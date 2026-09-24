@@ -1,0 +1,12 @@
+# Wafer — pale and crisp.
+# Light neutral ground with a cool blue accent.
+name = "wafer"
+
+[colors]
+bg = "#f2f2f2"
+fg = "#a4a4a4"
+bright_fg = "#202020"
+accent = "#4a90d9"
+green = "#4a90d9"
+yellow = "#8ab4e0"
+red = "#c8dcf0"

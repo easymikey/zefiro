@@ -1,0 +1,88 @@
+---
+source: crates/kernel/tests/unit/effects_snapshot.rs
+expression: effects(cmd)
+---
+[
+    Audio(
+        Load {
+            path: "/tmp/track1.flac",
+            gain: None,
+            revision: Revision(
+                1,
+            ),
+        },
+    ),
+    Audio(
+        Volume(
+            Percent(
+                50,
+            ),
+        ),
+    ),
+    Library(
+        AppendHistory {
+            track: Track {
+                path: "/tmp/track1.flac",
+                duration: Some(
+                    100s,
+                ),
+                tags: Tags {
+                    title: None,
+                    artist: None,
+                    album: None,
+                    album_artist: None,
+                    date: None,
+                    genre: None,
+                    track: None,
+                    track_total: None,
+                    disc: None,
+                    composer: None,
+                    comment: None,
+                    lyrics: None,
+                },
+                audio_format: AudioFormat {
+                    format: None,
+                    bitrate_kbps: None,
+                    sample_rate_hz: None,
+                    bits_per_sample: None,
+                    channels: None,
+                    replay_gain: None,
+                },
+                display: "track1.flac",
+                tagging: Read,
+            },
+            revision: Revision(
+                2,
+            ),
+        },
+    ),
+    System(
+        NowPlaying(
+            Track {
+                title: "track1",
+                artist: None,
+                album: None,
+                duration: 100s,
+                path: "/tmp/track1.flac",
+            },
+        ),
+    ),
+    Audio(
+        Pause(
+            Playing,
+        ),
+    ),
+    System(
+        PlaybackState(
+            Playing,
+        ),
+    ),
+    Animate(
+        TrackChanged,
+    ),
+    Animate(
+        PlaybackChanged(
+            Play,
+        ),
+    ),
+]

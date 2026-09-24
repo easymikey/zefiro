@@ -1,0 +1,9 @@
+---
+source: crates/config/src/appearance_document.rs
+expression: out
+---
+[cover]
+style = "off"
+
+[card]
+format_chips = true

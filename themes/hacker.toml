@@ -1,0 +1,12 @@
+# Hacker — terminal green on navy.
+# Neon on navy.
+name = "hacker"
+
+[colors]
+bg = "#0b0c16"
+fg = "#8e95b8"
+bright_fg = "#ddf7ff"
+accent = "#82FB9C"
+green = "#2ec27e"
+yellow = "#f7df50"
+red = "#ff5f78"

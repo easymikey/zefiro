@@ -1,0 +1,28 @@
+---
+source: crates/kernel/src/update/startup.rs
+expression: "(model.settings, model.transport.volume, model.themes,)"
+---
+(
+    Settings {
+        crossfade: Crossfade(
+            3s,
+        ),
+        replaygain: On,
+        output_device: Some(
+            "Speakers",
+        ),
+        output_devices: [],
+        sleep_presets: [
+            900s,
+            1800s,
+        ],
+        theme: "dark",
+    },
+    Percent(
+        42,
+    ),
+    [
+        "noir",
+        "solar",
+    ],
+)

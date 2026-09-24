@@ -1,0 +1,13 @@
+---
+source: crates/config/src/breakpoints.rs
+expression: "BreakpointsConfig::default()"
+---
+BreakpointsConfig {
+    full_min_width: 60,
+    full_min_height: 19,
+    compact_min_width: 30,
+    compact_min_height: 13,
+    min_columns: 48,
+    min_rows: 16,
+    mode: Auto,
+}

@@ -1,0 +1,12 @@
+# Ristretto — dark roast espresso.
+# Campfire coals, darkroom safelight, analog warmth.
+name = "ristretto"
+
+[colors]
+bg = "#121212"
+fg = "#907868"
+bright_fg = "#e8d0b8"
+accent = "#e07040"
+green = "#9aaa68"
+yellow = "#d8a050"
+red = "#d15a5a"

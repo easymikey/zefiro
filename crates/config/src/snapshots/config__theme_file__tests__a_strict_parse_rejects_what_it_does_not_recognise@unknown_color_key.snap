@@ -1,0 +1,6 @@
+---
+source: crates/config/src/theme_file.rs
+expression: error.to_string()
+---
+unknown field `selection_bg`, expected one of `bg`, `fg`, `bright_fg`, `accent`, `green`, `yellow`, `red`, `window_bg`
+noir.toml:10

@@ -1,0 +1,8 @@
+---
+source: crates/library/src/scan.rs
+expression: listing.paths
+---
+[
+    "[tmp]/a.flac",
+    "[tmp]/b.mp3",
+]

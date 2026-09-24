@@ -1,0 +1,387 @@
+mod field;
+
+use ratatui::{style::Color, text::Line};
+
+use crate::{
+    milkdrop::field::{
+        BandSplit,
+        CellPosition,
+        FieldDimensions,
+        Injection,
+        MilkdropCoefficients,
+        MilkdropColorBands,
+        MilkdropGlyphs,
+        Mirror,
+        Warp,
+        band_levels,
+        bilinear_sample,
+        field_center,
+        inject,
+        kaleido4_into,
+        mirror_horizontal_into,
+        preset_for_seed,
+        usize_to_f32,
+        warp_source,
+    },
+    primitive::span::text,
+    spectrum::Spectrum,
+    theme::ActiveTheme,
+};
+
+fn resolve_mirror(
+    field: &mut MilkdropField,
+    dimensions: FieldDimensions,
+    mirror: Mirror,
+) {
+    match mirror {
+        Mirror::None => std::mem::swap(&mut field.cells, &mut field.scratch),
+        Mirror::Horizontal => {
+            mirror_horizontal_into(&field.scratch, &mut field.cells, dimensions);
+        }
+        Mirror::Kaleido4 => kaleido4_into(&field.scratch, &mut field.cells, dimensions),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MilkdropField {
+    cells: Vec<f32>,
+    scratch: Vec<f32>,
+    width: usize,
+    height: usize,
+    phase: f32,
+}
+
+impl MilkdropField {
+    #[must_use]
+    pub fn new(width: usize, height: usize) -> Self {
+        let width = width.max(1);
+        let height = height.max(1);
+        Self {
+            cells: vec![0.0; width * height],
+            scratch: vec![0.0; width * height],
+            width,
+            height,
+            phase: 0.0,
+        }
+    }
+
+    #[must_use]
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    #[must_use]
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    fn cell(&self, position: CellPosition) -> f32 {
+        self.cells
+            .get(position.row * self.width + position.column)
+            .copied()
+            .unwrap_or(0.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Playing {
+    Yes,
+    No,
+}
+
+#[derive(Debug)]
+pub struct MilkdropStep<'a> {
+    pub bands: &'a Spectrum,
+    pub playing: Playing,
+    pub seed: u64,
+    pub tick: u64,
+}
+
+pub fn step(field: &mut MilkdropField, input: &MilkdropStep<'_>) {
+    let tuning = MilkdropCoefficients::default();
+    let split = BandSplit::default();
+    let levels = band_levels(input.bands, &split);
+    let preset = preset_for_seed(input.seed);
+
+    let dimensions = FieldDimensions {
+        width: field.width,
+        height: field.height,
+    };
+    let center = field_center(dimensions);
+    let zoom = preset.base_zoom + levels.bass * tuning.zoom_gain;
+    let rotation = preset.base_rotation + levels.mid * tuning.rotation_gain;
+    let warp = Warp {
+        center,
+        zoom,
+        rotation,
+        aspect_x: tuning.aspect_x,
+    };
+
+    field.scratch.clear();
+    for row in 0..field.height {
+        for column in 0..field.width {
+            let source = warp_source(CellPosition { column, row }, &warp);
+            let warped = bilinear_sample(&field.cells, dimensions, source);
+            field.scratch.push(warped * tuning.decay);
+        }
+    }
+
+    if input.playing == Playing::Yes {
+        inject(
+            &mut field.scratch,
+            dimensions,
+            &Injection {
+                center,
+                aspect_x: tuning.aspect_x,
+                core_radius: tuning.core_radius + levels.bass * tuning.core_gain,
+                treble: levels.treble,
+                spark_count: tuning.spark_count,
+                seed: input.seed,
+                tick: input.tick,
+            },
+        );
+    }
+
+    resolve_mirror(field, dimensions, preset.mirror);
+    field.phase = (field.phase + rotation).rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MilkdropColors {
+    dim: Color,
+    accent: Color,
+    bright: Color,
+}
+
+impl MilkdropColors {
+    #[must_use]
+    pub fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            dim: theme.dim(),
+            accent: theme.accent(),
+            bright: theme.text(),
+        }
+    }
+
+    fn color_for(&self, intensity: f32) -> Color {
+        let bands = MilkdropColorBands::default();
+        if intensity < bands.mid {
+            self.dim
+        } else if intensity < bands.high {
+            self.accent
+        } else {
+            self.bright
+        }
+    }
+}
+
+fn ramp_glyph(intensity: f32, glyphs: &MilkdropGlyphs) -> &'static str {
+    let last_index = glyphs.ramp.len() - 1;
+    let clamped = intensity.clamp(0.0, 1.0);
+    let index = raster::round_usize(clamped * usize_to_f32(last_index));
+    glyphs
+        .ramp
+        .get(index.min(last_index))
+        .copied()
+        .unwrap_or(glyphs.fallback)
+}
+
+pub fn lines_into(
+    field: &MilkdropField,
+    colors: &MilkdropColors,
+    output: &mut Vec<Line<'static>>,
+) {
+    let glyphs = MilkdropGlyphs::default();
+    if output.len() != field.height {
+        output.clear();
+        output.resize_with(field.height, Line::default);
+    }
+    for (row, line) in output.iter_mut().enumerate() {
+        line.spans.clear();
+        for column in 0..field.width {
+            let intensity = field.cell(CellPosition { column, row });
+            let glyph = ramp_glyph(intensity, &glyphs);
+            line.spans
+                .push(text(glyph).fg(colors.color_for(intensity)).into());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::style::Color;
+
+    use crate::{
+        milkdrop::{
+            CellPosition,
+            MilkdropColors,
+            MilkdropField,
+            MilkdropStep,
+            Playing,
+            lines_into,
+            step,
+        },
+        spectrum::Spectrum,
+    };
+
+    const SILENT_BANDS: [f32; 16] = [0.0; 16];
+
+    fn input(bands: &Spectrum, playing: Playing, beat: (u64, u64)) -> MilkdropStep<'_> {
+        MilkdropStep {
+            bands,
+            playing,
+            seed: beat.0,
+            tick: beat.1,
+        }
+    }
+
+    #[test]
+    fn lines_renders_exactly_height_rows_of_exactly_width_cells() {
+        let field = MilkdropField::new(20, 8);
+        let colors = MilkdropColors {
+            dim: Color::Black,
+            accent: Color::Red,
+            bright: Color::White,
+        };
+        let mut rendered = Vec::new();
+        lines_into(&field, &colors, &mut rendered);
+        assert_eq!(rendered.len(), 8);
+        for line in &rendered {
+            assert_eq!(line.spans.len(), 20);
+        }
+    }
+
+    #[test]
+    fn lines_matches_the_seven_row_variant_too() {
+        let field = MilkdropField::new(20, 7);
+        let colors = MilkdropColors {
+            dim: Color::Black,
+            accent: Color::Red,
+            bright: Color::White,
+        };
+        let mut rendered = Vec::new();
+        lines_into(&field, &colors, &mut rendered);
+        assert_eq!(rendered.len(), 7);
+    }
+
+    #[test]
+    fn lines_into_reuses_an_undersized_buffer_across_a_resize() {
+        let colors = MilkdropColors {
+            dim: Color::Black,
+            accent: Color::Red,
+            bright: Color::White,
+        };
+        let mut rendered = Vec::new();
+        lines_into(&MilkdropField::new(5, 3), &colors, &mut rendered);
+        assert_eq!(rendered.len(), 3);
+        lines_into(&MilkdropField::new(20, 8), &colors, &mut rendered);
+        assert_eq!(rendered.len(), 8);
+        for line in &rendered {
+            assert_eq!(line.spans.len(), 20);
+        }
+    }
+
+    #[test]
+    fn a_degenerate_zero_size_request_still_produces_a_one_by_one_field() {
+        let field = MilkdropField::new(0, 0);
+        assert_eq!((field.width(), field.height()), (1, 1));
+    }
+
+    #[test]
+    fn step_is_deterministic_for_the_same_seed_and_tick() {
+        let mut a = MilkdropField::new(9, 9);
+        let mut b = a.clone();
+        step(&mut a, &input(&SILENT_BANDS, Playing::Yes, (7, 3)));
+        step(&mut b, &input(&SILENT_BANDS, Playing::Yes, (7, 3)));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn different_seeds_produce_different_fields() {
+        let loud_treble = [1.0; 16];
+        let mut a = MilkdropField::new(9, 9);
+        let mut b = a.clone();
+        step(&mut a, &input(&loud_treble, Playing::Yes, (0, 5)));
+        step(&mut b, &input(&loud_treble, Playing::Yes, (1, 5)));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn same_seed_scatters_sparks_at_the_same_positions_across_independent_fields() {
+        let loud_treble = [1.0; 16];
+        let mut field_a = MilkdropField::new(9, 9);
+        let mut field_b = MilkdropField::new(9, 9);
+        step(&mut field_a, &input(&loud_treble, Playing::Yes, (42, 11)));
+        step(&mut field_b, &input(&loud_treble, Playing::Yes, (42, 11)));
+        assert_eq!(field_a, field_b);
+    }
+
+    #[test]
+    fn decay_only_steps_converge_to_near_zero() {
+        let mut field = MilkdropField::new(9, 9);
+        field.cells = vec![1.0; field.cells.len()];
+        for tick in 0..80 {
+            step(&mut field, &input(&SILENT_BANDS, Playing::No, (3, tick)));
+        }
+        assert!(
+            field.cells.iter().all(|&level| level < 0.001),
+            "expected a fully decayed field, got {:?}",
+            field.cells
+        );
+    }
+
+    #[test]
+    fn ambient_zoom_above_one_spreads_the_core_outward_over_a_few_steps() {
+        let (width, height) = (9, 9);
+        let mut field = MilkdropField::new(width, height);
+        let probe = CellPosition {
+            column: width / 2 + 4,
+            row: height / 2,
+        };
+
+        step(&mut field, &input(&SILENT_BANDS, Playing::Yes, (0, 0)));
+        let initial = field.cell(probe);
+        assert_eq!(initial, 0.0, "probe must start outside the injected core");
+
+        for tick in 1..3 {
+            step(&mut field, &input(&SILENT_BANDS, Playing::Yes, (0, tick)));
+        }
+        let spread = field.cell(probe);
+        assert!(
+            spread > initial,
+            "expected the core to have spread out to the probe cell by the third step, got {spread}"
+        );
+    }
+
+    #[test]
+    fn kaleido_preset_output_is_four_way_symmetric() {
+        let loud = [1.0; 16];
+        let mut stepped = MilkdropField::new(10, 8);
+        step(&mut stepped, &input(&loud, Playing::Yes, (2, 9)));
+
+        for row in 0..stepped.height {
+            for column in 0..stepped.width {
+                let cell = stepped.cell(CellPosition { column, row });
+                let mirrored_column = stepped.width - 1 - column;
+                let mirrored_row = stepped.height - 1 - row;
+                assert_eq!(
+                    cell,
+                    stepped.cell(CellPosition {
+                        column: mirrored_column,
+                        row
+                    }),
+                    "not left-right symmetric at ({column}, {row})"
+                );
+                assert_eq!(
+                    cell,
+                    stepped.cell(CellPosition {
+                        column,
+                        row: mirrored_row
+                    }),
+                    "not top-bottom symmetric at ({column}, {row})"
+                );
+            }
+        }
+    }
+}

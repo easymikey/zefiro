@@ -1,0 +1,17 @@
+---
+source: crates/audio/src/engine/live/preload.rs
+expression: log
+---
+[
+    PreloadCrossfade {
+        path: "/b",
+        gain: None,
+        speed: Speed(
+            1.0,
+        ),
+    },
+    Nothing,
+    Promote {
+        volume: 1.0,
+    },
+]

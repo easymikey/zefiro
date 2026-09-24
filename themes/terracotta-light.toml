@@ -1,0 +1,12 @@
+# Terracotta (light).
+# Warm terracotta accent on a soft paper ground.
+name = "terracotta-light"
+
+[colors]
+bg = "#faf9f5"
+fg = "#5e5d59"
+bright_fg = "#141413"
+accent = "#D97757"
+green = "#3f7a3f"
+yellow = "#b8862b"
+red = "#b0432c"

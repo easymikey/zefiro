@@ -1,0 +1,6 @@
+---
+source: crates/config/src/theme_file.rs
+expression: error.to_string()
+---
+invalid color `#zzzzzz`: expected 6 hex digits as #rrggbb
+noir.toml:3

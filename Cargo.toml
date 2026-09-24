@@ -1,0 +1,278 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/audio",
+  "crates/config",
+  "crates/kernel",
+  "crates/library",
+  "crates/macos",
+  "crates/raster",
+  "crates/runtime",
+  "crates/sifr",
+  "crates/terminal",
+  "crates/widgets",
+]
+
+[workspace.metadata.bin]
+just = { version = "1.51.0", locked = true }
+cargo-nextest = { version = "0.9.128", locked = true }
+cargo-llvm-cov = { version = "0.9.0", locked = true }
+cargo-shear = { version = "1.6.6", locked = true }
+cargo-outdated = { version = "0.17.0", locked = true }
+cargo-sort = { version = "2.0.1", locked = true }
+cocogitto = { version = "6.3.0", locked = true, bins = ["cog"] }
+typos-cli = { version = "1.36.2", locked = true, bins = ["typos"] }
+taplo-cli = { version = "0.10.0", locked = true, bins = ["taplo"] }
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+
+[workspace.lints.clippy]
+# groups
+all = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+# size limits, thresholds in clippy.toml
+too_many_lines = "deny"
+cognitive_complexity = "deny"
+fn_params_excessive_bools = "deny"
+struct_excessive_bools = "deny"
+
+# panics & aborts
+unwrap_used = "deny"
+expect_used = "deny"
+get_unwrap = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+exit = "deny"
+todo = "deny"
+unreachable = "deny"
+unimplemented = "deny"
+
+# debug leftovers
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+# matching & imports
+wildcard_enum_match_arm = "deny"
+match_wildcard_for_single_variants = "deny"
+match_same_arms = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+single_match_else = "deny"
+wildcard_imports = "deny"
+
+# ownership, cloning & control flow
+option_if_let_else = "deny"
+manual_let_else = "deny"
+map_unwrap_or = "deny"
+if_not_else = "deny"
+needless_pass_by_value = "deny"
+needless_pass_by_ref_mut = "deny"
+trivially_copy_pass_by_ref = "deny"
+redundant_closure_for_method_calls = "deny"
+needless_continue = "deny"
+implicit_clone = "deny"
+redundant_clone = "deny"
+clone_on_ref_ptr = "deny"
+mem_forget = "deny"
+rc_buffer = "deny"
+rc_mutex = "deny"
+semicolon_if_nothing_returned = "deny"
+
+# numeric casts
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_precision_loss = "deny"
+cast_sign_loss = "deny"
+
+# escape hatches & api pitfalls
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+must_use_candidate = "deny"
+large_enum_variant = "deny"
+fallible_impl_from = "deny"
+shadow_unrelated = "deny"
+same_name_method = "deny"
+unneeded_field_pattern = "deny"
+undocumented_unsafe_blocks = "deny"
+multiple_crate_versions = "allow"
+
+[workspace.lints.rust]
+# groups
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+unused = { level = "deny", priority = -1 }
+nonstandard_style = { level = "deny", priority = -1 }
+warnings = { level = "deny", priority = -1 }
+
+# unsafe, results & visibility
+unused_must_use = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "deny"
+unreachable_pub = "deny"
+
+# paths, casts & idents
+absolute_paths_not_starting_with_crate = "deny"
+non_ascii_idents = "deny"
+redundant_imports = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+unit_bindings = "deny"
+unused_lifetimes = "deny"
+unused_qualifications = "deny"
+unstable_features = "deny"
+
+[workspace.dependencies]
+
+# crates
+audio = { path = "crates/audio" }
+config = { path = "crates/config" }
+kernel = { path = "crates/kernel" }
+library = { path = "crates/library" }
+macos = { path = "crates/macos" }
+raster = { path = "crates/raster" }
+runtime = { path = "crates/runtime" }
+terminal = { path = "crates/terminal" }
+widgets = { path = "crates/widgets" }
+
+# prod
+bincode = { version = "2", default-features = false, features = ["serde", "std"] }
+block2 = { version = "0.6", default-features = false, features = ["alloc"] }
+bon = { version = "3", default-features = false }
+clap = { version = "4", default-features = false, features = [
+  "derive",
+  "error-context",
+  "help",
+  "std",
+  "usage",
+] }
+cpal = { version = "0.16", default-features = false }
+crossbeam-channel = { version = "0.5", default-features = false, features = [
+  "std",
+] }
+crossterm = { version = "0.29", default-features = false, features = [
+  "events",
+] }
+dirs = { version = "7", default-features = false }
+fast_image_resize = { version = "=6.1.0", default-features = false }
+fastrand = { version = "2", default-features = false, features = ["std"] }
+image = { version = "0.25", default-features = false }
+lofty = { version = "0.25", default-features = false, features = [
+  "id3v2_compression_support",
+] }
+notify = { version = "8", default-features = false, features = [
+  "crossbeam-channel",
+  "macos_fsevent",
+] }
+num-traits = { version = "0.2", default-features = false }
+objc2 = { version = "0.6", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "NSImage",
+  "std",
+] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = [
+  "CFCGTypes",
+  "CFRunLoop",
+  "CFString",
+  "std",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "NSData",
+  "NSDictionary",
+  "NSString",
+  "NSValue",
+  "std",
+] }
+objc2-media-player = { version = "0.3", default-features = false, features = [
+  "MPMediaItem",
+  "MPNowPlayingInfoCenter",
+  "MPRemoteCommand",
+  "MPRemoteCommandCenter",
+  "MPRemoteCommandEvent",
+  "block2",
+  "objc2-app-kit",
+  "objc2-core-foundation",
+  "std",
+] }
+palette = { version = "0.7", default-features = false, features = ["std"] }
+ratatui = { version = "0.30", default-features = false, features = [
+  "crossterm_0_29",
+  "layout-cache",
+] }
+ratatui-image = { version = "11", default-features = false, features = [
+  "crossterm",
+] }
+realfft = { version = "3", default-features = false }
+rodio = { version = "0.21", default-features = false, features = [
+  "flac",
+  "mp3",
+  "mp4",
+  "playback",
+  "symphonia-alac",
+  "symphonia-mkv",
+  "vorbis",
+  "wav",
+] }
+serde = { version = "1", default-features = false, features = [
+  "derive",
+  "rc",
+  "std",
+] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+signal-hook = { version = "0.3", default-features = false }
+strum = { version = "0.28", default-features = false, features = [
+  "derive",
+  "std",
+] }
+tachyonfx = { version = "0.25.2", default-features = false, features = [
+  "std",
+  "std-duration",
+] }
+thiserror = { version = "2", default-features = false, features = ["std"] }
+tiny-skia = { version = "0.12", default-features = false, features = [
+  "std",
+  "simd",
+] }
+toml = { version = "1", default-features = false, features = [
+  "parse",
+  "serde",
+] }
+toml_edit = { version = "0.23", default-features = false, features = [
+  "parse",
+  "display",
+] }
+trash = { version = "5", default-features = false }
+triple_buffer = { version = "9", default-features = false }
+unicode-width = { version = "0.2", default-features = false }
+walkdir = { version = "2", default-features = false }
+
+# test
+insta = { version = "1", default-features = false, features = ["filters"] }
+proptest = { version = "1", default-features = false, features = ["std"] }
+rstest = { version = "0.27", default-features = false }
+tempfile = { version = "3", default-features = false }
+trybuild = { version = "1", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+panic = "unwind"
+codegen-units = 1
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.test]
+debug = "line-tables-only"
+
+[profile.test.package."*"]
+opt-level = 1
+debug = false

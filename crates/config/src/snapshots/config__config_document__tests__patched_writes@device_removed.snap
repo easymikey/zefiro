@@ -1,0 +1,6 @@
+---
+source: crates/config/src/config_document.rs
+expression: out
+---
+[audio]
+replaygain = false

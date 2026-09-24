@@ -1,0 +1,12 @@
+# Rosé Pine — moody, natural, elegant.
+# Muted rose on twilight ink.
+name = "rose-pine"
+
+[colors]
+bg = "#191724"
+fg = "#908caa"
+bright_fg = "#e0def4"
+accent = "#ebbcba"
+green = "#9ccfd8"
+yellow = "#f6c177"
+red = "#eb6f92"

@@ -1,0 +1,9 @@
+---
+source: crates/kernel/tests/unit/workspace.rs
+assertion_line: 213
+expression: "(unreadable.to_string(), save.to_string())"
+---
+(
+    "the themes folder is unreadable: not a directory",
+    "the theme file could not be saved: disk full",
+)

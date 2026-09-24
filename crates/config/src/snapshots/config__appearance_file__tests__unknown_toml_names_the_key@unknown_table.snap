@@ -1,0 +1,6 @@
+---
+source: crates/config/src/appearance_file.rs
+expression: error.to_string()
+---
+unknown field `nope`, expected one of `card`, `progress`, `cover`, `layout`, `window`
+sifr-ui.toml:1

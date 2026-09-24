@@ -1,0 +1,6 @@
+---
+source: crates/config/src/config_file.rs
+expression: error.to_string()
+---
+unknown field `nope`, expected one of `music_dir`, `theme`, `volume`, `audio`, `keymap`
+config.toml:1

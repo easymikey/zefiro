@@ -1,0 +1,57 @@
+use std::time::Duration;
+
+use kernel::{
+    domain::{AbLoop, Cursor, CursorDirection},
+    playlist::{PlayOrder, Playlist, skip},
+};
+use proptest::prelude::{Just, prop_assert, prop_assert_eq, prop_oneof, proptest};
+
+use crate::support::{bare_track, strategies::repeat_mode};
+
+proptest! {
+    #[test]
+    fn skip_keeps_the_cursor_in_range(
+        len in 0usize..8,
+        start in 0usize..8,
+        repeat in repeat_mode(),
+        shuffled in proptest::bool::ANY,
+        direction in prop_oneof![Just(CursorDirection::Forward), Just(CursorDirection::Backward)],
+    ) {
+        let tracks = (0..len).map(bare_track).collect::<Vec<_>>();
+        let play_order = if shuffled && len > 0 {
+            PlayOrder::Shuffle((0..len).collect())
+        } else {
+            PlayOrder::Linear
+        };
+        let mut playlist = Playlist {
+            tracks,
+            at: Cursor::with_len(len).at(start),
+            play_order,
+            repeat,
+        };
+        skip(&mut playlist, direction);
+        if len == 0 {
+            prop_assert!(playlist.at.is_empty());
+        } else {
+            prop_assert!(playlist.at.index() < len);
+        }
+        if let PlayOrder::Shuffle(order) = &playlist.play_order {
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            prop_assert_eq!(sorted, (0..len).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn ab_loop_mark_never_yields_a_full_loop_with_b_before_a(
+        positions in proptest::collection::vec(0u64..60_000, 0..20),
+    ) {
+        let mut state: Option<AbLoop> = None;
+        for millis in positions {
+            state = AbLoop::mark(state, Duration::from_millis(millis));
+            if let Some(AbLoop::Full { a, b }) = state {
+                prop_assert!(b > a);
+            }
+        }
+    }
+}

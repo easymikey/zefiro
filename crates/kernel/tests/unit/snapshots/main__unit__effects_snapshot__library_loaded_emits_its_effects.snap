@@ -1,0 +1,9 @@
+---
+source: crates/kernel/tests/unit/effects_snapshot.rs
+expression: effects(cmd)
+---
+[
+    Animate(
+        LibraryOpened,
+    ),
+]

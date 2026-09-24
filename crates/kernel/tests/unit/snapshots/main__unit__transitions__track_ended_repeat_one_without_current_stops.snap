@@ -1,0 +1,19 @@
+---
+source: crates/kernel/tests/unit/transitions.rs
+expression: effs
+---
+[
+    Audio(
+        Stop,
+    ),
+    System(
+        PlaybackState(
+            Paused,
+        ),
+    ),
+    System(
+        NowPlaying(
+            Cleared,
+        ),
+    ),
+]

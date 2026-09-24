@@ -1,0 +1,41 @@
+---
+source: crates/kernel/src/update/startup.rs
+expression: effects
+---
+[
+    Animate(
+        PlayOrderChanged,
+    ),
+    Audio(
+        Stop,
+    ),
+    System(
+        PlaybackState(
+            Paused,
+        ),
+    ),
+    System(
+        NowPlaying(
+            Cleared,
+        ),
+    ),
+    Audio(
+        ListDevices,
+    ),
+    Library(
+        LoadFavorites,
+    ),
+    Library(
+        ScanLibrary {
+            root: "/music",
+            revision: Revision(
+                0,
+            ),
+        },
+    ),
+    Config(
+        SelectTheme(
+            "dark",
+        ),
+    ),
+]

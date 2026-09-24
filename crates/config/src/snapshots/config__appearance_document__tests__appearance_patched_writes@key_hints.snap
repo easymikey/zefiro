@@ -1,0 +1,6 @@
+---
+source: crates/config/src/appearance_document.rs
+expression: out
+---
+[window]
+key_hints = false

@@ -1,0 +1,28 @@
+[package]
+name = "terminal"
+description = "Terminal I/O for the ratatui frontend: session setup, input, keys, image protocols"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+config = { workspace = true }
+crossbeam-channel = { workspace = true }
+crossterm = { workspace = true }
+image = { workspace = true }
+kernel = { workspace = true }
+raster = { workspace = true }
+ratatui = { workspace = true }
+ratatui-image = { workspace = true }
+tachyonfx = { workspace = true }
+thiserror = { workspace = true }
+widgets = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+rstest = { workspace = true }
+
+[lints]
+workspace = true

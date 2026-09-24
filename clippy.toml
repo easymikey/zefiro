@@ -1,0 +1,20 @@
+# size limits
+too-many-lines-threshold = 60
+cognitive-complexity-threshold = 15
+too-many-arguments-threshold = 3
+max-fn-params-bools = 0
+max-struct-bools = 0
+enum-variant-size-threshold = 200
+large-error-threshold = 128
+
+# tests
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+allow-dbg-in-tests = true
+
+# api
+avoid-breaking-exported-api = false
+check-private-items = true

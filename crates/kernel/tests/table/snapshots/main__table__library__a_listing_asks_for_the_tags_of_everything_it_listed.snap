@@ -1,0 +1,18 @@
+---
+source: crates/kernel/tests/table/library.rs
+expression: effects(cmd)
+---
+[
+    Library(
+        TagTracks {
+            root: "/music",
+            paths: [
+                "/music/a.flac",
+                "/music/b.flac",
+            ],
+            revision: Revision(
+                0,
+            ),
+        },
+    ),
+]

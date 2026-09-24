@@ -1,0 +1,33 @@
+---
+source: crates/kernel/src/update/startup.rs
+expression: projected
+---
+(
+    Crossfade(
+        3s,
+    ),
+    On,
+    Some(
+        "Speakers",
+    ),
+    [
+        900s,
+        1800s,
+    ],
+    "dark",
+    Percent(
+        42,
+    ),
+    Favorites(
+        {},
+    ),
+    true,
+    2,
+    Some(
+        Index(0),
+    ),
+    [
+        "noir",
+        "solar",
+    ],
+)

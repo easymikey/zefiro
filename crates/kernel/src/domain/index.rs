@@ -1,0 +1,42 @@
+use std::{fmt, marker::PhantomData};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TrackSpace;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PlaylistSpace;
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Index<Space>(usize, PhantomData<Space>);
+
+pub type TrackIndex = Index<TrackSpace>;
+
+pub type PlaylistIndex = Index<PlaylistSpace>;
+
+impl<Space> Index<Space> {
+    pub const fn new(position: usize) -> Self {
+        Self(position, PhantomData)
+    }
+
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl<Space> fmt::Debug for Index<Space> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Index({})", self.0)
+    }
+}
+
+impl<Space> fmt::Display for Index<Space> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl<Space> From<Index<Space>> for usize {
+    fn from(position: Index<Space>) -> Self {
+        position.0
+    }
+}

@@ -1,0 +1,119 @@
+use kernel::domain::{
+    CursorOver,
+    DeleteCandidate,
+    JumpDigits,
+    Overlay,
+    PlaylistIndex,
+    SearchQuery,
+    SettingsRows,
+    TextEntry,
+};
+use ratatui::layout::Rect;
+use widgets::{CoverArt, FrameLayout, Screen};
+
+use crate::unit::support::{Scenery, model_with_tracks, painted, track};
+
+fn frame_with_overlay(overlay: Overlay) -> String {
+    let mut sources = Scenery::new(model_with_tracks(3));
+    sources.model.workspace.overlay = Some(overlay);
+    let scene = sources.scene();
+    let area = Rect::new(0, 0, 80, 24);
+    let layout = FrameLayout::new(&scene, area);
+    assert!(
+        layout.overlay.is_some(),
+        "an active overlay must claim a rect in the full frame's layout"
+    );
+    painted(
+        &Screen {
+            scene,
+            layout: &layout,
+            cover_art: CoverArt::Missing,
+        },
+        80,
+        24,
+    )
+}
+
+#[test]
+fn the_help_overlay_is_painted_over_the_full_frame() {
+    let text = frame_with_overlay(Overlay::Help);
+    assert!(text.contains("KEYS"), "got {text:?}");
+}
+
+#[test]
+fn the_search_overlay_is_painted_over_the_full_frame() {
+    let text =
+        frame_with_overlay(Overlay::Search(CursorOver::new(SearchQuery::default(), 0)));
+    assert!(text.contains("SEARCH"), "got {text:?}");
+}
+
+#[test]
+fn the_history_overlay_is_painted_over_the_full_frame() {
+    let text = frame_with_overlay(Overlay::History(CursorOver::new((), 0)));
+    assert!(text.contains("HISTORY"), "got {text:?}");
+}
+
+#[test]
+fn the_settings_overlay_is_painted_over_the_full_frame() {
+    let text = frame_with_overlay(Overlay::Settings(CursorOver::new(SettingsRows, 0)));
+    assert!(text.contains("SETTINGS"), "got {text:?}");
+}
+
+#[test]
+fn the_confirm_delete_overlay_is_painted_over_the_full_frame() {
+    let text = frame_with_overlay(Overlay::ConfirmDelete(DeleteCandidate {
+        track: PlaylistIndex::new(0),
+        title: "Moon River".to_string(),
+        artist: "Audrey Hepburn".to_string(),
+    }));
+    assert!(text.contains("MOVE TO TRASH?"), "got {text:?}");
+}
+
+#[test]
+fn the_jump_to_time_overlay_is_painted_over_the_full_frame() {
+    let text = frame_with_overlay(Overlay::JumpToTime(JumpDigits::default()));
+    assert!(text.contains("JUMP TO TIME"), "got {text:?}");
+}
+
+#[test]
+fn the_track_details_overlay_is_painted_over_the_full_frame() {
+    let text = frame_with_overlay(Overlay::TrackDetails(track("Moon River")));
+    assert!(text.contains("TRACK INFO"), "got {text:?}");
+}
+
+#[test]
+fn the_source_dir_overlay_is_painted_over_the_full_frame() {
+    let text = frame_with_overlay(Overlay::SourceDir {
+        typed: TextEntry::default(),
+        error: None,
+    });
+    assert!(text.contains("LIBRARY FOLDER"), "got {text:?}");
+}
+
+#[test]
+fn the_save_playlist_banner_is_painted_over_the_full_frame() {
+    let mut sources = Scenery::new(model_with_tracks(3));
+    sources.model.workspace.overlay = Some(Overlay::SavePlaylist {
+        typed: TextEntry {
+            input: "mixtape".to_string(),
+        },
+        error: None,
+    });
+    let scene = sources.scene();
+    let area = Rect::new(0, 0, 80, 24);
+    let layout = FrameLayout::new(&scene, area);
+    let text = painted(
+        &Screen {
+            scene,
+            layout: &layout,
+            cover_art: CoverArt::Missing,
+        },
+        80,
+        24,
+    );
+    assert!(text.contains("mixtape"), "got {text:?}");
+    assert!(
+        text.contains("song00"),
+        "the frame behind the banner must still be there, got {text:?}"
+    );
+}

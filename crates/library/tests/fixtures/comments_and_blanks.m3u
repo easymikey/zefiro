@@ -1,0 +1,8 @@
+#EXTM3U
+
+#EXTINF:10,A - B
+
+/a.flac
+# just a comment
+
+/b.flac

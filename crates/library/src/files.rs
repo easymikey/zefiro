@@ -1,0 +1,83 @@
+use std::{
+    io::{self, Write},
+    path::Path,
+};
+
+pub fn read_if_present(path: &Path) -> io::Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+pub fn create_parent(path: &Path) -> io::Result<()> {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map_or(Ok(()), std::fs::create_dir_all)
+}
+
+pub fn persist(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    tmp.write_all(contents)?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(path).map_err(|error| error.error)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::files::{create_parent, persist, read_if_present};
+
+    #[test]
+    fn a_missing_file_reads_as_nothing_rather_than_an_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("absent.json");
+        assert_eq!(read_if_present(&path).unwrap(), None);
+    }
+
+    #[test]
+    fn an_existing_file_reads_as_its_text() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("present.json");
+        std::fs::write(&path, "[]").unwrap();
+        assert_eq!(read_if_present(&path).unwrap(), Some("[]".to_string()));
+    }
+
+    #[test]
+    fn create_parent_makes_the_whole_chain_and_is_happy_twice() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("one").join("two").join("file.json");
+        create_parent(&path).unwrap();
+        let parent = path.parent().unwrap();
+        assert!(parent.is_dir());
+        create_parent(&path).unwrap();
+    }
+
+    #[test]
+    fn persist_writes_the_final_file_and_leaves_no_temp_behind() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("favorites.json");
+
+        persist(&path, b"[]").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"[]".to_vec());
+        let leftovers: Vec<_> = std::fs::read_dir(directory.path()).unwrap().collect();
+        assert_eq!(leftovers.len(), 1);
+    }
+
+    #[test]
+    fn persist_overwrites_an_existing_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("favorites.json");
+        std::fs::write(&path, b"[1]").unwrap();
+
+        persist(&path, b"[2]").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"[2]".to_vec());
+    }
+}

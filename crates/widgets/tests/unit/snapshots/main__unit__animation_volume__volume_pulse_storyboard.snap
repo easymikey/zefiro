@@ -1,0 +1,8 @@
+---
+source: crates/widgets/tests/unit/animation_volume.rs
+expression: volume_storyboard(&mut stage)
+---
+t=0ms gap=26 fill=[Rgb(216, 106, 172), Rgb(216, 106, 172), Rgb(216, 106, 172)] groove=[Rgb(70, 60, 90), Rgb(70, 60, 90), Rgb(70, 60, 90)]
+t=225ms gap=15 fill=[Rgb(218, 95, 167), Rgb(218, 95, 167), Rgb(218, 95, 167)] groove=[Rgb(70, 60, 90), Rgb(70, 60, 90), Rgb(70, 60, 90)]
+t=450ms gap=7 fill=[Rgb(219, 87, 163), Rgb(219, 87, 163), Rgb(219, 87, 163)] groove=[Rgb(70, 60, 90), Rgb(70, 60, 90), Rgb(70, 60, 90)]
+t=900ms gap=0 fill=[Rgb(220, 80, 160), Rgb(220, 80, 160), Rgb(220, 80, 160)] groove=[Rgb(70, 60, 90), Rgb(70, 60, 90), Rgb(70, 60, 90)]

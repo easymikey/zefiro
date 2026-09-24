@@ -1,0 +1,61 @@
+---
+source: crates/config/src/theme_file.rs
+assertion_line: 93
+expression: "parse_theme(source, name).unwrap()"
+---
+ThemeFile {
+    name: "rose-pine",
+    colors: ThemeColors {
+        background: Hex(
+            [
+                25,
+                23,
+                36,
+            ],
+        ),
+        foreground: Hex(
+            [
+                144,
+                140,
+                170,
+            ],
+        ),
+        bright_foreground: Hex(
+            [
+                224,
+                222,
+                244,
+            ],
+        ),
+        accent: Hex(
+            [
+                235,
+                188,
+                186,
+            ],
+        ),
+        green: Hex(
+            [
+                156,
+                207,
+                216,
+            ],
+        ),
+        yellow: Hex(
+            [
+                246,
+                193,
+                119,
+            ],
+        ),
+        red: Hex(
+            [
+                235,
+                111,
+                146,
+            ],
+        ),
+        window_background: None,
+    },
+    scanning_label: "scanning…",
+}

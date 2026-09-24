@@ -1,0 +1,5 @@
+---
+source: crates/library/src/history.rs
+expression: contents
+---
+{"path":"/music/song.flac","title":"Song","artist":"Artist","ts":1700000000}

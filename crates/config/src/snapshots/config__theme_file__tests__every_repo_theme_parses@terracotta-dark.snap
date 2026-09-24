@@ -1,0 +1,61 @@
+---
+source: crates/config/src/theme_file.rs
+assertion_line: 93
+expression: "parse_theme(source, name).unwrap()"
+---
+ThemeFile {
+    name: "terracotta-dark",
+    colors: ThemeColors {
+        background: Hex(
+            [
+                31,
+                30,
+                29,
+            ],
+        ),
+        foreground: Hex(
+            [
+                184,
+                181,
+                173,
+            ],
+        ),
+        bright_foreground: Hex(
+            [
+                240,
+                238,
+                230,
+            ],
+        ),
+        accent: Hex(
+            [
+                217,
+                119,
+                87,
+            ],
+        ),
+        green: Hex(
+            [
+                106,
+                159,
+                106,
+            ],
+        ),
+        yellow: Hex(
+            [
+                217,
+                164,
+                65,
+            ],
+        ),
+        red: Hex(
+            [
+                200,
+                85,
+                61,
+            ],
+        ),
+        window_background: None,
+    },
+    scanning_label: "scanning…",
+}

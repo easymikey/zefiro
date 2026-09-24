@@ -1,0 +1,12 @@
+# Neobrutalism (light) — raw, high-contrast, unapologetic.
+# Fallback classic neobrutalism light palette (neobrutalism.com fetch timed out).
+name = "neobrutalism-light"
+
+[colors]
+bg = "#fef6e4"
+fg = "#4a4a4a"
+bright_fg = "#111111"
+accent = "#ff90e8"
+green = "#23a094"
+yellow = "#ffc900"
+red = "#ff5c5c"

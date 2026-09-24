@@ -1,0 +1,61 @@
+---
+source: crates/config/src/theme_file.rs
+assertion_line: 93
+expression: "parse_theme(source, name).unwrap()"
+---
+ThemeFile {
+    name: "neobrutalism-light",
+    colors: ThemeColors {
+        background: Hex(
+            [
+                254,
+                246,
+                228,
+            ],
+        ),
+        foreground: Hex(
+            [
+                74,
+                74,
+                74,
+            ],
+        ),
+        bright_foreground: Hex(
+            [
+                17,
+                17,
+                17,
+            ],
+        ),
+        accent: Hex(
+            [
+                255,
+                144,
+                232,
+            ],
+        ),
+        green: Hex(
+            [
+                35,
+                160,
+                148,
+            ],
+        ),
+        yellow: Hex(
+            [
+                255,
+                201,
+                0,
+            ],
+        ),
+        red: Hex(
+            [
+                255,
+                92,
+                92,
+            ],
+        ),
+        window_background: None,
+    },
+    scanning_label: "scanning…",
+}

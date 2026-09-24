@@ -1,0 +1,6 @@
+---
+source: crates/widgets/src/key_hints.rs
+assertion_line: 393
+expression: "widget_snapshot(&widget, width, 1)"
+---
+" Space  Play  Enter  Open  a  Queue  /  Find  ?/Ctrl+K  Help  q  Quit           "

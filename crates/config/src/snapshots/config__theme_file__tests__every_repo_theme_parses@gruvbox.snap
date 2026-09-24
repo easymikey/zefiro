@@ -1,0 +1,69 @@
+---
+source: crates/config/src/theme_file.rs
+assertion_line: 93
+expression: "parse_theme(source, name).unwrap()"
+---
+ThemeFile {
+    name: "gruvbox",
+    colors: ThemeColors {
+        background: Hex(
+            [
+                40,
+                40,
+                40,
+            ],
+        ),
+        foreground: Hex(
+            [
+                146,
+                131,
+                116,
+            ],
+        ),
+        bright_foreground: Hex(
+            [
+                235,
+                219,
+                178,
+            ],
+        ),
+        accent: Hex(
+            [
+                254,
+                128,
+                25,
+            ],
+        ),
+        green: Hex(
+            [
+                184,
+                187,
+                38,
+            ],
+        ),
+        yellow: Hex(
+            [
+                250,
+                189,
+                47,
+            ],
+        ),
+        red: Hex(
+            [
+                251,
+                73,
+                52,
+            ],
+        ),
+        window_background: Some(
+            Hex(
+                [
+                    50,
+                    48,
+                    47,
+                ],
+            ),
+        ),
+    },
+    scanning_label: "scanning…",
+}

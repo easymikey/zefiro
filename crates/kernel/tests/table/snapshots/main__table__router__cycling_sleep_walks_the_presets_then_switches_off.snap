@@ -1,0 +1,176 @@
+---
+source: crates/kernel/tests/table/router.rs
+expression: "walked(model, messages)"
+---
+[
+    (
+        Playback(
+            CycleSleep,
+        ),
+        One(
+            After {
+                delay: 900s,
+                message: Sleep(
+                    Revision(
+                        1,
+                    ),
+                ),
+            },
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: Some(
+                SleepTimer {
+                    preset_index: 0,
+                    delay: 900s,
+                },
+            ),
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Playback(
+            CycleSleep,
+        ),
+        One(
+            After {
+                delay: 1800s,
+                message: Sleep(
+                    Revision(
+                        2,
+                    ),
+                ),
+            },
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: Some(
+                SleepTimer {
+                    preset_index: 1,
+                    delay: 1800s,
+                },
+            ),
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Playback(
+            CycleSleep,
+        ),
+        One(
+            After {
+                delay: 3600s,
+                message: Sleep(
+                    Revision(
+                        3,
+                    ),
+                ),
+            },
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: Some(
+                SleepTimer {
+                    preset_index: 2,
+                    delay: 3600s,
+                },
+            ),
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Playback(
+            CycleSleep,
+        ),
+        None,
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+]

@@ -1,0 +1,45 @@
+---
+source: crates/audio/src/engine/machine.rs
+expression: wiring.log
+---
+[
+    Clear,
+    StartLoad {
+        path: "/tmp/track0.flac",
+        speed: Speed(
+            1.0,
+        ),
+    },
+    SetVolume(
+        0.5,
+    ),
+    Play,
+    Start {
+        volume: 0.5,
+        total: Some(
+            100s,
+        ),
+    },
+    Clear,
+    StartLoad {
+        path: "/tmp/track2.flac",
+        speed: Speed(
+            1.0,
+        ),
+    },
+    SetVolume(
+        0.5,
+    ),
+    Play,
+    Start {
+        volume: 0.5,
+        total: Some(
+            100s,
+        ),
+    },
+    Send(
+        Position(
+            7s,
+        ),
+    ),
+]

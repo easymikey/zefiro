@@ -1,0 +1,9 @@
+---
+source: crates/library/tests/unit/m3u.rs
+expression: text
+---
+#EXTM3U
+#EXTINF:123,Artist A - Title A
+/music/a.flac
+#EXTINF:45,Artist B - Title B
+/music/b.mp3

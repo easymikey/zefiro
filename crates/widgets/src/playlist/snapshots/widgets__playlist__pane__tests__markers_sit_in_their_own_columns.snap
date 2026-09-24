@@ -1,0 +1,13 @@
+---
+source: crates/widgets/src/playlist/pane.rs
+assertion_line: 237
+expression: "painted(&widget, 60, 8)"
+---
+"┏ Playlist ── 1/3 ── shuffle off · repeat off · queue 1 ·  ┓"
+"┃★   song00                                                ┃"
+"┃  ▶ song01                                                ┃"
+"┃    song02 [q1]                                           ┃"
+"┃                                                          ┃"
+"┃                                                          ┃"
+"┃                                                          ┃"
+"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"

@@ -1,0 +1,11 @@
+---
+source: crates/config/tests/unit/rows.rs
+expression: rejected
+---
+Err(
+    UnknownRow {
+        id: SettingId(
+            999,
+        ),
+    },
+)

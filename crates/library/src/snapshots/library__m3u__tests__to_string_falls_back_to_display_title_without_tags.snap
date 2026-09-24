@@ -1,0 +1,7 @@
+---
+source: crates/library/tests/unit/m3u.rs
+expression: "m3u::to_string(&tracks)"
+---
+#EXTM3U
+#EXTINF:7,tags.flac
+/no/tags.flac

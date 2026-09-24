@@ -1,0 +1,61 @@
+---
+source: crates/config/src/theme_file.rs
+assertion_line: 93
+expression: "parse_theme(source, name).unwrap()"
+---
+ThemeFile {
+    name: "oreo",
+    colors: ThemeColors {
+        background: Hex(
+            [
+                11,
+                11,
+                11,
+            ],
+        ),
+        foreground: Hex(
+            [
+                143,
+                138,
+                128,
+            ],
+        ),
+        bright_foreground: Hex(
+            [
+                245,
+                241,
+                232,
+            ],
+        ),
+        accent: Hex(
+            [
+                243,
+                233,
+                210,
+            ],
+        ),
+        green: Hex(
+            [
+                245,
+                241,
+                232,
+            ],
+        ),
+        yellow: Hex(
+            [
+                201,
+                194,
+                180,
+            ],
+        ),
+        red: Hex(
+            [
+                143,
+                138,
+                128,
+            ],
+        ),
+        window_background: None,
+    },
+    scanning_label: "scanning…",
+}

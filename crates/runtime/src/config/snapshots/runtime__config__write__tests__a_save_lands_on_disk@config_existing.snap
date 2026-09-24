@@ -1,0 +1,9 @@
+---
+source: crates/runtime/src/config/write.rs
+expression: text
+---
+# keep me
+theme = "auto"
+
+[audio]
+crossfade = "5s"

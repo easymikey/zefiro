@@ -1,0 +1,69 @@
+---
+source: crates/kernel/tests/table/router.rs
+expression: "walked(model, messages)"
+---
+[
+    (
+        Overlay(
+            History(
+                Enqueue,
+            ),
+        ),
+        Batch(
+            [
+                Animate(
+                    ToastRaised,
+                ),
+                After {
+                    delay: 3s,
+                    message: Toast(
+                        Revision(
+                            1,
+                        ),
+                    ),
+                },
+            ],
+        ),
+        Stopped,
+        Some(
+            History(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 1,
+                    },
+                    rows: (),
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        Some(
+            Toast {
+                level: Info,
+                text: "Not in library",
+            },
+        ),
+    ),
+]

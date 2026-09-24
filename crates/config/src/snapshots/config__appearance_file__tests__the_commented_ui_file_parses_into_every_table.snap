@@ -1,0 +1,39 @@
+---
+source: crates/config/src/appearance_file.rs
+expression: parse_appearance(COMMENTED_UI).unwrap()
+---
+AppearanceFile {
+    card: CardConfig {
+        format_chips: Shown,
+        speed_chip: Always,
+    },
+    progress: ProgressConfig {
+        height_px: 4.0,
+        radius: None,
+        fill: None,
+        track: None,
+        remaining: Elapsed,
+    },
+    cover: CoverConfig {
+        size_px: 160,
+        style: Vinyl,
+        text_cells: TextCoverCells {
+            width: 20,
+            height: 8,
+        },
+        brackets: Hidden,
+    },
+    layout: BreakpointsConfig {
+        full_min_width: 60,
+        full_min_height: 19,
+        compact_min_width: 30,
+        compact_min_height: 13,
+        min_columns: 48,
+        min_rows: 16,
+        mode: Auto,
+    },
+    window: WindowConfig {
+        animations: On,
+        key_hints: Shown,
+    },
+}

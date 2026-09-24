@@ -1,0 +1,13 @@
+---
+source: crates/widgets/src/playlist/pane.rs
+assertion_line: 277
+expression: "painted(&widget, 24, 8)"
+---
+"┏ Playlist ── 1/3 ── … ┓"
+"┃  ▶ song00            ┃"
+"┃    song01 [q1]       ┃"
+"┃    song02 [q2]       ┃"
+"┃                      ┃"
+"┃                      ┃"
+"┃                      ┃"
+"┗━━━━━━━━━━━━━━━━━━━━━━┛"

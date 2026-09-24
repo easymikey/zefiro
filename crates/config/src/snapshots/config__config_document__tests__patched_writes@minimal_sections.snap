@@ -1,0 +1,8 @@
+---
+source: crates/config/src/config_document.rs
+expression: out
+---
+theme = "dark"
+
+[audio]
+crossfade = "3s"

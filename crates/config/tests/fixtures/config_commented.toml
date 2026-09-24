@@ -1,0 +1,10 @@
+# sifr config
+music_dir = "/music" # where my library lives
+theme = "auto"
+volume = 50
+
+[audio]
+# gapless by default; bump this for a crossfade
+crossfade = "0s"
+replaygain = false
+sleep_presets = [15, 30, 60]

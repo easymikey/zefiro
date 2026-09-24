@@ -1,0 +1,21 @@
+---
+source: crates/config/src/config_file.rs
+expression: config
+---
+ConfigFile {
+    music_dir: None,
+    theme: "auto",
+    volume: 50,
+    audio: AudioConfig {
+        crossfade: Crossfade(
+            0ns,
+        ),
+        replaygain: Off,
+        device: None,
+        sleep_presets: [
+            600s,
+            1200s,
+        ],
+    },
+    keymap: {},
+}

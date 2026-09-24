@@ -1,0 +1,9 @@
+# sifr-ui.toml
+[cover]
+# the noir look
+style = "vinyl"
+brackets = false
+
+[card]
+format_chips = true
+speed_chip = "always"

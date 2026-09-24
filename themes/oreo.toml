@@ -1,0 +1,16 @@
+# Oreo — black and white, high contrast.
+# Cookies-and-cream monochrome with a warm cream accent for selection.
+# The cookie is the background, the cream is every foreground: `bright_fg`
+# is the primary text, `fg` the dim text and the frame, and the
+# green/yellow/red spectrum is a cream-to-grey ramp rather than three hues,
+# because a monochrome theme has no hue to spend on them.
+name = "oreo"
+
+[colors]
+bg = "#0b0b0b"
+bright_fg = "#f5f1e8"
+fg = "#8f8a80"
+accent = "#f3e9d2"
+green = "#f5f1e8"
+yellow = "#c9c2b4"
+red = "#8f8a80"

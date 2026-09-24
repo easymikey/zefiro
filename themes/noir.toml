@@ -1,0 +1,34 @@
+# Noir HUD: near-black, cool white, terracotta orange.
+#
+# This theme only carries the color palette below — the "HUD" look itself
+# (corner brackets, tech-info chips, and the text-art milkdrop
+# cover) used to be one `[ui] hud` flag bundled with this theme. That flag is
+# gone: the same look is now a combination of independent `sifr-ui.toml`
+# options, so it composes with any theme/terminal instead of being tied to
+# this one file. The settings overlay's `Preset` row (`,` to open, cycle to
+# `‹ noir ›`) applies the whole bundle at once — including selecting this
+# theme — or to reproduce it by hand in `sifr-ui.toml`:
+#
+#   [cover]
+#   style = "milkdrop"   # or "off" for a card with no cover column at all
+#   brackets = true
+#   renderer = "text"    # text-art everywhere, even on a graphics-capable terminal
+#   [card]
+#   tech_chips = true
+#   [progress]
+#   renderer = "text"
+#   remaining = true
+#
+# Every field above defaults to the plain look (`false`/`"auto"`)
+# on every other theme, so opting into noir's decorations never affects any
+# other theme/terminal combination.
+name = "noir"
+
+[colors]
+bg = "#0a0c10"
+fg = "#6b7280"
+bright_fg = "#d8dde6"
+accent = "#D97757"
+green = "#6b7280"
+yellow = "#D97757"
+red = "#f2a878"

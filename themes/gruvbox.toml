@@ -1,0 +1,25 @@
+# Gruvbox Dark — morhetz's retro groove, from the canonical palette
+# (https://github.com/morhetz/gruvbox).
+# Warm orange on soft charcoal, earth-toned and low-glare.
+#
+# Every value below is a named Gruvbox colour, not an approximation of one:
+# `bg` is `bg0` (#282828), the ground the scheme is designed around; `fg` is
+# `gray` (#928374), which is what Gruvbox itself uses for comments and rules,
+# so frames and dim lines stay quiet; `bright_fg` is `fg1` (#ebdbb2), the body
+# text. `accent` is bright orange, `green`/`yellow`/`red` are the *bright*
+# variants — those are the ones meant to be read against `bg0`.
+#
+# `window_bg` is `bg0_s` (#32302f), Gruvbox's own "soft" ground, rather than a
+# blend of `bg` toward `fg`: the scheme already names the shade a panel sits
+# at, and tinting `bg0` with gray drifts off the palette.
+name = "gruvbox"
+
+[colors]
+bg = "#282828"
+fg = "#928374"
+bright_fg = "#ebdbb2"
+accent = "#fe8019"
+green = "#b8bb26"
+yellow = "#fabd2f"
+red = "#fb4934"
+window_bg = "#32302f"

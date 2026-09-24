@@ -1,0 +1,21 @@
+---
+source: crates/widgets/src/status_line.rs
+expression: line
+---
+Line::from_iter([
+    Span::from("Playlist").blue(),
+    Span::from(" ── ").gray(),
+    Span::from("3/12").cyan(),
+    Span::from(" ── ").gray(),
+    Span::from("shuffle ").gray(),
+    Span::from("on").cyan(),
+    Span::from(" · ").gray(),
+    Span::from("repeat ").gray(),
+    Span::from("all").cyan(),
+    Span::from(" · ").gray(),
+    Span::from("queue ").gray(),
+    Span::from("7").cyan(),
+    Span::from(" · ").gray(),
+    Span::from("theme ").gray(),
+    Span::from("rose-pine").cyan(),
+])

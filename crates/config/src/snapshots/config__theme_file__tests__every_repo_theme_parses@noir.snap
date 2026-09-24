@@ -1,0 +1,61 @@
+---
+source: crates/config/src/theme_file.rs
+assertion_line: 93
+expression: "parse_theme(source, name).unwrap()"
+---
+ThemeFile {
+    name: "noir",
+    colors: ThemeColors {
+        background: Hex(
+            [
+                10,
+                12,
+                16,
+            ],
+        ),
+        foreground: Hex(
+            [
+                107,
+                114,
+                128,
+            ],
+        ),
+        bright_foreground: Hex(
+            [
+                216,
+                221,
+                230,
+            ],
+        ),
+        accent: Hex(
+            [
+                217,
+                119,
+                87,
+            ],
+        ),
+        green: Hex(
+            [
+                107,
+                114,
+                128,
+            ],
+        ),
+        yellow: Hex(
+            [
+                217,
+                119,
+                87,
+            ],
+        ),
+        red: Hex(
+            [
+                242,
+                168,
+                120,
+            ],
+        ),
+        window_background: None,
+    },
+    scanning_label: "scanning…",
+}

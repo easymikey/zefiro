@@ -1,0 +1,12 @@
+# Terracotta (dark).
+# Warm terracotta accent on a charcoal ground.
+name = "terracotta-dark"
+
+[colors]
+bg = "#1f1e1d"
+fg = "#b8b5ad"
+bright_fg = "#f0eee6"
+accent = "#D97757"
+green = "#6a9f6a"
+yellow = "#d9a441"
+red = "#c8553d"

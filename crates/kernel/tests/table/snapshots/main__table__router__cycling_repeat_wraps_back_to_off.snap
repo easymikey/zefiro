@@ -1,0 +1,114 @@
+---
+source: crates/kernel/tests/table/router.rs
+expression: "walked(model, messages)"
+---
+[
+    (
+        Playback(
+            CycleRepeat,
+        ),
+        One(
+            Animate(
+                PlayOrderChanged,
+            ),
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        All,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Playback(
+            CycleRepeat,
+        ),
+        One(
+            Animate(
+                PlayOrderChanged,
+            ),
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        One,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Playback(
+            CycleRepeat,
+        ),
+        One(
+            Animate(
+                PlayOrderChanged,
+            ),
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+]

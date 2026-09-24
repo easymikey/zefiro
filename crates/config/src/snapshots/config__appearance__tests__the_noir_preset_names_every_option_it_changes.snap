@@ -1,0 +1,14 @@
+---
+source: crates/config/src/appearance.rs
+expression: "preset_options(AppearancePreset::Noir)"
+---
+Appearance {
+    cover_style: Milkdrop,
+    cover_brackets: Shown,
+    format_chips: Shown,
+    speed_chip: Always,
+    progress_remaining: Remaining,
+    key_hints: Shown,
+    animations: On,
+    layout_mode: Auto,
+}

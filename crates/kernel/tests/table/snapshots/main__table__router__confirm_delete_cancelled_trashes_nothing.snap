@@ -1,0 +1,88 @@
+---
+source: crates/kernel/tests/table/router.rs
+expression: "walked(model, messages)"
+---
+[
+    (
+        Overlay(
+            Open(
+                ConfirmDelete,
+            ),
+        ),
+        One(
+            Animate(
+                OverlayOpened,
+            ),
+        ),
+        Stopped,
+        Some(
+            ConfirmDelete(
+                DeleteCandidate {
+                    track: Index(0),
+                    title: "Moon River",
+                    artist: "Audrey Hepburn",
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Close,
+        ),
+        One(
+            Animate(
+                OverlayClosed,
+            ),
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+]

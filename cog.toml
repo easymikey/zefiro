@@ -1,0 +1,28 @@
+tag_prefix = "v"
+branch_whitelist = ["main"]
+skip_ci = "[skip ci]"
+skip_untracked = true
+
+[commit_types]
+lint = { changelog_title = "Lints" }
+guard = { changelog_title = "Guards" }
+
+[changelog]
+path = "CHANGELOG.md"
+authors = [{ signature = "Mikhail Avdeev", username = "easymikey" }]
+
+# hooks delegate to just, one recipe each
+[git_hooks.pre-commit]
+script = """#!/bin/sh
+exec just pre-commit
+"""
+
+[git_hooks.commit-msg]
+script = """#!/bin/sh
+exec cog verify --file "$1"
+"""
+
+[git_hooks.pre-push]
+script = """#!/bin/sh
+exec just pre-push
+"""

@@ -1,0 +1,41 @@
+## File system
+desktop.ini
+
+## Editor
+*.swp
+*.swo
+Session.vim
+.cproject
+.idea
+*.iml
+.vscode
+.project
+.vim/
+.helix/
+.zed/
+.gram/
+.favorites.json
+.settings/
+.vs/
+.dir-locals.el
+
+## Logs
+*.log
+
+# Temporary files
+*~
+\#*
+\#*\#
+.#*
+*.bak
+
+## Build
+/target/
+**/*.rs.bk
+debug/
+target/debug/
+target/release/
+.bin/
+
+## Tooling
+.bin/

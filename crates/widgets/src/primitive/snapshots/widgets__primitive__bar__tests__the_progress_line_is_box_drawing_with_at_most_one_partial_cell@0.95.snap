@@ -1,0 +1,5 @@
+---
+source: crates/widgets/src/primitive/bar.rs
+expression: text
+---
+━━━━━━━━━╸

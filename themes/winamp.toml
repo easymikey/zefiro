@@ -1,0 +1,12 @@
+# Winamp 2.91 base theme. Text colors come from PLEDIT.TXT and the
+# spectrum colors from VISCOLOR.TXT.
+name = "winamp"
+
+[colors]
+bg = "#000000"
+fg = "#969696"
+bright_fg = "#FFFFFF"
+accent = "#00FF00"
+green = "#29CE10"
+yellow = "#D6B521"
+red = "#EF3110"

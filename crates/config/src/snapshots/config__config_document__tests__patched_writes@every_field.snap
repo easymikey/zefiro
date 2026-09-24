@@ -1,0 +1,13 @@
+---
+source: crates/config/src/config_document.rs
+expression: out
+---
+theme = "oreo"
+volume = 80
+music_dir = "/new/music"
+
+[audio]
+crossfade = "250ms"
+replaygain = true
+device = "Speakers"
+sleep_presets = [10, 20]

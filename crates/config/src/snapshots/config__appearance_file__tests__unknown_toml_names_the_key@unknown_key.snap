@@ -1,0 +1,6 @@
+---
+source: crates/config/src/appearance_file.rs
+expression: error.to_string()
+---
+unknown field `bogus`, expected one of `size_px`, `style`, `text_cells`, `brackets`
+sifr-ui.toml:2

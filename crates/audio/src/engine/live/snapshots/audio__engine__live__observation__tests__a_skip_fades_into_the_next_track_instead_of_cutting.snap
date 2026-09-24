@@ -1,0 +1,84 @@
+---
+source: crates/audio/src/engine/live/observation.rs
+expression: log
+---
+[
+    StartLoad {
+        path: "/a",
+        speed: Speed(
+            1.0,
+        ),
+    },
+    Start {
+        volume: 1.0,
+        total: Some(
+            100s,
+        ),
+    },
+    StartFade {
+        path: "/b",
+        speed: Speed(
+            1.0,
+        ),
+    },
+    Start {
+        volume: 0.0,
+        total: Some(
+            180s,
+        ),
+    },
+    Retire {
+        playing: 0.0,
+        retiring: 1.0,
+        at: 0ns,
+    },
+    Retire {
+        playing: 0.15643448,
+        retiring: 0.98768836,
+        at: 1s,
+    },
+    Retire {
+        playing: 0.309017,
+        retiring: 0.95105654,
+        at: 2s,
+    },
+    Retire {
+        playing: 0.45399055,
+        retiring: 0.8910065,
+        at: 3s,
+    },
+    Retire {
+        playing: 0.58778524,
+        retiring: 0.809017,
+        at: 4s,
+    },
+    Retire {
+        playing: 0.70710677,
+        retiring: 0.70710677,
+        at: 5s,
+    },
+    Retire {
+        playing: 0.80901706,
+        retiring: 0.5877852,
+        at: 6s,
+    },
+    Retire {
+        playing: 0.8910065,
+        retiring: 0.45399052,
+        at: 7s,
+    },
+    Retire {
+        playing: 0.95105654,
+        retiring: 0.30901697,
+        at: 8s,
+    },
+    Retire {
+        playing: 0.98768836,
+        retiring: 0.15643449,
+        at: 9s,
+    },
+    Retired {
+        playing: 1.0,
+        at: 10s,
+    },
+]

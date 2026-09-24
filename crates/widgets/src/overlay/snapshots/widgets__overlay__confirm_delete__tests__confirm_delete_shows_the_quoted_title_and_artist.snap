@@ -1,0 +1,17 @@
+---
+source: crates/widgets/src/overlay/confirm_delete.rs
+assertion_line: 97
+expression: "painted(&overlay, 60, 12)"
+---
+"                                                            "
+"                                                            "
+"                                                            "
+"                                                            "
+"              ╭ MOVE TO TRASH? ───────────────╮             "
+"              │ "Moon River" — Audrey Hepburn │             "
+"              │ [y] yes   [n] no              │             "
+"              ╰───────────────────────────────╯             "
+"                                                            "
+"                                                            "
+"                                                            "
+"                                                            "

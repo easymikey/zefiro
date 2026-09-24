@@ -1,0 +1,23 @@
+# Gruvbox Light — the same retro groove by daylight
+# (https://github.com/morhetz/gruvbox).
+# Burnt orange on warm cream paper.
+#
+# The mirror of `gruvbox`, colour for colour: `bg` is light `bg0` (#fbf1c7),
+# `fg` is `bg4`/`gray` (#7c6f64) for frames and dim lines, `bright_fg` is `fg1`
+# (#3c3836) for body text. `accent`, `green`, `yellow` and `red` are Gruvbox's
+# *faded* variants — the darker end of each pair, which is what the scheme
+# specifies for a light ground.
+#
+# `window_bg` is light `bg0_s` (#f2e5bc), Gruvbox's own soft ground — see the
+# dark theme's header for why a panel reads a named shade rather than a blend.
+name = "gruvbox-light"
+
+[colors]
+bg = "#fbf1c7"
+fg = "#7c6f64"
+bright_fg = "#3c3836"
+accent = "#af3a03"
+green = "#79740e"
+yellow = "#b57614"
+red = "#9d0006"
+window_bg = "#f2e5bc"

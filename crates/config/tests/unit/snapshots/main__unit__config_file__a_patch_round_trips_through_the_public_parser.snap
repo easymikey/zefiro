@@ -1,0 +1,26 @@
+---
+source: crates/config/tests/unit/config_file.rs
+expression: round_tripped
+---
+ConfigFile {
+    music_dir: Some(
+        "/music",
+    ),
+    theme: "noir",
+    volume: 42,
+    audio: AudioConfig {
+        crossfade: Crossfade(
+            0ns,
+        ),
+        replaygain: Off,
+        device: Some(
+            "Speakers",
+        ),
+        sleep_presets: [
+            900s,
+            1800s,
+            3600s,
+        ],
+    },
+    keymap: {},
+}

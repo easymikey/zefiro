@@ -1,0 +1,216 @@
+---
+source: crates/kernel/tests/table/router.rs
+expression: "walked(model, messages)"
+---
+[
+    (
+        Playback(
+            NudgeSpeed(
+                1,
+            ),
+        ),
+        One(
+            Audio(
+                SetSpeed(
+                    Speed(
+                        1.25,
+                    ),
+                ),
+            ),
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.25,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Playback(
+            NudgeSpeed(
+                1,
+            ),
+        ),
+        One(
+            Audio(
+                SetSpeed(
+                    Speed(
+                        1.5,
+                    ),
+                ),
+            ),
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.5,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Playback(
+            NudgeSpeed(
+                1,
+            ),
+        ),
+        One(
+            Audio(
+                SetSpeed(
+                    Speed(
+                        1.75,
+                    ),
+                ),
+            ),
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.75,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Playback(
+            NudgeSpeed(
+                1,
+            ),
+        ),
+        One(
+            Audio(
+                SetSpeed(
+                    Speed(
+                        2.0,
+                    ),
+                ),
+            ),
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                2.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Playback(
+            NudgeSpeed(
+                1,
+            ),
+        ),
+        One(
+            Audio(
+                SetSpeed(
+                    Speed(
+                        2.25,
+                    ),
+                ),
+            ),
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                2.25,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+]

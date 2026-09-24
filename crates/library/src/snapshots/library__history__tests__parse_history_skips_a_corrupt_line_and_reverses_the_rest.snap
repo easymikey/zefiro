@@ -1,0 +1,26 @@
+---
+source: crates/library/src/history.rs
+expression: "parse_history(HISTORY_LOG, 10)"
+---
+[
+    HistoryEntry {
+        path: "/music/third.flac",
+        title: "Third",
+        artist: None,
+        at: 7000,
+    },
+    HistoryEntry {
+        path: "/music/also-good.flac",
+        title: "Also Good",
+        artist: Some(
+            "Artist",
+        ),
+        at: 6000,
+    },
+    HistoryEntry {
+        path: "/music/good.flac",
+        title: "Good",
+        artist: None,
+        at: 5000,
+    },
+]

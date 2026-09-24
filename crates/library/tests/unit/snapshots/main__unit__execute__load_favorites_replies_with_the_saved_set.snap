@@ -1,0 +1,13 @@
+---
+source: crates/library/src/execute.rs
+expression: reply
+---
+Some(
+    Loaded(
+        FavoritesLoaded(
+            {
+                "/music/a.flac",
+            },
+        ),
+    ),
+)

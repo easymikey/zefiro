@@ -1,0 +1,61 @@
+---
+source: crates/config/src/theme_file.rs
+assertion_line: 93
+expression: "parse_theme(source, name).unwrap()"
+---
+ThemeFile {
+    name: "hacker",
+    colors: ThemeColors {
+        background: Hex(
+            [
+                11,
+                12,
+                22,
+            ],
+        ),
+        foreground: Hex(
+            [
+                142,
+                149,
+                184,
+            ],
+        ),
+        bright_foreground: Hex(
+            [
+                221,
+                247,
+                255,
+            ],
+        ),
+        accent: Hex(
+            [
+                130,
+                251,
+                156,
+            ],
+        ),
+        green: Hex(
+            [
+                46,
+                194,
+                126,
+            ],
+        ),
+        yellow: Hex(
+            [
+                247,
+                223,
+                80,
+            ],
+        ),
+        red: Hex(
+            [
+                255,
+                95,
+                120,
+            ],
+        ),
+        window_background: None,
+    },
+    scanning_label: "scanning…",
+}

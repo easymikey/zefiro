@@ -1,0 +1,13 @@
+---
+source: crates/library/src/scan.rs
+expression: listing.skipped.first_error
+---
+Some(
+    Read {
+        subject: Scan,
+        path: "[tmp]/gone",
+        source: Kind(
+            NotFound,
+        ),
+    },
+)

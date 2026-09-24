@@ -1,0 +1,23 @@
+---
+source: crates/config/src/appearance_document.rs
+expression: out
+---
+# sifr-ui.toml
+[cover]
+# the noir look
+style = "milkdrop"
+brackets = true
+
+[card]
+format_chips = true
+speed_chip = "always"
+
+[progress]
+remaining = true
+
+[window]
+key_hints = false
+animations = false
+
+[layout]
+mode = "compact"

@@ -1,0 +1,30 @@
+---
+source: crates/widgets/src/overlay/modal/frame.rs
+expression: frame
+---
+ModalAreas {
+    outer: Rect {
+        x: 18,
+        y: 11,
+        width: 44,
+        height: 3,
+    },
+    body: Rect {
+        x: 20,
+        y: 12,
+        width: 40,
+        height: 1,
+    },
+    hint_row: Rect {
+        x: 20,
+        y: 13,
+        width: 40,
+        height: 0,
+    },
+    painted: Rect {
+        x: 18,
+        y: 11,
+        width: 44,
+        height: 3,
+    },
+}

@@ -1,0 +1,253 @@
+---
+source: crates/kernel/tests/table/router.rs
+expression: "walked(model, messages)"
+---
+[
+    (
+        Overlay(
+            Open(
+                SavePlaylist,
+            ),
+        ),
+        One(
+            Animate(
+                OverlayOpened,
+            ),
+        ),
+        Stopped,
+        Some(
+            SavePlaylist {
+                typed: TextEntry {
+                    input: "",
+                },
+                error: None,
+            },
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 1,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Text(
+                Char(
+                    'm',
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            SavePlaylist {
+                typed: TextEntry {
+                    input: "m",
+                },
+                error: None,
+            },
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 1,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Text(
+                Char(
+                    'i',
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            SavePlaylist {
+                typed: TextEntry {
+                    input: "mi",
+                },
+                error: None,
+            },
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 1,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Text(
+                Char(
+                    'x',
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            SavePlaylist {
+                typed: TextEntry {
+                    input: "mix",
+                },
+                error: None,
+            },
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 1,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Confirm,
+        ),
+        Batch(
+            [
+                Animate(
+                    OverlayClosed,
+                ),
+                Library(
+                    SavePlaylist {
+                        name: "mix",
+                        tracks: [
+                            Track {
+                                path: "/tmp/track0.flac",
+                                duration: None,
+                                tags: Tags {
+                                    title: None,
+                                    artist: None,
+                                    album: None,
+                                    album_artist: None,
+                                    date: None,
+                                    genre: None,
+                                    track: None,
+                                    track_total: None,
+                                    disc: None,
+                                    composer: None,
+                                    comment: None,
+                                    lyrics: None,
+                                },
+                                audio_format: AudioFormat {
+                                    format: None,
+                                    bitrate_kbps: None,
+                                    sample_rate_hz: None,
+                                    bits_per_sample: None,
+                                    channels: None,
+                                    replay_gain: None,
+                                },
+                                display: "track0",
+                                tagging: Listed,
+                            },
+                        ],
+                    },
+                ),
+            ],
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 1,
+        },
+        Cursor {
+            index: 0,
+            len: 1,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+]

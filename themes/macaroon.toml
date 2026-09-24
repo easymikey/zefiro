@@ -1,0 +1,12 @@
+# Macaroon — soft pastel confection.
+# Muted teal and blush on a warm biscuit ground.
+name = "macaroon"
+
+[colors]
+bg = "#d8d0c8"
+fg = "#7a7a7a"
+bright_fg = "#1a1a1a"
+accent = "#2aa8a0"
+green = "#2aa8a0"
+yellow = "#e8c46a"
+red = "#e87a90"

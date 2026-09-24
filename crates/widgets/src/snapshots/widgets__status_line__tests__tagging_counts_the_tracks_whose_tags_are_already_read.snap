@@ -1,0 +1,5 @@
+---
+source: crates/widgets/src/status_line.rs
+expression: written(status)
+---
+Playlist ── 128 tracks · tagging 64/128 ── shuffle on · repeat all · queue 7 · …

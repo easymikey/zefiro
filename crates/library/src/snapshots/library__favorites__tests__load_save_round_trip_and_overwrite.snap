@@ -1,0 +1,5 @@
+---
+source: crates/library/src/favorites.rs
+expression: raw
+---
+["/music/a.flac","/music/b.flac"]

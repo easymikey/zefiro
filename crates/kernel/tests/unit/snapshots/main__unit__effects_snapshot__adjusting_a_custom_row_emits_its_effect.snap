@@ -1,0 +1,12 @@
+---
+source: crates/kernel/tests/unit/effects_snapshot.rs
+expression: effects(cmd)
+---
+[
+    Setting {
+        id: SettingId(
+            3,
+        ),
+        position: 1,
+    },
+]

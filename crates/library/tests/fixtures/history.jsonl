@@ -1,0 +1,4 @@
+{"path":"/music/good.flac","title":"Good","artist":null,"ts":5000}
+{not valid json
+{"path":"/music/also-good.flac","title":"Also Good","artist":"Artist","ts":6000}
+{"path":"/music/third.flac","title":"Third","artist":null,"ts":7000}

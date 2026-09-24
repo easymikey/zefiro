@@ -1,0 +1,6 @@
+---
+source: crates/terminal/src/window_colors.rs
+expression: written
+---
+\u{1b}]11;#1a2b3c\u{7}\u{1b}]10;#ff0099\u{7}\u{1b}]12;#ff0099\u{7}
+\u{1b}]111\u{7}\u{1b}]110\u{7}\u{1b}]112\u{7}

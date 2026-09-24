@@ -1,0 +1,31 @@
+[package]
+name = "macos"
+description = "macOS integration: media keys, the Now Playing panel, system volume, default output changes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = { workspace = true }
+cpal = { workspace = true }
+crossbeam-channel = { workspace = true }
+kernel = { workspace = true }
+objc2 = { workspace = true }
+objc2-app-kit = { workspace = true }
+objc2-core-audio = { version = "0.3.2", default-features = false, features = [
+  "AudioHardware",
+  "std",
+] }
+objc2-core-foundation = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-media-player = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+rstest = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

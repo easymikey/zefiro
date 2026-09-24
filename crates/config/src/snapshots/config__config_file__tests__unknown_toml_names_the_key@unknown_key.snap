@@ -1,0 +1,6 @@
+---
+source: crates/config/src/config_file.rs
+expression: error.to_string()
+---
+unknown field `bogus`, expected one of `crossfade`, `replaygain`, `device`, `sleep_presets`
+config.toml:2

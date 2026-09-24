@@ -1,0 +1,26 @@
+---
+source: crates/runtime/src/config/driver.rs
+assertion_line: 454
+expression: text
+---
+# sifr-ui.toml
+[cover]
+# the noir look
+style = "off"
+brackets = true
+
+[card]
+format_chips = false
+speed_chip = "always"
+
+[notice]
+style = "line"
+
+[progress]
+remaining = true
+
+[window]
+key_hints = false
+
+[layout]
+mode = "compact"

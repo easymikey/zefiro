@@ -1,0 +1,61 @@
+---
+source: crates/config/src/theme_file.rs
+assertion_line: 93
+expression: "parse_theme(source, name).unwrap()"
+---
+ThemeFile {
+    name: "wafer",
+    colors: ThemeColors {
+        background: Hex(
+            [
+                242,
+                242,
+                242,
+            ],
+        ),
+        foreground: Hex(
+            [
+                164,
+                164,
+                164,
+            ],
+        ),
+        bright_foreground: Hex(
+            [
+                32,
+                32,
+                32,
+            ],
+        ),
+        accent: Hex(
+            [
+                74,
+                144,
+                217,
+            ],
+        ),
+        green: Hex(
+            [
+                74,
+                144,
+                217,
+            ],
+        ),
+        yellow: Hex(
+            [
+                138,
+                180,
+                224,
+            ],
+        ),
+        red: Hex(
+            [
+                200,
+                220,
+                240,
+            ],
+        ),
+        window_background: None,
+    },
+    scanning_label: "scanning…",
+}

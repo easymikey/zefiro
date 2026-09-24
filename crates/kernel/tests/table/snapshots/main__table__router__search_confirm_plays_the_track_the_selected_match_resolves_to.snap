@@ -1,0 +1,496 @@
+---
+source: crates/kernel/tests/table/router.rs
+expression: "walked(model, messages)"
+---
+[
+    (
+        Overlay(
+            Open(
+                Search,
+            ),
+        ),
+        One(
+            Animate(
+                OverlayOpened,
+            ),
+        ),
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 3,
+                    },
+                    rows: SearchQuery {
+                        input: "",
+                        matches: [
+                            0,
+                            1,
+                            2,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Edit(
+                    Char(
+                        'm',
+                    ),
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 3,
+                    },
+                    rows: SearchQuery {
+                        input: "m",
+                        matches: [
+                            0,
+                            2,
+                            1,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Edit(
+                    Char(
+                        'o',
+                    ),
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 3,
+                    },
+                    rows: SearchQuery {
+                        input: "mo",
+                        matches: [
+                            0,
+                            2,
+                            1,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Edit(
+                    Char(
+                        'o',
+                    ),
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 2,
+                    },
+                    rows: SearchQuery {
+                        input: "moo",
+                        matches: [
+                            0,
+                            2,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Edit(
+                    Char(
+                        'n',
+                    ),
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 2,
+                    },
+                    rows: SearchQuery {
+                        input: "moon",
+                        matches: [
+                            0,
+                            2,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Navigate(
+                    Down,
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 1,
+                        len: 2,
+                    },
+                    rows: SearchQuery {
+                        input: "moon",
+                        matches: [
+                            0,
+                            2,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Confirm,
+        ),
+        Batch(
+            [
+                Animate(
+                    OverlayClosed,
+                ),
+                Audio(
+                    Stop,
+                ),
+                Audio(
+                    Load {
+                        path: "/m/2.flac",
+                        gain: None,
+                        revision: Revision(
+                            1,
+                        ),
+                    },
+                ),
+                Audio(
+                    Volume(
+                        Percent(
+                            50,
+                        ),
+                    ),
+                ),
+                Library(
+                    AppendHistory {
+                        track: Track {
+                            path: "/m/2.flac",
+                            duration: Some(
+                                100s,
+                            ),
+                            tags: Tags {
+                                title: Some(
+                                    "Moonlight Sonata",
+                                ),
+                                artist: Some(
+                                    "Beethoven",
+                                ),
+                                album: None,
+                                album_artist: None,
+                                date: None,
+                                genre: None,
+                                track: None,
+                                track_total: None,
+                                disc: None,
+                                composer: None,
+                                comment: None,
+                                lyrics: None,
+                            },
+                            audio_format: AudioFormat {
+                                format: None,
+                                bitrate_kbps: None,
+                                sample_rate_hz: None,
+                                bits_per_sample: None,
+                                channels: None,
+                                replay_gain: None,
+                            },
+                            display: "Beethoven — Moonlight Sonata",
+                            tagging: Read,
+                        },
+                        revision: Revision(
+                            2,
+                        ),
+                    },
+                ),
+                System(
+                    NowPlaying(
+                        Track {
+                            title: "Moonlight Sonata",
+                            artist: Some(
+                                "Beethoven",
+                            ),
+                            album: None,
+                            duration: 100s,
+                            path: "/m/2.flac",
+                        },
+                    ),
+                ),
+                Audio(
+                    Pause(
+                        Playing,
+                    ),
+                ),
+                System(
+                    PlaybackState(
+                        Playing,
+                    ),
+                ),
+                Animate(
+                    TrackChanged,
+                ),
+                Animate(
+                    PlaybackChanged(
+                        Play,
+                    ),
+                ),
+            ],
+        ),
+        Loading {
+            track: Track {
+                path: "/m/2.flac",
+                duration: Some(
+                    100s,
+                ),
+                tags: Tags {
+                    title: Some(
+                        "Moonlight Sonata",
+                    ),
+                    artist: Some(
+                        "Beethoven",
+                    ),
+                    album: None,
+                    album_artist: None,
+                    date: None,
+                    genre: None,
+                    track: None,
+                    track_total: None,
+                    disc: None,
+                    composer: None,
+                    comment: None,
+                    lyrics: None,
+                },
+                audio_format: AudioFormat {
+                    format: None,
+                    bitrate_kbps: None,
+                    sample_rate_hz: None,
+                    bits_per_sample: None,
+                    channels: None,
+                    replay_gain: None,
+                },
+                display: "Beethoven — Moonlight Sonata",
+                tagging: Read,
+            },
+            at: 0ns,
+        },
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 2,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+]

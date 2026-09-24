@@ -1,0 +1,8 @@
+---
+source: crates/widgets/src/primitive/corner_brackets.rs
+expression: rendered
+---
+"⌜      ⌝"
+"        "
+"        "
+"⌞      ⌟"

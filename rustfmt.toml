@@ -1,0 +1,23 @@
+# edition
+edition = "2024"
+style_edition = "2024"
+unstable_features = true
+
+# width
+max_width = 88
+inline_attribute_width = 88
+
+# shorthand
+use_field_init_shorthand = true
+use_try_shorthand = true
+
+# imports
+imports_granularity = "Crate"
+imports_layout = "HorizontalVertical"
+group_imports = "StdExternalCrate"
+
+# comments
+wrap_comments = true
+normalize_comments = true
+normalize_doc_attributes = true
+format_code_in_doc_comments = true

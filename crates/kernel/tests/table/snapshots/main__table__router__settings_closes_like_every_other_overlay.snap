@@ -1,0 +1,90 @@
+---
+source: crates/kernel/tests/table/router.rs
+expression: "walked(model, messages)"
+---
+[
+    (
+        Overlay(
+            Open(
+                Settings,
+            ),
+        ),
+        One(
+            Animate(
+                OverlayOpened,
+            ),
+        ),
+        Stopped,
+        Some(
+            Settings(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 5,
+                    },
+                    rows: SettingsRows,
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Close,
+        ),
+        One(
+            Animate(
+                OverlayClosed,
+            ),
+        ),
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+]

@@ -1,0 +1,21 @@
+---
+source: crates/widgets/src/overlay/track_details.rs
+assertion_line: 334
+expression: "painted(&dialog, 48, 16)"
+---
+"                                                "
+"                                                "
+"                                                "
+"        ╭ TRACK INFO ──────────────────╮        "
+"        │ TITLE ────  Moon River       │        "
+"        │ ARTIST ───  —                │        "
+"        │ ALBUM ────  —                │        "
+"        │ YEAR  —                      │        "
+"        │ TRACK  —                     │        "
+"        │ DURATION  00:00              │        "
+"        │ FORMAT  —                    │        "
+"        │ PATH  …ffanys/moon_river.mp3 │        "
+"        │ any key · close              │        "
+"        ╰──────────────────────────────╯        "
+"                                                "
+"                                                "

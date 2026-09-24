@@ -1,0 +1,23 @@
+[package]
+name = "kernel"
+description = "Pure player state machine: model, messages, commands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+bon = { workspace = true }
+serde = { workspace = true }
+strum = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+proptest = { workspace = true }
+rstest = { workspace = true }
+trybuild = { workspace = true }
+
+[lints]
+workspace = true

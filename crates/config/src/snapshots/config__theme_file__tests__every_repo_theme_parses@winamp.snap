@@ -1,0 +1,61 @@
+---
+source: crates/config/src/theme_file.rs
+assertion_line: 93
+expression: "parse_theme(source, name).unwrap()"
+---
+ThemeFile {
+    name: "winamp",
+    colors: ThemeColors {
+        background: Hex(
+            [
+                0,
+                0,
+                0,
+            ],
+        ),
+        foreground: Hex(
+            [
+                150,
+                150,
+                150,
+            ],
+        ),
+        bright_foreground: Hex(
+            [
+                255,
+                255,
+                255,
+            ],
+        ),
+        accent: Hex(
+            [
+                0,
+                255,
+                0,
+            ],
+        ),
+        green: Hex(
+            [
+                41,
+                206,
+                16,
+            ],
+        ),
+        yellow: Hex(
+            [
+                214,
+                181,
+                33,
+            ],
+        ),
+        red: Hex(
+            [
+                239,
+                49,
+                16,
+            ],
+        ),
+        window_background: None,
+    },
+    scanning_label: "scanning…",
+}

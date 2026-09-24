@@ -1,0 +1,490 @@
+---
+source: crates/kernel/tests/table/router.rs
+expression: "walked(model, messages)"
+---
+[
+    (
+        Overlay(
+            Open(
+                Search,
+            ),
+        ),
+        One(
+            Animate(
+                OverlayOpened,
+            ),
+        ),
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 3,
+                    },
+                    rows: SearchQuery {
+                        input: "",
+                        matches: [
+                            0,
+                            1,
+                            2,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Edit(
+                    Char(
+                        'm',
+                    ),
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 3,
+                    },
+                    rows: SearchQuery {
+                        input: "m",
+                        matches: [
+                            0,
+                            2,
+                            1,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Edit(
+                    Char(
+                        'o',
+                    ),
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 3,
+                    },
+                    rows: SearchQuery {
+                        input: "mo",
+                        matches: [
+                            0,
+                            2,
+                            1,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Edit(
+                    Char(
+                        'o',
+                    ),
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 2,
+                    },
+                    rows: SearchQuery {
+                        input: "moo",
+                        matches: [
+                            0,
+                            2,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Edit(
+                    Char(
+                        'n',
+                    ),
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 2,
+                    },
+                    rows: SearchQuery {
+                        input: "moon",
+                        matches: [
+                            0,
+                            2,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Edit(
+                    Backspace,
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 2,
+                    },
+                    rows: SearchQuery {
+                        input: "moo",
+                        matches: [
+                            0,
+                            2,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Edit(
+                    Backspace,
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 3,
+                    },
+                    rows: SearchQuery {
+                        input: "mo",
+                        matches: [
+                            0,
+                            2,
+                            1,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Edit(
+                    Backspace,
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 3,
+                    },
+                    rows: SearchQuery {
+                        input: "m",
+                        matches: [
+                            0,
+                            2,
+                            1,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Overlay(
+            Search(
+                Edit(
+                    Backspace,
+                ),
+            ),
+        ),
+        None,
+        Stopped,
+        Some(
+            Search(
+                CursorOver {
+                    cursor: Cursor {
+                        index: 0,
+                        len: 3,
+                    },
+                    rows: SearchQuery {
+                        input: "",
+                        matches: [
+                            0,
+                            1,
+                            2,
+                        ],
+                    },
+                },
+            ),
+        ),
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+]

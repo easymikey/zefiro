@@ -1,0 +1,6 @@
+---
+source: crates/config/src/rows.rs
+expression: written
+---
+[layout]
+mode = "compact"

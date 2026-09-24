@@ -1,0 +1,6 @@
+[alias]
+llvm-cov = ["bin", "cargo-llvm-cov"]
+nextest = ["bin", "cargo-nextest"]
+outdated = ["bin", "cargo-outdated"]
+shear = ["bin", "cargo-shear"]
+sort = ["bin", "cargo-sort"]

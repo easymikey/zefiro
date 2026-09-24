@@ -1,0 +1,18 @@
+---
+source: crates/audio/src/engine/live/preload.rs
+expression: log
+---
+[
+    PreloadGapless(
+        "/b",
+    ),
+    Nothing,
+    Send(
+        Position(
+            1s,
+        ),
+    ),
+    Send(
+        TrackChanged,
+    ),
+]

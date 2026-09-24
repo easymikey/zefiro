@@ -1,0 +1,6 @@
+---
+source: crates/config/src/theme_file.rs
+expression: error.to_string()
+---
+unknown field `bogus`, expected one of `name`, `colors`, `scanning_label`
+noir.toml:2

@@ -1,0 +1,6 @@
+---
+source: crates/config/src/rows.rs
+expression: written
+---
+[window]
+key_hints = false

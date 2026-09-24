@@ -1,0 +1,61 @@
+---
+source: crates/config/src/theme_file.rs
+assertion_line: 93
+expression: "parse_theme(source, name).unwrap()"
+---
+ThemeFile {
+    name: "macaroon",
+    colors: ThemeColors {
+        background: Hex(
+            [
+                216,
+                208,
+                200,
+            ],
+        ),
+        foreground: Hex(
+            [
+                122,
+                122,
+                122,
+            ],
+        ),
+        bright_foreground: Hex(
+            [
+                26,
+                26,
+                26,
+            ],
+        ),
+        accent: Hex(
+            [
+                42,
+                168,
+                160,
+            ],
+        ),
+        green: Hex(
+            [
+                42,
+                168,
+                160,
+            ],
+        ),
+        yellow: Hex(
+            [
+                232,
+                196,
+                106,
+            ],
+        ),
+        red: Hex(
+            [
+                232,
+                122,
+                144,
+            ],
+        ),
+        window_background: None,
+    },
+    scanning_label: "scanning…",
+}
