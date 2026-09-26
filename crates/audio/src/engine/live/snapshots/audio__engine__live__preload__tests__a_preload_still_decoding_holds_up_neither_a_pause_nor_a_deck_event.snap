@@ -6,10 +6,11 @@ expression: log
     PreloadGapless(
         "/b",
     ),
-    Pause,
-    Send(
-        Position(
-            5s,
-        ),
+    Many(
+        [
+            Pause,
+            Report,
+        ],
     ),
+    Nothing,
 ]

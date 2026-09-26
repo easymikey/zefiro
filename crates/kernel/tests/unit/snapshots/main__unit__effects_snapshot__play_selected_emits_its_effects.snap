@@ -1,5 +1,6 @@
 ---
 source: crates/kernel/tests/unit/effects_snapshot.rs
+assertion_line: 48
 expression: effects(cmd)
 ---
 [
@@ -52,8 +53,8 @@ expression: effects(cmd)
                 display: "track0",
                 tagging: Listed,
             },
-            revision: Revision(
-                2,
+            at: UnixSeconds(
+                0,
             ),
         },
     ),

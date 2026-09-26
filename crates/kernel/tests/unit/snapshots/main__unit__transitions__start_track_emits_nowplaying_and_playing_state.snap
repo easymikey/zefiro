@@ -1,5 +1,6 @@
 ---
 source: crates/kernel/tests/unit/transitions.rs
+assertion_line: 524
 expression: effs
 ---
 [
@@ -58,8 +59,8 @@ expression: effs
                 display: "Artist — Song",
                 tagging: Read,
             },
-            revision: Revision(
-                2,
+            at: UnixSeconds(
+                0,
             ),
         },
     ),

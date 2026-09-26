@@ -3,7 +3,22 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 use strum::{EnumIter, IntoStaticStr};
 
 use crate::{
-    domain::{Crossfade, Percent, Replaygain, Revision, SettingId, Speed, Track},
+    domain::{
+        Crossfade,
+        DeviceName,
+        Driver,
+        OptionIndex,
+        Percent,
+        Replaygain,
+        Revision,
+        SettingId,
+        Speed,
+        ThemeChoice,
+        ThemeName,
+        Track,
+        UnixSeconds,
+        playlist::PlaylistFileName,
+    },
     message::Timer,
 };
 
@@ -11,7 +26,7 @@ use crate::{
 pub enum DevicePatch {
     Keep,
     SystemDefault,
-    Named(String),
+    Named(DeviceName),
 }
 
 #[derive(Debug, Clone, PartialEq, bon::Builder)]
@@ -24,7 +39,7 @@ pub struct ConfigPatch {
     #[builder(setters(option_fn(name = with_replaygain)))]
     pub replaygain: Option<Replaygain>,
     #[builder(setters(option_fn(name = with_theme)))]
-    pub theme: Option<String>,
+    pub theme: Option<ThemeName>,
     #[builder(setters(option_fn(name = with_volume)))]
     pub volume: Option<Percent>,
     #[builder(setters(option_fn(name = with_sleep_presets)))]
@@ -35,7 +50,7 @@ pub struct ConfigPatch {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowColorsCmd {
-    Apply(String),
+    Apply(ThemeName),
     Reset,
 }
 
@@ -43,7 +58,7 @@ pub enum WindowColorsCmd {
 #[strum(serialize_all = "snake_case")]
 pub enum ConfigCmd {
     Save(ConfigPatch),
-    SelectTheme(String),
+    SelectTheme(ThemeChoice),
 }
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
@@ -66,7 +81,7 @@ pub enum AudioCmd {
     },
     SetCrossfade(Crossfade),
     SetReplaygain(Replaygain),
-    SetDevice(Option<String>),
+    SetDevice(Option<DeviceName>),
     ListDevices,
 }
 
@@ -75,7 +90,7 @@ pub enum AudioCmd {
 pub enum LibraryCmd {
     AppendHistory {
         track: Arc<Track>,
-        revision: Revision,
+        at: UnixSeconds,
     },
     SaveFavorites(Arc<HashSet<PathBuf>>),
     LoadFavorites,
@@ -88,7 +103,7 @@ pub enum LibraryCmd {
         revision: Revision,
     },
     SavePlaylist {
-        name: String,
+        name: PlaylistFileName,
         tracks: Vec<Arc<Track>>,
     },
     ScanLibrary {
@@ -169,8 +184,9 @@ pub enum Effect {
     WindowColors(WindowColorsCmd),
     Animate(Cue),
     RollShuffle { len: usize },
-    Setting { id: SettingId, position: usize },
+    Setting { id: SettingId, option: OptionIndex },
     After { delay: Duration, message: Timer },
+    Restart(Driver),
     Quit,
 }
 

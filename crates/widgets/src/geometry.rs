@@ -1,6 +1,6 @@
 use std::fmt;
 
-use config::{CoverStyle, appearance_file::TextCoverCells};
+use config::{CoverStyle, TextCoverCells};
 use num_traits::ToPrimitive;
 use raster::{cover_aspect_ratio, round_u32};
 
@@ -186,7 +186,7 @@ pub(crate) fn cover_sizing(style: CoverStyle, cells: TextCoverCells) -> CoverSiz
 
 #[cfg(test)]
 mod tests {
-    use config::{CoverStyle, appearance_file::TextCoverCells};
+    use config::{CoverStyle, TextCoverCells};
     use rstest::rstest;
 
     use crate::geometry::{Cells, CoverSizing, Pixels, cover_sizing};

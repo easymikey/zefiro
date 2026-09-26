@@ -1,10 +1,5 @@
 use crossterm::event::{Event, KeyEvent, KeyEventKind};
-use kernel::{
-    Message,
-    Overlay,
-    domain::{Model, TextCapture},
-    update::keymap::{Bindings, KeyPress, route},
-};
+use kernel::{Key, KeyPress, Message};
 use runtime::Reaction;
 use terminal::{LayoutTranslation, from_event};
 
@@ -17,69 +12,51 @@ pub(crate) enum ShellInput {
     Failed(ShellFailure),
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct RouteContext<'a> {
-    pub(crate) model: &'a Model,
-    pub(crate) bindings: &'a Bindings,
-    pub(crate) page_size: usize,
-}
-
-pub(crate) fn message_for(input: ShellInput, context: RouteContext<'_>) -> Reaction {
+pub(crate) fn message_for(input: ShellInput) -> Reaction {
     match input {
         ShellInput::Terminate => Reaction::Message(Message::Quit),
-        ShellInput::Terminal(event) => terminal_message(&event, context),
+        ShellInput::Terminal(event) => terminal_message(&event),
         ShellInput::Failed(failure) => Reaction::Message(toast_message(&failure)),
     }
 }
 
-fn terminal_message(event: &Event, context: RouteContext<'_>) -> Reaction {
+fn terminal_message(event: &Event) -> Reaction {
     match event {
-        Event::Key(key_event) => keyboard_message(*key_event, context),
+        Event::Key(key_event) => keyboard_message(*key_event),
         Event::Resize(_, _) | Event::FocusGained => Reaction::Repaint,
         Event::FocusLost | Event::Mouse(_) | Event::Paste(_) => Reaction::Ignored,
     }
 }
 
-fn keyboard_message(key_event: KeyEvent, context: RouteContext<'_>) -> Reaction {
+fn keyboard_message(key_event: KeyEvent) -> Reaction {
     if key_event.kind != KeyEventKind::Press {
         return Reaction::Ignored;
     }
-    let Some(key) = from_event(key_event, layout_translation(context.model)) else {
-        return Reaction::Ignored;
-    };
-    route(
-        context.bindings,
-        &context.model.workspace,
-        KeyPress {
-            key,
-            visible_rows: context.page_size,
-        },
-    )
-    .map_or(Reaction::Ignored, Reaction::Message)
+    let key = from_event(key_event, LayoutTranslation::Applied);
+    let typed = from_event(key_event, LayoutTranslation::Verbatim);
+    key_press(key, typed).map_or(Reaction::Ignored, |press| {
+        Reaction::Message(Message::Key(press))
+    })
 }
 
-fn layout_translation(model: &Model) -> LayoutTranslation {
-    match model.workspace.overlay.as_ref().map(Overlay::captures_text) {
-        Some(TextCapture::Typing) => LayoutTranslation::Verbatim,
-        Some(TextCapture::Chording) | None => LayoutTranslation::Applied,
+fn key_press(key: Option<Key>, typed: Option<Key>) -> Option<KeyPress> {
+    match (key, typed) {
+        (Some(key), Some(typed)) => Some(KeyPress { key, typed }),
+        (Some(key), None) => Some(KeyPress { key, typed: key }),
+        (None, Some(typed)) => Some(KeyPress { key: typed, typed }),
+        (None, None) => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crossterm::event::{Event, KeyCode as CrosstermCode, KeyEvent, KeyModifiers};
-    use kernel::{
-        BrowseRequest,
-        Message,
-        PlaybackRequest,
-        domain::{KeymapOverrides, Model},
-        update::keymap::Bindings,
-    };
+    use kernel::{Key, KeyCode, KeyPress, Message};
     use rstest::rstest;
     use runtime::Reaction;
 
     use crate::{
-        shell::input::{RouteContext, ShellInput, message_for},
+        shell::input::{ShellInput, message_for},
         toast::{ShellFailure, toast_message},
     };
 
@@ -90,65 +67,28 @@ mod tests {
         )))
     }
 
-    fn context<'a>(model: &'a Model, bindings: &'a Bindings) -> RouteContext<'a> {
-        RouteContext {
-            model,
-            bindings,
-            page_size: 0,
-        }
-    }
-
     #[test]
-    fn a_space_press_toggles_playback() {
-        let model = Model::default();
-        let bindings = Bindings::new(&KeymapOverrides::default());
-        let message = message_for(key_press(' '), context(&model, &bindings));
+    fn a_key_press_becomes_a_key_message() {
+        let message = message_for(key_press(' '));
 
+        let key = Key::plain(KeyCode::Char(' '));
         assert_eq!(
             message,
-            Reaction::Message(Message::Playback(PlaybackRequest::Toggle))
+            Reaction::Message(Message::Key(KeyPress { key, typed: key }))
         );
-    }
-
-    #[test]
-    fn a_j_press_moves_the_cursor_down() {
-        let model = Model::default();
-        let bindings = Bindings::new(&KeymapOverrides::default());
-        let message = message_for(key_press('j'), context(&model, &bindings));
-
-        assert_eq!(
-            message,
-            Reaction::Message(Message::Browse(BrowseRequest::CursorBy(1)))
-        );
-    }
-
-    #[test]
-    fn a_q_press_quits() {
-        let model = Model::default();
-        let bindings = Bindings::new(&KeymapOverrides::default());
-        let message = message_for(key_press('q'), context(&model, &bindings));
-
-        assert_eq!(message, Reaction::Message(Message::Quit));
     }
 
     #[test]
     fn terminate_quits_without_touching_the_model() {
-        let model = Model::default();
-        let bindings = Bindings::new(&KeymapOverrides::default());
-        let message = message_for(ShellInput::Terminate, context(&model, &bindings));
+        let message = message_for(ShellInput::Terminate);
 
         assert_eq!(message, Reaction::Message(Message::Quit));
     }
 
     #[test]
     fn a_failure_becomes_a_toast_message_at_once() {
-        let model = Model::default();
-        let bindings = Bindings::new(&KeymapOverrides::default());
         let failure = ShellFailure::Cover("broken".to_string());
-        let message = message_for(
-            ShellInput::Failed(failure.clone()),
-            context(&model, &bindings),
-        );
+        let message = message_for(ShellInput::Failed(failure.clone()));
 
         assert_eq!(message, Reaction::Message(toast_message(&failure)));
     }
@@ -157,19 +97,8 @@ mod tests {
     #[case::a_resize(ShellInput::Terminal(Event::Resize(80, 24)))]
     #[case::focus_gained(ShellInput::Terminal(Event::FocusGained))]
     fn resize_and_focus_gained_ask_for_a_repaint(#[case] input: ShellInput) {
-        let model = Model::default();
-        let bindings = Bindings::new(&KeymapOverrides::default());
-        let message = message_for(input, context(&model, &bindings));
+        let message = message_for(input);
 
         assert_eq!(message, Reaction::Repaint);
-    }
-
-    #[test]
-    fn an_unbound_letter_is_ignored() {
-        let model = Model::default();
-        let bindings = Bindings::new(&KeymapOverrides::default());
-        let message = message_for(key_press('w'), context(&model, &bindings));
-
-        assert_eq!(message, Reaction::Ignored);
     }
 }

@@ -1,6 +1,7 @@
 use kernel::{AudioEvent, AudioFailure};
 
 use crate::engine::{
+    crossfade::arm_cue,
     effect::{EngineEffect, Preload},
     phase::{Fade, Next, Phase},
     state::{Engine, Live},
@@ -24,15 +25,26 @@ impl Live {
         };
         let io = match outcome {
             Err(error) => EngineEffect::Send(AudioEvent::Error(error)),
-            Ok(Preload::Gapless(_)) => EngineEffect::Nothing,
+            Ok(Preload::Gapless(path)) => {
+                if path == wanted {
+                    playing.next = Next::Gapless(path);
+                }
+                EngineEffect::Nothing
+            }
             Ok(Preload::Crossfade(preload)) => {
                 if preload.path == wanted {
+                    let cue =
+                        arm_cue(playing.current.total, self.config.crossfade.value());
                     playing.next = Next::Crossfading {
                         preload,
                         fade: Fade::Idle,
                     };
+                    cue.map_or(EngineEffect::Nothing, |cue| EngineEffect::Arm {
+                        cue: Some(cue),
+                    })
+                } else {
+                    EngineEffect::Nothing
                 }
-                EngineEffect::Nothing
             }
         };
         self.phase = Phase::Playing(playing);
@@ -52,7 +64,7 @@ mod tests {
     use crate::{
         EngineConfig,
         engine::{
-            effect::{EngineEffect, EngineMessage, Preload, PreloadedTrack},
+            effect::{EngineEffect, EngineMessage, Preload, PreloadedTrack, Slot},
             phase::{Fade, Next, Phase, Playing},
             state::{
                 Engine,
@@ -65,7 +77,6 @@ mod tests {
                     crossfading,
                     decode_fault,
                     landed,
-                    observed,
                     playing,
                     playing_with_crossfade,
                     preload,
@@ -90,7 +101,7 @@ mod tests {
         landed(preload_b()),
         Transition {
             next: Engine::Live(crossfading(Fade::Idle)),
-            io: EngineEffect::Nothing,
+            io: EngineEffect::Arm { cue: Some(secs(90)) },
         }
     )]
     #[case::preload_failure_is_reported(
@@ -137,13 +148,13 @@ mod tests {
     }
 
     #[test]
-    fn a_preload_still_decoding_holds_up_neither_a_pause_nor_a_tick() {
+    fn a_preload_still_decoding_holds_up_neither_a_pause_nor_a_deck_event() {
         let (_, log) = trace(
             Engine::Live(playing()),
             vec![
                 preload("/b"),
                 cmd(AudioCmd::Pause(Playback::Paused)),
-                observed(1, secs(5)),
+                EngineMessage::Finished(Slot::Incoming),
             ],
         );
         insta::assert_debug_snapshot!(log);
@@ -190,8 +201,7 @@ mod tests {
             vec![
                 preload("/b"),
                 EngineMessage::Preloaded(Ok(Preload::Gapless("/b".into()))),
-                observed(2, secs(1)),
-                observed(1, secs(2)),
+                EngineMessage::Finished(Slot::Primary),
             ],
         );
         insta::assert_debug_snapshot!(log);
@@ -199,7 +209,7 @@ mod tests {
 
     #[test]
     fn a_landed_crossfade_preload_still_hands_off() {
-        let (state, mut log) = trace(
+        let (state, log) = trace(
             Engine::Live(playing_with_crossfade()),
             vec![preload("/b"), landed(preload_b())],
         );
@@ -211,9 +221,6 @@ mod tests {
                 ..
             })
         ));
-
-        let (_, tail) = trace(Engine::Live(live), vec![observed(0, secs(30))]);
-        log.extend(tail);
         insta::assert_debug_snapshot!(log);
     }
 

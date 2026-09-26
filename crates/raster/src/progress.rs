@@ -1,4 +1,4 @@
-use config::{Hex, appearance_file::ProgressConfig};
+use config::{Hex, ProgressConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BarColorOverrides {

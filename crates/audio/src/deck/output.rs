@@ -1,13 +1,14 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use kernel::{AudioFailure, Playback};
+use crossbeam_channel::Sender;
+use kernel::{Playback, domain::DeviceName};
 use rodio::{Source, mixer::MixerSource, source::Zero};
 
 use crate::{
-    deck::DeviceOpen,
+    deck::{DeckEvent, DeviceOpen, envelope::Envelope},
     device::open_stream,
     error::DeviceError,
-    tap::{Ring, Tap},
+    tap::{Handoff, Tap},
 };
 
 pub(crate) struct Output {
@@ -21,22 +22,22 @@ pub(crate) struct Output {
 
 pub(crate) struct OpenedStream {
     pub(crate) stream: rodio::OutputStream,
-    pub(crate) device: Option<String>,
+    pub(crate) device: Option<DeviceName>,
     pub(crate) opened: DeviceOpen,
 }
 
 pub(crate) fn open_output_stream(
-    device: Option<String>,
-    raised: &crossbeam_channel::Sender<AudioFailure>,
+    device: Option<DeviceName>,
+    wake: &Sender<DeckEvent>,
 ) -> Result<OpenedStream, DeviceError> {
-    match open_stream(device.as_deref(), raised) {
+    match open_stream(device.as_ref(), wake) {
         Ok(stream) => Ok(OpenedStream {
             stream,
             device,
             opened: DeviceOpen::AsRequested,
         }),
         Err(DeviceError::NotFound { .. }) => {
-            open_stream(None, raised).map(|stream| OpenedStream {
+            open_stream(None, wake).map(|stream| OpenedStream {
                 stream,
                 device: None,
                 opened: DeviceOpen::FellBack,
@@ -65,11 +66,11 @@ impl Output {
         }
     }
 
-    pub(crate) fn listen(&mut self, ring: Arc<Ring>) {
+    pub(crate) fn listen(&mut self, spectrum: &Handoff) {
         let Some(mix_source) = self.mix_source.take() else {
             return;
         };
-        self.stream.mixer().add(Tap::new(mix_source, ring));
+        self.stream.mixer().add(Tap::new(mix_source, spectrum));
     }
 
     fn fresh_sink(&self, speed: f32) -> rodio::Sink {
@@ -103,14 +104,14 @@ impl Output {
         }
     }
 
-    pub(crate) fn append<S>(&self, source: S)
+    pub(crate) fn append<S>(&self, source: Envelope<S>)
     where
         S: Source + Send + 'static,
     {
         self.sink.append(source);
     }
 
-    pub(crate) fn stage<S>(&mut self, source: S, speed: f32)
+    pub(crate) fn stage<S>(&mut self, source: Envelope<S>, speed: f32)
     where
         S: Source + Send + 'static,
     {

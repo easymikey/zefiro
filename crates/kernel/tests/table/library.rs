@@ -10,10 +10,13 @@ use kernel::{
     Cue,
     Effect,
     LibraryCmd,
-    LoadedRequest,
+    LibraryFact,
     Message,
     Model,
+    Moment,
     Player,
+    Playhead,
+    Speed,
     Tags,
     Track,
     domain::{Preload, Revision, ScanStatus, Tagging},
@@ -53,10 +56,11 @@ fn listed_library(paths: &[&str]) -> (Model, Cmd) {
     let tracks = paths.iter().copied().map(listed).collect();
     let cmd = update(
         &mut model,
-        Message::Loaded(LoadedRequest::LibraryListed {
+        Message::Library(LibraryFact::Listed {
             tracks,
             revision: Revision::default(),
         }),
+        Moment::default(),
     )
     .unwrap();
     (model, cmd)
@@ -108,16 +112,17 @@ fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
     let (mut model, _) = listed_library(&["/music/a.flac", "/music/b.flac"]);
     model.player = Player::Playing {
         track: listed("/music/a.flac"),
-        at: Duration::ZERO,
+        head: Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default()),
         preload: Preload::None,
     };
 
     let cmd = update(
         &mut model,
-        Message::Loaded(LoadedRequest::TracksTagged {
+        Message::Library(LibraryFact::Tagged {
             tracks: vec![tagged("/music/a.flac", "Alpha", 200)],
             revision: Revision::default(),
         }),
+        Moment::default(),
     )
     .unwrap();
 
@@ -144,10 +149,11 @@ fn a_tagged_chunk_reaches_the_library_behind_the_playlist() {
 
     let _ = update(
         &mut model,
-        Message::Loaded(LoadedRequest::TracksTagged {
+        Message::Library(LibraryFact::Tagged {
             tracks: vec![tagged("/music/b.flac", "Beta", 30)],
             revision: Revision::default(),
         }),
+        Moment::default(),
     )
     .unwrap();
 
@@ -167,18 +173,20 @@ fn the_last_chunk_opens_the_library_once() {
 
     let first = update(
         &mut model,
-        Message::Loaded(LoadedRequest::TracksTagged {
+        Message::Library(LibraryFact::Tagged {
             tracks: vec![tagged("/music/a.flac", "Alpha", 10)],
             revision: Revision::default(),
         }),
+        Moment::default(),
     )
     .unwrap();
     let last = update(
         &mut model,
-        Message::Loaded(LoadedRequest::TracksTagged {
+        Message::Library(LibraryFact::Tagged {
             tracks: vec![tagged("/music/b.flac", "Beta", 20)],
             revision: Revision::default(),
         }),
+        Moment::default(),
     )
     .unwrap();
 
@@ -193,18 +201,20 @@ fn a_chunk_arriving_after_the_last_one_opens_nothing() {
 
     let last = update(
         &mut model,
-        Message::Loaded(LoadedRequest::TracksTagged {
+        Message::Library(LibraryFact::Tagged {
             tracks: vec![tagged("/music/a.flac", "Alpha", 10)],
             revision: Revision::default(),
         }),
+        Moment::default(),
     )
     .unwrap();
     let stray = update(
         &mut model,
-        Message::Loaded(LoadedRequest::TracksTagged {
+        Message::Library(LibraryFact::Tagged {
             tracks: vec![tagged("/music/a.flac", "Alpha", 10)],
             revision: Revision::default(),
         }),
+        Moment::default(),
     )
     .unwrap();
 
@@ -222,7 +232,12 @@ fn rescanning_model() -> Model {
         music_dir: PathBuf::from("/music"),
         ..Model::default()
     };
-    let cmd = update(&mut model, Message::Browse(BrowseRequest::Rescan)).unwrap();
+    let cmd = update(
+        &mut model,
+        Message::Browse(BrowseRequest::Rescan),
+        Moment::default(),
+    )
+    .unwrap();
 
     let issued = effects(cmd).iter().find_map(|effect| match effect {
         Effect::Library(LibraryCmd::Rescan { revision, .. }) => Some(*revision),
@@ -235,6 +250,7 @@ fn rescanning_model() -> Model {
         | Effect::RollShuffle { .. }
         | Effect::Setting { .. }
         | Effect::After { .. }
+        | Effect::Restart(_)
         | Effect::Quit => None,
     });
     assert_eq!(issued, Some(revision(1)));
@@ -255,10 +271,11 @@ fn only_the_awaited_scan_generation_lands(
 
     let cmd = update(
         &mut model,
-        Message::Loaded(LoadedRequest::LibraryLoaded {
+        Message::Library(LibraryFact::Loaded {
             tracks: vec![listed("/music/a.flac")],
             revision: revision(bumps),
         }),
+        Moment::default(),
     )
     .unwrap();
 
@@ -279,10 +296,11 @@ fn a_listing_asks_for_the_tags_of_everything_it_listed() {
 
     let cmd = update(
         &mut model,
-        Message::Loaded(LoadedRequest::LibraryListed {
+        Message::Library(LibraryFact::Listed {
             tracks: vec![listed("/music/a.flac"), listed("/music/b.flac")],
             revision: Revision::default(),
         }),
+        Moment::default(),
     )
     .unwrap();
 
@@ -295,10 +313,11 @@ fn a_listing_from_a_superseded_scan_asks_for_no_tags() {
 
     let cmd = update(
         &mut model,
-        Message::Loaded(LoadedRequest::LibraryListed {
+        Message::Library(LibraryFact::Listed {
             tracks: vec![listed("/music/a.flac")],
             revision: Revision::UNSTAMPED,
         }),
+        Moment::default(),
     )
     .unwrap();
 

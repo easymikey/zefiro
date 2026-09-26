@@ -1,5 +1,6 @@
 ---
 source: crates/kernel/src/update/startup.rs
+assertion_line: 222
 expression: projected
 ---
 (
@@ -8,13 +9,14 @@ expression: projected
     ),
     On,
     Some(
-        "Speakers",
+        DeviceName(
+            "Speakers",
+        ),
     ),
     [
         900s,
         1800s,
     ],
-    "dark",
     Percent(
         42,
     ),
@@ -26,8 +28,19 @@ expression: projected
     Some(
         Index(0),
     ),
-    [
-        "noir",
-        "solar",
-    ],
+    Themes {
+        names: [
+            ThemeName(
+                "noir",
+            ),
+            ThemeName(
+                "solar",
+            ),
+        ],
+        selected: Named(
+            ThemeName(
+                "dark",
+            ),
+        ),
+    },
 )

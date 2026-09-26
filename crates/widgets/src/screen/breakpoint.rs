@@ -1,4 +1,4 @@
-use config::{LayoutMode, breakpoints::BreakpointsConfig};
+use config::{BreakpointsConfig, LayoutMode};
 use ratatui::layout::Size;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +60,7 @@ impl Breakpoint {
 
 #[cfg(test)]
 mod tests {
-    use config::{LayoutMode, breakpoints::BreakpointsConfig};
+    use config::{BreakpointsConfig, LayoutMode};
     use ratatui::layout::Size;
     use rstest::rstest;
 

@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/keymap.rs
-assertion_line: 482
+assertion_line: 546
 expression: "rendered.join(\"\\n\")"
 ---
 Global         Space            Message(Playback(Toggle))
@@ -31,10 +31,10 @@ Playlist       gg               Message(Browse(Top))
 Playlist       Home             Message(Browse(Top))
 Playlist       G                Message(Browse(Bottom))
 Playlist       End              Message(Browse(Bottom))
-Playlist       PgDn             Message(Browse(PageBy(0, Down)))
-Playlist       Ctrl+D           Message(Browse(PageBy(0, Down)))
-Playlist       PgUp             Message(Browse(PageBy(0, Up)))
-Playlist       Ctrl+U           Message(Browse(PageBy(0, Up)))
+Playlist       PgDn             Message(Browse(PageBy(Down)))
+Playlist       Ctrl+D           Message(Browse(PageBy(Down)))
+Playlist       PgUp             Message(Browse(PageBy(Up)))
+Playlist       Ctrl+U           Message(Browse(PageBy(Up)))
 Playlist       Enter            Message(Browse(PlaySelected))
 Playlist       a                Message(Browse(Enqueue))
 Playlist       A                Message(Browse(PlayNext))

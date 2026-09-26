@@ -15,10 +15,7 @@ use crate::{
 const TITLE_CELLS: u16 = 2;
 const BORDER_COLUMNS: u16 = 2;
 
-pub(crate) fn pane_block(
-    title: Option<Line<'static>>,
-    border: Color,
-) -> Block<'static> {
+pub(crate) fn pane_block<'a>(title: Option<Line<'a>>, border: Color) -> Block<'a> {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Thick)
@@ -38,11 +35,11 @@ fn title_budget(area: Rect) -> usize {
     )
 }
 
-pub(crate) fn pane_title(
+pub(crate) fn pane_title<'a>(
     area: Rect,
-    view: PlaylistView<'_>,
-    theme: ActiveTheme<'_>,
-) -> Line<'static> {
+    view: PlaylistView<'a>,
+    theme: ActiveTheme<'a>,
+) -> Line<'a> {
     let shuffle = if view.playlist.play_order.is_shuffle() {
         Shuffle::On
     } else {
@@ -54,8 +51,8 @@ pub(crate) fn pane_title(
         queue_len: view.queue.len(),
         position: view.browse_selected,
         total: view.playlist.tracks.len(),
-        scan: ScanProgress::of(view.scan, theme.scanning_label.as_str()),
-        theme_name: theme.name.as_str(),
+        scan: ScanProgress::of(view.scan, theme.theme.scanning_label.as_str()),
+        theme_name: theme.theme.name.as_str(),
         sleep_left: view.sleep_left,
     };
     let colors = StatusLineColors {

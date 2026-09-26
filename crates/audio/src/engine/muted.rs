@@ -4,7 +4,7 @@ use kernel::{
     AudioFailure,
     EngineRejection,
     Playback,
-    domain::{Crossfade, Percent, Replaygain, Speed},
+    domain::{Crossfade, DeviceName, Percent, Replaygain, Speed},
     update::Rejected,
 };
 
@@ -12,7 +12,7 @@ use crate::{
     EngineConfig,
     deck::Reopening,
     engine::{
-        effect::{EngineEffect, EngineMessage},
+        effect::{EngineEffect, EngineMessage, devices_fact},
         state::{Engine, Live, Mix, Muted, PendingLoad, Transition, announce},
     },
 };
@@ -54,28 +54,32 @@ impl Muted {
             EngineMessage::Opened(Err(error)) => {
                 Transition::from(self.stays_silent(error))
             }
+            EngineMessage::DevicesListed(result) => Transition::Next(
+                Engine::Muted(self),
+                EngineEffect::Send(devices_fact(result)),
+            ),
             EngineMessage::Cmd(AudioCmd::Pause(Playback::Paused))
             | EngineMessage::Decoded(_)
             | EngineMessage::Preloaded(_)
             | EngineMessage::Failed(_)
-            | EngineMessage::Observed { .. } => {
+            | EngineMessage::Retiring { .. }
+            | EngineMessage::Finished(_)
+            | EngineMessage::Cued
+            | EngineMessage::Ramped(_) => {
                 Transition::Next(Engine::Muted(self), EngineEffect::Nothing)
             }
             EngineMessage::Cmd(
                 AudioCmd::Pause(Playback::Playing)
                 | AudioCmd::Seek(_)
                 | AudioCmd::Preload { .. },
-            ) => {
-                let reason = EngineRejection::WhileMuted(self.fault.clone());
-                Transition::Rejected(Rejected {
-                    state: Engine::Muted(self),
-                    reason,
-                })
-            }
+            ) => Transition::Rejected(Rejected {
+                reason: EngineRejection::WhileMuted(self.fault.clone()),
+                state: Engine::Muted(self),
+            }),
         }
     }
 
-    fn retry(self, device: Option<String>) -> (Engine, EngineEffect) {
+    fn retry(self, device: Option<DeviceName>) -> (Engine, EngineEffect) {
         let speed = self.mix.speed;
         let asked = Muted {
             config: EngineConfig {
@@ -177,7 +181,7 @@ mod tests {
         Bounded,
         EngineRejection,
         Playback,
-        domain::{Percent, Replaygain, Speed},
+        domain::{DeviceName, Percent, Replaygain, Speed},
         update::Machine,
     };
     use rstest::rstest;
@@ -208,7 +212,6 @@ mod tests {
                     loaded_at,
                     loading,
                     muted,
-                    observed,
                     opened,
                     output_lost,
                     playing,
@@ -257,10 +260,13 @@ mod tests {
     #[rstest]
     #[case::muted_retries_a_device(
         muted(),
-        cmd(AudioCmd::SetDevice(Some("usb".into()))),
+        cmd(AudioCmd::SetDevice(Some(DeviceName::new("usb".to_string()).unwrap()))),
         Transition {
             next: Engine::Muted(Muted { fault: fault(), config: config_on("usb"), pending: None, mix: Mix::default() }),
-            io: EngineEffect::Open { device: Some("usb".into()), speed: Speed::default() },
+            io: EngineEffect::Open {
+                device: Some(DeviceName::new("usb".to_string()).unwrap()),
+                speed: Speed::default(),
+            },
         }
     )]
     #[case::muted_lists_devices(
@@ -401,7 +407,7 @@ mod tests {
     #[case::muted_ignores_a_pause(muted(), cmd(AudioCmd::Pause(Playback::Paused)))]
     #[case::muted_ignores_a_decode(muted(), EngineMessage::Decoded(Ok(None)))]
     #[case::muted_ignores_a_preload_answer(muted(), landed(preload_b()))]
-    #[case::muted_ignores_a_tick(muted(), observed(0, Duration::ZERO))]
+    #[case::muted_ignores_a_retiring_fact(muted(), EngineMessage::Retiring { from: 0.0 })]
     #[case::muted_ignores_a_second_stream_fault(muted(), failed())]
     fn a_stale_cell_leaves_the_muted_engine_alone(
         #[case] start: Engine,
@@ -444,13 +450,10 @@ mod tests {
     }
 
     #[test]
-    fn a_muted_engine_reports_no_position() {
+    fn a_muted_engine_ignores_a_retiring_fact() {
         let (mut engine, _) = trace(Engine::Live(playing()), vec![failed()]);
-        let observed = engine.update(EngineMessage::Observed {
-            queue_len: 1,
-            position: secs(3),
-        });
-        assert_eq!(observed, Ok(EngineEffect::Nothing));
+        let retiring = engine.update(EngineMessage::Retiring { from: 0.5 });
+        assert_eq!(retiring, Ok(EngineEffect::Nothing));
     }
 
     #[test]

@@ -4,7 +4,18 @@ use std::{sync::Arc, time::Duration};
 
 use config::AppearanceFile;
 use kernel::{
-    domain::{AudioFormat, KeymapOverrides, Model, Player, Preload, Tags, Track},
+    Moment,
+    domain::{
+        AudioFormat,
+        KeymapOverrides,
+        Model,
+        Player,
+        Playhead,
+        Preload,
+        Speed,
+        Tags,
+        Track,
+    },
     update::keymap::{Bindings, KeyBinding},
 };
 use widgets::{
@@ -52,7 +63,11 @@ pub(crate) fn playing_model(
     Model {
         player: Player::Playing {
             track: track(title, duration_secs),
-            at: Duration::from_secs(position_secs),
+            head: Playhead::anchored(
+                Duration::from_secs(position_secs),
+                Moment::default(),
+                Speed::default(),
+            ),
             preload: Preload::None,
         },
         ..Model::default()
@@ -94,6 +109,7 @@ impl Scenery {
             cell_aspect: CellAspect::default(),
             clock,
             now_unix: 0,
+            now: Moment::default(),
             music_dir: "/home/user/Music",
             sleep_left: None,
         }

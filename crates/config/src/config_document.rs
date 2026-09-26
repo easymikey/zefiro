@@ -3,7 +3,7 @@ use std::time::Duration;
 use kernel::{
     ConfigPatch,
     DevicePatch,
-    domain::{Crossfade, Replaygain},
+    domain::{Crossfade, Replaygain, ThemeName},
 };
 use toml_edit::{Array, DocumentMut, value};
 
@@ -67,7 +67,7 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), ConfigE
     match device {
         DevicePatch::Keep => {}
         DevicePatch::Named(name) => {
-            ensure_table(doc, "audio")?["device"] = value(name);
+            ensure_table(doc, "audio")?["device"] = value(name.as_str());
         }
         DevicePatch::SystemDefault => {
             ensure_table(doc, "audio")?.remove("device");
@@ -75,7 +75,7 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), ConfigE
     }
     write_fields(doc, sleep_presets_field(sleep_presets))?;
     if let Some(theme) = theme {
-        doc["theme"] = value(theme);
+        doc["theme"] = value(ThemeName::as_str(&theme));
     }
     if let Some(volume) = volume {
         doc["volume"] = value(i64::from(volume.value()));
@@ -100,7 +100,7 @@ mod tests {
         Bounded,
         ConfigPatch,
         DevicePatch,
-        domain::{Crossfade, Percent, Replaygain},
+        domain::{Crossfade, DeviceName, Percent, Replaygain, ThemeChoice, ThemeName},
     };
     use proptest::prelude::*;
     use rstest::rstest;
@@ -108,7 +108,7 @@ mod tests {
     use crate::{
         appearance_file::parse_appearance,
         config_document::{format_crossfade, patched, to_minutes},
-        config_file::parse,
+        config_file::parse_config,
         error::ConfigError,
     };
 
@@ -132,8 +132,10 @@ mod tests {
         ConfigPatch {
             crossfade: Some(crossfade_millis(250)),
             replaygain: Some(Replaygain::On),
-            device: DevicePatch::Named("Speakers".into()),
-            theme: Some("oreo".into()),
+            device: DevicePatch::Named(
+                DeviceName::new("Speakers".to_string()).unwrap(),
+            ),
+            theme: Some(ThemeName::from_static("oreo")),
             volume: Some(Percent::clamped(80)),
             sleep_presets: Some(vec![
                 Duration::from_secs(10 * 60),
@@ -154,7 +156,7 @@ mod tests {
         "",
         ConfigPatch::builder()
             .crossfade(crossfade_secs(3))
-            .theme("dark")
+            .theme(ThemeName::from_static("dark"))
             .build()
     )]
     #[case::one_field_keeps_every_comment(
@@ -210,22 +212,25 @@ mod tests {
 
     #[test]
     fn every_fixture_parses_with_its_own_parser() {
-        assert!(parse(COMMENTED_CONFIG).is_ok());
+        assert!(parse_config(COMMENTED_CONFIG).is_ok());
         assert!(parse_appearance(COMMENTED_UI).is_ok());
     }
 
     #[test]
     fn a_full_config_patch_reads_back_through_its_own_parser() {
         let written = patched(COMMENTED_CONFIG, every_config_field()).unwrap();
-        let parsed = parse(&written).unwrap();
+        let parsed = parse_config(&written).unwrap();
         assert_eq!(parsed.audio.crossfade, crossfade_millis(250));
         assert_eq!(parsed.audio.replaygain, Replaygain::On);
         assert_eq!(parsed.audio.device, Some("Speakers".to_string()));
-        assert_eq!(parsed.theme, "oreo");
-        assert_eq!(parsed.volume, 80);
         assert_eq!(
-            parsed.audio.sleep_presets,
-            vec![Duration::from_secs(10 * 60), Duration::from_secs(20 * 60)]
+            parsed.theme,
+            ThemeChoice::Named(ThemeName::from_static("oreo"))
+        );
+        assert_eq!(parsed.volume, Percent::clamped(80));
+        assert_eq!(
+            parsed.audio.sleep_presets.as_slice(),
+            [Duration::from_secs(10 * 60), Duration::from_secs(20 * 60)]
         );
         assert_eq!(parsed.music_dir, Some(PathBuf::from("/new/music")));
     }
@@ -238,8 +243,9 @@ mod tests {
         prop_oneof![
             Just(DevicePatch::Keep),
             Just(DevicePatch::SystemDefault),
-            prop_oneof![Just("Speakers"), Just("Headphones")]
-                .prop_map(|name| DevicePatch::Named(name.to_string())),
+            prop_oneof![Just("Speakers"), Just("Headphones")].prop_map(|name| {
+                DevicePatch::Named(DeviceName::new(name.to_string()).unwrap())
+            }),
         ]
     }
 
@@ -257,13 +263,17 @@ mod tests {
             ]),
             proptest::option::of(
                 prop_oneof![Just("dark"), Just("oreo"), Just("noir")]
-                    .prop_map(str::to_string),
+                    .prop_map(|name| ThemeName::new(name.to_string()).unwrap()),
             ),
             proptest::option::of((0u8..=100).prop_map(Percent::clamped)),
-            proptest::option::of(proptest::collection::vec(
-                (1u64..=120).prop_map(|minutes| Duration::from_secs(minutes * 60)),
-                0..4,
-            )),
+            proptest::option::of(
+                proptest::collection::btree_set(1u64..=120, 0..4).prop_map(|minutes| {
+                    minutes
+                        .into_iter()
+                        .map(|value| Duration::from_secs(value * 60))
+                        .collect::<Vec<_>>()
+                }),
+            ),
             proptest::option::of(
                 prop_oneof![Just("/music"), Just("/new/music")]
                     .prop_map(str::to_string),
@@ -304,9 +314,9 @@ mod tests {
             text in base_config_texts(),
             patch in config_patch(),
         ) {
-            let base = parse(text).unwrap();
+            let base = parse_config(text).unwrap();
             let written = patched(text, patch.clone()).unwrap();
-            let parsed = parse(&written).unwrap();
+            let parsed = parse_config(&written).unwrap();
 
             prop_assert_eq!(
                 parsed.audio.crossfade,
@@ -321,17 +331,20 @@ mod tests {
                 match patch.device {
                     DevicePatch::Keep => base.audio.device,
                     DevicePatch::SystemDefault => None,
-                    DevicePatch::Named(name) => Some(name),
+                    DevicePatch::Named(name) => Some(name.to_string()),
                 }
             );
-            prop_assert_eq!(parsed.theme, patch.theme.unwrap_or(base.theme));
             prop_assert_eq!(
-                parsed.volume,
-                patch.volume.map_or(base.volume, Percent::value)
+                parsed.theme,
+                patch.theme.map_or(base.theme, ThemeChoice::Named)
             );
+            prop_assert_eq!(parsed.volume, patch.volume.unwrap_or(base.volume));
             prop_assert_eq!(
-                parsed.audio.sleep_presets,
-                patch.sleep_presets.unwrap_or(base.audio.sleep_presets)
+                parsed.audio.sleep_presets.as_slice(),
+                patch
+                    .sleep_presets
+                    .as_deref()
+                    .unwrap_or(base.audio.sleep_presets.as_slice())
             );
             prop_assert_eq!(
                 parsed.music_dir,

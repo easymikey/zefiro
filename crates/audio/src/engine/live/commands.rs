@@ -1,19 +1,21 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use kernel::{
     AudioCmd,
+    AudioFailure,
     EngineRejection,
     Playback,
-    domain::{Crossfade, Delivery, Revision},
+    domain::{Crossfade, Delivery, DeviceName, OutputDevice, Revision},
     update::Rejected,
 };
 
 use crate::engine::{
-    crossfade::{Promotion, promotion_on_abandon},
-    effect::{EngineEffect, PreloadedTrack},
+    crossfade::{Promotion, arm_cue, promotion_on_abandon},
+    effect::{EngineEffect, PreloadedTrack, devices_fact},
     phase::{
         AfterLoad,
         CurrentTrack,
+        Fade,
         Handover,
         Incoming,
         Loading,
@@ -22,7 +24,7 @@ use crate::engine::{
         Phase,
         Playing,
     },
-    state::{Engine, Live, PendingLoad, Transition},
+    state::{Engine, Live, PendingLoad, Transition, reported},
 };
 
 struct Request {
@@ -57,11 +59,9 @@ impl Live {
                     Playback::Paused => EngineEffect::Pause,
                     Playback::Playing => EngineEffect::Play,
                 };
-                Transition::Next(Engine::Live(self), io)
+                Transition::Next(Engine::Live(self), reported(io))
             }
-            AudioCmd::Seek(target) => {
-                Transition::Next(Engine::Live(self), EngineEffect::Seek(target))
-            }
+            AudioCmd::Seek(target) => Transition::from(self.seek(target)),
             AudioCmd::Volume(volume) => {
                 self.user_factor = volume;
                 let applied = self.volume();
@@ -69,7 +69,10 @@ impl Live {
             }
             AudioCmd::SetSpeed(speed) => {
                 self.speed = speed;
-                Transition::Next(Engine::Live(self), EngineEffect::SetSpeed(speed))
+                Transition::Next(
+                    Engine::Live(self),
+                    reported(EngineEffect::SetSpeed(speed)),
+                )
             }
             AudioCmd::Stop => {
                 self.phase = Phase::Idle;
@@ -100,7 +103,6 @@ impl Live {
             return (Engine::Live(self), EngineEffect::Nothing);
         }
         self.performed.load = revision;
-        let from = self.primary_gain();
         let speed = self.speed;
         let fades =
             !self.config.crossfade.value().is_zero() && self.phase.current().is_some();
@@ -111,10 +113,7 @@ impl Live {
         };
         if fades {
             self.phase = Phase::Handover(Handover {
-                outgoing: Outgoing {
-                    from,
-                    fraction: 0.0,
-                },
+                outgoing: Outgoing { from: 0.0 },
                 incoming: Incoming::Loading(loading),
             });
             return (Engine::Live(self), EngineEffect::StartFade { path, speed });
@@ -123,7 +122,65 @@ impl Live {
         (Engine::Live(self), EngineEffect::StartLoad { path, speed })
     }
 
-    fn set_device(self, device: Option<String>) -> (Engine, EngineEffect) {
+    fn seek(mut self, target: Duration) -> (Engine, EngineEffect) {
+        let playing = match std::mem::take(&mut self.phase) {
+            Phase::Playing(playing) => playing,
+            phase @ (Phase::Idle | Phase::Loading(_) | Phase::Handover(_)) => {
+                self.phase = phase;
+                return (Engine::Live(self), reported(EngineEffect::Seek(target)));
+            }
+        };
+        let Next::Crossfading { preload, fade } = playing.next else {
+            self.phase = Phase::Playing(playing);
+            return (Engine::Live(self), reported(EngineEffect::Seek(target)));
+        };
+        let cue = arm_cue(playing.current.total, self.config.crossfade.value());
+        match fade {
+            Fade::Idle => {
+                self.phase = Phase::Playing(Playing {
+                    next: Next::Crossfading {
+                        preload,
+                        fade: Fade::Idle,
+                    },
+                    ..playing
+                });
+                let io = EngineEffect::Many(vec![
+                    EngineEffect::Seek(target),
+                    EngineEffect::Arm { cue },
+                    EngineEffect::Report,
+                ]);
+                (Engine::Live(self), io)
+            }
+            Fade::Fading if cue.is_some_and(|cue| target < cue) => {
+                self.phase = Phase::Playing(Playing {
+                    next: Next::Crossfading {
+                        preload,
+                        fade: Fade::Idle,
+                    },
+                    ..playing
+                });
+                let io = EngineEffect::Many(vec![
+                    EngineEffect::Unfade,
+                    EngineEffect::Seek(target),
+                    EngineEffect::Arm { cue },
+                    EngineEffect::Report,
+                ]);
+                (Engine::Live(self), io)
+            }
+            Fade::Fading => {
+                self.phase = Phase::Playing(Playing {
+                    next: Next::Crossfading {
+                        preload,
+                        fade: Fade::Fading,
+                    },
+                    ..playing
+                });
+                (Engine::Live(self), reported(EngineEffect::Seek(target)))
+            }
+        }
+    }
+
+    fn set_device(self, device: Option<DeviceName>) -> (Engine, EngineEffect) {
         match device {
             in_use if in_use == self.config.device => {
                 (Engine::Live(self), EngineEffect::Nothing)
@@ -190,13 +247,22 @@ impl Live {
             std::mem::take(&mut playing.next),
             crossfade.value().is_zero(),
         ) {
-            (Next::None, true | false) => {
-                self.phase = Phase::Playing(playing);
-                (Engine::Live(self), EngineEffect::Nothing)
-            }
-            (next @ Next::Crossfading { .. }, false) => {
-                self.phase = Phase::Playing(Playing { next, ..playing });
-                (Engine::Live(self), EngineEffect::Nothing)
+            (
+                Next::Crossfading {
+                    preload,
+                    fade: Fade::Idle,
+                },
+                false,
+            ) => {
+                let cue = arm_cue(playing.current.total, crossfade.value());
+                self.phase = Phase::Playing(Playing {
+                    next: Next::Crossfading {
+                        preload,
+                        fade: Fade::Idle,
+                    },
+                    ..playing
+                });
+                (Engine::Live(self), EngineEffect::Arm { cue })
             }
             (Next::Crossfading { preload, fade }, true) => {
                 match promotion_on_abandon(fade) {
@@ -207,9 +273,17 @@ impl Live {
                             preloading: Some(path.clone()),
                             ..playing
                         });
-                        (Engine::Live(self), EngineEffect::RestartGapless(path))
+                        let io = EngineEffect::Many(vec![
+                            EngineEffect::Arm { cue: None },
+                            EngineEffect::RestartGapless(path),
+                        ]);
+                        (Engine::Live(self), io)
                     }
                 }
+            }
+            (next, _) => {
+                self.phase = Phase::Playing(Playing { next, ..playing });
+                (Engine::Live(self), EngineEffect::Nothing)
             }
         }
     }
@@ -224,10 +298,19 @@ impl Live {
             current: CurrentTrack { total, gain, path },
             next: Next::None,
             preloading,
-            previous_queue_len: 1,
         });
         let volume = self.volume();
-        (Engine::Live(self), EngineEffect::Promote { volume })
+        (
+            Engine::Live(self),
+            reported(EngineEffect::Promote { volume }),
+        )
+    }
+
+    pub(crate) fn devices_listed(
+        self,
+        result: Result<Vec<OutputDevice>, AudioFailure>,
+    ) -> (Engine, EngineEffect) {
+        (Engine::Live(self), EngineEffect::Send(devices_fact(result)))
     }
 }
 
@@ -238,7 +321,7 @@ mod tests {
         Bounded,
         EngineRejection,
         Playback,
-        domain::{Percent, Replaygain, Speed},
+        domain::{DeviceName, Percent, Replaygain, Speed},
         update::Machine,
     };
     use proptest::{
@@ -281,6 +364,7 @@ mod tests {
                     secs,
                     set_crossfade,
                 },
+                reported,
             },
         },
     };
@@ -346,17 +430,50 @@ mod tests {
     #[case::play(
         Engine::Live(playing()),
         cmd(AudioCmd::Pause(Playback::Playing)),
-        Transition { next: Engine::Live(playing()), io: EngineEffect::Play }
+        Transition { next: Engine::Live(playing()), io: reported(EngineEffect::Play) }
     )]
     #[case::pause(
         Engine::Live(playing()),
         cmd(AudioCmd::Pause(Playback::Paused)),
-        Transition { next: Engine::Live(playing()), io: EngineEffect::Pause }
+        Transition { next: Engine::Live(playing()), io: reported(EngineEffect::Pause) }
     )]
     #[case::seek(
         Engine::Live(playing()),
         cmd(AudioCmd::Seek(secs(5))),
-        Transition { next: Engine::Live(playing()), io: EngineEffect::Seek(secs(5)) }
+        Transition { next: Engine::Live(playing()), io: reported(EngineEffect::Seek(secs(5))) }
+    )]
+    #[case::seek_while_idle_crossfade_rearms(
+        Engine::Live(crossfading(Fade::Idle)),
+        cmd(AudioCmd::Seek(secs(50))),
+        Transition {
+            next: Engine::Live(crossfading(Fade::Idle)),
+            io: EngineEffect::Many(vec![
+                EngineEffect::Seek(secs(50)),
+                EngineEffect::Arm { cue: Some(secs(90)) },
+                EngineEffect::Report,
+            ]),
+        }
+    )]
+    #[case::seek_back_out_of_a_fade_unfades(
+        Engine::Live(crossfading(Fade::Fading)),
+        cmd(AudioCmd::Seek(secs(50))),
+        Transition {
+            next: Engine::Live(crossfading(Fade::Idle)),
+            io: EngineEffect::Many(vec![
+                EngineEffect::Unfade,
+                EngineEffect::Seek(secs(50)),
+                EngineEffect::Arm { cue: Some(secs(90)) },
+                EngineEffect::Report,
+            ]),
+        }
+    )]
+    #[case::seek_inside_a_fade_keeps_fading(
+        Engine::Live(crossfading(Fade::Fading)),
+        cmd(AudioCmd::Seek(secs(95))),
+        Transition {
+            next: Engine::Live(crossfading(Fade::Fading)),
+            io: reported(EngineEffect::Seek(secs(95))),
+        }
     )]
     #[case::volume_sets_the_user_factor(
         Engine::Live(playing()),
@@ -371,7 +488,7 @@ mod tests {
         cmd(AudioCmd::SetSpeed(Speed::clamped(1.5))),
         Transition {
             next: Engine::Live(Live { speed: Speed::clamped(1.5), ..playing() }),
-            io: EngineEffect::SetSpeed(Speed::clamped(1.5)),
+            io: reported(EngineEffect::SetSpeed(Speed::clamped(1.5))),
         }
     )]
     #[case::stop_clears_the_track(
@@ -405,23 +522,27 @@ mod tests {
         set_crossfade(4),
         Transition {
             next: Engine::Live(Live { config: EngineConfig { crossfade: crossfade(4), ..config() }, ..crossfading(Fade::Idle) }),
-            io: EngineEffect::Nothing,
+            io: EngineEffect::Arm { cue: Some(secs(96)) },
         }
     )]
     #[case::crossfade_to_zero_promotes_a_louder_preload(
-        Engine::Live(crossfading(Fade::Fading(0.7))),
+        Engine::Live(crossfading(Fade::Fading)),
         set_crossfade(0),
-        Transition { next: Engine::Live(promoted(crossfade(0))), io: EngineEffect::Promote { volume: 1.0 } }
-    )]
-    #[case::crossfade_to_zero_restarts_a_quiet_preload(
-        Engine::Live(crossfading(Fade::Fading(0.2))),
-        set_crossfade(0),
-        Transition { next: Engine::Live(awaiting(playing(), "/b")), io: EngineEffect::RestartGapless("/b".into()) }
+        Transition {
+            next: Engine::Live(promoted(crossfade(0))),
+            io: reported(EngineEffect::Promote { volume: 1.0 }),
+        }
     )]
     #[case::crossfade_to_zero_restarts_an_unfaded_preload(
         Engine::Live(crossfading(Fade::Idle)),
         set_crossfade(0),
-        Transition { next: Engine::Live(awaiting(playing(), "/b")), io: EngineEffect::RestartGapless("/b".into()) }
+        Transition {
+            next: Engine::Live(awaiting(playing(), "/b")),
+            io: EngineEffect::Many(vec![
+                EngineEffect::Arm { cue: None },
+                EngineEffect::RestartGapless("/b".into()),
+            ]),
+        }
     )]
     #[case::replaygain_reapplies_the_volume(
         Engine::Live(playing()),
@@ -433,8 +554,14 @@ mod tests {
     )]
     #[case::set_device_opens_another_device(
         Engine::Live(playing()),
-        cmd(AudioCmd::SetDevice(Some("usb".into()))),
-        Transition { next: Engine::Live(playing()), io: EngineEffect::Open { device: Some("usb".into()), speed: Speed::default() } }
+        cmd(AudioCmd::SetDevice(Some(DeviceName::new("usb".to_string()).unwrap()))),
+        Transition {
+            next: Engine::Live(playing()),
+            io: EngineEffect::Open {
+                device: Some(DeviceName::new("usb".to_string()).unwrap()),
+                speed: Speed::default(),
+            },
+        }
     )]
     #[case::set_device_to_the_one_in_use_is_nothing(
         Engine::Live(playing()),
@@ -452,7 +579,7 @@ mod tests {
         Transition {
             next: Engine::Live(Live {
                 phase: Phase::Handover(Handover {
-                    outgoing: Outgoing { from: 1.0, fraction: 0.0 },
+                    outgoing: Outgoing { from: 0.0 },
                     incoming: Incoming::Loading(loading_track("/b")),
                 }),
                 performed: Stamps { load: first(), ..Stamps::default() },
@@ -476,7 +603,7 @@ mod tests {
     #[case::while_idle(live())]
     #[case::while_loading(loading())]
     #[case::while_the_skip_is_still_decoding(handing_over(
-        Outgoing { from: 1.0, fraction: 0.0 },
+        Outgoing { from: 1.0 },
         Incoming::Loading(loading_track("/b")),
     ))]
     #[case::while_the_skip_fades_in(retiring(0.5))]

@@ -1,5 +1,5 @@
-use config::appearance_patch;
-use kernel::domain::SettingId;
+use config::{appearance_patch, appearance_row};
+use kernel::domain::{OptionCount, SettingId};
 use rstest::rstest;
 
 #[rstest]
@@ -11,7 +11,14 @@ fn a_row_patches_through_the_public_contract(
     #[case] id: u16,
     #[case] position: usize,
 ) {
-    let patch = appearance_patch(SettingId(id), position).unwrap();
+    let option = appearance_row(SettingId::new(id))
+        .unwrap()
+        .spec
+        .control
+        .count()
+        .index(position)
+        .unwrap();
+    let patch = appearance_patch(SettingId::new(id), option).unwrap();
     insta::with_settings!({ snapshot_suffix => name }, {
         insta::assert_debug_snapshot!(patch);
     });
@@ -19,6 +26,7 @@ fn a_row_patches_through_the_public_contract(
 
 #[test]
 fn an_unknown_row_is_rejected_through_the_public_contract() {
-    let rejected = appearance_patch(SettingId(999), 0);
+    let option = OptionCount::new(1).unwrap().index(0).unwrap();
+    let rejected = appearance_patch(SettingId::new(999), option);
     insta::assert_debug_snapshot!(rejected);
 }

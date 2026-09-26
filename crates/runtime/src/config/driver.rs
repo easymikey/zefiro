@@ -1,22 +1,24 @@
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use kernel::{Message, domain::Driver};
+use kernel::{ConfigFact, Message, domain::Driver};
 
 use crate::{
     config::{ConfigPaths, ConfigTiming, session::ConfigLoop},
     driver::{DriverThread, spawn_driver},
     error::RuntimeError,
     interpret::ConfigCommand,
+    mailbox::Mailbox,
+    registry,
     shell::Reload,
 };
 
 pub(crate) fn spawn(
     paths: ConfigPaths,
     timing: ConfigTiming,
-    mailbox: Sender<Message>,
+    mailbox: &Sender<Message>,
 ) -> Result<(DriverThread<ConfigCommand>, Receiver<Reload>), RuntimeError> {
     let (reloads, reloaded) = unbounded();
     let thread = spawn_driver(
-        Driver::Config,
+        registry::row(Driver::Config),
         move |inbox, mailbox| {
             let outbound = Outbound {
                 mailbox,
@@ -30,7 +32,7 @@ pub(crate) fn spawn(
 }
 
 pub(crate) struct Outbound<'a> {
-    pub(crate) mailbox: &'a Sender<Message>,
+    pub(crate) mailbox: &'a Mailbox<ConfigFact>,
     pub(crate) reloads: &'a Sender<Reload>,
 }
 
@@ -49,11 +51,10 @@ mod tests {
 
     use crossbeam_channel::Receiver;
     use kernel::{
+        ConfigFact,
         ConfigPatch,
-        LoadedRequest,
         Message,
-        WorkspaceRequest,
-        domain::{ConfigSource, CustomSetting, SettingId, Toast},
+        domain::{ConfigSource, CustomSetting, OptionIndex, SettingId, ThemeName},
     };
 
     use crate::{
@@ -92,7 +93,7 @@ mod tests {
     fn a_hand_edit_of_the_theme_reaches_the_shell_parsed() {
         let directory = tempfile::tempdir().unwrap();
         let (mailbox, _messages) = crossbeam_channel::unbounded();
-        let (thread, reloaded) = spawn(paths(&directory), timing(), mailbox).unwrap();
+        let (thread, reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
 
         let theme = drain(&reloaded)
             .into_iter()
@@ -124,7 +125,7 @@ mod tests {
     fn a_hand_edit_after_spawn_reaches_the_shell_without_polling() {
         let directory = tempfile::tempdir().unwrap();
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, reloaded) = spawn(paths(&directory), timing(), mailbox).unwrap();
+        let (thread, reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
         drain(&reloaded);
         drain(&messages);
 
@@ -155,12 +156,12 @@ mod tests {
         std::fs::write(directory.path().join("config.toml"), "[keymap\nnot toml")
             .unwrap();
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, _reloaded) = spawn(paths(&directory), timing(), mailbox).unwrap();
+        let (thread, _reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
 
         let failed = drain(&messages).into_iter().any(|message| {
             matches!(
                 message,
-                Message::Workspace(WorkspaceRequest::SourceFailed {
+                Message::Config(ConfigFact::SourceFailed {
                     source: ConfigSource::Keymap,
                     ..
                 })
@@ -181,10 +182,10 @@ mod tests {
         )
         .unwrap();
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, _reloaded) = spawn(paths(&directory), timing(), mailbox).unwrap();
+        let (thread, _reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
 
         let failure = drain(&messages).into_iter().find_map(|message| {
-            let Message::Workspace(WorkspaceRequest::SourceFailed {
+            let Message::Config(ConfigFact::SourceFailed {
                 source: ConfigSource::Appearance,
                 text,
             }) = message
@@ -205,7 +206,7 @@ mod tests {
     fn a_later_broken_appearance_edit_keeps_the_last_good_rows() {
         let directory = tempfile::tempdir().unwrap();
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, reloaded) = spawn(paths(&directory), timing(), mailbox).unwrap();
+        let (thread, reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
         drain(&reloaded);
         let first_rows = drain(&messages).into_iter().find_map(custom_rows_reloaded);
         assert!(
@@ -228,7 +229,7 @@ mod tests {
         let failed = later_messages.iter().any(|message| {
             matches!(
                 message,
-                Message::Workspace(WorkspaceRequest::SourceFailed {
+                Message::Config(ConfigFact::SourceFailed {
                     source: ConfigSource::Appearance,
                     ..
                 })
@@ -248,23 +249,21 @@ mod tests {
     }
 
     fn toast_text(message: Message) -> Option<String> {
-        let Message::Workspace(WorkspaceRequest::ShowToast(Toast { text, .. })) =
-            message
-        else {
+        let Message::Config(ConfigFact::Failed(failure)) = message else {
             return None;
         };
-        Some(text)
+        Some(failure.to_string())
     }
 
-    fn themes_listed(message: Message) -> Option<Vec<String>> {
-        let Message::Loaded(LoadedRequest::ThemesLoaded(themes)) = message else {
+    fn themes_listed(message: Message) -> Option<Vec<ThemeName>> {
+        let Message::Config(ConfigFact::ThemesLoaded(themes)) = message else {
             return None;
         };
         Some(themes)
     }
 
     fn custom_rows_reloaded(message: Message) -> Option<Vec<CustomSetting>> {
-        let Message::Loaded(LoadedRequest::CustomRowsReloaded(rows)) = message else {
+        let Message::Config(ConfigFact::CustomRowsReloaded(rows)) = message else {
             return None;
         };
         Some(rows)
@@ -274,7 +273,7 @@ mod tests {
     fn an_unreadable_config_shows_a_toast() {
         let directory = tempfile::tempdir().unwrap();
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, _reloaded) = spawn(paths(&directory), timing(), mailbox).unwrap();
+        let (thread, _reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
 
         let toast = drain(&messages).into_iter().find_map(toast_text);
         assert!(toast.is_none(), "a missing file must not be unreadable");
@@ -289,14 +288,14 @@ mod tests {
         std::fs::create_dir_all(directory.path().join("themes")).unwrap();
         std::fs::write(directory.path().join("themes/mine.toml"), "").unwrap();
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, _reloaded) = spawn(paths(&directory), timing(), mailbox).unwrap();
+        let (thread, _reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
 
         let themes = drain(&messages)
             .into_iter()
             .find_map(themes_listed)
             .unwrap();
-        assert!(themes.contains(&"mine".to_string()));
-        assert!(themes.contains(&"noir".to_string()));
+        assert!(themes.contains(&ThemeName::from_static("mine")));
+        assert!(themes.contains(&ThemeName::from_static("noir")));
 
         drop(thread.commands);
         thread.handle.join().unwrap().unwrap();
@@ -344,20 +343,20 @@ mod tests {
             theme: None,
         };
         let (mailbox, _messages) = crossbeam_channel::unbounded();
-        let (thread, reloaded) = spawn(paths, timing(), mailbox).unwrap();
+        let (thread, reloaded) = spawn(paths, timing(), &mailbox).unwrap();
         drain(&reloaded);
         thread
             .commands
             .send(ConfigCommand::Save(
-                ConfigPatch::builder().theme("noir").build(),
+                ConfigPatch::builder()
+                    .theme(ThemeName::from_static("noir"))
+                    .build(),
             ))
             .unwrap();
-        let format_chips_row_position = 1;
-        let patch = config::appearance_patch(
-            setting_id(config::AppearanceField::FormatChips),
-            format_chips_row_position,
-        )
-        .unwrap();
+        let format_chips_id = setting_id(config::AppearanceField::FormatChips);
+        let patch =
+            config::appearance_patch(format_chips_id, option_at(format_chips_id, 1))
+                .unwrap();
         thread
             .commands
             .send(ConfigCommand::Appearance(patch))
@@ -402,10 +401,21 @@ style = "line"
             .into_iter()
             .find(|row| row.field == field)
             .unwrap()
+            .spec
             .id
     }
 
-    fn appearance_rows() -> [(SettingId, usize); 6] {
+    fn option_at(id: SettingId, position: usize) -> OptionIndex {
+        config::appearance_row(id)
+            .unwrap()
+            .spec
+            .control
+            .count()
+            .index(position)
+            .unwrap()
+    }
+
+    fn appearance_rows() -> [(SettingId, OptionIndex); 6] {
         [
             (config::AppearanceField::CoverStyle, 3),
             (config::AppearanceField::CoverBrackets, 1),
@@ -414,7 +424,10 @@ style = "line"
             (config::AppearanceField::KeyHints, 1),
             (config::AppearanceField::LayoutMode, 2),
         ]
-        .map(|(field, position)| (setting_id(field), position))
+        .map(|(field, position)| {
+            let id = setting_id(field);
+            (id, option_at(id, position))
+        })
     }
 
     fn assert_appearance_rows_landed(parsed: &toml::Value) {
@@ -440,7 +453,7 @@ style = "line"
             theme: None,
         };
         let (mailbox, _messages) = crossbeam_channel::unbounded();
-        let (thread, _reloaded) = spawn(paths, timing(), mailbox).unwrap();
+        let (thread, _reloaded) = spawn(paths, timing(), &mailbox).unwrap();
 
         for (id, position) in appearance_rows() {
             let patch = config::appearance_patch(id, position).unwrap();
@@ -476,17 +489,16 @@ style = "line"
     }
 
     #[test]
-    fn a_preset_write_reloads_every_row_and_never_selects_a_theme_on_its_own() {
+    fn a_preset_write_lands_on_disk_and_never_selects_a_theme() {
         let directory = tempfile::tempdir().unwrap();
         let appearance_path = directory.path().join("sifr-ui.toml");
-        let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, reloaded) = spawn(paths(&directory), timing(), mailbox).unwrap();
+        let (mailbox, _messages) = crossbeam_channel::unbounded();
+        let (thread, reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
         drain(&reloaded);
-        drain(&messages);
 
         let preset_id = setting_id(config::AppearanceField::Preset);
-        let noir_position = 1;
-        let patch = config::appearance_patch(preset_id, noir_position).unwrap();
+        let noir_option = option_at(preset_id, 1);
+        let patch = config::appearance_patch(preset_id, noir_option).unwrap();
         thread
             .commands
             .send(ConfigCommand::Appearance(patch))
@@ -500,35 +512,42 @@ style = "line"
             "the written file must hold noir's full appearance"
         );
 
-        let received = drain(&messages);
-        let rows = received
-            .iter()
-            .cloned()
-            .find_map(custom_rows_reloaded)
-            .expect("a multi-field write must reload every row from the file it wrote");
-        let cover_style_id = setting_id(config::AppearanceField::CoverStyle);
-        let cover_style_position = rows
-            .iter()
-            .find(|row| row.id == cover_style_id)
-            .map(|row| row.position);
-        assert_eq!(
-            cover_style_position,
-            Some(2),
-            "cover style must show noir's milkdrop option"
-        );
-        let preset_position = rows
-            .iter()
-            .find(|row| row.id == preset_id)
-            .map(|row| row.position);
-        assert_eq!(
-            preset_position,
-            Some(noir_position),
-            "the preset row itself must land on noir"
-        );
-
         assert!(
             reloaded.try_recv().is_err(),
             "an appearance write alone must never select a theme; only ConfigCmd::SelectTheme, which the kernel sends, may do that"
+        );
+
+        drop(thread.commands);
+        thread.handle.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn an_appearance_save_sends_no_custom_rows() {
+        let directory = tempfile::tempdir().unwrap();
+        let appearance_path = directory.path().join("sifr-ui.toml");
+        let (mailbox, messages) = crossbeam_channel::unbounded();
+        let (thread, reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
+        drain(&reloaded);
+        drain(&messages);
+
+        let format_chips_id = setting_id(config::AppearanceField::FormatChips);
+        let patch =
+            config::appearance_patch(format_chips_id, option_at(format_chips_id, 1))
+                .unwrap();
+        thread
+            .commands
+            .send(ConfigCommand::Appearance(patch))
+            .unwrap();
+
+        wait_for_content(&appearance_path, "format_chips = true").unwrap();
+
+        let mut settled = Vec::new();
+        while let Ok(message) = messages.recv_timeout(SETTLE_TIMEOUT) {
+            settled.push(message);
+        }
+        assert!(
+            settled.into_iter().find_map(custom_rows_reloaded).is_none(),
+            "a successful appearance write must send no custom rows echo"
         );
 
         drop(thread.commands);

@@ -4,6 +4,7 @@ mod requests;
 use std::{sync::Arc, time::Duration};
 
 pub use events::Lookahead;
+use events::next_decision;
 
 use crate::{
     cmd::{
@@ -16,36 +17,76 @@ use crate::{
         PlaybackChange,
         SystemCmd,
     },
-    domain::{Percent, Player, Revision, Track},
-    message::AudioFailure,
-    update::machine::{Machine, Rejected},
+    domain::{
+        AbLoop,
+        Model,
+        Moment,
+        Percent,
+        Player,
+        PlaylistIndex,
+        Revision,
+        Speed,
+        Track,
+        UnixSeconds,
+        Workspace,
+        playlist::{self, Playlist, RepeatMode},
+    },
+    message::{AudioFailure, Timer},
+    update::{
+        machine::{Machine, Rejected},
+        rejection::Rejection,
+    },
 };
+
+#[derive(Debug, Clone, Copy)]
+pub struct Anchor {
+    pub now: Moment,
+    pub speed: Speed,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Resume {
+    pub volume: Percent,
+    pub anchor: Anchor,
+}
 
 #[derive(Debug)]
 pub enum PlayerMessage {
     Toggle {
         current: Option<Arc<Track>>,
-        volume: Percent,
+        resume: Resume,
     },
     Stop,
-    Hold,
-    Release,
-    Seek(Duration),
-    SleepFired,
+    Hold(Moment),
+    Release(Anchor),
+    Seek {
+        target: Duration,
+        now: Moment,
+    },
+    SleepFired(Moment),
     Start {
         track: Arc<Track>,
         volume: Percent,
     },
     Loaded {
         total: Option<Duration>,
+        anchor: Anchor,
     },
-    Error(AudioFailure),
-    Position {
-        at: Duration,
+    Error {
+        failure: AudioFailure,
+        now: Moment,
+    },
+    Playhead {
+        offset: Duration,
         lookahead: Lookahead,
+    },
+    Reported {
+        offset: Duration,
+        now: Moment,
     },
     TrackChanged {
         next: Option<Arc<Track>>,
+        now: Moment,
     },
     Ended {
         next: Option<Arc<Track>>,
@@ -70,19 +111,22 @@ impl Machine for Player {
 
     fn transition(self, message: PlayerMessage) -> Transition {
         match message {
-            PlayerMessage::Toggle { current, volume } => self.toggle(current, volume),
+            PlayerMessage::Toggle { current, resume } => self.toggle(current, resume),
             PlayerMessage::Stop => Ok((Player::Stopped, stopped_effects())),
-            PlayerMessage::Hold => self.hold(),
-            PlayerMessage::Release => self.release(),
-            PlayerMessage::Seek(target) => self.seek(target),
-            PlayerMessage::SleepFired => self.sleep_fired(),
+            PlayerMessage::Hold(now) => self.hold(now),
+            PlayerMessage::Release(anchor) => self.release(anchor),
+            PlayerMessage::Seek { target, now } => self.seek(target, now),
+            PlayerMessage::SleepFired(now) => self.sleep_fired(now),
             PlayerMessage::Start { track, volume } => {
                 Ok(start(track, volume, StartOrigin::User))
             }
-            PlayerMessage::Loaded { total } => self.loaded(total),
-            PlayerMessage::Error(failure) => Ok(self.failed(&failure)),
-            PlayerMessage::Position { at, lookahead } => self.positioned(at, lookahead),
-            PlayerMessage::TrackChanged { next } => self.track_changed(next),
+            PlayerMessage::Loaded { total, anchor } => self.loaded(total, anchor),
+            PlayerMessage::Error { failure, now } => Ok(self.failed(&failure, now)),
+            PlayerMessage::Playhead { offset, lookahead } => {
+                self.positioned(offset, lookahead)
+            }
+            PlayerMessage::Reported { offset, now } => self.reported(offset, now),
+            PlayerMessage::TrackChanged { next, now } => self.track_changed(next, now),
             PlayerMessage::Ended { next, volume } => self.ended(next, volume),
         }
     }
@@ -100,6 +144,100 @@ impl Player {
             state: self,
             reason,
         })
+    }
+}
+
+pub(crate) fn account(
+    model: &mut Model,
+    message: PlayerMessage,
+    now: Moment,
+) -> Result<Cmd, Rejection> {
+    let since = playing_since(&model.player);
+    let cmd = model.player.update(message)?;
+    accumulate(&mut model.workspace, since, now);
+    let position = position_report(&cmd);
+    Ok(cmd.then(arm(model, now, position)))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PositionReport {
+    AlreadySent,
+    Pending,
+}
+
+fn position_report(cmd: &Cmd) -> PositionReport {
+    let sent = cmd
+        .effects()
+        .any(|effect| matches!(effect, Effect::System(SystemCmd::PlaybackPosition(_))));
+    if sent {
+        PositionReport::AlreadySent
+    } else {
+        PositionReport::Pending
+    }
+}
+
+pub(crate) fn lookahead(model: &Model, now: Moment) -> Lookahead {
+    let ab_loop = match model.transport.ab {
+        Some(AbLoop::Full { a, b }) => Some((a, b)),
+        Some(AbLoop::AOnly(_)) | None => None,
+    };
+    let duration = model.player.current().map_or(Duration::ZERO, |track| {
+        track.duration().unwrap_or(Duration::ZERO)
+    });
+    Lookahead {
+        preload_lead: model.transport.preload_lead,
+        ab_loop,
+        next: next_track(&model.playlist, &model.queue),
+        duration,
+        now,
+    }
+}
+
+fn next_track(playlist: &Playlist, queue: &[PlaylistIndex]) -> Option<Arc<Track>> {
+    if matches!(playlist.repeat, RepeatMode::One) {
+        return playlist.current().cloned();
+    }
+    if let Some(index) = queue.first() {
+        return playlist.tracks.get(index.get()).cloned();
+    }
+    playlist::upcoming(playlist).cloned()
+}
+
+pub(crate) fn arm(model: &Model, now: Moment, position: PositionReport) -> Cmd {
+    let Player::Playing { head, .. } = &model.player else {
+        return Cmd::None;
+    };
+    let reported = match position {
+        PositionReport::Pending => {
+            Effect::System(SystemCmd::PlaybackPosition(head.position_at(now))).into()
+        }
+        PositionReport::AlreadySent => Cmd::None,
+    };
+    let look = lookahead(model, now);
+    let timer = next_decision(*head, &look, now).map_or(Cmd::None, |delay| {
+        Effect::After {
+            delay,
+            message: Timer::Mark(Revision::UNSTAMPED),
+        }
+        .into()
+    });
+    reported.then(timer)
+}
+
+pub(crate) fn playing_since(player: &Player) -> Option<Moment> {
+    match player {
+        Player::Playing { head, .. } => Some(head.since),
+        Player::Stopped | Player::Loading { .. } | Player::Paused { .. } => None,
+    }
+}
+
+pub(crate) fn accumulate(
+    workspace: &mut Workspace,
+    since: Option<Moment>,
+    now: Moment,
+) {
+    if let Some(since) = since {
+        workspace.played_for += now.elapsed_since(since);
     }
 }
 
@@ -125,7 +263,7 @@ fn start(track: Arc<Track>, volume: Percent, origin: StartOrigin) -> (Player, Cm
         Effect::Audio(AudioCmd::Volume(volume)),
         Effect::Library(LibraryCmd::AppendHistory {
             track: Arc::clone(&track),
-            revision: Revision::UNSTAMPED,
+            at: UnixSeconds::UNSTAMPED,
         }),
         Effect::System(SystemCmd::NowPlaying(now_playing(&track))),
     ]);
@@ -154,7 +292,7 @@ fn handoff_effects(track: &Arc<Track>, playback: PlaybackChange) -> Cmd {
     let mut effects = vec![
         Effect::Library(LibraryCmd::AppendHistory {
             track: Arc::clone(track),
-            revision: Revision::UNSTAMPED,
+            at: UnixSeconds::UNSTAMPED,
         }),
         Effect::System(SystemCmd::NowPlaying(now_playing(track))),
     ];

@@ -7,6 +7,7 @@ use kernel::{
     Effect,
     Message,
     Model,
+    Moment,
     PlaybackChange,
     PlaybackRequest,
     Player,
@@ -15,12 +16,11 @@ use kernel::{
     WorkspaceRequest,
     update::update,
 };
-use rstest::rstest;
 
 use crate::support::playing_model;
 
 fn sent(model: &mut Model, message: Message) -> Cmd {
-    update(model, message).unwrap()
+    update(model, message, Moment::default()).unwrap()
 }
 
 fn scheduled(cmd: &Cmd) -> Vec<Timer> {
@@ -58,7 +58,11 @@ fn millis(value: u64) -> Duration {
 }
 
 fn position(at: Duration) -> Message {
-    Message::Audio(AudioEvent::Position(at))
+    Message::Audio(AudioEvent::Playhead(at))
+}
+
+fn moment(millis: u64) -> Moment {
+    Moment::new(Duration::from_millis(millis))
 }
 
 #[test]
@@ -152,41 +156,50 @@ fn a_cancelled_sleep_timer_changes_nothing() {
     assert_eq!(model.transport.sleep, None);
 }
 
-#[rstest]
-#[case::steady_positions_add_up(
-    vec![position(millis(100)), position(millis(200)), position(millis(300))],
-    millis(300)
-)]
-#[case::a_seek_is_not_listening(
-    vec![
-        position(millis(500)),
-        Message::Playback(PlaybackRequest::SeekTo(secs(60))),
-        position(secs(60) + millis(100)),
-    ],
-    millis(600)
-)]
-#[case::a_stale_position_racing_a_seek_is_not_listening(
-    vec![
-        position(millis(100)),
-        Message::Playback(PlaybackRequest::SeekTo(secs(60))),
-        position(millis(200)),
-        position(secs(60) + millis(100)),
-    ],
-    millis(100)
-)]
-#[case::a_track_change_starts_counting_from_zero(
-    vec![position(millis(500)), Message::Audio(AudioEvent::TrackChanged), position(millis(100))],
-    millis(600)
-)]
-fn played_for_follows_the_positions_audio_reports(
-    #[case] messages: Vec<Message>,
-    #[case] played_for: Duration,
-) {
+#[test]
+fn a_stale_mark_is_ignored() {
     let mut model = playing_model(3);
+    let armed = sent(&mut model, position(secs(50)));
+    let stale = scheduled(&armed)[0];
+    let _ = sent(&mut model, position(secs(60)));
 
-    for message in messages {
-        let _cmd = sent(&mut model, message);
-    }
+    let cmd = sent(&mut model, Message::Elapsed(stale));
 
-    assert_eq!(model.workspace.played_for, played_for);
+    assert_eq!(cmd, Cmd::None);
+}
+
+#[test]
+fn played_for_accumulates_wall_time_across_playhead_reports() {
+    let mut model = playing_model(3);
+    let _ = update(&mut model, position(millis(100)), moment(100)).unwrap();
+    let _ = update(&mut model, position(millis(200)), moment(250)).unwrap();
+    assert_eq!(model.workspace.played_for, millis(250));
+}
+
+#[test]
+fn played_for_keeps_accumulating_across_a_seek() {
+    let mut model = playing_model(3);
+    let _ = update(&mut model, position(millis(100)), moment(100)).unwrap();
+    let _ = update(
+        &mut model,
+        Message::Playback(PlaybackRequest::SeekTo(secs(60))),
+        moment(150),
+    )
+    .unwrap();
+    let _ = update(&mut model, position(secs(60) + millis(50)), moment(400)).unwrap();
+    assert_eq!(model.workspace.played_for, millis(400));
+}
+
+#[test]
+fn played_for_keeps_the_wall_time_across_a_track_change() {
+    let mut model = playing_model(3);
+    let _ = update(&mut model, position(millis(100)), moment(100)).unwrap();
+    let _ = update(
+        &mut model,
+        Message::Audio(AudioEvent::TrackChanged),
+        moment(150),
+    )
+    .unwrap();
+    let _ = update(&mut model, position(millis(50)), moment(300)).unwrap();
+    assert_eq!(model.workspace.played_for, millis(300));
 }

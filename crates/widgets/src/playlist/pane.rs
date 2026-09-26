@@ -152,6 +152,7 @@ mod tests {
     use kernel::{
         LoadedRequest,
         Message,
+        Moment,
         PlaybackRequest,
         domain::{Cursor, Favorites, Model, PlaylistIndex, ScanStatus, Track},
         playlist::Playlist,
@@ -538,14 +539,20 @@ mod tests {
         let _ = update(
             &mut model,
             Message::Playback(PlaybackRequest::ToggleShuffle),
+            Moment::default(),
         );
         let mut order: Vec<usize> = vec![0, 39];
         order.extend(1..39);
         let _ = update(
             &mut model,
             Message::Loaded(LoadedRequest::ShuffleRolled(order)),
+            Moment::default(),
         );
-        let _ = update(&mut model, Message::Playback(PlaybackRequest::Next));
+        let _ = update(
+            &mut model,
+            Message::Playback(PlaybackRequest::Next),
+            Moment::default(),
+        );
 
         let playing = model
             .playlist

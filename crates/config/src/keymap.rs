@@ -7,7 +7,7 @@ use serde::{
 };
 use strum::IntoEnumIterator;
 
-use crate::{config_file::parse, error::ConfigError};
+use crate::{config_file::parse_config, error::ConfigError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -113,7 +113,7 @@ pub struct ParsedKeymap {
 }
 
 pub fn parse_keymap(text: &str) -> Result<ParsedKeymap, ConfigError> {
-    parse(text).map(|config| ParsedKeymap {
+    parse_config(text).map(|config| ParsedKeymap {
         keymap: config.keymap.into(),
         music_dir: config.music_dir,
     })

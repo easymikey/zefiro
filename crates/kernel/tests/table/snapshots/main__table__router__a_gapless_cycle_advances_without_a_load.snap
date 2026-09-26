@@ -1,12 +1,96 @@
 ---
 source: crates/kernel/tests/table/router.rs
+assertion_line: 414
 expression: "walked(model, messages)"
 ---
 [
     (
         Audio(
-            Position(
+            Playhead(
                 95s,
+            ),
+        ),
+        One(
+            System(
+                PlaybackPosition(
+                    95s,
+                ),
+            ),
+        ),
+        Playing {
+            track: Track {
+                path: "/tmp/track0.flac",
+                duration: Some(
+                    100s,
+                ),
+                tags: Tags {
+                    title: None,
+                    artist: None,
+                    album: None,
+                    album_artist: None,
+                    date: None,
+                    genre: None,
+                    track: None,
+                    track_total: None,
+                    disc: None,
+                    composer: None,
+                    comment: None,
+                    lyrics: None,
+                },
+                audio_format: AudioFormat {
+                    format: None,
+                    bitrate_kbps: None,
+                    sample_rate_hz: None,
+                    bits_per_sample: None,
+                    channels: None,
+                    replay_gain: None,
+                },
+                display: "track0.flac",
+                tagging: Read,
+            },
+            head: Playhead {
+                offset: 95s,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
+            preload: None,
+        },
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Elapsed(
+            Mark(
+                Revision(
+                    0,
+                ),
             ),
         ),
         Batch(
@@ -23,6 +107,11 @@ expression: "walked(model, messages)"
                 Library(
                     PrefetchCover(
                         "/tmp/track1.flac",
+                    ),
+                ),
+                System(
+                    PlaybackPosition(
+                        95s,
                     ),
                 ),
             ],
@@ -58,7 +147,15 @@ expression: "walked(model, messages)"
                 display: "track0.flac",
                 tagging: Read,
             },
-            at: 95s,
+            head: Playhead {
+                offset: 95s,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
             preload: Queued(
                 Track {
                     path: "/tmp/track1.flac",
@@ -156,8 +253,8 @@ expression: "walked(model, messages)"
                             display: "track1.flac",
                             tagging: Read,
                         },
-                        revision: Revision(
-                            2,
+                        at: UnixSeconds(
+                            0,
                         ),
                     },
                 ),
@@ -190,6 +287,19 @@ expression: "walked(model, messages)"
                         Play,
                     ),
                 ),
+                System(
+                    PlaybackPosition(
+                        0ns,
+                    ),
+                ),
+                After {
+                    delay: 90s,
+                    message: Mark(
+                        Revision(
+                            2,
+                        ),
+                    ),
+                },
             ],
         ),
         Playing {
@@ -223,7 +333,15 @@ expression: "walked(model, messages)"
                 display: "track1.flac",
                 tagging: Read,
             },
-            at: 0ns,
+            head: Playhead {
+                offset: 0ns,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
             preload: None,
         },
         None,
@@ -254,8 +372,91 @@ expression: "walked(model, messages)"
     ),
     (
         Audio(
-            Position(
+            Playhead(
                 95s,
+            ),
+        ),
+        One(
+            System(
+                PlaybackPosition(
+                    95s,
+                ),
+            ),
+        ),
+        Playing {
+            track: Track {
+                path: "/tmp/track1.flac",
+                duration: Some(
+                    100s,
+                ),
+                tags: Tags {
+                    title: None,
+                    artist: None,
+                    album: None,
+                    album_artist: None,
+                    date: None,
+                    genre: None,
+                    track: None,
+                    track_total: None,
+                    disc: None,
+                    composer: None,
+                    comment: None,
+                    lyrics: None,
+                },
+                audio_format: AudioFormat {
+                    format: None,
+                    bitrate_kbps: None,
+                    sample_rate_hz: None,
+                    bits_per_sample: None,
+                    channels: None,
+                    replay_gain: None,
+                },
+                display: "track1.flac",
+                tagging: Read,
+            },
+            head: Playhead {
+                offset: 95s,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
+            preload: None,
+        },
+        None,
+        Cursor {
+            index: 1,
+            len: 3,
+        },
+        Cursor {
+            index: 1,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab: None,
+            preload_lead: 10s,
+            output: Ready,
+        },
+        None,
+    ),
+    (
+        Elapsed(
+            Mark(
+                Revision(
+                    2,
+                ),
             ),
         ),
         Batch(
@@ -272,6 +473,11 @@ expression: "walked(model, messages)"
                 Library(
                     PrefetchCover(
                         "/tmp/track2.flac",
+                    ),
+                ),
+                System(
+                    PlaybackPosition(
+                        95s,
                     ),
                 ),
             ],
@@ -307,7 +513,15 @@ expression: "walked(model, messages)"
                 display: "track1.flac",
                 tagging: Read,
             },
-            at: 95s,
+            head: Playhead {
+                offset: 95s,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
             preload: Queued(
                 Track {
                     path: "/tmp/track2.flac",

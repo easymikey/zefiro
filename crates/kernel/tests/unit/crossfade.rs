@@ -7,8 +7,10 @@ use kernel::{
     Effect,
     Message,
     Model,
+    Moment,
     PlaybackRequest,
     Preload,
+    Timer,
     update::update,
 };
 
@@ -49,10 +51,16 @@ fn preload_revision(effect: &Effect) -> Option<kernel::domain::Revision> {
 
 fn playing_three() -> Model {
     let mut model = model_with_dated_tracks(3);
-    let _ = update(&mut model, Message::Playback(PlaybackRequest::Toggle)).unwrap();
+    let _ = update(
+        &mut model,
+        Message::Playback(PlaybackRequest::Toggle),
+        Moment::default(),
+    )
+    .unwrap();
     let _ = update(
         &mut model,
         Message::Audio(AudioEvent::Loaded { total: None }),
+        Moment::default(),
     )
     .unwrap();
     model
@@ -62,12 +70,34 @@ fn playing_three() -> Model {
 fn a_tick_near_the_end_arms_the_preload() {
     let mut model = playing_three();
 
-    let early =
-        update(&mut model, Message::Audio(AudioEvent::Position(secs(50)))).unwrap();
+    let _ = update(
+        &mut model,
+        Message::Audio(AudioEvent::Playhead(secs(50))),
+        Moment::default(),
+    )
+    .unwrap();
+    let first_mark = model.mark_generation;
+    let early = update(
+        &mut model,
+        Message::Elapsed(Timer::Mark(first_mark)),
+        Moment::default(),
+    )
+    .unwrap();
     assert_eq!(preloaded(&early), None);
 
-    let late =
-        update(&mut model, Message::Audio(AudioEvent::Position(secs(95)))).unwrap();
+    let _ = update(
+        &mut model,
+        Message::Audio(AudioEvent::Playhead(secs(95))),
+        Moment::default(),
+    )
+    .unwrap();
+    let second_mark = model.mark_generation;
+    let late = update(
+        &mut model,
+        Message::Elapsed(Timer::Mark(second_mark)),
+        Moment::default(),
+    )
+    .unwrap();
     assert_eq!(preloaded(&late), Some(PathBuf::from("/tmp/track1.flac")));
     assert!(matches!(
         model.player,
@@ -81,8 +111,19 @@ fn a_tick_near_the_end_arms_the_preload() {
 #[test]
 fn the_armed_preload_is_stamped_fresh() {
     let mut model = playing_three();
-    let cmd =
-        update(&mut model, Message::Audio(AudioEvent::Position(secs(95)))).unwrap();
+    let _ = update(
+        &mut model,
+        Message::Audio(AudioEvent::Playhead(secs(95))),
+        Moment::default(),
+    )
+    .unwrap();
+    let mark = model.mark_generation;
+    let cmd = update(
+        &mut model,
+        Message::Elapsed(Timer::Mark(mark)),
+        Moment::default(),
+    )
+    .unwrap();
     let revision = cmd.effects().find_map(preload_revision);
     assert!(
         revision
@@ -93,9 +134,26 @@ fn the_armed_preload_is_stamped_fresh() {
 #[test]
 fn the_hand_off_adopts_the_preloaded_track_without_a_second_load() {
     let mut model = playing_three();
-    let _ = update(&mut model, Message::Audio(AudioEvent::Position(secs(95)))).unwrap();
+    let _ = update(
+        &mut model,
+        Message::Audio(AudioEvent::Playhead(secs(95))),
+        Moment::default(),
+    )
+    .unwrap();
+    let mark = model.mark_generation;
+    let _ = update(
+        &mut model,
+        Message::Elapsed(Timer::Mark(mark)),
+        Moment::default(),
+    )
+    .unwrap();
 
-    let cmd = update(&mut model, Message::Audio(AudioEvent::TrackChanged)).unwrap();
+    let cmd = update(
+        &mut model,
+        Message::Audio(AudioEvent::TrackChanged),
+        Moment::default(),
+    )
+    .unwrap();
 
     assert_eq!(loaded(&cmd), None);
     assert_eq!(

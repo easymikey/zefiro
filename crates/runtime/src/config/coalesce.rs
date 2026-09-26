@@ -153,7 +153,13 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use config::{CoverStyle, FormatChips, KeyHints};
-    use kernel::{Bounded, ConfigPatch, DevicePatch, Percent, domain::Crossfade};
+    use kernel::{
+        Bounded,
+        ConfigPatch,
+        DevicePatch,
+        Percent,
+        domain::{Crossfade, DeviceName, ThemeName},
+    };
 
     use crate::{
         config::{
@@ -170,27 +176,32 @@ mod tests {
     #[test]
     fn merge_config_patch_folds_disjoint_fields_and_later_field_wins() {
         let earlier = ConfigPatch::builder()
-            .theme("dark")
+            .theme(ThemeName::from_static("dark"))
             .crossfade(crossfade(1))
             .build();
         let later = ConfigPatch::builder().crossfade(crossfade(3)).build();
 
         let merged = merge_config_patch(Some(earlier), later);
 
-        assert_eq!(merged.theme.as_deref(), Some("dark"));
+        assert_eq!(merged.theme.as_ref().map(ThemeName::as_str), Some("dark"));
         assert_eq!(merged.crossfade, Some(crossfade(3)));
     }
 
     #[test]
     fn merge_config_patch_device_keep_does_not_override() {
         let earlier = ConfigPatch::builder()
-            .device(DevicePatch::Named("Speakers".into()))
+            .device(DevicePatch::Named(
+                DeviceName::new("Speakers".to_string()).unwrap(),
+            ))
             .build();
         let later = ConfigPatch::builder().device(DevicePatch::Keep).build();
 
         let merged = merge_config_patch(Some(earlier), later);
 
-        assert_eq!(merged.device, DevicePatch::Named("Speakers".into()));
+        assert_eq!(
+            merged.device,
+            DevicePatch::Named(DeviceName::new("Speakers".to_string()).unwrap())
+        );
     }
 
     #[test]
@@ -226,7 +237,12 @@ mod tests {
         let mut coalescer = coalescer(&directory);
         let start = Instant::now();
 
-        coalescer.queue(start, ConfigPatch::builder().theme("noir").build());
+        coalescer.queue(
+            start,
+            ConfigPatch::builder()
+                .theme(ThemeName::from_static("noir"))
+                .build(),
+        );
         for volume in [10u8, 20, 30, 40, 50] {
             let now = start + Duration::from_millis(u64::from(volume));
             coalescer.queue(
@@ -272,7 +288,12 @@ mod tests {
             ConfigTiming::default().save_debounce,
         );
 
-        coalescer.queue(Instant::now(), ConfigPatch::builder().theme("dark").build());
+        coalescer.queue(
+            Instant::now(),
+            ConfigPatch::builder()
+                .theme(ThemeName::from_static("dark"))
+                .build(),
+        );
         let flushed = coalescer.flush_all();
 
         let text = std::fs::read_to_string(&path).unwrap();
@@ -289,7 +310,12 @@ mod tests {
             ConfigTiming::default().save_debounce,
         );
 
-        coalescer.queue(Instant::now(), ConfigPatch::builder().theme("dark").build());
+        coalescer.queue(
+            Instant::now(),
+            ConfigPatch::builder()
+                .theme(ThemeName::from_static("dark"))
+                .build(),
+        );
         let flushed = coalescer.flush_all();
 
         assert!(matches!(

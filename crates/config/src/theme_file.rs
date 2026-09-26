@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 use crate::{
-    error::{ConfigError, named_toml},
+    error::{ConfigError, TomlFile, named_toml},
     hex::Hex,
 };
 
@@ -44,7 +44,7 @@ pub fn theme_file_name(name: &str) -> String {
 }
 
 pub fn parse_theme(source: &str, name: &str) -> Result<ThemeFile, ConfigError> {
-    named_toml(source, &theme_file_name(name))
+    named_toml(source, TomlFile::Theme(name.to_owned()))
 }
 
 #[cfg(test)]

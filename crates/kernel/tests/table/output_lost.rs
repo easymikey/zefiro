@@ -5,12 +5,13 @@ use kernel::{
     Effect,
     Message,
     Model,
+    Moment,
     Playback,
     PlaybackChange,
     PlaybackRequest,
     Player,
     SystemCmd,
-    domain::Output,
+    domain::{Output, OutputFault},
     message::{AudioEvent, AudioFailure},
     update::update,
 };
@@ -20,13 +21,13 @@ use crate::support::{first_toast_expiry, model_with_tracks, playing_model};
 
 fn output_lost() -> Message {
     Message::Audio(AudioEvent::Error(AudioFailure::OutputLost {
-        reason: "device went away".to_string(),
+        fault: OutputFault::DeviceGone,
     }))
 }
 
 fn lost_while_playing(count: usize) -> Model {
     let mut model = playing_model(count);
-    let _lost = update(&mut model, output_lost()).unwrap();
+    let _lost = update(&mut model, output_lost(), Moment::default()).unwrap();
     model
 }
 
@@ -45,7 +46,7 @@ fn lost_while_playing(count: usize) -> Model {
 #[case::stopped_only_marks_the_output(
     model_with_tracks(3),
     Cmd::Batch(vec![Effect::Animate(Cue::ToastRaised), first_toast_expiry()]),
-    "audio output stopped: device went away"
+    "Audio output lost: the device is gone"
 )]
 fn a_lost_output_is_mirrored_in_the_model(
     #[case] mut model: Model,
@@ -53,7 +54,7 @@ fn a_lost_output_is_mirrored_in_the_model(
     #[case] toast: &str,
 ) {
     let was_playing = model.player.is_playing();
-    let cmd = update(&mut model, output_lost()).unwrap();
+    let cmd = update(&mut model, output_lost(), Moment::default()).unwrap();
 
     assert_eq!(cmd, expected);
     assert!(matches!(model.transport.output, Output::Lost { .. }));
@@ -70,7 +71,12 @@ fn a_lost_output_is_mirrored_in_the_model(
 fn play_while_the_output_is_lost_loads_again_so_the_engine_reopens() {
     let mut model = lost_while_playing(3);
 
-    let cmd = update(&mut model, Message::Playback(PlaybackRequest::Play)).unwrap();
+    let cmd = update(
+        &mut model,
+        Message::Playback(PlaybackRequest::Play),
+        Moment::default(),
+    )
+    .unwrap();
 
     assert!(
         cmd.effects()
@@ -83,11 +89,17 @@ fn play_while_the_output_is_lost_loads_again_so_the_engine_reopens() {
 #[test]
 fn a_track_that_loads_after_the_reopen_clears_the_lost_output() {
     let mut model = lost_while_playing(3);
-    let _play = update(&mut model, Message::Playback(PlaybackRequest::Play)).unwrap();
+    let _play = update(
+        &mut model,
+        Message::Playback(PlaybackRequest::Play),
+        Moment::default(),
+    )
+    .unwrap();
 
     let _loaded = update(
         &mut model,
         Message::Audio(AudioEvent::Loaded { total: None }),
+        Moment::default(),
     )
     .unwrap();
 

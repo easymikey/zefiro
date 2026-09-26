@@ -1,11 +1,8 @@
 use std::{borrow::Borrow, sync::Arc};
 
-use kernel::{Playlist, Track, playlist::PlaylistFileName};
+use kernel::{LibrarySubject, Playlist, Track, playlist::PlaylistFileName};
 
-use crate::{
-    error::{LibraryError, Subject},
-    paths::LibraryPaths,
-};
+use crate::{error::LibraryError, paths::LibraryPaths};
 
 fn playlist_filename(name: &PlaylistFileName) -> String {
     format!("{}.m3u8", name.as_str())
@@ -18,7 +15,7 @@ pub fn load(
     let path = paths.playlists.join(playlist_filename(name));
     let content =
         std::fs::read_to_string(&path).map_err(|source| LibraryError::Read {
-            subject: Subject::Playlist,
+            subject: LibrarySubject::Playlist,
             path: path.clone(),
             source,
         })?;
@@ -41,13 +38,13 @@ pub(crate) fn save<Item: Borrow<Track>>(
 ) -> Result<(), LibraryError> {
     let path = paths.playlists.join(playlist_filename(name));
     crate::files::create_parent(&path).map_err(|source| LibraryError::Write {
-        subject: Subject::Playlist,
+        subject: LibrarySubject::Playlist,
         path: paths.playlists.clone(),
         source,
     })?;
     std::fs::write(&path, crate::m3u::to_string(tracks)).map_err(|source| {
         LibraryError::Write {
-            subject: Subject::Playlist,
+            subject: LibrarySubject::Playlist,
             path: path.clone(),
             source,
         }

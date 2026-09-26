@@ -3,9 +3,7 @@ use std::{
     time::Duration,
 };
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Tags {
     pub title: Option<String>,
     pub artist: Option<String>,
@@ -21,7 +19,7 @@ pub struct Tags {
     pub lyrics: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct AudioFormat {
     pub format: Option<String>,
     pub bitrate_kbps: Option<u32>,
@@ -31,13 +29,13 @@ pub struct AudioFormat {
     pub replay_gain: Option<f32>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tagging {
     Listed,
     Read,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq)]
 pub struct Track {
     path: PathBuf,
     duration: Option<Duration>,

@@ -1,5 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
+assertion_line: 414
 expression: "walked(model, messages)"
 ---
 [
@@ -392,8 +393,8 @@ expression: "walked(model, messages)"
                             display: "Beethoven — Moonlight Sonata",
                             tagging: Read,
                         },
-                        revision: Revision(
-                            2,
+                        at: UnixSeconds(
+                            0,
                         ),
                     },
                 ),

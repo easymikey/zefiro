@@ -73,7 +73,7 @@ impl MinimalCard<'_> {
             .displayed_track
             .and_then(|track| track.duration())
             .unwrap_or_default();
-        let position = self.view.player.position();
+        let position = self.view.player.position_at(self.view.now);
         let fraction = if duration.is_zero() {
             0.0
         } else {

@@ -2,26 +2,26 @@ use std::{sync::Arc, time::Duration};
 
 use crate::{
     cmd::{Cmd, PlaybackChange},
-    domain::{Pause, Percent, Player, Preload, Track},
-    update::player::{StartOrigin, Transition, seek_effect, start},
+    domain::{Moment, Pause, Player, Playhead, Preload, Track},
+    update::player::{Anchor, Resume, StartOrigin, Transition, seek_effect, start},
 };
 
 impl Player {
-    pub(super) fn toggle(
+    pub(crate) fn toggle(
         self,
         current: Option<Arc<Track>>,
-        volume: Percent,
+        resume: Resume,
     ) -> Transition {
         match self {
             Player::Stopped => current.map_or_else(
                 || Player::Stopped.refuse(),
-                |track| Ok(start(track, volume, StartOrigin::User)),
+                |track| Ok(start(track, resume.volume, StartOrigin::User)),
             ),
             loading @ Player::Loading { .. } => loading.refuse(),
-            Player::Playing { track, at, .. } => Ok((
+            Player::Playing { track, head, .. } => Ok((
                 Player::Paused {
                     track,
-                    at,
+                    at: head.position_at(resume.anchor.now),
                     pause: Pause::ByListener,
                 },
                 PlaybackChange::Pause.cued(),
@@ -29,7 +29,11 @@ impl Player {
             Player::Paused { track, at, .. } => Ok((
                 Player::Playing {
                     track,
-                    at,
+                    head: Playhead::anchored(
+                        at,
+                        resume.anchor.now,
+                        resume.anchor.speed,
+                    ),
                     preload: Preload::None,
                 },
                 PlaybackChange::Play.cued(),
@@ -37,12 +41,16 @@ impl Player {
         }
     }
 
-    pub(super) fn seek(self, target: Duration) -> Transition {
+    pub(crate) fn seek(self, target: Duration, now: Moment) -> Transition {
         match self {
-            Player::Playing { track, preload, .. } => Ok((
+            Player::Playing {
+                track,
+                head,
+                preload,
+            } => Ok((
                 Player::Playing {
                     track,
-                    at: target,
+                    head: Playhead::anchored(target, now, head.speed),
                     preload: preload.seek_reset(),
                 },
                 seek_effect(target),
@@ -59,12 +67,12 @@ impl Player {
         }
     }
 
-    pub(super) fn sleep_fired(self) -> Transition {
+    pub(crate) fn sleep_fired(self, now: Moment) -> Transition {
         match self {
-            Player::Playing { track, at, .. } => Ok((
+            Player::Playing { track, head, .. } => Ok((
                 Player::Paused {
                     track,
-                    at,
+                    at: head.position_at(now),
                     pause: Pause::ByListener,
                 },
                 PlaybackChange::Pause.cued(),
@@ -75,12 +83,12 @@ impl Player {
         }
     }
 
-    pub(super) fn hold(self) -> Transition {
+    pub(crate) fn hold(self, now: Moment) -> Transition {
         match self {
-            Player::Playing { track, at, .. } => Ok((
+            Player::Playing { track, head, .. } => Ok((
                 Player::Paused {
                     track,
-                    at,
+                    at: head.position_at(now),
                     pause: Pause::ByOverlay,
                 },
                 PlaybackChange::Pause.cued(),
@@ -91,7 +99,7 @@ impl Player {
         }
     }
 
-    pub(super) fn release(self) -> Transition {
+    pub(crate) fn release(self, anchor: Anchor) -> Transition {
         match self {
             Player::Paused {
                 track,
@@ -100,7 +108,7 @@ impl Player {
             } => Ok((
                 Player::Playing {
                     track,
-                    at,
+                    head: Playhead::anchored(at, anchor.now, anchor.speed),
                     preload: Preload::None,
                 },
                 PlaybackChange::Play.cued(),

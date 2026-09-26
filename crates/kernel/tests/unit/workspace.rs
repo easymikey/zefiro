@@ -1,8 +1,10 @@
 use kernel::{
     Cmd,
+    ConfigFact,
     Cue,
     Effect,
     Message,
+    Moment,
     Timer,
     WorkspaceRequest,
     domain::{
@@ -15,6 +17,7 @@ use kernel::{
         Model,
         Revision,
         TOAST_LIFETIME,
+        ThemeName,
         Toast,
     },
     update::update,
@@ -23,19 +26,19 @@ use rstest::rstest;
 
 use crate::support::first_toast_expiry;
 
-fn reduce(model: &mut Model, request: WorkspaceRequest) -> Cmd {
-    update(model, Message::Workspace(request)).unwrap()
+fn reduce(model: &mut Model, message: Message) -> Cmd {
+    update(model, message, Moment::default()).unwrap()
 }
 
-fn fail(source: ConfigSource, text: &str) -> WorkspaceRequest {
-    WorkspaceRequest::SourceFailed {
+fn fail(source: ConfigSource, text: &str) -> ConfigFact {
+    ConfigFact::SourceFailed {
         source,
         text: text.to_string(),
     }
 }
 
-fn recovered(source: ConfigSource) -> WorkspaceRequest {
-    WorkspaceRequest::SourceRecovered(source)
+fn recovered(source: ConfigSource) -> ConfigFact {
+    ConfigFact::SourceRecovered(source)
 }
 
 fn has_raised_a_toast(cmd: &Cmd) -> bool {
@@ -54,7 +57,10 @@ fn showing_a_toast_installs_it_and_clearing_takes_it_away() {
     assert!(model.workspace.toast.is_none());
 
     let toast = Toast::error("boom".into());
-    let cmd = reduce(&mut model, WorkspaceRequest::ShowToast(toast.clone()));
+    let cmd = reduce(
+        &mut model,
+        Message::Workspace(WorkspaceRequest::ShowToast(toast.clone())),
+    );
     assert_eq!(model.workspace.toast, Some(toast));
     assert_eq!(
         cmd,
@@ -64,7 +70,7 @@ fn showing_a_toast_installs_it_and_clearing_takes_it_away() {
         ])
     );
 
-    let cleared = reduce(&mut model, WorkspaceRequest::ClearToast);
+    let cleared = reduce(&mut model, Message::Workspace(WorkspaceRequest::ClearToast));
     assert!(model.workspace.toast.is_none());
     assert!(matches!(cleared, Cmd::None));
 }
@@ -75,7 +81,7 @@ fn a_shown_toast_schedules_its_expiry_after_the_one_lifetime() {
 
     let cmd = reduce(
         &mut model,
-        WorkspaceRequest::ShowToast(Toast::error("boom".into())),
+        Message::Workspace(WorkspaceRequest::ShowToast(Toast::error("boom".into()))),
     );
 
     assert!(cmd.effects().any(|effect| *effect
@@ -90,10 +96,19 @@ fn a_shown_toast_schedules_its_expiry_after_the_one_lifetime() {
 fn a_source_failing_again_with_the_same_words_does_not_raise_a_second_toast() {
     let mut model = Model::default();
 
-    let first = reduce(&mut model, fail(ConfigSource::Theme, "Theme: boom"));
+    let first = reduce(
+        &mut model,
+        Message::Config(fail(ConfigSource::Theme, "Theme: boom")),
+    );
     model.workspace.toast = None;
-    let repeat = reduce(&mut model, fail(ConfigSource::Theme, "Theme: boom"));
-    let changed = reduce(&mut model, fail(ConfigSource::Theme, "Theme: worse"));
+    let repeat = reduce(
+        &mut model,
+        Message::Config(fail(ConfigSource::Theme, "Theme: boom")),
+    );
+    let changed = reduce(
+        &mut model,
+        Message::Config(fail(ConfigSource::Theme, "Theme: worse")),
+    );
 
     assert!(has_raised_a_toast(&first), "{first:?}");
     assert!(matches!(repeat, Cmd::None));
@@ -110,7 +125,7 @@ fn keys_reloaded_installs_the_merged_table() {
     let config = KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]);
     let cmd = reduce(
         &mut model,
-        WorkspaceRequest::KeymapReloaded(Box::new(config.clone())),
+        Message::Config(ConfigFact::KeymapReloaded(Box::new(config.clone()))),
     );
     assert_eq!(model.workspace.keymap.config(), &config);
     assert!(matches!(cmd, Cmd::None));
@@ -118,32 +133,38 @@ fn keys_reloaded_installs_the_merged_table() {
 
 #[rstest]
 #[case::a_failing_source_shows_its_own_text(
-    &[fail(ConfigSource::Theme, "Theme: boom")],
+    &[Message::Config(fail(ConfigSource::Theme, "Theme: boom"))],
     Some("Theme: boom")
 )]
 #[case::recovery_clears_the_toast_it_put_up(
-    &[fail(ConfigSource::Theme, "Theme: boom"), recovered(ConfigSource::Theme)],
+    &[
+        Message::Config(fail(ConfigSource::Theme, "Theme: boom")),
+        Message::Config(recovered(ConfigSource::Theme)),
+    ],
     None
 )]
 #[case::recovery_clears_without_reviving_another_sources_words(
     &[
-        fail(ConfigSource::Keymap, "Keymap: bad chord"),
-        fail(ConfigSource::Theme, "Theme: boom"),
-        recovered(ConfigSource::Theme),
+        Message::Config(fail(ConfigSource::Keymap, "Keymap: bad chord")),
+        Message::Config(fail(ConfigSource::Theme, "Theme: boom")),
+        Message::Config(recovered(ConfigSource::Theme)),
     ],
     None
 )]
 #[case::recovery_of_a_source_nobody_is_showing_keeps_the_toast(
     &[
-        fail(ConfigSource::Theme, "Theme: boom"),
-        fail(ConfigSource::Appearance, "UI: broken"),
-        recovered(ConfigSource::Theme),
+        Message::Config(fail(ConfigSource::Theme, "Theme: boom")),
+        Message::Config(fail(ConfigSource::Appearance, "UI: broken")),
+        Message::Config(recovered(ConfigSource::Theme)),
     ],
     Some("UI: broken")
 )]
-#[case::recovery_without_a_failure_disturbs_nothing(&[recovered(ConfigSource::Theme)], None)]
+#[case::recovery_without_a_failure_disturbs_nothing(
+    &[Message::Config(recovered(ConfigSource::Theme))],
+    None
+)]
 fn source_errors_decide_which_toast_is_on_screen(
-    #[case] requests: &[WorkspaceRequest],
+    #[case] requests: &[Message],
     #[case] expected: Option<&str>,
 ) {
     let mut model = Model::default();
@@ -168,10 +189,10 @@ fn a_config_failure_shows_the_kernels_own_words() {
 
     let cmd = reduce(
         &mut model,
-        WorkspaceRequest::ConfigFailed(ConfigFailure::Unreadable {
+        Message::Config(ConfigFact::Failed(ConfigFailure::Unreadable {
             file: ConfigFile::Appearance,
             detail: "permission denied".to_string(),
-        }),
+        })),
     );
 
     assert!(has_raised_a_toast(&cmd), "{cmd:?}");
@@ -189,9 +210,12 @@ fn a_repeated_config_failure_still_raises_its_own_toast() {
         detail: "disk full".to_string(),
     };
 
-    let _first = reduce(&mut model, WorkspaceRequest::ConfigFailed(failure.clone()));
+    let _first = reduce(
+        &mut model,
+        Message::Config(ConfigFact::Failed(failure.clone())),
+    );
     model.workspace.toast = None;
-    let second = reduce(&mut model, WorkspaceRequest::ConfigFailed(failure));
+    let second = reduce(&mut model, Message::Config(ConfigFact::Failed(failure)));
 
     assert!(
         has_raised_a_toast(&second),
@@ -218,11 +242,17 @@ fn theme_reloaded_leaves_the_toast_alone() {
     let mut model = Model::default();
     model.workspace.toast = Some(Toast::error("Theme: boom".into()));
 
-    let cmd = reduce(&mut model, WorkspaceRequest::ThemeReloaded);
+    let cmd = reduce(
+        &mut model,
+        Message::Config(ConfigFact::ThemeReloaded(ThemeName::from_static("noir"))),
+    );
 
     assert_eq!(
         model.workspace.toast,
         Some(Toast::error("Theme: boom".into()))
     );
-    assert!(matches!(cmd, Cmd::One(Effect::Animate(Cue::ThemeChanged))));
+    assert!(
+        cmd.effects()
+            .any(|effect| matches!(effect, Effect::Animate(Cue::ThemeChanged)))
+    );
 }

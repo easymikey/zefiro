@@ -101,7 +101,18 @@ mod tests {
     use config::{AppearanceFile, Hex, ThemeColors};
     use image::{Rgba, RgbaImage};
     use kernel::{
-        domain::{AudioFormat, KeymapOverrides, Model, Player, Preload, Tags, Track},
+        Moment,
+        domain::{
+            AudioFormat,
+            KeymapOverrides,
+            Model,
+            Player,
+            Playhead,
+            Preload,
+            Speed,
+            Tags,
+            Track,
+        },
         update::keymap::Bindings,
     };
     use ratatui::layout::Rect;
@@ -161,7 +172,11 @@ mod tests {
         Model {
             player: Player::Playing {
                 track,
-                at: Duration::from_secs(position_secs),
+                head: Playhead::anchored(
+                    Duration::from_secs(position_secs),
+                    Moment::default(),
+                    Speed::default(),
+                ),
                 preload: Preload::None,
             },
             ..Model::default()
@@ -199,6 +214,7 @@ mod tests {
                 cell_aspect: CellAspect::default(),
                 clock: Duration::ZERO,
                 now_unix: 0,
+                now: Moment::default(),
                 music_dir: "/music",
                 sleep_left: None,
             }

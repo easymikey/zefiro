@@ -3,12 +3,22 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use crate::domain::{
     Crossfade,
     CustomSetting,
+    DeviceName,
     Percent,
     PlaylistIndex,
     Replaygain,
+    ThemeChoice,
+    ThemeName,
     Track,
     playlist::PlaylistSource,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Shuffle {
+    #[default]
+    Disabled,
+    Enabled,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Startup {
@@ -16,13 +26,13 @@ pub struct Startup {
     pub playlist_tracks: Vec<Arc<Track>>,
     pub playlist_index: Option<PlaylistIndex>,
     pub playlist_source: PlaylistSource,
-    pub shuffle_order: Option<Vec<usize>>,
+    pub shuffle: Shuffle,
     pub crossfade: Crossfade,
     pub replaygain: Replaygain,
-    pub output_device: Option<String>,
+    pub output_device: Option<DeviceName>,
     pub sleep_presets: Box<[Duration]>,
-    pub theme: String,
+    pub theme: ThemeChoice,
     pub volume: Percent,
-    pub themes: Vec<String>,
+    pub themes: Vec<ThemeName>,
     pub custom_rows: Vec<CustomSetting>,
 }

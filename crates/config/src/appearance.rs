@@ -1,3 +1,4 @@
+use kernel::domain::ThemeName;
 use serde::{Deserialize, Deserializer};
 use strum::{EnumIter, EnumString, IntoEnumIterator};
 
@@ -150,10 +151,10 @@ pub enum AppearancePreset {
 
 impl AppearancePreset {
     #[must_use]
-    pub const fn theme(self) -> Option<&'static str> {
+    pub const fn theme(self) -> Option<ThemeName> {
         match self {
             AppearancePreset::Default => None,
-            AppearancePreset::Noir => Some("noir"),
+            AppearancePreset::Noir => Some(ThemeName::from_static("noir")),
         }
     }
 }
@@ -254,7 +255,10 @@ mod tests {
         #[case] preset: AppearancePreset,
         #[case] theme: Option<&str>,
     ) {
-        assert_eq!(preset.theme(), theme);
+        assert_eq!(
+            preset.theme().map(|name| name.as_str().to_string()),
+            theme.map(str::to_string)
+        );
     }
 
     #[rstest]

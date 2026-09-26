@@ -40,6 +40,10 @@ fn run() -> Result<(), Error> {
     let (startup, paths) = startup::boot()?;
     let hardware = Hardware::system(&startup);
     let runtime = Runtime::boot(startup, paths, hardware)?;
+    runtime::host(runtime, body).map_err(Error::from)?
+}
+
+fn body(runtime: Runtime) -> Result<(), Error> {
     let mut session = TerminalSession::enter()?;
     let upgrade = capability_upgrade();
 
@@ -62,15 +66,7 @@ fn capability_upgrade() -> Option<ProbeAnswer> {
 }
 
 fn spawn_terminal_input(shell_input: crossbeam_channel::Sender<ShellInput>) {
-    let (terminal_sender, terminal_receiver) = unbounded();
-    thread::spawn(move || InputLoop.run(&terminal_sender));
-    thread::spawn(move || {
-        for event in terminal_receiver.iter() {
-            if shell_input.send(ShellInput::Terminal(event)).is_err() {
-                return;
-            }
-        }
-    });
+    thread::spawn(move || InputLoop.run(ShellInput::Terminal, &shell_input));
 }
 
 fn with_worker_panic(result: Result<(), Error>) -> Result<(), Error> {

@@ -3,19 +3,22 @@ use std::time::Duration;
 use kernel::{
     BrowseRequest,
     Cmd,
+    ConfigFact,
     Cue,
     Effect,
-    LoadedRequest,
+    LibraryFact,
     Message,
     Model,
+    Moment,
     OverlayName,
     OverlayRequest,
     PlaybackChange,
     PlaybackRequest,
+    SystemEvent,
     Timer,
     Toast,
     WorkspaceRequest,
-    domain::{Bounded, Percent, PlaylistIndex, Revision},
+    domain::{Bounded, Percent, PlaylistIndex, Revision, ThemeName},
     message::AudioEvent,
     update::update,
 };
@@ -26,7 +29,7 @@ use crate::support::{model_with_tracks, playing_model, router::moon_library_scan
 fn cues(model: &mut Model, messages: Vec<Message>) -> Vec<Cue> {
     let mut seen = Vec::new();
     for message in messages {
-        let cmd = update(model, message).unwrap();
+        let cmd = update(model, message, Moment::default()).unwrap();
         seen.extend(found(&cmd));
     }
     seen
@@ -44,6 +47,7 @@ fn found(cmd: &Cmd) -> Vec<Cue> {
             | Effect::RollShuffle { .. }
             | Effect::Setting { .. }
             | Effect::After { .. }
+            | Effect::Restart(_)
             | Effect::Quit => None,
         })
         .collect()
@@ -113,7 +117,7 @@ fn toasted() -> Message {
 )]
 #[case::the_system_raising_the_volume_raises_a_cue(
     model_with_tracks(3),
-    vec![Message::SystemVolume(Percent::clamped(60))],
+    vec![Message::System(SystemEvent::Volume(Percent::clamped(60)))],
     Cue::VolumeChanged
 )]
 #[case::trashing_a_track_raises_a_cue(
@@ -123,12 +127,12 @@ fn toasted() -> Message {
 )]
 #[case::reloading_the_theme_raises_a_cue(
     model_with_tracks(3),
-    vec![Message::Workspace(WorkspaceRequest::ThemeReloaded)],
+    vec![Message::Config(ConfigFact::ThemeReloaded(ThemeName::from_static("noir")))],
     Cue::ThemeChanged
 )]
 #[case::the_library_landing_raises_a_cue(
     Model::default(),
-    vec![Message::Loaded(LoadedRequest::LibraryLoaded {
+    vec![Message::Library(LibraryFact::Loaded {
         tracks: Vec::new(),
         revision: Revision::default(),
     })],
@@ -149,7 +153,9 @@ fn a_transition_raises_its_cue(
 #[rstest]
 #[case::the_system_echoing_a_volume_stays_silent(
     model_with_tracks(3),
-    vec![Message::SystemVolume(model_with_tracks(3).transport.volume)]
+    vec![Message::System(SystemEvent::Volume(
+        model_with_tracks(3).transport.volume
+    ))]
 )]
 #[case::a_toast_timer_without_a_toast_stays_silent(
     model_with_tracks(3),
@@ -167,17 +173,17 @@ fn a_non_transition_stays_silent(
 #[case::the_next_key(vec![
     Message::Playback(PlaybackRequest::Next),
     Message::Audio(AudioEvent::Loaded { total: None }),
-    Message::Audio(AudioEvent::Position(Duration::from_millis(100))),
+    Message::Audio(AudioEvent::Playhead(Duration::from_millis(100))),
 ])]
 #[case::a_gapless_handoff(vec![
-    Message::Audio(AudioEvent::Position(Duration::from_millis(100))),
+    Message::Audio(AudioEvent::Playhead(Duration::from_millis(100))),
     Message::Audio(AudioEvent::TrackChanged),
-    Message::Audio(AudioEvent::Position(Duration::from_millis(10))),
+    Message::Audio(AudioEvent::Playhead(Duration::from_millis(10))),
 ])]
 #[case::the_track_running_out(vec![
     Message::Audio(AudioEvent::Ended),
     Message::Audio(AudioEvent::Loaded { total: None }),
-    Message::Audio(AudioEvent::Position(Duration::from_millis(10))),
+    Message::Audio(AudioEvent::Playhead(Duration::from_millis(10))),
 ])]
 fn one_track_change_cues_one_sweep_and_one_chip_pulse(#[case] messages: Vec<Message>) {
     let seen = cues(&mut playing_model(3), messages);

@@ -1,15 +1,18 @@
 use crate::{
     cmd::{AudioCmd, Cmd, ConfigCmd, ConfigPatch, DevicePatch, Effect},
     domain::{
+        Choice,
         CustomSetting,
         Model,
         Nudge,
         Replaygain,
         SLEEP_PRESET_BUNDLES,
-        SettingControl,
         SettingId,
         SettingRow,
         Settings,
+        ThemeChoice,
+        ThemeName,
+        Themes,
     },
     update::{
         machine::{Machine, Never, Rejected},
@@ -65,7 +68,7 @@ pub(super) fn adjust(
     match row.target(nudge) {
         Target::Custom(id) => Ok(custom_nudged(custom_rows, id, nudge)),
         Target::Setting(message) => Ok(settings.update(message)?),
-        Target::Theme(nudge) => Ok(theme_picked(themes, settings, nudge)),
+        Target::Theme(nudge) => Ok(theme_picked(themes, nudge)),
     }
 }
 
@@ -74,64 +77,44 @@ fn custom_nudged(
     id: SettingId,
     nudge: Nudge,
 ) -> Cmd {
-    let Some(slot) = custom_rows.iter_mut().find(|slot| slot.id == id) else {
+    let Some(slot) = custom_rows.iter_mut().find(|slot| slot.spec.id == id) else {
         return Cmd::None;
     };
-    slot.position = next_position(slot.control, slot.position, nudge);
-    let setting = Cmd::from(Effect::Setting {
-        id,
-        position: slot.position,
-    });
+    let option = slot.choice.nudged(slot.spec.control, nudge);
+    slot.choice = Choice::Option(option);
+    let setting = Cmd::from(Effect::Setting { id, option });
     let theme = slot
+        .spec
         .themes
-        .get(slot.position)
-        .copied()
+        .get(option.get())
+        .cloned()
         .flatten()
         .map(|name| {
-            Cmd::from(Effect::Config(ConfigCmd::SelectTheme(name.to_string())))
+            Cmd::from(Effect::Config(ConfigCmd::SelectTheme(ThemeChoice::Named(
+                name,
+            ))))
         });
-    let cue = slot.cue.map(Cmd::from);
+    let cue = slot.spec.cue.map(Cmd::from);
     [Some(setting), theme, cue]
         .into_iter()
         .flatten()
         .fold(Cmd::None, Cmd::then)
 }
 
-fn next_position(control: SettingControl, position: usize, nudge: Nudge) -> usize {
-    match control {
-        SettingControl::Toggle => wrapped_index(position, delta(nudge), 2),
-        SettingControl::Cycle(len) if position >= len => 0,
-        SettingControl::Cycle(len) => wrapped_index(position, delta(nudge), len),
-        SettingControl::Step => match nudge {
-            Nudge::Up => position.saturating_add(1),
-            Nudge::Down => position.saturating_sub(1),
-        },
-    }
-}
-
-fn theme_picked(themes: &[String], settings: &mut Settings, nudge: Nudge) -> Cmd {
-    if themes.is_empty() {
-        return Cmd::None;
-    }
-    let current = themes
-        .iter()
-        .position(|name| name == &settings.theme)
-        .unwrap_or(0);
-    let next_index = wrapped_index(current, delta(nudge), themes.len());
-    let Some(next) = themes.get(next_index).cloned() else {
+fn theme_picked(themes: &mut Themes, nudge: Nudge) -> Cmd {
+    let Some(next) = themes.nudged(nudge) else {
         return Cmd::None;
     };
-    let picked = theme_effects(next.clone());
-    settings.theme = next;
-    picked
+    themes.selected = ThemeChoice::Named(next.clone());
+    theme_effects(next)
 }
 
-fn theme_effects(name: String) -> Cmd {
+fn theme_effects(name: ThemeName) -> Cmd {
     Cmd::Batch(vec![
         Effect::Config(ConfigCmd::Save(
             ConfigPatch::builder().theme(name.clone()).build(),
         )),
-        Effect::Config(ConfigCmd::SelectTheme(name)),
+        Effect::Config(ConfigCmd::SelectTheme(ThemeChoice::Named(name))),
     ])
 }
 

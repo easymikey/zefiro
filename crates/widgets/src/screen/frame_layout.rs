@@ -1,12 +1,14 @@
-use config::{CoverStyle, KeyHints, appearance_file::WindowConfig};
-use kernel::domain::Overlay;
+use config::{BreakpointsConfig, CoverStyle, KeyHints, WindowConfig};
 use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::{
     card::{self, CardMetrics, compact_height},
-    overlay::{layer::OverlayLayer, modal::OverlayAreas},
+    geometry::{CellAspect, CoverSizing},
+    overlay::{
+        layer::{OverlayContent, OverlayLayer},
+        modal::OverlayAreas,
+    },
     playlist::{PlaylistAreas, PlaylistPane},
-    scene::Scene,
     screen::Breakpoint,
     toast::{ToastAreas, ToastCard},
 };
@@ -14,6 +16,18 @@ use crate::{
 const MAX_WIDTH: u16 = 100;
 const MARGIN: u16 = 1;
 const KEY_HINTS_ROWS: u16 = 1;
+
+#[derive(Debug, Clone, Copy)]
+pub struct LayoutInputs<'a> {
+    pub breakpoints: &'a BreakpointsConfig,
+    pub window: WindowConfig,
+    pub cell_aspect: CellAspect,
+    pub cover_sizing: CoverSizing,
+    pub cover_style: CoverStyle,
+    pub(crate) playlist: Option<PlaylistPane<'a>>,
+    pub(crate) overlay: OverlayContent<'a>,
+    pub(crate) toast: Option<ToastCard<'a>>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameLayout {
@@ -33,21 +47,22 @@ pub struct FrameLayout {
 
 impl FrameLayout {
     #[must_use]
-    pub fn new(scene: &Scene<'_>, screen: Rect) -> Self {
-        let body = body(scene, screen);
+    pub fn new(inputs: &LayoutInputs<'_>, screen: Rect) -> Self {
+        let body = body(inputs, screen);
         if body.breakpoint == Breakpoint::TooSmall {
             return body;
         }
         Self {
-            overlay: overlay_layer(scene, &body).areas(screen),
-            toast: toast_card(scene).and_then(|toast| toast.areas(screen)),
+            overlay: OverlayLayer::placed(inputs.overlay, &body, inputs.cover_style)
+                .areas(screen),
+            toast: inputs.toast.and_then(|toast| toast.areas(screen)),
             ..body
         }
     }
 
     #[must_use]
-    pub fn avoid(&self, scene: &Scene<'_>) -> Option<Rect> {
-        match scene.cover_style() {
+    pub fn avoid(&self, cover_style: CoverStyle) -> Option<Rect> {
+        match cover_style {
             CoverStyle::Vinyl | CoverStyle::Plain => self.cover,
             CoverStyle::Milkdrop | CoverStyle::Off => None,
         }
@@ -106,11 +121,11 @@ fn search_bounds(content: Rect, header_rows: u16, hint_rows: u16) -> Rect {
     }
 }
 
-fn body(scene: &Scene<'_>, screen: Rect) -> FrameLayout {
-    let breakpoint = Breakpoint::new(screen.as_size(), &scene.appearance.layout);
+fn body(inputs: &LayoutInputs<'_>, screen: Rect) -> FrameLayout {
+    let breakpoint = Breakpoint::new(screen.as_size(), inputs.breakpoints);
     let content = content_area(screen);
     let header_rows = header_rows(breakpoint);
-    let hint_rows = key_hint_rows(scene.appearance.window);
+    let hint_rows = key_hint_rows(inputs.window);
     let [header, pane, hints] = content.layout(&Layout::vertical([
         Constraint::Length(header_rows),
         Constraint::Min(0),
@@ -128,19 +143,23 @@ fn body(scene: &Scene<'_>, screen: Rect) -> FrameLayout {
             content,
             header,
             playlist_pane: pane,
-            playlist: playlist(scene, pane),
+            playlist: playlist(inputs, pane),
             key_hints: (hint_rows > 0).then_some(hints),
             search_bounds,
-            ..card_areas(scene, header, empty(screen, breakpoint))
+            ..card_areas(inputs, header, empty(screen, breakpoint))
         },
     }
 }
 
-fn card_areas(scene: &Scene<'_>, header: Rect, layout: FrameLayout) -> FrameLayout {
+fn card_areas(
+    inputs: &LayoutInputs<'_>,
+    header: Rect,
+    layout: FrameLayout,
+) -> FrameLayout {
     if layout.breakpoint != Breakpoint::Full {
         return layout;
     }
-    let metrics = card::metrics(header, scene.cell_aspect, scene.cover_sizing());
+    let metrics = card::metrics(header, inputs.cell_aspect, inputs.cover_sizing);
     FrameLayout {
         card: Some(metrics),
         cover: Some(metrics.cover_square).filter(|cover| !cover.is_empty()),
@@ -148,53 +167,20 @@ fn card_areas(scene: &Scene<'_>, header: Rect, layout: FrameLayout) -> FrameLayo
     }
 }
 
-fn playlist(scene: &Scene<'_>, pane: Rect) -> Option<PlaylistAreas> {
-    let taken = matches!(
-        scene.model.workspace.overlay,
-        Some(Overlay::Search(_) | Overlay::History(_))
-    );
-    if taken || pane.is_empty() {
+fn playlist(inputs: &LayoutInputs<'_>, pane: Rect) -> Option<PlaylistAreas> {
+    if pane.is_empty() {
         return None;
     }
-    let playlist = PlaylistPane {
-        view: scene.playlist_view(),
-        theme: scene.active_theme(),
-    };
+    let playlist = inputs.playlist?;
     Some(playlist.areas(pane))
-}
-
-pub(crate) fn overlay_layer<'a>(
-    scene: &Scene<'a>,
-    layout: &FrameLayout,
-) -> OverlayLayer<'a> {
-    let model = scene.model;
-    OverlayLayer {
-        workspace: &model.workspace,
-        theme: scene.active_theme(),
-        tracks: &model.playlist.tracks,
-        history: &model.history.view,
-        settings_view: scene.settings_view(),
-        bindings: scene.bindings,
-        avoid: layout.avoid(scene),
-        playlist_pane: layout.playlist_pane,
-        search_bounds: layout.search_bounds,
-        now_unix: scene.now_unix,
-    }
-}
-
-pub(crate) fn toast_card<'a>(scene: &Scene<'a>) -> Option<ToastCard<'a>> {
-    let toast = scene.model.workspace.toast.as_ref()?;
-    Some(ToastCard {
-        toast,
-        theme: scene.active_theme(),
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use config::CoverStyle;
-    use kernel::domain::{CursorOver, Overlay, SearchQuery, Toast};
+    use kernel::domain::{CursorOver, Overlay, SearchQuery, SettingsCursor, Toast};
     use ratatui::layout::Rect;
+    use rstest::rstest;
 
     use crate::{
         overlay::modal::OverlayAreas,
@@ -221,11 +207,11 @@ mod tests {
     fn a_full_frame_with_pixels_holds_the_card_and_the_cover() {
         let sources = SceneSources::new(model_with_tracks(3));
         let scene = with_pixels(sources.scene());
-        let layout = FrameLayout::new(&scene, screen());
+        let layout = FrameLayout::new(&scene.layout_inputs(), screen());
         let card = layout.card.unwrap();
         assert_eq!(layout.breakpoint, Breakpoint::Full);
         assert_eq!(layout.cover, Some(card.cover_square));
-        assert_eq!(layout.avoid(&scene), layout.cover);
+        assert_eq!(layout.avoid(scene.cover_style()), layout.cover);
         assert!(layout.playlist.is_some());
         assert!(layout.key_hints.is_some());
     }
@@ -233,7 +219,7 @@ mod tests {
     #[test]
     fn without_pixels_there_is_no_cover() {
         let sources = SceneSources::new(model_with_tracks(3));
-        let layout = FrameLayout::new(&sources.scene(), screen());
+        let layout = FrameLayout::new(&sources.scene().layout_inputs(), screen());
         assert!(layout.card.is_some());
         assert_eq!(layout.cover, None);
     }
@@ -243,9 +229,9 @@ mod tests {
         let mut sources = SceneSources::new(model_with_tracks(3));
         sources.appearance.cover.style = CoverStyle::Milkdrop;
         let scene = sources.scene();
-        let layout = FrameLayout::new(&scene, screen());
+        let layout = FrameLayout::new(&scene.layout_inputs(), screen());
         assert!(layout.cover.is_some());
-        assert_eq!(layout.avoid(&scene), None);
+        assert_eq!(layout.avoid(scene.cover_style()), None);
     }
 
     #[test]
@@ -254,7 +240,7 @@ mod tests {
         model.workspace.overlay =
             Some(Overlay::Search(CursorOver::new(SearchQuery::default(), 0)));
         let sources = SceneSources::new(model);
-        let layout = FrameLayout::new(&sources.scene(), screen());
+        let layout = FrameLayout::new(&sources.scene().layout_inputs(), screen());
         assert_eq!(layout.playlist, None);
         assert_eq!(
             layout.overlay.map(OverlayAreas::painted),
@@ -267,7 +253,9 @@ mod tests {
         let mut model = model_with_tracks(3);
         model.workspace.toast = Some(Toast::info("Saved".to_string()));
         let sources = SceneSources::new(model);
-        let toast = FrameLayout::new(&sources.scene(), screen()).toast.unwrap();
+        let toast = FrameLayout::new(&sources.scene().layout_inputs(), screen())
+            .toast
+            .unwrap();
         assert_eq!(toast.outer.y, 0);
         assert_eq!(toast.outer.right(), screen().right());
     }
@@ -277,10 +265,76 @@ mod tests {
         let mut model = model_with_tracks(3);
         model.workspace.toast = Some(Toast::info("Saved".to_string()));
         let sources = SceneSources::new(model);
-        let layout = FrameLayout::new(&sources.scene(), Rect::new(0, 0, 40, 10));
+        let layout =
+            FrameLayout::new(&sources.scene().layout_inputs(), Rect::new(0, 0, 40, 10));
         assert_eq!(layout.breakpoint, Breakpoint::TooSmall);
         assert_eq!(layout.card, None);
         assert_eq!(layout.playlist, None);
         assert_eq!(layout.toast, None);
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum PlaylistPresence {
+        Shown,
+        Hidden,
+    }
+
+    #[rstest]
+    #[case::no_overlay(None, screen(), PlaylistPresence::Shown)]
+    #[case::search(
+        Some(Overlay::Search(CursorOver::new(SearchQuery::default(), 0))),
+        screen(),
+        PlaylistPresence::Hidden
+    )]
+    #[case::history(
+        Some(Overlay::History(CursorOver::new((), 0))),
+        screen(),
+        PlaylistPresence::Hidden
+    )]
+    #[case::settings(
+        Some(Overlay::Settings(SettingsCursor::default())),
+        screen(),
+        PlaylistPresence::Shown
+    )]
+    #[case::empty_pane(None, Rect::new(0, 0, 40, 10), PlaylistPresence::Hidden)]
+    fn layout_inputs_hide_the_playlist_under_a_taking_overlay(
+        #[case] overlay: Option<Overlay>,
+        #[case] area: Rect,
+        #[case] presence: PlaylistPresence,
+    ) {
+        let mut model = model_with_tracks(3);
+        model.workspace.overlay = overlay;
+        let sources = SceneSources::new(model);
+        let layout = FrameLayout::new(&sources.scene().layout_inputs(), area);
+        match presence {
+            PlaylistPresence::Shown => assert!(layout.playlist.is_some()),
+            PlaylistPresence::Hidden => assert!(layout.playlist.is_none()),
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum CoverAvoidance {
+        Avoided,
+        Ignored,
+    }
+
+    #[rstest]
+    #[case::vinyl(CoverStyle::Vinyl, CoverAvoidance::Avoided)]
+    #[case::plain(CoverStyle::Plain, CoverAvoidance::Avoided)]
+    #[case::milkdrop(CoverStyle::Milkdrop, CoverAvoidance::Ignored)]
+    #[case::off(CoverStyle::Off, CoverAvoidance::Ignored)]
+    fn avoid_follows_the_cover_style(
+        #[case] style: CoverStyle,
+        #[case] avoidance: CoverAvoidance,
+    ) {
+        let mut sources = SceneSources::new(model_with_tracks(3));
+        sources.appearance.cover.style = style;
+        let scene = with_pixels(sources.scene());
+        let layout = FrameLayout::new(&scene.layout_inputs(), screen());
+        let expected = match avoidance {
+            CoverAvoidance::Avoided => layout.cover,
+            CoverAvoidance::Ignored => None,
+        };
+        assert_eq!(layout.avoid(style), expected);
     }
 }

@@ -101,21 +101,22 @@ pub(super) fn update(
         BrowseRequest::Dequeue => Ok(dequeue_selected(model)),
         BrowseRequest::MoveInQueue(direction) => Ok(move_in_queue(model, direction)),
         BrowseRequest::PlaySelected => play_selected(model),
-        BrowseRequest::PageBy(rows, nudge) if len > 0 => {
+        BrowseRequest::PageBy(nudge) if len > 0 => {
+            let rows = model.workspace.visible_rows;
             navigate(&mut model.workspace, BrowseMessage::PageBy(rows, nudge))
         }
         BrowseRequest::Rescan => Ok(rescan(&mut model.scan_status, &model.music_dir)),
         BrowseRequest::Trash(track_index) => Ok(trash_track(model, track_index)),
         BrowseRequest::SavePlaylist(name) => {
             Ok(Effect::Library(LibraryCmd::SavePlaylist {
-                name: name.into_inner(),
+                name,
                 tracks: model.playlist.tracks.clone(),
             })
             .into())
         }
         BrowseRequest::CursorBy(_)
         | BrowseRequest::CursorTo(_)
-        | BrowseRequest::PageBy(_, _) => Ok(Cmd::None),
+        | BrowseRequest::PageBy(_) => Ok(Cmd::None),
     }
 }
 

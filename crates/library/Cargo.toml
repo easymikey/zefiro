@@ -12,6 +12,7 @@ bincode = { workspace = true }
 dirs = { workspace = true }
 kernel = { workspace = true }
 lofty = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }

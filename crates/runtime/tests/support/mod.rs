@@ -4,6 +4,7 @@ use audio::SpectrumTap;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use kernel::{
     AudioCmd,
+    AudioEvent,
     Message,
     domain::{Model, Startup},
 };
@@ -15,6 +16,7 @@ use runtime::{
     DriverLoop,
     FrameDue,
     Hardware,
+    Mailbox,
     NoDriver,
     Painted,
     Reaction,
@@ -77,8 +79,8 @@ pub(crate) struct RecordingAudio {
     forward: Sender<AudioCmd>,
 }
 
-impl DriverLoop<AudioCmd> for RecordingAudio {
-    fn run(self, inbox: &Receiver<AudioCmd>, _mailbox: &Sender<Message>) {
+impl DriverLoop<AudioCmd, AudioEvent> for RecordingAudio {
+    fn run(self, inbox: &Receiver<AudioCmd>, _outbox: &Mailbox<AudioEvent>) {
         while let Ok(command) = inbox.recv() {
             if self.forward.send(command).is_err() {
                 return;
@@ -103,14 +105,18 @@ pub(crate) fn panicking_hardware() -> Hardware<PanickingAudio, NoDriver> {
 
 #[cfg(test)]
 mod tests {
-    use crossbeam_channel::{Receiver, Sender};
-    use kernel::{AudioCmd, Message};
-    use runtime::DriverLoop;
+    use crossbeam_channel::Receiver;
+    use kernel::AudioCmd;
+    use runtime::{DriverLoop, Mailbox};
 
     use crate::support::PanickingAudio;
 
-    impl DriverLoop<AudioCmd> for PanickingAudio {
-        fn run(self, _inbox: &Receiver<AudioCmd>, _mailbox: &Sender<Message>) {
+    impl DriverLoop<AudioCmd, kernel::AudioEvent> for PanickingAudio {
+        fn run(
+            self,
+            _inbox: &Receiver<AudioCmd>,
+            _outbox: &Mailbox<kernel::AudioEvent>,
+        ) {
             panic!("boom");
         }
     }

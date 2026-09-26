@@ -5,39 +5,60 @@ use kernel::{
     Effect,
     Message,
     Model,
+    Moment,
     Nudge,
-    domain::{CustomSetting, SettingControl, SettingId, SettingRow},
+    domain::{
+        Choice,
+        CustomControl,
+        CustomSetting,
+        CustomSpec,
+        OptionCount,
+        SettingControl,
+        SettingId,
+        SettingRow,
+        ThemeName,
+    },
     update::update,
 };
 use rstest::rstest;
 
 fn step(model: &mut Model, row: SettingRow, nudge: Nudge) -> Cmd {
-    update(model, Message::Adjust { row, nudge }).unwrap()
+    update(model, Message::Adjust { row, nudge }, Moment::default()).unwrap()
 }
 
-fn setting_position(cmd: &Cmd, id: SettingId) -> Option<usize> {
+fn setting_option(cmd: &Cmd, id: SettingId) -> Option<usize> {
     cmd.effects().find_map(|effect| {
         let Effect::Setting {
             id: emitted,
-            position,
+            option,
         } = effect
         else {
             return None;
         };
-        (*emitted == id).then_some(*position)
+        (*emitted == id).then_some(option.get())
     })
 }
 
-fn model_with_custom_row(control: SettingControl) -> (Model, SettingId) {
-    let id = SettingId(7);
+fn leaked(spec: CustomSpec) -> &'static CustomSpec {
+    Box::leak(Box::new(spec))
+}
+
+fn custom_setting(id: SettingId, control: CustomControl) -> CustomSetting {
+    CustomSetting {
+        spec: leaked(CustomSpec {
+            id,
+            control,
+            cue: None,
+            themes: &[],
+        }),
+        choice: Choice::Option(control.count().index(0).unwrap()),
+    }
+}
+
+fn model_with_custom_row(control: CustomControl) -> (Model, SettingId) {
+    let id = SettingId::new(7);
     let mut model = Model::default();
-    model.custom_rows.push(CustomSetting {
-        id,
-        control,
-        position: 0,
-        cue: None,
-        themes: &[],
-    });
+    model.custom_rows.push(custom_setting(id, control));
     (model, id)
 }
 
@@ -45,7 +66,7 @@ fn model_with_custom_row(control: SettingControl) -> (Model, SettingId) {
 fn nudging_an_unregistered_custom_row_emits_nothing() {
     let mut model = Model::default();
 
-    let cmd = step(&mut model, SettingRow::Custom(SettingId(9)), Nudge::Up);
+    let cmd = step(&mut model, SettingRow::Custom(SettingId::new(9)), Nudge::Up);
 
     assert!(matches!(cmd, Cmd::None));
 }
@@ -55,29 +76,30 @@ fn nudging_an_unregistered_custom_row_emits_nothing() {
 #[case::down_wraps_backward(vec![Nudge::Down], vec![1])]
 fn a_toggle_custom_row_wraps_mod_two(
     #[case] nudges: Vec<Nudge>,
-    #[case] expected_positions: Vec<usize>,
+    #[case] expected_options: Vec<usize>,
 ) {
-    let (mut model, id) = model_with_custom_row(SettingControl::Toggle);
+    let (mut model, id) = model_with_custom_row(CustomControl::Toggle);
 
     let seen: Vec<usize> = nudges
         .into_iter()
         .map(|nudge| {
             let cmd = step(&mut model, SettingRow::Custom(id), nudge);
-            setting_position(&cmd, id).unwrap_or(usize::MAX)
+            setting_option(&cmd, id).unwrap_or(usize::MAX)
         })
         .collect();
 
-    assert_eq!(seen, expected_positions);
+    assert_eq!(seen, expected_options);
 }
 
 #[test]
 fn a_cycle_custom_row_wraps_at_its_own_ring_size() {
-    let (mut model, id) = model_with_custom_row(SettingControl::Cycle(3));
+    let (mut model, id) =
+        model_with_custom_row(CustomControl::Cycle(OptionCount::new(3).unwrap()));
 
     let walked: Vec<usize> = (0..4)
         .map(|_| {
             let cmd = step(&mut model, SettingRow::Custom(id), Nudge::Up);
-            setting_position(&cmd, id).unwrap_or(usize::MAX)
+            setting_option(&cmd, id).unwrap_or(usize::MAX)
         })
         .collect();
 
@@ -85,46 +107,31 @@ fn a_cycle_custom_row_wraps_at_its_own_ring_size() {
 }
 
 #[test]
-fn a_step_custom_row_has_no_ceiling_and_floors_at_zero() {
-    let (mut model, id) = model_with_custom_row(SettingControl::Step);
+fn a_step_custom_row_saturates_at_both_ends() {
+    let (mut model, id) =
+        model_with_custom_row(CustomControl::Step(OptionCount::new(3).unwrap()));
 
     let up = step(&mut model, SettingRow::Custom(id), Nudge::Up);
-    assert_eq!(setting_position(&up, id), Some(1));
+    assert_eq!(setting_option(&up, id), Some(1));
     let up_again = step(&mut model, SettingRow::Custom(id), Nudge::Up);
-    assert_eq!(setting_position(&up_again, id), Some(2));
+    assert_eq!(setting_option(&up_again, id), Some(2));
+    let up_at_the_ceiling = step(&mut model, SettingRow::Custom(id), Nudge::Up);
+    assert_eq!(setting_option(&up_at_the_ceiling, id), Some(2));
 
     let down = step(&mut model, SettingRow::Custom(id), Nudge::Down);
-    assert_eq!(setting_position(&down, id), Some(1));
+    assert_eq!(setting_option(&down, id), Some(1));
     let down_to_floor = step(&mut model, SettingRow::Custom(id), Nudge::Down);
-    assert_eq!(setting_position(&down_to_floor, id), Some(0));
+    assert_eq!(setting_option(&down_to_floor, id), Some(0));
     let floored = step(&mut model, SettingRow::Custom(id), Nudge::Down);
-    assert_eq!(setting_position(&floored, id), Some(0));
+    assert_eq!(setting_option(&floored, id), Some(0));
 }
 
 #[test]
 fn all_places_the_leading_custom_row_before_theme_then_the_rest_after() {
     let custom = vec![
-        CustomSetting {
-            id: SettingId(1),
-            control: SettingControl::Toggle,
-            position: 2,
-            cue: None,
-            themes: &[],
-        },
-        CustomSetting {
-            id: SettingId(2),
-            control: SettingControl::Toggle,
-            position: 0,
-            cue: None,
-            themes: &[],
-        },
-        CustomSetting {
-            id: SettingId(3),
-            control: SettingControl::Toggle,
-            position: 1,
-            cue: None,
-            themes: &[],
-        },
+        custom_setting(SettingId::new(1), CustomControl::Toggle),
+        custom_setting(SettingId::new(2), CustomControl::Toggle),
+        custom_setting(SettingId::new(3), CustomControl::Toggle),
     ];
 
     let all = SettingRow::all(&custom);
@@ -132,10 +139,10 @@ fn all_places_the_leading_custom_row_before_theme_then_the_rest_after() {
     assert_eq!(
         all,
         vec![
-            SettingRow::Custom(SettingId(1)),
+            SettingRow::Custom(SettingId::new(1)),
             SettingRow::Theme,
-            SettingRow::Custom(SettingId(2)),
-            SettingRow::Custom(SettingId(3)),
+            SettingRow::Custom(SettingId::new(2)),
+            SettingRow::Custom(SettingId::new(3)),
             SettingRow::Crossfade,
             SettingRow::Replaygain,
             SettingRow::OutputDevice,
@@ -145,47 +152,42 @@ fn all_places_the_leading_custom_row_before_theme_then_the_rest_after() {
 }
 
 #[rstest]
-#[case::toggle(SettingControl::Toggle, 2)]
-#[case::cycle(SettingControl::Cycle(3), 3)]
-#[case::step(SettingControl::Step, 5)]
+#[case::toggle(CustomControl::Toggle, 2)]
+#[case::cycle(CustomControl::Cycle(OptionCount::new(3).unwrap()), 3)]
+#[case::step(CustomControl::Step(OptionCount::new(5).unwrap()), 5)]
 fn nudging_every_option_of_a_custom_row_never_reorders_settings_row_all(
-    #[case] control: SettingControl,
+    #[case] control: CustomControl,
     #[case] options: usize,
 ) {
     let mut model = Model::default();
-    model.custom_rows.push(CustomSetting {
-        id: SettingId(5),
-        control,
-        position: 0,
-        cue: None,
-        themes: &[],
-    });
-    model.custom_rows.push(CustomSetting {
-        id: SettingId(6),
-        control: SettingControl::Toggle,
-        position: 0,
-        cue: None,
-        themes: &[],
-    });
+    model
+        .custom_rows
+        .push(custom_setting(SettingId::new(5), control));
+    model
+        .custom_rows
+        .push(custom_setting(SettingId::new(6), CustomControl::Toggle));
 
     let before = SettingRow::all(&model.custom_rows);
 
     for _ in 0..options {
-        let _ = step(&mut model, SettingRow::Custom(SettingId(5)), Nudge::Up);
+        let _ = step(&mut model, SettingRow::Custom(SettingId::new(5)), Nudge::Up);
         assert_eq!(SettingRow::all(&model.custom_rows), before);
     }
 }
 
 #[test]
 fn nudging_a_custom_row_with_a_cue_emits_the_setting_then_the_cue() {
-    let id = SettingId(11);
+    let id = SettingId::new(11);
+    let count = OptionCount::new(3).unwrap();
     let mut model = Model::default();
     model.custom_rows.push(CustomSetting {
-        id,
-        control: SettingControl::Cycle(3),
-        position: 0,
-        cue: Some(Cue::LayoutChanged),
-        themes: &[],
+        spec: leaked(CustomSpec {
+            id,
+            control: CustomControl::Cycle(count),
+            cue: Some(Cue::LayoutChanged),
+            themes: &[],
+        }),
+        choice: Choice::Option(count.index(0).unwrap()),
     });
 
     let cmd = step(&mut model, SettingRow::Custom(id), Nudge::Up);
@@ -194,7 +196,10 @@ fn nudging_a_custom_row_with_a_cue_emits_the_setting_then_the_cue() {
     assert_eq!(
         effects,
         vec![
-            &Effect::Setting { id, position: 1 },
+            &Effect::Setting {
+                id,
+                option: count.index(1).unwrap(),
+            },
             &Effect::Animate(Cue::LayoutChanged),
         ]
     );
@@ -202,66 +207,76 @@ fn nudging_a_custom_row_with_a_cue_emits_the_setting_then_the_cue() {
 
 #[test]
 fn nudging_a_custom_row_without_a_cue_emits_only_the_setting() {
-    let (mut model, id) = model_with_custom_row(SettingControl::Toggle);
+    let (mut model, id) = model_with_custom_row(CustomControl::Toggle);
 
     let cmd = step(&mut model, SettingRow::Custom(id), Nudge::Up);
 
     let effects: Vec<&Effect> = cmd.effects().collect();
-    assert_eq!(effects, vec![&Effect::Setting { id, position: 1 }]);
+    assert_eq!(
+        effects,
+        vec![&Effect::Setting {
+            id,
+            option: CustomControl::Toggle.count().index(1).unwrap(),
+        }]
+    );
 }
 
 #[test]
 fn control_reads_the_matching_slot_for_a_custom_row() {
-    let custom = vec![CustomSetting {
-        id: SettingId(4),
-        control: SettingControl::Cycle(5),
-        position: 0,
-        cue: None,
-        themes: &[],
-    }];
+    let count = OptionCount::new(5).unwrap();
+    let custom = vec![custom_setting(
+        SettingId::new(4),
+        CustomControl::Cycle(count),
+    )];
 
     assert_eq!(
-        SettingRow::Custom(SettingId(4)).control(&custom),
-        SettingControl::Cycle(5)
+        SettingRow::Custom(SettingId::new(4)).control(&custom),
+        Some(SettingControl::Custom(CustomControl::Cycle(count)))
     );
     assert_eq!(
-        SettingRow::Custom(SettingId(404)).control(&custom),
-        SettingControl::Step
+        SettingRow::Custom(SettingId::new(404)).control(&custom),
+        None
     );
     assert_eq!(
         SettingRow::Replaygain.control(&custom),
-        SettingControl::Toggle
+        Some(SettingControl::Toggle)
     );
 }
 
 #[rstest]
-#[case::custom_nudges_to_default(2, Nudge::Up, (0, None))]
-#[case::default_nudges_to_noir(0, Nudge::Up, (1, Some("noir")))]
-#[case::noir_nudges_to_default(1, Nudge::Down, (0, None))]
+#[case::custom_nudges_to_default(Choice::Mixed, Nudge::Up, (0, None))]
+#[case::default_nudges_to_noir(Choice::Option(OptionCount::new(2).unwrap().index(0).unwrap()), Nudge::Up, (1, Some("noir")))]
+#[case::noir_nudges_to_default(Choice::Option(OptionCount::new(2).unwrap().index(1).unwrap()), Nudge::Down, (0, None))]
 fn nudging_the_preset_row_selects_its_options_theme(
-    #[case] start: usize,
+    #[case] start: Choice,
     #[case] nudge: Nudge,
     #[case] expected: (usize, Option<&str>),
 ) {
-    let (expected_position, expected_theme) = expected;
-    let id = SettingId(200);
+    let themes: &'static [Option<ThemeName>] =
+        Box::leak(Box::new([None, Some(ThemeName::from_static("noir"))]));
+
+    let (expected_option, expected_theme) = expected;
+    let id = SettingId::new(200);
+    let count = OptionCount::new(2).unwrap();
     let mut model = Model::default();
     model.custom_rows.push(CustomSetting {
-        id,
-        control: SettingControl::Cycle(2),
-        position: start,
-        cue: None,
-        themes: &[None, Some("noir")],
+        spec: leaked(CustomSpec {
+            id,
+            control: CustomControl::Cycle(count),
+            cue: None,
+            themes,
+        }),
+        choice: start,
     });
 
     let cmd = step(&mut model, SettingRow::Custom(id), nudge);
 
-    assert_eq!(setting_position(&cmd, id), Some(expected_position));
+    assert_eq!(setting_option(&cmd, id), Some(expected_option));
     let theme = cmd.effects().find_map(|effect| {
-        let Effect::Config(ConfigCmd::SelectTheme(name)) = effect else {
+        let Effect::Config(ConfigCmd::SelectTheme(choice)) = effect else {
             return None;
         };
-        Some(name.as_str())
+        Some(choice.to_string())
     });
-    assert_eq!(theme, expected_theme);
+    assert_eq!(theme, expected_theme.map(str::to_string));
 }

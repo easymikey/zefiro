@@ -1,6 +1,35 @@
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use crate::domain::{Crossfade, SLEEP_PRESET_BUNDLES, time::SECONDS_PER_MINUTE};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DeviceName(String);
+
+impl DeviceName {
+    pub fn new(name: String) -> Result<Self, DeviceNameRejection> {
+        if name.is_empty() {
+            return Err(DeviceNameRejection::Empty);
+        }
+        Ok(Self(name))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for DeviceName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum DeviceNameRejection {
+    #[error("enter a device name")]
+    Empty,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceDefault {
@@ -10,7 +39,7 @@ pub enum DeviceDefault {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputDevice {
-    pub name: String,
+    pub name: DeviceName,
     pub default: DeviceDefault,
 }
 
@@ -18,10 +47,9 @@ pub struct OutputDevice {
 pub struct Settings {
     pub crossfade: Crossfade,
     pub replaygain: Replaygain,
-    pub output_device: Option<String>,
+    pub output_device: Option<DeviceName>,
     pub output_devices: Vec<OutputDevice>,
     pub sleep_presets: Box<[Duration]>,
-    pub theme: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -39,7 +67,6 @@ impl Default for Settings {
             output_device: None,
             output_devices: Vec::new(),
             sleep_presets: SLEEP_PRESET_BUNDLES.first(),
-            theme: "auto".to_string(),
         }
     }
 }
@@ -60,7 +87,13 @@ pub fn format_sleep_presets_label(presets: &[Duration]) -> String {
 mod tests {
     use std::time::Duration;
 
-    use crate::domain::settings::format_sleep_presets_label;
+    use rstest::rstest;
+
+    use crate::domain::settings::{
+        DeviceName,
+        DeviceNameRejection,
+        format_sleep_presets_label,
+    };
 
     #[test]
     fn sleep_presets_label_renders_minutes_or_off() {
@@ -73,5 +106,15 @@ mod tests {
             "15m, 30m, 60m"
         );
         assert_eq!(format_sleep_presets_label(&[]), "off");
+    }
+
+    #[rstest]
+    #[case::empty("".to_string(), Err(DeviceNameRejection::Empty))]
+    #[case::named("Speakers".to_string(), Ok(()))]
+    fn a_device_name_is_never_empty(
+        #[case] name: String,
+        #[case] expected: Result<(), DeviceNameRejection>,
+    ) {
+        assert_eq!(DeviceName::new(name).map(|_| ()), expected);
     }
 }

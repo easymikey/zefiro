@@ -1,7 +1,8 @@
-use config::keymap::KeymapFile;
+use config::KeymapFile;
 use kernel::{
     Key,
     KeyCode,
+    KeyPress,
     Message,
     PlaybackRequest,
     domain::{
@@ -15,14 +16,7 @@ use kernel::{
         Overlay,
         Workspace,
     },
-    update::keymap::{
-        Bindings,
-        KeyBinding,
-        KeyOutcome,
-        KeyPress,
-        default_bindings,
-        route,
-    },
+    update::keymap::{Bindings, KeyBinding, KeyOutcome, default_bindings, route},
 };
 use rstest::rstest;
 
@@ -49,6 +43,7 @@ fn config_with(next: Option<&str>, prev: Option<&str>) -> KeymapOverrides {
 
 fn compiled(config: KeymapOverrides) -> Workspace {
     let mut workspace = Workspace::default();
+    workspace.bindings = Bindings::new(&config);
     workspace.keymap = Keymap::new(config, &default_bindings());
     workspace
 }
@@ -119,12 +114,9 @@ fn an_override_routes(
         !validation_errors(&under.config).is_empty(),
         reports_an_error
     );
-    let table = Bindings::new(&under.config);
-    let press = KeyPress {
-        key: character(under.pressed),
-        visible_rows: 0,
-    };
-    assert_eq!(route(&table, &compiled(under.config), press), expected);
+    let key = character(under.pressed);
+    let press = KeyPress { key, typed: key };
+    assert_eq!(route(&compiled(under.config), press), expected);
 }
 
 #[test]
@@ -180,23 +172,18 @@ fn a_binding_that_names_a_context_routes_only_there(
 ) {
     let mut workspace = Workspace::default();
     workspace.overlay = Some(overlay);
-    let table = Bindings::new(&next_in_search());
-    let press = KeyPress {
-        key: character('n'),
-        visible_rows: 0,
-    };
-    assert_eq!(route(&table, &workspace, press), expected);
+    workspace.bindings = Bindings::new(&next_in_search());
+    let key = character('n');
+    let press = KeyPress { key, typed: key };
+    assert_eq!(route(&workspace, press), expected);
 }
 
 #[test]
 fn a_binding_that_names_a_context_leaves_the_playlist_without_it() {
     let workspace = compiled(next_in_search());
-    let table = Bindings::new(&next_in_search());
-    let press = KeyPress {
-        key: character('n'),
-        visible_rows: 0,
-    };
-    assert_eq!(route(&table, &workspace, press), None);
+    let key = character('n');
+    let press = KeyPress { key, typed: key };
+    assert_eq!(route(&workspace, press), None);
 }
 
 #[rstest]

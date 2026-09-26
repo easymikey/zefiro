@@ -1,8 +1,16 @@
 ---
 source: crates/kernel/tests/unit/effects_snapshot.rs
+assertion_line: 87
 expression: effects(cmd)
 ---
 [
+    WindowColors(
+        Apply(
+            ThemeName(
+                "noir",
+            ),
+        ),
+    ),
     Animate(
         ThemeChanged,
     ),

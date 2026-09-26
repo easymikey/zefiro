@@ -5,7 +5,7 @@ use kernel::domain::{
     Overlay,
     PlaylistIndex,
     SearchQuery,
-    SettingsRows,
+    SettingsCursor,
     TextEntry,
 };
 use ratatui::layout::Rect;
@@ -18,7 +18,7 @@ fn frame_with_overlay(overlay: Overlay) -> String {
     sources.model.workspace.overlay = Some(overlay);
     let scene = sources.scene();
     let area = Rect::new(0, 0, 80, 24);
-    let layout = FrameLayout::new(&scene, area);
+    let layout = FrameLayout::new(&scene.layout_inputs(), area);
     assert!(
         layout.overlay.is_some(),
         "an active overlay must claim a rect in the full frame's layout"
@@ -55,7 +55,7 @@ fn the_history_overlay_is_painted_over_the_full_frame() {
 
 #[test]
 fn the_settings_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::Settings(CursorOver::new(SettingsRows, 0)));
+    let text = frame_with_overlay(Overlay::Settings(SettingsCursor::default()));
     assert!(text.contains("SETTINGS"), "got {text:?}");
 }
 
@@ -101,7 +101,7 @@ fn the_save_playlist_banner_is_painted_over_the_full_frame() {
     });
     let scene = sources.scene();
     let area = Rect::new(0, 0, 80, 24);
-    let layout = FrameLayout::new(&scene, area);
+    let layout = FrameLayout::new(&scene.layout_inputs(), area);
     let text = painted(
         &Screen {
             scene,

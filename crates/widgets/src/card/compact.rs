@@ -170,7 +170,7 @@ fn paint_progress_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
     let duration = current
         .and_then(|track| track.duration())
         .unwrap_or_default();
-    let position = context.view.player.position();
+    let position = context.view.player.position_at(context.view.now);
     let fraction = if duration.is_zero() {
         0.0
     } else {
@@ -216,7 +216,7 @@ fn paint_status_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
     };
     let label = status_label(status);
 
-    let position = view.player.position();
+    let position = view.player.position_at(view.now);
     let duration = view
         .displayed_track
         .and_then(|track| track.duration())
@@ -282,7 +282,18 @@ mod tests {
     use config::SpeedChipMode;
     use kernel::{
         Bounded,
-        domain::{AudioFormat, Output, Percent, Player, Preload, Speed, Tags, Track},
+        Moment,
+        domain::{
+            AudioFormat,
+            Output,
+            Percent,
+            Player,
+            Playhead,
+            Preload,
+            Speed,
+            Tags,
+            Track,
+        },
         playlist::PlayOrder,
     };
 
@@ -314,7 +325,11 @@ mod tests {
         let track = track("Moon River", 245);
         let player = Player::Playing {
             track: Arc::clone(&track),
-            at: Duration::from_secs(30),
+            head: Playhead::anchored(
+                Duration::from_secs(30),
+                Moment::default(),
+                Speed::default(),
+            ),
             preload: Preload::None,
         };
         let spectrum: Spectrum = [0.0; SPECTRUM_BANDS];
@@ -330,6 +345,7 @@ mod tests {
             queue_length: 1,
             displayed_track: Some(&track),
             output: &output,
+            now: Moment::default(),
         };
         let widget = CompactCard {
             view,
@@ -358,6 +374,7 @@ mod tests {
             queue_length: 0,
             displayed_track: None,
             output: &output,
+            now: Moment::default(),
         };
         let widget = CompactCard {
             view,

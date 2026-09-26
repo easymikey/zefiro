@@ -7,8 +7,10 @@ use kernel::{
     JumpRequest,
     Key,
     KeyCode,
+    KeyPress,
     Message,
     Modifiers,
+    Moment,
     Nudge,
     OverlayName,
     OverlayRequest,
@@ -17,10 +19,10 @@ use kernel::{
     SearchRequest,
     SettingsRowRequest,
     TextRequest,
+    Toast,
     domain::{
         Chord,
         ChordPrefix,
-        Cursor,
         CursorOver,
         DeleteCandidate,
         JumpDigits,
@@ -29,12 +31,15 @@ use kernel::{
         Overlay,
         PlaylistIndex,
         SettingRow,
-        SettingsRows,
+        SettingsCursor,
         TextEntry,
         Track,
         Workspace,
     },
-    update::keymap::{Bindings, KeyOutcome, KeyPress, route},
+    update::{
+        keymap::{Bindings, KeyOutcome, route},
+        update,
+    },
 };
 use rstest::rstest;
 
@@ -71,14 +76,7 @@ fn history_after_g() -> Workspace {
 }
 
 fn settings_on(row: SettingRow) -> Workspace {
-    let all = SettingRow::all(&[]);
-    let found = all.iter().position(|candidate| *candidate == row);
-    assert!(found.is_some());
-    let index = found.unwrap_or_default();
-    with_overlay(Overlay::Settings(CursorOver {
-        cursor: Cursor::with_len(all.len()).at(index),
-        rows: SettingsRows,
-    }))
+    with_overlay(Overlay::Settings(SettingsCursor { selected: row }))
 }
 
 fn confirming_delete() -> Workspace {
@@ -168,7 +166,7 @@ fn confirm() -> Option<Message> {
 #[case::browse_ctrl_u_pages_the_playlist(
     browsing(),
     Key::ctrl(KeyCode::Char('u')),
-    Some(Message::Browse(BrowseRequest::PageBy(VISIBLE_ROWS, Nudge::Up)))
+    Some(Message::Browse(BrowseRequest::PageBy(Nudge::Up)))
 )]
 #[case::help_swallows_a_hotkey(help(), character('n'), None)]
 #[case::help_esc_closes(help(), plain(KeyCode::Esc), close())]
@@ -432,16 +430,75 @@ fn confirm() -> Option<Message> {
     close()
 )]
 fn routed_key(
-    #[case] workspace: Workspace,
+    #[case] mut workspace: Workspace,
     #[case] key: Key,
     #[case] expected: Option<Message>,
 ) {
-    let bindings = Bindings::new(&KeymapOverrides::default());
-    let press = KeyPress {
-        key,
-        visible_rows: VISIBLE_ROWS,
-    };
-    assert_eq!(route(&bindings, &workspace, press), expected);
+    workspace.bindings = Bindings::new(&KeymapOverrides::default());
+    workspace.visible_rows = VISIBLE_ROWS;
+    let press = KeyPress { key, typed: key };
+    assert_eq!(route(&workspace, press), expected);
+}
+
+#[rstest]
+#[case::space_toggles(character(' '), character(' '), None)]
+#[case::j_moves_down(character('j'), character('j'), None)]
+#[case::typing_overlay_uses_typed(
+    character('ф'),
+    character('a'),
+    Some(Overlay::Search(CursorOver::default()))
+)]
+#[case::chording_overlay_uses_key(
+    character('g'),
+    character('x'),
+    Some(Overlay::History(CursorOver::default()))
+)]
+#[case::unbound_key_changes_nothing(character('w'), character('w'), None)]
+fn a_key_press_routes_through_update(
+    #[case] key: Key,
+    #[case] typed: Key,
+    #[case] overlay: Option<Overlay>,
+) {
+    let mut model = crate::support::model_with_tracks(3);
+    model.workspace.bindings = Bindings::new(&KeymapOverrides::default());
+    model.workspace.overlay = overlay;
+    model.workspace.toast = Some(Toast::info("hello".to_string()));
+
+    let press = KeyPress { key, typed };
+    let _ = update(&mut model, Message::Key(press), Moment::default()).unwrap();
+
+    match typed.code {
+        KeyCode::Char('j') => {
+            assert_eq!(model.workspace.browse.selected().get(), 1);
+        }
+        KeyCode::Char('a') => {
+            assert!(matches!(
+                &model.workspace.overlay,
+                Some(Overlay::Search(cursor_over)) if cursor_over.rows.input == "a"
+            ));
+        }
+        KeyCode::Char('x') => {
+            assert_eq!(model.workspace.chord, Some(ChordPrefix::G));
+        }
+        KeyCode::Char('w') => {
+            assert!(model.workspace.toast.is_some());
+        }
+        KeyCode::Char(_)
+        | KeyCode::Enter
+        | KeyCode::Esc
+        | KeyCode::Backspace
+        | KeyCode::Up
+        | KeyCode::Down
+        | KeyCode::Left
+        | KeyCode::Right
+        | KeyCode::Home
+        | KeyCode::End
+        | KeyCode::Tab
+        | KeyCode::PageUp
+        | KeyCode::PageDown => {
+            assert!(model.workspace.toast.is_none());
+        }
+    }
 }
 
 #[rstest]
@@ -451,15 +508,14 @@ fn the_search_query_swallows_every_printable_hotkey(
     #[case] from: char,
     #[case] to: char,
 ) {
-    let workspace = searching();
-    let bindings = Bindings::new(&KeymapOverrides::default());
+    let mut workspace = searching();
+    workspace.bindings = Bindings::new(&KeymapOverrides::default());
+    workspace.visible_rows = VISIBLE_ROWS;
     for typed in from..=to {
-        let press = KeyPress {
-            key: character(typed),
-            visible_rows: VISIBLE_ROWS,
-        };
+        let key = character(typed);
+        let press = KeyPress { key, typed: key };
         assert_eq!(
-            route(&bindings, &workspace, press),
+            route(&workspace, press),
             search_edit(SearchEdit::Char(typed)),
             "'{typed}' must type into the query, not fire a hotkey"
         );
@@ -514,12 +570,10 @@ fn every_compiled_binding_is_what_its_chord_routes_to() {
                 key
             }
         };
-        let press = KeyPress {
-            key,
-            visible_rows: 0,
-        };
+        workspace.bindings = table.clone();
+        let press = KeyPress { key, typed: key };
         assert_eq!(
-            route(&table, &workspace, press),
+            route(&workspace, press),
             fixed_message(&binding.outcome),
             "{chord}"
         );

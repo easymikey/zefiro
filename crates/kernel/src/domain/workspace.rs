@@ -1,12 +1,8 @@
 use std::{collections::HashMap, time::Duration};
 
-use crate::domain::{
-    ChordPrefix,
-    Cursor,
-    Keymap,
-    Overlay,
-    PlaylistIndex,
-    library::SortKey,
+use crate::{
+    domain::{ChordPrefix, Cursor, Keymap, Overlay, PlaylistIndex, library::SortKey},
+    update::keymap::Bindings,
 };
 
 pub const TOAST_LIFETIME: Duration = Duration::from_secs(3);
@@ -18,6 +14,8 @@ pub struct Workspace {
     pub chord: Option<ChordPrefix>,
     pub toast: Option<Toast>,
     pub keymap: Keymap,
+    pub bindings: Bindings,
+    pub visible_rows: usize,
     pub played_for: Duration,
     pub(crate) source_errors: SourceErrors,
 }
@@ -55,6 +53,8 @@ pub enum ConfigFailure {
     Unreadable { file: ConfigFile, detail: String },
     #[error("{file} could not be saved: {detail}")]
     Save { file: ConfigFile, detail: String },
+    #[error("Config watch failed: {detail}")]
+    Watch { detail: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

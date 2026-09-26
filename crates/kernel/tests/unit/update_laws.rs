@@ -1,4 +1,4 @@
-use kernel::update::update;
+use kernel::{Moment, update::update};
 use proptest::prelude::{prop_assert_eq, proptest};
 
 use crate::support::strategies::{message, reached_model};
@@ -10,7 +10,7 @@ proptest! {
         message in message(),
     ) {
         let before = format!("{model:?}");
-        if update(&mut model, message).is_err() {
+        if update(&mut model, message, Moment::default()).is_err() {
             prop_assert_eq!(format!("{model:?}"), before);
         }
     }

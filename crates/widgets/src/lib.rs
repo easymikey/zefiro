@@ -11,6 +11,7 @@ mod milkdrop;
 mod overlay;
 mod playlist;
 mod primitive;
+mod redraw;
 mod scene;
 mod screen;
 mod spectrum;
@@ -47,9 +48,15 @@ pub use milkdrop::{
 };
 pub use overlay::modal::{ModalAreas, ModalScrollAreas, OverlayAreas};
 pub use playlist::{PlaylistAreas, favorite_cell};
+pub use redraw::{
+    ProgressScale,
+    next_clock_second,
+    next_progress_step,
+    next_sleep_minute,
+};
 pub use scene::{PixelPath, Scene, abbreviate_home};
-pub use screen::{Breakpoint, FrameLayout, Screen};
-pub use spectrum::{SPECTRUM_BANDS, Spectrum, SpectrumSmoothing};
+pub use screen::{Breakpoint, FrameLayout, LayoutInputs, Screen};
+pub use spectrum::{SPECTRUM_BANDS, Spectrum, SpectrumMotion, SpectrumSmoothing};
 pub use theme::{
     ActiveTheme,
     ColorDepth,

@@ -10,7 +10,16 @@ use crate::{
         PlaybackChange,
         SystemCmd,
     },
-    domain::{Loaded, Model, Revision, Settings, Startup, playlist::Playlist},
+    domain::{
+        Loaded,
+        Model,
+        Revision,
+        Settings,
+        Shuffle,
+        Startup,
+        Themes,
+        playlist::Playlist,
+    },
     update::{machine::Machine, playlist::PlaylistMessage},
 };
 
@@ -22,7 +31,6 @@ pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
         output_device: startup.output_device,
         output_devices: Vec::new(),
         sleep_presets: startup.sleep_presets,
-        theme: startup.theme,
     };
     model.transport.volume = startup.volume;
     model.custom_rows = startup.custom_rows;
@@ -30,15 +38,16 @@ pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
     model.library = Loaded::Loading;
     model.music_dir = startup.music_dir.clone();
     model.playlist_source = startup.playlist_source;
-    model.themes = startup.themes;
+    model.themes = Themes {
+        names: startup.themes,
+        selected: theme.clone(),
+    };
     crate::domain::playlist::relist(
         &mut model.playlist,
         startup.playlist_tracks,
         startup.playlist_index,
     );
-    let cmd = startup.shuffle_order.map_or(Cmd::None, |order| {
-        shuffle_restored(&mut model.playlist, order)
-    });
+    let cmd = shuffled(&mut model.playlist, startup.shuffle);
 
     let mut effects = PlaybackChange::Stop.effects().to_vec();
     effects.extend([
@@ -54,10 +63,14 @@ pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
     cmd.then(Cmd::Batch(effects))
 }
 
-fn shuffle_restored(playlist: &mut Playlist, order: Vec<usize>) -> Cmd {
-    let Ok(toggled) = playlist.update(PlaylistMessage::ToggleShuffle);
-    let Ok(rolled) = playlist.update(PlaylistMessage::ShuffleRolled(order));
-    toggled.then(Cue::PlayOrderChanged.into()).then(rolled)
+fn shuffled(playlist: &mut Playlist, shuffle: Shuffle) -> Cmd {
+    match shuffle {
+        Shuffle::Disabled => Cmd::None,
+        Shuffle::Enabled => {
+            let Ok(toggled) = playlist.update(PlaylistMessage::ToggleShuffle);
+            toggled.then(Cue::PlayOrderChanged.into())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -73,13 +86,17 @@ mod tests {
         domain::{
             Bounded,
             Crossfade,
+            DeviceName,
             Model,
             Percent,
             PlaylistIndex,
             Replaygain,
+            Shuffle,
             Startup,
+            ThemeChoice,
+            ThemeName,
             Track,
-            playlist::PlaylistSource,
+            playlist::{PlayOrder, PlaylistSource},
         },
         update::startup::seed_model,
     };
@@ -95,15 +112,18 @@ mod tests {
             playlist_tracks: tracks,
             playlist_index: Some(PlaylistIndex::new(0)),
             playlist_source: PlaylistSource::Named,
-            shuffle_order: Some(vec![1, 0]),
+            shuffle: Shuffle::Enabled,
             crossfade: Crossfade::clamped(Duration::from_secs(3)),
             replaygain: Replaygain::On,
-            output_device: Some("Speakers".to_string()),
+            output_device: Some(DeviceName::new("Speakers".to_string()).unwrap()),
             sleep_presets: vec![Duration::from_secs(900), Duration::from_secs(1800)]
                 .into(),
-            theme: "dark".to_string(),
+            theme: ThemeChoice::Named(ThemeName::from_static("dark")),
             volume: Percent::clamped(42),
-            themes: vec!["noir".to_string(), "solar".to_string()],
+            themes: vec![
+                ThemeName::from_static("noir"),
+                ThemeName::from_static("solar"),
+            ],
             custom_rows: Vec::new(),
         }
     }
@@ -152,9 +172,15 @@ mod tests {
         let model = startup_model();
 
         assert!(model.settings.output_devices.is_empty());
-        assert!(model.playlist.play_order.is_shuffle());
+        assert_eq!(model.playlist.play_order, PlayOrder::ShufflePending);
         assert!(!model.favorites.is_favorite(&PathBuf::from("/music/a.flac")));
-        assert_eq!(model.themes, ["noir".to_string(), "solar".to_string()]);
+        assert_eq!(
+            model.themes.names,
+            [
+                ThemeName::from_static("noir"),
+                ThemeName::from_static("solar")
+            ]
+        );
     }
 
     #[test]
@@ -173,7 +199,6 @@ mod tests {
             model.settings.replaygain,
             model.settings.output_device.clone(),
             model.settings.sleep_presets.clone(),
-            model.settings.theme.clone(),
             model.transport.volume,
             model.favorites.clone(),
             model.library.is_loading(),

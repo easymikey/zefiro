@@ -15,13 +15,23 @@ use kernel::{
     LibraryCmd,
     Message,
     Model,
+    Moment,
     NowPlaying,
     Playback,
     PlaybackChange,
     PlaybackRequest,
     Player,
     SystemCmd,
-    domain::{Cursor, Loaded, Nudge, PlaylistIndex, Revision, ScanStatus, TrackIndex},
+    domain::{
+        Cursor,
+        Loaded,
+        Nudge,
+        PlaylistIndex,
+        Revision,
+        ScanStatus,
+        TrackIndex,
+        UnixSeconds,
+    },
     library::{Library, SortKey},
     playlist::PlayOrder,
     update::update,
@@ -31,7 +41,7 @@ use rstest::rstest;
 use crate::support::{bare_track, model_with_tracks, titled_track};
 
 fn browse(model: &mut Model, message: BrowseRequest) -> Cmd {
-    update(model, Message::Browse(message)).unwrap()
+    update(model, Message::Browse(message), Moment::default()).unwrap()
 }
 
 fn indices(queue: &[usize]) -> Vec<PlaylistIndex> {
@@ -177,6 +187,7 @@ fn queue_row(#[case] row: QueueRow) {
 struct CursorRow {
     tracks: usize,
     from: usize,
+    visible_rows: usize,
     message: BrowseRequest,
     expected: usize,
 }
@@ -185,68 +196,93 @@ struct CursorRow {
 #[case::cursor_to_lands_on_the_row(CursorRow {
     tracks: 2,
     from: 0,
+    visible_rows: 0,
     message: BrowseRequest::CursorTo(PlaylistIndex::new(1)),
     expected: 1,
 })]
 #[case::cursor_to_past_the_end_clamps(CursorRow {
     tracks: 2,
     from: 0,
+    visible_rows: 0,
     message: BrowseRequest::CursorTo(PlaylistIndex::new(99)),
     expected: 1,
 })]
 #[case::cursor_to_on_an_empty_playlist_stays_at_zero(CursorRow {
     tracks: 0,
     from: 0,
+    visible_rows: 0,
     message: BrowseRequest::CursorTo(PlaylistIndex::new(0)),
     expected: 0,
 })]
 #[case::page_down_moves_by_the_reported_rows(CursorRow {
     tracks: 20,
     from: 0,
-    message: BrowseRequest::PageBy(5, Nudge::Down),
+    visible_rows: 5,
+    message: BrowseRequest::PageBy(Nudge::Down),
     expected: 5,
 })]
 #[case::page_down_clamps_at_the_last_track(CursorRow {
     tracks: 8,
     from: 6,
-    message: BrowseRequest::PageBy(5, Nudge::Down),
+    visible_rows: 5,
+    message: BrowseRequest::PageBy(Nudge::Down),
     expected: 7,
 })]
 #[case::page_up_moves_by_the_reported_rows(CursorRow {
     tracks: 20,
     from: 8,
-    message: BrowseRequest::PageBy(5, Nudge::Up),
+    visible_rows: 5,
+    message: BrowseRequest::PageBy(Nudge::Up),
     expected: 3,
 })]
 #[case::page_up_clamps_at_the_first_track(CursorRow {
     tracks: 20,
     from: 2,
-    message: BrowseRequest::PageBy(5, Nudge::Up),
+    visible_rows: 5,
+    message: BrowseRequest::PageBy(Nudge::Up),
     expected: 0,
 })]
 #[case::page_down_with_no_rows_reported_stays_put(CursorRow {
     tracks: 20,
     from: 0,
-    message: BrowseRequest::PageBy(0, Nudge::Down),
+    visible_rows: 0,
+    message: BrowseRequest::PageBy(Nudge::Down),
     expected: 0,
 })]
 #[case::page_down_on_an_empty_playlist_stays_at_zero(CursorRow {
     tracks: 0,
     from: 0,
-    message: BrowseRequest::PageBy(5, Nudge::Down),
+    visible_rows: 5,
+    message: BrowseRequest::PageBy(Nudge::Down),
     expected: 0,
 })]
 #[case::page_up_on_an_empty_playlist_stays_at_zero(CursorRow {
     tracks: 0,
     from: 0,
-    message: BrowseRequest::PageBy(5, Nudge::Up),
+    visible_rows: 5,
+    message: BrowseRequest::PageBy(Nudge::Up),
     expected: 0,
 })]
 fn cursor_row(#[case] row: CursorRow) {
     let mut model = browsing(row.tracks, row.from, &[]);
+    model.workspace.visible_rows = row.visible_rows;
     let effects = browse(&mut model, row.message);
     assert_eq!(model.workspace.browse.selected().get(), row.expected);
     assert_eq!(effects, Cmd::None);
+}
+
+#[rstest]
+#[case::no_rows_reported(0, 0)]
+#[case::a_single_row(1, 1)]
+#[case::a_full_page(20, 20)]
+fn page_by_uses_the_stored_viewport(
+    #[case] visible_rows: usize,
+    #[case] expected: usize,
+) {
+    let mut model = browsing(30, 0, &[]);
+    model.workspace.visible_rows = visible_rows;
+    let _ = browse(&mut model, BrowseRequest::PageBy(Nudge::Down));
+    assert_eq!(model.workspace.browse.selected().get(), expected);
 }
 
 fn unsorted_library() -> Model {
@@ -350,7 +386,7 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
             Effect::Audio(AudioCmd::Volume(model.transport.volume)),
             Effect::Library(LibraryCmd::AppendHistory {
                 track: Arc::clone(&track),
-                revision: Revision::UNSTAMPED.next().next(),
+                at: UnixSeconds::UNSTAMPED,
             }),
             Effect::System(SystemCmd::NowPlaying(NowPlaying::Track {
                 title: track.song_title(),
@@ -370,10 +406,16 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
 #[test]
 fn play_selected_retires_the_stream_the_media_key_started() {
     let mut model = browsing(3, 2, &[]);
-    let _ = update(&mut model, Message::Playback(PlaybackRequest::Play)).unwrap();
+    let _ = update(
+        &mut model,
+        Message::Playback(PlaybackRequest::Play),
+        Moment::default(),
+    )
+    .unwrap();
     let _ = update(
         &mut model,
         Message::Audio(AudioEvent::Loaded { total: None }),
+        Moment::default(),
     )
     .unwrap();
 

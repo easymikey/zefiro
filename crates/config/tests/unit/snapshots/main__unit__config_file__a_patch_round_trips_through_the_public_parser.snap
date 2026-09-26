@@ -6,8 +6,14 @@ ConfigFile {
     music_dir: Some(
         "/music",
     ),
-    theme: "noir",
-    volume: 42,
+    theme: Named(
+        ThemeName(
+            "noir",
+        ),
+    ),
+    volume: Percent(
+        42,
+    ),
     audio: AudioConfig {
         crossfade: Crossfade(
             0ns,
@@ -16,11 +22,13 @@ ConfigFile {
         device: Some(
             "Speakers",
         ),
-        sleep_presets: [
-            900s,
-            1800s,
-            3600s,
-        ],
+        sleep_presets: SleepPresets(
+            [
+                900s,
+                1800s,
+                3600s,
+            ],
+        ),
     },
     keymap: {},
 }

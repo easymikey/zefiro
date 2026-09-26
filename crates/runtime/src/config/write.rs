@@ -56,7 +56,11 @@ mod tests {
     };
 
     use config::{AppearancePatch, ConfigError, CoverBrackets};
-    use kernel::{Bounded, ConfigPatch, domain::Crossfade};
+    use kernel::{
+        Bounded,
+        ConfigPatch,
+        domain::{Crossfade, ThemeName},
+    };
     use rstest::{fixture, rstest};
 
     use crate::{
@@ -97,7 +101,12 @@ mod tests {
     }
 
     fn save_theme(path: &Path) -> Result<Written, SaveError> {
-        save(path, ConfigPatch::builder().theme("dark").build())
+        save(
+            path,
+            ConfigPatch::builder()
+                .theme(ThemeName::from_static("dark"))
+                .build(),
+        )
     }
 
     fn save_crossfade(path: &Path) -> Result<Written, SaveError> {

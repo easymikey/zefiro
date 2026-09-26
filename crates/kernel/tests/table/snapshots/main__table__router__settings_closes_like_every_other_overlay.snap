@@ -17,12 +17,8 @@ expression: "walked(model, messages)"
         Stopped,
         Some(
             Settings(
-                CursorOver {
-                    cursor: Cursor {
-                        index: 0,
-                        len: 5,
-                    },
-                    rows: SettingsRows,
+                SettingsCursor {
+                    selected: Theme,
                 },
             ),
         ),

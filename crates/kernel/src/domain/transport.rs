@@ -2,12 +2,28 @@ use std::time::Duration;
 
 use crate::domain::{AbLoop, Bounded, Percent, SleepTimer, Speed};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFault {
+    DeviceGone,
+    Backend,
+}
+
+impl std::fmt::Display for OutputFault {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let label = match self {
+            OutputFault::DeviceGone => "the device is gone",
+            OutputFault::Backend => "an audio backend error",
+        };
+        formatter.write_str(label)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Output {
     #[default]
     Ready,
     Lost {
-        reason: String,
+        fault: OutputFault,
     },
 }
 

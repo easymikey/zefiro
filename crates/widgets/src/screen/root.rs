@@ -8,6 +8,7 @@ use ratatui::{
 use crate::{
     card::CoverArt,
     key_hints::KeyHintsLine,
+    overlay::layer::OverlayLayer,
     playlist::PlaylistPane,
     primitive::canvas::Canvas,
     scene::Scene,
@@ -18,7 +19,6 @@ use crate::{
         FullScreen,
         MinimalCard,
         TooSmallNotice,
-        frame_layout::{overlay_layer, toast_card},
     },
 };
 
@@ -92,7 +92,12 @@ impl Screen<'_> {
     fn render_layers(&self, buffer: &mut Buffer) {
         let screen = self.layout.screen;
         if let Some(areas) = self.layout.overlay {
-            overlay_layer(&self.scene, self.layout).render_in(
+            OverlayLayer::placed(
+                self.scene.overlay_content(),
+                self.layout,
+                self.scene.cover_style(),
+            )
+            .render_in(
                 areas,
                 Canvas {
                     area: screen,
@@ -100,7 +105,7 @@ impl Screen<'_> {
                 },
             );
         }
-        if let Some((toast, areas)) = toast_card(&self.scene).zip(self.layout.toast) {
+        if let Some((toast, areas)) = self.scene.toast_card().zip(self.layout.toast) {
             toast.render_in(
                 areas,
                 Canvas {
@@ -129,7 +134,8 @@ mod tests {
 
     fn frame(scene: Scene<'_>, cover_art: CoverArt<'_>, size: (u16, u16)) -> String {
         let (width, height) = size;
-        let layout = FrameLayout::new(&scene, Rect::new(0, 0, width, height));
+        let layout =
+            FrameLayout::new(&scene.layout_inputs(), Rect::new(0, 0, width, height));
         painted(
             &Screen {
                 scene,

@@ -13,7 +13,12 @@ expression: wiring.log
     SetVolume(
         0.5,
     ),
-    Play,
+    Many(
+        [
+            Play,
+            Report,
+        ],
+    ),
     Clear,
     StartLoad {
         path: "/tmp/track2.flac",
@@ -24,16 +29,22 @@ expression: wiring.log
     SetVolume(
         0.5,
     ),
-    Play,
-    Start {
-        volume: 0.5,
-        total: Some(
-            100s,
-        ),
-    },
-    Send(
-        Position(
-            7s,
-        ),
+    Many(
+        [
+            Play,
+            Report,
+        ],
     ),
+    Many(
+        [
+            Start {
+                volume: 0.5,
+                total: Some(
+                    100s,
+                ),
+            },
+            Report,
+        ],
+    ),
+    Nothing,
 ]

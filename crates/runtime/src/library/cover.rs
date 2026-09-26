@@ -22,6 +22,12 @@ pub struct CoverRequest {
     pub side: u32,
 }
 
+impl From<&CoverRequest> for &'static str {
+    fn from(_: &CoverRequest) -> Self {
+        "cover"
+    }
+}
+
 #[derive(Debug)]
 pub enum CoverOutcome {
     Art(RgbaImage),
@@ -245,7 +251,7 @@ mod tests {
                 decode,
                 fit_square,
             },
-            driver::{LibraryThread, spawn},
+            driver::spawn,
         },
     };
 
@@ -384,11 +390,8 @@ mod tests {
         Receiver<Message>,
     ) {
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let LibraryThread {
-            thread,
-            covers,
-            decoded,
-        } = spawn(paths(directory), DECODABLE, mailbox).unwrap();
+        let (thread, covers, decoded) =
+            spawn(paths(directory), DECODABLE, &mailbox).unwrap();
         (thread, covers, decoded, messages)
     }
 

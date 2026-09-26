@@ -1,7 +1,7 @@
 use std::{error::Error, time::Instant};
 
 use crossbeam_channel::{Receiver, Select, never};
-use kernel::{Message, WorkspaceRequest};
+use kernel::{ConfigFact, Message, domain::ThemeName};
 
 use crate::{
     error::RunError,
@@ -63,8 +63,7 @@ where
 
     fn drive(mut self) -> Result<(), RunError<S::Error>> {
         loop {
-            let pumped = self.runtime.pump();
-            let deadline = self.deadline(pumped);
+            let deadline = self.deadline();
             let first = self.wait(deadline)?;
             self.gather(first);
             self.fire_timers(Instant::now());
@@ -78,7 +77,7 @@ where
         }
     }
 
-    fn deadline(&self, pumped: Option<Instant>) -> Option<Instant> {
+    fn deadline(&self) -> Option<Instant> {
         let frame = match self.shell.frame_due() {
             FrameDue::At(at) => Some(at),
             FrameDue::Settled => None,
@@ -87,15 +86,10 @@ where
             Repaint::Needed => Some(Instant::now()),
             Repaint::Settled => None,
         };
-        [
-            self.runtime.timers.next_deadline(),
-            frame,
-            pumped,
-            immediate,
-        ]
-        .into_iter()
-        .flatten()
-        .min()
+        [self.runtime.timers.next_deadline(), frame, immediate]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     fn wait(
@@ -107,7 +101,7 @@ where
         let input_index = select.recv(self.input);
         let mailbox_index = select.recv(&wiring.mailbox);
         let reloads_index = select.recv(&wiring.reloads);
-        select.recv(&wiring.library.decoded);
+        select.recv(&wiring.decoded);
         let operation = match deadline {
             Some(deadline) => match select.select_deadline(deadline) {
                 Ok(operation) => operation,
@@ -140,9 +134,9 @@ where
                 Arrival::Reload,
             ));
         }
-        Ok(operation.recv(&wiring.library.decoded).map_or_else(
+        Ok(operation.recv(&wiring.decoded).map_or_else(
             |_| {
-                wiring.library.decoded = never();
+                wiring.decoded = never();
                 Arrival::Nothing
             },
             Arrival::Cover,
@@ -155,7 +149,7 @@ where
         }
         let mailbox = self.runtime.wiring.mailbox.clone();
         let reloads = self.runtime.wiring.reloads.clone();
-        let decoded = self.runtime.wiring.library.decoded.clone();
+        let decoded = self.runtime.wiring.decoded.clone();
         let arrivals = std::iter::once(first)
             .chain(ready(self.input).map(Arrival::Input))
             .chain(ready(&mailbox).map(Arrival::Message))
@@ -186,12 +180,15 @@ where
             }
             Arrival::Reload(reload) => {
                 self.repaint = Repaint::Needed;
-                let themed = matches!(reload, Reload::Theme(_));
+                let name = match &reload {
+                    Reload::Theme(theme) => ThemeName::new(theme.name.clone()).ok(),
+                    Reload::Appearance(_) => None,
+                };
                 self.shell.reloaded(reload);
-                if themed {
+                if let Some(name) = name {
                     let change = self
                         .runtime
-                        .step(Message::Workspace(WorkspaceRequest::ThemeReloaded));
+                        .step(Message::Config(ConfigFact::ThemeReloaded(name)));
                     self.note(change);
                 }
             }
@@ -232,6 +229,10 @@ where
         if let Some(request) = painted.cover {
             self.runtime.request_cover(request);
         }
+        if let Some(visible_rows) = painted.viewport {
+            let change = self.runtime.step(Message::Viewport { visible_rows });
+            self.note(change);
+        }
         Ok(())
     }
 }
@@ -244,7 +245,6 @@ fn ready<T>(receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
 mod tests {
     use std::{convert::Infallible, path::PathBuf, time::Instant};
 
-    use audio::SpectrumTap;
     use config::{Hex, ThemeColors, ThemeFile};
     use crossbeam_channel::{Receiver, Sender, unbounded};
     use kernel::{
@@ -260,13 +260,9 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        driver::{DriverThread, NoDriver, spawn_loop},
         error::RunError,
         event_loop::{EventLoop, Repaint},
-        library::{
-            cover::{CoverDecoded, CoverRequest},
-            driver::LibraryThread,
-        },
+        library::cover::{CoverDecoded, CoverRequest},
         runtime::{Change, Runtime, Wiring},
         shell::{FrameDue, Painted, Reaction, Reload, Shell, ShellEffect, View},
         trace::{Trace, TraceEntry},
@@ -354,6 +350,7 @@ mod tests {
             let _ = self.keys.send(next);
             Ok(Painted {
                 cover: self.cover.clone(),
+                viewport: None,
             })
         }
     }
@@ -365,38 +362,12 @@ mod tests {
         _decoded: Sender<CoverDecoded>,
     }
 
-    fn idle<C: Send + 'static>(
-        driver: Driver,
-        mailbox: &Sender<Message>,
-    ) -> DriverThread<C> {
-        spawn_loop(driver, NoDriver, mailbox.clone()).unwrap()
-    }
-
     fn stock_startup() -> Startup {
         Startup::default()
     }
 
     fn fixture() -> Fixture {
-        let (mailbox, arrivals) = unbounded();
-        let (covers, cover_inbox) = unbounded();
-        let (reloads_sender, reloads) = unbounded();
-        let (decoded_sender, decoded) = unbounded();
-        let wiring = Wiring {
-            mailbox: arrivals,
-            audio: idle(Driver::Audio, &mailbox),
-            spectrum: SpectrumTap::silent(),
-            library: LibraryThread {
-                thread: idle(Driver::Library, &mailbox),
-                covers,
-                decoded,
-            },
-            config: idle(Driver::Config, &mailbox),
-            reloads,
-            #[cfg(target_os = "macos")]
-            macos: idle(Driver::Macos, &mailbox),
-            #[cfg(target_os = "macos")]
-            controls: None,
-        };
+        let (wiring, cover_inbox, reloads_sender, decoded_sender) = Wiring::idle();
         Fixture {
             runtime: Runtime::assemble(stock_startup(), wiring, Trace::default()),
             cover_inbox,
@@ -487,7 +458,12 @@ mod tests {
     #[test]
     fn a_rejection_lands_in_the_trace_only() {
         let mut fixture = fixture();
-        fixture.runtime.model.drivers.audio = DriverStatus::Stopped;
+        fixture
+            .runtime
+            .model
+            .drivers
+            .record_mut(Driver::Audio)
+            .status = DriverStatus::Stopped;
         let (keys, input) = unbounded();
         keys.send(Key::Stray).unwrap();
         let mut shell = Scripted::new(keys, 1);
@@ -513,7 +489,10 @@ mod tests {
             shell.effects,
             vec![ShellEffect::WindowColors(WindowColorsCmd::Reset)]
         );
-        assert_eq!(fixture.runtime.model.drivers.audio, DriverStatus::Stopped);
+        assert_eq!(
+            fixture.runtime.model.drivers.status(Driver::Audio),
+            &DriverStatus::Stopped
+        );
         fixture.runtime.drain();
     }
 

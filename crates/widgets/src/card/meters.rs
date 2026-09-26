@@ -44,8 +44,8 @@ fn remaining(view: CardView<'_>) -> Duration {
     let duration = view
         .displayed_track
         .and_then(|track| track.duration())
-        .unwrap_or_default();
-    duration.saturating_sub(view.player.position())
+        .unwrap_or(Duration::ZERO);
+    duration.saturating_sub(view.player.position_at(view.now))
 }
 
 pub(crate) fn paint(
@@ -68,8 +68,8 @@ fn paint_time_row(buffer: &mut Buffer, context: &CardContext<'_>) {
     let current = context.view.displayed_track;
     let duration = current
         .and_then(|track| track.duration())
-        .unwrap_or_default();
-    let position = context.view.player.position();
+        .unwrap_or(Duration::ZERO);
+    let position = context.view.player.position_at(context.view.now);
     let elapsed_total = elapsed_of(position, duration);
     let time_row = metrics.time_row;
     let elapsed_width = elapsed_total.chars().count();
@@ -147,8 +147,8 @@ fn paint_progress_text(buffer: &mut Buffer, context: &CardContext<'_>) {
     let current = context.view.displayed_track;
     let duration = current
         .and_then(|track| track.duration())
-        .unwrap_or_default();
-    let position = context.view.player.position();
+        .unwrap_or(Duration::ZERO);
+    let position = context.view.player.position_at(context.view.now);
     let fraction = if duration.is_zero() {
         0.0
     } else {
@@ -206,4 +206,88 @@ fn paint_volume_row(
         spectrum_buffers,
     );
     Paragraph::new(spectrum_lines).render(spectrum_area, buffer);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use config::Appearance;
+    use kernel::{
+        Bounded,
+        Moment,
+        domain::{
+            AudioFormat,
+            Output,
+            Percent,
+            Player,
+            Playhead,
+            Preload,
+            Speed,
+            Tags,
+            Track,
+        },
+        playlist::PlayOrder,
+    };
+    use ratatui::{buffer::Buffer, layout::Rect};
+
+    use crate::{
+        card::{CardContext, CardLayout, CardView, meters::paint_time_row, metrics},
+        geometry::{CellAspect, CoverSizing},
+        scene::fixtures::{find_text, noir},
+        spectrum::{SPECTRUM_BANDS, Spectrum},
+        theme::{ActiveTheme, ColorDepth},
+    };
+
+    #[test]
+    fn the_time_row_reads_the_view_now_not_the_epoch() {
+        let theme = noir();
+        let track = Arc::new(
+            Track::builder()
+                .path("/music/song.mp3")
+                .duration(Duration::from_secs(245))
+                .tags(Tags::default())
+                .audio_format(AudioFormat::default())
+                .build(),
+        );
+        let player = Player::Playing {
+            track: Arc::clone(&track),
+            head: Playhead::anchored(
+                Duration::from_secs(10),
+                Moment::default(),
+                Speed::default(),
+            ),
+            preload: Preload::None,
+        };
+        let spectrum: Spectrum = [0.0; SPECTRUM_BANDS];
+        let output = Output::Ready;
+        let play_order = PlayOrder::default();
+        let view = CardView {
+            player: &player,
+            speed: Speed::default(),
+            volume: Percent::clamped(50),
+            spectrum: &spectrum,
+            repeat: Default::default(),
+            play_order: &play_order,
+            queue_length: 1,
+            displayed_track: Some(&track),
+            output: &output,
+            now: Moment::new(Duration::from_secs(5)),
+        };
+        let area = Rect::new(0, 0, 60, 12);
+        let card_metrics = metrics(area, CellAspect::default(), CoverSizing::default());
+        let context = CardContext {
+            view,
+            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            appearance: Appearance::default(),
+            metrics: &card_metrics,
+            layout: CardLayout::default(),
+        };
+        let mut buffer = Buffer::empty(area);
+        paint_time_row(&mut buffer, &context);
+        assert!(
+            find_text(&buffer, "0:15").is_some(),
+            "expected the elapsed time to read 0:15, offset by the view's now"
+        );
+    }
 }

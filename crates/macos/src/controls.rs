@@ -3,8 +3,8 @@
 use std::{ptr::NonNull, time::Duration};
 
 use block2::RcBlock;
-use crossbeam_channel::{SendError, Sender};
-use kernel::{Message, PlaybackRequest};
+use crossbeam_channel::{Sender, TrySendError};
+use kernel::{Gesture, Message, SystemEvent};
 use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject};
 use objc2_media_player::{
     MPChangePlaybackPositionCommandEvent,
@@ -18,9 +18,9 @@ use objc2_media_player::{
 use crate::ffi;
 
 #[derive(Debug, Clone, Copy)]
-enum Gesture {
-    Press(PlaybackRequest),
-    Hold(PlaybackRequest),
+enum Trigger {
+    Press(Gesture),
+    Hold(Gesture),
     Scrub,
 }
 
@@ -36,9 +36,9 @@ impl Controls {
         let commands = ffi::remote_commands(&center);
         let targets = commands
             .into_iter()
-            .zip(gestures())
-            .map(|(command, gesture)| {
-                let target = target(&command, gesture, events.clone());
+            .zip(triggers())
+            .map(|(command, trigger)| {
+                let target = target(&command, trigger, events.clone());
                 (command, target)
             })
             .collect();
@@ -54,57 +54,67 @@ impl Drop for Controls {
     }
 }
 
-fn gestures() -> [Gesture; 9] {
+fn triggers() -> [Trigger; 9] {
     [
-        Gesture::Press(PlaybackRequest::Play),
-        Gesture::Press(PlaybackRequest::Pause),
-        Gesture::Press(PlaybackRequest::Toggle),
-        Gesture::Press(PlaybackRequest::Stop),
-        Gesture::Press(PlaybackRequest::Next),
-        Gesture::Press(PlaybackRequest::Prev),
-        Gesture::Hold(PlaybackRequest::SeekForward),
-        Gesture::Hold(PlaybackRequest::SeekBack),
-        Gesture::Scrub,
+        Trigger::Press(Gesture::Play),
+        Trigger::Press(Gesture::Pause),
+        Trigger::Press(Gesture::Toggle),
+        Trigger::Press(Gesture::Stop),
+        Trigger::Press(Gesture::Next),
+        Trigger::Press(Gesture::Previous),
+        Trigger::Hold(Gesture::SeekForward),
+        Trigger::Hold(Gesture::SeekBack),
+        Trigger::Scrub,
     ]
+}
+
+#[cfg(test)]
+fn pressed(trigger: Trigger) -> Option<Gesture> {
+    match trigger {
+        Trigger::Press(gesture) => Some(gesture),
+        Trigger::Hold(_) | Trigger::Scrub => None,
+    }
 }
 
 fn target(
     command: &MPRemoteCommand,
-    gesture: Gesture,
+    trigger: Trigger,
     events: Sender<Message>,
 ) -> Retained<AnyObject> {
-    let handler = RcBlock::new(handler(gesture, events));
+    let handler = RcBlock::new(handler(trigger, events));
     ffi::enable_command(command);
     ffi::add_command_target(command, &handler)
 }
 
 fn handler(
-    gesture: Gesture,
+    trigger: Trigger,
     events: Sender<Message>,
 ) -> impl Fn(NonNull<MPRemoteCommandEvent>) -> MPRemoteCommandHandlerStatus + 'static {
     move |event| {
-        ffi::borrow_command_event(event, |event| match reaction(gesture, event) {
-            Reaction::Forward(message) => status(events.send(message)),
+        ffi::borrow_command_event(event, |event| match reaction(trigger, event) {
+            Reaction::Forward(gesture) => {
+                status(events.try_send(Message::from(SystemEvent::MediaKey(gesture))))
+            }
             Reaction::Nothing => MPRemoteCommandHandlerStatus::Success,
             Reaction::Malformed => MPRemoteCommandHandlerStatus::CommandFailed,
         })
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Reaction {
-    Forward(Message),
+    Forward(Gesture),
     Nothing,
     Malformed,
 }
 
-fn reaction(gesture: Gesture, event: &MPRemoteCommandEvent) -> Reaction {
-    match gesture {
-        Gesture::Press(request) => Reaction::Forward(Message::Playback(request)),
-        Gesture::Hold(request) => event
+fn reaction(trigger: Trigger, event: &MPRemoteCommandEvent) -> Reaction {
+    match trigger {
+        Trigger::Press(gesture) => Reaction::Forward(gesture),
+        Trigger::Hold(gesture) => event
             .downcast_ref::<MPSeekCommandEvent>()
-            .map_or(Reaction::Malformed, |seek| hold(request, phase(seek))),
-        Gesture::Scrub => event
+            .map_or(Reaction::Malformed, |seek| hold(gesture, phase(seek))),
+        Trigger::Scrub => event
             .downcast_ref::<MPChangePlaybackPositionCommandEvent>()
             .map_or(Reaction::Malformed, |scrub| scrub_to(seconds(scrub))),
     }
@@ -118,9 +128,9 @@ fn seconds(scrub: &MPChangePlaybackPositionCommandEvent) -> f64 {
     ffi::scrub_position_seconds(scrub)
 }
 
-fn hold(request: PlaybackRequest, phase: MPSeekCommandEventType) -> Reaction {
+fn hold(gesture: Gesture, phase: MPSeekCommandEventType) -> Reaction {
     if phase == MPSeekCommandEventType::BeginSeeking {
-        Reaction::Forward(Message::Playback(request))
+        Reaction::Forward(gesture)
     } else {
         Reaction::Nothing
     }
@@ -128,11 +138,11 @@ fn hold(request: PlaybackRequest, phase: MPSeekCommandEventType) -> Reaction {
 
 fn scrub_to(seconds: f64) -> Reaction {
     Duration::try_from_secs_f64(seconds).map_or(Reaction::Malformed, |position| {
-        Reaction::Forward(Message::Playback(PlaybackRequest::SeekTo(position)))
+        Reaction::Forward(Gesture::Scrub(position))
     })
 }
 
-fn status(sent: Result<(), SendError<Message>>) -> MPRemoteCommandHandlerStatus {
+fn status(sent: Result<(), TrySendError<Message>>) -> MPRemoteCommandHandlerStatus {
     sent.map_or(MPRemoteCommandHandlerStatus::CommandFailed, |()| {
         MPRemoteCommandHandlerStatus::Success
     })
@@ -142,31 +152,30 @@ fn status(sent: Result<(), SendError<Message>>) -> MPRemoteCommandHandlerStatus 
 mod tests {
     use std::time::Duration;
 
-    use kernel::{Message, PlaybackRequest};
+    use crossbeam_channel::bounded;
+    use kernel::{Gesture, Message};
     use objc2_media_player::{MPRemoteCommandHandlerStatus, MPSeekCommandEventType};
     use rstest::rstest;
 
-    use crate::controls::{Reaction, hold, scrub_to, status};
+    use crate::controls::{Reaction, hold, pressed, scrub_to, status, triggers};
 
     #[rstest]
     #[case::begin(
         MPSeekCommandEventType::BeginSeeking,
-        Reaction::Forward(Message::Playback(PlaybackRequest::SeekForward))
+        Reaction::Forward(Gesture::SeekForward)
     )]
     #[case::end(MPSeekCommandEventType::EndSeeking, Reaction::Nothing)]
     fn only_the_start_of_a_hold_seeks(
         #[case] phase: MPSeekCommandEventType,
         #[case] reaction: Reaction,
     ) {
-        assert_eq!(hold(PlaybackRequest::SeekForward, phase), reaction);
+        assert_eq!(hold(Gesture::SeekForward, phase), reaction);
     }
 
     #[rstest]
     #[case::inside(
         42.5,
-        Reaction::Forward(Message::Playback(PlaybackRequest::SeekTo(
-            Duration::from_millis(42_500)
-        )))
+        Reaction::Forward(Gesture::Scrub(Duration::from_millis(42_500)))
     )]
     #[case::negative(-1.0, Reaction::Malformed)]
     #[case::not_a_number(f64::NAN, Reaction::Malformed)]
@@ -177,17 +186,47 @@ mod tests {
         assert_eq!(scrub_to(seconds), reaction);
     }
 
+    #[derive(Debug, Clone, Copy)]
+    enum Mailbox {
+        Room,
+        Full,
+        Closed,
+    }
+
+    #[rstest]
+    #[case::room(Mailbox::Room, MPRemoteCommandHandlerStatus::Success)]
+    #[case::full(Mailbox::Full, MPRemoteCommandHandlerStatus::CommandFailed)]
+    #[case::closed(Mailbox::Closed, MPRemoteCommandHandlerStatus::CommandFailed)]
+    fn the_command_status_follows_the_mailbox(
+        #[case] mailbox: Mailbox,
+        #[case] expected: MPRemoteCommandHandlerStatus,
+    ) {
+        let (events, receiver) = bounded(1);
+        match mailbox {
+            Mailbox::Room => {}
+            Mailbox::Full => events.try_send(Message::Quit).unwrap(),
+            Mailbox::Closed => drop(receiver),
+        }
+        assert_eq!(status(events.try_send(Message::Quit)), expected);
+    }
+
     #[test]
-    fn a_closed_event_channel_fails_the_command() {
-        let (events, receiver) = crossbeam_channel::unbounded::<Message>();
+    fn every_trigger_forwards_its_gesture() {
+        let presses: Vec<Option<Gesture>> =
+            triggers().into_iter().map(pressed).collect();
         assert_eq!(
-            status(events.send(Message::Quit)),
-            MPRemoteCommandHandlerStatus::Success
-        );
-        drop(receiver);
-        assert_eq!(
-            status(events.send(Message::Quit)),
-            MPRemoteCommandHandlerStatus::CommandFailed
+            presses,
+            vec![
+                Some(Gesture::Play),
+                Some(Gesture::Pause),
+                Some(Gesture::Toggle),
+                Some(Gesture::Stop),
+                Some(Gesture::Next),
+                Some(Gesture::Previous),
+                None,
+                None,
+                None,
+            ]
         );
     }
 }

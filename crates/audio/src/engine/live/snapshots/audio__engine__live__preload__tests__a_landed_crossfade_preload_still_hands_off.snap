@@ -10,8 +10,9 @@ expression: log
             1.0,
         ),
     },
-    Nothing,
-    Promote {
-        volume: 1.0,
+    Arm {
+        cue: Some(
+            90s,
+        ),
     },
 ]

@@ -1,16 +1,22 @@
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
-use kernel::{
-    domain::{ScanStatus, format_time},
-    playlist::RepeatMode,
-};
+use kernel::{domain::ScanStatus, playlist::RepeatMode};
 use ratatui::{style::Color, text::Line};
 
-use crate::primitive::{
-    glyphs::TruncateGlyphs,
-    span::{Piece, row, text},
-    text::truncate_line_to_width,
+use crate::{
+    primitive::{
+        glyphs::TruncateGlyphs,
+        span::{Piece, row, text},
+        text::truncate_line_to_width,
+    },
+    redraw::ceil_minutes,
 };
+
+const SHUFFLE_LABEL: &str = "shuffle ";
+const REPEAT_LABEL: &str = "repeat ";
+const QUEUE_LABEL: &str = "queue ";
+const THEME_LABEL: &str = "theme ";
+const SLEEP_LABEL: &str = "sleep ";
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ScanProgress<'a> {
@@ -86,26 +92,27 @@ fn counts(status: StatusLineView<'_>) -> String {
     }
 }
 
+fn sleep_label(left: Duration) -> String {
+    format!("{}m", ceil_minutes(left))
+}
+
 #[must_use]
-pub(crate) fn build(
-    status: StatusLineView<'_>,
+pub(crate) fn build<'a>(
+    status: StatusLineView<'a>,
     colors: StatusLineColors,
     row_width: usize,
-) -> Line<'static> {
+) -> Line<'a> {
     let glyphs = StatusGlyphs::default();
     let pos_total = counts(status);
 
-    let shuffle = match status.shuffle {
+    let shuffle: &'static str = match status.shuffle {
         Shuffle::On => "on",
         Shuffle::Off => "off",
     };
-    let repeat = <&'static str>::from(status.repeat_mode);
+    let repeat: &'static str = <&'static str>::from(status.repeat_mode);
 
-    let flag = |label: &'static str, value: String| -> Vec<Piece<'static>> {
-        vec![
-            text(format!("{label} ")).fg(colors.dim),
-            text(value).fg(colors.accent),
-        ]
+    let flag = |label: &'static str, value: Cow<'a, str>| -> Vec<Piece<'a>> {
+        vec![text(label).fg(colors.dim), text(value).fg(colors.accent)]
     };
     let flag_separator = || text(glyphs.flag_separator).fg(colors.dim);
 
@@ -115,14 +122,14 @@ pub(crate) fn build(
         text(pos_total).fg(colors.accent),
         text(glyphs.separator).fg(colors.dim),
     ];
-    let mut flags = vec![
-        ("shuffle", shuffle.to_string()),
-        ("repeat", repeat.to_string()),
-        ("queue", status.queue_len.to_string()),
-        ("theme", status.theme_name.to_string()),
+    let mut flags: Vec<(&'static str, Cow<'a, str>)> = vec![
+        (SHUFFLE_LABEL, Cow::Borrowed(shuffle)),
+        (REPEAT_LABEL, Cow::Borrowed(repeat)),
+        (QUEUE_LABEL, Cow::Owned(status.queue_len.to_string())),
+        (THEME_LABEL, Cow::Borrowed(status.theme_name)),
     ];
     if let Some(sleep_left) = status.sleep_left {
-        flags.push(("sleep", format_time(sleep_left)));
+        flags.push((SLEEP_LABEL, Cow::Owned(sleep_label(sleep_left))));
     }
     let pieces =
         head.into_iter()
@@ -140,8 +147,11 @@ pub(crate) fn build(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use kernel::playlist::RepeatMode;
     use ratatui::style::Color;
+    use rstest::rstest;
     use unicode_width::UnicodeWidthStr;
 
     use crate::status_line::{
@@ -150,6 +160,7 @@ mod tests {
         StatusLineColors,
         StatusLineView,
         build,
+        sleep_label,
     };
 
     fn colors() -> StatusLineColors {
@@ -223,8 +234,6 @@ mod tests {
 
     #[test]
     fn an_armed_sleep_timer_adds_a_countdown_flag() {
-        use std::time::Duration;
-
         let status = StatusLineView {
             sleep_left: Some(Duration::from_secs(14 * 60 + 59)),
             ..view()
@@ -234,7 +243,17 @@ mod tests {
             .iter()
             .map(|span| span.content.as_ref())
             .collect();
-        assert!(text.ends_with("sleep 14:59"), "got {text:?}");
+        assert!(text.ends_with("sleep 15m"), "got {text:?}");
+    }
+
+    #[rstest]
+    #[case::rounds_up_from_one_second_left(Duration::from_secs(14 * 60 + 59), "15m")]
+    #[case::exact_quarter_hour(Duration::from_secs(15 * 60), "15m")]
+    #[case::rounds_up_past_the_quarter_hour(Duration::from_secs(15 * 60 + 1), "16m")]
+    #[case::last_minute(Duration::from_secs(1), "1m")]
+    #[case::no_time_left(Duration::ZERO, "0m")]
+    fn sleep_label_rows(#[case] left: Duration, #[case] expected: &str) {
+        assert_eq!(sleep_label(left), expected);
     }
 
     #[test]

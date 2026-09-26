@@ -1,10 +1,16 @@
 use std::{path::PathBuf, time::Duration};
 
-use kernel::{AudioEvent, AudioFailure, Playback, domain::Speed};
+use kernel::{
+    AudioEvent,
+    AudioFailure,
+    Playback,
+    domain::{DeviceName, Speed},
+};
 
 use crate::{
     deck::{Deck, source::PreloadRequest},
     engine::effect::{EngineEffect, EngineMessage},
+    error::seek_fault,
 };
 
 pub(crate) fn perform(io: EngineEffect, deck: &mut Deck) -> Option<EngineMessage> {
@@ -27,17 +33,13 @@ pub(crate) fn perform(io: EngineEffect, deck: &mut Deck) -> Option<EngineMessage
         EngineEffect::Pause => pause(deck),
         EngineEffect::Seek(target) => seek_effect(deck, target),
         EngineEffect::SetVolume(volume) => apply_volume(deck, volume),
-        EngineEffect::Fade {
-            outgoing,
-            incoming,
-            at,
-        } => fade(deck, (outgoing, incoming), at),
-        EngineEffect::Retire {
-            playing,
-            retiring,
-            at,
-        } => retire(deck, (playing, retiring), at),
-        EngineEffect::Retired { playing, at } => retired(deck, playing, at),
+        EngineEffect::Arm { cue } => arm(deck, cue),
+        EngineEffect::Crossfade { length, incoming } => {
+            start_crossfade(deck, length, incoming)
+        }
+        EngineEffect::Unfade => unfade(deck),
+        EngineEffect::Ramp { length, playing } => ramp(deck, length, playing),
+        EngineEffect::DropOutgoing => drop_outgoing(deck),
         EngineEffect::SetSpeed(speed) => set_speed(deck, speed),
         EngineEffect::Clear => clear(deck),
         EngineEffect::PreloadGapless(path) => preload_gapless(deck, path),
@@ -47,6 +49,8 @@ pub(crate) fn perform(io: EngineEffect, deck: &mut Deck) -> Option<EngineMessage
         EngineEffect::RestartGapless(path) => restart_gapless(deck, path),
         EngineEffect::Promote { volume } => promoted(deck, volume),
         EngineEffect::ListDevices => list_devices(deck),
+        EngineEffect::Report => report(deck),
+        EngineEffect::Advance => advance(deck),
     }
 }
 
@@ -56,7 +60,7 @@ fn in_turn(steps: Vec<EngineEffect>, deck: &mut Deck) -> Option<EngineMessage> {
         .fold(None, |landed, io| landed.or(perform(io, deck)))
 }
 
-fn send(deck: &Deck, event: AudioEvent) -> Option<EngineMessage> {
+fn send(deck: &mut Deck, event: AudioEvent) -> Option<EngineMessage> {
     deck.send(event);
     None
 }
@@ -69,15 +73,14 @@ fn mute(deck: &mut Deck, fault: AudioFailure) -> Option<EngineMessage> {
 
 fn open_stream(
     deck: &mut Deck,
-    device: Option<String>,
+    device: Option<DeviceName>,
     speed: Speed,
 ) -> Option<EngineMessage> {
     Some(EngineMessage::Opened(deck.open(device, speed.value())))
 }
 
 fn decode(deck: &mut Deck, path: PathBuf) -> Option<EngineMessage> {
-    deck.spawn_decode(path);
-    None
+    deck.spawn_decode(path)
 }
 
 fn resumed(
@@ -101,7 +104,7 @@ fn pause(deck: &Deck) -> Option<EngineMessage> {
     None
 }
 
-fn seek_effect(deck: &Deck, target: Duration) -> Option<EngineMessage> {
+fn seek_effect(deck: &mut Deck, target: Duration) -> Option<EngineMessage> {
     seek(deck, target);
     None
 }
@@ -117,8 +120,7 @@ fn set_speed(deck: &Deck, speed: Speed) -> Option<EngineMessage> {
 }
 
 fn preload_gapless(deck: &mut Deck, path: PathBuf) -> Option<EngineMessage> {
-    deck.start_preload(PreloadRequest::Gapless(path));
-    None
+    deck.start_preload(PreloadRequest::Gapless(path))
 }
 
 fn preload_crossfade(
@@ -130,14 +132,12 @@ fn preload_crossfade(
         path,
         gain,
         speed: speed.value(),
-    });
-    None
+    })
 }
 
 fn restart_gapless(deck: &mut Deck, path: PathBuf) -> Option<EngineMessage> {
     deck.drop_preload();
-    deck.start_preload(PreloadRequest::Gapless(path));
-    None
+    deck.start_preload(PreloadRequest::Gapless(path))
 }
 
 fn promoted(deck: &mut Deck, volume: f32) -> Option<EngineMessage> {
@@ -149,6 +149,18 @@ fn promoted(deck: &mut Deck, volume: f32) -> Option<EngineMessage> {
 
 fn list_devices(deck: &Deck) -> Option<EngineMessage> {
     deck.list_devices();
+    None
+}
+
+fn report(deck: &mut Deck) -> Option<EngineMessage> {
+    if let Some(position) = deck.playhead() {
+        deck.send(AudioEvent::Playhead(position));
+    }
+    None
+}
+
+fn advance(deck: &mut Deck) -> Option<EngineMessage> {
+    deck.advance();
     None
 }
 
@@ -165,65 +177,51 @@ fn start_track(
 
 fn start_load(deck: &mut Deck, path: PathBuf, speed: Speed) -> Option<EngineMessage> {
     deck.drop_preload();
-    if let Some(output) = deck.output.as_mut() {
-        output.outgoing = None;
-        output.swap_sink(speed.value());
-    }
-    deck.spawn_decode(path);
-    None
+    deck.swap_primary(speed.value());
+    deck.spawn_decode(path)
 }
 
 fn start_fade(deck: &mut Deck, path: PathBuf, speed: Speed) -> Option<EngineMessage> {
     deck.drop_preload();
-    if let Some(output) = deck.output.as_mut() {
-        output.retire_sink(speed.value());
-    }
-    deck.spawn_decode(path);
+    deck.retire_primary(speed.value());
+    let from = deck.retiring_gain();
+    deck.spawn_decode(path)
+        .or(Some(EngineMessage::Retiring { from }))
+}
+
+fn ramp(deck: &mut Deck, length: Duration, playing: f32) -> Option<EngineMessage> {
+    deck.ramp_handover(length, playing);
     None
 }
 
-fn retire(deck: &Deck, volumes: (f32, f32), at: Duration) -> Option<EngineMessage> {
-    let (playing, retiring) = volumes;
-    set_volume(deck, playing);
-    if let Some(outgoing) = deck.outgoing() {
-        outgoing.set_volume(retiring);
-    }
-    deck.send(AudioEvent::Position(at));
+fn drop_outgoing(deck: &mut Deck) -> Option<EngineMessage> {
+    deck.drop_outgoing();
     None
 }
 
-fn retired(deck: &mut Deck, playing: f32, at: Duration) -> Option<EngineMessage> {
-    if let Some(output) = deck.output.as_mut() {
-        output.outgoing = None;
-    }
-    set_volume(deck, playing);
-    deck.send(AudioEvent::Position(at));
+fn arm(deck: &mut Deck, cue: Option<Duration>) -> Option<EngineMessage> {
+    deck.cue_primary(cue);
     None
 }
 
-fn fade(deck: &Deck, volumes: (f32, f32), at: Duration) -> Option<EngineMessage> {
-    let (outgoing, incoming) = volumes;
-    set_volume(deck, outgoing);
-    if let Some(preload) = deck
-        .output
-        .as_ref()
-        .and_then(|output| output.preload.as_ref())
-    {
-        preload.set_volume(incoming);
-        if incoming > 0.0 {
-            preload.play();
-        }
-    }
-    deck.send(AudioEvent::Position(at));
+fn start_crossfade(
+    deck: &mut Deck,
+    length: Duration,
+    incoming: f32,
+) -> Option<EngineMessage> {
+    deck.crossfade(length, incoming);
+    None
+}
+
+fn unfade(deck: &mut Deck) -> Option<EngineMessage> {
+    deck.unfade();
     None
 }
 
 fn clear(deck: &mut Deck) -> Option<EngineMessage> {
     deck.drop_preload();
-    if let Some(output) = deck.output.as_mut() {
-        let speed = output.sink.speed();
-        output.swap_sink(speed);
-        output.outgoing = None;
+    if let Some(speed) = deck.primary().map(rodio::Sink::speed) {
+        deck.swap_primary(speed);
     }
     deck.clear_staged();
     None
@@ -235,28 +233,26 @@ fn set_volume(deck: &Deck, volume: f32) {
     }
 }
 
-fn seek(deck: &Deck, target: Duration) {
+fn seek(deck: &mut Deck, target: Duration) {
     let Some(sink) = deck.primary() else {
         return;
     };
     if let Err(error) = sink.try_seek(target) {
-        deck.send(AudioEvent::Error(AudioFailure::Seek {
-            reason: error.to_string(),
-        }));
+        deck.send(AudioEvent::Error(seek_fault(&error)));
     }
 }
 
 fn resume(deck: &mut Deck, position: Duration, paused: Playback) {
     deck.append_staged();
-    let Some(sink) = deck.primary() else {
-        return;
-    };
-    if let Err(error) = sink.try_seek(position) {
-        deck.send(AudioEvent::Error(AudioFailure::Seek {
-            reason: error.to_string(),
-        }));
+    let error = deck
+        .primary()
+        .and_then(|sink| sink.try_seek(position).err());
+    if let Some(error) = error {
+        deck.send(AudioEvent::Error(seek_fault(&error)));
     }
-    if let Playback::Paused = paused {
+    if let Playback::Paused = paused
+        && let Some(sink) = deck.primary()
+    {
         sink.pause();
     }
 }

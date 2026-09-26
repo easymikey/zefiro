@@ -4,11 +4,26 @@ use std::{
 };
 
 use clap::Parser;
-use config::{ConfigFile, appearance_file, config_file};
+use config::{
+    APPEARANCE_FILE_NAME,
+    AppearanceFile,
+    CONFIG_FILE_NAME,
+    ConfigFile,
+    parse_appearance,
+    parse_config,
+};
 use kernel::{
     Bounded,
     Track,
-    domain::{CustomSetting, Percent, PlaylistIndex, Startup},
+    domain::{
+        CustomSetting,
+        DeviceName,
+        Percent,
+        PlaylistIndex,
+        Shuffle,
+        Startup,
+        ThemeChoice,
+    },
     playlist::{PlaylistFileName, PlaylistSource},
 };
 use library::LibraryPaths;
@@ -33,31 +48,11 @@ pub(crate) struct Cli {
     playlist: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Shuffle {
-    Enabled,
-    Disabled,
-}
-
 fn shuffle_requested(count: u8) -> Shuffle {
     if count > 0 {
         Shuffle::Enabled
     } else {
         Shuffle::Disabled
-    }
-}
-
-fn rolled_shuffle_order(
-    shuffle: Shuffle,
-    playlist_length: usize,
-) -> Option<Vec<usize>> {
-    match shuffle {
-        Shuffle::Disabled => None,
-        Shuffle::Enabled => {
-            let mut order: Vec<usize> = (0..playlist_length).collect();
-            fastrand::shuffle(&mut order);
-            Some(order)
-        }
     }
 }
 
@@ -70,7 +65,7 @@ fn read_config_file(path: Option<&Path>) -> Result<ConfigFile, Error> {
         return Ok(ConfigFile::default());
     };
     match std::fs::read_to_string(path) {
-        Ok(text) => config_file::parse(&text).map_err(|source| Error::ConfigParse {
+        Ok(text) => parse_config(&text).map_err(|source| Error::ConfigParse {
             path: path.to_path_buf(),
             source,
         }),
@@ -86,8 +81,8 @@ fn read_config_file(path: Option<&Path>) -> Result<ConfigFile, Error> {
 
 fn appearance_path(root: Option<&Path>) -> PathBuf {
     root.map_or_else(
-        || PathBuf::from(appearance_file::APPEARANCE_FILE_NAME),
-        |root| root.join(appearance_file::APPEARANCE_FILE_NAME),
+        || PathBuf::from(APPEARANCE_FILE_NAME),
+        |root| root.join(APPEARANCE_FILE_NAME),
     )
 }
 
@@ -102,11 +97,11 @@ fn config_paths(root: Option<&Path>, config: Option<PathBuf>) -> runtime::Config
     }
 }
 
-fn appearance_file_at_boot(path: &Path) -> appearance_file::AppearanceFile {
+fn appearance_file_at_boot(path: &Path) -> AppearanceFile {
     let Ok(text) = std::fs::read_to_string(path) else {
-        return appearance_file::AppearanceFile::default();
+        return AppearanceFile::default();
     };
-    appearance_file::parse_appearance(&text).unwrap_or_default()
+    parse_appearance(&text).unwrap_or_default()
 }
 
 fn seeded_custom_rows(path: &Path) -> Vec<CustomSetting> {
@@ -169,23 +164,33 @@ struct Overrides {
     volume: Option<u8>,
 }
 
+fn parse_cli_theme(raw: &str) -> ThemeChoice {
+    raw.parse().unwrap_or(ThemeChoice::Auto)
+}
+
 fn startup_from_file(
     file: ConfigFile,
     music_dir: PathBuf,
-    overrides: Overrides,
+    overrides: &Overrides,
 ) -> Startup {
     Startup {
         music_dir,
         playlist_tracks: Vec::new(),
         playlist_index: None,
         playlist_source: PlaylistSource::Library,
-        shuffle_order: None,
+        shuffle: Shuffle::Disabled,
         crossfade: file.audio.crossfade,
         replaygain: file.audio.replaygain,
-        output_device: file.audio.device,
+        output_device: file
+            .audio
+            .device
+            .and_then(|name| DeviceName::new(name).ok()),
         sleep_presets: file.audio.sleep_presets.into(),
-        theme: overrides.theme.unwrap_or(file.theme),
-        volume: Percent::clamped(overrides.volume.unwrap_or(file.volume)),
+        theme: overrides
+            .theme
+            .as_deref()
+            .map_or(file.theme, parse_cli_theme),
+        volume: overrides.volume.map_or(file.volume, Percent::clamped),
         themes: Vec::new(),
         custom_rows: Vec::new(),
     }
@@ -196,7 +201,7 @@ fn with_playlist(
     playlist: LoadedPlaylist,
     shuffle: Shuffle,
 ) -> Startup {
-    startup.shuffle_order = rolled_shuffle_order(shuffle, playlist.tracks.len());
+    startup.shuffle = shuffle;
     startup.playlist_tracks = playlist.tracks;
     startup.playlist_index = playlist.index;
     startup.playlist_source = playlist.source;
@@ -206,9 +211,7 @@ fn with_playlist(
 pub(crate) fn boot() -> Result<(Startup, runtime::BootPaths), Error> {
     let cli = Cli::parse();
     let root = configuration_root();
-    let config = root
-        .as_deref()
-        .map(|root| root.join(config_file::CONFIG_FILE_NAME));
+    let config = root.as_deref().map(|root| root.join(CONFIG_FILE_NAME));
     let file = read_config_file(config.as_deref())?;
     let music_dir = resolved_music_dir(&file, cli.path)?;
     let library = LibraryPaths::from_dirs()?;
@@ -222,7 +225,7 @@ pub(crate) fn boot() -> Result<(Startup, runtime::BootPaths), Error> {
     let startup = Startup {
         custom_rows: seeded_custom_rows(&appearance),
         ..with_playlist(
-            startup_from_file(file, music_dir, overrides),
+            startup_from_file(file, music_dir, &overrides),
             playlist,
             shuffle,
         )
@@ -238,15 +241,10 @@ pub(crate) fn boot() -> Result<(Startup, runtime::BootPaths), Error> {
 mod tests {
     use clap::Parser;
     use config::AppearanceFile;
+    use kernel::domain::Shuffle;
     use rstest::rstest;
 
-    use crate::startup::{
-        Cli,
-        Shuffle,
-        rolled_shuffle_order,
-        seeded_custom_rows,
-        shuffle_requested,
-    };
+    use crate::startup::{Cli, seeded_custom_rows, shuffle_requested};
 
     fn stock_rows() -> Vec<kernel::domain::CustomSetting> {
         config::custom_rows(&AppearanceFile::default())
@@ -267,23 +265,6 @@ mod tests {
         let path = directory.path().join("sifr-ui.toml");
 
         assert_eq!(seeded_custom_rows(&path), stock_rows());
-    }
-
-    #[test]
-    fn shuffle_disabled_leaves_the_order_untouched() {
-        assert_eq!(rolled_shuffle_order(Shuffle::Disabled, 5), None);
-    }
-
-    #[rstest]
-    #[case::empty(0)]
-    #[case::several(5)]
-    fn shuffle_enabled_permutes_the_full_range(#[case] playlist_length: usize) {
-        let mut order =
-            rolled_shuffle_order(Shuffle::Enabled, playlist_length).unwrap();
-
-        order.sort_unstable();
-
-        assert_eq!(order, (0..playlist_length).collect::<Vec<usize>>());
     }
 
     #[test]

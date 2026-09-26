@@ -4,19 +4,23 @@ expression: config
 ---
 ConfigFile {
     music_dir: None,
-    theme: "auto",
-    volume: 50,
+    theme: Auto,
+    volume: Percent(
+        50,
+    ),
     audio: AudioConfig {
         crossfade: Crossfade(
             3s,
         ),
         replaygain: Off,
         device: None,
-        sleep_presets: [
-            900s,
-            1800s,
-            3600s,
-        ],
+        sleep_presets: SleepPresets(
+            [
+                900s,
+                1800s,
+                3600s,
+            ],
+        ),
     },
     keymap: {},
 }

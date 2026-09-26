@@ -1,13 +1,11 @@
 ---
-source: crates/library/src/execute.rs
+source: crates/library/tests/unit/execute.rs
 expression: reply
 ---
 Some(
-    Loaded(
-        FavoritesLoaded(
-            {
-                "/music/a.flac",
-            },
-        ),
+    FavoritesLoaded(
+        {
+            "/music/a.flac",
+        },
     ),
 )

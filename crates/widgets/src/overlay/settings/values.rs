@@ -22,9 +22,9 @@ use kernel::{
         OutputDevice,
         Replaygain,
         SLEEP_PRESET_BUNDLES,
-        SettingControl,
         SettingId,
         SettingRow,
+        ThemeName,
         format_sleep_presets_label,
     },
 };
@@ -37,7 +37,7 @@ pub struct SettingsView<'a> {
     pub crossfade: Crossfade,
     pub replaygain: Replaygain,
     pub theme: &'a str,
-    pub themes: &'a [String],
+    pub themes: &'a [ThemeName],
     pub sleep_presets: &'a [Duration],
     pub music_dir: &'a str,
     pub output_device: Option<&'a str>,
@@ -203,14 +203,16 @@ fn preset_label(appearance: Appearance) -> &'static str {
 pub(crate) fn max_value_width(row: SettingRow, values: &SettingsView<'_>) -> usize {
     let glyphs = SettingsGlyphs::default();
     match row {
-        SettingRow::Theme => widest_pick(values.themes.iter().cloned(), glyphs),
+        SettingRow::Theme => {
+            widest_pick(values.themes.iter().map(ThemeName::to_string), glyphs)
+        }
         SettingRow::Crossfade => format_duration_step(Crossfade::MAX, glyphs).width(),
         SettingRow::Replaygain => widest_toggle(glyphs),
         SettingRow::OutputDevice => widest_pick(
             values
                 .output_devices
                 .iter()
-                .map(|device| device.name.clone())
+                .map(|device| device.name.to_string())
                 .chain(std::iter::once(glyphs.output_device_default.to_string())),
             glyphs,
         ),
@@ -246,13 +248,10 @@ fn custom_max_value_width(
     let Some(row) = appearance_row(id) else {
         return 0;
     };
-    let options = match row.control {
-        SettingControl::Toggle => 2,
-        SettingControl::Cycle(count) => count,
-        SettingControl::Step => 1,
-    };
-    (0..options)
-        .filter_map(|position| appearance_patch(id, position).ok())
+    let count = row.spec.control.count();
+    (0..count.get())
+        .filter_map(|position| count.index(position))
+        .filter_map(|option| appearance_patch(id, option).ok())
         .map(|patch| {
             custom_value_text(id, &with_patched_appearance(values, patch), glyphs)
                 .width()
@@ -341,6 +340,7 @@ mod tests {
                 .into_iter()
                 .find(|row| row.field == AppearanceField::CoverStyle)
                 .unwrap()
+                .spec
                 .id,
         );
         assert_eq!(settings_label(cover_style_row), "Cover style");
@@ -354,7 +354,7 @@ mod tests {
     fn an_unregistered_custom_id_names_nothing() {
         let custom = Vec::new();
         let values = settings_values(&custom);
-        let unknown = SettingRow::Custom(SettingId(9_999));
+        let unknown = SettingRow::Custom(SettingId::new(9_999));
         assert_eq!(settings_label(unknown), "");
         assert_eq!(value_text(unknown, &values), "");
     }

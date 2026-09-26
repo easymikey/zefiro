@@ -1,5 +1,6 @@
 ---
 source: crates/kernel/src/update/startup.rs
+assertion_line: 186
 expression: effects
 ---
 [
@@ -35,7 +36,11 @@ expression: effects
     ),
     Config(
         SelectTheme(
-            "dark",
+            Named(
+                ThemeName(
+                    "dark",
+                ),
+            ),
         ),
     ),
 ]

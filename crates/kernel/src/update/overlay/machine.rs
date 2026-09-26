@@ -217,12 +217,12 @@ fn inner_transition(open: Overlay, inner: InnerMessage) -> Transition {
                 reject: OverlayRejection::Search,
             },
         ),
-        (Overlay::Settings(rows), InnerMessage::Settings(message)) => lift(
-            rows,
+        (Overlay::Settings(cursor), InnerMessage::Settings(message)) => lift(
+            cursor,
             message,
             &Lift {
                 wrap: Overlay::Settings,
-                reject: OverlayRejection::Settings,
+                reject: |never| match never {},
             },
         ),
         (Overlay::SavePlaylist { typed, .. }, InnerMessage::Text(message)) => Ok((

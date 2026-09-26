@@ -33,11 +33,17 @@ clippy crate="":
 test *filter:
     cargo nextest run {{filter}}
 
-# fmt, clippy, tests for one crate or the workspace
-gate crate="":
-    cargo fmt --all
-    just clippy {{crate}}
-    just test {{ if crate == "" { "--workspace" } else { "-p " + crate } }}
+# house rules clippy cannot see, over lines added since a base
+rules base="main":
+    sh scripts/rules.sh {{base}}
+
+# fmt, clippy, tests, house rules, acceptance: brief defaults to .gate-brief
+gate brief="":
+    sh scripts/gate.sh {{brief}}
+
+# acceptance block from a brief: just accept docs/briefs/foo.md
+accept brief:
+    sh scripts/accept.sh {{brief}}
 
 # accept pending insta snapshots after reading the diffs
 snap-accept *filter:

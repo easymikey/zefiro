@@ -171,6 +171,7 @@ fn settings_content_width(rows: &[SettingRow], values: &SettingsView<'_>) -> u16
 #[cfg(test)]
 mod tests {
     use config::CoverStyle;
+    use kernel::domain::ThemeName;
     use ratatui::layout::Rect;
 
     use crate::{
@@ -265,7 +266,10 @@ mod tests {
         let theme = noir();
         let custom = custom_rows();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        let themes = ["noir".to_string(), "gruvbox-light".to_string()];
+        let themes = [
+            ThemeName::from_static("noir"),
+            ThemeName::from_static("gruvbox-light"),
+        ];
         let screen = Rect::new(0, 0, 80, 28);
 
         let mut with_noir = settings_values(&custom);

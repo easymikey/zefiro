@@ -1,72 +1,46 @@
 use crate::{
     Cmd,
     domain::{
-        CursorOver,
-        ListMotion,
         Model,
+        Moment,
         Nudge,
+        Overlay,
         SettingControl,
         SettingRow,
-        SettingsRows,
+        SettingsCursor,
     },
     message::SettingsRowRequest,
     update::{
-        machine::{Machine, Rejected},
-        overlay::{
-            FollowUp,
-            InnerMessage,
-            OverlayEffect,
-            OverlayMessage,
-            follow,
-            selected_setting_row,
-        },
+        machine::{Machine, Never, Rejected},
+        overlay::{FollowUp, InnerMessage, OverlayEffect, OverlayMessage, follow},
         rejection::Rejection,
     },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingsRejection {
-    NothingSelected,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsMessage {
-    Navigate {
-        nudge: Nudge,
-        len: usize,
-    },
-    Adjust {
-        row: Option<SettingRow>,
-        nudge: Nudge,
-    },
+    Navigate(SettingRow),
+    Adjust(Nudge),
     Noop,
 }
 
-type Transition = Result<
-    (CursorOver<SettingsRows>, OverlayEffect),
-    Rejected<CursorOver<SettingsRows>>,
->;
-
-impl Machine for CursorOver<SettingsRows> {
+impl Machine for SettingsCursor {
     type Message = SettingsMessage;
-    type Rejection = SettingsRejection;
+    type Rejection = Never;
     type Effect = OverlayEffect;
 
-    fn transition(mut self, message: SettingsMessage) -> Transition {
+    fn transition(
+        self,
+        message: SettingsMessage,
+    ) -> Result<(Self, OverlayEffect), Rejected<Self>> {
         match message {
-            SettingsMessage::Navigate { nudge, len } => {
-                self.resize(len);
-                self.navigate(ListMotion::from(nudge));
-                Ok((self, OverlayEffect::default()))
+            SettingsMessage::Navigate(selected) => {
+                Ok((SettingsCursor { selected }, OverlayEffect::default()))
             }
-            SettingsMessage::Adjust {
-                row: Some(row),
-                nudge,
-            } => Ok((self, OverlayEffect::from(FollowUp::Adjust { row, nudge }))),
-            SettingsMessage::Adjust { row: None, .. } => Err(Rejected {
-                state: self,
-                reason: SettingsRejection::NothingSelected,
-            }),
+            SettingsMessage::Adjust(nudge) => {
+                let row = self.selected;
+                Ok((self, OverlayEffect::from(FollowUp::Adjust { row, nudge })))
+            }
             SettingsMessage::Noop => Ok((self, OverlayEffect::default())),
         }
     }
@@ -75,42 +49,46 @@ impl Machine for CursorOver<SettingsRows> {
 pub(super) fn request(
     model: &mut Model,
     request: SettingsRowRequest,
+    now: Moment,
 ) -> Result<Cmd, Rejection> {
     let message = resolve(model, request);
     let effect = model
         .workspace
         .overlay
         .update(OverlayMessage::Inner(InnerMessage::Settings(message)))?;
-    follow(model, effect)
+    follow(model, effect, now)
 }
 
 fn resolve(model: &Model, request: SettingsRowRequest) -> SettingsMessage {
     match request {
-        SettingsRowRequest::Navigate(nudge) => SettingsMessage::Navigate {
-            nudge,
-            len: SettingRow::all(&model.custom_rows).len(),
-        },
-        SettingsRowRequest::Adjust(nudge) => SettingsMessage::Adjust {
-            row: selected_setting_row(model),
-            nudge,
-        },
+        SettingsRowRequest::Navigate(nudge) => navigate_target(model, nudge),
+        SettingsRowRequest::Adjust(nudge) => SettingsMessage::Adjust(nudge),
         SettingsRowRequest::Activate => activate(model),
     }
 }
 
+fn navigate_target(model: &Model, nudge: Nudge) -> SettingsMessage {
+    let Some(Overlay::Settings(cursor)) = &model.workspace.overlay else {
+        return SettingsMessage::Noop;
+    };
+    let rows = SettingRow::all(&model.custom_rows);
+    SettingsMessage::Navigate(cursor.moved(&rows, nudge).selected)
+}
+
 fn activate(model: &Model) -> SettingsMessage {
-    match selected_setting_row(model) {
-        Some(row) if activates(row, model) => SettingsMessage::Adjust {
-            row: Some(row),
-            nudge: Nudge::Up,
-        },
-        Some(_) | None => SettingsMessage::Noop,
+    let Some(Overlay::Settings(cursor)) = &model.workspace.overlay else {
+        return SettingsMessage::Noop;
+    };
+    if activates(cursor.selected, model) {
+        SettingsMessage::Adjust(Nudge::Up)
+    } else {
+        SettingsMessage::Noop
     }
 }
 
 fn activates(row: SettingRow, model: &Model) -> bool {
     matches!(
         row.control(&model.custom_rows),
-        SettingControl::Toggle | SettingControl::Cycle(_)
+        Some(SettingControl::Toggle | SettingControl::Ring | SettingControl::Custom(_))
     )
 }

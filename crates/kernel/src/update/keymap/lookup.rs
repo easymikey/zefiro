@@ -7,6 +7,9 @@ use crate::{
         KeyCode,
         KeyContext,
         KeyPattern,
+        KeyPress,
+        Overlay,
+        TextCapture,
         Workspace,
     },
     message::{
@@ -18,26 +21,15 @@ use crate::{
         TextRequest,
     },
     update::keymap::{
-        bindings::Bindings,
         chord::{KeyBinding, KeyOutcome},
         key_context::key_context_stack,
     },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KeyPress {
-    pub key: Key,
-    pub visible_rows: usize,
-}
-
 #[must_use]
-pub fn route(
-    bindings: &Bindings,
-    workspace: &Workspace,
-    press: KeyPress,
-) -> Option<Message> {
-    let KeyPress { key, visible_rows } = press;
-    let bindings = bindings.as_slice();
+pub fn route(workspace: &Workspace, press: KeyPress) -> Option<Message> {
+    let key = pressed_key(workspace, press);
+    let bindings = workspace.bindings.as_slice();
     let stack = key_context_stack(workspace);
     let lookup = |key_context| {
         in_key_context(
@@ -49,16 +41,14 @@ pub fn route(
             key,
         )
     };
-    let message =
-        lookup(stack.primary()).or_else(|| stack.fallback().and_then(lookup))?;
-    Some(paged_at(message, visible_rows))
+    lookup(stack.primary()).or_else(|| stack.fallback().and_then(lookup))
 }
 
-fn paged_at(message: Message, visible_rows: usize) -> Message {
-    let Message::Browse(BrowseRequest::PageBy(_, nudge)) = message else {
-        return message;
-    };
-    Message::Browse(BrowseRequest::PageBy(visible_rows, nudge))
+fn pressed_key(workspace: &Workspace, press: KeyPress) -> Key {
+    match workspace.overlay.as_ref().map(Overlay::captures_text) {
+        Some(TextCapture::Typing) => press.typed,
+        Some(TextCapture::Chording) | None => press.key,
+    }
 }
 
 struct BindingScope {

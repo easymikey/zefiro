@@ -32,13 +32,19 @@ impl Machine for Engine {
             (Engine::Live(live), EngineMessage::Failed(fault)) => {
                 Transition::from(live.failed(fault))
             }
-            (
-                Engine::Live(live),
-                EngineMessage::Observed {
-                    queue_len,
-                    position,
-                },
-            ) => Transition::from(live.observed(queue_len, position)),
+            (Engine::Live(live), EngineMessage::Retiring { from }) => {
+                Transition::from(live.retiring(from))
+            }
+            (Engine::Live(live), EngineMessage::DevicesListed(result)) => {
+                Transition::from(live.devices_listed(result))
+            }
+            (Engine::Live(live), EngineMessage::Finished(slot)) => {
+                Transition::from(live.finished(slot))
+            }
+            (Engine::Live(live), EngineMessage::Cued) => Transition::from(live.cued()),
+            (Engine::Live(live), EngineMessage::Ramped(slot)) => {
+                Transition::from(live.ramped(slot))
+            }
         };
         match moved {
             Transition::Next(engine, io) => Ok((engine, io)),
@@ -59,6 +65,7 @@ mod tests {
         Effect,
         Message,
         Model,
+        Moment,
         PlaybackRequest,
         Playlist,
         Track,
@@ -69,7 +76,7 @@ mod tests {
     use crate::{
         EngineConfig,
         engine::{
-            effect::{EngineEffect, EngineMessage},
+            effect::{EngineEffect, EngineMessage, Slot},
             state::{Engine, Live, fixtures::config},
         },
     };
@@ -117,6 +124,7 @@ mod tests {
             | Effect::WindowColors(_)
             | Effect::Setting { .. }
             | Effect::After { .. }
+            | Effect::Restart(_)
             | Effect::Quit => None,
         }
     }
@@ -163,7 +171,7 @@ mod tests {
                 EngineEffect::Promote { .. } => {
                     self.primary = self.preload.take();
                 }
-                EngineEffect::Retired { .. } => {
+                EngineEffect::DropOutgoing => {
                     self.outgoing = None;
                 }
                 EngineEffect::Nothing
@@ -176,11 +184,15 @@ mod tests {
                 | EngineEffect::Pause
                 | EngineEffect::Seek(_)
                 | EngineEffect::SetVolume(_)
-                | EngineEffect::Fade { .. }
-                | EngineEffect::Retire { .. }
+                | EngineEffect::Arm { .. }
+                | EngineEffect::Crossfade { .. }
+                | EngineEffect::Unfade
+                | EngineEffect::Ramp { .. }
                 | EngineEffect::SetSpeed(_)
                 | EngineEffect::RestartGapless(_)
-                | EngineEffect::ListDevices => {}
+                | EngineEffect::ListDevices
+                | EngineEffect::Report
+                | EngineEffect::Advance => {}
             }
         }
     }
@@ -209,7 +221,7 @@ mod tests {
         }
 
         fn press(&mut self, message: Message) {
-            let cmd = update(&mut self.model, message).unwrap();
+            let cmd = update(&mut self.model, message, Moment::default()).unwrap();
             let audio: Vec<AudioCmd> = cmd.effects().filter_map(as_audio).collect();
             for command in audio {
                 self.engine_step(EngineMessage::Cmd(command));
@@ -223,11 +235,8 @@ mod tests {
             }
         }
 
-        fn tick(&mut self, position: Duration) {
-            self.engine_step(EngineMessage::Observed {
-                queue_len: 1,
-                position,
-            });
+        fn handover_settles(&mut self) {
+            self.engine_step(EngineMessage::Ramped(Slot::Outgoing));
         }
 
         fn at_most_two_streams(&self, named: &str) {
@@ -270,7 +279,7 @@ mod tests {
         wiring.at_most_two_streams("a row picked while the media key's track plays");
         wiring.playing_is("/tmp/track2.flac");
         wiring.decoded();
-        wiring.tick(CROSSFADE);
+        wiring.handover_settles();
 
         wiring.one_open_stream("a finished skip fade");
         wiring.playing_is("/tmp/track2.flac");
@@ -286,7 +295,7 @@ mod tests {
         wiring.press(Message::Browse(BrowseRequest::PlaySelected));
         wiring.at_most_two_streams("a row picked mid-load");
         wiring.decoded();
-        wiring.tick(CROSSFADE);
+        wiring.handover_settles();
 
         wiring.one_open_stream("a row picked mid-load");
         wiring.playing_is("/tmp/track2.flac");
@@ -300,15 +309,14 @@ mod tests {
         wiring.press(Message::Playback(PlaybackRequest::Play));
         wiring.decoded();
 
-        for step in 1..=3 {
+        for _ in 1..=3 {
             wiring.press(Message::Playback(PlaybackRequest::Next));
             wiring.at_most_two_streams("a skip inside a fade");
             wiring.decoded();
-            wiring.tick(Duration::from_secs(step));
             wiring.at_most_two_streams("a fade running under the next skip");
         }
 
-        wiring.tick(CROSSFADE);
+        wiring.handover_settles();
         wiring.one_open_stream("three skips inside one fade");
         insta::assert_debug_snapshot!(wiring.log);
     }

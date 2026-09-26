@@ -64,10 +64,10 @@ mod tests {
     #[test]
     fn the_bar_colours_follow_the_progress_configs_overrides() {
         let theme = theme();
-        let overridden = config::appearance_file::ProgressConfig {
+        let overridden = config::ProgressConfig {
             fill: Some(Hex([255, 0, 0])),
             track: Some(Hex([0, 255, 0])),
-            ..config::appearance_file::ProgressConfig::default()
+            ..config::ProgressConfig::default()
         };
         assert_eq!(
             bar_colors(color_overrides(&overridden), &theme),

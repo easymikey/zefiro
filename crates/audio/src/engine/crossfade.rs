@@ -15,14 +15,6 @@ pub(crate) fn gain_out(fraction: f32) -> f32 {
 }
 
 #[must_use]
-pub(crate) fn fade_fraction(position: Duration, crossfade: Duration) -> f32 {
-    if crossfade.is_zero() {
-        return 1.0;
-    }
-    (position.as_secs_f32() / crossfade.as_secs_f32()).clamp(0.0, 1.0)
-}
-
-#[must_use]
 pub(crate) fn effective_volume(
     config: &EngineConfig,
     gain_db: Option<f32>,
@@ -41,27 +33,6 @@ pub(crate) fn effective_volume(
     user * gain
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum CrossfadeAction {
-    Wait,
-    Fade(f32),
-    Handoff,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SinkDrain {
-    Drained,
-    Playing,
-}
-
-#[derive(Debug)]
-pub(crate) struct CrossfadeMoment {
-    pub(crate) sink_drained: SinkDrain,
-    pub(crate) total: Option<Duration>,
-    pub(crate) position: Duration,
-    pub(crate) crossfade: Duration,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Promotion {
     Preload,
@@ -70,37 +41,18 @@ pub(crate) enum Promotion {
 
 #[must_use]
 pub(crate) fn promotion_on_abandon(fade: Fade) -> Promotion {
-    if matches!(fade, Fade::Fading(fraction) if fraction >= 0.5) {
-        Promotion::Preload
-    } else {
-        Promotion::Nothing
+    match fade {
+        Fade::Fading => Promotion::Preload,
+        Fade::Idle => Promotion::Nothing,
     }
 }
 
 #[must_use]
-pub(crate) fn crossfade_action(moment: &CrossfadeMoment) -> CrossfadeAction {
-    let CrossfadeMoment {
-        sink_drained,
-        total,
-        position,
-        crossfade,
-    } = *moment;
-    if matches!(sink_drained, SinkDrain::Drained) {
-        return CrossfadeAction::Handoff;
-    }
-    let fade_start = match total {
-        Some(total) if !total.is_zero() => total.saturating_sub(crossfade),
-        Some(_) | None => return CrossfadeAction::Wait,
-    };
-    if position < fade_start {
-        return CrossfadeAction::Wait;
-    }
-    let fraction = fade_fraction(position.saturating_sub(fade_start), crossfade);
-    if fraction >= 1.0 {
-        CrossfadeAction::Handoff
-    } else {
-        CrossfadeAction::Fade(fraction)
-    }
+pub(crate) fn arm_cue(
+    total: Option<Duration>,
+    crossfade: Duration,
+) -> Option<Duration> {
+    total.map(|total| total.saturating_sub(crossfade))
 }
 
 #[cfg(test)]
@@ -116,11 +68,8 @@ mod tests {
         UnityVolume,
         engine::{
             crossfade::{
-                CrossfadeAction,
-                CrossfadeMoment,
                 Promotion,
-                SinkDrain,
-                crossfade_action,
+                arm_cue,
                 effective_volume,
                 gain_in,
                 gain_out,
@@ -136,14 +85,6 @@ mod tests {
         gain: Option<f32>,
         user_factor: f32,
         expected: f32,
-    }
-
-    struct CrossfadeRow {
-        sink_drained: SinkDrain,
-        total_secs: Option<u64>,
-        position_secs: u64,
-        crossfade_secs: u64,
-        expected: CrossfadeAction,
     }
 
     #[rstest]
@@ -197,92 +138,10 @@ mod tests {
         );
     }
 
-    fn rounded(action: CrossfadeAction) -> CrossfadeAction {
-        match action {
-            CrossfadeAction::Fade(fraction) => {
-                CrossfadeAction::Fade((fraction * 10_000.0).round() / 10_000.0)
-            }
-            CrossfadeAction::Wait => CrossfadeAction::Wait,
-            CrossfadeAction::Handoff => CrossfadeAction::Handoff,
-        }
-    }
-
     #[rstest]
-    #[case::waits_before_the_window(CrossfadeRow {
-        sink_drained: SinkDrain::Playing,
-        total_secs: Some(100),
-        position_secs: 50,
-        crossfade_secs: 5,
-        expected: CrossfadeAction::Wait,
-    })]
-    #[case::waits_while_the_total_is_unknown(CrossfadeRow {
-        sink_drained: SinkDrain::Playing,
-        total_secs: None,
-        position_secs: 5,
-        crossfade_secs: 3,
-        expected: CrossfadeAction::Wait,
-    })]
-    #[case::hands_off_when_a_sink_with_no_total_drains(CrossfadeRow {
-        sink_drained: SinkDrain::Drained,
-        total_secs: None,
-        position_secs: 5,
-        crossfade_secs: 3,
-        expected: CrossfadeAction::Handoff,
-    })]
-    #[case::hands_off_when_a_sink_drains_early(CrossfadeRow {
-        sink_drained: SinkDrain::Drained,
-        total_secs: Some(100),
-        position_secs: 100,
-        crossfade_secs: 3,
-        expected: CrossfadeAction::Handoff,
-    })]
-    #[case::interpolates_inside_the_window(CrossfadeRow {
-        sink_drained: SinkDrain::Playing,
-        total_secs: Some(100),
-        position_secs: 92,
-        crossfade_secs: 10,
-        expected: CrossfadeAction::Fade(0.2),
-    })]
-    #[case::hands_off_at_the_end(CrossfadeRow {
-        sink_drained: SinkDrain::Playing,
-        total_secs: Some(100),
-        position_secs: 100,
-        crossfade_secs: 10,
-        expected: CrossfadeAction::Handoff,
-    })]
-    #[case::waits_after_a_backward_seek(CrossfadeRow {
-        sink_drained: SinkDrain::Playing,
-        total_secs: Some(100),
-        position_secs: 80,
-        crossfade_secs: 10,
-        expected: CrossfadeAction::Wait,
-    })]
-    #[case::opens_on_time_past_the_preload_lead(CrossfadeRow {
-        sink_drained: SinkDrain::Playing,
-        total_secs: Some(100),
-        position_secs: 90,
-        crossfade_secs: 20,
-        expected: CrossfadeAction::Fade(0.5),
-    })]
-    fn crossfade_action_rows(#[case] row: CrossfadeRow) {
-        let action = crossfade_action(&CrossfadeMoment {
-            sink_drained: row.sink_drained,
-            total: row.total_secs.map(Duration::from_secs),
-            position: Duration::from_secs(row.position_secs),
-            crossfade: Duration::from_secs(row.crossfade_secs),
-        });
-        assert_eq!(rounded(action), row.expected);
-    }
-
-    #[rstest]
-    #[case::never_started(Fade::Idle, Promotion::Nothing)]
-    #[case::just_started(Fade::Fading(0.0), Promotion::Nothing)]
-    #[case::below_the_midpoint(Fade::Fading(0.2), Promotion::Nothing)]
-    #[case::just_below_the_midpoint(Fade::Fading(0.49), Promotion::Nothing)]
-    #[case::at_the_midpoint(Fade::Fading(0.5), Promotion::Preload)]
-    #[case::past_the_midpoint(Fade::Fading(0.9), Promotion::Preload)]
-    #[case::complete(Fade::Fading(1.0), Promotion::Preload)]
-    fn abandoning_a_crossfade_promotes_only_the_louder_preload(
+    #[case::idle(Fade::Idle, Promotion::Nothing)]
+    #[case::fading(Fade::Fading, Promotion::Preload)]
+    fn abandoning_a_crossfade_promotes_only_a_fading_preload(
         #[case] fade: Fade,
         #[case] promotion: Promotion,
     ) {
@@ -303,6 +162,26 @@ mod tests {
         let power = gain_in(fraction)
             .mul_add(gain_in(fraction), gain_out(fraction) * gain_out(fraction));
         assert!((power - 1.0).abs() < 1e-5, "equal power, got {power}");
+    }
+
+    #[rstest]
+    #[case::known_total(
+        Some(Duration::from_secs(100)),
+        Duration::from_secs(10),
+        Some(Duration::from_secs(90))
+    )]
+    #[case::unknown_total(None, Duration::from_secs(10), None)]
+    #[case::crossfade_past_the_total_saturates(
+        Some(Duration::from_secs(5)),
+        Duration::from_secs(10),
+        Some(Duration::ZERO)
+    )]
+    fn the_cue_sits_a_crossfade_before_the_end(
+        #[case] total: Option<Duration>,
+        #[case] crossfade: Duration,
+        #[case] expected: Option<Duration>,
+    ) {
+        assert_eq!(arm_cue(total, crossfade), expected);
     }
 
     proptest! {

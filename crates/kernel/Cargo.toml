@@ -9,7 +9,6 @@ publish = false
 
 [dependencies]
 bon = { workspace = true }
-serde = { workspace = true }
 strum = { workspace = true }
 thiserror = { workspace = true }
 

@@ -1,63 +1,115 @@
 #![forbid(unsafe_code)]
 
-use std::{
-    io::Read,
-    process::{Command, Stdio},
-    thread,
-    time::Duration,
+use kernel::{Bounded, Percent};
+use objc2_core_audio::AudioObjectID;
+
+use crate::audio_hardware::{
+    Muted,
+    muted,
+    set_muted,
+    set_volume_scalar,
+    volume_scalar,
 };
 
-use crossbeam_channel::bounded;
-use kernel::{Bounded, Percent};
-
-const READ_TIMEOUT: Duration = Duration::from_millis(750);
-
-fn osascript(script: &str) -> Command {
-    let mut command = Command::new("osascript");
-    command
-        .args(["-e", script])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    command
+pub(crate) fn read_volume(device: AudioObjectID) -> Option<Percent> {
+    let scalar = volume_scalar(device)?;
+    if matches!(muted(device), Some(true)) {
+        Some(Percent::clamped(0))
+    } else {
+        Some(percent_from_scalar(scalar))
+    }
 }
 
-pub(crate) fn read_volume() -> Option<Percent> {
-    let mut child = osascript("output volume of (get volume settings)")
-        .stdout(Stdio::piped())
-        .spawn()
-        .ok()?;
-    let mut stdout = child.stdout.take()?;
-    let (reply, response) = bounded(1);
-    thread::spawn(move || {
-        let mut output = String::new();
-        let read = stdout.read_to_string(&mut output).is_ok();
-        let _ = reply.send(read.then_some(output));
-    });
-    let Ok(output) = response.recv_timeout(READ_TIMEOUT) else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return None;
-    };
-    output?.trim().parse::<u8>().ok().map(Percent::clamped)
+#[must_use]
+pub(crate) fn write_volume(device: AudioObjectID, volume: Percent) -> Written {
+    if set_volume_scalar(device, scalar_from_percent(volume)).is_err() {
+        return Written::Refused;
+    }
+    if let Some(target) = mute_target(device, volume) {
+        let cleared = set_muted(device, target);
+        if cleared.is_err() && volume.value() > 0 {
+            return Written::Refused;
+        }
+    }
+    Written::Landed
 }
 
-pub(crate) fn write_volume(volume: Percent) {
-    let _ = osascript(&format!("set volume output volume {}", volume.value())).status();
+fn mute_target(device: AudioObjectID, volume: Percent) -> Option<Muted> {
+    match (volume.value() > 0, muted(device)) {
+        (true, Some(true)) => Some(Muted::No),
+        (false, Some(false)) => Some(Muted::Yes),
+        (_, None) | (true, Some(false)) | (false, Some(true)) => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Written {
+    Landed,
+    Refused,
+}
+
+fn percent_from_scalar(scalar: f32) -> Percent {
+    let scalar = if scalar.is_nan() { 0.0 } else { scalar };
+    let scaled = scalar.clamp(0.0, 1.0) * 100.0;
+    let step = (0..=100u8)
+        .find(|step| f32::from(*step) + 0.5 > scaled)
+        .unwrap_or(100);
+    Percent::clamped(step)
+}
+
+fn scalar_from_percent(volume: Percent) -> f32 {
+    volume.ratio()
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use kernel::{Bounded, Percent};
+    use rstest::rstest;
 
-    use crate::volume::read_volume;
+    use crate::{
+        audio_hardware::current_default_device,
+        volume::{
+            Written,
+            percent_from_scalar,
+            read_volume,
+            scalar_from_percent,
+            write_volume,
+        },
+    };
+
+    #[rstest]
+    #[case::floor(0.0, 0)]
+    #[case::rounds_down(0.404, 40)]
+    #[case::rounds_up(0.406, 41)]
+    #[case::ceiling(1.0, 100)]
+    #[case::clamps_above_one(1.7, 100)]
+    #[case::clamps_below_zero(-0.2, 0)]
+    #[case::not_a_number_is_zero(f32::NAN, 0)]
+    fn percent_from_scalar_rounds_and_clamps(#[case] scalar: f32, #[case] percent: u8) {
+        assert_eq!(percent_from_scalar(scalar), Percent::clamped(percent));
+    }
+
+    #[rstest]
+    #[case::silence(0)]
+    #[case::a_sliver(1)]
+    #[case::two_fifths(40)]
+    #[case::almost_full(99)]
+    #[case::full(100)]
+    fn scalar_round_trips_every_percent(#[case] percent: u8) {
+        let volume = Percent::clamped(percent);
+        assert_eq!(percent_from_scalar(scalar_from_percent(volume)), volume);
+    }
 
     #[test]
-    #[ignore = "hardware: spawns osascript against System Events and times it"]
-    fn read_volume_returns_quickly_in_the_common_case() {
-        let start = Instant::now();
-        let volume = read_volume();
-        assert!(start.elapsed() < Duration::from_millis(500));
-        assert!(volume.is_some());
+    #[ignore = "hardware: writes the system volume"]
+    fn the_system_volume_reads_back_what_was_written() {
+        let device = current_default_device();
+        let original = read_volume(device);
+        assert_eq!(write_volume(device, Percent::clamped(37)), Written::Landed);
+        let after = read_volume(device).unwrap();
+        assert!(after.value().abs_diff(37) <= 1);
+        if let Some(original) = original {
+            assert_eq!(write_volume(device, original), Written::Landed);
+        }
     }
 }

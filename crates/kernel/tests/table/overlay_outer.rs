@@ -21,7 +21,8 @@ use kernel::{
         JumpDigits,
         PlaylistIndex,
         SearchQuery,
-        SettingsRows,
+        SettingRow,
+        SettingsCursor,
         SourceDirError,
         TextEntry,
         TimecodeError,
@@ -94,14 +95,14 @@ fn history(selected: usize, len: usize) -> Overlay {
 }
 
 fn settings(selected: usize) -> Overlay {
-    Overlay::Settings(CursorOver {
-        cursor: Cursor::with_len(6).at(selected),
-        rows: SettingsRows,
+    let rows = SettingRow::all(&[]);
+    Overlay::Settings(SettingsCursor {
+        selected: rows[selected],
     })
 }
 
 fn fresh_settings() -> Overlay {
-    Overlay::Settings(CursorOver::default())
+    Overlay::Settings(SettingsCursor::default())
 }
 
 fn candidate() -> DeleteCandidate {
@@ -305,7 +306,7 @@ type Cell = crate::support::table::Cell<Option<Overlay>>;
 )]
 #[case::confirm_delete_refuses_settings(
     Some(confirm_delete()),
-    inner(InnerMessage::Settings(SettingsMessage::Navigate { nudge: Nudge::Down, len: 6 })),
+    inner(InnerMessage::Settings(SettingsMessage::Navigate(SettingRow::Theme))),
     Err(OverlayRejection::WrongOverlay)
 )]
 #[case::track_details_refuses_jump(

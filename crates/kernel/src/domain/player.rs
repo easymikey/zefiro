@@ -2,9 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use strum::IntoStaticStr;
 
-use crate::domain::Track;
-
-const LISTENING_STEP_LIMIT: Duration = Duration::from_secs(1);
+use crate::domain::{Moment, Playhead, Speed, Track};
 
 #[derive(Debug, Clone, Default, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -17,7 +15,7 @@ pub enum Player {
     },
     Playing {
         track: Arc<Track>,
-        at: Duration,
+        head: Playhead,
         preload: Preload,
     },
     Paused {
@@ -53,24 +51,11 @@ impl Player {
     }
 
     #[must_use]
-    pub fn position(&self) -> Duration {
+    pub fn position_at(&self, now: Moment) -> Duration {
         match self {
             Self::Stopped => Duration::ZERO,
-            Self::Loading { at, .. }
-            | Self::Playing { at, .. }
-            | Self::Paused { at, .. } => *at,
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn listened(&self, reported: Duration) -> Duration {
-        match self {
-            Self::Playing { at, .. } => Some(reported.saturating_sub(*at))
-                .filter(|step| *step <= LISTENING_STEP_LIMIT)
-                .unwrap_or_default(),
-            Self::Stopped | Self::Loading { .. } | Self::Paused { .. } => {
-                Duration::ZERO
-            }
+            Self::Loading { at, .. } | Self::Paused { at, .. } => *at,
+            Self::Playing { head, .. } => head.position_at(now),
         }
     }
 
@@ -92,6 +77,24 @@ impl Player {
         match self {
             Self::Playing { preload, .. } => preload.track(),
             Self::Stopped | Self::Loading { .. } | Self::Paused { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn reanchored(self, now: Moment, speed: Speed) -> Self {
+        match self {
+            Self::Playing {
+                track,
+                head,
+                preload,
+            } => Self::Playing {
+                track,
+                head: Playhead::anchored(head.position_at(now), now, speed),
+                preload,
+            },
+            other @ (Self::Stopped | Self::Loading { .. } | Self::Paused { .. }) => {
+                other
+            }
         }
     }
 }
@@ -159,62 +162,6 @@ mod ab_loop_tests {
                 a,
                 b: Duration::from_secs(11),
             })
-        );
-    }
-}
-
-#[cfg(test)]
-mod listened_tests {
-    use std::{sync::Arc, time::Duration};
-
-    use rstest::rstest;
-
-    use crate::domain::{
-        AudioFormat,
-        Pause,
-        Tags,
-        Track,
-        player::{Player, Preload},
-    };
-
-    fn track() -> Arc<Track> {
-        Arc::new(
-            Track::builder()
-                .path("a.mp3")
-                .duration(Duration::from_secs(300))
-                .tags(Tags::default())
-                .audio_format(AudioFormat::default())
-                .build(),
-        )
-    }
-
-    fn playing_at(millis: u64) -> Player {
-        Player::Playing {
-            track: track(),
-            at: Duration::from_millis(millis),
-            preload: Preload::None,
-        }
-    }
-
-    #[rstest]
-    #[case::a_regular_step_counts(playing_at(1_000), 1_100, 100)]
-    #[case::a_step_at_the_limit_counts(playing_at(1_000), 2_000, 1_000)]
-    #[case::a_jump_past_the_limit_is_a_seek(playing_at(1_000), 60_000, 0)]
-    #[case::a_backward_report_counts_nothing(playing_at(5_000), 4_900, 0)]
-    #[case::a_stopped_player_counts_nothing(Player::Stopped, 100, 0)]
-    #[case::a_paused_player_counts_nothing(
-        Player::Paused { track: track(), at: Duration::ZERO, pause: Pause::ByListener },
-        100,
-        0
-    )]
-    fn listened_counts_only_small_forward_steps_while_playing(
-        #[case] player: Player,
-        #[case] reported_millis: u64,
-        #[case] listened_millis: u64,
-    ) {
-        assert_eq!(
-            player.listened(Duration::from_millis(reported_millis)),
-            Duration::from_millis(listened_millis)
         );
     }
 }

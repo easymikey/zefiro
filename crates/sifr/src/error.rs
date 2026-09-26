@@ -7,6 +7,8 @@ pub(crate) enum Error {
     #[error(transparent)]
     Run(#[from] runtime::RunError<io::Error>),
     #[error(transparent)]
+    Host(#[from] runtime::HostError),
+    #[error(transparent)]
     Terminal(#[from] terminal::TerminalError),
     #[error(transparent)]
     Library(#[from] library::LibraryError),

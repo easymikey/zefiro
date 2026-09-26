@@ -4,20 +4,22 @@ use kernel::{
     Effect,
     Message,
     Model,
+    Moment,
     domain::{DeviceDefault, OutputDevice},
     update::update,
 };
 
-use crate::support::first_toast_expiry;
+use crate::support::{device, first_toast_expiry};
 
 #[test]
 fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
     let mut m = Model::default();
-    m.settings.output_device = Some("usb-dac".to_string());
+    m.settings.output_device = Some(device("usb-dac"));
 
     let cmd = update(
         &mut m,
         Message::Audio(kernel::AudioEvent::DeviceFellBack(None)),
+        Moment::default(),
     )
     .unwrap();
 
@@ -39,17 +41,16 @@ fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
 #[test]
 fn a_device_that_opened_as_asked_leaves_the_toast_alone() {
     let mut m = Model::default();
-    m.settings.output_device = Some("usb-dac".to_string());
+    m.settings.output_device = Some(device("usb-dac"));
 
     let cmd = update(
         &mut m,
-        Message::Audio(kernel::AudioEvent::DeviceFellBack(Some(
-            "usb-dac".to_string(),
-        ))),
+        Message::Audio(kernel::AudioEvent::DeviceFellBack(Some(device("usb-dac")))),
+        Moment::default(),
     )
     .unwrap();
 
-    assert_eq!(m.settings.output_device, Some("usb-dac".to_string()));
+    assert_eq!(m.settings.output_device, Some(device("usb-dac")));
     assert_eq!(cmd, Cmd::None);
     assert!(m.workspace.toast.is_none());
 }
@@ -61,17 +62,18 @@ fn devices_loaded_replaces_output_devices_and_emits_nothing() {
 
     let devices = vec![
         OutputDevice {
-            name: "Speakers".to_string(),
+            name: device("Speakers"),
             default: DeviceDefault::Default,
         },
         OutputDevice {
-            name: "Headphones".to_string(),
+            name: device("Headphones"),
             default: DeviceDefault::Named,
         },
     ];
     let cmd = update(
         &mut m,
         Message::Audio(kernel::AudioEvent::DevicesLoaded(devices.clone())),
+        Moment::default(),
     )
     .unwrap();
 

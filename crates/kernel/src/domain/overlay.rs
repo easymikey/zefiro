@@ -5,6 +5,7 @@ use strum::IntoStaticStr;
 use crate::domain::{
     CursorOver,
     PlaylistIndex,
+    SettingRow,
     TimecodeError,
     Track,
     playlist::PlaylistNameRejection,
@@ -20,7 +21,7 @@ pub enum Overlay {
         error: Option<PlaylistNameRejection>,
     },
     History(CursorOver<()>),
-    Settings(CursorOver<SettingsRows>),
+    Settings(SettingsCursor),
     ConfirmDelete(DeleteCandidate),
     JumpToTime(JumpDigits),
     TrackDetails(Arc<Track>),
@@ -84,8 +85,18 @@ pub struct SearchQuery {
     pub matches: Vec<usize>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SettingsRows;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettingsCursor {
+    pub selected: SettingRow,
+}
+
+impl Default for SettingsCursor {
+    fn default() -> Self {
+        Self {
+            selected: SettingRow::Theme,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteCandidate {

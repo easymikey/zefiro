@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use kernel::{
-    LoadedRequest,
-    Message,
-    WorkspaceRequest,
-    domain::{ConfigFailure, ConfigSource},
+    ConfigFact,
+    Delivery,
+    Outbox,
+    domain::{ConfigFailure, ConfigSource, ThemeName},
 };
 
 use crate::{
@@ -30,15 +30,12 @@ pub(crate) fn react(
             theme_changed(&name, text.as_deref(), outbound);
         }
         ConfigChange::Themes(names) => {
-            let loaded = LoadedRequest::ThemesLoaded(embedded_and_user(names));
-            send(outbound, Message::Loaded(loaded));
+            send(outbound, ConfigFact::ThemesLoaded(embedded_and_user(names)));
         }
         ConfigChange::Unreadable { file, detail } => {
             send(
                 outbound,
-                Message::Workspace(WorkspaceRequest::ConfigFailed(
-                    ConfigFailure::Unreadable { file, detail },
-                )),
+                ConfigFact::Failed(ConfigFailure::Unreadable { file, detail }),
             );
         }
     }
@@ -49,10 +46,7 @@ fn appearance_changed(text: Option<&str>, outbound: &Outbound<'_>) {
         Ok(file) => {
             let rows = config::custom_rows(&file);
             let _ = outbound.reloads.send(Reload::Appearance(file));
-            send(
-                outbound,
-                Message::Loaded(LoadedRequest::CustomRowsReloaded(rows)),
-            );
+            send(outbound, ConfigFact::CustomRowsReloaded(rows));
             source(ConfigSource::Appearance, None, outbound);
         }
         Err(error) => {
@@ -78,8 +72,8 @@ fn keymap_changed(
 ) {
     match keymap_reload(text) {
         Ok(parsed) => {
-            let reloaded = WorkspaceRequest::KeymapReloaded(Box::new(parsed.keymap));
-            send(outbound, Message::Workspace(reloaded));
+            let reloaded = ConfigFact::KeymapReloaded(Box::new(parsed.keymap));
+            send(outbound, reloaded);
             music_dir_changed(parsed.music_dir, outbound, keys_sighting);
         }
         Err(error) => source(ConfigSource::Keymap, Some(error.to_string()), outbound),
@@ -93,29 +87,27 @@ fn music_dir_changed(
 ) {
     let sighting = std::mem::replace(keys_sighting, KeysSighting::Repeat);
     if let (KeysSighting::Repeat, Some(music_dir)) = (sighting, music_dir) {
-        send(
-            outbound,
-            Message::Loaded(LoadedRequest::MusicDirReloaded(music_dir)),
-        );
+        send(outbound, ConfigFact::MusicDirReloaded(music_dir));
     }
 }
 
 fn source(source: ConfigSource, text: Option<String>, outbound: &Outbound<'_>) {
-    let request = text.map_or(WorkspaceRequest::SourceRecovered(source), |text| {
-        WorkspaceRequest::SourceFailed { source, text }
+    let fact = text.map_or(ConfigFact::SourceRecovered(source), |text| {
+        ConfigFact::SourceFailed { source, text }
     });
-    send(outbound, Message::Workspace(request));
+    send(outbound, fact);
 }
 
-fn send(outbound: &Outbound<'_>, message: Message) {
-    let _ = outbound.mailbox.send(message);
+fn send(outbound: &Outbound<'_>, fact: ConfigFact) {
+    if let Delivery::Closed = outbound.mailbox.send(fact) {}
 }
 
-fn embedded_and_user(user: Vec<String>) -> Vec<String> {
+fn embedded_and_user(user: Vec<String>) -> Vec<ThemeName> {
     config::EMBEDDED_THEMES
         .iter()
         .map(|name| (*name).to_string())
         .chain(user)
+        .filter_map(|name| ThemeName::new(name).ok())
         .fold(Vec::new(), |mut names, name| {
             if !names.contains(&name) {
                 names.push(name);

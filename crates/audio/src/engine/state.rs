@@ -1,30 +1,22 @@
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 use kernel::{
     AudioEvent,
     AudioFailure,
-    domain::{Bounded, Percent, Revision, Speed},
+    domain::{Bounded, DeviceName, Percent, Revision, Speed},
     update::Rejected,
 };
 
 use crate::{
     EngineConfig,
     deck::DeviceOpen,
-    engine::{
-        crossfade::{effective_volume, gain_in, gain_out},
-        effect::EngineEffect,
-        phase::{Fade, Handover, Next, Phase, Playing},
-    },
+    engine::{crossfade::effective_volume, effect::EngineEffect, phase::Phase},
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Engine {
     Muted(Muted),
     Live(Live),
-}
-
-impl Engine {
-    pub(crate) const TICK: Duration = Duration::from_millis(100);
 }
 
 impl Default for Engine {
@@ -70,7 +62,6 @@ pub(crate) struct Live {
     pub(crate) user_factor: Percent,
     pub(crate) config: EngineConfig,
     pub(crate) performed: Stamps,
-    pub(crate) last_position: Option<Duration>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -93,7 +84,6 @@ impl Live {
             user_factor: mix.volume,
             config,
             performed: Stamps::default(),
-            last_position: None,
         }
     }
 
@@ -101,38 +91,11 @@ impl Live {
         let gain = self.phase.current().and_then(|current| current.gain);
         effective_volume(&self.config, gain, self.user_factor.ratio())
     }
-
-    pub(crate) fn primary_gain(&self) -> f32 {
-        let volume = self.volume();
-        match &self.phase {
-            Phase::Handover(Handover { outgoing, .. }) => {
-                volume * gain_in(outgoing.fraction)
-            }
-            Phase::Playing(Playing {
-                next:
-                    Next::Crossfading {
-                        fade: Fade::Fading(fraction),
-                        ..
-                    },
-                ..
-            }) => volume * gain_out(*fraction),
-            Phase::Idle
-            | Phase::Loading(_)
-            | Phase::Playing(Playing {
-                next:
-                    Next::None
-                    | Next::Crossfading {
-                        fade: Fade::Idle, ..
-                    },
-                ..
-            }) => volume,
-        }
-    }
 }
 
 pub(crate) fn announce(
     opened: DeviceOpen,
-    device: Option<String>,
+    device: Option<DeviceName>,
     io: EngineEffect,
 ) -> EngineEffect {
     match opened {
@@ -141,12 +104,23 @@ pub(crate) fn announce(
     }
 }
 
-fn notice(device: Option<String>, then: EngineEffect) -> EngineEffect {
+fn notice(device: Option<DeviceName>, then: EngineEffect) -> EngineEffect {
     let told = EngineEffect::Send(AudioEvent::DeviceFellBack(device));
     if matches!(then, EngineEffect::Nothing) {
         return told;
     }
     EngineEffect::Many(vec![told, then])
+}
+
+pub(crate) fn reported(io: EngineEffect) -> EngineEffect {
+    if matches!(io, EngineEffect::Nothing) {
+        return EngineEffect::Report;
+    }
+    if let EngineEffect::Many(mut steps) = io {
+        steps.push(EngineEffect::Report);
+        return EngineEffect::Many(steps);
+    }
+    EngineEffect::Many(vec![io, EngineEffect::Report])
 }
 
 pub(crate) enum Transition {
@@ -169,8 +143,9 @@ pub(crate) mod fixtures {
         AudioCmd,
         AudioFailure,
         Bounded,
+        DecodeFault,
         Playback,
-        domain::{Crossfade, Replaygain, Revision},
+        domain::{Crossfade, DeviceName, OutputFault, Replaygain, Revision},
     };
 
     use crate::{
@@ -218,7 +193,7 @@ pub(crate) mod fixtures {
 
     pub(crate) fn config_on(device: &str) -> EngineConfig {
         EngineConfig {
-            device: Some(device.to_string()),
+            device: Some(DeviceName::new(device.to_string()).unwrap()),
             ..config()
         }
     }
@@ -232,13 +207,13 @@ pub(crate) mod fixtures {
     pub(crate) fn decode_fault() -> AudioFailure {
         AudioFailure::Decode {
             path: "/a".into(),
-            reason: "not a flac".to_string(),
+            fault: DecodeFault::Unsupported,
         }
     }
 
     pub(crate) fn output_lost() -> AudioFailure {
         AudioFailure::OutputLost {
-            reason: "the device went away".to_string(),
+            fault: OutputFault::DeviceGone,
         }
     }
 
@@ -297,10 +272,7 @@ pub(crate) mod fixtures {
     }
 
     pub(crate) fn playing_track(current: CurrentTrack) -> Phase {
-        Phase::Playing(Playing {
-            previous_queue_len: 1,
-            ..Playing::new(current)
-        })
+        Phase::Playing(Playing::new(current))
     }
 
     pub(crate) fn loading_track(path: &str) -> Loading {
@@ -368,14 +340,8 @@ pub(crate) mod fixtures {
         }
     }
 
-    pub(crate) fn retiring(fraction: f32) -> Live {
-        handing_over(
-            Outgoing {
-                from: 1.0,
-                fraction,
-            },
-            Incoming::Playing(track_b()),
-        )
+    pub(crate) fn retiring(from: f32) -> Live {
+        handing_over(Outgoing { from }, Incoming::Playing(track_b()))
     }
 
     pub(crate) fn crossfading(fade: Fade) -> Live {
@@ -385,7 +351,6 @@ pub(crate) mod fixtures {
                     preload: preload_b(),
                     fade,
                 },
-                previous_queue_len: 1,
                 ..Playing::new(track_a())
             }),
             config: EngineConfig {
@@ -417,10 +382,6 @@ pub(crate) mod fixtures {
 
     pub(crate) fn second() -> Revision {
         first().next()
-    }
-
-    pub(crate) fn third() -> Revision {
-        second().next()
     }
 
     pub(crate) fn load_at(path: &str, revision: Revision) -> EngineMessage {
@@ -497,7 +458,7 @@ pub(crate) mod fixtures {
         playback: Playback,
     ) -> EngineMessage {
         EngineMessage::Opened(Ok(Reopening {
-            device: device.map(str::to_string),
+            device: device.map(|name| DeviceName::new(name.to_string()).unwrap()),
             position,
             playback,
             opened: DeviceOpen::AsRequested,
@@ -511,12 +472,5 @@ pub(crate) mod fixtures {
             playback,
             opened: DeviceOpen::FellBack,
         }))
-    }
-
-    pub(crate) fn observed(queue_len: usize, position: Duration) -> EngineMessage {
-        EngineMessage::Observed {
-            queue_len,
-            position,
-        }
     }
 }

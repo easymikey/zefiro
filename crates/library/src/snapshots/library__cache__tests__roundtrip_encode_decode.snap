@@ -2,7 +2,7 @@
 source: crates/library/src/cache.rs
 expression: decoded
 ---
-Some(
+Ok(
     [
         Track {
             path: "/music/one.flac",

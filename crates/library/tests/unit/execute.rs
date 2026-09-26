@@ -4,13 +4,13 @@ use kernel::{
     AudioFormat,
     HistoryEntry,
     LibraryCmd,
-    LoadedRequest,
-    Message,
+    LibraryFact,
     Tags,
     Track,
-    domain::Revision,
+    domain::{Revision, UnixSeconds},
+    playlist::PlaylistFileName,
 };
-use library::{LibraryPaths, execute};
+use library::{CacheMiss, LibraryNote, LibraryPaths, execute};
 
 const FIXTURE_LENGTH: Duration = Duration::from_secs(180);
 const DECODABLE: &[&str] = &["flac", "wav"];
@@ -52,17 +52,17 @@ fn append_history_writes_an_entry_and_replies_with_nothing() {
     let directory = tempfile::tempdir().unwrap();
     let paths = library_paths(directory.path());
 
-    let reply = execute(
+    let executed = execute(
         LibraryCmd::AppendHistory {
             track: track("/music/song.flac"),
-            revision: Revision::UNSTAMPED,
+            at: UnixSeconds::UNSTAMPED,
         },
         &paths,
         DECODABLE,
     )
     .unwrap();
 
-    assert_eq!(reply, None);
+    assert_eq!(executed.fact, None);
     assert!(paths.data.join("history.jsonl").is_file());
 }
 
@@ -73,14 +73,14 @@ fn save_favorites_writes_the_file_and_replies_with_nothing() {
     let mut saved = HashSet::new();
     saved.insert(PathBuf::from("/music/a.flac"));
 
-    let reply = execute(
+    let executed = execute(
         LibraryCmd::SaveFavorites(Arc::new(saved)),
         &paths,
         DECODABLE,
     )
     .unwrap();
 
-    assert_eq!(reply, None);
+    assert_eq!(executed.fact, None);
     assert!(paths.data.join("favorites.json").is_file());
 }
 
@@ -97,9 +97,9 @@ fn load_favorites_replies_with_the_saved_set() {
     )
     .unwrap();
 
-    let reply = execute(LibraryCmd::LoadFavorites, &paths, DECODABLE).unwrap();
+    let executed = execute(LibraryCmd::LoadFavorites, &paths, DECODABLE).unwrap();
 
-    insta::assert_debug_snapshot!(reply);
+    insta::assert_debug_snapshot!(executed.fact);
 }
 
 #[test]
@@ -108,9 +108,9 @@ fn trash_of_a_missing_file_replies_with_nothing() {
     let paths = library_paths(directory.path());
     let missing = directory.path().join("never-existed.flac");
 
-    let reply = execute(LibraryCmd::Trash(missing), &paths, DECODABLE).unwrap();
+    let executed = execute(LibraryCmd::Trash(missing), &paths, DECODABLE).unwrap();
 
-    assert_eq!(reply, None);
+    assert_eq!(executed.fact, None);
 }
 
 #[test]
@@ -120,18 +120,18 @@ fn load_history_replies_with_the_appended_entry() {
     execute(
         LibraryCmd::AppendHistory {
             track: track("/music/song.flac"),
-            revision: Revision::UNSTAMPED,
+            at: UnixSeconds::UNSTAMPED,
         },
         &paths,
         DECODABLE,
     )
     .unwrap();
 
-    let reply =
+    let executed =
         execute(LibraryCmd::LoadHistory { limit: 10 }, &paths, DECODABLE).unwrap();
 
-    match reply {
-        Some(Message::Loaded(LoadedRequest::HistoryLoaded(entries))) => {
+    match executed.fact {
+        Some(LibraryFact::HistoryLoaded(entries)) => {
             let listed: Vec<PathBuf> = entries
                 .iter()
                 .map(|entry: &HistoryEntry| entry.path.clone())
@@ -140,6 +140,7 @@ fn load_history_replies_with_the_appended_entry() {
         }
         other => panic!("expected HistoryLoaded, got {other:?}"),
     }
+    assert!(executed.notes.is_empty());
 }
 
 #[test]
@@ -147,9 +148,9 @@ fn save_playlist_writes_under_the_sanitised_name() {
     let directory = tempfile::tempdir().unwrap();
     let paths = library_paths(directory.path());
 
-    let reply = execute(
+    let executed = execute(
         LibraryCmd::SavePlaylist {
-            name: "My Mix".to_string(),
+            name: PlaylistFileName::new("My Mix").unwrap(),
             tracks: vec![track("/music/song.flac")],
         },
         &paths,
@@ -157,27 +158,8 @@ fn save_playlist_writes_under_the_sanitised_name() {
     )
     .unwrap();
 
-    assert_eq!(reply, None);
+    assert_eq!(executed.fact, None);
     assert!(paths.playlists.join("My Mix.m3u8").is_file());
-}
-
-#[test]
-fn save_playlist_with_a_rejected_name_writes_nothing() {
-    let directory = tempfile::tempdir().unwrap();
-    let paths = library_paths(directory.path());
-
-    let reply = execute(
-        LibraryCmd::SavePlaylist {
-            name: "...".to_string(),
-            tracks: vec![track("/music/song.flac")],
-        },
-        &paths,
-        DECODABLE,
-    )
-    .unwrap();
-
-    assert_eq!(reply, None);
-    assert!(!paths.playlists.exists());
 }
 
 const TONE: &[u8] = include_bytes!("../fixtures/tone.wav");
@@ -195,7 +177,7 @@ fn rescan_replies_with_the_tracks_it_found_under_the_revision_it_was_given() {
     let paths = library_paths(directory.path());
     let root = scanned_root(&directory);
 
-    let reply = execute(
+    let executed = execute(
         LibraryCmd::Rescan {
             root,
             revision: Revision::UNSTAMPED.next(),
@@ -206,7 +188,7 @@ fn rescan_replies_with_the_tracks_it_found_under_the_revision_it_was_given() {
     .unwrap();
 
     insta::with_settings!({ filters => tmp_filters() }, {
-        insta::assert_debug_snapshot!(reply);
+        insta::assert_debug_snapshot!(executed.fact);
     });
 }
 
@@ -216,7 +198,7 @@ fn scan_library_lists_placeholder_tracks_under_the_revision_it_was_given() {
     let paths = library_paths(directory.path());
     let root = scanned_root(&directory);
 
-    let reply = execute(
+    let executed = execute(
         LibraryCmd::ScanLibrary {
             root,
             revision: Revision::UNSTAMPED.next().next(),
@@ -227,7 +209,7 @@ fn scan_library_lists_placeholder_tracks_under_the_revision_it_was_given() {
     .unwrap();
 
     insta::with_settings!({ filters => tmp_filters() }, {
-        insta::assert_debug_snapshot!(reply);
+        insta::assert_debug_snapshot!(executed.fact);
     });
 }
 
@@ -238,7 +220,7 @@ fn tag_tracks_answers_every_listed_path_under_the_revision_it_was_given() {
     let root = scanned_root(&directory);
     let listed = vec![root.join("a.wav"), root.join("never-existed.flac")];
 
-    let reply = execute(
+    let executed = execute(
         LibraryCmd::TagTracks {
             root,
             paths: listed,
@@ -250,7 +232,7 @@ fn tag_tracks_answers_every_listed_path_under_the_revision_it_was_given() {
     .unwrap();
 
     insta::with_settings!({ filters => tmp_filters() }, {
-        insta::assert_debug_snapshot!(reply);
+        insta::assert_debug_snapshot!(executed.fact);
     });
 }
 
@@ -269,7 +251,7 @@ fn a_scan_after_a_rescan_answers_from_the_cache() {
     )
     .unwrap();
 
-    let reply = execute(
+    let executed = execute(
         LibraryCmd::ScanLibrary {
             root,
             revision: Revision::UNSTAMPED.next().next(),
@@ -280,6 +262,41 @@ fn a_scan_after_a_rescan_answers_from_the_cache() {
     .unwrap();
 
     insta::with_settings!({ filters => tmp_filters() }, {
-        insta::assert_debug_snapshot!(reply);
+        insta::assert_debug_snapshot!(executed.fact);
     });
+    assert!(executed.notes.is_empty());
+}
+
+#[test]
+fn a_corrupt_cache_is_noted_and_the_scan_lists_instead() {
+    let directory = tempfile::tempdir().unwrap();
+    let paths = library_paths(directory.path());
+    let root = scanned_root(&directory);
+    std::fs::create_dir_all(&paths.cache).unwrap();
+    std::fs::write(
+        paths.cache.join("library.dir"),
+        root.to_string_lossy().as_bytes(),
+    )
+    .unwrap();
+    std::fs::write(
+        paths.cache.join("library.bin"),
+        [5u8, 0xDE, 0xAD, 0xBE, 0xEF],
+    )
+    .unwrap();
+
+    let executed = execute(
+        LibraryCmd::ScanLibrary {
+            root,
+            revision: Revision::UNSTAMPED.next(),
+        },
+        &paths,
+        DECODABLE,
+    )
+    .unwrap();
+
+    assert!(matches!(executed.fact, Some(LibraryFact::Listed { .. })));
+    assert_eq!(
+        executed.notes,
+        vec![LibraryNote::CacheMissed(CacheMiss::Corrupt)]
+    );
 }

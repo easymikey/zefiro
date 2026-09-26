@@ -13,7 +13,7 @@ use crate::{
         SpeedChipMode,
     },
     breakpoints::BreakpointsConfig,
-    error::{ConfigError, named_toml},
+    error::{ConfigError, TomlFile, named_toml},
     hex::Hex,
 };
 
@@ -62,13 +62,6 @@ pub struct CardConfig {
     pub speed_chip: SpeedChipMode,
 }
 
-#[must_use]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Bar {
-    pub height_px: f32,
-    pub radius: Option<f32>,
-}
-
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ProgressConfig {
@@ -78,15 +71,6 @@ pub struct ProgressConfig {
     pub track: Option<Hex>,
     #[serde(deserialize_with = "crate::appearance::progress_style")]
     pub remaining: ProgressStyle,
-}
-
-impl ProgressConfig {
-    pub fn bar(&self) -> Bar {
-        Bar {
-            height_px: self.height_px,
-            radius: self.radius,
-        }
-    }
 }
 
 impl Default for ProgressConfig {
@@ -181,7 +165,7 @@ impl AppearanceFile {
 pub const APPEARANCE_FILE_NAME: &str = "sifr-ui.toml";
 
 pub fn parse_appearance(source: &str) -> Result<AppearanceFile, ConfigError> {
-    named_toml(source, APPEARANCE_FILE_NAME)
+    named_toml(source, TomlFile::Appearance)
 }
 
 #[cfg(test)]

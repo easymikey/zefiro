@@ -97,3 +97,9 @@ impl Bindings {
         &self.0
     }
 }
+
+impl Default for Bindings {
+    fn default() -> Self {
+        Bindings::new(&KeymapOverrides::default())
+    }
+}

@@ -1,17 +1,4 @@
 use config::Animations;
-use kernel::WindowColorsCmd;
-use terminal::{UnknownThemeError, WindowColorsWriter};
-use widgets::Theme;
-
-pub(crate) fn window_colors(
-    theme: &Theme,
-    command: WindowColorsCmd,
-) -> Option<UnknownThemeError> {
-    let (sender, receiver) = crossbeam_channel::unbounded();
-    let _ = sender.send(command);
-    WindowColorsWriter::new(receiver)
-        .obey(|name| (name == theme.name).then(|| theme.clone()))
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PendingWindowColors {

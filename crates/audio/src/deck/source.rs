@@ -3,28 +3,28 @@ use std::{
     fs::File,
     io::BufReader,
     path::{Path, PathBuf},
-    thread,
-    thread::JoinHandle,
     time::Duration,
 };
 
+use crossbeam_channel::Sender;
 use kernel::AudioFailure;
 use rodio::Source;
 
 use crate::{
-    deck::output::Output,
+    deck::{
+        DeckEvent,
+        Ticket,
+        envelope::{EnvelopeControl, Envelopes, envelope},
+        output::Output,
+        worker::{DecodeRequest, DecodeWorker, Job},
+    },
     error::{AudioError, preload_fault},
 };
 
 pub(crate) type TrackDecoder = rodio::Decoder<BufReader<File>>;
-type DecodeResult = Result<TrackDecoder, AudioError>;
+pub(crate) type DecodeResult = Result<TrackDecoder, AudioError>;
 
 const READ_CAPACITY: usize = 1 << 20;
-
-struct PendingDecode {
-    path: PathBuf,
-    handle: Result<JoinHandle<DecodeResult>, AudioError>,
-}
 
 pub(crate) enum PreloadRequest {
     Gapless(PathBuf),
@@ -56,18 +56,25 @@ impl PreloadRequest {
 
 struct PendingPreload {
     request: PreloadRequest,
-    handle: Result<JoinHandle<DecodeResult>, AudioError>,
 }
 
-fn decode(path: &Path) -> DecodeResult {
-    let file = File::open(path).map_err(|error| AudioError::Decode {
+struct Decoded {
+    source: TrackDecoder,
+    total: Option<Duration>,
+    ticket: Ticket,
+}
+
+struct Landing<'a> {
+    output: Option<&'a mut Output>,
+    wake: Sender<DeckEvent>,
+}
+
+pub(crate) fn decode(path: &Path) -> DecodeResult {
+    let file = File::open(path).map_err(|source| AudioError::Open {
         path: path.to_path_buf(),
-        source: rodio::decoder::DecoderError::IoError(error.to_string()),
+        source,
     })?;
-    let length = file
-        .metadata()
-        .map(|metadata| metadata.len())
-        .unwrap_or_default();
+    let length = file.metadata().map_or(0, |metadata| metadata.len());
     let reader = BufReader::with_capacity(READ_CAPACITY, file);
     let builder = rodio::Decoder::builder()
         .with_data(reader)
@@ -85,119 +92,160 @@ fn decode(path: &Path) -> DecodeResult {
 
 fn install(
     request: PreloadRequest,
-    decoded: (TrackDecoder, Option<Duration>),
-    output: Option<&mut Output>,
-) -> Option<Landed> {
-    let (source, total) = decoded;
+    decoded: Decoded,
+    landing: Landing<'_>,
+) -> (Option<Landed>, Option<EnvelopeControl>) {
+    let Decoded {
+        source,
+        total,
+        ticket,
+    } = decoded;
+    let Landing { output, wake } = landing;
+    let Some(output) = output else {
+        return (None, None);
+    };
+    let (wrapped, control) = envelope(source, ticket, wake);
     match request {
         PreloadRequest::Gapless(path) => {
-            output?.append(source);
-            Some(Landed::Gapless(path))
+            output.append(wrapped);
+            (Some(Landed::Gapless(path)), Some(control))
         }
         PreloadRequest::Crossfade { path, gain, speed } => {
-            output?.stage(source, speed);
-            Some(Landed::Crossfade { path, gain, total })
+            output.stage(wrapped, speed);
+            (Some(Landed::Crossfade { path, gain, total }), Some(control))
         }
     }
-}
-
-fn spawn_worker(path: PathBuf) -> Result<JoinHandle<DecodeResult>, AudioError> {
-    thread::Builder::new()
-        .name("audio-decode".into())
-        .spawn(move || decode(&path))
-        .map_err(AudioError::Spawn)
 }
 
 pub(crate) struct DeckSource {
-    decode: Option<PendingDecode>,
+    decode_ticket: Ticket,
+    preload_ticket: Ticket,
     preloading: Option<PendingPreload>,
     staged: Option<TrackDecoder>,
+    worker: Result<DecodeWorker, AudioFailure>,
+    wake: Sender<DeckEvent>,
+    pub(crate) envelopes: Envelopes,
 }
 
 impl DeckSource {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(wake: Sender<DeckEvent>) -> Self {
+        let worker = DecodeWorker::spawn(wake.clone())
+            .map_err(|error| AudioFailure::from(&error));
         Self {
-            decode: None,
+            decode_ticket: Ticket::default(),
+            preload_ticket: Ticket::default(),
             preloading: None,
             staged: None,
+            worker,
+            wake,
+            envelopes: Envelopes::default(),
         }
     }
 
-    pub(crate) fn spawn_decode(&mut self, path: PathBuf) {
-        let handle = spawn_worker(path.clone());
+    pub(crate) fn spawn_decode(&mut self, path: PathBuf) -> Option<AudioFailure> {
         self.staged = None;
-        self.decode = Some(PendingDecode { path, handle });
+        self.decode_ticket = self.decode_ticket.next();
+        match &self.worker {
+            Ok(worker) => {
+                worker.submit(Job::Decode(DecodeRequest {
+                    path,
+                    ticket: self.decode_ticket,
+                }));
+                None
+            }
+            Err(fault) => Some(fault.clone()),
+        }
     }
 
-    pub(crate) fn start_preload(&mut self, request: PreloadRequest) {
-        let handle = spawn_worker(request.path().to_path_buf());
-        self.preloading = Some(PendingPreload { request, handle });
+    pub(crate) fn start_preload(
+        &mut self,
+        request: PreloadRequest,
+    ) -> Option<AudioFailure> {
+        self.preload_ticket = self.preload_ticket.next();
+        let path = request.path().to_path_buf();
+        let outcome = match &self.worker {
+            Ok(worker) => {
+                worker.submit(Job::Preload(DecodeRequest {
+                    path,
+                    ticket: self.preload_ticket,
+                }));
+                None
+            }
+            Err(fault) => Some(fault.clone()),
+        };
+        self.preloading = Some(PendingPreload { request });
+        outcome
+    }
+
+    pub(crate) fn list_devices(&self) {
+        if let Ok(worker) = &self.worker {
+            worker.submit(Job::ListDevices);
+        }
     }
 
     pub(crate) fn drop_preload(&mut self) {
+        self.preload_ticket = self.preload_ticket.next();
         self.preloading = None;
     }
 
     pub(crate) fn clear_staged(&mut self) {
-        self.decode = None;
+        self.decode_ticket = self.decode_ticket.next();
         self.staged = None;
     }
 
-    pub(crate) fn poll_decode(
+    pub(crate) fn accept_decode(
         &mut self,
+        landed: (Ticket, Result<TrackDecoder, AudioError>),
     ) -> Option<Result<Option<Duration>, AudioFailure>> {
-        let pending = self.decode.take()?;
-        let handle = match pending.handle {
-            Err(error) => return Some(Err(AudioFailure::from(&error))),
-            Ok(handle) => handle,
-        };
-        if !handle.is_finished() {
-            self.decode = Some(PendingDecode {
-                path: pending.path,
-                handle: Ok(handle),
-            });
+        let (ticket, outcome) = landed;
+        if ticket != self.decode_ticket {
             return None;
         }
-        match handle.join() {
-            Ok(Ok(source)) => {
+        Some(match outcome {
+            Ok(source) => {
                 let total = source.total_duration();
                 self.staged = Some(source);
-                Some(Ok(total))
+                Ok(total)
             }
-            Ok(Err(error)) => Some(Err(AudioFailure::from(&error))),
-            Err(_panic) => Some(Err(AudioFailure::Decode {
-                path: pending.path,
-                reason: "the decode worker panicked".to_owned(),
-            })),
-        }
+            Err(error) => Err(AudioFailure::from(&error)),
+        })
     }
 
-    pub(crate) fn poll_preload(
+    pub(crate) fn accept_preload(
         &mut self,
+        landed: (Ticket, Result<TrackDecoder, AudioError>),
         output: Option<&mut Output>,
     ) -> Option<Result<Landed, AudioFailure>> {
-        let pending = self.preloading.take()?;
-        let handle = match pending.handle {
-            Err(error) => return Some(Err(preload_fault(&error))),
-            Ok(handle) => handle,
-        };
-        if !handle.is_finished() {
-            self.preloading = Some(PendingPreload {
-                request: pending.request,
-                handle: Ok(handle),
-            });
+        let (ticket, outcome) = landed;
+        if ticket != self.preload_ticket {
             return None;
         }
-        match handle.join() {
-            Ok(Ok(source)) => {
+        let pending = self.preloading.take()?;
+        match outcome {
+            Ok(source) => {
                 let total = source.total_duration();
-                install(pending.request, (source, total), output).map(Ok)
+                let decoded = Decoded {
+                    source,
+                    total,
+                    ticket,
+                };
+                let landing = Landing {
+                    output,
+                    wake: self.wake.clone(),
+                };
+                let (installed, control) = install(pending.request, decoded, landing);
+                match (&installed, control) {
+                    (Some(Landed::Gapless(_)), Some(control)) => {
+                        self.envelopes.queued = Some(control);
+                    }
+                    (Some(Landed::Crossfade { .. }), Some(control)) => {
+                        self.envelopes.incoming = Some(control);
+                    }
+                    (_, _) => {}
+                }
+                installed.map(Ok)
             }
-            Ok(Err(error)) => Some(Err(preload_fault(&error))),
-            Err(_panic) => Some(Err(AudioFailure::Preload {
-                path: pending.request.path().to_path_buf(),
-                reason: "the decode worker panicked".to_owned(),
-            })),
+            Err(error) => Some(Err(preload_fault(&error))),
         }
     }
 
@@ -205,57 +253,12 @@ impl DeckSource {
         let Some(source) = self.staged.take() else {
             return;
         };
-        if let Some(output) = output {
-            output.append(source);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{
-        fs::File,
-        path::PathBuf,
-        process::Command,
-        time::{Duration, Instant},
-    };
-
-    use crate::deck::source::{DeckSource, PreloadRequest};
-
-    fn never_opening_file() -> Option<PathBuf> {
-        let path =
-            std::env::temp_dir().join(format!("sifr-preload-{}", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        let made = Command::new("mkfifo").arg(&path).status().ok()?;
-        made.success().then_some(path)
-    }
-
-    fn silent_source() -> DeckSource {
-        DeckSource::new()
-    }
-
-    #[test]
-    fn a_preload_on_a_file_that_never_opens_still_returns_at_once() {
-        let Some(path) = never_opening_file() else {
+        let Some(output) = output else {
             return;
         };
-        let mut source = silent_source();
-
-        let started = Instant::now();
-        source.start_preload(PreloadRequest::Gapless(path.clone()));
-        let landed = source.poll_preload(None);
-        let waited = started.elapsed();
-
-        let unblock = path.clone();
-        let _ = std::thread::Builder::new().spawn(move || {
-            let _ = File::create(&unblock);
-        });
-        let _ = std::fs::remove_file(&path);
-
-        assert!(landed.is_none());
-        assert!(
-            waited < Duration::from_secs(1),
-            "starting a preload must not wait on the file, waited {waited:?}"
-        );
+        let (wrapped, control) =
+            envelope(source, self.decode_ticket, self.wake.clone());
+        output.append(wrapped);
+        self.envelopes.primary = Some(control);
     }
 }

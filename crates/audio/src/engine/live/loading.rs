@@ -7,7 +7,7 @@ use crate::{
     engine::{
         effect::EngineEffect,
         phase::{AfterLoad, CurrentTrack, Handover, Incoming, Loading, Phase, Playing},
-        state::{Engine, Live, Mix, Muted, announce},
+        state::{Engine, Live, Mix, Muted, announce, reported},
     },
 };
 
@@ -121,7 +121,7 @@ impl Live {
                     outgoing,
                     incoming: Incoming::Playing(current),
                 });
-                self.started(&after_load)
+                self.handover_started(&after_load)
             }
             (
                 phase @ (Phase::Idle
@@ -141,7 +141,7 @@ impl Live {
     fn started(self, after_load: &AfterLoad) -> (Engine, EngineEffect) {
         let io = match after_load {
             AfterLoad::None => EngineEffect::Start {
-                volume: self.primary_gain(),
+                volume: self.volume(),
                 total: self.phase.current().and_then(|current| current.total),
             },
             AfterLoad::Resume {
@@ -152,6 +152,33 @@ impl Live {
                 paused: *playback,
             },
         };
+        (Engine::Live(self), reported(io))
+    }
+
+    fn handover_started(self, after_load: &AfterLoad) -> (Engine, EngineEffect) {
+        let volume = self.volume();
+        let length = self.config.crossfade.value();
+        let start = match after_load {
+            AfterLoad::None => EngineEffect::Start {
+                volume,
+                total: self.phase.current().and_then(|current| current.total),
+            },
+            AfterLoad::Resume {
+                position, playback, ..
+            } => EngineEffect::Resume {
+                volume,
+                position: *position,
+                paused: *playback,
+            },
+        };
+        let io = EngineEffect::Many(vec![
+            start,
+            EngineEffect::Ramp {
+                length,
+                playing: volume,
+            },
+            EngineEffect::Report,
+        ]);
         (Engine::Live(self), io)
     }
 }
@@ -166,7 +193,6 @@ mod tests {
     use crate::{
         EngineConfig,
         engine::{
-            crossfade::gain_in,
             effect::{EngineEffect, EngineMessage},
             phase::{AfterLoad, Incoming, Loading, Outgoing, Phase, Playing},
             state::{
@@ -197,6 +223,7 @@ mod tests {
                     secs,
                     track_a,
                 },
+                reported,
             },
         },
     };
@@ -259,7 +286,7 @@ mod tests {
         EngineMessage::Decoded(Ok(Some(TOTAL))),
         Transition {
             next: Engine::Live(Live { phase: Phase::Playing(Playing::new(track_a())), ..playing() }),
-            io: EngineEffect::Start { volume: 1.0, total: Some(TOTAL) },
+            io: reported(EngineEffect::Start { volume: 1.0, total: Some(TOTAL) }),
         }
     )]
     #[case::decoded_resumes_where_the_old_device_was(
@@ -271,7 +298,9 @@ mod tests {
                 config: config_on("usb"),
                 ..live()
             }),
-            io: EngineEffect::Resume { volume: 1.0, position: secs(5), paused: Playback::Paused },
+            io: reported(
+                EngineEffect::Resume { volume: 1.0, position: secs(5), paused: Playback::Paused },
+            ),
         }
     )]
     #[case::decode_failure_is_reported(
@@ -304,7 +333,7 @@ mod tests {
     )]
     #[case::reopened_mid_skip_keeps_the_decoding_track(
         Engine::Live(handing_over(
-            Outgoing { from: 1.0, fraction: 0.0 },
+            Outgoing { from: 1.0 },
             Incoming::Loading(loading_track("/b")),
         )),
         opened(None, Duration::ZERO, Playback::Playing),
@@ -317,20 +346,24 @@ mod tests {
             io: EngineEffect::SetVolume(1.0),
         }
     )]
-    #[case::a_decoded_skip_starts_under_the_retiring_stream(
+    #[case::a_decoded_skip_starts_and_ramps_over_the_retiring_stream(
         Engine::Live(handing_over(
-            Outgoing { from: 1.0, fraction: 0.5 },
+            Outgoing { from: 0.5 },
             Incoming::Loading(loading_track("/b")),
         )),
         EngineMessage::Decoded(Ok(Some(PRELOAD_TOTAL))),
         Transition {
             next: Engine::Live(retiring(0.5)),
-            io: EngineEffect::Start { volume: gain_in(0.5), total: Some(PRELOAD_TOTAL) },
+            io: EngineEffect::Many(vec![
+                EngineEffect::Start { volume: 1.0, total: Some(PRELOAD_TOTAL) },
+                EngineEffect::Ramp { length: secs(10), playing: 1.0 },
+                EngineEffect::Report,
+            ]),
         }
     )]
     #[case::a_failed_skip_drops_the_retiring_stream_too(
         Engine::Live(handing_over(
-            Outgoing { from: 1.0, fraction: 0.0 },
+            Outgoing { from: 1.0 },
             Incoming::Loading(loading_track("/b")),
         )),
         EngineMessage::Decoded(Err(decode_fault())),

@@ -13,7 +13,7 @@ use crate::primitive::{glyphs::ScrollbarGlyphs, span::text};
 const TITLE_SPACE: &str = " ";
 
 #[must_use]
-pub(crate) fn spaced_title(title: Line<'static>) -> Line<'static> {
+pub(crate) fn spaced_title<'a>(title: Line<'a>) -> Line<'a> {
     let space = || Span::from(text(TITLE_SPACE));
     Line::from_iter(once(space()).chain(title.spans).chain(once(space())))
 }

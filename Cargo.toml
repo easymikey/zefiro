@@ -153,7 +153,6 @@ clap = { version = "4", default-features = false, features = [
   "std",
   "usage",
 ] }
-cpal = { version = "0.16", default-features = false }
 crossbeam-channel = { version = "0.5", default-features = false, features = [
   "std",
 ] }
@@ -161,6 +160,7 @@ crossterm = { version = "0.29", default-features = false, features = [
   "events",
 ] }
 dirs = { version = "7", default-features = false }
+dispatch2 = { version = "0.3", default-features = false, features = ["std"] }
 fast_image_resize = { version = "=6.1.0", default-features = false }
 fastrand = { version = "2", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false }
@@ -175,6 +175,10 @@ num-traits = { version = "0.2", default-features = false }
 objc2 = { version = "0.6", default-features = false, features = ["std"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = [
   "NSImage",
+  "std",
+] }
+objc2-core-audio = { version = "0.3.2", default-features = false, features = [
+  "AudioHardware",
   "std",
 ] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = [

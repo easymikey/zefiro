@@ -4,7 +4,7 @@ use crossbeam_channel::{Sender, unbounded};
 use kernel::{
     Message,
     Nudge,
-    domain::{DriverFailure, DriverStatus, Model, SettingRow},
+    domain::{Driver, Model, SettingRow},
 };
 use runtime::{
     CoverDecoded,
@@ -90,7 +90,7 @@ enum LifeStep {
 struct ObserveDeadThenQuit {
     steps: Sender<LifeStep>,
     paints: usize,
-    audio: Option<DriverStatus>,
+    restarts: usize,
 }
 
 impl Shell for ObserveDeadThenQuit {
@@ -116,9 +116,8 @@ impl Shell for ObserveDeadThenQuit {
 
     fn paint(&mut self, view: View<'_>) -> Result<Painted, Infallible> {
         self.paints += 1;
-        self.audio = Some(view.model.drivers.audio.clone());
-        let dead = matches!(self.audio, Some(DriverStatus::Dead(_)));
-        let next = if dead || self.paints >= 20 {
+        self.restarts = view.model.drivers.record(Driver::Audio).restarts.count();
+        let next = if self.restarts > 0 || self.paints >= 20 {
             LifeStep::Quit
         } else {
             LifeStep::Paint
@@ -129,7 +128,7 @@ impl Shell for ObserveDeadThenQuit {
 }
 
 #[test]
-fn a_driver_panic_shows_as_dead_through_view() {
+fn a_driver_panic_is_supervised_through_view() {
     let directory = tempfile::tempdir().unwrap();
     let startup = stock_startup();
     let runtime =
@@ -141,16 +140,11 @@ fn a_driver_panic_shows_as_dead_through_view() {
     let mut shell = ObserveDeadThenQuit {
         steps,
         paints: 0,
-        audio: None,
+        restarts: 0,
     };
 
     let ended = run(runtime, &mut shell, &input);
 
     assert!(matches!(ended, Ok(())));
-    assert_eq!(
-        shell.audio,
-        Some(DriverStatus::Dead(DriverFailure::Panicked(
-            "boom".to_owned()
-        )))
-    );
+    assert_eq!(shell.restarts, 1);
 }

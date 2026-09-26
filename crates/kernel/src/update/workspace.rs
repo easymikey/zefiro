@@ -12,7 +12,7 @@ use crate::{
     },
     message::{Timer, WorkspaceRequest},
     update::{
-        keymap::default_bindings,
+        keymap::{Bindings, default_bindings},
         machine::{Machine, Never, Rejected},
     },
 };
@@ -23,9 +23,9 @@ pub(crate) enum KeymapReload {
     Unchanged,
 }
 
-struct SourceOutcome {
-    source: ConfigSource,
-    text: Option<String>,
+pub(crate) struct SourceOutcome {
+    pub(crate) source: ConfigSource,
+    pub(crate) text: Option<String>,
 }
 
 impl Workspace {
@@ -37,10 +37,11 @@ impl Workspace {
         }
     }
 
-    fn keymap_reloaded(&mut self, keys: KeymapOverrides) -> Cmd {
+    pub(crate) fn keymap_reloaded(&mut self, keys: KeymapOverrides) -> Cmd {
         match self.keymap_reload(&keys) {
             KeymapReload::Unchanged => Cmd::None,
             KeymapReload::Fresh => {
+                self.bindings = Bindings::new(&keys);
                 self.keymap = Keymap::new(keys, &default_bindings());
                 let text = (!self.keymap.errors().is_empty()).then(|| {
                     KeyValidationErrors(self.keymap.errors().to_vec()).to_string()
@@ -53,7 +54,7 @@ impl Workspace {
         }
     }
 
-    fn show(&mut self, toast: Toast) -> Cmd {
+    pub(crate) fn show(&mut self, toast: Toast) -> Cmd {
         self.toast = Some(toast);
         Cmd::Batch(vec![
             Effect::Animate(Cue::ToastRaised),
@@ -64,7 +65,7 @@ impl Workspace {
         ])
     }
 
-    fn source_result(&mut self, outcome: SourceOutcome) -> Cmd {
+    pub(crate) fn source_result(&mut self, outcome: SourceOutcome) -> Cmd {
         let SourceOutcome { source, text } = outcome;
         match text {
             Some(text) => {
@@ -75,7 +76,7 @@ impl Workspace {
         }
     }
 
-    fn source_recovered(&mut self, source: ConfigSource) -> Cmd {
+    pub(crate) fn source_recovered(&mut self, source: ConfigSource) -> Cmd {
         let cleared = self.source_errors.clear(source);
         self.toast
             .take_if(|toast| Some(toast.text.as_str()) == cleared.as_deref())
@@ -97,18 +98,6 @@ impl Machine for Workspace {
             WorkspaceRequest::ClearToast => {
                 self.toast = None;
                 Cmd::None
-            }
-            WorkspaceRequest::KeymapReloaded(keys) => self.keymap_reloaded(*keys),
-            WorkspaceRequest::ThemeReloaded => Cmd::None,
-            WorkspaceRequest::SourceFailed { source, text } => {
-                self.source_result(SourceOutcome {
-                    source,
-                    text: Some(text),
-                })
-            }
-            WorkspaceRequest::SourceRecovered(source) => self.source_recovered(source),
-            WorkspaceRequest::ConfigFailed(failure) => {
-                self.show(Toast::error(failure.to_string()))
             }
         };
         Ok((self, cmd))

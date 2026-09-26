@@ -1,5 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
+assertion_line: 414
 expression: "walked(model, messages)"
 ---
 [
@@ -188,7 +189,9 @@ expression: "walked(model, messages)"
                 ),
                 Library(
                     SavePlaylist {
-                        name: "mix",
+                        name: PlaylistFileName(
+                            "mix",
+                        ),
                         tracks: [
                             Track {
                                 path: "/tmp/track0.flac",

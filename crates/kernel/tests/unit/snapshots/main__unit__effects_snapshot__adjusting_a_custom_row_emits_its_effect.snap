@@ -7,6 +7,8 @@ expression: effects(cmd)
         id: SettingId(
             3,
         ),
-        position: 1,
+        option: OptionIndex(
+            1,
+        ),
     },
 ]

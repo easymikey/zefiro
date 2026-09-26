@@ -7,4 +7,4 @@ pub(crate) mod table;
 
 pub use bindings::{Bindings, default_bindings};
 pub use chord::{KeyBinding, KeyOutcome};
-pub use lookup::{KeyPress, route};
+pub use lookup::route;

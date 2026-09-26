@@ -24,10 +24,6 @@ impl<T> CursorOver<T> {
         self.cursor = self.cursor.resize(len);
     }
 
-    pub(crate) fn select(&mut self, index: usize) {
-        self.cursor = Cursor::with_len(self.cursor.len()).at(index);
-    }
-
     pub(crate) fn navigate(&mut self, motion: ListMotion) {
         self.cursor = match motion {
             ListMotion::Up => self.cursor.step(-1),

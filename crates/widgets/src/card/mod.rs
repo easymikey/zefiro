@@ -10,6 +10,7 @@ pub(crate) use compact::{CompactCard, height as compact_height};
 use config::{Appearance, CoverBrackets};
 pub(crate) use headings::{CardStatus, card_status, status_label};
 use kernel::{
+    Moment,
     domain::{Output, Percent, Player, Speed, Track},
     playlist::{PlayOrder, RepeatMode},
 };
@@ -47,6 +48,7 @@ pub struct CardView<'a> {
     pub queue_length: usize,
     pub displayed_track: Option<&'a Arc<Track>>,
     pub output: &'a Output,
+    pub now: Moment,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -181,11 +183,14 @@ mod tests {
     use config::{Appearance, ProgressStyle};
     use kernel::{
         Bounded,
+        Moment,
         domain::{
             AudioFormat,
             Output,
+            OutputFault,
             Percent,
             Player,
+            Playhead,
             Preload,
             Speed,
             Tags,
@@ -251,7 +256,11 @@ mod tests {
             Self {
                 player: Player::Playing {
                     track: Arc::clone(&track),
-                    at: Duration::from_secs(30),
+                    head: Playhead::anchored(
+                        Duration::from_secs(30),
+                        Moment::default(),
+                        Speed::default(),
+                    ),
                     preload: Preload::None,
                 },
                 spectrum: [0.5; SPECTRUM_BANDS],
@@ -276,7 +285,7 @@ mod tests {
                 player: Player::Stopped,
                 spectrum: [0.2; SPECTRUM_BANDS],
                 output: Output::Lost {
-                    reason: "device removed".to_string(),
+                    fault: OutputFault::DeviceGone,
                 },
                 play_order: PlayOrder::default(),
                 track: Some(track),
@@ -294,6 +303,7 @@ mod tests {
                 queue_length: 3,
                 displayed_track: self.track.as_ref(),
                 output: &self.output,
+                now: Moment::default(),
             }
         }
     }

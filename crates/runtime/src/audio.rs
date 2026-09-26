@@ -5,18 +5,18 @@ use audio::{
     UnityVolume,
     prepare as prepare_engine,
 };
-use crossbeam_channel::{Receiver, Sender};
-use kernel::{AudioCmd, Message, domain::Startup};
+use crossbeam_channel::Receiver;
+use kernel::{AudioCmd, AudioEvent, domain::Startup};
 
-use crate::driver::DriverLoop;
+use crate::{driver::DriverLoop, mailbox::Mailbox};
 
 pub(crate) fn prepare(startup: &Startup) -> (AudioLoop, SpectrumTap) {
     prepare_engine(engine_config(startup))
 }
 
-impl DriverLoop<AudioCmd> for AudioLoop {
-    fn run(self, inbox: &Receiver<AudioCmd>, mailbox: &Sender<Message>) {
-        AudioLoop::run(self, inbox, mailbox);
+impl DriverLoop<AudioCmd, AudioEvent> for AudioLoop {
+    fn run(self, inbox: &Receiver<AudioCmd>, outbox: &Mailbox<AudioEvent>) {
+        AudioLoop::run(self, inbox, outbox);
     }
 }
 
@@ -39,13 +39,13 @@ fn unity_volume() -> UnityVolume {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::Startup;
+    use kernel::domain::{DeviceName, Startup};
 
     use crate::audio::{engine_config, unity_volume};
 
     fn stock_startup() -> Startup {
         Startup {
-            output_device: Some("Speakers".to_owned()),
+            output_device: Some(DeviceName::new("Speakers".to_string()).unwrap()),
             ..Startup::default()
         }
     }

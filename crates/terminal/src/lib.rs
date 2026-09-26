@@ -33,4 +33,8 @@ pub use pixels::{
     Pixels,
 };
 pub use session::{TerminalSession, install_panic_hook};
-pub use window_colors::{UnknownThemeError, WindowColorsWriter};
+pub use window_colors::{
+    UnknownThemeError,
+    window_colors_sequence,
+    write_window_colors,
+};

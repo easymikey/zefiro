@@ -3,10 +3,9 @@ use std::{
     path::PathBuf,
 };
 
-use crate::{
-    error::{LibraryError, Subject},
-    paths::LibraryPaths,
-};
+use kernel::LibrarySubject;
+
+use crate::{error::LibraryError, paths::LibraryPaths};
 
 pub(crate) fn save(
     paths: &LibraryPaths,
@@ -14,19 +13,19 @@ pub(crate) fn save(
 ) -> Result<(), LibraryError> {
     let path = paths.data.join("favorites.json");
     crate::files::create_parent(&path).map_err(|source| LibraryError::Write {
-        subject: Subject::Favorites,
+        subject: LibrarySubject::Favorites,
         path: path.clone(),
         source,
     })?;
     let list: BTreeSet<&PathBuf> = favorites.iter().collect();
     let json = serde_json::to_string(&list).map_err(|source| LibraryError::Json {
-        subject: Subject::Favorites,
+        subject: LibrarySubject::Favorites,
         path: path.clone(),
         source,
     })?;
     crate::files::persist(&path, json.as_bytes()).map_err(|source| {
         LibraryError::Write {
-            subject: Subject::Favorites,
+            subject: LibrarySubject::Favorites,
             path,
             source,
         }
@@ -37,7 +36,7 @@ pub(crate) fn load(paths: &LibraryPaths) -> Result<HashSet<PathBuf>, LibraryErro
     let path = paths.data.join("favorites.json");
     let read = crate::files::read_if_present(&path);
     let Some(content) = read.map_err(|source| LibraryError::Read {
-        subject: Subject::Favorites,
+        subject: LibrarySubject::Favorites,
         path: path.clone(),
         source,
     })?
@@ -46,7 +45,7 @@ pub(crate) fn load(paths: &LibraryPaths) -> Result<HashSet<PathBuf>, LibraryErro
     };
     let list: Vec<PathBuf> =
         serde_json::from_str(&content).map_err(|source| LibraryError::Json {
-            subject: Subject::Favorites,
+            subject: LibrarySubject::Favorites,
             path,
             source,
         })?;

@@ -1,4 +1,4 @@
-use config::{CoverStyle, KeyHints, LayoutMode, breakpoints::BreakpointsConfig};
+use config::{BreakpointsConfig, CoverStyle, KeyHints, LayoutMode};
 use ratatui::layout::Rect;
 use rstest::rstest;
 use widgets::{CoverArt, FrameLayout, PixelPath, Scene, Screen};
@@ -7,7 +7,8 @@ use crate::unit::support::{Scenery, model_with_tracks, painted, playing_track};
 
 fn painted_frame(scene: Scene<'_>, size: (u16, u16)) -> (FrameLayout, String) {
     let (width, height) = size;
-    let layout = FrameLayout::new(&scene, Rect::new(0, 0, width, height));
+    let layout =
+        FrameLayout::new(&scene.layout_inputs(), Rect::new(0, 0, width, height));
     let text = painted(
         &Screen {
             scene,

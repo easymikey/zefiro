@@ -5,6 +5,13 @@ pub const SPECTRUM_BANDS: usize = 16;
 pub type Spectrum = [f32; SPECTRUM_BANDS];
 
 const REFERENCE_RATE_HZ: f32 = 60.0;
+const SILENT_BAND: f32 = 1.0 / 1024.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpectrumMotion {
+    Moving,
+    Settled,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct SpectrumSmoothing {
@@ -39,7 +46,12 @@ impl SpectrumSmoothing {
         let decay = effective_coefficient(self.decay, elapsed_secs);
         for (previous, &level) in self.bands.iter_mut().zip(raw.iter()) {
             let coefficient = if level > *previous { attack } else { decay };
-            *previous = smooth_band(*previous, level, coefficient);
+            let smoothed = smooth_band(*previous, level, coefficient);
+            *previous = if smoothed.abs() < SILENT_BAND {
+                0.0
+            } else {
+                smoothed
+            };
         }
         self.bands
     }
@@ -53,13 +65,27 @@ impl SpectrumSmoothing {
     pub fn bands(&self) -> Spectrum {
         self.bands
     }
+
+    #[must_use]
+    pub fn motion(&self) -> SpectrumMotion {
+        if self.bands.iter().all(|&band| band == 0.0) {
+            SpectrumMotion::Settled
+        } else {
+            SpectrumMotion::Moving
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use crate::spectrum::{SPECTRUM_BANDS, SpectrumSmoothing};
+    use crate::spectrum::{
+        SILENT_BAND,
+        SPECTRUM_BANDS,
+        SpectrumMotion,
+        SpectrumSmoothing,
+    };
 
     const FRAME: Duration = Duration::from_millis(16);
 
@@ -86,7 +112,7 @@ mod tests {
         for _ in 0..30 {
             decayed = smoothing.fade(FRAME);
         }
-        assert!(decayed.iter().all(|&level| level < 0.001));
+        assert_eq!(decayed, [0.0; SPECTRUM_BANDS]);
     }
 
     #[test]
@@ -113,5 +139,46 @@ mod tests {
         let mut smoothing = SpectrumSmoothing::default();
         let bands = smoothing.smooth(&[1.0; SPECTRUM_BANDS], Duration::ZERO);
         assert_eq!(bands, [0.0; SPECTRUM_BANDS]);
+    }
+
+    #[test]
+    fn fresh_is_settled() {
+        let smoothing = SpectrumSmoothing::default();
+        assert_eq!(smoothing.motion(), SpectrumMotion::Settled);
+    }
+
+    #[test]
+    fn one_live_frame_moves() {
+        let mut smoothing = SpectrumSmoothing::default();
+        let _ = smoothing.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
+        assert_eq!(smoothing.motion(), SpectrumMotion::Moving);
+    }
+
+    #[test]
+    fn fade_settles_within_seven_frames_at_33_ms() {
+        let mut smoothing = SpectrumSmoothing::default();
+        let _ = smoothing.smooth(&[1.0; SPECTRUM_BANDS], Duration::from_secs(1));
+        let frame = Duration::from_millis(33);
+        for _ in 0..7 {
+            let _ = smoothing.fade(frame);
+        }
+        assert_eq!(smoothing.motion(), SpectrumMotion::Settled);
+    }
+
+    #[test]
+    fn zero_elapsed_keeps_moving() {
+        let mut smoothing = SpectrumSmoothing::default();
+        let _ = smoothing.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
+        let _ = smoothing.smooth(&[1.0; SPECTRUM_BANDS], Duration::ZERO);
+        assert_eq!(smoothing.motion(), SpectrumMotion::Moving);
+    }
+
+    #[test]
+    fn a_tiny_band_snaps_to_zero() {
+        let mut smoothing = SpectrumSmoothing::default();
+        let mut raw = [0.0; SPECTRUM_BANDS];
+        raw[0] = SILENT_BAND / 2.0;
+        let bands = smoothing.smooth(&raw, FRAME);
+        assert_eq!(bands[0], 0.0);
     }
 }

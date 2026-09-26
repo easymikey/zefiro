@@ -5,15 +5,22 @@ use kernel::{
     AudioFailure,
     Bounded,
     BrowseRequest,
+    ConfigFact,
+    DecodeFault,
     DriverMessage,
     EngineRejection,
+    Gesture,
     HistoryRequest,
     JumpRequest,
+    Key,
     KeyCode,
+    KeyPress,
+    LibraryFact,
     LibraryFailure,
     LoadedRequest,
     Message,
     Model,
+    Moment,
     Nudge,
     OverlayName,
     OverlayRequest,
@@ -22,11 +29,21 @@ use kernel::{
     SearchEdit,
     SearchRequest,
     SettingsRowRequest,
+    SystemEvent,
     TextRequest,
     Timer,
     Toast,
     WorkspaceRequest,
-    domain::{ChordPrefix, Driver, DriverFailure, PlaylistIndex, Revision, SettingRow},
+    domain::{
+        ChordPrefix,
+        Driver,
+        DriverFailure,
+        OutputFault,
+        PlaylistIndex,
+        Revision,
+        SettingRow,
+        ThemeName,
+    },
     message::SeekTenths,
     playlist::{PlaylistFileName, RepeatMode},
     update::update,
@@ -70,6 +87,20 @@ pub(crate) fn durations(len: Range<usize>) -> impl Strategy<Value = Vec<Duration
 
 fn nudge() -> impl Strategy<Value = Nudge> {
     prop_oneof![Just(Nudge::Up), Just(Nudge::Down)]
+}
+
+fn key_press() -> impl Strategy<Value = KeyPress> {
+    select(vec![
+        KeyCode::Char('j'),
+        KeyCode::Char('q'),
+        KeyCode::Enter,
+        KeyCode::Esc,
+        KeyCode::PageDown,
+    ])
+    .prop_map(|code| {
+        let key = Key::plain(code);
+        KeyPress { key, typed: key }
+    })
 }
 
 fn playlist_index() -> impl Strategy<Value = PlaylistIndex> {
@@ -186,8 +217,7 @@ fn browse() -> impl Strategy<Value = BrowseRequest> {
         playlist_index().prop_map(BrowseRequest::CursorTo),
         (-4i64..4).prop_map(BrowseRequest::CursorBy),
         nudge().prop_map(BrowseRequest::MoveInQueue),
-        (1usize..5, nudge())
-            .prop_map(|(page, nudge)| BrowseRequest::PageBy(page, nudge)),
+        nudge().prop_map(BrowseRequest::PageBy),
     ]
 }
 
@@ -195,18 +225,17 @@ fn audio() -> impl Strategy<Value = AudioEvent> {
     let failure = prop_oneof![
         Just(AudioFailure::Decode {
             path: "/tmp/track0.flac".into(),
-            reason: "corrupt".to_string(),
+            fault: DecodeFault::Corrupt,
         }),
         Just(AudioFailure::OutputLost {
-            reason: "unplugged".to_string(),
+            fault: OutputFault::DeviceGone,
         }),
     ];
     prop_oneof![
-        (0u64..200).prop_map(|secs| AudioEvent::Position(Duration::from_secs(secs))),
+        (0u64..200).prop_map(|secs| AudioEvent::Playhead(Duration::from_secs(secs))),
         select(vec![
             AudioEvent::TrackChanged,
             AudioEvent::Ended,
-            AudioEvent::OutputRouteChanged,
             AudioEvent::DeviceFellBack(None),
             AudioEvent::DevicesLoaded(Vec::new()),
             AudioEvent::Loaded { total: None },
@@ -223,14 +252,23 @@ fn loaded() -> impl Strategy<Value = LoadedRequest> {
         playlist_index().prop_map(LoadedRequest::Jump),
         proptest::collection::vec(0usize..6, 0..6)
             .prop_map(LoadedRequest::ShuffleRolled),
-        select(vec![
-            LoadedRequest::HistoryLoaded(Vec::new()),
-            LoadedRequest::ThemesLoaded(vec!["dusk".to_string()]),
-            LoadedRequest::FavoritesLoaded(std::collections::HashSet::new()),
-            LoadedRequest::MusicDirReloaded("/tmp".into()),
-            LoadedRequest::Failed(LibraryFailure::NoDirectory),
-        ]),
     ]
+}
+
+fn library() -> impl Strategy<Value = LibraryFact> {
+    select(vec![
+        LibraryFact::HistoryLoaded(Vec::new()),
+        LibraryFact::FavoritesLoaded(std::collections::HashSet::new()),
+        LibraryFact::Failed(LibraryFailure::NoDirectory),
+    ])
+}
+
+fn config() -> impl Strategy<Value = ConfigFact> {
+    select(vec![
+        ConfigFact::ThemesLoaded(vec![ThemeName::from_static("dusk")]),
+        ConfigFact::MusicDirReloaded("/tmp".into()),
+        ConfigFact::ThemeReloaded(ThemeName::from_static("dusk")),
+    ])
 }
 
 fn driver() -> impl Strategy<Value = Message> {
@@ -245,6 +283,7 @@ fn driver() -> impl Strategy<Value = Message> {
             "boom".to_string()
         ))),
         Just(DriverMessage::Stopped),
+        Just(DriverMessage::Congested),
     ];
     (driver, change).prop_map(|(driver, change)| Message::Driver(driver, change))
 }
@@ -265,12 +304,40 @@ fn event() -> impl Strategy<Value = Message> {
         select(vec![
             WorkspaceRequest::ShowToast(Toast::info("hello".to_string())),
             WorkspaceRequest::ClearToast,
-            WorkspaceRequest::ThemeReloaded,
         ])
         .prop_map(Message::Workspace),
-        (0u8..=100).prop_map(|volume| Message::SystemVolume(Percent::clamped(volume))),
         stamped().prop_map(|revision| Message::Elapsed(Timer::Toast(revision))),
         stamped().prop_map(|revision| Message::Elapsed(Timer::Sleep(revision))),
+        select(vec![
+            Driver::Audio,
+            Driver::Library,
+            Driver::Config,
+            Driver::Macos
+        ])
+        .prop_map(|driver| Message::Elapsed(Timer::Restart(driver))),
+        (0usize..50).prop_map(|visible_rows| Message::Viewport { visible_rows }),
+        key_press().prop_map(Message::Key),
+    ]
+}
+
+fn system() -> impl Strategy<Value = SystemEvent> {
+    prop_oneof![
+        (0u8..=100).prop_map(|volume| SystemEvent::Volume(Percent::clamped(volume))),
+        Just(SystemEvent::OutputRouteChanged),
+        select(vec![
+            Gesture::Play,
+            Gesture::Pause,
+            Gesture::Toggle,
+            Gesture::Stop,
+            Gesture::Next,
+            Gesture::Previous,
+            Gesture::SeekForward,
+            Gesture::SeekBack,
+        ])
+        .prop_map(SystemEvent::MediaKey),
+        (0u64..200).prop_map(|secs| SystemEvent::MediaKey(Gesture::Scrub(
+            Duration::from_secs(secs)
+        ))),
     ]
 }
 
@@ -281,8 +348,11 @@ pub(crate) fn message() -> impl Strategy<Value = Message> {
         browse().prop_map(Message::Browse),
         audio().prop_map(Message::Audio),
         loaded().prop_map(Message::Loaded),
+        library().prop_map(Message::Library),
+        config().prop_map(Message::Config),
         driver(),
         event(),
+        system().prop_map(Message::System),
     ]
 }
 
@@ -294,7 +364,7 @@ pub(crate) fn reached_model() -> impl Strategy<Value = Model> {
     ];
     (seed, proptest::collection::vec(message(), 0..16)).prop_map(|(seed, path)| {
         path.into_iter().fold(seed, |mut model, message| {
-            let _ = update(&mut model, message);
+            let _ = update(&mut model, message, Moment::default());
             model
         })
     })

@@ -3,53 +3,51 @@ source: crates/library/tests/unit/execute.rs
 expression: reply
 ---
 Some(
-    Loaded(
-        LibraryLoaded {
-            tracks: [
-                Track {
-                    path: "[tmp]/music/a.wav",
-                    duration: Some(
-                        100ms,
-                    ),
-                    tags: Tags {
-                        title: None,
-                        artist: None,
-                        album: None,
-                        album_artist: None,
-                        date: None,
-                        genre: None,
-                        track: None,
-                        track_total: None,
-                        disc: None,
-                        composer: None,
-                        comment: None,
-                        lyrics: None,
-                    },
-                    audio_format: AudioFormat {
-                        format: Some(
-                            "Wav",
-                        ),
-                        bitrate_kbps: Some(
-                            64,
-                        ),
-                        sample_rate_hz: Some(
-                            8000,
-                        ),
-                        bits_per_sample: Some(
-                            8,
-                        ),
-                        channels: Some(
-                            1,
-                        ),
-                        replay_gain: None,
-                    },
-                    display: "a.wav",
-                    tagging: Read,
+    Loaded {
+        tracks: [
+            Track {
+                path: "[tmp]/music/a.wav",
+                duration: Some(
+                    100ms,
+                ),
+                tags: Tags {
+                    title: None,
+                    artist: None,
+                    album: None,
+                    album_artist: None,
+                    date: None,
+                    genre: None,
+                    track: None,
+                    track_total: None,
+                    disc: None,
+                    composer: None,
+                    comment: None,
+                    lyrics: None,
                 },
-            ],
-            revision: Revision(
-                1,
-            ),
-        },
-    ),
+                audio_format: AudioFormat {
+                    format: Some(
+                        "Wav",
+                    ),
+                    bitrate_kbps: Some(
+                        64,
+                    ),
+                    sample_rate_hz: Some(
+                        8000,
+                    ),
+                    bits_per_sample: Some(
+                        8,
+                    ),
+                    channels: Some(
+                        1,
+                    ),
+                    replay_gain: None,
+                },
+                display: "a.wav",
+                tagging: Read,
+            },
+        ],
+        revision: Revision(
+            1,
+        ),
+    },
 )

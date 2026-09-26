@@ -1,17 +1,23 @@
 use std::{path::Path, time::Duration};
 
 use config::{AppearanceFile, CoverStyle};
-use kernel::{domain::Model, update::keymap::KeyBinding};
+use kernel::{
+    Moment,
+    domain::{DeviceName, Model, Overlay, ThemeChoice},
+    update::keymap::KeyBinding,
+};
 use raster::color_overrides;
 
 use crate::{
     card::CardView,
     geometry::{CellAspect, CoverSizing, cover_sizing},
     key_hints::KeyHintsContent,
-    overlay::settings::SettingsView,
-    playlist::{LibraryLoad, PlaylistView},
+    overlay::{layer::OverlayContent, settings::SettingsView},
+    playlist::{LibraryLoad, PlaylistPane, PlaylistView},
+    screen::LayoutInputs,
     spectrum::Spectrum,
     theme::{ActiveTheme, ColorDepth, Theme},
+    toast::ToastCard,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +38,7 @@ pub struct Scene<'a> {
     pub cell_aspect: CellAspect,
     pub clock: Duration,
     pub now_unix: u64,
+    pub now: Moment,
     pub music_dir: &'a str,
     pub sleep_left: Option<Duration>,
 }
@@ -56,6 +63,7 @@ impl<'a> Scene<'a> {
             queue_length: model.queue.len(),
             displayed_track: model.displayed_track(),
             output: &model.transport.output,
+            now: self.now,
         }
     }
 
@@ -84,11 +92,11 @@ impl<'a> Scene<'a> {
         SettingsView {
             crossfade: settings.crossfade,
             replaygain: settings.replaygain,
-            theme: &settings.theme,
-            themes: &self.model.themes,
+            theme: theme_display(&self.model.themes.selected),
+            themes: &self.model.themes.names,
             sleep_presets: &settings.sleep_presets,
             music_dir: self.music_dir,
-            output_device: settings.output_device.as_deref(),
+            output_device: settings.output_device.as_ref().map(DeviceName::as_str),
             output_devices: &settings.output_devices,
             appearance: self.appearance.options(),
             custom_rows: &self.model.custom_rows,
@@ -108,6 +116,65 @@ impl<'a> Scene<'a> {
     #[must_use]
     pub fn cover_sizing(&self) -> CoverSizing {
         cover_sizing(self.cover_style(), self.appearance.cover.text_cells)
+    }
+
+    #[must_use]
+    pub(crate) fn playlist_pane(&self) -> Option<PlaylistPane<'a>> {
+        let taken = matches!(
+            self.model.workspace.overlay,
+            Some(Overlay::Search(_) | Overlay::History(_))
+        );
+        if taken {
+            return None;
+        }
+        Some(PlaylistPane {
+            view: self.playlist_view(),
+            theme: self.active_theme(),
+        })
+    }
+
+    #[must_use]
+    pub(crate) fn overlay_content(&self) -> OverlayContent<'a> {
+        let model = self.model;
+        OverlayContent {
+            workspace: &model.workspace,
+            theme: self.active_theme(),
+            tracks: &model.playlist.tracks,
+            history: &model.history.view,
+            settings_view: self.settings_view(),
+            bindings: self.bindings,
+            now_unix: self.now_unix,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn toast_card(&self) -> Option<ToastCard<'a>> {
+        let toast = self.model.workspace.toast.as_ref()?;
+        Some(ToastCard {
+            toast,
+            theme: self.active_theme(),
+        })
+    }
+
+    #[must_use]
+    pub fn layout_inputs(&self) -> LayoutInputs<'a> {
+        LayoutInputs {
+            breakpoints: &self.appearance.layout,
+            window: self.appearance.window,
+            cell_aspect: self.cell_aspect,
+            cover_sizing: self.cover_sizing(),
+            cover_style: self.cover_style(),
+            playlist: self.playlist_pane(),
+            overlay: self.overlay_content(),
+            toast: self.toast_card(),
+        }
+    }
+}
+
+fn theme_display(choice: &ThemeChoice) -> &str {
+    match choice {
+        ThemeChoice::Auto => "auto",
+        ThemeChoice::Named(name) => name.as_str(),
     }
 }
 
@@ -135,8 +202,9 @@ pub fn abbreviate_home(path: &Path, home: &Path) -> String {
 pub(crate) mod fixtures {
     use std::{sync::Arc, time::Duration};
 
-    use config::{APPEARANCE_ROWS, Appearance, AppearanceFile};
+    use config::{Appearance, AppearanceFile};
     use kernel::{
+        Moment,
         domain::{
             AudioFormat,
             Crossfade,
@@ -218,16 +286,7 @@ pub(crate) mod fixtures {
     }
 
     pub(crate) fn custom_rows() -> Vec<CustomSetting> {
-        APPEARANCE_ROWS
-            .iter()
-            .map(|row| CustomSetting {
-                id: row.id,
-                control: row.control,
-                position: 0,
-                cue: row.cue,
-                themes: row.themes,
-            })
-            .collect()
+        config::custom_rows(&AppearanceFile::default())
     }
 
     pub(crate) fn settings_values(custom_rows: &[CustomSetting]) -> SettingsView<'_> {
@@ -304,6 +363,7 @@ pub(crate) mod fixtures {
                 cell_aspect: CellAspect::default(),
                 clock: Duration::ZERO,
                 now_unix: 0,
+                now: Moment::default(),
                 music_dir: "/home/user/Music",
                 sleep_left: None,
             }

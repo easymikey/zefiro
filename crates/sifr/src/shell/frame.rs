@@ -6,12 +6,7 @@ use std::{
 
 use audio::SpectrumAnalyzer;
 use config::{AppearanceFile, AppearancePatch, Hex, ThemeColors, ThemeFile};
-use kernel::{
-    Cue,
-    WindowColorsCmd,
-    domain::{KeymapOverrides, Model},
-    update::keymap::Bindings,
-};
+use kernel::{Cue, WindowColorsCmd, domain::ThemeName};
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
@@ -27,6 +22,8 @@ use terminal::{
     Pixels,
     ProbeAnswer,
     TerminalEnvironment,
+    UnknownThemeError,
+    write_window_colors,
 };
 use widgets::{
     ActiveTheme,
@@ -61,13 +58,17 @@ use crate::{
             resolved_cover_fade,
             track_changed_fade,
         },
-        frame_clock::{animation_frame_due, frame_effect},
+        frame_clock::{
+            animation_frame_due,
+            earliest_frame_due,
+            frame_effect,
+            playhead_frame_due,
+        },
         reload,
         window_colors::{
             PendingWindowColors,
             WindowColorsPlan,
             settle_window_colors_plan,
-            window_colors,
             window_colors_plan,
         },
     },
@@ -77,8 +78,6 @@ use crate::{
 pub(crate) struct Frame {
     theme: Theme,
     appearance: AppearanceFile,
-    keymap: KeymapOverrides,
-    bindings: Bindings,
     home: Option<PathBuf>,
     music_dir: PathBuf,
     music_dir_display: String,
@@ -95,6 +94,7 @@ pub(crate) struct Frame {
     wanted_cover: Option<PathBuf>,
     pending_cues: Vec<Cue>,
     animation_stage: AnimationStage,
+    motion: FrameDue,
     resize: ResizeState,
     cover_fade: CoverFadePermission,
     outgoing_theme_background: Option<Color>,
@@ -122,13 +122,9 @@ impl Frame {
             color_depth,
         } = terminal::resolve_immediate(&TerminalEnvironment::current());
         let cell_aspect = terminal::cell_aspect(picker.font_size());
-        let keymap = KeymapOverrides::default();
-        let bindings = Bindings::new(&keymap);
         Self {
             theme: initial_theme(),
             appearance: AppearanceFile::default(),
-            keymap,
-            bindings,
             home: dirs::home_dir(),
             music_dir: PathBuf::new(),
             music_dir_display: String::new(),
@@ -145,6 +141,7 @@ impl Frame {
             wanted_cover: None,
             pending_cues: Vec::new(),
             animation_stage: AnimationStage::default(),
+            motion: FrameDue::Settled,
             resize: ResizeState::Clean,
             cover_fade: CoverFadePermission::Absent,
             outgoing_theme_background: None,
@@ -170,11 +167,7 @@ impl Frame {
                 Some(ActiveTheme::new(&self.theme, self.color_depth).window_bg());
         }
         reload::install(&mut self.theme, &mut self.appearance, reload);
-        if is_theme_reload {
-            self.stage_window_colors()
-        } else {
-            None
-        }
+        None
     }
 
     pub(crate) fn patched(&mut self, patch: AppearancePatch) -> Option<ShellFailure> {
@@ -208,18 +201,33 @@ impl Frame {
     }
 
     fn apply_window_colors(&self) -> Option<ShellFailure> {
-        window_colors(&self.theme, WindowColorsCmd::Apply(self.theme.name.clone()))
-            .map(ShellFailure::Theme)
+        ThemeName::new(self.theme.name.clone()).map_or_else(
+            |_| {
+                Some(ShellFailure::Theme(UnknownThemeError {
+                    name: self.theme.name.clone(),
+                }))
+            },
+            |name| {
+                write_window_colors(&WindowColorsCmd::Apply(name), &self.theme)
+                    .err()
+                    .map(ShellFailure::Theme)
+            },
+        )
     }
 
-    pub(crate) fn effect(&mut self, effect: ShellEffect) -> Option<ShellFailure> {
+    pub(crate) fn effect(&mut self, effect: &ShellEffect) -> Option<ShellFailure> {
         match effect {
-            ShellEffect::Appearance(patch) => self.patched(patch),
-            ShellEffect::WindowColors(command) => {
-                window_colors(&self.theme, command).map(ShellFailure::Theme)
+            ShellEffect::Appearance(patch) => self.patched(*patch),
+            ShellEffect::WindowColors(WindowColorsCmd::Apply(_)) => {
+                self.stage_window_colors()
+            }
+            ShellEffect::WindowColors(WindowColorsCmd::Reset) => {
+                write_window_colors(&WindowColorsCmd::Reset, &self.theme)
+                    .err()
+                    .map(ShellFailure::Theme)
             }
             ShellEffect::Animate(cue) => {
-                self.pending_cues.push(cue);
+                self.pending_cues.push(*cue);
                 None
             }
         }
@@ -285,30 +293,18 @@ impl Frame {
         fade
     }
 
-    pub(crate) fn bindings(&self) -> &Bindings {
-        &self.bindings
-    }
-
-    pub(crate) fn page_size(&self) -> usize {
-        usize::from(self.playlist_body_height)
-    }
-
     pub(crate) fn frame_due(&self) -> FrameDue {
         let effect = frame_effect(&self.animation_stage, self.cover_motion());
-        animation_frame_due(effect, self.last_paint)
+        let animation = animation_frame_due(effect, self.last_paint);
+        earliest_frame_due(animation, self.motion)
     }
 
     fn cover_motion(&self) -> CoverMotion {
         self.pixels.cover_motion(self.started.elapsed())
     }
 
-    fn refresh_bindings(&mut self, model: &Model) {
-        let config = model.workspace.keymap.config();
-        if config == &self.keymap {
-            return;
-        }
-        self.keymap = config.clone();
-        self.bindings = Bindings::new(&self.keymap);
+    fn note_motion(&mut self, view: &View<'_>) {
+        self.motion = playhead_frame_due(&view.model.player, view.now, self.last_paint);
     }
 
     fn refresh_music_dir(&mut self, music_dir: &Path) {
@@ -335,7 +331,7 @@ impl Frame {
         view: View<'_>,
     ) -> Result<Painted, io::Error> {
         self.last_paint = Instant::now();
-        self.refresh_bindings(view.model);
+        self.note_motion(&view);
         self.refresh_music_dir(view.model.music_dir.as_path());
         let current_track = view.model.player.current().map(|track| track.path());
         let fade = self.cover_fade(current_track);
@@ -348,7 +344,6 @@ impl Frame {
                 theme: &self.theme,
                 color_depth: self.color_depth,
                 appearance: &self.appearance,
-                bindings: &self.bindings,
                 pixel_path: self.pixel_path,
                 cell_aspect: self.cell_aspect,
                 started: self.started,
@@ -366,8 +361,9 @@ impl Frame {
             },
         );
         let area = terminal_area(terminal.size()?);
-        let layout = FrameLayout::new(&scene, area);
-        self.playlist_body_height = playlist_body_height(layout.playlist);
+        let layout = FrameLayout::new(&scene.layout_inputs(), area);
+        let viewport =
+            note_playlist_height(&mut self.playlist_body_height, layout.playlist);
         let wash = cover_wash(self.animation_stage.wash_progress(), area.width);
         let cover_art_owner = self
             .pixels
@@ -392,7 +388,7 @@ impl Frame {
             animation_stage.advance(frame.buffer_mut(), elapsed);
         })?;
         self.settle_window_colors();
-        Ok(Painted { cover })
+        Ok(Painted { cover, viewport })
     }
 }
 
@@ -400,7 +396,6 @@ struct SceneSources<'a> {
     theme: &'a Theme,
     color_depth: ColorDepth,
     appearance: &'a AppearanceFile,
-    bindings: &'a Bindings,
     pixel_path: PixelPath,
     cell_aspect: CellAspect,
     started: Instant,
@@ -417,12 +412,13 @@ fn build_scene<'a>(
         theme: sources.theme,
         color_depth: sources.color_depth,
         appearance: sources.appearance,
-        bindings: sources.bindings.as_slice(),
+        bindings: view.model.workspace.bindings.as_slice(),
         spectrum: bands,
         pixel_path: sources.pixel_path,
         cell_aspect: sources.cell_aspect,
         clock: sources.started.elapsed(),
         now_unix: now_unix(),
+        now: view.now,
         music_dir: sources.music_dir_display,
         sleep_left: sleep_left(view.sleep_deadline, Instant::now()),
     }
@@ -450,6 +446,15 @@ fn now_unix() -> u64 {
 
 fn playlist_body_height(playlist: Option<PlaylistAreas>) -> u16 {
     playlist.map_or(0, |areas| areas.body.height)
+}
+
+fn note_playlist_height(
+    tracked: &mut u16,
+    playlist: Option<PlaylistAreas>,
+) -> Option<usize> {
+    let previous = *tracked;
+    *tracked = playlist_body_height(playlist);
+    (*tracked != previous).then_some(usize::from(*tracked))
 }
 
 fn sleep_left(sleep_deadline: Option<Instant>, now: Instant) -> Option<Duration> {

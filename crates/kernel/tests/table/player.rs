@@ -6,18 +6,22 @@ use kernel::{
     Bounded,
     Cmd,
     Cue,
+    DecodeFault,
     Effect,
     LibraryCmd,
+    Moment,
     NowPlaying,
     Pause,
     Percent,
     PlaybackChange,
     Player,
+    Playhead,
     Preload,
+    Speed,
     SystemCmd,
     Track,
-    domain::Revision,
-    update::player::{Lookahead, PlayerMessage, PlayerRejection},
+    domain::{Revision, UnixSeconds},
+    update::player::{Anchor, Lookahead, PlayerMessage, PlayerRejection, Resume},
 };
 use rstest::rstest;
 
@@ -31,36 +35,63 @@ fn secs(seconds: u64) -> Duration {
     Duration::from_secs(seconds)
 }
 
+fn now() -> Moment {
+    Moment::new(Duration::from_secs(1_000))
+}
+
+fn speed() -> Speed {
+    Speed::default()
+}
+
+fn anchor() -> Anchor {
+    Anchor {
+        now: now(),
+        speed: speed(),
+    }
+}
+
+fn head_at(at: Duration) -> Playhead {
+    Playhead::anchored(at, now(), speed())
+}
+
 fn fault() -> AudioFailure {
     AudioFailure::Decode {
         path: "/tmp/a.flac".into(),
-        reason: "not a flac".to_string(),
+        fault: DecodeFault::Unsupported,
     }
 }
 
 fn error() -> PlayerMessage {
-    PlayerMessage::Error(fault())
+    PlayerMessage::Error {
+        failure: fault(),
+        now: now(),
+    }
 }
 
 fn seek_error() -> PlayerMessage {
-    PlayerMessage::Error(AudioFailure::Seek {
-        reason: "the source cannot seek".to_string(),
-    })
+    PlayerMessage::Error {
+        failure: AudioFailure::Seek {
+            reason: "the source cannot seek".to_string(),
+        },
+        now: now(),
+    }
 }
 
 fn tick(at: u64, ab: Option<(u64, u64)>, next: Option<Arc<Track>>) -> PlayerMessage {
-    PlayerMessage::Position {
-        at: secs(at),
+    PlayerMessage::Playhead {
+        offset: secs(at),
         lookahead: Lookahead {
             preload_lead: PRELOAD_LEAD,
             ab_loop: ab.map(|(a, b)| (secs(a), secs(b))),
             next,
+            duration: TRACK_LENGTH,
+            now: now(),
         },
     }
 }
 
 fn track_changed(next: Option<Arc<Track>>) -> PlayerMessage {
-    PlayerMessage::TrackChanged { next }
+    PlayerMessage::TrackChanged { next, now: now() }
 }
 
 fn next(track: Arc<Track>) -> PlayerMessage {
@@ -90,7 +121,7 @@ fn now_playing(track: &Arc<Track>) -> Effect {
 fn appended_to_history(track: &Arc<Track>) -> Effect {
     Effect::Library(LibraryCmd::AppendHistory {
         track: Arc::clone(track),
-        revision: Revision::UNSTAMPED,
+        at: UnixSeconds::UNSTAMPED,
     })
 }
 
@@ -130,7 +161,11 @@ fn loading(track: Arc<Track>) -> Player {
 }
 
 fn playing(track: Arc<Track>, at: Duration, preload: Preload) -> Player {
-    Player::Playing { track, at, preload }
+    Player::Playing {
+        track,
+        head: head_at(at),
+        preload,
+    }
 }
 
 fn paused(track: Arc<Track>, at: Duration) -> Player {
@@ -152,7 +187,10 @@ fn held(track: Arc<Track>, at: Duration) -> Player {
 fn toggle(current: Option<Arc<Track>>) -> PlayerMessage {
     PlayerMessage::Toggle {
         current,
-        volume: volume(),
+        resume: Resume {
+            volume: volume(),
+            anchor: anchor(),
+        },
     }
 }
 
@@ -202,6 +240,20 @@ fn seeks(seconds: u64) -> Cmd {
     ])
 }
 
+fn seek(target: u64) -> PlayerMessage {
+    PlayerMessage::Seek {
+        target: secs(target),
+        now: now(),
+    }
+}
+
+fn loaded(total: Option<Duration>) -> PlayerMessage {
+    PlayerMessage::Loaded {
+        total,
+        anchor: anchor(),
+    }
+}
+
 type Cell = crate::support::table::Cell<Player>;
 
 #[rstest]
@@ -222,34 +274,46 @@ type Cell = crate::support::table::Cell<Player>;
 #[case::loading_stop_stops(loading(track_a()), PlayerMessage::Stop, Ok((Player::Stopped, stopped())))]
 #[case::playing_stop_stops(playing(track_a(), AT, Preload::Queued(track_b())), PlayerMessage::Stop, Ok((Player::Stopped, stopped())))]
 #[case::paused_stop_stops(paused(track_a(), AT), PlayerMessage::Stop, Ok((Player::Stopped, stopped())))]
-#[case::playing_hold_pauses_and_remembers_it(playing(track_a(), AT, Preload::Queued(track_b())), PlayerMessage::Hold, Ok((held(track_a(), AT), pauses())))]
-#[case::playing_release_changes_nothing(playing(track_a(), AT, Preload::None), PlayerMessage::Release, Ok((playing(track_a(), AT, Preload::None), Cmd::None)))]
-#[case::held_release_resumes_without_a_preload(held(track_a(), AT), PlayerMessage::Release, Ok((playing(track_a(), AT, Preload::None), plays())))]
+#[case::playing_hold_pauses_and_remembers_it(playing(track_a(), AT, Preload::Queued(track_b())), PlayerMessage::Hold(now()), Ok((held(track_a(), AT), pauses())))]
+#[case::playing_release_changes_nothing(playing(track_a(), AT, Preload::None), PlayerMessage::Release(anchor()), Ok((playing(track_a(), AT, Preload::None), Cmd::None)))]
+#[case::held_release_resumes_without_a_preload(held(track_a(), AT), PlayerMessage::Release(anchor()), Ok((playing(track_a(), AT, Preload::None), plays())))]
 #[case::held_toggle_resumes_and_ends_the_hold(held(track_a(), AT), toggle(None), Ok((playing(track_a(), AT, Preload::None), plays())))]
-#[case::held_seek_keeps_the_hold(held(track_a(), AT), PlayerMessage::Seek(Duration::from_secs(7)), Ok((held(track_a(), Duration::from_secs(7)), seeks(7))))]
+#[case::held_seek_keeps_the_hold(held(track_a(), AT), seek(7), Ok((held(track_a(), Duration::from_secs(7)), seeks(7))))]
 #[case::held_track_changed_keeps_the_hold(held(track_a(), AT), track_changed(Some(track_b())), Ok((held(track_b(), Duration::ZERO), handed_off(&track_b(), PlaybackChange::Pause))))]
 #[case::stopped_seek_is_refused(
     Player::Stopped,
-    PlayerMessage::Seek(Duration::from_secs(7)),
+    seek(7),
     Err(PlayerRejection::Stopped)
 )]
 #[case::loading_seek_is_refused(
     loading(track_a()),
-    PlayerMessage::Seek(Duration::from_secs(7)),
+    seek(7),
     Err(PlayerRejection::Loading)
 )]
-#[case::playing_seek_moves_and_downgrades_the_preload(playing(track_a(), AT, Preload::Queued(track_b())), PlayerMessage::Seek(Duration::from_secs(7)), Ok((playing(track_a(), Duration::from_secs(7), Preload::Stale(track_b())), seeks(7))))]
-#[case::paused_seek_moves(paused(track_a(), AT), PlayerMessage::Seek(Duration::from_secs(7)), Ok((paused(track_a(), Duration::from_secs(7)), seeks(7))))]
-#[case::playing_sleep_pauses(playing(track_a(), AT, Preload::None), PlayerMessage::SleepFired, Ok((paused(track_a(), AT), pauses())))]
+#[case::playing_seek_moves_and_downgrades_the_preload(playing(track_a(), AT, Preload::Queued(track_b())), seek(7), Ok((playing(track_a(), Duration::from_secs(7), Preload::Stale(track_b())), seeks(7))))]
+#[case::paused_seek_moves(paused(track_a(), AT), seek(7), Ok((paused(track_a(), Duration::from_secs(7)), seeks(7))))]
+#[case::playing_sleep_pauses(playing(track_a(), AT, Preload::None), PlayerMessage::SleepFired(now()), Ok((paused(track_a(), AT), pauses())))]
 #[case::stopped_next_starts(Player::Stopped, next(track_b()), Ok((loading(track_b()), cut_in(&track_b()))))]
 #[case::loading_next_interrupts_the_load(loading(track_a()), next(track_b()), Ok((loading(track_b()), cut_in(&track_b()))))]
 #[case::playing_next_drops_the_preload_and_starts(playing(track_a(), AT, Preload::Queued(track_a())), next(track_b()), Ok((loading(track_b()), cut_in(&track_b()))))]
 #[case::paused_next_starts(paused(track_a(), AT), next(track_b()), Ok((loading(track_b()), cut_in(&track_b()))))]
-#[case::stopped_loaded_is_refused(Player::Stopped, PlayerMessage::Loaded { total: None }, Err(PlayerRejection::Stopped))]
-#[case::loading_loaded_plays_with_the_engines_duration(loading(track_a()), PlayerMessage::Loaded { total: Some(secs(120)) }, Ok((playing(track_with_duration("/tmp/a.flac", secs(120)), Duration::ZERO, Preload::None), Cmd::None)))]
-#[case::loading_loaded_without_a_duration_keeps_the_tags(loading(track_a()), PlayerMessage::Loaded { total: None }, Ok((playing(track_a(), Duration::ZERO, Preload::None), Cmd::None)))]
-#[case::playing_loaded_is_refused(playing(track_a(), AT, Preload::None), PlayerMessage::Loaded { total: None }, Err(PlayerRejection::Playing))]
-#[case::paused_loaded_is_refused(paused(track_a(), AT), PlayerMessage::Loaded { total: None }, Err(PlayerRejection::Paused))]
+#[case::stopped_loaded_is_refused(
+    Player::Stopped,
+    loaded(None),
+    Err(PlayerRejection::Stopped)
+)]
+#[case::loading_loaded_plays_with_the_engines_duration(loading(track_a()), loaded(Some(secs(120))), Ok((playing(track_with_duration("/tmp/a.flac", secs(120)), Duration::ZERO, Preload::None), Cmd::None)))]
+#[case::loading_loaded_without_a_duration_keeps_the_tags(loading(track_a()), loaded(None), Ok((playing(track_a(), Duration::ZERO, Preload::None), Cmd::None)))]
+#[case::playing_loaded_is_refused(
+    playing(track_a(), AT, Preload::None),
+    loaded(None),
+    Err(PlayerRejection::Playing)
+)]
+#[case::paused_loaded_is_refused(
+    paused(track_a(), AT),
+    loaded(None),
+    Err(PlayerRejection::Paused)
+)]
 #[case::stopped_error_is_the_no_device_report(Player::Stopped, error(), Ok((Player::Stopped, Cmd::None)))]
 #[case::loading_error_unwinds_the_start(loading(track_a()), error(), Ok((Player::Stopped, stopped())))]
 #[case::playing_error_keeps_playing(playing(track_a(), AT, Preload::Queued(track_b())), error(), Ok((playing(track_a(), AT, Preload::Queued(track_b())), Cmd::None)))]
@@ -345,9 +409,9 @@ enum IdleMessage {
 impl IdleMessage {
     fn build(self) -> PlayerMessage {
         match self {
-            IdleMessage::Hold => PlayerMessage::Hold,
-            IdleMessage::Release => PlayerMessage::Release,
-            IdleMessage::SleepFired => PlayerMessage::SleepFired,
+            IdleMessage::Hold => PlayerMessage::Hold(now()),
+            IdleMessage::Release => PlayerMessage::Release(anchor()),
+            IdleMessage::SleepFired => PlayerMessage::SleepFired(now()),
         }
     }
 }

@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use audio::SpectrumTap;
 use config::{AppearanceFile, AppearancePatch, ThemeFile};
-use kernel::{Cue, Message, WindowColorsCmd, domain::Model};
+use kernel::{Cue, Message, Moment, WindowColorsCmd, domain::Model};
 
 use crate::library::cover::{CoverDecoded, CoverRequest};
 
@@ -59,9 +59,11 @@ pub struct View<'a> {
     pub model: &'a Model,
     pub spectrum: &'a SpectrumTap,
     pub sleep_deadline: Option<Instant>,
+    pub now: Moment,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Painted {
     pub cover: Option<CoverRequest>,
+    pub viewport: Option<usize>,
 }

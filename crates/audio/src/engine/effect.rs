@@ -1,8 +1,21 @@
 use std::{path::PathBuf, time::Duration};
 
-use kernel::{AudioCmd, AudioEvent, AudioFailure, Playback, domain::Speed};
+use kernel::{
+    AudioCmd,
+    AudioEvent,
+    AudioFailure,
+    Playback,
+    domain::{DeviceName, OutputDevice, Speed},
+};
 
 use crate::deck::{Landed, Reopening};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Slot {
+    Primary,
+    Outgoing,
+    Incoming,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Preload {
@@ -24,10 +37,20 @@ pub(crate) enum EngineMessage {
     Decoded(Result<Option<Duration>, AudioFailure>),
     Preloaded(Result<Preload, AudioFailure>),
     Failed(AudioFailure),
-    Observed {
-        queue_len: usize,
-        position: Duration,
-    },
+    Retiring { from: f32 },
+    Finished(Slot),
+    Cued,
+    Ramped(Slot),
+    DevicesListed(Result<Vec<OutputDevice>, AudioFailure>),
+}
+
+pub(crate) fn devices_fact(
+    devices: Result<Vec<OutputDevice>, AudioFailure>,
+) -> AudioEvent {
+    devices.map_or_else(
+        |_error| AudioEvent::DevicesLoaded(Vec::new()),
+        AudioEvent::DevicesLoaded,
+    )
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -38,7 +61,7 @@ pub(crate) enum EngineEffect {
     Send(AudioEvent),
     Mute(AudioFailure),
     Open {
-        device: Option<String>,
+        device: Option<DeviceName>,
         speed: Speed,
     },
     StartLoad {
@@ -63,20 +86,19 @@ pub(crate) enum EngineEffect {
     Pause,
     Seek(Duration),
     SetVolume(f32),
-    Fade {
-        outgoing: f32,
+    Arm {
+        cue: Option<Duration>,
+    },
+    Crossfade {
+        length: Duration,
         incoming: f32,
-        at: Duration,
     },
-    Retire {
+    Unfade,
+    Ramp {
+        length: Duration,
         playing: f32,
-        retiring: f32,
-        at: Duration,
     },
-    Retired {
-        playing: f32,
-        at: Duration,
-    },
+    DropOutgoing,
     SetSpeed(Speed),
     Clear,
     PreloadGapless(PathBuf),
@@ -90,6 +112,8 @@ pub(crate) enum EngineEffect {
         volume: f32,
     },
     ListDevices,
+    Report,
+    Advance,
 }
 
 impl From<Landed> for Preload {

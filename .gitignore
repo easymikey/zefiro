@@ -39,3 +39,5 @@ target/release/
 
 ## Tooling
 .bin/
+.gate-brief
+/rust-analyzer.toml

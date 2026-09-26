@@ -10,6 +10,8 @@ use crate::domain::{
     PlaylistIndex,
     Revision,
     Settings,
+    ThemeName,
+    Themes,
     Track,
     Transport,
     Workspace,
@@ -48,8 +50,10 @@ pub struct Model {
     pub scan_generation: Revision,
     pub toast_generation: Revision,
     pub sleep_generation: Revision,
+    pub mark_generation: Revision,
     pub effects: Revision,
-    pub themes: Vec<String>,
+    pub themes: Themes,
+    pub window_colors: Option<ThemeName>,
     pub drivers: Drivers,
 }
 
@@ -93,8 +97,11 @@ mod displayed_track_tests {
         Browse,
         Cursor,
         Loaded,
+        Moment,
         Player,
+        Playhead,
         Preload,
+        Speed,
         TrackIndex,
         Workspace,
         library::Library,
@@ -112,7 +119,11 @@ mod displayed_track_tests {
         };
         model.player = Player::Playing {
             track: titled_track("playing"),
-            at: Duration::ZERO,
+            head: Playhead::anchored(
+                Duration::ZERO,
+                Moment::default(),
+                Speed::default(),
+            ),
             preload: Preload::None,
         };
         model.workspace.browse.cursor = Cursor::with_len(1).at(0);
@@ -159,14 +170,21 @@ mod playing_index_tests {
 
     use crate::domain::{
         Cursor,
+        Moment,
         Pause,
         Player,
+        Playhead,
         PlaylistIndex,
         Preload,
+        Speed,
         Track,
         model::{Model, titled_track},
         playlist::Playlist,
     };
+
+    fn anchored_at_zero() -> Playhead {
+        Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default())
+    }
 
     fn model_with(tracks: Vec<Arc<Track>>, index: Option<PlaylistIndex>) -> Model {
         Model {
@@ -183,7 +201,7 @@ mod playing_index_tests {
     #[rstest]
     #[case::playing_reports_the_playlist_index(Player::Playing {
         track: titled_track("a"),
-        at: Duration::ZERO,
+        head: anchored_at_zero(),
         preload: Preload::None,
     }, Some(PlaylistIndex::new(0)))]
     #[case::paused_reports_the_playlist_index(Player::Paused {
@@ -208,7 +226,7 @@ mod playing_index_tests {
             model_with(vec![titled_track("a")], Some(PlaylistIndex::new(0)));
         model.player = Player::Playing {
             track: titled_track("a"),
-            at: Duration::ZERO,
+            head: anchored_at_zero(),
             preload: Preload::None,
         };
         let rescanned = titled_track("a");
@@ -225,7 +243,7 @@ mod playing_index_tests {
         );
         model.player = Player::Playing {
             track: titled_track("a"),
-            at: Duration::ZERO,
+            head: anchored_at_zero(),
             preload: Preload::None,
         };
         assert_eq!(model.playing_index(), None);

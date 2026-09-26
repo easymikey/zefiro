@@ -4,12 +4,9 @@ use std::{
     sync::Arc,
 };
 
-use kernel::Track;
+use kernel::{LibrarySubject, Track};
 
-use crate::{
-    error::{LibraryError, Subject},
-    tags::read_track,
-};
+use crate::{error::LibraryError, tags::read_track};
 
 #[must_use]
 pub(crate) fn has_audio(path: &Path, decodable: &[&str]) -> bool {
@@ -48,19 +45,27 @@ impl Listing {
         self
     }
 
-    fn skipping(mut self, err: walkdir::Error) -> Self {
+    fn skipping(mut self, error: walkdir::Error, root: &Path) -> Self {
         self.skipped.count += 1;
-        let path = err.path().map(Path::to_path_buf).unwrap_or_default();
-        if self.skipped.first_error.is_none()
-            && let Some(source) = err.into_io_error()
-        {
-            self.skipped.first_error = Some(LibraryError::Read {
-                subject: Subject::Scan,
-                path,
-                source,
-            });
+        if self.skipped.first_error.is_none() {
+            self.skipped.first_error = Some(walk_error(error, root));
         }
         self
+    }
+}
+
+fn walk_error(error: walkdir::Error, root: &Path) -> LibraryError {
+    let path = error
+        .path()
+        .map_or_else(|| root.to_path_buf(), Path::to_path_buf);
+    let text = error.to_string();
+    let source = error
+        .into_io_error()
+        .unwrap_or_else(|| std::io::Error::other(text));
+    LibraryError::Read {
+        subject: LibrarySubject::Scan,
+        path,
+        source,
     }
 }
 
@@ -86,7 +91,7 @@ pub(crate) fn scan_dir(root: &Path, decodable: &[&str]) -> ScanReport {
 
 fn lost_error(root: &Path, lost: usize) -> Option<LibraryError> {
     (lost > 0).then(|| LibraryError::Read {
-        subject: Subject::Scan,
+        subject: LibrarySubject::Scan,
         path: root.to_path_buf(),
         source: std::io::Error::other("a tag-reading worker died"),
     })
@@ -99,7 +104,7 @@ pub(crate) fn list_dir(root: &Path, decodable: &[&str]) -> Listing {
             skipped: Skips {
                 count: 1,
                 first_error: Some(LibraryError::Read {
-                    subject: Subject::Scan,
+                    subject: LibrarySubject::Scan,
                     path: root.to_path_buf(),
                     source: std::io::Error::from(root_error_kind(root)),
                 }),
@@ -111,7 +116,7 @@ pub(crate) fn list_dir(root: &Path, decodable: &[&str]) -> Listing {
         .into_iter()
         .fold(Listing::default(), |listing, entry| match entry {
             Ok(entry) => listing.keeping(entry, decodable),
-            Err(err) => listing.skipping(err),
+            Err(err) => listing.skipping(err, root),
         })
 }
 
@@ -163,7 +168,10 @@ mod tests {
     use kernel::Tagging;
     use rstest::{fixture, rstest};
 
-    use crate::scan::{has_audio, list_dir, scan_dir, tag_tracks};
+    use crate::{
+        error::LibraryError,
+        scan::{has_audio, list_dir, scan_dir, tag_tracks},
+    };
 
     const DECODABLE: &[&str] =
         &["flac", "mp3", "mp4", "m4a", "m4b", "ogg", "wav", "mkv"];
@@ -322,6 +330,14 @@ mod tests {
 
         assert_eq!(report.tracks.len(), 1);
         assert_eq!(report.skipped.count, 1);
+        let first_error = report.skipped.first_error.as_ref();
+        assert!(
+            first_error.is_some_and(|error| matches!(
+                error,
+                LibraryError::Read { path, .. } if path.as_os_str() != ""
+            )),
+            "the walk error must keep a non-empty path"
+        );
         insta::with_settings!({ filters => tmp_filters() }, {
             insta::assert_debug_snapshot!(report.skipped.first_error);
         });

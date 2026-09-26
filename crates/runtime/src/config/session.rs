@@ -2,10 +2,10 @@ use std::{path::Path, time::Instant};
 
 use crossbeam_channel::{Receiver, Select, Sender, unbounded};
 use kernel::{
-    LoadedRequest,
-    Message,
-    WorkspaceRequest,
-    domain::{ConfigFailure, ConfigFile, Toast},
+    ConfigFact,
+    Delivery,
+    Outbox,
+    domain::{ConfigFailure, ConfigFile},
     update::Machine,
 };
 use notify::RecommendedWatcher;
@@ -18,12 +18,12 @@ use crate::{
         coalesce::SaveCoalescer,
         disk::{Listing, list_theme_names, read},
         driver::{KeysSighting, Outbound},
-        reload::appearance_reload,
         watch::{ConfigChange, ConfigIo, ConfigWatch, ConfigWatchMessage, WatchedFile},
         watcher::{config_directory, register},
     },
     error::SaveError,
     interpret::ConfigCommand,
+    mailbox::Mailbox,
 };
 
 #[derive(Clone, Copy)]
@@ -46,7 +46,7 @@ pub(crate) struct ConfigLoop<'a> {
     filesystem_events: Receiver<notify::Result<notify::Event>>,
     coalescer: SaveCoalescer,
     keys_sighting: KeysSighting,
-    mailbox: &'a Sender<Message>,
+    mailbox: &'a Mailbox<ConfigFact>,
     reloads: &'a Sender<crate::shell::Reload>,
 }
 
@@ -59,7 +59,10 @@ impl<'a> ConfigLoop<'a> {
         let (events, filesystem_events) = unbounded();
         let watcher = notify::recommended_watcher(events).map_or_else(
             |error| {
-                let _ = outbound.mailbox.send(watch_failure(&error.to_string()));
+                if let Delivery::Closed =
+                    outbound.mailbox.send(watch_failure(&error.to_string()))
+                {
+                }
                 None
             },
             Some,
@@ -83,7 +86,7 @@ impl<'a> ConfigLoop<'a> {
 
     fn mount(&mut self, directory: &Path) {
         if let Err(error) = register(&mut self.watcher, directory) {
-            self.toast(format!("Config watch failed: {error}"));
+            self.watch_failed(&error.to_string());
         }
     }
 
@@ -184,10 +187,8 @@ impl<'a> ConfigLoop<'a> {
         react(change, &outbound, &mut self.keys_sighting);
     }
 
-    fn toast(&self, text: String) {
-        self.send(Message::Workspace(WorkspaceRequest::ShowToast(
-            Toast::error(text),
-        )));
+    fn watch_failed(&self, detail: &str) {
+        if let Delivery::Closed = self.deliver(watch_failure(detail)) {}
     }
 
     fn note_flush(&mut self, flushed: crate::config::coalesce::Flushed) {
@@ -217,12 +218,7 @@ impl<'a> ConfigLoop<'a> {
         target: SaveTarget,
     ) {
         match result {
-            Ok(written) => {
-                if target.file == ConfigFile::Appearance {
-                    self.reloaded_own_appearance_write(&written.text);
-                }
-                self.drive((target.wrote)(written.text));
-            }
+            Ok(written) => self.drive((target.wrote)(written.text)),
             Err(error) => self.config_failed(ConfigFailure::Save {
                 file: target.file,
                 detail: error.to_string(),
@@ -230,19 +226,12 @@ impl<'a> ConfigLoop<'a> {
         }
     }
 
-    fn reloaded_own_appearance_write(&self, text: &str) {
-        if let Ok(file) = appearance_reload(Some(text)) {
-            let rows = config::custom_rows(&file);
-            self.send(Message::Loaded(LoadedRequest::CustomRowsReloaded(rows)));
-        }
-    }
-
     fn config_failed(&self, failure: ConfigFailure) {
-        self.send(Message::Workspace(WorkspaceRequest::ConfigFailed(failure)));
+        if let Delivery::Closed = self.deliver(ConfigFact::Failed(failure)) {}
     }
 
-    fn send(&self, message: Message) {
-        let _ = self.mailbox.send(message);
+    fn deliver(&self, fact: ConfigFact) -> Delivery {
+        self.mailbox.send(fact)
     }
 }
 
@@ -253,8 +242,8 @@ fn step(watch: ConfigWatch, message: ConfigWatchMessage) -> (ConfigWatch, Config
     }
 }
 
-fn watch_failure(reason: &str) -> Message {
-    Message::Workspace(WorkspaceRequest::ShowToast(Toast::error(format!(
-        "Config watch failed: {reason}"
-    ))))
+fn watch_failure(reason: &str) -> ConfigFact {
+    ConfigFact::Failed(ConfigFailure::Watch {
+        detail: reason.to_owned(),
+    })
 }

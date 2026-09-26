@@ -5,14 +5,18 @@ use std::{
 
 use crossbeam_channel::{Receiver, Select, Sender};
 use kernel::{
+    Delivery,
+    IoFault,
     LibraryCmd,
+    LibraryFact,
     LibraryFailure,
-    LoadedRequest,
+    LibrarySubject,
     Message,
+    Outbox,
     domain::{Driver, Revision},
     update::Machine,
 };
-use library::{LibraryPaths, execute};
+use library::{Executed, LibraryPaths, execute};
 
 use crate::{
     driver::{DriverThread, spawn_driver},
@@ -30,26 +34,27 @@ use crate::{
         notify::{register, relocate},
         watch::{LibraryWatch, LibraryWatchMessage, WatchIo},
     },
+    mailbox::Mailbox,
+    registry,
 };
 
 const DEBOUNCE: Duration = Duration::from_millis(500);
 
-#[derive(Debug)]
-pub(crate) struct LibraryThread {
-    pub(crate) thread: DriverThread<LibraryCmd>,
-    pub(crate) covers: Sender<CoverRequest>,
-    pub(crate) decoded: Receiver<CoverDecoded>,
-}
+type LibrarySpawn = (
+    DriverThread<LibraryCmd>,
+    Sender<CoverRequest>,
+    Receiver<CoverDecoded>,
+);
 
 pub(crate) fn spawn(
     paths: LibraryPaths,
     decodable: &'static [&'static str],
-    mailbox: Sender<Message>,
-) -> Result<LibraryThread, RuntimeError> {
+    mailbox: &Sender<Message>,
+) -> Result<LibrarySpawn, RuntimeError> {
     let (covers, cover_inbox) = crossbeam_channel::unbounded();
     let (decoded, decoded_events) = crossbeam_channel::unbounded();
     let thread = spawn_driver(
-        Driver::Library,
+        registry::row(Driver::Library),
         move |inbox, mailbox| {
             let outbound = Outbound {
                 mailbox,
@@ -60,15 +65,11 @@ pub(crate) fn spawn(
         },
         mailbox,
     )?;
-    Ok(LibraryThread {
-        thread,
-        covers,
-        decoded: decoded_events,
-    })
+    Ok((thread, covers, decoded_events))
 }
 
 struct Outbound<'a> {
-    mailbox: &'a Sender<Message>,
+    mailbox: &'a Mailbox<LibraryFact>,
     decoded: &'a Sender<CoverDecoded>,
     cover_inbox: Receiver<CoverRequest>,
 }
@@ -107,7 +108,7 @@ struct LibraryLoop<'a> {
     deadline: Option<Instant>,
     paths: LibraryPaths,
     decodable: &'static [&'static str],
-    mailbox: &'a Sender<Message>,
+    mailbox: &'a Mailbox<LibraryFact>,
     decoded: &'a Sender<CoverDecoded>,
 }
 
@@ -120,7 +121,8 @@ impl<'a> LibraryLoop<'a> {
         let (events, filesystem_events) = crossbeam_channel::unbounded();
         let watcher = notify::recommended_watcher(events).map_or_else(
             |error| {
-                let _ = outbound.mailbox.send(watch_failure(&error.to_string()));
+                if let Delivery::Closed = outbound.mailbox.send(watch_failure(&error)) {
+                }
                 None
             },
             Some,
@@ -251,9 +253,9 @@ impl<'a> LibraryLoop<'a> {
     }
 
     fn report_watch(&self, outcome: Result<(), notify::Error>) {
-        if let Err(error) = outcome {
-            self.send(watch_failure(&error.to_string()));
-        }
+        if let Err(error) = outcome
+            && let Delivery::Closed = self.deliver(watch_failure(&error))
+        {}
     }
 
     fn drive_decode(&mut self, message: DecodeMessage) {
@@ -293,17 +295,19 @@ impl<'a> LibraryLoop<'a> {
 
     fn execute(&self, command: LibraryCmd) {
         match execute(command, &self.paths, self.decodable) {
-            Ok(Some(message)) => self.send(message),
-            Ok(None) => {}
+            Ok(Executed {
+                fact: Some(fact), ..
+            }) => if let Delivery::Closed = self.deliver(fact) {},
+            Ok(Executed { fact: None, .. }) => {}
             Err(error) => {
                 let failure: LibraryFailure = (&error).into();
-                self.send(Message::Loaded(LoadedRequest::Failed(failure)));
+                if let Delivery::Closed = self.deliver(LibraryFact::Failed(failure)) {}
             }
         }
     }
 
-    fn send(&self, message: Message) {
-        let _ = self.mailbox.send(message);
+    fn deliver(&self, fact: LibraryFact) -> Delivery {
+        self.mailbox.send(fact)
     }
 }
 
@@ -321,10 +325,21 @@ fn decode_step(decoding: Decoding, message: DecodeMessage) -> (Decoding, DecodeI
     }
 }
 
-fn watch_failure(reason: &str) -> Message {
-    Message::Loaded(LoadedRequest::Failed(LibraryFailure::Watch {
-        reason: reason.to_owned(),
-    }))
+fn watch_failure(error: &notify::Error) -> LibraryFact {
+    let fault = match &error.kind {
+        notify::ErrorKind::Io(source) => source.kind().into(),
+        notify::ErrorKind::PathNotFound => IoFault::Missing,
+        notify::ErrorKind::Generic(_)
+        | notify::ErrorKind::WatchNotFound
+        | notify::ErrorKind::InvalidConfig(_)
+        | notify::ErrorKind::MaxFilesWatch => IoFault::Other,
+    };
+    let path = error.paths.first().map_or_else(PathBuf::new, Clone::clone);
+    LibraryFact::Failed(LibraryFailure::File {
+        subject: LibrarySubject::Watch,
+        path,
+        fault,
+    })
 }
 
 #[cfg(test)]
@@ -334,8 +349,9 @@ mod tests {
     use crossbeam_channel::Receiver;
     use kernel::{
         LibraryCmd,
+        LibraryFact,
         LibraryFailure,
-        LoadedRequest,
+        LibrarySubject,
         Message,
         domain::{Driver, Revision},
     };
@@ -345,9 +361,10 @@ mod tests {
         driver::DriverThread,
         library::{
             cover::{CoverCache, CoverOutcome, CoverRequest, Decoding},
-            driver::{LibraryLoop, LibraryThread, Wake, spawn},
+            driver::{LibraryLoop, Wake, spawn},
             watch::LibraryWatch,
         },
+        mailbox::{Congestion, Mailbox},
     };
 
     const RECV_TIMEOUT: Duration = Duration::from_secs(2);
@@ -366,8 +383,8 @@ mod tests {
         directory: &tempfile::TempDir,
     ) -> (DriverThread<LibraryCmd>, Receiver<Message>) {
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let LibraryThread { thread, .. } =
-            spawn(paths(directory), DECODABLE, mailbox).unwrap();
+        let (thread, _covers, _decoded) =
+            spawn(paths(directory), DECODABLE, &mailbox).unwrap();
         (thread, messages)
     }
 
@@ -385,16 +402,14 @@ mod tests {
     }
 
     fn listed_tracks(message: Message) -> Option<Vec<std::sync::Arc<kernel::Track>>> {
-        let Message::Loaded(LoadedRequest::LibraryListed { tracks, .. }) = message
-        else {
+        let Message::Library(LibraryFact::Listed { tracks, .. }) = message else {
             return None;
         };
         Some(tracks)
     }
 
     fn scanned_track_count(message: Message) -> Option<usize> {
-        let Message::Loaded(LoadedRequest::LibraryLoaded { tracks, .. }) = message
-        else {
+        let Message::Library(LibraryFact::Loaded { tracks, .. }) = message else {
             return None;
         };
         Some(tracks.len())
@@ -431,7 +446,10 @@ mod tests {
         let failed = drain(&messages).into_iter().any(|message| {
             matches!(
                 message,
-                Message::Loaded(LoadedRequest::Failed(LibraryFailure::Scan { .. }))
+                Message::Library(LibraryFact::Failed(LibraryFailure::File {
+                    subject: LibrarySubject::Scan,
+                    ..
+                }))
             )
         });
         assert!(failed, "a scan of a missing root must report a failure");
@@ -455,11 +473,8 @@ mod tests {
         let track = directory.path().join("untagged.mp3");
         std::fs::write(&track, b"stub").unwrap();
         let (mailbox, _messages) = crossbeam_channel::unbounded();
-        let LibraryThread {
-            thread,
-            covers,
-            decoded: decoded_events,
-        } = spawn(paths(&directory), DECODABLE, mailbox).unwrap();
+        let (thread, covers, decoded_events) =
+            spawn(paths(&directory), DECODABLE, &mailbox).unwrap();
         covers
             .send(CoverRequest {
                 path: track.clone(),
@@ -531,6 +546,7 @@ mod tests {
     fn a_lost_filesystem_watcher_becomes_never_without_stopping_the_loop() {
         let directory = tempfile::tempdir().unwrap();
         let (mailbox, _messages) = crossbeam_channel::unbounded();
+        let mailbox = Mailbox::new(mailbox, Congestion::default());
         let (decoded, _decoded_events) = crossbeam_channel::unbounded();
         let (events, filesystem_events) = crossbeam_channel::unbounded();
         drop(events);

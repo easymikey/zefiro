@@ -1,5 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
+assertion_line: 404
 expression: "walked(model, messages)"
 ---
 [
@@ -39,7 +40,15 @@ expression: "walked(model, messages)"
                 display: "track0.flac",
                 tagging: Read,
             },
-            at: 10s,
+            head: Playhead {
+                offset: 10s,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
             preload: None,
         },
         None,
@@ -74,11 +83,17 @@ expression: "walked(model, messages)"
     ),
     (
         Audio(
-            Position(
+            Playhead(
                 5s,
             ),
         ),
-        None,
+        One(
+            System(
+                PlaybackPosition(
+                    5s,
+                ),
+            ),
+        ),
         Playing {
             track: Track {
                 path: "/tmp/track0.flac",
@@ -110,7 +125,15 @@ expression: "walked(model, messages)"
                 display: "track0.flac",
                 tagging: Read,
             },
-            at: 5s,
+            head: Playhead {
+                offset: 5s,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
             preload: None,
         },
         None,
@@ -179,7 +202,15 @@ expression: "walked(model, messages)"
                 display: "track0.flac",
                 tagging: Read,
             },
-            at: 5s,
+            head: Playhead {
+                offset: 5s,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
             preload: None,
         },
         None,

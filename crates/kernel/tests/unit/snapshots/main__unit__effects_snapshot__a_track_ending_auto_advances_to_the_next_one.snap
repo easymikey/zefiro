@@ -1,5 +1,6 @@
 ---
 source: crates/kernel/tests/unit/effects_snapshot.rs
+assertion_line: 110
 expression: effects(cmd)
 ---
 [
@@ -51,8 +52,8 @@ expression: effects(cmd)
                 display: "track1.flac",
                 tagging: Read,
             },
-            revision: Revision(
-                2,
+            at: UnixSeconds(
+                0,
             ),
         },
     ),

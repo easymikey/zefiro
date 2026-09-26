@@ -3,16 +3,13 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{
     cmd::{Cmd, Cue, Effect, LibraryCmd},
     domain::{
-        CustomSetting,
         Loaded,
         Model,
-        Overlay,
         Player,
         PlaylistIndex,
         Reply,
         Revision,
         ScanStatus,
-        SettingRow,
         Toast,
         Track,
         TrackIndex,
@@ -21,11 +18,10 @@ use crate::{
         library::Library,
         playlist::{self, Playlist, PlaylistSource},
     },
-    message::{LibraryFailure, LoadedRequest, WorkspaceRequest},
+    message::{LibraryFact, LibraryFailure, LoadedRequest, WorkspaceRequest},
     update::{
         audio,
         machine::Machine,
-        overlay::selected_setting_row,
         playlist::PlaylistMessage,
         rejection::Rejection,
     },
@@ -53,55 +49,29 @@ pub(super) fn loaded(
         LoadedRequest::ShuffleRolled(order) => Ok(model
             .playlist
             .update(PlaylistMessage::ShuffleRolled(order))?),
-        LoadedRequest::FavoritesLoaded(favorites) => {
-            model.favorites = favorites.into();
-            Ok(Cmd::None)
-        }
-        LoadedRequest::LibraryLoaded { tracks, revision } => {
-            Ok(whole_library(model, tracks, revision))
-        }
-        LoadedRequest::LibraryListed { tracks, revision } => {
-            Ok(listed_library(model, tracks, revision))
-        }
-        LoadedRequest::TracksTagged { tracks, revision } => {
-            Ok(tagged_tracks(model, tracks, revision))
-        }
-        LoadedRequest::HistoryLoaded(entries) => {
-            model.history.view = entries;
-            Ok(Cmd::None)
-        }
-        LoadedRequest::ThemesLoaded(themes) => {
-            model.themes = themes;
-            Ok(Cmd::None)
-        }
-        LoadedRequest::MusicDirReloaded(reloaded) => {
-            Ok(music_dir_reloaded(&mut model.music_dir, reloaded))
-        }
-        LoadedRequest::CustomRowsReloaded(rows) => {
-            reload_custom_rows(model, rows);
-            Ok(Cmd::None)
-        }
-        LoadedRequest::Failed(failure) => failed(model, &failure),
     }
 }
 
-fn reload_custom_rows(model: &mut Model, rows: Vec<CustomSetting>) {
-    let previous = selected_setting_row(model);
-    model.custom_rows = rows;
-    let Model {
-        workspace,
-        custom_rows,
-        ..
-    } = model;
-    let Some(Overlay::Settings(cursor)) = &mut workspace.overlay else {
-        return;
-    };
-    let all = SettingRow::all(custom_rows);
-    cursor.resize(all.len());
-    if let Some(row) = previous
-        && let Some(index) = all.iter().position(|candidate| *candidate == row)
-    {
-        cursor.select(index);
+pub(crate) fn library(model: &mut Model, fact: LibraryFact) -> Result<Cmd, Rejection> {
+    match fact {
+        LibraryFact::FavoritesLoaded(favorites) => {
+            model.favorites = favorites.into();
+            Ok(Cmd::None)
+        }
+        LibraryFact::Loaded { tracks, revision } => {
+            Ok(whole_library(model, tracks, revision))
+        }
+        LibraryFact::Listed { tracks, revision } => {
+            Ok(listed_library(model, tracks, revision))
+        }
+        LibraryFact::Tagged { tracks, revision } => {
+            Ok(tagged_tracks(model, tracks, revision))
+        }
+        LibraryFact::HistoryLoaded(entries) => {
+            model.history.view = entries;
+            Ok(Cmd::None)
+        }
+        LibraryFact::Failed(failure) => failed(model, &failure),
     }
 }
 
@@ -300,22 +270,6 @@ fn tagging_progress(scan_status: &mut ScanStatus, read: usize) -> Cmd {
     Cmd::None
 }
 
-fn music_dir_reloaded(
-    music_dir: &mut std::path::PathBuf,
-    reloaded: std::path::PathBuf,
-) -> Cmd {
-    if reloaded == *music_dir {
-        Cmd::None
-    } else {
-        *music_dir = reloaded.clone();
-        Effect::Library(LibraryCmd::Rescan {
-            root: reloaded,
-            revision: Revision::UNSTAMPED,
-        })
-        .into()
-    }
-}
-
 fn install_library(library: &mut Loaded<Library>, tracks: Vec<Arc<Track>>) {
     match library {
         Loaded::Ready(existing) => existing.all = tracks,
@@ -349,10 +303,10 @@ fn jump(slices: PlaylistJump<'_>, index: PlaylistIndex) -> Result<Cmd, Rejection
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc};
+    use std::sync::Arc;
 
     use crate::{
-        cmd::{Cmd, Cue, Effect, LibraryCmd},
+        cmd::{Cmd, Cue, Effect},
         domain::{
             History,
             HistoryEntry,
@@ -366,60 +320,12 @@ mod tests {
             library::Library,
             playlist::PlaylistSource,
         },
-        message::{LibraryFailure, LoadedRequest, Timer},
-        update::loaded::loaded,
+        message::{LibraryFact, LibraryFailure, Timer},
+        update::loaded::library,
     };
 
     fn track(path: &str) -> Arc<Track> {
         Arc::new(Track::listed(std::path::Path::new(path)))
-    }
-
-    #[test]
-    fn setting_themes_installs_the_list_the_shell_found() {
-        let mut model = Model {
-            themes: vec!["noir".to_string()],
-            ..Model::default()
-        };
-
-        let cmd = loaded(
-            &mut model,
-            LoadedRequest::ThemesLoaded(vec!["wafer".to_string()]),
-        )
-        .unwrap();
-
-        assert_eq!(model.themes, ["wafer".to_string()]);
-        assert!(matches!(cmd, Cmd::None));
-    }
-
-    fn rescanned_root(cmd: &Cmd) -> Option<PathBuf> {
-        match cmd {
-            Cmd::One(Effect::Library(LibraryCmd::Rescan { root, .. })) => {
-                Some(root.clone())
-            }
-            Cmd::None | Cmd::One(_) | Cmd::Batch(_) => None,
-        }
-    }
-
-    #[rstest::rstest]
-    #[case::the_root_it_already_plays(PathBuf::from("/music"), None)]
-    #[case::another_root(PathBuf::from("/other"), Some(PathBuf::from("/other")))]
-    fn a_music_dir_reload_rescans_only_a_root_that_moved(
-        #[case] reloaded: PathBuf,
-        #[case] expected: Option<PathBuf>,
-    ) {
-        let mut model = Model {
-            music_dir: PathBuf::from("/music"),
-            ..Model::default()
-        };
-
-        let cmd = loaded(
-            &mut model,
-            LoadedRequest::MusicDirReloaded(reloaded.clone()),
-        )
-        .unwrap();
-
-        assert_eq!(rescanned_root(&cmd), expected);
-        assert_eq!(model.music_dir, reloaded);
     }
 
     #[test]
@@ -432,9 +338,9 @@ mod tests {
             ..Model::default()
         };
 
-        let cmd = loaded(
+        let cmd = library(
             &mut model,
-            LoadedRequest::LibraryLoaded {
+            LibraryFact::Loaded {
                 tracks: vec![track("/music/a.flac"), track("/music/b.flac")],
                 revision: Revision::default(),
             },
@@ -466,9 +372,9 @@ mod tests {
             ..Model::default()
         };
 
-        let cmd = loaded(
+        let cmd = library(
             &mut model,
-            LoadedRequest::LibraryLoaded {
+            LibraryFact::Loaded {
                 tracks: vec![track("/music/a.flac"), track("/music/b.flac")],
                 revision: Revision::default(),
             },
@@ -484,11 +390,8 @@ mod tests {
     fn a_library_failure_raises_an_error_toast() {
         let mut model = Model::default();
 
-        let cmd = loaded(
-            &mut model,
-            LoadedRequest::Failed(LibraryFailure::NoDirectory),
-        )
-        .unwrap();
+        let cmd = library(&mut model, LibraryFact::Failed(LibraryFailure::NoDirectory))
+            .unwrap();
 
         let toast = model.workspace.toast.unwrap();
         assert_eq!(toast.level, ToastLevel::Error);
@@ -535,7 +438,7 @@ mod tests {
             },
         ];
         let cmd =
-            loaded(&mut model, LoadedRequest::HistoryLoaded(fresh.clone())).unwrap();
+            library(&mut model, LibraryFact::HistoryLoaded(fresh.clone())).unwrap();
 
         assert_eq!(model.history.view, fresh);
         assert!(matches!(cmd, Cmd::None));

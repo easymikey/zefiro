@@ -36,7 +36,6 @@ pub(crate) struct Playing {
     pub(crate) current: CurrentTrack,
     pub(crate) next: Next,
     pub(crate) preloading: Option<PathBuf>,
-    pub(crate) previous_queue_len: usize,
 }
 
 impl Playing {
@@ -46,7 +45,6 @@ impl Playing {
             current,
             next: Next::None,
             preloading: None,
-            previous_queue_len: 0,
         }
     }
 }
@@ -66,7 +64,6 @@ pub(crate) enum Incoming {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Outgoing {
     pub(crate) from: f32,
-    pub(crate) fraction: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,17 +77,18 @@ pub(crate) struct CurrentTrack {
 pub(crate) enum Next {
     #[default]
     None,
+    Gapless(PathBuf),
     Crossfading {
         preload: PreloadedTrack,
         fade: Fade,
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Fade {
     #[default]
     Idle,
-    Fading(f32),
+    Fading,
 }
 
 #[derive(Debug, Clone, PartialEq)]

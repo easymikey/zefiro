@@ -10,7 +10,7 @@ mod track_details;
 pub use history::{HistoryMessage, HistoryPick, HistoryRejection};
 pub use jump::JumpRejection;
 pub use search::{SearchMessage, SearchRejection};
-pub use settings::{SettingsMessage, SettingsRejection};
+pub use settings::SettingsMessage;
 
 use crate::{
     cmd::{Cmd, Effect, LibraryCmd},
@@ -18,12 +18,13 @@ use crate::{
         CursorOver,
         JumpDigits,
         Model,
+        Moment,
         Nudge,
         Overlay,
         OverlayName,
         SearchQuery,
         SettingRow,
-        SettingsRows,
+        SettingsCursor,
         TextEntry,
     },
     message::{
@@ -66,7 +67,6 @@ pub enum OverlayRejection {
     Jump(JumpRejection),
     Search(SearchRejection),
     History(HistoryRejection),
-    Settings(SettingsRejection),
 }
 
 #[derive(Debug, PartialEq)]
@@ -115,39 +115,52 @@ impl From<FollowUp> for OverlayEffect {
 pub(super) fn update(
     model: &mut Model,
     request: OverlayRequest,
+    now: Moment,
 ) -> Result<Cmd, Rejection> {
     match request {
-        OverlayRequest::Open(name) => open_request(model, name),
-        OverlayRequest::Close => update_overlay(model, OverlayMessage::Close),
-        OverlayRequest::Confirm => update_overlay(model, OverlayMessage::Confirm),
-        OverlayRequest::Search(request) => search_request(model, request),
-        OverlayRequest::Settings(request) => settings::request(model, request),
-        OverlayRequest::Text(message) => {
-            update_overlay(model, OverlayMessage::Inner(InnerMessage::Text(message)))
-        }
-        OverlayRequest::Jump(message) => {
-            update_overlay(model, OverlayMessage::Inner(InnerMessage::Jump(message)))
-        }
-        OverlayRequest::History(request) => history::request(model, request),
+        OverlayRequest::Open(name) => open_request(model, name, now),
+        OverlayRequest::Close => update_overlay(model, OverlayMessage::Close, now),
+        OverlayRequest::Confirm => update_overlay(model, OverlayMessage::Confirm, now),
+        OverlayRequest::Search(request) => search_request(model, request, now),
+        OverlayRequest::Settings(request) => settings::request(model, request, now),
+        OverlayRequest::Text(message) => update_overlay(
+            model,
+            OverlayMessage::Inner(InnerMessage::Text(message)),
+            now,
+        ),
+        OverlayRequest::Jump(message) => update_overlay(
+            model,
+            OverlayMessage::Inner(InnerMessage::Jump(message)),
+            now,
+        ),
+        OverlayRequest::History(request) => history::request(model, request, now),
     }
 }
 
-fn open_request(model: &mut Model, name: OverlayName) -> Result<Cmd, Rejection> {
+fn open_request(
+    model: &mut Model,
+    name: OverlayName,
+    now: Moment,
+) -> Result<Cmd, Rejection> {
     let (opened, cmd) = overlay_for(model, name)?;
-    Ok(cmd.then(update_overlay(model, OverlayMessage::Open(opened))?))
+    Ok(cmd.then(update_overlay(model, OverlayMessage::Open(opened), now)?))
 }
 
-fn search_request(model: &mut Model, request: SearchRequest) -> Result<Cmd, Rejection> {
+fn search_request(
+    model: &mut Model,
+    request: SearchRequest,
+    now: Moment,
+) -> Result<Cmd, Rejection> {
     match request {
         SearchRequest::Edit(edit) => {
             let tracks = model.playlist.tracks.clone();
-            update_overlay(model, inner_search(SearchMessage::Edit(edit, tracks)))
+            update_overlay(model, inner_search(SearchMessage::Edit(edit, tracks)), now)
         }
         SearchRequest::Navigate(nudge) => {
-            update_overlay(model, inner_search(SearchMessage::Navigate(nudge)))
+            update_overlay(model, inner_search(SearchMessage::Navigate(nudge)), now)
         }
         SearchRequest::Enqueue => {
-            update_overlay(model, inner_search(SearchMessage::Enqueue))
+            update_overlay(model, inner_search(SearchMessage::Enqueue), now)
         }
     }
 }
@@ -185,13 +198,10 @@ fn overlay_for(
             })
             .into(),
         )),
-        OverlayName::Settings => {
-            let len = SettingRow::all(&model.custom_rows).len();
-            Ok((
-                Overlay::Settings(CursorOver::new(SettingsRows, len)),
-                Cmd::None,
-            ))
-        }
+        OverlayName::Settings => Ok((
+            Overlay::Settings(SettingsCursor::first(&model.custom_rows)),
+            Cmd::None,
+        )),
         OverlayName::ConfirmDelete => {
             confirm_delete::candidate(&model.playlist, &model.workspace)
                 .map(|candidate| (Overlay::ConfirmDelete(candidate), Cmd::None))
@@ -220,24 +230,20 @@ fn overlay_for(
 fn update_overlay(
     model: &mut Model,
     message: OverlayMessage,
+    now: Moment,
 ) -> Result<Cmd, Rejection> {
     let effect = model.workspace.overlay.update(message)?;
-    follow(model, effect)
+    follow(model, effect, now)
 }
 
-fn follow(model: &mut Model, effect: OverlayEffect) -> Result<Cmd, Rejection> {
+pub(super) fn follow(
+    model: &mut Model,
+    effect: OverlayEffect,
+    now: Moment,
+) -> Result<Cmd, Rejection> {
     let OverlayEffect { cmd, follow_up } = effect;
     match follow_up {
-        Some(follow_up) => Ok(cmd.then(branch(model, follow_up.into())?)),
+        Some(follow_up) => Ok(cmd.then(branch(model, follow_up.into(), now)?)),
         None => Ok(cmd),
     }
-}
-
-pub(super) fn selected_setting_row(model: &Model) -> Option<SettingRow> {
-    let Some(Overlay::Settings(cursor)) = &model.workspace.overlay else {
-        return None;
-    };
-    SettingRow::all(&model.custom_rows)
-        .get(cursor.selected())
-        .copied()
 }

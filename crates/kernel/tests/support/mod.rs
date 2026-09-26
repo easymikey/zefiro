@@ -9,16 +9,23 @@ use kernel::{
     Cmd,
     Effect,
     Model,
+    Moment,
     Player,
+    Playhead,
     Preload,
+    Speed,
     TOAST_LIFETIME,
     Timer,
     Track,
-    domain::{AudioFormat, Cursor, Revision, Tags},
+    domain::{AudioFormat, Cursor, DeviceName, Revision, Tags},
     playlist::Playlist,
 };
 
 const FIXTURE_LENGTH: Duration = Duration::from_secs(100);
+
+pub(crate) fn device(name: &str) -> DeviceName {
+    DeviceName::new(name.to_string()).unwrap()
+}
 
 pub(crate) fn bare_track(number: usize) -> Arc<Track> {
     track_at(&format!("/tmp/track{number}.flac"))
@@ -101,7 +108,7 @@ pub(crate) fn model_playing_at(count: usize, k: usize, at: Duration) -> Model {
     m.playlist.at = Cursor::with_len(count).at(k);
     m.player = Player::Playing {
         track: bare_track(k),
-        at,
+        head: Playhead::anchored(at, Moment::default(), Speed::default()),
         preload: Preload::None,
     };
     m
@@ -111,7 +118,7 @@ pub(crate) fn playing_model(count: usize) -> Model {
     let mut m = model_with_dated_tracks(count);
     m.player = Player::Playing {
         track: dated_track(0),
-        at: Duration::ZERO,
+        head: Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default()),
         preload: Preload::None,
     };
     m

@@ -1,4 +1,4 @@
-use config::{LayoutMode, breakpoints::BreakpointsConfig};
+use config::{BreakpointsConfig, LayoutMode};
 use ratatui::layout::Size;
 use widgets::Breakpoint;
 

@@ -1,13 +1,10 @@
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HistoryEntry {
     pub path: PathBuf,
     pub title: String,
     pub artist: Option<String>,
-    #[serde(rename = "ts")]
     pub at: i64,
 }
 

@@ -8,19 +8,17 @@ mod error;
 mod spectrum;
 mod tap;
 
-use std::sync::Arc;
-
 pub use config::{EngineConfig, UnityVolume};
-use crossbeam_channel::{Receiver as CmdReceiver, Sender as EventSender};
+use crossbeam_channel::Receiver as CmdReceiver;
 pub use error::{AudioError, DeviceError};
-use kernel::{AudioCmd, Message};
+use kernel::{AudioCmd, AudioEvent, Outbox};
 pub use spectrum::SpectrumAnalyzer;
 pub use tap::SpectrumTap;
 
 use crate::{
     deck::Deck,
     engine::thread::{Worker, audio_thread, boot},
-    tap::Ring,
+    tap::Handoff,
 };
 
 pub const DECODABLE_EXTENSIONS: &[&str] =
@@ -29,20 +27,24 @@ pub const DECODABLE_EXTENSIONS: &[&str] =
 #[derive(Debug)]
 pub struct AudioLoop {
     config: EngineConfig,
-    ring: Arc<Ring>,
+    spectrum: Handoff,
 }
 
 #[must_use]
 pub fn prepare(config: EngineConfig) -> (AudioLoop, SpectrumTap) {
-    let (ring, spectrum) = tap::new_tap();
-    (AudioLoop { config, ring }, spectrum)
+    let (spectrum, tap) = tap::new_tap();
+    (AudioLoop { config, spectrum }, tap)
 }
 
 impl AudioLoop {
-    pub fn run(self, commands: &CmdReceiver<AudioCmd>, mailbox: &EventSender<Message>) {
-        let AudioLoop { config, ring } = self;
-        let mut deck = Deck::new(mailbox.clone(), ring);
+    pub fn run<O: Outbox<AudioEvent>>(
+        self,
+        commands: &CmdReceiver<AudioCmd>,
+        outbox: &O,
+    ) {
+        let AudioLoop { config, spectrum } = self;
+        let mut deck = Deck::new(spectrum);
         let state = boot(config, &mut deck);
-        audio_thread(commands, state, Worker { deck });
+        audio_thread(commands, Worker { state, deck }, outbox);
     }
 }

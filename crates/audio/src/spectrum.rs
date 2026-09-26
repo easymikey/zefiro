@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn silence_gives_zero_bands() {
-        let (_ring, tap) = new_tap();
+        let (_spectrum, tap) = new_tap();
         let mut analyzer = SpectrumAnalyzer::new();
         let bands: [f32; 8] = analyzer.bands(&tap);
         assert!(bands.iter().all(|&band| band == 0.0));
@@ -164,11 +164,11 @@ mod tests {
     #[case::a_few_bands(4)]
     #[case::many_bands(32)]
     fn every_band_stays_within_unit_range(#[case] count: usize) {
-        let (ring, tap) = new_tap();
+        let (spectrum, tap) = new_tap();
         let source = Tone {
             samples: tone(64.0).into_iter(),
         };
-        Tap::new(source, ring).for_each(drop);
+        Tap::new(source, &spectrum).for_each(drop);
 
         let mut analyzer = SpectrumAnalyzer::new();
         let bands: Vec<f32> = match count {

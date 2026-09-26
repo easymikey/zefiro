@@ -15,10 +15,15 @@ expression: log
             1.0,
         ),
     },
-    Start {
-        volume: 1.0,
-        total: Some(
-            100s,
-        ),
-    },
+    Many(
+        [
+            Start {
+                volume: 1.0,
+                total: Some(
+                    100s,
+                ),
+            },
+            Report,
+        ],
+    ),
 ]

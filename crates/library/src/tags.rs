@@ -1,6 +1,6 @@
 use std::{borrow::Cow, path::Path};
 
-use kernel::Track;
+use kernel::{LibrarySubject, Track};
 use lofty::{
     config::ParseOptions,
     prelude::{AudioFile, TaggedFileExt},
@@ -8,7 +8,7 @@ use lofty::{
     tag::{Accessor, ItemKey, Tag},
 };
 
-use crate::error::{LibraryError, Subject};
+use crate::error::LibraryError;
 
 fn owned_tag(tag: Option<Cow<'_, str>>) -> Option<String> {
     tag.map(Cow::into_owned)
@@ -16,7 +16,7 @@ fn owned_tag(tag: Option<Cow<'_, str>>) -> Option<String> {
 
 pub(crate) fn read_track(path: &Path) -> Result<Track, LibraryError> {
     let file = std::fs::File::open(path).map_err(|source| LibraryError::Read {
-        subject: Subject::Scan,
+        subject: LibrarySubject::Scan,
         path: path.to_path_buf(),
         source,
     })?;

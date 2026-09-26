@@ -37,6 +37,14 @@ pub enum RuntimeError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum HostError {
+    #[error("spawning the event loop thread: {0}")]
+    Spawn(#[source] io::Error),
+    #[error("the event loop thread panicked")]
+    EventLoopPanicked,
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum RunError<E: Error + 'static> {
     #[error("input closed")]
     InputClosed,

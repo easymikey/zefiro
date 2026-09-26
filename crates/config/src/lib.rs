@@ -2,18 +2,18 @@
 #![deny(missing_debug_implementations)]
 #![deny(unreachable_pub)]
 
-pub mod appearance;
+mod appearance;
 pub(crate) mod appearance_document;
-pub mod appearance_file;
-pub mod breakpoints;
+mod appearance_file;
+mod breakpoints;
 pub(crate) mod config_document;
-pub mod config_file;
+mod config_file;
 pub(crate) mod document;
-pub mod embedded_theme;
-pub mod error;
+mod embedded_theme;
+mod error;
 pub(crate) mod hex;
-pub mod keymap;
-pub mod rows;
+mod keymap;
+mod rows;
 pub(crate) mod theme_file;
 
 pub use appearance::{
@@ -32,13 +32,29 @@ pub use appearance::{
     preset_options,
 };
 pub use appearance_document::appearance_patched;
-pub use appearance_file::{AppearanceFile, parse_appearance};
+pub use appearance_file::{
+    APPEARANCE_FILE_NAME,
+    AppearanceFile,
+    CardConfig,
+    CoverConfig,
+    ProgressConfig,
+    TextCoverCells,
+    WindowConfig,
+    parse_appearance,
+};
+pub use breakpoints::BreakpointsConfig;
 pub use config_document::patched;
-pub use config_file::{ConfigFile, parse};
+pub use config_file::{AudioConfig, CONFIG_FILE_NAME, ConfigFile, parse_config};
 pub use embedded_theme::{EMBEDDED_THEMES, embedded_theme};
-pub use error::{ColorRejection, ConfigError, CrossfadeRejection, SettingRejection};
+pub use error::{
+    ColorRejection,
+    ConfigError,
+    CrossfadeRejection,
+    SettingRejection,
+    TomlFile,
+};
 pub use hex::Hex;
-pub use keymap::{ParsedKeymap, parse_keymap};
+pub use keymap::{KeymapFile, ParsedKeymap, parse_keymap};
 pub use rows::{
     APPEARANCE_ROWS,
     AppearanceField,

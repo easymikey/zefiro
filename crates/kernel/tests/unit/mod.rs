@@ -8,6 +8,7 @@ mod library;
 mod output_device;
 mod playlist_laws;
 mod search;
+mod setting_row;
 mod timers;
 mod transitions;
 mod update_laws;

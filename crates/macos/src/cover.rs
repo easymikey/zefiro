@@ -1,12 +1,16 @@
 #![forbid(unsafe_code)]
 
 use std::{
+    fmt,
     fs,
+    io,
     path::{Path, PathBuf},
     ptr::NonNull,
+    thread::{self, JoinHandle},
 };
 
 use block2::RcBlock;
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use objc2::{AllocAnyThread, rc::Retained};
 use objc2_app_kit::NSImage;
 use objc2_core_foundation::CGSize;
@@ -26,22 +30,92 @@ const COVER_NAMES: [&str; 6] = [
     "front.png",
 ];
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CoverBytes {
+    pub(crate) track: PathBuf,
+    pub(crate) bytes: Option<Vec<u8>>,
+}
+
+pub(crate) struct CoverWorker {
+    wanted: Option<Sender<PathBuf>>,
+    stale: Receiver<PathBuf>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl CoverWorker {
+    pub(crate) fn spawn(
+        read: CoverReader,
+    ) -> Result<(Self, Receiver<CoverBytes>), io::Error> {
+        let (wanted, tasks) = bounded::<PathBuf>(1);
+        let stale = tasks.clone();
+        let (results, arrivals) = bounded::<CoverBytes>(1);
+        let handle = thread::Builder::new()
+            .name("sifr-cover".to_string())
+            .spawn(move || worker(tasks, read, &results))?;
+        Ok((
+            Self {
+                wanted: Some(wanted),
+                stale,
+                handle: Some(handle),
+            },
+            arrivals,
+        ))
+    }
+
+    pub(crate) fn want(&self, track: PathBuf) {
+        let Some(wanted) = &self.wanted else {
+            return;
+        };
+        if let Err(TrySendError::Full(track)) = wanted.try_send(track) {
+            match self.stale.try_recv() {
+                Ok(_) | Err(_) => {}
+            }
+            match wanted.try_send(track) {
+                Ok(()) | Err(_) => {}
+            }
+        }
+    }
+}
+
+impl fmt::Debug for CoverWorker {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CoverWorker")
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for CoverWorker {
+    fn drop(&mut self) {
+        self.wanted = None;
+        if let Some(handle) = self.handle.take() {
+            match handle.join() {
+                Ok(()) | Err(_) => {}
+            }
+        }
+    }
+}
+
+fn worker(tasks: Receiver<PathBuf>, read: CoverReader, results: &Sender<CoverBytes>) {
+    for track in tasks {
+        let bytes = cover_bytes(&track, read);
+        match results.send(CoverBytes { track, bytes }) {
+            Ok(()) => {}
+            Err(_) => return,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Cover {
-    track: PathBuf,
     artwork: Option<Retained<MPMediaItemArtwork>>,
 }
 
 impl Cover {
-    pub(crate) fn new(track: &Path, read: CoverReader) -> Self {
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Self {
         Self {
-            track: track.to_path_buf(),
-            artwork: cover_bytes(track, read).and_then(|bytes| artwork(&bytes)),
+            artwork: artwork(bytes),
         }
-    }
-
-    pub(crate) fn track(&self) -> &Path {
-        &self.track
     }
 
     pub(crate) fn artwork(&self) -> Option<&MPMediaItemArtwork> {
@@ -70,9 +144,15 @@ fn artwork(bytes: &[u8]) -> Option<Retained<MPMediaItemArtwork>> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::OnceLock,
+    };
 
-    use crate::cover::{artwork, cover_bytes, folder_cover};
+    use crossbeam_channel::{Receiver, Sender, bounded};
+
+    use crate::cover::{CoverWorker, artwork, cover_bytes, folder_cover};
 
     fn embedded(_track: &Path) -> Option<Vec<u8>> {
         Some(b"embedded".to_vec())
@@ -113,5 +193,44 @@ mod tests {
     #[test]
     fn undecodable_cover_bytes_give_no_artwork() {
         assert!(artwork(b"not an image").is_none());
+    }
+
+    fn started() -> &'static (Sender<()>, Receiver<()>) {
+        static STARTED: OnceLock<(Sender<()>, Receiver<()>)> = OnceLock::new();
+        STARTED.get_or_init(|| bounded(0))
+    }
+
+    fn gate() -> &'static (Sender<()>, Receiver<()>) {
+        static GATE: OnceLock<(Sender<()>, Receiver<()>)> = OnceLock::new();
+        GATE.get_or_init(|| bounded(0))
+    }
+
+    fn blocking_read(_track: &Path) -> Option<Vec<u8>> {
+        match started().0.send(()) {
+            Ok(()) | Err(_) => {}
+        }
+        match gate().1.recv() {
+            Ok(()) | Err(_) => {}
+        }
+        Some(b"cover".to_vec())
+    }
+
+    #[test]
+    fn the_latest_wanted_track_wins() {
+        let (worker, arrivals) = CoverWorker::spawn(blocking_read).unwrap();
+
+        worker.want(PathBuf::from("A"));
+        started().1.recv().unwrap();
+        worker.want(PathBuf::from("B"));
+        worker.want(PathBuf::from("C"));
+        gate().0.send(()).unwrap();
+        let first = arrivals.recv().unwrap();
+
+        started().1.recv().unwrap();
+        gate().0.send(()).unwrap();
+        let second = arrivals.recv().unwrap();
+
+        assert_eq!(first.track, PathBuf::from("A"));
+        assert_eq!(second.track, PathBuf::from("C"));
     }
 }

@@ -10,7 +10,6 @@ use std::io::Stdout;
 
 use crossbeam_channel::Sender;
 use crossterm::event::Event;
-use input::RouteContext;
 pub(crate) use input::ShellInput;
 use kernel::domain::Model;
 use ratatui::{Terminal, backend::CrosstermBackend};
@@ -51,18 +50,11 @@ impl runtime::Shell for Shell<'_> {
     type Input = ShellInput;
     type Error = std::io::Error;
 
-    fn input(&mut self, event: Self::Input, model: &Model) -> Reaction {
+    fn input(&mut self, event: Self::Input, _model: &Model) -> Reaction {
         if let ShellInput::Terminal(Event::Resize(_, _)) = &event {
             self.frame.mark_resized();
         }
-        input::message_for(
-            event,
-            RouteContext {
-                model,
-                bindings: self.frame.bindings(),
-                page_size: self.frame.page_size(),
-            },
-        )
+        input::message_for(event)
     }
 
     fn reloaded(&mut self, reload: Reload) {
@@ -72,7 +64,7 @@ impl runtime::Shell for Shell<'_> {
     }
 
     fn effect(&mut self, effect: ShellEffect) {
-        if let Some(failure) = self.frame.effect(effect) {
+        if let Some(failure) = self.frame.effect(&effect) {
             self.report(failure);
         }
     }

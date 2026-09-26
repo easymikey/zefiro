@@ -1,6 +1,6 @@
-mod crossfade;
+pub(crate) mod crossfade;
 pub(crate) mod driver;
-mod effect;
+pub(crate) mod effect;
 mod live;
 mod machine;
 mod muted;

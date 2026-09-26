@@ -7,6 +7,7 @@ use crate::{
         History,
         ListMotion,
         Model,
+        Moment,
         Nudge,
         Overlay,
         PlaylistIndex,
@@ -93,6 +94,7 @@ impl Machine for CursorOver<()> {
 pub(super) fn request(
     model: &mut Model,
     request: HistoryRequest,
+    now: Moment,
 ) -> Result<Cmd, Rejection> {
     let len = model.history.view.len();
     let message = match request {
@@ -110,7 +112,7 @@ pub(super) fn request(
         .overlay
         .update(OverlayMessage::Inner(InnerMessage::History(message)))
     {
-        Ok(effect) => follow(model, effect),
+        Ok(effect) => follow(model, effect, now),
         Err(OverlayRejection::History(HistoryRejection::NotInLibrary)) => {
             not_in_library(&mut model.workspace)
         }
@@ -122,7 +124,6 @@ pub(super) fn request(
             | OverlayRejection::NothingSelected
             | OverlayRejection::Jump(_)
             | OverlayRejection::Search(_)
-            | OverlayRejection::Settings(_)
             | OverlayRejection::History(HistoryRejection::NothingSelected)),
         ) => Err(rejection.into()),
     }

@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
 use config::Hex;
-use kernel::WindowColorsCmd;
+use kernel::{WindowColorsCmd, domain::ThemeName};
 use widgets::{Role, Theme};
 
 const OSC: &str = "\x1b]";
@@ -77,76 +77,49 @@ pub struct UnknownThemeError {
     pub name: String,
 }
 
-pub struct WindowColorsWriter {
-    write: fn(&str),
-    commands: crossbeam_channel::Receiver<WindowColorsCmd>,
-}
-
-impl std::fmt::Debug for WindowColorsWriter {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("WindowColorsWriter")
-            .finish_non_exhaustive()
+fn apply_to(name: &ThemeName, theme: &Theme) -> Result<String, UnknownThemeError> {
+    if name.as_str() == theme.name {
+        Ok(apply_sequence(
+            theme.colors.role(Role::WindowBg),
+            theme.colors.role(Role::Text),
+        ))
+    } else {
+        Err(UnknownThemeError {
+            name: name.as_str().to_string(),
+        })
     }
 }
 
-impl WindowColorsWriter {
-    #[must_use]
-    pub fn new(commands: crossbeam_channel::Receiver<WindowColorsCmd>) -> Self {
-        Self {
-            write: emit,
-            commands,
-        }
-    }
-
-    #[must_use]
-    pub fn disconnected() -> Self {
-        Self::new(crossbeam_channel::never())
-    }
-
-    pub fn obey(
-        &self,
-        resolve: impl Fn(&str) -> Option<Theme>,
-    ) -> Option<UnknownThemeError> {
-        let mut unresolved = None;
-        for command in self.commands.try_iter() {
-            match command {
-                WindowColorsCmd::Apply(name) => match resolve(&name) {
-                    Some(theme) => {
-                        (self.write)(&apply_sequence(
-                            theme.colors.role(Role::WindowBg),
-                            theme.colors.role(Role::Text),
-                        ));
-                    }
-                    None => unresolved = Some(UnknownThemeError { name }),
-                },
-                WindowColorsCmd::Reset => (self.write)(&reset_sequence()),
-            }
-        }
-        unresolved
+pub fn window_colors_sequence(
+    command: &WindowColorsCmd,
+    theme: &Theme,
+) -> Result<String, UnknownThemeError> {
+    match command {
+        WindowColorsCmd::Apply(name) => apply_to(name, theme),
+        WindowColorsCmd::Reset => Ok(reset_sequence()),
     }
 }
 
-impl Default for WindowColorsWriter {
-    fn default() -> Self {
-        Self::disconnected()
-    }
+pub fn write_window_colors(
+    command: &WindowColorsCmd,
+    theme: &Theme,
+) -> Result<(), UnknownThemeError> {
+    emit(&window_colors_sequence(command, theme)?);
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-
     use config::{Hex, ThemeColors};
-    use kernel::WindowColorsCmd;
+    use kernel::{WindowColorsCmd, domain::ThemeName};
     use rstest::rstest;
-    use widgets::{Colors, Theme};
+    use widgets::{Colors, Role, Theme};
 
     use crate::window_colors::{
-        WindowColorsWriter,
+        UnknownThemeError,
         apply_sequence,
-        emit,
         reset_sequence,
+        window_colors_sequence,
     };
 
     const BACKGROUND: Hex = Hex([0x1a, 0x2b, 0x3c]);
@@ -161,23 +134,9 @@ mod tests {
         insta::assert_snapshot!(written);
     }
 
-    thread_local! {
-        static WRITTEN: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-    }
-
-    fn capture(sequence: &str) {
-        WRITTEN
-            .with_borrow_mut(|written| written.extend_from_slice(sequence.as_bytes()));
-    }
-
-    fn escapes_written() -> usize {
-        WRITTEN
-            .with_borrow(|written| written.iter().filter(|byte| **byte == 0x1b).count())
-    }
-
-    fn resolve(name: &str) -> Option<Theme> {
-        (name == KNOWN_THEME).then(|| Theme {
-            name: name.to_string(),
+    fn theme() -> Theme {
+        Theme {
+            name: KNOWN_THEME.to_string(),
             colors: Colors::derive(&ThemeColors {
                 background: Hex([0x10, 0x10, 0x10]),
                 foreground: Hex([0xe0, 0xe0, 0xe0]),
@@ -189,55 +148,28 @@ mod tests {
                 window_background: None,
             }),
             scanning_label: String::new(),
-        })
+        }
     }
 
     #[rstest]
-    #[case::a_known_theme_paints_three_sequences(
-        &[WindowColorsCmd::Apply(KNOWN_THEME.to_string())],
-        3,
-        None
+    #[case::apply_to_the_same_theme(
+        WindowColorsCmd::Apply(ThemeName::from_static(KNOWN_THEME)),
+        Ok(apply_sequence(
+            theme().colors.role(Role::WindowBg),
+            theme().colors.role(Role::Text),
+        ))
     )]
-    #[case::a_reset_paints_three_sequences(&[WindowColorsCmd::Reset], 3, None)]
-    #[case::an_unknown_theme_paints_nothing_and_reports(
-        &[WindowColorsCmd::Apply("no-such-theme".to_string())],
-        0,
-        Some("no-such-theme")
+    #[case::apply_to_another_name(
+        WindowColorsCmd::Apply(ThemeName::from_static("no-such-theme")),
+        Err(UnknownThemeError {
+            name: "no-such-theme".to_string(),
+        })
     )]
-    #[case::nothing_commanded_writes_nothing(&[], 0, None)]
-    fn the_driver_obeys_each_command_and_remembers_none(
-        #[case] commands: &[WindowColorsCmd],
-        #[case] escapes: usize,
-        #[case] unresolvable: Option<&str>,
+    #[case::reset_ignores_the_theme(WindowColorsCmd::Reset, Ok(reset_sequence()))]
+    fn window_colors_sequence_rows(
+        #[case] command: WindowColorsCmd,
+        #[case] expected: Result<String, UnknownThemeError>,
     ) {
-        let (sender, receiver) = crossbeam_channel::unbounded();
-        for command in commands {
-            let _ = sender.send(command.clone());
-        }
-        let colors = WindowColorsWriter {
-            write: capture,
-            commands: receiver,
-        };
-
-        let unresolved = colors.obey(resolve);
-
-        assert_eq!(escapes_written(), escapes);
-        match unresolvable {
-            Some(name) => {
-                assert!(
-                    unresolved.is_some_and(|error| error.to_string().contains(name))
-                );
-            }
-            None => assert!(unresolved.is_none()),
-        }
-    }
-
-    #[test]
-    fn a_disconnected_driver_writes_nothing() {
-        let colors = WindowColorsWriter {
-            write: emit,
-            commands: crossbeam_channel::never(),
-        };
-        assert!(colors.obey(|_| None).is_none());
+        assert_eq!(window_colors_sequence(&command, &theme()), expected);
     }
 }

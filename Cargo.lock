@@ -965,7 +965,6 @@ dependencies = [
  "insta",
  "proptest",
  "rstest",
- "serde",
  "strum",
  "thiserror 2.0.20",
  "trybuild",
@@ -1019,6 +1018,7 @@ dependencies = [
  "kernel",
  "lofty",
  "rstest",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
@@ -1126,8 +1126,8 @@ name = "macos"
 version = "0.1.0"
 dependencies = [
  "block2",
- "cpal",
  "crossbeam-channel",
+ "dispatch2",
  "kernel",
  "objc2",
  "objc2-app-kit",
@@ -2228,7 +2228,6 @@ dependencies = [
  "crossbeam-channel",
  "crossterm",
  "dirs",
- "fastrand",
  "image",
  "kernel",
  "library",

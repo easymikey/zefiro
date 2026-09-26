@@ -8,6 +8,7 @@ use kernel::{
     LoadedRequest,
     Message,
     Model,
+    Moment,
     Nudge,
     OverlayName,
     OverlayRequest,
@@ -15,6 +16,7 @@ use kernel::{
     SearchEdit,
     SearchRequest,
     TextRequest,
+    Timer,
     domain::{
         AudioFormat,
         Cursor,
@@ -24,8 +26,11 @@ use kernel::{
         Loaded,
         Overlay,
         Player,
+        Playhead,
         PlaylistIndex,
         Preload,
+        Revision,
+        Speed,
         Tags,
         Track,
         TrackIndex,
@@ -140,7 +145,11 @@ pub(crate) fn playing_nothing_selected(duration: Duration) -> Model {
                 .audio_format(AudioFormat::default())
                 .build()
                 .into(),
-            at: Duration::ZERO,
+            head: Playhead::anchored(
+                Duration::ZERO,
+                Moment::default(),
+                Speed::default(),
+            ),
             preload: Preload::None,
         },
         ..Default::default()
@@ -167,7 +176,7 @@ pub(crate) fn spinning_at(count: usize, at: usize) -> Model {
     model.playlist.at = Cursor::with_len(count).at(at);
     model.player = Player::Playing {
         track: dated_track(at),
-        at: Duration::ZERO,
+        head: Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default()),
         preload: Preload::None,
     };
     model
@@ -184,7 +193,7 @@ pub(crate) fn queued(mut model: Model, queue: &[usize]) -> Model {
 }
 
 pub(crate) fn near_the_end() -> Message {
-    Message::Audio(AudioEvent::Position(Duration::from_secs(95)))
+    Message::Audio(AudioEvent::Playhead(Duration::from_secs(95)))
 }
 
 pub(crate) fn handed_off() -> Message {
@@ -227,6 +236,10 @@ pub(crate) fn mark_ab() -> Message {
     Message::Playback(PlaybackRequest::AbMark)
 }
 
+pub(crate) fn mark_fires() -> Message {
+    Message::Elapsed(Timer::Mark(Revision::UNSTAMPED))
+}
+
 pub(crate) fn nudge_speed(steps: i8) -> Message {
     Message::Playback(PlaybackRequest::NudgeSpeed(steps))
 }
@@ -235,7 +248,11 @@ pub(crate) fn spinning_past(at: u64) -> Model {
     let mut model = spinning(1);
     model.player = Player::Playing {
         track: dated_track(0),
-        at: Duration::from_secs(at),
+        head: Playhead::anchored(
+            Duration::from_secs(at),
+            Moment::default(),
+            Speed::default(),
+        ),
         preload: Preload::None,
     };
     model

@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
-assertion_line: 403
+assertion_line: 404
 expression: "walked(model, messages)"
 ---
 [
@@ -46,7 +46,15 @@ expression: "walked(model, messages)"
                 display: "0.flac",
                 tagging: Read,
             },
-            at: 0ns,
+            head: Playhead {
+                offset: 0ns,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
             preload: None,
         },
         Some(
@@ -148,7 +156,15 @@ expression: "walked(model, messages)"
                 display: "0.flac",
                 tagging: Read,
             },
-            at: 0ns,
+            head: Playhead {
+                offset: 0ns,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
             preload: None,
         },
         None,

@@ -1,5 +1,6 @@
 ---
 source: crates/kernel/src/update/startup.rs
+assertion_line: 141
 expression: "(model.settings, model.transport.volume, model.themes,)"
 ---
 (
@@ -9,20 +10,32 @@ expression: "(model.settings, model.transport.volume, model.themes,)"
         ),
         replaygain: On,
         output_device: Some(
-            "Speakers",
+            DeviceName(
+                "Speakers",
+            ),
         ),
         output_devices: [],
         sleep_presets: [
             900s,
             1800s,
         ],
-        theme: "dark",
     },
     Percent(
         42,
     ),
-    [
-        "noir",
-        "solar",
-    ],
+    Themes {
+        names: [
+            ThemeName(
+                "noir",
+            ),
+            ThemeName(
+                "solar",
+            ),
+        ],
+        selected: Named(
+            ThemeName(
+                "dark",
+            ),
+        ),
+    },
 )

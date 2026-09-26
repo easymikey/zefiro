@@ -5,23 +5,29 @@ use kernel::{
     AudioFormat,
     Bounded,
     Cmd,
+    ConfigFact,
     Cue,
     Effect,
+    LibraryFact,
     LoadedRequest,
     Message,
     Model,
+    Moment,
     NowPlaying,
     Percent,
     PlaybackRequest,
     Player,
+    Playhead,
     Preload,
+    Speed,
     SystemCmd,
+    SystemEvent,
     Tags,
+    Timer,
     ToastLevel,
     Track,
     Transport,
     WindowColorsCmd,
-    WorkspaceRequest,
     domain::{
         Action,
         Cursor,
@@ -30,6 +36,7 @@ use kernel::{
         KeymapOverrides,
         PlaylistIndex,
         Revision,
+        ThemeName,
     },
     playlist::{self, PlayOrder, Playlist, RepeatMode},
     update::update,
@@ -54,6 +61,7 @@ fn ack_loaded(m: &mut Model) -> Cmd {
     update(
         m,
         Message::Audio(kernel::AudioEvent::Loaded { total: None }),
+        Moment::default(),
     )
     .unwrap()
 }
@@ -89,7 +97,12 @@ fn load_three() -> Playlist {
 #[test]
 fn prev_at_first_track_is_noop_without_repeat() {
     let mut m = model_with_tracks(3);
-    let cmd = update(&mut m, Message::Playback(PlaybackRequest::Prev)).unwrap();
+    let cmd = update(
+        &mut m,
+        Message::Playback(PlaybackRequest::Prev),
+        Moment::default(),
+    )
+    .unwrap();
     assert_eq!(m.playlist.anchor(), Some(PlaylistIndex::new(0)));
     assert!(matches!(cmd, Cmd::None));
 }
@@ -106,6 +119,7 @@ fn volume_clamped_0_100() {
     let cmd = update(
         &mut low,
         Message::Playback(PlaybackRequest::NudgeVolume(-5)),
+        Moment::default(),
     )
     .unwrap();
     assert_eq!(low.transport.volume.value(), 0);
@@ -126,8 +140,12 @@ fn volume_clamped_0_100() {
         },
         ..Default::default()
     };
-    let _ =
-        update(&mut hi, Message::Playback(PlaybackRequest::NudgeVolume(5))).unwrap();
+    let _ = update(
+        &mut hi,
+        Message::Playback(PlaybackRequest::NudgeVolume(5)),
+        Moment::default(),
+    )
+    .unwrap();
     assert_eq!(hi.transport.volume.value(), 100);
 }
 
@@ -182,13 +200,13 @@ fn seek_routes_clamp_to_duration_regardless_of_message_source(
                     .audio_format(AudioFormat::default())
                     .build(),
             ),
-            at,
+            head: Playhead::anchored(at, Moment::default(), Speed::default()),
             preload: Preload::None,
         },
         ..Default::default()
     };
-    let cmd = update(&mut m, message).unwrap();
-    assert_eq!(m.player.position(), expected);
+    let cmd = update(&mut m, message, Moment::default()).unwrap();
+    assert_eq!(m.player.position_at(Moment::default()), expected);
     let seek = effects(cmd);
     assert!(
         matches!(seek.first(), Some(Effect::Audio(AudioCmd::Seek(d))) if *d == expected)
@@ -201,7 +219,7 @@ fn seek_routes_clamp_to_duration_regardless_of_message_source(
 #[test]
 fn quit_stops_audio_resets_the_window_colors_and_ends_with_quit() {
     let mut m = Model::default();
-    let cmd = update(&mut m, Message::Quit).unwrap();
+    let cmd = update(&mut m, Message::Quit, Moment::default()).unwrap();
     let effects: Vec<Effect> = cmd.into_iter().collect();
     assert!(matches!(
         effects.first(),
@@ -228,6 +246,7 @@ fn jump_request_starts_selected_track() {
     let cmd = update(
         &mut m,
         Message::Loaded(LoadedRequest::Jump(PlaylistIndex::new(2))),
+        Moment::default(),
     )
     .unwrap();
     assert_eq!(m.playlist.anchor(), Some(PlaylistIndex::new(2)));
@@ -257,6 +276,7 @@ fn jump_out_of_range_is_noop() {
     let cmd = update(
         &mut m,
         Message::Loaded(LoadedRequest::Jump(PlaylistIndex::new(9))),
+        Moment::default(),
     )
     .unwrap();
     assert_eq!(m.playlist.anchor(), Some(PlaylistIndex::new(0)));
@@ -270,10 +290,11 @@ fn library_loaded_relists_the_playlist_without_effects() {
     let tracks = vec![arc_track("/new/a.flac"), arc_track("/new/b.flac")];
     let cmd = update(
         &mut m,
-        Message::Loaded(LoadedRequest::LibraryLoaded {
+        Message::Library(LibraryFact::Loaded {
             tracks: tracks.clone(),
             revision: Revision::default(),
         }),
+        Moment::default(),
     )
     .unwrap();
     assert_eq!(m.playlist.tracks, tracks);
@@ -286,7 +307,12 @@ fn library_loaded_relists_the_playlist_without_effects() {
 fn an_explicit_skip_snaps_the_browse_cursor() {
     let mut m = model_playing_at(3, 0, Duration::ZERO);
     m.workspace.browse.cursor = Cursor::with_len(3).at(2);
-    let _ = update(&mut m, Message::Playback(PlaybackRequest::Next)).unwrap();
+    let _ = update(
+        &mut m,
+        Message::Playback(PlaybackRequest::Next),
+        Moment::default(),
+    )
+    .unwrap();
     assert_eq!(m.workspace.browse.selected(), PlaylistIndex::new(1));
 }
 
@@ -299,15 +325,24 @@ fn a_natural_track_change_follows_only_a_cursor_that_was_on_the_playing_row(
 ) {
     let mut m = model_playing_at(3, 0, Duration::ZERO);
     m.workspace.browse.cursor = Cursor::with_len(3).at(cursor);
-    let _ = update(&mut m, Message::Audio(kernel::AudioEvent::Ended)).unwrap();
+    let _ = update(
+        &mut m,
+        Message::Audio(kernel::AudioEvent::Ended),
+        Moment::default(),
+    )
+    .unwrap();
     assert_eq!(m.workspace.browse.selected(), PlaylistIndex::new(expected));
 }
 
 #[test]
 fn toggling_shuffle_on_asks_for_an_order() {
     let mut m = model_with_tracks(4);
-    let cmd =
-        update(&mut m, Message::Playback(PlaybackRequest::ToggleShuffle)).unwrap();
+    let cmd = update(
+        &mut m,
+        Message::Playback(PlaybackRequest::ToggleShuffle),
+        Moment::default(),
+    )
+    .unwrap();
     assert!(matches!(m.playlist.play_order, PlayOrder::ShufflePending));
     assert!(
         effects(cmd)
@@ -320,8 +355,12 @@ fn toggling_shuffle_on_asks_for_an_order() {
 fn toggle_shuffle_off_clears_order() {
     let mut m = model_with_tracks(4);
     m.playlist.play_order = PlayOrder::Shuffle(vec![3, 1, 2, 0]);
-    let cmd =
-        update(&mut m, Message::Playback(PlaybackRequest::ToggleShuffle)).unwrap();
+    let cmd = update(
+        &mut m,
+        Message::Playback(PlaybackRequest::ToggleShuffle),
+        Moment::default(),
+    )
+    .unwrap();
     assert!(matches!(m.playlist.play_order, PlayOrder::Linear));
     assert!(driver_effects(cmd).is_empty());
 }
@@ -338,14 +377,22 @@ fn preload_peeks_queue_head_when_queue_nonempty() {
                 .audio_format(AudioFormat::default())
                 .build(),
         ),
-        at: Duration::ZERO,
+        head: Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default()),
         preload: Preload::None,
     };
     m.queue.push(PlaylistIndex::new(2));
 
+    let _ = update(
+        &mut m,
+        Message::Audio(kernel::AudioEvent::Playhead(Duration::from_secs(95))),
+        Moment::default(),
+    )
+    .unwrap();
+    let mark = m.mark_generation;
     let cmd = update(
         &mut m,
-        Message::Audio(kernel::AudioEvent::Position(Duration::from_secs(95))),
+        Message::Elapsed(Timer::Mark(mark)),
+        Moment::default(),
     )
     .unwrap();
     assert!(cmd.effects().any(|effect| matches!(
@@ -360,16 +407,22 @@ fn track_ended_repeat_one_without_current_stops() {
     m.playlist.repeat = RepeatMode::One;
     let cmd = update(
         &mut m,
-        Message::Loaded(LoadedRequest::LibraryLoaded {
+        Message::Library(LibraryFact::Loaded {
             tracks: vec![],
             revision: Revision::default(),
         }),
+        Moment::default(),
     )
     .unwrap();
     assert!(m.player.is_playing());
     assert!(driver_effects(cmd).is_empty());
 
-    let cmd2 = update(&mut m, Message::Audio(kernel::AudioEvent::Ended)).unwrap();
+    let cmd2 = update(
+        &mut m,
+        Message::Audio(kernel::AudioEvent::Ended),
+        Moment::default(),
+    )
+    .unwrap();
     assert_eq!(m.player, Player::Stopped);
     let effs = driver_effects(cmd2);
     insta::assert_debug_snapshot!(effs);
@@ -383,14 +436,14 @@ fn track_ended_repeat_one_without_current_stops() {
     },
     kernel::AudioFailure::Decode {
         path: "/tmp/track0.flac".into(),
-        reason: "no such file".into(),
+        fault: kernel::DecodeFault::Unreadable(kernel::IoFault::Missing),
     },
-    "no such file"
+    "not found"
 )]
 #[case::a_preload_that_never_arrives(
     Player::Playing {
         track: arc_track("/tmp/track0.flac"),
-        at: Duration::from_secs(10),
+        head: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
         preload: Preload::Queued(arc_track("/tmp/track1.flac")),
     },
     kernel::AudioFailure::Stream {
@@ -401,7 +454,7 @@ fn track_ended_repeat_one_without_current_stops() {
 #[case::a_seek_the_source_refuses(
     Player::Playing {
         track: arc_track("/tmp/track0.flac"),
-        at: Duration::from_secs(10),
+        head: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
         preload: Preload::None,
     },
     kernel::AudioFailure::Seek {
@@ -418,7 +471,12 @@ fn an_audio_failure_raises_an_error_toast(
         player,
         ..Default::default()
     };
-    let _ = update(&mut m, Message::Audio(kernel::AudioEvent::Error(fault))).unwrap();
+    let _ = update(
+        &mut m,
+        Message::Audio(kernel::AudioEvent::Error(fault)),
+        Moment::default(),
+    )
+    .unwrap();
     let toast = m.workspace.toast.unwrap();
     assert_eq!(toast.level, ToastLevel::Error);
     assert!(toast.text.contains(excerpt), "got {:?}", toast.text);
@@ -427,7 +485,12 @@ fn an_audio_failure_raises_an_error_toast(
 #[test]
 fn system_volume_sets_model_and_cues_without_an_audio_effect() {
     let mut m = Model::default();
-    let cmd = update(&mut m, Message::SystemVolume(Percent::clamped(33))).unwrap();
+    let cmd = update(
+        &mut m,
+        Message::System(SystemEvent::Volume(Percent::clamped(33))),
+        Moment::default(),
+    )
+    .unwrap();
     assert_eq!(m.transport.volume.value(), 33);
     let raised: Vec<_> = cmd.effects().collect();
     assert!(matches!(
@@ -451,7 +514,12 @@ fn start_track_emits_nowplaying_and_playing_state() {
             .audio_format(AudioFormat::default())
             .build(),
     );
-    let cmd = update(&mut m, Message::Playback(PlaybackRequest::Toggle)).unwrap();
+    let cmd = update(
+        &mut m,
+        Message::Playback(PlaybackRequest::Toggle),
+        Moment::default(),
+    )
+    .unwrap();
     let effs = effects(cmd);
     insta::assert_debug_snapshot!(effs);
     let now_playing = effs
@@ -471,6 +539,7 @@ fn start_track_emits_nowplaying_and_playing_state() {
             | Effect::WindowColors(_)
             | Effect::Setting { .. }
             | Effect::After { .. }
+            | Effect::Restart(_)
             | Effect::Quit => None,
         })
         .unwrap();
@@ -489,8 +558,12 @@ fn start_track_emits_nowplaying_and_playing_state() {
 #[test]
 fn set_volume_emits_audio_and_system() {
     let mut m = Model::default();
-    let cmd =
-        update(&mut m, Message::Playback(PlaybackRequest::NudgeVolume(5))).unwrap();
+    let cmd = update(
+        &mut m,
+        Message::Playback(PlaybackRequest::NudgeVolume(5)),
+        Moment::default(),
+    )
+    .unwrap();
     let effs = driver_effects(cmd);
     insta::assert_debug_snapshot!(effs);
     let [
@@ -521,7 +594,8 @@ fn a_keymap_reload_moves_the_generation_only_when_the_file_says_something_new(
 
     let cmd = update(
         &mut model,
-        Message::Workspace(WorkspaceRequest::KeymapReloaded(Box::new(keys.clone()))),
+        Message::Config(ConfigFact::KeymapReloaded(Box::new(keys.clone()))),
+        Moment::default(),
     )
     .unwrap();
 
@@ -540,7 +614,8 @@ fn a_theme_reload_bumps_the_theme_generation_and_raises_a_cue() {
 
     let cmd = update(
         &mut model,
-        Message::Workspace(WorkspaceRequest::ThemeReloaded),
+        Message::Config(ConfigFact::ThemeReloaded(ThemeName::from_static("noir"))),
+        Moment::default(),
     )
     .unwrap();
 
