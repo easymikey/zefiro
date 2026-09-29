@@ -222,7 +222,10 @@ mod tests {
         let parsed = parse_config(&written).unwrap();
         assert_eq!(parsed.audio.crossfade, crossfade_millis(250));
         assert_eq!(parsed.audio.replaygain, Replaygain::On);
-        assert_eq!(parsed.audio.device, Some("Speakers".to_string()));
+        assert_eq!(
+            parsed.audio.device,
+            Some(DeviceName::new("Speakers".to_string()).unwrap())
+        );
         assert_eq!(
             parsed.theme,
             ThemeChoice::Named(ThemeName::from_static("oreo"))
@@ -331,7 +334,7 @@ mod tests {
                 match patch.device {
                     DevicePatch::Keep => base.audio.device,
                     DevicePatch::SystemDefault => None,
-                    DevicePatch::Named(name) => Some(name.to_string()),
+                    DevicePatch::Named(name) => Some(name),
                 }
             );
             prop_assert_eq!(

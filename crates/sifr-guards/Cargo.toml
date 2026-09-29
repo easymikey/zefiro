@@ -1,0 +1,23 @@
+[package]
+name = "sifr-guards"
+description = "Architecture guards over the workspace sources"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+autotests = false
+
+[[test]]
+name = "main"
+path = "tests/main.rs"
+
+[dependencies]
+
+[dev-dependencies]
+toml = { workspace = true }
+thiserror = { workspace = true }
+config = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"

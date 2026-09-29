@@ -1,41 +1,31 @@
 use std::{
     collections::VecDeque,
     mem,
-    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
-use audio::{AudioLoop, DECODABLE_EXTENSIONS, SpectrumTap};
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::Sender;
 use kernel::{
-    AudioCmd,
-    AudioEvent,
     Cmd,
     DriverMessage,
-    LibraryCmd,
     Message,
     Moment,
-    SystemCmd,
-    SystemEvent,
-    domain::{Driver, DriverStatus, Model, Startup},
+    domain::{Model, Startup},
 };
 use library::LibraryPaths;
 
 use crate::{
-    config::{ConfigPaths, ConfigTiming, driver::spawn as spawn_config},
-    driver::{DriverLoop, DriverThread, Report, spawn_loop},
+    config::ConfigPaths,
     error::RuntimeError,
-    interpret::{ConfigCommand, Interpreter, interpret},
-    library::{
-        cover::{CoverDecoded, CoverRequest},
-        driver::spawn as spawn_library,
-    },
-    mailbox::Crowding,
-    port::{Port, Ports},
+    interpret::{Interpreter, interpret},
+    launch::Launchers,
+    library::cover::CoverRequest,
+    mailbox::{Backlog, Episode, Observation, episode_transition},
     registry,
-    shell::{Flow, Reload, ShellEffect, View},
+    shell::{Flow, ShellEffect, View},
     timers::Timers,
     trace::{Trace, TraceEntry},
+    wiring::{Relaunching, Wiring, drain_reports, drop_ports, join_reported},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,343 +41,6 @@ pub struct BootPaths {
 }
 
 #[derive(Debug)]
-pub struct Hardware<A, M> {
-    audio: A,
-    spectrum: SpectrumTap,
-    system: M,
-}
-
-impl<A, M> Hardware<A, M> {
-    #[must_use]
-    pub fn new(audio: A, spectrum: SpectrumTap, system: M) -> Self {
-        Self {
-            audio,
-            spectrum,
-            system,
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Hardware<AudioLoop, crate::macos::SystemStart> {
-    #[must_use]
-    pub fn system(startup: &Startup) -> Self {
-        let (audio, spectrum) = crate::audio::prepare(startup);
-        Self {
-            audio,
-            spectrum,
-            system: crate::macos::SystemStart::new(library::embedded_cover),
-        }
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-impl Hardware<AudioLoop, crate::driver::NoDriver> {
-    #[must_use]
-    pub fn system(startup: &Startup) -> Self {
-        let (audio, spectrum) = crate::audio::prepare(startup);
-        Self {
-            audio,
-            spectrum,
-            system: crate::driver::NoDriver,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct Wiring {
-    pub(crate) mailbox: Receiver<Message>,
-    pub(crate) mailbox_sender: Sender<Message>,
-    pub(crate) ports: Ports,
-    pub(crate) handles: [Option<JoinHandle<Report>>; 4],
-    pub(crate) spectrum: SpectrumTap,
-    pub(crate) reloads: Receiver<Reload>,
-    pub(crate) decoded: Receiver<CoverDecoded>,
-}
-
-#[cfg(target_os = "macos")]
-fn spawn_macos<M: DriverLoop<SystemCmd, SystemEvent>>(
-    system: M,
-    mailbox: &Sender<Message>,
-) -> Result<Option<DriverThread<SystemCmd>>, RuntimeError> {
-    Ok(Some(crate::macos::spawn(system, mailbox)?))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn spawn_macos<M: DriverLoop<SystemCmd, SystemEvent>>(
-    system: M,
-    _mailbox: &Sender<Message>,
-) -> Result<Option<DriverThread<SystemCmd>>, RuntimeError> {
-    drop(system);
-    Ok(None)
-}
-
-impl Wiring {
-    fn spawn<A, M>(
-        startup: &Startup,
-        paths: BootPaths,
-        hardware: Hardware<A, M>,
-    ) -> Result<Self, RuntimeError>
-    where
-        A: DriverLoop<AudioCmd, AudioEvent>,
-        M: DriverLoop<SystemCmd, SystemEvent>,
-    {
-        for row in registry::REGISTRY {
-            debug_assert!(row.inbox > 0);
-        }
-        let (mailbox, arrivals) = bounded(256);
-        let mailbox_sender = mailbox.clone();
-        let Hardware {
-            audio: audio_loop,
-            spectrum,
-            system,
-        } = hardware;
-        let audio = spawn_loop(registry::row(Driver::Audio), audio_loop, &mailbox)?;
-        let config_paths = ConfigPaths {
-            theme: Some(startup.theme.to_string()),
-            ..paths.config
-        };
-        let (config, reloads) =
-            spawn_config(config_paths, ConfigTiming::default(), &mailbox)?;
-        let macos = spawn_macos(system, &mailbox)?;
-        let (library, covers, decoded) =
-            spawn_library(paths.library, DECODABLE_EXTENSIONS, &mailbox)?;
-        let (ports, handles) = wire_ports(Spawned {
-            audio,
-            library,
-            config,
-            macos,
-            covers,
-        });
-
-        Ok(Self {
-            mailbox: arrivals,
-            mailbox_sender,
-            ports,
-            handles,
-            spectrum,
-            reloads,
-            decoded,
-        })
-    }
-}
-
-struct Spawned {
-    audio: DriverThread<AudioCmd>,
-    library: DriverThread<LibraryCmd>,
-    config: DriverThread<ConfigCommand>,
-    macos: Option<DriverThread<SystemCmd>>,
-    covers: Sender<CoverRequest>,
-}
-
-fn wire_ports(spawned: Spawned) -> (Ports, [Option<JoinHandle<Report>>; 4]) {
-    let Spawned {
-        audio,
-        library,
-        config,
-        macos,
-        covers,
-    } = spawned;
-    let DriverThread {
-        commands: audio_commands,
-        handle: audio_handle,
-        congestion: audio_congestion,
-    } = audio;
-    let DriverThread {
-        commands: library_commands,
-        handle: library_handle,
-        congestion: library_congestion,
-    } = library;
-    let DriverThread {
-        commands: config_commands,
-        handle: config_handle,
-        congestion: config_congestion,
-    } = config;
-    let (macos_port, macos_handle) = match macos {
-        Some(DriverThread {
-            commands,
-            handle,
-            congestion,
-        }) => {
-            freshly_spawned(&congestion);
-            (Some(Port::new(Driver::Macos, commands)), Some(handle))
-        }
-        None => (None, None),
-    };
-    freshly_spawned(&audio_congestion);
-    freshly_spawned(&library_congestion);
-    freshly_spawned(&config_congestion);
-    let handles: [Option<JoinHandle<Report>>; 4] = [
-        Some(audio_handle),
-        Some(library_handle),
-        Some(config_handle),
-        macos_handle,
-    ];
-    let ports = Ports {
-        audio: Port::new(Driver::Audio, audio_commands),
-        library: Port::new(Driver::Library, library_commands),
-        covers: Port::new(Driver::Library, covers),
-        config: Port::new(Driver::Config, config_commands),
-        macos: macos_port,
-    };
-    (ports, handles)
-}
-
-fn freshly_spawned(congestion: &crate::mailbox::Congestion) {
-    debug_assert!(matches!(congestion.settle(), Crowding::Clear));
-}
-
-fn take_handle(
-    handles: &mut [Option<JoinHandle<Report>>; 4],
-    driver: Driver,
-) -> Option<JoinHandle<Report>> {
-    let [audio, library, config, macos] = handles;
-    match driver {
-        Driver::Audio => audio.take(),
-        Driver::Library => library.take(),
-        Driver::Config => config.take(),
-        Driver::Macos => macos.take(),
-    }
-}
-
-fn drop_ports(ports: Ports) {
-    let Ports {
-        audio,
-        macos,
-        library,
-        config,
-        covers,
-    } = ports;
-    drop(audio);
-    drop(macos);
-    drop(library);
-    drop(config);
-    drop(covers);
-}
-
-fn drain_reports(
-    model: &Model,
-    mailbox: &Receiver<Message>,
-    timeout: Duration,
-) -> Vec<Driver> {
-    let mut awaited: Vec<Driver> = registry::REGISTRY
-        .iter()
-        .map(|row| row.driver)
-        .filter(|driver| matches!(model.drivers.status(*driver), DriverStatus::Running))
-        .collect();
-    let mut reported: Vec<Driver> = registry::REGISTRY
-        .iter()
-        .map(|row| row.driver)
-        .filter(|driver| !awaited.contains(driver))
-        .collect();
-    let deadline = Instant::now() + timeout;
-    while !awaited.is_empty() {
-        let Ok(message) = mailbox.recv_deadline(deadline) else {
-            break;
-        };
-        if let Message::Driver(
-            driver,
-            DriverMessage::Stopped | DriverMessage::Died(_),
-        ) = message
-        {
-            awaited.retain(|waiting| *waiting != driver);
-            reported.push(driver);
-        }
-    }
-    reported
-}
-
-fn join_reported(
-    handles: &mut [Option<JoinHandle<Report>>; 4],
-    reported: &[Driver],
-    trace: &mut Trace,
-) {
-    for row in registry::REGISTRY {
-        if !reported.contains(&row.driver) {
-            continue;
-        }
-        let Some(handle) = take_handle(handles, row.driver) else {
-            continue;
-        };
-        let joined = handle.join();
-        if matches!(joined, Err(_) | Ok(Err(_))) {
-            trace.push(TraceEntry::JoinFailed { driver: row.driver });
-        }
-    }
-}
-
-#[cfg(test)]
-fn idle_thread<C: Send + 'static>(
-    driver: Driver,
-    mailbox: &Sender<Message>,
-) -> DriverThread<C> {
-    spawn_loop::<C, Message, _>(registry::row(driver), crate::driver::NoDriver, mailbox)
-        .unwrap()
-}
-
-#[cfg(test)]
-impl Wiring {
-    pub(crate) fn idle() -> (
-        Self,
-        Receiver<CoverRequest>,
-        Sender<Reload>,
-        Sender<CoverDecoded>,
-    ) {
-        let (mailbox, arrivals) = crossbeam_channel::unbounded();
-        let (covers, cover_inbox) = crossbeam_channel::unbounded();
-        let (reloads_sender, reloads) = crossbeam_channel::unbounded();
-        let (decoded_sender, decoded) = crossbeam_channel::unbounded();
-
-        let DriverThread {
-            commands: audio_commands,
-            handle: audio_handle,
-            ..
-        } = idle_thread::<AudioCmd>(Driver::Audio, &mailbox);
-        let DriverThread {
-            commands: library_commands,
-            handle: library_handle,
-            ..
-        } = idle_thread::<LibraryCmd>(Driver::Library, &mailbox);
-        let DriverThread {
-            commands: config_commands,
-            handle: config_handle,
-            ..
-        } = idle_thread::<ConfigCommand>(Driver::Config, &mailbox);
-        let DriverThread {
-            commands: macos_commands,
-            handle: macos_handle,
-            ..
-        } = idle_thread::<SystemCmd>(Driver::Macos, &mailbox);
-
-        let handles: [Option<JoinHandle<Report>>; 4] = [
-            Some(audio_handle),
-            Some(library_handle),
-            Some(config_handle),
-            Some(macos_handle),
-        ];
-
-        let ports = Ports {
-            audio: Port::new(Driver::Audio, audio_commands),
-            library: Port::new(Driver::Library, library_commands),
-            covers: Port::new(Driver::Library, covers),
-            config: Port::new(Driver::Config, config_commands),
-            macos: Some(Port::new(Driver::Macos, macos_commands)),
-        };
-
-        let wiring = Self {
-            mailbox: arrivals,
-            mailbox_sender: mailbox,
-            ports,
-            handles,
-            spectrum: SpectrumTap::silent(),
-            reloads,
-            decoded,
-        };
-        (wiring, cover_inbox, reloads_sender, decoded_sender)
-    }
-}
-
-#[derive(Debug)]
 pub struct Runtime {
     pub(crate) model: Model,
     pub(crate) wiring: Wiring,
@@ -397,30 +50,37 @@ pub struct Runtime {
     flow: Flow,
     shell_effects: Vec<ShellEffect>,
     cover: Option<CoverRequest>,
+    episodes: [Episode; 4],
+}
+
+pub(crate) struct Seed {
+    model: Model,
+    cmd: Cmd,
 }
 
 impl Runtime {
     pub(crate) const DRAIN: Duration = Duration::from_secs(2);
 
-    pub fn boot<A, M>(
+    pub fn boot(
         startup: Startup,
-        paths: BootPaths,
-        hardware: Hardware<A, M>,
-    ) -> Result<Self, RuntimeError>
-    where
-        A: DriverLoop<AudioCmd, AudioEvent>,
-        M: DriverLoop<SystemCmd, SystemEvent>,
-    {
-        let wiring = Wiring::spawn(&startup, paths, hardware)?;
-        let trace = Trace::default();
-        Ok(Self::assemble(startup, wiring, trace))
+        paths: &BootPaths,
+        launchers: &Launchers,
+    ) -> Result<Self, RuntimeError> {
+        let seed = Self::seeded(startup);
+        let wiring = Wiring::spawn(&seed.model, paths, launchers)?;
+        Ok(Self::assemble(seed, wiring, Trace::default()))
     }
 
-    pub(crate) fn assemble(startup: Startup, wiring: Wiring, trace: Trace) -> Self {
+    pub(crate) fn seeded(startup: Startup) -> Seed {
         let (mut model, cmd) = kernel::startup(startup);
         for row in registry::REGISTRY {
             model.drivers = model.drivers.with_strategy(row.driver, row.supervision);
         }
+        Seed { model, cmd }
+    }
+
+    pub(crate) fn assemble(seed: Seed, wiring: Wiring, trace: Trace) -> Self {
+        let Seed { model, cmd } = seed;
         let mut runtime = Self {
             model,
             wiring,
@@ -430,6 +90,7 @@ impl Runtime {
             flow: Flow::Continue,
             shell_effects: Vec::new(),
             cover: None,
+            episodes: [Episode::default(); 4],
         };
         for answer in runtime.interpret(cmd) {
             runtime.step(answer);
@@ -455,14 +116,49 @@ impl Runtime {
         change
     }
 
+    pub(crate) fn settle_congestion(&mut self) {
+        for row in registry::REGISTRY {
+            if let Flow::Stop = self.flow {
+                return;
+            }
+            let Some(congestion) = self.wiring.ports.congestion(row.driver) else {
+                continue;
+            };
+            let crowding = congestion.settle();
+            let backlog = if self.wiring.mailbox.is_empty() {
+                Backlog::Drained
+            } else {
+                Backlog::Pending
+            };
+            let observed = Observation {
+                crowding,
+                backlog,
+                driver: row.driver,
+            };
+            let slot = row.driver.index();
+            let Some(current) = self.episodes.get(slot).copied() else {
+                continue;
+            };
+            let (next, message) = episode_transition(current, observed);
+            if let Some(entry) = self.episodes.get_mut(slot) {
+                *entry = next;
+            }
+            if let Some(message) = message {
+                self.step(message);
+            }
+        }
+    }
+
     #[must_use]
     pub fn trace(&self) -> &Trace {
         &self.trace
     }
 
     #[must_use]
-    pub(crate) fn sleep_deadline(&self) -> Option<Instant> {
-        self.timers.sleep_deadline(self.model.transport.sleep)
+    pub(crate) fn sleep_deadline(&self) -> Option<Moment> {
+        self.timers
+            .sleep_deadline(self.model.transport.sleep)
+            .map(|deadline| Moment::new(deadline.saturating_duration_since(self.epoch)))
     }
 
     pub(crate) fn flow(&self) -> Flow {
@@ -473,17 +169,22 @@ impl Runtime {
         mem::take(&mut self.shell_effects)
     }
 
-    pub(crate) fn view(&self) -> View<'_> {
+    pub(crate) fn view(&self, now: Instant) -> View<'_> {
         View {
             model: &self.model,
             spectrum: &self.wiring.spectrum,
+            cells: &self.wiring.cells,
             sleep_deadline: self.sleep_deadline(),
-            now: self.now(),
+            now: Moment::new(now.saturating_duration_since(self.epoch)),
         }
     }
 
     pub(crate) fn now(&self) -> Moment {
         Moment::new(Instant::now().saturating_duration_since(self.epoch))
+    }
+
+    pub(crate) fn instant_of(&self, moment: Moment) -> Instant {
+        self.epoch + moment.since_epoch()
     }
 
     pub(crate) fn request_cover(&mut self, request: CoverRequest) {
@@ -493,8 +194,8 @@ impl Runtime {
         let sent = self
             .wiring
             .ports
-            .covers
-            .send(&self.model.drivers, request.clone());
+            .library
+            .send_cover(&self.model.drivers, request.clone());
         self.cover = Some(request);
         if let Err(undelivered) = sent {
             self.trace.push(undelivered.into());
@@ -540,48 +241,325 @@ impl Runtime {
     }
 
     fn interpret(&mut self, cmd: Cmd) -> Vec<Message> {
-        let mut interpreter = Interpreter {
-            drivers: &self.model.drivers,
-            ports: &self.wiring.ports,
-            timers: &mut self.timers,
-            trace: &mut self.trace,
-        };
-        let interpreted = interpret(cmd, &mut interpreter);
-        self.shell_effects.extend(interpreted.shell);
-        if let Flow::Stop = interpreted.flow {
-            self.flow = Flow::Stop;
+        let mut answers = Vec::new();
+        let mut pending = cmd;
+        loop {
+            let mut interpreter = Interpreter {
+                drivers: &self.model.drivers,
+                ports: &self.wiring.ports,
+                timers: &mut self.timers,
+                trace: &mut self.trace,
+            };
+            let interpreted = interpret(pending, &mut interpreter);
+            self.shell_effects.extend(interpreted.shell);
+            answers.extend(interpreted.answers);
+            if let Flow::Stop = interpreted.flow {
+                self.flow = Flow::Stop;
+            }
+            let Some((driver, effects)) = interpreted.relaunch else {
+                break;
+            };
+            let relaunching = Relaunching {
+                model: &self.model,
+                trace: &mut self.trace,
+            };
+            self.wiring.relaunch(driver, relaunching);
+            pending = Cmd::Batch(effects);
         }
-        interpreted.answers
+        answers
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        cell::RefCell,
+        convert::Infallible,
+        path::{Path, PathBuf},
+    };
 
-    use crossbeam_channel::Receiver;
+    use crossbeam_channel::{Receiver, Sender, unbounded};
     use kernel::{
+        AudioCmd,
+        AudioEvent,
         DriverMessage,
         Message,
+        Nudge,
         Toast,
         WorkspaceRequest,
-        domain::{Driver, DriverStatus, Startup},
+        domain::{Driver, DriverStatus, SettingRow, Startup},
     };
+    use library::LibraryPaths;
     use rstest::rstest;
 
     use crate::{
+        config::{ConfigPaths, SeenTexts},
+        driver::DriverLoop,
+        error::RuntimeError,
+        event_loop::run,
+        interpret::LibraryCommand,
+        launch::{Launched, Launchers, Launching, launch_config, spawn_audio_launched},
         library::cover::CoverRequest,
-        runtime::{Change, Runtime, Wiring},
-        trace::{Trace, TraceEntry},
+        mailbox::Mailbox,
+        runtime::{BootPaths, Change, Runtime},
+        shell::{FrameDue, Painted, Reaction, Shell, ShellEffect, View},
+        trace::{DropReason, Trace, TraceEntry},
+        wiring::Wiring,
     };
 
     fn stock_startup() -> Startup {
         Startup::default()
     }
 
-    fn boot(library: DriverStatus) -> (Runtime, Receiver<CoverRequest>) {
-        let (wiring, cover_inbox, _reloads_sender, _decoded_sender) = Wiring::idle();
-        let mut runtime = Runtime::assemble(stock_startup(), wiring, Trace::default());
+    fn boot_paths(directory: &Path) -> BootPaths {
+        BootPaths {
+            config: ConfigPaths {
+                config: Some(directory.join("config.toml")),
+                appearance: directory.join("sifr-ui.toml"),
+                themes: directory.join("themes"),
+                theme: None,
+                seen: SeenTexts::default(),
+            },
+            library: LibraryPaths {
+                cache: directory.join("cache"),
+                data: directory.join("data"),
+                playlists: directory.join("playlists"),
+            },
+        }
+    }
+
+    struct QuitShell;
+
+    impl Shell for QuitShell {
+        type Input = ();
+        type Error = Infallible;
+
+        fn input(&mut self, (): ()) -> Reaction {
+            Reaction::Message(Message::Quit)
+        }
+
+        fn effect(&mut self, _effect: ShellEffect) {}
+
+        fn frame_due(&self, _view: &View<'_>) -> FrameDue {
+            FrameDue::Settled
+        }
+
+        fn paint(&mut self, _view: View<'_>) -> Result<Painted, Infallible> {
+            Ok(Painted::default())
+        }
+    }
+
+    thread_local! {
+        static AUDIO_TAP: RefCell<Option<Sender<AudioCmd>>> = const { RefCell::new(None) };
+    }
+
+    struct RecordingAudio {
+        forward: Sender<AudioCmd>,
+    }
+
+    impl DriverLoop<AudioCmd, AudioEvent> for RecordingAudio {
+        fn run(self, inbox: &Receiver<AudioCmd>, _outbox: &Mailbox<AudioEvent>) {
+            while let Ok(command) = inbox.recv() {
+                if self.forward.send(command).is_err() {
+                    return;
+                }
+            }
+        }
+    }
+
+    fn recording_audio(
+        launching: &Launching<'_>,
+    ) -> Result<Launched<AudioCmd>, RuntimeError> {
+        let forward = AUDIO_TAP.with(|tap| tap.borrow().clone()).unwrap();
+        spawn_audio_launched(RecordingAudio { forward }, launching)
+    }
+
+    fn recording_launchers() -> (Launchers, Receiver<AudioCmd>) {
+        let (forward, commands) = unbounded();
+        AUDIO_TAP.with(|tap| *tap.borrow_mut() = Some(forward));
+        (
+            Launchers {
+                audio: recording_audio,
+                ..Launchers::idle()
+            },
+            commands,
+        )
+    }
+
+    struct PanickingAudio;
+
+    impl DriverLoop<AudioCmd, AudioEvent> for PanickingAudio {
+        fn run(self, _inbox: &Receiver<AudioCmd>, _outbox: &Mailbox<AudioEvent>) {
+            panic!("boom");
+        }
+    }
+
+    fn panicking_audio(
+        launching: &Launching<'_>,
+    ) -> Result<Launched<AudioCmd>, RuntimeError> {
+        spawn_audio_launched(PanickingAudio, launching)
+    }
+
+    fn panicking_launchers() -> Launchers {
+        Launchers {
+            audio: panicking_audio,
+            ..Launchers::idle()
+        }
+    }
+
+    #[test]
+    fn boot_sends_the_startup_stop_and_list_devices_to_the_stub_audio_inbox() {
+        let directory = tempfile::tempdir().unwrap();
+        let startup = stock_startup();
+        let (launchers, commands) = recording_launchers();
+        let runtime =
+            Runtime::boot(startup, &boot_paths(directory.path()), &launchers).unwrap();
+        let (keys, input) = unbounded();
+        keys.send(()).unwrap();
+        let mut shell = QuitShell;
+
+        let ended = run(runtime, &mut shell, &input);
+
+        assert!(matches!(ended, Ok(())));
+        assert_eq!(commands.recv().unwrap(), AudioCmd::Stop);
+        assert_eq!(commands.recv().unwrap(), AudioCmd::ListDevices);
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum SaveStep {
+        Adjust,
+        Quit,
+    }
+
+    struct AdjustThenQuit;
+
+    impl Shell for AdjustThenQuit {
+        type Input = SaveStep;
+        type Error = Infallible;
+
+        fn input(&mut self, event: SaveStep) -> Reaction {
+            match event {
+                SaveStep::Adjust => Reaction::Message(Message::Adjust {
+                    row: SettingRow::Replaygain,
+                    nudge: Nudge::Up,
+                }),
+                SaveStep::Quit => Reaction::Message(Message::Quit),
+            }
+        }
+
+        fn effect(&mut self, _effect: ShellEffect) {}
+
+        fn frame_due(&self, _view: &View<'_>) -> FrameDue {
+            FrameDue::Settled
+        }
+
+        fn paint(&mut self, _view: View<'_>) -> Result<Painted, Infallible> {
+            Ok(Painted::default())
+        }
+    }
+
+    #[test]
+    fn drain_on_stop_writes_the_pending_config_save() {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = boot_paths(directory.path());
+        let config_path = paths.config.config.clone().unwrap();
+        let startup = stock_startup();
+        let launchers = Launchers {
+            config: launch_config,
+            ..Launchers::idle()
+        };
+        let runtime = Runtime::boot(startup, &paths, &launchers).unwrap();
+
+        let (steps, input) = unbounded();
+        steps.send(SaveStep::Adjust).unwrap();
+        steps.send(SaveStep::Quit).unwrap();
+        let mut shell = AdjustThenQuit;
+
+        let ended = run(runtime, &mut shell, &input);
+
+        assert!(matches!(ended, Ok(())));
+        let text = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            text.contains("replaygain"),
+            "drain must flush the pending replaygain save to disk"
+        );
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum LifeStep {
+        Paint,
+        Quit,
+    }
+
+    struct ObserveDeadThenQuit {
+        steps: Sender<LifeStep>,
+        paints: usize,
+        restarts: usize,
+    }
+
+    impl Shell for ObserveDeadThenQuit {
+        type Input = LifeStep;
+        type Error = Infallible;
+
+        fn input(&mut self, event: LifeStep) -> Reaction {
+            match event {
+                LifeStep::Paint => Reaction::Ignored,
+                LifeStep::Quit => Reaction::Message(Message::Quit),
+            }
+        }
+
+        fn effect(&mut self, _effect: ShellEffect) {}
+
+        fn frame_due(&self, _view: &View<'_>) -> FrameDue {
+            FrameDue::Settled
+        }
+
+        fn paint(&mut self, view: View<'_>) -> Result<Painted, Infallible> {
+            self.paints += 1;
+            self.restarts = view.model.drivers.record(Driver::Audio).restarts.count();
+            let next = if self.restarts > 0 || self.paints >= 20 {
+                LifeStep::Quit
+            } else {
+                LifeStep::Paint
+            };
+            let _ = self.steps.send(next);
+            Ok(Painted::default())
+        }
+    }
+
+    #[test]
+    fn a_driver_panic_is_supervised_through_view() {
+        let directory = tempfile::tempdir().unwrap();
+        let startup = stock_startup();
+        let runtime = Runtime::boot(
+            startup,
+            &boot_paths(directory.path()),
+            &panicking_launchers(),
+        )
+        .unwrap();
+
+        let (steps, input) = unbounded();
+        steps.send(LifeStep::Paint).unwrap();
+        let mut shell = ObserveDeadThenQuit {
+            steps,
+            paints: 0,
+            restarts: 0,
+        };
+
+        let ended = run(runtime, &mut shell, &input);
+
+        assert!(matches!(ended, Ok(())));
+        assert!(
+            (1..=3).contains(&shell.restarts),
+            "audio's standard supervision caps automatic restarts at 3 within 60s, saw {}",
+            shell.restarts
+        );
+    }
+
+    fn boot(library: DriverStatus) -> (Runtime, Receiver<LibraryCommand>) {
+        let (wiring, cover_inbox, _writers) = Wiring::idle();
+        let seed = Runtime::seeded(stock_startup());
+        let mut runtime = Runtime::assemble(seed, wiring, Trace::default());
         runtime.model.drivers.record_mut(Driver::Library).status = library;
         (runtime, cover_inbox)
     }
@@ -606,7 +584,8 @@ mod tests {
                     entry,
                     TraceEntry::Dropped {
                         driver: Driver::Library,
-                        command: "cover"
+                        command: "cover",
+                        reason: DropReason::NotRunning,
                     }
                 )
             })
@@ -627,8 +606,12 @@ mod tests {
         runtime.request_cover(request);
 
         assert!(runtime.trace.is_empty());
-        assert_eq!(cover_inbox.try_iter().count(), 1);
         runtime.drain();
+        let covers = cover_inbox
+            .iter()
+            .filter(|command| matches!(command, LibraryCommand::Cover(_)))
+            .count();
+        assert_eq!(covers, 1);
     }
 
     #[rstest]

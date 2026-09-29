@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use config::SpeedChipMode;
 use kernel::playlist::RepeatMode;
 use raster::unit_fraction;
@@ -48,6 +50,26 @@ impl Widget for &MinimalCard<'_> {
     }
 }
 
+#[must_use]
+pub(crate) fn progress_bar_width(
+    view: CardView<'_>,
+    speed_chip: SpeedChipMode,
+    width: u16,
+) -> u16 {
+    let duration = view
+        .displayed_track
+        .and_then(|track| track.duration())
+        .unwrap_or(Duration::ZERO);
+    let position = view.player.position_at(view.now);
+    let time = elapsed_of(position, duration);
+    let time_width = u16::try_from(time.chars().count())
+        .unwrap_or(u16::MAX)
+        .min(width);
+    let gap = u16::from(width > time_width);
+    let chip_width = speed_chip_width(view.speed, speed_chip);
+    width.saturating_sub(time_width + gap + chip_width)
+}
+
 impl MinimalCard<'_> {
     fn title_line(&self, width: u16) -> Line<'static> {
         let status = card_status(self.view.output, self.view.player);
@@ -85,7 +107,7 @@ impl MinimalCard<'_> {
             .min(width);
         let gap = u16::from(width > time_width);
         let chip_width = speed_chip_width(self.view.speed, self.speed_chip);
-        let bar_width = width.saturating_sub(time_width + gap + chip_width);
+        let bar_width = progress_bar_width(self.view, self.speed_chip, width);
         let mut spans = fill_line(
             &FillSpec::progress(unit_fraction(fraction), usize::from(bar_width)),
             FillColors { accent, dim },

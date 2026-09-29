@@ -17,14 +17,14 @@ fn key_context_of(overlay: &Overlay) -> KeyContext {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ContextStack {
+pub(crate) enum ContextStack {
     Overlay(KeyContext),
     Base,
 }
 
 impl ContextStack {
     #[must_use]
-    pub(super) fn primary(self) -> KeyContext {
+    pub(crate) fn primary(self) -> KeyContext {
         match self {
             Self::Overlay(context) => context,
             Self::Base => KeyContext::Playlist,

@@ -21,6 +21,13 @@ pub(crate) fn system(
             .transport
             .update(TransportMessage::SetVolume(volume))?),
         SystemEvent::OutputRouteChanged => route_changed(model, now),
+        SystemEvent::HardwareWatchFailed(detail) => {
+            Ok(model
+                .workspace
+                .update(WorkspaceRequest::ShowToast(Toast::error(format!(
+                    "Audio device watch failed: {detail}"
+                ))))?)
+        }
         SystemEvent::MediaKey(gesture) => {
             playback::playback(model, gesture.into(), now)
         }
@@ -33,7 +40,6 @@ fn route_changed(model: &mut Model, now: Moment) -> Result<Cmd, Rejection> {
     }
     let current = model.playlist.current().cloned();
     let resume = Resume {
-        volume: model.transport.volume,
         anchor: Anchor {
             now,
             speed: model.transport.speed,

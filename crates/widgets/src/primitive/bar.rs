@@ -155,6 +155,11 @@ pub(crate) struct HudProgressColors {
 }
 
 #[must_use]
+pub(crate) fn hud_progress_bar_width(row_width: u16, remaining: Duration) -> u16 {
+    row_width.saturating_sub(remaining_reserve(row_width, Some(remaining)))
+}
+
+#[must_use]
 pub(crate) fn hud_progress_line(
     input: &HudProgressRow,
     colors: &HudProgressColors,
@@ -162,11 +167,10 @@ pub(crate) fn hud_progress_line(
     let chip_spans = chip::spans(&remaining_label(input.remaining), colors.chip);
     let gap = HudProgressLayout::default().gap;
     let row_width = u16::try_from(input.row_width).unwrap_or(u16::MAX);
-    let reserved = remaining_reserve(row_width, Some(input.remaining));
-    if reserved == 0 {
+    let bar_width = usize::from(hud_progress_bar_width(row_width, input.remaining));
+    if bar_width == input.row_width {
         return fill_line(&FillSpec::progress(input.frac, input.row_width), colors.bar);
     }
-    let bar_width = input.row_width.saturating_sub(usize::from(reserved));
     let bar = fill_line(&FillSpec::progress(input.frac, bar_width), colors.bar);
     Line::from_iter(
         bar.spans

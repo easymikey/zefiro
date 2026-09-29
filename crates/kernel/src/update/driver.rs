@@ -39,6 +39,7 @@ pub enum DriverRejection {
     Running,
     Dead,
     Stopped,
+    Input(&'static str),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +58,10 @@ impl Machine for DriverStatus {
         message: DriverMessage,
     ) -> Result<(Self, Option<DriverSignal>), Rejected<Self>> {
         match (self, message) {
+            (state, DriverMessage::Rejected { input }) => Err(Rejected {
+                state,
+                reason: DriverRejection::Input(input),
+            }),
             (DriverStatus::Running, DriverMessage::Died(failure)) => Ok((
                 DriverStatus::Dead(failure.clone()),
                 Some(DriverSignal::Died(failure)),
@@ -172,7 +177,6 @@ fn boot(model: &Model, driver: Driver) -> Cmd {
         Driver::Audio => Cmd::Batch(vec![
             Effect::Audio(AudioCmd::ListDevices),
             Effect::Audio(AudioCmd::SetDevice(model.settings.output_device.clone())),
-            Effect::Audio(AudioCmd::Volume(model.transport.volume)),
             Effect::Audio(AudioCmd::SetCrossfade(model.settings.crossfade)),
             Effect::Audio(AudioCmd::SetReplaygain(model.settings.replaygain)),
         ]),
@@ -189,6 +193,7 @@ fn boot(model: &Model, driver: Driver) -> Cmd {
         Driver::Macos => Cmd::Batch(vec![
             Effect::System(SystemCmd::NowPlaying(NowPlaying::default())),
             Effect::System(SystemCmd::PlaybackState(Playback::Paused)),
+            Effect::System(SystemCmd::Volume(model.transport.volume)),
         ]),
     }
 }
@@ -302,6 +307,12 @@ mod tests {
         message: DriverMessage::Congested,
         next: DriverStatus::Stopped,
         outcome: Err(DriverRejection::Stopped),
+    })]
+    #[case::running_reports_a_rejected_input(LifeRow {
+        start: DriverStatus::Running,
+        message: DriverMessage::Rejected { input: "seek" },
+        next: DriverStatus::Running,
+        outcome: Err(DriverRejection::Input("seek")),
     })]
     fn a_driver_lives_through_its_table(#[case] row: LifeRow) {
         let mut status = row.start;

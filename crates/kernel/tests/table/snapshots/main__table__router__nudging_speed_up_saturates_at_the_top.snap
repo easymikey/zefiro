@@ -6,7 +6,9 @@ expression: "walked(model, messages)"
     (
         Playback(
             NudgeSpeed(
-                1,
+                SpeedStep(
+                    1,
+                ),
             ),
         ),
         One(
@@ -48,7 +50,9 @@ expression: "walked(model, messages)"
     (
         Playback(
             NudgeSpeed(
-                1,
+                SpeedStep(
+                    1,
+                ),
             ),
         ),
         One(
@@ -90,7 +94,9 @@ expression: "walked(model, messages)"
     (
         Playback(
             NudgeSpeed(
-                1,
+                SpeedStep(
+                    1,
+                ),
             ),
         ),
         One(
@@ -132,7 +138,9 @@ expression: "walked(model, messages)"
     (
         Playback(
             NudgeSpeed(
-                1,
+                SpeedStep(
+                    1,
+                ),
             ),
         ),
         One(
@@ -174,7 +182,9 @@ expression: "walked(model, messages)"
     (
         Playback(
             NudgeSpeed(
-                1,
+                SpeedStep(
+                    1,
+                ),
             ),
         ),
         One(

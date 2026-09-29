@@ -103,13 +103,6 @@ expression: "walked(model, messages)"
                         ),
                     },
                 ),
-                Audio(
-                    Volume(
-                        Percent(
-                            50,
-                        ),
-                    ),
-                ),
                 Library(
                     AppendHistory {
                         track: Track {

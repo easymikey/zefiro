@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use config::{AppearanceFile, CoverStyle};
+use config::{AppearanceFile, CoverStyle, ProgressStyle};
 use kernel::{
     Moment,
     domain::{DeviceName, Model, Overlay, ThemeChoice},
@@ -9,12 +9,14 @@ use kernel::{
 use raster::color_overrides;
 
 use crate::{
-    card::CardView,
+    card::{CardMetrics, CardView, compact_progress_bar_width},
     geometry::{CellAspect, CoverSizing, cover_sizing},
     key_hints::KeyHintsContent,
     overlay::{layer::OverlayContent, settings::SettingsView},
     playlist::{LibraryLoad, PlaylistPane, PlaylistView},
-    screen::LayoutInputs,
+    primitive::bar::hud_progress_bar_width,
+    redraw::{OnScreen, Presence},
+    screen::{Breakpoint, FrameLayout, LayoutInputs, minimal_progress_bar_width},
     spectrum::Spectrum,
     theme::{ActiveTheme, ColorDepth, Theme},
     toast::ToastCard,
@@ -37,7 +39,6 @@ pub struct Scene<'a> {
     pub pixel_path: PixelPath,
     pub cell_aspect: CellAspect,
     pub clock: Duration,
-    pub now_unix: u64,
     pub now: Moment,
     pub music_dir: &'a str,
     pub sleep_left: Option<Duration>,
@@ -143,7 +144,6 @@ impl<'a> Scene<'a> {
             history: &model.history.view,
             settings_view: self.settings_view(),
             bindings: self.bindings,
-            now_unix: self.now_unix,
         }
     }
 
@@ -167,6 +167,77 @@ impl<'a> Scene<'a> {
             playlist: self.playlist_pane(),
             overlay: self.overlay_content(),
             toast: self.toast_card(),
+        }
+    }
+
+    #[must_use]
+    pub fn on_screen(&self, layout: &FrameLayout) -> OnScreen {
+        OnScreen {
+            progress_bar: self.progress_bar_width(layout),
+            clock: if self.card_shown(layout) {
+                Presence::Shown
+            } else {
+                Presence::Hidden
+            },
+            sleep_label: if layout.playlist.is_some() && self.sleep_left.is_some() {
+                Presence::Shown
+            } else {
+                Presence::Hidden
+            },
+            spectrum: if self.spectrum_shown(layout) {
+                Presence::Shown
+            } else {
+                Presence::Hidden
+            },
+        }
+    }
+
+    fn card_shown(&self, layout: &FrameLayout) -> bool {
+        match layout.breakpoint {
+            Breakpoint::Full => layout.card.is_some(),
+            Breakpoint::Compact | Breakpoint::Minimal => true,
+            Breakpoint::TooSmall => false,
+        }
+    }
+
+    fn spectrum_shown(&self, layout: &FrameLayout) -> bool {
+        let card_spectrum = layout
+            .card
+            .is_some_and(|metrics| !metrics.spectrum_row.is_empty());
+        let milkdrop_spectrum =
+            self.cover_style() == CoverStyle::Milkdrop && layout.cover.is_some();
+        card_spectrum || milkdrop_spectrum
+    }
+
+    fn progress_bar_width(&self, layout: &FrameLayout) -> Option<u16> {
+        match layout.breakpoint {
+            Breakpoint::Full => layout
+                .card
+                .map(|metrics| self.full_progress_bar_width(&metrics)),
+            Breakpoint::Compact => Some(compact_progress_bar_width(layout.header)),
+            Breakpoint::Minimal => Some(minimal_progress_bar_width(
+                self.card_view(),
+                self.appearance.options().speed_chip,
+                layout.screen.width,
+            )),
+            Breakpoint::TooSmall => None,
+        }
+    }
+
+    fn full_progress_bar_width(&self, metrics: &CardMetrics) -> u16 {
+        let row_width = metrics.progress_row.width;
+        match self.appearance.options().progress_remaining {
+            ProgressStyle::Remaining => {
+                let view = self.card_view();
+                let duration = view
+                    .displayed_track
+                    .and_then(|track| track.duration())
+                    .unwrap_or(Duration::ZERO);
+                let remaining =
+                    duration.saturating_sub(view.player.position_at(view.now));
+                hud_progress_bar_width(row_width, remaining)
+            }
+            ProgressStyle::Elapsed => row_width,
         }
     }
 }
@@ -362,7 +433,6 @@ pub(crate) mod fixtures {
                 pixel_path: PixelPath::Halfblocks,
                 cell_aspect: CellAspect::default(),
                 clock: Duration::ZERO,
-                now_unix: 0,
                 now: Moment::default(),
                 music_dir: "/home/user/Music",
                 sleep_left: None,
@@ -373,12 +443,24 @@ pub(crate) mod fixtures {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{path::Path, time::Duration};
 
-    use config::CoverStyle;
+    use config::{CoverStyle, ProgressStyle};
+    use ratatui::layout::{Rect, Size};
     use rstest::rstest;
 
-    use crate::scene::{PixelPath, abbreviate_home, painted_cover_style};
+    use crate::{
+        card::compact_progress_bar_width,
+        primitive::bar::hud_progress_bar_width,
+        redraw::Presence,
+        scene::{
+            PixelPath,
+            abbreviate_home,
+            fixtures::{SceneSources, model_with_tracks},
+            painted_cover_style,
+        },
+        screen::{Breakpoint, FrameLayout},
+    };
 
     #[rstest]
     #[case::vinyl_with_graphics(
@@ -439,5 +521,76 @@ mod tests {
         #[case] expected: &str,
     ) {
         assert_eq!(abbreviate_home(Path::new(path), Path::new(home)), expected);
+    }
+
+    #[rstest]
+    #[case::full_with_chip(
+        Size::new(80, 24),
+        (48, 16),
+        Some(ProgressStyle::Remaining)
+    )]
+    #[case::full_without_chip(
+        Size::new(80, 24),
+        (48, 16),
+        Some(ProgressStyle::Elapsed)
+    )]
+    #[case::compact(Size::new(80, 18), (48, 16), None)]
+    #[case::minimal(Size::new(20, 5), (10, 3), None)]
+    #[case::overlay_only(Size::new(40, 10), (48, 16), None)]
+    fn on_screen_rows(
+        #[case] size: Size,
+        #[case] minimums: (u16, u16),
+        #[case] style: Option<ProgressStyle>,
+    ) {
+        let (min_columns, min_rows) = minimums;
+        let mut sources = SceneSources::new(model_with_tracks(1));
+        sources.appearance.layout.min_columns = min_columns;
+        sources.appearance.layout.min_rows = min_rows;
+        if let Some(style) = style {
+            sources.appearance.progress.remaining = style;
+        }
+        let scene = sources.scene();
+        let layout = FrameLayout::new(
+            &scene.layout_inputs(),
+            Rect::new(0, 0, size.width, size.height),
+        );
+        let on_screen = scene.on_screen(&layout);
+
+        match layout.breakpoint {
+            Breakpoint::Full => {
+                let metrics = layout.card.unwrap();
+                let row_width = metrics.progress_row.width;
+                let expected = match style.unwrap() {
+                    ProgressStyle::Remaining => {
+                        let view = scene.card_view();
+                        let duration = view
+                            .displayed_track
+                            .and_then(|track| track.duration())
+                            .unwrap_or(Duration::ZERO);
+                        let remaining =
+                            duration.saturating_sub(view.player.position_at(view.now));
+                        hud_progress_bar_width(row_width, remaining)
+                    }
+                    ProgressStyle::Elapsed => row_width,
+                };
+                assert_eq!(on_screen.progress_bar, Some(expected));
+                assert_eq!(on_screen.clock, Presence::Shown);
+            }
+            Breakpoint::Compact => {
+                assert_eq!(
+                    on_screen.progress_bar,
+                    Some(compact_progress_bar_width(layout.header))
+                );
+                assert_eq!(on_screen.clock, Presence::Shown);
+            }
+            Breakpoint::Minimal => {
+                assert!(on_screen.progress_bar.is_some());
+                assert_eq!(on_screen.clock, Presence::Shown);
+            }
+            Breakpoint::TooSmall => {
+                assert_eq!(on_screen.progress_bar, None);
+                assert_eq!(on_screen.clock, Presence::Hidden);
+            }
+        }
     }
 }

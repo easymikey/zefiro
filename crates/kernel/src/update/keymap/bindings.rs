@@ -31,14 +31,14 @@ fn template_bindings(base: &[KeyBinding]) -> Vec<DefaultBinding> {
 
 #[must_use]
 pub fn default_bindings() -> Vec<DefaultBinding> {
-    template_bindings(table::defaults())
+    template_bindings(&table::defaults())
 }
 
 fn resolved_bindings(
     config: &KeymapOverrides,
 ) -> (Vec<KeyBinding>, Vec<KeyValidationError>) {
     let base = table::defaults();
-    let defaults = template_bindings(base);
+    let defaults = template_bindings(&base);
     let Resolution {
         errors,
         final_chords,

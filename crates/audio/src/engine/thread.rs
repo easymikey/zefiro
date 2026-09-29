@@ -82,7 +82,7 @@ pub(crate) fn coalesced(batch: Vec<AudioCmd>) -> Vec<AudioCmd> {
                 seen.clear();
                 kept.push(cmd);
             }
-            AudioCmd::Volume(_) | AudioCmd::SetSpeed(_) | AudioCmd::Seek(_) => {
+            AudioCmd::SetSpeed(_) | AudioCmd::Seek(_) => {
                 if seen.insert(discriminant(&cmd)) {
                     kept.push(cmd);
                 }
@@ -128,7 +128,7 @@ mod tests {
         Delivery,
         Outbox,
         Playback,
-        domain::{Bounded, Crossfade, Percent, Replaygain, Revision, Speed},
+        domain::{Bounded, Crossfade, Replaygain, Revision, Speed},
     };
     use rstest::rstest;
 
@@ -279,29 +279,29 @@ mod tests {
 
         let (finished, joined) = crossbeam_channel::bounded(1);
         thread::spawn(move || {
-            let _ = finished.send(handle.join().is_ok());
+            finished.send(handle.join().is_ok()).unwrap();
         });
         assert_eq!(joined.recv_timeout(Duration::from_secs(1)), Ok(true));
         drop(command_sender);
     }
 
     #[rstest]
-    #[case::two_volumes(
+    #[case::two_speeds(
         vec![
-            AudioCmd::Volume(Percent::clamped(10)),
-            AudioCmd::Volume(Percent::clamped(20)),
+            AudioCmd::SetSpeed(Speed::clamped(1.5)),
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
         ],
-        vec![AudioCmd::Volume(Percent::clamped(20))]
+        vec![AudioCmd::SetSpeed(Speed::clamped(2.0))]
     )]
-    #[case::volume_speed_volume(
+    #[case::speed_seek_speed(
         vec![
-            AudioCmd::Volume(Percent::clamped(10)),
+            AudioCmd::SetSpeed(Speed::clamped(1.5)),
+            AudioCmd::Seek(Duration::from_secs(1)),
             AudioCmd::SetSpeed(Speed::clamped(2.0)),
-            AudioCmd::Volume(Percent::clamped(30)),
         ],
         vec![
+            AudioCmd::Seek(Duration::from_secs(1)),
             AudioCmd::SetSpeed(Speed::clamped(2.0)),
-            AudioCmd::Volume(Percent::clamped(30)),
         ]
     )]
     #[case::seeks_across_a_load(
@@ -319,14 +319,14 @@ mod tests {
     )]
     #[case::stop_splits(
         vec![
-            AudioCmd::Volume(Percent::clamped(1)),
+            AudioCmd::SetSpeed(Speed::clamped(1.5)),
             AudioCmd::Stop,
-            AudioCmd::Volume(Percent::clamped(2)),
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
         ],
         vec![
-            AudioCmd::Volume(Percent::clamped(1)),
+            AudioCmd::SetSpeed(Speed::clamped(1.5)),
             AudioCmd::Stop,
-            AudioCmd::Volume(Percent::clamped(2)),
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
         ]
     )]
     #[case::others_untouched(

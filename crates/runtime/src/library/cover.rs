@@ -110,14 +110,14 @@ fn requested(request: CoverRequest) -> (Decoding, DecodeIo) {
 
 pub(crate) const CACHE_CAPACITY: usize = 8;
 
-#[derive(Debug, Clone)]
-enum CachedOutcome {
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum CachedOutcome {
     Art(RgbaImage),
     NoArt,
 }
 
 impl CachedOutcome {
-    fn from_outcome(outcome: &CoverOutcome) -> Option<Self> {
+    pub(crate) fn from_outcome(outcome: &CoverOutcome) -> Option<Self> {
         match outcome {
             CoverOutcome::Art(image) => Some(CachedOutcome::Art(image.clone())),
             CoverOutcome::NoArt => Some(CachedOutcome::NoArt),
@@ -133,14 +133,14 @@ impl CachedOutcome {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct CoverCacheEntry {
     path: PathBuf,
     side: u32,
     outcome: CachedOutcome,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub(crate) struct CoverCache {
     entries: VecDeque<CoverCacheEntry>,
 }
@@ -156,21 +156,28 @@ impl CoverCache {
         Some(outcome.into_outcome())
     }
 
-    pub(crate) fn remember(&mut self, decoded: &CoverDecoded) {
-        let Some(cached) = CachedOutcome::from_outcome(&decoded.outcome) else {
+    pub(crate) fn remember(&mut self, done: &CoverDone) {
+        let Some(cached) = &done.cached else {
             return;
         };
         self.entries
-            .retain(|entry| entry.path != decoded.path || entry.side != decoded.side);
+            .retain(|entry| entry.path != done.path || entry.side != done.side);
         if self.entries.len() == CACHE_CAPACITY {
             self.entries.pop_back();
         }
         self.entries.push_front(CoverCacheEntry {
-            path: decoded.path.clone(),
-            side: decoded.side,
-            outcome: cached,
+            path: done.path.clone(),
+            side: done.side,
+            outcome: cached.clone(),
         });
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct CoverDone {
+    pub(crate) path: PathBuf,
+    pub(crate) side: u32,
+    pub(crate) cached: Option<CachedOutcome>,
 }
 
 pub(crate) fn decode(request: &CoverRequest) -> CoverDecoded {
@@ -230,18 +237,19 @@ pub(crate) fn fit_square(image: DynamicImage, side: u32) -> Option<RgbaImage> {
 mod tests {
     use std::{io::Cursor, path::PathBuf, time::Duration};
 
-    use crossbeam_channel::{Receiver, Sender};
+    use crossbeam_channel::Receiver;
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
-    use kernel::{LibraryCmd, Message, update::Machine};
+    use kernel::{Message, update::Machine};
     use library::LibraryPaths;
     use rstest::rstest;
 
     use crate::{
+        cells::{Cells, cells},
         driver::DriverThread,
+        interpret::LibraryCommand,
         library::{
             cover::{
                 CACHE_CAPACITY,
-                CoverDecoded,
                 CoverOutcome,
                 CoverRequest,
                 DecodeIo,
@@ -370,7 +378,6 @@ mod tests {
     }
 
     const RECV_TIMEOUT: Duration = Duration::from_secs(2);
-    const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
     const DECODABLE: &[&str] = &["mp3"];
 
     fn paths(directory: &tempfile::TempDir) -> LibraryPaths {
@@ -384,18 +391,35 @@ mod tests {
     fn spawned_with_covers(
         directory: &tempfile::TempDir,
     ) -> (
-        DriverThread<LibraryCmd>,
-        Sender<CoverRequest>,
-        Receiver<CoverDecoded>,
+        DriverThread<LibraryCommand>,
+        Cells,
+        Receiver<()>,
         Receiver<Message>,
     ) {
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, covers, decoded) =
-            spawn(paths(directory), DECODABLE, &mailbox).unwrap();
-        (thread, covers, decoded, messages)
+        let (writers, cells, doorbell) = cells();
+        let thread =
+            spawn((paths(directory), DECODABLE), &mailbox, writers.cover).unwrap();
+        (thread, cells, doorbell, messages)
     }
 
-    fn stopped(thread: DriverThread<LibraryCmd>) {
+    fn send_cover(thread: &DriverThread<LibraryCommand>, request: CoverRequest) {
+        thread
+            .commands
+            .send(LibraryCommand::Cover(request))
+            .unwrap();
+    }
+
+    fn recv_cover(
+        cells: &Cells,
+        doorbell: &Receiver<()>,
+    ) -> crate::library::cover::CoverDecoded {
+        doorbell.recv_timeout(RECV_TIMEOUT).unwrap();
+        let decoded = cells.cover.take().unwrap();
+        std::sync::Arc::try_unwrap(decoded).unwrap()
+    }
+
+    fn stopped(thread: DriverThread<LibraryCommand>) {
         drop(thread.commands);
         thread.handle.join().unwrap().unwrap();
     }
@@ -466,84 +490,25 @@ mod tests {
     fn a_repeated_cover_request_answers_from_the_cache_once_the_file_is_gone() {
         let directory = tempfile::tempdir().unwrap();
         let path = flac_with_cover(&directory, "cover.flac", [10, 20, 30, 255]);
-        let (thread, covers, decoded, _messages) = spawned_with_covers(&directory);
+        let (thread, cells, doorbell, _messages) = spawned_with_covers(&directory);
 
-        covers
-            .send(CoverRequest {
+        send_cover(
+            &thread,
+            CoverRequest {
                 path: path.clone(),
                 side: 8,
-            })
-            .unwrap();
-        let first = decoded.recv_timeout(RECV_TIMEOUT).unwrap();
+            },
+        );
+        let first = recv_cover(&cells, &doorbell);
         assert!(matches!(first.outcome, CoverOutcome::Art(_)));
 
         std::fs::remove_file(&path).unwrap();
-        covers.send(CoverRequest { path, side: 8 }).unwrap();
-        let second = decoded.recv_timeout(RECV_TIMEOUT).unwrap();
+        send_cover(&thread, CoverRequest { path, side: 8 });
+        let second = recv_cover(&cells, &doorbell);
         assert!(
             matches!(second.outcome, CoverOutcome::Art(_)),
             "expected a cached Art answer, got {:?}",
             second.outcome
-        );
-
-        stopped(thread);
-    }
-
-    #[test]
-    fn a_prefetch_reuses_the_last_visible_side_and_primes_the_cache() {
-        let directory = tempfile::tempdir().unwrap();
-        let seed = flac_with_cover(&directory, "seed.flac", [1, 2, 3, 255]);
-        let next = flac_with_cover(&directory, "next.flac", [40, 50, 60, 255]);
-        let (thread, covers, decoded, _messages) = spawned_with_covers(&directory);
-
-        covers
-            .send(CoverRequest {
-                path: seed,
-                side: 8,
-            })
-            .unwrap();
-        let seeded = decoded.recv_timeout(RECV_TIMEOUT).unwrap();
-        assert!(matches!(seeded.outcome, CoverOutcome::Art(_)));
-
-        thread
-            .commands
-            .send(LibraryCmd::PrefetchCover(next.clone()))
-            .unwrap();
-        assert!(
-            decoded.recv_timeout(SETTLE_TIMEOUT).is_err(),
-            "a prefetch must never deliver a decoded cover"
-        );
-
-        std::fs::remove_file(&next).unwrap();
-        covers
-            .send(CoverRequest {
-                path: next,
-                side: 8,
-            })
-            .unwrap();
-        let answered = decoded.recv_timeout(RECV_TIMEOUT).unwrap();
-        assert!(
-            matches!(answered.outcome, CoverOutcome::Art(_)),
-            "expected the prefetch to have cached the cover before deletion, got {:?}",
-            answered.outcome
-        );
-
-        stopped(thread);
-    }
-
-    #[test]
-    fn a_prefetch_before_any_visible_side_is_known_sends_no_message() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = flac_with_cover(&directory, "unknown_side.flac", [5, 6, 7, 255]);
-        let (thread, _covers, decoded, _messages) = spawned_with_covers(&directory);
-
-        thread
-            .commands
-            .send(LibraryCmd::PrefetchCover(path))
-            .unwrap();
-        assert!(
-            decoded.recv_timeout(SETTLE_TIMEOUT).is_err(),
-            "a prefetch with no known side must not decode or answer"
         );
 
         stopped(thread);
@@ -558,28 +523,30 @@ mod tests {
                 flac_with_cover(&directory, &format!("cover{index}.flac"), fill)
             })
             .collect();
-        let (thread, covers, decoded, _messages) = spawned_with_covers(&directory);
+        let (thread, cells, doorbell, _messages) = spawned_with_covers(&directory);
 
         for path in &paths {
-            covers
-                .send(CoverRequest {
+            send_cover(
+                &thread,
+                CoverRequest {
                     path: path.clone(),
                     side: 8,
-                })
-                .unwrap();
-            let answer = decoded.recv_timeout(RECV_TIMEOUT).unwrap();
+                },
+            );
+            let answer = recv_cover(&cells, &doorbell);
             assert!(matches!(answer.outcome, CoverOutcome::Art(_)));
         }
 
         let oldest = paths.first().unwrap();
         std::fs::remove_file(oldest).unwrap();
-        covers
-            .send(CoverRequest {
+        send_cover(
+            &thread,
+            CoverRequest {
                 path: oldest.clone(),
                 side: 8,
-            })
-            .unwrap();
-        let evicted_answer = decoded.recv_timeout(RECV_TIMEOUT).unwrap();
+            },
+        );
+        let evicted_answer = recv_cover(&cells, &doorbell);
         assert!(
             matches!(evicted_answer.outcome, CoverOutcome::NoArt),
             "expected the evicted entry to force a fresh decode and find the file gone, \
@@ -595,20 +562,21 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("broken.flac");
         std::fs::write(&path, minimal_flac_with_picture(b"not a real image")).unwrap();
-        let (thread, covers, decoded, _messages) = spawned_with_covers(&directory);
+        let (thread, cells, doorbell, _messages) = spawned_with_covers(&directory);
 
-        covers
-            .send(CoverRequest {
+        send_cover(
+            &thread,
+            CoverRequest {
                 path: path.clone(),
                 side: 8,
-            })
-            .unwrap();
-        let first = decoded.recv_timeout(RECV_TIMEOUT).unwrap();
+            },
+        );
+        let first = recv_cover(&cells, &doorbell);
         assert!(matches!(first.outcome, CoverOutcome::Failed(_)));
 
         std::fs::remove_file(&path).unwrap();
-        covers.send(CoverRequest { path, side: 8 }).unwrap();
-        let second = decoded.recv_timeout(RECV_TIMEOUT).unwrap();
+        send_cover(&thread, CoverRequest { path, side: 8 });
+        let second = recv_cover(&cells, &doorbell);
         assert!(
             matches!(second.outcome, CoverOutcome::NoArt),
             "expected an uncached failure to force a fresh decode and find the file gone, \

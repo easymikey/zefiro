@@ -7,20 +7,20 @@ This document describes how sifr is built as of the crate rebuild of September 2
 sifr is The Elm Architecture (TEA) with drivers:
 
 ```
-Message ──► kernel::update(&mut Model, Message) ──► Result<Cmd, Rejection>
-   ▲                                                   │
-   │                                            runtime::interpret
-   │                                                   │
-drivers (threads) ◄── commands ───────────────────────┤
-   │                                                   ├── timers (Effect::After)
-   └── Message ──► mailbox ──► event loop              └── ShellEffect ──► Shell
-                                                                           │
-                                          Shell::paint: Scene ─► FrameLayout ─► Pixels ─► Screen
+Message ──► kernel::update(&mut Model, Message, Moment) ──► Result<Cmd, Rejection>
+   ▲                                                            │
+   │                                                     runtime::interpret
+   │                                                            │
+drivers (threads) ◄── commands ─────────────────────────────────┤
+   │                                                            ├── timers (Effect::After)
+   └── fact ──► Mailbox ──► event loop                          └── ShellEffect ──► Shell
+                                                                                    │
+                                            Shell::paint: view ─► Scene ─► FrameLayout ─► Screen
 ```
 
 - The kernel is the only place that decides. It is pure: no IO, no clock, no threads.
 - The runtime performs what the kernel decided. Its interpreter is a lookup table.
-- Drivers adapt external sources (audio device, file system, config files, macOS media keys, terminal input, OS signals) into `Message`s. A driver waits for its source; nothing polls.
+- Drivers adapt external sources (audio device, file system, config files, macOS media keys, terminal input, OS signals) into facts. A driver waits for its source; nothing polls.
 - The shell (binary `sifr`) turns terminal input into messages and the model into a frame.
 - Timers exist only in the kernel as `Effect::After { delay, message }`; they come back as `Message::Elapsed`.
 
@@ -30,48 +30,50 @@ Edges only point left. `runtime` never depends on `raster`, `widgets` or `termin
 
 | layer | crate | role | depends on |
 |---|---|---|---|
-| 0 | `kernel` | `Model`, `Message`, `Cmd`/`Effect`, `update`, key routing, domain types | — |
+| 0 | `kernel` | `Model`, `Message`, `Cmd`/`Effect`, `update`, key routing, `Machine`, `Outbox`, supervision, domain types | — |
 | 1 | `config` | file formats: `config.toml`, `sifr-ui.toml` (appearance), themes, keymap; parse and format-preserving patch; settings rows | kernel |
 | 1 | `library` | scan, tags, embedded covers, playlists; `execute(LibraryCmd)` | kernel |
 | 1 | `audio` | playback engine on rodio, spectrum tap; `AudioLoop` | kernel |
-| 1 | `macos` | media keys, Now Playing, system volume and output device (CoreAudio listeners); `SystemLoop` | kernel |
-| 2 | `raster` | pure pixel images: progress bar, meters, vinyl, cover fitting | kernel, config |
-| 2 | `runtime` | event loop, interpreter, timers, trace, driver threads (audio, library + covers + watch, config, macos), boot and drain | kernel, config, library, audio, macos |
+| 1 | `macos` | media keys, Now Playing, system volume and output device (CoreAudio listeners); `SystemLoop`, `MainLoop` | kernel |
+| 2 | `raster` | pure pixel images: meters, vinyl, cover fitting, progress geometry and colours | kernel, config |
+| 2 | `runtime` | event loop, interpreter, timers, trace, cells, registry, driver threads (audio, library + covers + watch, config, macos), boot, drain, `host` | kernel, config, library, audio, macos |
 | 3 | `widgets` | pure terminal view: `Scene`, `FrameLayout`, `Screen`, card, playlist, overlays, toast, animations, milkdrop, spectrum smoothing | kernel, config, raster |
 | 4 | `terminal` | terminal IO: session, `InputLoop`, key conversion, capability probe, window colours, `Pixels` (image protocols) | kernel, config, raster, widgets |
-| 5 | `sifr` | binary: command line, startup, signals, `Shell` implementation | all but raster, macos |
+| 5 | `sifr` | binary: command line, startup, signals, the `Shell` implementation (`view`, `Motion`, `Painter`, frame clock) | all but macos |
 
 ## Threads
 
 | thread | waits on | sends |
 |---|---|---|
-| main (event loop) | `select` over input, mailbox, reloads, decoded covers; deadline = earliest of kernel timers, animation frame, immediate repaint, macOS run loop pump (N5 removes the pump) | commands to drivers; `ShellEffect`s and paints to the shell |
-| audio | its command inbox (idle); `Engine::TICK` while busy (N4 removes it) | `Message::Audio(..)` |
-| library | command inbox, `notify` events, cover requests, debounce deadline | scan results, covers, watch failures |
-| config | command inbox, `notify` events on the config directory, save deadline | `Reload::Theme/Appearance`, kernel messages (keymap, custom rows, failures) |
-| macos | command inbox, CoreAudio property listeners | `Message::SystemVolume`, output route changes, media keys |
+| main (macOS only) | the AppKit run loop (`macos::MainLoop`), which `runtime::host` runs while the event loop lives on a thread of its own | media key facts through the mailbox |
+| event loop (`sifr-event-loop`) | one `select` over input, mailbox and the cell doorbell; deadline = earliest of kernel timers, frame clock, pending repaint | commands to drivers; `ShellEffect`s and paints to the shell |
+| audio | its command inbox | `AudioEvent` facts |
+| library | command inbox, `notify` events, decoded covers, debounce deadline | scan results, `LibraryFact`s, watch failures; decoded covers go to the cover cell |
+| cover (`sifr-cover`) | a doorbell for its one pending request | decoded covers |
+| config | command inbox, `notify` events on the config directory, save deadline | theme and appearance cells, `ConfigFact`s (keymap, custom rows, failures) |
+| macos | command inbox, CoreAudio property listeners | `SystemEvent::Volume`, output route changes, media keys, watch failures |
 | terminal input | crossterm `read` | `ShellInput::Terminal(Event)` |
 | signals | signal-hook `Signals::forever()` | `ShellInput::Terminate` |
 
-Every driver runs inside `spawn_driver`: a named thread under `catch_unwind`; on exit it reports `Message::Driver(driver, Stopped | Died(Panicked))`. `model.drivers` holds each driver's `DriverStatus`; the interpreter sends a command only to a `Running` driver (`gated`), otherwise it records `TraceEntry::Dropped`.
+Off macOS `host` runs the body inline. Every driver runs inside `spawn_driver`: a named thread under `catch_unwind`; on exit it reports `Message::Driver(driver, Stopped | Died(..))`. `model.drivers` holds each driver's `DriverStatus`; a `Port` sends a command only to a `Running` driver, otherwise the interpreter records `TraceEntry::Dropped`.
 
-Hardware drivers are injected: `Runtime::boot(startup, paths, Hardware::system(&startup))` in the binary, `Hardware::new(stub_audio, spectrum, stub_system)` in tests, so boot and stop are tested without a sound device.
+Hardware drivers are injected: the binary passes the real `Launchers` to `Runtime::boot(startup, &paths, &launchers)`, tests pass stubs (recording or panicking audio), so boot and stop are tested without a sound device.
 
 ## Contracts
 
 Kernel (`crates/kernel/src/update/mod.rs`):
 
 ```rust
-pub fn update(model: &mut Model, message: Message) -> Result<Cmd, Rejection>;
+pub fn update(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Rejection>;
 ```
 
-Every sub-machine follows `Machine::transition(self, message) -> Result<(Self, Effect), Rejected<Self>>`. A message the current state does not accept is a `Rejection`, not a silent no-op.
+Every sub-machine implements `Machine::transition(self, message) -> Result<(Self, Effect), Rejected<Self>>` (`crates/kernel/src/update/machine.rs`); the provided `update(&mut self, message) -> Result<Effect, Rejection>` writes the state back on both branches. A message the current state does not accept is a `Rejection`, not a silent no-op. Driver-side machines (`ConfigDriver`, `LibraryDriver`, the audio engine, the macOS volume echo) use the same trait.
 
-Driver (`crates/runtime/src/driver.rs`):
+Driver (`crates/runtime/src/driver.rs`, crate-private):
 
 ```rust
-pub trait DriverLoop<C>: Send + 'static {
-    fn run(self, inbox: &Receiver<C>, mailbox: &Sender<Message>);
+pub(crate) trait DriverLoop<C, F>: Send + 'static {
+    fn run(self, inbox: &Receiver<C>, outbox: &Mailbox<F>);
 }
 ```
 
@@ -79,42 +81,42 @@ Shell (`crates/runtime/src/shell.rs`), implemented only by the binary:
 
 | method | called when |
 |---|---|
-| `input(event, &Model) -> Option<Message>` | an input arrives (keys go through `kernel::route`; `Terminate` becomes the quit message) |
-| `reloaded(Reload)` | a theme or appearance file changed on disk (not by our own write) |
-| `effect(ShellEffect)` | the kernel asked for window colours, an animation cue, or an in-app appearance change |
-| `cover(CoverDecoded)` | the library decoded the cover the shell asked for |
-| `frame_due() -> FrameDue` | the loop computes its deadline: `At(instant)` only while an animation runs |
-| `paint(View) -> Painted` | after a step whose `Change` was `Applied`, a reload or a cover |
+| `input(Self::Input) -> Reaction` | an input arrives: `Reaction::Message(Message)`, `Repaint` or `Ignored` |
+| `effect(ShellEffect)` | the kernel asked for window colours or an animation cue |
+| `frame_due(&View) -> FrameDue` | the loop computes its deadline: `At(moment)` only while something moves, else `Settled` |
+| `paint(View) -> Painted` | the loop decided to paint; `Painted` carries the cover the frame wants, the visible row count and paint failures as messages |
+
+`View` gives the shell the model, the spectrum tap, the `Cells`, the sleep deadline and `now`.
 
 ## Flows
 
-**Key press.** crossterm event → input thread → `ShellInput::Terminal` → `Shell::input` → `terminal::from_event` → `kernel::route(key, bindings)` → `Message` → `update` → `Cmd` → interpreter → driver commands / timers / shell effects → paint.
+**Key press.** crossterm event → input thread → `ShellInput::Terminal` → `Shell::input` → `Reaction::Message(Message::Key(KeyPress))` → `Runtime::step` → `kernel::update` routes the key through `kernel::route` and the bindings → `Cmd` → interpreter → driver commands / timers / shell effects → paint.
 
-**Playback.** `update` returns `AudioCmd::Play` → audio inbox → engine opens the file → `AudioEvent`s back through the mailbox (`Started`, `Position`, `Ended`, `Rejected`) → `update`.
+**Playback.** `update` returns `AudioCmd::Load` → audio inbox → engine opens the file → `AudioEvent`s back through `Mailbox<AudioEvent>` → `update`. A command the engine refuses comes back as `DriverMessage::Rejected { input }`.
 
-**In-app setting.** nudge key → `update` → `Effect::Setting(patch)` → interpreter sends the patch to the config driver (coalesced format-preserving save) and `ShellEffect::Appearance(patch)` to the shell in the same step → shell holds `appearance.patched(&patch)` → next frame. The config driver marks its own write as seen, so it never comes back as a reload.
+**Volume.** `update` returns `SystemCmd::Volume` → macos inbox → CoreAudio write; the volume echo swallows the listener event of our own write. A change made outside sifr arrives as `SystemEvent::Volume`. If the hardware watch cannot start, `SystemEvent::HardwareWatchFailed` becomes a toast.
 
-**Hand edit of `sifr-ui.toml`.** `notify` event → config driver parses → `Reload::Appearance(file)` to the shell and `LoadedRequest::CustomRowsReloaded(config::custom_rows(&file))` to the kernel, so the settings rows show the file's values.
+**In-app setting.** nudge key → `update` → `Effect::Setting { id, option }` → `ConfigCommand::Setting` → the config machine patches its appearance, queues the save in `SaveQueue` (coalesced, format-preserving) and outputs `Published::Appearance` → appearance cell and doorbell → the next paint installs it. The machine marks its own write as seen, so it never comes back as a reload.
 
-**Cover.** `Shell::paint` returns which cover it wants in `Painted` → runtime asks the library thread (`CoverRequest`) → decode + fit → `CoverDecoded` → `Shell::cover` maps it to `terminal::DecodedCover` → `Pixels` encodes it once per (path, rect) → placed after `Screen` in the same `terminal.draw`.
+**Hand edit of `sifr-ui.toml`.** `notify` event → config machine polls the files → `Published::Appearance(file)` into the cell and `ConfigFact::CustomRowsReloaded(rows)` to the kernel, so the settings rows show the file's values. A theme file works the same way with `Published::Theme` and `ConfigFact::ThemeReloaded`.
 
-**Timer.** `Effect::After { delay, message }` → `Timers` slot (one per kind: toast, sleep; a new one replaces the old) → the loop's deadline is the earliest slot → on wake every due timer, sorted by deadline, becomes `Message::Elapsed` → `update`; a timer whose `Revision` is stale is rejected by the kernel and causes no repaint.
+**Cover.** `Shell::paint` returns the cover it wants in `Painted` → `Runtime::request_cover` (once per distinct request) → library port → library machine: a cached decode is published at once, otherwise the cover worker decodes and fits it → `Latest<CoverDecoded>` into the cover cell and the doorbell → the next paint takes it from `Cells` → `Pixels` encodes it once per (path, rect) → placed after `Screen` in the same `terminal.draw`. The cover cache is state of the library machine.
 
-**One frame.** `Scene { model, theme, appearance, bindings, spectrum, pixel_path, cell_aspect, clock, now_unix, music_dir, sleep_left }` → `FrameLayout::new(&scene, area)` computes every rect once → `Pixels::refresh` returns the cover art → one `terminal.draw`: `Screen` paints text cells, then `Pixels::place` puts image protocols last, skipping rects covered by overlays or toasts.
+**Timer.** `Effect::After { delay, message }` → `Timers` slot (one per `Timer` kind: toast, sleep, mark, and a restart slot per driver; a new one replaces the old) → the loop's deadline is the earliest slot → on wake every due timer, sorted by deadline, becomes `Message::Elapsed` → `update`; a timer whose `Revision` is stale is rejected by the kernel and causes no repaint.
 
-**Stop.** `q`, a signal or a worker panic → kernel quit → `Flow::Stop` → `drain`: flush pending saves, stop drivers, join those that reported.
+**One frame.** `view(&View, &Presentation, &Motion)` builds `Scene { model, theme, color_depth, appearance, bindings, spectrum, pixel_path, cell_aspect, clock, now, music_dir, sleep_left }` → `FrameLayout::new` computes every rect once → `Pixels::refresh` returns the cover art → `Painter::paint`: one `terminal.draw`, `Screen` paints text cells, then `Pixels::place` puts image protocols last, skipping rects covered by overlays or toasts.
 
-## Events (target design)
+**Stop.** `q`, a signal or a worker panic → kernel quit → `Flow::Stop` → `drain`: drop the ports, stop drivers (the config machine flushes pending saves on `Stopping`), join those that reported.
 
-Decided on 2026-09-24 (`docs/superpowers/plans/2026-09-24-event-model-design.md`, §8 and §9); not implemented yet. Where the sections above describe today's code, this section is the target, and the tasks in §6 of that note get there.
+## Events
 
-sifr routes events like an operating system. The kernel receives only decisions and domain facts, so it is never flooded; motion belongs to the shell, the way a compositor owns vsync.
+sifr routes events like an operating system. The kernel receives only decisions and domain facts, so it is never flooded; motion belongs to the shell, the way a compositor owns vsync. The design note is `docs/superpowers/plans/2026-09-24-event-model-design.md`.
 
 ### Three event classes
 
 | class | what | path | reaches the kernel |
 |---|---|---|---|
-| **fact** | a decision or a domain fact: key press, media key, track finished or changed, loaded, device or output route changed, system volume changed, failure, scan result, driver died or congested | driver → its typed `Outbox` → bounded mailbox → `update(model, message, now)` | yes, as `Message` |
+| **fact** | a decision or a domain fact: key press, media key, track finished or changed, loaded, device or output route changed, system volume changed, failure, scan result, driver died or congested | driver → `Mailbox<F>` (`Outbox<F>`) → bounded mailbox → `update(model, message, now)` | yes, as `Message` |
 | **driver internal** | how a driver does its work: buffer refills, decode and preload progress, retries, debounce, save coalescing, raw cpal, CoreAudio, AppKit and notify callbacks | stays in the driver thread; only the resulting fact leaves | no |
 | **stream** | a value that only matters when painted: spectrum samples, levels, the decoded cover, the reloaded theme and appearance | latest-value cell, overwritten, read by the shell at paint | no |
 
@@ -125,9 +127,9 @@ A value is a stream when losing an intermediate value is harmless and only the l
 | Linux | sifr |
 |---|---|
 | interrupt top half | an OS callback (cpal error, CoreAudio listener, `MPRemoteCommand`, rodio source `next`) sets a flag or does one `try_send` into a bounded(1) doorbell; it never allocates, locks, blocks or decides |
-| bottom half / workqueue | the driver thread: drains the doorbell, reads the flags, runs its pure `step`, sends zero or more facts |
+| bottom half / workqueue | the driver thread: drains the doorbell, reads the flags, runs its machine's `transition`, sends zero or more facts |
 | syscall | a `Message` into `update` |
-| epoll | the one runtime `select` over input, mailbox and doorbells, with one deadline |
+| epoll | the one runtime `select` over input, mailbox and the cell doorbell, with one deadline |
 | timerfd | kernel `Effect::After` → `Message::Elapsed`, only for decisions |
 | shared memory | lock-free cells: `triple_buffer`, atomics, `arc-swap` |
 | vsync / compositor | the shell's frame clock: frames only while something moves |
@@ -138,87 +140,83 @@ A value is a stream when losing an intermediate value is harmless and only the l
 
 ### Registry
 
-The driver set is static: audio, library, config, macOS. `runtime::registry` holds one hand-written `const` row per driver and a hand-written typed `Ports` struct (no macro); both are exhaustive over `Driver`, so a new driver fails to compile until its row is filled. A row states the thread and placement (`Worker | MainThread`), the command inbox capacity, the fact type the driver may send, the cells it writes, its supervision strategy and its congestion flag. `Wiring`, `spawn_driver`, `drain` and `Port::send` (gate, overflow, trace) read the row; nothing else knows a driver.
+The driver set is static: audio, macOS, library, config. `runtime::registry` holds `REGISTRY`, one hand-written `const DriverRow` per driver, and `row(driver)`, which matches exhaustively over `Driver`, so a new driver fails to compile until its row is filled. A `DriverRow` states the thread name, the placement (`Worker | WorkerWithMainLoop`), the platform (`Every | Macos`), the command inbox capacity and the supervision strategy. The typed `Ports` struct in `runtime::port` (one `Port<C>` per driver, each with its congestion flag) is hand-written too, no macro. `Wiring`, `spawn_driver`, `drain` and `Port::send` (gate, overflow, trace) read the row; nothing else knows a driver.
 
 ### Cells
 
 A cell holds one latest value; a writer overwrites, the shell reads at paint, nothing queues. Cells are lock-free, because the audio thread must never wait on a lock held by the shell:
 
-- `triple_buffer` (single producer, single consumer, wait-free, no allocation) for spectrum samples and levels;
-- `std::sync::atomic` for scalars (published gain, flags, congestion flags);
-- `arc-swap` for the theme, the appearance and the decoded cover.
+- `triple_buffer` (single producer, single consumer, wait-free, no allocation) for spectrum samples (`SpectrumTap`);
+- `std::sync::atomic` for scalars (congestion flags, the library overflow flag);
+- `arc-swap` for the theme, the appearance and the decoded cover: `runtime::cells()` returns `Writers` (one `Latest<T>` per value, `publish` overwrites and rings), `Cells` (one `Reading<T>` per value, `take` swaps the value out) and one bounded(1) doorbell receiver that the loop selects on. `Writers` and `cells()` are public so tests and other shells can build their own.
 
-A cell whose change must be painted rings a bounded(1) doorbell once per new value. The displayed playhead is not a cell: the kernel holds the anchor `Playhead { offset, since, speed }`, and the shell computes `position_at(now)` at paint. The audio driver re-anchors only on actions (start, pause, seek, speed, track change, device reopen) and after a stall it detects.
+The displayed playhead is not a cell: the kernel holds the anchor `Playhead { offset, since, speed }`, and the shell computes `position_at(now)` at paint. The audio engine reports a new anchor (`AudioEvent::Playhead`) only after an action: start, play, pause, seek, speed, promote (track change). There is no stall detection; a stalled output keeps the last anchor until the next action.
 
 ### Time and frames
 
-The kernel reads no clock: `update(model, message, now)`. Kernel timers (`Effect::After`) exist only for decisions: `Timer::Mark` (the preload-due point or the A-B end, armed by `next_decision`, none when no decision lies ahead), the sleep timer, toast expiry and a supervision backoff. A timer never exists for display. `Timers` is a keyed map over `Timer`.
+The kernel takes the time as an argument: `update(model, message, now)`. Kernel timers (`Effect::After`) exist only for decisions: `Timer::Mark` (the preload-due point or the A-B end, none when no decision lies ahead), `Timer::Sleep`, `Timer::Toast` and `Timer::Restart(driver)` for a supervision backoff. A timer never exists for display.
 
-The shell is the compositor. `frame_due(view)` is the earliest moment something on screen moves, each source a pure function of (layout, anchor, now) that never slides:
+The shell is the compositor. `Shell::frame_due(view)` is the earliest moment something on screen moves; the sources live in `sifr/src/shell/frame_clock.rs` and read `Motion::on_screen`, each a pure function of the layout, the anchor and `now` that never slides:
 
 | source | next frame | while |
 |---|---|---|
 | animation stage, cover crossfade | last paint + 33 ms | the effect runs, plus one closing frame |
-| spectrum, milkdrop, spinning vinyl | last paint + 33 ms | `Playing` and the widget is on screen; after a pause, until every band decays to zero |
-| progress bar | the moment the bar visibly changes (a pixel of the pixel bar, a cell of the text bar) | `Playing` |
-| clock digits | the next whole second of `position_at`, divided by the speed | `Playing` and a clock is shown |
-| sleep countdown | the next whole minute (minutes only) | a sleep timer runs and is shown |
+| `spectrum_frame_due`: spectrum row, milkdrop | last paint + 33 ms | `Playing` and the widget is on screen; after a pause, until every band decays to zero |
+| `progress_frame_due` | the moment the bar visibly changes: half a cell of the text bar (two steps per cell) | `Playing` |
+| `clock_frame_due` | the next whole second of `position_at`, divided by the speed | `Playing` and a clock is shown |
+| `sleep_frame_due` | the next whole minute (minutes only) | a sleep timer runs and is shown |
 
-When nothing moves, `frame_due` is `Settled` and the loop blocks with no deadline.
+The vinyl does not spin. When nothing moves, `frame_due` is `Settled` and the loop blocks with no deadline.
 
 ### Loop and priorities
 
-One `select` over input, the mailbox and the cell doorbells, with one deadline: the earliest of the kernel timers and the frame clock. After any wake the loop drains input first, then the mailbox; every ready item forms one batch, and a batch paints once. A key-triggered batch paints at once; only self-moving things follow the 33 ms grid. `frame_due` is computed once per iteration with the same `now`. Timers fire after the batch.
+One `select` over input, the mailbox and the cell doorbell, with one deadline: the earliest of the kernel timers, the frame clock and the pending repaint. After any wake the loop gathers input first, then the mailbox, then the doorbell; every ready item forms one batch, and a batch paints once. Timers fire after the batch, then congestion is settled and shell effects are handed over.
+
+The pending repaint is `Repaint { Settled, Now, Frame }` (`runtime/src/repaint.rs`). An input or a `Reaction::Repaint` raises it to `Now`, a fact or a doorbell to `Frame`, which waits for the 33 ms grid (`FRAME`) since the last paint; `Settled` paints only when the shell's own `frame_due` has passed. A key-triggered batch therefore paints at once and only self-moving things follow the grid. `frame_due` is computed once per iteration with the same `now`.
 
 ### Backpressure
 
-Every channel is bounded: mailbox 256, each command inbox 64 per row, input 256, notify and decode workers 64, doorbells 1.
+Every channel that carries traffic is bounded: mailbox 256, each command inbox 64 per row, input 256, library `notify` events 64, the cover worker one pending request behind a doorbell of 1, cell doorbell 1. The config `notify` callback feeds an unbounded channel.
 
-- The loop never blocks on a driver. Each driver drains every ready command and coalesces idempotent ones (volume, speed, seek) to the last; the runtime only `try_send`s, and `Full` records `TraceEntry::Dropped { reason: Full }` and raises the row's congestion flag.
-- A driver that finds the mailbox full raises its row's congestion flag, then blocks, so only the culprit slows down.
-- After every batch the runtime swaps each flag: a raised flag with no open episode steps one `DriverMessage::Congested`; a clear flag ends the episode. The kernel shows one toast per episode naming the driver, and a trace entry.
+- The loop never blocks on a driver: a `Port` only `try_send`s, and `Full` records `TraceEntry::Dropped { reason: Full }` and raises the port's congestion flag. A full library `notify` channel raises an overflow flag that becomes one rescan.
+- A driver that finds the mailbox full raises its congestion flag, then blocks in `send` (`Delivery::Congested`), so only the culprit slows down.
+- After every batch the runtime swaps each flag: a raised flag with no open episode steps one `DriverMessage::Congested`; a clear flag with a drained mailbox ends the episode. The kernel shows one toast per episode naming the driver.
 - No cycle can deadlock: the loop only `try_send`s to drivers, drivers only `send` to the loop.
 
 ### Supervision
 
-`Died` is a fact; the kernel decides with a pure `supervise(strategy, history, now)`, and the runtime performs the decision from the registry row (respawn, resend the boot commands). Each row picks one strategy, so switching is a one-line change:
+`Died` is a fact; the kernel decides with a pure `supervise(strategy, history, now) -> Decision` (`Restart`, `RestartAfter`, `Degrade`, `Quit`), and the runtime performs the decision (`Effect::Restart`, relaunch and resend the boot commands). Each registry row picks one `Supervision`, so switching is a one-line change:
 
 - `Restart { attempts, within, then }` (systemd `StartLimitBurst`/`IntervalSec`, Erlang intensity/period);
 - `Backoff { attempts, first, longest, then }`, restarts delayed through `Effect::After`;
 - `Degrade(Notice)`: keep running without the driver; `Notice` is `Toast` or `Silent`;
 - `Fatal`: quit with an error.
 
-`then: Fallback` is `Degrade(Notice)` or `Fatal`, applied once the attempts run out. Defaults: audio `Restart { 3, 60 s, then: Degrade(Toast) }`, library `Restart { 1, 60 s, then: Degrade(Toast) }`, config `Degrade(Toast)`, macOS `Degrade(Silent)`.
+`then: Fallback` is `Degrade(Notice)` or `Fatal`, applied once the attempts run out. Defaults (`Supervision::standard`): audio `Restart { 3, 60 s, then: Degrade(Toast) }`, library `Restart { 1, 60 s, then: Degrade(Toast) }`, config `Degrade(Toast)`, macOS `Degrade(Silent)`.
 
 ### Dependency inversion, FP style
 
 1. The abstraction is a data type, not a trait. The kernel owns the contracts: facts in (`Message`, one fact enum per driver: `AudioEvent`, `LibraryFact`, `ConfigFact`, `SystemEvent`) and commands out (`Cmd`/`Effect`). `update` describes what should happen; the interpreter decides how (Elm `Cmd`, free monad). The kernel is tested with no mocks.
-2. A driver is a state machine too: a pure `step(state, input) -> (state, facts)` tested as a table, and a thin IO loop (select, step, send) with no logic.
-3. A capability is a value: a driver receives `Outbox<ItsFact>` and can send only its own facts; the shell receives only its cells. Media keys arrive as `SystemEvent::MediaKey(gesture)`; the kernel maps the gesture.
-4. Traits exist only at the hardware edge: one narrow trait per kind of IO (`AudioBackend`, `SystemControls` …), methods take and return data, static dispatch through generics (`Hardware<A, M>`), never `dyn`. Fakes plug in over the same real channels.
-5. The view is a function: `view(&Model, &Cells) -> Frame` is pure; `paint(frame)` is the shell's only side effect.
+2. A driver is a state machine too: a pure `transition(self, input) -> Result<(Self, Effect), Rejected<Self>>` through the kernel `Machine` trait, tested as a table, and a thin IO loop (select, transition, perform the outputs) with no logic.
+3. A capability is a value: a driver receives its `Mailbox<ItsFact>` and can send only its own facts. `kernel::Outbox<F>` is the one narrow trait behind it (`send(fact) -> Delivery`); `Mailbox<F>` implements it, and `AudioLoop::run` is generic over it. The shell receives only its cells. Media keys arrive as `SystemEvent::MediaKey(gesture)`; the kernel maps the gesture.
+4. Traits exist only at the hardware edge and the outbox: one narrow trait per kind of IO, methods take and return data, static dispatch through generics, never `dyn`. Fakes plug in over the same real channels.
+5. The view is a function: `view(&View, &Presentation, &Motion) -> Frame` is pure; `Motion::advanced` moves the animation state between frames and `Painter::paint` is the shell's only side effect.
 6. One composition root: `main` → `Runtime::boot` → the registry picks the concrete types. Below it nothing knows it runs on real CoreAudio.
 
 ### Stop
 
-The loop stops reading input; the kernel's quit `Cmd` has already stopped audio and cleared Now Playing. `drain` walks the registry in order — audio (silence first), macOS, library, config (flushes pending saves) — waits for `Stopped | Died` up to two seconds in total, joins those that reported, and on macOS ends the main run loop.
+The loop stops reading input; the kernel's quit `Cmd` has already stopped audio and reset the window colours. `drain` drops the ports, waits for `Stopped | Died` from the drivers up to two seconds in total, joins those that reported (the config driver flushes pending saves when its inbox closes), and on macOS `host` then stops the main run loop.
 
 ## Suspected leaks (for the reviews)
 
-Each row is a question, not a verdict. Rows marked *Resolved* or *Narrowed* are answered by the Events section once its tasks land.
+Each row is a question, not a verdict.
 
-1. **Drivers speak kernel.** `audio`, `library`, `macos` build `kernel::Message` directly and `library::execute` matches `LibraryCmd`. Adapters are therefore not reusable outside sifr and the kernel's message shape leaks into four crates. Alternative: each driver has its own event type and runtime maps it. *Narrowed by Events (FP rule 3): each driver sends only its own fact enum through a typed `Outbox`; the enums stay in the kernel by decision (Q13).*
-2. **`audio` re-exports `kernel::AudioEvent`** and **`macos` re-exports `objc2::MainThreadMarker`** and `pump_main_run_loop`: a foreign type in a public surface. *Half resolved by Events: N5 M1 deletes `pump_main_run_loop` and the `MainThreadMarker` re-export; the `AudioEvent` re-export stays open.*
-3. **Kernel surface is doubled.** `pub mod cmd, domain, message, search, update` plus `pub use` of the same items: two paths to every type, and the whole `domain` is public, including internals of sub-machines.
-4. **Config surface is doubled** the same way (`pub mod` + `pub use`), and exposes two free `patched`/`appearance_patched` functions next to `AppearanceFile::patched`.
-5. **`raster` depends on `config`**: pure pixel code knows file formats (theme colours). Possibly only a colour type is needed.
-6. **`widgets::Scene` borrows the whole `&Model`.** It is the root view, so Demeter allows it, but every widget read-model method sits on `Scene`; check that no component below the root reaches into `Model`.
-7. **Name clash `widgets::Pixels` (geometry unit) vs `terminal::Pixels` (image layer).** Also `terminal::CoverArtOwner` exists only to own what `widgets::CoverArt` borrows.
-8. **`terminal::UnknownThemeError`** in window colours: the terminal layer knows theme names.
-9. **Binary reaches past runtime**: `sifr` depends on `audio` and `library` directly (engine config, playlist load at startup). Check whether runtime should own these.
-10. **`CoverRequest.side: u32`** is a bare pixel count in runtime's public API; the pixel unit type lives in widgets, which runtime cannot see.
-11. **Main-thread pump** (`Runtime::pump`, `PUMP_CAP` 100 ms) and **audio `Engine::TICK`** are the last periodic wake-ups (tasks N5, N4). *Resolved by Events: N4 and N5 remove both; the frame clock moves the display.*
-12. **macOS volume read spawns a child process** although CoreAudio listeners are now in place; `rebind()` re-subscribes on every volume event. *Resolved by Events (task M2): CoreAudio volume properties, a bounded(1) doorbell, `rebind` only on a default-device change.*
-13. **Timers are fixed slots** (toast, sleep). A third kind needs a new field; a keyed map would not. *Resolved by Events: `Timer::Mark` and the supervision backoff make four kinds, so `Timers` becomes a keyed map (task R2).*
-14. **Settings rows**: `CustomSetting.position` means the current value's index, not the row's index; the name invites the wrong reading.
-15. **Trace**: `TraceEntry` mixes dropped commands, rejected settings and platform facts (`ControlsUnattached`); check it is one concept.
+1. **`macos` builds `kernel::Message`.** `Controls::attach` and `MainLoop::attach` take a `Sender<Message>` and wrap `SystemEvent::MediaKey` themselves, and `library::execute` matches the kernel's `LibraryCmd`. `audio`, `library` and `config` already send only their own fact enum through an `Outbox`; the enums stay in the kernel by decision (Q13). Should `macos` take an `Outbox<SystemEvent>` too?
+2. **Kernel surface is doubled.** `pub mod cmd, domain, message, outbox, search, update` plus `pub use` of the same items: two paths to every type, and the whole `domain` is public, including internals of sub-machines.
+3. **Config exports free `patched` and `appearance_patched`** next to `AppearanceFile::patched`.
+4. **`raster` depends on `config`**: pure pixel code knows file formats (theme colours). Possibly only a colour type is needed.
+5. **Name clash `widgets::Pixels` (geometry unit) vs `terminal::Pixels` (image layer).** Also `terminal::CoverArtOwner` exists only to own what `widgets::CoverArt` borrows.
+6. **`terminal::UnknownThemeError`** in window colours: the terminal layer knows theme names.
+7. **Binary reaches past runtime**: `sifr` depends on `audio` and `library` directly (engine config, playlist load at startup). Check whether runtime should own these.
+8. **`CoverRequest.side: u32`** is a bare pixel count in runtime's public API; the pixel unit type lives in widgets, which runtime cannot see.
+9. **Trace**: `TraceEntry` mixes rejected messages, dropped commands, join and restart failures and platform facts (`ControlsUnattached`); check it is one concept.

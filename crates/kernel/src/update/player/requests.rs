@@ -15,7 +15,7 @@ impl Player {
         match self {
             Player::Stopped => current.map_or_else(
                 || Player::Stopped.refuse(),
-                |track| Ok(start(track, resume.volume, StartOrigin::User)),
+                |track| Ok(start(track, StartOrigin::User)),
             ),
             loading @ Player::Loading { .. } => loading.refuse(),
             Player::Playing { track, head, .. } => Ok((

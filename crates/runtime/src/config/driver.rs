@@ -1,45 +1,48 @@
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use config::{AppearanceFile, ThemeFile};
+use crossbeam_channel::Sender;
 use kernel::{ConfigFact, Message, domain::Driver};
 
 use crate::{
-    config::{ConfigPaths, ConfigTiming, session::ConfigLoop},
+    cells::Latest,
+    config::{
+        ConfigPaths,
+        ConfigTiming,
+        session::{ConfigLoop, Watching},
+    },
     driver::{DriverThread, spawn_driver},
     error::RuntimeError,
     interpret::ConfigCommand,
     mailbox::Mailbox,
     registry,
-    shell::Reload,
 };
 
 pub(crate) fn spawn(
-    paths: ConfigPaths,
-    timing: ConfigTiming,
+    config: (ConfigPaths, ConfigTiming),
     mailbox: &Sender<Message>,
-) -> Result<(DriverThread<ConfigCommand>, Receiver<Reload>), RuntimeError> {
-    let (reloads, reloaded) = unbounded();
+    writers: (Latest<ThemeFile>, Latest<AppearanceFile>),
+) -> Result<DriverThread<ConfigCommand>, RuntimeError> {
+    let (paths, timing) = config;
+    let (theme, appearance) = writers;
     let thread = spawn_driver(
         registry::row(Driver::Config),
         move |inbox, mailbox| {
             let outbound = Outbound {
                 mailbox,
-                reloads: &reloads,
+                theme: &theme,
+                appearance: &appearance,
             };
-            ConfigLoop::new(&paths, timing, &outbound).run(inbox);
+            let watching = Watching::recommended(mailbox);
+            ConfigLoop::new((&paths, timing), &outbound, watching).run(inbox);
         },
         mailbox,
     )?;
-    Ok((thread, reloaded))
+    Ok(thread)
 }
 
 pub(crate) struct Outbound<'a> {
     pub(crate) mailbox: &'a Mailbox<ConfigFact>,
-    pub(crate) reloads: &'a Sender<Reload>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum KeysSighting {
-    First,
-    Repeat,
+    pub(crate) theme: &'a Latest<ThemeFile>,
+    pub(crate) appearance: &'a Latest<AppearanceFile>,
 }
 
 #[cfg(test)]
@@ -58,13 +61,29 @@ mod tests {
     };
 
     use crate::{
-        config::{ConfigPaths, ConfigTiming, driver::spawn},
+        cells::{Cells, cells},
+        config::{ConfigPaths, ConfigTiming, driver::spawn as spawn_config},
+        driver::DriverThread,
+        error::RuntimeError,
         interpret::ConfigCommand,
-        shell::Reload,
     };
 
     const RECV_TIMEOUT: Duration = Duration::from_secs(2);
     const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
+
+    fn spawn(
+        paths: ConfigPaths,
+        timing: ConfigTiming,
+        mailbox: &crossbeam_channel::Sender<Message>,
+    ) -> Result<(DriverThread<ConfigCommand>, Cells, Receiver<()>), RuntimeError> {
+        let (writers, cells, doorbell) = cells();
+        let thread = spawn_config(
+            (paths, timing),
+            mailbox,
+            (writers.theme, writers.appearance),
+        )?;
+        Ok((thread, cells, doorbell))
+    }
 
     fn paths(directory: &tempfile::TempDir) -> ConfigPaths {
         ConfigPaths {
@@ -72,6 +91,7 @@ mod tests {
             appearance: directory.path().join("sifr-ui.toml"),
             themes: directory.path().join("themes"),
             theme: Some("noir".to_string()),
+            seen: crate::config::SeenTexts::default(),
         }
     }
 
@@ -93,27 +113,28 @@ mod tests {
     fn a_hand_edit_of_the_theme_reaches_the_shell_parsed() {
         let directory = tempfile::tempdir().unwrap();
         let (mailbox, _messages) = crossbeam_channel::unbounded();
-        let (thread, reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
+        let (thread, cells, doorbell) =
+            spawn(paths(&directory), timing(), &mailbox).unwrap();
 
-        let theme = drain(&reloaded)
-            .into_iter()
-            .find_map(|reload| match reload {
-                Reload::Theme(theme) => Some(theme),
-                Reload::Appearance(_) => None,
-            });
-        assert_eq!(theme.map(|theme| theme.name), Some("noir".to_string()));
+        drain(&doorbell);
+        let theme = cells.theme.take();
+        assert_eq!(
+            theme.map(|theme| theme.name.clone()),
+            Some("noir".to_string())
+        );
 
         drop(thread.commands);
         thread.handle.join().unwrap().unwrap();
     }
 
     fn wait_for_appearance_reload(
-        receiver: &Receiver<Reload>,
+        doorbell: &Receiver<()>,
+        cells: &Cells,
         deadline: Instant,
     ) -> bool {
         while Instant::now() < deadline {
-            if let Ok(Reload::Appearance(_)) =
-                receiver.recv_timeout(Duration::from_millis(100))
+            if doorbell.recv_timeout(Duration::from_millis(100)).is_ok()
+                && cells.appearance.take().is_some()
             {
                 return true;
             }
@@ -125,8 +146,10 @@ mod tests {
     fn a_hand_edit_after_spawn_reaches_the_shell_without_polling() {
         let directory = tempfile::tempdir().unwrap();
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
-        drain(&reloaded);
+        let (thread, cells, doorbell) =
+            spawn(paths(&directory), timing(), &mailbox).unwrap();
+        drain(&doorbell);
+        let _ = cells.appearance.take();
         drain(&messages);
 
         std::fs::write(
@@ -137,7 +160,7 @@ mod tests {
 
         let deadline = Instant::now() + Duration::from_secs(3);
         assert!(
-            wait_for_appearance_reload(&reloaded, deadline),
+            wait_for_appearance_reload(&doorbell, &cells, deadline),
             "a hand edit made after spawn must reach the shell through a filesystem event"
         );
         let rows = drain(&messages).into_iter().find_map(custom_rows_reloaded);
@@ -156,7 +179,8 @@ mod tests {
         std::fs::write(directory.path().join("config.toml"), "[keymap\nnot toml")
             .unwrap();
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, _reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
+        let (thread, _cells, _doorbell) =
+            spawn(paths(&directory), timing(), &mailbox).unwrap();
 
         let failed = drain(&messages).into_iter().any(|message| {
             matches!(
@@ -182,7 +206,8 @@ mod tests {
         )
         .unwrap();
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, _reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
+        let (thread, _cells, _doorbell) =
+            spawn(paths(&directory), timing(), &mailbox).unwrap();
 
         let failure = drain(&messages).into_iter().find_map(|message| {
             let Message::Config(ConfigFact::SourceFailed {
@@ -206,8 +231,9 @@ mod tests {
     fn a_later_broken_appearance_edit_keeps_the_last_good_rows() {
         let directory = tempfile::tempdir().unwrap();
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
-        drain(&reloaded);
+        let (thread, _cells, doorbell) =
+            spawn(paths(&directory), timing(), &mailbox).unwrap();
+        drain(&doorbell);
         let first_rows = drain(&messages).into_iter().find_map(custom_rows_reloaded);
         assert!(
             first_rows.is_some(),
@@ -273,7 +299,8 @@ mod tests {
     fn an_unreadable_config_shows_a_toast() {
         let directory = tempfile::tempdir().unwrap();
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, _reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
+        let (thread, _cells, _doorbell) =
+            spawn(paths(&directory), timing(), &mailbox).unwrap();
 
         let toast = drain(&messages).into_iter().find_map(toast_text);
         assert!(toast.is_none(), "a missing file must not be unreadable");
@@ -288,7 +315,8 @@ mod tests {
         std::fs::create_dir_all(directory.path().join("themes")).unwrap();
         std::fs::write(directory.path().join("themes/mine.toml"), "").unwrap();
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, _reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
+        let (thread, _cells, _doorbell) =
+            spawn(paths(&directory), timing(), &mailbox).unwrap();
 
         let themes = drain(&messages)
             .into_iter()
@@ -341,10 +369,11 @@ mod tests {
             appearance: appearance_path.clone(),
             themes: directory.path().join("themes"),
             theme: None,
+            seen: crate::config::SeenTexts::default(),
         };
         let (mailbox, _messages) = crossbeam_channel::unbounded();
-        let (thread, reloaded) = spawn(paths, timing(), &mailbox).unwrap();
-        drain(&reloaded);
+        let (thread, _cells, doorbell) = spawn(paths, timing(), &mailbox).unwrap();
+        drain(&doorbell);
         thread
             .commands
             .send(ConfigCommand::Save(
@@ -354,18 +383,19 @@ mod tests {
             ))
             .unwrap();
         let format_chips_id = setting_id(config::AppearanceField::FormatChips);
-        let patch =
-            config::appearance_patch(format_chips_id, option_at(format_chips_id, 1))
-                .unwrap();
         thread
             .commands
-            .send(ConfigCommand::Appearance(patch))
+            .send(ConfigCommand::Setting {
+                id: format_chips_id,
+                option: option_at(format_chips_id, 1),
+            })
             .unwrap();
 
         assert!(wait_for(&config_path), "config.toml must land on disk");
         assert!(wait_for(&appearance_path), "sifr-ui.toml must land on disk");
+        drain(&doorbell);
         assert!(
-            reloaded.recv_timeout(SETTLE_TIMEOUT).is_err(),
+            doorbell.recv_timeout(SETTLE_TIMEOUT).is_err(),
             "a write we made ourselves must never come back as a reload"
         );
         let root = repo_root();
@@ -391,9 +421,6 @@ brackets = false
 [card]
 format_chips = true
 speed_chip = "always"
-
-[notice]
-style = "line"
 "#;
 
     fn setting_id(field: config::AppearanceField) -> SettingId {
@@ -437,7 +464,6 @@ style = "line"
         assert_eq!(flag_at(parsed, "progress", "remaining"), Some(true));
         assert_eq!(flag_at(parsed, "window", "key_hints"), Some(false));
         assert_eq!(text_at(parsed, "layout", "mode"), Some("compact"));
-        assert_eq!(text_at(parsed, "notice", "style"), Some("line"));
         assert_eq!(text_at(parsed, "card", "speed_chip"), Some("always"));
     }
 
@@ -451,15 +477,19 @@ style = "line"
             appearance: appearance_path.clone(),
             themes: directory.path().join("themes"),
             theme: None,
+            seen: crate::config::SeenTexts::default(),
         };
         let (mailbox, _messages) = crossbeam_channel::unbounded();
-        let (thread, _reloaded) = spawn(paths, timing(), &mailbox).unwrap();
+        let (thread, _cells, doorbell) = spawn(paths, timing(), &mailbox).unwrap();
+        drain(&doorbell);
 
         for (id, position) in appearance_rows() {
-            let patch = config::appearance_patch(id, position).unwrap();
             thread
                 .commands
-                .send(ConfigCommand::Appearance(patch))
+                .send(ConfigCommand::Setting {
+                    id,
+                    option: position,
+                })
                 .unwrap();
         }
 
@@ -493,15 +523,18 @@ style = "line"
         let directory = tempfile::tempdir().unwrap();
         let appearance_path = directory.path().join("sifr-ui.toml");
         let (mailbox, _messages) = crossbeam_channel::unbounded();
-        let (thread, reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
-        drain(&reloaded);
+        let (thread, _cells, doorbell) =
+            spawn(paths(&directory), timing(), &mailbox).unwrap();
+        drain(&doorbell);
 
         let preset_id = setting_id(config::AppearanceField::Preset);
         let noir_option = option_at(preset_id, 1);
-        let patch = config::appearance_patch(preset_id, noir_option).unwrap();
         thread
             .commands
-            .send(ConfigCommand::Appearance(patch))
+            .send(ConfigCommand::Setting {
+                id: preset_id,
+                option: noir_option,
+            })
             .unwrap();
 
         let text = wait_for_content(&appearance_path, "milkdrop").unwrap();
@@ -512,8 +545,9 @@ style = "line"
             "the written file must hold noir's full appearance"
         );
 
+        drain(&doorbell);
         assert!(
-            reloaded.try_recv().is_err(),
+            doorbell.try_recv().is_err(),
             "an appearance write alone must never select a theme; only ConfigCmd::SelectTheme, which the kernel sends, may do that"
         );
 
@@ -526,17 +560,18 @@ style = "line"
         let directory = tempfile::tempdir().unwrap();
         let appearance_path = directory.path().join("sifr-ui.toml");
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, reloaded) = spawn(paths(&directory), timing(), &mailbox).unwrap();
-        drain(&reloaded);
+        let (thread, _cells, doorbell) =
+            spawn(paths(&directory), timing(), &mailbox).unwrap();
+        drain(&doorbell);
         drain(&messages);
 
         let format_chips_id = setting_id(config::AppearanceField::FormatChips);
-        let patch =
-            config::appearance_patch(format_chips_id, option_at(format_chips_id, 1))
-                .unwrap();
         thread
             .commands
-            .send(ConfigCommand::Appearance(patch))
+            .send(ConfigCommand::Setting {
+                id: format_chips_id,
+                option: option_at(format_chips_id, 1),
+            })
             .unwrap();
 
         wait_for_content(&appearance_path, "format_chips = true").unwrap();

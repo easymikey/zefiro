@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use crate::{
     cmd::{AudioCmd, Cmd, Effect, LibraryCmd, PlaybackChange},
-    domain::{Moment, Pause, Percent, Player, Playhead, Preload, Revision, Track},
+    domain::{Moment, Pause, Player, Playhead, Preload, Revision, Track},
     message::AudioFailure,
     update::player::{
         Anchor,
@@ -242,11 +242,11 @@ impl Player {
         }
     }
 
-    pub(crate) fn ended(self, next: Option<Arc<Track>>, volume: Percent) -> Transition {
+    pub(crate) fn ended(self, next: Option<Arc<Track>>) -> Transition {
         match self {
             Player::Playing { .. } => Ok(next.map_or_else(
                 || (Player::Stopped, stopped_effects()),
-                |track| start(track, volume, StartOrigin::TrackEnded),
+                |track| start(track, StartOrigin::TrackEnded),
             )),
             other @ (Player::Paused { .. }
             | Player::Loading { .. }

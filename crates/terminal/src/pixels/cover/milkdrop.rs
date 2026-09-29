@@ -1,26 +1,26 @@
 use std::{
     hash::{Hash, Hasher},
     path::Path,
+    sync::Arc,
     time::Duration,
 };
 
 use ratatui::text::Line;
 use widgets::{
     FrameLayout,
+    MilkdropAdvance,
     MilkdropColors,
     MilkdropField,
-    MilkdropStep,
     Playing,
-    Scene,
     lines_into,
-    step,
 };
 
-use crate::pixels::cover::CoverArtOwner;
+use crate::pixels::cover::{CoverArtOwner, CoverMoment};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct MilkdropSources<'a> {
-    pub(crate) scene: Scene<'a>,
+    pub(crate) moment: CoverMoment<'a>,
+    pub(crate) colors: MilkdropColors,
     pub(crate) layout: FrameLayout,
 }
 
@@ -30,6 +30,7 @@ type MilkdropResetKey = (u64, usize, usize);
 struct MilkdropTick {
     reset_key: MilkdropResetKey,
     clock: Duration,
+    playing: Playing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +50,7 @@ fn plan_milkdrop(
     };
     if installed.reset_key != desired.reset_key {
         MilkdropPlan::Rebuild
-    } else if installed.clock != desired.clock {
+    } else if installed.clock != desired.clock && desired.playing == Playing::Yes {
         MilkdropPlan::Advance
     } else {
         MilkdropPlan::Reuse
@@ -69,65 +70,69 @@ fn milkdrop_seed(path: Option<&Path>) -> u64 {
 pub(crate) struct MilkdropCover {
     field: Option<MilkdropField>,
     tick: Option<MilkdropTick>,
-    lines: Vec<Line<'static>>,
+    rows: Vec<Line<'static>>,
+    lines: Arc<[Line<'static>]>,
 }
 
 impl MilkdropCover {
     pub(crate) fn refresh(&mut self, sources: MilkdropSources<'_>) -> CoverArtOwner {
-        let MilkdropSources { scene, layout } = sources;
+        let MilkdropSources {
+            moment,
+            colors,
+            layout,
+        } = sources;
         let Some(rect) = layout.cover else {
             self.field = None;
             self.tick = None;
-            self.lines.clear();
+            self.lines = Arc::default();
             return CoverArtOwner::Missing;
         };
         let width = usize::from(rect.width);
         let height = usize::from(rect.height);
-        let seed =
-            milkdrop_seed(scene.model.player.current().map(|track| track.path()));
+        let seed = milkdrop_seed(moment.track);
         let desired = MilkdropTick {
             reset_key: (seed, width, height),
-            clock: scene.clock,
+            clock: moment.clock,
+            playing: moment.playing,
         };
         match plan_milkdrop(self.tick, desired) {
             MilkdropPlan::Rebuild => {
                 self.field = Some(MilkdropField::new(width, height));
-                self.advance(&scene, seed);
+                self.advance(moment, seed);
+                self.paint(colors);
+                self.tick = Some(desired);
             }
-            MilkdropPlan::Advance => self.advance(&scene, seed),
+            MilkdropPlan::Advance => {
+                self.advance(moment, seed);
+                self.paint(colors);
+                self.tick = Some(desired);
+            }
             MilkdropPlan::Reuse => {}
         }
-        self.tick = Some(desired);
-        self.paint(&scene);
-        CoverArtOwner::Text(self.lines.clone())
+        CoverArtOwner::Text(Arc::clone(&self.lines))
     }
 
-    fn advance(&mut self, scene: &Scene<'_>, seed: u64) {
+    fn advance(&mut self, moment: CoverMoment<'_>, seed: u64) {
         let Some(field) = self.field.as_mut() else {
             return;
         };
-        let playing = if scene.model.player.is_playing() {
-            Playing::Yes
-        } else {
-            Playing::No
-        };
-        let tick = u64::try_from(scene.clock.as_millis()).unwrap_or(u64::MAX);
-        let input = MilkdropStep {
-            bands: scene.spectrum,
-            playing,
+        let tick = u64::try_from(moment.clock.as_millis()).unwrap_or(u64::MAX);
+        let input = MilkdropAdvance {
+            bands: moment.bands,
+            playing: moment.playing,
             seed,
             tick,
         };
-        step(field, &input);
+        field.advance(&input);
     }
 
-    fn paint(&mut self, scene: &Scene<'_>) {
+    fn paint(&mut self, colors: MilkdropColors) {
         let Some(field) = self.field.as_ref() else {
-            self.lines.clear();
+            self.lines = Arc::default();
             return;
         };
-        let colors = MilkdropColors::from_theme(&scene.active_theme());
-        lines_into(field, &colors, &mut self.lines);
+        lines_into(field, &colors, &mut self.rows);
+        self.lines = Arc::from(self.rows.as_slice());
     }
 }
 
@@ -136,6 +141,7 @@ mod tests {
     use std::{path::PathBuf, time::Duration};
 
     use rstest::rstest;
+    use widgets::Playing;
 
     use crate::pixels::cover::milkdrop::{
         MilkdropPlan,
@@ -148,12 +154,22 @@ mod tests {
         MilkdropTick {
             reset_key,
             clock: Duration::from_millis(millis),
+            playing: Playing::Yes,
+        }
+    }
+
+    fn paused(reset_key: (u64, usize, usize), millis: u64) -> MilkdropTick {
+        MilkdropTick {
+            playing: Playing::No,
+            ..tick(reset_key, millis)
         }
     }
 
     #[rstest]
     #[case::same_reset_key_and_clock(Some(tick((1, 20, 8), 100)), tick((1, 20, 8), 100), MilkdropPlan::Reuse)]
     #[case::a_new_clock_advances(Some(tick((1, 20, 8), 100)), tick((1, 20, 8), 116), MilkdropPlan::Advance)]
+    #[case::paused_clock_movement_reuses(Some(tick((1, 20, 8), 100)), paused((1, 20, 8), 116), MilkdropPlan::Reuse)]
+    #[case::paused_reset_key_change_rebuilds(Some(tick((2, 20, 8), 100)), paused((1, 20, 8), 116), MilkdropPlan::Rebuild)]
     #[case::a_different_reset_key_rebuilds(Some(tick((2, 20, 8), 100)), tick((1, 20, 8), 100), MilkdropPlan::Rebuild)]
     #[case::nothing_installed_rebuilds(None, tick((1, 20, 8), 100), MilkdropPlan::Rebuild)]
     fn plan_milkdrop_decides_rebuild_advance_or_reuse(

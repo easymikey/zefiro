@@ -61,6 +61,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2050,6 +2059,7 @@ dependencies = [
 name = "runtime"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "audio",
  "config",
  "crossbeam-channel",
@@ -2222,6 +2232,7 @@ dependencies = [
 name = "sifr"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "audio",
  "clap",
  "config",
@@ -2229,8 +2240,10 @@ dependencies = [
  "crossterm",
  "dirs",
  "image",
+ "insta",
  "kernel",
  "library",
+ "raster",
  "ratatui",
  "rstest",
  "runtime",
@@ -2239,6 +2252,15 @@ dependencies = [
  "terminal",
  "thiserror 2.0.20",
  "widgets",
+]
+
+[[package]]
+name = "sifr-guards"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "thiserror 2.0.20",
+ "toml",
 ]
 
 [[package]]

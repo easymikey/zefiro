@@ -2,16 +2,16 @@ use std::time::Duration;
 
 use crate::{
     cmd::{AudioCmd, Cmd, Cue, Effect, SystemCmd},
-    domain::{AbLoop, Percent, Revision, SleepTimer, Transport},
+    domain::{AbLoop, Percent, Revision, SleepTimer, SpeedStep, Transport, VolumeStep},
     message::Timer,
     update::machine::{Machine, Never, Rejected},
 };
 
 #[derive(Debug, Clone)]
 pub enum TransportMessage {
-    NudgeVolume(i8),
+    NudgeVolume(VolumeStep),
     SetVolume(Percent),
-    NudgeSpeed(i8),
+    NudgeSpeed(SpeedStep),
     CycleSleep(Box<[Duration]>),
     AbMark { position: Option<Duration> },
 }
@@ -27,18 +27,15 @@ impl Machine for Transport {
     ) -> Result<(Self, Cmd), Rejected<Self>> {
         let cmd = match message {
             TransportMessage::NudgeVolume(delta) => {
-                self.volume = self.volume.nudge(delta);
-                Cmd::Batch(vec![
-                    Effect::Audio(AudioCmd::Volume(self.volume)),
-                    Effect::System(SystemCmd::Volume(self.volume)),
-                ])
+                self.volume = self.volume.nudge(delta.get());
+                Effect::System(SystemCmd::Volume(self.volume)).into()
             }
             TransportMessage::SetVolume(volume) if volume == self.volume => Cmd::None,
             TransportMessage::SetVolume(volume) => {
                 self.volume = volume;
                 Cue::VolumeChanged.into()
             }
-            TransportMessage::NudgeSpeed(delta) if delta > 0 => {
+            TransportMessage::NudgeSpeed(step) if step.get() > 0 => {
                 self.speed = self.speed.step_up();
                 Effect::Audio(AudioCmd::SetSpeed(self.speed)).into()
             }

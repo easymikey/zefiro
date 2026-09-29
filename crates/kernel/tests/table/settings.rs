@@ -358,15 +358,18 @@ fn adjust_row_sleep_presets_cycles_and_wraps_and_persists() {
     let mut model = seeded();
     assert_eq!(
         Some(model.settings.sleep_presets.as_ref()),
-        bundles.bundles.first().map(Vec::as_slice)
+        bundles.bundles.first().copied()
     );
 
     let cmd = step(&mut model, SettingRow::SleepPresets, Nudge::Up);
     assert_eq!(
         Some(model.settings.sleep_presets.as_ref()),
-        bundles.bundles.get(1).map(Vec::as_slice)
+        bundles.bundles.get(1).copied()
     );
-    assert_eq!(sleep_presets_patch(&cmd), bundles.bundles.get(1).cloned());
+    assert_eq!(
+        sleep_presets_patch(&cmd),
+        bundles.bundles.get(1).map(|bundle| bundle.to_vec())
+    );
 
     let _ = step(&mut model, SettingRow::SleepPresets, Nudge::Down);
     let wrapped = step(&mut model, SettingRow::SleepPresets, Nudge::Down);
@@ -385,7 +388,7 @@ fn adjust_row_sleep_presets_snaps_a_custom_value_to_the_nearest_bundle() {
     let bundles = &SLEEP_PRESET_BUNDLES;
     assert_eq!(
         Some(model.settings.sleep_presets.as_ref()),
-        bundles.bundles.get(1).map(Vec::as_slice)
+        bundles.bundles.get(1).copied()
     );
 }
 

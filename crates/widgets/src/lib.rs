@@ -39,16 +39,17 @@ pub use animation::{
 pub use card::{CardMetrics, CoverArt};
 pub use geometry::{CellAspect, Cells, CoverAspect, CoverSizing, Pixels};
 pub use milkdrop::{
+    MilkdropAdvance,
     MilkdropColors,
     MilkdropField,
-    MilkdropStep,
     Playing,
     lines_into,
-    step,
 };
 pub use overlay::modal::{ModalAreas, ModalScrollAreas, OverlayAreas};
 pub use playlist::{PlaylistAreas, favorite_cell};
 pub use redraw::{
+    OnScreen,
+    Presence,
     ProgressScale,
     next_clock_second,
     next_progress_step,

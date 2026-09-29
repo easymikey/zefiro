@@ -30,10 +30,10 @@ struct WatchedPath {
 }
 
 impl WatchedPath {
-    fn fresh(path: PathBuf) -> Self {
+    fn starting(path: PathBuf, text: Option<&str>) -> Self {
         Self {
             path,
-            seen: Seen::Fresh,
+            seen: Seen::starting(text),
         }
     }
 }
@@ -57,15 +57,17 @@ impl ConfigWatch {
     #[must_use]
     pub(crate) fn new(paths: &ConfigPaths) -> Self {
         Self {
-            appearance: WatchedPath::fresh(paths.appearance.clone()),
-            keys: paths
-                .config
-                .clone()
-                .map(|path| Box::new(WatchedPath::fresh(path))),
+            appearance: WatchedPath::starting(
+                paths.appearance.clone(),
+                paths.seen.appearance.as_deref(),
+            ),
+            keys: paths.config.clone().map(|path| {
+                Box::new(WatchedPath::starting(path, paths.seen.keys.as_deref()))
+            }),
             theme: paths.theme.clone().map(|name| {
                 Box::new(SelectedTheme {
                     name,
-                    seen: Seen::Fresh,
+                    seen: Seen::starting(paths.seen.theme.as_deref()),
                 })
             }),
             themes: paths.themes.clone(),
@@ -286,6 +288,7 @@ mod tests {
 
     use crate::config::{
         ConfigPaths,
+        SeenTexts,
         watch::{
             ConfigChange,
             ConfigIo,
@@ -306,7 +309,44 @@ mod tests {
             appearance: PathBuf::from(UI_PATH),
             themes: PathBuf::from(THEMES_DIR),
             theme: theme.map(str::to_string),
+            seen: SeenTexts::default(),
         }
+    }
+
+    fn seen_at_boot(appearance: &str, theme: &str, keys: &str) -> ConfigWatch {
+        let mut boot = paths(Some(KEYS_PATH), Some("noir"));
+        boot.seen = SeenTexts {
+            appearance: Some(appearance.to_string()),
+            theme: Some(theme.to_string()),
+            keys: Some(keys.to_string()),
+        };
+        ConfigWatch::new(&boot)
+    }
+
+    #[rstest]
+    #[case(WatchedFile::Appearance, "a = 1\n")]
+    #[case(WatchedFile::Theme, "b = 2\n")]
+    #[case(WatchedFile::Keys, "c = 3\n")]
+    fn a_seen_boot_text_is_not_reported_on_the_first_poll(
+        #[case] file: WatchedFile,
+        #[case] text: &str,
+    ) {
+        let watch = seen_at_boot("a = 1\n", "b = 2\n", "c = 3\n");
+        let (_, io) = step(watch, observed(file, Some(text)));
+        assert!(is_nothing(&io));
+    }
+
+    #[rstest]
+    #[case(WatchedFile::Appearance, "a = 1 \n")]
+    #[case(WatchedFile::Theme, "b = 3\n")]
+    #[case(WatchedFile::Keys, "c = 3")]
+    fn a_changed_file_after_boot_is_reported(
+        #[case] file: WatchedFile,
+        #[case] text: &str,
+    ) {
+        let watch = seen_at_boot("a = 1\n", "b = 2\n", "c = 3\n");
+        let (_, io) = step(watch, observed(file, Some(text)));
+        assert!(sent(io).is_some());
     }
 
     fn unselected() -> ConfigWatch {

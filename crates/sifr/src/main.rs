@@ -8,10 +8,11 @@ mod toast;
 
 use std::{io::Write, process::ExitCode, thread};
 
-use crossbeam_channel::unbounded;
+use crossbeam_channel::bounded;
 use error::Error;
-use runtime::{Hardware, Runtime};
+use runtime::{Launchers, Runtime};
 use shell::ShellInput;
+use startup::{Boot, BootLook};
 use terminal::{
     CapabilityProbe,
     InputLoop,
@@ -24,32 +25,35 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            report(&error);
+            print_error(&error);
             ExitCode::FAILURE
         }
     }
 }
 
-fn report(error: &Error) {
+fn print_error(error: &Error) {
     let mut stderr = std::io::stderr();
     let _ = writeln!(stderr, "sifr: {error}");
 }
 
 fn run() -> Result<(), Error> {
     terminal::install_panic_hook(signal::remember_worker_panic);
-    let (startup, paths) = startup::boot()?;
-    let hardware = Hardware::system(&startup);
-    let runtime = Runtime::boot(startup, paths, hardware)?;
-    runtime::host(runtime, body).map_err(Error::from)?
+    let Boot {
+        startup,
+        paths,
+        look,
+    } = startup::boot()?;
+    let runtime = Runtime::boot(startup, &paths, &Launchers::system())?;
+    runtime::host(runtime, move |runtime| body(runtime, look)).map_err(Error::from)?
 }
 
-fn body(runtime: Runtime) -> Result<(), Error> {
+fn body(runtime: Runtime, look: BootLook) -> Result<(), Error> {
     let mut session = TerminalSession::enter()?;
     let upgrade = capability_upgrade();
 
-    let (input_sender, input_receiver) = unbounded();
-    signal::install(input_sender.clone());
-    let mut shell = shell::Shell::new(session.terminal_mut(), input_sender.clone());
+    let (input_sender, input_receiver) = bounded(256);
+    signal::install(input_sender.clone())?;
+    let mut shell = shell::Shell::new(session.terminal_mut(), look)?;
     if let Some(answer) = upgrade {
         shell.adopt(answer);
     }

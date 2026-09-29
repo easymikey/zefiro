@@ -287,7 +287,7 @@ fn track_details_rows() -> Vec<KeyBinding> {
     ))
 }
 
-pub(super) fn rows() -> Vec<KeyBinding> {
+pub(crate) fn rows() -> Vec<KeyBinding> {
     [
         text_prompt_rows(),
         search_rows(),

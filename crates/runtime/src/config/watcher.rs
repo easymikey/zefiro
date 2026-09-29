@@ -11,17 +11,43 @@ pub(crate) fn config_directory(paths: &ConfigPaths) -> PathBuf {
     }
 }
 
+pub(crate) trait FileWatch {
+    fn watch(&mut self, path: &Path) -> Result<(), notify::Error>;
+    fn unwatch(&mut self, path: &Path) -> Result<(), notify::Error>;
+}
+
+impl FileWatch for RecommendedWatcher {
+    fn watch(&mut self, path: &Path) -> Result<(), notify::Error> {
+        Watcher::watch(self, path, RecursiveMode::Recursive)
+    }
+
+    fn unwatch(&mut self, path: &Path) -> Result<(), notify::Error> {
+        Watcher::unwatch(self, path)
+    }
+}
+
+impl<W: FileWatch> FileWatch for Option<W> {
+    fn watch(&mut self, path: &Path) -> Result<(), notify::Error> {
+        self.as_mut().map_or_else(
+            || Err(notify::Error::generic("no watcher")),
+            |watcher| watcher.watch(path),
+        )
+    }
+
+    fn unwatch(&mut self, path: &Path) -> Result<(), notify::Error> {
+        self.as_mut()
+            .map_or(Ok(()), |watcher| watcher.unwatch(path))
+    }
+}
+
 pub(crate) fn register(
-    watcher: &mut Option<RecommendedWatcher>,
+    watcher: &mut impl FileWatch,
     directory: &Path,
 ) -> Result<(), notify::Error> {
     if !directory.exists() {
         return Ok(());
     }
-    watcher.as_mut().map_or_else(
-        || Err(notify::Error::generic("no watcher")),
-        |watcher| watcher.watch(directory, RecursiveMode::Recursive),
-    )
+    watcher.watch(directory)
 }
 
 #[cfg(test)]
@@ -41,6 +67,7 @@ mod tests {
             appearance: PathBuf::from(appearance),
             themes: PathBuf::from(themes),
             theme: None,
+            seen: crate::config::SeenTexts::default(),
         }
     }
 

@@ -16,13 +16,6 @@ expression: effects(cmd)
             ),
         },
     ),
-    Audio(
-        Volume(
-            Percent(
-                50,
-            ),
-        ),
-    ),
     Library(
         AppendHistory {
             track: Track {

@@ -1,15 +1,9 @@
 ---
 source: crates/kernel/tests/unit/transitions.rs
+assertion_line: 566
 expression: effs
 ---
 [
-    Audio(
-        Volume(
-            Percent(
-                55,
-            ),
-        ),
-    ),
     System(
         Volume(
             Percent(

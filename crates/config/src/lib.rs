@@ -45,7 +45,7 @@ pub use appearance_file::{
 pub use breakpoints::BreakpointsConfig;
 pub use config_document::patched;
 pub use config_file::{AudioConfig, CONFIG_FILE_NAME, ConfigFile, parse_config};
-pub use embedded_theme::{EMBEDDED_THEMES, embedded_theme};
+pub use embedded_theme::{EMBEDDED_THEMES, embedded_theme, resolve_theme};
 pub use error::{
     ColorRejection,
     ConfigError,

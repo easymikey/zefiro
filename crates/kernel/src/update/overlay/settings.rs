@@ -46,7 +46,7 @@ impl Machine for SettingsCursor {
     }
 }
 
-pub(super) fn request(
+pub(crate) fn request(
     model: &mut Model,
     request: SettingsRowRequest,
     now: Moment,

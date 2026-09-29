@@ -91,7 +91,7 @@ impl Machine for CursorOver<()> {
     }
 }
 
-pub(super) fn request(
+pub(crate) fn request(
     model: &mut Model,
     request: HistoryRequest,
     now: Moment,

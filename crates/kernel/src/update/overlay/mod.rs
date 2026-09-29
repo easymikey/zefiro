@@ -112,7 +112,7 @@ impl From<FollowUp> for OverlayEffect {
     }
 }
 
-pub(super) fn update(
+pub(crate) fn update(
     model: &mut Model,
     request: OverlayRequest,
     now: Moment,
@@ -236,7 +236,7 @@ fn update_overlay(
     follow(model, effect, now)
 }
 
-pub(super) fn follow(
+pub(crate) fn follow(
     model: &mut Model,
     effect: OverlayEffect,
     now: Moment,

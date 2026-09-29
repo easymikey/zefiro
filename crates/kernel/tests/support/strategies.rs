@@ -41,8 +41,12 @@ use kernel::{
         OutputFault,
         PlaylistIndex,
         Revision,
+        RowDelta,
+        SeekStep,
         SettingRow,
+        SpeedStep,
         ThemeName,
+        VolumeStep,
     },
     message::SeekTenths,
     playlist::{PlaylistFileName, RepeatMode},
@@ -187,9 +191,12 @@ fn playback() -> impl Strategy<Value = PlaybackRequest> {
             PlaybackRequest::CycleSleep,
             PlaybackRequest::AbMark,
         ]),
-        (-30i64..30).prop_map(PlaybackRequest::SeekBy),
-        (-3i8..3).prop_map(PlaybackRequest::NudgeVolume),
-        (-3i8..3).prop_map(PlaybackRequest::NudgeSpeed),
+        (-30i64..30)
+            .prop_map(|seconds| PlaybackRequest::SeekBy(SeekStep::new(seconds))),
+        (-3i8..3)
+            .prop_map(|percent| PlaybackRequest::NudgeVolume(VolumeStep::new(percent))),
+        (-3i8..3)
+            .prop_map(|notches| PlaybackRequest::NudgeSpeed(SpeedStep::new(notches))),
         (0u64..200).prop_map(|secs| PlaybackRequest::SeekTo(Duration::from_secs(secs))),
         (0u8..10).prop_map(|tenths| {
             PlaybackRequest::SeekFraction(SeekTenths::try_from(tenths).unwrap())
@@ -215,7 +222,7 @@ fn browse() -> impl Strategy<Value = BrowseRequest> {
         playlist_index().prop_map(BrowseRequest::Trash),
         playlist_index().prop_map(BrowseRequest::EnqueueTrack),
         playlist_index().prop_map(BrowseRequest::CursorTo),
-        (-4i64..4).prop_map(BrowseRequest::CursorBy),
+        (-4i64..4).prop_map(|rows| BrowseRequest::CursorBy(RowDelta::new(rows))),
         nudge().prop_map(BrowseRequest::MoveInQueue),
         nudge().prop_map(BrowseRequest::PageBy),
     ]

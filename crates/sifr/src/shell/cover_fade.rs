@@ -1,10 +1,23 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use config::CoverStyle;
 use kernel::Cue;
+use raster::VinylColors;
 use runtime::{CoverDecoded, CoverOutcome, CoverRequest};
-use terminal::{CoverFade, CoverSources, CoverWash, DecodedCover};
-use widgets::{FrameLayout, Scene};
+use terminal::{
+    CoverFade,
+    CoverKey,
+    CoverLook,
+    CoverMoment,
+    CoverPlacement,
+    CoverSources,
+    CoverWash,
+    DecodedCover,
+};
+use widgets::{MilkdropColors, Playing, Scene};
 
 use crate::toast::ShellFailure;
 
@@ -22,22 +35,37 @@ pub(crate) enum CoverArrival {
     Missing,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct CoverPlacement {
-    pub(crate) layout: FrameLayout,
-    pub(crate) fade: CoverFade,
-    pub(crate) wash: CoverWash,
+pub(crate) fn cover_sources<'a>(
+    scene: Scene<'a>,
+    placement: CoverPlacement,
+) -> CoverSources<'a> {
+    CoverSources {
+        key: CoverKey {
+            config_generation: scene.model.config_generation,
+            theme_generation: scene.model.theme_generation,
+        },
+        look: CoverLook {
+            style: scene.cover_style(),
+            animations: scene.appearance.window.animations,
+            vinyl: VinylColors::from(scene.theme),
+            milkdrop: MilkdropColors::from_theme(&scene.active_theme()),
+        },
+        moment: cover_moment(&scene),
+        placement,
+    }
 }
 
-pub(crate) fn cover_sources(
-    scene: Scene<'_>,
-    placement: CoverPlacement,
-) -> CoverSources<'_> {
-    CoverSources {
-        scene,
-        layout: placement.layout,
-        fade: placement.fade,
-        wash: placement.wash,
+fn cover_moment<'a>(scene: &Scene<'a>) -> CoverMoment<'a> {
+    let playing = if scene.model.player.is_playing() {
+        Playing::Yes
+    } else {
+        Playing::No
+    };
+    CoverMoment {
+        clock: scene.clock,
+        playing,
+        track: scene.model.player.current().map(|track| track.path()),
+        bands: scene.spectrum,
     }
 }
 
@@ -126,7 +154,7 @@ pub(crate) fn cover_outcome(
     match decoded.outcome {
         CoverOutcome::Art(image) => Ok(Some(DecodedCover {
             path: decoded.path,
-            image,
+            image: Arc::new(image),
         })),
         CoverOutcome::NoArt => Ok(None),
         CoverOutcome::Failed(error) => Err(ShellFailure::Cover(error.to_string())),
@@ -135,7 +163,10 @@ pub(crate) fn cover_outcome(
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
 
     use config::CoverStyle;
     use image::RgbaImage;
@@ -293,7 +324,7 @@ mod tests {
 
         assert_eq!(
             mapped.map(|cover| cover.map(|cover| (cover.path, cover.image))),
-            Ok(Some((PathBuf::from("/music/track.jpg"), image)))
+            Ok(Some((PathBuf::from("/music/track.jpg"), Arc::new(image))))
         );
     }
 

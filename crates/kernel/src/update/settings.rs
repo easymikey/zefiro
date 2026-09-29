@@ -54,7 +54,7 @@ pub enum SettingsMessage {
     SleepPresets(Nudge),
 }
 
-pub(super) fn adjust(
+pub(crate) fn adjust(
     model: &mut Model,
     row: SettingRow,
     nudge: Nudge,
@@ -210,9 +210,10 @@ fn adjust_sleep_presets(settings: &mut Settings, delta: i64) -> Cmd {
         .index_of(&settings.sleep_presets)
         .unwrap_or_else(|| bundles.nearest_index(&settings.sleep_presets));
     let next_index = wrapped_index(current, delta, bundles.bundles.len());
-    let Some(next) = bundles.bundles.get(next_index).cloned() else {
+    let Some(next) = bundles.bundles.get(next_index).copied() else {
         return Cmd::None;
     };
+    let next = next.to_vec();
     settings.sleep_presets = next.clone().into_boxed_slice();
     Effect::Config(ConfigCmd::Save(
         ConfigPatch::builder().sleep_presets(next).build(),

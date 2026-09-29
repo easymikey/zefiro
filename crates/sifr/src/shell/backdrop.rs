@@ -1,12 +1,11 @@
-use config::AppearanceFile;
 use ratatui::style::Color;
 use terminal::CoverArtOwner;
-use widgets::{ActiveTheme, Backdrop, ColorDepth, FrameLayout, Theme};
+use widgets::{ActiveTheme, Backdrop, FrameLayout};
+
+use crate::shell::view::Presentation;
 
 pub(crate) struct BackdropSources<'a> {
-    pub(crate) theme: &'a Theme,
-    pub(crate) color_depth: ColorDepth,
-    pub(crate) appearance: &'a AppearanceFile,
+    pub(crate) presentation: &'a Presentation,
     pub(crate) mix: f32,
     pub(crate) outgoing_background: Option<Color>,
 }
@@ -16,11 +15,14 @@ pub(crate) fn animation_backdrop(
     layout: FrameLayout,
     cover_art: &CoverArtOwner,
 ) -> Backdrop {
-    let theme = ActiveTheme::new(sources.theme, sources.color_depth);
+    let theme = ActiveTheme::new(
+        &sources.presentation.theme,
+        sources.presentation.color_depth,
+    );
     let fill = theme.volume_bar().fill;
     let background = theme.window_bg();
     Backdrop {
-        animations: sources.appearance.window.animations,
+        animations: sources.presentation.appearance.window.animations,
         layout: protected_layout(layout, cover_art),
         background,
         accent: theme.accent(),
@@ -39,19 +41,27 @@ fn protected_layout(mut layout: FrameLayout, cover_art: &CoverArtOwner) -> Frame
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{sync::Arc, time::Duration};
 
     use config::AppearanceFile;
-    use kernel::Cue;
+    use kernel::{Cue, Moment};
     use ratatui::{buffer::Buffer, layout::Rect};
     use runtime::FrameDue;
     use terminal::CoverArtOwner;
-    use widgets::{AnimationStage, Breakpoint, ColorDepth, FrameLayout, ToastAreas};
+    use widgets::{
+        AnimationStage,
+        Breakpoint,
+        CellAspect,
+        ColorDepth,
+        FrameLayout,
+        PixelPath,
+        ToastAreas,
+    };
 
     use crate::shell::{
         backdrop::{Backdrop, BackdropSources, animation_backdrop},
-        frame::fallback_theme,
         frame_clock::{FrameEffect, animation_frame_due},
+        view::{Presentation, fallback_theme_file},
     };
 
     fn test_backdrop(cover_art: &CoverArtOwner) -> Backdrop {
@@ -62,7 +72,16 @@ mod tests {
         cover_art: &CoverArtOwner,
         outgoing_background: Option<ratatui::style::Color>,
     ) -> Backdrop {
-        let theme = fallback_theme();
+        let presentation = Presentation {
+            theme: widgets::Theme::from(fallback_theme_file()),
+            appearance: AppearanceFile::default(),
+            pixel_path: PixelPath::Halfblocks,
+            color_depth: ColorDepth::TrueColor,
+            cell_aspect: CellAspect::default(),
+            home: None,
+            music_dir: std::path::PathBuf::new(),
+            music_dir_display: String::new(),
+        };
         let layout = FrameLayout {
             screen: Rect::new(0, 0, 40, 10),
             breakpoint: Breakpoint::Full,
@@ -82,9 +101,7 @@ mod tests {
         };
         animation_backdrop(
             &BackdropSources {
-                theme: &theme,
-                color_depth: ColorDepth::TrueColor,
-                appearance: &AppearanceFile::default(),
+                presentation: &presentation,
                 mix: 0.2,
                 outgoing_background,
             },
@@ -120,7 +137,7 @@ mod tests {
 
     #[test]
     fn a_text_cover_takes_part_in_effects() {
-        let backdrop = test_backdrop(&CoverArtOwner::Text(Vec::new()));
+        let backdrop = test_backdrop(&CoverArtOwner::Text(Arc::default()));
 
         assert_eq!(backdrop.layout.cover, None);
     }
@@ -151,7 +168,7 @@ mod tests {
 
         assert!(!stage.wants_frame());
         assert_eq!(
-            animation_frame_due(FrameEffect::Settled, Instant::now()),
+            animation_frame_due(FrameEffect::Settled, Moment::default()),
             FrameDue::Settled
         );
     }

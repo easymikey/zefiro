@@ -1,4 +1,4 @@
-use std::{fmt, time::Duration};
+use std::{fmt, path::Path, sync::Arc, time::Duration};
 
 use config::Animations;
 use image::{DynamicImage, RgbaImage};
@@ -19,11 +19,12 @@ use raster::{
 };
 use ratatui::layout::Rect;
 use ratatui_image::{FontSize, picker::Picker, protocol::StatefulProtocol};
-use widgets::{Cells, FrameLayout, Pixels, Scene};
+use widgets::{Cells, FrameLayout, Pixels};
 
 use crate::pixels::cover::{
     CoverArtOwner,
     CoverFade,
+    CoverKey,
     CoverMotion,
     CoverWash,
     DecodedCover,
@@ -34,7 +35,10 @@ use crate::pixels::cover::{
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct VinylSources<'a> {
-    pub(crate) scene: Scene<'a>,
+    pub(crate) key: CoverKey,
+    pub(crate) colors: VinylColors,
+    pub(crate) clock: Duration,
+    pub(crate) animations: Animations,
     pub(crate) layout: FrameLayout,
     pub(crate) decoded: Option<&'a DecodedCover>,
     pub(crate) fade: CoverFade,
@@ -102,7 +106,7 @@ fn rebuild_kind(
 }
 
 struct InstallVinyl {
-    pixmap: RgbaImage,
+    pixmap: Arc<RgbaImage>,
     key: VinylCacheKey,
     rect: Rect,
     now: Duration,
@@ -126,7 +130,7 @@ impl WashState {
 }
 
 struct BeginThemeWash {
-    pixmap: RgbaImage,
+    pixmap: Arc<RgbaImage>,
     key: VinylCacheKey,
     rect: Rect,
     now: Duration,
@@ -153,7 +157,7 @@ impl RebuildKind {
 
 struct RebuildInput {
     kind: RebuildKind,
-    pixmap: RgbaImage,
+    pixmap: Arc<RgbaImage>,
     key: VinylCacheKey,
     rect: Rect,
     now: Duration,
@@ -179,8 +183,8 @@ struct AdvanceTiming {
 pub(crate) struct VinylCover {
     cache: VinylCache,
     painted: Option<PaintedVinyl>,
-    pixmap: Option<RgbaImage>,
-    theme_wash: Option<RgbaImage>,
+    pixmap: Option<Arc<RgbaImage>>,
+    theme_wash: Option<Arc<RgbaImage>>,
     crossfade: CoverCrossfade,
 }
 
@@ -213,7 +217,10 @@ impl VinylCover {
         sources: VinylSources<'_>,
     ) -> CoverArtOwner {
         let VinylSources {
-            scene,
+            key,
+            colors,
+            clock,
+            animations,
             layout,
             decoded,
             fade,
@@ -224,18 +231,16 @@ impl VinylCover {
             return CoverArtOwner::Missing;
         };
         let font_size = picker.font_size();
-        let size_px = vinyl_size_px(rect, font_size);
-        let art = vinyl_art_source(&self.cache, decoded, size_px);
-        let request = VinylRequest {
-            cache: &mut self.cache,
-            colors: VinylColors::from(scene.theme),
-            art,
-            size_px,
-            face: SleeveFace::Art,
-            config_generation: scene.model.config_generation,
-            theme_generation: scene.model.theme_generation,
-        };
-        let VinylImage::Ready { pixmap, key } = compose(request) else {
+        let Some((pixmap, cache_key)) = compose_vinyl(
+            &mut self.cache,
+            ComposeVinyl {
+                key,
+                colors,
+                decoded,
+                rect,
+                font_size,
+            },
+        ) else {
             self.discard_protocol();
             return CoverArtOwner::Missing;
         };
@@ -243,26 +248,25 @@ impl VinylCover {
             wash,
             cell_width_px: font_size.width,
         };
-        let Some(kind) = rebuild_kind(self.painted.as_ref(), &key, rect) else {
+        let Some(kind) = rebuild_kind(self.painted.as_ref(), &cache_key, rect) else {
             self.advance(
                 picker,
                 AdvanceTiming {
-                    now: scene.clock,
+                    now: clock,
                     wash: wash_state,
                 },
             );
             return CoverArtOwner::Image;
         };
-        let pixmap = pixmap.clone();
         self.rebuild(
             picker,
             RebuildInput {
                 kind,
                 pixmap,
-                key,
+                key: cache_key,
                 rect,
-                now: scene.clock,
-                animations: scene.appearance.window.animations,
+                now: clock,
+                animations,
                 fade,
                 wash: wash_state,
             },
@@ -426,7 +430,7 @@ impl VinylCover {
             _ => self
                 .crossfade
                 .crossfade_at(pixmap, target.now)
-                .unwrap_or_else(|| pixmap.clone()),
+                .unwrap_or_else(|| RgbaImage::clone(pixmap)),
         };
         let protocol = cover_protocol(picker, DynamicImage::ImageRgba8(image));
         self.painted = Some(PaintedVinyl {
@@ -450,38 +454,87 @@ fn sleeve_inset_side_px(size_px: u32) -> u32 {
     dimension_u32((size - pad * 2.0).round()).max(1)
 }
 
-fn vinyl_art_source(
+#[derive(Debug, Clone, Copy)]
+struct ComposeVinyl<'a> {
+    key: CoverKey,
+    colors: VinylColors,
+    decoded: Option<&'a DecodedCover>,
+    rect: Rect,
+    font_size: FontSize,
+}
+
+#[must_use]
+fn compose_vinyl(
+    cache: &mut VinylCache,
+    sources: ComposeVinyl<'_>,
+) -> Option<(Arc<RgbaImage>, VinylCacheKey)> {
+    let ComposeVinyl {
+        key,
+        colors,
+        decoded,
+        rect,
+        font_size,
+    } = sources;
+    let size_px = vinyl_size_px(rect, font_size);
+    let path = vinyl_art_source(decoded);
+    let art = VinylArtSource {
+        path: path.map(Path::to_path_buf),
+        decoded: art_decode(cache, decoded, size_px),
+    };
+    let request = VinylRequest {
+        cache,
+        colors,
+        art,
+        size_px,
+        face: SleeveFace::Art,
+        config_generation: key.config_generation,
+        theme_generation: key.theme_generation,
+    };
+    let VinylImage::Ready {
+        pixmap,
+        key: cache_key,
+    } = compose(request)
+    else {
+        return None;
+    };
+    Some((Arc::new(pixmap.clone()), cache_key))
+}
+
+#[must_use]
+fn vinyl_art_source(decoded: Option<&DecodedCover>) -> Option<&Path> {
+    decoded.map(|cover| cover.path.as_path())
+}
+
+#[must_use]
+fn art_decode(
     cache: &VinylCache,
     decoded: Option<&DecodedCover>,
     size_px: u32,
-) -> VinylArtSource {
-    let Some(cover) = decoded else {
-        return VinylArtSource::default();
-    };
+) -> Option<DecodedArt> {
+    let cover = decoded?;
     let state = cache.art_cache_state(Some(&cover.path), size_px);
     if state == ArtCacheState::Cached {
-        return VinylArtSource {
-            path: Some(cover.path.clone()),
-            decoded: None,
-        };
+        return None;
     }
-    VinylArtSource {
-        path: Some(cover.path.clone()),
-        decoded: Some(DecodedArt {
-            side_px: sleeve_inset_side_px(size_px),
-            image: Some(DynamicImage::ImageRgba8(cover.image.clone())),
-        }),
-    }
+    Some(DecodedArt {
+        side_px: sleeve_inset_side_px(size_px),
+        image: Some(DynamicImage::ImageRgba8((*cover.image).clone())),
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
 
+    use config::Animations;
     use image::{Rgba, RgbaImage};
     use kernel::domain::Revision;
     use raster::{
         SleeveFace,
+        VinylArtSource,
         VinylCache,
         VinylCacheKey,
         VinylColors,
@@ -490,13 +543,21 @@ mod tests {
         compose,
     };
     use ratatui::layout::Rect;
+    use ratatui_image::picker::Picker;
     use rstest::rstest;
+    use widgets::{Breakpoint, FrameLayout};
 
     use crate::pixels::cover::{
+        CoverFade,
+        CoverKey,
+        CoverWash,
         DecodedCover,
         vinyl::{
+            VinylCover,
             VinylPaintKey,
             VinylPlan,
+            VinylSources,
+            art_decode,
             plan_vinyl,
             sleeve_inset_side_px,
             vinyl_art_source,
@@ -510,6 +571,14 @@ mod tests {
             path: Some(PathBuf::from(path)),
             face: SleeveFace::Art,
             size_px: 128,
+        }
+    }
+
+    fn key_with_cover_key(path: &str, key: CoverKey) -> VinylCacheKey {
+        VinylCacheKey {
+            config_generation: key.config_generation,
+            theme_generation: key.theme_generation,
+            ..key_for(path)
         }
     }
 
@@ -584,6 +653,42 @@ mod tests {
         assert_eq!(plan_vinyl(painted, desired), expected);
     }
 
+    #[rstest]
+    #[case::same_cover_key_is_reused_regardless_of_the_callers_clock(
+        CoverKey { config_generation: Revision::default(), theme_generation: Revision::default() },
+        CoverKey { config_generation: Revision::default(), theme_generation: Revision::default() },
+        VinylPlan::Reuse
+    )]
+    #[case::a_moved_config_generation_forces_a_rebuild(
+        CoverKey { config_generation: Revision::default(), theme_generation: Revision::default() },
+        CoverKey { config_generation: Revision::default().next(), theme_generation: Revision::default() },
+        VinylPlan::RebuildNewKey
+    )]
+    #[case::a_moved_theme_generation_forces_a_theme_wash_rebuild(
+        CoverKey { config_generation: Revision::default(), theme_generation: Revision::default() },
+        CoverKey { config_generation: Revision::default(), theme_generation: Revision::default().next() },
+        VinylPlan::RebuildThemeWash
+    )]
+    fn cover_key_rows(
+        #[case] painted: CoverKey,
+        #[case] desired: CoverKey,
+        #[case] expected: VinylPlan,
+    ) {
+        let painted_key = key_with_cover_key("a.flac", painted);
+        let desired_key = key_with_cover_key("a.flac", desired);
+        let plan = plan_vinyl(
+            Some(VinylPaintKey {
+                key: &painted_key,
+                rect: rect(),
+            }),
+            VinylPaintKey {
+                key: &desired_key,
+                rect: rect(),
+            },
+        );
+        assert_eq!(plan, expected);
+    }
+
     #[test]
     fn sleeve_inset_side_px_is_smaller_than_the_full_canvas() {
         assert!(sleeve_inset_side_px(128) < 128);
@@ -595,20 +700,23 @@ mod tests {
         let mut cache = VinylCache::default();
         let cover = DecodedCover {
             path: PathBuf::from("a.flac"),
-            image: RgbaImage::from_pixel(4, 4, Rgba([200, 100, 50, 255])),
+            image: Arc::new(RgbaImage::from_pixel(4, 4, Rgba([200, 100, 50, 255]))),
         };
         let size_px = 96;
 
-        let first = vinyl_art_source(&cache, Some(&cover), size_px);
+        let first_decoded = art_decode(&cache, Some(&cover), size_px);
         assert!(
-            first.decoded.is_some(),
+            first_decoded.is_some(),
             "an empty cache must build the art source"
         );
 
         let request = VinylRequest {
             cache: &mut cache,
             colors: VinylColors::default(),
-            art: first,
+            art: VinylArtSource {
+                path: vinyl_art_source(Some(&cover)).map(Path::to_path_buf),
+                decoded: first_decoded,
+            },
             size_px,
             face: SleeveFace::Art,
             config_generation: Revision::default(),
@@ -616,10 +724,64 @@ mod tests {
         };
         assert!(matches!(compose(request), VinylImage::Ready { .. }));
 
-        let second = vinyl_art_source(&cache, Some(&cover), size_px);
+        let second_decoded = art_decode(&cache, Some(&cover), size_px);
         assert!(
-            second.decoded.is_none(),
+            second_decoded.is_none(),
             "a cached key must not rebuild the art source"
         );
+    }
+
+    fn layout_with_cover(cover: Rect) -> FrameLayout {
+        FrameLayout {
+            screen: Rect::default(),
+            breakpoint: Breakpoint::Full,
+            content: Rect::default(),
+            header: Rect::default(),
+            card: None,
+            cover: Some(cover),
+            playlist_pane: Rect::default(),
+            playlist: None,
+            key_hints: None,
+            search_bounds: Rect::default(),
+            overlay: None,
+            toast: None,
+        }
+    }
+
+    fn vinyl_sources(layout: FrameLayout) -> VinylSources<'static> {
+        VinylSources {
+            key: CoverKey {
+                config_generation: Revision::default(),
+                theme_generation: Revision::default(),
+            },
+            colors: VinylColors::default(),
+            clock: std::time::Duration::ZERO,
+            animations: Animations::default(),
+            layout,
+            decoded: None,
+            fade: CoverFade::Allowed,
+            wash: CoverWash::Idle,
+        }
+    }
+
+    #[test]
+    fn a_settled_vinyl_refresh_shares_the_cached_pixmap() {
+        let picker = Picker::halfblocks();
+        let mut cover = VinylCover::default();
+        let sources = vinyl_sources(layout_with_cover(rect()));
+
+        cover.refresh(&picker, sources);
+        let first = cover
+            .pixmap
+            .clone()
+            .expect("a refresh with a cover rect paints a pixmap");
+
+        cover.refresh(&picker, sources);
+        let second = cover
+            .pixmap
+            .clone()
+            .expect("a settled second refresh keeps the painted pixmap");
+
+        assert!(Arc::ptr_eq(&first, &second));
     }
 }

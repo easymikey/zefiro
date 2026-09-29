@@ -33,7 +33,7 @@ struct PlaylistJump<'a> {
     player: &'a mut Player,
 }
 
-pub(super) fn loaded(
+pub(crate) fn loaded(
     model: &mut Model,
     message: LoadedRequest,
 ) -> Result<Cmd, Rejection> {

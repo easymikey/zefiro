@@ -20,10 +20,14 @@ use crate::domain::{
     Percent,
     PlaylistIndex,
     Revision,
+    RowDelta,
+    SeekStep,
     SettingRow,
+    SpeedStep,
     ThemeName,
     Toast,
     Track,
+    VolumeStep,
     playlist::PlaylistFileName,
 };
 
@@ -86,6 +90,7 @@ pub enum DriverMessage {
     Died(DriverFailure),
     Stopped,
     Congested,
+    Rejected { input: &'static str },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
@@ -176,13 +181,13 @@ pub enum PlaybackRequest {
     Stop,
     Next,
     Prev,
-    SeekBy(i64),
-    NudgeVolume(i8),
+    SeekBy(SeekStep),
+    NudgeVolume(VolumeStep),
     ToggleShuffle,
     CycleRepeat,
     CycleSleep,
     AbMark,
-    NudgeSpeed(i8),
+    NudgeSpeed(SpeedStep),
     SeekTo(Duration),
     SeekFraction(SeekTenths),
 }
@@ -220,7 +225,7 @@ pub enum BrowseRequest {
     Trash(PlaylistIndex),
     SavePlaylist(PlaylistFileName),
     ChordPrefix(ChordPrefix),
-    CursorBy(i64),
+    CursorBy(RowDelta),
     Top,
     Bottom,
     PlaySelected,
@@ -350,11 +355,12 @@ pub enum AudioEvent {
     DeviceFellBack(Option<DeviceName>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
+#[derive(Debug, Clone, PartialEq, Eq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum SystemEvent {
     Volume(Percent),
     OutputRouteChanged,
+    HardwareWatchFailed(String),
     MediaKey(Gesture),
 }
 

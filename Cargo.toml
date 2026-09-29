@@ -9,6 +9,7 @@ members = [
   "crates/raster",
   "crates/runtime",
   "crates/sifr",
+  "crates/sifr-guards",
   "crates/terminal",
   "crates/widgets",
 ]
@@ -143,6 +144,7 @@ terminal = { path = "crates/terminal" }
 widgets = { path = "crates/widgets" }
 
 # prod
+arc-swap = { version = "1", default-features = false }
 bincode = { version = "2", default-features = false, features = ["serde", "std"] }
 block2 = { version = "0.6", default-features = false, features = ["alloc"] }
 bon = { version = "3", default-features = false }

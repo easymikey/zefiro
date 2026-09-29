@@ -138,7 +138,6 @@ impl Scenery {
             pixel_path: PixelPath::Halfblocks,
             cell_aspect: CellAspect::default(),
             clock: Duration::ZERO,
-            now_unix: 0,
             now: Moment::default(),
             music_dir: "/home/user/Music",
             sleep_left: None,

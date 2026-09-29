@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/unit/transitions.rs
-assertion_line: 524
+assertion_line: 526
 expression: effs
 ---
 [
@@ -15,13 +15,6 @@ expression: effs
                 1,
             ),
         },
-    ),
-    Audio(
-        Volume(
-            Percent(
-                50,
-            ),
-        ),
     ),
     Library(
         AppendHistory {

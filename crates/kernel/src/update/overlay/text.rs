@@ -1,6 +1,6 @@
 use crate::{domain::TextEntry, message::TextRequest};
 
-pub(super) fn retyped(mut text: TextEntry, message: TextRequest) -> TextEntry {
+pub(crate) fn retyped(mut text: TextEntry, message: TextRequest) -> TextEntry {
     match message {
         TextRequest::Char(character) => text.input.push(character),
         TextRequest::Backspace => {

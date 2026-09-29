@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::domain::{Player, Track, Workspace, playlist::Playlist};
 
-pub(super) fn candidate(
+pub(crate) fn candidate(
     playlist: &Playlist,
     player: &Player,
     workspace: &Workspace,

@@ -26,6 +26,11 @@ impl Seen {
     }
 
     #[must_use]
+    pub(crate) fn starting(text: Option<&str>) -> Self {
+        text.map_or(Seen::Fresh, |text| Seen::Content(Signature::of(text)))
+    }
+
+    #[must_use]
     pub(crate) fn changed_by(self, text: Option<&str>) -> bool {
         match self {
             Seen::Fresh => true,

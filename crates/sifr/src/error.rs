@@ -11,6 +11,8 @@ pub(crate) enum Error {
     #[error(transparent)]
     Terminal(#[from] terminal::TerminalError),
     #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error(transparent)]
     Library(#[from] library::LibraryError),
     #[error("reading {path}: {source}")]
     ConfigRead {
@@ -34,6 +36,8 @@ pub(crate) enum Error {
         #[source]
         source: kernel::playlist::PlaylistNameRejection,
     },
+    #[error(transparent)]
+    SignalInstall(#[from] crate::signal::AlreadyInstalled),
     #[error("a background thread panicked: {report}")]
     WorkerPanic { report: String },
     #[error("{run} (teardown after also failed: {teardown})")]

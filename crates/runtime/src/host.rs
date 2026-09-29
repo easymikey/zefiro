@@ -54,15 +54,12 @@ impl Drop for StopOnDrop {
 mod tests {
     use kernel::domain::Startup;
 
-    use crate::{
-        host::host,
-        runtime::{Runtime, Wiring},
-        trace::Trace,
-    };
+    use crate::{host::host, runtime::Runtime, trace::Trace, wiring::Wiring};
 
     fn idle_runtime() -> Runtime {
         let (wiring, ..) = Wiring::idle();
-        Runtime::assemble(Startup::default(), wiring, Trace::default())
+        let seed = Runtime::seeded(Startup::default());
+        Runtime::assemble(seed, wiring, Trace::default())
     }
 
     #[test]

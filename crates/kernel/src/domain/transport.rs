@@ -66,3 +66,76 @@ impl Default for SeekSteps {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeekStep(i64);
+
+impl SeekStep {
+    #[must_use]
+    pub const fn new(seconds: i64) -> Self {
+        Self(seconds)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VolumeStep(i8);
+
+impl VolumeStep {
+    #[must_use]
+    pub const fn new(percent: i8) -> Self {
+        Self(percent)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> i8 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpeedStep(i8);
+
+impl SpeedStep {
+    #[must_use]
+    pub const fn new(notches: i8) -> Self {
+        Self(notches)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> i8 {
+        self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use crate::domain::transport::{SeekStep, SpeedStep, VolumeStep};
+
+    #[rstest]
+    #[case::negative(-30)]
+    #[case::positive(30)]
+    fn steps_convert(#[case] value: i64) {
+        assert_eq!(SeekStep::new(value).get(), value);
+    }
+
+    #[rstest]
+    #[case::negative(-5)]
+    #[case::positive(5)]
+    fn volume_step_converts(#[case] value: i8) {
+        assert_eq!(VolumeStep::new(value).get(), value);
+    }
+
+    #[rstest]
+    #[case::negative(-1)]
+    #[case::positive(1)]
+    fn speed_step_converts(#[case] value: i8) {
+        assert_eq!(SpeedStep::new(value).get(), value);
+    }
+}

@@ -37,7 +37,6 @@ pub(crate) struct OverlayContent<'a> {
     pub(crate) history: &'a [HistoryEntry],
     pub(crate) settings_view: SettingsView<'a>,
     pub(crate) bindings: &'a [KeyBinding],
-    pub(crate) now_unix: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -151,7 +150,6 @@ impl<'a> OverlayLayer<'a> {
                 theme: self.content.theme,
                 entries: self.content.history,
                 selected: cursor.selected(),
-                now_unix: self.content.now_unix,
                 container: self.container(avoid),
             })),
             Overlay::Settings(cursor) => {
@@ -294,7 +292,6 @@ mod tests {
                 history: &[],
                 settings_view: settings_values(&[]),
                 bindings: &[],
-                now_unix: 0,
             },
             placement: OverlayPlacement {
                 avoid: None,

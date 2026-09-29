@@ -20,7 +20,9 @@ ConfigFile {
         ),
         replaygain: Off,
         device: Some(
-            "Speakers",
+            DeviceName(
+                "Speakers",
+            ),
         ),
         sleep_presets: SleepPresets(
             [

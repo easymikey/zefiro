@@ -92,7 +92,9 @@ impl Input {
             | Message::Playback(_)
             | Message::Browse(_) => Input::Key,
             Message::System(
-                SystemEvent::Volume(_) | SystemEvent::OutputRouteChanged,
+                SystemEvent::Volume(_)
+                | SystemEvent::OutputRouteChanged
+                | SystemEvent::HardwareWatchFailed(_),
             )
             | Message::Workspace(_)
             | Message::Loaded(_)
@@ -143,7 +145,6 @@ fn stamp(model: &mut Model, cmd: &mut Cmd, now: Moment) {
             | Effect::Audio(
                 AudioCmd::Pause(_)
                 | AudioCmd::Seek(_)
-                | AudioCmd::Volume(_)
                 | AudioCmd::SetSpeed(_)
                 | AudioCmd::Stop
                 | AudioCmd::SetCrossfade(_)

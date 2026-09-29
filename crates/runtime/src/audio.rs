@@ -6,12 +6,12 @@ use audio::{
     prepare as prepare_engine,
 };
 use crossbeam_channel::Receiver;
-use kernel::{AudioCmd, AudioEvent, domain::Startup};
+use kernel::{AudioCmd, AudioEvent, domain::Model};
 
 use crate::{driver::DriverLoop, mailbox::Mailbox};
 
-pub(crate) fn prepare(startup: &Startup) -> (AudioLoop, SpectrumTap) {
-    prepare_engine(engine_config(startup))
+pub(crate) fn prepare(model: &Model) -> (AudioLoop, SpectrumTap) {
+    prepare_engine(engine_config(model))
 }
 
 impl DriverLoop<AudioCmd, AudioEvent> for AudioLoop {
@@ -20,12 +20,12 @@ impl DriverLoop<AudioCmd, AudioEvent> for AudioLoop {
     }
 }
 
-fn engine_config(startup: &Startup) -> EngineConfig {
+fn engine_config(model: &Model) -> EngineConfig {
     EngineConfig {
-        crossfade: startup.crossfade,
-        replaygain: startup.replaygain,
+        crossfade: model.settings.crossfade,
+        replaygain: model.settings.replaygain,
         unity_volume: unity_volume(),
-        device: startup.output_device.clone(),
+        device: model.settings.output_device.clone(),
     }
 }
 
@@ -39,26 +39,28 @@ fn unity_volume() -> UnityVolume {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{DeviceName, Startup};
+    use kernel::domain::{DeviceName, Model, Startup};
 
     use crate::audio::{engine_config, unity_volume};
 
-    fn stock_startup() -> Startup {
-        Startup {
+    fn stock_model() -> Model {
+        let startup = Startup {
             output_device: Some(DeviceName::new("Speakers".to_string()).unwrap()),
             ..Startup::default()
-        }
+        };
+        let (model, _cmd) = kernel::startup(startup);
+        model
     }
 
     #[test]
     fn engine_config_carries_the_startup_device_and_gain_settings() {
-        let startup = stock_startup();
+        let model = stock_model();
 
-        let config = engine_config(&startup);
+        let config = engine_config(&model);
 
-        assert_eq!(config.crossfade, startup.crossfade);
-        assert_eq!(config.replaygain, startup.replaygain);
-        assert_eq!(config.device, startup.output_device);
+        assert_eq!(config.crossfade, model.settings.crossfade);
+        assert_eq!(config.replaygain, model.settings.replaygain);
+        assert_eq!(config.device, model.settings.output_device);
         assert_eq!(config.unity_volume, unity_volume());
     }
 }

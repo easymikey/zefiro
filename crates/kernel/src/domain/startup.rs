@@ -35,4 +35,5 @@ pub struct Startup {
     pub volume: Percent,
     pub themes: Vec<ThemeName>,
     pub custom_rows: Vec<CustomSetting>,
+    pub notices: Vec<String>,
 }

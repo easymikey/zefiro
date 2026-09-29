@@ -67,6 +67,11 @@ impl SpectrumSmoothing {
     }
 
     #[must_use]
+    pub fn current_bands(&self) -> &Spectrum {
+        &self.bands
+    }
+
+    #[must_use]
     pub fn motion(&self) -> SpectrumMotion {
         if self.bands.iter().all(|&band| band == 0.0) {
             SpectrumMotion::Settled

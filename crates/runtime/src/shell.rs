@@ -1,20 +1,15 @@
-use std::time::Instant;
-
 use audio::SpectrumTap;
-use config::{AppearanceFile, AppearancePatch, ThemeFile};
 use kernel::{Cue, Message, Moment, WindowColorsCmd, domain::Model};
 
-use crate::library::cover::{CoverDecoded, CoverRequest};
+use crate::{cells::Cells, library::cover::CoverRequest};
 
 pub trait Shell {
     type Input;
     type Error: std::error::Error + 'static;
 
-    fn input(&mut self, event: Self::Input, model: &Model) -> Reaction;
-    fn reloaded(&mut self, reload: Reload);
+    fn input(&mut self, event: Self::Input) -> Reaction;
     fn effect(&mut self, effect: ShellEffect);
-    fn cover(&mut self, decoded: CoverDecoded);
-    fn frame_due(&self) -> FrameDue;
+    fn frame_due(&self, view: &View<'_>) -> FrameDue;
     fn paint(&mut self, view: View<'_>) -> Result<Painted, Self::Error>;
 }
 
@@ -26,25 +21,17 @@ pub enum Reaction {
     Ignored,
 }
 
-#[must_use]
-#[derive(Debug, Clone, PartialEq)]
-pub enum Reload {
-    Theme(ThemeFile),
-    Appearance(AppearanceFile),
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ShellEffect {
     WindowColors(WindowColorsCmd),
     Animate(Cue),
-    Appearance(AppearancePatch),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FrameDue {
     #[default]
     Settled,
-    At(Instant),
+    At(Moment),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -58,12 +45,14 @@ pub(crate) enum Flow {
 pub struct View<'a> {
     pub model: &'a Model,
     pub spectrum: &'a SpectrumTap,
-    pub sleep_deadline: Option<Instant>,
+    pub cells: &'a Cells,
+    pub sleep_deadline: Option<Moment>,
     pub now: Moment,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Painted {
     pub cover: Option<CoverRequest>,
     pub viewport: Option<usize>,
+    pub failures: Vec<Message>,
 }

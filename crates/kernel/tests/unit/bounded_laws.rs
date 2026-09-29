@@ -36,18 +36,23 @@ proptest! {
         current in durations(0..4),
     ) {
         let bundle_count = bundles.len();
-        let presets = SleepPresetBundles { bundles };
+        let leaked: Vec<&'static [Duration]> = bundles
+            .into_iter()
+            .map(|bundle| &*Box::leak(bundle.into_boxed_slice()))
+            .collect();
+        let presets = SleepPresetBundles {
+            bundles: Box::leak(leaked.into_boxed_slice()),
+        };
         prop_assert!(presets.nearest_index(&current) < bundle_count);
     }
 }
 
 #[test]
 fn a_new_bundle_closer_in_total_becomes_nearest() {
+    const FIFTEEN: [Duration; 1] = [Duration::from_secs(60 * 15)];
+    const NINETY: [Duration; 1] = [Duration::from_secs(60 * 90)];
     let presets = SleepPresetBundles {
-        bundles: vec![
-            vec![Duration::from_secs(60 * 15)],
-            vec![Duration::from_secs(60 * 90)],
-        ],
+        bundles: &[&FIFTEEN, &NINETY],
     };
     assert_eq!(presets.nearest_index(&[Duration::from_secs(60 * 14)]), 0);
     assert_eq!(presets.nearest_index(&[Duration::from_secs(60 * 89)]), 1);

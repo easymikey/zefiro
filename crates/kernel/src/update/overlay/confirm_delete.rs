@@ -1,6 +1,6 @@
 use crate::domain::{DeleteCandidate, Workspace, playlist::Playlist};
 
-pub(super) fn candidate(
+pub(crate) fn candidate(
     playlist: &Playlist,
     workspace: &Workspace,
 ) -> Option<DeleteCandidate> {

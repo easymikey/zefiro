@@ -21,7 +21,6 @@ use crate::{
         AbLoop,
         Model,
         Moment,
-        Percent,
         Player,
         PlaylistIndex,
         Revision,
@@ -46,7 +45,6 @@ pub struct Anchor {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Resume {
-    pub volume: Percent,
     pub anchor: Anchor,
 }
 
@@ -66,7 +64,6 @@ pub enum PlayerMessage {
     SleepFired(Moment),
     Start {
         track: Arc<Track>,
-        volume: Percent,
     },
     Loaded {
         total: Option<Duration>,
@@ -90,7 +87,6 @@ pub enum PlayerMessage {
     },
     Ended {
         next: Option<Arc<Track>>,
-        volume: Percent,
     },
 }
 
@@ -117,9 +113,7 @@ impl Machine for Player {
             PlayerMessage::Release(anchor) => self.release(anchor),
             PlayerMessage::Seek { target, now } => self.seek(target, now),
             PlayerMessage::SleepFired(now) => self.sleep_fired(now),
-            PlayerMessage::Start { track, volume } => {
-                Ok(start(track, volume, StartOrigin::User))
-            }
+            PlayerMessage::Start { track } => Ok(start(track, StartOrigin::User)),
             PlayerMessage::Loaded { total, anchor } => self.loaded(total, anchor),
             PlayerMessage::Error { failure, now } => Ok(self.failed(&failure, now)),
             PlayerMessage::Playhead { offset, lookahead } => {
@@ -127,7 +121,7 @@ impl Machine for Player {
             }
             PlayerMessage::Reported { offset, now } => self.reported(offset, now),
             PlayerMessage::TrackChanged { next, now } => self.track_changed(next, now),
-            PlayerMessage::Ended { next, volume } => self.ended(next, volume),
+            PlayerMessage::Ended { next } => self.ended(next),
         }
     }
 }
@@ -247,7 +241,7 @@ enum StartOrigin {
     TrackEnded,
 }
 
-fn start(track: Arc<Track>, volume: Percent, origin: StartOrigin) -> (Player, Cmd) {
+fn start(track: Arc<Track>, origin: StartOrigin) -> (Player, Cmd) {
     let path = track.path().to_path_buf();
     let gain = track.audio_format().replay_gain;
     let mut effects = match origin {
@@ -260,7 +254,6 @@ fn start(track: Arc<Track>, volume: Percent, origin: StartOrigin) -> (Player, Cm
             gain,
             revision: Revision::UNSTAMPED,
         }),
-        Effect::Audio(AudioCmd::Volume(volume)),
         Effect::Library(LibraryCmd::AppendHistory {
             track: Arc::clone(&track),
             at: UnixSeconds::UNSTAMPED,
@@ -304,7 +297,7 @@ fn handoff_effects(track: &Arc<Track>, playback: PlaybackChange) -> Cmd {
     Cmd::Batch(effects)
 }
 
-pub(super) fn stopped_effects() -> Cmd {
+pub(crate) fn stopped_effects() -> Cmd {
     let mut effects = PlaybackChange::Stop.effects().to_vec();
     effects.extend([
         Effect::System(SystemCmd::NowPlaying(NowPlaying::default())),

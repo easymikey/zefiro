@@ -10,7 +10,11 @@ use crate::pixels::cover::CoverPixels;
 pub use crate::pixels::cover::{
     CoverArtOwner,
     CoverFade,
+    CoverKey,
+    CoverLook,
+    CoverMoment,
     CoverMotion,
+    CoverPlacement,
     CoverSources,
     CoverWash,
     DecodedCover,
@@ -102,31 +106,21 @@ mod tests {
     use image::{Rgba, RgbaImage};
     use kernel::{
         Moment,
-        domain::{
-            AudioFormat,
-            KeymapOverrides,
-            Model,
-            Player,
-            Playhead,
-            Preload,
-            Speed,
-            Tags,
-            Track,
-        },
-        update::keymap::Bindings,
+        domain::{AudioFormat, Model, Player, Playhead, Preload, Speed, Tags, Track},
     };
+    use raster::{VinylColors, color_overrides};
     use ratatui::layout::Rect;
     use ratatui_image::picker::Picker;
     use widgets::{
+        ActiveTheme,
         AnimationTimings,
         Breakpoint,
-        CellAspect,
         ColorDepth,
         Colors,
         FrameLayout,
-        PixelPath,
+        MilkdropColors,
+        Playing,
         SPECTRUM_BANDS,
-        Scene,
         Spectrum,
         Theme,
         ToastAreas,
@@ -134,7 +128,11 @@ mod tests {
 
     use crate::pixels::{
         CoverFade,
+        CoverKey,
+        CoverLook,
+        CoverMoment,
         CoverMotion,
+        CoverPlacement,
         CoverSources,
         CoverWash,
         DecodedCover,
@@ -187,7 +185,6 @@ mod tests {
         model: Model,
         theme: Theme,
         appearance: AppearanceFile,
-        bindings: Bindings,
         spectrum: Spectrum,
     }
 
@@ -197,26 +194,40 @@ mod tests {
                 model: playing(245, 30),
                 theme: theme(),
                 appearance: AppearanceFile::default(),
-                bindings: Bindings::new(&KeymapOverrides::default()),
                 spectrum: [0.0; SPECTRUM_BANDS],
             }
         }
 
-        fn scene(&self) -> Scene<'_> {
-            Scene {
-                model: &self.model,
-                theme: &self.theme,
-                color_depth: ColorDepth::TrueColor,
-                appearance: &self.appearance,
-                bindings: self.bindings.as_slice(),
-                spectrum: &self.spectrum,
-                pixel_path: PixelPath::Protocol,
-                cell_aspect: CellAspect::default(),
-                clock: Duration::ZERO,
-                now_unix: 0,
-                now: Moment::default(),
-                music_dir: "/music",
-                sleep_left: None,
+        fn sources(&self, layout: FrameLayout, fade: CoverFade) -> CoverSources<'_> {
+            CoverSources {
+                key: CoverKey {
+                    config_generation: self.model.config_generation,
+                    theme_generation: self.model.theme_generation,
+                },
+                look: CoverLook {
+                    style: self.appearance.cover.style,
+                    animations: self.appearance.window.animations,
+                    vinyl: VinylColors::from(&self.theme),
+                    milkdrop: MilkdropColors::from_theme(
+                        &ActiveTheme::new(&self.theme, ColorDepth::TrueColor)
+                            .with_bars(color_overrides(&self.appearance.progress)),
+                    ),
+                },
+                moment: CoverMoment {
+                    clock: Duration::ZERO,
+                    playing: if self.model.player.is_playing() {
+                        Playing::Yes
+                    } else {
+                        Playing::No
+                    },
+                    track: self.model.player.current().map(|track| track.path()),
+                    bands: &self.spectrum,
+                },
+                placement: CoverPlacement {
+                    layout,
+                    fade,
+                    wash: CoverWash::Idle,
+                },
             }
         }
     }
@@ -241,7 +252,7 @@ mod tests {
     fn decoded_cover(path: &str) -> DecodedCover {
         DecodedCover {
             path: PathBuf::from(path),
-            image: RgbaImage::from_pixel(4, 4, Rgba([200, 100, 50, 255])),
+            image: Arc::new(RgbaImage::from_pixel(4, 4, Rgba([200, 100, 50, 255]))),
         }
     }
 
@@ -255,19 +266,9 @@ mod tests {
         let mut pixels = Pixels::new(Picker::halfblocks());
         let layout = layout_with_cover(Rect::new(0, 0, 10, 10));
         pixels.decoded_cover(decoded_cover("a.jpg"));
-        pixels.refresh(CoverSources {
-            scene: fixture.scene(),
-            layout,
-            fade: CoverFade::Allowed,
-            wash: CoverWash::Idle,
-        });
+        pixels.refresh(fixture.sources(layout, CoverFade::Allowed));
         pixels.decoded_cover(decoded_cover("b.jpg"));
-        pixels.refresh(CoverSources {
-            scene: fixture.scene(),
-            layout,
-            fade: CoverFade::Allowed,
-            wash: CoverWash::Idle,
-        });
+        pixels.refresh(fixture.sources(layout, CoverFade::Allowed));
         assert_eq!(
             pixels.cover_motion(Duration::ZERO),
             CoverMotion::Crossfading
@@ -276,15 +277,9 @@ mod tests {
             pixels.cover_motion(crossfade_duration()),
             CoverMotion::Crossfading
         );
-        pixels.refresh(CoverSources {
-            scene: Scene {
-                clock: crossfade_duration(),
-                ..fixture.scene()
-            },
-            layout,
-            fade: CoverFade::Allowed,
-            wash: CoverWash::Idle,
-        });
+        let mut settled = fixture.sources(layout, CoverFade::Allowed);
+        settled.moment.clock = crossfade_duration();
+        pixels.refresh(settled);
         assert_eq!(
             pixels.cover_motion(crossfade_duration()),
             CoverMotion::Still
@@ -297,19 +292,9 @@ mod tests {
         let mut pixels = Pixels::new(Picker::halfblocks());
         let layout = layout_with_cover(Rect::new(0, 0, 10, 10));
         pixels.decoded_cover(decoded_cover("a.jpg"));
-        pixels.refresh(CoverSources {
-            scene: fixture.scene(),
-            layout,
-            fade: CoverFade::Allowed,
-            wash: CoverWash::Idle,
-        });
+        pixels.refresh(fixture.sources(layout, CoverFade::Allowed));
         pixels.decoded_cover(decoded_cover("b.jpg"));
-        pixels.refresh(CoverSources {
-            scene: fixture.scene(),
-            layout,
-            fade: CoverFade::Withheld,
-            wash: CoverWash::Idle,
-        });
+        pixels.refresh(fixture.sources(layout, CoverFade::Withheld));
         assert_eq!(pixels.cover_motion(Duration::ZERO), CoverMotion::Still);
     }
 
@@ -318,18 +303,14 @@ mod tests {
         let fixture = Fixture::playing();
         let mut pixels = Pixels::new(Picker::halfblocks());
         pixels.decoded_cover(decoded_cover("a.jpg"));
-        pixels.refresh(CoverSources {
-            scene: fixture.scene(),
-            layout: layout_with_cover(Rect::new(0, 0, 10, 10)),
-            fade: CoverFade::Allowed,
-            wash: CoverWash::Idle,
-        });
-        pixels.refresh(CoverSources {
-            scene: fixture.scene(),
-            layout: layout_with_cover(Rect::new(0, 0, 12, 10)),
-            fade: CoverFade::Allowed,
-            wash: CoverWash::Idle,
-        });
+        pixels.refresh(fixture.sources(
+            layout_with_cover(Rect::new(0, 0, 10, 10)),
+            CoverFade::Allowed,
+        ));
+        pixels.refresh(fixture.sources(
+            layout_with_cover(Rect::new(0, 0, 12, 10)),
+            CoverFade::Allowed,
+        ));
         assert_eq!(pixels.cover_motion(Duration::ZERO), CoverMotion::Still);
     }
 

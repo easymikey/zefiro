@@ -270,9 +270,8 @@ mod tests {
         let source = "[cover]\nstyle = \"plain\"\n[card]\n[card]\n";
 
         let broken = parse_appearance(source)
-            .err()
-            .map(|error| error.to_string())
-            .unwrap_or_default();
+            .expect_err("a duplicate table must not parse")
+            .to_string();
 
         assert_eq!(broken.lines().nth(1), Some("sifr-ui.toml:4"), "{broken:?}");
     }

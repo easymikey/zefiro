@@ -11,11 +11,11 @@ pub(crate) enum ThemeReloadError {
 pub(crate) fn appearance_reload(
     text: Option<&str>,
 ) -> Result<AppearanceFile, ConfigError> {
-    config::parse_appearance(text.unwrap_or_default())
+    text.map_or_else(|| Ok(AppearanceFile::default()), config::parse_appearance)
 }
 
 pub(crate) fn keymap_reload(text: Option<&str>) -> Result<ParsedKeymap, ConfigError> {
-    config::parse_keymap(text.unwrap_or_default())
+    config::parse_keymap(text.unwrap_or(""))
 }
 
 pub(crate) fn theme_reload(

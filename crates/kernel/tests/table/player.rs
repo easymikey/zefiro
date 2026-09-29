@@ -3,7 +3,6 @@ use std::{sync::Arc, time::Duration};
 use kernel::{
     AudioCmd,
     AudioFailure,
-    Bounded,
     Cmd,
     Cue,
     DecodeFault,
@@ -12,7 +11,6 @@ use kernel::{
     Moment,
     NowPlaying,
     Pause,
-    Percent,
     PlaybackChange,
     Player,
     Playhead,
@@ -95,17 +93,11 @@ fn track_changed(next: Option<Arc<Track>>) -> PlayerMessage {
 }
 
 fn next(track: Arc<Track>) -> PlayerMessage {
-    PlayerMessage::Start {
-        track,
-        volume: volume(),
-    }
+    PlayerMessage::Start { track }
 }
 
 fn ended(next: Option<Arc<Track>>) -> PlayerMessage {
-    PlayerMessage::Ended {
-        next,
-        volume: volume(),
-    }
+    PlayerMessage::Ended { next }
 }
 
 fn now_playing(track: &Arc<Track>) -> Effect {
@@ -139,10 +131,6 @@ fn plays() -> Cmd {
 
 fn pauses() -> Cmd {
     PlaybackChange::Pause.cued()
-}
-
-fn volume() -> Percent {
-    Percent::clamped(70)
 }
 
 fn track_a() -> Arc<Track> {
@@ -187,10 +175,7 @@ fn held(track: Arc<Track>, at: Duration) -> Player {
 fn toggle(current: Option<Arc<Track>>) -> PlayerMessage {
     PlayerMessage::Toggle {
         current,
-        resume: Resume {
-            volume: volume(),
-            anchor: anchor(),
-        },
+        resume: Resume { anchor: anchor() },
     }
 }
 
@@ -201,7 +186,6 @@ fn faded_in(track: &Arc<Track>) -> Cmd {
             gain: track.audio_format().replay_gain,
             revision: Revision::UNSTAMPED,
         }),
-        Effect::Audio(AudioCmd::Volume(volume())),
         appended_to_history(track),
         now_playing(track),
     ];

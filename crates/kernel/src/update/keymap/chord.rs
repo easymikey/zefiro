@@ -10,7 +10,7 @@ pub enum KeyOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum BindingSource {
+pub(crate) enum BindingSource {
     Configured,
     Default,
 }
@@ -21,14 +21,14 @@ pub struct KeyBinding {
     pub outcome: KeyOutcome,
     pub action: Option<Action>,
     pub key_context: KeyContext,
-    pub(super) source: BindingSource,
+    pub(crate) source: BindingSource,
 }
 
-pub(super) struct ActionRow {
-    pub(super) action: Action,
-    pub(super) chord: Chord,
-    pub(super) message: Message,
-    pub(super) key_context: KeyContext,
+pub(crate) struct ActionRow {
+    pub(crate) action: Action,
+    pub(crate) chord: Chord,
+    pub(crate) message: Message,
+    pub(crate) key_context: KeyContext,
 }
 
 impl From<ActionRow> for KeyBinding {
@@ -43,10 +43,10 @@ impl From<ActionRow> for KeyBinding {
     }
 }
 
-pub(super) struct KeyContextRow {
-    pub(super) key_context: KeyContext,
-    pub(super) pattern: KeyPattern,
-    pub(super) outcome: KeyOutcome,
+pub(crate) struct KeyContextRow {
+    pub(crate) key_context: KeyContext,
+    pub(crate) pattern: KeyPattern,
+    pub(crate) outcome: KeyOutcome,
 }
 
 impl From<KeyContextRow> for KeyBinding {

@@ -1,5 +1,3 @@
-use std::sync::LazyLock;
-
 use crate::{
     domain::{
         Action,
@@ -11,7 +9,11 @@ use crate::{
         Modifiers,
         Nudge,
         OverlayName,
+        RowDelta,
+        SeekStep,
         SeekSteps,
+        SpeedStep,
+        VolumeStep,
         digit_char,
         digits,
     },
@@ -73,22 +75,22 @@ fn global_rows() -> Vec<KeyBinding> {
         row((PlayPause, key(' '), Message::Playback(P::Toggle), Global)),
         row((Next, key('n'), Message::Playback(P::Next), Global)),
         row((Prev, key('p'), Message::Playback(P::Prev), Global)),
-        row((SeekBack, key('h'), Message::Playback(P::SeekBy(-steps.medium)), Global)),
-        row((SeekForward, key('l'), Message::Playback(P::SeekBy(steps.medium)), Global)),
-        row((SeekBackShort, special(KeyCode::Left), Message::Playback(P::SeekBy(-steps.small)), Global)),
-        row((SeekForwardShort, special(KeyCode::Right), Message::Playback(P::SeekBy(steps.small)), Global)),
-        row((SeekBackLong, shift_special(KeyCode::Left), Message::Playback(P::SeekBy(-steps.large)), Global)),
-        row((SeekForwardLong, shift_special(KeyCode::Right), Message::Playback(P::SeekBy(steps.large)), Global)),
-        row((VolumeUp, key('+'), Message::Playback(P::NudgeVolume(5)), Global)),
-        row((VolumeUp, key('='), Message::Playback(P::NudgeVolume(5)), Global)),
-        row((VolumeDown, key('-'), Message::Playback(P::NudgeVolume(-5)), Global)),
-        row((VolumeDown, key('_'), Message::Playback(P::NudgeVolume(-5)), Global)),
+        row((SeekBack, key('h'), Message::Playback(P::SeekBy(SeekStep::new(-steps.medium))), Global)),
+        row((SeekForward, key('l'), Message::Playback(P::SeekBy(SeekStep::new(steps.medium))), Global)),
+        row((SeekBackShort, special(KeyCode::Left), Message::Playback(P::SeekBy(SeekStep::new(-steps.small))), Global)),
+        row((SeekForwardShort, special(KeyCode::Right), Message::Playback(P::SeekBy(SeekStep::new(steps.small))), Global)),
+        row((SeekBackLong, shift_special(KeyCode::Left), Message::Playback(P::SeekBy(SeekStep::new(-steps.large))), Global)),
+        row((SeekForwardLong, shift_special(KeyCode::Right), Message::Playback(P::SeekBy(SeekStep::new(steps.large))), Global)),
+        row((VolumeUp, key('+'), Message::Playback(P::NudgeVolume(VolumeStep::new(5))), Global)),
+        row((VolumeUp, key('='), Message::Playback(P::NudgeVolume(VolumeStep::new(5))), Global)),
+        row((VolumeDown, key('-'), Message::Playback(P::NudgeVolume(VolumeStep::new(-5))), Global)),
+        row((VolumeDown, key('_'), Message::Playback(P::NudgeVolume(VolumeStep::new(-5))), Global)),
         row((Shuffle, key('s'), Message::Playback(P::ToggleShuffle), Global)),
         row((Repeat, key('r'), Message::Playback(P::CycleRepeat), Global)),
         row((SleepTimer, key('z'), Message::Playback(P::CycleSleep), Global)),
         row((AbRepeat, key('b'), Message::Playback(P::AbMark), Global)),
-        row((SpeedDown, key('['), Message::Playback(P::NudgeSpeed(-1)), Global)),
-        row((SpeedUp, key(']'), Message::Playback(P::NudgeSpeed(1)), Global)),
+        row((SpeedDown, key('['), Message::Playback(P::NudgeSpeed(SpeedStep::new(-1))), Global)),
+        row((SpeedUp, key(']'), Message::Playback(P::NudgeSpeed(SpeedStep::new(1))), Global)),
         row((JumpToTime, ctrl('j'), Message::Overlay(OverlayRequest::Open(OverlayName::JumpToTime)), Global)),
         row((Search, key('/'), Message::Overlay(OverlayRequest::Open(OverlayName::Search)), Global)),
         row((History, key('H'), Message::Overlay(OverlayRequest::Open(OverlayName::History)), Global)),
@@ -109,10 +111,10 @@ fn playlist_rows() -> Vec<KeyBinding> {
     };
     use BrowseRequest as B;
     vec![
-        row((Down, key('j'), Message::Browse(B::CursorBy(1)), Playlist)),
-        row((Down, special(KeyCode::Down), Message::Browse(B::CursorBy(1)), Playlist)),
-        row((Up, key('k'), Message::Browse(B::CursorBy(-1)), Playlist)),
-        row((Up, special(KeyCode::Up), Message::Browse(B::CursorBy(-1)), Playlist)),
+        row((Down, key('j'), Message::Browse(B::CursorBy(RowDelta::new(1))), Playlist)),
+        row((Down, special(KeyCode::Down), Message::Browse(B::CursorBy(RowDelta::new(1))), Playlist)),
+        row((Up, key('k'), Message::Browse(B::CursorBy(RowDelta::new(-1))), Playlist)),
+        row((Up, special(KeyCode::Up), Message::Browse(B::CursorBy(RowDelta::new(-1))), Playlist)),
         row((Top, Chord::Sequence { prefix: ChordPrefix::G, key: ChordPrefix::G.key() }, Message::Browse(B::Top), Playlist)),
         row((Top, special(KeyCode::Home), Message::Browse(B::Top), Playlist)),
         row((Bottom, key('G'), Message::Browse(B::Bottom), Playlist)),
@@ -136,14 +138,10 @@ fn playlist_rows() -> Vec<KeyBinding> {
     ]
 }
 
-static DEFAULTS: LazyLock<Vec<KeyBinding>> = LazyLock::new(|| {
+pub(crate) fn defaults() -> Vec<KeyBinding> {
     let mut rows = global_rows();
     rows.extend(playlist_rows());
     rows.extend(digit_seek_rows());
     rows.extend(overlays::rows());
     rows
-});
-
-pub(super) fn defaults() -> &'static [KeyBinding] {
-    &DEFAULTS
 }

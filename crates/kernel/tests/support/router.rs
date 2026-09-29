@@ -31,6 +31,7 @@ use kernel::{
         Preload,
         Revision,
         Speed,
+        SpeedStep,
         Tags,
         Track,
         TrackIndex,
@@ -241,7 +242,7 @@ pub(crate) fn mark_fires() -> Message {
 }
 
 pub(crate) fn nudge_speed(steps: i8) -> Message {
-    Message::Playback(PlaybackRequest::NudgeSpeed(steps))
+    Message::Playback(PlaybackRequest::NudgeSpeed(SpeedStep::new(steps)))
 }
 
 pub(crate) fn spinning_past(at: u64) -> Model {

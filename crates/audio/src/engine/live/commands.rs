@@ -62,11 +62,6 @@ impl Live {
                 Transition::Next(Engine::Live(self), reported(io))
             }
             AudioCmd::Seek(target) => Transition::from(self.seek(target)),
-            AudioCmd::Volume(volume) => {
-                self.user_factor = volume;
-                let applied = self.volume();
-                Transition::Next(Engine::Live(self), EngineEffect::SetVolume(applied))
-            }
             AudioCmd::SetSpeed(speed) => {
                 self.speed = speed;
                 Transition::Next(
@@ -321,7 +316,7 @@ mod tests {
         Bounded,
         EngineRejection,
         Playback,
-        domain::{DeviceName, Percent, Replaygain, Speed},
+        domain::{DeviceName, Replaygain, Speed},
         update::Machine,
     };
     use proptest::{
@@ -473,14 +468,6 @@ mod tests {
         Transition {
             next: Engine::Live(crossfading(Fade::Fading)),
             io: reported(EngineEffect::Seek(secs(95))),
-        }
-    )]
-    #[case::volume_sets_the_user_factor(
-        Engine::Live(playing()),
-        cmd(AudioCmd::Volume(Percent::clamped(50))),
-        Transition {
-            next: Engine::Live(Live { user_factor: Percent::clamped(50), ..playing() }),
-            io: EngineEffect::SetVolume(0.5),
         }
     )]
     #[case::speed(

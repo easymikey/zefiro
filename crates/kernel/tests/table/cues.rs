@@ -18,7 +18,7 @@ use kernel::{
     Timer,
     Toast,
     WorkspaceRequest,
-    domain::{Bounded, Percent, PlaylistIndex, Revision, ThemeName},
+    domain::{Bounded, Percent, PlaylistIndex, Revision, ThemeName, VolumeStep},
     message::AudioEvent,
     update::update,
 };
@@ -112,7 +112,7 @@ fn toasted() -> Message {
 )]
 #[case::nudging_the_volume_raises_a_cue(
     model_with_tracks(3),
-    vec![Message::Playback(PlaybackRequest::NudgeVolume(1))],
+    vec![Message::Playback(PlaybackRequest::NudgeVolume(VolumeStep::new(1)))],
     Cue::VolumeChanged
 )]
 #[case::the_system_raising_the_volume_raises_a_cue(

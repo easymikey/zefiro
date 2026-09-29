@@ -17,23 +17,23 @@ impl Default for FormatChipsLayout {
     }
 }
 
-pub(super) struct FormatChipFit {
-    pub(super) line: Option<Line<'static>>,
-    pub(super) elapsed_budget: usize,
+pub(crate) struct FormatChipFit {
+    pub(crate) line: Option<Line<'static>>,
+    pub(crate) elapsed_budget: usize,
 }
 
-pub(super) struct FormatChipContent<'a> {
-    pub(super) current: Option<&'a Arc<Track>>,
-    pub(super) visibility: FormatChips,
-    pub(super) colors: ChipColors,
+pub(crate) struct FormatChipContent<'a> {
+    pub(crate) current: Option<&'a Arc<Track>>,
+    pub(crate) visibility: FormatChips,
+    pub(crate) colors: ChipColors,
 }
 
-pub(super) struct ChipBudget {
-    pub(super) available_width: u16,
-    pub(super) elapsed_width: usize,
+pub(crate) struct ChipBudget {
+    pub(crate) available_width: u16,
+    pub(crate) elapsed_width: usize,
 }
 
-pub(super) fn format_chip_fit(
+pub(crate) fn format_chip_fit(
     input: &FormatChipContent<'_>,
     budget: &ChipBudget,
 ) -> FormatChipFit {

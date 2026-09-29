@@ -71,7 +71,7 @@ fn navigate(
     Ok(Cmd::None)
 }
 
-pub(super) fn update(
+pub(crate) fn update(
     model: &mut Model,
     message: BrowseRequest,
 ) -> Result<Cmd, Rejection> {
@@ -82,7 +82,7 @@ pub(super) fn update(
             model.workspace.chord = Some(prefix);
             Ok(Cmd::None)
         }
-        BrowseRequest::CursorBy(delta) if len > 0 => isize::try_from(delta)
+        BrowseRequest::CursorBy(delta) if len > 0 => isize::try_from(delta.get())
             .map_or(Ok(Cmd::None), |delta| {
                 navigate(&mut model.workspace, BrowseMessage::SelectBy(delta))
             }),
@@ -244,11 +244,11 @@ fn cycle_sort(model: &mut Model) -> Cmd {
     Cmd::None
 }
 
-pub(super) struct TrashRequest<'a> {
-    pub(super) library: &'a mut Library,
-    pub(super) player: &'a Player,
-    pub(super) playlist: &'a mut Playlist,
-    pub(super) queue: &'a mut Vec<PlaylistIndex>,
+pub(crate) struct TrashRequest<'a> {
+    pub(crate) library: &'a mut Library,
+    pub(crate) player: &'a Player,
+    pub(crate) playlist: &'a mut Playlist,
+    pub(crate) queue: &'a mut Vec<PlaylistIndex>,
 }
 
 fn trash_track(model: &mut Model, track_index: PlaylistIndex) -> Cmd {
@@ -286,7 +286,7 @@ fn trash_track(model: &mut Model, track_index: PlaylistIndex) -> Cmd {
     ])
 }
 
-pub(super) fn resync_playlist(slices: TrashRequest<'_>) {
+pub(crate) fn resync_playlist(slices: TrashRequest<'_>) {
     let TrashRequest {
         library,
         player,

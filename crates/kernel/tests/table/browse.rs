@@ -383,7 +383,6 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
                 gain: None,
                 revision: Revision::UNSTAMPED.next(),
             }),
-            Effect::Audio(AudioCmd::Volume(model.transport.volume)),
             Effect::Library(LibraryCmd::AppendHistory {
                 track: Arc::clone(&track),
                 at: UnixSeconds::UNSTAMPED,

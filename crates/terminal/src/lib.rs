@@ -26,7 +26,11 @@ pub use keys::{LayoutTranslation, from_event};
 pub use pixels::{
     CoverArtOwner,
     CoverFade,
+    CoverKey,
+    CoverLook,
+    CoverMoment,
     CoverMotion,
+    CoverPlacement,
     CoverSources,
     CoverWash,
     DecodedCover,

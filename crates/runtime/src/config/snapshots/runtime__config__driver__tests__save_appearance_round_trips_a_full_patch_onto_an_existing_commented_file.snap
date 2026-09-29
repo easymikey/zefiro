@@ -13,9 +13,6 @@ brackets = true
 format_chips = false
 speed_chip = "always"
 
-[notice]
-style = "line"
-
 [progress]
 remaining = true
 

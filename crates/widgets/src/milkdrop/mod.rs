@@ -90,61 +90,63 @@ pub enum Playing {
 }
 
 #[derive(Debug)]
-pub struct MilkdropStep<'a> {
+pub struct MilkdropAdvance<'a> {
     pub bands: &'a Spectrum,
     pub playing: Playing,
     pub seed: u64,
     pub tick: u64,
 }
 
-pub fn step(field: &mut MilkdropField, input: &MilkdropStep<'_>) {
-    let tuning = MilkdropCoefficients::default();
-    let split = BandSplit::default();
-    let levels = band_levels(input.bands, &split);
-    let preset = preset_for_seed(input.seed);
+impl MilkdropField {
+    pub fn advance(&mut self, input: &MilkdropAdvance<'_>) {
+        let tuning = MilkdropCoefficients::default();
+        let split = BandSplit::default();
+        let levels = band_levels(input.bands, &split);
+        let preset = preset_for_seed(input.seed);
 
-    let dimensions = FieldDimensions {
-        width: field.width,
-        height: field.height,
-    };
-    let center = field_center(dimensions);
-    let zoom = preset.base_zoom + levels.bass * tuning.zoom_gain;
-    let rotation = preset.base_rotation + levels.mid * tuning.rotation_gain;
-    let warp = Warp {
-        center,
-        zoom,
-        rotation,
-        aspect_x: tuning.aspect_x,
-    };
+        let dimensions = FieldDimensions {
+            width: self.width,
+            height: self.height,
+        };
+        let center = field_center(dimensions);
+        let zoom = preset.base_zoom + levels.bass * tuning.zoom_gain;
+        let rotation = preset.base_rotation + levels.mid * tuning.rotation_gain;
+        let warp = Warp {
+            center,
+            zoom,
+            rotation,
+            aspect_x: tuning.aspect_x,
+        };
 
-    field.scratch.clear();
-    for row in 0..field.height {
-        for column in 0..field.width {
-            let source = warp_source(CellPosition { column, row }, &warp);
-            let warped = bilinear_sample(&field.cells, dimensions, source);
-            field.scratch.push(warped * tuning.decay);
+        self.scratch.clear();
+        for row in 0..self.height {
+            for column in 0..self.width {
+                let source = warp_source(CellPosition { column, row }, &warp);
+                let warped = bilinear_sample(&self.cells, dimensions, source);
+                self.scratch.push(warped * tuning.decay);
+            }
         }
-    }
 
-    if input.playing == Playing::Yes {
-        inject(
-            &mut field.scratch,
-            dimensions,
-            &Injection {
-                center,
-                aspect_x: tuning.aspect_x,
-                core_radius: tuning.core_radius + levels.bass * tuning.core_gain,
-                treble: levels.treble,
-                spark_count: tuning.spark_count,
-                seed: input.seed,
-                tick: input.tick,
-            },
-        );
-    }
+        if input.playing == Playing::Yes {
+            inject(
+                &mut self.scratch,
+                dimensions,
+                &Injection {
+                    center,
+                    aspect_x: tuning.aspect_x,
+                    core_radius: tuning.core_radius + levels.bass * tuning.core_gain,
+                    treble: levels.treble,
+                    spark_count: tuning.spark_count,
+                    seed: input.seed,
+                    tick: input.tick,
+                },
+            );
+        }
 
-    resolve_mirror(field, dimensions, preset.mirror);
-    field.phase = (field.phase + rotation).rem_euclid(std::f32::consts::TAU)
-        - std::f32::consts::PI;
+        resolve_mirror(self, dimensions, preset.mirror);
+        self.phase = (self.phase + rotation).rem_euclid(std::f32::consts::TAU)
+            - std::f32::consts::PI;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -215,20 +217,23 @@ mod tests {
     use crate::{
         milkdrop::{
             CellPosition,
+            MilkdropAdvance,
             MilkdropColors,
             MilkdropField,
-            MilkdropStep,
             Playing,
             lines_into,
-            step,
         },
         spectrum::Spectrum,
     };
 
     const SILENT_BANDS: [f32; 16] = [0.0; 16];
 
-    fn input(bands: &Spectrum, playing: Playing, beat: (u64, u64)) -> MilkdropStep<'_> {
-        MilkdropStep {
+    fn input(
+        bands: &Spectrum,
+        playing: Playing,
+        beat: (u64, u64),
+    ) -> MilkdropAdvance<'_> {
+        MilkdropAdvance {
             bands,
             playing,
             seed: beat.0,
@@ -292,8 +297,8 @@ mod tests {
     fn step_is_deterministic_for_the_same_seed_and_tick() {
         let mut a = MilkdropField::new(9, 9);
         let mut b = a.clone();
-        step(&mut a, &input(&SILENT_BANDS, Playing::Yes, (7, 3)));
-        step(&mut b, &input(&SILENT_BANDS, Playing::Yes, (7, 3)));
+        a.advance(&input(&SILENT_BANDS, Playing::Yes, (7, 3)));
+        b.advance(&input(&SILENT_BANDS, Playing::Yes, (7, 3)));
         assert_eq!(a, b);
     }
 
@@ -302,8 +307,8 @@ mod tests {
         let loud_treble = [1.0; 16];
         let mut a = MilkdropField::new(9, 9);
         let mut b = a.clone();
-        step(&mut a, &input(&loud_treble, Playing::Yes, (0, 5)));
-        step(&mut b, &input(&loud_treble, Playing::Yes, (1, 5)));
+        a.advance(&input(&loud_treble, Playing::Yes, (0, 5)));
+        b.advance(&input(&loud_treble, Playing::Yes, (1, 5)));
         assert_ne!(a, b);
     }
 
@@ -312,8 +317,8 @@ mod tests {
         let loud_treble = [1.0; 16];
         let mut field_a = MilkdropField::new(9, 9);
         let mut field_b = MilkdropField::new(9, 9);
-        step(&mut field_a, &input(&loud_treble, Playing::Yes, (42, 11)));
-        step(&mut field_b, &input(&loud_treble, Playing::Yes, (42, 11)));
+        field_a.advance(&input(&loud_treble, Playing::Yes, (42, 11)));
+        field_b.advance(&input(&loud_treble, Playing::Yes, (42, 11)));
         assert_eq!(field_a, field_b);
     }
 
@@ -322,7 +327,7 @@ mod tests {
         let mut field = MilkdropField::new(9, 9);
         field.cells = vec![1.0; field.cells.len()];
         for tick in 0..80 {
-            step(&mut field, &input(&SILENT_BANDS, Playing::No, (3, tick)));
+            field.advance(&input(&SILENT_BANDS, Playing::No, (3, tick)));
         }
         assert!(
             field.cells.iter().all(|&level| level < 0.001),
@@ -340,12 +345,12 @@ mod tests {
             row: height / 2,
         };
 
-        step(&mut field, &input(&SILENT_BANDS, Playing::Yes, (0, 0)));
+        field.advance(&input(&SILENT_BANDS, Playing::Yes, (0, 0)));
         let initial = field.cell(probe);
         assert_eq!(initial, 0.0, "probe must start outside the injected core");
 
         for tick in 1..3 {
-            step(&mut field, &input(&SILENT_BANDS, Playing::Yes, (0, tick)));
+            field.advance(&input(&SILENT_BANDS, Playing::Yes, (0, tick)));
         }
         let spread = field.cell(probe);
         assert!(
@@ -358,7 +363,7 @@ mod tests {
     fn kaleido_preset_output_is_four_way_symmetric() {
         let loud = [1.0; 16];
         let mut stepped = MilkdropField::new(10, 8);
-        step(&mut stepped, &input(&loud, Playing::Yes, (2, 9)));
+        stepped.advance(&input(&loud, Playing::Yes, (2, 9)));
 
         for row in 0..stepped.height {
             for column in 0..stepped.width {

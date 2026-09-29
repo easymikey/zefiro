@@ -1,5 +1,6 @@
 ---
 source: crates/config/src/config_file.rs
+assertion_line: 181
 expression: config
 ---
 ConfigFile {
@@ -14,7 +15,9 @@ ConfigFile {
         ),
         replaygain: Off,
         device: Some(
-            "Speakers",
+            DeviceName(
+                "Speakers",
+            ),
         ),
         sleep_presets: SleepPresets(
             [

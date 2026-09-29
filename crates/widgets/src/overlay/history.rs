@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use kernel::domain::HistoryEntry;
 use ratatui::{
     buffer::Buffer,
@@ -39,7 +41,6 @@ pub(crate) struct HistoryOverlay<'a> {
     pub(crate) theme: ActiveTheme<'a>,
     pub(crate) entries: &'a [HistoryEntry],
     pub(crate) selected: usize,
-    pub(crate) now_unix: u64,
     pub(crate) container: OverlayContainer<'a>,
 }
 
@@ -106,6 +107,7 @@ impl HistoryOverlay<'_> {
             ModalMetrics::default().column_spacing,
         );
         let offset = scroll_offset(self.selected, total, height);
+        let now_unix = wall_clock_unix();
 
         let table = Table::new(
             self.entries.iter().map(|played| {
@@ -116,7 +118,7 @@ impl HistoryOverlay<'_> {
                         lead,
                     },
                     colors,
-                    self.now_unix,
+                    now_unix,
                 )
             }),
             columns.constraints(),
@@ -244,6 +246,12 @@ struct EntryRow<'a> {
     lead: u16,
 }
 
+fn wall_clock_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
 fn when_label(played: &HistoryEntry, now_unix: u64) -> String {
     let then_unix = u64::try_from(played.at).unwrap_or(0);
     relative_time(now_unix, then_unix)
@@ -281,7 +289,10 @@ mod tests {
     use ratatui::layout::Rect;
 
     use crate::{
-        overlay::{history::HistoryOverlay, modal::OverlayContainer},
+        overlay::{
+            history::{HistoryOverlay, wall_clock_unix},
+            modal::OverlayContainer,
+        },
         scene::fixtures::{find_text, noir, painted, painted_buffer},
         theme::{ActiveTheme, ColorDepth},
     };
@@ -291,7 +302,7 @@ mod tests {
             path: path.into(),
             title: title.to_string(),
             artist: artist.map(str::to_string),
-            at: 0,
+            at: i64::try_from(wall_clock_unix()).unwrap(),
         }
     }
 
@@ -318,7 +329,6 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             selected: 1,
-            now_unix: 0,
             container: OverlayContainer::Modal { avoid: &[] },
         };
         insta::assert_snapshot!(painted(&overlay, 80, 28));
@@ -336,7 +346,6 @@ mod tests {
             theme: active,
             entries: &entries,
             selected: 1,
-            now_unix: 0,
             container: OverlayContainer::Modal { avoid: &[] },
         };
         let buffer = painted_buffer(&overlay, 80, 28);
@@ -356,7 +365,6 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             selected: 0,
-            now_unix: 0,
             container: OverlayContainer::Pane(Rect::new(0, 0, 120, 40)),
         };
         insta::assert_snapshot!(painted(&overlay, 120, 40));
@@ -370,7 +378,6 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             selected: 0,
-            now_unix: 0,
             container: OverlayContainer::Pane(Rect::new(0, 0, 120, 40)),
         };
         let buffer = painted_buffer(&overlay, 120, 40);
@@ -389,7 +396,6 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             selected: 0,
-            now_unix: 0,
             container: OverlayContainer::Modal { avoid: &[] },
         };
         insta::assert_snapshot!(painted(&overlay, 80, 28));
@@ -403,7 +409,6 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             selected: 0,
-            now_unix: 0,
             container: OverlayContainer::Modal { avoid: &[] },
         };
         let _ = painted(&overlay, 4, 3);

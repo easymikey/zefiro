@@ -28,7 +28,7 @@ use crate::{
     },
 };
 
-pub(super) fn audio(
+pub(crate) fn audio(
     model: &mut Model,
     event: AudioEvent,
     now: Moment,
@@ -151,7 +151,7 @@ fn pop_queued_track(
     Some(track)
 }
 
-pub(super) fn next(model: &mut Model) -> Result<Cmd, Rejection> {
+pub(crate) fn next(model: &mut Model) -> Result<Cmd, Rejection> {
     let cmd = pop_queued_track(&mut model.playlist, &mut model.queue)
         .or_else(|| {
             playlist::skip(&mut model.playlist, CursorDirection::Forward).cloned()
@@ -163,7 +163,7 @@ pub(super) fn next(model: &mut Model) -> Result<Cmd, Rejection> {
     Ok(cmd)
 }
 
-pub(super) fn previous(model: &mut Model) -> Result<Cmd, Rejection> {
+pub(crate) fn previous(model: &mut Model) -> Result<Cmd, Rejection> {
     let cmd = playlist::skip(&mut model.playlist, CursorDirection::Backward)
         .cloned()
         .map_or(Ok(Cmd::None), |track| {
@@ -201,7 +201,6 @@ fn ended(model: &mut Model, now: Moment) -> Result<Cmd, Rejection> {
     let pick = successor(&model.playlist, &model.queue);
     let message = PlayerMessage::Ended {
         next: pick.track().cloned(),
-        volume: model.transport.volume,
     };
     let cmd = player::account(model, message, now)?;
     if pick.track().is_some() {
@@ -332,19 +331,16 @@ fn move_onto_preloaded(
     cursor_to(playlist, committed_index);
 }
 
-pub(super) fn track_duration(track: &Arc<Track>) -> Duration {
+pub(crate) fn track_duration(track: &Arc<Track>) -> Duration {
     track.duration().unwrap_or_default()
 }
 
-pub(super) fn start(
+pub(crate) fn start(
     transport: &mut Transport,
     player: &mut Player,
     track: Arc<Track>,
 ) -> Result<Cmd, Rejection> {
-    let cmd = player.update(PlayerMessage::Start {
-        track,
-        volume: transport.volume,
-    })?;
+    let cmd = player.update(PlayerMessage::Start { track })?;
     transport.ab = None;
     Ok(cmd)
 }

@@ -14,6 +14,7 @@ pub(crate) fn read(file: WatchedFile, path: &Path) -> ConfigWatchMessage {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Listing {
     Names(Vec<String>),
     Unreadable(String),

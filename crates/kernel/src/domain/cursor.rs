@@ -1,3 +1,18 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowDelta(i64);
+
+impl RowDelta {
+    #[must_use]
+    pub const fn new(rows: i64) -> Self {
+        Self(rows)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CursorDirection {
     #[default]
@@ -89,7 +104,14 @@ fn clamped_step(index: usize, len: usize, delta: isize) -> usize {
 mod tests {
     use rstest::rstest;
 
-    use crate::domain::cursor::{Cursor, CursorDirection};
+    use crate::domain::cursor::{Cursor, CursorDirection, RowDelta};
+
+    #[rstest]
+    #[case::negative(-4)]
+    #[case::positive(4)]
+    fn steps_convert(#[case] value: i64) {
+        assert_eq!(RowDelta::new(value).get(), value);
+    }
 
     struct PageRow {
         index: usize,

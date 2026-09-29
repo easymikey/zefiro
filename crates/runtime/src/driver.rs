@@ -4,7 +4,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crossbeam_channel::{Receiver, SendError, Sender, unbounded};
+use crossbeam_channel::{Receiver, SendError, Sender, bounded};
 use kernel::{DriverMessage, Message, domain::DriverFailure};
 
 use crate::{
@@ -22,12 +22,12 @@ pub(crate) struct DriverThread<C> {
     pub(crate) congestion: Congestion,
 }
 
-pub trait DriverLoop<C, F>: Send + 'static {
+pub(crate) trait DriverLoop<C, F>: Send + 'static {
     fn run(self, inbox: &Receiver<C>, outbox: &Mailbox<F>);
 }
 
 #[derive(Debug, Default)]
-pub struct NoDriver;
+pub(crate) struct NoDriver;
 
 impl<C: Send + 'static, F: Send + 'static> DriverLoop<C, F> for NoDriver {
     fn run(self, inbox: &Receiver<C>, _outbox: &Mailbox<F>) {
@@ -62,7 +62,7 @@ where
     F: Send + 'static,
     R: FnOnce(&Receiver<C>, &Mailbox<F>) + Send + 'static,
 {
-    let (commands, inbox) = unbounded::<C>();
+    let (commands, inbox): (Sender<C>, Receiver<C>) = bounded(row.inbox);
     let congestion = Congestion::default();
     let outbox = Mailbox::new(mailbox.clone(), congestion.clone());
     let report_sender = mailbox.clone();

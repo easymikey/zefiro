@@ -85,6 +85,24 @@ fn status_row_geometry(inner: Rect, layout: CompactCardLayout) -> StatusRowGeome
     }
 }
 
+fn content_area(area: Rect, layout: CompactCardLayout) -> Rect {
+    let inner = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .inner(area);
+    Rect {
+        x: inner.x + layout.padding,
+        y: inner.y,
+        width: inner.width.saturating_sub(layout.padding * 2),
+        height: inner.height,
+    }
+}
+
+#[must_use]
+pub(crate) fn progress_bar_width(area: Rect) -> u16 {
+    content_area(area, CompactCardLayout::default()).width
+}
+
 impl Widget for &CompactCard<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let layout = CompactCardLayout::default();
@@ -97,15 +115,8 @@ impl Widget for &CompactCard<'_> {
             .border_style(Style::default().fg(frame_color))
             .title(" Sifr ")
             .title_style(Style::default().fg(frame_color));
-        let inner = block.inner(area);
+        let inner = content_area(area, layout);
         block.render(area, buffer);
-
-        let inner = Rect {
-            x: inner.x + layout.padding,
-            y: inner.y,
-            width: inner.width.saturating_sub(layout.padding * 2),
-            height: inner.height,
-        };
 
         let context = CompactContext {
             view: self.view,

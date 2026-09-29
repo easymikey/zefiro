@@ -25,15 +25,16 @@ fn write_text(
     path: &Path,
     produce: impl FnOnce(&str) -> Result<String, ConfigError>,
 ) -> Result<Written, SaveError> {
-    let existing = library::files::read_if_present(path)
-        .map_err(|source| SaveError::Read {
+    let existing =
+        library::files::read_if_present(path).map_err(|source| SaveError::Read {
             path: path.to_path_buf(),
             source,
-        })?
-        .unwrap_or_default();
-    let text = produce(&existing).map_err(|source| SaveError::Parse {
-        path: path.to_path_buf(),
-        source,
+        })?;
+    let text = produce(existing.as_deref().unwrap_or("")).map_err(|source| {
+        SaveError::Parse {
+            path: path.to_path_buf(),
+            source,
+        }
     })?;
     library::files::create_parent(path).map_err(|source| SaveError::Write {
         path: path.to_path_buf(),

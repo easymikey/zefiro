@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use image::{Rgba, RgbaImage};
 use raster::channel_byte;
@@ -21,14 +21,14 @@ pub(crate) struct CoverCrossfade {
 
 #[derive(Debug)]
 struct FadingCover {
-    outgoing: RgbaImage,
+    outgoing: Arc<RgbaImage>,
     started: Duration,
     duration: Duration,
     interpolation: Interpolation,
 }
 
 impl CoverCrossfade {
-    pub(crate) fn begin(&mut self, outgoing: RgbaImage, now: Duration) {
+    pub(crate) fn begin(&mut self, outgoing: Arc<RgbaImage>, now: Duration) {
         let (millis, interpolation) = AnimationTimings::default().cover_crossfade;
         self.fade = Some(FadingCover {
             outgoing,
@@ -101,7 +101,7 @@ pub(crate) fn mixed(back: Rgba<u8>, front: Rgba<u8>, alpha: f32) -> Rgba<u8> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
 
     use image::{Rgba, RgbaImage};
     use widgets::AnimationTimings;
@@ -128,7 +128,7 @@ mod tests {
 
     fn running() -> CoverCrossfade {
         let mut crossfade = CoverCrossfade::default();
-        crossfade.begin(filled_cover(OLD_COVER_PIXEL), Duration::ZERO);
+        crossfade.begin(Arc::new(filled_cover(OLD_COVER_PIXEL)), Duration::ZERO);
         crossfade
     }
 

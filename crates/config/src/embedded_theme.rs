@@ -1,3 +1,5 @@
+use kernel::domain::{ThemeChoice, ThemeName};
+
 const TERRACOTTA_DARK: &str = include_str!("../../../themes/terracotta-dark.toml");
 const TERRACOTTA_LIGHT: &str = include_str!("../../../themes/terracotta-light.toml");
 const EMBER: &str = include_str!("../../../themes/ember.toml");
@@ -58,9 +60,30 @@ pub fn embedded_theme(name: &str) -> Option<&'static str> {
     }
 }
 
+#[must_use]
+pub fn resolve_theme(choice: &ThemeChoice) -> ThemeName {
+    match choice {
+        ThemeChoice::Named(name) => name.clone(),
+        ThemeChoice::Auto => ThemeName::from_static("noir"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::embedded_theme::{EMBEDDED_THEMES, embedded_theme};
+    use kernel::domain::{ThemeChoice, ThemeName};
+    use rstest::rstest;
+
+    use crate::embedded_theme::{EMBEDDED_THEMES, embedded_theme, resolve_theme};
+
+    #[rstest]
+    #[case::auto(ThemeChoice::Auto, "noir")]
+    #[case::named(ThemeChoice::Named(ThemeName::from_static("ember")), "ember")]
+    fn a_choice_resolves_to_a_named_theme(
+        #[case] choice: ThemeChoice,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(resolve_theme(&choice).as_str(), expected);
+    }
 
     #[test]
     fn every_embedded_name_resolves_to_its_own_text() {

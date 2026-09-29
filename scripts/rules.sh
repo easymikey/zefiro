@@ -28,4 +28,10 @@ for file in $(git diff "$base" --name-only --diff-filter=AM -- "$paths"); do
     fi
 done
 
+whole_tree=$(rg -l "super::|pub\(super\)" crates/*/src || true)
+if [ -n "$whole_tree" ]; then
+    printf '%s\n' "$whole_tree" | sed 's/^/super (whole tree): /'
+    status=1
+fi
+
 exit "$status"

@@ -6,6 +6,20 @@ const STEP_CORRECTION: Duration = Duration::from_millis(1);
 const SECONDS_PER_MINUTE: u64 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence {
+    Shown,
+    Hidden,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OnScreen {
+    pub progress_bar: Option<u16>,
+    pub clock: Presence,
+    pub sleep_label: Presence,
+    pub spectrum: Presence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProgressScale {
     pub steps: NonZeroU32,
     pub length: Duration,

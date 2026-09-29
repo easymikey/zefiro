@@ -71,7 +71,6 @@ pub enum AudioCmd {
     },
     Pause(Playback),
     Seek(Duration),
-    Volume(Percent),
     SetSpeed(Speed),
     Stop,
     Preload {

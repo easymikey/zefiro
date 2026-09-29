@@ -4,7 +4,7 @@ use kernel::{
     AudioFailure,
     EngineRejection,
     Playback,
-    domain::{Crossfade, DeviceName, Percent, Replaygain, Speed},
+    domain::{Crossfade, DeviceName, Replaygain, Speed},
     update::Rejected,
 };
 
@@ -34,9 +34,6 @@ impl Muted {
             })),
             EngineMessage::Cmd(AudioCmd::ListDevices) => {
                 Transition::Next(Engine::Muted(self), EngineEffect::ListDevices)
-            }
-            EngineMessage::Cmd(AudioCmd::Volume(volume)) => {
-                Transition::from(self.set_volume(volume))
             }
             EngineMessage::Cmd(AudioCmd::SetSpeed(speed)) => {
                 Transition::from(self.set_speed(speed))
@@ -99,11 +96,6 @@ impl Muted {
             ..self
         };
         (Engine::Muted(waiting), EngineEffect::Open { device, speed })
-    }
-
-    fn set_volume(self, volume: Percent) -> (Engine, EngineEffect) {
-        let mix = Mix { volume, ..self.mix };
-        (Engine::Muted(Muted { mix, ..self }), EngineEffect::Nothing)
     }
 
     fn set_speed(self, speed: Speed) -> (Engine, EngineEffect) {
@@ -181,7 +173,7 @@ mod tests {
         Bounded,
         EngineRejection,
         Playback,
-        domain::{DeviceName, Percent, Replaygain, Speed},
+        domain::{DeviceName, Replaygain, Speed},
         update::Machine,
     };
     use rstest::rstest;
@@ -325,19 +317,6 @@ mod tests {
         Transition {
             next: Engine::Muted(Muted { fault: decode_fault(), config: config(), pending: None, mix: Mix::default() }),
             io: EngineEffect::Send(AudioEvent::Error(decode_fault())),
-        }
-    )]
-    #[case::muted_remembers_the_volume(
-        muted(),
-        cmd(AudioCmd::Volume(Percent::clamped(50))),
-        Transition {
-            next: Engine::Muted(Muted {
-                fault: fault(),
-                config: config(),
-                pending: None,
-                mix: Mix { volume: Percent::clamped(50), ..Mix::default() },
-            }),
-            io: EngineEffect::Nothing,
         }
     )]
     #[case::muted_remembers_the_speed(

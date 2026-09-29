@@ -1,6 +1,5 @@
 use std::time::Instant;
 
-use config::AppearancePatch;
 use kernel::{
     AudioCmd,
     Cmd,
@@ -11,11 +10,12 @@ use kernel::{
     LoadedRequest,
     Message,
     SystemCmd,
-    domain::Drivers,
+    domain::{Driver, Drivers, OptionIndex, SettingId},
 };
 use strum::IntoStaticStr;
 
 use crate::{
+    library::cover::CoverRequest,
     port::Ports,
     shell::{Flow, ShellEffect},
     timers::Timers,
@@ -24,10 +24,17 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub(crate) enum ConfigCommand {
+pub enum ConfigCommand {
     Save(ConfigPatch),
     SelectTheme(String),
-    Appearance(AppearancePatch),
+    Setting { id: SettingId, option: OptionIndex },
+}
+
+#[derive(Debug, Clone, PartialEq, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum LibraryCommand {
+    Kernel(LibraryCmd),
+    Cover(CoverRequest),
 }
 
 impl From<ConfigCmd> for ConfigCommand {
@@ -46,6 +53,7 @@ pub(crate) struct Interpreted {
     pub answers: Vec<Message>,
     pub shell: Vec<ShellEffect>,
     pub flow: Flow,
+    pub relaunch: Option<(Driver, Vec<Effect>)>,
 }
 
 #[derive(Debug)]
@@ -69,15 +77,13 @@ impl Interpreter<'_> {
     }
 
     fn library(&mut self, command: LibraryCmd) {
-        let result = self.ports.library.send(self.drivers, command);
+        let result = self.ports.library.send_command(self.drivers, command);
         self.deliver(result);
     }
 
     fn system(&mut self, command: SystemCmd) {
-        if let Some(port) = &self.ports.macos {
-            let result = port.send(self.drivers, command);
-            self.deliver(result);
-        }
+        let result = self.ports.macos.send(self.drivers, command);
+        self.deliver(result);
     }
 
     fn config(&mut self, command: ConfigCommand) {
@@ -94,7 +100,8 @@ fn shuffle_order(len: usize) -> Vec<usize> {
 
 pub(crate) fn interpret(cmd: Cmd, runtime: &mut Interpreter<'_>) -> Interpreted {
     let mut interpreted = Interpreted::default();
-    for effect in cmd {
+    let mut effects = cmd.into_iter();
+    while let Some(effect) = effects.next() {
         match effect {
             Effect::Audio(command) => runtime.audio(command),
             Effect::Library(command) => runtime.library(command),
@@ -110,15 +117,7 @@ pub(crate) fn interpret(cmd: Cmd, runtime: &mut Interpreter<'_>) -> Interpreted 
                 ));
             }
             Effect::Setting { id, option } => {
-                match config::appearance_patch(id, option) {
-                    Ok(patch) => {
-                        runtime.config(ConfigCommand::Appearance(patch));
-                        interpreted.shell.push(ShellEffect::Appearance(patch));
-                    }
-                    Err(rejection) => {
-                        runtime.trace.push(TraceEntry::SettingRejected(rejection));
-                    }
-                }
+                runtime.config(ConfigCommand::Setting { id, option });
             }
             Effect::After { delay, message } => {
                 if let Some(deadline) = Instant::now().checked_add(delay) {
@@ -128,10 +127,10 @@ pub(crate) fn interpret(cmd: Cmd, runtime: &mut Interpreter<'_>) -> Interpreted 
                     runtime.trace.push(TraceEntry::TimerOverflow { timer });
                 }
             }
-            Effect::Restart(driver) => runtime.trace.push(TraceEntry::Dropped {
-                driver,
-                command: "restart",
-            }),
+            Effect::Restart(driver) => {
+                interpreted.relaunch = Some((driver, effects.collect()));
+                return interpreted;
+            }
             Effect::Quit => interpreted.flow = Flow::Stop,
         }
     }
@@ -160,57 +159,48 @@ mod tests {
     };
 
     use crate::{
-        interpret::{ConfigCommand, Interpreter, interpret},
-        library::cover::CoverRequest,
-        port::{Port, Ports},
+        interpret::{ConfigCommand, Interpreter, LibraryCommand, interpret},
+        mailbox::Congestion,
+        port::{LibraryPort, Port, Ports},
         shell::{Flow, ShellEffect},
         timers::Timers,
-        trace::{Trace, TraceEntry},
+        trace::{DropReason, Trace, TraceEntry},
     };
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum MacosLink {
-        Present,
-        Absent,
-    }
 
     struct Fixture {
         model: Model,
         ports: Ports,
         audio_rx: Receiver<AudioCmd>,
-        library_rx: Receiver<LibraryCmd>,
+        library_rx: Receiver<LibraryCommand>,
         config_rx: Receiver<ConfigCommand>,
         macos_rx: Receiver<SystemCmd>,
-        _cover_rx: Receiver<CoverRequest>,
         timers: Timers,
         trace: Trace,
     }
 
     impl Fixture {
-        fn new(macos: MacosLink) -> Self {
+        fn new() -> Self {
             let (audio_tx, audio_rx) = unbounded();
             let (library_tx, library_rx) = unbounded();
             let (config_tx, config_rx) = unbounded();
             let (macos_tx, macos_rx) = unbounded();
-            let (covers_tx, cover_rx) = unbounded();
-            let macos_port = match macos {
-                MacosLink::Present => Some(Port::new(Driver::Macos, macos_tx)),
-                MacosLink::Absent => None,
-            };
+            let macos_port = Port::new(Driver::Macos, macos_tx, Congestion::default());
             Self {
                 model: Model::default(),
                 ports: Ports {
-                    audio: Port::new(Driver::Audio, audio_tx),
-                    library: Port::new(Driver::Library, library_tx),
-                    covers: Port::new(Driver::Library, covers_tx),
-                    config: Port::new(Driver::Config, config_tx),
+                    audio: Port::new(Driver::Audio, audio_tx, Congestion::default()),
+                    library: LibraryPort::new(Port::new(
+                        Driver::Library,
+                        library_tx,
+                        Congestion::default(),
+                    )),
+                    config: Port::new(Driver::Config, config_tx, Congestion::default()),
                     macos: macos_port,
                 },
                 audio_rx,
                 library_rx,
                 config_rx,
                 macos_rx,
-                _cover_rx: cover_rx,
                 timers: Timers::default(),
                 trace: Trace::default(),
             }
@@ -228,7 +218,7 @@ mod tests {
 
     #[test]
     fn a_command_to_a_running_driver_is_routed() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
+        let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
         interpret(Cmd::One(Effect::Audio(AudioCmd::Stop)), &mut interpreter);
@@ -238,8 +228,33 @@ mod tests {
     }
 
     #[test]
+    fn a_restart_effect_hands_back_the_driver_and_the_rest() {
+        let mut fixture = Fixture::new();
+        let mut interpreter = fixture.interpreter();
+        let cmd = Cmd::Batch(vec![
+            Effect::Restart(Driver::Audio),
+            Effect::Audio(AudioCmd::Stop),
+            Effect::Audio(AudioCmd::SetDevice(None)),
+        ]);
+
+        let interpreted = interpret(cmd, &mut interpreter);
+
+        assert_eq!(
+            interpreted.relaunch,
+            Some((
+                Driver::Audio,
+                vec![
+                    Effect::Audio(AudioCmd::Stop),
+                    Effect::Audio(AudioCmd::SetDevice(None)),
+                ]
+            ))
+        );
+        assert!(fixture.audio_rx.try_recv().is_err());
+    }
+
+    #[test]
     fn a_command_to_a_dead_driver_is_dropped_and_traced() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
+        let mut fixture = Fixture::new();
         fixture.model.drivers.record_mut(Driver::Audio).status = DriverStatus::Stopped;
         let mut interpreter = fixture.interpreter();
 
@@ -250,14 +265,15 @@ mod tests {
             fixture.trace.iter().next(),
             Some(&TraceEntry::Dropped {
                 driver: Driver::Audio,
-                command: "stop"
+                command: "stop",
+                reason: DropReason::NotRunning,
             })
         );
     }
 
     #[test]
     fn a_send_onto_a_lost_inbox_is_dropped_and_traced() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
+        let mut fixture = Fixture::new();
         fixture.audio_rx = never();
         let mut interpreter = fixture.interpreter();
 
@@ -267,29 +283,15 @@ mod tests {
             fixture.trace.iter().next(),
             Some(&TraceEntry::Dropped {
                 driver: Driver::Audio,
-                command: "stop"
+                command: "stop",
+                reason: DropReason::Closed,
             })
         );
     }
 
     #[test]
-    fn a_system_effect_on_a_platform_without_the_macos_driver_records_nothing() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
-        let mut interpreter = fixture.interpreter();
-
-        interpret(
-            Cmd::One(Effect::System(
-                SystemCmd::Volume(kernel::Percent::default()),
-            )),
-            &mut interpreter,
-        );
-
-        assert!(fixture.trace.is_empty());
-    }
-
-    #[test]
     fn a_system_command_to_a_stopped_macos_driver_is_dropped_and_traced() {
-        let mut fixture = Fixture::new(MacosLink::Present);
+        let mut fixture = Fixture::new();
         fixture.model.drivers.record_mut(Driver::Macos).status = DriverStatus::Stopped;
         let mut interpreter = fixture.interpreter();
 
@@ -304,14 +306,15 @@ mod tests {
             fixture.trace.iter().next(),
             Some(&TraceEntry::Dropped {
                 driver: Driver::Macos,
-                command: "volume"
+                command: "volume",
+                reason: DropReason::NotRunning,
             })
         );
     }
 
     #[test]
     fn a_system_send_onto_a_lost_macos_inbox_is_dropped_and_traced() {
-        let mut fixture = Fixture::new(MacosLink::Present);
+        let mut fixture = Fixture::new();
         fixture.macos_rx = never();
         let mut interpreter = fixture.interpreter();
 
@@ -326,14 +329,15 @@ mod tests {
             fixture.trace.iter().next(),
             Some(&TraceEntry::Dropped {
                 driver: Driver::Macos,
-                command: "volume"
+                command: "volume",
+                reason: DropReason::Closed,
             })
         );
     }
 
     #[test]
     fn a_library_command_is_routed() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
+        let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
         interpret(
@@ -341,12 +345,15 @@ mod tests {
             &mut interpreter,
         );
 
-        assert_eq!(fixture.library_rx.try_recv(), Ok(LibraryCmd::LoadFavorites));
+        assert_eq!(
+            fixture.library_rx.try_recv(),
+            Ok(LibraryCommand::Kernel(LibraryCmd::LoadFavorites))
+        );
     }
 
     #[test]
     fn a_config_save_is_routed() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
+        let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
         interpret(
@@ -367,7 +374,7 @@ mod tests {
 
     #[test]
     fn window_colors_and_animate_become_shell_effects() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
+        let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
         let interpreted = interpret(
@@ -389,7 +396,7 @@ mod tests {
 
     #[test]
     fn quit_stops_the_flow_after_the_rest_of_the_batch() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
+        let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
         let interpreted = interpret(
@@ -403,7 +410,7 @@ mod tests {
 
     #[test]
     fn roll_shuffle_answers_with_a_permutation_of_the_right_length() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
+        let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
         let interpreted =
@@ -420,7 +427,7 @@ mod tests {
 
     #[test]
     fn two_roll_shuffles_in_one_batch_answer_in_order() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
+        let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
         let interpreted = interpret(
@@ -447,51 +454,26 @@ mod tests {
     }
 
     #[test]
-    fn a_setting_effect_reaches_the_config_inbox_and_the_shell_in_the_same_step() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
+    fn a_setting_effect_reaches_the_config_inbox_as_a_setting_command() {
+        let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
+        let id = setting_id(config::AppearanceField::CoverBrackets);
+        let option = OptionCount::new(2).unwrap().index(0).unwrap();
 
-        let interpreted = interpret(
-            Cmd::One(Effect::Setting {
-                id: setting_id(config::AppearanceField::CoverBrackets),
-                option: OptionCount::new(2).unwrap().index(0).unwrap(),
-            }),
-            &mut interpreter,
-        );
+        let interpreted =
+            interpret(Cmd::One(Effect::Setting { id, option }), &mut interpreter);
 
-        assert!(matches!(
+        assert_eq!(
             fixture.config_rx.try_recv(),
-            Ok(ConfigCommand::Appearance(_))
-        ));
-        assert!(matches!(
-            interpreted.shell.as_slice(),
-            [ShellEffect::Appearance(_)]
-        ));
-    }
-
-    #[test]
-    fn an_unknown_setting_is_traced_and_never_reaches_the_config_inbox() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
-        let mut interpreter = fixture.interpreter();
-
-        interpret(
-            Cmd::One(Effect::Setting {
-                id: SettingId::new(u16::MAX),
-                option: OptionCount::new(1).unwrap().index(0).unwrap(),
-            }),
-            &mut interpreter,
+            Ok(ConfigCommand::Setting { id, option })
         );
-
-        assert!(fixture.config_rx.try_recv().is_err());
-        assert!(matches!(
-            fixture.trace.iter().next(),
-            Some(&TraceEntry::SettingRejected(_))
-        ));
+        assert!(interpreted.shell.is_empty());
+        assert!(fixture.trace.iter().next().is_none());
     }
 
     #[test]
     fn after_schedules_a_timer() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
+        let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
         interpret(
@@ -507,7 +489,7 @@ mod tests {
 
     #[test]
     fn a_delay_that_would_overflow_the_clock_is_traced_and_skipped() {
-        let mut fixture = Fixture::new(MacosLink::Absent);
+        let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
         interpret(

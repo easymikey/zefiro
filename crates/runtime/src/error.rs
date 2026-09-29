@@ -34,6 +34,8 @@ pub enum RuntimeError {
         #[source]
         source: io::Error,
     },
+    #[error("the audio launcher produced no spectrum tap")]
+    NoSpectrum,
 }
 
 #[derive(Debug, thiserror::Error)]

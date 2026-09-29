@@ -4,7 +4,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
+use crossbeam_channel::{Receiver, SendError, Sender, TryRecvError, TrySendError};
 
 use crate::{
     deck::{
@@ -48,7 +48,10 @@ impl<T> Slot<T> {
         let _ = self.drain.try_recv();
         if let Err(TrySendError::Full(value)) = self.sender.try_send(value) {
             let _ = self.drain.try_recv();
-            let _ = self.sender.try_send(value);
+            match self.sender.try_send(value) {
+                Ok(()) | Err(TrySendError::Disconnected(_) | TrySendError::Full(_)) => {
+                }
+            }
         }
     }
 
@@ -62,7 +65,7 @@ pub(crate) struct DecodeWorker {
     decode: Slot<DecodeRequest>,
     preload: Slot<DecodeRequest>,
     devices: Slot<()>,
-    handle: Option<JoinHandle<()>>,
+    handle: Option<JoinHandle<Result<(), SendError<DeckEvent>>>>,
 }
 
 struct WorkerChannels {
@@ -85,7 +88,7 @@ impl DecodeWorker {
         };
         let builder = thread::Builder::new().name("audio-worker".into());
         let handle = builder
-            .spawn(move || run(&channels))
+            .spawn(move || serve(&channels))
             .map_err(AudioError::Spawn)?;
         Ok(Self {
             decode,
@@ -110,16 +113,20 @@ impl Drop for DecodeWorker {
         self.preload.close();
         self.devices.close();
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            join_quietly(handle);
         }
     }
+}
+
+fn join_quietly(handle: JoinHandle<Result<(), SendError<DeckEvent>>>) {
+    drop(handle.join());
 }
 
 fn disconnected<T>(receiver: &Receiver<T>) -> bool {
     matches!(receiver.try_recv(), Err(TryRecvError::Disconnected))
 }
 
-fn run(channels: &WorkerChannels) {
+fn serve(channels: &WorkerChannels) -> Result<(), SendError<DeckEvent>> {
     let WorkerChannels {
         decode,
         preload,
@@ -129,30 +136,35 @@ fn run(channels: &WorkerChannels) {
     loop {
         crossbeam_channel::select! {
             recv(decode) -> request => match request {
-                Ok(request) => decode_job(request, Role::Decode, wake),
+                Ok(request) => decode_job(request, Role::Decode, wake)?,
                 Err(_) if disconnected(preload) && disconnected(devices) => break,
                 Err(_) => {}
             },
             recv(preload) -> request => match request {
                 Ok(request) => {
                     if let Ok(primary) = decode.try_recv() {
-                        decode_job(primary, Role::Decode, wake);
+                        decode_job(primary, Role::Decode, wake)?;
                     }
-                    decode_job(request, Role::Preload, wake);
+                    decode_job(request, Role::Preload, wake)?;
                 }
                 Err(_) if disconnected(decode) && disconnected(devices) => break,
                 Err(_) => {}
             },
             recv(devices) -> signal => match signal {
-                Ok(()) => list_devices(wake),
+                Ok(()) => list_devices(wake)?,
                 Err(_) if disconnected(decode) && disconnected(preload) => break,
                 Err(_) => {}
             },
         }
     }
+    Ok(())
 }
 
-fn decode_job(request: DecodeRequest, role: Role, wake: &Sender<DeckEvent>) {
+fn decode_job(
+    request: DecodeRequest,
+    role: Role,
+    wake: &Sender<DeckEvent>,
+) -> Result<(), SendError<DeckEvent>> {
     let DecodeRequest { path, ticket } = request;
     let outcome: DecodeResult = panic::catch_unwind(AssertUnwindSafe(|| decode(&path)))
         .unwrap_or_else(|_panic| Err(AudioError::WorkerPanicked { path }));
@@ -160,11 +172,11 @@ fn decode_job(request: DecodeRequest, role: Role, wake: &Sender<DeckEvent>) {
         Role::Decode => DeckEvent::Decoded { ticket, outcome },
         Role::Preload => DeckEvent::Preloaded { ticket, outcome },
     };
-    let _ = wake.send(event);
+    wake.send(event)
 }
 
-fn list_devices(wake: &Sender<DeckEvent>) {
-    let _ = wake.send(DeckEvent::DevicesListed(list_output_devices()));
+fn list_devices(wake: &Sender<DeckEvent>) -> Result<(), SendError<DeckEvent>> {
+    wake.send(DeckEvent::DevicesListed(list_output_devices()))
 }
 
 #[cfg(test)]

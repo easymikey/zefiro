@@ -331,9 +331,13 @@ impl SystemLoop {
             current_device: current,
             volume: read_volume(current),
         };
-        let Ok(effect) = self.hardware.update(read);
-        if let Some(device) = effect.rebind {
-            let _ = watch.rebind_to(device);
+        let Ok(mut effect) = self.hardware.update(read);
+        if let Some(device) = effect.rebind
+            && let Err(failure) = watch.rebind_to(device)
+        {
+            effect
+                .facts
+                .push(SystemEvent::HardwareWatchFailed(failure.to_string()));
         }
         deliver(effect.facts, outbox)
     }

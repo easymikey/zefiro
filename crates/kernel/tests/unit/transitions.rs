@@ -36,7 +36,9 @@ use kernel::{
         KeymapOverrides,
         PlaylistIndex,
         Revision,
+        SeekStep,
         ThemeName,
+        VolumeStep,
     },
     playlist::{self, PlayOrder, Playlist, RepeatMode},
     update::update,
@@ -118,7 +120,7 @@ fn volume_clamped_0_100() {
     };
     let cmd = update(
         &mut low,
-        Message::Playback(PlaybackRequest::NudgeVolume(-5)),
+        Message::Playback(PlaybackRequest::NudgeVolume(VolumeStep::new(-5))),
         Moment::default(),
     )
     .unwrap();
@@ -126,11 +128,7 @@ fn volume_clamped_0_100() {
     let effs = effects(cmd);
     assert!(matches!(
         effs.as_slice(),
-        [
-            Effect::Audio(AudioCmd::Volume(audio)),
-            Effect::System(SystemCmd::Volume(system)),
-            ..
-        ] if audio.value() == 0 && system.value() == 0
+        [Effect::System(SystemCmd::Volume(system)), ..] if system.value() == 0
     ));
 
     let mut hi = Model {
@@ -142,7 +140,7 @@ fn volume_clamped_0_100() {
     };
     let _ = update(
         &mut hi,
-        Message::Playback(PlaybackRequest::NudgeVolume(5)),
+        Message::Playback(PlaybackRequest::NudgeVolume(VolumeStep::new(5))),
         Moment::default(),
     )
     .unwrap();
@@ -151,12 +149,12 @@ fn volume_clamped_0_100() {
 
 #[rstest]
 #[case::playback_seek_by_negative_saturates_at_zero(
-    Message::Playback(PlaybackRequest::SeekBy(-10)),
+    Message::Playback(PlaybackRequest::SeekBy(SeekStep::new(-10))),
     Duration::from_secs(3),
     Duration::ZERO
 )]
 #[case::playback_seek_by_positive_clamps_to_duration(
-    Message::Playback(PlaybackRequest::SeekBy(10)),
+    Message::Playback(PlaybackRequest::SeekBy(SeekStep::new(10))),
     Duration::from_secs(95),
     Duration::from_secs(100)
 )]
@@ -556,27 +554,20 @@ fn start_track_emits_nowplaying_and_playing_state() {
 }
 
 #[test]
-fn set_volume_emits_audio_and_system() {
+fn nudge_volume_emits_only_the_system_volume() {
     let mut m = Model::default();
     let cmd = update(
         &mut m,
-        Message::Playback(PlaybackRequest::NudgeVolume(5)),
+        Message::Playback(PlaybackRequest::NudgeVolume(VolumeStep::new(5))),
         Moment::default(),
     )
     .unwrap();
     let effs = driver_effects(cmd);
     insta::assert_debug_snapshot!(effs);
-    let [
-        Effect::Audio(AudioCmd::Volume(audio_volume)),
-        Effect::System(SystemCmd::Volume(system_volume)),
-    ] = effs.as_slice()
-    else {
-        panic!("expected Audio(Volume) then System(Volume), got {effs:?}");
+    let [Effect::System(SystemCmd::Volume(system_volume))] = effs.as_slice() else {
+        panic!("expected System(Volume) alone, got {effs:?}");
     };
-    assert_eq!(
-        (*audio_volume, *system_volume),
-        (m.transport.volume, m.transport.volume)
-    );
+    assert_eq!(*system_volume, m.transport.volume);
 }
 
 fn keymap_naming(chord: &str) -> KeymapOverrides {

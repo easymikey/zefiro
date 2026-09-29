@@ -2,6 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use kernel::domain::{
     Crossfade,
+    DeviceName,
     Percent,
     Replaygain,
     SleepPresets,
@@ -88,6 +89,16 @@ where
     two_state(deserializer, Replaygain::On, Replaygain::Off)
 }
 
+fn device<'de, D>(deserializer: D) -> Result<Option<DeviceName>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)?
+        .map(DeviceName::new)
+        .transpose()
+        .map_err(serde::de::Error::custom)
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AudioConfig {
@@ -95,7 +106,8 @@ pub struct AudioConfig {
     pub crossfade: Crossfade,
     #[serde(deserialize_with = "replaygain")]
     pub replaygain: Replaygain,
-    pub device: Option<String>,
+    #[serde(deserialize_with = "device")]
+    pub device: Option<DeviceName>,
     #[serde(deserialize_with = "sleep_presets")]
     pub sleep_presets: SleepPresets,
 }
@@ -234,6 +246,7 @@ mod tests {
     #[case::sleep_zero_minutes("[audio]\nsleep_presets = [0]\n")]
     #[case::sleep_not_ascending("[audio]\nsleep_presets = [30, 20]\n")]
     #[case::sleep_too_many("[audio]\nsleep_presets = [1, 2, 3, 4, 5, 6]\n")]
+    #[case::device_empty("[audio]\ndevice = \"\"\n")]
     fn config_values_out_of_range_are_rejected(#[case] text: &str) {
         assert!(
             matches!(parse_config(text), Err(ConfigError::Parse { .. })),
@@ -248,6 +261,8 @@ mod tests {
     #[case::theme_named("theme = \"AUTO\"")]
     #[case::sleep_empty_means_off("[audio]\nsleep_presets = []\n")]
     #[case::sleep_three_presets("[audio]\nsleep_presets = [1, 360, 720]\n")]
+    #[case::device_named("[audio]\ndevice = \"Speakers\"\n")]
+    #[case::device_absent("")]
     fn config_values_in_range_are_kept(#[case] text: &str) {
         assert!(parse_config(text).is_ok(), "{text:?} must parse");
     }

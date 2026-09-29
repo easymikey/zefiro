@@ -5,13 +5,19 @@ mod protocol;
 mod vinyl;
 mod wash;
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
-use config::CoverStyle;
+use config::{Animations, CoverStyle};
 use image::RgbaImage;
+use kernel::domain::Revision;
+use raster::VinylColors;
 use ratatui::text::Line;
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
-use widgets::{CoverArt, FrameLayout, Scene};
+use widgets::{CoverArt, FrameLayout, MilkdropColors, Playing, Spectrum};
 
 use crate::pixels::cover::{
     milkdrop::{MilkdropCover, MilkdropSources},
@@ -23,7 +29,7 @@ use crate::pixels::cover::{
 #[derive(Debug, Clone)]
 pub struct DecodedCover {
     pub path: PathBuf,
-    pub image: RgbaImage,
+    pub image: Arc<RgbaImage>,
 }
 
 /// A frame's cover art, owned outside `Pixels` so the shell can borrow it
@@ -32,7 +38,7 @@ pub struct DecodedCover {
 pub enum CoverArtOwner {
     Missing,
     Image,
-    Text(Vec<Line<'static>>),
+    Text(Arc<[Line<'static>]>),
 }
 
 impl CoverArtOwner {
@@ -70,14 +76,41 @@ pub enum CoverWash {
     Idle,
 }
 
-/// What a frame's refresh needs to place the cover, plus the caller's
-/// crossfade permission for the plain cover and the screen's theme wash.
 #[derive(Debug, Clone, Copy)]
-pub struct CoverSources<'a> {
-    pub scene: Scene<'a>,
+pub struct CoverPlacement {
     pub layout: FrameLayout,
     pub fade: CoverFade,
     pub wash: CoverWash,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CoverSources<'a> {
+    pub key: CoverKey,
+    pub look: CoverLook,
+    pub moment: CoverMoment<'a>,
+    pub placement: CoverPlacement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CoverKey {
+    pub config_generation: Revision,
+    pub theme_generation: Revision,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CoverLook {
+    pub style: CoverStyle,
+    pub animations: Animations,
+    pub vinyl: VinylColors,
+    pub milkdrop: MilkdropColors,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CoverMoment<'a> {
+    pub clock: Duration,
+    pub playing: Playing,
+    pub track: Option<&'a Path>,
+    pub bands: &'a Spectrum,
 }
 
 #[derive(Default, Debug)]
@@ -105,20 +138,21 @@ impl CoverPixels {
         sources: CoverSources<'_>,
     ) -> CoverArtOwner {
         let CoverSources {
-            scene,
-            layout,
-            fade,
-            wash,
+            key,
+            look,
+            moment,
+            placement,
         } = sources;
-        let style = scene.cover_style();
-        self.active = Some(style);
+        let CoverPlacement { layout, fade, wash } = placement;
+        self.active = Some(look.style);
         let decoded = self.decoded.as_ref();
-        match style {
+        match look.style {
             CoverStyle::Off => CoverArtOwner::Missing,
             CoverStyle::Plain => self.plain.refresh(
                 picker,
                 PlainSources {
-                    scene,
+                    clock: moment.clock,
+                    animations: look.animations,
                     layout,
                     decoded,
                     fade,
@@ -128,16 +162,21 @@ impl CoverPixels {
             CoverStyle::Vinyl => self.vinyl.refresh(
                 picker,
                 VinylSources {
-                    scene,
+                    key,
+                    colors: look.vinyl,
+                    clock: moment.clock,
+                    animations: look.animations,
                     layout,
                     decoded,
                     fade,
                     wash,
                 },
             ),
-            CoverStyle::Milkdrop => {
-                self.milkdrop.refresh(MilkdropSources { scene, layout })
-            }
+            CoverStyle::Milkdrop => self.milkdrop.refresh(MilkdropSources {
+                moment,
+                colors: look.milkdrop,
+                layout,
+            }),
         }
     }
 

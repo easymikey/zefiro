@@ -1,41 +1,35 @@
-use std::{sync::LazyLock, time::Duration};
+use std::time::Duration;
 
 use crate::domain::time::SECONDS_PER_MINUTE;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SleepPresetBundles {
-    pub bundles: Vec<Vec<Duration>>,
+    pub bundles: &'static [&'static [Duration]],
 }
 
-fn minutes(values: &[u64]) -> Vec<Duration> {
-    values
-        .iter()
-        .map(|value| Duration::from_secs(value * SECONDS_PER_MINUTE))
-        .collect()
+const fn minutes(value: u64) -> Duration {
+    Duration::from_secs(value * SECONDS_PER_MINUTE)
 }
 
-pub static SLEEP_PRESET_BUNDLES: LazyLock<SleepPresetBundles> =
-    LazyLock::new(|| SleepPresetBundles {
-        bundles: vec![
-            minutes(&[15, 30, 60]),
-            minutes(&[10, 20, 45]),
-            minutes(&[30, 60, 90]),
-            minutes(&[45, 90, 120]),
-            Vec::new(),
-        ],
-    });
+pub const SLEEP_PRESET_BUNDLES: SleepPresetBundles = SleepPresetBundles {
+    bundles: &[
+        &[minutes(15), minutes(30), minutes(60)],
+        &[minutes(10), minutes(20), minutes(45)],
+        &[minutes(30), minutes(60), minutes(90)],
+        &[minutes(45), minutes(90), minutes(120)],
+        &[],
+    ],
+};
 
 impl SleepPresetBundles {
     #[must_use]
     pub fn first(&self) -> Box<[Duration]> {
-        self.bundles.first().cloned().unwrap_or_default().into()
+        self.bundles.first().copied().unwrap_or(&[]).into()
     }
 
     #[must_use]
     pub fn index_of(&self, current: &[Duration]) -> Option<usize> {
-        self.bundles
-            .iter()
-            .position(|bundle| bundle.as_slice() == current)
+        self.bundles.iter().position(|bundle| *bundle == current)
     }
 
     #[must_use]
@@ -93,7 +87,7 @@ mod tests {
     #[test]
     fn sleep_preset_bundles_index_of_finds_an_exact_match_only() {
         let bundles = &SLEEP_PRESET_BUNDLES;
-        let third = bundles.bundles.get(2).map(Vec::as_slice);
+        let third = bundles.bundles.get(2).copied();
         assert_eq!(third.and_then(|bundle| bundles.index_of(bundle)), Some(2));
         let custom = [Duration::from_secs(5 * 60)];
         assert_eq!(bundles.index_of(&custom), None);

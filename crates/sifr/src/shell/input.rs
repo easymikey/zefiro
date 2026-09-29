@@ -3,20 +3,16 @@ use kernel::{Key, KeyPress, Message};
 use runtime::Reaction;
 use terminal::{LayoutTranslation, from_event};
 
-use crate::toast::{ShellFailure, toast_message};
-
 #[derive(Debug, Clone)]
 pub(crate) enum ShellInput {
     Terminal(Event),
     Terminate,
-    Failed(ShellFailure),
 }
 
 pub(crate) fn message_for(input: ShellInput) -> Reaction {
     match input {
         ShellInput::Terminate => Reaction::Message(Message::Quit),
         ShellInput::Terminal(event) => terminal_message(&event),
-        ShellInput::Failed(failure) => Reaction::Message(toast_message(&failure)),
     }
 }
 
@@ -55,10 +51,7 @@ mod tests {
     use rstest::rstest;
     use runtime::Reaction;
 
-    use crate::{
-        shell::input::{ShellInput, message_for},
-        toast::{ShellFailure, toast_message},
-    };
+    use crate::shell::input::{ShellInput, message_for};
 
     fn key_press(character: char) -> ShellInput {
         ShellInput::Terminal(Event::Key(KeyEvent::new(
@@ -83,14 +76,6 @@ mod tests {
         let message = message_for(ShellInput::Terminate);
 
         assert_eq!(message, Reaction::Message(Message::Quit));
-    }
-
-    #[test]
-    fn a_failure_becomes_a_toast_message_at_once() {
-        let failure = ShellFailure::Cover("broken".to_string());
-        let message = message_for(ShellInput::Failed(failure.clone()));
-
-        assert_eq!(message, Reaction::Message(toast_message(&failure)));
     }
 
     #[rstest]

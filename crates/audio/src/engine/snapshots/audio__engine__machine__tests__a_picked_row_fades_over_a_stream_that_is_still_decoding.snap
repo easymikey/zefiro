@@ -1,5 +1,6 @@
 ---
 source: crates/audio/src/engine/machine.rs
+assertion_line: 302
 expression: wiring.log
 ---
 [
@@ -10,9 +11,6 @@ expression: wiring.log
             1.0,
         ),
     },
-    SetVolume(
-        0.5,
-    ),
     Many(
         [
             Play,
@@ -26,9 +24,6 @@ expression: wiring.log
             1.0,
         ),
     },
-    SetVolume(
-        0.5,
-    ),
     Many(
         [
             Play,
@@ -38,7 +33,7 @@ expression: wiring.log
     Many(
         [
             Start {
-                volume: 0.5,
+                volume: 1.0,
                 total: Some(
                     100s,
                 ),

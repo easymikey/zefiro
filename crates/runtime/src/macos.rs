@@ -12,7 +12,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct SystemStart(CoverReader);
+pub(crate) struct SystemStart(CoverReader);
 
 impl SystemStart {
     pub(crate) fn new(read_cover: CoverReader) -> Self {

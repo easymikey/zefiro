@@ -1,28 +1,23 @@
 use std::path::Path;
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use crate::config::watcher::FileWatch;
 
 pub(crate) fn register(
-    watcher: &mut Option<RecommendedWatcher>,
+    watcher: &mut impl FileWatch,
     root: &Path,
 ) -> Result<(), notify::Error> {
-    watcher.as_mut().map_or_else(
-        || Err(notify::Error::generic("no watcher")),
-        |watcher| watcher.watch(root, RecursiveMode::Recursive),
-    )
+    watcher.watch(root)
 }
 
 pub(crate) fn unregister(
-    watcher: &mut Option<RecommendedWatcher>,
+    watcher: &mut impl FileWatch,
     root: &Path,
 ) -> Result<(), notify::Error> {
-    watcher
-        .as_mut()
-        .map_or(Ok(()), |watcher| watcher.unwatch(root))
+    watcher.unwatch(root)
 }
 
 pub(crate) fn relocate(
-    watcher: &mut Option<RecommendedWatcher>,
+    watcher: &mut impl FileWatch,
     from: &Path,
     to: &Path,
 ) -> Result<(), notify::Error> {
@@ -33,29 +28,59 @@ pub(crate) fn relocate(
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use notify::RecommendedWatcher;
 
-    use crate::library::notify::{register, unregister};
+    use crate::{
+        config::watcher::FileWatch,
+        library::notify::{register, relocate, unregister},
+    };
+
+    #[derive(Default)]
+    struct FakeWatch {
+        watched: Vec<PathBuf>,
+    }
+
+    impl FileWatch for FakeWatch {
+        fn watch(&mut self, path: &Path) -> Result<(), notify::Error> {
+            self.watched.push(path.to_path_buf());
+            Ok(())
+        }
+
+        fn unwatch(&mut self, path: &Path) -> Result<(), notify::Error> {
+            self.watched.retain(|watched| watched != path);
+            Ok(())
+        }
+    }
 
     #[test]
     fn registering_without_a_watcher_reports_an_error() {
         let mut watcher: Option<RecommendedWatcher> = None;
-        let error = register(&mut watcher, std::path::Path::new("/music"));
+        let error = register(&mut watcher, Path::new("/music"));
         assert!(error.is_err());
     }
 
     #[test]
     fn unregistering_without_a_watcher_is_a_no_op() {
         let mut watcher: Option<RecommendedWatcher> = None;
-        assert!(unregister(&mut watcher, std::path::Path::new("/music")).is_ok());
+        assert!(unregister(&mut watcher, Path::new("/music")).is_ok());
     }
 
     #[test]
-    #[ignore = "spins up a real OS filesystem watcher"]
     fn a_registered_watcher_can_be_unregistered() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut watcher = Some(notify::recommended_watcher(|_| {}).unwrap());
-        register(&mut watcher, directory.path()).unwrap();
-        unregister(&mut watcher, directory.path()).unwrap();
+        let mut watcher = FakeWatch::default();
+        register(&mut watcher, Path::new("/music")).unwrap();
+        assert_eq!(watcher.watched, vec![PathBuf::from("/music")]);
+        unregister(&mut watcher, Path::new("/music")).unwrap();
+        assert!(watcher.watched.is_empty());
+    }
+
+    #[test]
+    fn relocating_moves_the_watch_to_the_new_root() {
+        let mut watcher = FakeWatch::default();
+        register(&mut watcher, Path::new("/music")).unwrap();
+        relocate(&mut watcher, Path::new("/music"), Path::new("/tunes")).unwrap();
+        assert_eq!(watcher.watched, vec![PathBuf::from("/tunes")]);
     }
 }

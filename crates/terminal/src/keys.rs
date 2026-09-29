@@ -16,8 +16,10 @@ pub fn from_event(event: KeyEvent, translation: LayoutTranslation) -> Option<Key
     to_key(event)
 }
 
-const JCUKEN_LAYOUT: &str = "йцукенгшщзфывапролдячсмитьЙЦУКЕНГШЩЗФЫВАПРОЛДЯЧСМИТЬ.";
-const QWERTY_LAYOUT: &str = "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM/";
+const JCUKEN_LAYOUT: &str =
+    "йцукенгшщзхъфывапролджэячсмитьбю.ЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮ,";
+const QWERTY_LAYOUT: &str =
+    "qwertyuiop[]asdfghjkl;'zxcvbnm,./QWERTYUIOP{}ASDFGHJKL:\"ZXCVBNM<>?";
 
 fn normalized(mut event: KeyEvent) -> KeyEvent {
     if let CrosstermCode::Char(character) = event.code {
@@ -180,6 +182,29 @@ mod tests {
         let verbatim =
             from_event(event, LayoutTranslation::Verbatim).map(|key| key.code);
         assert_eq!(verbatim, Some(KeyCode::Char('й')));
+    }
+
+    #[rstest::rstest]
+    #[case('х', '[')]
+    #[case('ъ', ']')]
+    #[case('ж', ';')]
+    #[case('э', '\'')]
+    #[case('б', ',')]
+    #[case('ю', '.')]
+    #[case('.', '/')]
+    #[case('Х', '{')]
+    #[case('Ж', ':')]
+    #[case('Э', '"')]
+    #[case('Б', '<')]
+    #[case('Ю', '>')]
+    #[case(',', '?')]
+    fn layout_translation_covers_the_punctuation_keys(
+        #[case] ru: char,
+        #[case] en: char,
+    ) {
+        let event = KeyEvent::new(CrosstermCode::Char(ru), KeyModifiers::NONE);
+        let applied = from_event(event, LayoutTranslation::Applied).map(|key| key.code);
+        assert_eq!(applied, Some(KeyCode::Char(en)));
     }
 
     #[test]

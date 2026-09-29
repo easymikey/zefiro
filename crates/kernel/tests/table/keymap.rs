@@ -30,6 +30,7 @@ use kernel::{
         KeymapOverrides,
         Overlay,
         PlaylistIndex,
+        SeekStep,
         SettingRow,
         SettingsCursor,
         TextEntry,
@@ -151,17 +152,17 @@ fn confirm() -> Option<Message> {
     character('?'),
     Some(Message::Overlay(OverlayRequest::Open(OverlayName::Help)))
 )]
-#[case::browse_shift_left_seeks_far_back(browsing(), with(KeyCode::Left, Modifiers::SHIFT), Some(Message::Playback(PlaybackRequest::SeekBy(-30))))]
+#[case::browse_shift_left_seeks_far_back(browsing(), with(KeyCode::Left, Modifiers::SHIFT), Some(Message::Playback(PlaybackRequest::SeekBy(SeekStep::new(-30)))))]
 #[case::browse_shift_right_seeks_far_forward(
     browsing(),
     with(KeyCode::Right, Modifiers::SHIFT),
-    Some(Message::Playback(PlaybackRequest::SeekBy(30)))
+    Some(Message::Playback(PlaybackRequest::SeekBy(SeekStep::new(30))))
 )]
-#[case::browse_left_seeks_back(browsing(), plain(KeyCode::Left), Some(Message::Playback(PlaybackRequest::SeekBy(-5))))]
+#[case::browse_left_seeks_back(browsing(), plain(KeyCode::Left), Some(Message::Playback(PlaybackRequest::SeekBy(SeekStep::new(-5)))))]
 #[case::browse_right_seeks_forward(
     browsing(),
     plain(KeyCode::Right),
-    Some(Message::Playback(PlaybackRequest::SeekBy(5)))
+    Some(Message::Playback(PlaybackRequest::SeekBy(SeekStep::new(5))))
 )]
 #[case::browse_ctrl_u_pages_the_playlist(
     browsing(),

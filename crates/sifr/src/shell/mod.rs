@@ -3,87 +3,68 @@ mod cover_fade;
 mod frame;
 mod frame_clock;
 mod input;
-mod reload;
+mod motion;
+mod view;
 mod window_colors;
 
-use std::io::Stdout;
+use std::io::{self, Stdout};
 
-use crossbeam_channel::Sender;
 use crossterm::event::Event;
 pub(crate) use input::ShellInput;
-use kernel::domain::Model;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use runtime::{CoverDecoded, FrameDue, Painted, Reaction, Reload, ShellEffect, View};
+use runtime::{FrameDue, Painted, Reaction, ShellEffect, View};
 use terminal::ProbeAnswer;
+pub(crate) use view::fallback_theme_file;
 
-use crate::{shell::frame::Frame, toast::ShellFailure};
+use crate::{
+    shell::frame::{Painter, resized_area},
+    startup::BootLook,
+};
 
 #[derive(Debug)]
 pub(crate) struct Shell<'terminal> {
     terminal: &'terminal mut Terminal<CrosstermBackend<Stdout>>,
-    frame: Frame,
-    failures: Sender<ShellInput>,
+    frame: Painter,
 }
 
 impl<'terminal> Shell<'terminal> {
     pub(crate) fn new(
         terminal: &'terminal mut Terminal<CrosstermBackend<Stdout>>,
-        failures: Sender<ShellInput>,
-    ) -> Self {
-        Self {
+        look: BootLook,
+    ) -> Result<Self, io::Error> {
+        let size = terminal.size()?;
+        let area = resized_area(size.width, size.height);
+        Ok(Self {
             terminal,
-            frame: Frame::new(),
-            failures,
-        }
+            frame: Painter::new(area, look),
+        })
     }
 
     pub(crate) fn adopt(&mut self, answer: ProbeAnswer) {
         self.frame.adopt(answer);
     }
-
-    fn report(&self, failure: ShellFailure) {
-        let _ = self.failures.send(ShellInput::Failed(failure));
-    }
 }
 
 impl runtime::Shell for Shell<'_> {
     type Input = ShellInput;
-    type Error = std::io::Error;
+    type Error = io::Error;
 
-    fn input(&mut self, event: Self::Input, _model: &Model) -> Reaction {
-        if let ShellInput::Terminal(Event::Resize(_, _)) = &event {
-            self.frame.mark_resized();
+    fn input(&mut self, event: Self::Input) -> Reaction {
+        if let ShellInput::Terminal(Event::Resize(width, height)) = &event {
+            self.frame.resized(resized_area(*width, *height));
         }
         input::message_for(event)
     }
 
-    fn reloaded(&mut self, reload: Reload) {
-        if let Some(failure) = self.frame.reloaded(reload) {
-            self.report(failure);
-        }
-    }
-
     fn effect(&mut self, effect: ShellEffect) {
-        if let Some(failure) = self.frame.effect(&effect) {
-            self.report(failure);
-        }
+        self.frame.effect(&effect);
     }
 
-    fn cover(&mut self, decoded: CoverDecoded) {
-        if let Some(failure) = self.frame.cover(decoded) {
-            self.report(failure);
-        }
-    }
-
-    fn frame_due(&self) -> FrameDue {
-        self.frame.frame_due()
+    fn frame_due(&self, view: &View<'_>) -> FrameDue {
+        self.frame.frame_due(view)
     }
 
     fn paint(&mut self, view: View<'_>) -> Result<Painted, Self::Error> {
-        let painted = self.frame.paint(self.terminal, view)?;
-        if let Some(failure) = self.frame.take_settled_failure() {
-            self.report(failure);
-        }
-        Ok(painted)
+        self.frame.paint(self.terminal, view)
     }
 }

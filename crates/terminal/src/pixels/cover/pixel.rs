@@ -1,6 +1,7 @@
 use std::{
     fmt,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -8,7 +9,7 @@ use config::Animations;
 use image::{DynamicImage, RgbaImage, imageops::FilterType};
 use ratatui::layout::Rect;
 use ratatui_image::{FontSize, picker::Picker, protocol::StatefulProtocol};
-use widgets::{FrameLayout, Scene};
+use widgets::FrameLayout;
 
 use crate::pixels::cover::{
     CoverArtOwner,
@@ -44,7 +45,8 @@ pub(crate) fn plan_cover(
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PlainSources<'a> {
-    pub(crate) scene: Scene<'a>,
+    pub(crate) clock: Duration,
+    pub(crate) animations: Animations,
     pub(crate) layout: FrameLayout,
     pub(crate) decoded: Option<&'a DecodedCover>,
     pub(crate) fade: CoverFade,
@@ -104,7 +106,7 @@ struct AdvanceCrossfade {
 #[derive(Default)]
 pub(crate) struct PlainCover {
     painted: Option<PaintedCover>,
-    pixmap: Option<RgbaImage>,
+    pixmap: Option<Arc<RgbaImage>>,
     crossfade: CoverCrossfade,
     transparency: Transparency,
     wash_hold: WashHold,
@@ -140,7 +142,8 @@ impl PlainCover {
         sources: PlainSources<'_>,
     ) -> CoverArtOwner {
         let PlainSources {
-            scene,
+            clock,
+            animations,
             layout,
             decoded,
             fade,
@@ -159,21 +162,15 @@ impl PlainCover {
             .map(|painted| (painted.path.as_path(), painted.rect));
         match plan_cover(decoded_path, painted, rect) {
             CoverPlan::Reuse => {
-                self.advance_crossfade(
-                    picker,
-                    AdvanceCrossfade {
-                        now: scene.clock,
-                        wash,
-                    },
-                );
+                self.advance_crossfade(picker, AdvanceCrossfade { now: clock, wash });
             }
             CoverPlan::RebuildSamePath => {
                 self.install(
                     picker,
                     InstallPlain {
                         rect,
-                        now: scene.clock,
-                        animations: scene.appearance.window.animations,
+                        now: clock,
+                        animations,
                         decoded,
                         fade: CoverFade::Withheld,
                     },
@@ -184,8 +181,8 @@ impl PlainCover {
                     picker,
                     InstallPlain {
                         rect,
-                        now: scene.clock,
-                        animations: scene.appearance.window.animations,
+                        now: clock,
+                        animations,
                         decoded,
                         fade,
                     },
@@ -219,7 +216,7 @@ impl PlainCover {
             self.crossfade.begin(outgoing, input.now);
         }
         self.transparency = transparency(&decoded.image);
-        self.pixmap = Some(decoded.image.clone());
+        self.pixmap = Some(Arc::clone(&decoded.image));
         self.repaint(
             picker,
             PaintTarget {
@@ -268,7 +265,7 @@ impl PlainCover {
         let image = self
             .crossfade
             .crossfade_at(pixmap, target.now)
-            .unwrap_or_else(|| pixmap.clone());
+            .unwrap_or_else(|| (**pixmap).clone());
         let image = fit_to_rect(image, target.rect, picker.font_size());
         let protocol = cover_protocol(picker, DynamicImage::ImageRgba8(image));
         self.painted = Some(PaintedCover {
@@ -298,14 +295,21 @@ fn fit_to_rect(image: RgbaImage, rect: Rect, font_size: FontSize) -> RgbaImage {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc, time::Duration};
 
+    use config::Animations;
     use image::{Rgba, RgbaImage};
     use ratatui::layout::Rect;
-    use ratatui_image::FontSize;
+    use ratatui_image::{FontSize, picker::Picker};
     use rstest::rstest;
+    use widgets::{Breakpoint, FrameLayout};
 
-    use crate::pixels::cover::pixel::{CoverPlan, fit_to_rect, plan_cover};
+    use crate::pixels::cover::{
+        CoverFade,
+        CoverWash,
+        DecodedCover,
+        pixel::{CoverPlan, PlainCover, PlainSources, fit_to_rect, plan_cover},
+    };
 
     struct PlanCase {
         decoded_path: PathBuf,
@@ -364,6 +368,55 @@ mod tests {
 
     fn other_rect() -> Rect {
         Rect::new(0, 0, 12, 10)
+    }
+
+    fn layout_with_cover(cover: Rect) -> FrameLayout {
+        FrameLayout {
+            screen: Rect::default(),
+            breakpoint: Breakpoint::Full,
+            content: Rect::default(),
+            header: Rect::default(),
+            card: None,
+            cover: Some(cover),
+            playlist_pane: Rect::default(),
+            playlist: None,
+            key_hints: None,
+            search_bounds: Rect::default(),
+            overlay: None,
+            toast: None,
+        }
+    }
+
+    fn sources<'a>(
+        decoded: Option<&'a DecodedCover>,
+        fade: CoverFade,
+    ) -> PlainSources<'a> {
+        PlainSources {
+            clock: Duration::ZERO,
+            animations: Animations::On,
+            layout: layout_with_cover(rect()),
+            decoded,
+            fade,
+            wash: CoverWash::Idle,
+        }
+    }
+
+    #[test]
+    fn a_crossfade_keeps_the_incoming_image_shared() {
+        let picker = Picker::halfblocks();
+        let mut plain = PlainCover::default();
+        let first = DecodedCover {
+            path: PathBuf::from("a.jpg"),
+            image: Arc::new(source_pixmap()),
+        };
+        plain.refresh(&picker, sources(Some(&first), CoverFade::Allowed));
+        let second = DecodedCover {
+            path: PathBuf::from("b.jpg"),
+            image: Arc::new(source_pixmap()),
+        };
+        plain.refresh(&picker, sources(Some(&second), CoverFade::Allowed));
+        let incoming = plain.pixmap.as_ref().expect("a pixmap after install");
+        assert!(Arc::ptr_eq(incoming, &second.image));
     }
 
     #[rstest]

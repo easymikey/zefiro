@@ -6,7 +6,11 @@ mod metrics;
 
 use std::sync::Arc;
 
-pub(crate) use compact::{CompactCard, height as compact_height};
+pub(crate) use compact::{
+    CompactCard,
+    height as compact_height,
+    progress_bar_width as compact_progress_bar_width,
+};
 use config::{Appearance, CoverBrackets};
 pub(crate) use headings::{CardStatus, card_status, status_label};
 use kernel::{

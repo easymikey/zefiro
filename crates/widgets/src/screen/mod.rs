@@ -10,6 +10,9 @@ pub use breakpoint::Breakpoint;
 pub(crate) use compact::CompactScreen;
 pub use frame_layout::{FrameLayout, LayoutInputs};
 pub(crate) use full::FullScreen;
-pub(crate) use minimal::MinimalCard;
+pub(crate) use minimal::{
+    MinimalCard,
+    progress_bar_width as minimal_progress_bar_width,
+};
 pub use root::Screen;
 pub(crate) use too_small::TooSmallNotice;

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::{
     cmd::{Cmd, Cue},
-    domain::{Model, Moment, Output, SeekSteps},
+    domain::{Model, Moment, Output, SeekStep, SeekSteps, SpeedStep, VolumeStep},
     message::{PlaybackRequest, SeekTenths},
     update::{
         audio,
@@ -23,8 +23,12 @@ pub(crate) fn playback(
         PlaybackRequest::Toggle => play_pause(model, now),
         PlaybackRequest::Play => resume_playback(model, now),
         PlaybackRequest::Pause => pause_playback(model, now),
-        PlaybackRequest::SeekForward => step(model, SeekSteps::default().medium, now),
-        PlaybackRequest::SeekBack => step(model, -SeekSteps::default().medium, now),
+        PlaybackRequest::SeekForward => {
+            step(model, SeekStep::new(SeekSteps::default().medium), now)
+        }
+        PlaybackRequest::SeekBack => {
+            step(model, SeekStep::new(-SeekSteps::default().medium), now)
+        }
         PlaybackRequest::Hold => player::account(model, PlayerMessage::Hold(now), now),
         PlaybackRequest::Release => release(model, now),
         PlaybackRequest::Stop => player::account(model, PlayerMessage::Stop, now),
@@ -68,14 +72,18 @@ fn repeat_cycled(model: &mut Model) -> Result<Cmd, Rejection> {
     Ok(cmd.then(Cue::PlayOrderChanged.into()))
 }
 
-fn volume_nudged(model: &mut Model, delta: i8) -> Result<Cmd, Rejection> {
+fn volume_nudged(model: &mut Model, delta: VolumeStep) -> Result<Cmd, Rejection> {
     let cmd = model
         .transport
         .update(TransportMessage::NudgeVolume(delta))?;
     Ok(cmd.then(Cue::VolumeChanged.into()))
 }
 
-fn speed_nudged(model: &mut Model, delta: i8, now: Moment) -> Result<Cmd, Rejection> {
+fn speed_nudged(
+    model: &mut Model,
+    delta: SpeedStep,
+    now: Moment,
+) -> Result<Cmd, Rejection> {
     let cmd = model
         .transport
         .update(TransportMessage::NudgeSpeed(delta))?;
@@ -116,7 +124,7 @@ fn seek_fraction(
     seek(model, target, now)
 }
 
-fn step(model: &mut Model, seconds: i64, now: Moment) -> Result<Cmd, Rejection> {
+fn step(model: &mut Model, seconds: SeekStep, now: Moment) -> Result<Cmd, Rejection> {
     let target = relative_target(model, seconds, now);
     seek(model, Some(target), now)
 }
@@ -136,7 +144,6 @@ pub(crate) fn play_pause(model: &mut Model, now: Moment) -> Result<Cmd, Rejectio
     }
     let current = model.playlist.current().cloned();
     let resume = Resume {
-        volume: model.transport.volume,
         anchor: Anchor {
             now,
             speed: model.transport.speed,
@@ -183,7 +190,8 @@ fn fraction_target(model: &Model, tenths: SeekTenths) -> Option<Duration> {
     clamped(model, duration * u32::from(tenths.tenths()) / 10)
 }
 
-fn relative_target(model: &Model, seconds: i64, now: Moment) -> Duration {
+fn relative_target(model: &Model, seconds: SeekStep, now: Moment) -> Duration {
+    let seconds = seconds.get();
     let at = model.player.position_at(now);
     let moved = if seconds < 0 {
         at.saturating_sub(Duration::from_secs(seconds.unsigned_abs()))

@@ -18,10 +18,14 @@ use kernel::{
     },
     update::keymap::{Bindings, KeyBinding},
 };
+use raster::VinylColors;
+use terminal::{CoverKey, CoverLook, CoverMoment, CoverPlacement, CoverSources};
 use widgets::{
     CellAspect,
     ColorDepth,
+    MilkdropColors,
     PixelPath,
+    Playing,
     SPECTRUM_BANDS,
     Scene,
     Spectrum,
@@ -93,10 +97,6 @@ impl Scenery {
         }
     }
 
-    pub(crate) fn scene(&self) -> Scene<'_> {
-        self.scene_at(Duration::ZERO)
-    }
-
     pub(crate) fn scene_at(&self, clock: Duration) -> Scene<'_> {
         Scene {
             model: &self.model,
@@ -108,10 +108,44 @@ impl Scenery {
             pixel_path: PixelPath::Protocol,
             cell_aspect: CellAspect::default(),
             clock,
-            now_unix: 0,
             now: Moment::default(),
             music_dir: "/home/user/Music",
             sleep_left: None,
+        }
+    }
+
+    pub(crate) fn sources(&self, placement: CoverPlacement) -> CoverSources<'_> {
+        self.sources_at(placement, Duration::ZERO)
+    }
+
+    pub(crate) fn sources_at(
+        &self,
+        placement: CoverPlacement,
+        clock: Duration,
+    ) -> CoverSources<'_> {
+        let scene = self.scene_at(clock);
+        CoverSources {
+            key: CoverKey {
+                config_generation: scene.model.config_generation,
+                theme_generation: scene.model.theme_generation,
+            },
+            look: CoverLook {
+                style: scene.cover_style(),
+                animations: scene.appearance.window.animations,
+                vinyl: VinylColors::from(scene.theme),
+                milkdrop: MilkdropColors::from_theme(&scene.active_theme()),
+            },
+            moment: CoverMoment {
+                clock: scene.clock,
+                playing: if scene.model.player.is_playing() {
+                    Playing::Yes
+                } else {
+                    Playing::No
+                },
+                track: scene.model.player.current().map(|track| track.path()),
+                bands: scene.spectrum,
+            },
+            placement,
         }
     }
 }

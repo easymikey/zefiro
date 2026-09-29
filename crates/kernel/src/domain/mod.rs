@@ -36,7 +36,7 @@ mod workspace;
 pub use bounded::Bounded;
 pub use chord::{CharSink, Chord, ChordParseError, ChordPrefix, KeyPattern};
 pub use crossfade::{Crossfade, CrossfadeOutOfRange};
-pub use cursor::{Cursor, CursorDirection};
+pub use cursor::{Cursor, CursorDirection, RowDelta};
 pub use cursor_over::{CursorOver, Nudge};
 pub(crate) use cursor_over::{ListMotion, cycled};
 pub(crate) use digit::digit_char;
@@ -107,7 +107,7 @@ pub(crate) use time::parse_timecode;
 pub use time::{TimecodeError, format_time};
 pub use track::{AudioFormat, Tagging, Tags, Track};
 pub(crate) use transport::SeekSteps;
-pub use transport::{Output, OutputFault, Transport};
+pub use transport::{Output, OutputFault, SeekStep, SpeedStep, Transport, VolumeStep};
 pub use workspace::{
     Browse,
     ConfigFailure,

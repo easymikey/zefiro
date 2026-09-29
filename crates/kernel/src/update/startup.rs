@@ -18,6 +18,7 @@ use crate::{
         Shuffle,
         Startup,
         Themes,
+        Toast,
         playlist::Playlist,
     },
     update::{machine::Machine, playlist::PlaylistMessage},
@@ -25,6 +26,7 @@ use crate::{
 
 pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
     let theme = startup.theme.clone();
+    let notices = startup.notices;
     model.settings = Settings {
         crossfade: startup.crossfade,
         replaygain: startup.replaygain,
@@ -60,7 +62,15 @@ pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
         }),
         Effect::Config(ConfigCmd::SelectTheme(theme)),
     ]);
-    cmd.then(Cmd::Batch(effects))
+    let announced = announced(model, &notices);
+    cmd.then(Cmd::Batch(effects)).then(announced)
+}
+
+fn announced(model: &mut Model, notices: &[String]) -> Cmd {
+    if notices.is_empty() {
+        return Cmd::None;
+    }
+    model.workspace.show(Toast::error(notices.join("\n")))
 }
 
 fn shuffled(playlist: &mut Playlist, shuffle: Shuffle) -> Cmd {
@@ -125,7 +135,31 @@ mod tests {
                 ThemeName::from_static("solar"),
             ],
             custom_rows: Vec::new(),
+            notices: Vec::new(),
         }
+    }
+
+    #[test]
+    fn startup_notices_raise_one_error_toast() {
+        let mut model = Model::default();
+        let startup = Startup {
+            notices: vec!["broken a".to_string(), "broken b".to_string()],
+            ..stock_startup()
+        };
+
+        let _ = seed_model(&mut model, startup);
+
+        let toast = model.workspace.toast.unwrap();
+        assert_eq!(toast.level, crate::domain::ToastLevel::Error);
+        assert_eq!(toast.text, "broken a\nbroken b");
+    }
+
+    #[test]
+    fn startup_without_notices_raises_no_toast() {
+        let mut model = Model::default();
+        let _ = seed_model(&mut model, stock_startup());
+
+        assert!(model.workspace.toast.is_none());
     }
 
     fn startup_model() -> Model {

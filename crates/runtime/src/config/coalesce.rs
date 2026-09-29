@@ -7,7 +7,10 @@ use config::AppearancePatch;
 use kernel::{ConfigPatch, DevicePatch};
 
 use crate::{
-    config::write::{Written, save, save_appearance},
+    config::{
+        ConfigPaths,
+        write::{Written, save, save_appearance},
+    },
     error::SaveError,
 };
 
@@ -17,31 +20,29 @@ pub(crate) struct Flushed {
     pub appearance: Option<Result<Written, SaveError>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+pub(crate) struct SavePatches {
+    pub config: Option<ConfigPatch>,
+    pub appearance: Option<AppearancePatch>,
+}
+
+#[derive(Debug, PartialEq)]
 struct PendingSave<P> {
     patch: P,
     deadline: Instant,
 }
 
-#[must_use]
-#[derive(Debug)]
-pub(crate) struct SaveCoalescer {
-    config: Option<PathBuf>,
-    appearance: PathBuf,
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct SaveQueue {
     debounce: Duration,
     pending_config: Option<PendingSave<ConfigPatch>>,
     pending_appearance: Option<PendingSave<AppearancePatch>>,
 }
 
-impl SaveCoalescer {
-    pub(crate) fn new(
-        config: Option<PathBuf>,
-        appearance: PathBuf,
-        debounce: Duration,
-    ) -> Self {
+impl SaveQueue {
+    #[must_use]
+    pub(crate) fn new(debounce: Duration) -> Self {
         Self {
-            config,
-            appearance,
             debounce,
             pending_config: None,
             pending_appearance: None,
@@ -80,30 +81,35 @@ impl SaveCoalescer {
         });
     }
 
-    pub(crate) fn flush_due(&mut self, now: Instant) -> Flushed {
-        let mut flushed = Flushed::default();
-        if matches!(&self.pending_config, Some(pending) if pending.deadline <= now)
-            && let Some(pending) = self.pending_config.take()
-        {
-            flushed.config = Some(run_save(&self.config, pending.patch));
-        }
-        if matches!(&self.pending_appearance, Some(pending) if pending.deadline <= now)
-            && let Some(pending) = self.pending_appearance.take()
-        {
-            flushed.appearance = Some(save_appearance(&self.appearance, pending.patch));
-        }
-        flushed
+    pub(crate) fn take_due(&mut self, now: Instant) -> Option<SavePatches> {
+        let config = take_if_due(&mut self.pending_config, now);
+        let appearance = take_if_due(&mut self.pending_appearance, now);
+        gather(config, appearance)
     }
 
-    pub(crate) fn flush_all(&mut self) -> Flushed {
-        let mut flushed = Flushed::default();
-        if let Some(pending) = self.pending_config.take() {
-            flushed.config = Some(run_save(&self.config, pending.patch));
-        }
-        if let Some(pending) = self.pending_appearance.take() {
-            flushed.appearance = Some(save_appearance(&self.appearance, pending.patch));
-        }
-        flushed
+    pub(crate) fn take_all(&mut self) -> Option<SavePatches> {
+        let config = self.pending_config.take().map(|pending| pending.patch);
+        let appearance = self.pending_appearance.take().map(|pending| pending.patch);
+        gather(config, appearance)
+    }
+}
+
+fn take_if_due<P>(slot: &mut Option<PendingSave<P>>, now: Instant) -> Option<P> {
+    if slot.as_ref().is_some_and(|pending| pending.deadline <= now) {
+        slot.take().map(|pending| pending.patch)
+    } else {
+        None
+    }
+}
+
+fn gather(
+    config: Option<ConfigPatch>,
+    appearance: Option<AppearancePatch>,
+) -> Option<SavePatches> {
+    if config.is_none() && appearance.is_none() {
+        None
+    } else {
+        Some(SavePatches { config, appearance })
     }
 }
 
@@ -143,34 +149,73 @@ fn merge_appearance_patch(
     }
 }
 
-fn run_save(path: &Option<PathBuf>, patch: ConfigPatch) -> Result<Written, SaveError> {
-    path.as_ref()
-        .map_or(Err(SaveError::NoConfigDirectory), |path| save(path, patch))
+#[derive(Debug)]
+pub(crate) struct SavePaths {
+    config: Option<PathBuf>,
+    appearance: PathBuf,
+}
+
+impl SavePaths {
+    #[must_use]
+    pub(crate) fn new(paths: &ConfigPaths) -> Self {
+        Self {
+            config: paths.config.clone(),
+            appearance: paths.appearance.clone(),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn write(&self, patches: SavePatches) -> Flushed {
+        Flushed {
+            config: patches
+                .config
+                .map(|patch| run_save(self.config.as_ref(), patch)),
+            appearance: patches
+                .appearance
+                .map(|patch| save_appearance(&self.appearance, patch)),
+        }
+    }
+}
+
+fn run_save(path: Option<&PathBuf>, patch: ConfigPatch) -> Result<Written, SaveError> {
+    path.map_or(Err(SaveError::NoConfigDirectory), |path| save(path, patch))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use config::{CoverStyle, FormatChips, KeyHints};
     use kernel::{
         Bounded,
         ConfigPatch,
         DevicePatch,
-        Percent,
         domain::{Crossfade, DeviceName, ThemeName},
     };
 
     use crate::{
-        config::{
-            ConfigTiming,
-            coalesce::{SaveCoalescer, merge_appearance_patch, merge_config_patch},
+        config::coalesce::{
+            SavePatches,
+            SavePaths,
+            merge_appearance_patch,
+            merge_config_patch,
         },
         error::SaveError,
     };
 
     fn crossfade(seconds: u64) -> Crossfade {
         Crossfade::clamped(Duration::from_secs(seconds))
+    }
+
+    fn theme_only(name: &'static str) -> SavePatches {
+        SavePatches {
+            config: Some(
+                ConfigPatch::builder()
+                    .theme(ThemeName::from_static(name))
+                    .build(),
+            ),
+            appearance: None,
+        }
     }
 
     #[test]
@@ -222,101 +267,32 @@ mod tests {
         assert_eq!(merged.cover_style, Some(CoverStyle::Off));
     }
 
-    fn coalescer(directory: &tempfile::TempDir) -> SaveCoalescer {
-        SaveCoalescer::new(
-            Some(directory.path().join("config.toml")),
-            directory.path().join("sifr-ui.toml"),
-            ConfigTiming::default().save_debounce,
-        )
-    }
-
     #[test]
-    fn a_burst_of_saves_becomes_one_write_carrying_every_field() {
+    fn write_lands_a_config_patch_on_disk() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.toml");
-        let mut coalescer = coalescer(&directory);
-        let start = Instant::now();
+        let paths = SavePaths {
+            config: Some(path.clone()),
+            appearance: directory.path().join("window.toml"),
+        };
 
-        coalescer.queue(
-            start,
-            ConfigPatch::builder()
-                .theme(ThemeName::from_static("noir"))
-                .build(),
-        );
-        for volume in [10u8, 20, 30, 40, 50] {
-            let now = start + Duration::from_millis(u64::from(volume));
-            coalescer.queue(
-                now,
-                ConfigPatch::builder()
-                    .volume(Percent::clamped(volume))
-                    .build(),
-            );
-            assert_eq!(
-                coalescer.next_deadline(),
-                Some(now + ConfigTiming::default().save_debounce),
-                "every new job in the burst pushes the trailing edge out"
-            );
-        }
-
-        let flushed = coalescer.flush_due(start + Duration::from_secs(1));
-
-        assert_eq!(
-            coalescer.next_deadline(),
-            None,
-            "the flush leaves nothing pending"
-        );
-        assert!(matches!(flushed.config, Some(Ok(_))));
-        assert!(
-            flushed.appearance.is_none(),
-            "a coalesced burst reports exactly one land"
-        );
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("volume = 50"), "the last patch wins: {text}");
-        assert!(
-            text.contains("theme = \"noir\""),
-            "and the first patch's disjoint field is still there: {text}"
-        );
-    }
-
-    #[test]
-    fn flush_all_writes_a_save_whose_window_has_not_elapsed() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("config.toml");
-        let mut coalescer = SaveCoalescer::new(
-            Some(path.clone()),
-            directory.path().join("window.toml"),
-            ConfigTiming::default().save_debounce,
-        );
-
-        coalescer.queue(
-            Instant::now(),
-            ConfigPatch::builder()
-                .theme(ThemeName::from_static("dark"))
-                .build(),
-        );
-        let flushed = coalescer.flush_all();
+        let flushed = paths.write(theme_only("dark"));
 
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("theme = \"dark\""));
         assert!(matches!(flushed.config, Some(Ok(_))));
+        assert!(flushed.appearance.is_none());
     }
 
     #[test]
     fn a_save_with_no_path_reports_no_config_dir() {
         let directory = tempfile::tempdir().unwrap();
-        let mut coalescer = SaveCoalescer::new(
-            None,
-            directory.path().join("window.toml"),
-            ConfigTiming::default().save_debounce,
-        );
+        let paths = SavePaths {
+            config: None,
+            appearance: directory.path().join("window.toml"),
+        };
 
-        coalescer.queue(
-            Instant::now(),
-            ConfigPatch::builder()
-                .theme(ThemeName::from_static("dark"))
-                .build(),
-        );
-        let flushed = coalescer.flush_all();
+        let flushed = paths.write(theme_only("dark"));
 
         assert!(matches!(
             flushed.config,

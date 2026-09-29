@@ -1,183 +1,232 @@
 use std::{
-    path::{Path, PathBuf},
-    time::{Duration, Instant},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
 };
 
-use crossbeam_channel::{Receiver, Select, Sender};
+use crossbeam_channel::{Receiver, Select, Sender, TrySendError};
 use kernel::{
     Delivery,
-    IoFault,
-    LibraryCmd,
+    DriverMessage,
     LibraryFact,
-    LibraryFailure,
-    LibrarySubject,
     Message,
     Outbox,
-    domain::{Driver, Revision},
+    domain::{Driver, DriverFailure},
     update::Machine,
 };
-use library::{Executed, LibraryPaths, execute};
+use library::{LibraryPaths, execute};
 
 use crate::{
+    cells::Latest,
+    config::watcher::FileWatch,
     driver::{DriverThread, spawn_driver},
     error::RuntimeError,
+    interpret::LibraryCommand,
     library::{
-        cover::{
-            CoverCache,
-            CoverDecoded,
-            CoverRequest,
-            DecodeIo,
-            DecodeMessage,
-            Decoding,
-            decode,
+        cover::{CoverDecoded, CoverDone, CoverRequest},
+        machine::{
+            LibraryDriver,
+            LibraryInput,
+            LibraryOutput,
+            WatchChange,
+            watch_failure,
         },
         notify::{register, relocate},
-        watch::{LibraryWatch, LibraryWatchMessage, WatchIo},
+        worker::CoverWorker,
     },
     mailbox::Mailbox,
     registry,
 };
 
-const DEBOUNCE: Duration = Duration::from_millis(500);
-
-type LibrarySpawn = (
-    DriverThread<LibraryCmd>,
-    Sender<CoverRequest>,
-    Receiver<CoverDecoded>,
-);
-
 pub(crate) fn spawn(
-    paths: LibraryPaths,
-    decodable: &'static [&'static str],
+    library: (LibraryPaths, &'static [&'static str]),
     mailbox: &Sender<Message>,
-) -> Result<LibrarySpawn, RuntimeError> {
-    let (covers, cover_inbox) = crossbeam_channel::unbounded();
-    let (decoded, decoded_events) = crossbeam_channel::unbounded();
-    let thread = spawn_driver(
+    cover: Latest<CoverDecoded>,
+) -> Result<DriverThread<LibraryCommand>, RuntimeError> {
+    let (paths, decodable) = library;
+    let (worker, results) = CoverWorker::spawn(cover.clone())?;
+    spawn_driver(
         registry::row(Driver::Library),
         move |inbox, mailbox| {
             let outbound = Outbound {
                 mailbox,
-                decoded: &decoded,
-                cover_inbox,
+                worker,
+                results,
+                cover,
             };
-            LibraryLoop::new(paths, decodable, outbound).run(inbox);
+            let watching = Watching::recommended(outbound.mailbox);
+            LibraryLoop::new((paths, decodable), outbound, watching).run(inbox);
         },
         mailbox,
-    )?;
-    Ok((thread, covers, decoded_events))
+    )
 }
 
 struct Outbound<'a> {
     mailbox: &'a Mailbox<LibraryFact>,
-    decoded: &'a Sender<CoverDecoded>,
-    cover_inbox: Receiver<CoverRequest>,
+    worker: CoverWorker,
+    results: Receiver<CoverDone>,
+    cover: Latest<CoverDecoded>,
 }
 
 enum Wake {
-    Command(LibraryCmd),
+    Command(LibraryCommand),
     FilesystemChange(Result<(), notify::Error>),
     FilesystemEventsLost,
     DebounceElapsed,
-    Cover(CoverRequest),
-    CoverInboxLost,
+    Decoded(CoverDone),
+    ResultsLost,
     Stopped,
 }
 
-#[derive(Clone, Copy)]
-enum Scan {
-    Full,
-    Cache,
+enum Halt {
+    Continue,
+    Stop,
 }
 
-fn scan_command(root: PathBuf, revision: Revision, cause: Scan) -> LibraryCmd {
-    match cause {
-        Scan::Full => LibraryCmd::Rescan { root, revision },
-        Scan::Cache => LibraryCmd::ScanLibrary { root, revision },
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rescan {
+    Needed,
+    Settled,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Overflow(Arc<AtomicBool>);
+
+impl Overflow {
+    fn raise(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    fn settle(&self) -> Rescan {
+        if self.0.swap(false, Ordering::AcqRel) {
+            Rescan::Needed
+        } else {
+            Rescan::Settled
+        }
     }
 }
 
-struct LibraryLoop<'a> {
-    watch: LibraryWatch,
-    watcher: Option<notify::RecommendedWatcher>,
-    filesystem_events: Receiver<notify::Result<notify::Event>>,
-    cover_inbox: Receiver<CoverRequest>,
-    decoding: Decoding,
-    cover_cache: CoverCache,
-    last_cover_side: Option<u32>,
-    deadline: Option<Instant>,
-    paths: LibraryPaths,
-    decodable: &'static [&'static str],
-    mailbox: &'a Mailbox<LibraryFact>,
-    decoded: &'a Sender<CoverDecoded>,
+fn watch_events(
+    overflow: Overflow,
+) -> (
+    impl FnMut(notify::Result<notify::Event>) + Send + 'static,
+    Receiver<notify::Result<notify::Event>>,
+) {
+    let (events, filesystem_events) = crossbeam_channel::bounded(64);
+    let callback = move |event| match events.try_send(event) {
+        Err(TrySendError::Full(_)) => overflow.raise(),
+        Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+    };
+    (callback, filesystem_events)
 }
 
-impl<'a> LibraryLoop<'a> {
-    fn new(
-        paths: LibraryPaths,
-        decodable: &'static [&'static str],
-        outbound: Outbound<'a>,
-    ) -> Self {
-        let (events, filesystem_events) = crossbeam_channel::unbounded();
-        let watcher = notify::recommended_watcher(events).map_or_else(
+struct Watching<W> {
+    watcher: W,
+    events: Receiver<notify::Result<notify::Event>>,
+    overflow: Overflow,
+}
+
+impl Watching<Option<notify::RecommendedWatcher>> {
+    fn recommended(mailbox: &Mailbox<LibraryFact>) -> Self {
+        let overflow = Overflow::default();
+        let (callback, events) = watch_events(overflow.clone());
+        let watcher = notify::recommended_watcher(callback).map_or_else(
             |error| {
-                if let Delivery::Closed = outbound.mailbox.send(watch_failure(&error)) {
+                match mailbox.send(watch_failure(&error)) {
+                    Delivery::Sent | Delivery::Congested | Delivery::Closed => {}
                 }
                 None
             },
             Some,
         );
         Self {
-            watch: LibraryWatch::default(),
             watcher,
-            filesystem_events,
-            cover_inbox: outbound.cover_inbox,
-            decoding: Decoding::default(),
-            cover_cache: CoverCache::default(),
-            last_cover_side: None,
-            deadline: None,
+            events,
+            overflow,
+        }
+    }
+}
+
+struct LibraryLoop<'a, W> {
+    driver: LibraryDriver,
+    watcher: W,
+    filesystem_events: Receiver<notify::Result<notify::Event>>,
+    overflow: Overflow,
+    worker: CoverWorker,
+    results: Receiver<CoverDone>,
+    paths: LibraryPaths,
+    decodable: &'static [&'static str],
+    mailbox: &'a Mailbox<LibraryFact>,
+    cover: Latest<CoverDecoded>,
+}
+
+impl<'a, W: FileWatch> LibraryLoop<'a, W> {
+    fn new(
+        library: (LibraryPaths, &'static [&'static str]),
+        outbound: Outbound<'a>,
+        watching: Watching<W>,
+    ) -> Self {
+        let (paths, decodable) = library;
+        Self {
+            driver: LibraryDriver::default(),
+            watcher: watching.watcher,
+            filesystem_events: watching.events,
+            overflow: watching.overflow,
+            worker: outbound.worker,
+            results: outbound.results,
             paths,
             decodable,
             mailbox: outbound.mailbox,
-            decoded: outbound.decoded,
+            cover: outbound.cover,
         }
     }
 
-    fn run(mut self, inbox: &Receiver<LibraryCmd>) {
+    fn run(mut self, inbox: &Receiver<LibraryCommand>) {
         loop {
-            match self.wait(inbox) {
+            let halt = match self.wait(inbox) {
                 Wake::Command(command) => self.command(command),
-                Wake::FilesystemChange(event) => {
-                    self.drive(
-                        LibraryWatchMessage::FilesystemChange(event),
-                        Scan::Full,
-                    );
-                }
-                Wake::DebounceElapsed => {
-                    self.deadline = None;
-                    self.drive(LibraryWatchMessage::DebounceElapsed, Scan::Full);
-                }
-                Wake::Cover(request) => {
-                    self.last_cover_side = Some(request.side);
-                    self.drive_decode(DecodeMessage::Request(request));
-                }
-                Wake::CoverInboxLost => {
-                    self.cover_inbox = crossbeam_channel::never();
-                }
+                Wake::FilesystemChange(event) => self.filesystem_change(event),
                 Wake::FilesystemEventsLost => {
                     self.filesystem_events = crossbeam_channel::never();
+                    Halt::Continue
                 }
-                Wake::Stopped => return,
+                Wake::DebounceElapsed => self.feed(LibraryInput::DebounceDue),
+                Wake::Decoded(done) => self.feed(LibraryInput::Decoded(done)),
+                Wake::ResultsLost => {
+                    self.results = crossbeam_channel::never();
+                    Halt::Continue
+                }
+                Wake::Stopped => {
+                    self.feed(LibraryInput::Stopping);
+                    self.retire();
+                    return;
+                }
+            };
+            if let Halt::Stop = halt {
+                self.retire();
+                return;
             }
         }
     }
 
-    fn wait(&self, inbox: &Receiver<LibraryCmd>) -> Wake {
+    fn retire(self) {
+        if self.worker.join().is_err() {
+            let failure = DriverFailure::Panicked("cover worker".to_owned());
+            let died = DriverMessage::Died(failure);
+            match self.mailbox.report(Driver::Library, died) {
+                Delivery::Sent | Delivery::Congested | Delivery::Closed => {}
+            }
+        }
+    }
+
+    fn wait(&self, inbox: &Receiver<LibraryCommand>) -> Wake {
         let mut select = Select::new();
         let command_index = select.recv(inbox);
         let filesystem_index = select.recv(&self.filesystem_events);
-        let cover_index = select.recv(&self.cover_inbox);
-        let selected = match self.deadline {
+        let results_index = select.recv(&self.results);
+        let selected = match self.driver.deadline() {
             Some(deadline) => select.select_deadline(deadline),
             None => Ok(select.select()),
         };
@@ -194,178 +243,154 @@ impl<'a> LibraryLoop<'a> {
                     Wake::FilesystemChange(event.map(|_| ()))
                 });
         }
-        if operation.index() == cover_index {
+        if operation.index() == results_index {
             return operation
-                .recv(&self.cover_inbox)
-                .map_or(Wake::CoverInboxLost, Wake::Cover);
+                .recv(&self.results)
+                .map_or(Wake::ResultsLost, Wake::Decoded);
         }
         Wake::Stopped
     }
 
-    fn command(&mut self, command: LibraryCmd) {
+    fn command(&mut self, command: LibraryCommand) -> Halt {
         match command {
-            LibraryCmd::Rescan { root, revision } => {
-                self.drive(LibraryWatchMessage::Rescan { root, revision }, Scan::Full);
+            LibraryCommand::Kernel(command) => {
+                self.feed(LibraryInput::Command(command))
             }
-            LibraryCmd::ScanLibrary { root, revision } => {
-                self.drive(LibraryWatchMessage::Rescan { root, revision }, Scan::Cache);
-            }
-            LibraryCmd::PrefetchCover(path) => self.prefetch_cover(path),
-            other @ (LibraryCmd::AppendHistory { .. }
-            | LibraryCmd::SaveFavorites(_)
-            | LibraryCmd::LoadFavorites
-            | LibraryCmd::Trash(_)
-            | LibraryCmd::LoadHistory { .. }
-            | LibraryCmd::SavePlaylist { .. }
-            | LibraryCmd::TagTracks { .. }) => self.execute(other),
+            LibraryCommand::Cover(request) => self.feed(LibraryInput::Cover(request)),
         }
     }
 
-    fn drive(&mut self, message: LibraryWatchMessage, cause: Scan) {
-        let (watch, io) = step(std::mem::take(&mut self.watch), message);
-        self.watch = watch;
-        self.act(io, cause);
+    fn filesystem_change(&mut self, event: Result<(), notify::Error>) -> Halt {
+        let halt = self.feed(LibraryInput::FilesChanged {
+            at: Instant::now(),
+            event,
+        });
+        if let (Halt::Continue, Rescan::Needed) = (&halt, self.overflow.settle()) {
+            return self.feed(LibraryInput::EventsOverflowed { at: Instant::now() });
+        }
+        halt
     }
 
-    fn act(&mut self, io: WatchIo, cause: Scan) {
-        match io {
-            WatchIo::Nothing => {}
-            WatchIo::Move { from, to, revision } => {
-                let outcome = relocate(&mut self.watcher, &from, &to);
-                self.report_watch(outcome);
-                self.execute(scan_command(to, revision, cause));
-            }
-            WatchIo::ArmDebounce => self.deadline = Some(Instant::now() + DEBOUNCE),
-            WatchIo::Rescan { root, revision } => {
-                self.execute(scan_command(root, revision, cause));
-            }
-            WatchIo::RegisterAndRescan { root, revision } => {
-                self.mount(&root);
-                self.execute(scan_command(root, revision, cause));
-            }
-            WatchIo::Report(error) => self.report_watch(Err(error)),
+    fn feed(&mut self, input: LibraryInput) -> Halt {
+        let label: &'static str = (&input).into();
+        match self.driver.update(input) {
+            Ok(outputs) => self.act_all(outputs),
+            Err(_) => self.reject(label),
         }
     }
 
-    fn mount(&mut self, root: &Path) {
-        let outcome = register(&mut self.watcher, root);
-        self.report_watch(outcome);
+    fn act_all(&mut self, outputs: Vec<LibraryOutput>) -> Halt {
+        for output in outputs {
+            if let Halt::Stop = self.act(output) {
+                return Halt::Stop;
+            }
+        }
+        Halt::Continue
     }
 
-    fn report_watch(&self, outcome: Result<(), notify::Error>) {
-        if let Err(error) = outcome
-            && let Delivery::Closed = self.deliver(watch_failure(&error))
-        {}
-    }
-
-    fn drive_decode(&mut self, message: DecodeMessage) {
-        let (decoding, io) = decode_step(std::mem::take(&mut self.decoding), message);
-        self.decoding = decoding;
-        self.act_decode(io);
-    }
-
-    fn act_decode(&mut self, io: DecodeIo) {
-        if let DecodeIo::Decode(request) = io {
-            let path = request.path.clone();
-            let decoded = self.resolve(request);
-            let _ = self.decoded.send(decoded);
-            self.drive_decode(DecodeMessage::Decoded(path));
+    fn reject(&self, input: &'static str) -> Halt {
+        let rejected = DriverMessage::Rejected { input };
+        match self.mailbox.report(Driver::Library, rejected) {
+            Delivery::Closed => Halt::Stop,
+            Delivery::Sent | Delivery::Congested => Halt::Continue,
         }
     }
 
-    fn prefetch_cover(&mut self, path: PathBuf) {
-        let Some(side) = self.last_cover_side else {
-            return;
+    fn act(&mut self, output: LibraryOutput) -> Halt {
+        match output {
+            LibraryOutput::Execute(command) => self.execute(command),
+            LibraryOutput::Watch(change) => self.watch_change(change),
+            LibraryOutput::Decode(request) => self.decode(request),
+            LibraryOutput::Publish(decoded) => self.publish(decoded),
+            LibraryOutput::Tell(fact) => self.tell(fact),
+        }
+    }
+
+    fn execute(&mut self, command: kernel::LibraryCmd) -> Halt {
+        let result = execute(command, &self.paths, self.decodable);
+        self.feed(LibraryInput::Executed(result))
+    }
+
+    fn watch_change(&mut self, change: WatchChange) -> Halt {
+        let outcome = match change {
+            WatchChange::Register(root) => register(&mut self.watcher, &root),
+            WatchChange::Relocate { from, to } => {
+                relocate(&mut self.watcher, &from, &to)
+            }
         };
-        let _ = self.resolve(CoverRequest { path, side });
-    }
-
-    fn resolve(&mut self, request: CoverRequest) -> CoverDecoded {
-        if let Some(outcome) = self.cover_cache.answer(&request) {
-            return CoverDecoded {
-                path: request.path,
-                side: request.side,
-                outcome,
-            };
-        }
-        let decoded = decode(&request);
-        self.cover_cache.remember(&decoded);
-        decoded
-    }
-
-    fn execute(&self, command: LibraryCmd) {
-        match execute(command, &self.paths, self.decodable) {
-            Ok(Executed {
-                fact: Some(fact), ..
-            }) => if let Delivery::Closed = self.deliver(fact) {},
-            Ok(Executed { fact: None, .. }) => {}
-            Err(error) => {
-                let failure: LibraryFailure = (&error).into();
-                if let Delivery::Closed = self.deliver(LibraryFact::Failed(failure)) {}
-            }
+        match outcome {
+            Ok(()) => Halt::Continue,
+            Err(error) => self.tell(watch_failure(&error)),
         }
     }
 
-    fn deliver(&self, fact: LibraryFact) -> Delivery {
-        self.mailbox.send(fact)
+    fn decode(&self, request: CoverRequest) -> Halt {
+        self.worker.request(request);
+        Halt::Continue
     }
-}
 
-fn step(watch: LibraryWatch, message: LibraryWatchMessage) -> (LibraryWatch, WatchIo) {
-    match watch.transition(message) {
-        Ok(pair) => pair,
-        Err(rejected) => (rejected.state, WatchIo::default()),
+    fn publish(&self, decoded: CoverDecoded) -> Halt {
+        self.cover.publish(decoded);
+        Halt::Continue
     }
-}
 
-fn decode_step(decoding: Decoding, message: DecodeMessage) -> (Decoding, DecodeIo) {
-    match decoding.transition(message) {
-        Ok(pair) => pair,
-        Err(rejected) => (rejected.state, DecodeIo::default()),
+    fn tell(&self, fact: LibraryFact) -> Halt {
+        match self.mailbox.send(fact) {
+            Delivery::Closed => Halt::Stop,
+            Delivery::Sent | Delivery::Congested => Halt::Continue,
+        }
     }
-}
-
-fn watch_failure(error: &notify::Error) -> LibraryFact {
-    let fault = match &error.kind {
-        notify::ErrorKind::Io(source) => source.kind().into(),
-        notify::ErrorKind::PathNotFound => IoFault::Missing,
-        notify::ErrorKind::Generic(_)
-        | notify::ErrorKind::WatchNotFound
-        | notify::ErrorKind::InvalidConfig(_)
-        | notify::ErrorKind::MaxFilesWatch => IoFault::Other,
-    };
-    let path = error.paths.first().map_or_else(PathBuf::new, Clone::clone);
-    LibraryFact::Failed(LibraryFailure::File {
-        subject: LibrarySubject::Watch,
-        path,
-        fault,
-    })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        path::{Path, PathBuf},
+        time::Duration,
+    };
 
-    use crossbeam_channel::Receiver;
+    use crossbeam_channel::{Receiver, SendError};
     use kernel::{
+        DriverMessage,
         LibraryCmd,
         LibraryFact,
         LibraryFailure,
         LibrarySubject,
         Message,
-        domain::{Driver, Revision},
+        domain::{Driver, DriverFailure, Revision},
     };
     use library::LibraryPaths;
 
     use crate::{
+        cells::cells,
+        config::watcher::FileWatch,
         driver::DriverThread,
+        interpret::LibraryCommand,
         library::{
-            cover::{CoverCache, CoverOutcome, CoverRequest, Decoding},
-            driver::{LibraryLoop, Wake, spawn},
-            watch::LibraryWatch,
+            cover::{CoverDecoded, CoverOutcome, CoverRequest},
+            driver::{Halt, LibraryLoop, Outbound, Overflow, Wake, Watching, spawn},
+            machine::{LibraryDriver, LibraryInput},
+            worker::CoverWorker,
         },
         mailbox::{Congestion, Mailbox},
     };
+
+    #[derive(Default)]
+    struct FakeWatch {
+        watched: Vec<PathBuf>,
+    }
+
+    impl FileWatch for FakeWatch {
+        fn watch(&mut self, path: &Path) -> Result<(), notify::Error> {
+            self.watched.push(path.to_path_buf());
+            Ok(())
+        }
+
+        fn unwatch(&mut self, path: &Path) -> Result<(), notify::Error> {
+            self.watched.retain(|watched| watched != path);
+            Ok(())
+        }
+    }
 
     const RECV_TIMEOUT: Duration = Duration::from_secs(2);
     const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
@@ -381,14 +406,15 @@ mod tests {
 
     fn spawned(
         directory: &tempfile::TempDir,
-    ) -> (DriverThread<LibraryCmd>, Receiver<Message>) {
+    ) -> (DriverThread<LibraryCommand>, Receiver<Message>) {
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (thread, _covers, _decoded) =
-            spawn(paths(directory), DECODABLE, &mailbox).unwrap();
+        let (writers, _cells, _doorbell) = cells();
+        let thread =
+            spawn((paths(directory), DECODABLE), &mailbox, writers.cover).unwrap();
         (thread, messages)
     }
 
-    fn stopped(thread: DriverThread<LibraryCmd>) {
+    fn stopped(thread: DriverThread<LibraryCommand>) {
         drop(thread.commands);
         thread.handle.join().unwrap().unwrap();
     }
@@ -422,10 +448,10 @@ mod tests {
         let (thread, messages) = spawned(&directory);
         thread
             .commands
-            .send(LibraryCmd::ScanLibrary {
+            .send(LibraryCommand::Kernel(LibraryCmd::ScanLibrary {
                 root: directory.path().to_path_buf(),
                 revision: Revision::default(),
-            })
+            }))
             .unwrap();
         let listed = drain(&messages).into_iter().find_map(listed_tracks);
         assert_eq!(listed.map(|tracks| tracks.len()), Some(1));
@@ -438,10 +464,10 @@ mod tests {
         let (thread, messages) = spawned(&directory);
         thread
             .commands
-            .send(LibraryCmd::ScanLibrary {
+            .send(LibraryCommand::Kernel(LibraryCmd::ScanLibrary {
                 root: directory.path().join("missing"),
                 revision: Revision::default(),
-            })
+            }))
             .unwrap();
         let failed = drain(&messages).into_iter().any(|message| {
             matches!(
@@ -473,73 +499,87 @@ mod tests {
         let track = directory.path().join("untagged.mp3");
         std::fs::write(&track, b"stub").unwrap();
         let (mailbox, _messages) = crossbeam_channel::unbounded();
-        let (thread, covers, decoded_events) =
-            spawn(paths(&directory), DECODABLE, &mailbox).unwrap();
-        covers
-            .send(CoverRequest {
+        let (writers, cells, doorbell) = cells();
+        let thread =
+            spawn((paths(&directory), DECODABLE), &mailbox, writers.cover).unwrap();
+        thread
+            .commands
+            .send(LibraryCommand::Cover(CoverRequest {
                 path: track.clone(),
                 side: 64,
-            })
+            }))
             .unwrap();
-        let decoded = decoded_events.recv_timeout(RECV_TIMEOUT).unwrap();
+        doorbell.recv_timeout(RECV_TIMEOUT).unwrap();
+        let decoded = cells.cover.take().unwrap();
         assert_eq!(decoded.path, track);
         assert!(matches!(decoded.outcome, CoverOutcome::NoArt));
         assert!(
-            decoded_events.recv_timeout(SETTLE_TIMEOUT).is_err(),
+            doorbell.recv_timeout(SETTLE_TIMEOUT).is_err(),
             "one request must answer with exactly one decoded cover"
         );
         stopped(thread);
     }
 
     #[test]
-    #[ignore = "hardware: needs FSEvents; run with --include-ignored"]
-    fn a_burst_of_fs_events_settles_into_one_rescan_with_the_last_scan_revision() {
+    fn a_fake_file_event_rescans_after_the_debounce() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("one.mp3"), b"stub").unwrap();
-        let (thread, messages) = spawned(&directory);
-        let revision = Revision::default().next();
-        thread
-            .commands
-            .send(LibraryCmd::Rescan {
-                root: directory.path().to_path_buf(),
-                revision,
-            })
-            .unwrap();
-        let initial = messages
-            .recv_timeout(Duration::from_secs(2))
-            .ok()
-            .and_then(scanned_track_count);
+        let (sender, messages) = crossbeam_channel::unbounded::<Message>();
+        let mailbox = Mailbox::new(sender, Congestion::default());
+        let (writers, _cells, _doorbell) = cells();
+        let (events, filesystem_events) = crossbeam_channel::unbounded();
+        let (worker, results) = CoverWorker::spawn(writers.cover.clone()).unwrap();
+        let outbound = Outbound {
+            mailbox: &mailbox,
+            worker,
+            results,
+            cover: writers.cover,
+        };
+        let watching = Watching {
+            watcher: FakeWatch::default(),
+            events: filesystem_events,
+            overflow: Overflow::default(),
+        };
+        let mut driver_loop =
+            LibraryLoop::new((paths(&directory), DECODABLE), outbound, watching);
+        let (_commands, inbox) = crossbeam_channel::unbounded();
+
+        driver_loop.command(LibraryCommand::Kernel(LibraryCmd::Rescan {
+            root: directory.path().to_path_buf(),
+            revision: Revision::default().next(),
+        }));
         assert_eq!(
-            initial,
+            messages.try_iter().find_map(scanned_track_count),
             Some(1),
             "the initial rescan must see the seed file"
         );
-        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(
+            driver_loop.watcher.watched,
+            vec![directory.path().to_path_buf()]
+        );
+
         for index in 0..3 {
             std::fs::write(directory.path().join(format!("burst{index}.mp3")), b"stub")
                 .unwrap();
-            std::thread::sleep(Duration::from_millis(50));
+            events.send(Ok(notify::Event::default())).unwrap();
+            let Wake::FilesystemChange(event) = driver_loop.wait(&inbox) else {
+                panic!("a fake file event must wake the loop");
+            };
+            driver_loop.filesystem_change(event);
         }
-        let deadline = Instant::now() + Duration::from_secs(3);
-        let mut counted = None;
-        while Instant::now() < deadline {
-            if let Ok(message) = messages.recv_timeout(Duration::from_millis(200))
-                && let Some(count) = scanned_track_count(message)
-            {
-                counted = Some(count);
-                break;
-            }
-        }
+        assert!(matches!(driver_loop.wait(&inbox), Wake::DebounceElapsed));
+        driver_loop.feed(LibraryInput::DebounceDue);
+
         assert_eq!(
-            counted,
+            messages.try_iter().find_map(scanned_track_count),
             Some(4),
             "the debounced rescan must see every file from the burst"
         );
         assert!(
-            messages.recv_timeout(Duration::from_millis(500)).is_err(),
+            messages.try_recv().is_err(),
             "the burst must coalesce into a single rescan"
         );
-        stopped(thread);
+        driver_loop.retire();
     }
 
     #[test]
@@ -547,22 +587,21 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let (mailbox, _messages) = crossbeam_channel::unbounded();
         let mailbox = Mailbox::new(mailbox, Congestion::default());
-        let (decoded, _decoded_events) = crossbeam_channel::unbounded();
+        let (writers, _cells, _doorbell) = cells();
         let (events, filesystem_events) = crossbeam_channel::unbounded();
         drop(events);
+        let (worker, results) = CoverWorker::spawn(writers.cover.clone()).unwrap();
         let mut driver_loop = LibraryLoop {
-            watch: LibraryWatch::default(),
-            watcher: None,
+            driver: LibraryDriver::default(),
+            watcher: FakeWatch::default(),
             filesystem_events,
-            cover_inbox: crossbeam_channel::never(),
-            decoding: Decoding::default(),
-            cover_cache: CoverCache::default(),
-            last_cover_side: None,
-            deadline: None,
+            overflow: Overflow::default(),
+            worker,
+            results,
             paths: paths(&directory),
             decodable: DECODABLE,
             mailbox: &mailbox,
-            decoded: &decoded,
+            cover: writers.cover,
         };
         let (commands, inbox) = crossbeam_channel::unbounded();
         assert!(matches!(
@@ -570,7 +609,117 @@ mod tests {
             Wake::FilesystemEventsLost
         ));
         driver_loop.filesystem_events = crossbeam_channel::never();
-        commands.send(LibraryCmd::LoadFavorites).unwrap();
+        commands
+            .send(LibraryCommand::Kernel(LibraryCmd::LoadFavorites))
+            .unwrap();
         assert!(matches!(driver_loop.wait(&inbox), Wake::Command(_)));
+        driver_loop.retire();
+    }
+
+    #[test]
+    fn a_closed_mailbox_ends_the_library_driver() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mailbox, messages) = crossbeam_channel::unbounded();
+        let (writers, _cells, _doorbell) = cells();
+        let thread =
+            spawn((paths(&directory), DECODABLE), &mailbox, writers.cover).unwrap();
+
+        drop(messages);
+
+        thread
+            .commands
+            .send(LibraryCommand::Kernel(LibraryCmd::LoadFavorites))
+            .unwrap();
+
+        let report = thread.handle.join().unwrap();
+        assert_eq!(
+            report,
+            Err(SendError(Message::Driver(
+                Driver::Library,
+                DriverMessage::Stopped
+            )))
+        );
+    }
+
+    #[test]
+    fn a_rejected_input_is_reported_to_the_mailbox() {
+        let directory = tempfile::tempdir().unwrap();
+        let (sender, messages) = crossbeam_channel::unbounded::<Message>();
+        let mailbox = Mailbox::new(sender, Congestion::default());
+        let (writers, _cells, _doorbell) = cells();
+        let (_events, filesystem_events) = crossbeam_channel::unbounded();
+        let (worker, results) = CoverWorker::spawn(writers.cover.clone()).unwrap();
+        let outbound = Outbound {
+            mailbox: &mailbox,
+            worker,
+            results,
+            cover: writers.cover,
+        };
+        let watching = Watching {
+            watcher: FakeWatch::default(),
+            events: filesystem_events,
+            overflow: Overflow::default(),
+        };
+        let mut driver_loop =
+            LibraryLoop::new((paths(&directory), DECODABLE), outbound, watching);
+
+        let halt = driver_loop.feed(LibraryInput::DebounceDue);
+
+        assert!(matches!(halt, Halt::Continue));
+        assert_eq!(
+            messages.try_iter().collect::<Vec<_>>(),
+            vec![Message::Driver(
+                Driver::Library,
+                DriverMessage::Rejected {
+                    input: "DebounceDue"
+                }
+            )]
+        );
+        assert!(matches!(
+            driver_loop.feed(LibraryInput::Stopping),
+            Halt::Continue
+        ));
+        driver_loop.retire();
+    }
+
+    #[test]
+    fn a_panicking_cover_worker_is_reported_on_stop() {
+        let directory = tempfile::tempdir().unwrap();
+        let (sender, messages) = crossbeam_channel::unbounded::<Message>();
+        let mailbox = Mailbox::new(sender, Congestion::default());
+        let (writers, _cells, _doorbell) = cells();
+        let (_events, filesystem_events) = crossbeam_channel::unbounded();
+        let (worker, results) = CoverWorker::spawn_with(
+            writers.cover.clone(),
+            |_request: &CoverRequest| -> CoverDecoded { panic!("decode blew up") },
+        )
+        .unwrap();
+        let outbound = Outbound {
+            mailbox: &mailbox,
+            worker,
+            results,
+            cover: writers.cover,
+        };
+        let watching = Watching {
+            watcher: FakeWatch::default(),
+            events: filesystem_events,
+            overflow: Overflow::default(),
+        };
+        let driver_loop =
+            LibraryLoop::new((paths(&directory), DECODABLE), outbound, watching);
+        driver_loop.worker.request(CoverRequest {
+            path: PathBuf::from("a"),
+            side: 64,
+        });
+
+        driver_loop.retire();
+
+        assert_eq!(
+            messages.try_iter().collect::<Vec<_>>(),
+            vec![Message::Driver(
+                Driver::Library,
+                DriverMessage::Died(DriverFailure::Panicked("cover worker".to_owned()))
+            )]
+        );
     }
 }

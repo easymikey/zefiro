@@ -1,6 +1,14 @@
 use std::collections::VecDeque;
 
 use kernel::{domain::Driver, update::Rejection};
+use strum::IntoStaticStr;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
+pub enum DropReason {
+    NotRunning,
+    Full,
+    Closed,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TraceEntry {
@@ -11,10 +19,13 @@ pub enum TraceEntry {
     Dropped {
         driver: Driver,
         command: &'static str,
+        reason: DropReason,
     },
     ControlsUnattached,
-    SettingRejected(config::SettingRejection),
     JoinFailed {
+        driver: Driver,
+    },
+    RestartFailed {
         driver: Driver,
     },
     TimerOverflow {
@@ -59,12 +70,13 @@ mod tests {
         update::{DriverRejection, Rejection},
     };
 
-    use crate::trace::{Trace, TraceEntry};
+    use crate::trace::{DropReason, Trace, TraceEntry};
 
     fn dropped(driver: Driver) -> TraceEntry {
         TraceEntry::Dropped {
             driver,
             command: "save",
+            reason: DropReason::NotRunning,
         }
     }
 
