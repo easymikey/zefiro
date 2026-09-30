@@ -1,4 +1,4 @@
-use config::{BreakpointsConfig, CoverStyle, KeyHints, WindowConfig};
+use config::{CoverStyle, KeyHints, LayoutConfig, WindowConfig};
 use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::{
@@ -19,7 +19,7 @@ const KEY_HINTS_ROWS: u16 = 1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct LayoutInputs<'a> {
-    pub breakpoints: &'a BreakpointsConfig,
+    pub layout: &'a LayoutConfig,
     pub window: WindowConfig,
     pub cell_aspect: CellAspect,
     pub cover_sizing: CoverSizing,
@@ -61,7 +61,7 @@ impl FrameLayout {
     }
 
     #[must_use]
-    pub fn avoid(&self, cover_style: CoverStyle) -> Option<Rect> {
+    pub fn cover_exclusion(&self, cover_style: CoverStyle) -> Option<Rect> {
         match cover_style {
             CoverStyle::Vinyl | CoverStyle::Plain => self.cover,
             CoverStyle::Milkdrop | CoverStyle::Off => None,
@@ -105,7 +105,7 @@ fn key_hint_rows(window: WindowConfig) -> u16 {
 
 fn header_rows(breakpoint: Breakpoint) -> u16 {
     match breakpoint {
-        Breakpoint::Full => card::height(),
+        Breakpoint::Full => card::card_height(),
         Breakpoint::Compact => compact_height(),
         Breakpoint::Minimal | Breakpoint::TooSmall => 0,
     }
@@ -122,7 +122,7 @@ fn search_bounds(content: Rect, header_rows: u16, hint_rows: u16) -> Rect {
 }
 
 fn body(inputs: &LayoutInputs<'_>, screen: Rect) -> FrameLayout {
-    let breakpoint = Breakpoint::new(screen.as_size(), inputs.breakpoints);
+    let breakpoint = Breakpoint::new(screen.as_size(), inputs.layout);
     let content = content_area(screen);
     let header_rows = header_rows(breakpoint);
     let hint_rows = key_hint_rows(inputs.window);
@@ -159,7 +159,7 @@ fn card_areas(
     if layout.breakpoint != Breakpoint::Full {
         return layout;
     }
-    let metrics = card::metrics(header, inputs.cell_aspect, inputs.cover_sizing);
+    let metrics = card::card_metrics(header, inputs.cell_aspect, inputs.cover_sizing);
     FrameLayout {
         card: Some(metrics),
         cover: Some(metrics.cover_square).filter(|cover| !cover.is_empty()),
@@ -178,7 +178,7 @@ fn playlist(inputs: &LayoutInputs<'_>, pane: Rect) -> Option<PlaylistAreas> {
 #[cfg(test)]
 mod tests {
     use config::CoverStyle;
-    use kernel::domain::{CursorOver, Overlay, SearchQuery, SettingsCursor, Toast};
+    use kernel::domain::{CursorOver, Overlay, SearchQuery, SettingRow, Toast};
     use ratatui::layout::Rect;
     use rstest::rstest;
 
@@ -211,7 +211,7 @@ mod tests {
         let card = layout.card.unwrap();
         assert_eq!(layout.breakpoint, Breakpoint::Full);
         assert_eq!(layout.cover, Some(card.cover_square));
-        assert_eq!(layout.avoid(scene.cover_style()), layout.cover);
+        assert_eq!(layout.cover_exclusion(scene.cover_style()), layout.cover);
         assert!(layout.playlist.is_some());
         assert!(layout.key_hints.is_some());
     }
@@ -231,7 +231,7 @@ mod tests {
         let scene = sources.scene();
         let layout = FrameLayout::new(&scene.layout_inputs(), screen());
         assert!(layout.cover.is_some());
-        assert_eq!(layout.avoid(scene.cover_style()), None);
+        assert_eq!(layout.cover_exclusion(scene.cover_style()), None);
     }
 
     #[test]
@@ -243,7 +243,7 @@ mod tests {
         let layout = FrameLayout::new(&sources.scene().layout_inputs(), screen());
         assert_eq!(layout.playlist, None);
         assert_eq!(
-            layout.overlay.map(OverlayAreas::painted),
+            layout.overlay.map(OverlayAreas::outer),
             Some(layout.playlist_pane)
         );
     }
@@ -292,7 +292,9 @@ mod tests {
         PlaylistPresence::Hidden
     )]
     #[case::settings(
-        Some(Overlay::Settings(SettingsCursor::default())),
+        Some(Overlay::Settings {
+            selected: SettingRow::Theme
+        }),
         screen(),
         PlaylistPresence::Shown
     )]
@@ -335,6 +337,6 @@ mod tests {
             CoverAvoidance::Avoided => layout.cover,
             CoverAvoidance::Ignored => None,
         };
-        assert_eq!(layout.avoid(style), expected);
+        assert_eq!(layout.cover_exclusion(style), expected);
     }
 }

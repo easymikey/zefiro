@@ -3,6 +3,7 @@ use kernel::{
     Cmd,
     Cue,
     Effect,
+    MacosCmd,
     Message,
     Model,
     Moment,
@@ -10,9 +11,8 @@ use kernel::{
     PlaybackChange,
     PlaybackRequest,
     Player,
-    SystemCmd,
-    domain::{Output, OutputFault},
-    message::{AudioEvent, AudioFailure},
+    domain::{Output, StreamError},
+    message::{AudioError, AudioEvent},
     update::update,
 };
 use rstest::rstest;
@@ -20,8 +20,8 @@ use rstest::rstest;
 use crate::support::{first_toast_expiry, model_with_tracks, playing_model};
 
 fn output_lost() -> Message {
-    Message::Audio(AudioEvent::Error(AudioFailure::OutputLost {
-        fault: OutputFault::DeviceGone,
+    Message::Audio(AudioEvent::Error(AudioError::OutputLost {
+        kind: StreamError::DeviceGone,
     }))
 }
 
@@ -37,8 +37,8 @@ fn lost_while_playing(count: usize) -> Model {
     Cmd::Batch(vec![
         Effect::Animate(Cue::ToastRaised),
         first_toast_expiry(),
-        Effect::Audio(AudioCmd::Pause(Playback::Paused)),
-        Effect::System(SystemCmd::PlaybackState(Playback::Paused)),
+        Effect::Audio(AudioCmd::Playback(Playback::Paused)),
+        Effect::Macos(MacosCmd::PlaybackState(Playback::Paused)),
         Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Pause)),
     ]),
     "Output lost — paused"

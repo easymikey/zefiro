@@ -4,77 +4,77 @@ expression: test_colors_file().derive()
 ---
 Colors {
     roles: [
-        Hex(
+        Rgb(
             [
                 16,
                 32,
                 48,
             ],
         ),
-        Hex(
+        Rgb(
             [
                 18,
                 34,
                 50,
             ],
         ),
-        Hex(
+        Rgb(
             [
                 112,
                 128,
                 144,
             ],
         ),
-        Hex(
+        Rgb(
             [
                 160,
                 176,
                 192,
             ],
         ),
-        Hex(
+        Rgb(
             [
                 255,
                 255,
                 0,
             ],
         ),
-        Hex(
+        Rgb(
             [
                 169,
                 178,
                 188,
             ],
         ),
-        Hex(
+        Rgb(
             [
                 50,
                 66,
                 82,
             ],
         ),
-        Hex(
+        Rgb(
             [
                 160,
                 176,
                 192,
             ],
         ),
-        Hex(
+        Rgb(
             [
                 64,
                 80,
                 96,
             ],
         ),
-        Hex(
+        Rgb(
             [
                 64,
                 80,
                 96,
             ],
         ),
-        Hex(
+        Rgb(
             [
                 51,
                 67,
@@ -83,21 +83,21 @@ Colors {
         ),
     ],
     spectrum: [
-        Hex(
+        Rgb(
             [
                 0,
                 255,
                 0,
             ],
         ),
-        Hex(
+        Rgb(
             [
                 255,
                 255,
                 0,
             ],
         ),
-        Hex(
+        Rgb(
             [
                 255,
                 0,

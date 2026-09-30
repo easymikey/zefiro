@@ -29,7 +29,7 @@ use crate::{
 #[must_use]
 pub fn route(workspace: &Workspace, press: KeyPress) -> Option<Message> {
     let key = pressed_key(workspace, press);
-    let bindings = workspace.bindings.as_slice();
+    let bindings = workspace.keymap.bindings();
     let stack = key_context_stack(workspace);
     let lookup = |key_context| {
         in_key_context(

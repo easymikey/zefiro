@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use config::{AppearanceFile, CoverStyle, ProgressStyle};
+use config::{AppearanceFile, CoverStyle, ProgressTime};
 use kernel::{
     Moment,
     domain::{DeviceName, Model, Overlay, ThemeChoice},
@@ -93,20 +93,23 @@ impl<'a> Scene<'a> {
         SettingsView {
             crossfade: settings.crossfade,
             replaygain: settings.replaygain,
-            theme: theme_display(&self.model.themes.selected),
+            theme: theme_label(&self.model.themes.selected),
             themes: &self.model.themes.names,
             sleep_presets: &settings.sleep_presets,
             music_dir: self.music_dir,
-            output_device: settings.output_device.as_ref().map(DeviceName::as_str),
+            output_device: settings.output_device.named().map(DeviceName::as_str),
             output_devices: &settings.output_devices,
-            appearance: self.appearance.options(),
-            custom_rows: &self.model.custom_rows,
+            appearance: self.appearance.appearance(),
+            custom_settings: &self.model.custom_settings,
         }
     }
 
     #[must_use]
     pub(crate) fn key_hints(&self) -> KeyHintsContent<'a> {
-        KeyHintsContent::new(self.model.workspace.overlay.as_ref(), self.bindings)
+        match self.model.workspace.overlay {
+            Some(Overlay::Settings { .. }) => KeyHintsContent::settings(self.bindings),
+            _ => KeyHintsContent::keys(self.bindings),
+        }
     }
 
     #[must_use]
@@ -159,7 +162,7 @@ impl<'a> Scene<'a> {
     #[must_use]
     pub fn layout_inputs(&self) -> LayoutInputs<'a> {
         LayoutInputs {
-            breakpoints: &self.appearance.layout,
+            layout: &self.appearance.layout,
             window: self.appearance.window,
             cell_aspect: self.cell_aspect,
             cover_sizing: self.cover_sizing(),
@@ -217,7 +220,7 @@ impl<'a> Scene<'a> {
             Breakpoint::Compact => Some(compact_progress_bar_width(layout.header)),
             Breakpoint::Minimal => Some(minimal_progress_bar_width(
                 self.card_view(),
-                self.appearance.options().speed_chip,
+                self.appearance.appearance().speed_chip,
                 layout.screen.width,
             )),
             Breakpoint::TooSmall => None,
@@ -226,8 +229,8 @@ impl<'a> Scene<'a> {
 
     fn full_progress_bar_width(&self, metrics: &CardMetrics) -> u16 {
         let row_width = metrics.progress_row.width;
-        match self.appearance.options().progress_remaining {
-            ProgressStyle::Remaining => {
+        match self.appearance.appearance().progress_time {
+            ProgressTime::Remaining => {
                 let view = self.card_view();
                 let duration = view
                     .displayed_track
@@ -237,12 +240,12 @@ impl<'a> Scene<'a> {
                     duration.saturating_sub(view.player.position_at(view.now));
                 hud_progress_bar_width(row_width, remaining)
             }
-            ProgressStyle::Elapsed => row_width,
+            ProgressTime::Elapsed => row_width,
         }
     }
 }
 
-fn theme_display(choice: &ThemeChoice) -> &str {
+fn theme_label(choice: &ThemeChoice) -> &str {
     match choice {
         ThemeChoice::Auto => "auto",
         ThemeChoice::Named(name) => name.as_str(),
@@ -356,11 +359,13 @@ pub(crate) mod fixtures {
         None
     }
 
-    pub(crate) fn custom_rows() -> Vec<CustomSetting> {
-        config::custom_rows(&AppearanceFile::default())
+    pub(crate) fn custom_settings() -> Vec<CustomSetting> {
+        config::custom_settings(&AppearanceFile::default())
     }
 
-    pub(crate) fn settings_values(custom_rows: &[CustomSetting]) -> SettingsView<'_> {
+    pub(crate) fn settings_values(
+        custom_settings: &[CustomSetting],
+    ) -> SettingsView<'_> {
         SettingsView {
             crossfade: Crossfade::default(),
             replaygain: Replaygain::On,
@@ -371,7 +376,7 @@ pub(crate) mod fixtures {
             output_device: None,
             output_devices: &[],
             appearance: Appearance::default(),
-            custom_rows,
+            custom_settings,
         }
     }
 
@@ -445,7 +450,7 @@ pub(crate) mod fixtures {
 mod tests {
     use std::{path::Path, time::Duration};
 
-    use config::{CoverStyle, ProgressStyle};
+    use config::{CoverStyle, ProgressTime};
     use ratatui::layout::{Rect, Size};
     use rstest::rstest;
 
@@ -527,20 +532,20 @@ mod tests {
     #[case::full_with_chip(
         Size::new(80, 24),
         (48, 16),
-        Some(ProgressStyle::Remaining)
+        Some(ProgressTime::Remaining)
     )]
     #[case::full_without_chip(
         Size::new(80, 24),
         (48, 16),
-        Some(ProgressStyle::Elapsed)
+        Some(ProgressTime::Elapsed)
     )]
     #[case::compact(Size::new(80, 18), (48, 16), None)]
     #[case::minimal(Size::new(20, 5), (10, 3), None)]
     #[case::overlay_only(Size::new(40, 10), (48, 16), None)]
-    fn on_screen_rows(
+    fn the_breakpoint_picks_the_screen_for_the_size_and_minimums(
         #[case] size: Size,
         #[case] minimums: (u16, u16),
-        #[case] style: Option<ProgressStyle>,
+        #[case] style: Option<ProgressTime>,
     ) {
         let (min_columns, min_rows) = minimums;
         let mut sources = SceneSources::new(model_with_tracks(1));
@@ -561,7 +566,7 @@ mod tests {
                 let metrics = layout.card.unwrap();
                 let row_width = metrics.progress_row.width;
                 let expected = match style.unwrap() {
-                    ProgressStyle::Remaining => {
+                    ProgressTime::Remaining => {
                         let view = scene.card_view();
                         let duration = view
                             .displayed_track
@@ -571,7 +576,7 @@ mod tests {
                             duration.saturating_sub(view.player.position_at(view.now));
                         hud_progress_bar_width(row_width, remaining)
                     }
-                    ProgressStyle::Elapsed => row_width,
+                    ProgressTime::Elapsed => row_width,
                 };
                 assert_eq!(on_screen.progress_bar, Some(expected));
                 assert_eq!(on_screen.clock, Presence::Shown);

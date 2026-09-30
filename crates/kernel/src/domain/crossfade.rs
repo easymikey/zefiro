@@ -1,6 +1,6 @@
 use std::{fmt, time::Duration};
 
-use crate::domain::Bounded;
+use crate::domain::{Bounded, Direction};
 
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -38,11 +38,10 @@ impl Crossfade {
         Self::clamped(self.0.saturating_sub(Self::STEP))
     }
 
-    pub fn step(self, delta: i64) -> Self {
-        if delta < 0 {
-            self.step_down()
-        } else {
-            self.step_up()
+    pub fn step(self, direction: Direction) -> Self {
+        match direction {
+            Direction::Next => self.step_up(),
+            Direction::Previous => self.step_down(),
         }
     }
 }
@@ -76,7 +75,7 @@ mod tests {
 
     use rstest::rstest;
 
-    use crate::domain::{Bounded, crossfade::Crossfade};
+    use crate::domain::{Bounded, Direction, crossfade::Crossfade};
 
     #[rstest]
     #[case::at_the_ceiling(Crossfade::MAX, Some(Crossfade::MAX))]
@@ -123,23 +122,27 @@ mod tests {
     }
 
     #[rstest]
-    #[case::positive_delta_steps_up(
+    #[case::next_steps_up(
         Crossfade::default(),
-        1,
+        Direction::Next,
         Duration::from_millis(500)
     )]
-    #[case::negative_delta_clamps_at_the_floor(Crossfade::default(), -1, Duration::ZERO)]
-    #[case::positive_delta_clamps_at_the_ceiling(
+    #[case::previous_clamps_at_the_floor(
+        Crossfade::default(),
+        Direction::Previous,
+        Duration::ZERO
+    )]
+    #[case::next_clamps_at_the_ceiling(
         Crossfade::clamped(Crossfade::MAX),
-        1,
+        Direction::Next,
         Crossfade::MAX
     )]
-    fn step_reads_only_the_sign_of_delta(
+    fn step_follows_the_direction(
         #[case] start: Crossfade,
-        #[case] delta: i64,
+        #[case] direction: Direction,
         #[case] expected: Duration,
     ) {
-        assert_eq!(start.step(delta).value(), expected);
+        assert_eq!(start.step(direction).value(), expected);
     }
 
     #[test]

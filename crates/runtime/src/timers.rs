@@ -5,7 +5,7 @@ use kernel::{SleepTimer, Timer, domain::Driver};
 #[derive(Debug, Clone, Copy)]
 struct Scheduled {
     deadline: Instant,
-    message: Timer,
+    timer: Timer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +49,10 @@ impl Timers {
     pub(crate) fn schedule(&mut self, deadline: Instant, message: Timer) {
         let slot = TimerSlot::from(message).index();
         if let Some(entry) = self.scheduled.get_mut(slot) {
-            *entry = Some(Scheduled { deadline, message });
+            *entry = Some(Scheduled {
+                deadline,
+                timer: message,
+            });
         }
     }
 
@@ -75,10 +78,7 @@ impl Timers {
             }
         }
         fired.sort_by_key(|scheduled| scheduled.deadline);
-        fired
-            .into_iter()
-            .map(|scheduled| scheduled.message)
-            .collect()
+        fired.into_iter().map(|scheduled| scheduled.timer).collect()
     }
 
     #[must_use]

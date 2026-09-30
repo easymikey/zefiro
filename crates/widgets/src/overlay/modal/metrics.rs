@@ -6,7 +6,7 @@ use ratatui::{
 use crate::{
     primitive::{
         glyphs::TITLE_SEPARATOR,
-        span::{row, text},
+        span::{line, text},
     },
     theme::ActiveTheme,
 };
@@ -36,8 +36,8 @@ pub(crate) fn modal_title(
     detail: String,
     theme: ActiveTheme<'_>,
 ) -> Line<'static> {
-    row([
-        text(format!("{word}{TITLE_SEPARATOR}")).fg(theme.frame()),
+    line([
+        text(format!("{word}{TITLE_SEPARATOR}")).fg(theme.border()),
         text(detail).fg(theme.dim()),
     ])
 }
@@ -57,8 +57,8 @@ impl ModalRowColors {
         Self {
             text: theme.text(),
             dim: theme.dim(),
-            selected_text: theme.selection_fg(),
-            selected_background: theme.selection_bg(),
+            selected_text: theme.selection_foreground(),
+            selected_background: theme.selection_background(),
             accent: theme.accent(),
         }
     }

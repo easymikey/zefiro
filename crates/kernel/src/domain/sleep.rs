@@ -40,14 +40,10 @@ impl SleepPresetBundles {
             .enumerate()
             .min_by_key(|(_, bundle)| {
                 let total: Duration = bundle.iter().sum();
-                duration_diff(total, current_total)
+                total.abs_diff(current_total)
             })
             .map_or(0, |(index, _)| index)
     }
-}
-
-fn duration_diff(a: Duration, b: Duration) -> Duration {
-    a.abs_diff(b)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

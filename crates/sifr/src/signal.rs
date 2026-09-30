@@ -13,7 +13,7 @@ static WORKER_PANIC: ArcSwapOption<String> = ArcSwapOption::const_empty();
 #[error("the signal handler is already installed")]
 pub(crate) struct AlreadyInstalled;
 
-pub(crate) fn install(sender: Sender<ShellInput>) -> Result<(), AlreadyInstalled> {
+pub(crate) fn apply_reload(sender: Sender<ShellInput>) -> Result<(), AlreadyInstalled> {
     QUIT_SENDER.set(sender).map_err(|_| AlreadyInstalled)?;
     spawn_watcher();
     Ok(())
@@ -51,7 +51,7 @@ pub(crate) fn remember_worker_panic(report: String) {
     terminate_if_listening();
 }
 
-pub(crate) fn taken_worker_panic() -> Option<String> {
+pub(crate) fn take_worker_panic() -> Option<String> {
     WORKER_PANIC.swap(None).map(Arc::unwrap_or_clone)
 }
 
@@ -61,9 +61,9 @@ mod tests {
 
     use crate::signal::{
         AlreadyInstalled,
-        install,
+        apply_reload,
         remember_worker_panic,
-        taken_worker_panic,
+        take_worker_panic,
     };
 
     #[test]
@@ -72,10 +72,10 @@ mod tests {
         remember_worker_panic("a later thread fell over too".to_owned());
 
         assert_eq!(
-            taken_worker_panic().as_deref(),
+            take_worker_panic().as_deref(),
             Some("the input thread fell over")
         );
-        assert_eq!(taken_worker_panic(), None);
+        assert_eq!(take_worker_panic(), None);
     }
 
     #[test]
@@ -83,7 +83,7 @@ mod tests {
         let (first, _first_receiver) = bounded(1);
         let (second, _second_receiver) = bounded(1);
 
-        assert!(install(first).is_ok());
-        assert!(matches!(install(second), Err(AlreadyInstalled)));
+        assert!(apply_reload(first).is_ok());
+        assert!(matches!(apply_reload(second), Err(AlreadyInstalled)));
     }
 }

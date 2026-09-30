@@ -4,7 +4,7 @@ use crate::appearance::LayoutMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct BreakpointsConfig {
+pub struct LayoutConfig {
     pub full_min_width: u16,
     pub full_min_height: u16,
     pub compact_min_width: u16,
@@ -14,7 +14,7 @@ pub struct BreakpointsConfig {
     pub mode: LayoutMode,
 }
 
-impl Default for BreakpointsConfig {
+impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
             full_min_width: 60,
@@ -30,10 +30,10 @@ impl Default for BreakpointsConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::breakpoints::BreakpointsConfig;
+    use crate::breakpoints::LayoutConfig;
 
     #[test]
     fn the_stock_breakpoints_are_the_documented_defaults() {
-        insta::assert_debug_snapshot!(BreakpointsConfig::default());
+        insta::assert_debug_snapshot!(LayoutConfig::default());
     }
 }

@@ -1,14 +1,16 @@
 use std::{io, path::Path};
 
-use crate::config::watch::{ConfigWatchMessage, WatchedFile, config_file};
+use kernel::domain::ConfigFile;
+
+use crate::config::watch::WatchMessage;
 
 const THEME_EXTENSION: &str = "toml";
 
-pub(crate) fn read(file: WatchedFile, path: &Path) -> ConfigWatchMessage {
+pub(crate) fn read(file: ConfigFile, path: &Path) -> WatchMessage {
     match library::files::read_if_present(path) {
-        Ok(text) => ConfigWatchMessage::Observed { file, text },
-        Err(error) => ConfigWatchMessage::Unreadable {
-            file: config_file(file),
+        Ok(text) => WatchMessage::Observed { file, text },
+        Err(error) => WatchMessage::Unreadable {
+            file,
             detail: error.to_string(),
         },
     }
@@ -42,20 +44,19 @@ pub(crate) fn list_theme_names(dir: &Path) -> Listing {
 
 #[cfg(test)]
 mod tests {
+    use kernel::domain::ConfigFile;
+
     use crate::config::{
         disk::{Listing, list_theme_names, read},
-        watch::{ConfigWatchMessage, WatchedFile},
+        watch::WatchMessage,
     };
 
     #[test]
     fn a_missing_file_reads_as_no_text() {
         let directory = tempfile::tempdir().unwrap();
-        let message = read(WatchedFile::Theme, &directory.path().join("noir.toml"));
+        let message = read(ConfigFile::Theme, &directory.path().join("noir.toml"));
 
-        assert!(matches!(
-            message,
-            ConfigWatchMessage::Observed { text: None, .. }
-        ));
+        assert!(matches!(message, WatchMessage::Observed { text: None, .. }));
     }
 
     fn names(listing: Listing) -> Option<Vec<String>> {

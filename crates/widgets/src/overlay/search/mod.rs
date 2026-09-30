@@ -24,16 +24,16 @@ use crate::{
             OverlayAreas,
             OverlayContainer,
             PlacedModal,
-            lead_cells,
+            leading_cells,
             modal_title,
         },
-        search::matches::{SearchMatchList, render_match_list, render_matches},
+        search::matches::{SearchMatchList, render_match_pane, render_match_rows},
     },
     primitive::{
         canvas::Canvas,
         glyphs::SearchGlyphs,
         inset::Inset,
-        span::{row, text},
+        span::{line, text},
     },
     theme::ActiveTheme,
 };
@@ -58,7 +58,7 @@ impl SearchOverlay<'_> {
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
         match self.container {
             OverlayContainer::Modal { avoid } => {
-                OverlayAreas::Dialog(self.modal().frame(screen, avoid))
+                OverlayAreas::Dialog(self.modal().areas(screen, avoid))
             }
             OverlayContainer::Pane(pane) => {
                 OverlayAreas::List(self.border(pane).areas())
@@ -97,8 +97,8 @@ impl SearchOverlay<'_> {
 
     fn header(&self) -> SearchHeader<'_> {
         SearchHeader {
-            query: &self.search.rows.input,
-            matches: self.search.rows.matches.len(),
+            query: &self.search.content.input,
+            matches: self.search.content.matches.len(),
             total: self.tracks.len(),
         }
     }
@@ -123,8 +123,8 @@ impl SearchOverlay<'_> {
                 content_rows: content_rows(self.search),
             },
             hint: None,
-            border: theme.frame(),
-            window_background: theme.window_bg(),
+            border: theme.border(),
+            window_background: theme.window_background(),
         }
     }
 
@@ -153,7 +153,10 @@ impl SearchOverlay<'_> {
         if matches_rect.width == 0 || matches_rect.height == 0 {
             return;
         }
-        render_match_list(&self.match_list(matches_rect, lead_cells(&areas)), buffer);
+        render_match_pane(
+            &self.match_list(matches_rect, leading_cells(&areas)),
+            buffer,
+        );
     }
 
     fn render_modal(&self, placed: PlacedModal<'_>, buffer: &mut Buffer) {
@@ -172,7 +175,7 @@ impl SearchOverlay<'_> {
         };
         Paragraph::new(header_line(&self.header(), self.colors()))
             .render(header_area, buffer);
-        render_matches(&self.match_list(matches_area, 0), buffer);
+        render_match_rows(&self.match_list(matches_area, 0), buffer);
     }
 
     fn render_query(&self, area: Rect, buffer: &mut Buffer) {
@@ -190,8 +193,8 @@ impl SearchOverlay<'_> {
         let rule = SearchGlyphs::default()
             .rule
             .repeat(usize::from(rule_row.width));
-        let border = self.theme.frame();
-        Paragraph::new(row([text(rule).fg(border)])).render(rule_row, buffer);
+        let border = self.theme.border();
+        Paragraph::new(line([text(rule).fg(border)])).render(rule_row, buffer);
     }
 
     fn match_list(&self, area: Rect, lead: u16) -> SearchMatchList<'_> {
@@ -223,7 +226,7 @@ fn search_title(header: &SearchHeader<'_>, theme: ActiveTheme<'_>) -> Line<'stat
 
 fn query_line(header: &SearchHeader<'_>, colors: ModalRowColors) -> Line<'static> {
     let glyphs = SearchGlyphs::default();
-    row([
+    line([
         text(glyphs.header_prefix).fg(colors.accent),
         text(header.query.to_string()).fg(colors.text),
         text(glyphs.cursor).fg(colors.accent),
@@ -233,7 +236,7 @@ fn query_line(header: &SearchHeader<'_>, colors: ModalRowColors) -> Line<'static
 fn header_line(header: &SearchHeader<'_>, colors: ModalRowColors) -> Line<'static> {
     let glyphs = SearchGlyphs::default();
     let summary = match_count_text(header.matches, header.total, glyphs);
-    row([
+    line([
         text(glyphs.header_prefix).fg(colors.accent),
         text(header.query.to_string()).fg(colors.text),
         text(glyphs.cursor).fg(colors.accent),
@@ -252,10 +255,10 @@ fn match_count_text(matches: usize, total: usize, glyphs: SearchGlyphs) -> Strin
 }
 
 fn content_rows(search: &CursorOver<SearchQuery>) -> u16 {
-    let match_rows = if search.rows.matches.is_empty() {
+    let match_rows = if search.content.matches.is_empty() {
         1
     } else {
-        u16::try_from(search.rows.matches.len()).unwrap_or(u16::MAX)
+        u16::try_from(search.content.matches.len()).unwrap_or(u16::MAX)
     };
     1 + match_rows
 }
@@ -296,7 +299,7 @@ mod tests {
         let length = matches.len();
         CursorOver {
             cursor: Cursor::with_len(length).at(selected),
-            rows: SearchQuery {
+            content: SearchQuery {
                 input: input.to_string(),
                 matches,
             },
@@ -393,7 +396,7 @@ mod tests {
             container: pane_container(Rect::new(0, 0, 80, 28)),
         };
         let buffer = painted_buffer(&overlay, 80, 28);
-        let selection_bg = active.selection_bg();
+        let selection_bg = active.selection_background();
         let (alpha_x, alpha_y) = find_text(&buffer, "Alpha").unwrap();
         let (beta_x, beta_y) = find_text(&buffer, "Beta").unwrap();
         assert_eq!(buffer[(beta_x, beta_y)].style().bg, Some(selection_bg));
@@ -413,7 +416,7 @@ mod tests {
             bounds: pane,
             container: pane_container(pane),
         };
-        assert_eq!(overlay.areas(pane).painted(), pane);
+        assert_eq!(overlay.areas(pane).outer(), pane);
         let buffer = painted_buffer(&overlay, 80, 28);
         let (_, title_row) = find_text(&buffer, "SEARCH").unwrap();
         assert_eq!(title_row, pane.y);

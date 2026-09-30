@@ -12,7 +12,7 @@ use crate::{
     primitive::{
         canvas::Canvas,
         glyphs::TruncateGlyphs,
-        span::{row, text},
+        span::{line, text},
         text::truncate_to_width,
     },
     theme::ActiveTheme,
@@ -53,13 +53,13 @@ impl PromptBody<'_> {
     fn line(&self, width: usize, color: Color) -> Line<'static> {
         let glyphs = PromptGlyphs::default();
         match self {
-            PromptBody::Entry(input) => row([
+            PromptBody::Entry(input) => line([
                 text(glyphs.marker).fg(color),
                 text((*input).to_string()).fg(color),
                 text(glyphs.cursor).fg(color),
             ]),
             PromptBody::Sentence(sentence) => {
-                row([text(truncated(sentence, width)).fg(color)])
+                line([text(truncated(sentence, width)).fg(color)])
             }
         }
     }
@@ -83,7 +83,7 @@ fn truncated(text: &str, width: usize) -> String {
 impl Prompt<'_> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> ModalAreas {
-        self.modal().frame(screen, self.avoid)
+        self.modal().areas(screen, self.avoid)
     }
 
     fn modal(&self) -> Modal<'_> {
@@ -98,16 +98,16 @@ impl Prompt<'_> {
                     .max(u16::try_from(widest).unwrap_or(self.min_width)),
                 content_lines: 1 + u16::from(self.error.is_some()),
             },
-            hint: Some(row([text(self.hint).fg(self.theme.dim())])),
-            border: self.theme.frame(),
-            window_background: self.theme.window_bg(),
+            hint: Some(line([text(self.hint).fg(self.theme.dim())])),
+            border: self.theme.border(),
+            window_background: self.theme.window_background(),
         }
     }
 
     fn lines(&self, width: usize) -> Vec<Line<'static>> {
         let mut lines = vec![self.body.line(width, self.theme.text())];
         if let Some(error) = &self.error {
-            lines.push(row([text(truncated(error, width)).fg(self.theme.alert())]));
+            lines.push(line([text(truncated(error, width)).fg(self.theme.alert())]));
         }
         lines
     }

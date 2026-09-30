@@ -26,14 +26,14 @@ impl fmt::Display for TomlFile {
     }
 }
 
-fn reason(error: &toml::de::Error) -> &str {
+fn first_line(error: &toml::de::Error) -> &str {
     let message = error.message();
     message.lines().next().unwrap_or(message).trim()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
-    #[error("{}\n{file}:{line}", reason(.source))]
+pub enum Error {
+    #[error("{}\n{file}:{line}", first_line(.source))]
     Parse {
         file: TomlFile,
         line: usize,
@@ -45,11 +45,11 @@ pub enum ConfigError {
     #[error("{}", .0.message())]
     Document(#[from] toml_edit::TomlError),
     #[error(transparent)]
-    Crossfade(#[from] CrossfadeRejection),
+    Crossfade(#[from] CrossfadeError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum CrossfadeRejection {
+pub enum CrossfadeError {
     #[error("invalid crossfade {value:?}: {source}")]
     Number {
         value: String,
@@ -66,12 +66,12 @@ pub enum CrossfadeRejection {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid color `{input}`: expected 6 hex digits as #rrggbb")]
-pub struct ColorRejection {
+pub struct ColorError {
     pub input: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum SettingRejection {
+pub enum SettingError {
     #[error("no appearance row carries the id {}", .id.get())]
     UnknownRow { id: SettingId },
     #[error("appearance row {} has no option at position {}", .id.get(), .option.get())]
@@ -88,11 +88,11 @@ fn line_at(source: &str, offset: usize) -> usize {
         + 1
 }
 
-pub(crate) fn named_toml<T>(source: &str, file: TomlFile) -> Result<T, ConfigError>
+pub(crate) fn parse_toml<T>(source: &str, file: TomlFile) -> Result<T, Error>
 where
     T: DeserializeOwned,
 {
-    toml::from_str(source).map_err(|error| ConfigError::Parse {
+    toml::from_str(source).map_err(|error| Error::Parse {
         file,
         line: line_at(source, error.span().map_or(0, |span| span.start)),
         source: Box::new(error),
@@ -103,18 +103,18 @@ where
 mod tests {
     use rstest::rstest;
 
-    use crate::error::{ConfigError, TomlFile, named_toml};
+    use crate::error::{Error, TomlFile, parse_toml};
 
-    fn fault_text(source: &str, file: TomlFile) -> String {
-        let parsed: Result<toml::Table, ConfigError> = named_toml(source, file);
+    fn error_text(source: &str, file: TomlFile) -> String {
+        let parsed: Result<toml::Table, Error> = parse_toml(source, file);
         parsed
             .err()
-            .map_or_else(String::new, |fault| fault.to_string())
+            .map_or_else(String::new, |error| error.to_string())
     }
 
     #[test]
-    fn a_fault_puts_the_message_first_and_the_place_below_it() {
-        let text = fault_text("a = 1\n\n[card]\nb = 2\n[card]\n", TomlFile::Appearance);
+    fn an_error_puts_the_message_first_and_the_place_below_it() {
+        let text = error_text("a = 1\n\n[card]\nb = 2\n[card]\n", TomlFile::Appearance);
 
         let place = text.lines().nth(1);
 
@@ -122,8 +122,8 @@ mod tests {
     }
 
     #[test]
-    fn a_fault_on_the_first_line_reports_line_one_in_exactly_two_lines() {
-        let text = fault_text("[card\n", TomlFile::Config);
+    fn an_error_on_the_first_line_reports_line_one_in_exactly_two_lines() {
+        let text = error_text("[card\n", TomlFile::Config);
 
         assert_eq!(text.lines().nth(1), Some("config.toml:1"));
         assert_eq!(text.lines().count(), 2, "whole text was {text:?}");
@@ -133,12 +133,12 @@ mod tests {
     #[case::config(TomlFile::Config, "a = 1\n[b]\nc = 1\n[b]\n")]
     #[case::appearance(TomlFile::Appearance, "[card]\n[card]\n")]
     #[case::theme_noir(TomlFile::Theme("noir".to_owned()), "[colors]\n[colors]\n")]
-    fn a_parse_fault_keeps_its_cause(#[case] file: TomlFile, #[case] source: &str) {
-        let parsed: Result<toml::Table, ConfigError> = named_toml(source, file.clone());
-        let fault = parsed.expect_err("duplicate tables must not parse");
+    fn a_parse_error_keeps_its_cause(#[case] file: TomlFile, #[case] source: &str) {
+        let parsed: Result<toml::Table, Error> = parse_toml(source, file.clone());
+        let error = parsed.expect_err("duplicate tables must not parse");
 
-        assert!(std::error::Error::source(&fault).is_some());
-        let text = fault.to_string();
+        assert!(std::error::Error::source(&error).is_some());
+        let text = error.to_string();
         let place = text.lines().last().unwrap();
         assert!(
             place.starts_with(&format!("{file}:")),

@@ -35,7 +35,7 @@ fn validation_errors(config: &KeymapOverrides) -> Vec<KeyValidationError> {
 }
 
 fn config_with(next: Option<&str>, prev: Option<&str>) -> KeymapOverrides {
-    [(Action::Next, next), (Action::Prev, prev)]
+    [(Action::Next, next), (Action::Previous, prev)]
         .into_iter()
         .filter_map(|(action, chord)| Some((action, KeyOverride::from(chord?))))
         .collect()
@@ -43,7 +43,6 @@ fn config_with(next: Option<&str>, prev: Option<&str>) -> KeymapOverrides {
 
 fn compiled(config: KeymapOverrides) -> Workspace {
     let mut workspace = Workspace::default();
-    workspace.bindings = Bindings::new(&config);
     workspace.keymap = Keymap::new(config, &default_bindings());
     workspace
 }
@@ -72,7 +71,7 @@ fn pressed_under(
 )]
 #[case::an_override_leaves_every_other_action_alone(
     pressed_under(Some("y"), None, 'p'),
-    Some(Message::Playback(PlaybackRequest::Prev)),
+    Some(Message::Playback(PlaybackRequest::Previous)),
     false
 )]
 #[case::an_override_vacates_the_default_it_left(
@@ -102,7 +101,7 @@ fn pressed_under(
 )]
 #[case::the_loser_of_a_collision_reverts_to_its_own_default(
     pressed_under(Some("y"), Some("y"), 'p'),
-    Some(Message::Playback(PlaybackRequest::Prev)),
+    Some(Message::Playback(PlaybackRequest::Previous)),
     true
 )]
 fn an_override_routes(
@@ -125,7 +124,7 @@ fn an_override_that_takes_a_default_leaves_its_action_unbound() {
     assert!(!bindings(&config).iter().any(|binding| {
         matches!(
             binding.outcome,
-            KeyOutcome::Message(Message::Playback(PlaybackRequest::Prev))
+            KeyOutcome::Message(Message::Playback(PlaybackRequest::Previous))
         )
     }));
 }
@@ -172,7 +171,7 @@ fn a_binding_that_names_a_context_routes_only_there(
 ) {
     let mut workspace = Workspace::default();
     workspace.overlay = Some(overlay);
-    workspace.bindings = Bindings::new(&next_in_search());
+    workspace.keymap = Keymap::new(next_in_search(), &default_bindings());
     let key = character('n');
     let press = KeyPress { key, typed: key };
     assert_eq!(route(&workspace, press), expected);
@@ -209,7 +208,10 @@ fn a_binding_that_names_a_context_leaves_the_playlist_without_it() {
 )]
 #[case::a_table_without_a_chord_does_not_parse("next = { context = \"search\" }", None)]
 #[case::an_unknown_action_does_not_parse("nekst = \"y\"", None)]
-fn a_keys_entry_parses(#[case] spelling: &str, #[case] expected: Option<KeyOverride>) {
+fn a_keys_entry_reads_as_a_chord_with_its_context(
+    #[case] spelling: &str,
+    #[case] expected: Option<KeyOverride>,
+) {
     let parsed = toml::from_str::<KeymapFile>(spelling)
         .ok()
         .map(KeymapOverrides::from)

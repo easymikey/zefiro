@@ -27,7 +27,7 @@ fn format_chip_values(audio_format: &AudioFormat) -> Vec<String> {
 }
 
 #[must_use]
-pub(crate) fn build_fit(
+pub(crate) fn fit_format_chips(
     audio_format: &AudioFormat,
     colors: ChipColors,
     max_width: usize,
@@ -58,7 +58,7 @@ mod tests {
     use ratatui::{style::Color, text::Line};
     use rstest::rstest;
 
-    use crate::primitive::{chip::ChipColors, format_chips::build_fit};
+    use crate::primitive::{chip::ChipColors, format_chips::fit_format_chips};
 
     fn colors() -> ChipColors {
         ChipColors {
@@ -110,7 +110,7 @@ mod tests {
         #[case] width: usize,
         #[case] expected: Option<&str>,
     ) {
-        let line = build_fit(&audio_format, colors(), width);
+        let line = fit_format_chips(&audio_format, colors(), width);
         assert_eq!(line.as_ref().map(line_text).as_deref(), expected);
     }
 }

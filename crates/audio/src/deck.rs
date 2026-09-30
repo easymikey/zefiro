@@ -8,38 +8,38 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender};
 pub(crate) use event::{DeckEvent, Ticket};
-use kernel::{AudioEvent, AudioFailure, Playback, domain::DeviceName};
-pub(crate) use source::Landed;
+use kernel::{AudioError, AudioEvent, Playback, domain::OutputDevice};
 
 use crate::{
     deck::{
         envelope::{Curve, EnvelopeControl, Envelopes, Flags, Ramp},
         output::{Output, open_output_stream},
-        source::{DeckSource, PreloadRequest},
+        source::{Decoding, PreloadRequest},
     },
-    engine::effect::{EngineMessage, Preload, Slot},
-    error::{device_fault, output_lost},
+    engine::effect::{EngineMessage, Slot},
+    error::{device_error, output_lost},
     tap::Handoff,
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Reopening {
-    pub(crate) device: Option<DeviceName>,
+pub(crate) struct DeviceOpened {
+    pub(crate) device: OutputDevice,
     pub(crate) position: Duration,
     pub(crate) playback: Playback,
-    pub(crate) opened: DeviceOpen,
+    pub(crate) opened: DeviceChoice,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DeviceOpen {
+pub(crate) enum DeviceChoice {
     FellBack,
-    AsRequested,
+    Requested,
 }
 
 pub(crate) struct Deck {
     pub(crate) output: Option<Output>,
-    source: DeckSource,
-    facts: Vec<AudioEvent>,
+    source: Decoding,
+    events: Vec<AudioEvent>,
+    refused: Vec<&'static str>,
     wake: Sender<DeckEvent>,
     heard: Receiver<DeckEvent>,
     spectrum: Handoff,
@@ -48,11 +48,12 @@ pub(crate) struct Deck {
 impl Deck {
     pub(crate) fn new(spectrum: Handoff) -> Self {
         let (wake, heard) = crossbeam_channel::bounded(64);
-        let source = DeckSource::new(wake.clone());
+        let source = Decoding::new(wake.clone());
         Self {
             output: None,
             source,
-            facts: Vec::new(),
+            events: Vec::new(),
+            refused: Vec::new(),
             wake,
             heard,
             spectrum,
@@ -60,20 +61,28 @@ impl Deck {
     }
 
     pub(crate) fn send(&mut self, event: AudioEvent) {
-        self.facts.push(event);
+        self.events.push(event);
     }
 
-    pub(crate) fn drain_facts(&mut self) -> std::vec::Drain<'_, AudioEvent> {
-        self.facts.drain(..)
+    pub(crate) fn refuse(&mut self, input: &'static str) {
+        self.refused.push(input);
+    }
+
+    pub(crate) fn drain_refused(&mut self) -> std::vec::Drain<'_, &'static str> {
+        self.refused.drain(..)
+    }
+
+    pub(crate) fn drain_events(&mut self) -> std::vec::Drain<'_, AudioEvent> {
+        self.events.drain(..)
     }
 
     pub(crate) fn heard(&self) -> &Receiver<DeckEvent> {
         &self.heard
     }
 
-    pub(crate) fn landed(&mut self, event: DeckEvent) -> Vec<EngineMessage> {
+    pub(crate) fn messages_for(&mut self, event: DeckEvent) -> Vec<EngineMessage> {
         match event {
-            DeckEvent::Fault(error) => {
+            DeckEvent::OutputLost(error) => {
                 vec![EngineMessage::Failed(output_lost(&error))]
             }
             DeckEvent::Decoded { ticket, outcome } => self
@@ -83,16 +92,16 @@ impl Deck {
                 .into_iter()
                 .collect(),
             DeckEvent::Preloaded { ticket, outcome } => {
-                let Some(landed) = self
+                let Some(preloaded) = self
                     .source
                     .accept_preload((ticket, outcome), self.output.as_mut())
                 else {
                     return Vec::new();
                 };
-                vec![EngineMessage::Preloaded(landed.map(Preload::from))]
+                vec![EngineMessage::Preloaded(preloaded)]
             }
             DeckEvent::DevicesListed(result) => {
-                vec![EngineMessage::DevicesListed(result.map_err(device_fault))]
+                vec![EngineMessage::DevicesListed(result.map_err(device_error))]
             }
             DeckEvent::Track(ticket) => self.track_events(ticket),
         }
@@ -127,7 +136,7 @@ impl Deck {
         if let Some(control) = self.source.envelopes.primary.as_ref() {
             return Some(control.position());
         }
-        self.output.as_ref().map(|output| output.sink.get_pos())
+        self.output.as_ref().map(|output| output.primary.get_pos())
     }
 
     pub(crate) fn silence(&mut self) {
@@ -138,10 +147,10 @@ impl Deck {
 
     pub(crate) fn open(
         &mut self,
-        device: Option<DeviceName>,
+        device: OutputDevice,
         speed: f32,
-    ) -> Result<Reopening, AudioFailure> {
-        let opened = open_output_stream(device, &self.wake).map_err(device_fault)?;
+    ) -> Result<DeviceOpened, AudioError> {
+        let opened = open_output_stream(device, &self.wake).map_err(device_error)?;
         let (position, playback) = self
             .output
             .as_ref()
@@ -150,7 +159,7 @@ impl Deck {
         let mut output = Output::with_stream(opened.stream, speed);
         output.listen(&self.spectrum);
         self.output = Some(output);
-        Ok(Reopening {
+        Ok(DeviceOpened {
             device: opened.device,
             position,
             playback,
@@ -164,7 +173,7 @@ impl Deck {
     ) -> Option<EngineMessage> {
         self.source
             .spawn_decode(path)
-            .map(|fault| EngineMessage::Decoded(Err(fault)))
+            .map(|error| EngineMessage::Decoded(Err(error)))
     }
 
     pub(crate) fn start_preload(
@@ -173,13 +182,13 @@ impl Deck {
     ) -> Option<EngineMessage> {
         self.source
             .start_preload(request)
-            .map(|fault| EngineMessage::Preloaded(Err(fault)))
+            .map(|error| EngineMessage::Preloaded(Err(error)))
     }
 
     pub(crate) fn drop_preload(&mut self) {
         self.source.drop_preload();
         if let Some(output) = self.output.as_mut() {
-            output.preload = None;
+            output.incoming = None;
         }
     }
 
@@ -188,7 +197,9 @@ impl Deck {
     }
 
     pub(crate) fn append_staged(&mut self) {
-        self.source.append_staged(self.output.as_mut());
+        if let Some(output) = self.output.as_ref() {
+            self.source.append_staged(output);
+        }
     }
 
     pub(crate) fn promote(&mut self) {
@@ -242,7 +253,7 @@ impl Deck {
         let Some(output) = self.output.as_mut() else {
             return;
         };
-        let Some(preload) = output.preload.as_ref() else {
+        let Some(preload) = output.incoming.as_ref() else {
             return;
         };
         preload.set_volume(incoming);
@@ -269,7 +280,7 @@ impl Deck {
         if let Some(preload) = self
             .output
             .as_ref()
-            .and_then(|output| output.preload.as_ref())
+            .and_then(|output| output.incoming.as_ref())
         {
             preload.pause();
         }
@@ -318,7 +329,7 @@ impl Deck {
     }
 
     pub(crate) fn primary(&self) -> Option<&rodio::Sink> {
-        self.output.as_ref().map(|output| &output.sink)
+        self.output.as_ref().map(|output| &output.primary)
     }
 
     pub(crate) fn outgoing(&self) -> Option<&rodio::Sink> {
@@ -364,14 +375,14 @@ fn slot_for(envelopes: &Envelopes, ticket: Ticket) -> Option<Slot> {
 mod tests {
     use std::{path::PathBuf, time::Duration};
 
-    use kernel::AudioFailure;
+    use kernel::AudioError;
     use rodio::{Source, source::SineWave};
     use rstest::rstest;
 
     use crate::{
         deck::{Deck, DeckEvent, Ticket, envelope::envelope, source::PreloadRequest},
         engine::effect::{EngineMessage, Slot},
-        error::AudioError,
+        error::Error,
         tap,
     };
 
@@ -390,8 +401,8 @@ mod tests {
         deck.start_preload(PreloadRequest::Gapless(PathBuf::from("/b")));
     }
 
-    fn decode_error() -> Result<crate::deck::source::TrackDecoder, AudioError> {
-        Err(AudioError::Decode {
+    fn decode_error() -> Result<crate::deck::source::TrackDecoder, Error> {
+        Err(Error::Decode {
             path: PathBuf::from("/a"),
             source: rodio::decoder::DecoderError::UnrecognizedFormat,
         })
@@ -409,15 +420,15 @@ mod tests {
             Expected::Nothing => assert!(messages.is_empty()),
             Expected::DecodeError => assert!(matches!(
                 messages,
-                [EngineMessage::Decoded(Err(AudioFailure::Decode { .. }))]
+                [EngineMessage::Decoded(Err(AudioError::Decode { .. }))]
             )),
             Expected::PreloadError => assert!(matches!(
                 messages,
-                [EngineMessage::Preloaded(Err(AudioFailure::Preload { .. }))]
+                [EngineMessage::Preloaded(Err(AudioError::Preload { .. }))]
             )),
             Expected::OutputLost => assert!(matches!(
                 messages,
-                [EngineMessage::Failed(AudioFailure::OutputLost { .. })]
+                [EngineMessage::Failed(AudioError::OutputLost { .. })]
             )),
         }
     }
@@ -447,13 +458,13 @@ mod tests {
         decode_pending,
         DeckEvent::Decoded {
             ticket: Ticket::default().next(),
-            outcome: Err(AudioError::WorkerPanicked { path: PathBuf::from("/a") }),
+            outcome: Err(Error::WorkerPanicked { path: PathBuf::from("/a") }),
         },
         Expected::DecodeError
     )]
     #[case::stream_fault(
         no_pending,
-        DeckEvent::Fault(rodio::cpal::StreamError::DeviceNotAvailable),
+        DeckEvent::OutputLost(rodio::cpal::StreamError::DeviceNotAvailable),
         Expected::OutputLost
     )]
     fn a_landed_event_becomes_a_message(
@@ -463,7 +474,7 @@ mod tests {
     ) {
         let mut deck = deck_with_no_output();
         pending(&mut deck);
-        let messages = deck.landed(event);
+        let messages = deck.messages_for(event);
         assert_expected(&messages, &expected);
     }
 
@@ -472,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn track_finished_primary() {
+    fn a_finished_primary_sink_reports_the_track_finished() {
         let mut deck = deck_with_no_output();
         let (wake, _heard) = crossbeam_channel::bounded(4);
         let (source, control) = envelope(tone(1), Ticket::default().next(), wake);
@@ -480,7 +491,7 @@ mod tests {
         let ticket = control.ticket();
         deck.source.envelopes.primary = Some(control);
 
-        let messages = deck.landed(DeckEvent::Track(ticket));
+        let messages = deck.messages_for(DeckEvent::Track(ticket));
         assert!(matches!(
             messages.as_slice(),
             [EngineMessage::Finished(Slot::Primary)]
@@ -490,7 +501,7 @@ mod tests {
     #[test]
     fn track_unknown_ticket() {
         let mut deck = deck_with_no_output();
-        let messages = deck.landed(DeckEvent::Track(Ticket::default()));
+        let messages = deck.messages_for(DeckEvent::Track(Ticket::default()));
         assert!(messages.is_empty());
     }
 }

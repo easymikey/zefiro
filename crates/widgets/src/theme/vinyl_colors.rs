@@ -12,7 +12,7 @@ impl From<&Theme> for VinylColors {
             border: colors.role(Role::Frame),
             record: shade(colors.role(Role::Dim), RECORD_SHADE_FACTOR),
             accent: colors.role(Role::Accent),
-            blank_paper: colors.role(Role::WindowBg),
+            blank_paper: colors.role(Role::WindowBackground),
             ..Self::default()
         }
     }
@@ -36,9 +36,12 @@ mod tests {
         let theme = theme();
         assert_ne!(
             theme.colors.role(Role::Background),
-            theme.colors.role(Role::WindowBg)
+            theme.colors.role(Role::WindowBackground)
         );
         let colors = VinylColors::from(&theme);
-        assert_eq!(colors.blank_paper, theme.colors.role(Role::WindowBg));
+        assert_eq!(
+            colors.blank_paper,
+            theme.colors.role(Role::WindowBackground)
+        );
     }
 }

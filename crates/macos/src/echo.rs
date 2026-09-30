@@ -2,7 +2,7 @@
 
 use kernel::{
     Percent,
-    update::{Machine, Never, Rejected},
+    update::{Machine, Rejected},
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -21,12 +21,12 @@ pub(crate) enum VolumeMessage {
 pub(crate) enum VolumeEffect {
     #[default]
     Nothing,
-    Report(Percent),
+    Changed(Percent),
 }
 
 impl Machine for VolumeEcho {
     type Message = VolumeMessage;
-    type Rejection = Never;
+    type Error = std::convert::Infallible;
     type Effect = VolumeEffect;
 
     fn transition(
@@ -56,7 +56,7 @@ impl Machine for VolumeEcho {
                     pending: self.pending,
                     last_reported: Some(volume),
                 },
-                VolumeEffect::Report(volume),
+                VolumeEffect::Changed(volume),
             ),
         })
     }
@@ -85,7 +85,7 @@ mod tests {
     )]
     #[case::someone_else_moves_the_volume(
         &[40, 55],
-        &[VolumeEffect::Nothing, VolumeEffect::Report(Percent::clamped(55))]
+        &[VolumeEffect::Nothing, VolumeEffect::Changed(Percent::clamped(55))]
     )]
     fn volume_echo_suppresses_our_own_write(
         #[case] polls: &[u8],
@@ -94,7 +94,7 @@ mod tests {
         let mut echo = VolumeEcho::default();
         assert_eq!(
             echo.update(VolumeMessage::Polled(percent(30))),
-            Ok(VolumeEffect::Report(percent(30)))
+            Ok(VolumeEffect::Changed(percent(30)))
         );
         assert_eq!(
             echo.update(VolumeMessage::Written(percent(40))),

@@ -3,23 +3,23 @@ use crate::{
     domain::{
         CursorOver,
         JumpDigits,
+        MusicDirError,
         Overlay,
         PlaylistIndex,
         SearchQuery,
-        SourceDirError,
         TextEntry,
         parse_timecode,
         playlist::PlaylistFileName,
     },
-    message::{BrowseRequest, LoadedRequest, PlaybackRequest},
+    message::{BrowseRequest, PlaybackRequest, PlaylistRequest},
     update::{
         machine::{Machine, Rejected},
         overlay::{
             FollowUp,
             InnerMessage,
             OverlayEffect,
+            OverlayError,
             OverlayMessage,
-            OverlayRejection,
             text,
         },
     },
@@ -27,7 +27,7 @@ use crate::{
 
 struct Lift<Inner: Machine> {
     wrap: fn(Inner) -> Overlay,
-    reject: fn(Inner::Rejection) -> OverlayRejection,
+    reject: fn(Inner::Error) -> OverlayError,
 }
 
 fn lift<Inner: Machine>(
@@ -50,7 +50,7 @@ type Transition = Result<(Option<Overlay>, OverlayEffect), Rejected<Option<Overl
 
 impl Machine for Option<Overlay> {
     type Message = OverlayMessage;
-    type Rejection = OverlayRejection;
+    type Error = OverlayError;
     type Effect = OverlayEffect;
 
     fn transition(self, message: OverlayMessage) -> Transition {
@@ -61,7 +61,7 @@ impl Machine for Option<Overlay> {
                 OverlayMessage::Close
                 | OverlayMessage::Confirm
                 | OverlayMessage::Inner(_),
-            ) => refuse(None, OverlayRejection::WhileClosed),
+            ) => refuse(None, OverlayError::WhileClosed),
             (Some(open), OverlayMessage::Close) => {
                 cued_close(Ok((None, closed_playback(&open))))
             }
@@ -71,7 +71,7 @@ impl Machine for Option<Overlay> {
     }
 }
 
-fn refuse(state: Option<Overlay>, reason: OverlayRejection) -> Transition {
+fn refuse(state: Option<Overlay>, reason: OverlayError) -> Transition {
     Err(Rejected { state, reason })
 }
 
@@ -110,15 +110,15 @@ fn release() -> FollowUp {
 
 fn opened_playback(previous: Option<&Overlay>, opened: &Overlay) -> Option<FollowUp> {
     match (previous, opened) {
-        (_, Overlay::Settings(_)) => Some(hold()),
-        (Some(Overlay::Settings(_)), _) => Some(release()),
+        (_, Overlay::Settings { .. }) => Some(hold()),
+        (Some(Overlay::Settings { .. }), _) => Some(release()),
         (_, _) => None,
     }
 }
 
 fn closed_playback(open: &Overlay) -> OverlayEffect {
     match open {
-        Overlay::Settings(_) => OverlayEffect::from(release()),
+        Overlay::Settings { .. } => OverlayEffect::from(release()),
         Overlay::Help
         | Overlay::Search(_)
         | Overlay::SavePlaylist { .. }
@@ -126,7 +126,7 @@ fn closed_playback(open: &Overlay) -> OverlayEffect {
         | Overlay::ConfirmDelete(_)
         | Overlay::TrackDetails(_)
         | Overlay::JumpToTime(_)
-        | Overlay::SourceDir { .. } => OverlayEffect::default(),
+        | Overlay::MusicDir { .. } => OverlayEffect::default(),
     }
 }
 
@@ -141,26 +141,23 @@ fn confirm(open: Overlay) -> Transition {
             ))),
         )),
         Overlay::JumpToTime(digits) => confirm_jump(digits),
-        Overlay::SourceDir { typed, .. } => confirm_source_dir(typed),
-        Overlay::Settings(_) => Ok((None, OverlayEffect::from(release()))),
+        Overlay::MusicDir { typed, .. } => confirm_music_dir(typed),
+        Overlay::Settings { .. } => Ok((None, OverlayEffect::from(release()))),
         Overlay::Help | Overlay::TrackDetails(_) | Overlay::History(_) => {
-            refuse(Some(open), OverlayRejection::NoConfirm)
+            refuse(Some(open), OverlayError::NoConfirm)
         }
     }
 }
 
 fn confirm_search(search: CursorOver<SearchQuery>) -> Transition {
-    let Some(index) = search.rows.matches.get(search.selected()).copied() else {
-        return refuse(
-            Some(Overlay::Search(search)),
-            OverlayRejection::NothingSelected,
-        );
+    let Some(index) = search.content.matches.get(search.selected()).copied() else {
+        return refuse(Some(Overlay::Search(search)), OverlayError::NothingSelected);
     };
     Ok((
         None,
-        OverlayEffect::from(FollowUp::Loaded(LoadedRequest::Jump(PlaylistIndex::new(
-            index,
-        )))),
+        OverlayEffect::from(FollowUp::Loaded(PlaylistRequest::JumpTo(
+            PlaylistIndex::new(index),
+        ))),
     ))
 }
 
@@ -193,11 +190,11 @@ fn confirm_save_playlist(typed: TextEntry) -> Transition {
     }
 }
 
-fn confirm_source_dir(typed: TextEntry) -> Transition {
+fn confirm_music_dir(typed: TextEntry) -> Transition {
     if typed.input.trim().is_empty() {
-        let open = Overlay::SourceDir {
+        let open = Overlay::MusicDir {
             typed,
-            error: Some(SourceDirError::Empty),
+            error: Some(MusicDirError::Empty),
         };
         return Ok((Some(open), OverlayEffect::default()));
     }
@@ -214,16 +211,11 @@ fn inner_transition(open: Overlay, inner: InnerMessage) -> Transition {
             message,
             &Lift {
                 wrap: Overlay::Search,
-                reject: OverlayRejection::Search,
+                reject: OverlayError::Search,
             },
         ),
-        (Overlay::Settings(cursor), InnerMessage::Settings(message)) => lift(
-            cursor,
-            message,
-            &Lift {
-                wrap: Overlay::Settings,
-                reject: |never| match never {},
-            },
+        (Overlay::Settings { selected }, InnerMessage::Settings(message)) => Ok(
+            crate::update::overlay::settings::transition(selected, message),
         ),
         (Overlay::SavePlaylist { typed, .. }, InnerMessage::Text(message)) => Ok((
             Some(Overlay::SavePlaylist {
@@ -232,8 +224,8 @@ fn inner_transition(open: Overlay, inner: InnerMessage) -> Transition {
             }),
             OverlayEffect::default(),
         )),
-        (Overlay::SourceDir { typed, .. }, InnerMessage::Text(message)) => Ok((
-            Some(Overlay::SourceDir {
+        (Overlay::MusicDir { typed, .. }, InnerMessage::Text(message)) => Ok((
+            Some(Overlay::MusicDir {
                 typed: text::retyped(typed, message),
                 error: None,
             }),
@@ -244,7 +236,7 @@ fn inner_transition(open: Overlay, inner: InnerMessage) -> Transition {
             message,
             &Lift {
                 wrap: Overlay::JumpToTime,
-                reject: OverlayRejection::Jump,
+                reject: OverlayError::Jump,
             },
         ),
         (Overlay::History(cursor), InnerMessage::History(message)) => lift(
@@ -252,7 +244,7 @@ fn inner_transition(open: Overlay, inner: InnerMessage) -> Transition {
             message,
             &Lift {
                 wrap: Overlay::History,
-                reject: OverlayRejection::History,
+                reject: OverlayError::History,
             },
         ),
         (
@@ -262,6 +254,6 @@ fn inner_transition(open: Overlay, inner: InnerMessage) -> Transition {
             | InnerMessage::Text(_)
             | InnerMessage::Jump(_)
             | InnerMessage::History(_),
-        ) => refuse(Some(open), OverlayRejection::WrongOverlay),
+        ) => refuse(Some(open), OverlayError::WrongOverlay),
     }
 }

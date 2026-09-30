@@ -1,4 +1,4 @@
-use config::{BreakpointsConfig, CoverStyle, KeyHints, LayoutMode};
+use config::{CoverStyle, KeyHints, LayoutConfig, LayoutMode};
 use ratatui::layout::Rect;
 use rstest::rstest;
 use widgets::{CoverArt, FrameLayout, PixelPath, Scene, Screen};
@@ -25,11 +25,11 @@ fn frame(scene: Scene<'_>, size: (u16, u16)) -> String {
     painted_frame(scene, size).1
 }
 
-fn tiny_breakpoints() -> BreakpointsConfig {
-    BreakpointsConfig {
+fn tiny_breakpoints() -> LayoutConfig {
+    LayoutConfig {
         min_columns: 20,
         min_rows: 3,
-        ..BreakpointsConfig::default()
+        ..LayoutConfig::default()
     }
 }
 
@@ -82,7 +82,7 @@ fn narrowing_one_column_below_full_switches_from_the_card_to_the_compact_arrange
         pixel_path: PixelPath::Protocol,
         ..sources.scene()
     };
-    let bp = BreakpointsConfig::default();
+    let bp = LayoutConfig::default();
     let wide = frame(scene, (bp.full_min_width, bp.full_min_height));
     let narrow = frame(scene, (bp.full_min_width - 1, bp.full_min_height));
     assert!(wide.contains("No cover"), "got {wide:?}");
@@ -120,7 +120,7 @@ fn a_vinyl_cover_at_the_full_floor_still_leaves_the_title_visible() {
         pixel_path: PixelPath::Protocol,
         ..sources.scene()
     };
-    let bp = BreakpointsConfig::default();
+    let bp = LayoutConfig::default();
     let text = frame(scene, (bp.full_min_width, bp.full_min_height));
     assert!(text.contains("Vinyl Floor Song"), "got {text:?}");
 }

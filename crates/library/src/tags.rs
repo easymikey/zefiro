@@ -3,42 +3,42 @@ use std::{borrow::Cow, path::Path};
 use kernel::{LibrarySubject, Track};
 use lofty::{
     config::ParseOptions,
+    file::TaggedFile,
     prelude::{AudioFile, TaggedFileExt},
     probe::Probe,
     tag::{Accessor, ItemKey, Tag},
 };
 
-use crate::error::LibraryError;
+use crate::error::Error;
 
 fn owned_tag(tag: Option<Cow<'_, str>>) -> Option<String> {
     tag.map(Cow::into_owned)
 }
 
-pub(crate) fn read_track(path: &Path) -> Result<Track, LibraryError> {
-    let file = std::fs::File::open(path).map_err(|source| LibraryError::Read {
-        subject: LibrarySubject::Scan,
-        path: path.to_path_buf(),
-        source,
-    })?;
+pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
+    let file =
+        std::fs::File::open(path).map_err(Error::read(LibrarySubject::Scan, path))?;
     let options = ParseOptions::new().read_cover_art(false);
-    let Ok(tagged) = Probe::new(std::io::BufReader::new(file))
+    let Some(tagged) = Probe::new(std::io::BufReader::new(file))
         .options(options)
         .guess_file_type()
-        .map_err(|_| ())
-        .and_then(|probe| probe.read().map_err(|_| ()))
+        .ok()
+        .and_then(|probe| probe.read().ok())
     else {
         return Ok(Track::listed(path));
     };
     let properties = tagged.properties();
     let duration = properties.duration();
-    let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
+    let tag = main_tag(&tagged);
     let audio_format = kernel::AudioFormat {
         format: Some(format!("{:?}", tagged.file_type())),
         sample_rate_hz: properties.sample_rate(),
         bitrate_kbps: properties.audio_bitrate(),
         bits_per_sample: properties.bit_depth(),
         channels: properties.channels(),
-        replay_gain: tag.and_then(replay_gain_of),
+        replay_gain: tag
+            .and_then(|tag| tag.get_string(ItemKey::ReplayGainTrackGain))
+            .and_then(parse_replay_gain),
     };
     let tags = tag.map_or_else(kernel::Tags::default, tags_from);
     Ok(Track::builder()
@@ -70,9 +70,8 @@ fn tags_from(tag: &Tag) -> kernel::Tags {
     }
 }
 
-fn replay_gain_of(tag: &Tag) -> Option<f32> {
-    tag.get_string(ItemKey::ReplayGainTrackGain)
-        .and_then(parse_replay_gain)
+fn main_tag(tagged: &TaggedFile) -> Option<&Tag> {
+    tagged.primary_tag().or_else(|| tagged.first_tag())
 }
 
 fn parse_replay_gain(raw: &str) -> Option<f32> {
@@ -86,7 +85,7 @@ fn parse_replay_gain(raw: &str) -> Option<f32> {
 #[must_use]
 pub fn embedded_cover(path: &Path) -> Option<Vec<u8>> {
     let tagged = Probe::open(path).ok()?.read().ok()?;
-    let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
+    let tag = main_tag(&tagged)?;
     let picture = tag.pictures().first()?;
     Some(picture.data().to_vec())
 }
@@ -95,7 +94,10 @@ pub fn embedded_cover(path: &Path) -> Option<Vec<u8>> {
 mod tests {
     use rstest::{fixture, rstest};
 
-    use crate::tags::{embedded_cover, parse_replay_gain, read_track};
+    use crate::{
+        tags::{embedded_cover, parse_replay_gain, read_track},
+        test_support::tmp_filters,
+    };
 
     #[fixture]
     fn unparseable_media() -> tempfile::TempDir {
@@ -104,18 +106,8 @@ mod tests {
         dir
     }
 
-    fn tmp_filters() -> Vec<(&'static str, &'static str)> {
-        vec![
-            (
-                r"(/private)?/var/folders/[^/]+/[^/]+/T/\.tmp[A-Za-z0-9]+",
-                "[tmp]",
-            ),
-            (r"/tmp/\.tmp[A-Za-z0-9]+", "[tmp]"),
-        ]
-    }
-
     #[rstest]
-    fn unparseable_file_still_yields_meta_with_path(
+    fn an_unparseable_file_still_yields_meta_carrying_its_path(
         unparseable_media: tempfile::TempDir,
     ) {
         let path = unparseable_media.path().join("clip.mkv");
@@ -152,48 +144,43 @@ mod tests {
     }
 
     fn minimal_flac_with_cover(picture_data: &[u8]) -> Vec<u8> {
-        let mut mime = Vec::new();
-        mime.extend_from_slice(b"image/jpeg");
-        let mut description = Vec::new();
-        description.extend_from_slice(b"");
-
-        let mut picture_payload = Vec::new();
-        picture_payload.extend_from_slice(&3u32.to_be_bytes());
-        picture_payload
-            .extend_from_slice(&u32::try_from(mime.len()).unwrap_or(0).to_be_bytes());
-        picture_payload.extend_from_slice(&mime);
-        picture_payload.extend_from_slice(
-            &u32::try_from(description.len()).unwrap_or(0).to_be_bytes(),
-        );
-        picture_payload.extend_from_slice(&description);
-        picture_payload.extend_from_slice(&1u32.to_be_bytes());
-        picture_payload.extend_from_slice(&1u32.to_be_bytes());
-        picture_payload.extend_from_slice(&24u32.to_be_bytes());
-        picture_payload.extend_from_slice(&0u32.to_be_bytes());
-        picture_payload.extend_from_slice(
-            &u32::try_from(picture_data.len()).unwrap_or(0).to_be_bytes(),
-        );
-        picture_payload.extend_from_slice(picture_data);
-
+        let length =
+            |bytes: &[u8]| u32::try_from(bytes.len()).unwrap_or(0).to_be_bytes();
+        let mime: &[u8] = b"image/jpeg";
+        let picture_payload = [
+            &3u32.to_be_bytes()[..],
+            &length(mime),
+            mime,
+            &length(b""),
+            &1u32.to_be_bytes(),
+            &1u32.to_be_bytes(),
+            &24u32.to_be_bytes(),
+            &0u32.to_be_bytes(),
+            &length(picture_data),
+            picture_data,
+        ]
+        .concat();
         let streaminfo_bits: u64 = (44100u64 << 44) | (1u64 << 41) | (15u64 << 36);
-        let mut streaminfo = Vec::new();
-        streaminfo.extend_from_slice(&4096u16.to_be_bytes());
-        streaminfo.extend_from_slice(&4096u16.to_be_bytes());
-        streaminfo.extend_from_slice(&[0, 0, 0]);
-        streaminfo.extend_from_slice(&[0, 0, 0]);
-        streaminfo.extend_from_slice(&streaminfo_bits.to_be_bytes());
-        streaminfo.extend_from_slice(&[0u8; 16]);
-
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"fLaC");
-        bytes.push(0x00);
-        bytes.extend_from_slice(&[0x00, 0x00, 0x22]);
-        bytes.extend_from_slice(&streaminfo);
-        bytes.push(0x86);
+        let streaminfo = [
+            &4096u16.to_be_bytes()[..],
+            &4096u16.to_be_bytes(),
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &streaminfo_bits.to_be_bytes(),
+            &[0u8; 16],
+        ]
+        .concat();
         let payload_len = picture_payload.len().to_be_bytes();
-        bytes.extend_from_slice(&payload_len[payload_len.len() - 3..]);
-        bytes.extend_from_slice(&picture_payload);
-        bytes
+        [
+            &b"fLaC"[..],
+            &[0x00],
+            &[0x00, 0x00, 0x22],
+            &streaminfo,
+            &[0x86],
+            &payload_len[payload_len.len() - 3..],
+            &picture_payload,
+        ]
+        .concat()
     }
 
     #[test]

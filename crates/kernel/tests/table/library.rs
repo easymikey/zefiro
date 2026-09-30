@@ -10,7 +10,7 @@ use kernel::{
     Cue,
     Effect,
     LibraryCmd,
-    LibraryFact,
+    LibraryEvent,
     Message,
     Model,
     Moment,
@@ -56,7 +56,7 @@ fn listed_library(paths: &[&str]) -> (Model, Cmd) {
     let tracks = paths.iter().copied().map(listed).collect();
     let cmd = update(
         &mut model,
-        Message::Library(LibraryFact::Listed {
+        Message::Library(LibraryEvent::Listed {
             tracks,
             revision: Revision::default(),
         }),
@@ -118,7 +118,7 @@ fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
 
     let cmd = update(
         &mut model,
-        Message::Library(LibraryFact::Tagged {
+        Message::Library(LibraryEvent::Tagged {
             tracks: vec![tagged("/music/a.flac", "Alpha", 200)],
             revision: Revision::default(),
         }),
@@ -149,7 +149,7 @@ fn a_tagged_chunk_reaches_the_library_behind_the_playlist() {
 
     let _ = update(
         &mut model,
-        Message::Library(LibraryFact::Tagged {
+        Message::Library(LibraryEvent::Tagged {
             tracks: vec![tagged("/music/b.flac", "Beta", 30)],
             revision: Revision::default(),
         }),
@@ -173,7 +173,7 @@ fn the_last_chunk_opens_the_library_once() {
 
     let first = update(
         &mut model,
-        Message::Library(LibraryFact::Tagged {
+        Message::Library(LibraryEvent::Tagged {
             tracks: vec![tagged("/music/a.flac", "Alpha", 10)],
             revision: Revision::default(),
         }),
@@ -182,7 +182,7 @@ fn the_last_chunk_opens_the_library_once() {
     .unwrap();
     let last = update(
         &mut model,
-        Message::Library(LibraryFact::Tagged {
+        Message::Library(LibraryEvent::Tagged {
             tracks: vec![tagged("/music/b.flac", "Beta", 20)],
             revision: Revision::default(),
         }),
@@ -201,7 +201,7 @@ fn a_chunk_arriving_after_the_last_one_opens_nothing() {
 
     let last = update(
         &mut model,
-        Message::Library(LibraryFact::Tagged {
+        Message::Library(LibraryEvent::Tagged {
             tracks: vec![tagged("/music/a.flac", "Alpha", 10)],
             revision: Revision::default(),
         }),
@@ -210,7 +210,7 @@ fn a_chunk_arriving_after_the_last_one_opens_nothing() {
     .unwrap();
     let stray = update(
         &mut model,
-        Message::Library(LibraryFact::Tagged {
+        Message::Library(LibraryEvent::Tagged {
             tracks: vec![tagged("/music/a.flac", "Alpha", 10)],
             revision: Revision::default(),
         }),
@@ -240,15 +240,14 @@ fn rescanning_model() -> Model {
     .unwrap();
 
     let issued = effects(cmd).iter().find_map(|effect| match effect {
-        Effect::Library(LibraryCmd::Rescan { revision, .. }) => Some(*revision),
+        Effect::Library(LibraryCmd::Scan { revision, .. }) => Some(*revision),
         Effect::Library(_)
         | Effect::Audio(_)
-        | Effect::System(_)
+        | Effect::Macos(_)
         | Effect::Config(_)
         | Effect::WindowColors(_)
         | Effect::Animate(_)
         | Effect::RollShuffle { .. }
-        | Effect::Setting { .. }
         | Effect::After { .. }
         | Effect::Restart(_)
         | Effect::Quit => None,
@@ -271,7 +270,7 @@ fn only_the_awaited_scan_generation_lands(
 
     let cmd = update(
         &mut model,
-        Message::Library(LibraryFact::Loaded {
+        Message::Library(LibraryEvent::Loaded {
             tracks: vec![listed("/music/a.flac")],
             revision: revision(bumps),
         }),
@@ -296,7 +295,7 @@ fn a_listing_asks_for_the_tags_of_everything_it_listed() {
 
     let cmd = update(
         &mut model,
-        Message::Library(LibraryFact::Listed {
+        Message::Library(LibraryEvent::Listed {
             tracks: vec![listed("/music/a.flac"), listed("/music/b.flac")],
             revision: Revision::default(),
         }),
@@ -313,7 +312,7 @@ fn a_listing_from_a_superseded_scan_asks_for_no_tags() {
 
     let cmd = update(
         &mut model,
-        Message::Library(LibraryFact::Listed {
+        Message::Library(LibraryEvent::Listed {
             tracks: vec![listed("/music/a.flac")],
             revision: Revision::UNSTAMPED,
         }),

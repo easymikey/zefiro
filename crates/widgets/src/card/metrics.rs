@@ -44,7 +44,7 @@ impl Default for CardLayout {
 }
 
 #[must_use]
-pub(crate) fn height() -> u16 {
+pub(crate) fn card_height() -> u16 {
     CardLayout::default().height
 }
 
@@ -154,7 +154,7 @@ fn meter_and_volume(band: Rect, layout: &CardLayout) -> (Rect, Rect) {
 }
 
 #[must_use]
-pub(crate) fn metrics(
+pub(crate) fn card_metrics(
     area: Rect,
     cell_aspect: CellAspect,
     sizing: CoverSizing,
@@ -215,12 +215,12 @@ pub(crate) fn content_rect(metrics: &CardMetrics) -> Rect {
 
 #[cfg(test)]
 #[must_use]
-pub(crate) fn info_rect(
+pub(crate) fn text_rect(
     area: Rect,
     cell_aspect: CellAspect,
     sizing: CoverSizing,
 ) -> Rect {
-    content_rect(&metrics(area, cell_aspect, sizing))
+    content_rect(&card_metrics(area, cell_aspect, sizing))
 }
 
 #[cfg(test)]
@@ -233,12 +233,12 @@ mod tests {
             meters::volume_cell_size,
             metrics::{
                 CardLayout,
+                card_metrics,
                 cover_cell_height,
                 cover_cell_width,
                 cover_column_span,
-                info_rect,
                 inner,
-                metrics,
+                text_rect,
                 text_width,
             },
         },
@@ -284,8 +284,8 @@ mod tests {
         let layout = CardLayout::default();
 
         assert!(
-            metrics(area, cell_aspect, plain).content_column.x
-                < metrics(area, cell_aspect, vinyl).content_column.x,
+            card_metrics(area, cell_aspect, plain).content_column.x
+                < card_metrics(area, cell_aspect, vinyl).content_column.x,
             "a square cover column must start the text column further left \
              than the vinyl's wider one"
         );
@@ -317,7 +317,7 @@ mod tests {
             inner(area).width
         );
         assert!(
-            metrics(area, cell_aspect, CoverSizing::Off)
+            card_metrics(area, cell_aspect, CoverSizing::Off)
                 .cover_square
                 .is_empty()
         );
@@ -331,7 +331,7 @@ mod tests {
             width: 80,
             height: 12,
         };
-        insta::assert_debug_snapshot!(metrics(
+        insta::assert_debug_snapshot!(card_metrics(
             area,
             CellAspect::default(),
             CoverSizing::default()
@@ -348,7 +348,7 @@ mod tests {
         };
         let cell_aspect = CellAspect::default();
         let sizing = CoverSizing::default();
-        let card_metrics = metrics(area, cell_aspect, sizing);
+        let card_metrics = card_metrics(area, cell_aspect, sizing);
         let layout = CardLayout::default();
         let column = card_metrics.content_column;
 
@@ -379,7 +379,7 @@ mod tests {
             "one spectrum_volume_gap separates the meter from the bar"
         );
 
-        let rect = info_rect(area, cell_aspect, sizing);
+        let rect = text_rect(area, cell_aspect, sizing);
         assert_eq!(rect.x, column.x);
         assert_eq!(rect.y, card_metrics.title_row.y, "starts at the title row");
         assert_eq!(rect.width, card_metrics.row_width);

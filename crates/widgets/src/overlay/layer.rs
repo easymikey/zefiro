@@ -19,9 +19,9 @@ use crate::{
         history::HistoryOverlay,
         jump_to_time::JumpToTimeOverlay,
         modal::{OverlayAreas, OverlayContainer},
+        music_dir::MusicDirOverlay,
         search::SearchOverlay,
         settings::{SettingsOverlay, SettingsView},
-        source_dir::SourceDirOverlay,
         track_details::TrackDetailsOverlay,
     },
     primitive::canvas::Canvas,
@@ -61,7 +61,7 @@ enum ActiveOverlay<'a> {
     ConfirmDelete(ConfirmDeleteOverlay<'a>),
     JumpToTime(JumpToTimeOverlay<'a>),
     TrackDetails(TrackDetailsOverlay<'a>),
-    SourceDir(SourceDirOverlay<'a>),
+    MusicDir(MusicDirOverlay<'a>),
 }
 
 impl ActiveOverlay<'_> {
@@ -74,7 +74,7 @@ impl ActiveOverlay<'_> {
             Self::ConfirmDelete(overlay) => overlay.areas(screen),
             Self::JumpToTime(overlay) => overlay.areas(screen),
             Self::TrackDetails(overlay) => overlay.areas(screen),
-            Self::SourceDir(overlay) => overlay.areas(screen),
+            Self::MusicDir(overlay) => overlay.areas(screen),
         }
     }
 
@@ -87,7 +87,7 @@ impl ActiveOverlay<'_> {
             Self::ConfirmDelete(overlay) => overlay.render_in(areas, canvas),
             Self::JumpToTime(overlay) => overlay.render_in(areas, canvas),
             Self::TrackDetails(overlay) => overlay.render_in(areas, canvas),
-            Self::SourceDir(overlay) => overlay.render_in(areas, canvas),
+            Self::MusicDir(overlay) => overlay.render_in(areas, canvas),
         }
     }
 }
@@ -102,7 +102,7 @@ fn banner_area(screen: Rect) -> Option<Rect> {
 fn banner_color(phase: SavePhase, theme: ActiveTheme<'_>) -> ratatui::style::Color {
     match phase {
         SavePhase::Prompt => theme.accent(),
-        SavePhase::Failure => theme.accent2(),
+        SavePhase::Failure => theme.secondary_accent(),
     }
 }
 
@@ -116,7 +116,7 @@ impl<'a> OverlayLayer<'a> {
         Self {
             content,
             placement: OverlayPlacement {
-                avoid: layout.avoid(cover_style),
+                avoid: layout.cover_exclusion(cover_style),
                 playlist_pane: layout.playlist_pane,
                 search_bounds: layout.search_bounds,
             },
@@ -152,12 +152,10 @@ impl<'a> OverlayLayer<'a> {
                 selected: cursor.selected(),
                 container: self.container(avoid),
             })),
-            Overlay::Settings(cursor) => {
-                let rows = SettingRow::all(self.content.settings_view.custom_rows);
-                let selected = rows
-                    .iter()
-                    .position(|row| *row == cursor.selected)
-                    .unwrap_or(0);
+            Overlay::Settings { selected: current } => {
+                let rows = SettingRow::all(self.content.settings_view.custom_settings);
+                let selected =
+                    rows.iter().position(|row| *row == *current).unwrap_or(0);
                 Some(ActiveOverlay::Settings(SettingsOverlay {
                     theme: self.content.theme,
                     values: self.content.settings_view,
@@ -168,7 +166,7 @@ impl<'a> OverlayLayer<'a> {
             overlay @ (Overlay::ConfirmDelete(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_)
-            | Overlay::SourceDir { .. }
+            | Overlay::MusicDir { .. }
             | Overlay::SavePlaylist { .. }) => self.dialog(overlay, avoid),
         }
     }
@@ -200,8 +198,8 @@ impl<'a> OverlayLayer<'a> {
                     avoid,
                 }))
             }
-            Overlay::SourceDir { typed, error } => {
-                Some(ActiveOverlay::SourceDir(SourceDirOverlay {
+            Overlay::MusicDir { typed, error } => {
+                Some(ActiveOverlay::MusicDir(MusicDirOverlay {
                     typed,
                     error: error.as_ref(),
                     theme: self.content.theme,
@@ -211,7 +209,7 @@ impl<'a> OverlayLayer<'a> {
             Overlay::Help
             | Overlay::Search(_)
             | Overlay::History(_)
-            | Overlay::Settings(_)
+            | Overlay::Settings { .. }
             | Overlay::SavePlaylist { .. } => None,
         }
     }
@@ -258,7 +256,7 @@ mod tests {
         Overlay,
         PlaylistIndex,
         SearchQuery,
-        SettingsCursor,
+        SettingRow,
         TextEntry,
         Workspace,
     };
@@ -270,7 +268,7 @@ mod tests {
             layer::{OverlayContent, OverlayLayer, OverlayPlacement},
             modal::OverlayAreas,
         },
-        scene::fixtures::{custom_rows, noir, painted, settings_values},
+        scene::fixtures::{custom_settings, noir, painted, settings_values},
         theme::{ActiveTheme, ColorDepth},
     };
 
@@ -340,9 +338,10 @@ mod tests {
     #[test]
     fn settings_overlay_lists_the_settings_view() {
         let theme = noir();
-        let custom = custom_rows();
-        let workspace =
-            workspace_with(Overlay::Settings(SettingsCursor::first(&custom)));
+        let custom = custom_settings();
+        let workspace = workspace_with(Overlay::Settings {
+            selected: SettingRow::first(&custom),
+        });
         let mut with_values = layer(&theme, &workspace);
         with_values.content.settings_view = settings_values(&custom);
         insta::assert_snapshot!(painted(&with_values, 80, 28));
@@ -388,7 +387,7 @@ mod tests {
     #[test]
     fn source_dir_overlay_shows_the_prompt() {
         let theme = noir();
-        let workspace = workspace_with(Overlay::SourceDir {
+        let workspace = workspace_with(Overlay::MusicDir {
             typed: TextEntry::default(),
             error: None,
         });
@@ -398,9 +397,9 @@ mod tests {
 
     #[rstest]
     #[case::prompt(None)]
-    #[case::failure(Some(kernel::domain::playlist::PlaylistNameRejection::Empty))]
+    #[case::failure(Some(kernel::domain::playlist::PlaylistNameError::Empty))]
     fn save_playlist_shows_the_bottom_banner(
-        #[case] error: Option<kernel::domain::playlist::PlaylistNameRejection>,
+        #[case] error: Option<kernel::domain::playlist::PlaylistNameError>,
     ) {
         let theme = noir();
         let workspace = workspace_with(Overlay::SavePlaylist {
@@ -412,7 +411,7 @@ mod tests {
         let overlay = layer(&theme, &workspace);
         let screen = Rect::new(0, 0, 80, 28);
         assert_eq!(
-            overlay.areas(screen).map(OverlayAreas::painted),
+            overlay.areas(screen).map(OverlayAreas::outer),
             Some(Rect::new(0, screen.height - 1, screen.width, 1))
         );
     }

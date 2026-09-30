@@ -1,21 +1,15 @@
-use audio::{
-    AudioLoop,
-    EngineConfig,
-    SpectrumTap,
-    UnityVolume,
-    prepare as prepare_engine,
-};
+use audio::{AudioLoop, EngineConfig, SpectrumTap, UnityVolume};
 use crossbeam_channel::Receiver;
 use kernel::{AudioCmd, AudioEvent, domain::Model};
 
-use crate::{driver::DriverLoop, mailbox::Mailbox};
+use crate::{driver::DriverLoop, sender::DriverSender};
 
 pub(crate) fn prepare(model: &Model) -> (AudioLoop, SpectrumTap) {
-    prepare_engine(engine_config(model))
+    AudioLoop::new(engine_config(model))
 }
 
 impl DriverLoop<AudioCmd, AudioEvent> for AudioLoop {
-    fn run(self, inbox: &Receiver<AudioCmd>, outbox: &Mailbox<AudioEvent>) {
+    fn run(self, inbox: &Receiver<AudioCmd>, outbox: &DriverSender<AudioEvent>) {
         AudioLoop::run(self, inbox, outbox);
     }
 }
@@ -39,13 +33,15 @@ fn unity_volume() -> UnityVolume {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{DeviceName, Model, Startup};
+    use kernel::domain::{DeviceName, Model, OutputDevice, Startup};
 
     use crate::audio::{engine_config, unity_volume};
 
     fn stock_model() -> Model {
         let startup = Startup {
-            output_device: Some(DeviceName::new("Speakers".to_string()).unwrap()),
+            output_device: OutputDevice::Named(
+                DeviceName::new("Speakers".to_string()).unwrap(),
+            ),
             ..Startup::default()
         };
         let (model, _cmd) = kernel::startup(startup);

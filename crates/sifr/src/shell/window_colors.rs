@@ -19,14 +19,20 @@ pub(crate) fn window_colors_plan(animations: Animations) -> WindowColorsPlan {
     }
 }
 
-pub(crate) fn settle_window_colors_plan(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Wash {
+    Running,
+    Idle,
+}
+
+pub(crate) fn flush_staged_window_colors_plan(
     pending: PendingWindowColors,
-    wash_progress: Option<f32>,
+    wash: Wash,
 ) -> bool {
-    if wash_progress.is_some() {
-        return false;
+    match wash {
+        Wash::Running => false,
+        Wash::Idle => matches!(pending, PendingWindowColors::Staged),
     }
-    matches!(pending, PendingWindowColors::Staged)
 }
 
 #[cfg(test)]
@@ -35,8 +41,9 @@ mod tests {
 
     use crate::shell::window_colors::{
         PendingWindowColors,
+        Wash,
         WindowColorsPlan,
-        settle_window_colors_plan,
+        flush_staged_window_colors_plan,
         window_colors_plan,
     };
 
@@ -55,19 +62,25 @@ mod tests {
 
     #[test]
     fn a_running_wash_holds_a_staged_plan_back() {
-        assert!(!settle_window_colors_plan(
+        assert!(!flush_staged_window_colors_plan(
             PendingWindowColors::Staged,
-            Some(0.4)
+            Wash::Running
         ));
     }
 
     #[test]
     fn a_finished_wash_releases_the_staged_plan() {
-        assert!(settle_window_colors_plan(PendingWindowColors::Staged, None));
+        assert!(flush_staged_window_colors_plan(
+            PendingWindowColors::Staged,
+            Wash::Idle
+        ));
     }
 
     #[test]
     fn no_wash_and_nothing_staged_settles_to_nothing() {
-        assert!(!settle_window_colors_plan(PendingWindowColors::Idle, None));
+        assert!(!flush_staged_window_colors_plan(
+            PendingWindowColors::Idle,
+            Wash::Idle
+        ));
     }
 }

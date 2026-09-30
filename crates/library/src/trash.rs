@@ -1,18 +1,18 @@
 use std::path::Path;
 
-use crate::error::LibraryError;
+use crate::error::Error;
 
-pub(crate) fn move_to_trash(path: &Path) -> Result<(), LibraryError> {
+pub(crate) fn move_to_trash(path: &Path) -> Result<(), Error> {
     move_to_trash_with(path, |doomed: &Path| trash::delete(doomed))
 }
 
 pub(crate) fn move_to_trash_with(
     path: &Path,
     mut delete: impl FnMut(&Path) -> Result<(), trash::Error>,
-) -> Result<(), LibraryError> {
+) -> Result<(), Error> {
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) | Ok(_) => delete(path).map_err(|source| LibraryError::Trash {
+        Err(_) | Ok(_) => delete(path).map_err(|source| Error::Trash {
             path: path.to_path_buf(),
             source,
         }),

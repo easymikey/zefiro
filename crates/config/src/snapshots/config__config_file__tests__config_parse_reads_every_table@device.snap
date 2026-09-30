@@ -1,9 +1,9 @@
 ---
 source: crates/config/src/config_file.rs
-assertion_line: 181
+assertion_line: 183
 expression: config
 ---
-ConfigFile {
+ConfigToml {
     music_dir: None,
     theme: Auto,
     volume: Percent(
@@ -14,7 +14,7 @@ ConfigFile {
             0ns,
         ),
         replaygain: Off,
-        device: Some(
+        device: Named(
             DeviceName(
                 "Speakers",
             ),

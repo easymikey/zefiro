@@ -1,22 +1,22 @@
-use std::{error::Error, time::Instant};
+use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Select, never};
 use kernel::Message;
 
 use crate::{
-    error::RunError,
+    error::Error,
     repaint::{Repaint, Source, repaint_after},
-    runtime::{Change, Runtime},
-    shell::{Flow, Reaction, Shell},
+    runtime::Runtime,
+    shell::{Reaction, Shell},
 };
 
 pub fn run<S: Shell>(
     mut runtime: Runtime,
     shell: &mut S,
     input: &Receiver<S::Input>,
-) -> Result<(), RunError<S::Error>>
+) -> Result<(), Error<S::Error>>
 where
-    S::Error: Error + 'static,
+    S::Error: std::error::Error + 'static,
 {
     let ended = EventLoop::new(&mut runtime, shell, input).drive();
     runtime.drain();
@@ -26,7 +26,7 @@ where
 enum Arrival<I> {
     Input(I),
     Message(Message),
-    Doorbell,
+    Notified,
     Nothing,
 }
 
@@ -40,7 +40,7 @@ pub(crate) struct EventLoop<'a, S: Shell> {
 
 impl<'a, S: Shell> EventLoop<'a, S>
 where
-    S::Error: Error + 'static,
+    S::Error: std::error::Error + 'static,
 {
     pub(crate) fn new(
         runtime: &'a mut Runtime,
@@ -56,7 +56,7 @@ where
         }
     }
 
-    pub(crate) fn drive(mut self) -> Result<(), RunError<S::Error>> {
+    pub(crate) fn drive(mut self) -> Result<(), Error<S::Error>> {
         let mut frame_due = self.shell.frame_due(&self.runtime.view(Instant::now()));
         loop {
             let now = Instant::now();
@@ -64,11 +64,11 @@ where
             let first = self.wait(deadline)?;
             self.gather(first);
             self.fire_timers(now);
-            self.runtime.settle_congestion();
+            self.runtime.report_full();
             for effect in self.runtime.take_shell_effects() {
                 self.shell.effect(effect);
             }
-            if let Flow::Stop = self.runtime.flow() {
+            if self.runtime.flow().is_break() {
                 return Ok(());
             }
             frame_due = self.shell.frame_due(&self.runtime.view(now));
@@ -79,12 +79,12 @@ where
     fn wait(
         &mut self,
         deadline: Option<Instant>,
-    ) -> Result<Arrival<S::Input>, RunError<S::Error>> {
+    ) -> Result<Arrival<S::Input>, Error<S::Error>> {
         let wiring = &mut self.runtime.wiring;
         let mut select = Select::new();
         let input_index = select.recv(self.input);
-        let mailbox_index = select.recv(&wiring.mailbox);
-        select.recv(&wiring.doorbell);
+        let sender_index = select.recv(&wiring.receiver);
+        select.recv(&wiring.notified);
         let operation = match deadline {
             Some(deadline) => match select.select_deadline(deadline) {
                 Ok(operation) => operation,
@@ -97,23 +97,23 @@ where
             return operation
                 .recv(self.input)
                 .map(Arrival::Input)
-                .map_err(|_| RunError::InputClosed);
+                .map_err(|_| Error::InputClosed);
         }
-        if index == mailbox_index {
-            return Ok(operation.recv(&wiring.mailbox).map_or_else(
+        if index == sender_index {
+            return Ok(operation.recv(&wiring.receiver).map_or_else(
                 |_| {
-                    wiring.mailbox = never();
+                    wiring.receiver = never();
                     Arrival::Nothing
                 },
                 Arrival::Message,
             ));
         }
-        Ok(operation.recv(&wiring.doorbell).map_or_else(
+        Ok(operation.recv(&wiring.notified).map_or_else(
             |_| {
-                wiring.doorbell = never();
+                wiring.notified = never();
                 Arrival::Nothing
             },
-            |()| Arrival::Doorbell,
+            |()| Arrival::Notified,
         ))
     }
 
@@ -121,39 +121,38 @@ where
         if let Arrival::Nothing = first {
             return;
         }
-        let mailbox = self.runtime.wiring.mailbox.clone();
-        let doorbell = self.runtime.wiring.doorbell.clone();
+        let queued = self.runtime.wiring.receiver.clone();
+        let notified = self.runtime.wiring.notified.clone();
         let mut inputs = Vec::new();
         let mut messages = Vec::new();
         let mut rang = false;
         match first {
             Arrival::Input(event) => inputs.push(event),
             Arrival::Message(message) => messages.push(message),
-            Arrival::Doorbell => rang = true,
+            Arrival::Notified => rang = true,
             Arrival::Nothing => {}
         }
         inputs.extend(ready(self.input));
-        messages.extend(ready(&mailbox));
-        rang = rang || ready(&doorbell).count() > 0;
+        messages.extend(ready(&queued));
+        rang = rang || ready(&notified).count() > 0;
         let arrivals = inputs
             .into_iter()
             .map(Arrival::Input)
             .chain(messages.into_iter().map(Arrival::Message))
-            .chain(rang.then_some(Arrival::Doorbell));
+            .chain(rang.then_some(Arrival::Notified));
         for arrival in arrivals {
-            if let Flow::Stop = self.runtime.flow() {
+            if self.runtime.flow().is_break() {
                 return;
             }
-            self.apply(arrival);
+            self.dispatch_arrival(arrival);
         }
     }
 
-    fn apply(&mut self, arrival: Arrival<S::Input>) {
+    fn dispatch_arrival(&mut self, arrival: Arrival<S::Input>) {
         match arrival {
             Arrival::Input(event) => match self.shell.input(event) {
                 Reaction::Message(message) => {
-                    let change = self.runtime.step(message);
-                    self.note(change, Source::Input);
+                    self.step_and_repaint(message, Source::Input);
                 }
                 Reaction::Repaint => {
                     self.repaint = repaint_after(self.repaint, Source::Input);
@@ -161,26 +160,24 @@ where
                 Reaction::Ignored => {}
             },
             Arrival::Message(message) => {
-                let change = self.runtime.step(message);
-                self.note(change, Source::Fact);
+                self.step_and_repaint(message, Source::Event);
             }
-            Arrival::Doorbell => {
-                self.repaint = repaint_after(self.repaint, Source::Fact);
+            Arrival::Notified => {
+                self.repaint = repaint_after(self.repaint, Source::Event);
             }
             Arrival::Nothing => {}
         }
     }
 
-    pub(crate) fn note(&mut self, change: Change, source: Source) {
-        if let Change::Applied = change {
+    pub(crate) fn step_and_repaint(&mut self, message: Message, source: Source) {
+        if self.runtime.step(message) {
             self.repaint = repaint_after(self.repaint, source);
         }
     }
 
     fn fire_timers(&mut self, now: Instant) {
         for timer in self.runtime.timers.due(now) {
-            let change = self.runtime.step(Message::Elapsed(timer));
-            self.note(change, Source::Fact);
+            self.step_and_repaint(Message::Elapsed(timer), Source::Event);
         }
     }
 }
@@ -193,33 +190,31 @@ fn ready<T>(receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
 pub(crate) mod tests {
     use std::{convert::Infallible, path::PathBuf, time::Instant};
 
-    use config::{Hex, ThemeColors, ThemeFile};
+    use config::{Rgb, ThemeColors, ThemeFile};
     use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
     use kernel::{
-        ConfigFact,
+        ConfigEvent,
         Cue,
-        Delivery,
         DriverMessage,
-        LibraryFact,
+        LibraryEvent,
         Message,
         Outbox,
         Timer,
         WindowColorsCmd,
         WorkspaceRequest,
         domain::{Driver, DriverStatus, Startup, ThemeName, Toast},
-        update::{DriverRejection, Rejection},
+        update::{DriverStatusError, UpdateError},
     };
 
     use crate::{
-        cells::Writers,
-        error::RunError,
+        cells::Senders,
+        error::Error,
         event_loop::EventLoop,
-        interpret::LibraryCommand,
-        library::cover::CoverRequest,
-        mailbox::{Congestion, Mailbox},
+        library::{cover::CoverRequest, machine::LibraryMessage},
         port::{LibraryPort, Port},
         runtime::Runtime,
-        shell::{Flow, FrameDue, Painted, Reaction, Shell, ShellEffect, View},
+        sender::{DriverSender, FullEdge},
+        shell::{FrameDue, FrameInput, Painted, Reaction, Shell, ShellEffect},
         trace::{Trace, TraceEntry},
         wiring::Wiring,
     };
@@ -287,11 +282,11 @@ pub(crate) mod tests {
             self.effects.push(effect);
         }
 
-        fn frame_due(&self, _view: &View<'_>) -> FrameDue {
+        fn frame_due(&self, _view: &FrameInput<'_>) -> FrameDue {
             FrameDue::Settled
         }
 
-        fn paint(&mut self, view: View<'_>) -> Result<Painted, Infallible> {
+        fn paint(&mut self, view: FrameInput<'_>) -> Result<Painted, Infallible> {
             if view.cells.theme.take().is_some() {
                 self.order.push(Order::Reloaded);
             }
@@ -305,7 +300,7 @@ pub(crate) mod tests {
             let _ = self.keys.send(next);
             Ok(Painted {
                 cover: self.cover.clone(),
-                viewport: None,
+                visible_rows: None,
                 failures: std::mem::take(&mut self.pending_failures),
             })
         }
@@ -313,8 +308,8 @@ pub(crate) mod tests {
 
     pub(crate) struct Fixture {
         pub(crate) runtime: Runtime,
-        cover_inbox: Receiver<LibraryCommand>,
-        _writers: Writers,
+        cover_inbox: Receiver<LibraryMessage>,
+        _writers: Senders,
     }
 
     pub(crate) fn stock_startup() -> Startup {
@@ -358,7 +353,7 @@ pub(crate) mod tests {
 
         let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
-        assert!(matches!(ended, Err(RunError::InputClosed)));
+        assert!(matches!(ended, Err(Error::InputClosed)));
         fixture.runtime.drain();
     }
 
@@ -370,7 +365,7 @@ pub(crate) mod tests {
             .step(Message::Workspace(WorkspaceRequest::ShowToast(
                 Toast::error("hello".to_owned()),
             )));
-        let generation = fixture.runtime.model.toast_generation;
+        let generation = fixture.runtime.model.revisions.toast;
         fixture
             .runtime
             .timers
@@ -417,7 +412,7 @@ pub(crate) mod tests {
             rejected,
             vec![&TraceEntry::Rejected {
                 message: "driver",
-                rejection: Rejection::Driver(Driver::Audio, DriverRejection::Stopped),
+                error: UpdateError::Driver(Driver::Audio, DriverStatusError::Stopped),
             }]
         );
         assert_eq!(shell.toasts, vec![None]);
@@ -441,7 +436,7 @@ pub(crate) mod tests {
         shell.continue_with = Key::Ping;
         shell.cover = Some(CoverRequest {
             path: PathBuf::from("/music/cover.mp3"),
-            side: 64,
+            size_px: 64,
         });
 
         let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
@@ -452,7 +447,7 @@ pub(crate) mod tests {
         let covers = fixture
             .cover_inbox
             .iter()
-            .filter(|command| matches!(command, LibraryCommand::Cover(_)))
+            .filter(|command| matches!(command, LibraryMessage::Cover(_)))
             .count();
         assert_eq!(covers, 1);
     }
@@ -476,13 +471,13 @@ pub(crate) mod tests {
         ThemeFile {
             name: "test".to_owned(),
             colors: ThemeColors {
-                background: Hex([0, 0, 0]),
-                foreground: Hex([255, 255, 255]),
-                bright_foreground: Hex([255, 255, 255]),
-                accent: Hex([0, 0, 0]),
-                green: Hex([0, 0, 0]),
-                yellow: Hex([0, 0, 0]),
-                red: Hex([0, 0, 0]),
+                background: Rgb([0, 0, 0]),
+                foreground: Rgb([255, 255, 255]),
+                bright_foreground: Rgb([255, 255, 255]),
+                accent: Rgb([0, 0, 0]),
+                green: Rgb([0, 0, 0]),
+                yellow: Rgb([0, 0, 0]),
+                red: Rgb([0, 0, 0]),
                 window_background: None,
             },
             scanning_label: "scanning".to_owned(),
@@ -492,13 +487,13 @@ pub(crate) mod tests {
     #[test]
     fn a_theme_reload_bumps_the_generation_and_animates_after_reloaded() {
         let mut fixture = fixture();
-        let before = fixture.runtime.model.theme_generation;
+        let before = fixture.runtime.model.revisions.theme;
         fixture._writers.theme.publish(stub_theme());
-        let fact = ConfigFact::ThemeReloaded(ThemeName::from_static("test"));
+        let event = ConfigEvent::ThemeReloaded(ThemeName::from_static("test"));
         fixture
             .runtime
-            .mailbox_sender()
-            .send(Message::Config(fact))
+            .sender()
+            .send(Message::Config(event))
             .unwrap();
         let (keys, input) = unbounded();
         let mut shell = Scripted::new(keys, 1);
@@ -507,7 +502,7 @@ pub(crate) mod tests {
 
         assert!(matches!(ended, Ok(())));
         assert_eq!(
-            fixture.runtime.model.theme_generation.get(),
+            fixture.runtime.model.revisions.theme.get(),
             before.next().get()
         );
         let animated_at = shell
@@ -531,12 +526,12 @@ pub(crate) mod tests {
 
     const CAPACITY: usize = 256;
 
-    fn fill_the_mailbox(outbox: &Mailbox<LibraryFact>, congestion: &Congestion) {
+    fn fill_the_sender(outbox: &DriverSender<LibraryEvent>, full_edge: &FullEdge) {
         for _ in 0..CAPACITY {
-            let delivery = outbox.send(LibraryFact::HistoryLoaded(Vec::new()));
-            assert!(matches!(delivery, Delivery::Sent));
+            let delivery = outbox.send(LibraryEvent::HistoryLoaded(Vec::new()));
+            assert!(matches!(delivery, Ok(())));
         }
-        congestion.raise();
+        full_edge.raise();
     }
 
     fn toasts_in_one_iteration(runtime: &mut Runtime) -> usize {
@@ -545,7 +540,7 @@ pub(crate) mod tests {
         let mut event_loop = EventLoop::new(runtime, &mut shell, &input);
         let first = event_loop.wait(Some(Instant::now())).unwrap();
         event_loop.gather(first);
-        event_loop.runtime.settle_congestion();
+        event_loop.runtime.report_full();
         for effect in event_loop.runtime.take_shell_effects() {
             event_loop.shell.effect(effect);
         }
@@ -557,29 +552,26 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_full_mailbox_raises_one_congestion_toast_per_episode() {
+    fn a_full_sender_raises_a_toast_per_full_edge() {
         let mut fixture = fixture();
-        let (sender, mailbox) = bounded(CAPACITY);
-        let congestion = Congestion::default();
-        let outbox = Mailbox::new(sender.clone(), congestion.clone());
+        let (sender, arrivals) = bounded(CAPACITY);
+        let full_edge = FullEdge::default();
+        let outbox = DriverSender::new(sender.clone(), full_edge.clone());
         let (library_commands, _library_inbox) = unbounded();
-        fixture.runtime.wiring.mailbox = mailbox;
-        fixture.runtime.wiring.mailbox_sender = sender;
+        fixture.runtime.wiring.receiver = arrivals;
+        fixture.runtime.wiring.sender = sender;
         fixture.runtime.wiring.ports.library = LibraryPort::new(Port::new(
             Driver::Library,
             library_commands,
-            congestion.clone(),
+            full_edge.clone(),
         ));
 
-        fill_the_mailbox(&outbox, &congestion);
+        fill_the_sender(&outbox, &full_edge);
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
 
-        fill_the_mailbox(&outbox, &congestion);
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
 
-        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
-
-        fill_the_mailbox(&outbox, &congestion);
+        fill_the_sender(&outbox, &full_edge);
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
         fixture.runtime.drain();
     }
@@ -591,9 +583,9 @@ pub(crate) mod tests {
             fixture
                 .runtime
                 .wiring
-                .mailbox_sender
+                .sender
                 .send(Message::Workspace(WorkspaceRequest::ShowToast(
-                    Toast::error("fact".to_owned()),
+                    Toast::error("event".to_owned()),
                 )))
                 .unwrap();
         }
@@ -605,7 +597,7 @@ pub(crate) mod tests {
         let first = event_loop.wait(None).unwrap();
         event_loop.gather(first);
 
-        assert!(matches!(fixture.runtime.flow(), Flow::Stop));
+        assert!(fixture.runtime.flow().is_break());
         assert!(fixture.runtime.model.workspace.toast.is_none());
         fixture.runtime.drain();
     }

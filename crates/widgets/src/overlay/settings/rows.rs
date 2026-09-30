@@ -3,7 +3,7 @@ use ratatui::{layout::Constraint, style::Style, text::Line, widgets::Row};
 
 use crate::{
     overlay::{
-        modal::{ModalRowColors, led},
+        modal::{ModalRowColors, indented},
         settings::values::{SettingsView, settings_label, value_text},
     },
     primitive::{glyphs::TruncateGlyphs, text::truncate_to_width},
@@ -17,7 +17,7 @@ pub(crate) struct SettingsColumns {
 }
 
 impl SettingsColumns {
-    pub(crate) fn resolve(width: u16, lead: u16, label_width: usize) -> Self {
+    pub(crate) fn for_width(width: u16, lead: u16, label_width: usize) -> Self {
         let label = small_width(label_width).saturating_add(lead);
         Self {
             label,
@@ -62,7 +62,7 @@ fn settings_cells(view: &SettingsRowView<'_>) -> [String; 2] {
             .into_owned()
     };
     [
-        led(settings_label(view.row), columns.lead, columns.label),
+        indented(settings_label(view.row), columns.lead, columns.label),
         cell(&value_text(view.row, view.values), columns.value),
     ]
 }
@@ -74,18 +74,18 @@ mod tests {
 
     use crate::{
         overlay::settings::rows::{SettingsColumns, SettingsRowView, settings_cells},
-        scene::fixtures::{custom_rows, settings_values},
+        scene::fixtures::{custom_settings, settings_values},
     };
 
-    fn all_rows(custom_rows: &[CustomSetting]) -> Vec<SettingRow> {
-        SettingRow::all(custom_rows)
+    fn all_rows(custom_settings: &[CustomSetting]) -> Vec<SettingRow> {
+        SettingRow::all(custom_settings)
     }
 
     #[test]
     fn every_row_fits_its_columns() {
-        let custom = custom_rows();
+        let custom = custom_settings();
         let values = settings_values(&custom);
-        let columns = SettingsColumns::resolve(60, 0, 20);
+        let columns = SettingsColumns::for_width(60, 0, 20);
         for row in all_rows(&custom) {
             let [label, value] = settings_cells(&SettingsRowView {
                 row,

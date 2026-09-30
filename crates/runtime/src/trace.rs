@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use kernel::{domain::Driver, update::Rejection};
+use kernel::{domain::Driver, update::UpdateError};
 use strum::IntoStaticStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
@@ -14,7 +14,7 @@ pub enum DropReason {
 pub enum TraceEntry {
     Rejected {
         message: &'static str,
-        rejection: Rejection,
+        error: UpdateError,
     },
     Dropped {
         driver: Driver,
@@ -67,7 +67,7 @@ impl Trace {
 mod tests {
     use kernel::{
         domain::Driver,
-        update::{DriverRejection, Rejection},
+        update::{DriverStatusError, UpdateError},
     };
 
     use crate::trace::{DropReason, Trace, TraceEntry};
@@ -133,18 +133,18 @@ mod tests {
     #[test]
     fn a_rejected_entry_carries_the_message_label_and_the_rejection() {
         let mut trace = Trace::default();
-        let rejection = Rejection::Driver(Driver::Library, DriverRejection::Dead);
+        let error = UpdateError::Driver(Driver::Library, DriverStatusError::Dead);
 
         trace.push(TraceEntry::Rejected {
             message: "elapsed",
-            rejection: rejection.clone(),
+            error: error.clone(),
         });
 
         assert_eq!(
             trace.iter().next(),
             Some(&TraceEntry::Rejected {
                 message: "elapsed",
-                rejection,
+                error,
             })
         );
     }

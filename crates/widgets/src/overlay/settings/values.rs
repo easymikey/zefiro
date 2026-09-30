@@ -9,7 +9,7 @@ use config::{
     CoverBrackets,
     FormatChips,
     KeyHints,
-    ProgressStyle,
+    ProgressTime,
     appearance_patch,
     appearance_row,
     preset_of,
@@ -19,7 +19,7 @@ use kernel::{
     domain::{
         Crossfade,
         CustomSetting,
-        OutputDevice,
+        ListedDevice,
         Replaygain,
         SLEEP_PRESET_BUNDLES,
         SettingId,
@@ -41,9 +41,9 @@ pub struct SettingsView<'a> {
     pub sleep_presets: &'a [Duration],
     pub music_dir: &'a str,
     pub output_device: Option<&'a str>,
-    pub output_devices: &'a [OutputDevice],
+    pub output_devices: &'a [ListedDevice],
     pub appearance: Appearance,
-    pub custom_rows: &'a [CustomSetting],
+    pub custom_settings: &'a [CustomSetting],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,11 +79,11 @@ impl From<FormatChips> for Toggle {
     }
 }
 
-impl From<ProgressStyle> for Toggle {
-    fn from(value: ProgressStyle) -> Self {
+impl From<ProgressTime> for Toggle {
+    fn from(value: ProgressTime) -> Self {
         match value {
-            ProgressStyle::Remaining => Toggle::On,
-            ProgressStyle::Elapsed => Toggle::Off,
+            ProgressTime::Remaining => Toggle::On,
+            ProgressTime::Elapsed => Toggle::Off,
         }
     }
 }
@@ -178,7 +178,7 @@ fn custom_value_text(
             format_pick(&appearance.speed_chip.to_string(), glyphs)
         }
         AppearanceField::ProgressRemaining => {
-            format_toggle(Toggle::from(appearance.progress_remaining), glyphs)
+            format_toggle(Toggle::from(appearance.progress_time), glyphs)
         }
         AppearanceField::KeyHints => {
             format_toggle(Toggle::from(appearance.key_hints), glyphs)
@@ -194,7 +194,7 @@ fn custom_value_text(
 
 fn preset_label(appearance: Appearance) -> &'static str {
     match preset_of(appearance) {
-        Some(AppearancePreset::Default) => "default",
+        Some(AppearancePreset::Stock) => "default",
         Some(AppearancePreset::Noir) => "noir",
         None => "custom",
     }
@@ -248,7 +248,7 @@ fn custom_max_value_width(
     let Some(row) = appearance_row(id) else {
         return 0;
     };
-    let count = row.spec.control.count();
+    let count = row.custom.control.count();
     (0..count.get())
         .filter_map(|position| count.index(position))
         .filter_map(|option| appearance_patch(id, option).ok())
@@ -276,9 +276,7 @@ fn apply_patch(appearance: Appearance, patch: AppearancePatch) -> Appearance {
         cover_brackets: patch.cover_brackets.unwrap_or(appearance.cover_brackets),
         format_chips: patch.format_chips.unwrap_or(appearance.format_chips),
         speed_chip: patch.speed_chip.unwrap_or(appearance.speed_chip),
-        progress_remaining: patch
-            .progress_remaining
-            .unwrap_or(appearance.progress_remaining),
+        progress_time: patch.progress_time.unwrap_or(appearance.progress_time),
         key_hints: patch.key_hints.unwrap_or(appearance.key_hints),
         animations: patch.animations.unwrap_or(appearance.animations),
         layout_mode: patch.layout_mode.unwrap_or(appearance.layout_mode),
@@ -307,12 +305,12 @@ mod tests {
 
     use crate::{
         overlay::settings::values::{SettingsView, settings_label, value_text},
-        scene::fixtures::{custom_rows, settings_values},
+        scene::fixtures::{custom_settings, settings_values},
     };
 
     #[test]
     fn toggle_on_off_render_distinct_glyphs() {
-        let custom = custom_rows();
+        let custom = custom_settings();
         let on = settings_values(&custom);
         let off = SettingsView {
             replaygain: Replaygain::Off,
@@ -326,21 +324,21 @@ mod tests {
 
     #[test]
     fn pick_row_shows_current_theme() {
-        let custom = custom_rows();
+        let custom = custom_settings();
         let values = settings_values(&custom);
         assert!(value_text(SettingRow::Theme, &values).contains("noir"));
     }
 
     #[test]
     fn a_custom_row_renders_its_appearance_fields_label_and_value() {
-        let custom = custom_rows();
+        let custom = custom_settings();
         let values = settings_values(&custom);
         let cover_style_row = SettingRow::Custom(
             APPEARANCE_ROWS
                 .into_iter()
                 .find(|row| row.field == AppearanceField::CoverStyle)
                 .unwrap()
-                .spec
+                .custom
                 .id,
         );
         assert_eq!(settings_label(cover_style_row), "Cover style");

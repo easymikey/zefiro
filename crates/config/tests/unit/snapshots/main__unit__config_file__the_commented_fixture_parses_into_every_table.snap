@@ -1,8 +1,9 @@
 ---
 source: crates/config/tests/unit/config_file.rs
+assertion_line: 14
 expression: parsed
 ---
-ConfigFile {
+ConfigToml {
     music_dir: Some(
         "/music",
     ),
@@ -15,7 +16,7 @@ ConfigFile {
             0ns,
         ),
         replaygain: Off,
-        device: None,
+        device: SystemDefault,
         sleep_presets: SleepPresets(
             [
                 900s,

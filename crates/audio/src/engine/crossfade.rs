@@ -18,12 +18,12 @@ pub(crate) fn gain_out(fraction: f32) -> f32 {
 pub(crate) fn effective_volume(
     config: &EngineConfig,
     gain_db: Option<f32>,
-    user_factor: f32,
+    volume: f32,
 ) -> f32 {
     let user = if matches!(config.unity_volume, UnityVolume::Pinned) {
         1.0
     } else {
-        user_factor
+        volume
     };
     let gain = if matches!(config.replaygain, Replaygain::On) {
         gain_db.map_or(1.0, |g| 10f32.powf(g / 20.0))
@@ -59,7 +59,7 @@ pub(crate) fn arm_cue(
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::{Crossfade, Replaygain};
+    use kernel::domain::{Crossfade, OutputDevice, Replaygain};
     use proptest::prelude::{prop_assert, proptest};
     use rstest::rstest;
 
@@ -83,7 +83,7 @@ mod tests {
         replaygain: Replaygain,
         unity_volume: UnityVolume,
         gain: Option<f32>,
-        user_factor: f32,
+        volume: f32,
         expected: f32,
     }
 
@@ -92,35 +92,35 @@ mod tests {
         replaygain: Replaygain::On,
         unity_volume: UnityVolume::Free,
         gain: None,
-        user_factor: 0.5,
+        volume: 0.5,
         expected: 0.5,
     })]
     #[case::replaygain_disabled_ignores_the_gain(VolumeRow {
         replaygain: Replaygain::Off,
         unity_volume: UnityVolume::Free,
         gain: Some(-6.0),
-        user_factor: 1.0,
+        volume: 1.0,
         expected: 1.0,
     })]
     #[case::replaygain_applies_decibels_as_a_linear_factor(VolumeRow {
         replaygain: Replaygain::On,
         unity_volume: UnityVolume::Free,
         gain: Some(-6.0),
-        user_factor: 1.0,
+        volume: 1.0,
         expected: 0.501_187,
     })]
     #[case::unity_volume_pins_a_quiet_user_factor(VolumeRow {
         replaygain: Replaygain::On,
         unity_volume: UnityVolume::Pinned,
         gain: Some(-6.0),
-        user_factor: 0.1,
+        volume: 0.1,
         expected: 0.501_187,
     })]
     #[case::unity_volume_pins_a_loud_user_factor(VolumeRow {
         replaygain: Replaygain::On,
         unity_volume: UnityVolume::Pinned,
         gain: Some(-6.0),
-        user_factor: 0.9,
+        volume: 0.9,
         expected: 0.501_187,
     })]
     fn effective_volume_combines_gain_and_user_factor(#[case] row: VolumeRow) {
@@ -128,9 +128,9 @@ mod tests {
             crossfade: Crossfade::default(),
             replaygain: row.replaygain,
             unity_volume: row.unity_volume,
-            device: None,
+            device: OutputDevice::SystemDefault,
         };
-        let factor = effective_volume(&engine_config, row.gain, row.user_factor);
+        let factor = effective_volume(&engine_config, row.gain, row.volume);
         let expected = row.expected;
         assert!(
             (factor - expected).abs() < 1e-4,

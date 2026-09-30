@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/src/update/startup.rs
-assertion_line: 186
+assertion_line: 255
 expression: effects
 ---
 [
@@ -10,12 +10,12 @@ expression: effects
     Audio(
         Stop,
     ),
-    System(
+    Macos(
         PlaybackState(
             Paused,
         ),
     ),
-    System(
+    Macos(
         NowPlaying(
             Cleared,
         ),
@@ -23,15 +23,37 @@ expression: effects
     Audio(
         ListDevices,
     ),
+    Audio(
+        SetDevice(
+            Named(
+                DeviceName(
+                    "Speakers",
+                ),
+            ),
+        ),
+    ),
+    Audio(
+        SetCrossfade(
+            Crossfade(
+                3s,
+            ),
+        ),
+    ),
+    Audio(
+        SetReplaygain(
+            On,
+        ),
+    ),
     Library(
         LoadFavorites,
     ),
     Library(
-        ScanLibrary {
-            root: "/music",
+        Scan {
+            music_dir: "/music",
             revision: Revision(
                 0,
             ),
+            mode: Cached,
         },
     ),
     Config(

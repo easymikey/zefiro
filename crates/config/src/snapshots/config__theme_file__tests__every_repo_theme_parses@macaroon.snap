@@ -6,49 +6,49 @@ expression: "parse_theme(source, name).unwrap()"
 ThemeFile {
     name: "macaroon",
     colors: ThemeColors {
-        background: Hex(
+        background: Rgb(
             [
                 216,
                 208,
                 200,
             ],
         ),
-        foreground: Hex(
+        foreground: Rgb(
             [
                 122,
                 122,
                 122,
             ],
         ),
-        bright_foreground: Hex(
+        bright_foreground: Rgb(
             [
                 26,
                 26,
                 26,
             ],
         ),
-        accent: Hex(
+        accent: Rgb(
             [
                 42,
                 168,
                 160,
             ],
         ),
-        green: Hex(
+        green: Rgb(
             [
                 42,
                 168,
                 160,
             ],
         ),
-        yellow: Hex(
+        yellow: Rgb(
             [
                 232,
                 196,
                 106,
             ],
         ),
-        red: Hex(
+        red: Rgb(
             [
                 232,
                 122,

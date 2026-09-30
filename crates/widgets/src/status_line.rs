@@ -1,12 +1,15 @@
 use std::{borrow::Cow, time::Duration};
 
-use kernel::{domain::ScanStatus, playlist::RepeatMode};
+use kernel::{
+    domain::{ScanStatus, Shuffle},
+    playlist::RepeatMode,
+};
 use ratatui::{style::Color, text::Line};
 
 use crate::{
     primitive::{
         glyphs::TruncateGlyphs,
-        span::{Piece, row, text},
+        span::{StyledText, line, text},
         text::truncate_line_to_width,
     },
     redraw::ceil_minutes,
@@ -34,12 +37,6 @@ impl<'a> ScanProgress<'a> {
             ScanStatus::Tagging { done, total } => Self::Tagging { done, total },
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Shuffle {
-    On,
-    Off,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -97,7 +94,7 @@ fn sleep_label(left: Duration) -> String {
 }
 
 #[must_use]
-pub(crate) fn build<'a>(
+pub(crate) fn status_line<'a>(
     status: StatusLineView<'a>,
     colors: StatusLineColors,
     row_width: usize,
@@ -106,12 +103,12 @@ pub(crate) fn build<'a>(
     let pos_total = counts(status);
 
     let shuffle: &'static str = match status.shuffle {
-        Shuffle::On => "on",
-        Shuffle::Off => "off",
+        Shuffle::Enabled => "on",
+        Shuffle::Disabled => "off",
     };
     let repeat: &'static str = <&'static str>::from(status.repeat_mode);
 
-    let flag = |label: &'static str, value: Cow<'a, str>| -> Vec<Piece<'a>> {
+    let flag = |label: &'static str, value: Cow<'a, str>| -> Vec<StyledText<'a>> {
         vec![text(label).fg(colors.dim), text(value).fg(colors.accent)]
     };
     let flag_separator = || text(glyphs.flag_separator).fg(colors.dim);
@@ -142,25 +139,24 @@ pub(crate) fn build<'a>(
                 },
             ));
 
-    truncate_line_to_width(row(pieces), row_width, TruncateGlyphs::default())
+    truncate_line_to_width(line(pieces), row_width, TruncateGlyphs::default())
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use kernel::playlist::RepeatMode;
+    use kernel::{domain::Shuffle, playlist::RepeatMode};
     use ratatui::style::Color;
     use rstest::rstest;
     use unicode_width::UnicodeWidthStr;
 
     use crate::status_line::{
         ScanProgress,
-        Shuffle,
         StatusLineColors,
         StatusLineView,
-        build,
         sleep_label,
+        status_line,
     };
 
     fn colors() -> StatusLineColors {
@@ -173,7 +169,7 @@ mod tests {
 
     fn view() -> StatusLineView<'static> {
         StatusLineView {
-            shuffle: Shuffle::On,
+            shuffle: Shuffle::Enabled,
             repeat_mode: RepeatMode::All,
             queue_len: 7,
             position: 2,
@@ -185,7 +181,7 @@ mod tests {
     }
 
     fn written(status: StatusLineView<'_>) -> String {
-        build(status, colors(), 80)
+        status_line(status, colors(), 80)
             .spans
             .iter()
             .map(|span| span.content.as_ref())
@@ -214,14 +210,14 @@ mod tests {
     }
 
     #[test]
-    fn build_snapshot() {
-        let line = build(view(), colors(), 80);
+    fn the_status_line_shows_every_label() {
+        let line = status_line(view(), colors(), 80);
         insta::assert_debug_snapshot!(line);
     }
 
     #[test]
     fn the_title_names_the_pane_its_position_and_its_flags() {
-        let text: String = build(view(), colors(), 80)
+        let text: String = status_line(view(), colors(), 80)
             .spans
             .iter()
             .map(|span| span.content.as_ref())
@@ -238,7 +234,7 @@ mod tests {
             sleep_left: Some(Duration::from_secs(14 * 60 + 59)),
             ..view()
         };
-        let text: String = build(status, colors(), 100)
+        let text: String = status_line(status, colors(), 100)
             .spans
             .iter()
             .map(|span| span.content.as_ref())
@@ -252,14 +248,17 @@ mod tests {
     #[case::rounds_up_past_the_quarter_hour(Duration::from_secs(15 * 60 + 1), "16m")]
     #[case::last_minute(Duration::from_secs(1), "1m")]
     #[case::no_time_left(Duration::ZERO, "0m")]
-    fn sleep_label_rows(#[case] left: Duration, #[case] expected: &str) {
+    fn the_sleep_label_rounds_minutes_up(
+        #[case] left: Duration,
+        #[case] expected: &str,
+    ) {
         assert_eq!(sleep_label(left), expected);
     }
 
     #[test]
     fn a_narrow_border_truncates_the_title_with_an_ellipsis() {
         let budget = 24;
-        let text: String = build(view(), colors(), budget)
+        let text: String = status_line(view(), colors(), budget)
             .spans
             .iter()
             .map(|span| span.content.as_ref())

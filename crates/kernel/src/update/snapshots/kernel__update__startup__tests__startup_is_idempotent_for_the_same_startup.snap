@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/src/update/startup.rs
-assertion_line: 222
+assertion_line: 261
 expression: projected
 ---
 (
@@ -8,7 +8,7 @@ expression: projected
         3s,
     ),
     On,
-    Some(
+    Named(
         DeviceName(
             "Speakers",
         ),

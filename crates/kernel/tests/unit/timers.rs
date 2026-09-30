@@ -103,7 +103,7 @@ fn arming_the_sleep_timer_schedules_the_first_preset() {
         cmd,
         Cmd::One(Effect::After {
             delay: first_preset,
-            message: Timer::Sleep(model.sleep_generation),
+            message: Timer::Sleep(model.revisions.sleep),
         })
     );
 }

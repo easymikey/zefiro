@@ -17,7 +17,7 @@ use crate::{
         CompactScreen,
         FrameLayout,
         FullScreen,
-        MinimalCard,
+        MinimalScreen,
         TooSmallNotice,
     },
 };
@@ -33,7 +33,11 @@ impl Widget for &Screen<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let theme = self.scene.active_theme();
         Block::new()
-            .style(Style::default().bg(theme.window_bg()).fg(theme.text()))
+            .style(
+                Style::default()
+                    .bg(theme.window_background())
+                    .fg(theme.text()),
+            )
             .render(area, buffer);
         let layout = self.layout;
         match layout.breakpoint {
@@ -46,7 +50,7 @@ impl Widget for &Screen<'_> {
                     .render(layout.screen, buffer);
                 return;
             }
-            Breakpoint::Minimal => (&MinimalCard {
+            Breakpoint::Minimal => (&MinimalScreen {
                 view: self.scene.card_view(),
                 theme,
                 speed_chip: self.scene.appearance.card.speed_chip,

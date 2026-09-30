@@ -3,17 +3,13 @@ use std::{io, path::PathBuf};
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum Error {
     #[error(transparent)]
-    Runtime(#[from] runtime::RuntimeError),
+    Runtime(#[from] runtime::Error),
     #[error(transparent)]
-    Run(#[from] runtime::RunError<io::Error>),
-    #[error(transparent)]
-    Host(#[from] runtime::HostError),
-    #[error(transparent)]
-    Terminal(#[from] terminal::TerminalError),
+    Terminal(#[from] terminal::Error),
     #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]
-    Library(#[from] library::LibraryError),
+    Library(#[from] library::Error),
     #[error("reading {path}: {source}")]
     ConfigRead {
         path: PathBuf,
@@ -24,7 +20,7 @@ pub(crate) enum Error {
     ConfigParse {
         path: PathBuf,
         #[source]
-        source: config::ConfigError,
+        source: config::Error,
     },
     #[error("no music directory configured and no default audio directory available")]
     MusicDirectoryUnset,
@@ -34,7 +30,7 @@ pub(crate) enum Error {
     PlaylistName {
         name: String,
         #[source]
-        source: kernel::playlist::PlaylistNameRejection,
+        source: kernel::playlist::PlaylistNameError,
     },
     #[error(transparent)]
     SignalInstall(#[from] crate::signal::AlreadyInstalled),
@@ -43,7 +39,7 @@ pub(crate) enum Error {
     #[error("{run} (teardown after also failed: {teardown})")]
     RunAndTeardown {
         #[source]
-        run: runtime::RunError<io::Error>,
+        run: runtime::Error,
         teardown: io::Error,
     },
 }
@@ -77,7 +73,7 @@ mod tests {
     #[test]
     fn run_and_teardown_message_names_both_failures() {
         let error = Error::RunAndTeardown {
-            run: runtime::RunError::InputClosed,
+            run: runtime::Error::InputClosed,
             teardown: io::Error::other("broken pipe"),
         };
 

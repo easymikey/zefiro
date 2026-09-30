@@ -6,12 +6,12 @@ expression: effs
     Audio(
         Stop,
     ),
-    System(
+    Macos(
         PlaybackState(
             Paused,
         ),
     ),
-    System(
+    Macos(
         NowPlaying(
             Cleared,
         ),

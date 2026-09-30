@@ -9,12 +9,12 @@ use crate::{
         CoverStyle,
         FormatChips,
         KeyHints,
-        ProgressStyle,
-        SpeedChipMode,
+        ProgressTime,
+        SpeedChip,
     },
-    breakpoints::BreakpointsConfig,
-    error::{ConfigError, TomlFile, named_toml},
-    hex::Hex,
+    breakpoints::LayoutConfig,
+    error::{Error, TomlFile, parse_toml},
+    hex::Rgb,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -59,7 +59,7 @@ impl Default for CoverConfig {
 pub struct CardConfig {
     #[serde(deserialize_with = "crate::appearance::format_chips")]
     pub format_chips: FormatChips,
-    pub speed_chip: SpeedChipMode,
+    pub speed_chip: SpeedChip,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -67,10 +67,10 @@ pub struct CardConfig {
 pub struct ProgressConfig {
     pub height_px: f32,
     pub radius: Option<f32>,
-    pub fill: Option<Hex>,
-    pub track: Option<Hex>,
+    pub fill: Option<Rgb>,
+    pub track: Option<Rgb>,
     #[serde(deserialize_with = "crate::appearance::progress_style")]
-    pub remaining: ProgressStyle,
+    pub remaining: ProgressTime,
 }
 
 impl Default for ProgressConfig {
@@ -80,7 +80,7 @@ impl Default for ProgressConfig {
             radius: None,
             fill: None,
             track: None,
-            remaining: ProgressStyle::default(),
+            remaining: ProgressTime::default(),
         }
     }
 }
@@ -101,32 +101,32 @@ pub struct AppearanceFile {
     pub card: CardConfig,
     pub progress: ProgressConfig,
     pub cover: CoverConfig,
-    pub layout: BreakpointsConfig,
+    pub layout: LayoutConfig,
     pub window: WindowConfig,
 }
 
 impl AppearanceFile {
-    pub fn options(&self) -> Appearance {
+    pub fn appearance(&self) -> Appearance {
         Appearance {
             cover_style: self.cover.style,
             cover_brackets: self.cover.brackets,
             format_chips: self.card.format_chips,
             speed_chip: self.card.speed_chip,
-            progress_remaining: self.progress.remaining,
+            progress_time: self.progress.remaining,
             key_hints: self.window.key_hints,
             animations: self.window.animations,
             layout_mode: self.layout.mode,
         }
     }
 
-    pub fn with(self, appearance: Appearance) -> Self {
+    pub fn with_appearance(self, appearance: Appearance) -> Self {
         Self {
             card: CardConfig {
                 format_chips: appearance.format_chips,
                 speed_chip: appearance.speed_chip,
             },
             progress: ProgressConfig {
-                remaining: appearance.progress_remaining,
+                remaining: appearance.progress_time,
                 ..self.progress
             },
             cover: CoverConfig {
@@ -134,7 +134,7 @@ impl AppearanceFile {
                 brackets: appearance.cover_brackets,
                 ..self.cover
             },
-            layout: BreakpointsConfig {
+            layout: LayoutConfig {
                 mode: appearance.layout_mode,
                 ..self.layout
             },
@@ -146,15 +146,13 @@ impl AppearanceFile {
     }
 
     pub fn patched(&self, patch: AppearancePatch) -> AppearanceFile {
-        let current = self.options();
-        self.clone().with(Appearance {
+        let current = self.appearance();
+        self.clone().with_appearance(Appearance {
             cover_style: patch.cover_style.unwrap_or(current.cover_style),
             cover_brackets: patch.cover_brackets.unwrap_or(current.cover_brackets),
             format_chips: patch.format_chips.unwrap_or(current.format_chips),
             speed_chip: patch.speed_chip.unwrap_or(current.speed_chip),
-            progress_remaining: patch
-                .progress_remaining
-                .unwrap_or(current.progress_remaining),
+            progress_time: patch.progress_time.unwrap_or(current.progress_time),
             key_hints: patch.key_hints.unwrap_or(current.key_hints),
             animations: patch.animations.unwrap_or(current.animations),
             layout_mode: patch.layout_mode.unwrap_or(current.layout_mode),
@@ -164,8 +162,8 @@ impl AppearanceFile {
 
 pub const APPEARANCE_FILE_NAME: &str = "sifr-ui.toml";
 
-pub fn parse_appearance(source: &str) -> Result<AppearanceFile, ConfigError> {
-    named_toml(source, TomlFile::Appearance)
+pub fn parse_appearance(source: &str) -> Result<AppearanceFile, Error> {
+    parse_toml(source, TomlFile::Appearance)
 }
 
 #[cfg(test)]
@@ -183,9 +181,9 @@ mod tests {
             FormatChips,
             KeyHints,
             LayoutMode,
-            ProgressStyle,
-            SpeedChipMode,
-            preset_options,
+            ProgressTime,
+            SpeedChip,
+            preset_appearance,
         },
         appearance_file::{
             AppearanceFile,
@@ -193,8 +191,8 @@ mod tests {
             TextCoverCells,
             parse_appearance,
         },
-        breakpoints::BreakpointsConfig,
-        error::ConfigError,
+        breakpoints::LayoutConfig,
+        error::Error,
     };
 
     const COMMENTED_UI: &str = include_str!("../tests/fixtures/sifr-ui_commented.toml");
@@ -211,17 +209,22 @@ mod tests {
 
     #[test]
     fn the_stock_file_offers_the_stock_appearance() {
-        assert_eq!(AppearanceFile::default().options(), Appearance::default());
+        assert_eq!(
+            AppearanceFile::default().appearance(),
+            Appearance::default()
+        );
     }
 
     #[rstest]
     #[case::stock(Appearance::default())]
-    #[case::noir(preset_options(AppearancePreset::Noir))]
+    #[case::noir(preset_appearance(AppearancePreset::Noir))]
     fn a_file_written_with_an_appearance_offers_it_back(
         #[case] appearance: Appearance,
     ) {
         assert_eq!(
-            AppearanceFile::default().with(appearance).options(),
+            AppearanceFile::default()
+                .with_appearance(appearance)
+                .appearance(),
             appearance
         );
     }
@@ -236,7 +239,7 @@ mod tests {
             ..AppearanceFile::default()
         };
 
-        let noir = sized.with(preset_options(AppearancePreset::Noir));
+        let noir = sized.with_appearance(preset_appearance(AppearancePreset::Noir));
 
         assert_eq!(noir.cover.size_px, 320);
         assert_eq!(noir.cover.style, CoverStyle::Milkdrop);
@@ -251,7 +254,7 @@ mod tests {
     fn a_broken_file_reports_the_real_parse_error() {
         assert!(matches!(
             parse_appearance("[cover\nnot toml"),
-            Err(ConfigError::Parse { .. })
+            Err(Error::Parse { .. })
         ));
     }
 
@@ -306,8 +309,8 @@ mod tests {
             assert_eq!(c.cover.style, CoverStyle::Off);
             assert_eq!(c.cover.brackets, CoverBrackets::Shown);
             assert_eq!(c.card.format_chips, FormatChips::Shown);
-            assert_eq!(c.card.speed_chip, SpeedChipMode::Changed);
-            assert_eq!(c.progress.remaining, ProgressStyle::Remaining);
+            assert_eq!(c.card.speed_chip, SpeedChip::Changed);
+            assert_eq!(c.progress.remaining, ProgressTime::Remaining);
         }
     )]
     #[case::the_window_flags("[window]\nkey_hints = false\n", |c: &AppearanceFile| {
@@ -317,7 +320,7 @@ mod tests {
         assert_eq!(c.progress.fill.map(|hex| hex.0), Some([255, 0, 0]));
     })]
     #[case::one_breakpoint("[layout]\nfull_min_width = 80\n", |c: &AppearanceFile| {
-        let stock = BreakpointsConfig::default();
+        let stock = LayoutConfig::default();
         assert_eq!(c.layout.full_min_width, 80);
         assert_eq!(c.layout.full_min_height, stock.full_min_height);
         assert_eq!(c.layout.compact_min_width, stock.compact_min_width);
@@ -356,10 +359,10 @@ mod tests {
         AppearancePatch::builder().format_chips(FormatChips::Shown).build()
     )]
     #[case::speed_chip(
-        AppearancePatch::builder().speed_chip(SpeedChipMode::Never).build()
+        AppearancePatch::builder().speed_chip(SpeedChip::Never).build()
     )]
-    #[case::progress_remaining(
-        AppearancePatch::builder().progress_remaining(ProgressStyle::Remaining).build()
+    #[case::progress_time(
+        AppearancePatch::builder().progress_time(ProgressTime::Remaining).build()
     )]
     #[case::key_hints(
         AppearancePatch::builder().key_hints(KeyHints::Hidden).build()
@@ -372,7 +375,7 @@ mod tests {
     )]
     fn patched_applies_exactly_the_row_the_patch_names(#[case] patch: AppearancePatch) {
         let base = AppearanceFile::default();
-        let after = base.patched(patch).options();
+        let after = base.patched(patch).appearance();
         let expected = Appearance {
             cover_style: patch
                 .cover_style
@@ -384,9 +387,9 @@ mod tests {
                 .format_chips
                 .unwrap_or(Appearance::default().format_chips),
             speed_chip: patch.speed_chip.unwrap_or(Appearance::default().speed_chip),
-            progress_remaining: patch
-                .progress_remaining
-                .unwrap_or(Appearance::default().progress_remaining),
+            progress_time: patch
+                .progress_time
+                .unwrap_or(Appearance::default().progress_time),
             key_hints: patch.key_hints.unwrap_or(Appearance::default().key_hints),
             animations: patch.animations.unwrap_or(Appearance::default().animations),
             layout_mode: patch
@@ -398,8 +401,8 @@ mod tests {
 
     #[test]
     fn patched_with_an_empty_patch_leaves_every_option_untouched() {
-        let base =
-            AppearanceFile::default().with(preset_options(AppearancePreset::Noir));
+        let base = AppearanceFile::default()
+            .with_appearance(preset_appearance(AppearancePreset::Noir));
         let after = base.patched(AppearancePatch::builder().build());
         assert_eq!(after, base);
     }

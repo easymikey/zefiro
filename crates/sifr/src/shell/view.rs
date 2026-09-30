@@ -1,8 +1,8 @@
 use std::{path::PathBuf, time::Duration};
 
-use config::{AppearanceFile, Hex, ThemeColors, ThemeFile};
+use config::{AppearanceFile, Rgb, ThemeColors, ThemeFile};
 use kernel::Moment;
-use runtime::View;
+use runtime::FrameInput;
 use widgets::{CellAspect, ColorDepth, FrameLayout, PixelPath, Scene, Theme};
 
 use crate::shell::motion::Motion;
@@ -15,51 +15,51 @@ pub(crate) struct Presentation {
     pub(in crate::shell) cell_aspect: CellAspect,
     pub(in crate::shell) home: Option<PathBuf>,
     pub(in crate::shell) music_dir: PathBuf,
-    pub(in crate::shell) music_dir_display: String,
+    pub(in crate::shell) music_dir_label: String,
 }
 
-pub(in crate::shell) enum Update {
+pub(in crate::shell) enum LookReload {
     Theme(ThemeFile),
     Appearance(AppearanceFile),
 }
 
-pub(in crate::shell) fn install(
+pub(in crate::shell) fn apply_reload(
     theme: &mut Theme,
     appearance: &mut AppearanceFile,
-    update: Update,
+    update: LookReload,
 ) {
     match update {
-        Update::Theme(file) => *theme = Theme::from(file),
-        Update::Appearance(file) => *appearance = file,
+        LookReload::Theme(file) => *theme = Theme::from(file),
+        LookReload::Appearance(file) => *appearance = file,
     }
 }
 
-pub(crate) struct Frame<'a> {
+pub(crate) struct LaidOutScene<'a> {
     pub(crate) scene: Scene<'a>,
     pub(crate) layout: FrameLayout,
 }
 
 pub(crate) fn view<'a>(
-    view: &View<'a>,
+    input: &FrameInput<'a>,
     presentation: &'a Presentation,
     motion: &'a Motion,
-) -> Frame<'a> {
+) -> LaidOutScene<'a> {
     let scene = Scene {
-        model: view.model,
+        model: input.model,
         theme: &presentation.theme,
         color_depth: presentation.color_depth,
         appearance: &presentation.appearance,
-        bindings: view.model.workspace.bindings.as_slice(),
-        spectrum: motion.spectrum.current_bands(),
+        bindings: input.model.workspace.keymap.bindings(),
+        spectrum: motion.spectrum.bands(),
         pixel_path: presentation.pixel_path,
         cell_aspect: presentation.cell_aspect,
-        clock: animation_clock(motion.started, view.now),
-        now: view.now,
-        music_dir: &presentation.music_dir_display,
-        sleep_left: sleep_left(view.sleep_deadline, view.now),
+        clock: animation_clock(motion.started, input.now),
+        now: input.now,
+        music_dir: &presentation.music_dir_label,
+        sleep_left: sleep_left(input.sleep_deadline, input.now),
     };
     let layout = FrameLayout::new(&scene.layout_inputs(), motion.area);
-    Frame { scene, layout }
+    LaidOutScene { scene, layout }
 }
 
 fn animation_clock(started: Moment, now: Moment) -> Duration {
@@ -74,13 +74,13 @@ pub(crate) fn fallback_theme_file() -> ThemeFile {
     ThemeFile {
         name: "fallback".to_string(),
         colors: ThemeColors {
-            background: Hex([0, 0, 0]),
-            foreground: Hex([0xff, 0xff, 0xff]),
-            bright_foreground: Hex([0xff, 0xff, 0xff]),
-            accent: Hex([0xff, 0xff, 0xff]),
-            green: Hex([0, 0xff, 0]),
-            yellow: Hex([0xff, 0xff, 0]),
-            red: Hex([0xff, 0, 0]),
+            background: Rgb([0, 0, 0]),
+            foreground: Rgb([0xff, 0xff, 0xff]),
+            bright_foreground: Rgb([0xff, 0xff, 0xff]),
+            accent: Rgb([0xff, 0xff, 0xff]),
+            green: Rgb([0, 0xff, 0]),
+            yellow: Rgb([0xff, 0xff, 0]),
+            red: Rgb([0xff, 0, 0]),
             window_background: None,
         },
         scanning_label: "scanning…".to_string(),
@@ -92,11 +92,11 @@ mod tests {
     use std::{path::PathBuf, time::Duration};
 
     use audio::SpectrumTap;
-    use config::{AppearanceFile, Hex, ThemeColors, ThemeFile};
+    use config::{AppearanceFile, Rgb, ThemeColors, ThemeFile};
     use kernel::{Moment, domain::Model};
     use ratatui::layout::Rect;
     use rstest::rstest;
-    use runtime::View;
+    use runtime::FrameInput;
     use widgets::{
         CellAspect,
         ColorDepth,
@@ -110,12 +110,12 @@ mod tests {
     use crate::shell::{
         motion::Motion,
         view::{
-            Frame,
+            LaidOutScene,
+            LookReload,
             Presentation,
-            Update,
             animation_clock,
+            apply_reload,
             fallback_theme_file,
-            install,
             sleep_left,
             view,
         },
@@ -135,13 +135,13 @@ mod tests {
             cell_aspect: CellAspect::default(),
             home: None,
             music_dir: PathBuf::new(),
-            music_dir_display: String::new(),
+            music_dir_label: String::new(),
         };
         let motion = Motion {
             area,
             ..Motion::default()
         };
-        let stock = View {
+        let stock = FrameInput {
             model: &model,
             spectrum: &spectrum,
             cells: &cells,
@@ -149,7 +149,7 @@ mod tests {
             now: Moment::new(Duration::from_secs(5)),
         };
 
-        let Frame { layout, .. } = view(&stock, &presentation, &motion);
+        let LaidOutScene { layout, .. } = view(&stock, &presentation, &motion);
 
         assert_eq!(layout.screen, area);
         insta::assert_debug_snapshot!(layout);
@@ -159,13 +159,13 @@ mod tests {
         ThemeFile {
             name: name.to_string(),
             colors: ThemeColors {
-                background: Hex([0, 0, 0]),
-                foreground: Hex([1, 1, 1]),
-                bright_foreground: Hex([2, 2, 2]),
-                accent: Hex([3, 3, 3]),
-                green: Hex([0, 0xff, 0]),
-                yellow: Hex([0xff, 0xff, 0]),
-                red: Hex([0xff, 0, 0]),
+                background: Rgb([0, 0, 0]),
+                foreground: Rgb([1, 1, 1]),
+                bright_foreground: Rgb([2, 2, 2]),
+                accent: Rgb([3, 3, 3]),
+                green: Rgb([0, 0xff, 0]),
+                yellow: Rgb([0xff, 0xff, 0]),
+                red: Rgb([0xff, 0, 0]),
                 window_background: None,
             },
             scanning_label: "scanning…".to_string(),
@@ -177,10 +177,10 @@ mod tests {
         let mut theme = Theme::from(theme_file("before"));
         let mut appearance = AppearanceFile::default();
 
-        install(
+        apply_reload(
             &mut theme,
             &mut appearance,
-            Update::Theme(theme_file("after")),
+            LookReload::Theme(theme_file("after")),
         );
 
         assert_eq!(theme.name, "after");
@@ -193,7 +193,11 @@ mod tests {
         let mut replacement = AppearanceFile::default();
         replacement.cover.size_px = 512;
 
-        install(&mut theme, &mut appearance, Update::Appearance(replacement));
+        apply_reload(
+            &mut theme,
+            &mut appearance,
+            LookReload::Appearance(replacement),
+        );
 
         assert_eq!(appearance.cover.size_px, 512);
     }

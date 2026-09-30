@@ -8,7 +8,7 @@ use crate::domain::{
     SettingRow,
     TimecodeError,
     Track,
-    playlist::PlaylistNameRejection,
+    playlist::PlaylistNameError,
 };
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
@@ -18,16 +18,18 @@ pub enum Overlay {
     Search(CursorOver<SearchQuery>),
     SavePlaylist {
         typed: TextEntry,
-        error: Option<PlaylistNameRejection>,
+        error: Option<PlaylistNameError>,
     },
     History(CursorOver<()>),
-    Settings(SettingsCursor),
+    Settings {
+        selected: SettingRow,
+    },
     ConfirmDelete(DeleteCandidate),
     JumpToTime(JumpDigits),
     TrackDetails(Arc<Track>),
-    SourceDir {
+    MusicDir {
         typed: TextEntry,
-        error: Option<SourceDirError>,
+        error: Option<MusicDirError>,
     },
 }
 
@@ -37,10 +39,10 @@ impl Overlay {
         match self {
             Overlay::Search(_)
             | Overlay::SavePlaylist { .. }
-            | Overlay::SourceDir { .. } => TextCapture::Typing,
+            | Overlay::MusicDir { .. } => TextCapture::Typing,
             Overlay::Help
             | Overlay::History(_)
-            | Overlay::Settings(_)
+            | Overlay::Settings { .. }
             | Overlay::ConfirmDelete(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_) => TextCapture::Chording,
@@ -59,7 +61,7 @@ pub enum OverlayName {
     ConfirmDelete,
     TrackDetails,
     JumpToTime,
-    SourceDir,
+    MusicDir,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +76,7 @@ pub struct TextEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum SourceDirError {
+pub enum MusicDirError {
     #[error("enter a folder path")]
     Empty,
 }
@@ -83,19 +85,6 @@ pub enum SourceDirError {
 pub struct SearchQuery {
     pub input: String,
     pub matches: Vec<usize>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SettingsCursor {
-    pub selected: SettingRow,
-}
-
-impl Default for SettingsCursor {
-    fn default() -> Self {
-        Self {
-            selected: SettingRow::Theme,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

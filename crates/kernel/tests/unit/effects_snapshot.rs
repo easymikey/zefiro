@@ -1,8 +1,8 @@
 use kernel::{
     AudioEvent,
     BrowseRequest,
-    ConfigFact,
-    LibraryFact,
+    ConfigEvent,
+    LibraryEvent,
     Message,
     Model,
     Moment,
@@ -10,9 +10,9 @@ use kernel::{
     domain::{
         Choice,
         CustomControl,
+        CustomRow,
         CustomSetting,
-        CustomSpec,
-        Nudge,
+        Direction,
         OptionCount,
         Revision,
         SettingId,
@@ -53,21 +53,21 @@ fn adjusting_a_custom_row_emits_its_effect() {
     let mut m = Model::default();
     let id = SettingId::new(3);
     let count = OptionCount::new(4).unwrap();
-    let spec: &'static CustomSpec = Box::leak(Box::new(CustomSpec {
+    let custom: &'static CustomRow = Box::leak(Box::new(CustomRow {
         id,
         control: CustomControl::Cycle(count),
         cue: None,
         themes: &[],
     }));
-    m.custom_rows.push(CustomSetting {
-        spec,
+    m.custom_settings.push(CustomSetting {
+        custom,
         choice: Choice::Option(count.index(0).unwrap()),
     });
     let cmd = update(
         &mut m,
         Message::Adjust {
             row: SettingRow::Custom(id),
-            nudge: Nudge::Up,
+            direction: Direction::Next,
         },
         Moment::default(),
     )
@@ -80,7 +80,7 @@ fn theme_reloaded_emits_its_effect() {
     let mut m = Model::default();
     let cmd = update(
         &mut m,
-        Message::Config(ConfigFact::ThemeReloaded(ThemeName::from_static("noir"))),
+        Message::Config(ConfigEvent::ThemeReloaded(ThemeName::from_static("noir"))),
         Moment::default(),
     )
     .unwrap();
@@ -92,7 +92,7 @@ fn library_loaded_emits_its_effects() {
     let mut m = Model::default();
     let cmd = update(
         &mut m,
-        Message::Library(LibraryFact::Loaded {
+        Message::Library(LibraryEvent::Loaded {
             tracks: vec![],
             revision: Revision::default(),
         }),

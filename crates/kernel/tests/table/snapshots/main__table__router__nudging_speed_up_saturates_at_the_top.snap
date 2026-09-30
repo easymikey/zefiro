@@ -5,11 +5,9 @@ expression: "walked(model, messages)"
 [
     (
         Playback(
-            NudgeSpeed(
-                SpeedStep(
-                    1,
-                ),
-            ),
+            NudgeSpeed {
+                steps: 1,
+            },
         ),
         One(
             Audio(
@@ -42,18 +40,15 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,
     ),
     (
         Playback(
-            NudgeSpeed(
-                SpeedStep(
-                    1,
-                ),
-            ),
+            NudgeSpeed {
+                steps: 1,
+            },
         ),
         One(
             Audio(
@@ -86,18 +81,15 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,
     ),
     (
         Playback(
-            NudgeSpeed(
-                SpeedStep(
-                    1,
-                ),
-            ),
+            NudgeSpeed {
+                steps: 1,
+            },
         ),
         One(
             Audio(
@@ -130,18 +122,15 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,
     ),
     (
         Playback(
-            NudgeSpeed(
-                SpeedStep(
-                    1,
-                ),
-            ),
+            NudgeSpeed {
+                steps: 1,
+            },
         ),
         One(
             Audio(
@@ -174,18 +163,15 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,
     ),
     (
         Playback(
-            NudgeSpeed(
-                SpeedStep(
-                    1,
-                ),
-            ),
+            NudgeSpeed {
+                steps: 1,
+            },
         ),
         One(
             Audio(
@@ -218,7 +204,6 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,

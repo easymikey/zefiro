@@ -19,7 +19,7 @@ pub(crate) enum Decoding {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoverRequest {
     pub path: PathBuf,
-    pub side: u32,
+    pub size_px: u32,
 }
 
 impl From<&CoverRequest> for &'static str {
@@ -56,31 +56,31 @@ pub(crate) enum DecodeMessage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DecodingRejection {
+pub(crate) enum DecodingError {
     WhileBusy,
     WhileIdle,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) enum DecodeIo {
+pub(crate) enum DecodeEffect {
     Decode(CoverRequest),
     #[default]
     Nothing,
 }
 
-type Step = Result<(Decoding, DecodeIo), Rejected<Decoding>>;
+type Step = Result<(Decoding, DecodeEffect), Rejected<Decoding>>;
 
 impl Machine for Decoding {
     type Message = DecodeMessage;
-    type Rejection = DecodingRejection;
-    type Effect = DecodeIo;
+    type Error = DecodingError;
+    type Effect = DecodeEffect;
 
     fn transition(self, message: DecodeMessage) -> Step {
         match (self, message) {
             (Decoding::Idle, DecodeMessage::Request(request)) => Ok(requested(request)),
             (state @ Decoding::Idle, DecodeMessage::Decoded(_)) => Err(Rejected {
                 state,
-                reason: DecodingRejection::WhileIdle,
+                reason: DecodingError::WhileIdle,
             }),
             (Decoding::Busy(path), DecodeMessage::Request(request))
                 if path != request.path =>
@@ -90,22 +90,22 @@ impl Machine for Decoding {
             (Decoding::Busy(path), DecodeMessage::Decoded(answered))
                 if path == answered =>
             {
-                Ok((Decoding::Idle, DecodeIo::Nothing))
+                Ok((Decoding::Idle, DecodeEffect::Nothing))
             }
             (
                 state @ Decoding::Busy(_),
                 DecodeMessage::Request(_) | DecodeMessage::Decoded(_),
             ) => Err(Rejected {
                 state,
-                reason: DecodingRejection::WhileBusy,
+                reason: DecodingError::WhileBusy,
             }),
         }
     }
 }
 
-fn requested(request: CoverRequest) -> (Decoding, DecodeIo) {
+fn requested(request: CoverRequest) -> (Decoding, DecodeEffect) {
     let path = request.path.clone();
-    (Decoding::Busy(path), DecodeIo::Decode(request))
+    (Decoding::Busy(path), DecodeEffect::Decode(request))
 }
 
 pub(crate) const CACHE_CAPACITY: usize = 8;
@@ -148,7 +148,7 @@ pub(crate) struct CoverCache {
 impl CoverCache {
     pub(crate) fn answer(&mut self, request: &CoverRequest) -> Option<CoverOutcome> {
         let position = self.entries.iter().position(|entry| {
-            entry.path == request.path && entry.side == request.side
+            entry.path == request.path && entry.side == request.size_px
         })?;
         let entry = self.entries.remove(position)?;
         let outcome = entry.outcome.clone();
@@ -156,7 +156,7 @@ impl CoverCache {
         Some(outcome.into_outcome())
     }
 
-    pub(crate) fn remember(&mut self, done: &CoverDone) {
+    pub(crate) fn remember(&mut self, done: &DecodeFinished) {
         let Some(cached) = &done.cached else {
             return;
         };
@@ -174,7 +174,7 @@ impl CoverCache {
 }
 
 #[derive(Debug)]
-pub(crate) struct CoverDone {
+pub(crate) struct DecodeFinished {
     pub(crate) path: PathBuf,
     pub(crate) side: u32,
     pub(crate) cached: Option<CachedOutcome>,
@@ -183,11 +183,11 @@ pub(crate) struct CoverDone {
 pub(crate) fn decode(request: &CoverRequest) -> CoverDecoded {
     let outcome = library::embedded_cover(&request.path)
         .map_or(CoverOutcome::NoArt, |bytes| {
-            decode_bytes(&bytes, request.side)
+            decode_bytes(&bytes, request.size_px)
         });
     CoverDecoded {
         path: request.path.clone(),
-        side: request.side,
+        side: request.size_px,
         outcome,
     }
 }
@@ -240,33 +240,33 @@ mod tests {
     use crossbeam_channel::Receiver;
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
     use kernel::{Message, update::Machine};
-    use library::LibraryPaths;
+    use library::LibraryDirs;
     use rstest::rstest;
 
     use crate::{
-        cells::{Cells, cells},
+        cells::{Receivers, cells},
         driver::DriverThread,
-        interpret::LibraryCommand,
         library::{
             cover::{
                 CACHE_CAPACITY,
                 CoverOutcome,
                 CoverRequest,
-                DecodeIo,
+                DecodeEffect,
                 DecodeMessage,
                 Decoding,
-                DecodingRejection,
+                DecodingError,
                 decode,
                 fit_square,
             },
-            driver::spawn,
+            driver::{LibraryParts, spawn},
+            machine::LibraryMessage,
         },
     };
 
     fn request(path: &str, side: u32) -> CoverRequest {
         CoverRequest {
             path: PathBuf::from(path),
-            side,
+            size_px: side,
         }
     }
 
@@ -278,12 +278,12 @@ mod tests {
         Decoding::Busy(PathBuf::from(path))
     }
 
-    fn render(io: &DecodeIo) -> String {
+    fn render(io: &DecodeEffect) -> String {
         match io {
-            DecodeIo::Decode(request) => {
-                format!("decode {} @ {}", request.path.display(), request.side)
+            DecodeEffect::Decode(request) => {
+                format!("decode {} @ {}", request.path.display(), request.size_px)
             }
-            DecodeIo::Nothing => "nothing".to_string(),
+            DecodeEffect::Nothing => "nothing".to_string(),
         }
     }
 
@@ -323,22 +323,22 @@ mod tests {
     #[case::idle_refuses_an_answer(
         idle(),
         DecodeMessage::Decoded(PathBuf::from("/music/cover.jpg")),
-        DecodingRejection::WhileIdle
+        DecodingError::WhileIdle
     )]
     #[case::busy_refuses_the_same_request_again(
         busy("/music/cover.jpg"),
         DecodeMessage::Request(request("/music/cover.jpg", 64)),
-        DecodingRejection::WhileBusy
+        DecodingError::WhileBusy
     )]
     #[case::busy_refuses_an_unrelated_answer(
         busy("/music/cover.jpg"),
         DecodeMessage::Decoded(PathBuf::from("/music/other.jpg")),
-        DecodingRejection::WhileBusy
+        DecodingError::WhileBusy
     )]
     fn a_refused_cell_hands_the_state_back(
         #[case] start: Decoding,
         #[case] message: DecodeMessage,
-        #[case] reason: DecodingRejection,
+        #[case] reason: DecodingError,
     ) {
         let expected = start.clone();
         let rejected = start.transition(message).err().unwrap();
@@ -380,46 +380,53 @@ mod tests {
     const RECV_TIMEOUT: Duration = Duration::from_secs(2);
     const DECODABLE: &[&str] = &["mp3"];
 
-    fn paths(directory: &tempfile::TempDir) -> LibraryPaths {
-        LibraryPaths {
-            cache: directory.path().join("cache"),
-            data: directory.path().join("data"),
-            playlists: directory.path().join("playlists"),
+    fn paths(directory: &tempfile::TempDir) -> LibraryDirs {
+        LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
         }
     }
 
     fn spawned_with_covers(
         directory: &tempfile::TempDir,
     ) -> (
-        DriverThread<LibraryCommand>,
-        Cells,
+        DriverThread<LibraryMessage>,
+        Receivers,
         Receiver<()>,
         Receiver<Message>,
     ) {
         let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (writers, cells, doorbell) = cells();
-        let thread =
-            spawn((paths(directory), DECODABLE), &mailbox, writers.cover).unwrap();
-        (thread, cells, doorbell, messages)
+        let (writers, cells, notified) = cells();
+        let thread = spawn(
+            LibraryParts {
+                dirs: paths(directory),
+                decodable: DECODABLE,
+            },
+            &mailbox,
+            writers.cover,
+        )
+        .unwrap();
+        (thread, cells, notified, messages)
     }
 
-    fn send_cover(thread: &DriverThread<LibraryCommand>, request: CoverRequest) {
+    fn send_cover(thread: &DriverThread<LibraryMessage>, request: CoverRequest) {
         thread
             .commands
-            .send(LibraryCommand::Cover(request))
+            .send(LibraryMessage::Cover(request))
             .unwrap();
     }
 
     fn recv_cover(
-        cells: &Cells,
-        doorbell: &Receiver<()>,
+        cells: &Receivers,
+        notified: &Receiver<()>,
     ) -> crate::library::cover::CoverDecoded {
-        doorbell.recv_timeout(RECV_TIMEOUT).unwrap();
+        notified.recv_timeout(RECV_TIMEOUT).unwrap();
         let decoded = cells.cover.take().unwrap();
         std::sync::Arc::try_unwrap(decoded).unwrap()
     }
 
-    fn stopped(thread: DriverThread<LibraryCommand>) {
+    fn stopped(thread: DriverThread<LibraryMessage>) {
         drop(thread.commands);
         thread.handle.join().unwrap().unwrap();
     }
@@ -490,21 +497,21 @@ mod tests {
     fn a_repeated_cover_request_answers_from_the_cache_once_the_file_is_gone() {
         let directory = tempfile::tempdir().unwrap();
         let path = flac_with_cover(&directory, "cover.flac", [10, 20, 30, 255]);
-        let (thread, cells, doorbell, _messages) = spawned_with_covers(&directory);
+        let (thread, cells, notified, _messages) = spawned_with_covers(&directory);
 
         send_cover(
             &thread,
             CoverRequest {
                 path: path.clone(),
-                side: 8,
+                size_px: 8,
             },
         );
-        let first = recv_cover(&cells, &doorbell);
+        let first = recv_cover(&cells, &notified);
         assert!(matches!(first.outcome, CoverOutcome::Art(_)));
 
         std::fs::remove_file(&path).unwrap();
-        send_cover(&thread, CoverRequest { path, side: 8 });
-        let second = recv_cover(&cells, &doorbell);
+        send_cover(&thread, CoverRequest { path, size_px: 8 });
+        let second = recv_cover(&cells, &notified);
         assert!(
             matches!(second.outcome, CoverOutcome::Art(_)),
             "expected a cached Art answer, got {:?}",
@@ -523,17 +530,17 @@ mod tests {
                 flac_with_cover(&directory, &format!("cover{index}.flac"), fill)
             })
             .collect();
-        let (thread, cells, doorbell, _messages) = spawned_with_covers(&directory);
+        let (thread, cells, notified, _messages) = spawned_with_covers(&directory);
 
         for path in &paths {
             send_cover(
                 &thread,
                 CoverRequest {
                     path: path.clone(),
-                    side: 8,
+                    size_px: 8,
                 },
             );
-            let answer = recv_cover(&cells, &doorbell);
+            let answer = recv_cover(&cells, &notified);
             assert!(matches!(answer.outcome, CoverOutcome::Art(_)));
         }
 
@@ -543,10 +550,10 @@ mod tests {
             &thread,
             CoverRequest {
                 path: oldest.clone(),
-                side: 8,
+                size_px: 8,
             },
         );
-        let evicted_answer = recv_cover(&cells, &doorbell);
+        let evicted_answer = recv_cover(&cells, &notified);
         assert!(
             matches!(evicted_answer.outcome, CoverOutcome::NoArt),
             "expected the evicted entry to force a fresh decode and find the file gone, \
@@ -562,21 +569,21 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("broken.flac");
         std::fs::write(&path, minimal_flac_with_picture(b"not a real image")).unwrap();
-        let (thread, cells, doorbell, _messages) = spawned_with_covers(&directory);
+        let (thread, cells, notified, _messages) = spawned_with_covers(&directory);
 
         send_cover(
             &thread,
             CoverRequest {
                 path: path.clone(),
-                side: 8,
+                size_px: 8,
             },
         );
-        let first = recv_cover(&cells, &doorbell);
+        let first = recv_cover(&cells, &notified);
         assert!(matches!(first.outcome, CoverOutcome::Failed(_)));
 
         std::fs::remove_file(&path).unwrap();
-        send_cover(&thread, CoverRequest { path, side: 8 });
-        let second = recv_cover(&cells, &doorbell);
+        send_cover(&thread, CoverRequest { path, size_px: 8 });
+        let second = recv_cover(&cells, &notified);
         assert!(
             matches!(second.outcome, CoverOutcome::NoArt),
             "expected an uncached failure to force a fresh decode and find the file gone, \

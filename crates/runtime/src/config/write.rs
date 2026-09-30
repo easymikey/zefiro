@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use config::{AppearancePatch, ConfigError};
+use config::AppearancePatch;
 use kernel::ConfigPatch;
 
 use crate::error::SaveError;
@@ -10,20 +10,25 @@ pub(crate) struct Written {
     pub text: String,
 }
 
-pub(crate) fn save(path: &Path, patch: ConfigPatch) -> Result<Written, SaveError> {
-    write_text(path, |existing| config::patched(existing, patch))
+pub(crate) fn save_config(
+    path: &Path,
+    patch: ConfigPatch,
+) -> Result<Written, SaveError> {
+    write_text(path, |existing| config::patch_config_text(existing, patch))
 }
 
 pub(crate) fn save_appearance(
     path: &Path,
     patch: AppearancePatch,
 ) -> Result<Written, SaveError> {
-    write_text(path, |existing| config::appearance_patched(existing, patch))
+    write_text(path, |existing| {
+        config::patch_appearance_text(existing, patch)
+    })
 }
 
 fn write_text(
     path: &Path,
-    produce: impl FnOnce(&str) -> Result<String, ConfigError>,
+    produce: impl FnOnce(&str) -> Result<String, config::Error>,
 ) -> Result<Written, SaveError> {
     let existing =
         library::files::read_if_present(path).map_err(|source| SaveError::Read {
@@ -36,11 +41,11 @@ fn write_text(
             source,
         }
     })?;
-    library::files::create_parent(path).map_err(|source| SaveError::Write {
+    library::files::create_parent_dir(path).map_err(|source| SaveError::Write {
         path: path.to_path_buf(),
         source,
     })?;
-    library::files::persist(path, text.as_bytes()).map_err(|source| {
+    library::files::write_atomic(path, text.as_bytes()).map_err(|source| {
         SaveError::Write {
             path: path.to_path_buf(),
             source,
@@ -56,7 +61,7 @@ mod tests {
         time::Duration,
     };
 
-    use config::{AppearancePatch, ConfigError, CoverBrackets};
+    use config::{AppearancePatch, CoverBrackets};
     use kernel::{
         Bounded,
         ConfigPatch,
@@ -65,7 +70,7 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use crate::{
-        config::write::{Written, save, save_appearance},
+        config::write::{Written, save_appearance, save_config},
         error::SaveError,
     };
 
@@ -102,7 +107,7 @@ mod tests {
     }
 
     fn save_theme(path: &Path) -> Result<Written, SaveError> {
-        save(
+        save_config(
             path,
             ConfigPatch::builder()
                 .theme(ThemeName::from_static("dark"))
@@ -111,38 +116,38 @@ mod tests {
     }
 
     fn save_crossfade(path: &Path) -> Result<Written, SaveError> {
-        save(path, ConfigPatch::builder().crossfade(crossfade(5)).build())
+        save_config(path, ConfigPatch::builder().crossfade(crossfade(5)).build())
     }
 
-    struct Landing {
+    struct InstallParts {
         name: &'static str,
         existing: &'static str,
         save: Save,
     }
 
     #[rstest]
-    #[case::appearance_creates_a_minimal_file(Landing {
+    #[case::appearance_creates_a_minimal_file(InstallParts {
         name: "appearance_missing",
         existing: "",
         save: save_cover_brackets,
     })]
-    #[case::appearance_updates_one_key_of_an_existing_file(Landing {
+    #[case::appearance_updates_one_key_of_an_existing_file(InstallParts {
         name: "appearance_existing",
         existing: EXISTING_UI,
         save: save_cover_brackets,
     })]
-    #[case::config_creates_a_minimal_file(Landing {
+    #[case::config_creates_a_minimal_file(InstallParts {
         name: "config_missing",
         existing: "",
         save: save_theme,
     })]
-    #[case::config_updates_one_key_of_an_existing_file(Landing {
+    #[case::config_updates_one_key_of_an_existing_file(InstallParts {
         name: "config_existing",
         existing: EXISTING_CONFIG,
         save: save_crossfade,
     })]
     fn a_save_lands_on_disk(
-        #[case] landing: Landing,
+        #[case] landing: InstallParts,
         config_file: std::io::Result<(tempfile::TempDir, PathBuf)>,
     ) {
         let (_directory, path) = config_file.unwrap();
@@ -177,7 +182,7 @@ mod tests {
         assert!(matches!(
             refused,
             SaveError::Parse {
-                source: ConfigError::NotATable { ref key },
+                source: config::Error::NotATable { ref key },
                 ..
             } if key == "audio"
         ));

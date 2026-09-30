@@ -10,20 +10,20 @@ use audio::SpectrumAnalyzer;
 use kernel::{Cue, Message, Moment, WindowColorsCmd, domain::ThemeName};
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use runtime::{
-    Cells,
     CoverDecoded,
     CoverRequest,
     FrameDue,
+    FrameInput,
     Painted,
+    Receivers,
     ShellEffect,
-    View,
 };
 use terminal::{
     Capabilities,
-    CoverArtOwner,
     CoverMotion,
     CoverPlacement,
-    Pixels,
+    CoverRenderer,
+    OwnedCoverArt,
     ProbeAnswer,
     TerminalEnvironment,
     UnknownThemeError,
@@ -53,7 +53,7 @@ use crate::{
             cover_wash,
         },
         frame_clock::{
-            Playback,
+            ClockState,
             SpectrumSources,
             animation_frame_due,
             clock_frame_due,
@@ -64,27 +64,28 @@ use crate::{
             spectrum_frame_due,
         },
         motion::{AdvanceSources, Clearing, Motion, ResizeState},
-        view::{self, Frame, Presentation, Update, install},
+        view::{self, LaidOutScene, LookReload, Presentation, apply_reload},
         window_colors::{
             PendingWindowColors,
+            Wash,
             WindowColorsPlan,
-            settle_window_colors_plan,
+            flush_staged_window_colors_plan,
             window_colors_plan,
         },
     },
-    startup::BootLook,
-    toast::{ShellFailure, toast_message},
+    startup::Look,
+    toast::{ShellError, toast_message},
 };
 
 pub(crate) struct Painter {
     presentation: Presentation,
-    pixels: Pixels,
+    pixels: CoverRenderer,
     spectrum_analyzer: SpectrumAnalyzer,
     motion: Motion,
     pending_cues: Vec<Cue>,
     animation_stage: AnimationStage,
     pending_window_colors: PendingWindowColors,
-    failures: Vec<ShellFailure>,
+    errors: Vec<ShellError>,
 }
 
 impl std::fmt::Debug for Painter {
@@ -94,12 +95,12 @@ impl std::fmt::Debug for Painter {
 }
 
 impl Painter {
-    pub(crate) fn new(area: Rect, look: BootLook) -> Self {
+    pub(crate) fn new(area: Rect, look: Look) -> Self {
         let Capabilities {
             picker,
             pixel_path,
             color_depth,
-        } = terminal::resolve_immediate(&TerminalEnvironment::current());
+        } = Capabilities::before_probe(&TerminalEnvironment::current());
         let cell_aspect = terminal::cell_aspect(picker.font_size());
         Self {
             presentation: Presentation {
@@ -110,9 +111,9 @@ impl Painter {
                 cell_aspect,
                 home: dirs::home_dir(),
                 music_dir: PathBuf::new(),
-                music_dir_display: String::new(),
+                music_dir_label: String::new(),
             },
-            pixels: Pixels::new(picker),
+            pixels: CoverRenderer::new(picker),
             spectrum_analyzer: SpectrumAnalyzer::new(),
             motion: Motion {
                 area,
@@ -121,15 +122,15 @@ impl Painter {
             pending_cues: Vec::new(),
             animation_stage: AnimationStage::default(),
             pending_window_colors: PendingWindowColors::Idle,
-            failures: Vec::new(),
+            errors: Vec::new(),
         }
     }
 
-    pub(crate) fn adopt(&mut self, answer: ProbeAnswer) {
+    pub(crate) fn apply_probe_answer(&mut self, answer: ProbeAnswer) {
         self.presentation.pixel_path = answer.pixel_path;
         self.presentation.cell_aspect =
             terminal::cell_aspect(answer.picker.font_size());
-        self.pixels.adopt(answer.picker);
+        self.pixels.set_picker(answer.picker);
     }
 
     pub(crate) fn resized(&mut self, area: Rect) {
@@ -137,26 +138,26 @@ impl Painter {
         self.motion.resize = ResizeState::Resized;
     }
 
-    pub(crate) fn absorb_cells(&mut self, cells: &Cells) {
+    pub(crate) fn take_latest(&mut self, cells: &Receivers) {
         if let Some(theme) = cells.theme.take() {
             self.motion.outgoing_theme_background = Some(
                 ActiveTheme::new(
                     &self.presentation.theme,
                     self.presentation.color_depth,
                 )
-                .window_bg(),
+                .window_background(),
             );
-            install(
+            apply_reload(
                 &mut self.presentation.theme,
                 &mut self.presentation.appearance,
-                Update::Theme(Arc::unwrap_or_clone(theme)),
+                LookReload::Theme(Arc::unwrap_or_clone(theme)),
             );
         }
         if let Some(appearance) = cells.appearance.take() {
-            install(
+            apply_reload(
                 &mut self.presentation.theme,
                 &mut self.presentation.appearance,
-                Update::Appearance(Arc::unwrap_or_clone(appearance)),
+                LookReload::Appearance(Arc::unwrap_or_clone(appearance)),
             );
         }
         let Some(cover) = cells.cover.take() else {
@@ -165,12 +166,12 @@ impl Painter {
         let Ok(decoded) = Arc::try_unwrap(cover) else {
             return;
         };
-        if let Some(failure) = self.cover(decoded) {
-            self.failures.push(failure);
+        if let Some(failure) = self.accept_cover(decoded) {
+            self.errors.push(failure);
         }
     }
 
-    fn stage_window_colors(&mut self) -> Option<ShellFailure> {
+    fn stage_window_colors(&mut self) -> Option<ShellError> {
         match window_colors_plan(self.presentation.appearance.window.animations) {
             WindowColorsPlan::ApplyNow => self.apply_window_colors(),
             WindowColorsPlan::Defer => {
@@ -180,23 +181,26 @@ impl Painter {
         }
     }
 
-    fn settle_window_colors(&mut self) {
-        let progress = self.animation_stage.wash_progress();
-        if progress.is_none() {
+    fn flush_staged_window_colors(&mut self) {
+        let wash = self
+            .animation_stage
+            .wash_progress()
+            .map_or(Wash::Idle, |_| Wash::Running);
+        if wash == Wash::Idle {
             self.motion.outgoing_theme_background = None;
         }
-        if settle_window_colors_plan(self.pending_window_colors, progress) {
+        if flush_staged_window_colors_plan(self.pending_window_colors, wash) {
             self.pending_window_colors = PendingWindowColors::Idle;
             if let Some(failure) = self.apply_window_colors() {
-                self.failures.push(failure);
+                self.errors.push(failure);
             }
         }
     }
 
-    fn apply_window_colors(&self) -> Option<ShellFailure> {
+    fn apply_window_colors(&self) -> Option<ShellError> {
         ThemeName::new(self.presentation.theme.name.clone()).map_or_else(
             |_| {
-                Some(ShellFailure::Theme(UnknownThemeError {
+                Some(ShellError::Theme(UnknownThemeError {
                     name: self.presentation.theme.name.clone(),
                 }))
             },
@@ -206,12 +210,12 @@ impl Painter {
                     &self.presentation.theme,
                 )
                 .err()
-                .map(ShellFailure::Theme)
+                .map(ShellError::Theme)
             },
         )
     }
 
-    pub(crate) fn effect(&mut self, effect: &ShellEffect) {
+    pub(crate) fn perform_effect(&mut self, effect: &ShellEffect) {
         let failure = match effect {
             ShellEffect::WindowColors(WindowColorsCmd::Apply(_)) => {
                 self.stage_window_colors()
@@ -219,7 +223,7 @@ impl Painter {
             ShellEffect::WindowColors(WindowColorsCmd::Reset) => {
                 write_window_colors(&WindowColorsCmd::Reset, &self.presentation.theme)
                     .err()
-                    .map(ShellFailure::Theme)
+                    .map(ShellError::Theme)
             }
             ShellEffect::Animate(cue) => {
                 self.pending_cues.push(*cue);
@@ -227,24 +231,24 @@ impl Painter {
             }
         };
         if let Some(failure) = failure {
-            self.failures.push(failure);
+            self.errors.push(failure);
         }
     }
 
-    pub(crate) fn cover(&mut self, decoded: CoverDecoded) -> Option<ShellFailure> {
+    pub(crate) fn accept_cover(&mut self, decoded: CoverDecoded) -> Option<ShellError> {
         let path = decoded.path.clone();
         match cover_outcome(decoded) {
             Ok(Some(cover)) => {
-                self.note_cover_arrived(&path, CoverArrival::Decoded);
-                self.pixels.decoded_cover(cover);
+                self.record_cover_arrived(&path, CoverArrival::Decoded);
+                self.pixels.set_cover(cover);
                 None
             }
             Ok(None) => {
-                self.note_cover_arrived(&path, CoverArrival::Missing);
+                self.record_cover_arrived(&path, CoverArrival::Missing);
                 None
             }
             Err(failure) => {
-                self.note_cover_arrived(&path, CoverArrival::Missing);
+                self.record_cover_arrived(&path, CoverArrival::Missing);
                 Some(failure)
             }
         }
@@ -253,7 +257,7 @@ impl Painter {
     fn backdrop(
         &self,
         layout: FrameLayout,
-        cover_art_owner: &CoverArtOwner,
+        cover_art_owner: &OwnedCoverArt,
     ) -> Backdrop {
         animation_backdrop(
             &BackdropSources {
@@ -266,12 +270,12 @@ impl Painter {
         )
     }
 
-    fn note_cover_arrived(&mut self, path: &Path, arrival: CoverArrival) {
+    fn record_cover_arrived(&mut self, path: &Path, arrival: CoverArrival) {
         let current = mem::take(&mut self.motion.cover_fade);
         self.motion.cover_fade = cover_arrived_fade(current, path, arrival);
     }
 
-    pub(crate) fn frame_due(&self, view: &View<'_>) -> FrameDue {
+    pub(crate) fn frame_due(&self, view: &FrameInput<'_>) -> FrameDue {
         let effect = frame_effect(&self.animation_stage, self.cover_motion(view.now));
         let animation = animation_frame_due(effect, self.motion.last_paint);
         let progress = progress_frame_due(
@@ -293,7 +297,7 @@ impl Painter {
             });
         let spectrum = spectrum_frame_due(
             SpectrumSources {
-                player: Playback::of(&view.model.player),
+                player: ClockState::of(&view.model.player),
                 shown: self.motion.on_screen.spectrum,
                 motion: self.motion.spectrum_motion,
                 last_paint: self.motion.last_paint,
@@ -317,31 +321,31 @@ impl Painter {
             return;
         }
         self.presentation.music_dir = music_dir.to_path_buf();
-        self.presentation.music_dir_display =
+        self.presentation.music_dir_label =
             self.presentation.home.as_deref().map_or_else(
                 || music_dir.display().to_string(),
                 |home| abbreviate_home(music_dir, home),
             );
     }
 
-    fn raw_bands(&mut self, view: &View<'_>) -> widgets::Spectrum {
+    fn raw_bands(&mut self, view: &FrameInput<'_>) -> widgets::Spectrum {
         if self.motion.on_screen.spectrum == Presence::Hidden {
             return [0.0; SPECTRUM_BANDS];
         }
-        match Playback::of(&view.model.player) {
-            Playback::Playing => self
+        match ClockState::of(&view.model.player) {
+            ClockState::Playing => self
                 .spectrum_analyzer
                 .bands::<SPECTRUM_BANDS>(view.spectrum),
-            Playback::Halted => [0.0; SPECTRUM_BANDS],
+            ClockState::Halted => [0.0; SPECTRUM_BANDS],
         }
     }
 
     pub(crate) fn paint(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        view: View<'_>,
+        view: FrameInput<'_>,
     ) -> Result<Painted, io::Error> {
-        self.absorb_cells(view.cells);
+        self.take_latest(view.cells);
         self.refresh_music_dir(view.model.music_dir.as_path());
         let raw = self.raw_bands(&view);
         let sources = AdvanceSources {
@@ -349,9 +353,9 @@ impl Painter {
             presentation: &self.presentation,
             pending_cues: &self.pending_cues,
         };
-        let (motion, advance) = mem::take(&mut self.motion).advanced(&sources, &raw);
+        let (motion, advance) = mem::take(&mut self.motion).advance(&sources, &raw);
         self.motion = motion;
-        let Frame { scene, layout } =
+        let LaidOutScene { scene, layout } =
             view::view(&view, &self.presentation, &self.motion);
         let wash =
             cover_wash(self.animation_stage.wash_progress(), self.motion.area.width);
@@ -364,7 +368,7 @@ impl Painter {
             },
         ));
         let cover_art = cover_art_owner.as_cover_art();
-        let elapsed = self.animation_stage.elapsed_since(scene.clock);
+        let elapsed = self.animation_stage.advance_clock(scene.clock);
         let backdrop = self.backdrop(layout, &cover_art_owner);
         if advance.clear == Clearing::Clear {
             terminal.clear()?;
@@ -384,9 +388,9 @@ impl Painter {
             animation_stage.play(cues, &backdrop);
             animation_stage.advance(frame.buffer_mut(), elapsed);
         })?;
-        self.settle_window_colors();
-        let failures = drained_failures(&mut self.failures);
-        Ok(painted(advance.cover, advance.viewport, failures))
+        self.flush_staged_window_colors();
+        let errors = drain_errors(&mut self.errors);
+        Ok(painted(advance.cover, advance.visible_rows, errors))
     }
 }
 
@@ -396,18 +400,18 @@ pub(crate) fn resized_area(width: u16, height: u16) -> Rect {
 
 fn painted(
     cover: Option<CoverRequest>,
-    viewport: Option<usize>,
-    failures: Vec<Message>,
+    visible_rows: Option<usize>,
+    errors: Vec<Message>,
 ) -> Painted {
     Painted {
         cover,
-        viewport,
-        failures,
+        visible_rows,
+        failures: errors,
     }
 }
 
-fn drained_failures(failures: &mut Vec<ShellFailure>) -> Vec<Message> {
-    mem::take(failures)
+fn drain_errors(errors: &mut Vec<ShellError>) -> Vec<Message> {
+    mem::take(errors)
         .into_iter()
         .map(|failure| toast_message(&failure))
         .collect()
@@ -417,13 +421,13 @@ fn playlist_body_height(playlist: Option<PlaylistAreas>) -> u16 {
     playlist.map_or(0, |areas| areas.body.height)
 }
 
-pub(crate) fn note_playlist_height(
+pub(crate) fn record_playlist_height(
     current: u16,
     playlist: Option<PlaylistAreas>,
 ) -> (u16, Option<usize>) {
     let updated = playlist_body_height(playlist);
-    let viewport = (updated != current).then_some(usize::from(updated));
-    (updated, viewport)
+    let visible_rows = (updated != current).then_some(usize::from(updated));
+    (updated, visible_rows)
 }
 
 #[cfg(test)]
@@ -446,7 +450,7 @@ mod tests {
         layout::Rect,
     };
     use rstest::rstest;
-    use runtime::{Reaction, Shell as _, View};
+    use runtime::{FrameInput, Reaction, Shell as _};
     use terminal::UnknownThemeError;
     use widgets::{OnScreen, PlaylistAreas, Presence, SPECTRUM_BANDS, SpectrumMotion};
 
@@ -454,21 +458,21 @@ mod tests {
         shell::{
             Shell,
             ShellInput,
-            cover_fade::{CoverWanted, desired_cover},
-            frame::{
-                Painter,
-                drained_failures,
-                note_playlist_height,
-                playlist_body_height,
-                resized_area,
-            },
-            frame_clock::Playback,
+            cover_fade::{CoverWanted, wanted_cover},
+            frame_clock::ClockState,
             input::message_for,
             motion::{Clearing, Motion, ResizeState, SpectrumAdvance, resize_clearing},
-            view::{self, Frame, fallback_theme_file},
+            painter::{
+                Painter,
+                drain_errors,
+                playlist_body_height,
+                record_playlist_height,
+                resized_area,
+            },
+            view::{self, LaidOutScene, fallback_theme_file},
         },
-        startup::BootLook,
-        toast::{ShellFailure, toast_message},
+        startup::Look,
+        toast::{ShellError, toast_message},
     };
 
     #[test]
@@ -491,24 +495,24 @@ mod tests {
 
     #[test]
     fn no_failures_drain_to_an_empty_list() {
-        let mut failures = Vec::new();
+        let mut errors = Vec::new();
 
-        assert_eq!(drained_failures(&mut failures), Vec::new());
+        assert_eq!(drain_errors(&mut errors), Vec::new());
     }
 
     #[test]
     fn two_failures_drain_as_two_toasts_in_order() {
-        let first = ShellFailure::Cover("first".to_string());
-        let second = ShellFailure::Theme(UnknownThemeError {
+        let first = ShellError::Cover("first".to_string());
+        let second = ShellError::Theme(UnknownThemeError {
             name: "gone".to_string(),
         });
-        let mut failures = vec![first.clone(), second.clone()];
+        let mut errors = vec![first.clone(), second.clone()];
 
         assert_eq!(
-            drained_failures(&mut failures),
+            drain_errors(&mut errors),
             vec![toast_message(&first), toast_message(&second)]
         );
-        assert!(failures.is_empty());
+        assert!(errors.is_empty());
     }
 
     #[test]
@@ -520,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn advanced_rows_cover_wants_a_new_track_once() {
+    fn advancing_requests_a_new_track_cover_once() {
         let mut wanted = None;
         let wants = CoverWanted {
             current: Some(Path::new("/music/track.jpg")),
@@ -528,8 +532,8 @@ mod tests {
             side: 160,
         };
 
-        let first = desired_cover(&mut wanted, &wants);
-        let second = desired_cover(&mut wanted, &wants);
+        let first = wanted_cover(&mut wanted, &wants);
+        let second = wanted_cover(&mut wanted, &wants);
 
         assert_eq!(
             first.map(|request| request.path),
@@ -544,7 +548,7 @@ mod tests {
         CoverStyle::Vinyl
     )]
     #[case::an_off_style_wants_nothing(None, CoverStyle::Off)]
-    fn advanced_rows_cover(
+    fn a_cover_is_wanted_only_for_a_new_track_or_style(
         #[case] mut wanted: Option<PathBuf>,
         #[case] style: CoverStyle,
     ) {
@@ -554,7 +558,7 @@ mod tests {
             side: 160,
         };
 
-        let request = desired_cover(&mut wanted, &wants);
+        let request = wanted_cover(&mut wanted, &wants);
 
         assert_eq!(request, None);
     }
@@ -572,20 +576,23 @@ mod tests {
     #[rstest]
     #[case::a_grown_playlist_reports_the_new_height(0, playlist_areas(7), Some(7))]
     #[case::an_unchanged_height_reports_nothing(7, playlist_areas(7), None)]
-    fn advanced_rows_viewport(
+    fn the_visible_rows_change_only_when_the_playlist_height_does(
         #[case] current: u16,
         #[case] playlist: Option<PlaylistAreas>,
         #[case] expected: Option<usize>,
     ) {
-        let (_, viewport) = note_playlist_height(current, playlist);
+        let (_, visible_rows) = record_playlist_height(current, playlist);
 
-        assert_eq!(viewport, expected);
+        assert_eq!(visible_rows, expected);
     }
 
     #[rstest]
     #[case::a_resize_clears_once(ResizeState::Resized, Clearing::Clear)]
     #[case::a_settled_frame_keeps(ResizeState::Clean, Clearing::Keep)]
-    fn advanced_rows_clearing(#[case] resize: ResizeState, #[case] expected: Clearing) {
+    fn a_resize_clears_the_screen_once(
+        #[case] resize: ResizeState,
+        #[case] expected: Clearing,
+    ) {
         let (next, clear) = resize_clearing(resize);
 
         assert_eq!(clear, expected);
@@ -602,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn advanced_rows_spectrum() {
+    fn advancing_moves_the_spectrum_with_the_player() {
         let mut motion = Motion {
             on_screen: spectrum_shown(),
             ..Motion::default()
@@ -610,7 +617,7 @@ mod tests {
         let mut now = Moment::new(Duration::from_millis(16));
         motion.advance_spectrum(
             SpectrumAdvance {
-                playback: Playback::Playing,
+                playback: ClockState::Playing,
                 now,
             },
             &[1.0; SPECTRUM_BANDS],
@@ -621,7 +628,7 @@ mod tests {
             now = Moment::new(now.since_epoch() + Duration::from_millis(16));
             motion.advance_spectrum(
                 SpectrumAdvance {
-                    playback: Playback::Halted,
+                    playback: ClockState::Halted,
                     now,
                 },
                 &[0.0; SPECTRUM_BANDS],
@@ -639,7 +646,7 @@ mod tests {
             },
         )
         .unwrap();
-        let look = BootLook {
+        let look = Look {
             theme: fallback_theme_file(),
             appearance: AppearanceFile::default(),
         };
@@ -653,14 +660,14 @@ mod tests {
 
         let reaction = shell.input(ShellInput::Terminal(Event::Resize(120, 40)));
 
-        let stock = View {
+        let stock = FrameInput {
             model: &model,
             spectrum: &spectrum,
             cells: &cells,
             sleep_deadline: None,
             now: Moment::new(Duration::from_secs(5)),
         };
-        let Frame { layout, .. } =
+        let LaidOutScene { layout, .. } =
             view::view(&stock, &shell.frame.presentation, &shell.frame.motion);
         assert_eq!(reaction, Reaction::Repaint);
         assert_eq!(layout.screen, Rect::new(0, 0, 120, 40));

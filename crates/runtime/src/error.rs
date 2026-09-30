@@ -1,11 +1,9 @@
-use std::{error::Error, io, path::PathBuf};
+use std::{io, path::PathBuf};
 
 use kernel::domain::Driver;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SaveError {
-    #[error("no config directory available")]
-    NoConfigDirectory,
     #[error("reading {path}: {source}")]
     Read {
         path: PathBuf,
@@ -16,7 +14,7 @@ pub(crate) enum SaveError {
     Parse {
         path: PathBuf,
         #[source]
-        source: config::ConfigError,
+        source: config::Error,
     },
     #[error("writing {path}: {source}")]
     Write {
@@ -27,31 +25,21 @@ pub(crate) enum SaveError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum RuntimeError {
+pub enum Error<E: std::error::Error + 'static = io::Error> {
     #[error("spawning the {driver} thread: {source}")]
     Spawn {
         driver: Driver,
         #[source]
         source: io::Error,
     },
-    #[error("the audio launcher produced no spectrum tap")]
-    NoSpectrum,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum HostError {
-    #[error("spawning the event loop thread: {0}")]
-    Spawn(#[source] io::Error),
-    #[error("the event loop thread panicked")]
-    EventLoopPanicked,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum RunError<E: Error + 'static> {
     #[error("input closed")]
     InputClosed,
     #[error("painting a frame: {0}")]
     Paint(#[source] E),
+    #[error("spawning the event loop thread: {0}")]
+    Host(#[source] io::Error),
+    #[error("the event loop thread panicked")]
+    EventLoopPanicked,
 }
 
 #[cfg(test)]
@@ -60,14 +48,7 @@ mod tests {
 
     use kernel::domain::Driver;
 
-    use crate::error::{RunError, RuntimeError, SaveError};
-
-    #[test]
-    fn no_config_dir_message_is_readable() {
-        let error = SaveError::NoConfigDirectory;
-
-        assert_eq!(error.to_string(), "no config directory available");
-    }
+    use crate::error::{Error, SaveError};
 
     #[test]
     fn read_message_includes_path_and_source() {
@@ -91,7 +72,7 @@ mod tests {
 
     #[test]
     fn spawn_message_includes_the_driver_and_the_source() {
-        let error = RuntimeError::Spawn {
+        let error: Error = Error::Spawn {
             driver: Driver::Audio,
             source: io::Error::other("resource temporarily unavailable"),
         };
@@ -104,14 +85,14 @@ mod tests {
 
     #[test]
     fn input_closed_message_is_readable() {
-        let error = RunError::<io::Error>::InputClosed;
+        let error = Error::<io::Error>::InputClosed;
 
         assert_eq!(error.to_string(), "input closed");
     }
 
     #[test]
     fn paint_message_includes_the_shell_error() {
-        let error = RunError::Paint(io::Error::other("broken pipe"));
+        let error = Error::Paint(io::Error::other("broken pipe"));
 
         assert_eq!(error.to_string(), "painting a frame: broken pipe");
     }

@@ -1,4 +1,4 @@
-use config::{BreakpointsConfig, LayoutMode};
+use config::{LayoutConfig, LayoutMode};
 use ratatui::layout::Size;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,21 +25,13 @@ fn fit(size: Size, width: u16, height: u16) -> Fit {
 
 impl Breakpoint {
     #[must_use]
-    pub fn new(size: Size, breakpoints: &BreakpointsConfig) -> Self {
-        if fit(size, breakpoints.min_columns, breakpoints.min_rows) == Fit::Short {
+    pub fn new(size: Size, layout: &LayoutConfig) -> Self {
+        if fit(size, layout.min_columns, layout.min_rows) == Fit::Short {
             return Self::TooSmall;
         }
-        let full = fit(
-            size,
-            breakpoints.full_min_width,
-            breakpoints.full_min_height,
-        );
-        let compact = fit(
-            size,
-            breakpoints.compact_min_width,
-            breakpoints.compact_min_height,
-        );
-        match (breakpoints.mode, full, compact) {
+        let full = fit(size, layout.full_min_width, layout.full_min_height);
+        let compact = fit(size, layout.compact_min_width, layout.compact_min_height);
+        match (layout.mode, full, compact) {
             (LayoutMode::Compact, _, Fit::Fits) => Self::Compact,
             (
                 LayoutMode::Auto | LayoutMode::Full | LayoutMode::Compact,
@@ -60,7 +52,7 @@ impl Breakpoint {
 
 #[cfg(test)]
 mod tests {
-    use config::{BreakpointsConfig, LayoutMode};
+    use config::{LayoutConfig, LayoutMode};
     use ratatui::layout::Size;
     use rstest::rstest;
 
@@ -88,22 +80,22 @@ mod tests {
         #[case] size: Size,
         #[case] expected: Breakpoint,
     ) {
-        let breakpoints = BreakpointsConfig {
+        let layout = LayoutConfig {
             mode,
-            ..BreakpointsConfig::default()
+            ..LayoutConfig::default()
         };
-        assert_eq!(Breakpoint::new(size, &breakpoints), expected);
+        assert_eq!(Breakpoint::new(size, &layout), expected);
     }
 
     #[test]
     fn a_lowered_minimum_lets_the_minimal_breakpoint_through() {
-        let breakpoints = BreakpointsConfig {
+        let layout = LayoutConfig {
             min_columns: 10,
             min_rows: 3,
-            ..BreakpointsConfig::default()
+            ..LayoutConfig::default()
         };
         assert_eq!(
-            Breakpoint::new(Size::new(20, 5), &breakpoints),
+            Breakpoint::new(Size::new(20, 5), &layout),
             Breakpoint::Minimal
         );
     }

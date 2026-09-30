@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fmt, str::FromStr};
 
-use crate::domain::Nudge;
+use crate::domain::Direction;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ThemeName(Cow<'static, str>);
@@ -11,11 +11,11 @@ impl ThemeName {
         Self(Cow::Borrowed(name))
     }
 
-    pub fn new(name: String) -> Result<Self, ThemeNameRejection> {
+    pub fn new(name: String) -> Result<Self, ThemeNameError> {
         if name.is_empty() {
-            Err(ThemeNameRejection::Empty)
+            Err(ThemeNameError::Empty)
         } else if name == "auto" {
-            Err(ThemeNameRejection::Reserved)
+            Err(ThemeNameError::Reserved)
         } else {
             Ok(Self(Cow::Owned(name)))
         }
@@ -34,7 +34,7 @@ impl fmt::Display for ThemeName {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum ThemeNameRejection {
+pub enum ThemeNameError {
     #[error("a theme name cannot be empty")]
     Empty,
     #[error("\"auto\" is a reserved theme name")]
@@ -49,7 +49,7 @@ pub enum ThemeChoice {
 }
 
 impl FromStr for ThemeChoice {
-    type Err = ThemeNameRejection;
+    type Err = ThemeNameError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         if text == "auto" {
@@ -77,7 +77,7 @@ pub struct Themes {
 
 impl Themes {
     #[must_use]
-    pub fn nudged(&self, nudge: Nudge) -> Option<ThemeName> {
+    pub fn nudged(&self, direction: Direction) -> Option<ThemeName> {
         if self.names.is_empty() {
             return None;
         }
@@ -88,35 +88,21 @@ impl Themes {
             ThemeChoice::Auto => None,
         };
         let next = current.map_or_else(
-            || match nudge {
-                Nudge::Up => 0,
-                Nudge::Down => self.names.len() - 1,
+            || match direction {
+                Direction::Next => 0,
+                Direction::Previous => self.names.len() - 1,
             },
-            |index| wrapped(index, self.names.len(), nudge),
+            |index| direction.wrapped(index, self.names.len()),
         );
         self.names.get(next).cloned()
     }
-}
-
-fn wrapped(current: usize, len: usize, nudge: Nudge) -> usize {
-    let delta: isize = match nudge {
-        Nudge::Up => 1,
-        Nudge::Down => -1,
-    };
-    let (Ok(len_signed), Ok(current_signed)) =
-        (isize::try_from(len.max(1)), isize::try_from(current))
-    else {
-        return current;
-    };
-    let wrapped = (current_signed + delta).rem_euclid(len_signed);
-    usize::try_from(wrapped).unwrap_or(0)
 }
 
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
-    use crate::domain::{Nudge, ThemeChoice, ThemeName, ThemeNameRejection, Themes};
+    use crate::domain::{Direction, ThemeChoice, ThemeName, ThemeNameError, Themes};
 
     fn names(values: &[&'static str]) -> Vec<ThemeName> {
         values.iter().copied().map(ThemeName::from_static).collect()
@@ -124,55 +110,55 @@ mod tests {
 
     struct NudgeRow {
         themes: Themes,
-        nudge: Nudge,
+        direction: Direction,
         expected: Option<&'static str>,
     }
 
     #[rstest]
     #[case::next(NudgeRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("a")) },
-        nudge: Nudge::Up,
+        direction: Direction::Next,
         expected: Some("b"),
     })]
     #[case::wraps_at_end(NudgeRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("c")) },
-        nudge: Nudge::Up,
+        direction: Direction::Next,
         expected: Some("a"),
     })]
     #[case::previous_wraps_at_start(NudgeRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("a")) },
-        nudge: Nudge::Down,
+        direction: Direction::Previous,
         expected: Some("c"),
     })]
     #[case::selected_missing_from_list_up(NudgeRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("gone")) },
-        nudge: Nudge::Up,
+        direction: Direction::Next,
         expected: Some("a"),
     })]
     #[case::selected_missing_from_list_down(NudgeRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("gone")) },
-        nudge: Nudge::Down,
+        direction: Direction::Previous,
         expected: Some("c"),
     })]
     #[case::auto_up(NudgeRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Auto },
-        nudge: Nudge::Up,
+        direction: Direction::Next,
         expected: Some("a"),
     })]
     #[case::auto_down(NudgeRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Auto },
-        nudge: Nudge::Down,
+        direction: Direction::Previous,
         expected: Some("c"),
     })]
     #[case::empty_list_gives_none(NudgeRow {
         themes: Themes { names: Vec::new(), selected: ThemeChoice::Auto },
-        nudge: Nudge::Up,
+        direction: Direction::Next,
         expected: None,
     })]
     fn themes_nudge_onto_a_listed_name(#[case] row: NudgeRow) {
         assert_eq!(
             row.themes
-                .nudged(row.nudge)
+                .nudged(row.direction)
                 .map(|name| name.as_str().to_string()),
             row.expected.map(str::to_string)
         );
@@ -181,14 +167,14 @@ mod tests {
     #[rstest]
     #[case::auto("auto", Ok(ThemeChoice::Auto))]
     #[case::named("noir", Ok(ThemeChoice::Named(ThemeName::from_static("noir"))))]
-    #[case::empty("", Err(ThemeNameRejection::Empty))]
+    #[case::empty("", Err(ThemeNameError::Empty))]
     #[case::case_sensitive(
         "AUTO",
         Ok(ThemeChoice::Named(ThemeName::from_static("AUTO")))
     )]
     fn theme_choice_parses(
         #[case] text: &str,
-        #[case] expected: Result<ThemeChoice, ThemeNameRejection>,
+        #[case] expected: Result<ThemeChoice, ThemeNameError>,
     ) {
         assert_eq!(text.parse::<ThemeChoice>(), expected);
     }

@@ -5,7 +5,7 @@
 )]
 pub trait Machine: Default {
     type Message;
-    type Rejection;
+    type Error;
     type Effect;
 
     fn transition(
@@ -13,10 +13,7 @@ pub trait Machine: Default {
         message: Self::Message,
     ) -> Result<(Self, Self::Effect), Rejected<Self>>;
 
-    fn update(
-        &mut self,
-        message: Self::Message,
-    ) -> Result<Self::Effect, Self::Rejection> {
+    fn update(&mut self, message: Self::Message) -> Result<Self::Effect, Self::Error> {
         match std::mem::take(self).transition(message) {
             Ok((state, effect)) => {
                 *self = state;
@@ -30,18 +27,15 @@ pub trait Machine: Default {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Never {}
-
 pub struct Rejected<S: Machine> {
     pub state: S,
-    pub reason: S::Rejection,
+    pub reason: S::Error,
 }
 
 impl<S: Machine> std::fmt::Debug for Rejected<S>
 where
     S: std::fmt::Debug,
-    S::Rejection: std::fmt::Debug,
+    S::Error: std::fmt::Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Rejected")
@@ -71,7 +65,7 @@ mod tests {
     }
 
     #[derive(Debug, PartialEq)]
-    enum LatchRejection {
+    enum LatchError {
         WhileOpen,
         WhileClosed,
     }
@@ -83,7 +77,7 @@ mod tests {
 
     impl Machine for Latch {
         type Message = LatchMessage;
-        type Rejection = LatchRejection;
+        type Error = LatchError;
         type Effect = Click;
 
         fn transition(
@@ -99,11 +93,11 @@ mod tests {
                 }
                 (Latch::Open, LatchMessage::Open) => Err(Rejected {
                     state: Latch::Open,
-                    reason: LatchRejection::WhileOpen,
+                    reason: LatchError::WhileOpen,
                 }),
                 (Latch::Closed, LatchMessage::Close) => Err(Rejected {
                     state: Latch::Closed,
-                    reason: LatchRejection::WhileClosed,
+                    reason: LatchError::WhileClosed,
                 }),
             }
         }
@@ -113,7 +107,7 @@ mod tests {
         start: Latch,
         message: LatchMessage,
         next: Latch,
-        outcome: Result<Click, LatchRejection>,
+        outcome: Result<Click, LatchError>,
     }
 
     #[rstest]
@@ -133,13 +127,13 @@ mod tests {
         start: Latch::Open,
         message: LatchMessage::Open,
         next: Latch::Open,
-        outcome: Err(LatchRejection::WhileOpen),
+        outcome: Err(LatchError::WhileOpen),
     })]
     #[case::closed_refuses_close(LatchRow {
         start: Latch::Closed,
         message: LatchMessage::Close,
         next: Latch::Closed,
-        outcome: Err(LatchRejection::WhileClosed),
+        outcome: Err(LatchError::WhileClosed),
     })]
     fn update_writes_the_state_back_on_both_branches(#[case] row: LatchRow) {
         let mut slot = row.start;

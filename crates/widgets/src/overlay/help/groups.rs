@@ -28,7 +28,7 @@ pub(crate) fn small_count_u16(count: usize) -> u16 {
     u16::try_from(count).unwrap_or(u16::MAX)
 }
 
-struct HelpGroupSpec {
+struct HelpGroupEntry {
     title: &'static str,
     actions: &'static [(Action, &'static str)],
 }
@@ -37,7 +37,7 @@ struct HelpGroupSpec {
 const PLAYBACK_ACTIONS: &[(Action, &str)] = &[
     (Action::PlayPause, "Play / pause"),
     (Action::Next, "Next track"),
-    (Action::Prev, "Previous track"),
+    (Action::Previous, "Previous track"),
     (Action::SeekBack, "Seek back 10s"),
     (Action::SeekForward, "Seek forward 10s"),
     (Action::SeekBackShort, "Seek back 5s"),
@@ -96,25 +96,25 @@ const GENERAL_ACTIONS: &[(Action, &str)] = &[
     (Action::Search, "Find"),
     (Action::History, "History"),
     (Action::Settings, "Settings"),
-    (Action::SourceDir, "Library folder"),
+    (Action::MusicDir, "Library folder"),
     (Action::Help, "Toggle this help"),
     (Action::Quit, "Quit"),
 ];
 
-const HELP_GROUPS: [HelpGroupSpec; 4] = [
-    HelpGroupSpec {
+const HELP_GROUPS: [HelpGroupEntry; 4] = [
+    HelpGroupEntry {
         title: "Playback",
         actions: PLAYBACK_ACTIONS,
     },
-    HelpGroupSpec {
+    HelpGroupEntry {
         title: "Navigation",
         actions: NAVIGATION_ACTIONS,
     },
-    HelpGroupSpec {
+    HelpGroupEntry {
         title: "Playlist",
         actions: PLAYLIST_ACTIONS,
     },
-    HelpGroupSpec {
+    HelpGroupEntry {
         title: "General",
         actions: GENERAL_ACTIONS,
     },
@@ -168,7 +168,7 @@ pub(crate) struct HelpGroups {
 }
 
 pub(crate) fn build_help_groups(bindings: &[KeyBinding]) -> HelpGroups {
-    let make = |spec: &HelpGroupSpec| {
+    let make = |spec: &HelpGroupEntry| {
         let rows: Vec<(String, &'static str)> = spec
             .actions
             .iter()

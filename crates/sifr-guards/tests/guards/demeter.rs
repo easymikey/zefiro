@@ -27,7 +27,7 @@ const ALLOWED_MODEL_FUNCTIONS: &[Allow] = &[
     Allow::new(
         "loaded.rs",
         "loaded",
-        "routes LoadedRequest across library, playlist and themes",
+        "routes PlaylistRequest across library, playlist and themes",
     ),
     Allow::new(
         "loaded.rs",
@@ -46,7 +46,7 @@ const ALLOWED_MODEL_FUNCTIONS: &[Allow] = &[
     ),
     Allow::new(
         "loaded.rs",
-        "scan_landing",
+        "scan_parts",
         "decides where a rescan lands across library and playlist",
     ),
     Allow::new(

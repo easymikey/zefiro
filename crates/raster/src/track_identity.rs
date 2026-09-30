@@ -18,7 +18,7 @@ impl TrackIdentity {
 mod tests {
     use kernel::domain::{AudioFormat, Tags, Track};
 
-    use crate::meters::TrackIdentity;
+    use crate::track_identity::TrackIdentity;
 
     fn track(path: &str) -> Track {
         Track::builder()

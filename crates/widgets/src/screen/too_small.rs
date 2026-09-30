@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::{
     primitive::{
-        span::{row, text},
+        span::{line, text},
         text::truncate,
     },
     theme::ActiveTheme,
@@ -63,10 +63,10 @@ impl Widget for &TooSmallNotice<'_> {
             glyphs.current_close
         ));
         let lines = vec![
-            row([text(fit(glyphs.headline.to_string())).style(text_style)])
+            line([text(fit(glyphs.headline.to_string())).style(text_style)])
                 .alignment(Alignment::Center),
-            row([text(resize_line).style(text_style)]).alignment(Alignment::Center),
-            row([text(current_line).style(dim_style)]).alignment(Alignment::Center),
+            line([text(resize_line).style(text_style)]).alignment(Alignment::Center),
+            line([text(current_line).style(dim_style)]).alignment(Alignment::Center),
         ];
         let content_height = u16::try_from(lines.len()).unwrap_or(0).min(area.height);
         let target = Rect {

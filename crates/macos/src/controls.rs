@@ -4,7 +4,7 @@ use std::{ptr::NonNull, time::Duration};
 
 use block2::RcBlock;
 use crossbeam_channel::{Sender, TrySendError};
-use kernel::{Gesture, Message, SystemEvent};
+use kernel::{Gesture, MacosEvent, Message};
 use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject};
 use objc2_media_player::{
     MPChangePlaybackPositionCommandEvent,
@@ -81,42 +81,42 @@ fn target(
     trigger: Trigger,
     events: Sender<Message>,
 ) -> Retained<AnyObject> {
-    let handler = RcBlock::new(handler(trigger, events));
+    let handler = RcBlock::new(command_handler(trigger, events));
     ffi::enable_command(command);
     ffi::add_command_target(command, &handler)
 }
 
-fn handler(
+fn command_handler(
     trigger: Trigger,
     events: Sender<Message>,
 ) -> impl Fn(NonNull<MPRemoteCommandEvent>) -> MPRemoteCommandHandlerStatus + 'static {
     move |event| {
         ffi::borrow_command_event(event, |event| match reaction(trigger, event) {
-            Reaction::Forward(gesture) => {
-                status(events.try_send(Message::from(SystemEvent::MediaKey(gesture))))
+            CommandOutcome::Forward(gesture) => {
+                status(events.try_send(Message::from(MacosEvent::MediaKey(gesture))))
             }
-            Reaction::Nothing => MPRemoteCommandHandlerStatus::Success,
-            Reaction::Malformed => MPRemoteCommandHandlerStatus::CommandFailed,
+            CommandOutcome::Nothing => MPRemoteCommandHandlerStatus::Success,
+            CommandOutcome::Malformed => MPRemoteCommandHandlerStatus::CommandFailed,
         })
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Reaction {
+enum CommandOutcome {
     Forward(Gesture),
     Nothing,
     Malformed,
 }
 
-fn reaction(trigger: Trigger, event: &MPRemoteCommandEvent) -> Reaction {
+fn reaction(trigger: Trigger, event: &MPRemoteCommandEvent) -> CommandOutcome {
     match trigger {
-        Trigger::Press(gesture) => Reaction::Forward(gesture),
+        Trigger::Press(gesture) => CommandOutcome::Forward(gesture),
         Trigger::Hold(gesture) => event
             .downcast_ref::<MPSeekCommandEvent>()
-            .map_or(Reaction::Malformed, |seek| hold(gesture, phase(seek))),
+            .map_or(CommandOutcome::Malformed, |seek| hold(gesture, phase(seek))),
         Trigger::Scrub => event
             .downcast_ref::<MPChangePlaybackPositionCommandEvent>()
-            .map_or(Reaction::Malformed, |scrub| scrub_to(seconds(scrub))),
+            .map_or(CommandOutcome::Malformed, |scrub| scrub_to(seconds(scrub))),
     }
 }
 
@@ -128,17 +128,17 @@ fn seconds(scrub: &MPChangePlaybackPositionCommandEvent) -> f64 {
     ffi::scrub_position_seconds(scrub)
 }
 
-fn hold(gesture: Gesture, phase: MPSeekCommandEventType) -> Reaction {
+fn hold(gesture: Gesture, phase: MPSeekCommandEventType) -> CommandOutcome {
     if phase == MPSeekCommandEventType::BeginSeeking {
-        Reaction::Forward(gesture)
+        CommandOutcome::Forward(gesture)
     } else {
-        Reaction::Nothing
+        CommandOutcome::Nothing
     }
 }
 
-fn scrub_to(seconds: f64) -> Reaction {
-    Duration::try_from_secs_f64(seconds).map_or(Reaction::Malformed, |position| {
-        Reaction::Forward(Gesture::Scrub(position))
+fn scrub_to(seconds: f64) -> CommandOutcome {
+    Duration::try_from_secs_f64(seconds).map_or(CommandOutcome::Malformed, |position| {
+        CommandOutcome::Forward(Gesture::Scrub(position))
     })
 }
 
@@ -157,17 +157,17 @@ mod tests {
     use objc2_media_player::{MPRemoteCommandHandlerStatus, MPSeekCommandEventType};
     use rstest::rstest;
 
-    use crate::controls::{Reaction, hold, pressed, scrub_to, status, triggers};
+    use crate::controls::{CommandOutcome, hold, pressed, scrub_to, status, triggers};
 
     #[rstest]
     #[case::begin(
         MPSeekCommandEventType::BeginSeeking,
-        Reaction::Forward(Gesture::SeekForward)
+        CommandOutcome::Forward(Gesture::SeekForward)
     )]
-    #[case::end(MPSeekCommandEventType::EndSeeking, Reaction::Nothing)]
+    #[case::end(MPSeekCommandEventType::EndSeeking, CommandOutcome::Nothing)]
     fn only_the_start_of_a_hold_seeks(
         #[case] phase: MPSeekCommandEventType,
-        #[case] reaction: Reaction,
+        #[case] reaction: CommandOutcome,
     ) {
         assert_eq!(hold(Gesture::SeekForward, phase), reaction);
     }
@@ -175,13 +175,13 @@ mod tests {
     #[rstest]
     #[case::inside(
         42.5,
-        Reaction::Forward(Gesture::Scrub(Duration::from_millis(42_500)))
+        CommandOutcome::Forward(Gesture::Scrub(Duration::from_millis(42_500)))
     )]
-    #[case::negative(-1.0, Reaction::Malformed)]
-    #[case::not_a_number(f64::NAN, Reaction::Malformed)]
+    #[case::negative(-1.0, CommandOutcome::Malformed)]
+    #[case::not_a_number(f64::NAN, CommandOutcome::Malformed)]
     fn a_scrub_seeks_to_a_valid_position_only(
         #[case] seconds: f64,
-        #[case] reaction: Reaction,
+        #[case] reaction: CommandOutcome,
     ) {
         assert_eq!(scrub_to(seconds), reaction);
     }

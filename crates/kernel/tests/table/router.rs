@@ -5,19 +5,19 @@ use kernel::{
     AudioEvent,
     Bounded,
     Cmd,
+    Direction,
     Message,
     Model,
     Moment,
-    Nudge,
     OverlayName,
     PlaybackRequest,
     Timer,
     domain::{Cursor, Overlay, Player, PlaylistIndex, Revision, Transport},
     playlist::{PlayOrder, RepeatMode},
     update::{
-        Rejection,
-        overlay::{HistoryRejection, OverlayRejection},
-        player::PlayerRejection,
+        UpdateError,
+        overlay::{HistoryError, OverlayError},
+        player::PlayerError,
         update,
     },
 };
@@ -91,7 +91,7 @@ fn walked(mut model: Model, messages: Vec<Message>) -> Vec<Step> {
                 model.player.clone(),
                 model.workspace.overlay.clone(),
                 model.workspace.browse.cursor,
-                model.playlist.at,
+                model.playlist.cursor,
                 model.queue.clone(),
                 model.playlist.repeat,
                 model.playlist.play_order.clone(),
@@ -104,7 +104,7 @@ fn walked(mut model: Model, messages: Vec<Message>) -> Vec<Step> {
 
 fn resolved(message: Message, model: &Model) -> Message {
     if let Message::Elapsed(Timer::Mark(Revision::UNSTAMPED)) = message {
-        return Message::Elapsed(Timer::Mark(model.mark_generation));
+        return Message::Elapsed(Timer::Mark(model.revisions.mark));
     }
     message
 }
@@ -118,17 +118,17 @@ fn resolved(message: Message, model: &Model) -> Message {
 #[case::search_confirm_plays_the_track_the_selected_match_resolves_to(
     "search_confirm_plays_the_track_the_selected_match_resolves_to",
     moon_library(),
-    search_moon(vec![search_nav(Nudge::Down), confirm()])
+    search_moon(vec![search_nav(Direction::Next), confirm()])
 )]
 #[case::search_enqueue_queues_the_resolved_track_and_stays_open(
     "search_enqueue_queues_the_resolved_track_and_stays_open",
     moon_library(),
-    search_moon(vec![search_nav(Nudge::Down), search_enqueue()])
+    search_moon(vec![search_nav(Direction::Next), search_enqueue()])
 )]
 #[case::search_esc_leaves_the_browse_cursor_where_it_was(
     "search_esc_leaves_the_browse_cursor_where_it_was",
     moon_library_selecting(2),
-    search_moon(vec![search_nav(Nudge::Down), close()])
+    search_moon(vec![search_nav(Direction::Next), close()])
 )]
 #[case::help_opens_over_the_browse_cursor_and_closes_off_it(
     "help_opens_over_the_browse_cursor_and_closes_off_it",
@@ -338,7 +338,7 @@ fn resolved(message: Message, model: &Model) -> Message {
 #[case::the_remotes_next_and_prev_walk_the_playlist(
     "the_remotes_next_and_prev_walk_the_playlist",
     spinning_at(3, 0),
-    vec![media(PlaybackRequest::Next), media(PlaybackRequest::Prev)]
+    vec![media(PlaybackRequest::Next), media(PlaybackRequest::Previous)]
 )]
 #[case::one_ab_press_marks_the_start(
     "one_ab_press_marks_the_start",
@@ -418,37 +418,37 @@ fn router_trace(
 #[case::confirm_delete_on_an_empty_playlist_never_opens(
     Model::default(),
     open(OverlayName::ConfirmDelete),
-    Rejection::Overlay(OverlayRejection::NoTrack)
+    UpdateError::Overlay(OverlayError::NoTrack)
 )]
 #[case::track_details_with_nothing_selected_and_nothing_playing_never_opens(
     Model::default(),
     open(OverlayName::TrackDetails),
-    Rejection::Overlay(OverlayRejection::NoTrack)
+    UpdateError::Overlay(OverlayError::NoTrack)
 )]
 #[case::closing_nothing_is_refused(
     moon_library(),
     close(),
-    Rejection::Overlay(OverlayRejection::WhileClosed)
+    UpdateError::Overlay(OverlayError::WhileClosed)
 )]
 #[case::history_enqueue_against_an_empty_log_selects_nothing(
     logged(&[], &[]),
     history_enqueue(),
-    Rejection::Overlay(OverlayRejection::History(HistoryRejection::NothingSelected))
+    UpdateError::Overlay(OverlayError::History(HistoryError::NothingSelected))
 )]
 #[case::the_remotes_seek_while_stopped_is_refused(
     Model::default(),
     media(PlaybackRequest::SeekForward),
-    Rejection::Player(PlayerRejection::Stopped)
+    UpdateError::Player(PlayerError::Stopped)
 )]
 #[case::a_refused_key_keeps_the_toast_up(
     toasted(),
     media(PlaybackRequest::SeekForward),
-    Rejection::Player(PlayerRejection::Stopped)
+    UpdateError::Player(PlayerError::Stopped)
 )]
 fn a_refused_message_leaves_the_model_alone(
     #[case] mut model: Model,
     #[case] message: Message,
-    #[case] rejection: Rejection,
+    #[case] rejection: UpdateError,
 ) {
     let before = format!("{model:?}");
     assert_eq!(

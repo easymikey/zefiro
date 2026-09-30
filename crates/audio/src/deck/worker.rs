@@ -13,7 +13,7 @@ use crate::{
         source::{DecodeResult, decode},
     },
     device::list_output_devices,
-    error::AudioError,
+    error::Error,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,7 +61,7 @@ impl<T> Slot<T> {
     }
 }
 
-pub(crate) struct DecodeWorker {
+pub(crate) struct AudioWorker {
     decode: Slot<DecodeRequest>,
     preload: Slot<DecodeRequest>,
     devices: Slot<()>,
@@ -75,8 +75,8 @@ struct WorkerChannels {
     wake: Sender<DeckEvent>,
 }
 
-impl DecodeWorker {
-    pub(crate) fn spawn(wake: Sender<DeckEvent>) -> Result<Self, AudioError> {
+impl AudioWorker {
+    pub(crate) fn spawn(wake: Sender<DeckEvent>) -> Result<Self, Error> {
         let decode = Slot::new();
         let preload = Slot::new();
         let devices = Slot::new();
@@ -89,7 +89,7 @@ impl DecodeWorker {
         let builder = thread::Builder::new().name("audio-worker".into());
         let handle = builder
             .spawn(move || serve(&channels))
-            .map_err(AudioError::Spawn)?;
+            .map_err(Error::Spawn)?;
         Ok(Self {
             decode,
             preload,
@@ -107,7 +107,7 @@ impl DecodeWorker {
     }
 }
 
-impl Drop for DecodeWorker {
+impl Drop for AudioWorker {
     fn drop(&mut self) {
         self.decode.close();
         self.preload.close();
@@ -167,7 +167,7 @@ fn decode_job(
 ) -> Result<(), SendError<DeckEvent>> {
     let DecodeRequest { path, ticket } = request;
     let outcome: DecodeResult = panic::catch_unwind(AssertUnwindSafe(|| decode(&path)))
-        .unwrap_or_else(|_panic| Err(AudioError::WorkerPanicked { path }));
+        .unwrap_or_else(|_panic| Err(Error::WorkerPanicked { path }));
     let event = match role {
         Role::Decode => DeckEvent::Decoded { ticket, outcome },
         Role::Preload => DeckEvent::Preloaded { ticket, outcome },
@@ -192,7 +192,7 @@ mod tests {
 
     use crate::deck::{
         Ticket,
-        worker::{DecodeRequest, DecodeWorker, Job, Slot},
+        worker::{AudioWorker, DecodeRequest, Job, Slot},
     };
 
     fn never_opening_file() -> Option<PathBuf> {
@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn a_dropped_worker_joins() {
         let (wake, _heard) = crossbeam_channel::bounded(1);
-        let worker = DecodeWorker::spawn(wake).unwrap();
+        let worker = AudioWorker::spawn(wake).unwrap();
         let started = Instant::now();
         drop(worker);
         assert!(started.elapsed() < Duration::from_secs(1));
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn a_dropped_worker_still_ends_with_a_job_in_flight() {
         let (wake, _heard) = crossbeam_channel::bounded(1);
-        let worker = DecodeWorker::spawn(wake).unwrap();
+        let worker = AudioWorker::spawn(wake).unwrap();
         worker.submit(Job::Decode(DecodeRequest {
             path: PathBuf::from("/no/such/track"),
             ticket: Ticket::default(),
@@ -249,7 +249,7 @@ mod tests {
             return;
         };
         let (wake, heard) = crossbeam_channel::bounded(1);
-        let worker = DecodeWorker::spawn(wake).unwrap();
+        let worker = AudioWorker::spawn(wake).unwrap();
 
         let started = Instant::now();
         worker.submit(Job::Preload(DecodeRequest {

@@ -13,7 +13,7 @@ pub struct FillColors {
 pub fn bar_colors(overrides: BarColorOverrides, theme: &Theme) -> BarColors {
     BarColors {
         fill: overrides.fill.unwrap_or(theme.colors.role(Role::Accent)),
-        track: overrides
+        trough: overrides
             .track
             .unwrap_or(theme.colors.role(Role::BarGroove)),
     }
@@ -21,7 +21,7 @@ pub fn bar_colors(overrides: BarColorOverrides, theme: &Theme) -> BarColors {
 
 #[cfg(test)]
 mod tests {
-    use config::Hex;
+    use config::Rgb;
     use raster::{BarColorOverrides, BarColors, color_overrides};
 
     use crate::theme::{Role, Theme, bars::bar_colors};
@@ -40,7 +40,7 @@ mod tests {
             bar_colors(BarColorOverrides::default(), &theme),
             BarColors {
                 fill: theme.colors.role(Role::Accent),
-                track: theme.colors.role(Role::BarGroove),
+                trough: theme.colors.role(Role::BarGroove),
             }
         );
     }
@@ -49,14 +49,14 @@ mod tests {
     fn a_set_override_wins_over_the_theme() {
         let theme = theme();
         let overrides = BarColorOverrides {
-            fill: Some(Hex([255, 0, 0])),
-            track: Some(Hex([0, 255, 0])),
+            fill: Some(Rgb([255, 0, 0])),
+            track: Some(Rgb([0, 255, 0])),
         };
         assert_eq!(
             bar_colors(overrides, &theme),
             BarColors {
-                fill: Hex([255, 0, 0]),
-                track: Hex([0, 255, 0]),
+                fill: Rgb([255, 0, 0]),
+                trough: Rgb([0, 255, 0]),
             }
         );
     }
@@ -65,15 +65,15 @@ mod tests {
     fn the_bar_colours_follow_the_progress_configs_overrides() {
         let theme = theme();
         let overridden = config::ProgressConfig {
-            fill: Some(Hex([255, 0, 0])),
-            track: Some(Hex([0, 255, 0])),
+            fill: Some(Rgb([255, 0, 0])),
+            track: Some(Rgb([0, 255, 0])),
             ..config::ProgressConfig::default()
         };
         assert_eq!(
             bar_colors(color_overrides(&overridden), &theme),
             BarColors {
-                fill: Hex([255, 0, 0]),
-                track: Hex([0, 255, 0]),
+                fill: Rgb([255, 0, 0]),
+                trough: Rgb([0, 255, 0]),
             }
         );
     }

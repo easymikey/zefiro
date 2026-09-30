@@ -9,17 +9,17 @@ use crate::{
         FormatChips,
         KeyHints,
         LayoutMode,
-        ProgressStyle,
-        SpeedChipMode,
+        ProgressTime,
+        SpeedChip,
     },
-    document::{Field, write_fields},
-    error::ConfigError,
+    document::{TomlEdit, write_edits},
+    error::Error,
 };
 
 fn cover_fields(
     style: Option<CoverStyle>,
     brackets: Option<CoverBrackets>,
-) -> [Field; 2] {
+) -> [TomlEdit; 2] {
     [
         (
             "cover",
@@ -36,8 +36,8 @@ fn cover_fields(
 
 fn card_fields(
     format_chips: Option<FormatChips>,
-    speed_chip: Option<SpeedChipMode>,
-) -> [Field; 2] {
+    speed_chip: Option<SpeedChip>,
+) -> [TomlEdit; 2] {
     [
         (
             "card",
@@ -52,11 +52,11 @@ fn card_fields(
     ]
 }
 
-fn progress_fields(remaining: Option<ProgressStyle>) -> [Field; 1] {
+fn progress_fields(remaining: Option<ProgressTime>) -> [TomlEdit; 1] {
     [(
         "progress",
         "remaining",
-        remaining.map(|style| value(matches!(style, ProgressStyle::Remaining))),
+        remaining.map(|style| value(matches!(style, ProgressTime::Remaining))),
     )]
 }
 
@@ -66,7 +66,7 @@ struct WindowFields {
     animations: Option<Animations>,
 }
 
-fn window_fields(fields: WindowFields) -> [Field; 2] {
+fn window_fields(fields: WindowFields) -> [TomlEdit; 2] {
     let WindowFields {
         key_hints,
         animations,
@@ -85,41 +85,41 @@ fn window_fields(fields: WindowFields) -> [Field; 2] {
     ]
 }
 
-fn layout_fields(mode: Option<LayoutMode>) -> [Field; 1] {
+fn layout_fields(mode: Option<LayoutMode>) -> [TomlEdit; 1] {
     [("layout", "mode", mode.map(|mode| value(mode.to_string())))]
 }
 
 fn patch_appearance(
     doc: &mut DocumentMut,
     patch: AppearancePatch,
-) -> Result<(), ConfigError> {
+) -> Result<(), Error> {
     let AppearancePatch {
         cover_style,
         cover_brackets,
         format_chips,
         speed_chip,
-        progress_remaining,
+        progress_time,
         key_hints,
         animations,
         layout_mode,
     } = patch;
-    write_fields(doc, cover_fields(cover_style, cover_brackets))?;
-    write_fields(doc, card_fields(format_chips, speed_chip))?;
-    write_fields(doc, progress_fields(progress_remaining))?;
-    write_fields(
+    write_edits(doc, cover_fields(cover_style, cover_brackets))?;
+    write_edits(doc, card_fields(format_chips, speed_chip))?;
+    write_edits(doc, progress_fields(progress_time))?;
+    write_edits(
         doc,
         window_fields(WindowFields {
             key_hints,
             animations,
         }),
     )?;
-    write_fields(doc, layout_fields(layout_mode))
+    write_edits(doc, layout_fields(layout_mode))
 }
 
-pub fn appearance_patched(
+pub fn patch_appearance_text(
     text: &str,
     patch: AppearancePatch,
-) -> Result<String, ConfigError> {
+) -> Result<String, Error> {
     let mut doc: DocumentMut = text.parse()?;
     patch_appearance(&mut doc, patch)?;
     Ok(doc.to_string())
@@ -140,12 +140,12 @@ mod tests {
             FormatChips,
             KeyHints,
             LayoutMode,
-            ProgressStyle,
-            SpeedChipMode,
+            ProgressTime,
+            SpeedChip,
         },
-        appearance_document::appearance_patched,
+        appearance_document::patch_appearance_text,
         appearance_file::parse_appearance,
-        error::ConfigError,
+        error::Error,
     };
 
     const COMMENTED_UI: &str = include_str!("../tests/fixtures/sifr-ui_commented.toml");
@@ -155,8 +155,8 @@ mod tests {
             cover_style: Some(CoverStyle::Milkdrop),
             cover_brackets: Some(CoverBrackets::Shown),
             format_chips: Some(FormatChips::Shown),
-            speed_chip: Some(SpeedChipMode::Always),
-            progress_remaining: Some(ProgressStyle::Remaining),
+            speed_chip: Some(SpeedChip::Always),
+            progress_time: Some(ProgressTime::Remaining),
             key_hints: Some(KeyHints::Hidden),
             animations: Some(Animations::Off),
             layout_mode: Some(LayoutMode::Compact),
@@ -207,28 +207,26 @@ mod tests {
         COMMENTED_UI,
         every_appearance_field_in_text()
     )]
-    fn appearance_patched_writes(
+    fn an_appearance_patch_writes_only_the_fields_it_sets(
         #[case] name: &str,
         #[case] text: &str,
         #[case] patch: AppearancePatch,
     ) {
-        let out = appearance_patched(text, patch).unwrap();
+        let out = patch_appearance_text(text, patch).unwrap();
         insta::with_settings!({ snapshot_suffix => name }, {
             insta::assert_snapshot!(out);
         });
     }
 
     #[test]
-    fn appearance_patched_reports_not_a_table_instead_of_panicking() {
-        let refused = appearance_patched(
+    fn an_appearance_patch_reports_a_non_table_document_instead_of_panicking() {
+        let refused = patch_appearance_text(
             "card = \"x\"\n",
             AppearancePatch::builder()
                 .format_chips(FormatChips::Shown)
                 .build(),
         );
-        assert!(
-            matches!(refused, Err(ConfigError::NotATable { ref key }) if key == "card")
-        );
+        assert!(matches!(refused, Err(Error::NotATable { ref key }) if key == "card"));
     }
 
     fn text_at<'a>(parsed: &'a toml::Value, table: &str, key: &str) -> Option<&'a str> {
@@ -238,7 +236,8 @@ mod tests {
     #[test]
     fn a_full_appearance_patch_still_parses_as_plain_toml() {
         let written =
-            appearance_patched(COMMENTED_UI, every_appearance_field_in_text()).unwrap();
+            patch_appearance_text(COMMENTED_UI, every_appearance_field_in_text())
+                .unwrap();
         let parsed: toml::Value = toml::from_str(&written).unwrap();
         assert_eq!(text_at(&parsed, "cover", "style"), Some("milkdrop"));
         assert_eq!(text_at(&parsed, "layout", "mode"), Some("compact"));
@@ -247,16 +246,17 @@ mod tests {
     #[test]
     fn a_full_appearance_patch_reads_back_through_its_own_parser() {
         let written =
-            appearance_patched(COMMENTED_UI, every_appearance_field_in_text()).unwrap();
+            patch_appearance_text(COMMENTED_UI, every_appearance_field_in_text())
+                .unwrap();
         let parsed = parse_appearance(&written).unwrap();
         assert_eq!(
-            parsed.options(),
+            parsed.appearance(),
             Appearance {
                 cover_style: CoverStyle::Milkdrop,
                 cover_brackets: CoverBrackets::Shown,
                 format_chips: FormatChips::Shown,
-                speed_chip: SpeedChipMode::Always,
-                progress_remaining: ProgressStyle::Remaining,
+                speed_chip: SpeedChip::Always,
+                progress_time: ProgressTime::Remaining,
                 key_hints: KeyHints::Hidden,
                 animations: Animations::Off,
                 layout_mode: LayoutMode::Compact,
@@ -272,8 +272,8 @@ mod tests {
         Option<CoverStyle>,
         Option<CoverBrackets>,
         Option<FormatChips>,
-        Option<SpeedChipMode>,
-        Option<ProgressStyle>,
+        Option<SpeedChip>,
+        Option<ProgressTime>,
     );
 
     fn cover_card_progress_patch() -> impl Strategy<Value = CoverCardProgressPatch> {
@@ -293,13 +293,13 @@ mod tests {
                 Just(FormatChips::Hidden),
             ]),
             proptest::option::of(prop_oneof![
-                Just(SpeedChipMode::Always),
-                Just(SpeedChipMode::Changed),
-                Just(SpeedChipMode::Never),
+                Just(SpeedChip::Always),
+                Just(SpeedChip::Changed),
+                Just(SpeedChip::Never),
             ]),
             proptest::option::of(prop_oneof![
-                Just(ProgressStyle::Elapsed),
-                Just(ProgressStyle::Remaining),
+                Just(ProgressTime::Elapsed),
+                Just(ProgressTime::Remaining),
             ]),
         )
     }
@@ -327,20 +327,14 @@ mod tests {
     fn appearance_patch() -> impl Strategy<Value = AppearancePatch> {
         (cover_card_progress_patch(), window_layout_patch()).prop_map(
             |(
-                (
-                    cover_style,
-                    cover_brackets,
-                    format_chips,
-                    speed_chip,
-                    progress_remaining,
-                ),
+                (cover_style, cover_brackets, format_chips, speed_chip, progress_time),
                 (key_hints, animations, layout_mode),
             )| AppearancePatch {
                 cover_style,
                 cover_brackets,
                 format_chips,
                 speed_chip,
-                progress_remaining,
+                progress_time,
                 key_hints,
                 animations,
                 layout_mode,
@@ -353,7 +347,7 @@ mod tests {
         fn an_untouched_appearance_patch_leaves_the_document_unchanged(
             text in base_appearance_texts(),
         ) {
-            let written = appearance_patched(text, AppearancePatch::builder().build()).unwrap();
+            let written = patch_appearance_text(text, AppearancePatch::builder().build()).unwrap();
             prop_assert_eq!(written, text);
         }
 
@@ -362,9 +356,9 @@ mod tests {
             text in base_appearance_texts(),
             patch in appearance_patch(),
         ) {
-            let base = parse_appearance(text).unwrap().options();
-            let written = appearance_patched(text, patch).unwrap();
-            let parsed = parse_appearance(&written).unwrap().options();
+            let base = parse_appearance(text).unwrap().appearance();
+            let written = patch_appearance_text(text, patch).unwrap();
+            let parsed = parse_appearance(&written).unwrap().appearance();
 
             prop_assert_eq!(parsed.cover_style, patch.cover_style.unwrap_or(base.cover_style));
             prop_assert_eq!(
@@ -377,8 +371,8 @@ mod tests {
             );
             prop_assert_eq!(parsed.speed_chip, patch.speed_chip.unwrap_or(base.speed_chip));
             prop_assert_eq!(
-                parsed.progress_remaining,
-                patch.progress_remaining.unwrap_or(base.progress_remaining)
+                parsed.progress_time,
+                patch.progress_time.unwrap_or(base.progress_time)
             );
             prop_assert_eq!(parsed.key_hints, patch.key_hints.unwrap_or(base.key_hints));
             prop_assert_eq!(parsed.animations, patch.animations.unwrap_or(base.animations));

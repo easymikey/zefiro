@@ -32,7 +32,7 @@ use crate::{
             SleevePlacement,
             StrokeStyle,
             VinylGeometry,
-            canvas_dims,
+            canvas_size,
             record_disc,
         },
     },
@@ -52,7 +52,7 @@ pub(crate) struct VinylFrameBase {
 
 #[must_use]
 pub(crate) fn prepare_frame_base(style: VinylFrameStyle) -> Option<VinylFrameBase> {
-    let dims = canvas_dims(&style);
+    let dims = canvas_size(&style);
     let mut pixmap = Pixmap::new(dims.width, dims.height)?;
     pixmap.fill(Color::TRANSPARENT);
     let geometry = VinylGeometry::new(dims.height, &style.layout);
@@ -75,7 +75,7 @@ pub(crate) struct VinylSleeveOverlay {
 pub(crate) fn prepare_sleeve_overlay(
     input: &VinylSleeve<'_>,
 ) -> Option<VinylSleeveOverlay> {
-    let dims = canvas_dims(&input.style);
+    let dims = canvas_size(&input.style);
     let mut pixmap = Pixmap::new(dims.width, dims.height)?;
     let geometry = VinylGeometry::new(dims.height, &input.style.layout);
     paint_sleeve(
@@ -142,8 +142,15 @@ fn paint_record_and_grooves(
     paint_drop_shadow_disc(pixmap, record, shadow);
     fill_disc(pixmap, record, skia_color(style.colors.record));
 
-    let label_r = record.r * style.layout.label_radius_fraction;
-    paint_grooves(pixmap, style, RecordGeometry { record, label_r });
+    let label_radius = record.radius * style.layout.label_radius_fraction;
+    paint_grooves(
+        pixmap,
+        style,
+        RecordGeometry {
+            record,
+            label_radius,
+        },
+    );
 }
 
 fn paint_label_ring_spindle(
@@ -153,11 +160,11 @@ fn paint_label_ring_spindle(
 ) {
     let record = record_disc(geometry);
     let layout = &input.layout;
-    let label_r = record.r * layout.label_radius_fraction;
+    let label_radius = record.radius * layout.label_radius_fraction;
     let label = Disc {
-        cx: record.cx,
-        cy: record.cy,
-        r: label_r,
+        center_x: record.center_x,
+        center_y: record.center_y,
+        radius: label_radius,
     };
     match sleeve_art(input) {
         Some(art) => paint_art_in_circle(
@@ -179,9 +186,9 @@ fn paint_label_ring_spindle(
     );
 
     let spindle = Disc {
-        cx: record.cx,
-        cy: record.cy,
-        r: layout.spindle_radius_fraction * geometry.size,
+        center_x: record.center_x,
+        center_y: record.center_y,
+        radius: layout.spindle_radius_fraction * geometry.size,
     };
     fill_disc(pixmap, spindle, skia_color(input.colors.record));
 }
@@ -196,8 +203,8 @@ fn paint_grooves(
     let size = dimension_f32(style.size_px.max(1));
     let gap = style.layout.groove_spacing * size;
     for i in 0..style.layout.groove_count {
-        let r = geometry.record.r - gap * dimension_f32(i + 1);
-        if r <= geometry.label_r {
+        let radius = geometry.record.radius - gap * dimension_f32(i + 1);
+        if radius <= geometry.label_radius {
             break;
         }
         let alpha = if i % 2 == 0 {
@@ -208,7 +215,7 @@ fn paint_grooves(
         stroke_ring(
             pixmap,
             Disc {
-                r,
+                radius,
                 ..geometry.record
             },
             StrokeStyle {
@@ -286,9 +293,9 @@ fn paint_drop_shadow_disc(pixmap: &mut Pixmap, disc: Disc, shadow: ShadowStyle) 
         fill_disc(
             pixmap,
             Disc {
-                cx: disc.cx + dx,
-                cy: disc.cy + dy,
-                r: disc.r + shadow.offset * spread_fraction,
+                center_x: disc.center_x + dx,
+                center_y: disc.center_y + dy,
+                radius: disc.radius + shadow.offset * spread_fraction,
             },
             skia_color_with_alpha(
                 shadow.color,
@@ -386,11 +393,11 @@ fn stroke_rounded_rect(pixmap: &mut Pixmap, rect: RoundedRect, style: StrokeStyl
 }
 
 fn fill_disc(pixmap: &mut Pixmap, disc: Disc, fill: Color) {
-    if disc.r <= 0.0 {
+    if disc.radius <= 0.0 {
         return;
     }
     let mut path_builder = PathBuilder::new();
-    path_builder.push_circle(disc.cx, disc.cy, disc.r);
+    path_builder.push_circle(disc.center_x, disc.center_y, disc.radius);
     let Some(path) = path_builder.finish() else {
         return;
     };
@@ -407,11 +414,11 @@ fn fill_disc(pixmap: &mut Pixmap, disc: Disc, fill: Color) {
 }
 
 fn stroke_ring(pixmap: &mut Pixmap, disc: Disc, style: StrokeStyle) {
-    if disc.r <= 0.0 || style.width <= 0.0 {
+    if disc.radius <= 0.0 || style.width <= 0.0 {
         return;
     }
     let mut path_builder = PathBuilder::new();
-    path_builder.push_circle(disc.cx, disc.cy, disc.r);
+    path_builder.push_circle(disc.center_x, disc.center_y, disc.radius);
     let Some(path) = path_builder.finish() else {
         return;
     };

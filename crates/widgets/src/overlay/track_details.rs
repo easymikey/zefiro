@@ -13,7 +13,7 @@ use crate::{
         canvas::Canvas,
         format_chips::kilohertz,
         glyphs::{TrackDetailsGlyphs, TruncateGlyphs},
-        span::{row, text},
+        span::{line, text},
         text::{truncate_from_left, truncate_to_width},
     },
     theme::ActiveTheme,
@@ -32,7 +32,7 @@ pub(crate) struct TrackDetailsOverlay<'a> {
 impl TrackDetailsOverlay<'_> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::Dialog(self.modal().frame(screen, self.avoid))
+        OverlayAreas::Dialog(self.modal().areas(screen, self.avoid))
     }
 
     pub(crate) fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
@@ -77,16 +77,16 @@ impl TrackDetailsOverlay<'_> {
                 content_width,
                 content_lines: u16::try_from(rows.len()).unwrap_or(u16::MAX),
             },
-            hint: Some(row([text(glyphs.hint).fg(self.theme.dim())])),
+            hint: Some(line([text(glyphs.hint).fg(self.theme.dim())])),
             border: self.theme.accent(),
-            window_background: self.theme.window_bg(),
+            window_background: self.theme.window_background(),
         }
     }
 
     fn rows(&self) -> Vec<TrackDetailsRow> {
         value_rows(
             self.track,
-            RowContext {
+            DetailsRowParts {
                 glyphs: TrackDetailsGlyphs::default(),
                 leader_column: LEADER_COLUMN,
             },
@@ -109,7 +109,7 @@ impl TrackDetailsOverlay<'_> {
                     )
                     .into_owned()
                 };
-                row([
+                line([
                     text(detail_row.prefix).fg(self.theme.dim()),
                     text(value).fg(self.theme.text()),
                 ])
@@ -131,12 +131,12 @@ struct TrackDetailsRow {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct RowContext {
+struct DetailsRowParts {
     glyphs: TrackDetailsGlyphs,
     leader_column: usize,
 }
 
-fn value_rows(track: &Track, context: RowContext) -> Vec<TrackDetailsRow> {
+fn value_rows(track: &Track, context: DetailsRowParts) -> Vec<TrackDetailsRow> {
     let glyphs = context.glyphs;
     let tags = track.tags();
     [
@@ -199,7 +199,7 @@ enum RowPrefix {
 }
 
 impl RowPrefix {
-    fn prefix(self, label: &str, context: RowContext) -> String {
+    fn prefix(self, label: &str, context: DetailsRowParts) -> String {
         match self {
             Self::Leader => leader_prefix(label, context),
             Self::Plain => plain_prefix(label, context.glyphs),
@@ -207,7 +207,7 @@ impl RowPrefix {
     }
 }
 
-fn leader_prefix(label: &str, context: RowContext) -> String {
+fn leader_prefix(label: &str, context: DetailsRowParts) -> String {
     let glyphs = context.glyphs;
     let dashes = context
         .leader_column

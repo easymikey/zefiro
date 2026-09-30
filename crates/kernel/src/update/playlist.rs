@@ -1,11 +1,11 @@
 use crate::{
     cmd::Cmd,
     domain::{
-        Nudge,
+        Direction,
         cycled,
         playlist::{PlayOrder, Playlist, RepeatMode},
     },
-    update::machine::{Machine, Never, Rejected},
+    update::machine::{Machine, Rejected},
 };
 
 #[derive(Debug, Clone)]
@@ -17,7 +17,7 @@ pub enum PlaylistMessage {
 
 impl Machine for Playlist {
     type Message = PlaylistMessage;
-    type Rejection = Never;
+    type Error = std::convert::Infallible;
     type Effect = Cmd;
 
     fn transition(
@@ -53,5 +53,5 @@ impl Machine for Playlist {
 }
 
 fn cycle_repeat(repeat: RepeatMode) -> RepeatMode {
-    cycled(repeat, Nudge::Up)
+    cycled(repeat, Direction::Next)
 }

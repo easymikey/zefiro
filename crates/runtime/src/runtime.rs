@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     mem,
+    ops::ControlFlow,
     time::{Duration, Instant},
 };
 
@@ -12,32 +13,25 @@ use kernel::{
     Moment,
     domain::{Model, Startup},
 };
-use library::LibraryPaths;
+use library::LibraryDirs;
 
 use crate::{
     config::ConfigPaths,
-    error::RuntimeError,
+    error::Error,
     interpret::{Interpreter, interpret},
-    launch::Launchers,
     library::cover::CoverRequest,
-    mailbox::{Backlog, Episode, Observation, episode_transition},
     registry,
-    shell::{Flow, ShellEffect, View},
+    shell::{FrameInput, ShellEffect},
+    spawn::Spawners,
     timers::Timers,
     trace::{Trace, TraceEntry},
-    wiring::{Relaunching, Wiring, drain_reports, drop_ports, join_reported},
+    wiring::{RestartParts, Wiring, await_exits, drop_ports, join_exited},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Change {
-    Applied,
-    Refused,
-}
-
 #[derive(Debug, Clone)]
-pub struct BootPaths {
+pub struct StartupPaths {
     pub config: ConfigPaths,
-    pub library: LibraryPaths,
+    pub library: LibraryDirs,
 }
 
 #[derive(Debug)]
@@ -47,10 +41,10 @@ pub struct Runtime {
     pub(crate) timers: Timers,
     pub(crate) trace: Trace,
     epoch: Instant,
-    flow: Flow,
+    flow: ControlFlow<()>,
     shell_effects: Vec<ShellEffect>,
     cover: Option<CoverRequest>,
-    episodes: [Episode; 4],
+    full_episodes: u32,
 }
 
 pub(crate) struct Seed {
@@ -61,13 +55,13 @@ pub(crate) struct Seed {
 impl Runtime {
     pub(crate) const DRAIN: Duration = Duration::from_secs(2);
 
-    pub fn boot(
+    pub fn start(
         startup: Startup,
-        paths: &BootPaths,
-        launchers: &Launchers,
-    ) -> Result<Self, RuntimeError> {
+        paths: &StartupPaths,
+        spawners: &Spawners,
+    ) -> Result<Self, Error> {
         let seed = Self::seeded(startup);
-        let wiring = Wiring::spawn(&seed.model, paths, launchers)?;
+        let wiring = Wiring::spawn(&seed.model, paths, spawners)?;
         Ok(Self::assemble(seed, wiring, Trace::default()))
     }
 
@@ -87,10 +81,10 @@ impl Runtime {
             timers: Timers::default(),
             trace,
             epoch: Instant::now(),
-            flow: Flow::Continue,
+            flow: ControlFlow::Continue(()),
             shell_effects: Vec::new(),
             cover: None,
-            episodes: [Episode::default(); 4],
+            full_episodes: 0,
         };
         for answer in runtime.interpret(cmd) {
             runtime.step(answer);
@@ -103,48 +97,29 @@ impl Runtime {
         runtime
     }
 
-    pub(crate) fn step(&mut self, message: Message) -> Change {
+    pub(crate) fn step(&mut self, message: Message) -> bool {
         let mut queue: VecDeque<Message> = VecDeque::from([message]);
-        let mut change = Change::Refused;
+        let mut applied = false;
         while let Some(current) = queue.pop_front() {
-            let (applied, following) = self.update(current);
-            if let Change::Applied = applied {
-                change = Change::Applied;
+            if let Some(following) = self.update(current) {
+                applied = true;
+                queue.extend(following);
             }
-            queue.extend(following);
         }
-        change
+        applied
     }
 
-    pub(crate) fn settle_congestion(&mut self) {
+    pub(crate) fn report_full(&mut self) {
         for row in registry::REGISTRY {
-            if let Flow::Stop = self.flow {
+            if self.flow.is_break() {
                 return;
             }
-            let Some(congestion) = self.wiring.ports.congestion(row.driver) else {
+            let Some(full_edge) = self.wiring.ports.full_edge(row.driver) else {
                 continue;
             };
-            let crowding = congestion.settle();
-            let backlog = if self.wiring.mailbox.is_empty() {
-                Backlog::Drained
-            } else {
-                Backlog::Pending
-            };
-            let observed = Observation {
-                crowding,
-                backlog,
-                driver: row.driver,
-            };
-            let slot = row.driver.index();
-            let Some(current) = self.episodes.get(slot).copied() else {
-                continue;
-            };
-            let (next, message) = episode_transition(current, observed);
-            if let Some(entry) = self.episodes.get_mut(slot) {
-                *entry = next;
-            }
-            if let Some(message) = message {
-                self.step(message);
+            if full_edge.take() {
+                self.full_episodes += 1;
+                self.step(Message::Driver(row.driver, DriverMessage::Full));
             }
         }
     }
@@ -161,7 +136,7 @@ impl Runtime {
             .map(|deadline| Moment::new(deadline.saturating_duration_since(self.epoch)))
     }
 
-    pub(crate) fn flow(&self) -> Flow {
+    pub(crate) fn flow(&self) -> ControlFlow<()> {
         self.flow
     }
 
@@ -169,8 +144,8 @@ impl Runtime {
         mem::take(&mut self.shell_effects)
     }
 
-    pub(crate) fn view(&self, now: Instant) -> View<'_> {
-        View {
+    pub(crate) fn view(&self, now: Instant) -> FrameInput<'_> {
+        FrameInput {
             model: &self.model,
             spectrum: &self.wiring.spectrum,
             cells: &self.wiring.cells,
@@ -203,8 +178,8 @@ impl Runtime {
     }
 
     #[must_use]
-    pub(crate) fn mailbox_sender(&self) -> Sender<Message> {
-        self.wiring.mailbox_sender.clone()
+    pub(crate) fn sender(&self) -> Sender<Message> {
+        self.wiring.sender.clone()
     }
 
     pub(crate) fn drain(self) {
@@ -215,27 +190,27 @@ impl Runtime {
             ..
         } = self;
         let Wiring {
-            mailbox,
+            receiver,
             mut handles,
             ports,
             ..
         } = wiring;
         drop_ports(ports);
-        let reported = drain_reports(&model, &mailbox, Self::DRAIN);
-        join_reported(&mut handles, &reported, &mut trace);
+        let reported = await_exits(&model, &receiver, Self::DRAIN);
+        join_exited(&mut handles, &reported, &mut trace);
     }
 
-    fn update(&mut self, message: Message) -> (Change, Vec<Message>) {
+    fn update(&mut self, message: Message) -> Option<Vec<Message>> {
         let label: &'static str = (&message).into();
         let now = self.now();
         match kernel::update::update(&mut self.model, message, now) {
-            Ok(cmd) => (Change::Applied, self.interpret(cmd)),
-            Err(rejection) => {
+            Ok(cmd) => Some(self.interpret(cmd)),
+            Err(error) => {
                 self.trace.push(TraceEntry::Rejected {
                     message: label,
-                    rejection,
+                    error,
                 });
-                (Change::Refused, Vec::new())
+                None
             }
         }
     }
@@ -251,19 +226,19 @@ impl Runtime {
                 trace: &mut self.trace,
             };
             let interpreted = interpret(pending, &mut interpreter);
-            self.shell_effects.extend(interpreted.shell);
+            self.shell_effects.extend(interpreted.shell_effects);
             answers.extend(interpreted.answers);
-            if let Flow::Stop = interpreted.flow {
-                self.flow = Flow::Stop;
+            if interpreted.flow.is_break() {
+                self.flow = ControlFlow::Break(());
             }
-            let Some((driver, effects)) = interpreted.relaunch else {
+            let Some((driver, effects)) = interpreted.restart else {
                 break;
             };
-            let relaunching = Relaunching {
+            let restart_parts = RestartParts {
                 model: &self.model,
                 trace: &mut self.trace,
             };
-            self.wiring.relaunch(driver, relaunching);
+            self.wiring.restart(driver, restart_parts);
             pending = Cmd::Batch(effects);
         }
         answers
@@ -282,27 +257,26 @@ mod tests {
     use kernel::{
         AudioCmd,
         AudioEvent,
+        Direction,
         DriverMessage,
         Message,
-        Nudge,
         Toast,
         WorkspaceRequest,
         domain::{Driver, DriverStatus, SettingRow, Startup},
     };
-    use library::LibraryPaths;
+    use library::LibraryDirs;
     use rstest::rstest;
 
     use crate::{
         config::{ConfigPaths, SeenTexts},
         driver::DriverLoop,
-        error::RuntimeError,
+        error::Error,
         event_loop::run,
-        interpret::LibraryCommand,
-        launch::{Launched, Launchers, Launching, launch_config, spawn_audio_launched},
-        library::cover::CoverRequest,
-        mailbox::Mailbox,
-        runtime::{BootPaths, Change, Runtime},
-        shell::{FrameDue, Painted, Reaction, Shell, ShellEffect, View},
+        library::{cover::CoverRequest, machine::LibraryMessage},
+        runtime::{Runtime, StartupPaths},
+        sender::DriverSender,
+        shell::{FrameDue, FrameInput, Painted, Reaction, Shell, ShellEffect},
+        spawn::{AudioSpawned, SpawnParts, Spawners, spawn_audio_loop, spawn_config},
         trace::{DropReason, Trace, TraceEntry},
         wiring::Wiring,
     };
@@ -311,19 +285,19 @@ mod tests {
         Startup::default()
     }
 
-    fn boot_paths(directory: &Path) -> BootPaths {
-        BootPaths {
+    fn start_paths(directory: &Path) -> StartupPaths {
+        StartupPaths {
             config: ConfigPaths {
-                config: Some(directory.join("config.toml")),
+                config: directory.join("config.toml"),
                 appearance: directory.join("sifr-ui.toml"),
                 themes: directory.join("themes"),
                 theme: None,
                 seen: SeenTexts::default(),
             },
-            library: LibraryPaths {
-                cache: directory.join("cache"),
-                data: directory.join("data"),
-                playlists: directory.join("playlists"),
+            library: LibraryDirs {
+                cache_dir: directory.join("cache"),
+                data_dir: directory.join("data"),
+                playlists_dir: directory.join("playlists"),
             },
         }
     }
@@ -340,11 +314,11 @@ mod tests {
 
         fn effect(&mut self, _effect: ShellEffect) {}
 
-        fn frame_due(&self, _view: &View<'_>) -> FrameDue {
+        fn frame_due(&self, _view: &FrameInput<'_>) -> FrameDue {
             FrameDue::Settled
         }
 
-        fn paint(&mut self, _view: View<'_>) -> Result<Painted, Infallible> {
+        fn paint(&mut self, _view: FrameInput<'_>) -> Result<Painted, Infallible> {
             Ok(Painted::default())
         }
     }
@@ -358,7 +332,7 @@ mod tests {
     }
 
     impl DriverLoop<AudioCmd, AudioEvent> for RecordingAudio {
-        fn run(self, inbox: &Receiver<AudioCmd>, _outbox: &Mailbox<AudioEvent>) {
+        fn run(self, inbox: &Receiver<AudioCmd>, _outbox: &DriverSender<AudioEvent>) {
             while let Ok(command) = inbox.recv() {
                 if self.forward.send(command).is_err() {
                     return;
@@ -367,20 +341,18 @@ mod tests {
         }
     }
 
-    fn recording_audio(
-        launching: &Launching<'_>,
-    ) -> Result<Launched<AudioCmd>, RuntimeError> {
+    fn recording_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioSpawned, Error> {
         let forward = AUDIO_TAP.with(|tap| tap.borrow().clone()).unwrap();
-        spawn_audio_launched(RecordingAudio { forward }, launching)
+        spawn_audio_loop(RecordingAudio { forward }, spawn_parts)
     }
 
-    fn recording_launchers() -> (Launchers, Receiver<AudioCmd>) {
+    fn recording_spawners() -> (Spawners, Receiver<AudioCmd>) {
         let (forward, commands) = unbounded();
         AUDIO_TAP.with(|tap| *tap.borrow_mut() = Some(forward));
         (
-            Launchers {
+            Spawners {
                 audio: recording_audio,
-                ..Launchers::idle()
+                ..Spawners::idle()
             },
             commands,
         )
@@ -389,31 +361,29 @@ mod tests {
     struct PanickingAudio;
 
     impl DriverLoop<AudioCmd, AudioEvent> for PanickingAudio {
-        fn run(self, _inbox: &Receiver<AudioCmd>, _outbox: &Mailbox<AudioEvent>) {
+        fn run(self, _inbox: &Receiver<AudioCmd>, _outbox: &DriverSender<AudioEvent>) {
             panic!("boom");
         }
     }
 
-    fn panicking_audio(
-        launching: &Launching<'_>,
-    ) -> Result<Launched<AudioCmd>, RuntimeError> {
-        spawn_audio_launched(PanickingAudio, launching)
+    fn panicking_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioSpawned, Error> {
+        spawn_audio_loop(PanickingAudio, spawn_parts)
     }
 
-    fn panicking_launchers() -> Launchers {
-        Launchers {
+    fn panicking_spawners() -> Spawners {
+        Spawners {
             audio: panicking_audio,
-            ..Launchers::idle()
+            ..Spawners::idle()
         }
     }
 
     #[test]
-    fn boot_sends_the_startup_stop_and_list_devices_to_the_stub_audio_inbox() {
+    fn start_sends_the_startup_stop_and_list_devices_to_the_stub_audio_inbox() {
         let directory = tempfile::tempdir().unwrap();
         let startup = stock_startup();
-        let (launchers, commands) = recording_launchers();
+        let (spawners, commands) = recording_spawners();
         let runtime =
-            Runtime::boot(startup, &boot_paths(directory.path()), &launchers).unwrap();
+            Runtime::start(startup, &start_paths(directory.path()), &spawners).unwrap();
         let (keys, input) = unbounded();
         keys.send(()).unwrap();
         let mut shell = QuitShell;
@@ -441,7 +411,7 @@ mod tests {
             match event {
                 SaveStep::Adjust => Reaction::Message(Message::Adjust {
                     row: SettingRow::Replaygain,
-                    nudge: Nudge::Up,
+                    direction: Direction::Next,
                 }),
                 SaveStep::Quit => Reaction::Message(Message::Quit),
             }
@@ -449,11 +419,11 @@ mod tests {
 
         fn effect(&mut self, _effect: ShellEffect) {}
 
-        fn frame_due(&self, _view: &View<'_>) -> FrameDue {
+        fn frame_due(&self, _view: &FrameInput<'_>) -> FrameDue {
             FrameDue::Settled
         }
 
-        fn paint(&mut self, _view: View<'_>) -> Result<Painted, Infallible> {
+        fn paint(&mut self, _view: FrameInput<'_>) -> Result<Painted, Infallible> {
             Ok(Painted::default())
         }
     }
@@ -461,14 +431,14 @@ mod tests {
     #[test]
     fn drain_on_stop_writes_the_pending_config_save() {
         let directory = tempfile::tempdir().unwrap();
-        let paths = boot_paths(directory.path());
-        let config_path = paths.config.config.clone().unwrap();
+        let paths = start_paths(directory.path());
+        let config_path = paths.config.config.clone();
         let startup = stock_startup();
-        let launchers = Launchers {
-            config: launch_config,
-            ..Launchers::idle()
+        let spawners = Spawners {
+            config: spawn_config,
+            ..Spawners::idle()
         };
-        let runtime = Runtime::boot(startup, &paths, &launchers).unwrap();
+        let runtime = Runtime::start(startup, &paths, &spawners).unwrap();
 
         let (steps, input) = unbounded();
         steps.send(SaveStep::Adjust).unwrap();
@@ -510,11 +480,11 @@ mod tests {
 
         fn effect(&mut self, _effect: ShellEffect) {}
 
-        fn frame_due(&self, _view: &View<'_>) -> FrameDue {
+        fn frame_due(&self, _view: &FrameInput<'_>) -> FrameDue {
             FrameDue::Settled
         }
 
-        fn paint(&mut self, view: View<'_>) -> Result<Painted, Infallible> {
+        fn paint(&mut self, view: FrameInput<'_>) -> Result<Painted, Infallible> {
             self.paints += 1;
             self.restarts = view.model.drivers.record(Driver::Audio).restarts.count();
             let next = if self.restarts > 0 || self.paints >= 20 {
@@ -531,10 +501,10 @@ mod tests {
     fn a_driver_panic_is_supervised_through_view() {
         let directory = tempfile::tempdir().unwrap();
         let startup = stock_startup();
-        let runtime = Runtime::boot(
+        let runtime = Runtime::start(
             startup,
-            &boot_paths(directory.path()),
-            &panicking_launchers(),
+            &start_paths(directory.path()),
+            &panicking_spawners(),
         )
         .unwrap();
 
@@ -556,7 +526,7 @@ mod tests {
         );
     }
 
-    fn boot(library: DriverStatus) -> (Runtime, Receiver<LibraryCommand>) {
+    fn start(library: DriverStatus) -> (Runtime, Receiver<LibraryMessage>) {
         let (wiring, cover_inbox, _writers) = Wiring::idle();
         let seed = Runtime::seeded(stock_startup());
         let mut runtime = Runtime::assemble(seed, wiring, Trace::default());
@@ -566,10 +536,10 @@ mod tests {
 
     #[test]
     fn a_refused_cover_request_is_traced_once_not_on_every_paint() {
-        let (mut runtime, _cover_inbox) = boot(DriverStatus::Stopped);
+        let (mut runtime, _cover_inbox) = start(DriverStatus::Stopped);
         let request = CoverRequest {
             path: PathBuf::from("/music/cover.jpg"),
-            side: 64,
+            size_px: 64,
         };
 
         runtime.request_cover(request.clone());
@@ -596,10 +566,10 @@ mod tests {
 
     #[test]
     fn a_repeated_accepted_cover_request_is_sent_once() {
-        let (mut runtime, cover_inbox) = boot(DriverStatus::Running);
+        let (mut runtime, cover_inbox) = start(DriverStatus::Running);
         let request = CoverRequest {
             path: PathBuf::from("/music/cover.jpg"),
-            side: 64,
+            size_px: 64,
         };
 
         runtime.request_cover(request.clone());
@@ -609,7 +579,7 @@ mod tests {
         runtime.drain();
         let covers = cover_inbox
             .iter()
-            .filter(|command| matches!(command, LibraryCommand::Cover(_)))
+            .filter(|command| matches!(command, LibraryMessage::Cover(_)))
             .count();
         assert_eq!(covers, 1);
     }
@@ -618,19 +588,19 @@ mod tests {
     #[case::an_accepted_message_applies(
         DriverStatus::Running,
         Message::Workspace(WorkspaceRequest::ShowToast(Toast::error("hello".to_owned()))),
-        Change::Applied
+        true
     )]
     #[case::a_rejected_message_is_refused(
         DriverStatus::Stopped,
         Message::Driver(Driver::Library, DriverMessage::Stopped),
-        Change::Refused
+        false
     )]
     fn step_reports_whether_the_message_changed_the_model(
         #[case] library: DriverStatus,
         #[case] message: Message,
-        #[case] expected: Change,
+        #[case] expected: bool,
     ) {
-        let (mut runtime, _cover_inbox) = boot(library);
+        let (mut runtime, _cover_inbox) = start(library);
 
         let change = runtime.step(message);
 

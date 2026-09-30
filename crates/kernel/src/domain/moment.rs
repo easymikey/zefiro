@@ -32,6 +32,11 @@ impl UnixSeconds {
     }
 
     #[must_use]
+    pub const fn new(seconds: i64) -> Self {
+        Self(seconds)
+    }
+
+    #[must_use]
     pub const fn get(self) -> i64 {
         self.0
     }

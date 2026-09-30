@@ -16,66 +16,64 @@ use crate::{
         Transport,
         Workspace,
         library::Library,
-        playlist::{self, Playlist, PlaylistSource},
+        playlist::{Playlist, PlaylistSource},
     },
-    message::{LibraryFact, LibraryFailure, LoadedRequest, WorkspaceRequest},
-    update::{
-        audio,
-        machine::Machine,
-        playlist::PlaylistMessage,
-        rejection::Rejection,
-    },
+    message::{LibraryError, LibraryEvent, PlaylistRequest, WorkspaceRequest},
+    update::{audio, error::UpdateError, machine::Machine, playlist::PlaylistMessage},
 };
 
-struct PlaylistJump<'a> {
+struct JumpParts<'a> {
     playlist: &'a mut Playlist,
     transport: &'a mut Transport,
     player: &'a mut Player,
 }
 
-pub(crate) fn loaded(
+pub(crate) fn update(
     model: &mut Model,
-    message: LoadedRequest,
-) -> Result<Cmd, Rejection> {
+    message: PlaylistRequest,
+) -> Result<Cmd, UpdateError> {
     match message {
-        LoadedRequest::Jump(index) => jump(
-            PlaylistJump {
+        PlaylistRequest::JumpTo(index) => jump(
+            JumpParts {
                 playlist: &mut model.playlist,
                 transport: &mut model.transport,
                 player: &mut model.player,
             },
             index,
         ),
-        LoadedRequest::ShuffleRolled(order) => Ok(model
+        PlaylistRequest::ShuffleRolled(order) => Ok(model
             .playlist
             .update(PlaylistMessage::ShuffleRolled(order))?),
     }
 }
 
-pub(crate) fn library(model: &mut Model, fact: LibraryFact) -> Result<Cmd, Rejection> {
-    match fact {
-        LibraryFact::FavoritesLoaded(favorites) => {
+pub(crate) fn library(
+    model: &mut Model,
+    event: LibraryEvent,
+) -> Result<Cmd, UpdateError> {
+    match event {
+        LibraryEvent::FavoritesLoaded(favorites) => {
             model.favorites = favorites.into();
             Ok(Cmd::None)
         }
-        LibraryFact::Loaded { tracks, revision } => {
+        LibraryEvent::Loaded { tracks, revision } => {
             Ok(whole_library(model, tracks, revision))
         }
-        LibraryFact::Listed { tracks, revision } => {
+        LibraryEvent::Listed { tracks, revision } => {
             Ok(listed_library(model, tracks, revision))
         }
-        LibraryFact::Tagged { tracks, revision } => {
+        LibraryEvent::Tagged { tracks, revision } => {
             Ok(tagged_tracks(model, tracks, revision))
         }
-        LibraryFact::HistoryLoaded(entries) => {
+        LibraryEvent::HistoryLoaded(entries) => {
             model.history.view = entries;
             Ok(Cmd::None)
         }
-        LibraryFact::Failed(failure) => failed(model, &failure),
+        LibraryEvent::Error(failure) => failed(model, &failure),
     }
 }
 
-fn failed(model: &mut Model, failure: &LibraryFailure) -> Result<Cmd, Rejection> {
+fn failed(model: &mut Model, failure: &LibraryError) -> Result<Cmd, UpdateError> {
     Ok(model
         .workspace
         .update(WorkspaceRequest::ShowToast(Toast::error(
@@ -88,7 +86,7 @@ fn whole_library(
     tracks: Vec<Arc<Track>>,
     revision: Revision,
 ) -> Cmd {
-    if let Reply::Stale = revision.reply(model.scan_generation) {
+    if let Reply::Stale = revision.reply(model.revisions.scan) {
         return Cmd::None;
     }
     model.scan_status = ScanStatus::Idle;
@@ -97,7 +95,7 @@ fn whole_library(
         Loaded::Ready(_) => Cmd::None,
     };
     let source = model.playlist_source;
-    let cmd = library_loaded(scan_landing(model), source, tracks);
+    let cmd = library_loaded(scan_parts(model), source, tracks);
     cmd.then(opening)
 }
 
@@ -106,7 +104,7 @@ fn listed_library(
     listed: Vec<Arc<Track>>,
     revision: Revision,
 ) -> Cmd {
-    if let Reply::Stale = revision.reply(model.scan_generation) {
+    if let Reply::Stale = revision.reply(model.revisions.scan) {
         return Cmd::None;
     }
     model.scan_status = ScanStatus::Tagging {
@@ -115,13 +113,13 @@ fn listed_library(
     };
     let tagging = tag_request(&model.music_dir, &listed, revision);
     let source = model.playlist_source;
-    let cmd = library_loaded(scan_landing(model), source, listed);
+    let cmd = library_loaded(scan_parts(model), source, listed);
     cmd.then(tagging_progress(&mut model.scan_status, 0))
         .then(tagging)
 }
 
 fn tag_request(
-    root: &std::path::Path,
+    music_dir: &std::path::Path,
     listed: &[Arc<Track>],
     revision: Revision,
 ) -> Cmd {
@@ -129,7 +127,7 @@ fn tag_request(
         return Cmd::None;
     }
     Effect::Library(LibraryCmd::TagTracks {
-        root: root.to_path_buf(),
+        music_dir: music_dir.to_path_buf(),
         paths: listed
             .iter()
             .map(|track| track.path().to_path_buf())
@@ -144,12 +142,12 @@ fn tagged_tracks(
     tagged: Vec<Arc<Track>>,
     revision: Revision,
 ) -> Cmd {
-    if let Reply::Stale = revision.reply(model.scan_generation) {
+    if let Reply::Stale = revision.reply(model.revisions.scan) {
         return Cmd::None;
     }
     let read = tagged.len();
     retag(
-        TaggedLanding {
+        TaggedParts {
             library: &mut model.library,
             playlist: &mut model.playlist,
             player: &mut model.player,
@@ -159,8 +157,8 @@ fn tagged_tracks(
     tagging_progress(&mut model.scan_status, read)
 }
 
-fn scan_landing(model: &mut Model) -> ScanLanding<'_> {
-    ScanLanding {
+fn scan_parts(model: &mut Model) -> ScanParts<'_> {
+    ScanParts {
         library: &mut model.library,
         playlist: &mut model.playlist,
         queue: &mut model.queue,
@@ -169,7 +167,7 @@ fn scan_landing(model: &mut Model) -> ScanLanding<'_> {
     }
 }
 
-struct ScanLanding<'a> {
+struct ScanParts<'a> {
     library: &'a mut Loaded<Library>,
     playlist: &'a mut Playlist,
     queue: &'a mut Vec<PlaylistIndex>,
@@ -178,11 +176,11 @@ struct ScanLanding<'a> {
 }
 
 fn library_loaded(
-    landing: ScanLanding<'_>,
+    landing: ScanParts<'_>,
     source: PlaylistSource,
     tracks: Vec<Arc<Track>>,
 ) -> Cmd {
-    let ScanLanding {
+    let ScanParts {
         library,
         playlist,
         queue,
@@ -196,7 +194,7 @@ fn library_loaded(
         PlaylistSource::Library => {
             if let Loaded::Ready(ready) = library {
                 crate::update::browse::resync_playlist(
-                    crate::update::browse::TrashRequest {
+                    crate::update::browse::RelistParts {
                         library: ready,
                         player,
                         playlist,
@@ -211,7 +209,7 @@ fn library_loaded(
     Cmd::None
 }
 
-struct TaggedLanding<'a> {
+struct TaggedParts<'a> {
     library: &'a mut Loaded<Library>,
     playlist: &'a mut Playlist,
     player: &'a mut Player,
@@ -219,8 +217,8 @@ struct TaggedLanding<'a> {
 
 type Tagged = HashMap<std::path::PathBuf, Arc<Track>>;
 
-fn retag(landing: TaggedLanding<'_>, tracks: Vec<Arc<Track>>) {
-    let TaggedLanding {
+fn retag(landing: TaggedParts<'_>, tracks: Vec<Arc<Track>>) {
+    let TaggedParts {
         library,
         playlist,
         player,
@@ -288,13 +286,14 @@ fn view_all(library: &mut Loaded<Library>) {
     }
 }
 
-fn jump(slices: PlaylistJump<'_>, index: PlaylistIndex) -> Result<Cmd, Rejection> {
-    let PlaylistJump {
+fn jump(slices: JumpParts<'_>, index: PlaylistIndex) -> Result<Cmd, UpdateError> {
+    let JumpParts {
         playlist,
         transport,
         player,
     } = slices;
-    playlist::jump(playlist, index)
+    playlist
+        .jump(index)
         .cloned()
         .map_or(Ok(Cmd::None), |track| {
             audio::start(transport, player, track)
@@ -317,10 +316,11 @@ mod tests {
             ToastLevel,
             Track,
             TrackIndex,
+            UnixSeconds,
             library::Library,
             playlist::PlaylistSource,
         },
-        message::{LibraryFact, LibraryFailure, Timer},
+        message::{LibraryError, LibraryEvent, Timer},
         update::loaded::library,
     };
 
@@ -340,7 +340,7 @@ mod tests {
 
         let cmd = library(
             &mut model,
-            LibraryFact::Loaded {
+            LibraryEvent::Loaded {
                 tracks: vec![track("/music/a.flac"), track("/music/b.flac")],
                 revision: Revision::default(),
             },
@@ -374,7 +374,7 @@ mod tests {
 
         let cmd = library(
             &mut model,
-            LibraryFact::Loaded {
+            LibraryEvent::Loaded {
                 tracks: vec![track("/music/a.flac"), track("/music/b.flac")],
                 revision: Revision::default(),
             },
@@ -390,12 +390,12 @@ mod tests {
     fn a_library_failure_raises_an_error_toast() {
         let mut model = Model::default();
 
-        let cmd = library(&mut model, LibraryFact::Failed(LibraryFailure::NoDirectory))
-            .unwrap();
+        let cmd =
+            library(&mut model, LibraryEvent::Error(LibraryError::NoUserDirs)).unwrap();
 
         let toast = model.workspace.toast.unwrap();
         assert_eq!(toast.level, ToastLevel::Error);
-        assert_eq!(toast.text, LibraryFailure::NoDirectory.to_string());
+        assert_eq!(toast.text, LibraryError::NoUserDirs.to_string());
         assert_eq!(
             cmd,
             Cmd::Batch(vec![
@@ -416,9 +416,8 @@ mod tests {
                     path: "/music/stale.flac".into(),
                     title: "Stale".into(),
                     artist: None,
-                    at: 1,
+                    at: UnixSeconds::new(1),
                 }],
-                ..Default::default()
             },
             ..Default::default()
         };
@@ -428,17 +427,17 @@ mod tests {
                 path: "/music/b.flac".into(),
                 title: "B".into(),
                 artist: Some("Artist".into()),
-                at: 200,
+                at: UnixSeconds::new(200),
             },
             HistoryEntry {
                 path: "/music/a.flac".into(),
                 title: "A".into(),
                 artist: None,
-                at: 100,
+                at: UnixSeconds::new(100),
             },
         ];
         let cmd =
-            library(&mut model, LibraryFact::HistoryLoaded(fresh.clone())).unwrap();
+            library(&mut model, LibraryEvent::HistoryLoaded(fresh.clone())).unwrap();
 
         assert_eq!(model.history.view, fresh);
         assert!(matches!(cmd, Cmd::None));

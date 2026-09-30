@@ -11,13 +11,13 @@ expression: wiring.log
             1.0,
         ),
     },
-    Many(
+    Batch(
         [
             Play,
             Report,
         ],
     ),
-    Many(
+    Batch(
         [
             Start {
                 volume: 1.0,
@@ -35,13 +35,13 @@ expression: wiring.log
             1.0,
         ),
     },
-    Many(
+    Batch(
         [
             Play,
             Report,
         ],
     ),
-    Many(
+    Batch(
         [
             Start {
                 volume: 1.0,

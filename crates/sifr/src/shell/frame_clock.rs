@@ -1,5 +1,5 @@
 use kernel::{Moment, Player};
-use runtime::{FRAME, FrameDue};
+use runtime::{FRAME_INTERVAL, FrameDue};
 use terminal::CoverMotion;
 use widgets::{
     AnimationStage,
@@ -31,7 +31,7 @@ pub(crate) fn frame_effect(
 pub(crate) fn animation_frame_due(effect: FrameEffect, last_paint: Moment) -> FrameDue {
     match effect {
         FrameEffect::Live => {
-            FrameDue::At(Moment::new(last_paint.since_epoch() + FRAME))
+            FrameDue::At(Moment::new(last_paint.since_epoch() + FRAME_INTERVAL))
         }
         FrameEffect::Settled => FrameDue::Settled,
     }
@@ -72,12 +72,12 @@ pub(crate) fn sleep_frame_due(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Playback {
+pub(crate) enum ClockState {
     Playing,
     Halted,
 }
 
-impl Playback {
+impl ClockState {
     pub(crate) fn of(player: &Player) -> Self {
         match player {
             Player::Playing { .. } => Self::Playing,
@@ -90,7 +90,7 @@ impl Playback {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SpectrumSources {
-    pub(crate) player: Playback,
+    pub(crate) player: ClockState,
     pub(crate) shown: Presence,
     pub(crate) motion: SpectrumMotion,
     pub(crate) last_paint: Moment,
@@ -100,11 +100,13 @@ pub(crate) fn spectrum_frame_due(sources: SpectrumSources, now: Moment) -> Frame
     let _ = now;
     let wants_frame = matches!(
         (sources.shown, sources.player, sources.motion),
-        (Presence::Shown, Playback::Playing, _)
-            | (Presence::Shown, Playback::Halted, SpectrumMotion::Moving)
+        (Presence::Shown, ClockState::Playing, _)
+            | (Presence::Shown, ClockState::Halted, SpectrumMotion::Moving)
     );
     if wants_frame {
-        FrameDue::At(Moment::new(sources.last_paint.since_epoch() + FRAME))
+        FrameDue::At(Moment::new(
+            sources.last_paint.since_epoch() + FRAME_INTERVAL,
+        ))
     } else {
         FrameDue::Settled
     }
@@ -149,8 +151,8 @@ mod tests {
     };
 
     use crate::shell::frame_clock::{
+        ClockState,
         FrameEffect,
-        Playback,
         SpectrumSources,
         animation_frame_due,
         clock_frame_due,
@@ -234,7 +236,7 @@ mod tests {
             Moment::new(Duration::from_secs(100))
         )
     )]
-    fn progress_frame_due_rows(
+    fn a_progress_frame_is_due_only_while_the_bar_can_move(
         #[case] player: Player,
         #[case] bar: Option<u16>,
         #[case] expected: Option<Moment>,
@@ -353,7 +355,9 @@ mod tests {
 
         assert_eq!(
             animation_frame_due(FrameEffect::Live, last_paint),
-            FrameDue::At(Moment::new(last_paint.since_epoch() + runtime::FRAME))
+            FrameDue::At(Moment::new(
+                last_paint.since_epoch() + runtime::FRAME_INTERVAL
+            ))
         );
     }
 
@@ -398,7 +402,7 @@ mod tests {
     }
 
     fn spectrum_sources(
-        player: Playback,
+        player: ClockState,
         shown: Presence,
         motion: SpectrumMotion,
     ) -> SpectrumSources {
@@ -412,33 +416,41 @@ mod tests {
 
     #[rstest]
     #[case::playing_shown_settled(
-        spectrum_sources(Playback::Playing, Presence::Shown, SpectrumMotion::Settled),
+        spectrum_sources(
+            ClockState::Playing,
+            Presence::Shown,
+            SpectrumMotion::Settled
+        ),
         true
     )]
     #[case::playing_hidden_moving(
-        spectrum_sources(Playback::Playing, Presence::Hidden, SpectrumMotion::Moving),
+        spectrum_sources(
+            ClockState::Playing,
+            Presence::Hidden,
+            SpectrumMotion::Moving
+        ),
         false
     )]
     #[case::halted_shown_moving(
-        spectrum_sources(Playback::Halted, Presence::Shown, SpectrumMotion::Moving),
+        spectrum_sources(ClockState::Halted, Presence::Shown, SpectrumMotion::Moving),
         true
     )]
     #[case::halted_shown_settled(
-        spectrum_sources(Playback::Halted, Presence::Shown, SpectrumMotion::Settled),
+        spectrum_sources(ClockState::Halted, Presence::Shown, SpectrumMotion::Settled),
         false
     )]
     #[case::halted_hidden_moving(
-        spectrum_sources(Playback::Halted, Presence::Hidden, SpectrumMotion::Moving),
+        spectrum_sources(ClockState::Halted, Presence::Hidden, SpectrumMotion::Moving),
         false
     )]
-    fn spectrum_frame_due_rows(
+    fn a_spectrum_frame_is_due_only_while_bands_can_move(
         #[case] sources: SpectrumSources,
         #[case] wants_frame: bool,
     ) {
         let now = Moment::new(Duration::from_secs(10));
         let expected = if wants_frame {
             FrameDue::At(Moment::new(
-                sources.last_paint.since_epoch() + runtime::FRAME,
+                sources.last_paint.since_epoch() + runtime::FRAME_INTERVAL,
             ))
         } else {
             FrameDue::Settled
@@ -459,7 +471,7 @@ mod tests {
 
         assert!(frames < 300);
         let sources = SpectrumSources {
-            player: Playback::Halted,
+            player: ClockState::Halted,
             shown: Presence::Shown,
             motion: smoothing.motion(),
             last_paint: Moment::new(Duration::from_secs(100)),

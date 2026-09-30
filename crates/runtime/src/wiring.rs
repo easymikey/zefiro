@@ -7,39 +7,40 @@ use audio::SpectrumTap;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use kernel::{
     AudioCmd,
+    ConfigCmd,
     DriverMessage,
+    MacosCmd,
     Message,
-    SystemCmd,
     domain::{Driver, DriverStatus, Model},
 };
 
 use crate::{
-    cells::{Cells, Writers, cells},
-    driver::{DriverThread, Report},
-    error::RuntimeError,
-    interpret::{ConfigCommand, LibraryCommand},
-    launch::{Launchers, Launching},
+    cells::{Receivers, Senders, cells},
+    driver::{DriverThread, Exit},
+    error::Error,
+    library::machine::LibraryMessage,
     port::{LibraryPort, Port, Ports},
     registry,
-    runtime::BootPaths,
+    runtime::StartupPaths,
+    spawn::{SpawnParts, Spawners},
     trace::{Trace, TraceEntry},
 };
 
 #[derive(Debug)]
 pub(crate) struct Wiring {
-    pub(crate) mailbox: Receiver<Message>,
-    pub(crate) mailbox_sender: Sender<Message>,
+    pub(crate) receiver: Receiver<Message>,
+    pub(crate) sender: Sender<Message>,
     pub(crate) ports: Ports,
-    pub(crate) handles: [Option<JoinHandle<Report>>; 4],
+    pub(crate) handles: [Option<JoinHandle<Exit>>; 4],
     pub(crate) spectrum: SpectrumTap,
-    pub(crate) cells: Cells,
-    pub(crate) doorbell: Receiver<()>,
-    launchers: Launchers,
-    paths: BootPaths,
-    writers: Writers,
+    pub(crate) cells: Receivers,
+    pub(crate) notified: Receiver<()>,
+    spawners: Spawners,
+    paths: StartupPaths,
+    writers: Senders,
 }
 
-pub(crate) struct Relaunching<'a> {
+pub(crate) struct RestartParts<'a> {
     pub(crate) model: &'a Model,
     pub(crate) trace: &'a mut Trace,
 }
@@ -47,110 +48,96 @@ pub(crate) struct Relaunching<'a> {
 impl Wiring {
     pub(crate) fn spawn(
         model: &Model,
-        paths: &BootPaths,
-        launchers: &Launchers,
-    ) -> Result<Self, RuntimeError> {
-        let (mailbox, arrivals) = bounded(256);
-        let mailbox_sender = mailbox.clone();
-        let (writers, cells, doorbell) = cells();
-        let launching = Launching {
+        paths: &StartupPaths,
+        spawners: &Spawners,
+    ) -> Result<Self, Error> {
+        let (sender, arrivals) = bounded(256);
+        let (writers, cells, notified) = cells();
+        let spawn_parts = SpawnParts {
             model,
             paths,
-            mailbox: &mailbox,
+            sender: &sender,
             writers: &writers,
         };
 
-        let audio = (launchers.audio)(&launching)?;
-        let library = (launchers.library)(&launching)?;
-        let config = (launchers.config)(&launching)?;
-        let macos = (launchers.macos)(&launching)?;
+        let (audio, spectrum) = (spawners.audio)(&spawn_parts)?;
+        let library = (spawners.library)(&spawn_parts)?;
+        let config = (spawners.config)(&spawn_parts)?;
+        let macos = (spawners.macos)(&spawn_parts)?;
 
-        let spectrum = audio.spectrum.ok_or(RuntimeError::NoSpectrum)?;
-
-        let (ports, handles) = wire_ports(Spawned {
-            audio: audio.thread,
-            library: library.thread,
-            config: config.thread,
-            macos: macos.thread,
+        let (ports, handles) = split_spawned(Spawned {
+            audio,
+            library,
+            config,
+            macos,
         });
 
         Ok(Self {
-            mailbox: arrivals,
-            mailbox_sender,
+            receiver: arrivals,
+            sender,
             ports,
             handles,
             spectrum,
             cells,
-            doorbell,
-            launchers: *launchers,
+            notified,
+            spawners: *spawners,
             paths: paths.clone(),
             writers,
         })
     }
 
-    pub(crate) fn relaunch(&mut self, driver: Driver, relaunching: Relaunching<'_>) {
-        let Relaunching { model, trace } = relaunching;
+    pub(crate) fn restart(&mut self, driver: Driver, restart_parts: RestartParts<'_>) {
+        let RestartParts { model, trace } = restart_parts;
         if let Some(handle) = take_handle(&mut self.handles, driver)
             && handle.join().is_err()
         {
             trace.push(TraceEntry::JoinFailed { driver });
         }
         let paths = self.paths.clone();
-        let mailbox = self.mailbox_sender.clone();
+        let sender = self.sender.clone();
         let writers = self.writers.clone();
-        let launching = Launching {
+        let spawn_parts = SpawnParts {
             model,
             paths: &paths,
-            mailbox: &mailbox,
+            sender: &sender,
             writers: &writers,
         };
-        if self.relaunch_driver(driver, &launching).is_err() {
+        if self.restart_driver(driver, &spawn_parts).is_err() {
             trace.push(TraceEntry::RestartFailed { driver });
         }
     }
 
-    fn relaunch_driver(
+    fn restart_driver(
         &mut self,
         driver: Driver,
-        launching: &Launching<'_>,
-    ) -> Result<(), RuntimeError> {
+        spawn_parts: &SpawnParts<'_>,
+    ) -> Result<(), Error> {
         match driver {
             Driver::Audio => {
-                let launched = (self.launchers.audio)(launching)?;
-                self.spectrum = launched.spectrum.ok_or(RuntimeError::NoSpectrum)?;
-                self.ports.audio = Port::new(
-                    driver,
-                    launched.thread.commands,
-                    launched.thread.congestion,
-                );
-                set_handle(&mut self.handles, driver, launched.thread.handle);
+                let (thread, spectrum) = (self.spawners.audio)(spawn_parts)?;
+                self.spectrum = spectrum;
+                self.ports.audio = Port::new(driver, thread.commands, thread.full_edge);
+                set_handle(&mut self.handles, driver, thread.handle);
             }
             Driver::Library => {
-                let launched = (self.launchers.library)(launching)?;
+                let thread = (self.spawners.library)(spawn_parts)?;
                 self.ports.library = LibraryPort::new(Port::new(
                     driver,
-                    launched.thread.commands,
-                    launched.thread.congestion,
+                    thread.commands,
+                    thread.full_edge,
                 ));
-                set_handle(&mut self.handles, driver, launched.thread.handle);
+                set_handle(&mut self.handles, driver, thread.handle);
             }
             Driver::Config => {
-                let launched = (self.launchers.config)(launching)?;
-                self.ports.config = Port::new(
-                    driver,
-                    launched.thread.commands,
-                    launched.thread.congestion,
-                );
-                set_handle(&mut self.handles, driver, launched.thread.handle);
+                let thread = (self.spawners.config)(spawn_parts)?;
+                self.ports.config =
+                    Port::new(driver, thread.commands, thread.full_edge);
+                set_handle(&mut self.handles, driver, thread.handle);
             }
             Driver::Macos => {
-                let launched = (self.launchers.macos)(launching)?;
-                self.ports.macos = Port::new(
-                    driver,
-                    launched.thread.commands,
-                    launched.thread.congestion,
-                );
-                set_handle(&mut self.handles, driver, launched.thread.handle);
+                let thread = (self.spawners.macos)(spawn_parts)?;
+                self.ports.macos = Port::new(driver, thread.commands, thread.full_edge);
+                set_handle(&mut self.handles, driver, thread.handle);
             }
         }
         Ok(())
@@ -159,12 +146,12 @@ impl Wiring {
 
 struct Spawned {
     audio: DriverThread<AudioCmd>,
-    library: DriverThread<LibraryCommand>,
-    config: DriverThread<ConfigCommand>,
-    macos: DriverThread<SystemCmd>,
+    library: DriverThread<LibraryMessage>,
+    config: DriverThread<ConfigCmd>,
+    macos: DriverThread<MacosCmd>,
 }
 
-fn wire_ports(spawned: Spawned) -> (Ports, [Option<JoinHandle<Report>>; 4]) {
+fn split_spawned(spawned: Spawned) -> (Ports, [Option<JoinHandle<Exit>>; 4]) {
     let Spawned {
         audio,
         library,
@@ -174,46 +161,46 @@ fn wire_ports(spawned: Spawned) -> (Ports, [Option<JoinHandle<Report>>; 4]) {
     let DriverThread {
         commands: audio_commands,
         handle: audio_handle,
-        congestion: audio_congestion,
+        full_edge: audio_full_edge,
     } = audio;
     let DriverThread {
         commands: library_commands,
         handle: library_handle,
-        congestion: library_congestion,
+        full_edge: library_full_edge,
     } = library;
     let DriverThread {
         commands: config_commands,
         handle: config_handle,
-        congestion: config_congestion,
+        full_edge: config_full_edge,
     } = config;
     let DriverThread {
         commands: macos_commands,
         handle: macos_handle,
-        congestion: macos_congestion,
+        full_edge: macos_full_edge,
     } = macos;
-    let handles: [Option<JoinHandle<Report>>; 4] = [
+    let handles: [Option<JoinHandle<Exit>>; 4] = [
         Some(audio_handle),
         Some(library_handle),
         Some(config_handle),
         Some(macos_handle),
     ];
     let ports = Ports {
-        audio: Port::new(Driver::Audio, audio_commands, audio_congestion),
+        audio: Port::new(Driver::Audio, audio_commands, audio_full_edge),
         library: LibraryPort::new(Port::new(
             Driver::Library,
             library_commands,
-            library_congestion,
+            library_full_edge,
         )),
-        config: Port::new(Driver::Config, config_commands, config_congestion),
-        macos: Port::new(Driver::Macos, macos_commands, macos_congestion),
+        config: Port::new(Driver::Config, config_commands, config_full_edge),
+        macos: Port::new(Driver::Macos, macos_commands, macos_full_edge),
     };
     (ports, handles)
 }
 
 fn take_handle(
-    handles: &mut [Option<JoinHandle<Report>>; 4],
+    handles: &mut [Option<JoinHandle<Exit>>; 4],
     driver: Driver,
-) -> Option<JoinHandle<Report>> {
+) -> Option<JoinHandle<Exit>> {
     let [audio, library, config, macos] = handles;
     match driver {
         Driver::Audio => audio.take(),
@@ -224,9 +211,9 @@ fn take_handle(
 }
 
 fn set_handle(
-    handles: &mut [Option<JoinHandle<Report>>; 4],
+    handles: &mut [Option<JoinHandle<Exit>>; 4],
     driver: Driver,
-    handle: JoinHandle<Report>,
+    handle: JoinHandle<Exit>,
 ) {
     let [audio, library, config, macos] = handles;
     match driver {
@@ -250,7 +237,7 @@ pub(crate) fn drop_ports(ports: Ports) {
     drop(config);
 }
 
-pub(crate) fn drain_reports(
+pub(crate) fn await_exits(
     model: &Model,
     mailbox: &Receiver<Message>,
     timeout: Duration,
@@ -282,8 +269,8 @@ pub(crate) fn drain_reports(
     reported
 }
 
-pub(crate) fn join_reported(
-    handles: &mut [Option<JoinHandle<Report>>; 4],
+pub(crate) fn join_exited(
+    handles: &mut [Option<JoinHandle<Exit>>; 4],
     reported: &[Driver],
     trace: &mut Trace,
 ) {
@@ -307,19 +294,26 @@ pub(crate) mod tests {
 
     use audio::SpectrumTap;
     use crossbeam_channel::{Receiver, Sender};
-    use kernel::{AudioCmd, DriverMessage, Message, SystemCmd, domain::Driver};
-    use library::LibraryPaths;
+    use kernel::{
+        AudioCmd,
+        ConfigCmd,
+        DriverMessage,
+        MacosCmd,
+        Message,
+        domain::Driver,
+    };
+    use library::LibraryDirs;
 
     use crate::{
-        cells::{Writers, cells},
+        cells::{Senders, cells},
         config::ConfigPaths,
-        driver::{DriverThread, Report},
-        interpret::{ConfigCommand, LibraryCommand},
-        launch::Launchers,
-        mailbox::Congestion,
+        driver::{DriverThread, Exit},
+        library::machine::LibraryMessage,
         port::{LibraryPort, Port, Ports},
         registry,
-        runtime::BootPaths,
+        runtime::StartupPaths,
+        sender::FullEdge,
+        spawn::Spawners,
         wiring::Wiring,
     };
 
@@ -335,27 +329,27 @@ pub(crate) mod tests {
         .unwrap()
     }
 
-    pub(crate) fn stub_paths() -> BootPaths {
-        BootPaths {
+    pub(crate) fn stub_paths() -> StartupPaths {
+        StartupPaths {
             config: ConfigPaths {
-                config: None,
+                config: std::path::PathBuf::new(),
                 appearance: std::path::PathBuf::new(),
                 themes: std::path::PathBuf::new(),
                 theme: None,
                 seen: crate::config::SeenTexts::default(),
             },
-            library: LibraryPaths {
-                cache: std::path::PathBuf::new(),
-                data: std::path::PathBuf::new(),
-                playlists: std::path::PathBuf::new(),
+            library: LibraryDirs {
+                cache_dir: std::path::PathBuf::new(),
+                data_dir: std::path::PathBuf::new(),
+                playlists_dir: std::path::PathBuf::new(),
             },
         }
     }
 
     fn idle_library_thread(
         mailbox: &Sender<Message>,
-        tap: Sender<LibraryCommand>,
-    ) -> DriverThread<LibraryCommand> {
+        tap: Sender<LibraryMessage>,
+    ) -> DriverThread<LibraryMessage> {
         let (commands, inbox) = crossbeam_channel::unbounded();
         let report_sender = mailbox.clone();
         let handle = std::thread::spawn(move || {
@@ -369,15 +363,15 @@ pub(crate) mod tests {
         DriverThread {
             commands,
             handle,
-            congestion: Congestion::default(),
+            full_edge: FullEdge::default(),
         }
     }
 
     impl Wiring {
-        pub(crate) fn idle() -> (Self, Receiver<LibraryCommand>, Writers) {
+        pub(crate) fn idle() -> (Self, Receiver<LibraryMessage>, Senders) {
             let (mailbox, arrivals) = crossbeam_channel::unbounded();
             let (library_tap, library_inbox) = crossbeam_channel::unbounded();
-            let (writers, cells, doorbell) = cells();
+            let (writers, cells, notified) = cells();
 
             let DriverThread {
                 commands: audio_commands,
@@ -393,14 +387,14 @@ pub(crate) mod tests {
                 commands: config_commands,
                 handle: config_handle,
                 ..
-            } = idle_thread::<ConfigCommand>(Driver::Config, &mailbox);
+            } = idle_thread::<ConfigCmd>(Driver::Config, &mailbox);
             let DriverThread {
                 commands: macos_commands,
                 handle: macos_handle,
                 ..
-            } = idle_thread::<SystemCmd>(Driver::Macos, &mailbox);
+            } = idle_thread::<MacosCmd>(Driver::Macos, &mailbox);
 
-            let handles: [Option<JoinHandle<Report>>; 4] = [
+            let handles: [Option<JoinHandle<Exit>>; 4] = [
                 Some(audio_handle),
                 Some(library_handle),
                 Some(config_handle),
@@ -408,31 +402,27 @@ pub(crate) mod tests {
             ];
 
             let ports = Ports {
-                audio: Port::new(Driver::Audio, audio_commands, Congestion::default()),
+                audio: Port::new(Driver::Audio, audio_commands, FullEdge::default()),
                 library: LibraryPort::new(Port::new(
                     Driver::Library,
                     library_commands,
-                    Congestion::default(),
+                    FullEdge::default(),
                 )),
-                config: Port::new(
-                    Driver::Config,
-                    config_commands,
-                    Congestion::default(),
-                ),
-                macos: Port::new(Driver::Macos, macos_commands, Congestion::default()),
+                config: Port::new(Driver::Config, config_commands, FullEdge::default()),
+                macos: Port::new(Driver::Macos, macos_commands, FullEdge::default()),
             };
 
             let paths = stub_paths();
 
             let wiring = Self {
-                mailbox: arrivals,
-                mailbox_sender: mailbox,
+                receiver: arrivals,
+                sender: mailbox,
                 ports,
                 handles,
                 spectrum: SpectrumTap::silent(),
                 cells,
-                doorbell,
-                launchers: Launchers::idle(),
+                notified,
+                spawners: Spawners::idle(),
                 paths,
                 writers: writers.clone(),
             };

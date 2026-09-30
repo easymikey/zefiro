@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use config::ProgressStyle;
+use config::ProgressTime;
 use raster::unit_fraction;
 use ratatui::{
     buffer::Buffer,
@@ -13,14 +13,14 @@ use ratatui::{
 use crate::{
     braille::{BrailleBuffers, CanvasSize, MeterFill, RowRounding},
     card::{
-        CardContext,
         CardMetrics,
+        CardParts,
         CardView,
         chips::{self, ChipBudget, FormatChipContent},
     },
     primitive::{
         bar::{
-            FillSpec,
+            BarFill,
             HudProgressColors,
             HudProgressRow,
             fill_line,
@@ -50,7 +50,7 @@ fn remaining(view: CardView<'_>) -> Duration {
 
 pub(crate) fn paint(
     buffer: &mut Buffer,
-    context: &CardContext<'_>,
+    context: &CardParts<'_>,
     spectrum_buffers: &mut BrailleBuffers,
 ) {
     paint_time_row(buffer, context);
@@ -58,7 +58,7 @@ pub(crate) fn paint(
     paint_volume_row(buffer, context, spectrum_buffers);
 }
 
-fn paint_time_row(buffer: &mut Buffer, context: &CardContext<'_>) {
+fn paint_time_row(buffer: &mut Buffer, context: &CardParts<'_>) {
     let metrics: &CardMetrics = context.metrics;
     let row_width = metrics.row_width;
     let dim_color: Color = context.theme.dim();
@@ -100,7 +100,8 @@ fn paint_time_row(buffer: &mut Buffer, context: &CardContext<'_>) {
             elapsed_width: left_width,
         },
     );
-    let elapsed_span: Span<'_> = text_of(&elapsed_total, fit.elapsed_budget, dim_color);
+    let elapsed_span: Span<'_> =
+        truncated_span(&elapsed_total, fit.elapsed_budget, dim_color);
     let time_line = Line::from_iter(
         std::iter::once(elapsed_span).chain(
             speed_spans
@@ -110,36 +111,32 @@ fn paint_time_row(buffer: &mut Buffer, context: &CardContext<'_>) {
         ),
     );
     Paragraph::new(time_line).render(time_row, buffer);
-    paint_format_chips_row(buffer, time_row, fit.line);
+    if let Some(line) = fit.line {
+        paint_format_chips_row(buffer, time_row, line);
+    }
 }
 
-fn text_of(value: &str, budget: usize, color: Color) -> Span<'static> {
+fn truncated_span(value: &str, budget: usize, color: Color) -> Span<'static> {
     crate::primitive::span::text(truncate(value, budget).into_owned())
         .fg(color)
         .dim()
         .into()
 }
 
-fn paint_format_chips_row(
-    buffer: &mut Buffer,
-    time_row: Rect,
-    line: Option<Line<'static>>,
-) {
-    if let Some(line) = line {
-        Paragraph::new(line)
-            .alignment(Alignment::Right)
-            .render(time_row, buffer);
-    }
+fn paint_format_chips_row(buffer: &mut Buffer, time_row: Rect, line: Line<'static>) {
+    Paragraph::new(line)
+        .alignment(Alignment::Right)
+        .render(time_row, buffer);
 }
 
-fn chip_colors(context: &CardContext<'_>) -> ChipColors {
+fn chip_colors(context: &CardParts<'_>) -> ChipColors {
     ChipColors {
         border: context.theme.dim(),
         value: context.theme.text(),
     }
 }
 
-fn paint_progress_text(buffer: &mut Buffer, context: &CardContext<'_>) {
+fn paint_progress_text(buffer: &mut Buffer, context: &CardParts<'_>) {
     let metrics: &CardMetrics = context.metrics;
     let row_width = metrics.row_width;
     let bar_colors = context.theme.progress_colors();
@@ -155,10 +152,10 @@ fn paint_progress_text(buffer: &mut Buffer, context: &CardContext<'_>) {
         position.as_secs_f64() / duration.as_secs_f64()
     };
     let progress_row = metrics.progress_row;
-    match context.appearance.progress_remaining {
-        ProgressStyle::Remaining => Paragraph::new(hud_progress_line(
+    match context.appearance.progress_time {
+        ProgressTime::Remaining => Paragraph::new(hud_progress_line(
             &HudProgressRow {
-                frac: unit_fraction(fraction),
+                fraction: unit_fraction(fraction),
                 row_width: usize::from(row_width),
                 remaining: remaining(context.view),
             },
@@ -168,8 +165,8 @@ fn paint_progress_text(buffer: &mut Buffer, context: &CardContext<'_>) {
             },
         ))
         .render(progress_row, buffer),
-        ProgressStyle::Elapsed => Paragraph::new(fill_line(
-            &FillSpec::progress(unit_fraction(fraction), usize::from(row_width)),
+        ProgressTime::Elapsed => Paragraph::new(fill_line(
+            &BarFill::progress(unit_fraction(fraction), usize::from(row_width)),
             bar_colors,
         ))
         .render(progress_row, buffer),
@@ -178,7 +175,7 @@ fn paint_progress_text(buffer: &mut Buffer, context: &CardContext<'_>) {
 
 fn paint_volume_row(
     buffer: &mut Buffer,
-    context: &CardContext<'_>,
+    context: &CardParts<'_>,
     spectrum_buffers: &mut BrailleBuffers,
 ) {
     let metrics: &CardMetrics = context.metrics;
@@ -186,8 +183,8 @@ fn paint_volume_row(
 
     let bar_area = metrics.volume_row;
     Paragraph::new(fill_line(
-        &FillSpec::volume(context.view.volume.ratio(), usize::from(bar_area.width)),
-        context.theme.volume_colors(),
+        &BarFill::volume(context.view.volume.ratio(), usize::from(bar_area.width)),
+        context.theme.volume_fill_colors(),
     ))
     .render(bar_area, buffer);
 
@@ -232,7 +229,7 @@ mod tests {
     use ratatui::{buffer::Buffer, layout::Rect};
 
     use crate::{
-        card::{CardContext, CardLayout, CardView, meters::paint_time_row, metrics},
+        card::{CardLayout, CardParts, CardView, card_metrics, meters::paint_time_row},
         geometry::{CellAspect, CoverSizing},
         scene::fixtures::{find_text, noir},
         spectrum::{SPECTRUM_BANDS, Spectrum},
@@ -275,8 +272,9 @@ mod tests {
             now: Moment::new(Duration::from_secs(5)),
         };
         let area = Rect::new(0, 0, 60, 12);
-        let card_metrics = metrics(area, CellAspect::default(), CoverSizing::default());
-        let context = CardContext {
+        let card_metrics =
+            card_metrics(area, CellAspect::default(), CoverSizing::default());
+        let context = CardParts {
             view,
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             appearance: Appearance::default(),

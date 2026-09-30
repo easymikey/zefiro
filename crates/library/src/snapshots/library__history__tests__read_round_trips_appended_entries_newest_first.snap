@@ -1,13 +1,16 @@
 ---
 source: crates/library/src/history.rs
-expression: entries
+assertion_line: 137
+expression: read.entries
 ---
 [
     HistoryEntry {
         path: "/music/second.flac",
         title: "Second",
         artist: None,
-        at: 2000,
+        at: UnixSeconds(
+            2000,
+        ),
     },
     HistoryEntry {
         path: "/music/first.flac",
@@ -15,6 +18,8 @@ expression: entries
         artist: Some(
             "Artist A",
         ),
-        at: 1000,
+        at: UnixSeconds(
+            1000,
+        ),
     },
 ]

@@ -1,4 +1,4 @@
-use config::{AppearancePatch, CoverStyle, appearance_patched, parse_appearance};
+use config::{AppearancePatch, CoverStyle, parse_appearance, patch_appearance_text};
 
 const COMMENTED_UI: &str = include_str!("../fixtures/sifr-ui_commented.toml");
 
@@ -13,7 +13,7 @@ fn a_patch_round_trips_through_the_public_parser() {
     let patch = AppearancePatch::builder()
         .cover_style(CoverStyle::Milkdrop)
         .build();
-    let written = appearance_patched(COMMENTED_UI, patch).unwrap();
+    let written = patch_appearance_text(COMMENTED_UI, patch).unwrap();
     let round_tripped = parse_appearance(&written).unwrap();
     insta::assert_debug_snapshot!(round_tripped);
 }

@@ -11,11 +11,11 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    overlay::modal::{ModalRowColors, led},
+    overlay::modal::{ModalRowColors, indented},
     primitive::{
         glyphs::{SearchGlyphs, TruncateGlyphs},
         list_chrome::scroll_offset,
-        span::{row, text},
+        span::{line, text},
         text::truncate_to_width,
         track_row::Selected,
     },
@@ -31,10 +31,10 @@ pub(crate) struct SearchMatchList<'a> {
 }
 
 fn match_count_line(count: usize, dim: Color) -> Option<Line<'static>> {
-    (count == 0).then(|| row([text(SearchGlyphs::default().no_matches).fg(dim)]))
+    (count == 0).then(|| line([text(SearchGlyphs::default().no_matches).fg(dim)]))
 }
 
-pub(crate) fn render_match_list(list: &SearchMatchList<'_>, buffer: &mut Buffer) {
+pub(crate) fn render_match_pane(list: &SearchMatchList<'_>, buffer: &mut Buffer) {
     let SearchMatchList {
         area,
         tracks,
@@ -42,18 +42,22 @@ pub(crate) fn render_match_list(list: &SearchMatchList<'_>, buffer: &mut Buffer)
         colors,
         ..
     } = *list;
-    if let Some(line) = match_count_line(search.rows.matches.len(), colors.dim) {
+    if let Some(line) = match_count_line(search.content.matches.len(), colors.dim) {
         Paragraph::new(line).render(area, buffer);
         return;
     }
 
     let items: Vec<ListItem<'static>> = search
-        .rows
+        .content
         .matches
         .iter()
         .filter_map(|&track_index| {
             tracks.get(track_index).map(|track| {
-                ListItem::new(Line::from(led(track.display(), list.lead, area.width)))
+                ListItem::new(Line::from(indented(
+                    track.display(),
+                    list.lead,
+                    area.width,
+                )))
             })
         })
         .collect();
@@ -72,7 +76,7 @@ struct MatchRow<'a> {
     row_width: usize,
 }
 
-pub(crate) fn render_matches(list: &SearchMatchList<'_>, buffer: &mut Buffer) {
+pub(crate) fn render_match_rows(list: &SearchMatchList<'_>, buffer: &mut Buffer) {
     let SearchMatchList {
         area,
         tracks,
@@ -83,14 +87,14 @@ pub(crate) fn render_matches(list: &SearchMatchList<'_>, buffer: &mut Buffer) {
     if area.height == 0 {
         return;
     }
-    if let Some(line) = match_count_line(search.rows.matches.len(), colors.dim) {
+    if let Some(line) = match_count_line(search.content.matches.len(), colors.dim) {
         Paragraph::new(line).render(area, buffer);
         return;
     }
 
     let row_width = usize::from(area.width);
     let lines: Vec<Line<'_>> = search
-        .rows
+        .content
         .matches
         .iter()
         .enumerate()
@@ -142,5 +146,5 @@ fn match_line<'a>(hit: &MatchRow<'a>, colors: ModalRowColors) -> Line<'a> {
         Selected::No => text(content).fg(base_text),
     };
 
-    row([marker_piece, content_piece])
+    line([marker_piece, content_piece])
 }

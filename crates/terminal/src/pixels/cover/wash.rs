@@ -2,7 +2,7 @@ use image::RgbaImage;
 use ratatui::layout::Rect;
 use widgets::wash_reveal;
 
-use crate::pixels::cover::crossfade::{CLEAR, mixed};
+use crate::pixels::cover::crossfade::{TRANSPARENT, blend_pixel};
 
 /// A pixel-image theme wash: blends `old` into `new` column by column, using
 /// the same left-to-right reveal the cell-based screen wash uses, so a cover
@@ -31,9 +31,12 @@ pub(crate) fn wash_frame(input: WashFrame<'_>) -> RgbaImage {
     RgbaImage::from_fn(new.width(), new.height(), |x_px, y_px| {
         let column = rect.x.saturating_add(column_offset(x_px, cell_width_px));
         let reveal = wash_reveal(progress, column, screen_width);
-        let front = new.get_pixel_checked(x_px, y_px).copied().unwrap_or(CLEAR);
+        let front = new
+            .get_pixel_checked(x_px, y_px)
+            .copied()
+            .unwrap_or(TRANSPARENT);
         old.get_pixel_checked(x_px, y_px)
-            .map_or(front, |back| mixed(*back, front, reveal))
+            .map_or(front, |back| blend_pixel(*back, front, reveal))
     })
 }
 

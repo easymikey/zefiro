@@ -6,49 +6,49 @@ expression: "parse_theme(source, name).unwrap()"
 ThemeFile {
     name: "wafer",
     colors: ThemeColors {
-        background: Hex(
+        background: Rgb(
             [
                 242,
                 242,
                 242,
             ],
         ),
-        foreground: Hex(
+        foreground: Rgb(
             [
                 164,
                 164,
                 164,
             ],
         ),
-        bright_foreground: Hex(
+        bright_foreground: Rgb(
             [
                 32,
                 32,
                 32,
             ],
         ),
-        accent: Hex(
+        accent: Rgb(
             [
                 74,
                 144,
                 217,
             ],
         ),
-        green: Hex(
+        green: Rgb(
             [
                 74,
                 144,
                 217,
             ],
         ),
-        yellow: Hex(
+        yellow: Rgb(
             [
                 138,
                 180,
                 224,
             ],
         ),
-        red: Hex(
+        red: Rgb(
             [
                 200,
                 220,

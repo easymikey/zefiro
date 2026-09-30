@@ -15,7 +15,7 @@ use crate::{
     overlay::modal::ModalMetrics,
     playlist::{
         chrome::{pane_block, pane_title},
-        row::{self, PlaylistRows, WindowFit, selected_row, visible_window},
+        row::{self, PlaylistRows, WindowFit, cursor_row, visible_rows},
     },
     primitive::list_chrome::{
         ScrollbarTrack,
@@ -70,7 +70,7 @@ impl PlaylistPane<'_> {
             body,
             rows: row_band(pane, body, scrollbar),
             scrollbar,
-            selected: selected_row(pane, self.view),
+            selected: cursor_row(pane, self.view),
         }
     }
 
@@ -81,7 +81,7 @@ impl PlaylistPane<'_> {
         }
         pane_block(
             Some(pane_title(pane, self.view, self.theme)),
-            self.theme.frame(),
+            self.theme.border(),
         )
         .render(pane, buffer);
         if areas.body.width == 0 || areas.body.height == 0 {
@@ -116,7 +116,7 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistPane<'_>
 
     let playing_index = view.playing.map(PlaylistIndex::get);
 
-    let window = visible_window(&WindowFit {
+    let window = visible_rows(&WindowFit {
         view,
         playing_index,
         height: inner.height,
@@ -138,7 +138,7 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistPane<'_>
             total: window.total,
             offset: usize::from(window.offset),
             viewport: usize::from(areas.scrollbar.height),
-            thumb: theme.frame(),
+            thumb: theme.border(),
             track: theme.dim(),
         },
         buffer,
@@ -150,10 +150,10 @@ mod tests {
     use std::{path::Path, sync::Arc, time::Duration};
 
     use kernel::{
-        LoadedRequest,
         Message,
         Moment,
         PlaybackRequest,
+        PlaylistRequest,
         domain::{Cursor, Favorites, Model, PlaylistIndex, ScanStatus, Track},
         playlist::Playlist,
         update::update,
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn markers_sit_in_their_own_columns() {
         let mut playlist = library(3);
-        playlist.at = Cursor::with_len(3).at(1);
+        playlist.cursor = Cursor::with_len(3).at(1);
         let theme = noir();
         let queue = [PlaylistIndex::new(2)];
         let mut favorites = Favorites::default();
@@ -320,7 +320,7 @@ mod tests {
             tracks: vec![titled_track(
                 "a very long track title that will not fit inside this pane",
             )],
-            at: Cursor::with_len(1).at(0),
+            cursor: Cursor::with_len(1).at(0),
             ..Playlist::default()
         };
         let theme = noir();
@@ -412,8 +412,8 @@ mod tests {
         let theme = noir();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let highlight = active.highlight();
-        let selection_text = active.selection_fg();
-        let selection_background = active.selection_bg();
+        let selection_text = active.selection_foreground();
+        let selection_background = active.selection_background();
 
         let widget = PlaylistPane {
             view: PlaylistView {
@@ -452,7 +452,7 @@ mod tests {
         let playlist = library(3);
         let theme = noir();
         let selection_background: Color =
-            ActiveTheme::new(&theme, ColorDepth::TrueColor).selection_bg();
+            ActiveTheme::new(&theme, ColorDepth::TrueColor).selection_background();
 
         let widget = PlaylistPane {
             view: PlaylistView {
@@ -495,7 +495,7 @@ mod tests {
                     ))))
                 })
                 .collect(),
-            at: Cursor::with_len(10_000).at(9_999),
+            cursor: Cursor::with_len(10_000).at(9_999),
             ..Playlist::default()
         };
         let theme = noir();
@@ -545,7 +545,7 @@ mod tests {
         order.extend(1..39);
         let _ = update(
             &mut model,
-            Message::Loaded(LoadedRequest::ShuffleRolled(order)),
+            Message::Loaded(PlaylistRequest::ShuffleRolled(order)),
             Moment::default(),
         );
         let _ = update(
@@ -556,7 +556,7 @@ mod tests {
 
         let playing = model
             .playlist
-            .anchor()
+            .playing_index()
             .expect("advance must land on a track");
         assert_eq!(
             playing.get(),

@@ -10,7 +10,7 @@ use crate::{
     primitive::{
         chip::{self, ChipColors},
         glyphs::{CardGlyphs, ProgressLineGlyphs},
-        span::{row, text},
+        span::{line, text},
     },
     theme::FillColors,
 };
@@ -29,18 +29,18 @@ struct FillGlyphs {
 }
 
 #[derive(Debug)]
-pub(crate) struct FillSpec {
-    frac: f32,
+pub(crate) struct BarFill {
+    fraction: f32,
     width: usize,
     glyphs: FillGlyphs,
 }
 
-impl FillSpec {
+impl BarFill {
     #[must_use]
-    pub(crate) fn progress(frac: f32, width: usize) -> Self {
+    pub(crate) fn progress(fraction: f32, width: usize) -> Self {
         let glyphs = ProgressLineGlyphs::default();
         Self {
-            frac,
+            fraction,
             width,
             glyphs: FillGlyphs {
                 filled_glyph: glyphs.full,
@@ -53,10 +53,10 @@ impl FillSpec {
     }
 
     #[must_use]
-    pub(crate) fn volume(frac: f32, width: usize) -> Self {
+    pub(crate) fn volume(fraction: f32, width: usize) -> Self {
         let glyphs = CardGlyphs::default();
         Self {
-            frac,
+            fraction,
             width,
             glyphs: FillGlyphs {
                 filled_glyph: glyphs.volume_filled,
@@ -69,35 +69,41 @@ impl FillSpec {
     }
 }
 
-fn run(glyph: &'static str, full_run: &'static str, cells: usize) -> Cow<'static, str> {
+fn repeat_glyph(
+    glyph: &'static str,
+    full_run: &'static str,
+    cells: usize,
+) -> Cow<'static, str> {
     full_run
         .get(..cells.saturating_mul(glyph.len()))
         .map_or_else(|| Cow::Owned(glyph.repeat(cells)), Cow::Borrowed)
 }
 
 #[must_use]
-pub(crate) fn fill_line(spec: &FillSpec, colors: FillColors) -> Line<'static> {
+pub(crate) fn fill_line(spec: &BarFill, colors: FillColors) -> Line<'static> {
     let width_f32 = spec.width.to_f32().unwrap_or(f32::MAX);
-    let exact = spec.frac.clamp(0.0, 1.0) * width_f32;
+    let exact = spec.fraction.clamp(0.0, 1.0) * width_f32;
     let whole = floor_usize(exact);
     let whole_f32 = whole.to_f32().unwrap_or(f32::MAX);
     let rounds_up = exact - whole_f32 >= 0.5 && whole < spec.width;
     let used = whole + usize::from(rounds_up);
     let partial = rounds_up.then_some(spec.glyphs.partial).flatten();
     let solid = used.saturating_sub(usize::from(partial.is_some()));
-    let filled = run(spec.glyphs.filled_glyph, spec.glyphs.filled_run, solid);
-    let groove = run(
+    let filled = repeat_glyph(spec.glyphs.filled_glyph, spec.glyphs.filled_run, solid);
+    let groove = repeat_glyph(
         spec.glyphs.groove_glyph,
         spec.glyphs.groove_run,
         spec.width.saturating_sub(used),
     );
-    row([
-        Some(text(filled).fg(colors.accent)),
-        partial.map(|glyph| text(glyph).fg(colors.accent)),
-        Some(text(groove).fg(colors.dim)),
-    ]
-    .into_iter()
-    .flatten())
+    line(
+        [
+            Some(text(filled).fg(colors.accent)),
+            partial.map(|glyph| text(glyph).fg(colors.accent)),
+            Some(text(groove).fg(colors.dim)),
+        ]
+        .into_iter()
+        .flatten(),
+    )
 }
 
 #[derive(Debug)]
@@ -143,7 +149,7 @@ pub(crate) fn remaining_reserve(row_width: u16, remaining: Option<Duration>) -> 
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HudProgressRow {
-    pub frac: f32,
+    pub fraction: f32,
     pub row_width: usize,
     pub remaining: Duration,
 }
@@ -169,9 +175,12 @@ pub(crate) fn hud_progress_line(
     let row_width = u16::try_from(input.row_width).unwrap_or(u16::MAX);
     let bar_width = usize::from(hud_progress_bar_width(row_width, input.remaining));
     if bar_width == input.row_width {
-        return fill_line(&FillSpec::progress(input.frac, input.row_width), colors.bar);
+        return fill_line(
+            &BarFill::progress(input.fraction, input.row_width),
+            colors.bar,
+        );
     }
-    let bar = fill_line(&FillSpec::progress(input.frac, bar_width), colors.bar);
+    let bar = fill_line(&BarFill::progress(input.fraction, bar_width), colors.bar);
     Line::from_iter(
         bar.spans
             .into_iter()
@@ -190,7 +199,7 @@ mod tests {
     use crate::{
         primitive::{
             bar::{
-                FillSpec,
+                BarFill,
                 HudProgressColors,
                 HudProgressRow,
                 fill_line,
@@ -202,7 +211,7 @@ mod tests {
         theme::FillColors,
     };
 
-    fn painted(spec: &FillSpec) -> Line<'static> {
+    fn painted(spec: &BarFill) -> Line<'static> {
         fill_line(
             spec,
             FillColors {
@@ -212,8 +221,8 @@ mod tests {
         )
     }
 
-    fn progress_text(frac: f32, width: usize) -> String {
-        painted(&FillSpec::progress(frac, width))
+    fn progress_text(fraction: f32, width: usize) -> String {
+        painted(&BarFill::progress(fraction, width))
             .spans
             .iter()
             .map(|s| s.content.to_string())
@@ -226,10 +235,10 @@ mod tests {
     #[case::just_short_of_full(0.95, 10)]
     #[case::full(1.0, 10)]
     fn the_progress_line_is_box_drawing_with_at_most_one_partial_cell(
-        #[case] frac: f32,
+        #[case] fraction: f32,
         #[case] width: usize,
     ) {
-        let text = progress_text(frac, width);
+        let text = progress_text(fraction, width);
         for banned in [
             block::ONE_EIGHTH,
             block::ONE_QUARTER,
@@ -250,15 +259,19 @@ mod tests {
             "at most one partial cell"
         );
         assert_eq!(text.chars().count(), width);
-        insta::with_settings!({ snapshot_suffix => format!("{frac}") }, {
+        insta::with_settings!({ snapshot_suffix => format!("{fraction}") }, {
             insta::assert_snapshot!(text);
         });
     }
 
-    fn hud_progress_text(frac: f32, row_width: usize, remaining: Duration) -> String {
+    fn hud_progress_text(
+        fraction: f32,
+        row_width: usize,
+        remaining: Duration,
+    ) -> String {
         let line = hud_progress_line(
             &HudProgressRow {
-                frac,
+                fraction,
                 row_width,
                 remaining,
             },
@@ -278,19 +291,19 @@ mod tests {
 
     struct BarRow {
         name: &'static str,
-        frac: f32,
+        fraction: f32,
         row_width: usize,
         remaining_secs: u64,
     }
 
     #[rstest]
-    #[case::at_the_start(BarRow { name: "start", frac: 0.0, row_width: 30, remaining_secs: 105 })]
-    #[case::half_way(BarRow { name: "half", frac: 0.5, row_width: 30, remaining_secs: 30 })]
-    #[case::at_the_end(BarRow { name: "end", frac: 1.0, row_width: 30, remaining_secs: 0 })]
-    #[case::too_narrow_for_a_chip(BarRow { name: "narrow", frac: 0.5, row_width: 4, remaining_secs: 45 })]
+    #[case::at_the_start(BarRow { name: "start", fraction: 0.0, row_width: 30, remaining_secs: 105 })]
+    #[case::half_way(BarRow { name: "half", fraction: 0.5, row_width: 30, remaining_secs: 30 })]
+    #[case::at_the_end(BarRow { name: "end", fraction: 1.0, row_width: 30, remaining_secs: 0 })]
+    #[case::too_narrow_for_a_chip(BarRow { name: "narrow", fraction: 0.5, row_width: 4, remaining_secs: 45 })]
     fn the_hud_row_paints_a_bar_and_its_remaining_chip(#[case] row: BarRow) {
         let text = hud_progress_text(
-            row.frac,
+            row.fraction,
             row.row_width,
             Duration::from_secs(row.remaining_secs),
         );
@@ -304,8 +317,8 @@ mod tests {
         });
     }
 
-    fn volume_text(frac: f32, bar_width: usize) -> String {
-        painted(&FillSpec::volume(frac, bar_width))
+    fn volume_text(fraction: f32, bar_width: usize) -> String {
+        painted(&BarFill::volume(fraction, bar_width))
             .spans
             .iter()
             .map(|s| s.content.to_string())
@@ -316,9 +329,9 @@ mod tests {
     #[case::silent(0.0)]
     #[case::half(0.5)]
     #[case::full(1.0)]
-    fn the_volume_bar_is_solid_blocks_filling_every_row(#[case] frac: f32) {
+    fn the_volume_bar_is_solid_blocks_filling_every_row(#[case] fraction: f32) {
         let glyphs = CardGlyphs::default();
-        let row = volume_text(frac, 16);
+        let row = volume_text(fraction, 16);
 
         assert_eq!(row.chars().count(), 16, "the row fills the bar's width");
         assert_eq!(
@@ -326,11 +339,11 @@ mod tests {
             0,
             "the volume bar must not borrow the progress line's glyphs"
         );
-        assert_ne!(row, progress_text(frac, 16));
+        assert_ne!(row, progress_text(fraction, 16));
         assert!(
             row.contains(glyphs.volume_filled) || row.contains(glyphs.volume_empty)
         );
-        insta::with_settings!({ snapshot_suffix => format!("{frac}") }, {
+        insta::with_settings!({ snapshot_suffix => format!("{fraction}") }, {
             insta::assert_snapshot!(row);
         });
     }
@@ -340,11 +353,11 @@ mod tests {
     #[case::half(0.5, 8)]
     #[case::full(1.0, 16)]
     fn the_volume_run_is_one_solid_block_that_changes_colour_at_the_level(
-        #[case] frac: f32,
+        #[case] fraction: f32,
         #[case] filled: usize,
     ) {
         let glyphs = CardGlyphs::default();
-        let line = painted(&FillSpec::volume(frac, 16));
+        let line = painted(&BarFill::volume(fraction, 16));
         let cells: Vec<(char, Option<Color>)> = line
             .spans
             .iter()

@@ -3,12 +3,14 @@ source: crates/kernel/tests/unit/effects_snapshot.rs
 expression: effects(cmd)
 ---
 [
-    Setting {
-        id: SettingId(
-            3,
-        ),
-        option: OptionIndex(
-            1,
-        ),
-    },
+    Config(
+        Setting {
+            id: SettingId(
+                3,
+            ),
+            option: OptionIndex(
+                1,
+            ),
+        },
+    ),
 ]

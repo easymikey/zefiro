@@ -2,14 +2,14 @@ use ratatui::{style::Color, text::Line};
 
 use crate::{
     braille,
-    primitive::span::{row, text},
+    primitive::span::{line, text},
 };
 
-fn spectrum_row_fraction(row_idx: u16, total_rows: u16) -> f32 {
+fn spectrum_row_fraction(row: u16, total_rows: u16) -> f32 {
     if total_rows <= 1 {
         return 1.0;
     }
-    1.0 - f32::from(row_idx) / f32::from(total_rows - 1)
+    1.0 - f32::from(row) / f32::from(total_rows - 1)
 }
 
 #[must_use]
@@ -18,18 +18,18 @@ pub(crate) fn lines(
     color_at: impl Fn(f32) -> Color,
     buffers: &mut braille::BrailleBuffers,
 ) -> Vec<Line<'static>> {
-    let spectrum_rows = buffers.meter(fill);
+    let spectrum_rows = buffers.render_meter(fill);
     let spectrum_total_rows = u16::try_from(spectrum_rows.len()).unwrap_or(u16::MAX);
     spectrum_rows
         .iter()
         .enumerate()
-        .map(|(row_idx, glyphs)| {
+        .map(|(row, glyphs)| {
             let t = spectrum_row_fraction(
-                u16::try_from(row_idx).unwrap_or(u16::MAX),
+                u16::try_from(row).unwrap_or(u16::MAX),
                 spectrum_total_rows,
             );
             let color = color_at(t);
-            row([text(glyphs.clone()).fg(color)])
+            line([text(glyphs.clone()).fg(color)])
         })
         .collect()
 }

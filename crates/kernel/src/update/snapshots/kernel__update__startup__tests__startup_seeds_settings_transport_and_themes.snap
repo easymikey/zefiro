@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/src/update/startup.rs
-assertion_line: 141
+assertion_line: 180
 expression: "(model.settings, model.transport.volume, model.themes,)"
 ---
 (
@@ -9,7 +9,7 @@ expression: "(model.settings, model.transport.volume, model.themes,)"
             3s,
         ),
         replaygain: On,
-        output_device: Some(
+        output_device: Named(
             DeviceName(
                 "Speakers",
             ),

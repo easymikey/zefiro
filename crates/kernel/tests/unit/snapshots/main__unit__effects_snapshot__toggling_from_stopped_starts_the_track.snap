@@ -51,7 +51,7 @@ expression: effects(cmd)
             ),
         },
     ),
-    System(
+    Macos(
         NowPlaying(
             Track {
                 title: "track0",
@@ -63,11 +63,11 @@ expression: effects(cmd)
         ),
     ),
     Audio(
-        Pause(
+        Playback(
             Playing,
         ),
     ),
-    System(
+    Macos(
         PlaybackState(
             Playing,
         ),

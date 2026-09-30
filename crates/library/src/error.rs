@@ -1,9 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use kernel::{IoFault, LibraryFailure, LibrarySubject};
+use kernel::{IoError, LibraryError, LibrarySubject};
 
 #[derive(Debug, thiserror::Error)]
-pub enum LibraryError {
+pub enum Error {
     #[error("{subject} {path}: {source}")]
     Read {
         subject: LibrarySubject,
@@ -29,7 +29,7 @@ pub enum LibraryError {
     },
 
     #[error("cache encode {path}: {source}")]
-    Cache {
+    Encode {
         path: PathBuf,
         #[source]
         source: bincode::error::EncodeError,
@@ -43,10 +43,48 @@ pub enum LibraryError {
     },
 
     #[error("no such directory")]
-    NoDirectory,
+    NoUserDirs,
 }
 
-fn trash_fault(source: &trash::Error) -> IoFault {
+impl Error {
+    pub(crate) fn read(
+        subject: LibrarySubject,
+        path: &Path,
+    ) -> impl FnOnce(std::io::Error) -> Error + use<> {
+        let path = path.to_path_buf();
+        move |source| Error::Read {
+            subject,
+            path,
+            source,
+        }
+    }
+
+    pub(crate) fn write(
+        subject: LibrarySubject,
+        path: &Path,
+    ) -> impl FnOnce(std::io::Error) -> Error + use<> {
+        let path = path.to_path_buf();
+        move |source| Error::Write {
+            subject,
+            path,
+            source,
+        }
+    }
+
+    pub(crate) fn json(
+        subject: LibrarySubject,
+        path: &Path,
+    ) -> impl FnOnce(serde_json::Error) -> Error + use<> {
+        let path = path.to_path_buf();
+        move |source| Error::Json {
+            subject,
+            path,
+            source,
+        }
+    }
+}
+
+fn trash_error(source: &trash::Error) -> IoError {
     match source {
         #[cfg(all(
             unix,
@@ -55,58 +93,58 @@ fn trash_fault(source: &trash::Error) -> IoFault {
             not(target_os = "android")
         ))]
         trash::Error::FileSystem { source, .. } => source.kind().into(),
-        _ => IoFault::Other,
+        _ => IoError::Other,
     }
 }
 
-impl From<&LibraryError> for LibraryFailure {
-    fn from(error: &LibraryError) -> Self {
+impl From<&Error> for LibraryError {
+    fn from(error: &Error) -> Self {
         match error {
-            LibraryError::Read {
+            Error::Read {
                 subject,
                 path,
                 source,
             }
-            | LibraryError::Write {
+            | Error::Write {
                 subject,
                 path,
                 source,
-            } => LibraryFailure::File {
+            } => LibraryError::File {
                 subject: *subject,
                 path: path.clone(),
-                fault: source.kind().into(),
+                kind: source.kind().into(),
             },
-            LibraryError::Json { subject, path, .. } => LibraryFailure::File {
+            Error::Json { subject, path, .. } => LibraryError::File {
                 subject: *subject,
                 path: path.clone(),
-                fault: IoFault::Malformed,
+                kind: IoError::Malformed,
             },
-            LibraryError::Cache { path, .. } => LibraryFailure::File {
+            Error::Encode { path, .. } => LibraryError::File {
                 subject: LibrarySubject::Cache,
                 path: path.clone(),
-                fault: IoFault::Malformed,
+                kind: IoError::Malformed,
             },
-            LibraryError::Trash { path, source } => LibraryFailure::File {
+            Error::Trash { path, source } => LibraryError::File {
                 subject: LibrarySubject::Trash,
                 path: path.clone(),
-                fault: trash_fault(source),
+                kind: trash_error(source),
             },
-            LibraryError::NoDirectory => LibraryFailure::NoDirectory,
+            Error::NoUserDirs => LibraryError::NoUserDirs,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use kernel::{IoFault, LibraryFailure, LibrarySubject};
+    use kernel::{IoError, LibraryError, LibrarySubject};
     use rstest::rstest;
 
-    use crate::error::LibraryError;
+    use crate::error::Error;
 
     #[rstest]
-    #[case::no_directory(LibraryError::NoDirectory, "no such directory")]
+    #[case::no_directory(Error::NoUserDirs, "no such directory")]
     #[case::read(
-        LibraryError::Read {
+        Error::Read {
             subject: LibrarySubject::Scan,
             path: "/music".into(),
             source: std::io::Error::from(std::io::ErrorKind::NotFound),
@@ -114,7 +152,7 @@ mod tests {
         "a scan /music: entity not found"
     )]
     #[case::write(
-        LibraryError::Write {
+        Error::Write {
             subject: LibrarySubject::Favorites,
             path: "/data/favorites.json".into(),
             source: std::io::Error::from(std::io::ErrorKind::NotFound),
@@ -122,7 +160,7 @@ mod tests {
         "the favorites file /data/favorites.json: entity not found"
     )]
     #[case::json(
-        LibraryError::Json {
+        Error::Json {
             subject: LibrarySubject::History,
             path: "/data/history.jsonl".into(),
             source: serde_json::from_str::<serde_json::Value>("")
@@ -131,14 +169,14 @@ mod tests {
         "the history file /data/history.jsonl: json: EOF while parsing a value at line 1 column 0"
     )]
     #[case::cache(
-        LibraryError::Cache {
+        Error::Encode {
             path: "/data/library.bin".into(),
             source: bincode::error::EncodeError::UnexpectedEnd,
         },
         "cache encode /data/library.bin: UnexpectedEnd"
     )]
     #[case::trash(
-        LibraryError::Trash {
+        Error::Trash {
             path: "/music/gone.flac".into(),
             source: trash::Error::Unknown {
                 description: "no trash service".to_string(),
@@ -146,81 +184,78 @@ mod tests {
         },
         "trash /music/gone.flac: Error during a `trash` operation: Unknown { description: \"no trash service\" }"
     )]
-    fn errors_render_readable_messages(
-        #[case] error: LibraryError,
-        #[case] expected: &str,
-    ) {
+    fn errors_render_readable_messages(#[case] error: Error, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);
     }
 
     #[rstest]
     #[case::read_missing(
-        LibraryError::Read {
+        Error::Read {
             subject: LibrarySubject::Scan,
             path: "/music".into(),
             source: std::io::Error::from(std::io::ErrorKind::NotFound),
         },
-        LibraryFailure::File {
+        LibraryError::File {
             subject: LibrarySubject::Scan,
             path: "/music".into(),
-            fault: IoFault::Missing,
+            kind: IoError::Missing,
         }
     )]
     #[case::write_denied(
-        LibraryError::Write {
+        Error::Write {
             subject: LibrarySubject::Favorites,
             path: "/data/favorites.json".into(),
             source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
         },
-        LibraryFailure::File {
+        LibraryError::File {
             subject: LibrarySubject::Favorites,
             path: "/data/favorites.json".into(),
-            fault: IoFault::Denied,
+            kind: IoError::Denied,
         }
     )]
     #[case::json(
-        LibraryError::Json {
+        Error::Json {
             subject: LibrarySubject::History,
             path: "/data/history.jsonl".into(),
             source: serde_json::from_str::<serde_json::Value>("")
                 .expect_err("empty input must fail to parse"),
         },
-        LibraryFailure::File {
+        LibraryError::File {
             subject: LibrarySubject::History,
             path: "/data/history.jsonl".into(),
-            fault: IoFault::Malformed,
+            kind: IoError::Malformed,
         }
     )]
     #[case::cache_encode(
-        LibraryError::Cache {
+        Error::Encode {
             path: "/data/library.bin".into(),
             source: bincode::error::EncodeError::UnexpectedEnd,
         },
-        LibraryFailure::File {
+        LibraryError::File {
             subject: LibrarySubject::Cache,
             path: "/data/library.bin".into(),
-            fault: IoFault::Malformed,
+            kind: IoError::Malformed,
         }
     )]
     #[case::trash_unknown(
-        LibraryError::Trash {
+        Error::Trash {
             path: "/music/gone.flac".into(),
             source: trash::Error::Unknown {
                 description: "no trash service".to_string(),
             },
         },
-        LibraryFailure::File {
+        LibraryError::File {
             subject: LibrarySubject::Trash,
             path: "/music/gone.flac".into(),
-            fault: IoFault::Other,
+            kind: IoError::Other,
         }
     )]
-    #[case::no_directory(LibraryError::NoDirectory, LibraryFailure::NoDirectory)]
+    #[case::no_directory(Error::NoUserDirs, LibraryError::NoUserDirs)]
     fn a_library_error_becomes_a_structured_failure(
-        #[case] error: LibraryError,
-        #[case] expected: LibraryFailure,
+        #[case] error: Error,
+        #[case] expected: LibraryError,
     ) {
-        let failure: LibraryFailure = (&error).into();
+        let failure: LibraryError = (&error).into();
         assert_eq!(failure, expected);
     }
 }

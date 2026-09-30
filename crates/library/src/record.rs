@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
-use kernel::{AudioFormat, HistoryEntry, Tagging, Tags, Track};
+use kernel::{AudioFormat, HistoryEntry, Tagging, Tags, Track, UnixSeconds};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -96,7 +96,7 @@ impl From<HistoryEntry> for HistoryRecord {
             path: entry.path,
             title: entry.title,
             artist: entry.artist,
-            at: entry.at,
+            at: entry.at.get(),
         }
     }
 }
@@ -107,30 +107,28 @@ impl From<HistoryRecord> for HistoryEntry {
             path: record.path,
             title: record.title,
             artist: record.artist,
-            at: record.at,
+            at: UnixSeconds::new(record.at),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, time::Duration};
+    use std::path::Path;
 
-    use kernel::{AudioFormat, Tags, Track};
+    use kernel::{Tags, Track};
     use rstest::rstest;
 
-    use crate::record::TrackRecord;
+    use crate::{record::TrackRecord, test_support};
 
     fn read_track() -> Track {
-        Track::builder()
-            .path("/music/one.flac")
-            .duration(Duration::from_secs(180))
-            .tags(Tags {
+        test_support::track(
+            "/music/one.flac",
+            Tags {
                 title: Some("Moon River".to_string()),
                 ..Tags::default()
-            })
-            .audio_format(AudioFormat::default())
-            .build()
+            },
+        )
     }
 
     fn listed_track() -> Track {

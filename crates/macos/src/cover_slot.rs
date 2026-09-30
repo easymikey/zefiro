@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use kernel::update::{Machine, Never, Rejected};
+use kernel::update::{Machine, Rejected};
 
 use crate::cover::CoverBytes;
 
@@ -13,7 +13,7 @@ pub(crate) struct CoverSlot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CoverMessage {
-    Showing(Option<PathBuf>),
+    TrackShown(Option<PathBuf>),
     Arrived(CoverBytes),
 }
 
@@ -21,14 +21,13 @@ pub(crate) enum CoverMessage {
 pub(crate) enum CoverEffect {
     Nothing,
     Clear,
-    CoverWanted(PathBuf),
+    Request(PathBuf),
     Show(Vec<u8>),
-    ShowNone,
 }
 
 impl Machine for CoverSlot {
     type Message = CoverMessage;
-    type Rejection = Never;
+    type Error = std::convert::Infallible;
     type Effect = CoverEffect;
 
     fn transition(
@@ -36,13 +35,13 @@ impl Machine for CoverSlot {
         message: CoverMessage,
     ) -> Result<(Self, CoverEffect), Rejected<Self>> {
         Ok(match message {
-            CoverMessage::Showing(track) => showing(self, track),
+            CoverMessage::TrackShown(track) => track_shown(self, track),
             CoverMessage::Arrived(bytes) => arrived(self, bytes),
         })
     }
 }
 
-fn showing(slot: CoverSlot, track: Option<PathBuf>) -> (CoverSlot, CoverEffect) {
+fn track_shown(slot: CoverSlot, track: Option<PathBuf>) -> (CoverSlot, CoverEffect) {
     if slot.track == track {
         (slot, CoverEffect::Nothing)
     } else {
@@ -51,7 +50,7 @@ fn showing(slot: CoverSlot, track: Option<PathBuf>) -> (CoverSlot, CoverEffect) 
                 CoverSlot {
                     track: Some(wanted.clone()),
                 },
-                CoverEffect::CoverWanted(wanted),
+                CoverEffect::Request(wanted),
             )
         })
     }
@@ -59,7 +58,7 @@ fn showing(slot: CoverSlot, track: Option<PathBuf>) -> (CoverSlot, CoverEffect) 
 
 fn arrived(slot: CoverSlot, bytes: CoverBytes) -> (CoverSlot, CoverEffect) {
     if slot.track.as_deref() == Some(bytes.track.as_path()) {
-        let effect = bytes.bytes.map_or(CoverEffect::ShowNone, CoverEffect::Show);
+        let effect = bytes.bytes.map_or(CoverEffect::Clear, CoverEffect::Show);
         (slot, effect)
     } else {
         (slot, CoverEffect::Nothing)
@@ -90,23 +89,23 @@ mod tests {
     }
 
     #[rstest]
-    #[case::first_track_wants_its_cover(Row {
+    #[case::first_track_requests_its_cover(Row {
         slot: CoverSlot::default(),
-        message: CoverMessage::Showing(Some(track("a.flac"))),
+        message: CoverMessage::TrackShown(Some(track("a.flac"))),
         next: CoverSlot { track: Some(track("a.flac")) },
-        effect: CoverEffect::CoverWanted(track("a.flac")),
+        effect: CoverEffect::Request(track("a.flac")),
     })]
     #[case::the_same_track_keeps_it(Row {
         slot: CoverSlot { track: Some(track("a.flac")) },
-        message: CoverMessage::Showing(Some(track("a.flac"))),
+        message: CoverMessage::TrackShown(Some(track("a.flac"))),
         next: CoverSlot { track: Some(track("a.flac")) },
         effect: CoverEffect::Nothing,
     })]
-    #[case::a_new_track_clears_and_wants(Row {
+    #[case::a_new_track_clears_and_requests(Row {
         slot: CoverSlot { track: Some(track("a.flac")) },
-        message: CoverMessage::Showing(Some(track("b.flac"))),
+        message: CoverMessage::TrackShown(Some(track("b.flac"))),
         next: CoverSlot { track: Some(track("b.flac")) },
-        effect: CoverEffect::CoverWanted(track("b.flac")),
+        effect: CoverEffect::Request(track("b.flac")),
     })]
     #[case::the_arrival_shows_it(Row {
         slot: CoverSlot { track: Some(track("a.flac")) },
@@ -128,20 +127,20 @@ mod tests {
     })]
     #[case::cleared_clears(Row {
         slot: CoverSlot { track: Some(track("a.flac")) },
-        message: CoverMessage::Showing(None),
+        message: CoverMessage::TrackShown(None),
         next: CoverSlot { track: None },
         effect: CoverEffect::Clear,
     })]
-    #[case::a_track_without_cover_shows_none(Row {
+    #[case::a_track_without_cover_clears(Row {
         slot: CoverSlot { track: Some(track("a.flac")) },
         message: CoverMessage::Arrived(CoverBytes {
             track: track("a.flac"),
             bytes: None,
         }),
         next: CoverSlot { track: Some(track("a.flac")) },
-        effect: CoverEffect::ShowNone,
+        effect: CoverEffect::Clear,
     })]
-    fn the_cover_slot_transitions_as_a_table(#[case] row: Row) {
+    fn the_cover_slot_requests_clears_or_shows_by_the_track_it_holds(#[case] row: Row) {
         let Row {
             mut slot,
             message,

@@ -1,8 +1,12 @@
 use std::{collections::HashMap, time::Duration};
 
-use crate::{
-    domain::{ChordPrefix, Cursor, Keymap, Overlay, PlaylistIndex, library::SortKey},
-    update::keymap::Bindings,
+use crate::domain::{
+    ChordPrefix,
+    Cursor,
+    Keymap,
+    Overlay,
+    PlaylistIndex,
+    library::SortKey,
 };
 
 pub const TOAST_LIFETIME: Duration = Duration::from_secs(3);
@@ -14,43 +18,35 @@ pub struct Workspace {
     pub chord: Option<ChordPrefix>,
     pub toast: Option<Toast>,
     pub keymap: Keymap,
-    pub bindings: Bindings,
     pub visible_rows: usize,
     pub played_for: Duration,
-    pub(crate) source_errors: SourceErrors,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ConfigSource {
-    Keymap,
-    Theme,
-    Appearance,
+    pub(crate) source_errors: ConfigFileErrors,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConfigFile {
     Appearance,
-    Keymap,
+    Config,
     Theme,
-    ThemeDirectory,
 }
 
 impl std::fmt::Display for ConfigFile {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
             ConfigFile::Appearance => "the appearance file",
-            ConfigFile::Keymap => "the config file",
+            ConfigFile::Config => "the config file",
             ConfigFile::Theme => "the theme file",
-            ConfigFile::ThemeDirectory => "the themes folder",
         };
         formatter.write_str(name)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigFailure {
+pub enum ConfigError {
     #[error("{file} is unreadable: {detail}")]
     Unreadable { file: ConfigFile, detail: String },
+    #[error("the themes folder is unreadable: {detail}")]
+    ThemesUnreadable { detail: String },
     #[error("{file} could not be saved: {detail}")]
     Save { file: ConfigFile, detail: String },
     #[error("Config watch failed: {detail}")]
@@ -58,12 +54,12 @@ pub enum ConfigFailure {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct SourceErrors(HashMap<ConfigSource, String>);
+pub(crate) struct ConfigFileErrors(HashMap<ConfigFile, String>);
 
-impl SourceErrors {
-    pub(crate) fn note(
+impl ConfigFileErrors {
+    pub(crate) fn insert_if_changed(
         &mut self,
-        source: ConfigSource,
+        source: ConfigFile,
         text: String,
     ) -> Option<String> {
         if self.0.get(&source) == Some(&text) {
@@ -73,7 +69,7 @@ impl SourceErrors {
         Some(text)
     }
 
-    pub(crate) fn clear(&mut self, source: ConfigSource) -> Option<String> {
+    pub(crate) fn clear(&mut self, source: ConfigFile) -> Option<String> {
         self.0.remove(&source)
     }
 }
@@ -158,7 +154,7 @@ mod save_line_tests {
     use crate::domain::{
         Overlay,
         TextEntry,
-        playlist::PlaylistNameRejection,
+        playlist::PlaylistNameError,
         workspace::{SaveLine, SavePhase, Toast, Workspace},
     };
 
@@ -193,14 +189,14 @@ mod save_line_tests {
                 typed: TextEntry {
                     input: "...".into(),
                 },
-                error: Some(PlaylistNameRejection::AllDots),
+                error: Some(PlaylistNameError::AllDots),
             }),
             ..Workspace::default()
         };
         assert_eq!(
             workspace.save_line(),
             Some(SaveLine {
-                text: PlaylistNameRejection::AllDots.to_string(),
+                text: PlaylistNameError::AllDots.to_string(),
                 phase: SavePhase::Failure,
             })
         );

@@ -6,49 +6,49 @@ expression: "parse_theme(source, name).unwrap()"
 ThemeFile {
     name: "gruvbox",
     colors: ThemeColors {
-        background: Hex(
+        background: Rgb(
             [
                 40,
                 40,
                 40,
             ],
         ),
-        foreground: Hex(
+        foreground: Rgb(
             [
                 146,
                 131,
                 116,
             ],
         ),
-        bright_foreground: Hex(
+        bright_foreground: Rgb(
             [
                 235,
                 219,
                 178,
             ],
         ),
-        accent: Hex(
+        accent: Rgb(
             [
                 254,
                 128,
                 25,
             ],
         ),
-        green: Hex(
+        green: Rgb(
             [
                 184,
                 187,
                 38,
             ],
         ),
-        yellow: Hex(
+        yellow: Rgb(
             [
                 250,
                 189,
                 47,
             ],
         ),
-        red: Hex(
+        red: Rgb(
             [
                 251,
                 73,
@@ -56,7 +56,7 @@ ThemeFile {
             ],
         ),
         window_background: Some(
-            Hex(
+            Rgb(
                 [
                     50,
                     48,

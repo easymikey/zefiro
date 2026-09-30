@@ -7,11 +7,11 @@ use ratatui::{
 };
 
 use crate::overlay::modal::place::{
-    BoxSize,
     ContentSize,
-    FrameWidthBox,
+    FrameWidth,
+    PlacedSize,
     anchored_frame,
-    content_dimensions,
+    content_size,
     padded_content,
     place,
     split_hint_row,
@@ -54,7 +54,6 @@ pub struct ModalAreas {
     pub outer: Rect,
     pub body: Rect,
     pub hint_row: Rect,
-    pub painted: Rect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,7 +119,7 @@ impl Default for ModalLayout {
 
 impl<'a> Modal<'a> {
     #[must_use]
-    pub(crate) fn frame(&self, area: Rect, avoid: &[Rect]) -> ModalAreas {
+    pub(crate) fn areas(&self, area: Rect, avoid: &[Rect]) -> ModalAreas {
         let hint = if self.hint.is_some() {
             Hint::Present
         } else {
@@ -133,7 +132,6 @@ impl<'a> Modal<'a> {
             outer,
             body,
             hint_row,
-            painted: outer,
         }
     }
 
@@ -144,7 +142,7 @@ impl<'a> Modal<'a> {
                 content_width,
                 content_rows,
             } => {
-                let (width, height) = content_dimensions(
+                let (width, height) = content_size(
                     bounds.area,
                     layout,
                     ContentSize {
@@ -155,14 +153,14 @@ impl<'a> Modal<'a> {
                         screen_margin: layout.list_screen_margin,
                     },
                 );
-                place(bounds.area, BoxSize { width, height }, bounds.avoid)
+                place(bounds.area, PlacedSize { width, height }, bounds.avoid)
             }
             ModalSize::Dialog {
                 min_width,
                 content_width,
                 content_lines,
             } => {
-                let (width, height) = content_dimensions(
+                let (width, height) = content_size(
                     bounds.area,
                     layout,
                     ContentSize {
@@ -173,7 +171,7 @@ impl<'a> Modal<'a> {
                         screen_margin: layout.dialog_screen_margin,
                     },
                 );
-                place(bounds.area, BoxSize { width, height }, bounds.avoid)
+                place(bounds.area, PlacedSize { width, height }, bounds.avoid)
             }
             ModalSize::FrameWidth {
                 bounds: frame_bounds,
@@ -181,7 +179,7 @@ impl<'a> Modal<'a> {
             } => anchored_frame(
                 layout,
                 hint,
-                FrameWidthBox {
+                FrameWidth {
                     bounds: frame_bounds,
                     content_rows,
                 },
@@ -282,7 +280,7 @@ mod tests {
         screen: area(80, 24),
     })]
     fn a_modal_frames_itself_inside_the_screen(#[case] row: ModalRow) {
-        let frame = modal(row.size, row.hint).frame(row.screen, &[]);
+        let frame = modal(row.size, row.hint).areas(row.screen, &[]);
 
         assert!(frame.outer.width <= row.screen.width);
         assert!(frame.outer.height <= row.screen.height);
@@ -309,7 +307,7 @@ mod tests {
     fn list_capacity_matches_what_frame_clamps_a_huge_list_to() {
         let screen = area(80, 24);
         let (capacity_width, capacity_rows) = list_capacity(screen, Hint::Present);
-        let frame = modal(list(200, 200), Hint::Present).frame(screen, &[]);
+        let frame = modal(list(200, 200), Hint::Present).areas(screen, &[]);
         assert_eq!(
             (frame.body.width, frame.body.height),
             (capacity_width, capacity_rows)
@@ -329,7 +327,7 @@ mod tests {
             window_background: Color::Reset,
         };
         let screen = area(80, 24);
-        let centered_outer = modal.frame(screen, &[]).outer;
+        let centered_outer = modal.areas(screen, &[]).outer;
         let cover = Rect {
             x: 0,
             y: 0,
@@ -338,7 +336,7 @@ mod tests {
         };
         assert!(cover.intersects(centered_outer));
 
-        let frame = modal.frame(screen, &[cover]);
+        let frame = modal.areas(screen, &[cover]);
         assert!(
             !frame.outer.intersects(cover),
             "modal must move clear of the cover rect, got {:?} vs cover {:?}",
@@ -373,14 +371,14 @@ mod tests {
             window_background: Color::Reset,
         };
         let screen = area(80, 24);
-        let centered_outer = modal.frame(screen, &[]).outer;
+        let centered_outer = modal.areas(screen, &[]).outer;
         let covers_everything = Rect {
             x: 0,
             y: 0,
             width: screen.width,
             height: screen.height,
         };
-        let frame = modal.frame(screen, &[covers_everything]);
+        let frame = modal.areas(screen, &[covers_everything]);
         assert_eq!(frame.outer, centered_outer);
     }
 }

@@ -63,7 +63,7 @@ fn the_returned_moment_really_crosses(#[case] speed: f32) {
 #[case::partial_second(10.4, 1.0, 601)]
 #[case::double_speed(10.4, 2.0, 301)]
 #[case::quarter_speed(10.4, 0.25, 2401)]
-fn next_clock_second_rows(
+fn the_next_clock_second_lands_on_the_following_whole_second_at_any_speed(
     #[case] offset_secs: f64,
     #[case] speed: f32,
     #[case] expected_millis: u64,
@@ -79,7 +79,7 @@ fn next_clock_second_rows(
 #[case::zero_width(0, 100, None)]
 #[case::zero_length(40, 0, None)]
 #[case::forty_columns(40, 100, Some(80))]
-fn text_bar_scale_rows(
+fn a_text_bar_has_two_steps_per_column_unless_empty(
     #[case] width: u16,
     #[case] length_secs: u64,
     #[case] expected_steps: Option<u32>,

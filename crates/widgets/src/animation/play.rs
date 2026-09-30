@@ -27,17 +27,17 @@ impl AnimationStage {
     pub fn play(&mut self, cues: Vec<Cue>, backdrop: &Backdrop) {
         self.remember_protected(backdrop.layout);
         if backdrop.animations == Animations::On {
-            let running = self.lift();
+            let running = self.take_running();
             for cue in once_each(cues) {
                 self.stage_cue(cue, backdrop);
             }
-            self.keep_behind(running);
+            self.restore_running(running);
         } else {
             self.clear();
         }
         let layout = backdrop.layout;
         self.vacated = VacatedAreas {
-            overlay: layout.overlay.map(OverlayAreas::painted),
+            overlay: layout.overlay.map(OverlayAreas::outer),
             toast: layout.toast.map(|toast| toast.painted),
             selected_row: layout.playlist.and_then(|playlist| playlist.selected),
         };
@@ -50,34 +50,34 @@ impl AnimationStage {
         match cue {
             Cue::OverlayOpened => {
                 self.stage_at(
-                    layout.overlay.map(OverlayAreas::painted),
                     modal_in(timings),
+                    layout.overlay.map(OverlayAreas::outer),
                 );
             }
-            Cue::OverlayClosed => self.stage_at(vacated.overlay, modal_out(timings)),
+            Cue::OverlayClosed => self.stage_at(modal_out(timings), vacated.overlay),
             Cue::ToastRaised => {
                 self.stage_at(
-                    layout.toast.map(|toast| toast.painted),
                     toast_slide_in(backdrop.background, timings),
+                    layout.toast.map(|toast| toast.painted),
                 );
             }
             Cue::ToastDismissed => {
                 self.stage_at(
-                    vacated.toast,
                     toast_burst(backdrop.background, self.cell_filter(), timings),
+                    vacated.toast,
                 );
             }
             Cue::PlaybackChanged(change) => {
                 self.stage_at(
-                    layout.card.map(|metrics| metrics.status_row),
                     chip_pulse(pulsed(change, backdrop), timings),
+                    layout.card.map(|metrics| metrics.status_row),
                 );
             }
             Cue::FavoriteToggled => self.stage_favorite_toggled(backdrop),
             Cue::VolumeChanged => self.stage_volume_changed(backdrop),
             Cue::TrackDeleted => self.stage_at(
-                vacated.selected_row,
                 delete_burst(backdrop.background, self.cell_filter(), timings),
+                vacated.selected_row,
             ),
             Cue::ThemeChanged | Cue::LayoutChanged => {
                 self.stage_whole_screen(
@@ -97,12 +97,12 @@ impl AnimationStage {
         let layout = backdrop.layout;
         let selected = layout.playlist.and_then(|playlist| playlist.selected);
         self.stage_at(
-            selected.map(favorite_cell),
             row_flash(backdrop.accent, timings),
+            selected.map(favorite_cell),
         );
         self.stage_at(
-            layout.card.map(|metrics| metrics.title_row),
             favorite_pulse(backdrop.accent, timings),
+            layout.card.map(|metrics| metrics.title_row),
         );
     }
 
@@ -114,7 +114,7 @@ impl AnimationStage {
             lifted: backdrop.volume_lifted,
         };
         let pulse = volume_pulse(shades, self.cell_filter(), timings);
-        self.stage_at(layout.card.map(|metrics| metrics.volume_row), pulse);
+        self.stage_at(pulse, layout.card.map(|metrics| metrics.volume_row));
     }
 }
 
@@ -212,6 +212,6 @@ mod tests {
 
         stage.play(vec![Cue::LayoutChanged], &backdrop);
 
-        assert_eq!(stage.staged(), 1);
+        assert_eq!(stage.staged_count(), 1);
     }
 }

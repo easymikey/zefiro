@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use config::SpeedChipMode;
+use config::SpeedChip;
 use kernel::playlist::RepeatMode;
 use raster::unit_fraction;
 use ratatui::{
@@ -14,23 +14,23 @@ use ratatui::{
 use crate::{
     card::{CardStatus, CardView, card_status, status_label},
     primitive::{
-        bar::{FillSpec, fill_line},
+        bar::{BarFill, fill_line},
         chip::{ChipColors, speed_chip_spans, speed_chip_width},
         relative_time::elapsed_of,
-        span::{row, text},
+        span::{line, text},
         text::truncate,
     },
     theme::{ActiveTheme, FillColors},
 };
 
 #[derive(Debug, Clone, Copy)]
-pub struct MinimalCard<'a> {
+pub struct MinimalScreen<'a> {
     pub view: CardView<'a>,
     pub theme: ActiveTheme<'a>,
-    pub speed_chip: SpeedChipMode,
+    pub speed_chip: SpeedChip,
 }
 
-impl Widget for &MinimalCard<'_> {
+impl Widget for &MinimalScreen<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let rows = [
             self.title_line(area.width),
@@ -53,7 +53,7 @@ impl Widget for &MinimalCard<'_> {
 #[must_use]
 pub(crate) fn progress_bar_width(
     view: CardView<'_>,
-    speed_chip: SpeedChipMode,
+    speed_chip: SpeedChip,
     width: u16,
 ) -> u16 {
     let duration = view
@@ -70,11 +70,11 @@ pub(crate) fn progress_bar_width(
     width.saturating_sub(time_width + gap + chip_width)
 }
 
-impl MinimalCard<'_> {
+impl MinimalScreen<'_> {
     fn title_line(&self, width: u16) -> Line<'static> {
         let status = card_status(self.view.output, self.view.player);
         let color = match status {
-            CardStatus::OutputLost => self.theme.accent2(),
+            CardStatus::OutputLost => self.theme.secondary_accent(),
             CardStatus::Playing => self.theme.accent(),
             CardStatus::Paused => self.theme.text(),
             CardStatus::Stopped => self.theme.dim(),
@@ -83,8 +83,8 @@ impl MinimalCard<'_> {
             .view
             .displayed_track
             .map_or_else(|| "No track".to_string(), |track| track.song_title());
-        let line = format!("{} {title}", status_label(status).glyph);
-        row([text(truncate(&line, usize::from(width)).into_owned()).fg(color)])
+        let label = format!("{} {title}", status_label(status).glyph);
+        line([text(truncate(&label, usize::from(width)).into_owned()).fg(color)])
     }
 
     fn progress_line(&self, width: u16) -> Line<'static> {
@@ -109,7 +109,7 @@ impl MinimalCard<'_> {
         let chip_width = speed_chip_width(self.view.speed, self.speed_chip);
         let bar_width = progress_bar_width(self.view, self.speed_chip, width);
         let mut spans = fill_line(
-            &FillSpec::progress(unit_fraction(fraction), usize::from(bar_width)),
+            &BarFill::progress(unit_fraction(fraction), usize::from(bar_width)),
             FillColors { accent, dim },
         )
         .spans;

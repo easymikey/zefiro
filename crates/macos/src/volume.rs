@@ -4,6 +4,7 @@ use kernel::{Bounded, Percent};
 use objc2_core_audio::AudioObjectID;
 
 use crate::audio_hardware::{
+    HardwareError,
     Muted,
     muted,
     set_muted,
@@ -20,18 +21,18 @@ pub(crate) fn read_volume(device: AudioObjectID) -> Option<Percent> {
     }
 }
 
-#[must_use]
-pub(crate) fn write_volume(device: AudioObjectID, volume: Percent) -> Written {
-    if set_volume_scalar(device, scalar_from_percent(volume)).is_err() {
-        return Written::Refused;
-    }
+pub(crate) fn write_volume(
+    device: AudioObjectID,
+    volume: Percent,
+) -> Result<(), HardwareError> {
+    set_volume_scalar(device, scalar_from_percent(volume))?;
     if let Some(target) = mute_target(device, volume) {
         let cleared = set_muted(device, target);
-        if cleared.is_err() && volume.value() > 0 {
-            return Written::Refused;
+        if volume.value() > 0 {
+            cleared?;
         }
     }
-    Written::Landed
+    Ok(())
 }
 
 fn mute_target(device: AudioObjectID, volume: Percent) -> Option<Muted> {
@@ -40,12 +41,6 @@ fn mute_target(device: AudioObjectID, volume: Percent) -> Option<Muted> {
         (false, Some(false)) => Some(Muted::Yes),
         (_, None) | (true, Some(false)) | (false, Some(true)) => None,
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Written {
-    Landed,
-    Refused,
 }
 
 fn percent_from_scalar(scalar: f32) -> Percent {
@@ -67,14 +62,8 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        audio_hardware::current_default_device,
-        volume::{
-            Written,
-            percent_from_scalar,
-            read_volume,
-            scalar_from_percent,
-            write_volume,
-        },
+        audio_hardware::default_output_device,
+        volume::{percent_from_scalar, read_volume, scalar_from_percent, write_volume},
     };
 
     #[rstest]
@@ -103,13 +92,13 @@ mod tests {
     #[test]
     #[ignore = "hardware: writes the system volume"]
     fn the_system_volume_reads_back_what_was_written() {
-        let device = current_default_device();
+        let device = default_output_device();
         let original = read_volume(device);
-        assert_eq!(write_volume(device, Percent::clamped(37)), Written::Landed);
+        assert_eq!(write_volume(device, Percent::clamped(37)), Ok(()));
         let after = read_volume(device).unwrap();
         assert!(after.value().abs_diff(37) <= 1);
         if let Some(original) = original {
-            assert_eq!(write_volume(device, original), Written::Landed);
+            assert_eq!(write_volume(device, original), Ok(()));
         }
     }
 }

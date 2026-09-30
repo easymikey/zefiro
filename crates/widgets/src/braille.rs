@@ -20,8 +20,8 @@ fn small_len_u32(count: usize) -> u32 {
     u32::try_from(count).unwrap_or(u32::MAX)
 }
 
-pub(crate) fn dot_coord(v: u32) -> u16 {
-    u16::try_from(v).unwrap_or(u16::MAX)
+pub(crate) fn dot_coord(value: u32) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -190,7 +190,7 @@ pub(crate) struct BrailleBuffers {
 }
 
 impl BrailleBuffers {
-    pub(crate) fn meter(&mut self, fill: &MeterFill<'_>) -> &[String] {
+    pub(crate) fn render_meter(&mut self, fill: &MeterFill<'_>) -> &[String] {
         self.canvas
             .resize_and_clear(fill.size.width, fill.size.height);
         fill_meter(&mut self.canvas, fill);

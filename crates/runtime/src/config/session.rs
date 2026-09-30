@@ -3,33 +3,33 @@ use std::{path::Path, time::Instant};
 use config::{AppearanceFile, ThemeFile};
 use crossbeam_channel::{Receiver, Select, unbounded};
 use kernel::{
-    ConfigFact,
-    Delivery,
+    ConfigCmd,
+    ConfigEvent,
     DriverMessage,
     Outbox,
-    domain::{ConfigFailure, Driver},
+    SendError,
+    domain::{ConfigError, ConfigFile, Driver},
     update::Machine,
 };
 use notify::RecommendedWatcher;
 
 use crate::{
-    cells::Latest,
+    cells::LatestSender,
     config::{
         ConfigPaths,
         ConfigTiming,
-        coalesce::SavePaths,
         disk::{list_theme_names, read},
         driver::Outbound,
-        machine::{ConfigDriver, ConfigInput, ConfigOutput, Published},
-        watch::{ConfigWatchMessage, WatchedFile},
-        watcher::{FileWatch, config_directory, register},
+        machine::{ConfigEffect, ConfigMessage, ConfigState, Published},
+        save_queue::SavePaths,
+        watch::WatchMessage,
     },
-    interpret::ConfigCommand,
-    mailbox::Mailbox,
+    sender::DriverSender,
+    watcher::{Watcher, config_directory, watch_if_present},
 };
 
 enum Wake {
-    Command(ConfigCommand),
+    Command(ConfigCmd),
     FilesystemChange,
     FilesystemEventsLost,
     SaveDeadlineElapsed,
@@ -47,12 +47,12 @@ pub(crate) struct Watching<W> {
 }
 
 impl Watching<Option<RecommendedWatcher>> {
-    pub(crate) fn recommended(mailbox: &Mailbox<ConfigFact>) -> Self {
+    pub(crate) fn recommended(mailbox: &DriverSender<ConfigEvent>) -> Self {
         let (events, receiver) = unbounded();
         let watcher = notify::recommended_watcher(events).map_or_else(
             |error| {
                 match mailbox.send(watch_failure(&error.to_string())) {
-                    Delivery::Sent | Delivery::Congested | Delivery::Closed => {}
+                    Ok(()) | Err(SendError::Full | SendError::Closed) => {}
                 }
                 None
             },
@@ -66,16 +66,16 @@ impl Watching<Option<RecommendedWatcher>> {
 }
 
 pub(crate) struct ConfigLoop<'a, W> {
-    driver: ConfigDriver,
+    driver: ConfigState,
     watcher: W,
     filesystem_events: Receiver<notify::Result<notify::Event>>,
     saving: SavePaths,
-    mailbox: &'a Mailbox<ConfigFact>,
-    theme: &'a Latest<ThemeFile>,
-    appearance: &'a Latest<AppearanceFile>,
+    mailbox: &'a DriverSender<ConfigEvent>,
+    theme: &'a LatestSender<ThemeFile>,
+    appearance: &'a LatestSender<AppearanceFile>,
 }
 
-impl<'a, W: FileWatch> ConfigLoop<'a, W> {
+impl<'a, W: Watcher> ConfigLoop<'a, W> {
     pub(crate) fn new(
         config: (&ConfigPaths, ConfigTiming),
         outbound: &Outbound<'a>,
@@ -83,7 +83,7 @@ impl<'a, W: FileWatch> ConfigLoop<'a, W> {
     ) -> Self {
         let (paths, timing) = config;
         let mut loaded = Self {
-            driver: ConfigDriver::new(paths, timing.save_debounce),
+            driver: ConfigState::new(paths, timing.save_debounce),
             watcher: watching.watcher,
             filesystem_events: watching.events,
             saving: SavePaths::new(paths),
@@ -96,25 +96,28 @@ impl<'a, W: FileWatch> ConfigLoop<'a, W> {
     }
 
     fn mount(&mut self, directory: &Path) {
-        if let Err(error) = register(&mut self.watcher, directory) {
-            self.tell(watch_failure(&error.to_string()));
+        if let Err(error) = watch_if_present(&mut self.watcher, directory) {
+            self.emit(watch_failure(&error.to_string()));
         }
     }
 
-    pub(crate) fn run(mut self, inbox: &Receiver<ConfigCommand>) {
-        if let Halt::Stop = self.feed(ConfigInput::FilesChanged) {
+    pub(crate) fn run(mut self, inbox: &Receiver<ConfigCmd>) {
+        if let Halt::Stop = self.feed(ConfigMessage::FilesChanged) {
             return;
         }
         loop {
             match self.wait(inbox) {
                 Wake::Command(command) => {
-                    let input = ConfigInput::Command(command, moment());
+                    let input = ConfigMessage::Command {
+                        cmd: command,
+                        now: moment(),
+                    };
                     if let Halt::Stop = self.feed(input) {
                         return;
                     }
                 }
                 Wake::FilesystemChange => {
-                    if let Halt::Stop = self.feed(ConfigInput::FilesChanged) {
+                    if let Halt::Stop = self.feed(ConfigMessage::FilesChanged) {
                         return;
                     }
                 }
@@ -122,20 +125,20 @@ impl<'a, W: FileWatch> ConfigLoop<'a, W> {
                     self.filesystem_events = crossbeam_channel::never();
                 }
                 Wake::SaveDeadlineElapsed => {
-                    let due = ConfigInput::SaveDue { now: moment() };
+                    let due = ConfigMessage::SaveDue { now: moment() };
                     if let Halt::Stop = self.feed(due) {
                         return;
                     }
                 }
                 Wake::Stopped => {
-                    self.feed(ConfigInput::Stopping);
+                    self.feed(ConfigMessage::Stopping);
                     return;
                 }
             }
         }
     }
 
-    fn wait(&self, inbox: &Receiver<ConfigCommand>) -> Wake {
+    fn wait(&self, inbox: &Receiver<ConfigCmd>) -> Wake {
         let mut select = Select::new();
         let command_index = select.recv(inbox);
         let filesystem_index = select.recv(&self.filesystem_events);
@@ -157,7 +160,7 @@ impl<'a, W: FileWatch> ConfigLoop<'a, W> {
         Wake::Stopped
     }
 
-    fn feed(&mut self, input: ConfigInput) -> Halt {
+    fn feed(&mut self, input: ConfigMessage) -> Halt {
         let label: &'static str = (&input).into();
         match self.driver.update(input) {
             Ok(outputs) => self.act_all(outputs),
@@ -165,7 +168,7 @@ impl<'a, W: FileWatch> ConfigLoop<'a, W> {
         }
     }
 
-    fn act_all(&mut self, outputs: Vec<ConfigOutput>) -> Halt {
+    fn act_all(&mut self, outputs: Vec<ConfigEffect>) -> Halt {
         for output in outputs {
             if let Halt::Stop = self.act(output) {
                 return Halt::Stop;
@@ -177,47 +180,48 @@ impl<'a, W: FileWatch> ConfigLoop<'a, W> {
     fn reject(&self, input: &'static str) -> Halt {
         let rejected = DriverMessage::Rejected { input };
         match self.mailbox.report(Driver::Config, rejected) {
-            Delivery::Closed => Halt::Stop,
-            Delivery::Sent | Delivery::Congested => Halt::Continue,
+            Err(SendError::Closed) => Halt::Stop,
+            Ok(()) | Err(SendError::Full) => Halt::Continue,
         }
     }
 
-    fn act(&mut self, output: ConfigOutput) -> Halt {
+    fn act(&mut self, output: ConfigEffect) -> Halt {
         match output {
-            ConfigOutput::Read { file, path } => self.read(file, &path),
-            ConfigOutput::List(dir) => self.list(&dir),
-            ConfigOutput::Write(patches) => {
+            ConfigEffect::Read { file, path } => self.read(file, &path),
+            ConfigEffect::List(dir) => self.list(&dir),
+            ConfigEffect::Save(patches) => {
                 let flushed = self.saving.write(patches);
-                self.feed(ConfigInput::Saved(flushed))
+                self.feed(ConfigMessage::Saved(flushed))
             }
-            ConfigOutput::Publish(published) => {
+            ConfigEffect::Changed(published) => {
                 self.publish(published);
                 Halt::Continue
             }
-            ConfigOutput::Tell(fact) => self.tell(fact),
+            ConfigEffect::Event(event) => self.emit(event),
         }
     }
 
-    fn read(&mut self, file: WatchedFile, path: &Path) -> Halt {
+    fn read(&mut self, file: ConfigFile, path: &Path) -> Halt {
         match read(file, path) {
-            ConfigWatchMessage::Observed { file, text } => {
-                self.feed(ConfigInput::Read { file, text })
+            WatchMessage::Observed { file, text } => {
+                self.feed(ConfigMessage::Read { file, text })
             }
-            ConfigWatchMessage::Unreadable { file, detail } => {
-                self.feed(ConfigInput::Unreadable { file, detail })
+            WatchMessage::Unreadable { file, detail } => {
+                self.feed(ConfigMessage::Unreadable { file, detail })
             }
-            ConfigWatchMessage::Poll(_)
-            | ConfigWatchMessage::PollThemes
-            | ConfigWatchMessage::Listed(_)
-            | ConfigWatchMessage::SelectTheme(_)
-            | ConfigWatchMessage::WroteAppearance(_)
-            | ConfigWatchMessage::WroteKeys(_) => Halt::Continue,
+            WatchMessage::Poll(_)
+            | WatchMessage::PollThemes
+            | WatchMessage::Listed(_)
+            | WatchMessage::ThemesUnreadable(_)
+            | WatchMessage::SelectTheme(_)
+            | WatchMessage::WroteAppearance(_)
+            | WatchMessage::WroteConfig(_) => Halt::Continue,
         }
     }
 
     fn list(&mut self, dir: &Path) -> Halt {
         let listing = list_theme_names(dir);
-        self.feed(ConfigInput::Listed(listing))
+        self.feed(ConfigMessage::Listed(listing))
     }
 
     fn publish(&self, published: Published) {
@@ -227,10 +231,10 @@ impl<'a, W: FileWatch> ConfigLoop<'a, W> {
         }
     }
 
-    fn tell(&self, fact: ConfigFact) -> Halt {
-        match self.mailbox.send(fact) {
-            Delivery::Closed => Halt::Stop,
-            Delivery::Sent | Delivery::Congested => Halt::Continue,
+    fn emit(&self, event: ConfigEvent) -> Halt {
+        match self.mailbox.send(event) {
+            Err(SendError::Closed) => Halt::Stop,
+            Ok(()) | Err(SendError::Full) => Halt::Continue,
         }
     }
 }
@@ -239,8 +243,8 @@ pub(crate) fn moment() -> Instant {
     Instant::now()
 }
 
-fn watch_failure(reason: &str) -> ConfigFact {
-    ConfigFact::Failed(ConfigFailure::Watch {
+fn watch_failure(reason: &str) -> ConfigEvent {
+    ConfigEvent::Error(ConfigError::Watch {
         detail: reason.to_owned(),
     })
 }
@@ -254,21 +258,25 @@ mod tests {
 
     use config::AppearanceField;
     use crossbeam_channel::{Receiver, SendError, unbounded};
-    use kernel::{ConfigPatch, DriverMessage, Message, domain::Driver};
+    use kernel::{
+        ConfigCmd,
+        ConfigPatch,
+        DriverMessage,
+        Message,
+        domain::{ConfigFile, Driver},
+    };
 
     use crate::{
         cells::cells,
         config::{
             ConfigPaths,
             ConfigTiming,
-            driver::{Outbound, spawn as spawn_config},
-            machine::ConfigInput,
+            driver::{ConfigParts, Outbound, spawn as spawn_config},
+            machine::ConfigMessage,
             session::{ConfigLoop, Halt, Wake, Watching},
-            watch::WatchedFile,
-            watcher::FileWatch,
         },
-        interpret::ConfigCommand,
-        mailbox::{Congestion, Mailbox},
+        sender::{DriverSender, FullEdge},
+        watcher::Watcher,
     };
 
     const RECV_TIMEOUT: Duration = Duration::from_secs(2);
@@ -281,7 +289,7 @@ mod tests {
         watched: Vec<PathBuf>,
     }
 
-    impl FileWatch for FakeWatch {
+    impl Watcher for FakeWatch {
         fn watch(&mut self, path: &Path) -> Result<(), notify::Error> {
             self.watched.push(path.to_path_buf());
             Ok(())
@@ -295,7 +303,7 @@ mod tests {
 
     fn paths(directory: &tempfile::TempDir) -> ConfigPaths {
         ConfigPaths {
-            config: None,
+            config: directory.path().join("config.toml"),
             appearance: directory.path().join("sifr-ui.toml"),
             themes: directory.path().join("themes"),
             theme: Some("noir".to_string()),
@@ -318,7 +326,7 @@ mod tests {
     fn a_fake_theme_change_publishes_the_theme() {
         let directory = tempfile::tempdir().unwrap();
         let (sender, _messages) = unbounded::<Message>();
-        let mailbox = Mailbox::new(sender, Congestion::default());
+        let mailbox = DriverSender::new(sender, FullEdge::default());
         let (writers, cells, _doorbell) = cells();
         let outbound = Outbound {
             mailbox: &mailbox,
@@ -336,7 +344,7 @@ mod tests {
             session.watcher.watched,
             vec![directory.path().to_path_buf()]
         );
-        session.feed(ConfigInput::FilesChanged);
+        session.feed(ConfigMessage::FilesChanged);
         let embedded = cells.theme.take();
         assert_eq!(
             embedded.map(|theme| theme.name.clone()),
@@ -349,7 +357,7 @@ mod tests {
         events.send(Ok(notify::Event::default())).unwrap();
         let (_commands, inbox) = unbounded();
         assert!(matches!(session.wait(&inbox), Wake::FilesystemChange));
-        session.feed(ConfigInput::FilesChanged);
+        session.feed(ConfigMessage::FilesChanged);
 
         let edited = cells.theme.take();
         assert!(edited.is_some(), "a changed theme file must be published");
@@ -359,7 +367,7 @@ mod tests {
     fn a_rejected_input_is_reported_to_the_mailbox() {
         let directory = tempfile::tempdir().unwrap();
         let (sender, messages) = unbounded::<Message>();
-        let mailbox = Mailbox::new(sender, Congestion::default());
+        let mailbox = DriverSender::new(sender, FullEdge::default());
         let (writers, _cells, _doorbell) = cells();
         let outbound = Outbound {
             mailbox: &mailbox,
@@ -371,11 +379,12 @@ mod tests {
             watcher: FakeWatch::default(),
             events: receiver,
         };
-        let mut session =
-            ConfigLoop::new((&paths(&directory), timing()), &outbound, watching);
+        let mut unselected = paths(&directory);
+        unselected.theme = None;
+        let mut session = ConfigLoop::new((&unselected, timing()), &outbound, watching);
 
-        let halt = session.feed(ConfigInput::Read {
-            file: WatchedFile::Keys,
+        let halt = session.feed(ConfigMessage::Read {
+            file: ConfigFile::Theme,
             text: None,
         });
 
@@ -388,7 +397,7 @@ mod tests {
             )]
         );
         assert!(matches!(
-            session.feed(ConfigInput::FilesChanged),
+            session.feed(ConfigMessage::FilesChanged),
             Halt::Continue
         ));
     }
@@ -399,9 +408,13 @@ mod tests {
         let (mailbox, messages) = unbounded();
         let (writers, _cells, doorbell) = cells();
         let thread = spawn_config(
-            (paths(&directory), timing()),
+            ConfigParts {
+                paths: paths(&directory),
+                timing: timing(),
+                theme: writers.theme,
+                appearance: writers.appearance,
+            },
             &mailbox,
-            (writers.theme, writers.appearance),
         )
         .unwrap();
 
@@ -414,16 +427,17 @@ mod tests {
             .unwrap();
         thread
             .commands
-            .send(ConfigCommand::Setting {
-                id: row.spec.id,
-                option: row.spec.control.count().index(1).unwrap(),
+            .send(ConfigCmd::Setting {
+                id: row.custom.id,
+                option: row.custom.control.count().index(1).unwrap(),
             })
             .unwrap();
         thread
             .commands
-            .send(ConfigCommand::Save(ConfigPatch::builder().build()))
+            .send(ConfigCmd::Save(ConfigPatch::builder().build()))
             .unwrap();
         drop(messages);
+        drop(thread.commands);
 
         let report = thread.handle.join().unwrap();
 

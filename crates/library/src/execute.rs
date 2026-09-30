@@ -1,30 +1,28 @@
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use kernel::{
     LibraryCmd,
-    LibraryFact,
+    LibraryEvent,
     Track,
-    domain::Revision,
-    playlist::PlaylistFileName,
+    domain::{Revision, ScanMode},
 };
 
 use crate::{
     cache::{self, CacheMiss},
-    error::LibraryError,
+    dirs::LibraryDirs,
+    error::Error,
     favorites,
     history,
-    paths::LibraryPaths,
     playlists,
-    scan::{self, ScanReport, Skips},
+    scan::{self, ScanReport, Skipped},
     trash,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LibraryNote {
+pub enum LibraryWarning {
     CacheMissed(CacheMiss),
     HistoryLinesSkipped { lines: usize },
     ScanEntriesSkipped { entries: usize },
@@ -32,56 +30,60 @@ pub enum LibraryNote {
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Executed {
-    pub fact: Option<LibraryFact>,
-    pub notes: Vec<LibraryNote>,
+    pub event: Option<LibraryEvent>,
+    pub warnings: Vec<LibraryWarning>,
 }
 
-fn answered(fact: LibraryFact) -> Executed {
+fn answered(event: LibraryEvent) -> Executed {
     Executed {
-        fact: Some(fact),
-        notes: Vec::new(),
+        event: Some(event),
+        warnings: Vec::new(),
     }
 }
 
 pub fn execute(
     command: LibraryCmd,
-    paths: &LibraryPaths,
+    dirs: &LibraryDirs,
     decodable: &[&str],
-) -> Result<Executed, LibraryError> {
+) -> Result<Executed, Error> {
     match command {
-        LibraryCmd::AppendHistory { track, .. } => append_history(paths, &track),
-        LibraryCmd::SaveFavorites(favorites) => save_favorites(paths, &favorites),
-        LibraryCmd::LoadFavorites => load_favorites(paths),
-        LibraryCmd::Trash(path) => trash_track(&path),
-        LibraryCmd::LoadHistory { limit } => load_history(paths, limit),
-        LibraryCmd::Rescan { root, revision } => rescan(
-            paths,
-            &ScanRequest {
-                root: &root,
-                revision,
-            },
-            decodable,
-        ),
-        LibraryCmd::SavePlaylist { name, tracks } => {
-            save_playlist(paths, &name, &tracks)
+        LibraryCmd::AppendHistory { track, at } => {
+            history::append(dirs, &track, at).map(|()| Executed::default())
         }
-        LibraryCmd::ScanLibrary { root, revision } => scan_library(
-            paths,
-            &ScanRequest {
-                root: &root,
+        LibraryCmd::SaveFavorites(favorites) => {
+            favorites::save(dirs, &favorites).map(|()| Executed::default())
+        }
+        LibraryCmd::LoadFavorites => load_favorites(dirs),
+        LibraryCmd::Trash(path) => {
+            trash::move_to_trash(&path).map(|()| Executed::default())
+        }
+        LibraryCmd::LoadHistory { limit } => load_history(dirs, limit),
+        LibraryCmd::Scan {
+            music_dir,
+            revision,
+            mode,
+        } => {
+            let request = ScanParts {
+                music_dir: &music_dir,
                 revision,
-            },
-            decodable,
-        ),
+            };
+            match mode {
+                ScanMode::Full => scan_full(dirs, &request, decodable),
+                ScanMode::Cached => scan_cached(dirs, &request, decodable),
+            }
+        }
+        LibraryCmd::SavePlaylist { name, tracks } => {
+            playlists::save(dirs, &name, &tracks).map(|()| Executed::default())
+        }
         LibraryCmd::PrefetchCover(_) => Ok(Executed::default()),
         LibraryCmd::TagTracks {
-            root,
+            music_dir,
             paths: listed,
             revision,
         } => tag_tracks(
-            paths,
-            TagRequest {
-                root,
+            dirs,
+            TagJob {
+                music_dir,
                 listed,
                 revision,
             },
@@ -89,116 +91,84 @@ pub fn execute(
     }
 }
 
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| {
-            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
-        })
+fn load_favorites(dirs: &LibraryDirs) -> Result<Executed, Error> {
+    let loaded = favorites::load(dirs)?;
+    Ok(answered(LibraryEvent::FavoritesLoaded(loaded)))
 }
 
-fn append_history(
-    paths: &LibraryPaths,
-    track: &Track,
-) -> Result<Executed, LibraryError> {
-    history::append(paths, track, unix_now())?;
-    Ok(Executed::default())
-}
-
-fn save_favorites(
-    paths: &LibraryPaths,
-    favorites: &HashSet<PathBuf>,
-) -> Result<Executed, LibraryError> {
-    favorites::save(paths, favorites)?;
-    Ok(Executed::default())
-}
-
-fn load_favorites(paths: &LibraryPaths) -> Result<Executed, LibraryError> {
-    let loaded = favorites::load(paths)?;
-    Ok(answered(LibraryFact::FavoritesLoaded(loaded)))
-}
-
-fn trash_track(path: &Path) -> Result<Executed, LibraryError> {
-    trash::move_to_trash(path)?;
-    Ok(Executed::default())
-}
-
-fn load_history(paths: &LibraryPaths, limit: usize) -> Result<Executed, LibraryError> {
-    let history::HistoryRead {
+fn load_history(dirs: &LibraryDirs, limit: usize) -> Result<Executed, Error> {
+    let history::LoadedHistory {
         entries,
         skipped_lines,
-    } = history::read(paths, limit)?;
-    let mut executed = answered(LibraryFact::HistoryLoaded(entries));
-    if skipped_lines > 0 {
-        executed.notes.push(LibraryNote::HistoryLinesSkipped {
-            lines: skipped_lines,
-        });
-    }
-    Ok(executed)
+    } = history::load(dirs, limit)?;
+    Ok(Executed {
+        event: Some(LibraryEvent::HistoryLoaded(entries)),
+        warnings: (skipped_lines > 0)
+            .then_some(LibraryWarning::HistoryLinesSkipped {
+                lines: skipped_lines,
+            })
+            .into_iter()
+            .collect(),
+    })
 }
 
 #[derive(Clone, Copy)]
-struct ScanRequest<'a> {
-    root: &'a Path,
+struct ScanParts<'a> {
+    music_dir: &'a Path,
     revision: Revision,
 }
 
-fn empty_scan_error(
-    found: usize,
-    first_error: Option<LibraryError>,
-) -> Option<LibraryError> {
+fn empty_scan_error(found: usize, first_error: Option<Error>) -> Option<Error> {
     first_error.filter(|_| found == 0)
 }
 
-fn skipped_note(found: usize, skipped: usize) -> Option<LibraryNote> {
+fn skipped_warning(found: usize, skipped: usize) -> Option<LibraryWarning> {
     (found > 0 && skipped > 0)
-        .then_some(LibraryNote::ScanEntriesSkipped { entries: skipped })
+        .then_some(LibraryWarning::ScanEntriesSkipped { entries: skipped })
 }
 
-fn rescan(
-    paths: &LibraryPaths,
-    request: &ScanRequest<'_>,
+fn scan_full(
+    dirs: &LibraryDirs,
+    request: &ScanParts<'_>,
     decodable: &[&str],
-) -> Result<Executed, LibraryError> {
-    let ScanRequest { root, revision } = *request;
-    let ScanReport { tracks, skipped } = scan::scan_dir(root, decodable);
-    let Skips { count, first_error } = skipped;
+) -> Result<Executed, Error> {
+    let ScanParts {
+        music_dir,
+        revision,
+    } = *request;
+    let ScanReport { tracks, skipped } = scan::scan_dir(music_dir, decodable);
+    let Skipped { count, first_error } = skipped;
     if let Some(error) = empty_scan_error(tracks.len(), first_error) {
         return Err(error);
     }
-    cache::save(paths, root, &tracks)?;
-    let note = skipped_note(tracks.len(), count);
-    let mut executed = answered(LibraryFact::Loaded { tracks, revision });
-    executed.notes.extend(note);
-    Ok(executed)
+    cache::save(dirs, music_dir, &tracks)?;
+    let warnings = skipped_warning(tracks.len(), count).into_iter().collect();
+    Ok(Executed {
+        event: Some(LibraryEvent::Loaded { tracks, revision }),
+        warnings,
+    })
 }
 
-fn save_playlist(
-    paths: &LibraryPaths,
-    name: &PlaylistFileName,
-    tracks: &[Arc<Track>],
-) -> Result<Executed, LibraryError> {
-    playlists::save(paths, name, tracks)?;
-    Ok(Executed::default())
-}
-
-fn scan_library(
-    paths: &LibraryPaths,
-    request: &ScanRequest<'_>,
+fn scan_cached(
+    dirs: &LibraryDirs,
+    request: &ScanParts<'_>,
     decodable: &[&str],
-) -> Result<Executed, LibraryError> {
-    let ScanRequest { root, revision } = *request;
-    let miss = match cache::load(paths, root) {
+) -> Result<Executed, Error> {
+    let ScanParts {
+        music_dir,
+        revision,
+    } = *request;
+    let miss = match cache::load(dirs, music_dir) {
         Ok(cached) => {
-            return Ok(answered(LibraryFact::Loaded {
+            return Ok(answered(LibraryEvent::Loaded {
                 tracks: cached,
                 revision,
             }));
         }
         Err(miss) => miss,
     };
-    let listing = scan::list_dir(root, decodable);
-    let Skips { count, first_error } = listing.skipped;
+    let listing = scan::list_dir(music_dir, decodable);
+    let Skipped { count, first_error } = listing.skipped;
     if let Some(error) = empty_scan_error(listing.paths.len(), first_error) {
         return Err(error);
     }
@@ -207,46 +177,45 @@ fn scan_library(
         .iter()
         .map(|path| Arc::new(Track::listed(path)))
         .collect();
-    let mut notes = Vec::new();
-    if miss != CacheMiss::Absent {
-        notes.push(LibraryNote::CacheMissed(miss));
-    }
-    notes.extend(skipped_note(tracks.len(), count));
+    let warnings = [
+        (miss != CacheMiss::Missing).then_some(LibraryWarning::CacheMissed(miss)),
+        skipped_warning(tracks.len(), count),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     Ok(Executed {
-        fact: Some(LibraryFact::Listed { tracks, revision }),
-        notes,
+        event: Some(LibraryEvent::Listed { tracks, revision }),
+        warnings,
     })
 }
 
-struct TagRequest {
-    root: PathBuf,
+struct TagJob {
+    music_dir: PathBuf,
     listed: Vec<PathBuf>,
     revision: Revision,
 }
 
-fn tag_tracks(
-    paths: &LibraryPaths,
-    request: TagRequest,
-) -> Result<Executed, LibraryError> {
-    let TagRequest {
-        root,
+fn tag_tracks(dirs: &LibraryDirs, request: TagJob) -> Result<Executed, Error> {
+    let TagJob {
+        music_dir,
         listed,
         revision,
     } = request;
-    let tracks = backfilled(&listed, scan::tag_tracks(&listed).tracks);
-    cache::save(paths, &root, &tracks)?;
-    Ok(answered(LibraryFact::Tagged { tracks, revision }))
+    let tracks = backfilled(&listed, scan::read_tags(&listed).tracks);
+    cache::save(dirs, &music_dir, &tracks)?;
+    Ok(answered(LibraryEvent::Tagged { tracks, revision }))
 }
 
 fn backfilled(paths: &[PathBuf], read: Vec<Arc<Track>>) -> Vec<Arc<Track>> {
     if read.len() == paths.len() {
         return read;
     }
-    let mut unread = read.into_iter().peekable();
+    let mut read_tracks = read.into_iter().peekable();
     paths
         .iter()
         .map(|path| {
-            unread
+            read_tracks
                 .next_if(|track| track.path() == *path)
                 .unwrap_or_else(|| Arc::new(Track::listed(path)))
         })

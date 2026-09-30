@@ -4,29 +4,28 @@ use crate::{
     Cmd,
     domain::{
         CursorOver,
+        Direction,
         History,
-        ListMotion,
         Model,
         Moment,
-        Nudge,
         Overlay,
         PlaylistIndex,
         Toast,
         Workspace,
         playlist::Playlist,
     },
-    message::{BrowseRequest, HistoryRequest, WorkspaceRequest},
+    message::{HistoryRequest, QueueRequest, WorkspaceRequest},
     update::{
+        error::UpdateError,
         machine::{Machine, Rejected},
         overlay::{
             FollowUp,
             InnerMessage,
             OverlayEffect,
+            OverlayError,
             OverlayMessage,
-            OverlayRejection,
             follow,
         },
-        rejection::Rejection,
     },
 };
 
@@ -39,21 +38,21 @@ pub enum HistoryPick {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryMessage {
-    Navigate { nudge: Nudge, len: usize },
+    Navigate { direction: Direction, len: usize },
     Top,
     Bottom { len: usize },
     Enqueue(HistoryPick),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HistoryRejection {
+pub enum HistoryError {
     NothingSelected,
     NotInLibrary,
 }
 
 impl Machine for CursorOver<()> {
     type Message = HistoryMessage;
-    type Rejection = HistoryRejection;
+    type Error = HistoryError;
     type Effect = OverlayEffect;
 
     fn transition(
@@ -61,31 +60,31 @@ impl Machine for CursorOver<()> {
         message: HistoryMessage,
     ) -> Result<(Self, OverlayEffect), Rejected<Self>> {
         match message {
-            HistoryMessage::Navigate { nudge, len } => {
+            HistoryMessage::Navigate { direction, len } => {
                 self.resize(len);
-                self.navigate(ListMotion::from(nudge));
+                self.navigate(direction);
                 Ok((self, OverlayEffect::default()))
             }
             HistoryMessage::Top => {
-                self.navigate(ListMotion::First);
+                self.cursor = self.cursor.first();
                 Ok((self, OverlayEffect::default()))
             }
             HistoryMessage::Bottom { len } => {
                 self.resize(len);
-                self.navigate(ListMotion::Last);
+                self.cursor = self.cursor.last();
                 Ok((self, OverlayEffect::default()))
             }
             HistoryMessage::Enqueue(HistoryPick::Queued(index)) => {
-                let queued = FollowUp::Browse(BrowseRequest::EnqueueTrack(index));
+                let queued = FollowUp::Queue(QueueRequest::EnqueueTrack(index));
                 Ok((self, OverlayEffect::from(queued)))
             }
             HistoryMessage::Enqueue(HistoryPick::Missing) => Err(Rejected {
                 state: self,
-                reason: HistoryRejection::NotInLibrary,
+                reason: HistoryError::NotInLibrary,
             }),
             HistoryMessage::Enqueue(HistoryPick::Nothing) => Err(Rejected {
                 state: self,
-                reason: HistoryRejection::NothingSelected,
+                reason: HistoryError::NothingSelected,
             }),
         }
     }
@@ -95,10 +94,12 @@ pub(crate) fn request(
     model: &mut Model,
     request: HistoryRequest,
     now: Moment,
-) -> Result<Cmd, Rejection> {
+) -> Result<Cmd, UpdateError> {
     let len = model.history.view.len();
     let message = match request {
-        HistoryRequest::Navigate(nudge) => HistoryMessage::Navigate { nudge, len },
+        HistoryRequest::Navigate(direction) => {
+            HistoryMessage::Navigate { direction, len }
+        }
         HistoryRequest::Top => HistoryMessage::Top,
         HistoryRequest::Bottom => HistoryMessage::Bottom { len },
         HistoryRequest::Enqueue => HistoryMessage::Enqueue(pick(
@@ -113,18 +114,18 @@ pub(crate) fn request(
         .update(OverlayMessage::Inner(InnerMessage::History(message)))
     {
         Ok(effect) => follow(model, effect, now),
-        Err(OverlayRejection::History(HistoryRejection::NotInLibrary)) => {
+        Err(OverlayError::History(HistoryError::NotInLibrary)) => {
             not_in_library(&mut model.workspace)
         }
         Err(
-            rejection @ (OverlayRejection::WhileClosed
-            | OverlayRejection::NoTrack
-            | OverlayRejection::WrongOverlay
-            | OverlayRejection::NoConfirm
-            | OverlayRejection::NothingSelected
-            | OverlayRejection::Jump(_)
-            | OverlayRejection::Search(_)
-            | OverlayRejection::History(HistoryRejection::NothingSelected)),
+            rejection @ (OverlayError::WhileClosed
+            | OverlayError::NoTrack
+            | OverlayError::WrongOverlay
+            | OverlayError::NoConfirm
+            | OverlayError::NothingSelected
+            | OverlayError::Jump(_)
+            | OverlayError::Search(_)
+            | OverlayError::History(HistoryError::NothingSelected)),
         ) => Err(rejection.into()),
     }
 }
@@ -151,17 +152,17 @@ fn selected_path<'a>(workspace: &Workspace, history: &'a History) -> Option<&'a 
             Overlay::Help
             | Overlay::Search(_)
             | Overlay::SavePlaylist { .. }
-            | Overlay::Settings(_)
+            | Overlay::Settings { .. }
             | Overlay::ConfirmDelete(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_)
-            | Overlay::SourceDir { .. },
+            | Overlay::MusicDir { .. },
         )
         | None => None,
     }
 }
 
-fn not_in_library(workspace: &mut Workspace) -> Result<Cmd, Rejection> {
+fn not_in_library(workspace: &mut Workspace) -> Result<Cmd, UpdateError> {
     Ok(workspace.update(WorkspaceRequest::ShowToast(Toast::info(
         "Not in library".to_string(),
     )))?)

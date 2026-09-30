@@ -1,7 +1,7 @@
 use audio::SpectrumTap;
 use kernel::{Cue, Message, Moment, WindowColorsCmd, domain::Model};
 
-use crate::{cells::Cells, library::cover::CoverRequest};
+use crate::{cells::Receivers, library::cover::CoverRequest};
 
 pub trait Shell {
     type Input;
@@ -9,8 +9,8 @@ pub trait Shell {
 
     fn input(&mut self, event: Self::Input) -> Reaction;
     fn effect(&mut self, effect: ShellEffect);
-    fn frame_due(&self, view: &View<'_>) -> FrameDue;
-    fn paint(&mut self, view: View<'_>) -> Result<Painted, Self::Error>;
+    fn frame_due(&self, view: &FrameInput<'_>) -> FrameDue;
+    fn paint(&mut self, view: FrameInput<'_>) -> Result<Painted, Self::Error>;
 }
 
 #[must_use]
@@ -34,18 +34,11 @@ pub enum FrameDue {
     At(Moment),
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum Flow {
-    #[default]
-    Continue,
-    Stop,
-}
-
 #[derive(Debug, Clone, Copy)]
-pub struct View<'a> {
+pub struct FrameInput<'a> {
     pub model: &'a Model,
     pub spectrum: &'a SpectrumTap,
-    pub cells: &'a Cells,
+    pub cells: &'a Receivers,
     pub sleep_deadline: Option<Moment>,
     pub now: Moment,
 }
@@ -53,6 +46,6 @@ pub struct View<'a> {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Painted {
     pub cover: Option<CoverRequest>,
-    pub viewport: Option<usize>,
+    pub visible_rows: Option<usize>,
     pub failures: Vec<Message>,
 }

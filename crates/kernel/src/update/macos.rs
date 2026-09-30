@@ -1,52 +1,48 @@
 use crate::{
     cmd::Cmd,
     domain::{Model, Moment, Toast},
-    message::{SystemEvent, WorkspaceRequest},
+    message::{MacosEvent, WorkspaceRequest},
     update::{
+        error::UpdateError,
         machine::Machine,
         playback,
-        player::{self, Anchor, PlayerMessage, Resume},
-        rejection::Rejection,
+        player::{self, Anchor, PlayerMessage},
         transport::TransportMessage,
     },
 };
 
-pub(crate) fn system(
+pub(crate) fn update(
     model: &mut Model,
-    event: SystemEvent,
+    event: MacosEvent,
     now: Moment,
-) -> Result<Cmd, Rejection> {
+) -> Result<Cmd, UpdateError> {
     match event {
-        SystemEvent::Volume(volume) => Ok(model
+        MacosEvent::Volume(volume) => Ok(model
             .transport
             .update(TransportMessage::SetVolume(volume))?),
-        SystemEvent::OutputRouteChanged => route_changed(model, now),
-        SystemEvent::HardwareWatchFailed(detail) => {
+        MacosEvent::OutputRouteChanged => route_changed(model, now),
+        MacosEvent::HardwareWatchError(detail) => {
             Ok(model
                 .workspace
                 .update(WorkspaceRequest::ShowToast(Toast::error(format!(
                     "Audio device watch failed: {detail}"
                 ))))?)
         }
-        SystemEvent::MediaKey(gesture) => {
-            playback::playback(model, gesture.into(), now)
-        }
+        MacosEvent::MediaKey(gesture) => playback::update(model, gesture.into(), now),
     }
 }
 
-fn route_changed(model: &mut Model, now: Moment) -> Result<Cmd, Rejection> {
+fn route_changed(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
     if !model.player.is_playing() {
         return Ok(Cmd::None);
     }
     let current = model.playlist.current().cloned();
-    let resume = Resume {
-        anchor: Anchor {
-            now,
-            speed: model.transport.speed,
-        },
+    let anchor = Anchor {
+        now,
+        speed: model.transport.speed,
     };
     let paused =
-        player::account(model, PlayerMessage::Toggle { current, resume }, now)?;
+        player::update_player(model, PlayerMessage::Toggle { current, anchor }, now)?;
     let raised = model
         .workspace
         .update(WorkspaceRequest::ShowToast(Toast::info(
@@ -76,8 +72,8 @@ mod tests {
             Tags,
             Track,
         },
-        message::{Gesture, PlaybackRequest, SystemEvent},
-        update::{playback::playback, system::system},
+        message::{Gesture, MacosEvent, PlaybackRequest},
+        update::{macos::update, playback},
     };
 
     #[rstest]
@@ -86,7 +82,7 @@ mod tests {
     #[case::toggle(Gesture::Toggle, PlaybackRequest::Toggle)]
     #[case::stop(Gesture::Stop, PlaybackRequest::Stop)]
     #[case::next(Gesture::Next, PlaybackRequest::Next)]
-    #[case::previous(Gesture::Previous, PlaybackRequest::Prev)]
+    #[case::previous(Gesture::Previous, PlaybackRequest::Previous)]
     #[case::seek_forward(Gesture::SeekForward, PlaybackRequest::SeekForward)]
     #[case::seek_back(Gesture::SeekBack, PlaybackRequest::SeekBack)]
     #[case::scrub(
@@ -128,7 +124,7 @@ mod tests {
         let mut model = Model::default();
         let volume = Percent::clamped(30);
         let cmd =
-            system(&mut model, SystemEvent::Volume(volume), Moment::default()).unwrap();
+            update(&mut model, MacosEvent::Volume(volume), Moment::default()).unwrap();
         assert_eq!(model.transport.volume, volume);
         assert!(matches!(cmd, Cmd::One(Effect::Animate(Cue::VolumeChanged))));
     }
@@ -136,9 +132,9 @@ mod tests {
     #[test]
     fn route_change_while_playing_pauses_and_toasts() {
         let mut model = playing_model();
-        let cmd = system(
+        let cmd = update(
             &mut model,
-            SystemEvent::OutputRouteChanged,
+            MacosEvent::OutputRouteChanged,
             Moment::default(),
         )
         .unwrap();
@@ -151,9 +147,9 @@ mod tests {
     #[test]
     fn route_change_while_idle_does_nothing() {
         let mut model = Model::default();
-        let cmd = system(
+        let cmd = update(
             &mut model,
-            SystemEvent::OutputRouteChanged,
+            MacosEvent::OutputRouteChanged,
             Moment::default(),
         )
         .unwrap();
@@ -166,10 +162,10 @@ mod tests {
         let mut via_playback = playing_model();
         let now = Moment::default();
         let system_cmd =
-            system(&mut via_system, SystemEvent::MediaKey(Gesture::Toggle), now)
+            update(&mut via_system, MacosEvent::MediaKey(Gesture::Toggle), now)
                 .unwrap();
         let playback_cmd =
-            playback(&mut via_playback, PlaybackRequest::Toggle, now).unwrap();
+            playback::update(&mut via_playback, PlaybackRequest::Toggle, now).unwrap();
         assert_eq!(system_cmd, playback_cmd);
     }
 }

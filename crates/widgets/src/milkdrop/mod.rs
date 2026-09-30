@@ -3,6 +3,7 @@ mod field;
 use ratatui::{style::Color, text::Line};
 
 use crate::{
+    Playing,
     milkdrop::field::{
         BandSplit,
         CellPosition,
@@ -17,7 +18,7 @@ use crate::{
         bilinear_sample,
         field_center,
         inject,
-        kaleido4_into,
+        kaleidoscope_quadrants_into,
         mirror_horizontal_into,
         preset_for_seed,
         usize_to_f32,
@@ -38,7 +39,9 @@ fn resolve_mirror(
         Mirror::Horizontal => {
             mirror_horizontal_into(&field.scratch, &mut field.cells, dimensions);
         }
-        Mirror::Kaleido4 => kaleido4_into(&field.scratch, &mut field.cells, dimensions),
+        Mirror::Kaleido4 => {
+            kaleidoscope_quadrants_into(&field.scratch, &mut field.cells, dimensions);
+        }
     }
 }
 
@@ -81,12 +84,6 @@ impl MilkdropField {
             .copied()
             .unwrap_or(0.0)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Playing {
-    Yes,
-    No,
 }
 
 #[derive(Debug)]
@@ -215,12 +212,12 @@ mod tests {
     use ratatui::style::Color;
 
     use crate::{
+        Playing,
         milkdrop::{
             CellPosition,
             MilkdropAdvance,
             MilkdropColors,
             MilkdropField,
-            Playing,
             lines_into,
         },
         spectrum::Spectrum,

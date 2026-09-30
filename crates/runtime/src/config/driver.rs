@@ -1,28 +1,37 @@
 use config::{AppearanceFile, ThemeFile};
 use crossbeam_channel::Sender;
-use kernel::{ConfigFact, Message, domain::Driver};
+use kernel::{ConfigCmd, ConfigEvent, Message, domain::Driver};
 
 use crate::{
-    cells::Latest,
+    cells::LatestSender,
     config::{
         ConfigPaths,
         ConfigTiming,
         session::{ConfigLoop, Watching},
     },
     driver::{DriverThread, spawn_driver},
-    error::RuntimeError,
-    interpret::ConfigCommand,
-    mailbox::Mailbox,
+    error::Error,
     registry,
+    sender::DriverSender,
 };
 
+pub(crate) struct ConfigParts {
+    pub(crate) paths: ConfigPaths,
+    pub(crate) timing: ConfigTiming,
+    pub(crate) theme: LatestSender<ThemeFile>,
+    pub(crate) appearance: LatestSender<AppearanceFile>,
+}
+
 pub(crate) fn spawn(
-    config: (ConfigPaths, ConfigTiming),
+    parts: ConfigParts,
     mailbox: &Sender<Message>,
-    writers: (Latest<ThemeFile>, Latest<AppearanceFile>),
-) -> Result<DriverThread<ConfigCommand>, RuntimeError> {
-    let (paths, timing) = config;
-    let (theme, appearance) = writers;
+) -> Result<DriverThread<ConfigCmd>, Error> {
+    let ConfigParts {
+        paths,
+        timing,
+        theme,
+        appearance,
+    } = parts;
     let thread = spawn_driver(
         registry::row(Driver::Config),
         move |inbox, mailbox| {
@@ -40,9 +49,9 @@ pub(crate) fn spawn(
 }
 
 pub(crate) struct Outbound<'a> {
-    pub(crate) mailbox: &'a Mailbox<ConfigFact>,
-    pub(crate) theme: &'a Latest<ThemeFile>,
-    pub(crate) appearance: &'a Latest<AppearanceFile>,
+    pub(crate) mailbox: &'a DriverSender<ConfigEvent>,
+    pub(crate) theme: &'a LatestSender<ThemeFile>,
+    pub(crate) appearance: &'a LatestSender<AppearanceFile>,
 }
 
 #[cfg(test)]
@@ -54,18 +63,22 @@ mod tests {
 
     use crossbeam_channel::Receiver;
     use kernel::{
-        ConfigFact,
+        ConfigCmd,
+        ConfigEvent,
         ConfigPatch,
         Message,
-        domain::{ConfigSource, CustomSetting, OptionIndex, SettingId, ThemeName},
+        domain::{ConfigFile, CustomSetting, OptionIndex, SettingId, ThemeName},
     };
 
     use crate::{
-        cells::{Cells, cells},
-        config::{ConfigPaths, ConfigTiming, driver::spawn as spawn_config},
+        cells::{Receivers, cells},
+        config::{
+            ConfigPaths,
+            ConfigTiming,
+            driver::{ConfigParts, spawn as spawn_config},
+        },
         driver::DriverThread,
-        error::RuntimeError,
-        interpret::ConfigCommand,
+        error::Error,
     };
 
     const RECV_TIMEOUT: Duration = Duration::from_secs(2);
@@ -75,19 +88,23 @@ mod tests {
         paths: ConfigPaths,
         timing: ConfigTiming,
         mailbox: &crossbeam_channel::Sender<Message>,
-    ) -> Result<(DriverThread<ConfigCommand>, Cells, Receiver<()>), RuntimeError> {
+    ) -> Result<(DriverThread<ConfigCmd>, Receivers, Receiver<()>), Error> {
         let (writers, cells, doorbell) = cells();
         let thread = spawn_config(
-            (paths, timing),
+            ConfigParts {
+                paths,
+                timing,
+                theme: writers.theme,
+                appearance: writers.appearance,
+            },
             mailbox,
-            (writers.theme, writers.appearance),
         )?;
         Ok((thread, cells, doorbell))
     }
 
     fn paths(directory: &tempfile::TempDir) -> ConfigPaths {
         ConfigPaths {
-            config: Some(directory.path().join("config.toml")),
+            config: directory.path().join("config.toml"),
             appearance: directory.path().join("sifr-ui.toml"),
             themes: directory.path().join("themes"),
             theme: Some("noir".to_string()),
@@ -129,7 +146,7 @@ mod tests {
 
     fn wait_for_appearance_reload(
         doorbell: &Receiver<()>,
-        cells: &Cells,
+        cells: &Receivers,
         deadline: Instant,
     ) -> bool {
         while Instant::now() < deadline {
@@ -185,8 +202,8 @@ mod tests {
         let failed = drain(&messages).into_iter().any(|message| {
             matches!(
                 message,
-                Message::Config(ConfigFact::SourceFailed {
-                    source: ConfigSource::Keymap,
+                Message::Config(ConfigEvent::SourceFailed {
+                    source: ConfigFile::Config,
                     ..
                 })
             )
@@ -198,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn a_broken_appearance_file_at_boot_becomes_a_source_failure_naming_the_file() {
+    fn a_broken_appearance_file_at_start_becomes_a_source_failure_naming_the_file() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
             directory.path().join("sifr-ui.toml"),
@@ -210,8 +227,8 @@ mod tests {
             spawn(paths(&directory), timing(), &mailbox).unwrap();
 
         let failure = drain(&messages).into_iter().find_map(|message| {
-            let Message::Config(ConfigFact::SourceFailed {
-                source: ConfigSource::Appearance,
+            let Message::Config(ConfigEvent::SourceFailed {
+                source: ConfigFile::Appearance,
                 text,
             }) = message
             else {
@@ -255,8 +272,8 @@ mod tests {
         let failed = later_messages.iter().any(|message| {
             matches!(
                 message,
-                Message::Config(ConfigFact::SourceFailed {
-                    source: ConfigSource::Appearance,
+                Message::Config(ConfigEvent::SourceFailed {
+                    source: ConfigFile::Appearance,
                     ..
                 })
             )
@@ -275,21 +292,21 @@ mod tests {
     }
 
     fn toast_text(message: Message) -> Option<String> {
-        let Message::Config(ConfigFact::Failed(failure)) = message else {
+        let Message::Config(ConfigEvent::Error(failure)) = message else {
             return None;
         };
         Some(failure.to_string())
     }
 
     fn themes_listed(message: Message) -> Option<Vec<ThemeName>> {
-        let Message::Config(ConfigFact::ThemesLoaded(themes)) = message else {
+        let Message::Config(ConfigEvent::ThemesLoaded(themes)) = message else {
             return None;
         };
         Some(themes)
     }
 
     fn custom_rows_reloaded(message: Message) -> Option<Vec<CustomSetting>> {
-        let Message::Config(ConfigFact::CustomRowsReloaded(rows)) = message else {
+        let Message::Config(ConfigEvent::CustomRowsReloaded(rows)) = message else {
             return None;
         };
         Some(rows)
@@ -365,7 +382,7 @@ mod tests {
         let config_path = directory.path().join("config.toml");
         let appearance_path = directory.path().join("sifr-ui.toml");
         let paths = ConfigPaths {
-            config: Some(config_path.clone()),
+            config: config_path.clone(),
             appearance: appearance_path.clone(),
             themes: directory.path().join("themes"),
             theme: None,
@@ -376,7 +393,7 @@ mod tests {
         drain(&doorbell);
         thread
             .commands
-            .send(ConfigCommand::Save(
+            .send(ConfigCmd::Save(
                 ConfigPatch::builder()
                     .theme(ThemeName::from_static("noir"))
                     .build(),
@@ -385,7 +402,7 @@ mod tests {
         let format_chips_id = setting_id(config::AppearanceField::FormatChips);
         thread
             .commands
-            .send(ConfigCommand::Setting {
+            .send(ConfigCmd::Setting {
                 id: format_chips_id,
                 option: option_at(format_chips_id, 1),
             })
@@ -428,14 +445,14 @@ speed_chip = "always"
             .into_iter()
             .find(|row| row.field == field)
             .unwrap()
-            .spec
+            .custom
             .id
     }
 
     fn option_at(id: SettingId, position: usize) -> OptionIndex {
         config::appearance_row(id)
             .unwrap()
-            .spec
+            .custom
             .control
             .count()
             .index(position)
@@ -473,7 +490,7 @@ speed_chip = "always"
         let appearance_path = directory.path().join("sifr-ui.toml");
         std::fs::write(&appearance_path, COMMENTED_APPEARANCE).unwrap();
         let paths = ConfigPaths {
-            config: None,
+            config: directory.path().join("config.toml"),
             appearance: appearance_path.clone(),
             themes: directory.path().join("themes"),
             theme: None,
@@ -486,7 +503,7 @@ speed_chip = "always"
         for (id, position) in appearance_rows() {
             thread
                 .commands
-                .send(ConfigCommand::Setting {
+                .send(ConfigCmd::Setting {
                     id,
                     option: position,
                 })
@@ -531,7 +548,7 @@ speed_chip = "always"
         let noir_option = option_at(preset_id, 1);
         thread
             .commands
-            .send(ConfigCommand::Setting {
+            .send(ConfigCmd::Setting {
                 id: preset_id,
                 option: noir_option,
             })
@@ -568,7 +585,7 @@ speed_chip = "always"
         let format_chips_id = setting_id(config::AppearanceField::FormatChips);
         thread
             .commands
-            .send(ConfigCommand::Setting {
+            .send(ConfigCmd::Setting {
                 id: format_chips_id,
                 option: option_at(format_chips_id, 1),
             })

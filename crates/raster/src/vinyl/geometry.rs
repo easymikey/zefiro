@@ -63,9 +63,9 @@ pub(crate) fn shadow_horizontal_reach_fraction() -> f32 {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Disc {
-    pub(crate) cx: f32,
-    pub(crate) cy: f32,
-    pub(crate) r: f32,
+    pub(crate) center_x: f32,
+    pub(crate) center_y: f32,
+    pub(crate) radius: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -85,7 +85,7 @@ pub(crate) struct StrokeStyle {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ShadowStyle {
-    pub(crate) color: config::Hex,
+    pub(crate) color: config::Rgb,
     pub(crate) offset: f32,
     pub(crate) peak_alpha: u8,
 }
@@ -93,7 +93,7 @@ pub(crate) struct ShadowStyle {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct RecordGeometry {
     pub(crate) record: Disc,
-    pub(crate) label_r: f32,
+    pub(crate) label_radius: f32,
 }
 
 pub(crate) struct LabelArt<'a> {
@@ -135,26 +135,26 @@ impl VinylGeometry {
     }
 }
 
-pub(crate) struct CanvasDims {
+pub(crate) struct CanvasSize {
     pub(crate) width: u32,
     pub(crate) height: u32,
 }
 
-pub(crate) fn canvas_dims(style: &VinylFrameStyle) -> CanvasDims {
+pub(crate) fn canvas_size(style: &VinylFrameStyle) -> CanvasSize {
     let size_px = style.size_px.max(1);
     let geometry = VinylGeometry::new(size_px, &style.layout);
-    CanvasDims {
+    CanvasSize {
         width: geometry.canvas_width_px(size_px),
         height: size_px,
     }
 }
 
 pub(crate) fn record_disc(geometry: &VinylGeometry) -> Disc {
-    let record_r = geometry.disc_diameter / 2.0;
+    let record_radius = geometry.disc_diameter / 2.0;
     Disc {
-        cx: geometry.size + geometry.peek - record_r,
-        cy: geometry.size / 2.0,
-        r: record_r,
+        center_x: geometry.size + geometry.peek - record_radius,
+        center_y: geometry.size / 2.0,
+        radius: record_radius,
     }
 }
 
@@ -177,8 +177,8 @@ mod tests {
             let geometry = VinylGeometry::new(size_px, &layout);
             let disc = record_disc(&geometry);
             let shadow_offset_px = layout.shadow_offset * geometry.size;
-            let shadow_right_edge_px = disc.cx
-                + disc.r
+            let shadow_right_edge_px = disc.center_x
+                + disc.radius
                 + shadow_offset_px * shadow_horizontal_reach_fraction();
             let canvas_width_px = dimension_f32(geometry.canvas_width_px(size_px));
             assert!(

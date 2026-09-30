@@ -219,7 +219,7 @@ const RETIRED_NAMES: &[&str] = &[
     "BatchFlags",
     "MediaWorker",
     "RingBuf",
-    "Notice",
+    "Announce",
     "NoticeLevel",
     "NoticeLifetime",
     "NoticeUpdate",

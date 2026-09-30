@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use crate::{
     cmd::{AudioCmd, Cmd, Effect, LibraryCmd, PlaybackChange},
     domain::{Moment, Pause, Player, Playhead, Preload, Revision, Track},
-    message::AudioFailure,
+    message::AudioError,
     update::player::{
         Anchor,
         StartOrigin,
@@ -91,14 +91,14 @@ impl Player {
         }
     }
 
-    pub(crate) fn failed(self, failure: &AudioFailure, now: Moment) -> (Player, Cmd) {
+    pub(crate) fn failed(self, failure: &AudioError, now: Moment) -> (Player, Cmd) {
         match failure {
-            AudioFailure::OutputLost { .. } => self.output_lost(now),
-            AudioFailure::Decode { .. }
-            | AudioFailure::Device { .. }
-            | AudioFailure::Stream { .. }
-            | AudioFailure::Preload { .. } => self.load_failed(),
-            AudioFailure::Seek { .. } => (self, Cmd::None),
+            AudioError::OutputLost { .. } => self.output_lost(now),
+            AudioError::Decode { .. }
+            | AudioError::Device { .. }
+            | AudioError::Stream { .. }
+            | AudioError::Preload { .. } => self.load_failed(),
+            AudioError::Seek { .. } => (self, Cmd::None),
         }
     }
 
@@ -274,7 +274,7 @@ pub(crate) fn next_decision(
 }
 
 #[cfg(test)]
-mod next_decision_tests {
+mod tests {
     use std::{sync::Arc, time::Duration};
 
     use rstest::rstest;

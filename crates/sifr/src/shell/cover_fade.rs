@@ -12,14 +12,14 @@ use terminal::{
     CoverKey,
     CoverLook,
     CoverMoment,
+    CoverParts,
     CoverPlacement,
-    CoverSources,
     CoverWash,
     DecodedCover,
 };
 use widgets::{MilkdropColors, Playing, Scene};
 
-use crate::toast::ShellFailure;
+use crate::toast::ShellError;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) enum CoverFadePermission {
@@ -38,11 +38,11 @@ pub(crate) enum CoverArrival {
 pub(crate) fn cover_sources<'a>(
     scene: Scene<'a>,
     placement: CoverPlacement,
-) -> CoverSources<'a> {
-    CoverSources {
+) -> CoverParts<'a> {
+    CoverParts {
         key: CoverKey {
-            config_generation: scene.model.config_generation,
-            theme_generation: scene.model.theme_generation,
+            config_generation: scene.model.revisions.config,
+            theme_generation: scene.model.revisions.theme,
         },
         look: CoverLook {
             style: scene.cover_style(),
@@ -126,7 +126,7 @@ pub(crate) struct CoverWanted<'a> {
     pub(crate) side: u32,
 }
 
-pub(crate) fn desired_cover(
+pub(crate) fn wanted_cover(
     wanted: &mut Option<PathBuf>,
     sources: &CoverWanted<'_>,
 ) -> Option<CoverRequest> {
@@ -144,20 +144,20 @@ pub(crate) fn desired_cover(
     *wanted = Some(path.to_path_buf());
     Some(CoverRequest {
         path: path.to_path_buf(),
-        side: sources.side,
+        size_px: sources.side,
     })
 }
 
 pub(crate) fn cover_outcome(
     decoded: CoverDecoded,
-) -> Result<Option<DecodedCover>, ShellFailure> {
+) -> Result<Option<DecodedCover>, ShellError> {
     match decoded.outcome {
         CoverOutcome::Art(image) => Ok(Some(DecodedCover {
             path: decoded.path,
             image: Arc::new(image),
         })),
         CoverOutcome::NoArt => Ok(None),
-        CoverOutcome::Failed(error) => Err(ShellFailure::Cover(error.to_string())),
+        CoverOutcome::Failed(error) => Err(ShellError::Cover(error.to_string())),
     }
 }
 
@@ -182,18 +182,18 @@ mod tests {
             cover_arrived_fade,
             cover_outcome,
             cover_wash,
-            desired_cover,
             resolved_cover_fade,
             track_changed_fade,
+            wanted_cover,
         },
-        toast::ShellFailure,
+        toast::ShellError,
     };
 
     #[test]
     fn an_off_style_wants_no_cover_and_forgets_it() {
         let mut wanted = Some(PathBuf::from("/music/old.jpg"));
 
-        let request = desired_cover(
+        let request = wanted_cover(
             &mut wanted,
             &CoverWanted {
                 current: Some(Path::new("/music/old.jpg")),
@@ -210,7 +210,7 @@ mod tests {
     fn a_milkdrop_style_wants_no_decoded_cover() {
         let mut wanted = None;
 
-        let request = desired_cover(
+        let request = wanted_cover(
             &mut wanted,
             &CoverWanted {
                 current: Some(Path::new("/music/track.jpg")),
@@ -226,7 +226,7 @@ mod tests {
     fn no_current_track_wants_no_cover() {
         let mut wanted = None;
 
-        let request = desired_cover(
+        let request = wanted_cover(
             &mut wanted,
             &CoverWanted {
                 current: None,
@@ -242,7 +242,7 @@ mod tests {
     fn playback_stopping_forgets_the_wanted_cover() {
         let mut wanted = Some(PathBuf::from("/music/old.jpg"));
 
-        let request = desired_cover(
+        let request = wanted_cover(
             &mut wanted,
             &CoverWanted {
                 current: None,
@@ -259,7 +259,7 @@ mod tests {
     fn a_new_track_path_is_requested_at_the_configured_side() {
         let mut wanted = None;
 
-        let request = desired_cover(
+        let request = wanted_cover(
             &mut wanted,
             &CoverWanted {
                 current: Some(Path::new("/music/track.jpg")),
@@ -269,7 +269,7 @@ mod tests {
         );
 
         assert_eq!(
-            request.map(|request| (request.path, request.side)),
+            request.map(|request| (request.path, request.size_px)),
             Some((PathBuf::from("/music/track.jpg"), 320))
         );
         assert_eq!(wanted, Some(PathBuf::from("/music/track.jpg")));
@@ -279,7 +279,7 @@ mod tests {
     fn the_same_track_path_is_not_requested_again() {
         let mut wanted = Some(PathBuf::from("/music/track.jpg"));
 
-        let request = desired_cover(
+        let request = wanted_cover(
             &mut wanted,
             &CoverWanted {
                 current: Some(Path::new("/music/track.jpg")),
@@ -295,7 +295,7 @@ mod tests {
     fn a_changed_track_path_is_requested_again() {
         let mut wanted = Some(PathBuf::from("/music/old.jpg"));
 
-        let request = desired_cover(
+        let request = wanted_cover(
             &mut wanted,
             &CoverWanted {
                 current: Some(Path::new("/music/new.jpg")),
@@ -355,7 +355,7 @@ mod tests {
 
         assert!(matches!(
             cover_outcome(decoded),
-            Err(ShellFailure::Cover(reason))
+            Err(ShellError::Cover(reason))
                 if reason == broken_cover_error().to_string()
         ));
     }

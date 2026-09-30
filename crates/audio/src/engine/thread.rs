@@ -1,20 +1,20 @@
 use std::{collections::HashSet, mem::discriminant};
 
 use crossbeam_channel::Receiver as CmdReceiver;
-use kernel::{AudioCmd, AudioEvent, Delivery, Outbox, update::Machine};
+use kernel::{AudioCmd, AudioEvent, Outbox, Refusals, SendError, update::Machine};
 
 use crate::{
     EngineConfig,
     deck::Deck,
     engine::{
-        driver::perform,
         effect::EngineMessage,
+        perform::perform,
         state::{Engine, Live},
     },
 };
 
-pub(crate) struct Worker {
-    pub(crate) state: Engine,
+pub(crate) struct EngineThread {
+    pub(crate) engine: Engine,
     pub(crate) deck: Deck,
 }
 
@@ -24,22 +24,22 @@ enum Flow {
     Closed,
 }
 
-pub(crate) fn boot(config: EngineConfig, deck: &mut Deck) -> Engine {
+pub(crate) fn start(config: EngineConfig, deck: &mut Deck) -> Engine {
     let opened = deck.open(config.device.clone(), 1.0);
     let mut state = Engine::Live(Live::new(config));
     deliver(&mut state, EngineMessage::Opened(opened), deck);
     state
 }
 
-pub(crate) fn audio_thread<O: Outbox<AudioEvent>>(
+pub(crate) fn audio_thread<O: Outbox<AudioEvent> + Refusals>(
     commands: &CmdReceiver<AudioCmd>,
-    mut worker: Worker,
+    mut thread: EngineThread,
     outbox: &O,
 ) {
-    if let Flow::Closed = flush(&mut worker.deck, outbox) {
+    if let Flow::Closed = flush(&mut thread.deck, outbox) {
         return;
     }
-    let heard = worker.deck.heard().clone();
+    let heard = thread.deck.heard().clone();
     loop {
         crossbeam_channel::select! {
             recv(commands) -> received => {
@@ -47,26 +47,31 @@ pub(crate) fn audio_thread<O: Outbox<AudioEvent>>(
                 let mut batch = vec![first];
                 batch.extend(commands.try_iter());
                 for cmd in coalesced(batch) {
-                    deliver(&mut worker.state, EngineMessage::Cmd(cmd), &mut worker.deck);
+                    deliver(&mut thread.engine, EngineMessage::Cmd(cmd), &mut thread.deck);
                 }
             },
             recv(heard) -> event => {
                 if let Ok(event) = event {
-                    for message in worker.deck.landed(event) {
-                        deliver(&mut worker.state, message, &mut worker.deck);
+                    for message in thread.deck.messages_for(event) {
+                        deliver(&mut thread.engine, message, &mut thread.deck);
                     }
                 }
             },
         }
-        if let Flow::Closed = flush(&mut worker.deck, outbox) {
+        if let Flow::Closed = flush(&mut thread.deck, outbox) {
             return;
         }
     }
 }
 
-fn flush<O: Outbox<AudioEvent>>(deck: &mut Deck, outbox: &O) -> Flow {
-    for fact in deck.drain_facts() {
-        if let Delivery::Closed = outbox.send(fact) {
+fn flush<O: Outbox<AudioEvent> + Refusals>(deck: &mut Deck, outbox: &O) -> Flow {
+    for event in deck.drain_events() {
+        if let Err(SendError::Closed) = outbox.send(event) {
+            return Flow::Closed;
+        }
+    }
+    for input in deck.drain_refused() {
+        if let Err(SendError::Closed) = outbox.refused(input) {
             return Flow::Closed;
         }
     }
@@ -87,7 +92,7 @@ pub(crate) fn coalesced(batch: Vec<AudioCmd>) -> Vec<AudioCmd> {
                     kept.push(cmd);
                 }
             }
-            AudioCmd::Pause(_)
+            AudioCmd::Playback(_)
             | AudioCmd::Preload { .. }
             | AudioCmd::SetCrossfade(_)
             | AudioCmd::SetReplaygain(_)
@@ -99,15 +104,30 @@ pub(crate) fn coalesced(batch: Vec<AudioCmd>) -> Vec<AudioCmd> {
     kept
 }
 
+fn input_name(message: &EngineMessage) -> &'static str {
+    match message {
+        EngineMessage::Cmd(cmd) => cmd.into(),
+        EngineMessage::Opened(_) => "opened",
+        EngineMessage::Decoded(_) => "decoded",
+        EngineMessage::Preloaded(_) => "preloaded",
+        EngineMessage::Failed(_) => "failed",
+        EngineMessage::Retiring { .. } => "retiring",
+        EngineMessage::Finished(_) => "finished",
+        EngineMessage::Cued => "cued",
+        EngineMessage::Ramped(_) => "ramped",
+        EngineMessage::DevicesListed(_) => "devices_listed",
+    }
+}
+
 fn deliver(state: &mut Engine, message: EngineMessage, deck: &mut Deck) {
     let mut next = Some(message);
     while let Some(current) = next {
-        next = match state.update(current) {
-            Ok(effect) => perform(effect, deck),
-            Err(rejection) => {
-                deck.send(AudioEvent::Rejected(rejection));
-                None
-            }
+        let input = input_name(&current);
+        next = if let Ok(effect) = state.update(current) {
+            perform(effect, deck)
+        } else {
+            deck.refuse(input);
+            None
         };
     }
 }
@@ -123,12 +143,13 @@ mod tests {
 
     use kernel::{
         AudioCmd,
+        AudioError,
         AudioEvent,
-        AudioFailure,
-        Delivery,
         Outbox,
         Playback,
-        domain::{Bounded, Crossfade, Replaygain, Revision, Speed},
+        Refusals,
+        SendError,
+        domain::{Bounded, Crossfade, OutputDevice, Replaygain, Revision, Speed},
     };
     use rstest::rstest;
 
@@ -136,28 +157,31 @@ mod tests {
         EngineConfig,
         UnityVolume,
         deck::Deck,
-        engine::thread::{Worker, audio_thread, boot, coalesced},
+        engine::thread::{EngineThread, audio_thread, coalesced, start},
         tap,
     };
 
     fn config(
-        crossfade_secs: u64,
+        crossfade_seconds: u64,
         replaygain: Replaygain,
         unity_volume: UnityVolume,
     ) -> EngineConfig {
         EngineConfig {
-            crossfade: Crossfade::clamped(Duration::from_secs(crossfade_secs)),
+            crossfade: Crossfade::clamped(Duration::from_secs(crossfade_seconds)),
             replaygain,
             unity_volume,
-            device: None,
+            device: OutputDevice::SystemDefault,
         }
     }
 
-    fn live_without_hardware() -> Worker {
+    fn live_without_hardware() -> EngineThread {
         let (spectrum, _spectrum_tap) = tap::new_tap();
         let mut deck = Deck::new(spectrum);
-        let state = boot(config(0, Replaygain::Off, UnityVolume::Free), &mut deck);
-        Worker { state, deck }
+        let state = start(config(0, Replaygain::Off, UnityVolume::Free), &mut deck);
+        EngineThread {
+            engine: state,
+            deck,
+        }
     }
 
     fn missing_file_load() -> AudioCmd {
@@ -178,12 +202,18 @@ mod tests {
 
     struct FakeOutbox {
         sent: Arc<Mutex<Vec<AudioEvent>>>,
-        reply: Delivery,
+        reply: Result<(), SendError>,
+    }
+
+    impl Refusals for FakeOutbox {
+        fn refused(&self, _input: &'static str) -> Result<(), SendError> {
+            self.reply
+        }
     }
 
     impl Outbox<AudioEvent> for FakeOutbox {
-        fn send(&self, fact: AudioEvent) -> Delivery {
-            self.sent.lock().unwrap().push(fact);
+        fn send(&self, event: AudioEvent) -> Result<(), SendError> {
+            self.sent.lock().unwrap().push(event);
             self.reply
         }
     }
@@ -214,19 +244,19 @@ mod tests {
         let sent = Arc::new(Mutex::new(Vec::new()));
         let outbox_sent = Arc::clone(&sent);
         let handle = thread::spawn(move || {
-            let worker = live_without_hardware();
+            let thread = live_without_hardware();
             let outbox = FakeOutbox {
                 sent: outbox_sent,
-                reply: Delivery::Sent,
+                reply: Ok(()),
             };
-            audio_thread(&command_receiver, worker, &outbox);
+            audio_thread(&command_receiver, thread, &outbox);
         });
 
         assert!(command_sender.send(missing_file_load()).is_ok());
         let events = wait_for(&sent, Duration::from_secs(2));
         assert!(matches!(
             events.as_slice(),
-            [AudioEvent::Error(AudioFailure::Decode { .. })]
+            [AudioEvent::Error(AudioError::Decode { .. })]
         ));
 
         drop(command_sender);
@@ -240,12 +270,12 @@ mod tests {
         let sent = Arc::new(Mutex::new(Vec::new()));
         let outbox_sent = Arc::clone(&sent);
         let handle = thread::spawn(move || {
-            let worker = live_without_hardware();
+            let thread = live_without_hardware();
             let outbox = FakeOutbox {
                 sent: outbox_sent,
-                reply: Delivery::Sent,
+                reply: Ok(()),
             };
-            audio_thread(&command_receiver, worker, &outbox);
+            audio_thread(&command_receiver, thread, &outbox);
         });
 
         thread::sleep(Duration::from_millis(250));
@@ -255,7 +285,7 @@ mod tests {
         let events = wait_for(&sent, Duration::from_secs(2));
         assert!(matches!(
             events.as_slice(),
-            [AudioEvent::Error(AudioFailure::Decode { .. })]
+            [AudioEvent::Error(AudioError::Decode { .. })]
         ));
 
         drop(command_sender);
@@ -267,12 +297,12 @@ mod tests {
         let (command_sender, command_receiver) =
             crossbeam_channel::unbounded::<AudioCmd>();
         let handle = thread::spawn(move || {
-            let worker = live_without_hardware();
+            let thread = live_without_hardware();
             let outbox = FakeOutbox {
                 sent: Arc::new(Mutex::new(Vec::new())),
-                reply: Delivery::Closed,
+                reply: Err(SendError::Closed),
             };
-            audio_thread(&command_receiver, worker, &outbox);
+            audio_thread(&command_receiver, thread, &outbox);
         });
 
         assert!(command_sender.send(missing_file_load()).is_ok());
@@ -331,13 +361,13 @@ mod tests {
     )]
     #[case::others_untouched(
         vec![
-            AudioCmd::Pause(Playback::Playing),
-            AudioCmd::Pause(Playback::Playing),
+            AudioCmd::Playback(Playback::Playing),
+            AudioCmd::Playback(Playback::Playing),
             AudioCmd::ListDevices,
         ],
         vec![
-            AudioCmd::Pause(Playback::Playing),
-            AudioCmd::Pause(Playback::Playing),
+            AudioCmd::Playback(Playback::Playing),
+            AudioCmd::Playback(Playback::Playing),
             AudioCmd::ListDevices,
         ]
     )]

@@ -1,20 +1,20 @@
-use config::{Hex, ProgressConfig};
+use config::{ProgressConfig, Rgb};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BarColorOverrides {
-    pub fill: Option<Hex>,
-    pub track: Option<Hex>,
+    pub fill: Option<Rgb>,
+    pub track: Option<Rgb>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BarColors {
-    pub fill: Hex,
-    pub track: Hex,
+    pub fill: Rgb,
+    pub trough: Rgb,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ProgressGeometry {
-    pub frac: f32,
+    pub fraction: f32,
     pub width: u32,
     pub height: u32,
 }

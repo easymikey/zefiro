@@ -1,9 +1,9 @@
 mod backdrop;
 mod cover_fade;
-mod frame;
 mod frame_clock;
 mod input;
 mod motion;
+mod painter;
 mod view;
 mod window_colors;
 
@@ -12,13 +12,13 @@ use std::io::{self, Stdout};
 use crossterm::event::Event;
 pub(crate) use input::ShellInput;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use runtime::{FrameDue, Painted, Reaction, ShellEffect, View};
+use runtime::{FrameDue, FrameInput, Painted, Reaction, ShellEffect};
 use terminal::ProbeAnswer;
 pub(crate) use view::fallback_theme_file;
 
 use crate::{
-    shell::frame::{Painter, resized_area},
-    startup::BootLook,
+    shell::painter::{Painter, resized_area},
+    startup::Look,
 };
 
 #[derive(Debug)]
@@ -30,7 +30,7 @@ pub(crate) struct Shell<'terminal> {
 impl<'terminal> Shell<'terminal> {
     pub(crate) fn new(
         terminal: &'terminal mut Terminal<CrosstermBackend<Stdout>>,
-        look: BootLook,
+        look: Look,
     ) -> Result<Self, io::Error> {
         let size = terminal.size()?;
         let area = resized_area(size.width, size.height);
@@ -40,8 +40,8 @@ impl<'terminal> Shell<'terminal> {
         })
     }
 
-    pub(crate) fn adopt(&mut self, answer: ProbeAnswer) {
-        self.frame.adopt(answer);
+    pub(crate) fn apply_probe_answer(&mut self, answer: ProbeAnswer) {
+        self.frame.apply_probe_answer(answer);
     }
 }
 
@@ -57,14 +57,14 @@ impl runtime::Shell for Shell<'_> {
     }
 
     fn effect(&mut self, effect: ShellEffect) {
-        self.frame.effect(&effect);
+        self.frame.perform_effect(&effect);
     }
 
-    fn frame_due(&self, view: &View<'_>) -> FrameDue {
+    fn frame_due(&self, view: &FrameInput<'_>) -> FrameDue {
         self.frame.frame_due(view)
     }
 
-    fn paint(&mut self, view: View<'_>) -> Result<Painted, Self::Error> {
+    fn paint(&mut self, view: FrameInput<'_>) -> Result<Painted, Self::Error> {
         self.frame.paint(self.terminal, view)
     }
 }

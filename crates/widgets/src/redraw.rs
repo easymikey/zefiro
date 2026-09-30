@@ -102,7 +102,10 @@ mod tests {
     #[case::minute_boundary_soon(Duration::from_secs(14 * 60 + 59), Duration::from_secs(59))]
     #[case::exact_quarter_hour(Duration::from_secs(15 * 60), Duration::from_secs(60))]
     #[case::deadline_itself(Duration::from_secs(30), Duration::from_secs(30))]
-    fn next_sleep_minute_rows(#[case] left: Duration, #[case] until_next: Duration) {
+    fn the_next_sleep_wake_is_the_nearest_minute_boundary_or_the_deadline(
+        #[case] left: Duration,
+        #[case] until_next: Duration,
+    ) {
         let now = Moment::new(Duration::from_secs(1_000));
         let deadline = Moment::new(now.since_epoch() + left);
         assert_eq!(

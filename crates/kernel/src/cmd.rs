@@ -8,9 +8,11 @@ use crate::{
         DeviceName,
         Driver,
         OptionIndex,
+        OutputDevice,
         Percent,
         Replaygain,
         Revision,
+        ScanMode,
         SettingId,
         Speed,
         ThemeChoice,
@@ -59,6 +61,7 @@ pub enum WindowColorsCmd {
 pub enum ConfigCmd {
     Save(ConfigPatch),
     SelectTheme(ThemeChoice),
+    Setting { id: SettingId, option: OptionIndex },
 }
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
@@ -69,7 +72,7 @@ pub enum AudioCmd {
         gain: Option<f32>,
         revision: Revision,
     },
-    Pause(Playback),
+    Playback(Playback),
     Seek(Duration),
     SetSpeed(Speed),
     Stop,
@@ -80,7 +83,7 @@ pub enum AudioCmd {
     },
     SetCrossfade(Crossfade),
     SetReplaygain(Replaygain),
-    SetDevice(Option<DeviceName>),
+    SetDevice(OutputDevice),
     ListDevices,
 }
 
@@ -97,20 +100,17 @@ pub enum LibraryCmd {
     LoadHistory {
         limit: usize,
     },
-    Rescan {
-        root: PathBuf,
-        revision: Revision,
-    },
     SavePlaylist {
         name: PlaylistFileName,
         tracks: Vec<Arc<Track>>,
     },
-    ScanLibrary {
-        root: PathBuf,
+    Scan {
+        music_dir: PathBuf,
         revision: Revision,
+        mode: ScanMode,
     },
     TagTracks {
-        root: PathBuf,
+        music_dir: PathBuf,
         paths: Vec<PathBuf>,
         revision: Revision,
     },
@@ -119,7 +119,7 @@ pub enum LibraryCmd {
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub enum SystemCmd {
+pub enum MacosCmd {
     NowPlaying(NowPlaying),
     PlaybackState(Playback),
     PlaybackPosition(Duration),
@@ -178,12 +178,11 @@ pub enum Cue {
 pub enum Effect {
     Audio(AudioCmd),
     Library(LibraryCmd),
-    System(SystemCmd),
+    Macos(MacosCmd),
     Config(ConfigCmd),
     WindowColors(WindowColorsCmd),
     Animate(Cue),
     RollShuffle { len: usize },
-    Setting { id: SettingId, option: OptionIndex },
     After { delay: Duration, message: Timer },
     Restart(Driver),
     Quit,
@@ -193,16 +192,16 @@ impl PlaybackChange {
     pub fn effects(self) -> [Effect; 2] {
         let (audio, playback) = match self {
             PlaybackChange::Play => {
-                (AudioCmd::Pause(Playback::Playing), Playback::Playing)
+                (AudioCmd::Playback(Playback::Playing), Playback::Playing)
             }
             PlaybackChange::Pause => {
-                (AudioCmd::Pause(Playback::Paused), Playback::Paused)
+                (AudioCmd::Playback(Playback::Paused), Playback::Paused)
             }
             PlaybackChange::Stop => (AudioCmd::Stop, Playback::Paused),
         };
         [
             Effect::Audio(audio),
-            Effect::System(SystemCmd::PlaybackState(playback)),
+            Effect::Macos(MacosCmd::PlaybackState(playback)),
         ]
     }
 
@@ -299,7 +298,7 @@ mod tests {
 
     #[test]
     fn then_merges_two_ones_into_batch() {
-        let first = Cmd::One(Effect::Audio(AudioCmd::Pause(Playback::Paused)));
+        let first = Cmd::One(Effect::Audio(AudioCmd::Playback(Playback::Paused)));
         let second = Cmd::One(Effect::Audio(AudioCmd::Stop));
         let merged = first.then(second);
         assert!(matches!(merged, Cmd::Batch(effects) if effects.len() == 2));
@@ -308,14 +307,14 @@ mod tests {
     #[test]
     fn into_iter_yields_batch_effects_in_order() {
         let cmd = Cmd::Batch(vec![
-            Effect::Audio(AudioCmd::Pause(Playback::Paused)),
+            Effect::Audio(AudioCmd::Playback(Playback::Paused)),
             Effect::Audio(AudioCmd::Stop),
         ]);
         let effects: Vec<Effect> = cmd.into_iter().collect();
         assert!(matches!(
             effects.as_slice(),
             [
-                Effect::Audio(AudioCmd::Pause(Playback::Paused)),
+                Effect::Audio(AudioCmd::Playback(Playback::Paused)),
                 Effect::Audio(AudioCmd::Stop)
             ]
         ));

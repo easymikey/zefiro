@@ -1,25 +1,25 @@
 use serde::Deserialize;
 
 use crate::{
-    error::{ConfigError, TomlFile, named_toml},
-    hex::Hex,
+    error::{Error, TomlFile, parse_toml},
+    hex::Rgb,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ThemeColors {
     #[serde(rename = "bg")]
-    pub background: Hex,
+    pub background: Rgb,
     #[serde(rename = "fg")]
-    pub foreground: Hex,
+    pub foreground: Rgb,
     #[serde(rename = "bright_fg")]
-    pub bright_foreground: Hex,
-    pub accent: Hex,
-    pub green: Hex,
-    pub yellow: Hex,
-    pub red: Hex,
+    pub bright_foreground: Rgb,
+    pub accent: Rgb,
+    pub green: Rgb,
+    pub yellow: Rgb,
+    pub red: Rgb,
     #[serde(default, rename = "window_bg")]
-    pub window_background: Option<Hex>,
+    pub window_background: Option<Rgb>,
 }
 
 const DEFAULT_SCANNING_LABEL: &str = "scanning…";
@@ -43,15 +43,15 @@ pub fn theme_file_name(name: &str) -> String {
     format!("{name}.toml")
 }
 
-pub fn parse_theme(source: &str, name: &str) -> Result<ThemeFile, ConfigError> {
-    named_toml(source, TomlFile::Theme(name.to_owned()))
+pub fn parse_theme(source: &str, name: &str) -> Result<ThemeFile, Error> {
+    parse_toml(source, TomlFile::Theme(name.to_owned()))
 }
 
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
-    use crate::{error::ConfigError, hex::Hex, theme_file::parse_theme};
+    use crate::{error::Error, hex::Rgb, theme_file::parse_theme};
 
     #[rstest]
     #[case::terracotta_dark(
@@ -118,7 +118,7 @@ mod tests {
         #[case] source: &str,
     ) {
         let error = parse_theme(source, "noir").unwrap_err();
-        assert!(matches!(error, ConfigError::Parse { .. }));
+        assert!(matches!(error, Error::Parse { .. }));
         insta::with_settings!({ snapshot_suffix => name }, {
             insta::assert_snapshot!(error.to_string());
         });
@@ -149,7 +149,7 @@ mod tests {
 
         assert_eq!(
             theme.colors.window_background,
-            Some(Hex([0x32, 0x30, 0x2f]))
+            Some(Rgb([0x32, 0x30, 0x2f]))
         );
     }
 }

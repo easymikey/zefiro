@@ -6,49 +6,49 @@ expression: "parse_theme(source, name).unwrap()"
 ThemeFile {
     name: "rose-pine",
     colors: ThemeColors {
-        background: Hex(
+        background: Rgb(
             [
                 25,
                 23,
                 36,
             ],
         ),
-        foreground: Hex(
+        foreground: Rgb(
             [
                 144,
                 140,
                 170,
             ],
         ),
-        bright_foreground: Hex(
+        bright_foreground: Rgb(
             [
                 224,
                 222,
                 244,
             ],
         ),
-        accent: Hex(
+        accent: Rgb(
             [
                 235,
                 188,
                 186,
             ],
         ),
-        green: Hex(
+        green: Rgb(
             [
                 156,
                 207,
                 216,
             ],
         ),
-        yellow: Hex(
+        yellow: Rgb(
             [
                 246,
                 193,
                 119,
             ],
         ),
-        red: Hex(
+        red: Rgb(
             [
                 235,
                 111,

@@ -1,12 +1,13 @@
 ---
 source: crates/audio/src/engine/live/preload.rs
+assertion_line: 160
 expression: log
 ---
 [
     PreloadGapless(
         "/b",
     ),
-    Many(
+    Batch(
         [
             Pause,
             Report,

@@ -23,7 +23,7 @@ AppearanceFile {
         },
         brackets: Hidden,
     },
-    layout: BreakpointsConfig {
+    layout: LayoutConfig {
         full_min_width: 60,
         full_min_height: 19,
         compact_min_width: 30,

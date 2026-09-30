@@ -8,8 +8,8 @@ use kernel::{
 use toml_edit::{Array, DocumentMut, value};
 
 use crate::{
-    document::{Field, ensure_table, write_fields},
-    error::ConfigError,
+    document::{TomlEdit, ensure_table, write_edits},
+    error::Error,
 };
 
 fn format_crossfade(crossfade: Crossfade) -> String {
@@ -28,7 +28,7 @@ fn to_minutes(duration: Duration) -> i64 {
 fn crossfade_replaygain_fields(
     crossfade: Option<Crossfade>,
     replaygain: Option<Replaygain>,
-) -> [Field; 2] {
+) -> [TomlEdit; 2] {
     [
         (
             "audio",
@@ -43,7 +43,7 @@ fn crossfade_replaygain_fields(
     ]
 }
 
-fn sleep_presets_field(sleep_presets: Option<Vec<Duration>>) -> [Field; 1] {
+fn sleep_presets_field(sleep_presets: Option<Vec<Duration>>) -> [TomlEdit; 1] {
     [(
         "audio",
         "sleep_presets",
@@ -53,7 +53,7 @@ fn sleep_presets_field(sleep_presets: Option<Vec<Duration>>) -> [Field; 1] {
     )]
 }
 
-fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), ConfigError> {
+fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> {
     let ConfigPatch {
         crossfade,
         device,
@@ -63,7 +63,7 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), ConfigE
         sleep_presets,
         music_dir,
     } = patch;
-    write_fields(doc, crossfade_replaygain_fields(crossfade, replaygain))?;
+    write_edits(doc, crossfade_replaygain_fields(crossfade, replaygain))?;
     match device {
         DevicePatch::Keep => {}
         DevicePatch::Named(name) => {
@@ -73,7 +73,7 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), ConfigE
             ensure_table(doc, "audio")?.remove("device");
         }
     }
-    write_fields(doc, sleep_presets_field(sleep_presets))?;
+    write_edits(doc, sleep_presets_field(sleep_presets))?;
     if let Some(theme) = theme {
         doc["theme"] = value(ThemeName::as_str(&theme));
     }
@@ -86,7 +86,7 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), ConfigE
     Ok(())
 }
 
-pub fn patched(text: &str, patch: ConfigPatch) -> Result<String, ConfigError> {
+pub fn patch_config_text(text: &str, patch: ConfigPatch) -> Result<String, Error> {
     let mut doc: DocumentMut = text.parse()?;
     patch_config(&mut doc, patch)?;
     Ok(doc.to_string())
@@ -100,16 +100,24 @@ mod tests {
         Bounded,
         ConfigPatch,
         DevicePatch,
-        domain::{Crossfade, DeviceName, Percent, Replaygain, ThemeChoice, ThemeName},
+        domain::{
+            Crossfade,
+            DeviceName,
+            OutputDevice,
+            Percent,
+            Replaygain,
+            ThemeChoice,
+            ThemeName,
+        },
     };
     use proptest::prelude::*;
     use rstest::rstest;
 
     use crate::{
         appearance_file::parse_appearance,
-        config_document::{format_crossfade, patched, to_minutes},
+        config_document::{format_crossfade, patch_config_text, to_minutes},
         config_file::parse_config,
-        error::ConfigError,
+        error::Error,
     };
 
     const COMMENTED_CONFIG: &str =
@@ -120,17 +128,17 @@ mod tests {
     const CONFIG_WITH_DEVICE: &str =
         "[audio]\ndevice = \"Speakers\"\nreplaygain = false\n";
 
-    fn crossfade_secs(secs: u64) -> Crossfade {
+    fn crossfade_seconds(secs: u64) -> Crossfade {
         Crossfade::clamped(Duration::from_secs(secs))
     }
 
-    fn crossfade_millis(millis: u64) -> Crossfade {
+    fn crossfade_milliseconds(millis: u64) -> Crossfade {
         Crossfade::clamped(Duration::from_millis(millis))
     }
 
     fn every_config_field() -> ConfigPatch {
         ConfigPatch {
-            crossfade: Some(crossfade_millis(250)),
+            crossfade: Some(crossfade_milliseconds(250)),
             replaygain: Some(Replaygain::On),
             device: DevicePatch::Named(
                 DeviceName::new("Speakers".to_string()).unwrap(),
@@ -155,14 +163,14 @@ mod tests {
         "minimal_sections",
         "",
         ConfigPatch::builder()
-            .crossfade(crossfade_secs(3))
+            .crossfade(crossfade_seconds(3))
             .theme(ThemeName::from_static("dark"))
             .build()
     )]
     #[case::one_field_keeps_every_comment(
         "one_field",
         COMMENTED_CONFIG,
-        ConfigPatch::builder().crossfade(crossfade_secs(3)).build()
+        ConfigPatch::builder().crossfade(crossfade_seconds(3)).build()
     )]
     #[case::every_field_kind("every_field", "", every_config_field())]
     #[case::the_system_default_device_removes_the_key(
@@ -170,12 +178,12 @@ mod tests {
         CONFIG_WITH_DEVICE,
         ConfigPatch::builder().device(DevicePatch::SystemDefault).build()
     )]
-    fn patched_writes(
+    fn a_patch_writes_only_the_fields_it_sets(
         #[case] name: &str,
         #[case] text: &str,
         #[case] patch: ConfigPatch,
     ) {
-        let out = patched(text, patch).unwrap();
+        let out = patch_config_text(text, patch).unwrap();
         insta::with_settings!({ snapshot_suffix => name }, {
             insta::assert_snapshot!(out);
         });
@@ -183,8 +191,8 @@ mod tests {
 
     #[rstest]
     #[case(Crossfade::default(), "0s")]
-    #[case(crossfade_secs(3), "3s")]
-    #[case(crossfade_millis(250), "250ms")]
+    #[case(crossfade_seconds(3), "3s")]
+    #[case(crossfade_milliseconds(250), "250ms")]
     fn format_crossfade_round_trips_seconds_and_milliseconds(
         #[case] crossfade: Crossfade,
         #[case] written: &str,
@@ -200,14 +208,14 @@ mod tests {
     }
 
     #[test]
-    fn patched_reports_not_a_table_instead_of_panicking() {
-        let refused = patched(
+    fn a_patch_reports_a_non_table_document_instead_of_panicking() {
+        let refused = patch_config_text(
             "audio = 1\n",
-            ConfigPatch::builder().crossfade(crossfade_secs(3)).build(),
+            ConfigPatch::builder()
+                .crossfade(crossfade_seconds(3))
+                .build(),
         );
-        assert!(
-            matches!(refused, Err(ConfigError::NotATable { ref key }) if key == "audio")
-        );
+        assert!(matches!(refused, Err(Error::NotATable { ref key }) if key == "audio"));
     }
 
     #[test]
@@ -218,13 +226,14 @@ mod tests {
 
     #[test]
     fn a_full_config_patch_reads_back_through_its_own_parser() {
-        let written = patched(COMMENTED_CONFIG, every_config_field()).unwrap();
+        let written =
+            patch_config_text(COMMENTED_CONFIG, every_config_field()).unwrap();
         let parsed = parse_config(&written).unwrap();
-        assert_eq!(parsed.audio.crossfade, crossfade_millis(250));
+        assert_eq!(parsed.audio.crossfade, crossfade_milliseconds(250));
         assert_eq!(parsed.audio.replaygain, Replaygain::On);
         assert_eq!(
             parsed.audio.device,
-            Some(DeviceName::new("Speakers".to_string()).unwrap())
+            OutputDevice::Named(DeviceName::new("Speakers".to_string()).unwrap())
         );
         assert_eq!(
             parsed.theme,
@@ -308,7 +317,7 @@ mod tests {
     proptest! {
         #[test]
         fn an_untouched_config_patch_leaves_the_document_unchanged(text in base_config_texts()) {
-            let written = patched(text, ConfigPatch::builder().build()).unwrap();
+            let written = patch_config_text(text, ConfigPatch::builder().build()).unwrap();
             prop_assert_eq!(written, text);
         }
 
@@ -318,7 +327,7 @@ mod tests {
             patch in config_patch(),
         ) {
             let base = parse_config(text).unwrap();
-            let written = patched(text, patch.clone()).unwrap();
+            let written = patch_config_text(text, patch.clone()).unwrap();
             let parsed = parse_config(&written).unwrap();
 
             prop_assert_eq!(
@@ -333,8 +342,8 @@ mod tests {
                 parsed.audio.device,
                 match patch.device {
                     DevicePatch::Keep => base.audio.device,
-                    DevicePatch::SystemDefault => None,
-                    DevicePatch::Named(name) => Some(name),
+                    DevicePatch::SystemDefault => OutputDevice::SystemDefault,
+                    DevicePatch::Named(name) => OutputDevice::Named(name),
                 }
             );
             prop_assert_eq!(

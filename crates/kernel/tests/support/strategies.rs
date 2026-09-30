@@ -1,35 +1,34 @@
 use std::{ops::Range, time::Duration};
 
 use kernel::{
+    AudioError,
     AudioEvent,
-    AudioFailure,
     Bounded,
     BrowseRequest,
-    ConfigFact,
-    DecodeFault,
+    ConfigEvent,
+    DecodeError,
+    Direction,
     DriverMessage,
-    EngineRejection,
     Gesture,
     HistoryRequest,
-    JumpRequest,
     Key,
     KeyCode,
     KeyPress,
-    LibraryFact,
-    LibraryFailure,
-    LoadedRequest,
+    LibraryError,
+    LibraryEvent,
+    MacosEvent,
     Message,
     Model,
     Moment,
-    Nudge,
     OverlayName,
     OverlayRequest,
     Percent,
     PlaybackRequest,
+    PlaylistRequest,
+    QueueRequest,
     SearchEdit,
     SearchRequest,
     SettingsRowRequest,
-    SystemEvent,
     TextRequest,
     Timer,
     Toast,
@@ -37,16 +36,13 @@ use kernel::{
     domain::{
         ChordPrefix,
         Driver,
-        DriverFailure,
-        OutputFault,
+        DriverError,
+        OutputDevice,
         PlaylistIndex,
         Revision,
-        RowDelta,
-        SeekStep,
         SettingRow,
-        SpeedStep,
+        StreamError,
         ThemeName,
-        VolumeStep,
     },
     message::SeekTenths,
     playlist::{PlaylistFileName, RepeatMode},
@@ -89,8 +85,8 @@ pub(crate) fn durations(len: Range<usize>) -> impl Strategy<Value = Vec<Duration
     proptest::collection::vec((0u64..7200).prop_map(Duration::from_secs), len)
 }
 
-fn nudge() -> impl Strategy<Value = Nudge> {
-    prop_oneof![Just(Nudge::Up), Just(Nudge::Down)]
+fn direction() -> impl Strategy<Value = Direction> {
+    prop_oneof![Just(Direction::Next), Just(Direction::Previous)]
 }
 
 fn key_press() -> impl Strategy<Value = KeyPress> {
@@ -121,7 +117,7 @@ fn overlay_name() -> impl Strategy<Value = OverlayName> {
         OverlayName::ConfirmDelete,
         OverlayName::TrackDetails,
         OverlayName::JumpToTime,
-        OverlayName::SourceDir,
+        OverlayName::MusicDir,
     ])
 }
 
@@ -137,21 +133,22 @@ fn overlay_input() -> impl Strategy<Value = OverlayRequest> {
             SearchEdit::Clear,
         ])
         .prop_map(|edit| OverlayRequest::Search(SearchRequest::Edit(edit))),
-        nudge()
-            .prop_map(|nudge| OverlayRequest::Search(SearchRequest::Navigate(nudge))),
+        direction().prop_map(|direction| OverlayRequest::Search(
+            SearchRequest::Navigate(direction)
+        )),
         Just(OverlayRequest::Search(SearchRequest::Enqueue)),
-        nudge().prop_map(|nudge| {
-            OverlayRequest::Settings(SettingsRowRequest::Navigate(nudge))
+        direction().prop_map(|direction| {
+            OverlayRequest::Settings(SettingsRowRequest::Navigate(direction))
         }),
-        nudge().prop_map(|nudge| OverlayRequest::Settings(SettingsRowRequest::Adjust(
-            nudge
-        ))),
+        direction().prop_map(|direction| OverlayRequest::Settings(
+            SettingsRowRequest::Adjust(direction)
+        )),
         Just(OverlayRequest::Settings(SettingsRowRequest::Activate)),
         typed
             .clone()
             .prop_map(|character| OverlayRequest::Text(TextRequest::Char(character))),
         Just(OverlayRequest::Text(TextRequest::Backspace)),
-        typed.prop_map(|character| OverlayRequest::Jump(JumpRequest::Char(character))),
+        typed.prop_map(|character| OverlayRequest::Jump(TextRequest::Char(character))),
     ]
 }
 
@@ -161,13 +158,13 @@ fn overlay() -> impl Strategy<Value = OverlayRequest> {
         Just(OverlayRequest::Close),
         Just(OverlayRequest::Confirm),
         overlay_input(),
-        Just(OverlayRequest::Jump(JumpRequest::Backspace)),
+        Just(OverlayRequest::Jump(TextRequest::Backspace)),
         select(vec![
             HistoryRequest::Top,
             HistoryRequest::Bottom,
             HistoryRequest::Enqueue,
-            HistoryRequest::Navigate(Nudge::Up),
-            HistoryRequest::Navigate(Nudge::Down),
+            HistoryRequest::Navigate(Direction::Previous),
+            HistoryRequest::Navigate(Direction::Next),
         ])
         .prop_map(OverlayRequest::History),
     ]
@@ -185,18 +182,15 @@ fn playback() -> impl Strategy<Value = PlaybackRequest> {
             PlaybackRequest::Release,
             PlaybackRequest::Stop,
             PlaybackRequest::Next,
-            PlaybackRequest::Prev,
+            PlaybackRequest::Previous,
             PlaybackRequest::ToggleShuffle,
             PlaybackRequest::CycleRepeat,
             PlaybackRequest::CycleSleep,
             PlaybackRequest::AbMark,
         ]),
-        (-30i64..30)
-            .prop_map(|seconds| PlaybackRequest::SeekBy(SeekStep::new(seconds))),
-        (-3i8..3)
-            .prop_map(|percent| PlaybackRequest::NudgeVolume(VolumeStep::new(percent))),
-        (-3i8..3)
-            .prop_map(|notches| PlaybackRequest::NudgeSpeed(SpeedStep::new(notches))),
+        (-30i64..30).prop_map(|seconds| PlaybackRequest::SeekBy { seconds }),
+        (-3i8..3).prop_map(|steps| PlaybackRequest::NudgeVolume { steps }),
+        (-3i8..3).prop_map(|steps| PlaybackRequest::NudgeSpeed { steps }),
         (0u64..200).prop_map(|secs| PlaybackRequest::SeekTo(Duration::from_secs(secs))),
         (0u8..10).prop_map(|tenths| {
             PlaybackRequest::SeekFraction(SeekTenths::try_from(tenths).unwrap())
@@ -211,31 +205,38 @@ fn browse() -> impl Strategy<Value = BrowseRequest> {
             BrowseRequest::Top,
             BrowseRequest::Bottom,
             BrowseRequest::PlaySelected,
-            BrowseRequest::Enqueue,
-            BrowseRequest::PlayNext,
-            BrowseRequest::Dequeue,
             BrowseRequest::CycleSort,
             BrowseRequest::Rescan,
             BrowseRequest::ToggleFavorite,
             BrowseRequest::SavePlaylist(PlaylistFileName::new("mix").unwrap()),
         ]),
         playlist_index().prop_map(BrowseRequest::Trash),
-        playlist_index().prop_map(BrowseRequest::EnqueueTrack),
         playlist_index().prop_map(BrowseRequest::CursorTo),
-        (-4i64..4).prop_map(|rows| BrowseRequest::CursorBy(RowDelta::new(rows))),
-        nudge().prop_map(BrowseRequest::MoveInQueue),
-        nudge().prop_map(BrowseRequest::PageBy),
+        (-4i64..4).prop_map(|rows| BrowseRequest::CursorBy { rows }),
+        direction().prop_map(BrowseRequest::PageBy),
+    ]
+}
+
+fn queue() -> impl Strategy<Value = QueueRequest> {
+    prop_oneof![
+        select(vec![
+            QueueRequest::Enqueue,
+            QueueRequest::PlayNext,
+            QueueRequest::Dequeue,
+        ]),
+        playlist_index().prop_map(QueueRequest::EnqueueTrack),
+        direction().prop_map(QueueRequest::MoveInQueue),
     ]
 }
 
 fn audio() -> impl Strategy<Value = AudioEvent> {
     let failure = prop_oneof![
-        Just(AudioFailure::Decode {
+        Just(AudioError::Decode {
             path: "/tmp/track0.flac".into(),
-            fault: DecodeFault::Corrupt,
+            kind: DecodeError::Corrupt,
         }),
-        Just(AudioFailure::OutputLost {
-            fault: OutputFault::DeviceGone,
+        Just(AudioError::OutputLost {
+            kind: StreamError::DeviceGone,
         }),
     ];
     prop_oneof![
@@ -243,38 +244,35 @@ fn audio() -> impl Strategy<Value = AudioEvent> {
         select(vec![
             AudioEvent::TrackChanged,
             AudioEvent::Ended,
-            AudioEvent::DeviceFellBack(None),
-            AudioEvent::DevicesLoaded(Vec::new()),
+            AudioEvent::DeviceFellBack(OutputDevice::SystemDefault),
+            AudioEvent::DevicesListed(Vec::new()),
             AudioEvent::Loaded { total: None },
-            AudioEvent::Rejected(EngineRejection::WhileNotPlaying(
-                "/tmp/track1.flac".into()
-            )),
         ]),
         failure.prop_map(AudioEvent::Error),
     ]
 }
 
-fn loaded() -> impl Strategy<Value = LoadedRequest> {
+fn loaded() -> impl Strategy<Value = PlaylistRequest> {
     prop_oneof![
-        playlist_index().prop_map(LoadedRequest::Jump),
+        playlist_index().prop_map(PlaylistRequest::JumpTo),
         proptest::collection::vec(0usize..6, 0..6)
-            .prop_map(LoadedRequest::ShuffleRolled),
+            .prop_map(PlaylistRequest::ShuffleRolled),
     ]
 }
 
-fn library() -> impl Strategy<Value = LibraryFact> {
+fn library() -> impl Strategy<Value = LibraryEvent> {
     select(vec![
-        LibraryFact::HistoryLoaded(Vec::new()),
-        LibraryFact::FavoritesLoaded(std::collections::HashSet::new()),
-        LibraryFact::Failed(LibraryFailure::NoDirectory),
+        LibraryEvent::HistoryLoaded(Vec::new()),
+        LibraryEvent::FavoritesLoaded(std::collections::HashSet::new()),
+        LibraryEvent::Error(LibraryError::NoUserDirs),
     ])
 }
 
-fn config() -> impl Strategy<Value = ConfigFact> {
+fn config() -> impl Strategy<Value = ConfigEvent> {
     select(vec![
-        ConfigFact::ThemesLoaded(vec![ThemeName::from_static("dusk")]),
-        ConfigFact::MusicDirReloaded("/tmp".into()),
-        ConfigFact::ThemeReloaded(ThemeName::from_static("dusk")),
+        ConfigEvent::ThemesLoaded(vec![ThemeName::from_static("dusk")]),
+        ConfigEvent::MusicDirReloaded("/tmp".into()),
+        ConfigEvent::ThemeReloaded(ThemeName::from_static("dusk")),
     ])
 }
 
@@ -286,11 +284,11 @@ fn driver() -> impl Strategy<Value = Message> {
         Driver::Macos,
     ]);
     let change = prop_oneof![
-        Just(DriverMessage::Died(DriverFailure::Panicked(
+        Just(DriverMessage::Died(DriverError::Panicked(
             "boom".to_string()
         ))),
         Just(DriverMessage::Stopped),
-        Just(DriverMessage::Congested),
+        Just(DriverMessage::Full),
     ];
     (driver, change).prop_map(|(driver, change)| Message::Driver(driver, change))
 }
@@ -305,9 +303,9 @@ fn event() -> impl Strategy<Value = Message> {
     prop_oneof![
         (
             select(vec![SettingRow::Crossfade, SettingRow::Replaygain]),
-            nudge()
+            direction()
         )
-            .prop_map(|(row, nudge)| Message::Adjust { row, nudge }),
+            .prop_map(|(row, direction)| Message::Adjust { row, direction }),
         select(vec![
             WorkspaceRequest::ShowToast(Toast::info("hello".to_string())),
             WorkspaceRequest::ClearToast,
@@ -327,10 +325,10 @@ fn event() -> impl Strategy<Value = Message> {
     ]
 }
 
-fn system() -> impl Strategy<Value = SystemEvent> {
+fn system() -> impl Strategy<Value = MacosEvent> {
     prop_oneof![
-        (0u8..=100).prop_map(|volume| SystemEvent::Volume(Percent::clamped(volume))),
-        Just(SystemEvent::OutputRouteChanged),
+        (0u8..=100).prop_map(|volume| MacosEvent::Volume(Percent::clamped(volume))),
+        Just(MacosEvent::OutputRouteChanged),
         select(vec![
             Gesture::Play,
             Gesture::Pause,
@@ -341,8 +339,8 @@ fn system() -> impl Strategy<Value = SystemEvent> {
             Gesture::SeekForward,
             Gesture::SeekBack,
         ])
-        .prop_map(SystemEvent::MediaKey),
-        (0u64..200).prop_map(|secs| SystemEvent::MediaKey(Gesture::Scrub(
+        .prop_map(MacosEvent::MediaKey),
+        (0u64..200).prop_map(|secs| MacosEvent::MediaKey(Gesture::Scrub(
             Duration::from_secs(secs)
         ))),
     ]
@@ -353,13 +351,14 @@ pub(crate) fn message() -> impl Strategy<Value = Message> {
         overlay().prop_map(Message::Overlay),
         playback().prop_map(Message::Playback),
         browse().prop_map(Message::Browse),
+        queue().prop_map(Message::Queue),
         audio().prop_map(Message::Audio),
         loaded().prop_map(Message::Loaded),
         library().prop_map(Message::Library),
         config().prop_map(Message::Config),
         driver(),
         event(),
-        system().prop_map(Message::System),
+        system().prop_map(Message::Macos),
     ]
 }
 

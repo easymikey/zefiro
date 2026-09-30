@@ -2,7 +2,7 @@
 source: crates/config/tests/unit/config_file.rs
 expression: parsed
 ---
-ParsedKeymap {
+ConfigReload {
     keymap: {
         "next": KeyOverride {
             chord: "x",

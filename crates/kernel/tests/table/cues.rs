@@ -3,10 +3,11 @@ use std::time::Duration;
 use kernel::{
     BrowseRequest,
     Cmd,
-    ConfigFact,
+    ConfigEvent,
     Cue,
     Effect,
-    LibraryFact,
+    LibraryEvent,
+    MacosEvent,
     Message,
     Model,
     Moment,
@@ -14,11 +15,11 @@ use kernel::{
     OverlayRequest,
     PlaybackChange,
     PlaybackRequest,
-    SystemEvent,
+    QueueRequest,
     Timer,
     Toast,
     WorkspaceRequest,
-    domain::{Bounded, Percent, PlaylistIndex, Revision, ThemeName, VolumeStep},
+    domain::{Bounded, Percent, PlaylistIndex, Revision, ThemeName},
     message::AudioEvent,
     update::update,
 };
@@ -41,11 +42,10 @@ fn found(cmd: &Cmd) -> Vec<Cue> {
             Effect::Animate(cue) => Some(*cue),
             Effect::Audio(_)
             | Effect::Library(_)
-            | Effect::System(_)
+            | Effect::Macos(_)
             | Effect::Config(_)
             | Effect::WindowColors(_)
             | Effect::RollShuffle { .. }
-            | Effect::Setting { .. }
             | Effect::After { .. }
             | Effect::Restart(_)
             | Effect::Quit => None,
@@ -92,7 +92,7 @@ fn toasted() -> Message {
 )]
 #[case::queuing_a_track_raises_a_cue(
     model_with_tracks(3),
-    vec![Message::Browse(BrowseRequest::EnqueueTrack(PlaylistIndex::new(1)))],
+    vec![Message::Queue(QueueRequest::EnqueueTrack(PlaylistIndex::new(1)))],
     Cue::QueueChanged
 )]
 #[case::favoriting_raises_a_cue(
@@ -112,12 +112,12 @@ fn toasted() -> Message {
 )]
 #[case::nudging_the_volume_raises_a_cue(
     model_with_tracks(3),
-    vec![Message::Playback(PlaybackRequest::NudgeVolume(VolumeStep::new(1)))],
+    vec![Message::Playback(PlaybackRequest::NudgeVolume { steps: 1 })],
     Cue::VolumeChanged
 )]
 #[case::the_system_raising_the_volume_raises_a_cue(
     model_with_tracks(3),
-    vec![Message::System(SystemEvent::Volume(Percent::clamped(60)))],
+    vec![Message::Macos(MacosEvent::Volume(Percent::clamped(60)))],
     Cue::VolumeChanged
 )]
 #[case::trashing_a_track_raises_a_cue(
@@ -127,12 +127,12 @@ fn toasted() -> Message {
 )]
 #[case::reloading_the_theme_raises_a_cue(
     model_with_tracks(3),
-    vec![Message::Config(ConfigFact::ThemeReloaded(ThemeName::from_static("noir")))],
+    vec![Message::Config(ConfigEvent::ThemeReloaded(ThemeName::from_static("noir")))],
     Cue::ThemeChanged
 )]
 #[case::the_library_landing_raises_a_cue(
     Model::default(),
-    vec![Message::Library(LibraryFact::Loaded {
+    vec![Message::Library(LibraryEvent::Loaded {
         tracks: Vec::new(),
         revision: Revision::default(),
     })],
@@ -153,7 +153,7 @@ fn a_transition_raises_its_cue(
 #[rstest]
 #[case::the_system_echoing_a_volume_stays_silent(
     model_with_tracks(3),
-    vec![Message::System(SystemEvent::Volume(
+    vec![Message::Macos(MacosEvent::Volume(
         model_with_tracks(3).transport.volume
     ))]
 )]
@@ -219,7 +219,7 @@ fn favoriting_twice_raises_two_cues_where_the_diff_saw_none() {
 #[test]
 fn enqueuing_the_same_track_twice_empties_the_queue_and_raises_a_cue_each_time() {
     let mut model = model_with_tracks(3);
-    let queued = Message::Browse(BrowseRequest::EnqueueTrack(PlaylistIndex::new(1)));
+    let queued = Message::Queue(QueueRequest::EnqueueTrack(PlaylistIndex::new(1)));
     let seen = cues(&mut model, vec![queued.clone(), queued]);
 
     assert!(model.queue.is_empty());

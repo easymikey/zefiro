@@ -5,11 +5,11 @@ use crossterm::event::{self, Event};
 pub struct InputLoop;
 
 impl InputLoop {
-    pub fn run<T>(self, map: fn(Event) -> T, events: &Sender<T>) {
+    pub fn run<T>(self, to_message: fn(Event) -> T, events: &Sender<T>) {
         loop {
             match event::read() {
                 Ok(event) => {
-                    if events.send(map(event)).is_err() {
+                    if events.send(to_message(event)).is_err() {
                         return;
                     }
                 }

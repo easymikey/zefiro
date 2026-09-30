@@ -65,12 +65,12 @@ kernel  ←  config / library / audio / macos  ←  raster / runtime  ←  widge
 
 ## Events and drivers (see `docs/architecture.md`, Events)
 
-36. Three event classes, one path each: only facts reach `update`, as a `Message` through the bounded mailbox; driver internals never leave the driver thread; streams go into latest-value cells, never a queue. No message exists only because time passed.
+36. Three event classes, one path each: only events reach `update`, as a `Message` through the bounded mailbox; driver internals never leave the driver thread; streams go into latest-value cells, never a queue. No message exists only because time passed.
 37. Cells are lock-free: `triple_buffer` for sample streams, atomics for scalars, `arc-swap` for large rare values. No `Mutex`, allocation or blocking call on a real-time path (audio callback, OS top half); a top half only sets a flag or `try_send`s a bounded(1) doorbell.
 38. Kernel timers (`Effect::After`) only for decisions (`Timer::Mark`, sleep, toast expiry, restart backoff); a timer or message whose only purpose is to move pixels is a defect.
 39. Frames only while something moves: every `frame_due` source is a pure function of (layout, anchor, now), never a sliding deadline; spectrum frames only while it is on screen and playing or decaying; when nothing moves the loop blocks with no deadline.
-40. Every driver has a pure `step(state, input) -> (state, facts)` tested as a table, plus a thin IO loop (select, step, send) with no decision in it.
-41. A driver receives `Outbox<ItsFact>` and sends only its own fact enum; no driver builds `kernel::Message` or holds a raw mailbox sender; the shell receives only its cells.
+40. Every driver has a pure `step(state, input) -> (state, events)` tested as a table, plus a thin IO loop (select, step, send) with no decision in it.
+41. A driver receives `Outbox<ItsFact>` and sends only its own event enum; no driver builds `kernel::Message` or holds a raw mailbox sender; the shell receives only its cells.
 42. Traits only at the hardware edge: one narrow trait per kind of IO, methods take and return data, static dispatch through generics, never `dyn`; fakes plug in over the same real channels.
-43. One `runtime::registry` row per driver declares its thread, placement, inbox capacity, fact type, cells and supervision strategy (`Restart`/`Backoff`/`Degrade`/`Fatal`); driver wiring outside its row, or a supervision decision outside the kernel, is a defect.
+43. One `runtime::registry` row per driver declares its thread, placement, inbox capacity, event type, cells and supervision strategy (`Restart`/`Backoff`/`Degrade`/`Fatal`); driver wiring outside its row, or a supervision decision outside the kernel, is a defect.
 44. Congestion: every channel is bounded; the loop never blocks on a driver (coalesce idempotent commands, `try_send`, `Full` → `Dropped` trace and the row's congestion flag); a driver raises its flag before it blocks on a full mailbox; one episode yields exactly one `DriverMessage::Congested` and one toast.

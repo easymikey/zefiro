@@ -3,16 +3,16 @@ use std::time::Duration;
 use crate::domain::{AbLoop, Bounded, Percent, SleepTimer, Speed};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutputFault {
+pub enum StreamError {
     DeviceGone,
     Backend,
 }
 
-impl std::fmt::Display for OutputFault {
+impl std::fmt::Display for StreamError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let label = match self {
-            OutputFault::DeviceGone => "the device is gone",
-            OutputFault::Backend => "an audio backend error",
+            StreamError::DeviceGone => "the device is gone",
+            StreamError::Backend => "an audio backend error",
         };
         formatter.write_str(label)
     }
@@ -23,9 +23,11 @@ pub enum Output {
     #[default]
     Ready,
     Lost {
-        fault: OutputFault,
+        kind: StreamError,
     },
 }
+
+pub const PRELOAD_LEAD: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct Transport {
@@ -33,7 +35,6 @@ pub struct Transport {
     pub speed: Speed,
     pub sleep: Option<SleepTimer>,
     pub ab: Option<AbLoop>,
-    pub preload_lead: Duration,
     pub output: Output,
 }
 
@@ -44,7 +45,6 @@ impl Default for Transport {
             speed: Speed::default(),
             sleep: None,
             ab: None,
-            preload_lead: Duration::from_secs(10),
             output: Output::Ready,
         }
     }
@@ -64,78 +64,5 @@ impl Default for SeekSteps {
             medium: 10,
             large: 30,
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SeekStep(i64);
-
-impl SeekStep {
-    #[must_use]
-    pub const fn new(seconds: i64) -> Self {
-        Self(seconds)
-    }
-
-    #[must_use]
-    pub const fn get(self) -> i64 {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VolumeStep(i8);
-
-impl VolumeStep {
-    #[must_use]
-    pub const fn new(percent: i8) -> Self {
-        Self(percent)
-    }
-
-    #[must_use]
-    pub const fn get(self) -> i8 {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpeedStep(i8);
-
-impl SpeedStep {
-    #[must_use]
-    pub const fn new(notches: i8) -> Self {
-        Self(notches)
-    }
-
-    #[must_use]
-    pub const fn get(self) -> i8 {
-        self.0
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use rstest::rstest;
-
-    use crate::domain::transport::{SeekStep, SpeedStep, VolumeStep};
-
-    #[rstest]
-    #[case::negative(-30)]
-    #[case::positive(30)]
-    fn steps_convert(#[case] value: i64) {
-        assert_eq!(SeekStep::new(value).get(), value);
-    }
-
-    #[rstest]
-    #[case::negative(-5)]
-    #[case::positive(5)]
-    fn volume_step_converts(#[case] value: i8) {
-        assert_eq!(VolumeStep::new(value).get(), value);
-    }
-
-    #[rstest]
-    #[case::negative(-1)]
-    #[case::positive(1)]
-    fn speed_step_converts(#[case] value: i8) {
-        assert_eq!(SpeedStep::new(value).get(), value);
     }
 }

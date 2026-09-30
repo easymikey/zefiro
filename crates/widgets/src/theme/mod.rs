@@ -3,16 +3,16 @@ use config::ThemeFile;
 mod active_theme;
 mod bars;
 mod contrast;
-mod hex;
 mod palette;
+mod rgb;
 mod vinyl_colors;
 
 pub use active_theme::ActiveTheme;
 pub(crate) use bars::FillColors;
 pub use bars::bar_colors;
-pub(crate) use hex::shade;
-pub use hex::{ColorDepth, color_at_depth, detect, lerp_rgb};
 pub use palette::{Colors, Role};
+pub(crate) use rgb::shade;
+pub use rgb::{ColorDepth, color_at_depth, lerp_rgb};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Theme {

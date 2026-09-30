@@ -1,286 +1,37 @@
-use std::{
-    fmt,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::sync::Arc;
 
-use config::Animations;
-use image::{DynamicImage, RgbaImage, imageops::FilterType};
+use image::{RgbaImage, imageops::FilterType};
 use ratatui::layout::Rect;
-use ratatui_image::{FontSize, picker::Picker, protocol::StatefulProtocol};
-use widgets::FrameLayout;
+use ratatui_image::FontSize;
 
 use crate::pixels::cover::{
-    CoverArtOwner,
-    CoverFade,
-    CoverMotion,
-    CoverWash,
     DecodedCover,
-    crossfade::{CoverCrossfade, CrossfadeStage},
-    protocol::cover_protocol,
+    lifecycle::{Built, Identity},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CoverPlan {
-    Reuse,
-    RebuildSamePath,
-    RebuildNewPath,
+#[must_use]
+pub(crate) fn plain_pixmap(decoded: Option<&DecodedCover>) -> Option<Built> {
+    let decoded = decoded?;
+    Some(Built {
+        pixmap: Arc::clone(&decoded.image),
+        identity: Identity::Plain(decoded.path.clone()),
+    })
 }
 
 #[must_use]
-pub(crate) fn plan_cover(
-    decoded_path: &Path,
-    painted: Option<(&Path, Rect)>,
-    rect: Rect,
-) -> CoverPlan {
-    match painted {
-        Some((path, painted_rect)) if path == decoded_path && painted_rect == rect => {
-            CoverPlan::Reuse
-        }
-        Some((path, _)) if path == decoded_path => CoverPlan::RebuildSamePath,
-        Some(_) | None => CoverPlan::RebuildNewPath,
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct PlainSources<'a> {
-    pub(crate) clock: Duration,
-    pub(crate) animations: Animations,
-    pub(crate) layout: FrameLayout,
-    pub(crate) decoded: Option<&'a DecodedCover>,
-    pub(crate) fade: CoverFade,
-    pub(crate) wash: CoverWash,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum Transparency {
-    Present,
-    #[default]
-    Absent,
-}
-
-#[must_use]
-fn transparency(image: &RgbaImage) -> Transparency {
-    if image.pixels().any(|pixel| pixel.0[3] < 255) {
-        Transparency::Present
-    } else {
-        Transparency::Absent
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum WashHold {
-    Holding,
-    #[default]
-    Released,
-}
-
-struct PaintedCover {
-    protocol: StatefulProtocol,
-    path: PathBuf,
-    rect: Rect,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct InstallPlain<'a> {
-    rect: Rect,
-    now: Duration,
-    animations: Animations,
-    decoded: Option<&'a DecodedCover>,
-    fade: CoverFade,
-}
-
-struct PaintTarget {
-    path: PathBuf,
-    rect: Rect,
-    now: Duration,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct AdvanceCrossfade {
-    now: Duration,
-    wash: CoverWash,
-}
-
-#[derive(Default)]
-pub(crate) struct PlainCover {
-    painted: Option<PaintedCover>,
-    pixmap: Option<Arc<RgbaImage>>,
-    crossfade: CoverCrossfade,
-    transparency: Transparency,
-    wash_hold: WashHold,
-}
-
-impl fmt::Debug for PlainCover {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("PlainCover")
-            .field(
-                "painted",
-                &self
-                    .painted
-                    .as_ref()
-                    .map(|painted| (&painted.path, painted.rect)),
-            )
-            .finish()
-    }
-}
-
-impl PlainCover {
-    pub(crate) fn discard_protocol(&mut self) {
-        self.painted = None;
-        self.pixmap = None;
-        self.crossfade = CoverCrossfade::default();
-        self.transparency = Transparency::Absent;
-        self.wash_hold = WashHold::Released;
-    }
-
-    pub(crate) fn refresh(
-        &mut self,
-        picker: &Picker,
-        sources: PlainSources<'_>,
-    ) -> CoverArtOwner {
-        let PlainSources {
-            clock,
-            animations,
-            layout,
-            decoded,
-            fade,
-            wash,
-        } = sources;
-        let Some(rect) = layout.cover else {
-            self.discard_protocol();
-            return CoverArtOwner::Missing;
-        };
-        let Some(decoded_path) = decoded.map(|decoded| decoded.path.as_path()) else {
-            return CoverArtOwner::Missing;
-        };
-        let painted = self
-            .painted
-            .as_ref()
-            .map(|painted| (painted.path.as_path(), painted.rect));
-        match plan_cover(decoded_path, painted, rect) {
-            CoverPlan::Reuse => {
-                self.advance_crossfade(picker, AdvanceCrossfade { now: clock, wash });
-            }
-            CoverPlan::RebuildSamePath => {
-                self.install(
-                    picker,
-                    InstallPlain {
-                        rect,
-                        now: clock,
-                        animations,
-                        decoded,
-                        fade: CoverFade::Withheld,
-                    },
-                );
-            }
-            CoverPlan::RebuildNewPath => {
-                self.install(
-                    picker,
-                    InstallPlain {
-                        rect,
-                        now: clock,
-                        animations,
-                        decoded,
-                        fade,
-                    },
-                );
-            }
-        }
-        CoverArtOwner::Image
-    }
-
-    pub(crate) fn protocol_mut(&mut self) -> Option<&mut StatefulProtocol> {
-        self.painted.as_mut().map(|painted| &mut painted.protocol)
-    }
-
-    pub(crate) fn motion(&self, now: Duration) -> CoverMotion {
-        match (self.crossfade.stage(now), self.wash_hold) {
-            (CrossfadeStage::Running | CrossfadeStage::Over, _)
-            | (CrossfadeStage::Idle, WashHold::Holding) => CoverMotion::Crossfading,
-            (CrossfadeStage::Idle, WashHold::Released) => CoverMotion::Still,
-        }
-    }
-
-    fn install(&mut self, picker: &Picker, input: InstallPlain<'_>) {
-        let Some(decoded) = input.decoded else {
-            return;
-        };
-        let outgoing = self.pixmap.take();
-        if input.animations == Animations::On
-            && input.fade == CoverFade::Allowed
-            && let Some(outgoing) = outgoing
-        {
-            self.crossfade.begin(outgoing, input.now);
-        }
-        self.transparency = transparency(&decoded.image);
-        self.pixmap = Some(Arc::clone(&decoded.image));
-        self.repaint(
-            picker,
-            PaintTarget {
-                path: decoded.path.clone(),
-                rect: input.rect,
-                now: input.now,
-            },
-        );
-    }
-
-    fn advance_crossfade(&mut self, picker: &Picker, input: AdvanceCrossfade) {
-        let AdvanceCrossfade { now, wash } = input;
-        self.wash_hold = match (self.transparency, wash) {
-            (Transparency::Present, CoverWash::Running { .. }) => WashHold::Holding,
-            (Transparency::Present, CoverWash::Idle) | (Transparency::Absent, _) => {
-                WashHold::Released
-            }
-        };
-        match (self.crossfade.stage(now), self.wash_hold) {
-            (CrossfadeStage::Idle, WashHold::Released) => {}
-            (CrossfadeStage::Idle, WashHold::Holding)
-            | (CrossfadeStage::Running, _) => self.repaint_current(picker, now),
-            (CrossfadeStage::Over, _) => {
-                self.crossfade.settle(now);
-                self.repaint_current(picker, now);
-            }
-        }
-    }
-
-    fn repaint_current(&mut self, picker: &Picker, now: Duration) {
-        let Some(painted) = self.painted.as_ref() else {
-            return;
-        };
-        let target = PaintTarget {
-            path: painted.path.clone(),
-            rect: painted.rect,
-            now,
-        };
-        self.repaint(picker, target);
-    }
-
-    fn repaint(&mut self, picker: &Picker, target: PaintTarget) {
-        let Some(pixmap) = self.pixmap.as_ref() else {
-            return;
-        };
-        let image = self
-            .crossfade
-            .crossfade_at(pixmap, target.now)
-            .unwrap_or_else(|| (**pixmap).clone());
-        let image = fit_to_rect(image, target.rect, picker.font_size());
-        let protocol = cover_protocol(picker, DynamicImage::ImageRgba8(image));
-        self.painted = Some(PaintedCover {
-            protocol,
-            path: target.path,
-            rect: target.rect,
-        });
-    }
+pub(crate) fn translucent(image: &RgbaImage) -> bool {
+    image.pixels().any(|pixel| pixel.0[3] < 255)
 }
 
 /// Resizes the plain cover's pixmap to exactly fill `rect` in pixels, so the
 /// placed image never depends on the resize protocol's own fit heuristics
 /// for a source resolution that may differ from the decoded cover's size.
 #[must_use]
-fn fit_to_rect(image: RgbaImage, rect: Rect, font_size: FontSize) -> RgbaImage {
+pub(crate) fn fit_to_rect(
+    image: RgbaImage,
+    rect: Rect,
+    font_size: FontSize,
+) -> RgbaImage {
     let width = u32::from(rect.width)
         .saturating_mul(u32::from(font_size.width))
         .max(1);
@@ -295,27 +46,12 @@ fn fit_to_rect(image: RgbaImage, rect: Rect, font_size: FontSize) -> RgbaImage {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc, time::Duration};
-
-    use config::Animations;
     use image::{Rgba, RgbaImage};
     use ratatui::layout::Rect;
-    use ratatui_image::{FontSize, picker::Picker};
+    use ratatui_image::FontSize;
     use rstest::rstest;
-    use widgets::{Breakpoint, FrameLayout};
 
-    use crate::pixels::cover::{
-        CoverFade,
-        CoverWash,
-        DecodedCover,
-        pixel::{CoverPlan, PlainCover, PlainSources, fit_to_rect, plan_cover},
-    };
-
-    struct PlanCase {
-        decoded_path: PathBuf,
-        painted: Option<(PathBuf, Rect)>,
-        rect: Rect,
-    }
+    use crate::pixels::cover::pixel::fit_to_rect;
 
     fn source_pixmap() -> RgbaImage {
         RgbaImage::from_pixel(4, 4, Rgba([200, 100, 50, 255]))
@@ -360,102 +96,5 @@ mod tests {
             "a plain cover's cell rect built with cover_aspect 1.0 must render \
              as a square in pixels once fit to the target"
         );
-    }
-
-    fn rect() -> Rect {
-        Rect::new(0, 0, 10, 10)
-    }
-
-    fn other_rect() -> Rect {
-        Rect::new(0, 0, 12, 10)
-    }
-
-    fn layout_with_cover(cover: Rect) -> FrameLayout {
-        FrameLayout {
-            screen: Rect::default(),
-            breakpoint: Breakpoint::Full,
-            content: Rect::default(),
-            header: Rect::default(),
-            card: None,
-            cover: Some(cover),
-            playlist_pane: Rect::default(),
-            playlist: None,
-            key_hints: None,
-            search_bounds: Rect::default(),
-            overlay: None,
-            toast: None,
-        }
-    }
-
-    fn sources<'a>(
-        decoded: Option<&'a DecodedCover>,
-        fade: CoverFade,
-    ) -> PlainSources<'a> {
-        PlainSources {
-            clock: Duration::ZERO,
-            animations: Animations::On,
-            layout: layout_with_cover(rect()),
-            decoded,
-            fade,
-            wash: CoverWash::Idle,
-        }
-    }
-
-    #[test]
-    fn a_crossfade_keeps_the_incoming_image_shared() {
-        let picker = Picker::halfblocks();
-        let mut plain = PlainCover::default();
-        let first = DecodedCover {
-            path: PathBuf::from("a.jpg"),
-            image: Arc::new(source_pixmap()),
-        };
-        plain.refresh(&picker, sources(Some(&first), CoverFade::Allowed));
-        let second = DecodedCover {
-            path: PathBuf::from("b.jpg"),
-            image: Arc::new(source_pixmap()),
-        };
-        plain.refresh(&picker, sources(Some(&second), CoverFade::Allowed));
-        let incoming = plain.pixmap.as_ref().expect("a pixmap after install");
-        assert!(Arc::ptr_eq(incoming, &second.image));
-    }
-
-    #[rstest]
-    #[case(
-        PlanCase { decoded_path: PathBuf::from("a.jpg"), painted: None, rect: rect() },
-        CoverPlan::RebuildNewPath
-    )]
-    #[case(
-        PlanCase {
-            decoded_path: PathBuf::from("a.jpg"),
-            painted: Some((PathBuf::from("a.jpg"), rect())),
-            rect: rect(),
-        },
-        CoverPlan::Reuse
-    )]
-    #[case(
-        PlanCase {
-            decoded_path: PathBuf::from("b.jpg"),
-            painted: Some((PathBuf::from("a.jpg"), rect())),
-            rect: rect(),
-        },
-        CoverPlan::RebuildNewPath
-    )]
-    #[case(
-        PlanCase {
-            decoded_path: PathBuf::from("a.jpg"),
-            painted: Some((PathBuf::from("a.jpg"), rect())),
-            rect: other_rect(),
-        },
-        CoverPlan::RebuildSamePath
-    )]
-    fn plan_cover_decides_reuse_or_rebuild(
-        #[case] case: PlanCase,
-        #[case] expected: CoverPlan,
-    ) {
-        let painted = case
-            .painted
-            .as_ref()
-            .map(|(path, cell)| (path.as_path(), *cell));
-        assert_eq!(plan_cover(&case.decoded_path, painted, case.rect), expected);
     }
 }

@@ -4,20 +4,22 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::primitive::{
-    chip,
-    glyphs::{PlaylistGlyphs, TruncateGlyphs},
-    marker::{
-        Favorite,
-        MarkerColumns,
-        Playing,
-        QueuePosition,
-        column_padding,
-        favorite_marker,
-        playing_marker,
+use crate::{
+    Playing,
+    primitive::{
+        chip,
+        glyphs::{PlaylistGlyphs, TruncateGlyphs},
+        marker::{
+            Favorite,
+            MarkerColumns,
+            QueuePosition,
+            column_padding,
+            favorite_marker,
+            playing_marker,
+        },
+        span::{line, text},
+        text::{blanks, truncate_to_width},
     },
-    span::{row, text},
-    text::{blanks, truncate_to_width},
 };
 
 const CHIP_GAP: usize = 1;
@@ -49,7 +51,10 @@ pub(crate) struct RowColors {
 }
 
 #[must_use]
-pub(crate) fn build(view: &TrackRowView<'_>, colors: RowColors) -> Line<'static> {
+pub(crate) fn track_row_line(
+    view: &TrackRowView<'_>,
+    colors: RowColors,
+) -> Line<'static> {
     let favorite_width = usize::from(view.columns.favorite);
     let playing_width = usize::from(view.columns.playing);
     let fav = favorite_marker(view.favorite, view.glyphs);
@@ -78,7 +83,7 @@ pub(crate) fn build(view: &TrackRowView<'_>, colors: RowColors) -> Line<'static>
         Selected::Yes => Style::default().fg(colors.selection_text),
         Selected::No => Style::default().fg(colors.text),
     };
-    row([
+    line([
         text(fav).fg(colors.favorite),
         text(blanks(column_padding(fav, favorite_width))).style(style),
         text(playing).style(style),
@@ -94,10 +99,13 @@ mod tests {
     use ratatui::style::Color;
     use unicode_width::UnicodeWidthStr;
 
-    use crate::primitive::{
-        glyphs::PlaylistGlyphs,
-        marker::{Favorite, MarkerColumns, Playing, QueuePosition},
-        track_row::{RowColors, Selected, TrackRowView, build},
+    use crate::{
+        Playing,
+        primitive::{
+            glyphs::PlaylistGlyphs,
+            marker::{Favorite, MarkerColumns, QueuePosition},
+            track_row::{RowColors, Selected, TrackRowView, track_row_line},
+        },
     };
 
     fn colors() -> RowColors {
@@ -123,7 +131,7 @@ mod tests {
     }
 
     fn rendered(view: &TrackRowView<'_>) -> String {
-        build(view, colors())
+        track_row_line(view, colors())
             .spans
             .iter()
             .map(|span| span.content.as_ref())

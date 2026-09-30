@@ -1,20 +1,17 @@
 use std::io::Write;
 
-use kernel::{HistoryEntry, LibrarySubject, Track};
+use kernel::{HistoryEntry, LibrarySubject, Track, UnixSeconds};
 
-use crate::{error::LibraryError, paths::LibraryPaths, record::HistoryRecord};
+use crate::{dirs::LibraryDirs, error::Error, record::HistoryRecord};
 
 pub(crate) fn append(
-    paths: &LibraryPaths,
+    dirs: &LibraryDirs,
     track: &Track,
-    at: i64,
-) -> Result<(), LibraryError> {
-    let path = paths.data.join("history.jsonl");
-    crate::files::create_parent(&path).map_err(|source| LibraryError::Write {
-        subject: LibrarySubject::History,
-        path: path.clone(),
-        source,
-    })?;
+    at: UnixSeconds,
+) -> Result<(), Error> {
+    let path = dirs.data_dir.join("history.jsonl");
+    crate::files::create_parent_dir(&path)
+        .map_err(Error::write(LibrarySubject::History, &path))?;
     let entry = HistoryEntry {
         path: track.path().to_path_buf(),
         title: track.song_title(),
@@ -22,45 +19,27 @@ pub(crate) fn append(
         at,
     };
     let record = HistoryRecord::from(entry);
-    let json = serde_json::to_string(&record).map_err(|source| LibraryError::Json {
-        subject: LibrarySubject::History,
-        path: path.clone(),
-        source,
-    })?;
+    let json = serde_json::to_string(&record)
+        .map_err(Error::json(LibrarySubject::History, &path))?;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(|source| LibraryError::Write {
-            subject: LibrarySubject::History,
-            path: path.clone(),
-            source,
-        })?;
-    writeln!(file, "{json}").map_err(|source| LibraryError::Write {
-        subject: LibrarySubject::History,
-        path,
-        source,
-    })
+        .map_err(Error::write(LibrarySubject::History, &path))?;
+    writeln!(file, "{json}").map_err(Error::write(LibrarySubject::History, &path))
 }
 
-pub(crate) struct HistoryRead {
+pub(crate) struct LoadedHistory {
     pub entries: Vec<HistoryEntry>,
     pub skipped_lines: usize,
 }
 
-pub(crate) fn read(
-    paths: &LibraryPaths,
-    limit: usize,
-) -> Result<HistoryRead, LibraryError> {
-    let path = paths.data.join("history.jsonl");
+pub(crate) fn load(dirs: &LibraryDirs, limit: usize) -> Result<LoadedHistory, Error> {
+    let path = dirs.data_dir.join("history.jsonl");
     let read = crate::files::read_if_present(&path);
-    let Some(contents) = read.map_err(|source| LibraryError::Read {
-        subject: LibrarySubject::History,
-        path: path.clone(),
-        source,
-    })?
+    let Some(contents) = read.map_err(Error::read(LibrarySubject::History, &path))?
     else {
-        return Ok(HistoryRead {
+        return Ok(LoadedHistory {
             entries: Vec::new(),
             skipped_lines: 0,
         });
@@ -68,7 +47,7 @@ pub(crate) fn read(
     Ok(parse_history(&contents, limit))
 }
 
-fn parse_history(contents: &str, limit: usize) -> HistoryRead {
+fn parse_history(contents: &str, limit: usize) -> LoadedHistory {
     let mut entries = Vec::new();
     let mut skipped_lines = 0;
     for line in contents.lines().rev() {
@@ -80,7 +59,7 @@ fn parse_history(contents: &str, limit: usize) -> HistoryRead {
             Err(_) => skipped_lines += 1,
         }
     }
-    HistoryRead {
+    LoadedHistory {
         entries,
         skipped_lines,
     }
@@ -88,67 +67,64 @@ fn parse_history(contents: &str, limit: usize) -> HistoryRead {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::Duration};
+    use std::path::PathBuf;
 
-    use kernel::{AudioFormat, Tags, Track};
+    use kernel::{Tags, Track, UnixSeconds};
     use rstest::rstest;
 
     use crate::{
+        dirs::LibraryDirs,
         history::{self, parse_history},
-        paths,
         record::HistoryRecord,
+        test_support,
     };
 
     const HISTORY_LOG: &str = include_str!("../tests/fixtures/history.jsonl");
-    const FIXTURE_LENGTH: Duration = Duration::from_secs(180);
 
     fn track(path: &str, title: &str, artist: Option<&str>) -> Track {
-        let tags = Tags {
-            title: Some(title.to_string()),
-            artist: artist.map(str::to_string),
-            ..Tags::default()
-        };
-        Track::builder()
-            .path(path)
-            .duration(FIXTURE_LENGTH)
-            .tags(tags)
-            .audio_format(AudioFormat::default())
-            .build()
+        test_support::track(
+            path,
+            Tags {
+                title: Some(title.to_string()),
+                artist: artist.map(str::to_string),
+                ..Tags::default()
+            },
+        )
     }
 
     #[test]
     fn history_append_writes_one_json_line() {
         let directory = tempfile::tempdir().unwrap();
-        let library_paths = paths::stub(directory.path());
+        let dirs = LibraryDirs::under(directory.path());
 
         let sample_track = track("/music/song.flac", "Song", Some("Artist"));
-        history::append(&library_paths, &sample_track, 1_700_000_000).unwrap();
+        history::append(&dirs, &sample_track, UnixSeconds::new(1_700_000_000)).unwrap();
 
         let contents =
-            std::fs::read_to_string(library_paths.data.join("history.jsonl")).unwrap();
+            std::fs::read_to_string(dirs.data_dir.join("history.jsonl")).unwrap();
         insta::assert_snapshot!(contents);
     }
 
     #[test]
     fn read_round_trips_appended_entries_newest_first() {
         let directory = tempfile::tempdir().unwrap();
-        let library_paths = paths::stub(directory.path());
+        let dirs = LibraryDirs::under(directory.path());
 
         let first = track("/music/first.flac", "First", Some("Artist A"));
         let second = track("/music/second.flac", "Second", None);
-        history::append(&library_paths, &first, 1_000).unwrap();
-        history::append(&library_paths, &second, 2_000).unwrap();
+        history::append(&dirs, &first, UnixSeconds::new(1_000)).unwrap();
+        history::append(&dirs, &second, UnixSeconds::new(2_000)).unwrap();
 
-        let read = history::read(&library_paths, 10).unwrap();
+        let read = history::load(&dirs, 10).unwrap();
         insta::assert_debug_snapshot!(read.entries);
     }
 
     #[test]
     fn read_returns_empty_vec_when_file_is_missing() {
         let directory = tempfile::tempdir().unwrap();
-        let library_paths = paths::stub(directory.path());
+        let dirs = LibraryDirs::under(directory.path());
 
-        let read = history::read(&library_paths, 10).unwrap();
+        let read = history::load(&dirs, 10).unwrap();
 
         assert!(read.entries.is_empty());
         assert_eq!(read.skipped_lines, 0);
@@ -186,15 +162,12 @@ mod tests {
     #[case::two(2, &["/music/third.flac", "/music/also-good.flac"])]
     #[case::more_than_there_are(9, &["/music/third.flac", "/music/also-good.flac", "/music/good.flac"])]
     fn parse_history_caps_at_limit(#[case] limit: usize, #[case] expected: &[&str]) {
-        let paths: Vec<PathBuf> = parse_history(HISTORY_LOG, limit)
+        let dirs: Vec<PathBuf> = parse_history(HISTORY_LOG, limit)
             .entries
             .into_iter()
             .map(|entry| entry.path)
             .collect();
-        assert_eq!(
-            paths,
-            expected.iter().map(PathBuf::from).collect::<Vec<_>>()
-        );
+        assert_eq!(dirs, expected.iter().map(PathBuf::from).collect::<Vec<_>>());
     }
 
     #[rstest]

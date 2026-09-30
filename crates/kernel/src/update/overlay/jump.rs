@@ -1,6 +1,6 @@
 use crate::{
     domain::{JumpDigits, JumpInputLimits},
-    message::JumpRequest,
+    message::TextRequest,
     update::{
         machine::{Machine, Rejected},
         overlay::OverlayEffect,
@@ -8,44 +8,44 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JumpRejection {
+pub enum JumpError {
     NotTimecodeChar,
     Full,
 }
 
 impl Machine for JumpDigits {
-    type Message = JumpRequest;
-    type Rejection = JumpRejection;
+    type Message = TextRequest;
+    type Error = JumpError;
     type Effect = OverlayEffect;
 
     fn transition(
         mut self,
-        message: JumpRequest,
+        message: TextRequest,
     ) -> Result<(Self, OverlayEffect), Rejected<Self>> {
         match message {
-            JumpRequest::Char(character)
+            TextRequest::Char(character)
                 if !(character.is_ascii_digit()
                     || character == JumpDigits::SEPARATOR) =>
             {
                 Err(Rejected {
                     state: self,
-                    reason: JumpRejection::NotTimecodeChar,
+                    reason: JumpError::NotTimecodeChar,
                 })
             }
-            JumpRequest::Char(_)
+            TextRequest::Char(_)
                 if self.input.len() >= JumpInputLimits::default().max_len =>
             {
                 Err(Rejected {
                     state: self,
-                    reason: JumpRejection::Full,
+                    reason: JumpError::Full,
                 })
             }
-            JumpRequest::Char(character) => {
+            TextRequest::Char(character) => {
                 self.input.push(character);
                 self.error = None;
                 Ok((self, OverlayEffect::default()))
             }
-            JumpRequest::Backspace => {
+            TextRequest::Backspace => {
                 self.input.pop();
                 self.error = None;
                 Ok((self, OverlayEffect::default()))

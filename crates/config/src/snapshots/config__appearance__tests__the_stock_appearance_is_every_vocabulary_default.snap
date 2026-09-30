@@ -7,7 +7,7 @@ Appearance {
     cover_brackets: Hidden,
     format_chips: Hidden,
     speed_chip: Always,
-    progress_remaining: Elapsed,
+    progress_time: Elapsed,
     key_hints: Shown,
     animations: On,
     layout_mode: Auto,

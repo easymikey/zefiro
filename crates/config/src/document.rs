@@ -1,25 +1,25 @@
 use toml_edit::{DocumentMut, Item, Table};
 
-use crate::error::ConfigError;
+use crate::error::Error;
 
-pub(crate) type Field = (&'static str, &'static str, Option<Item>);
+pub(crate) type TomlEdit = (&'static str, &'static str, Option<Item>);
 
 pub(crate) fn ensure_table<'doc>(
     doc: &'doc mut DocumentMut,
     key: &str,
-) -> Result<&'doc mut Table, ConfigError> {
+) -> Result<&'doc mut Table, Error> {
     doc.entry(key)
         .or_insert_with(|| Item::Table(Table::new()))
         .as_table_mut()
-        .ok_or_else(|| ConfigError::NotATable {
+        .ok_or_else(|| Error::NotATable {
             key: key.to_string(),
         })
 }
 
-pub(crate) fn write_fields<const N: usize>(
+pub(crate) fn write_edits<const N: usize>(
     doc: &mut DocumentMut,
-    fields: [Field; N],
-) -> Result<(), ConfigError> {
+    fields: [TomlEdit; N],
+) -> Result<(), Error> {
     fields
         .into_iter()
         .filter_map(|(table, key, item)| item.map(|item| (table, key, item)))

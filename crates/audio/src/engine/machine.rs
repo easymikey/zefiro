@@ -1,5 +1,5 @@
 use kernel::{
-    EngineRejection,
+    EngineError,
     update::{Machine, Rejected},
 };
 
@@ -10,7 +10,7 @@ use crate::engine::{
 
 impl Machine for Engine {
     type Message = EngineMessage;
-    type Rejection = EngineRejection;
+    type Error = EngineError;
     type Effect = EngineEffect;
 
     fn transition(
@@ -29,8 +29,8 @@ impl Machine for Engine {
             (Engine::Live(live), EngineMessage::Preloaded(outcome)) => {
                 Transition::from(live.preloaded(outcome))
             }
-            (Engine::Live(live), EngineMessage::Failed(fault)) => {
-                Transition::from(live.failed(fault))
+            (Engine::Live(live), EngineMessage::Failed(error)) => {
+                Transition::from(live.failed(error))
             }
             (Engine::Live(live), EngineMessage::Retiring { from }) => {
                 Transition::from(live.retiring(from))
@@ -47,7 +47,7 @@ impl Machine for Engine {
             }
         };
         match moved {
-            Transition::Next(engine, io) => Ok((engine, io)),
+            Transition::Next(engine, effect) => Ok((engine, effect)),
             Transition::Rejected(rejected) => Err(rejected),
         }
     }
@@ -99,7 +99,7 @@ mod tests {
         Model {
             playlist: Playlist {
                 tracks: (0..3).map(track).collect(),
-                at: Cursor::new(3),
+                cursor: Cursor::new(3),
                 ..Playlist::default()
             },
             ..Model::default()
@@ -117,12 +117,11 @@ mod tests {
         match effect {
             Effect::Audio(audio) => Some(audio.clone()),
             Effect::Library(_)
-            | Effect::System(_)
+            | Effect::Macos(_)
             | Effect::Config(_)
             | Effect::Animate(_)
             | Effect::RollShuffle { .. }
             | Effect::WindowColors(_)
-            | Effect::Setting { .. }
             | Effect::After { .. }
             | Effect::Restart(_)
             | Effect::Quit => None,
@@ -143,9 +142,9 @@ mod tests {
                 + usize::from(self.outgoing.is_some())
         }
 
-        fn apply(&mut self, io: &EngineEffect) {
-            match io {
-                EngineEffect::Many(steps) => {
+        fn apply(&mut self, effect: &EngineEffect) {
+            match effect {
+                EngineEffect::Batch(steps) => {
                     for step in steps {
                         self.apply(step);
                     }
@@ -215,9 +214,9 @@ mod tests {
         }
 
         fn engine_step(&mut self, message: EngineMessage) {
-            let io = self.engine.update(message).unwrap();
-            self.sinks.apply(&io);
-            self.log.push(io);
+            let effect = self.engine.update(message).unwrap();
+            self.sinks.apply(&effect);
+            self.log.push(effect);
         }
 
         fn press(&mut self, message: Message) {

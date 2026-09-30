@@ -21,7 +21,7 @@ use crate::{
             OverlayAreas,
             OverlayContainer,
             column_width,
-            lead_cells,
+            leading_cells,
         },
         settings::{
             rows::{SettingsColumns, SettingsRowView, settings_row},
@@ -73,7 +73,7 @@ impl<'a> SettingsOverlay<'a> {
     }
 
     fn rows(&self) -> Vec<SettingRow> {
-        SettingRow::all(self.values.custom_rows)
+        SettingRow::all(self.values.custom_settings)
     }
 
     fn modal_title(&self) -> String {
@@ -106,9 +106,9 @@ impl<'a> SettingsOverlay<'a> {
         let colors = ModalRowColors::from_theme(&self.theme);
         let rows = self.rows();
         let label_width = label_column_width(&rows);
-        let columns = SettingsColumns::resolve(
+        let columns = SettingsColumns::for_width(
             column_width(areas),
-            lead_cells(areas),
+            leading_cells(areas),
             label_width,
         );
         let offset =
@@ -177,7 +177,7 @@ mod tests {
     use crate::{
         overlay::{modal::OverlayAreas, settings::SettingsOverlay},
         scene::fixtures::{
-            custom_rows,
+            custom_settings,
             find_text,
             noir,
             painted,
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn settings_overlay_lists_every_row_with_its_label_and_value() {
         let theme = noir();
-        let custom = custom_rows();
+        let custom = custom_settings();
         let overlay = SettingsOverlay {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             values: settings_values(&custom),
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn settings_overlay_highlights_the_selected_row() {
         let theme = noir();
-        let custom = custom_rows();
+        let custom = custom_settings();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let overlay = SettingsOverlay {
             theme: active,
@@ -219,7 +219,7 @@ mod tests {
             avoid: &[],
         };
         let buffer = painted_buffer(&overlay, 80, 28);
-        let selection_bg = active.selection_bg();
+        let selection_bg = active.selection_background();
         let (theme_x, theme_y) = find_text(&buffer, "Theme").unwrap();
         let (crossfade_x, crossfade_y) = find_text(&buffer, "Crossfade").unwrap();
         assert_eq!(
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn settings_overlay_shows_the_current_theme_and_a_custom_appearance_row() {
         let theme = noir();
-        let custom = custom_rows();
+        let custom = custom_settings();
         let overlay = SettingsOverlay {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             values: settings_values(&custom),
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn settings_title_keeps_the_path_tail_visible_at_a_narrow_width() {
         let theme = noir();
-        let custom = custom_rows();
+        let custom = custom_settings();
         let mut with_long_path = settings_values(&custom);
         with_long_path.music_dir =
             "/Users/testuser/Music/Library/Deeply/Nested/Folder/apple-music";
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn the_modal_outer_rect_stays_put_across_a_theme_and_an_appearance_change() {
         let theme = noir();
-        let custom = custom_rows();
+        let custom = custom_settings();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let themes = [
             ThemeName::from_static("noir"),
@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn settings_overlay_does_not_panic_on_a_tiny_terminal() {
         let theme = noir();
-        let custom = custom_rows();
+        let custom = custom_settings();
         let overlay = SettingsOverlay {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             values: settings_values(&custom),

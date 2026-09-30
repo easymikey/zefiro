@@ -12,7 +12,7 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use crate::{error::TerminalError, window_colors};
+use crate::{error::Error, window_colors};
 
 fn leave_the_alternate_screen() {
     let _ = disable_raw_mode();
@@ -62,13 +62,13 @@ impl<W: Write> std::fmt::Debug for TerminalSession<W> {
 }
 
 impl TerminalSession<Stdout> {
-    pub fn enter() -> Result<Self, TerminalError> {
-        enable_raw_mode().map_err(TerminalError::Setup)?;
+    pub fn enter() -> Result<Self, Error> {
+        enable_raw_mode().map_err(Error::Setup)?;
 
         let mut stdout = io::stdout();
         if let Err(error) = execute!(stdout, EnterAlternateScreen) {
             let _ = disable_raw_mode();
-            return Err(TerminalError::Setup(error));
+            return Err(Error::Setup(error));
         }
 
         let terminal = match Terminal::new(CrosstermBackend::new(stdout)) {
@@ -76,7 +76,7 @@ impl TerminalSession<Stdout> {
             Err(error) => {
                 let _ = execute!(io::stdout(), LeaveAlternateScreen);
                 let _ = disable_raw_mode();
-                return Err(TerminalError::Setup(error));
+                return Err(Error::Setup(error));
             }
         };
 

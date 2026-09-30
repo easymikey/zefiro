@@ -5,7 +5,10 @@ use std::{
 
 use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 
-use crate::domain::{Chord, ChordParseError};
+use crate::{
+    domain::{Chord, ChordParseError},
+    update::keymap::{Bindings, KeyBinding},
+};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, EnumString)]
 #[strum(serialize_all = "snake_case")]
@@ -30,7 +33,7 @@ pub enum KeyContext {
 pub enum Action {
     PlayPause,
     Next,
-    Prev,
+    Previous,
     SeekBack,
     SeekForward,
     SeekBackShort,
@@ -73,7 +76,7 @@ pub enum Action {
     SettingsAdjustUp,
     SettingsActivate,
     SettingsClose,
-    SourceDir,
+    MusicDir,
     Help,
     Quit,
     #[strum(disabled)]
@@ -153,24 +156,6 @@ pub enum KeyValidationError {
     #[error("key collision left `{action}` unbound")]
     ActionUnbound { action: Action },
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct KeyValidationErrors(pub Vec<KeyValidationError>);
-
-impl fmt::Display for KeyValidationErrors {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut errors = self.0.iter();
-        if let Some(first) = errors.next() {
-            write!(formatter, "{first}")?;
-        }
-        for error in errors {
-            write!(formatter, "; {error}")?;
-        }
-        Ok(())
-    }
-}
-
-impl std::error::Error for KeyValidationErrors {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DefaultBinding {
@@ -338,13 +323,19 @@ pub(crate) fn resolve(
 pub struct Keymap {
     pub(crate) config: KeymapOverrides,
     pub(crate) errors: Vec<KeyValidationError>,
+    pub(crate) bindings: Bindings,
 }
 
 impl Keymap {
     #[must_use]
     pub fn new(config: KeymapOverrides, defaults: &[DefaultBinding]) -> Self {
         let errors = resolve(&config, defaults).errors;
-        Self { config, errors }
+        let bindings = Bindings::new(&config);
+        Self {
+            config,
+            errors,
+            bindings,
+        }
     }
 
     #[must_use]
@@ -355,6 +346,16 @@ impl Keymap {
     #[must_use]
     pub fn errors(&self) -> &[KeyValidationError] {
         &self.errors
+    }
+
+    #[must_use]
+    pub fn bindings(&self) -> &[KeyBinding] {
+        self.bindings.as_slice()
+    }
+
+    pub(crate) fn error_text(&self) -> Option<String> {
+        let texts: Vec<String> = self.errors.iter().map(ToString::to_string).collect();
+        (!texts.is_empty()).then(|| texts.join("; "))
     }
 }
 
@@ -369,7 +370,7 @@ mod validation_error_tests {
         Key,
         KeyCode,
         Modifiers,
-        keymap::{KeyValidationError, KeyValidationErrors},
+        keymap::{KeyValidationError, Keymap},
     };
 
     #[rstest]
@@ -392,31 +393,42 @@ mod validation_error_tests {
     )]
     #[case::an_unbound_action_names_the_action(
         KeyValidationError::ActionUnbound {
-            action: Action::Prev,
+            action: Action::Previous,
         }
         .to_string(),
-        "key collision left `Prev` unbound"
-    )]
-    #[case::an_empty_batch_is_empty_text(KeyValidationErrors(Vec::new()).to_string(), "")]
-    #[case::a_batch_joins_entries_with_semicolon_space(
-        KeyValidationErrors(vec![
-            KeyValidationError::InvalidChord(ChordParseError {
-                spelling: "bad".into(),
-            }),
-            KeyValidationError::ChordCollision {
-                chord: Chord::Key(Key {
-                    code: KeyCode::Char('p'),
-                    modifiers: Modifiers::NONE,
-                }),
-            },
-        ])
-        .to_string(),
-        "invalid key chord `bad`; key collision on `p`"
+        "key collision left `Previous` unbound"
     )]
     fn display_renders_the_expected_text(
         #[case] rendered: String,
         #[case] expected: &str,
     ) {
         assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn a_keymap_without_errors_has_no_error_text() {
+        assert_eq!(Keymap::default().error_text(), None);
+    }
+
+    #[test]
+    fn error_text_joins_entries_with_semicolon_space() {
+        let keymap = Keymap {
+            errors: vec![
+                KeyValidationError::InvalidChord(ChordParseError {
+                    spelling: "bad".into(),
+                }),
+                KeyValidationError::ChordCollision {
+                    chord: Chord::Key(Key {
+                        code: KeyCode::Char('p'),
+                        modifiers: Modifiers::NONE,
+                    }),
+                },
+            ],
+            ..Keymap::default()
+        };
+        assert_eq!(
+            keymap.error_text().as_deref(),
+            Some("invalid key chord `bad`; key collision on `p`")
+        );
     }
 }

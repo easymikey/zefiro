@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::{
+    Playing,
     overlay::modal::ModalMetrics,
     playlist::{
         chrome::pane_block,
@@ -15,12 +16,12 @@ use crate::{
     primitive::{
         glyphs::PlaylistGlyphs,
         list_chrome::{row_band, scroll_offset, scrollbar_column},
-        marker::{Favorite, MarkerColumns, Playing, QueuePosition},
+        marker::{Favorite, MarkerColumns, QueuePosition},
         track_row::{self, RowColors, Selected, TrackRowView},
     },
 };
 
-pub(crate) struct PlaylistWindow {
+pub(crate) struct VisibleRows {
     pub(crate) start: usize,
     pub(crate) end: usize,
     pub(crate) offset: u16,
@@ -33,7 +34,7 @@ pub(crate) struct WindowFit<'a> {
     pub(crate) height: u16,
 }
 
-pub(crate) fn visible_window(input: &WindowFit<'_>) -> PlaylistWindow {
+pub(crate) fn visible_rows(input: &WindowFit<'_>) -> VisibleRows {
     let &WindowFit {
         view,
         playing_index,
@@ -70,7 +71,7 @@ pub(crate) fn visible_window(input: &WindowFit<'_>) -> PlaylistWindow {
 
     let start = usize::from(offset);
     let end = (start + height).min(total);
-    PlaylistWindow {
+    VisibleRows {
         start,
         end,
         offset,
@@ -90,10 +91,10 @@ pub(crate) struct PlaylistRows<'a> {
     pub(crate) pane: PlaylistPane<'a>,
     pub(crate) rows: Rect,
     pub(crate) playing_index: Option<usize>,
-    pub(crate) window: &'a PlaylistWindow,
+    pub(crate) window: &'a VisibleRows,
 }
 
-struct RowContext<'a> {
+struct PlaylistRowParts<'a> {
     view: PlaylistView<'a>,
     playing_index: Option<usize>,
     row_width: usize,
@@ -101,7 +102,7 @@ struct RowContext<'a> {
 }
 
 fn build_line(
-    context: &RowContext<'_>,
+    context: &PlaylistRowParts<'_>,
     index: usize,
     track: &Track,
 ) -> ratatui::text::Line<'static> {
@@ -132,7 +133,7 @@ fn build_line(
         glyphs: PlaylistGlyphs::default(),
         row_width: context.row_width,
     };
-    track_row::build(&row_view, context.colors)
+    track_row::track_row_line(&row_view, context.colors)
 }
 
 pub(crate) fn paint_rows(buffer: &mut Buffer, input: PlaylistRows<'_>) {
@@ -144,13 +145,13 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, input: PlaylistRows<'_>) {
     } = input;
     let view = pane.view;
     let theme = pane.theme;
-    let context = RowContext {
+    let context = PlaylistRowParts {
         view,
         playing_index,
         row_width: usize::from(rows.width),
         colors: RowColors {
             text: theme.text(),
-            selection_text: theme.selection_fg(),
+            selection_text: theme.selection_foreground(),
             favorite: theme.favorite(),
             queue: theme.highlight(),
         },
@@ -181,15 +182,15 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, input: PlaylistRows<'_>) {
     StatefulWidget::render(list, rows, buffer, &mut playing_row);
 
     if let Some(band) = cursor_band(rows, window, view.browse_selected) {
-        buffer.set_style(band, Style::default().bg(theme.selection_bg()));
+        buffer.set_style(band, Style::default().bg(theme.selection_background()));
     }
 }
 
-fn cursor_band(band: Rect, window: &PlaylistWindow, selected: usize) -> Option<Rect> {
-    if selected < window.start || selected >= window.end {
+fn cursor_band(band: Rect, window: &VisibleRows, cursor_index: usize) -> Option<Rect> {
+    if cursor_index < window.start || cursor_index >= window.end {
         return None;
     }
-    let offset = u16::try_from(selected.checked_sub(window.start)?).ok()?;
+    let offset = u16::try_from(cursor_index.checked_sub(window.start)?).ok()?;
     (offset < band.height).then_some(Rect {
         x: band.x,
         y: band.y.saturating_add(offset),
@@ -199,7 +200,7 @@ fn cursor_band(band: Rect, window: &PlaylistWindow, selected: usize) -> Option<R
 }
 
 #[must_use]
-pub(crate) fn selected_row(area: Rect, view: PlaylistView<'_>) -> Option<Rect> {
+pub(crate) fn cursor_row(area: Rect, view: PlaylistView<'_>) -> Option<Rect> {
     if area.width == 0 || area.height == 0 || view.playlist.tracks.is_empty() {
         return None;
     }
@@ -209,7 +210,7 @@ pub(crate) fn selected_row(area: Rect, view: PlaylistView<'_>) -> Option<Rect> {
     }
     let scrollbar_inset = ModalMetrics::default().scrollbar_inset;
     let band = row_band(area, inner, scrollbar_column(area, inner, scrollbar_inset));
-    let window = visible_window(&WindowFit {
+    let window = visible_rows(&WindowFit {
         view,
         playing_index: view.playing.map(PlaylistIndex::get),
         height: inner.height,
@@ -245,7 +246,7 @@ mod tests {
 
     use crate::playlist::{
         pane::{LibraryLoad, PlaylistView},
-        row::{WindowFit, visible_window},
+        row::{WindowFit, visible_rows},
     };
 
     fn library(count: usize) -> Playlist {
@@ -282,7 +283,7 @@ mod tests {
     fn the_window_starts_at_zero_while_the_selection_fits_on_screen() {
         let playlist = library(10);
         let favorites = Favorites::default();
-        let window = visible_window(&WindowFit {
+        let window = visible_rows(&WindowFit {
             view: view(&playlist, &favorites, 2),
             playing_index: None,
             height: 5,
@@ -294,7 +295,7 @@ mod tests {
     fn the_window_follows_the_selection_past_the_first_screen() {
         let playlist = library(40);
         let favorites = Favorites::default();
-        let window = visible_window(&WindowFit {
+        let window = visible_rows(&WindowFit {
             view: view(&playlist, &favorites, 35),
             playing_index: None,
             height: 10,
@@ -308,7 +309,7 @@ mod tests {
     fn the_window_shifts_to_keep_the_playing_row_visible_when_the_cursor_still_fits() {
         let playlist = library(40);
         let favorites = Favorites::default();
-        let window = visible_window(&WindowFit {
+        let window = visible_rows(&WindowFit {
             view: view(&playlist, &favorites, 30),
             playing_index: Some(32),
             height: 10,

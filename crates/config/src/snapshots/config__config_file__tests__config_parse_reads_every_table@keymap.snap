@@ -1,8 +1,9 @@
 ---
 source: crates/config/src/config_file.rs
+assertion_line: 183
 expression: config
 ---
-ConfigFile {
+ConfigToml {
     music_dir: None,
     theme: Auto,
     volume: Percent(
@@ -13,7 +14,7 @@ ConfigFile {
             0ns,
         ),
         replaygain: Off,
-        device: None,
+        device: SystemDefault,
         sleep_presets: SleepPresets(
             [
                 900s,
@@ -23,11 +24,11 @@ ConfigFile {
         ),
     },
     keymap: {
-        "play_pause": KeyBindingFile {
+        "play_pause": KeyOverride {
             chord: "space",
             context: Global,
         },
-        "quit": KeyBindingFile {
+        "quit": KeyOverride {
             chord: "q",
             context: Global,
         },

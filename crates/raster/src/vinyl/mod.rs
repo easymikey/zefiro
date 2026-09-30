@@ -12,7 +12,7 @@ mod layers;
 
 pub(crate) use art::{VinylArt, prepare_art, sleeve_inset_side_px};
 pub use colors::{SleeveFace, VinylColors};
-use geometry::canvas_dims;
+use geometry::canvas_size;
 pub use geometry::{VinylLayout, canvas_aspect_ratio};
 use layers::solid_fallback;
 pub(crate) use layers::{
@@ -130,7 +130,7 @@ pub fn compose<'a>(request: VinylRequest<'a>) -> VinylImage<'a> {
     };
     let art_key = (key.path.clone(), style.size_px);
     if cache.art.get(&art_key).is_none() {
-        match prepared_art(art, style) {
+        match choose_art(art, style) {
             PreparedArt::Wanted => {
                 return VinylImage::ArtWanted {
                     side_px: sleeve_inset_side_px(style.size_px, &style.layout),
@@ -145,7 +145,7 @@ pub fn compose<'a>(request: VinylRequest<'a>) -> VinylImage<'a> {
     }
 }
 
-fn prepared_art(art: VinylArtSource, style: VinylFrameStyle) -> PreparedArt {
+fn choose_art(art: VinylArtSource, style: VinylFrameStyle) -> PreparedArt {
     if art.path.is_none() {
         return PreparedArt::Ready(None);
     }
@@ -225,7 +225,7 @@ pub(crate) fn vinyl_image(input: &VinylFrame<'_>) -> RgbaImage {
         colors: input.colors,
         layout: input.layout,
     };
-    let dims = canvas_dims(&style);
+    let dims = canvas_size(&style);
 
     let Some(base) = prepare_frame_base(style) else {
         return solid_fallback(dims.width, dims.height);
@@ -298,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn canvas_dims_are_size_px_plus_peek_wide_and_size_px_tall() {
+    fn canvas_size_is_size_px_plus_peek_wide_and_size_px_tall() {
         let art = synthetic_art(32);
         let prepared = prepared_art(&art, 64);
         let input = base_input(Some(&prepared));
@@ -551,7 +551,7 @@ mod vinyl_cache_tests {
     }
 
     #[test]
-    fn base_reused_when_neither_generation_moves_rebuilt_when_theme_generation_does() {
+    fn base_reused_when_neither_generation_moves_rebuilt_when_theme_revision_does() {
         let mut cache = VinylCache::default();
         let calls = Cell::new(0u32);
         let build = || {

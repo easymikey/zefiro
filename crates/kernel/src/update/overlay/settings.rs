@@ -1,48 +1,41 @@
 use crate::{
     Cmd,
-    domain::{
-        Model,
-        Moment,
-        Nudge,
-        Overlay,
-        SettingControl,
-        SettingRow,
-        SettingsCursor,
-    },
+    domain::{Direction, Model, Moment, Overlay, SettingControl, SettingRow},
     message::SettingsRowRequest,
     update::{
-        machine::{Machine, Never, Rejected},
+        error::UpdateError,
+        machine::Machine,
         overlay::{FollowUp, InnerMessage, OverlayEffect, OverlayMessage, follow},
-        rejection::Rejection,
     },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingsMessage {
+pub enum SettingsCursorMessage {
     Navigate(SettingRow),
-    Adjust(Nudge),
+    Adjust(Direction),
     Noop,
 }
 
-impl Machine for SettingsCursor {
-    type Message = SettingsMessage;
-    type Rejection = Never;
-    type Effect = OverlayEffect;
-
-    fn transition(
-        self,
-        message: SettingsMessage,
-    ) -> Result<(Self, OverlayEffect), Rejected<Self>> {
-        match message {
-            SettingsMessage::Navigate(selected) => {
-                Ok((SettingsCursor { selected }, OverlayEffect::default()))
-            }
-            SettingsMessage::Adjust(nudge) => {
-                let row = self.selected;
-                Ok((self, OverlayEffect::from(FollowUp::Adjust { row, nudge })))
-            }
-            SettingsMessage::Noop => Ok((self, OverlayEffect::default())),
-        }
+pub(crate) fn transition(
+    current: SettingRow,
+    message: SettingsCursorMessage,
+) -> (Option<Overlay>, OverlayEffect) {
+    match message {
+        SettingsCursorMessage::Navigate(selected) => (
+            Some(Overlay::Settings { selected }),
+            OverlayEffect::default(),
+        ),
+        SettingsCursorMessage::Adjust(direction) => (
+            Some(Overlay::Settings { selected: current }),
+            OverlayEffect::from(FollowUp::Adjust {
+                row: current,
+                direction,
+            }),
+        ),
+        SettingsCursorMessage::Noop => (
+            Some(Overlay::Settings { selected: current }),
+            OverlayEffect::default(),
+        ),
     }
 }
 
@@ -50,7 +43,7 @@ pub(crate) fn request(
     model: &mut Model,
     request: SettingsRowRequest,
     now: Moment,
-) -> Result<Cmd, Rejection> {
+) -> Result<Cmd, UpdateError> {
     let message = resolve(model, request);
     let effect = model
         .workspace
@@ -59,36 +52,38 @@ pub(crate) fn request(
     follow(model, effect, now)
 }
 
-fn resolve(model: &Model, request: SettingsRowRequest) -> SettingsMessage {
+fn resolve(model: &Model, request: SettingsRowRequest) -> SettingsCursorMessage {
     match request {
-        SettingsRowRequest::Navigate(nudge) => navigate_target(model, nudge),
-        SettingsRowRequest::Adjust(nudge) => SettingsMessage::Adjust(nudge),
+        SettingsRowRequest::Navigate(direction) => navigate_target(model, direction),
+        SettingsRowRequest::Adjust(direction) => {
+            SettingsCursorMessage::Adjust(direction)
+        }
         SettingsRowRequest::Activate => activate(model),
     }
 }
 
-fn navigate_target(model: &Model, nudge: Nudge) -> SettingsMessage {
-    let Some(Overlay::Settings(cursor)) = &model.workspace.overlay else {
-        return SettingsMessage::Noop;
+fn navigate_target(model: &Model, direction: Direction) -> SettingsCursorMessage {
+    let Some(Overlay::Settings { selected }) = &model.workspace.overlay else {
+        return SettingsCursorMessage::Noop;
     };
-    let rows = SettingRow::all(&model.custom_rows);
-    SettingsMessage::Navigate(cursor.moved(&rows, nudge).selected)
+    let rows = SettingRow::all(&model.custom_settings);
+    SettingsCursorMessage::Navigate(selected.moved(&rows, direction))
 }
 
-fn activate(model: &Model) -> SettingsMessage {
-    let Some(Overlay::Settings(cursor)) = &model.workspace.overlay else {
-        return SettingsMessage::Noop;
+fn activate(model: &Model) -> SettingsCursorMessage {
+    let Some(Overlay::Settings { selected }) = &model.workspace.overlay else {
+        return SettingsCursorMessage::Noop;
     };
-    if activates(cursor.selected, model) {
-        SettingsMessage::Adjust(Nudge::Up)
+    if activates(*selected, model) {
+        SettingsCursorMessage::Adjust(Direction::Next)
     } else {
-        SettingsMessage::Noop
+        SettingsCursorMessage::Noop
     }
 }
 
 fn activates(row: SettingRow, model: &Model) -> bool {
     matches!(
-        row.control(&model.custom_rows),
+        row.control(&model.custom_settings),
         Some(SettingControl::Toggle | SettingControl::Ring | SettingControl::Custom(_))
     )
 }

@@ -25,14 +25,6 @@ pub enum Player {
     },
 }
 
-#[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PlaybackMotion {
-    Live,
-    Held,
-    Decaying,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pause {
     ByListener,
@@ -62,14 +54,6 @@ impl Player {
     #[must_use]
     pub fn is_playing(&self) -> bool {
         matches!(self, Self::Playing { .. })
-    }
-
-    pub fn playback_motion(&self) -> PlaybackMotion {
-        match self {
-            Self::Playing { .. } => PlaybackMotion::Live,
-            Self::Paused { .. } => PlaybackMotion::Held,
-            Self::Stopped | Self::Loading { .. } => PlaybackMotion::Decaying,
-        }
     }
 
     #[must_use]

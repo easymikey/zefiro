@@ -3,15 +3,14 @@ use std::{path::Path, sync::Arc};
 use insta::assert_snapshot;
 use kernel::{
     BrowseRequest,
+    Direction,
     HistoryRequest,
-    JumpRequest,
     Key,
     KeyCode,
     KeyPress,
     Message,
     Modifiers,
     Moment,
-    Nudge,
     OverlayName,
     OverlayRequest,
     PlaybackRequest,
@@ -30,15 +29,13 @@ use kernel::{
         KeymapOverrides,
         Overlay,
         PlaylistIndex,
-        SeekStep,
         SettingRow,
-        SettingsCursor,
         TextEntry,
         Track,
         Workspace,
     },
     update::{
-        keymap::{Bindings, KeyOutcome, route},
+        keymap::{KeyOutcome, route},
         update,
     },
 };
@@ -77,7 +74,7 @@ fn history_after_g() -> Workspace {
 }
 
 fn settings_on(row: SettingRow) -> Workspace {
-    with_overlay(Overlay::Settings(SettingsCursor { selected: row }))
+    with_overlay(Overlay::Settings { selected: row })
 }
 
 fn confirming_delete() -> Workspace {
@@ -106,7 +103,7 @@ fn saving_a_playlist() -> Workspace {
 }
 
 fn naming_a_source_dir() -> Workspace {
-    with_overlay(Overlay::SourceDir {
+    with_overlay(Overlay::MusicDir {
         typed: TextEntry::default(),
         error: None,
     })
@@ -152,22 +149,22 @@ fn confirm() -> Option<Message> {
     character('?'),
     Some(Message::Overlay(OverlayRequest::Open(OverlayName::Help)))
 )]
-#[case::browse_shift_left_seeks_far_back(browsing(), with(KeyCode::Left, Modifiers::SHIFT), Some(Message::Playback(PlaybackRequest::SeekBy(SeekStep::new(-30)))))]
+#[case::browse_shift_left_seeks_far_back(browsing(), with(KeyCode::Left, Modifiers::SHIFT), Some(Message::Playback(PlaybackRequest::SeekBy { seconds: -30 })))]
 #[case::browse_shift_right_seeks_far_forward(
     browsing(),
     with(KeyCode::Right, Modifiers::SHIFT),
-    Some(Message::Playback(PlaybackRequest::SeekBy(SeekStep::new(30))))
+    Some(Message::Playback(PlaybackRequest::SeekBy { seconds: 30 }))
 )]
-#[case::browse_left_seeks_back(browsing(), plain(KeyCode::Left), Some(Message::Playback(PlaybackRequest::SeekBy(SeekStep::new(-5)))))]
+#[case::browse_left_seeks_back(browsing(), plain(KeyCode::Left), Some(Message::Playback(PlaybackRequest::SeekBy { seconds: -5 })))]
 #[case::browse_right_seeks_forward(
     browsing(),
     plain(KeyCode::Right),
-    Some(Message::Playback(PlaybackRequest::SeekBy(SeekStep::new(5))))
+    Some(Message::Playback(PlaybackRequest::SeekBy { seconds: 5 }))
 )]
 #[case::browse_ctrl_u_pages_the_playlist(
     browsing(),
     Key::ctrl(KeyCode::Char('u')),
-    Some(Message::Browse(BrowseRequest::PageBy(Nudge::Up)))
+    Some(Message::Browse(BrowseRequest::PageBy(Direction::Previous)))
 )]
 #[case::help_swallows_a_hotkey(help(), character('n'), None)]
 #[case::help_esc_closes(help(), plain(KeyCode::Esc), close())]
@@ -207,7 +204,7 @@ fn confirm() -> Option<Message> {
     searching(),
     plain(KeyCode::Down),
     Some(Message::Overlay(OverlayRequest::Search(SearchRequest::Navigate(
-        Nudge::Down
+        Direction::Next
     ))))
 )]
 #[case::search_tab_enqueues(
@@ -218,17 +215,17 @@ fn confirm() -> Option<Message> {
 #[case::history_j_navigates_down(
     history(),
     character('j'),
-    history_request(HistoryRequest::Navigate(Nudge::Down))
+    history_request(HistoryRequest::Navigate(Direction::Next))
 )]
 #[case::history_down_navigates_down(
     history(),
     plain(KeyCode::Down),
-    history_request(HistoryRequest::Navigate(Nudge::Down))
+    history_request(HistoryRequest::Navigate(Direction::Next))
 )]
 #[case::history_k_navigates_up(
     history(),
     character('k'),
-    history_request(HistoryRequest::Navigate(Nudge::Up))
+    history_request(HistoryRequest::Navigate(Direction::Previous))
 )]
 #[case::history_capital_g_jumps_to_the_bottom(
     history(),
@@ -255,42 +252,42 @@ fn confirm() -> Option<Message> {
 #[case::settings_j_navigates_down(
     settings_on(SettingRow::Theme),
     character('j'),
-    settings_row(SettingsRowRequest::Navigate(Nudge::Down))
+    settings_row(SettingsRowRequest::Navigate(Direction::Next))
 )]
 #[case::settings_down_navigates_down(
     settings_on(SettingRow::Theme),
     plain(KeyCode::Down),
-    settings_row(SettingsRowRequest::Navigate(Nudge::Down))
+    settings_row(SettingsRowRequest::Navigate(Direction::Next))
 )]
 #[case::settings_k_navigates_up(
     settings_on(SettingRow::Theme),
     character('k'),
-    settings_row(SettingsRowRequest::Navigate(Nudge::Up))
+    settings_row(SettingsRowRequest::Navigate(Direction::Previous))
 )]
 #[case::settings_up_navigates_up(
     settings_on(SettingRow::Theme),
     plain(KeyCode::Up),
-    settings_row(SettingsRowRequest::Navigate(Nudge::Up))
+    settings_row(SettingsRowRequest::Navigate(Direction::Previous))
 )]
 #[case::settings_l_adjusts_up(
     settings_on(SettingRow::Theme),
     character('l'),
-    settings_row(SettingsRowRequest::Adjust(Nudge::Up))
+    settings_row(SettingsRowRequest::Adjust(Direction::Next))
 )]
 #[case::settings_right_adjusts_up(
     settings_on(SettingRow::Theme),
     plain(KeyCode::Right),
-    settings_row(SettingsRowRequest::Adjust(Nudge::Up))
+    settings_row(SettingsRowRequest::Adjust(Direction::Next))
 )]
 #[case::settings_h_adjusts_down(
     settings_on(SettingRow::Theme),
     character('h'),
-    settings_row(SettingsRowRequest::Adjust(Nudge::Down))
+    settings_row(SettingsRowRequest::Adjust(Direction::Previous))
 )]
 #[case::settings_left_adjusts_down(
     settings_on(SettingRow::Theme),
     plain(KeyCode::Left),
-    settings_row(SettingsRowRequest::Adjust(Nudge::Down))
+    settings_row(SettingsRowRequest::Adjust(Direction::Previous))
 )]
 #[case::settings_space_activates_a_pick_row(
     settings_on(SettingRow::Theme),
@@ -315,22 +312,22 @@ fn confirm() -> Option<Message> {
 #[case::settings_h_on_a_toggle_row_adjusts_never_seeks(
     settings_on(SettingRow::Replaygain),
     character('h'),
-    settings_row(SettingsRowRequest::Adjust(Nudge::Down))
+    settings_row(SettingsRowRequest::Adjust(Direction::Previous))
 )]
 #[case::settings_left_on_a_toggle_row_adjusts_never_seeks(
     settings_on(SettingRow::Replaygain),
     plain(KeyCode::Left),
-    settings_row(SettingsRowRequest::Adjust(Nudge::Down))
+    settings_row(SettingsRowRequest::Adjust(Direction::Previous))
 )]
 #[case::settings_l_on_a_toggle_row_adjusts_never_seeks(
     settings_on(SettingRow::Replaygain),
     character('l'),
-    settings_row(SettingsRowRequest::Adjust(Nudge::Up))
+    settings_row(SettingsRowRequest::Adjust(Direction::Next))
 )]
 #[case::settings_right_on_a_toggle_row_adjusts_never_seeks(
     settings_on(SettingRow::Replaygain),
     plain(KeyCode::Right),
-    settings_row(SettingsRowRequest::Adjust(Nudge::Up))
+    settings_row(SettingsRowRequest::Adjust(Direction::Next))
 )]
 #[case::settings_enter_on_a_toggle_row_activates_it(
     settings_on(SettingRow::Replaygain),
@@ -364,17 +361,17 @@ fn confirm() -> Option<Message> {
 #[case::jump_types_a_digit(
     jumping(),
     character('4'),
-    Some(Message::Overlay(OverlayRequest::Jump(JumpRequest::Char('4'))))
+    Some(Message::Overlay(OverlayRequest::Jump(TextRequest::Char('4'))))
 )]
 #[case::jump_types_a_colon(
     jumping(),
     character(':'),
-    Some(Message::Overlay(OverlayRequest::Jump(JumpRequest::Char(':'))))
+    Some(Message::Overlay(OverlayRequest::Jump(TextRequest::Char(':'))))
 )]
 #[case::jump_backspace_erases(
     jumping(),
     plain(KeyCode::Backspace),
-    Some(Message::Overlay(OverlayRequest::Jump(JumpRequest::Backspace)))
+    Some(Message::Overlay(OverlayRequest::Jump(TextRequest::Backspace)))
 )]
 #[case::jump_enter_confirms(jumping(), plain(KeyCode::Enter), confirm())]
 #[case::jump_esc_cancels(jumping(), plain(KeyCode::Esc), close())]
@@ -435,7 +432,6 @@ fn routed_key(
     #[case] key: Key,
     #[case] expected: Option<Message>,
 ) {
-    workspace.bindings = Bindings::new(&KeymapOverrides::default());
     workspace.visible_rows = VISIBLE_ROWS;
     let press = KeyPress { key, typed: key };
     assert_eq!(route(&workspace, press), expected);
@@ -461,7 +457,6 @@ fn a_key_press_routes_through_update(
     #[case] overlay: Option<Overlay>,
 ) {
     let mut model = crate::support::model_with_tracks(3);
-    model.workspace.bindings = Bindings::new(&KeymapOverrides::default());
     model.workspace.overlay = overlay;
     model.workspace.toast = Some(Toast::info("hello".to_string()));
 
@@ -475,7 +470,7 @@ fn a_key_press_routes_through_update(
         KeyCode::Char('a') => {
             assert!(matches!(
                 &model.workspace.overlay,
-                Some(Overlay::Search(cursor_over)) if cursor_over.rows.input == "a"
+                Some(Overlay::Search(cursor_over)) if cursor_over.content.input == "a"
             ));
         }
         KeyCode::Char('x') => {
@@ -510,7 +505,6 @@ fn the_search_query_swallows_every_printable_hotkey(
     #[case] to: char,
 ) {
     let mut workspace = searching();
-    workspace.bindings = Bindings::new(&KeymapOverrides::default());
     workspace.visible_rows = VISIBLE_ROWS;
     for typed in from..=to {
         let key = character(typed);
@@ -549,7 +543,6 @@ fn fixed_message(outcome: &KeyOutcome) -> Option<Message> {
 #[test]
 fn every_compiled_binding_is_what_its_chord_routes_to() {
     let config = KeymapOverrides::default();
-    let table = Bindings::new(&config);
     let browsable = bindings(&config)
         .into_iter()
         .filter(|binding| {
@@ -571,7 +564,6 @@ fn every_compiled_binding_is_what_its_chord_routes_to() {
                 key
             }
         };
-        workspace.bindings = table.clone();
         let press = KeyPress { key, typed: key };
         assert_eq!(
             route(&workspace, press),

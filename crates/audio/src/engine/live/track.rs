@@ -49,11 +49,11 @@ impl Live {
             next: Next::None,
             preloading,
         });
-        let io = EngineEffect::Many(vec![
+        let effect = EngineEffect::Batch(vec![
             EngineEffect::Advance,
             EngineEffect::Send(AudioEvent::TrackChanged),
         ]);
-        (Engine::Live(self), reported(io))
+        (Engine::Live(self), reported(effect))
     }
 
     fn finished_idle(mut self) -> (Engine, EngineEffect) {
@@ -83,7 +83,7 @@ impl Live {
             return (Engine::Live(self), EngineEffect::Nothing);
         };
         let incoming =
-            effective_volume(&self.config, preload.gain, self.user_factor.ratio());
+            effective_volume(&self.config, preload.gain, self.volume.ratio());
         let length = self.config.crossfade.value();
         playing.next = Next::Crossfading {
             preload,
@@ -184,7 +184,7 @@ mod tests {
                 playing_track,
                 promoted,
                 retiring,
-                secs,
+                seconds,
                 track_a,
                 track_b,
             },
@@ -194,7 +194,7 @@ mod tests {
     struct Row {
         start: Engine,
         expected: Engine,
-        io: EngineEffect,
+        effect: EngineEffect,
     }
 
     fn gapless_queued() -> Engine {
@@ -220,7 +220,7 @@ mod tests {
                     })),
                     ..live()
                 }),
-                io: EngineEffect::Many(vec![
+                effect: EngineEffect::Batch(vec![
                     EngineEffect::Advance,
                     EngineEffect::Send(kernel::AudioEvent::TrackChanged),
                     EngineEffect::Report,
@@ -229,7 +229,7 @@ mod tests {
             Row {
                 start: Engine::Live(playing()),
                 expected: Engine::Live(live()),
-                io: EngineEffect::Many(vec![
+                effect: EngineEffect::Batch(vec![
                     EngineEffect::Send(kernel::AudioEvent::Ended),
                     EngineEffect::Report,
                 ]),
@@ -240,7 +240,7 @@ mod tests {
             let effect = state
                 .update(EngineMessage::Finished(Slot::Primary))
                 .unwrap();
-            assert_eq!(effect, row.io);
+            assert_eq!(effect, row.effect);
             assert_eq!(state, row.expected);
         }
     }
@@ -280,22 +280,25 @@ mod tests {
             .unwrap();
         assert_eq!(
             effect,
-            EngineEffect::Many(vec![
+            EngineEffect::Batch(vec![
                 EngineEffect::Promote { volume: 1.0 },
                 EngineEffect::Report,
             ])
         );
-        assert_eq!(state, Engine::Live(promoted(Crossfade::clamped(secs(10)))));
+        assert_eq!(
+            state,
+            Engine::Live(promoted(Crossfade::clamped(seconds(10))))
+        );
     }
 
     #[test]
-    fn cued_fades() {
+    fn a_cued_track_fades_in_and_out() {
         let mut state = Engine::Live(crossfading(Fade::Idle));
         let effect = state.update(EngineMessage::Cued).unwrap();
         assert_eq!(
             effect,
             EngineEffect::Crossfade {
-                length: secs(10),
+                length: seconds(10),
                 incoming: 1.0,
             }
         );
@@ -320,17 +323,20 @@ mod tests {
     }
 
     #[test]
-    fn ramped_promotes() {
+    fn a_finished_ramp_promotes_the_incoming_track() {
         let mut state = Engine::Live(crossfading(Fade::Fading));
         let effect = state.update(EngineMessage::Ramped(Slot::Primary)).unwrap();
         assert_eq!(
             effect,
-            EngineEffect::Many(vec![
+            EngineEffect::Batch(vec![
                 EngineEffect::Promote { volume: 1.0 },
                 EngineEffect::Report,
             ])
         );
-        assert_eq!(state, Engine::Live(promoted(Crossfade::clamped(secs(10)))));
+        assert_eq!(
+            state,
+            Engine::Live(promoted(Crossfade::clamped(seconds(10))))
+        );
     }
 
     #[rstest]
@@ -344,9 +350,9 @@ mod tests {
         );
     }
 
-    struct Transition {
+    struct Cell {
         next: Engine,
-        io: EngineEffect,
+        effect: EngineEffect,
     }
 
     #[rstest]
@@ -356,33 +362,33 @@ mod tests {
             Incoming::Loading(loading_track("/b")),
         )),
         EngineMessage::Retiring { from: 0.8 },
-        Transition {
+        Cell {
             next: Engine::Live(handing_over(
                 Outgoing { from: 0.8 },
                 Incoming::Loading(loading_track("/b")),
             )),
-            io: EngineEffect::Nothing,
+            effect: EngineEffect::Nothing,
         }
     )]
     #[case::retiring_outside_a_handover_is_ignored(
         Engine::Live(playing()),
         EngineMessage::Retiring { from: 0.8 },
-        Transition { next: Engine::Live(playing()), io: EngineEffect::Nothing }
+        Cell { next: Engine::Live(playing()), effect: EngineEffect::Nothing }
     )]
     #[case::ramped_outgoing_drops_it(
         Engine::Live(retiring(0.8)),
         EngineMessage::Ramped(Slot::Outgoing),
-        Transition {
+        Cell {
             next: Engine::Live(Live { phase: playing_track(track_b()), ..retiring(0.8) }),
-            io: EngineEffect::DropOutgoing,
+            effect: EngineEffect::DropOutgoing,
         }
     )]
     #[case::finished_outgoing_drops_it(
         Engine::Live(retiring(0.8)),
         EngineMessage::Finished(Slot::Outgoing),
-        Transition {
+        Cell {
             next: Engine::Live(Live { phase: playing_track(track_b()), ..retiring(0.8) }),
-            io: EngineEffect::DropOutgoing,
+            effect: EngineEffect::DropOutgoing,
         }
     )]
     #[case::ramped_primary_in_handover_ignored(
@@ -391,22 +397,22 @@ mod tests {
             Incoming::Loading(loading_track("/b")),
         )),
         EngineMessage::Ramped(Slot::Primary),
-        Transition {
+        Cell {
             next: Engine::Live(handing_over(
                 Outgoing { from: 0.8 },
                 Incoming::Loading(loading_track("/b")),
             )),
-            io: EngineEffect::Nothing,
+            effect: EngineEffect::Nothing,
         }
     )]
     fn a_handover_follows_its_ramps(
         #[case] start: Engine,
         #[case] message: EngineMessage,
-        #[case] moved: Transition,
+        #[case] moved: Cell,
     ) {
         let mut state = start;
         let effect = state.update(message).unwrap();
         assert_eq!(state, moved.next);
-        assert_eq!(effect, moved.io);
+        assert_eq!(effect, moved.effect);
     }
 }

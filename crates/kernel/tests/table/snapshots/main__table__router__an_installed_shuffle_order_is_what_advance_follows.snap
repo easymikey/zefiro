@@ -81,7 +81,6 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,
@@ -168,7 +167,6 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,
@@ -225,7 +223,7 @@ expression: "walked(model, messages)"
                         ),
                     },
                 ),
-                System(
+                Macos(
                     NowPlaying(
                         Track {
                             title: "track3",
@@ -237,11 +235,11 @@ expression: "walked(model, messages)"
                     ),
                 ),
                 Audio(
-                    Pause(
+                    Playback(
                         Playing,
                     ),
                 ),
-                System(
+                Macos(
                     PlaybackState(
                         Playing,
                     ),
@@ -317,7 +315,6 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,
@@ -330,7 +327,7 @@ expression: "walked(model, messages)"
         ),
         Batch(
             [
-                System(
+                Macos(
                     PlaybackPosition(
                         0ns,
                     ),
@@ -415,7 +412,6 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,
@@ -472,7 +468,7 @@ expression: "walked(model, messages)"
                         ),
                     },
                 ),
-                System(
+                Macos(
                     NowPlaying(
                         Track {
                             title: "track1",
@@ -484,11 +480,11 @@ expression: "walked(model, messages)"
                     ),
                 ),
                 Audio(
-                    Pause(
+                    Playback(
                         Playing,
                     ),
                 ),
-                System(
+                Macos(
                     PlaybackState(
                         Playing,
                     ),
@@ -564,7 +560,6 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,

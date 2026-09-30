@@ -1,23 +1,23 @@
-use kernel::domain::{SourceDirError, TextEntry};
+use kernel::domain::{MusicDirError, TextEntry};
 use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
 use crate::{
     overlay::modal::{OverlayAreas, Prompt, PromptBody},
-    primitive::{canvas::Canvas, glyphs::SourceDirGlyphs},
+    primitive::{canvas::Canvas, glyphs::MusicDirGlyphs},
     theme::ActiveTheme,
 };
 
 const MIN_WIDTH: u16 = 40;
 
 #[derive(Debug)]
-pub(crate) struct SourceDirOverlay<'a> {
+pub(crate) struct MusicDirOverlay<'a> {
     pub(crate) typed: &'a TextEntry,
-    pub(crate) error: Option<&'a SourceDirError>,
+    pub(crate) error: Option<&'a MusicDirError>,
     pub(crate) theme: ActiveTheme<'a>,
     pub(crate) avoid: &'a [Rect],
 }
 
-impl SourceDirOverlay<'_> {
+impl MusicDirOverlay<'_> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
         OverlayAreas::Dialog(self.prompt().areas(screen))
@@ -30,7 +30,7 @@ impl SourceDirOverlay<'_> {
     }
 
     fn prompt(&self) -> Prompt<'_> {
-        let glyphs = SourceDirGlyphs::default();
+        let glyphs = MusicDirGlyphs::default();
         Prompt {
             title: glyphs.title_word,
             hint: glyphs.hint,
@@ -43,7 +43,7 @@ impl SourceDirOverlay<'_> {
     }
 }
 
-impl Widget for &SourceDirOverlay<'_> {
+impl Widget for &MusicDirOverlay<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         self.render_in(self.areas(area), Canvas { area, buffer });
     }
@@ -51,10 +51,10 @@ impl Widget for &SourceDirOverlay<'_> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{SourceDirError, TextEntry};
+    use kernel::domain::{MusicDirError, TextEntry};
 
     use crate::{
-        overlay::source_dir::SourceDirOverlay,
+        overlay::music_dir::MusicDirOverlay,
         scene::fixtures::{noir, painted},
         theme::{ActiveTheme, ColorDepth},
     };
@@ -65,7 +65,7 @@ mod tests {
         let typed = TextEntry {
             input: "/home/user/Music".to_string(),
         };
-        let overlay = SourceDirOverlay {
+        let overlay = MusicDirOverlay {
             typed: &typed,
             error: None,
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
@@ -80,8 +80,8 @@ mod tests {
         let typed = TextEntry {
             input: String::new(),
         };
-        let error = SourceDirError::Empty;
-        let overlay = SourceDirOverlay {
+        let error = MusicDirError::Empty;
+        let overlay = MusicDirOverlay {
             typed: &typed,
             error: Some(&error),
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
@@ -96,7 +96,7 @@ mod tests {
         let typed = TextEntry {
             input: String::new(),
         };
-        let overlay = SourceDirOverlay {
+        let overlay = MusicDirOverlay {
             typed: &typed,
             error: None,
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),

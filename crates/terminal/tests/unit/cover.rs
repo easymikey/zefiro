@@ -5,13 +5,13 @@ use image::{Rgba, RgbaImage};
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 use ratatui_image::picker::Picker;
 use terminal::{
-    CoverArtOwner,
     CoverFade,
     CoverMotion,
     CoverPlacement,
+    CoverRenderer,
     CoverWash,
     DecodedCover,
-    Pixels,
+    OwnedCoverArt,
 };
 use widgets::{AnimationTimings, Breakpoint, FrameLayout};
 
@@ -56,7 +56,7 @@ fn painted(buffer: &Buffer, rect: Rect) -> bool {
 fn no_decoded_cover_is_missing_art() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Plain;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
     let art = pixels.refresh(sources.sources(CoverPlacement {
@@ -64,23 +64,23 @@ fn no_decoded_cover_is_missing_art() {
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(art, CoverArtOwner::Missing));
+    assert!(matches!(art, OwnedCoverArt::Missing));
 }
 
 #[test]
 fn a_decoded_cover_is_placed_as_an_image() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Plain;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
-    pixels.decoded_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
 
     let art = pixels.refresh(sources.sources(CoverPlacement {
         layout,
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(art, CoverArtOwner::Image));
+    assert!(matches!(art, OwnedCoverArt::Image));
 
     let mut buffer = Buffer::empty(cover_rect());
     pixels.place(&mut buffer, &layout);
@@ -91,23 +91,23 @@ fn a_decoded_cover_is_placed_as_an_image() {
 fn an_off_style_never_shows_the_cover() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Off;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
-    pixels.decoded_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
 
     let art = pixels.refresh(sources.sources(CoverPlacement {
         layout,
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(art, CoverArtOwner::Missing));
+    assert!(matches!(art, OwnedCoverArt::Missing));
 }
 
 #[test]
 fn a_vinyl_style_paints_an_image_over_the_cover_rect_even_without_art() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Vinyl;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
     let art = pixels.refresh(sources.sources(CoverPlacement {
@@ -115,7 +115,7 @@ fn a_vinyl_style_paints_an_image_over_the_cover_rect_even_without_art() {
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(art, CoverArtOwner::Image));
+    assert!(matches!(art, OwnedCoverArt::Image));
 
     let mut buffer = Buffer::empty(cover_rect());
     pixels.place(&mut buffer, &layout);
@@ -126,22 +126,22 @@ fn a_vinyl_style_paints_an_image_over_the_cover_rect_even_without_art() {
 fn a_vinyl_style_with_no_cover_rect_is_missing() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Vinyl;
-    let mut pixels = Pixels::new(Picker::halfblocks());
-    pixels.decoded_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
+    pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
 
     let art = pixels.refresh(sources.sources(CoverPlacement {
         layout: layout_with_cover(None),
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(art, CoverArtOwner::Missing));
+    assert!(matches!(art, OwnedCoverArt::Missing));
 }
 
 #[test]
 fn a_milkdrop_style_returns_text_sized_to_the_cover_rect() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Milkdrop;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let rect = cover_rect();
     let layout = layout_with_cover(Some(rect));
 
@@ -150,7 +150,7 @@ fn a_milkdrop_style_returns_text_sized_to_the_cover_rect() {
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    let CoverArtOwner::Text(lines) = art else {
+    let OwnedCoverArt::Text(lines) = art else {
         panic!("milkdrop must hand back text lines, got {art:?}");
     };
     assert_eq!(lines.len(), usize::from(rect.height));
@@ -163,22 +163,22 @@ fn a_milkdrop_style_returns_text_sized_to_the_cover_rect() {
 fn a_milkdrop_style_with_no_cover_rect_is_missing() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Milkdrop;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
 
     let art = pixels.refresh(sources.sources(CoverPlacement {
         layout: layout_with_cover(None),
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(art, CoverArtOwner::Missing));
+    assert!(matches!(art, OwnedCoverArt::Missing));
 }
 
 #[test]
 fn switching_from_plain_to_vinyl_and_back_keeps_showing_the_plain_image() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
-    pixels.decoded_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
 
     sources.appearance.cover.style = CoverStyle::Plain;
     let first = pixels.refresh(sources.sources(CoverPlacement {
@@ -186,7 +186,7 @@ fn switching_from_plain_to_vinyl_and_back_keeps_showing_the_plain_image() {
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(first, CoverArtOwner::Image));
+    assert!(matches!(first, OwnedCoverArt::Image));
 
     sources.appearance.cover.style = CoverStyle::Vinyl;
     pixels.refresh(sources.sources(CoverPlacement {
@@ -202,7 +202,7 @@ fn switching_from_plain_to_vinyl_and_back_keeps_showing_the_plain_image() {
         wash: CoverWash::Idle,
     }));
     assert!(
-        matches!(back, CoverArtOwner::Image),
+        matches!(back, OwnedCoverArt::Image),
         "a style detour must not lose the plain cover"
     );
 
@@ -214,7 +214,7 @@ fn switching_from_plain_to_vinyl_and_back_keeps_showing_the_plain_image() {
 #[test]
 fn switching_between_milkdrop_and_vinyl_changes_the_cover_art_kind_immediately() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
     sources.appearance.cover.style = CoverStyle::Milkdrop;
@@ -223,7 +223,7 @@ fn switching_between_milkdrop_and_vinyl_changes_the_cover_art_kind_immediately()
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(text, CoverArtOwner::Text(_)));
+    assert!(matches!(text, OwnedCoverArt::Text(_)));
 
     sources.appearance.cover.style = CoverStyle::Vinyl;
     let image = pixels.refresh(sources.sources(CoverPlacement {
@@ -231,7 +231,7 @@ fn switching_between_milkdrop_and_vinyl_changes_the_cover_art_kind_immediately()
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(image, CoverArtOwner::Image));
+    assert!(matches!(image, OwnedCoverArt::Image));
 
     sources.appearance.cover.style = CoverStyle::Milkdrop;
     let text_again = pixels.refresh(sources.sources(CoverPlacement {
@@ -239,13 +239,13 @@ fn switching_between_milkdrop_and_vinyl_changes_the_cover_art_kind_immediately()
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(text_again, CoverArtOwner::Text(_)));
+    assert!(matches!(text_again, OwnedCoverArt::Text(_)));
 }
 
 #[test]
 fn a_reused_plan_returns_the_same_lines_allocation() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
     sources.appearance.cover.style = CoverStyle::Milkdrop;
     let placement = CoverPlacement {
@@ -257,7 +257,7 @@ fn a_reused_plan_returns_the_same_lines_allocation() {
     let first = pixels.refresh(sources.sources(placement));
     let second = pixels.refresh(sources.sources(placement));
 
-    let (CoverArtOwner::Text(first), CoverArtOwner::Text(second)) = (first, second)
+    let (OwnedCoverArt::Text(first), OwnedCoverArt::Text(second)) = (first, second)
     else {
         panic!("milkdrop must hand back text lines");
     };
@@ -268,9 +268,9 @@ fn a_reused_plan_returns_the_same_lines_allocation() {
 fn reusing_the_same_path_and_rect_stays_an_image_across_frames() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Plain;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
-    pixels.decoded_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
 
     pixels.refresh(sources.sources(CoverPlacement {
         layout,
@@ -282,7 +282,7 @@ fn reusing_the_same_path_and_rect_stays_an_image_across_frames() {
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(art, CoverArtOwner::Image));
+    assert!(matches!(art, OwnedCoverArt::Image));
 }
 
 #[test]
@@ -290,10 +290,10 @@ fn an_allowed_track_change_crossfades_over_time() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Plain;
     sources.appearance.window.animations = Animations::On;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
-    pixels.decoded_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
     pixels.refresh(sources.sources_at(
         CoverPlacement {
             layout,
@@ -303,7 +303,7 @@ fn an_allowed_track_change_crossfades_over_time() {
         Duration::ZERO,
     ));
 
-    pixels.decoded_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
+    pixels.set_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
     let mid = pixels.refresh(sources.sources_at(
         CoverPlacement {
             layout,
@@ -312,7 +312,7 @@ fn an_allowed_track_change_crossfades_over_time() {
         },
         Duration::from_millis(50),
     ));
-    assert!(matches!(mid, CoverArtOwner::Image));
+    assert!(matches!(mid, OwnedCoverArt::Image));
 
     let settled = pixels.refresh(sources.sources_at(
         CoverPlacement {
@@ -322,7 +322,7 @@ fn an_allowed_track_change_crossfades_over_time() {
         },
         Duration::from_secs(5),
     ));
-    assert!(matches!(settled, CoverArtOwner::Image));
+    assert!(matches!(settled, OwnedCoverArt::Image));
 
     let mut buffer = Buffer::empty(cover_rect());
     pixels.place(&mut buffer, &layout);
@@ -337,7 +337,7 @@ fn crossfade_duration() -> Duration {
 fn no_cover_reports_a_still_motion() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Plain;
-    let pixels = Pixels::new(Picker::halfblocks());
+    let pixels = CoverRenderer::new(Picker::halfblocks());
 
     assert_eq!(pixels.cover_motion(Duration::ZERO), CoverMotion::Still);
 }
@@ -347,10 +347,10 @@ fn an_allowed_new_path_reports_crossfading() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Plain;
     sources.appearance.window.animations = Animations::On;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
-    pixels.decoded_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
     pixels.refresh(sources.sources_at(
         CoverPlacement {
             layout,
@@ -360,7 +360,7 @@ fn an_allowed_new_path_reports_crossfading() {
         Duration::ZERO,
     ));
 
-    pixels.decoded_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
+    pixels.set_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
     pixels.refresh(sources.sources_at(
         CoverPlacement {
             layout,
@@ -381,10 +381,10 @@ fn a_withheld_new_path_stays_still() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Plain;
     sources.appearance.window.animations = Animations::On;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
-    pixels.decoded_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
     pixels.refresh(sources.sources_at(
         CoverPlacement {
             layout,
@@ -394,7 +394,7 @@ fn a_withheld_new_path_stays_still() {
         Duration::ZERO,
     ));
 
-    pixels.decoded_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
+    pixels.set_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
     pixels.refresh(sources.sources_at(
         CoverPlacement {
             layout,
@@ -415,10 +415,10 @@ fn a_crossfade_reports_crossfading_until_a_paint_settles_it() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Plain;
     sources.appearance.window.animations = Animations::On;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
-    pixels.decoded_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
     pixels.refresh(sources.sources_at(
         CoverPlacement {
             layout,
@@ -428,7 +428,7 @@ fn a_crossfade_reports_crossfading_until_a_paint_settles_it() {
         Duration::ZERO,
     ));
 
-    pixels.decoded_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
+    pixels.set_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
     pixels.refresh(sources.sources_at(
         CoverPlacement {
             layout,
@@ -457,8 +457,8 @@ fn a_wider_rect_forces_a_rebuild_without_a_crossfade() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Plain;
     sources.appearance.window.animations = Animations::On;
-    let mut pixels = Pixels::new(Picker::halfblocks());
-    pixels.decoded_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
+    pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
 
     pixels.refresh(sources.sources(CoverPlacement {
         layout: layout_with_cover(Some(cover_rect())),
@@ -471,7 +471,7 @@ fn a_wider_rect_forces_a_rebuild_without_a_crossfade() {
         fade: CoverFade::Allowed,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(art, CoverArtOwner::Image));
+    assert!(matches!(art, OwnedCoverArt::Image));
     assert_eq!(pixels.cover_motion(Duration::ZERO), CoverMotion::Still);
 }
 
@@ -479,7 +479,7 @@ fn a_wider_rect_forces_a_rebuild_without_a_crossfade() {
 fn a_settled_theme_wash_ends_on_the_new_image_and_goes_still() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Vinyl;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
     pixels.refresh(sources.sources(CoverPlacement {
@@ -488,7 +488,7 @@ fn a_settled_theme_wash_ends_on_the_new_image_and_goes_still() {
         wash: CoverWash::Idle,
     }));
 
-    let _ = sources.model.theme_generation.bump();
+    let _ = sources.model.revisions.theme.bump();
     let mid = pixels.refresh(sources.sources(CoverPlacement {
         layout,
         fade: CoverFade::Withheld,
@@ -497,7 +497,7 @@ fn a_settled_theme_wash_ends_on_the_new_image_and_goes_still() {
             screen_width: 80,
         },
     }));
-    assert!(matches!(mid, CoverArtOwner::Image));
+    assert!(matches!(mid, OwnedCoverArt::Image));
     assert_eq!(
         pixels.cover_motion(Duration::ZERO),
         CoverMotion::Crossfading
@@ -508,7 +508,7 @@ fn a_settled_theme_wash_ends_on_the_new_image_and_goes_still() {
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
-    assert!(matches!(settled, CoverArtOwner::Image));
+    assert!(matches!(settled, OwnedCoverArt::Image));
     assert_eq!(pixels.cover_motion(Duration::ZERO), CoverMotion::Still);
 }
 
@@ -517,7 +517,7 @@ fn a_theme_change_with_no_wash_staged_installs_the_new_image_at_once() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.appearance.cover.style = CoverStyle::Vinyl;
     sources.appearance.window.animations = Animations::Off;
-    let mut pixels = Pixels::new(Picker::halfblocks());
+    let mut pixels = CoverRenderer::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
     pixels.refresh(sources.sources(CoverPlacement {
@@ -526,13 +526,13 @@ fn a_theme_change_with_no_wash_staged_installs_the_new_image_at_once() {
         wash: CoverWash::Idle,
     }));
 
-    let _ = sources.model.theme_generation.bump();
+    let _ = sources.model.revisions.theme.bump();
     let art = pixels.refresh(sources.sources(CoverPlacement {
         layout,
         fade: CoverFade::Withheld,
         wash: CoverWash::Idle,
     }));
 
-    assert!(matches!(art, CoverArtOwner::Image));
+    assert!(matches!(art, OwnedCoverArt::Image));
     assert_eq!(pixels.cover_motion(Duration::ZERO), CoverMotion::Still);
 }

@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use config::Hex;
+use config::Rgb;
 use raster::{BarColorOverrides, BarColors};
 use ratatui::style::Color;
 
@@ -10,7 +10,7 @@ use crate::theme::{
     Theme,
     bars::{FillColors, bar_colors},
     contrast::{MIN_MARKER_CONTRAST, raise_contrast},
-    hex::{color_at_depth, lerp_rgb, scale_channel},
+    rgb::{color_at_depth, lerp_rgb, scale_channel},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -36,14 +36,14 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
-    pub fn volume_bar(&self) -> BarColors {
+    pub fn volume_bar_colors(&self) -> BarColors {
         bar_colors(BarColorOverrides::default(), self.theme)
     }
 
     fn fill_colors(&self, bar: BarColors) -> FillColors {
         FillColors {
             accent: self.color(bar.fill),
-            dim: self.color(bar.track),
+            dim: self.color(bar.trough),
         }
     }
 
@@ -53,18 +53,18 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
-    pub fn volume_colors(&self) -> FillColors {
-        self.fill_colors(self.volume_bar())
+    pub fn volume_fill_colors(&self) -> FillColors {
+        self.fill_colors(self.volume_bar_colors())
     }
 
     #[must_use]
-    pub fn color(&self, hex: Hex) -> Color {
-        color_at_depth(hex, self.depth)
+    pub fn color(&self, rgb: Rgb) -> Color {
+        color_at_depth(rgb, self.depth)
     }
 
     #[must_use]
-    pub fn lifted(&self, hex: Hex, toward_text: f32) -> Color {
-        self.color(lerp_rgb(hex, self.colors.role(Role::Text), toward_text))
+    pub fn lifted(&self, rgb: Rgb, toward_text: f32) -> Color {
+        self.color(lerp_rgb(rgb, self.colors.role(Role::Text), toward_text))
     }
 
     #[must_use]
@@ -88,14 +88,14 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
-    pub fn accent2(&self) -> Color {
+    pub fn secondary_accent(&self) -> Color {
         self.role(Role::Accent2)
     }
 
     #[must_use]
     pub fn muted_accent(&self) -> Color {
         let accent = self.colors.role(Role::Accent).0;
-        self.color(Hex(accent.map(|channel| scale_channel(channel, 0.82))))
+        self.color(Rgb(accent.map(|channel| scale_channel(channel, 0.82))))
     }
 
     #[must_use]
@@ -103,8 +103,8 @@ impl<'a> ActiveTheme<'a> {
         self.color(raise_contrast(
             self.colors.role(Role::Accent2),
             &[
-                self.colors.role(Role::WindowBg),
-                self.colors.role(Role::SelectionBg),
+                self.colors.role(Role::WindowBackground),
+                self.colors.role(Role::SelectionBackground),
             ],
             MIN_MARKER_CONTRAST,
         ))
@@ -116,13 +116,13 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
-    pub fn frame(&self) -> Color {
+    pub fn border(&self) -> Color {
         self.role(Role::Frame)
     }
 
     #[must_use]
-    pub fn window_bg(&self) -> Color {
-        self.role(Role::WindowBg)
+    pub fn window_background(&self) -> Color {
+        self.role(Role::WindowBackground)
     }
 
     #[must_use]
@@ -131,13 +131,13 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
-    pub fn selection_fg(&self) -> Color {
-        self.role(Role::SelectionFg)
+    pub fn selection_foreground(&self) -> Color {
+        self.role(Role::SelectionForeground)
     }
 
     #[must_use]
-    pub fn selection_bg(&self) -> Color {
-        self.role(Role::SelectionBg)
+    pub fn selection_background(&self) -> Color {
+        self.role(Role::SelectionBackground)
     }
 
     #[must_use]

@@ -1,7 +1,7 @@
 // GUARD: `docs/config.md`'s `defaults:config` block still parses into
 // `Config::default()`.
 
-use config::{ConfigFile, parse_config};
+use config::{ConfigToml, parse_config};
 
 use crate::guards::{fault::TestFault, support};
 
@@ -51,7 +51,7 @@ fn config_defaults_block_matches_config_default() -> Result<(), TestFault> {
 
     assert_eq!(
         parsed,
-        ConfigFile::default(),
+        ConfigToml::default(),
         "docs/config.md's `config.toml` defaults block has drifted from \
          Config::default() — update the TOML between the <!-- defaults:config --> \
          / <!-- /defaults:config --> markers in docs/config.md to match the new \

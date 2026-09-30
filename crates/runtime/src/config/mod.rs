@@ -1,12 +1,11 @@
-pub(crate) mod coalesce;
 pub(crate) mod disk;
 pub(crate) mod driver;
 pub(crate) mod machine;
 pub(crate) mod reload;
+pub(crate) mod save_queue;
 pub(crate) mod seen;
 pub(crate) mod session;
 pub(crate) mod watch;
-pub(crate) mod watcher;
 pub(crate) mod write;
 
 use std::{path::PathBuf, time::Duration};
@@ -14,7 +13,7 @@ use std::{path::PathBuf, time::Duration};
 #[must_use]
 #[derive(Debug, Clone)]
 pub struct ConfigPaths {
-    pub config: Option<PathBuf>,
+    pub config: PathBuf,
     pub appearance: PathBuf,
     pub themes: PathBuf,
     pub theme: Option<String>,
@@ -25,7 +24,7 @@ pub struct ConfigPaths {
 pub struct SeenTexts {
     pub appearance: Option<String>,
     pub theme: Option<String>,
-    pub keys: Option<String>,
+    pub config: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

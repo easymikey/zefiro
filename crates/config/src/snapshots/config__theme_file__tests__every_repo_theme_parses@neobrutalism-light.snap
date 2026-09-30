@@ -6,49 +6,49 @@ expression: "parse_theme(source, name).unwrap()"
 ThemeFile {
     name: "neobrutalism-light",
     colors: ThemeColors {
-        background: Hex(
+        background: Rgb(
             [
                 254,
                 246,
                 228,
             ],
         ),
-        foreground: Hex(
+        foreground: Rgb(
             [
                 74,
                 74,
                 74,
             ],
         ),
-        bright_foreground: Hex(
+        bright_foreground: Rgb(
             [
                 17,
                 17,
                 17,
             ],
         ),
-        accent: Hex(
+        accent: Rgb(
             [
                 255,
                 144,
                 232,
             ],
         ),
-        green: Hex(
+        green: Rgb(
             [
                 35,
                 160,
                 148,
             ],
         ),
-        yellow: Hex(
+        yellow: Rgb(
             [
                 255,
                 201,
                 0,
             ],
         ),
-        red: Hex(
+        red: Rgb(
             [
                 255,
                 92,

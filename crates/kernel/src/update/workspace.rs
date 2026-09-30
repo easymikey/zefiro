@@ -1,8 +1,7 @@
 use crate::{
     cmd::{Cmd, Cue, Effect},
     domain::{
-        ConfigSource,
-        KeyValidationErrors,
+        ConfigFile,
         Keymap,
         KeymapOverrides,
         Revision,
@@ -12,46 +11,27 @@ use crate::{
     },
     message::{Timer, WorkspaceRequest},
     update::{
-        keymap::{Bindings, default_bindings},
-        machine::{Machine, Never, Rejected},
+        keymap::default_bindings,
+        machine::{Machine, Rejected},
     },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum KeymapReload {
-    Fresh,
-    Unchanged,
-}
-
 pub(crate) struct SourceOutcome {
-    pub(crate) source: ConfigSource,
+    pub(crate) source: ConfigFile,
     pub(crate) text: Option<String>,
 }
 
 impl Workspace {
-    pub(crate) fn keymap_reload(&self, keys: &KeymapOverrides) -> KeymapReload {
-        if self.keymap.config() == keys {
-            KeymapReload::Unchanged
-        } else {
-            KeymapReload::Fresh
-        }
-    }
-
     pub(crate) fn keymap_reloaded(&mut self, keys: KeymapOverrides) -> Cmd {
-        match self.keymap_reload(&keys) {
-            KeymapReload::Unchanged => Cmd::None,
-            KeymapReload::Fresh => {
-                self.bindings = Bindings::new(&keys);
-                self.keymap = Keymap::new(keys, &default_bindings());
-                let text = (!self.keymap.errors().is_empty()).then(|| {
-                    KeyValidationErrors(self.keymap.errors().to_vec()).to_string()
-                });
-                self.source_result(SourceOutcome {
-                    source: ConfigSource::Keymap,
-                    text,
-                })
-            }
+        if self.keymap.config() == &keys {
+            return Cmd::None;
         }
+        self.keymap = Keymap::new(keys, &default_bindings());
+        let text = self.keymap.error_text();
+        self.source_result(SourceOutcome {
+            source: ConfigFile::Config,
+            text,
+        })
     }
 
     pub(crate) fn show(&mut self, toast: Toast) -> Cmd {
@@ -69,14 +49,14 @@ impl Workspace {
         let SourceOutcome { source, text } = outcome;
         match text {
             Some(text) => {
-                let fresh = self.source_errors.note(source, text);
+                let fresh = self.source_errors.insert_if_changed(source, text);
                 fresh.map_or(Cmd::None, |told| self.show(Toast::error(told)))
             }
             None => self.source_recovered(source),
         }
     }
 
-    pub(crate) fn source_recovered(&mut self, source: ConfigSource) -> Cmd {
+    pub(crate) fn source_recovered(&mut self, source: ConfigFile) -> Cmd {
         let cleared = self.source_errors.clear(source);
         self.toast
             .take_if(|toast| Some(toast.text.as_str()) == cleared.as_deref())
@@ -86,7 +66,7 @@ impl Workspace {
 
 impl Machine for Workspace {
     type Message = WorkspaceRequest;
-    type Rejection = Never;
+    type Error = std::convert::Infallible;
     type Effect = Cmd;
 
     fn transition(

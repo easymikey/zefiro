@@ -1,33 +1,33 @@
-use config::Hex;
+use config::Rgb;
 use palette::{Srgb, color_difference::Wcag21RelativeContrast};
 
-use crate::theme::hex::lerp_rgb;
+use crate::theme::rgb::lerp_rgb;
 
 pub(crate) const MIN_BAND_CONTRAST: f32 = 1.5;
 pub(crate) const MIN_SELECTION_TEXT_CONTRAST: f32 = 4.5;
 pub(crate) const MIN_MARKER_CONTRAST: f32 = 3.0;
 
-const DARKEST: Hex = Hex([u8::MIN, u8::MIN, u8::MIN]);
-const LIGHTEST: Hex = Hex([u8::MAX, u8::MAX, u8::MAX]);
+const DARKEST: Rgb = Rgb([u8::MIN, u8::MIN, u8::MIN]);
+const LIGHTEST: Rgb = Rgb([u8::MAX, u8::MAX, u8::MAX]);
 const NUDGE_LADDER: [f32; 10] = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
 
-fn srgb(color: Hex) -> Srgb<f32> {
+fn srgb(color: Rgb) -> Srgb<f32> {
     let [red, green, blue] = color.0;
     Srgb::new(red, green, blue).into_format()
 }
 
 #[must_use]
-pub(crate) fn relative_luminance(color: Hex) -> f32 {
+pub(crate) fn relative_luminance(color: Rgb) -> f32 {
     srgb(color).relative_luminance().luma
 }
 
 #[must_use]
-pub(crate) fn contrast_ratio(first: Hex, second: Hex) -> f32 {
+pub(crate) fn contrast_ratio(first: Rgb, second: Rgb) -> f32 {
     srgb(first).relative_contrast(srgb(second))
 }
 
-pub(crate) fn raise_contrast(color: Hex, against: &[Hex], minimum: f32) -> Hex {
-    let clears = |candidate: Hex| {
+pub(crate) fn raise_contrast(color: Rgb, against: &[Rgb], minimum: f32) -> Rgb {
+    let clears = |candidate: Rgb| {
         against
             .iter()
             .all(|&background| contrast_ratio(candidate, background) >= minimum)
@@ -50,7 +50,7 @@ pub(crate) fn raise_contrast(color: Hex, against: &[Hex], minimum: f32) -> Hex {
         .unwrap_or(target)
 }
 
-pub(crate) fn visible_band(window_bg: Hex, text: Hex, mix: f32) -> Hex {
+pub(crate) fn visible_band(window_bg: Rgb, text: Rgb, mix: f32) -> Rgb {
     let band = lerp_rgb(window_bg, text, mix);
     if contrast_ratio(band, window_bg) >= MIN_BAND_CONTRAST {
         return band;
@@ -64,7 +64,7 @@ pub(crate) fn visible_band(window_bg: Hex, text: Hex, mix: f32) -> Hex {
 
 #[cfg(test)]
 mod tests {
-    use config::Hex;
+    use config::Rgb;
 
     use crate::theme::contrast::{
         MIN_BAND_CONTRAST,
@@ -75,8 +75,8 @@ mod tests {
         visible_band,
     };
 
-    const BLACK: Hex = Hex([0, 0, 0]);
-    const WHITE: Hex = Hex([0xff, 0xff, 0xff]);
+    const BLACK: Rgb = Rgb([0, 0, 0]);
+    const WHITE: Rgb = Rgb([0xff, 0xff, 0xff]);
 
     #[test]
     fn luminance_spans_black_to_white() {
@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn a_colour_against_itself_is_one_to_one() {
         assert!(
-            (contrast_ratio(Hex([0x2a, 0xa8, 0xa0]), Hex([0x2a, 0xa8, 0xa0])) - 1.0)
+            (contrast_ratio(Rgb([0x2a, 0xa8, 0xa0]), Rgb([0x2a, 0xa8, 0xa0])) - 1.0)
                 .abs()
                 < 0.01
         );
@@ -106,17 +106,17 @@ mod tests {
 
     #[test]
     fn raise_contrast_pushes_a_light_colour_further_from_a_light_background() {
-        let cream = Hex([0xf3, 0xe9, 0xd2]);
+        let cream = Rgb([0xf3, 0xe9, 0xd2]);
         let raised =
-            raise_contrast(cream, &[Hex([0xf5, 0xf1, 0xe8])], MIN_MARKER_CONTRAST);
+            raise_contrast(cream, &[Rgb([0xf5, 0xf1, 0xe8])], MIN_MARKER_CONTRAST);
         assert_ne!(raised, cream);
-        assert!(contrast_ratio(raised, Hex([0xf5, 0xf1, 0xe8])) >= MIN_MARKER_CONTRAST);
+        assert!(contrast_ratio(raised, Rgb([0xf5, 0xf1, 0xe8])) >= MIN_MARKER_CONTRAST);
     }
 
     #[test]
     fn raise_contrast_pushes_a_dark_colour_toward_black() {
-        let teal = Hex([0x2a, 0xa8, 0xa0]);
-        let paper = Hex([0xd8, 0xd0, 0xc8]);
+        let teal = Rgb([0x2a, 0xa8, 0xa0]);
+        let paper = Rgb([0xd8, 0xd0, 0xc8]);
         let raised = raise_contrast(teal, &[paper], MIN_MARKER_CONTRAST);
         assert!(relative_luminance(raised) < relative_luminance(teal));
         assert!(contrast_ratio(raised, paper) >= MIN_MARKER_CONTRAST);
@@ -124,16 +124,16 @@ mod tests {
 
     #[test]
     fn a_band_clears_the_band_ratio_even_when_the_mix_alone_would_not() {
-        let window_bg = Hex([0x0b, 0x0b, 0x0b]);
-        let text = Hex([0xf5, 0xf1, 0xe8]);
+        let window_bg = Rgb([0x0b, 0x0b, 0x0b]);
+        let text = Rgb([0xf5, 0xf1, 0xe8]);
         let band = visible_band(window_bg, text, 0.0);
         assert!(contrast_ratio(band, window_bg) >= MIN_BAND_CONTRAST);
     }
 
     #[test]
     fn a_band_lightens_a_dark_theme_and_darkens_a_light_one() {
-        let dark = Hex([0x12, 0x12, 0x11]);
-        let light = Hex([0xf3, 0xe9, 0xc1]);
+        let dark = Rgb([0x12, 0x12, 0x11]);
+        let light = Rgb([0xf3, 0xe9, 0xc1]);
         assert!(
             relative_luminance(visible_band(dark, WHITE, 0.18))
                 > relative_luminance(dark)

@@ -1,7 +1,4 @@
-use kernel::{
-    domain::{Action, Overlay},
-    update::keymap::KeyBinding,
-};
+use kernel::{domain::Action, update::keymap::KeyBinding};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -13,7 +10,7 @@ use ratatui::{
 use crate::{
     primitive::{
         glyphs::{KeyHintsGlyphs, TruncateGlyphs},
-        span::{row, text},
+        span::{line, text},
         text::truncate_line_to_width,
     },
     theme::ActiveTheme,
@@ -87,12 +84,13 @@ pub enum KeyHintsContent<'a> {
 
 impl<'a> KeyHintsContent<'a> {
     #[must_use]
-    pub fn new(overlay: Option<&Overlay>, bindings: &'a [KeyBinding]) -> Self {
-        if matches!(overlay, Some(Overlay::Settings(_))) {
-            Self::SettingsHints(bindings)
-        } else {
-            Self::Keys(bindings)
-        }
+    pub fn keys(bindings: &'a [KeyBinding]) -> Self {
+        Self::Keys(bindings)
+    }
+
+    #[must_use]
+    pub fn settings(bindings: &'a [KeyBinding]) -> Self {
+        Self::SettingsHints(bindings)
     }
 }
 
@@ -141,7 +139,7 @@ fn key_hints_line(
     content: KeyHintsContent<'_>,
     width: u16,
 ) -> Line<'static> {
-    let chip_text: Color = theme.window_bg();
+    let chip_text: Color = theme.window_background();
     let chip_background: Color = theme.muted_accent();
     let label: Color = theme.text();
     let separator_color: Color = theme.dim();
@@ -160,17 +158,19 @@ fn key_hints_line(
     };
 
     let render = |chips: &[ChipPair]| -> Line<'static> {
-        row(chips
-            .iter()
-            .enumerate()
-            .flat_map(|(position, (key, name))| {
-                let separator_piece =
-                    (position > 0).then(|| text(glyphs.separator).fg(separator_color));
-                separator_piece.into_iter().chain([
-                    text(format!(" {key} ")).fg(chip_text).bg(chip_background),
-                    text(format!(" {name}")).fg(label),
-                ])
-            }))
+        line(
+            chips
+                .iter()
+                .enumerate()
+                .flat_map(|(position, (key, name))| {
+                    let separator_piece = (position > 0)
+                        .then(|| text(glyphs.separator).fg(separator_color));
+                    separator_piece.into_iter().chain([
+                        text(format!(" {key} ")).fg(chip_text).bg(chip_background),
+                        text(format!(" {name}")).fg(label),
+                    ])
+                }),
+        )
     };
 
     let full = render(&pairs);

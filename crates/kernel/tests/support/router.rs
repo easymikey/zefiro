@@ -2,17 +2,16 @@ use std::time::Duration;
 
 use kernel::{
     AudioEvent,
-    BrowseRequest,
+    Direction,
     HistoryRequest,
-    JumpRequest,
-    LoadedRequest,
     Message,
     Model,
     Moment,
-    Nudge,
     OverlayName,
     OverlayRequest,
     PlaybackRequest,
+    PlaylistRequest,
+    QueueRequest,
     SearchEdit,
     SearchRequest,
     TextRequest,
@@ -31,10 +30,10 @@ use kernel::{
         Preload,
         Revision,
         Speed,
-        SpeedStep,
         Tags,
         Track,
         TrackIndex,
+        UnixSeconds,
     },
     library::Library,
     playlist::RepeatMode,
@@ -75,8 +74,8 @@ pub(crate) fn search_backspace() -> Message {
     )))
 }
 
-pub(crate) fn search_nav(nudge: Nudge) -> Message {
-    Message::Overlay(OverlayRequest::Search(SearchRequest::Navigate(nudge)))
+pub(crate) fn search_nav(direction: Direction) -> Message {
+    Message::Overlay(OverlayRequest::Search(SearchRequest::Navigate(direction)))
 }
 
 pub(crate) fn search_enqueue() -> Message {
@@ -88,7 +87,7 @@ pub(crate) fn history_enqueue() -> Message {
 }
 
 pub(crate) fn jump_char(character: char) -> Message {
-    Message::Overlay(OverlayRequest::Jump(JumpRequest::Char(character)))
+    Message::Overlay(OverlayRequest::Jump(TextRequest::Char(character)))
 }
 
 pub(crate) fn text_char(character: char) -> Message {
@@ -118,10 +117,9 @@ pub(crate) fn logged(log: &[&str], playlist: &[&str]) -> Model {
                     path: (*path).into(),
                     title: (*path).to_string(),
                     artist: None,
-                    at: 0,
+                    at: UnixSeconds::new(0),
                 })
                 .collect(),
-            ..Default::default()
         },
         ..Default::default()
     };
@@ -131,7 +129,7 @@ pub(crate) fn logged(log: &[&str], playlist: &[&str]) -> Model {
         .collect();
     model.workspace.overlay = Some(Overlay::History(CursorOver {
         cursor: Cursor::with_len(log.len()).at(log.len().saturating_sub(1)),
-        rows: (),
+        content: (),
     }));
     model
 }
@@ -174,7 +172,7 @@ pub(crate) fn spinning(count: usize) -> Model {
 
 pub(crate) fn spinning_at(count: usize, at: usize) -> Model {
     let mut model = spinning(count);
-    model.playlist.at = Cursor::with_len(count).at(at);
+    model.playlist.cursor = Cursor::with_len(count).at(at);
     model.player = Player::Playing {
         track: dated_track(at),
         head: Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default()),
@@ -214,7 +212,7 @@ pub(crate) fn skip() -> Message {
 }
 
 pub(crate) fn enqueue(track: usize) -> Message {
-    Message::Browse(BrowseRequest::EnqueueTrack(PlaylistIndex::new(track)))
+    Message::Queue(QueueRequest::EnqueueTrack(PlaylistIndex::new(track)))
 }
 
 pub(crate) fn shuffle() -> Message {
@@ -222,7 +220,7 @@ pub(crate) fn shuffle() -> Message {
 }
 
 pub(crate) fn shuffled(order: Vec<usize>) -> Message {
-    Message::Loaded(LoadedRequest::ShuffleRolled(order))
+    Message::Loaded(PlaylistRequest::ShuffleRolled(order))
 }
 
 pub(crate) fn a_lap_of(laps: usize) -> Vec<Message> {
@@ -242,7 +240,7 @@ pub(crate) fn mark_fires() -> Message {
 }
 
 pub(crate) fn nudge_speed(steps: i8) -> Message {
-    Message::Playback(PlaybackRequest::NudgeSpeed(SpeedStep::new(steps)))
+    Message::Playback(PlaybackRequest::NudgeSpeed { steps })
 }
 
 pub(crate) fn spinning_past(at: u64) -> Model {

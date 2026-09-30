@@ -1,4 +1,4 @@
-use config::SpeedChipMode;
+use config::SpeedChip;
 use raster::unit_fraction;
 use ratatui::{
     buffer::Buffer,
@@ -14,10 +14,10 @@ use crate::{
         headings::{CardStatus, card_status, status_label},
     },
     primitive::{
-        bar::{FillSpec, fill_line},
+        bar::{BarFill, fill_line},
         chip::{ChipColors, speed_chip_spans, speed_chip_width},
         relative_time::elapsed_of,
-        span::{row, text},
+        span::{line, text},
         text::truncate,
     },
     theme::{ActiveTheme, FillColors},
@@ -47,7 +47,7 @@ impl Default for CompactCardLayout {
 }
 
 #[must_use]
-pub(crate) fn height() -> u16 {
+pub(crate) fn compact_height() -> u16 {
     let layout = CompactCardLayout::default();
     layout.border_width + layout.title_rows + layout.progress_rows + layout.status_rows
 }
@@ -56,13 +56,13 @@ pub(crate) fn height() -> u16 {
 pub(crate) struct CompactCard<'a> {
     pub(crate) view: CardView<'a>,
     pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) speed_chip: SpeedChipMode,
+    pub(crate) speed_chip: SpeedChip,
 }
 
-struct CompactContext<'a> {
+struct CompactParts<'a> {
     view: CardView<'a>,
     theme: ActiveTheme<'a>,
-    speed_chip: SpeedChipMode,
+    speed_chip: SpeedChip,
     layout: CompactCardLayout,
     inner: Rect,
     status_row: StatusRowGeometry,
@@ -107,7 +107,7 @@ impl Widget for &CompactCard<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let layout = CompactCardLayout::default();
         let theme = self.theme;
-        let frame_color: Color = theme.frame();
+        let frame_color: Color = theme.border();
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -118,7 +118,7 @@ impl Widget for &CompactCard<'_> {
         let inner = content_area(area, layout);
         block.render(area, buffer);
 
-        let context = CompactContext {
+        let context = CompactParts {
             view: self.view,
             theme,
             speed_chip: self.speed_chip,
@@ -133,7 +133,7 @@ impl Widget for &CompactCard<'_> {
     }
 }
 
-fn paint_header_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
+fn paint_header_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let inner = context.inner;
     let clamp = |rect: Rect| rect.intersection(inner);
     let row_width = inner.width;
@@ -153,7 +153,7 @@ fn paint_header_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
         width: row_width,
         height: 1,
     });
-    Paragraph::new(row([text(truncate(&title, usize::from(row_width)))
+    Paragraph::new(line([text(truncate(&title, usize::from(row_width)))
         .fg(text_color)
         .bold()]))
     .render(title_row, buffer);
@@ -164,13 +164,13 @@ fn paint_header_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
         width: row_width,
         height: 1,
     });
-    Paragraph::new(row([
+    Paragraph::new(line([
         text(truncate(&artist, usize::from(row_width))).fg(dim_color)
     ]))
     .render(artist_row, buffer);
 }
 
-fn paint_progress_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
+fn paint_progress_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let inner = context.inner;
     let clamp = |rect: Rect| rect.intersection(inner);
     let row_width = inner.width;
@@ -196,7 +196,7 @@ fn paint_progress_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
         height: 1,
     });
     Paragraph::new(fill_line(
-        &FillSpec::progress(unit_fraction(fraction), usize::from(row_width)),
+        &BarFill::progress(unit_fraction(fraction), usize::from(row_width)),
         FillColors {
             accent: accent_color,
             dim: dim_color,
@@ -205,7 +205,7 @@ fn paint_progress_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
     .render(progress_row, buffer);
 }
 
-fn paint_status_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
+fn paint_status_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let inner = context.inner;
     let clamp = |rect: Rect| rect.intersection(inner);
     let StatusRowGeometry {
@@ -220,7 +220,7 @@ fn paint_status_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
 
     let status = card_status(view.output, view.player);
     let status_color = match status {
-        CardStatus::OutputLost => context.theme.accent2(),
+        CardStatus::OutputLost => context.theme.secondary_accent(),
         CardStatus::Playing => accent_color,
         CardStatus::Paused => text_color,
         CardStatus::Stopped => dim_color,
@@ -263,7 +263,7 @@ fn paint_status_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
     Paragraph::new(Line::from(status_spans)).render(status_row, buffer);
 }
 
-fn paint_meter_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
+fn paint_meter_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let inner = context.inner;
     let clamp = |rect: Rect| rect.intersection(inner);
     let row_width = inner.width;
@@ -280,8 +280,8 @@ fn paint_meter_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
         height: 1,
     });
     Paragraph::new(fill_line(
-        &FillSpec::volume(context.view.volume.ratio(), usize::from(bar_area.width)),
-        context.theme.volume_colors(),
+        &BarFill::volume(context.view.volume.ratio(), usize::from(bar_area.width)),
+        context.theme.volume_fill_colors(),
     ))
     .render(bar_area, buffer);
 }
@@ -290,7 +290,7 @@ fn paint_meter_row(buffer: &mut Buffer, context: &CompactContext<'_>) {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use config::SpeedChipMode;
+    use config::SpeedChip;
     use kernel::{
         Bounded,
         Moment,
@@ -361,7 +361,7 @@ mod tests {
         let widget = CompactCard {
             view,
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            speed_chip: SpeedChipMode::Always,
+            speed_chip: SpeedChip::Always,
         };
         let text = painted(&widget, 40, compact_height());
         assert!(text.contains("Moon River"), "got {text:?}");
@@ -390,7 +390,7 @@ mod tests {
         let widget = CompactCard {
             view,
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            speed_chip: SpeedChipMode::Always,
+            speed_chip: SpeedChip::Always,
         };
         let text = painted(&widget, 40, compact_height());
         assert!(text.contains("No track"), "got {text:?}");

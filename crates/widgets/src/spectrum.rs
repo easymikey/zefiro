@@ -62,12 +62,7 @@ impl SpectrumSmoothing {
     }
 
     #[must_use]
-    pub fn bands(&self) -> Spectrum {
-        self.bands
-    }
-
-    #[must_use]
-    pub fn current_bands(&self) -> &Spectrum {
+    pub fn bands(&self) -> &Spectrum {
         &self.bands
     }
 
@@ -98,7 +93,7 @@ mod tests {
     fn smoothing_moves_every_band_toward_the_raw_value_without_overshoot() {
         let mut smoothing = SpectrumSmoothing::default();
         let target = [1.0; SPECTRUM_BANDS];
-        let mut previous = smoothing.bands();
+        let mut previous = *smoothing.bands();
         for _ in 0..5 {
             let bands = smoothing.smooth(&target, FRAME);
             for (band, &previous_band) in bands.iter().zip(previous.iter()) {
@@ -113,7 +108,7 @@ mod tests {
     fn decay_pulls_bands_to_near_zero_within_a_few_frames() {
         let mut smoothing = SpectrumSmoothing::default();
         let _ = smoothing.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
-        let mut decayed = smoothing.bands();
+        let mut decayed = *smoothing.bands();
         for _ in 0..30 {
             decayed = smoothing.fade(FRAME);
         }

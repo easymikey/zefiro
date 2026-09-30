@@ -4,19 +4,18 @@ use crate::{
         CharSink,
         Chord,
         ChordPrefix,
+        Direction,
         JumpDigits,
         Key,
         KeyCode,
         KeyContext,
         KeyPattern,
         Modifiers,
-        Nudge,
         digit_char,
         digits,
     },
     message::{
         HistoryRequest,
-        JumpRequest,
         Message,
         OverlayRequest,
         SearchEdit,
@@ -149,11 +148,11 @@ fn search_rows() -> Vec<KeyBinding> {
             (plain(KeyCode::Backspace), edit(SearchEdit::Backspace)),
             (
                 plain(KeyCode::Down),
-                search(SearchRequest::Navigate(Nudge::Down)),
+                search(SearchRequest::Navigate(Direction::Next)),
             ),
             (
                 plain(KeyCode::Up),
-                search(SearchRequest::Navigate(Nudge::Up)),
+                search(SearchRequest::Navigate(Direction::Previous)),
             ),
             (plain(KeyCode::Tab), search(SearchRequest::Enqueue)),
             (KeyPattern::AnyChar, KeyOutcome::TypeChar(CharSink::Search)),
@@ -185,15 +184,21 @@ fn history_rows() -> Vec<KeyBinding> {
             ),
             (plain(KeyCode::Esc), close()),
             (plain(KeyCode::Enter), history(HistoryRequest::Enqueue)),
-            (letter('j'), history(HistoryRequest::Navigate(Nudge::Down))),
+            (
+                letter('j'),
+                history(HistoryRequest::Navigate(Direction::Next)),
+            ),
             (
                 plain(KeyCode::Down),
-                history(HistoryRequest::Navigate(Nudge::Down)),
+                history(HistoryRequest::Navigate(Direction::Next)),
             ),
-            (letter('k'), history(HistoryRequest::Navigate(Nudge::Up))),
+            (
+                letter('k'),
+                history(HistoryRequest::Navigate(Direction::Previous)),
+            ),
             (
                 plain(KeyCode::Up),
-                history(HistoryRequest::Navigate(Nudge::Up)),
+                history(HistoryRequest::Navigate(Direction::Previous)),
             ),
             (letter('G'), history(HistoryRequest::Bottom)),
         ],
@@ -226,22 +231,22 @@ fn settings_rows() -> Vec<KeyBinding> {
         settings_bindings(
             SettingsNavigateDown,
             &[letter_chord('j'), key_chord(KeyCode::Down)],
-            &settings(Navigate(Nudge::Down)),
+            &settings(Navigate(Direction::Next)),
         ),
         settings_bindings(
             SettingsNavigateUp,
             &[letter_chord('k'), key_chord(KeyCode::Up)],
-            &settings(Navigate(Nudge::Up)),
+            &settings(Navigate(Direction::Previous)),
         ),
         settings_bindings(
             SettingsAdjustDown,
             &[letter_chord('h'), key_chord(KeyCode::Left)],
-            &settings(Adjust(Nudge::Down)),
+            &settings(Adjust(Direction::Previous)),
         ),
         settings_bindings(
             SettingsAdjustUp,
             &[letter_chord('l'), key_chord(KeyCode::Right)],
-            &settings(Adjust(Nudge::Up)),
+            &settings(Adjust(Direction::Next)),
         ),
     ]
     .concat()
@@ -265,7 +270,7 @@ fn jump_rows() -> Vec<KeyBinding> {
         (plain(KeyCode::Enter), confirm()),
         (
             plain(KeyCode::Backspace),
-            overlay(OverlayRequest::Jump(JumpRequest::Backspace)),
+            overlay(OverlayRequest::Jump(TextRequest::Backspace)),
         ),
     ];
     let jump_keys = digits()
@@ -274,7 +279,7 @@ fn jump_rows() -> Vec<KeyBinding> {
     rows.extend(jump_keys.map(|character| {
         (
             letter(character),
-            overlay(OverlayRequest::Jump(JumpRequest::Char(character))),
+            overlay(OverlayRequest::Jump(TextRequest::Char(character))),
         )
     }));
     rows_in((KeyContext::JumpToTime, rows))

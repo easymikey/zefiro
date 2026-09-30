@@ -23,7 +23,7 @@ impl Stage {
         !matches!(self, Stage::Idle)
     }
 
-    fn staged(&self) -> usize {
+    fn staged_count(&self) -> usize {
         match self {
             Stage::Running(active) => active.len(),
             Stage::Idle | Stage::Ended => 0,
@@ -111,7 +111,7 @@ pub struct Backdrop {
 }
 
 impl AnimationStage {
-    pub fn elapsed_since(&mut self, clock: Duration) -> Duration {
+    pub fn advance_clock(&mut self, clock: Duration) -> Duration {
         let elapsed = clock.saturating_sub(self.last_clock);
         self.last_clock = clock;
         if !self.stage.is_running() {
@@ -136,8 +136,8 @@ impl AnimationStage {
     }
 
     #[must_use]
-    pub fn staged(&self) -> usize {
-        self.stage.staged()
+    pub fn staged_count(&self) -> usize {
+        self.stage.staged_count()
     }
 
     #[must_use]
@@ -150,12 +150,12 @@ impl AnimationStage {
         self.wash_area = None;
     }
 
-    pub(crate) fn lift(&mut self) -> Vec<(Animation, Rect)> {
+    pub(crate) fn take_running(&mut self) -> Vec<(Animation, Rect)> {
         std::mem::take(&mut self.stage).take_active()
     }
 
-    pub(crate) fn keep_behind(&mut self, running: Vec<(Animation, Rect)>) {
-        let current = self.lift();
+    pub(crate) fn restore_running(&mut self, running: Vec<(Animation, Rect)>) {
+        let current = self.take_running();
         let restaged: Vec<Rect> = current.iter().map(|(_, area)| *area).collect();
         let merged: Vec<(Animation, Rect)> = running
             .into_iter()
@@ -180,7 +180,7 @@ impl AnimationStage {
             .push((animation.with_filter(self.cell_filter()), area));
     }
 
-    pub(crate) fn stage_at(&mut self, area: Option<Rect>, animation: Animation) {
+    pub(crate) fn stage_at(&mut self, animation: Animation, area: Option<Rect>) {
         if let Some(area) = area {
             self.stage(animation, area);
         }
@@ -251,7 +251,7 @@ mod tests {
         let stage = Stage::default();
         assert!(!stage.is_running());
         assert!(!stage.wants_frame());
-        assert_eq!(stage.staged(), 0);
+        assert_eq!(stage.staged_count(), 0);
     }
 
     #[test]
@@ -260,7 +260,7 @@ mod tests {
         stage.push((fade(900), INSIDE));
         assert!(stage.is_running());
         assert!(stage.wants_frame());
-        assert_eq!(stage.staged(), 1);
+        assert_eq!(stage.staged_count(), 1);
     }
 
     #[test]
@@ -268,7 +268,7 @@ mod tests {
         let mut stage = Stage::default();
         stage.push((fade(900), INSIDE));
         stage.push((fade(900), INSIDE));
-        assert_eq!(stage.staged(), 2);
+        assert_eq!(stage.staged_count(), 2);
     }
 
     #[test]

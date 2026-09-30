@@ -1,5 +1,6 @@
 ---
 source: crates/audio/src/engine/live/preload.rs
+assertion_line: 207
 expression: log
 ---
 [
@@ -7,7 +8,7 @@ expression: log
         "/b",
     ),
     Nothing,
-    Many(
+    Batch(
         [
             Advance,
             Send(

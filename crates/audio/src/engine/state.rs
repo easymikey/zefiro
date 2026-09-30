@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 
 use kernel::{
+    AudioError,
     AudioEvent,
-    AudioFailure,
-    domain::{Bounded, DeviceName, Percent, Revision, Speed},
+    domain::{Bounded, OutputDevice, Percent, Revision, Speed},
     update::Rejected,
 };
 
 use crate::{
     EngineConfig,
-    deck::DeviceOpen,
+    deck::DeviceChoice,
     engine::{crossfade::effective_volume, effect::EngineEffect, phase::Phase},
 };
 
@@ -27,9 +27,9 @@ impl Default for Engine {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Muted {
-    pub(crate) fault: AudioFailure,
+    pub(crate) error: AudioError,
     pub(crate) config: EngineConfig,
-    pub(crate) pending: Option<PendingLoad>,
+    pub(crate) pending: Option<TrackRequest>,
     pub(crate) mix: Mix,
 }
 
@@ -49,7 +49,7 @@ impl Default for Mix {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PendingLoad {
+pub(crate) struct TrackRequest {
     pub(crate) path: PathBuf,
     pub(crate) gain: Option<f32>,
     pub(crate) revision: Revision,
@@ -59,15 +59,15 @@ pub(crate) struct PendingLoad {
 pub(crate) struct Live {
     pub(crate) phase: Phase,
     pub(crate) speed: Speed,
-    pub(crate) user_factor: Percent,
+    pub(crate) volume: Percent,
     pub(crate) config: EngineConfig,
-    pub(crate) performed: Stamps,
+    pub(crate) performed: PerformedRevisions,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct Stamps {
+pub(crate) struct PerformedRevisions {
     pub(crate) load: Revision,
-    pub(crate) preload: Revision,
+    pub(crate) incoming: Revision,
 }
 
 impl Live {
@@ -81,46 +81,46 @@ impl Live {
         Self {
             phase: Phase::Idle,
             speed: mix.speed,
-            user_factor: mix.volume,
+            volume: mix.volume,
             config,
-            performed: Stamps::default(),
+            performed: PerformedRevisions::default(),
         }
     }
 
     pub(crate) fn volume(&self) -> f32 {
         let gain = self.phase.current().and_then(|current| current.gain);
-        effective_volume(&self.config, gain, self.user_factor.ratio())
+        effective_volume(&self.config, gain, self.volume.ratio())
     }
 }
 
 pub(crate) fn announce(
-    opened: DeviceOpen,
-    device: Option<DeviceName>,
-    io: EngineEffect,
+    opened: DeviceChoice,
+    device: OutputDevice,
+    effect: EngineEffect,
 ) -> EngineEffect {
     match opened {
-        DeviceOpen::AsRequested => io,
-        DeviceOpen::FellBack => notice(device, io),
+        DeviceChoice::Requested => effect,
+        DeviceChoice::FellBack => announce_fallback(device, effect),
     }
 }
 
-fn notice(device: Option<DeviceName>, then: EngineEffect) -> EngineEffect {
+fn announce_fallback(device: OutputDevice, then: EngineEffect) -> EngineEffect {
     let told = EngineEffect::Send(AudioEvent::DeviceFellBack(device));
     if matches!(then, EngineEffect::Nothing) {
         return told;
     }
-    EngineEffect::Many(vec![told, then])
+    EngineEffect::Batch(vec![told, then])
 }
 
-pub(crate) fn reported(io: EngineEffect) -> EngineEffect {
-    if matches!(io, EngineEffect::Nothing) {
+pub(crate) fn reported(effect: EngineEffect) -> EngineEffect {
+    if matches!(effect, EngineEffect::Nothing) {
         return EngineEffect::Report;
     }
-    if let EngineEffect::Many(mut steps) = io {
+    if let EngineEffect::Batch(mut steps) = effect {
         steps.push(EngineEffect::Report);
-        return EngineEffect::Many(steps);
+        return EngineEffect::Batch(steps);
     }
-    EngineEffect::Many(vec![io, EngineEffect::Report])
+    EngineEffect::Batch(vec![effect, EngineEffect::Report])
 }
 
 pub(crate) enum Transition {
@@ -130,8 +130,8 @@ pub(crate) enum Transition {
 
 impl From<(Engine, EngineEffect)> for Transition {
     fn from(moved: (Engine, EngineEffect)) -> Self {
-        let (engine, io) = moved;
-        Transition::Next(engine, io)
+        let (engine, effect) = moved;
+        Transition::Next(engine, effect)
     }
 }
 
@@ -141,17 +141,24 @@ pub(crate) mod fixtures {
 
     use kernel::{
         AudioCmd,
-        AudioFailure,
+        AudioError,
         Bounded,
-        DecodeFault,
+        DecodeError,
         Playback,
-        domain::{Crossfade, DeviceName, OutputFault, Replaygain, Revision},
+        domain::{
+            Crossfade,
+            DeviceName,
+            OutputDevice,
+            Replaygain,
+            Revision,
+            StreamError,
+        },
     };
 
     use crate::{
         EngineConfig,
         UnityVolume,
-        deck::{DeviceOpen, Reopening},
+        deck::{DeviceChoice, DeviceOpened},
         engine::{
             effect::{EngineMessage, Preload, PreloadedTrack},
             phase::{
@@ -166,7 +173,7 @@ pub(crate) mod fixtures {
                 Phase,
                 Playing,
             },
-            state::{Engine, Live, Mix, Muted, PendingLoad, Stamps},
+            state::{Engine, Live, Mix, Muted, PerformedRevisions, TrackRequest},
         },
     };
 
@@ -174,12 +181,12 @@ pub(crate) mod fixtures {
     pub(crate) const PRELOAD_TOTAL: Duration = Duration::from_secs(90);
     pub(crate) const CROSSFADE_SECONDS: u64 = 10;
 
-    pub(crate) fn secs(seconds: u64) -> Duration {
-        Duration::from_secs(seconds)
+    pub(crate) fn seconds(count: u64) -> Duration {
+        Duration::from_secs(count)
     }
 
-    pub(crate) fn crossfade(seconds: u64) -> Crossfade {
-        Crossfade::clamped(secs(seconds))
+    pub(crate) fn crossfade(count: u64) -> Crossfade {
+        Crossfade::clamped(seconds(count))
     }
 
     pub(crate) fn config() -> EngineConfig {
@@ -187,33 +194,33 @@ pub(crate) mod fixtures {
             crossfade: crossfade(0),
             replaygain: Replaygain::Off,
             unity_volume: UnityVolume::Free,
-            device: None,
+            device: OutputDevice::SystemDefault,
         }
     }
 
     pub(crate) fn config_on(device: &str) -> EngineConfig {
         EngineConfig {
-            device: Some(DeviceName::new(device.to_string()).unwrap()),
+            device: OutputDevice::Named(DeviceName::new(device.to_string()).unwrap()),
             ..config()
         }
     }
 
-    pub(crate) fn fault() -> AudioFailure {
-        AudioFailure::Stream {
+    pub(crate) fn error() -> AudioError {
+        AudioError::Stream {
             reason: "no output device available".to_string(),
         }
     }
 
-    pub(crate) fn decode_fault() -> AudioFailure {
-        AudioFailure::Decode {
+    pub(crate) fn decode_error() -> AudioError {
+        AudioError::Decode {
             path: "/a".into(),
-            fault: DecodeFault::Unsupported,
+            kind: DecodeError::Unsupported,
         }
     }
 
-    pub(crate) fn output_lost() -> AudioFailure {
-        AudioFailure::OutputLost {
-            fault: OutputFault::DeviceGone,
+    pub(crate) fn output_lost() -> AudioError {
+        AudioError::OutputLost {
+            kind: StreamError::DeviceGone,
         }
     }
 
@@ -223,7 +230,7 @@ pub(crate) mod fixtures {
 
     pub(crate) fn muted() -> Engine {
         Engine::Muted(Muted {
-            fault: fault(),
+            error: error(),
             config: config(),
             pending: None,
             mix: Mix::default(),
@@ -232,12 +239,12 @@ pub(crate) mod fixtures {
 
     pub(crate) fn waiting_for(path: &str) -> Engine {
         Engine::Muted(Muted {
-            pending: Some(PendingLoad {
+            pending: Some(TrackRequest {
                 path: path.into(),
                 gain: None,
                 revision: first(),
             }),
-            fault: fault(),
+            error: error(),
             config: config(),
             mix: Mix::default(),
         })
@@ -303,7 +310,7 @@ pub(crate) mod fixtures {
                 path: "/a".into(),
                 gain: None,
                 after_load: AfterLoad::Resume {
-                    position: secs(5),
+                    position: seconds(5),
                     playback: Playback::Paused,
                     total: Some(TOTAL),
                 },
@@ -410,7 +417,7 @@ pub(crate) mod fixtures {
 
     pub(crate) fn loaded_at(live: Live, revision: Revision) -> Live {
         Live {
-            performed: Stamps {
+            performed: PerformedRevisions {
                 load: revision,
                 ..live.performed
             },
@@ -434,14 +441,14 @@ pub(crate) mod fixtures {
         }
     }
 
-    pub(crate) fn landed(preload: PreloadedTrack) -> EngineMessage {
+    pub(crate) fn installed(preload: PreloadedTrack) -> EngineMessage {
         EngineMessage::Preloaded(Ok(Preload::Crossfade(preload)))
     }
 
     pub(crate) fn preloaded_at(live: Live, revision: Revision) -> Live {
         Live {
-            performed: Stamps {
-                preload: revision,
+            performed: PerformedRevisions {
+                incoming: revision,
                 ..live.performed
             },
             ..live
@@ -453,24 +460,24 @@ pub(crate) mod fixtures {
     }
 
     pub(crate) fn opened(
-        device: Option<&str>,
+        device: OutputDevice,
         position: Duration,
         playback: Playback,
     ) -> EngineMessage {
-        EngineMessage::Opened(Ok(Reopening {
-            device: device.map(|name| DeviceName::new(name.to_string()).unwrap()),
+        EngineMessage::Opened(Ok(DeviceOpened {
+            device,
             position,
             playback,
-            opened: DeviceOpen::AsRequested,
+            opened: DeviceChoice::Requested,
         }))
     }
 
     pub(crate) fn fell_back(position: Duration, playback: Playback) -> EngineMessage {
-        EngineMessage::Opened(Ok(Reopening {
-            device: None,
+        EngineMessage::Opened(Ok(DeviceOpened {
+            device: OutputDevice::SystemDefault,
             position,
             playback,
-            opened: DeviceOpen::FellBack,
+            opened: DeviceChoice::FellBack,
         }))
     }
 }

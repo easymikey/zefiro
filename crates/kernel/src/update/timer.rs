@@ -2,18 +2,18 @@ use crate::{
     cmd::{Cmd, Cue},
     domain::{Model, Moment, Reply, Revision, Workspace},
     message::Timer,
-    update::{audio, driver, player, player::PlayerMessage, rejection::Rejection},
+    update::{audio, driver, error::UpdateError, player, player::PlayerMessage},
 };
 
 pub(crate) fn update(
     model: &mut Model,
     timer: Timer,
     now: Moment,
-) -> Result<Cmd, Rejection> {
+) -> Result<Cmd, UpdateError> {
     match timer {
         Timer::Toast(revision) => Ok(toast_expired(
             &mut model.workspace,
-            revision.reply(model.toast_generation),
+            revision.reply(model.revisions.toast),
         )),
         Timer::Sleep(revision) => sleep_fired(model, revision, now),
         Timer::Mark(revision) => audio::mark_fired(model, revision, now),
@@ -35,13 +35,11 @@ fn sleep_fired(
     model: &mut Model,
     revision: Revision,
     now: Moment,
-) -> Result<Cmd, Rejection> {
-    match (
-        revision.reply(model.sleep_generation),
-        model.transport.sleep,
-    ) {
+) -> Result<Cmd, UpdateError> {
+    match (revision.reply(model.revisions.sleep), model.transport.sleep) {
         (Reply::Awaited, Some(_)) => {
-            let paused = player::account(model, PlayerMessage::SleepFired(now), now)?;
+            let paused =
+                player::update_player(model, PlayerMessage::SleepFired(now), now)?;
             model.transport.sleep = None;
             Ok(paused)
         }

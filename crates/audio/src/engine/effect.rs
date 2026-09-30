@@ -2,13 +2,13 @@ use std::{path::PathBuf, time::Duration};
 
 use kernel::{
     AudioCmd,
+    AudioError,
     AudioEvent,
-    AudioFailure,
     Playback,
-    domain::{DeviceName, OutputDevice, Speed},
+    domain::{ListedDevice, OutputDevice, Speed},
 };
 
-use crate::deck::{Landed, Reopening};
+use crate::deck::DeviceOpened;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Slot {
@@ -33,23 +33,23 @@ pub(crate) struct PreloadedTrack {
 #[derive(Debug, Clone)]
 pub(crate) enum EngineMessage {
     Cmd(AudioCmd),
-    Opened(Result<Reopening, AudioFailure>),
-    Decoded(Result<Option<Duration>, AudioFailure>),
-    Preloaded(Result<Preload, AudioFailure>),
-    Failed(AudioFailure),
+    Opened(Result<DeviceOpened, AudioError>),
+    Decoded(Result<Option<Duration>, AudioError>),
+    Preloaded(Result<Preload, AudioError>),
+    Failed(AudioError),
     Retiring { from: f32 },
     Finished(Slot),
     Cued,
     Ramped(Slot),
-    DevicesListed(Result<Vec<OutputDevice>, AudioFailure>),
+    DevicesListed(Result<Vec<ListedDevice>, AudioError>),
 }
 
-pub(crate) fn devices_fact(
-    devices: Result<Vec<OutputDevice>, AudioFailure>,
+pub(crate) fn devices_event(
+    devices: Result<Vec<ListedDevice>, AudioError>,
 ) -> AudioEvent {
     devices.map_or_else(
-        |_error| AudioEvent::DevicesLoaded(Vec::new()),
-        AudioEvent::DevicesLoaded,
+        |_error| AudioEvent::DevicesListed(Vec::new()),
+        AudioEvent::DevicesListed,
     )
 }
 
@@ -57,11 +57,11 @@ pub(crate) fn devices_fact(
 pub(crate) enum EngineEffect {
     #[default]
     Nothing,
-    Many(Vec<EngineEffect>),
+    Batch(Vec<EngineEffect>),
     Send(AudioEvent),
-    Mute(AudioFailure),
+    Mute(AudioError),
     Open {
-        device: Option<DeviceName>,
+        device: OutputDevice,
         speed: Speed,
     },
     StartLoad {
@@ -114,51 +114,4 @@ pub(crate) enum EngineEffect {
     ListDevices,
     Report,
     Advance,
-}
-
-impl From<Landed> for Preload {
-    fn from(landed: Landed) -> Self {
-        match landed {
-            Landed::Gapless(path) => Preload::Gapless(path),
-            Landed::Crossfade { path, gain, total } => {
-                Preload::Crossfade(PreloadedTrack { path, gain, total })
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{path::PathBuf, time::Duration};
-
-    use rstest::rstest;
-
-    use crate::{
-        deck::Landed,
-        engine::effect::{Preload, PreloadedTrack},
-    };
-
-    #[rstest]
-    #[case::gapless(
-        Landed::Gapless(PathBuf::from("/a")),
-        Preload::Gapless(PathBuf::from("/a"))
-    )]
-    #[case::crossfade(
-        Landed::Crossfade {
-            path: PathBuf::from("/b"),
-            gain: Some(0.5),
-            total: Some(Duration::from_secs(10)),
-        },
-        Preload::Crossfade(PreloadedTrack {
-            path: PathBuf::from("/b"),
-            gain: Some(0.5),
-            total: Some(Duration::from_secs(10)),
-        })
-    )]
-    fn a_landed_preload_becomes_a_fact(
-        #[case] landed: Landed,
-        #[case] expected: Preload,
-    ) {
-        assert_eq!(Preload::from(landed), expected);
-    }
 }

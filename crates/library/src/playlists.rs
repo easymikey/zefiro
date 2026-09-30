@@ -2,23 +2,16 @@ use std::{borrow::Borrow, sync::Arc};
 
 use kernel::{LibrarySubject, Playlist, Track, playlist::PlaylistFileName};
 
-use crate::{error::LibraryError, paths::LibraryPaths};
+use crate::{dirs::LibraryDirs, error::Error};
 
 fn playlist_filename(name: &PlaylistFileName) -> String {
     format!("{}.m3u8", name.as_str())
 }
 
-pub fn load(
-    paths: &LibraryPaths,
-    name: &PlaylistFileName,
-) -> Result<Playlist, LibraryError> {
-    let path = paths.playlists.join(playlist_filename(name));
-    let content =
-        std::fs::read_to_string(&path).map_err(|source| LibraryError::Read {
-            subject: LibrarySubject::Playlist,
-            path: path.clone(),
-            source,
-        })?;
+pub fn load(dirs: &LibraryDirs, name: &PlaylistFileName) -> Result<Playlist, Error> {
+    let path = dirs.playlists_dir.join(playlist_filename(name));
+    let content = std::fs::read_to_string(&path)
+        .map_err(Error::read(LibrarySubject::Playlist, &path))?;
     let track_paths = crate::m3u::parse(&content);
     let tracks: Vec<Arc<Track>> = track_paths
         .iter()
@@ -32,23 +25,15 @@ pub fn load(
 }
 
 pub(crate) fn save<Item: Borrow<Track>>(
-    paths: &LibraryPaths,
+    dirs: &LibraryDirs,
     name: &PlaylistFileName,
     tracks: &[Item],
-) -> Result<(), LibraryError> {
-    let path = paths.playlists.join(playlist_filename(name));
-    crate::files::create_parent(&path).map_err(|source| LibraryError::Write {
-        subject: LibrarySubject::Playlist,
-        path: paths.playlists.clone(),
-        source,
-    })?;
-    std::fs::write(&path, crate::m3u::to_string(tracks)).map_err(|source| {
-        LibraryError::Write {
-            subject: LibrarySubject::Playlist,
-            path: path.clone(),
-            source,
-        }
-    })?;
+) -> Result<(), Error> {
+    let path = dirs.playlists_dir.join(playlist_filename(name));
+    crate::files::create_parent_dir(&path)
+        .map_err(Error::write(LibrarySubject::Playlist, &dirs.playlists_dir))?;
+    std::fs::write(&path, crate::m3u::to_string(tracks))
+        .map_err(Error::write(LibrarySubject::Playlist, &path))?;
     Ok(())
 }
 
@@ -57,7 +42,7 @@ mod tests {
     use kernel::{Track, playlist::PlaylistFileName};
 
     use crate::{
-        paths,
+        dirs::LibraryDirs,
         playlists::{self, playlist_filename},
     };
 
@@ -73,16 +58,16 @@ mod tests {
     #[test]
     fn named_playlist_load_computes_track_display() {
         let directory = tempfile::tempdir().unwrap();
-        let library_paths = paths::stub(directory.path());
-        std::fs::create_dir_all(&library_paths.playlists).unwrap();
+        let dirs = LibraryDirs::under(directory.path());
+        std::fs::create_dir_all(&dirs.playlists_dir).unwrap();
         let media_path = directory.path().join("loaded-from-m3u.mp3");
         std::fs::write(
-            library_paths.playlists.join("display.m3u8"),
+            dirs.playlists_dir.join("display.m3u8"),
             format!("#EXTM3U\n{}\n", media_path.display()),
         )
         .unwrap();
 
-        let playlist = playlists::load(&library_paths, &name("display")).unwrap();
+        let playlist = playlists::load(&dirs, &name("display")).unwrap();
         let track = playlist.tracks.first().unwrap();
         let expected_track = Track::listed(&media_path);
         let expected = expected_track.display();
@@ -94,15 +79,15 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_under_the_validated_name() {
         let directory = tempfile::tempdir().unwrap();
-        let library_paths = paths::stub(directory.path());
+        let dirs = LibraryDirs::under(directory.path());
         let media_path = directory.path().join("roundtrip.mp3");
         let track = Track::listed(&media_path);
 
-        playlists::save(&library_paths, &name("My Mix"), &[track]).unwrap();
-        let saved = library_paths.playlists.join("My Mix.m3u8");
+        playlists::save(&dirs, &name("My Mix"), &[track]).unwrap();
+        let saved = dirs.playlists_dir.join("My Mix.m3u8");
         assert!(saved.is_file());
 
-        let playlist = playlists::load(&library_paths, &name("My Mix")).unwrap();
+        let playlist = playlists::load(&dirs, &name("My Mix")).unwrap();
         assert_eq!(playlist.tracks.len(), 1);
     }
 }

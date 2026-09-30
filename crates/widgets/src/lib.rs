@@ -19,6 +19,12 @@ mod status_line;
 mod theme;
 mod toast;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Playing {
+    Yes,
+    No,
+}
+
 pub use animation::{
     AnimationStage,
     AnimationTimings,
@@ -38,13 +44,7 @@ pub use animation::{
 };
 pub use card::{CardMetrics, CoverArt};
 pub use geometry::{CellAspect, Cells, CoverAspect, CoverSizing, Pixels};
-pub use milkdrop::{
-    MilkdropAdvance,
-    MilkdropColors,
-    MilkdropField,
-    Playing,
-    lines_into,
-};
+pub use milkdrop::{MilkdropAdvance, MilkdropColors, MilkdropField, lines_into};
 pub use overlay::modal::{ModalAreas, ModalScrollAreas, OverlayAreas};
 pub use playlist::{PlaylistAreas, favorite_cell};
 pub use redraw::{
@@ -66,7 +66,6 @@ pub use theme::{
     Theme,
     bar_colors,
     color_at_depth,
-    detect,
     lerp_rgb,
 };
 pub use toast::ToastAreas;

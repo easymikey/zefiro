@@ -9,7 +9,7 @@ use image::RgbaImage;
 use tiny_skia::{FillRule, IntSize, Mask, PathBuilder, Pixmap, PixmapPaint, Transform};
 
 use crate::{
-    numeric::{dimension_f32, dimension_u32},
+    numeric::{dimension_f32, dimension_u32, round_i32},
     vinyl::{
         VinylLayout,
         geometry::{LabelArt, RoundedRect},
@@ -26,9 +26,9 @@ pub(crate) fn sleeve_inset_side_px(size_px: u32, layout: &VinylLayout) -> u32 {
 
 fn label_diameter_px(size_px: u32, layout: &VinylLayout) -> u32 {
     let size = dimension_f32(size_px.max(1));
-    let record_r = layout.disc_fraction * size / 2.0;
-    let label_r = record_r * layout.label_radius_fraction;
-    dimension_u32((label_r * 2.0).round()).max(1)
+    let record_radius = layout.disc_fraction * size / 2.0;
+    let label_radius = record_radius * layout.label_radius_fraction;
+    dimension_u32((label_radius * 2.0).round()).max(1)
 }
 
 #[derive(Debug)]
@@ -73,8 +73,8 @@ pub(crate) fn paint_art_in_rounded_rect(
     };
     mask.fill_path(&clip_path, FillRule::Winding, true, Transform::identity());
     pixmap.draw_pixmap(
-        round_to_i32(rect.x),
-        round_to_i32(rect.y),
+        round_i32(rect.x),
+        round_i32(rect.y),
         source.as_ref(),
         &PixmapPaint::default(),
         Transform::identity(),
@@ -84,16 +84,16 @@ pub(crate) fn paint_art_in_rounded_rect(
 
 pub(crate) fn paint_art_in_circle(pixmap: &mut Pixmap, placement: &LabelArt<'_>) {
     let disc = placement.disc;
-    if disc.r <= 0.0 {
+    if disc.radius <= 0.0 {
         return;
     }
-    let diameter = dimension_u32((disc.r * 2.0).round()).max(1);
+    let diameter = dimension_u32((disc.radius * 2.0).round()).max(1);
     let sized = sized_or_resized(placement.art, diameter, diameter);
     let Some(source) = rgba_to_pixmap(&sized) else {
         return;
     };
     let mut path_builder = PathBuilder::new();
-    path_builder.push_circle(disc.cx, disc.cy, disc.r);
+    path_builder.push_circle(disc.center_x, disc.center_y, disc.radius);
     let Some(clip_path) = path_builder.finish() else {
         return;
     };
@@ -103,7 +103,8 @@ pub(crate) fn paint_art_in_circle(pixmap: &mut Pixmap, placement: &LabelArt<'_>)
     mask.fill_path(&clip_path, FillRule::Winding, true, Transform::identity());
 
     let half = dimension_f32(diameter) / 2.0;
-    let transform = Transform::from_translate(disc.cx - half, disc.cy - half);
+    let transform =
+        Transform::from_translate(disc.center_x - half, disc.center_y - half);
     pixmap.draw_pixmap(
         0,
         0,
@@ -185,10 +186,6 @@ fn rgba_to_pixmap(image: &RgbaImage) -> Option<Pixmap> {
     let (width, height) = image.dimensions();
     let size = IntSize::from_wh(width, height)?;
     Pixmap::from_vec(image.as_raw().clone(), size)
-}
-
-fn round_to_i32(v: f32) -> i32 {
-    crate::numeric::round_i32(v)
 }
 
 #[cfg(test)]

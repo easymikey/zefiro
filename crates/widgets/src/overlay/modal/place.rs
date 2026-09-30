@@ -14,7 +14,7 @@ pub(crate) struct ContentSize {
     pub(crate) screen_margin: u16,
 }
 
-pub(crate) fn content_dimensions(
+pub(crate) fn content_size(
     area: Rect,
     layout: ModalLayout,
     size: ContentSize,
@@ -40,7 +40,7 @@ pub(crate) fn content_dimensions(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct FrameWidthBox {
+pub(crate) struct FrameWidth {
     pub(crate) bounds: Rect,
     pub(crate) content_rows: u16,
 }
@@ -48,7 +48,7 @@ pub(crate) struct FrameWidthBox {
 pub(crate) fn anchored_frame(
     layout: ModalLayout,
     hint: Hint,
-    spec: FrameWidthBox,
+    spec: FrameWidth,
 ) -> Rect {
     let hint_rows = layout.hint_rows_for(hint);
     let height = spec
@@ -82,12 +82,12 @@ pub(crate) fn list_capacity(area: Rect, hint: Hint) -> (u16, u16) {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BoxSize {
+pub(crate) struct PlacedSize {
     pub(crate) width: u16,
     pub(crate) height: u16,
 }
 
-fn centered(area: Rect, size: BoxSize) -> Rect {
+fn centered(area: Rect, size: PlacedSize) -> Rect {
     area.centered(
         Constraint::Length(size.width),
         Constraint::Length(size.height),
@@ -98,7 +98,7 @@ pub(crate) fn intersects_any(rect: Rect, avoid: &[Rect]) -> bool {
     avoid.iter().any(|region| rect.intersects(*region))
 }
 
-pub(crate) fn place(area: Rect, size: BoxSize, avoid: &[Rect]) -> Rect {
+pub(crate) fn place(area: Rect, size: PlacedSize, avoid: &[Rect]) -> Rect {
     let candidate = centered(area, size);
     if !intersects_any(candidate, avoid) {
         return candidate;

@@ -1,6 +1,6 @@
 use unicode_width::UnicodeWidthStr;
 
-use crate::primitive::glyphs::PlaylistGlyphs;
+use crate::{Playing, primitive::glyphs::PlaylistGlyphs};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MarkerColumns {
@@ -47,12 +47,6 @@ pub(crate) fn playing_marker(playing: Playing, glyphs: PlaylistGlyphs) -> &'stat
         Playing::Yes => glyphs.playing,
         Playing::No => "",
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Playing {
-    Yes,
-    No,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

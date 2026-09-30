@@ -2,7 +2,7 @@ use std::{mem, path::PathBuf};
 
 use kernel::{Cue, Moment};
 use ratatui::{layout::Rect, style::Color};
-use runtime::{CoverRequest, View};
+use runtime::{CoverRequest, FrameInput};
 use terminal::CoverFade;
 use widgets::{OnScreen, Presence, Spectrum, SpectrumMotion, SpectrumSmoothing};
 
@@ -10,12 +10,12 @@ use crate::shell::{
     cover_fade::{
         CoverFadePermission,
         CoverWanted,
-        desired_cover,
         resolved_cover_fade,
         track_changed_fade,
+        wanted_cover,
     },
-    frame::note_playlist_height,
-    frame_clock::Playback,
+    frame_clock::ClockState,
+    painter::record_playlist_height,
     view::{Presentation, view},
 };
 
@@ -48,20 +48,20 @@ pub(crate) enum Clearing {
 
 pub(crate) struct Advance {
     pub(crate) cover: Option<CoverRequest>,
-    pub(crate) viewport: Option<usize>,
+    pub(crate) visible_rows: Option<usize>,
     pub(crate) fade: CoverFade,
     pub(crate) clear: Clearing,
 }
 
 pub(crate) struct AdvanceSources<'a> {
-    pub(crate) view: &'a View<'a>,
+    pub(crate) view: &'a FrameInput<'a>,
     pub(crate) presentation: &'a Presentation,
     pub(crate) pending_cues: &'a [Cue],
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(in crate::shell) struct SpectrumAdvance {
-    pub(in crate::shell) playback: Playback,
+    pub(in crate::shell) playback: ClockState,
     pub(in crate::shell) now: Moment,
 }
 
@@ -99,7 +99,7 @@ pub(in crate::shell) fn resize_clearing(
 }
 
 impl Motion {
-    fn note_start(&mut self, now: Moment) {
+    fn record_start(&mut self, now: Moment) {
         if self.started == Moment::default() {
             self.started = now;
         }
@@ -116,22 +116,22 @@ impl Motion {
         let elapsed = advance.now.elapsed_since(self.spectrum_at);
         self.spectrum_at = advance.now;
         let _ = match advance.playback {
-            Playback::Playing => self.spectrum.smooth(raw, elapsed),
-            Playback::Halted => self.spectrum.fade(elapsed),
+            ClockState::Playing => self.spectrum.smooth(raw, elapsed),
+            ClockState::Halted => self.spectrum.fade(elapsed),
         };
         self.spectrum_motion = self.spectrum.motion();
     }
 
     #[must_use]
-    pub(crate) fn advanced(
+    pub(crate) fn advance(
         mut self,
         sources: &AdvanceSources<'_>,
         raw: &Spectrum,
     ) -> (Self, Advance) {
-        self.note_start(sources.view.now);
+        self.record_start(sources.view.now);
         self.advance_spectrum(
             SpectrumAdvance {
-                playback: Playback::of(&sources.view.model.player),
+                playback: ClockState::of(&sources.view.model.player),
                 now: sources.view.now,
             },
             raw,
@@ -151,7 +151,7 @@ impl Motion {
         let cover_style = built.scene.cover_style();
         let on_screen = built.scene.on_screen(&built.layout);
         let playlist = built.layout.playlist;
-        let cover = desired_cover(
+        let cover = wanted_cover(
             &mut self.wanted_cover,
             &CoverWanted {
                 current: current_track,
@@ -160,8 +160,8 @@ impl Motion {
             },
         );
         self.on_screen = on_screen;
-        let (playlist_body_height, viewport) =
-            note_playlist_height(self.playlist_body_height, playlist);
+        let (playlist_body_height, visible_rows) =
+            record_playlist_height(self.playlist_body_height, playlist);
         self.playlist_body_height = playlist_body_height;
         let (resize, clear) = resize_clearing(self.resize);
         self.resize = resize;
@@ -169,7 +169,7 @@ impl Motion {
             self,
             Advance {
                 cover,
-                viewport,
+                visible_rows,
                 fade,
                 clear,
             },

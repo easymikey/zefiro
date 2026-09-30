@@ -12,7 +12,6 @@ pub struct TerminalEnvironment {
     wezterm_executable: Option<String>,
     iterm_session_id: Option<String>,
     term: Option<String>,
-    colorterm: Option<String>,
 }
 
 impl TerminalEnvironment {
@@ -25,7 +24,6 @@ impl TerminalEnvironment {
             wezterm_executable: std::env::var("WEZTERM_EXECUTABLE").ok(),
             iterm_session_id: std::env::var("ITERM_SESSION_ID").ok(),
             term: std::env::var("TERM").ok(),
-            colorterm: std::env::var("COLORTERM").ok(),
         }
     }
 
@@ -71,25 +69,27 @@ pub enum Brand {
     Unknown,
 }
 
-#[must_use]
-pub fn detect(environment: &TerminalEnvironment) -> Brand {
-    let program = environment.term_program.as_deref().unwrap_or_default();
-    let term = environment.term.as_deref().unwrap_or_default();
-    if environment.kitty_window_id.is_some() || term.contains("kitty") {
-        Brand::Kitty
-    } else if environment.ghostty_resources_dir.is_some()
-        || program.eq_ignore_ascii_case("ghostty")
-        || term.contains("ghostty")
-    {
-        Brand::Ghostty
-    } else if environment.iterm_session_id.is_some() || program == "iTerm.app" {
-        Brand::Iterm2
-    } else if environment.wezterm_executable.is_some() || program == "WezTerm" {
-        Brand::WezTerm
-    } else if program == "Apple_Terminal" {
-        Brand::Apple
-    } else {
-        Brand::Unknown
+impl Brand {
+    #[must_use]
+    pub fn detect(environment: &TerminalEnvironment) -> Self {
+        let program = environment.term_program.as_deref().unwrap_or_default();
+        let term = environment.term.as_deref().unwrap_or_default();
+        if environment.kitty_window_id.is_some() || term.contains("kitty") {
+            Brand::Kitty
+        } else if environment.ghostty_resources_dir.is_some()
+            || program.eq_ignore_ascii_case("ghostty")
+            || term.contains("ghostty")
+        {
+            Brand::Ghostty
+        } else if environment.iterm_session_id.is_some() || program == "iTerm.app" {
+            Brand::Iterm2
+        } else if environment.wezterm_executable.is_some() || program == "WezTerm" {
+            Brand::WezTerm
+        } else if program == "Apple_Terminal" {
+            Brand::Apple
+        } else {
+            Brand::Unknown
+        }
     }
 }
 
@@ -123,7 +123,7 @@ impl Probe {
     }
 }
 
-fn should_probe(brand: Brand) -> Probe {
+fn probe_policy(brand: Brand) -> Probe {
     if protocols(brand).is_empty() {
         Probe::No
     } else {
@@ -213,18 +213,17 @@ fn select_protocol_type(
 }
 
 fn color_depth(environment: &TerminalEnvironment) -> ColorDepth {
-    widgets::detect(
-        environment.term_program.as_deref(),
-        environment.colorterm.as_deref(),
-    )
+    ColorDepth::detect(environment.term_program.as_deref())
 }
 
-#[must_use]
-pub fn resolve_immediate(environment: &TerminalEnvironment) -> Capabilities {
-    Capabilities {
-        picker: Picker::halfblocks(),
-        pixel_path: PixelPath::Halfblocks,
-        color_depth: color_depth(environment),
+impl Capabilities {
+    #[must_use]
+    pub fn before_probe(environment: &TerminalEnvironment) -> Self {
+        Capabilities {
+            picker: Picker::halfblocks(),
+            pixel_path: PixelPath::Halfblocks,
+            color_depth: color_depth(environment),
+        }
     }
 }
 
@@ -257,7 +256,7 @@ pub struct CapabilityProbe {
 impl CapabilityProbe {
     #[must_use]
     pub fn new(brand: Brand) -> Option<Self> {
-        if should_probe(brand).is_wanted() {
+        if probe_policy(brand).is_wanted() {
             Some(Self { brand })
         } else {
             None
@@ -285,8 +284,9 @@ mod tests {
     use rstest::rstest;
     use widgets::{CellAspect, PixelPath};
 
-    use crate::caps::{
+    use crate::capabilities::{
         Brand,
+        Capabilities,
         CapabilityProbe,
         DetectedCapabilities,
         Probe,
@@ -295,11 +295,9 @@ mod tests {
         TerminalEnvironment,
         cell_aspect,
         color_depth,
-        detect,
+        probe_policy,
         protocols,
-        resolve_immediate,
         select_protocol_type,
-        should_probe,
     };
 
     #[rstest]
@@ -326,7 +324,7 @@ mod tests {
         #[case] environment: TerminalEnvironment,
         #[case] expected: Brand,
     ) {
-        assert_eq!(detect(&environment), expected);
+        assert_eq!(Brand::detect(&environment), expected);
     }
 
     #[rstest]
@@ -342,7 +340,7 @@ mod tests {
         #[case] probed: Probe,
     ) {
         assert_eq!(protocols(brand), expected);
-        assert_eq!(should_probe(brand), probed);
+        assert_eq!(probe_policy(brand), probed);
     }
 
     struct ProtocolPick {
@@ -428,9 +426,9 @@ mod tests {
     }
 
     #[test]
-    fn resolve_immediate_is_always_halfblocks_regardless_of_brand() {
+    fn before_probe_is_always_halfblocks_regardless_of_brand() {
         let environment = TerminalEnvironment::default().with_term("xterm-kitty");
-        let capabilities = resolve_immediate(&environment);
+        let capabilities = Capabilities::before_probe(&environment);
         assert_eq!(
             capabilities.picker.protocol_type(),
             ProtocolType::Halfblocks

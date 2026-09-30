@@ -26,12 +26,12 @@ pub use appearance::{
     FormatChips,
     KeyHints,
     LayoutMode,
-    ProgressStyle,
-    SpeedChipMode,
+    ProgressTime,
+    SpeedChip,
+    preset_appearance,
     preset_of,
-    preset_options,
 };
-pub use appearance_document::appearance_patched;
+pub use appearance_document::patch_appearance_text;
 pub use appearance_file::{
     APPEARANCE_FILE_NAME,
     AppearanceFile,
@@ -42,25 +42,19 @@ pub use appearance_file::{
     WindowConfig,
     parse_appearance,
 };
-pub use breakpoints::BreakpointsConfig;
-pub use config_document::patched;
-pub use config_file::{AudioConfig, CONFIG_FILE_NAME, ConfigFile, parse_config};
+pub use breakpoints::LayoutConfig;
+pub use config_document::patch_config_text;
+pub use config_file::{AudioConfig, CONFIG_FILE_NAME, ConfigToml, parse_config};
 pub use embedded_theme::{EMBEDDED_THEMES, embedded_theme, resolve_theme};
-pub use error::{
-    ColorRejection,
-    ConfigError,
-    CrossfadeRejection,
-    SettingRejection,
-    TomlFile,
-};
-pub use hex::Hex;
-pub use keymap::{KeymapFile, ParsedKeymap, parse_keymap};
+pub use error::{ColorError, CrossfadeError, Error, SettingError, TomlFile};
+pub use hex::Rgb;
+pub use keymap::{ConfigReload, KeymapFile, parse_config_reload};
 pub use rows::{
     APPEARANCE_ROWS,
     AppearanceField,
     AppearanceRow,
     appearance_patch,
     appearance_row,
-    custom_rows,
+    custom_settings,
 };
 pub use theme_file::{ThemeColors, ThemeFile, parse_theme, theme_file_name};

@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/unit/transitions.rs
-assertion_line: 526
+assertion_line: 522
 expression: effs
 ---
 [
@@ -57,7 +57,7 @@ expression: effs
             ),
         },
     ),
-    System(
+    Macos(
         NowPlaying(
             Track {
                 title: "Song",
@@ -71,11 +71,11 @@ expression: effs
         ),
     ),
     Audio(
-        Pause(
+        Playback(
             Playing,
         ),
     ),
-    System(
+    Macos(
         PlaybackState(
             Playing,
         ),

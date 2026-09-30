@@ -1,5 +1,5 @@
 use ratatui::style::Color;
-use terminal::CoverArtOwner;
+use terminal::OwnedCoverArt;
 use widgets::{ActiveTheme, Backdrop, FrameLayout};
 
 use crate::shell::view::Presentation;
@@ -13,14 +13,14 @@ pub(crate) struct BackdropSources<'a> {
 pub(crate) fn animation_backdrop(
     sources: &BackdropSources<'_>,
     layout: FrameLayout,
-    cover_art: &CoverArtOwner,
+    cover_art: &OwnedCoverArt,
 ) -> Backdrop {
     let theme = ActiveTheme::new(
         &sources.presentation.theme,
         sources.presentation.color_depth,
     );
-    let fill = theme.volume_bar().fill;
-    let background = theme.window_bg();
+    let fill = theme.volume_bar_colors().fill;
+    let background = theme.window_background();
     Backdrop {
         animations: sources.presentation.appearance.window.animations,
         layout: protected_layout(layout, cover_art),
@@ -32,8 +32,8 @@ pub(crate) fn animation_backdrop(
     }
 }
 
-fn protected_layout(mut layout: FrameLayout, cover_art: &CoverArtOwner) -> FrameLayout {
-    if !matches!(cover_art, CoverArtOwner::Image) {
+fn protected_layout(mut layout: FrameLayout, cover_art: &OwnedCoverArt) -> FrameLayout {
+    if !matches!(cover_art, OwnedCoverArt::Image) {
         layout.cover = None;
     }
     layout
@@ -47,7 +47,7 @@ mod tests {
     use kernel::{Cue, Moment};
     use ratatui::{buffer::Buffer, layout::Rect};
     use runtime::FrameDue;
-    use terminal::CoverArtOwner;
+    use terminal::OwnedCoverArt;
     use widgets::{
         AnimationStage,
         Breakpoint,
@@ -64,12 +64,12 @@ mod tests {
         view::{Presentation, fallback_theme_file},
     };
 
-    fn test_backdrop(cover_art: &CoverArtOwner) -> Backdrop {
+    fn test_backdrop(cover_art: &OwnedCoverArt) -> Backdrop {
         test_backdrop_with_outgoing(cover_art, None)
     }
 
     fn test_backdrop_with_outgoing(
-        cover_art: &CoverArtOwner,
+        cover_art: &OwnedCoverArt,
         outgoing_background: Option<ratatui::style::Color>,
     ) -> Backdrop {
         let presentation = Presentation {
@@ -80,7 +80,7 @@ mod tests {
             cell_aspect: CellAspect::default(),
             home: None,
             music_dir: std::path::PathBuf::new(),
-            music_dir_display: String::new(),
+            music_dir_label: String::new(),
         };
         let layout = FrameLayout {
             screen: Rect::new(0, 0, 40, 10),
@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn with_no_wash_staged_the_wash_starts_from_the_current_background() {
-        let backdrop = test_backdrop(&CoverArtOwner::Missing);
+        let backdrop = test_backdrop(&OwnedCoverArt::Missing);
 
         assert_eq!(backdrop.wash_from, backdrop.background);
     }
@@ -122,7 +122,7 @@ mod tests {
         let outgoing = ratatui::style::Color::Rgb(0x11, 0x22, 0x33);
 
         let backdrop =
-            test_backdrop_with_outgoing(&CoverArtOwner::Missing, Some(outgoing));
+            test_backdrop_with_outgoing(&OwnedCoverArt::Missing, Some(outgoing));
 
         assert_eq!(backdrop.wash_from, outgoing);
         assert_ne!(backdrop.wash_from, backdrop.background);
@@ -130,28 +130,28 @@ mod tests {
 
     #[test]
     fn a_pixel_image_cover_stays_protected_from_effects() {
-        let backdrop = test_backdrop(&CoverArtOwner::Image);
+        let backdrop = test_backdrop(&OwnedCoverArt::Image);
 
         assert_eq!(backdrop.layout.cover, Some(Rect::new(0, 0, 4, 4)));
     }
 
     #[test]
     fn a_text_cover_takes_part_in_effects() {
-        let backdrop = test_backdrop(&CoverArtOwner::Text(Arc::default()));
+        let backdrop = test_backdrop(&OwnedCoverArt::Text(Arc::default()));
 
         assert_eq!(backdrop.layout.cover, None);
     }
 
     #[test]
     fn a_missing_cover_takes_part_in_effects() {
-        let backdrop = test_backdrop(&CoverArtOwner::Missing);
+        let backdrop = test_backdrop(&OwnedCoverArt::Missing);
 
         assert_eq!(backdrop.layout.cover, None);
     }
 
     #[test]
     fn an_ended_effect_settles_to_no_deadline_after_the_next_paint() {
-        let backdrop = test_backdrop(&CoverArtOwner::Missing);
+        let backdrop = test_backdrop(&OwnedCoverArt::Missing);
         let mut stage = AnimationStage::default();
         stage.play(vec![Cue::ToastRaised], &backdrop);
         assert!(stage.wants_frame(), "sanity: the toast is animating");

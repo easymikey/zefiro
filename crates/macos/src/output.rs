@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use kernel::update::{Machine, Never, Rejected};
+use kernel::update::{Machine, Rejected};
 use objc2_core_audio::AudioObjectID;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -11,7 +11,7 @@ pub(crate) enum DefaultOutput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct OutputPolled(pub(crate) AudioObjectID);
+pub(crate) struct OutputMessage(pub(crate) AudioObjectID);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum OutputEffect {
@@ -21,15 +21,15 @@ pub(crate) enum OutputEffect {
 }
 
 impl Machine for DefaultOutput {
-    type Message = OutputPolled;
-    type Rejection = Never;
+    type Message = OutputMessage;
+    type Error = std::convert::Infallible;
     type Effect = OutputEffect;
 
     fn transition(
         self,
-        message: OutputPolled,
+        message: OutputMessage,
     ) -> Result<(Self, OutputEffect), Rejected<Self>> {
-        let OutputPolled(current) = message;
+        let OutputMessage(current) = message;
         let effect = match self {
             DefaultOutput::Read(previous) if previous != current => {
                 OutputEffect::Changed
@@ -46,7 +46,7 @@ mod tests {
     use objc2_core_audio::AudioObjectID;
     use rstest::rstest;
 
-    use crate::output::{DefaultOutput, OutputEffect, OutputPolled};
+    use crate::output::{DefaultOutput, OutputEffect, OutputMessage};
 
     #[rstest]
     #[case::the_first_read_is_the_baseline(&[1], &[OutputEffect::Nothing])]
@@ -70,7 +70,7 @@ mod tests {
         let observed: Vec<OutputEffect> = polls
             .iter()
             .map(|device| {
-                let Ok(effect) = output.update(OutputPolled(*device));
+                let Ok(effect) = output.update(OutputMessage(*device));
                 effect
             })
             .collect();

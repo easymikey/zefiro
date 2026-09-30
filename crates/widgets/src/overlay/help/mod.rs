@@ -97,7 +97,7 @@ impl<'a> HelpOverlay<'a> {
     fn colors(&self) -> HelpColors {
         let theme = self.theme;
         HelpColors {
-            title: theme.frame(),
+            title: theme.border(),
             key: theme.muted_accent(),
             description: theme.text(),
         }

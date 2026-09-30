@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use config::{AppearanceFile, Hex};
+use config::{AppearanceFile, Rgb};
 use kernel::{
     Moment,
     domain::{
@@ -226,9 +226,9 @@ pub(crate) const TOAST_CARD: Rect = Rect {
 pub(crate) const BACKGROUND: Color = Color::Rgb(0, 0, 0);
 pub(crate) const TEXT: Color = Color::Rgb(200, 210, 220);
 pub(crate) const ACCENT: Color = Color::Rgb(240, 120, 40);
-pub(crate) const VOLUME_FILL: Hex = Hex([220, 80, 160]);
+pub(crate) const VOLUME_FILL: Rgb = Rgb([220, 80, 160]);
 pub(crate) const VOLUME_GROOVE: Color = Color::Rgb(70, 60, 90);
-pub(crate) const TEXT_HEX: Hex = Hex([200, 210, 220]);
+pub(crate) const TEXT_HEX: Rgb = Rgb([200, 210, 220]);
 
 pub(crate) fn volume_fill() -> Color {
     color_at_depth(VOLUME_FILL, ColorDepth::TrueColor)

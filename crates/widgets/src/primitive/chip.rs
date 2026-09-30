@@ -1,4 +1,4 @@
-use config::SpeedChipMode;
+use config::SpeedChip;
 use kernel::domain::Speed;
 use ratatui::{style::Color, text::Span};
 use unicode_width::UnicodeWidthStr;
@@ -45,18 +45,18 @@ pub(crate) fn width(label: &str) -> u16 {
     u16::try_from(cells).unwrap_or(u16::MAX)
 }
 
-fn speed_chip_text(speed: Speed, mode: SpeedChipMode) -> Option<String> {
+fn speed_chip_text(speed: Speed, mode: SpeedChip) -> Option<String> {
     let glyphs = SpeedChipGlyphs::default();
     let label = match mode {
-        SpeedChipMode::Never => None,
-        SpeedChipMode::Changed => speed.label(),
-        SpeedChipMode::Always => Some(speed.label_always()),
+        SpeedChip::Never => None,
+        SpeedChip::Changed => speed.label(),
+        SpeedChip::Always => Some(speed.label_always()),
     };
     label.map(|label| format!("{label}{}", glyphs.multiply))
 }
 
 #[must_use]
-pub(crate) fn speed_chip_width(speed: Speed, mode: SpeedChipMode) -> u16 {
+pub(crate) fn speed_chip_width(speed: Speed, mode: SpeedChip) -> u16 {
     let Some(label) = speed_chip_text(speed, mode) else {
         return 0;
     };
@@ -68,7 +68,7 @@ pub(crate) fn speed_chip_width(speed: Speed, mode: SpeedChipMode) -> u16 {
 #[must_use]
 pub(crate) fn speed_chip_spans(
     speed: Speed,
-    mode: SpeedChipMode,
+    mode: SpeedChip,
     colors: ChipColors,
 ) -> Option<Vec<Span<'static>>> {
     let label = speed_chip_text(speed, mode)?;
@@ -82,7 +82,7 @@ pub(crate) fn speed_chip_spans(
 
 #[cfg(test)]
 mod tests {
-    use config::SpeedChipMode;
+    use config::SpeedChip;
     use kernel::{Bounded, domain::Speed};
     use ratatui::style::{Color, Modifier};
     use rstest::rstest;
@@ -103,22 +103,22 @@ mod tests {
     }
 
     #[rstest]
-    #[case::changed_at_the_stock_speed(Speed::default(), SpeedChipMode::Changed, None)]
+    #[case::changed_at_the_stock_speed(Speed::default(), SpeedChip::Changed, None)]
     #[case::changed_after_a_change(
         Speed::clamped(1.25),
-        SpeedChipMode::Changed,
+        SpeedChip::Changed,
         Some("  \u{00BB} 1.25\u{00D7}")
     )]
     #[case::always_at_the_stock_speed(
         Speed::default(),
-        SpeedChipMode::Always,
+        SpeedChip::Always,
         Some("  \u{00BB} 1\u{00D7}")
     )]
-    #[case::never_at_the_stock_speed(Speed::default(), SpeedChipMode::Never, None)]
-    #[case::never_after_a_change(Speed::clamped(1.25), SpeedChipMode::Never, None)]
+    #[case::never_at_the_stock_speed(Speed::default(), SpeedChip::Never, None)]
+    #[case::never_after_a_change(Speed::clamped(1.25), SpeedChip::Never, None)]
     fn the_speed_chip_reads_its_mode(
         #[case] speed: Speed,
-        #[case] mode: SpeedChipMode,
+        #[case] mode: SpeedChip,
         #[case] expected: Option<&str>,
     ) {
         let spans = speed_chip_spans(speed, mode, colors());
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn the_marker_and_the_value_carry_the_dim_face_and_their_own_colours() {
         let spans =
-            speed_chip_spans(Speed::clamped(1.25), SpeedChipMode::Changed, colors())
+            speed_chip_spans(Speed::clamped(1.25), SpeedChip::Changed, colors())
                 .unwrap_or_default();
         let faces: Vec<(Option<Color>, bool)> = spans
             .iter()

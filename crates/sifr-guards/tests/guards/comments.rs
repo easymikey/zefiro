@@ -221,7 +221,7 @@ fn every_comment_is_a_listed_one_liner() {
     support::report(
         "comments guard (docs/principles.md): the code has no comments. The only \
          survivors are the one-liners listed in this guard's ALLOW — a `SAFETY:` \
-         above an unsafe block, a `PROTOCOL:` recording a terminal or AppKit fact, \
+         above an unsafe block, a `PROTOCOL:` recording a terminal or AppKit event, \
          a `GUARD:` saying why a guard exists — each exactly one line.",
         &violations,
         &support::stale(ALLOW, &seen),

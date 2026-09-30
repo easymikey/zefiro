@@ -15,7 +15,7 @@ impl Signature {
 pub(crate) enum Seen {
     #[default]
     Absent,
-    Fresh,
+    Never,
     Content(Signature),
 }
 
@@ -27,13 +27,13 @@ impl Seen {
 
     #[must_use]
     pub(crate) fn starting(text: Option<&str>) -> Self {
-        text.map_or(Seen::Fresh, |text| Seen::Content(Signature::of(text)))
+        text.map_or(Seen::Never, |text| Seen::Content(Signature::of(text)))
     }
 
     #[must_use]
     pub(crate) fn changed_by(self, text: Option<&str>) -> bool {
         match self {
-            Seen::Fresh => true,
+            Seen::Never => true,
             Seen::Absent | Seen::Content(_) => self != Seen::of(text),
         }
     }
@@ -48,7 +48,7 @@ mod tests {
     proptest! {
         #[test]
         fn a_fresh_target_always_reports_changed(text in proptest::option::of(".*")) {
-            prop_assert!(Seen::Fresh.changed_by(text.as_deref()));
+            prop_assert!(Seen::Never.changed_by(text.as_deref()));
         }
 
         #[test]

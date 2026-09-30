@@ -14,8 +14,8 @@ pub(crate) use placement::{
     ModalPlacement,
     OverlayContainer,
     column_width,
-    lead_cells,
-    led,
+    indented,
+    leading_cells,
 };
 pub use placement::{ModalScrollAreas, OverlayAreas};
 pub(crate) use prompt::{Prompt, PromptBody};

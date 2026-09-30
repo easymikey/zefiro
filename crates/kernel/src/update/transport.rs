@@ -1,24 +1,24 @@
 use std::time::Duration;
 
 use crate::{
-    cmd::{AudioCmd, Cmd, Cue, Effect, SystemCmd},
-    domain::{AbLoop, Percent, Revision, SleepTimer, SpeedStep, Transport, VolumeStep},
+    cmd::{AudioCmd, Cmd, Cue, Effect, MacosCmd},
+    domain::{AbLoop, Percent, Revision, SleepTimer, Transport},
     message::Timer,
-    update::machine::{Machine, Never, Rejected},
+    update::machine::{Machine, Rejected},
 };
 
 #[derive(Debug, Clone)]
 pub enum TransportMessage {
-    NudgeVolume(VolumeStep),
+    StepVolume { steps: i8 },
     SetVolume(Percent),
-    NudgeSpeed(SpeedStep),
+    StepSpeed { steps: i8 },
     CycleSleep(Box<[Duration]>),
     AbMark { position: Option<Duration> },
 }
 
 impl Machine for Transport {
     type Message = TransportMessage;
-    type Rejection = Never;
+    type Error = std::convert::Infallible;
     type Effect = Cmd;
 
     fn transition(
@@ -26,20 +26,20 @@ impl Machine for Transport {
         message: TransportMessage,
     ) -> Result<(Self, Cmd), Rejected<Self>> {
         let cmd = match message {
-            TransportMessage::NudgeVolume(delta) => {
-                self.volume = self.volume.nudge(delta.get());
-                Effect::System(SystemCmd::Volume(self.volume)).into()
+            TransportMessage::StepVolume { steps } => {
+                self.volume = self.volume.step(steps);
+                Effect::Macos(MacosCmd::Volume(self.volume)).into()
             }
             TransportMessage::SetVolume(volume) if volume == self.volume => Cmd::None,
             TransportMessage::SetVolume(volume) => {
                 self.volume = volume;
                 Cue::VolumeChanged.into()
             }
-            TransportMessage::NudgeSpeed(step) if step.get() > 0 => {
+            TransportMessage::StepSpeed { steps } if steps > 0 => {
                 self.speed = self.speed.step_up();
                 Effect::Audio(AudioCmd::SetSpeed(self.speed)).into()
             }
-            TransportMessage::NudgeSpeed(_) => {
+            TransportMessage::StepSpeed { .. } => {
                 self.speed = self.speed.step_down();
                 Effect::Audio(AudioCmd::SetSpeed(self.speed)).into()
             }

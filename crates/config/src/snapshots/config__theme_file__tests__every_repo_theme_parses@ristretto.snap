@@ -6,49 +6,49 @@ expression: "parse_theme(source, name).unwrap()"
 ThemeFile {
     name: "ristretto",
     colors: ThemeColors {
-        background: Hex(
+        background: Rgb(
             [
                 18,
                 18,
                 18,
             ],
         ),
-        foreground: Hex(
+        foreground: Rgb(
             [
                 144,
                 120,
                 104,
             ],
         ),
-        bright_foreground: Hex(
+        bright_foreground: Rgb(
             [
                 232,
                 208,
                 184,
             ],
         ),
-        accent: Hex(
+        accent: Rgb(
             [
                 224,
                 112,
                 64,
             ],
         ),
-        green: Hex(
+        green: Rgb(
             [
                 154,
                 170,
                 104,
             ],
         ),
-        yellow: Hex(
+        yellow: Rgb(
             [
                 216,
                 160,
                 80,
             ],
         ),
-        red: Hex(
+        red: Rgb(
             [
                 209,
                 90,

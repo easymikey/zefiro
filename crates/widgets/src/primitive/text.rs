@@ -116,7 +116,7 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     use crate::primitive::{
-        span::{row, text},
+        span::{line, text},
         text::{TruncateGlyphs, truncate, truncate_line_to_width, truncate_to_width},
     };
 
@@ -166,7 +166,7 @@ mod tests {
     }
 
     fn styled_line() -> Line<'static> {
-        row([
+        line([
             text("[Shuffle: on] ").fg(Color::White),
             text("[Repeat: Off] ").fg(Color::White),
             text("[Queue: 3] ").fg(Color::White),

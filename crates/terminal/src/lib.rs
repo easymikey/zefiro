@@ -2,7 +2,7 @@
 #![deny(missing_debug_implementations)]
 #![deny(unreachable_pub)]
 
-mod caps;
+mod capabilities;
 mod error;
 mod input;
 mod keys;
@@ -10,31 +10,29 @@ mod pixels;
 mod session;
 mod window_colors;
 
-pub use caps::{
+pub use capabilities::{
     Brand,
     Capabilities,
     CapabilityProbe,
     ProbeAnswer,
     TerminalEnvironment,
     cell_aspect,
-    detect,
-    resolve_immediate,
 };
-pub use error::TerminalError;
+pub use error::Error;
 pub use input::InputLoop;
 pub use keys::{LayoutTranslation, from_event};
 pub use pixels::{
-    CoverArtOwner,
     CoverFade,
     CoverKey,
     CoverLook,
     CoverMoment,
     CoverMotion,
+    CoverParts,
     CoverPlacement,
-    CoverSources,
+    CoverRenderer,
     CoverWash,
     DecodedCover,
-    Pixels,
+    OwnedCoverArt,
 };
 pub use session::{TerminalSession, install_panic_hook};
 pub use window_colors::{

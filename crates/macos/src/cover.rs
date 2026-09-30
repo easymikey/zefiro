@@ -51,7 +51,7 @@ impl CoverWorker {
         let (results, arrivals) = bounded::<CoverBytes>(1);
         let handle = thread::Builder::new()
             .name("sifr-cover".to_string())
-            .spawn(move || worker(tasks, read, &results))?;
+            .spawn(move || read_covers(tasks, read, &results))?;
         Ok((
             Self {
                 wanted: Some(wanted),
@@ -62,7 +62,7 @@ impl CoverWorker {
         ))
     }
 
-    pub(crate) fn want(&self, track: PathBuf) {
+    pub(crate) fn request(&self, track: PathBuf) {
         let Some(wanted) = &self.wanted else {
             return;
         };
@@ -96,7 +96,11 @@ impl Drop for CoverWorker {
     }
 }
 
-fn worker(tasks: Receiver<PathBuf>, read: CoverReader, results: &Sender<CoverBytes>) {
+fn read_covers(
+    tasks: Receiver<PathBuf>,
+    read: CoverReader,
+    results: &Sender<CoverBytes>,
+) {
     for track in tasks {
         let bytes = cover_bytes(&track, read);
         match results.send(CoverBytes { track, bytes }) {
@@ -219,10 +223,10 @@ mod tests {
     fn the_latest_wanted_track_wins() {
         let (worker, arrivals) = CoverWorker::spawn(blocking_read).unwrap();
 
-        worker.want(PathBuf::from("A"));
+        worker.request(PathBuf::from("A"));
         started().1.recv().unwrap();
-        worker.want(PathBuf::from("B"));
-        worker.want(PathBuf::from("C"));
+        worker.request(PathBuf::from("B"));
+        worker.request(PathBuf::from("C"));
         gate().0.send(()).unwrap();
         let first = arrivals.recv().unwrap();
 

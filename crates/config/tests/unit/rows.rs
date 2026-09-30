@@ -13,7 +13,7 @@ fn a_row_patches_through_the_public_contract(
 ) {
     let option = appearance_row(SettingId::new(id))
         .unwrap()
-        .spec
+        .custom
         .control
         .count()
         .index(position)

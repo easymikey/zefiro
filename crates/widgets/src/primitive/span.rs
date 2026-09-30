@@ -7,12 +7,12 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Piece<'a> {
+pub struct StyledText<'a> {
     content: Cow<'a, str>,
     style: Style,
 }
 
-impl<'a> Piece<'a> {
+impl<'a> StyledText<'a> {
     #[must_use]
     pub fn fg(mut self, color: impl Into<Color>) -> Self {
         self.style = self.style.fg(color.into());
@@ -62,22 +62,22 @@ impl<'a> Piece<'a> {
     }
 }
 
-impl<'a> From<Piece<'a>> for Span<'a> {
-    fn from(piece: Piece<'a>) -> Self {
+impl<'a> From<StyledText<'a>> for Span<'a> {
+    fn from(piece: StyledText<'a>) -> Self {
         Span::styled(piece.content, piece.style)
     }
 }
 
 #[must_use]
-pub(crate) fn text<'a>(content: impl Into<Cow<'a, str>>) -> Piece<'a> {
-    Piece {
+pub(crate) fn text<'a>(content: impl Into<Cow<'a, str>>) -> StyledText<'a> {
+    StyledText {
         content: content.into(),
         style: Style::default(),
     }
 }
 
 #[must_use]
-pub(crate) fn row<'a>(pieces: impl IntoIterator<Item = Piece<'a>>) -> Line<'a> {
+pub(crate) fn line<'a>(pieces: impl IntoIterator<Item = StyledText<'a>>) -> Line<'a> {
     Line::from(pieces.into_iter().map(Span::from).collect::<Vec<_>>())
 }
 
@@ -95,7 +95,7 @@ mod tests {
         text::Span,
     };
 
-    use crate::primitive::span::{row, text};
+    use crate::primitive::span::{line, text};
 
     #[test]
     fn fg_and_bold_produce_the_expected_span() {
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn row_of_three_pieces_yields_a_line_with_three_spans() {
-        let line = row([text("a"), text("b").bold(), text("c").fg(Color::Blue)]);
+        let line = line([text("a"), text("b").bold(), text("c").fg(Color::Blue)]);
         assert_eq!(line.spans.len(), 3);
         assert_eq!(line.spans.first(), Some(&Span::raw("a")));
         assert_eq!(

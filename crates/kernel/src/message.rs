@@ -4,30 +4,26 @@ use strum::IntoStaticStr;
 
 use crate::domain::{
     ChordPrefix,
-    ConfigFailure,
-    ConfigSource,
+    ConfigError,
+    ConfigFile,
     CustomSetting,
-    DeviceName,
+    Direction,
     Driver,
-    DriverFailure,
+    DriverError,
     HistoryEntry,
     KeyPress,
     KeymapOverrides,
-    Nudge,
+    ListedDevice,
     OutputDevice,
-    OutputFault,
     OverlayName,
     Percent,
     PlaylistIndex,
     Revision,
-    RowDelta,
-    SeekStep,
     SettingRow,
-    SpeedStep,
+    StreamError,
     ThemeName,
     Toast,
     Track,
-    VolumeStep,
     playlist::PlaylistFileName,
 };
 
@@ -35,19 +31,25 @@ use crate::domain::{
 #[strum(serialize_all = "snake_case")]
 pub enum Message {
     Overlay(OverlayRequest),
-    Adjust { row: SettingRow, nudge: Nudge },
+    Adjust {
+        row: SettingRow,
+        direction: Direction,
+    },
     Workspace(WorkspaceRequest),
     Playback(PlaybackRequest),
     Browse(BrowseRequest),
-    Loaded(LoadedRequest),
-    Library(LibraryFact),
-    Config(ConfigFact),
+    Queue(QueueRequest),
+    Loaded(PlaylistRequest),
+    Library(LibraryEvent),
+    Config(ConfigEvent),
     Audio(AudioEvent),
-    System(SystemEvent),
+    Macos(MacosEvent),
     Elapsed(Timer),
     Driver(Driver, DriverMessage),
     Key(KeyPress),
-    Viewport { visible_rows: usize },
+    Viewport {
+        visible_rows: usize,
+    },
     Quit,
 }
 
@@ -57,21 +59,21 @@ impl From<AudioEvent> for Message {
     }
 }
 
-impl From<SystemEvent> for Message {
-    fn from(event: SystemEvent) -> Self {
-        Message::System(event)
+impl From<MacosEvent> for Message {
+    fn from(event: MacosEvent) -> Self {
+        Message::Macos(event)
     }
 }
 
-impl From<LibraryFact> for Message {
-    fn from(fact: LibraryFact) -> Self {
-        Message::Library(fact)
+impl From<LibraryEvent> for Message {
+    fn from(event: LibraryEvent) -> Self {
+        Message::Library(event)
     }
 }
 
-impl From<ConfigFact> for Message {
-    fn from(fact: ConfigFact) -> Self {
-        Message::Config(fact)
+impl From<ConfigEvent> for Message {
+    fn from(event: ConfigEvent) -> Self {
+        Message::Config(event)
     }
 }
 
@@ -87,9 +89,9 @@ pub enum Timer {
 #[derive(Debug, Clone, PartialEq, Eq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum DriverMessage {
-    Died(DriverFailure),
+    Died(DriverError),
     Stopped,
-    Congested,
+    Full,
     Rejected { input: &'static str },
 }
 
@@ -102,7 +104,7 @@ pub enum OverlayRequest {
     Search(SearchRequest),
     Settings(SettingsRowRequest),
     Text(TextRequest),
-    Jump(JumpRequest),
+    Jump(TextRequest),
     History(HistoryRequest),
 }
 
@@ -110,7 +112,7 @@ pub enum OverlayRequest {
 #[strum(serialize_all = "snake_case")]
 pub enum SearchRequest {
     Edit(SearchEdit),
-    Navigate(Nudge),
+    Navigate(Direction),
     Enqueue,
 }
 
@@ -124,8 +126,8 @@ pub enum SearchEdit {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRowRequest {
-    Navigate(Nudge),
-    Adjust(Nudge),
+    Navigate(Direction),
+    Adjust(Direction),
     Activate,
 }
 
@@ -136,14 +138,8 @@ pub enum TextRequest {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JumpRequest {
-    Char(char),
-    Backspace,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryRequest {
-    Navigate(Nudge),
+    Navigate(Direction),
     Top,
     Bottom,
     Enqueue,
@@ -157,15 +153,15 @@ pub enum WorkspaceRequest {
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub enum ConfigFact {
+pub enum ConfigEvent {
     KeymapReloaded(Box<KeymapOverrides>),
     ThemeReloaded(ThemeName),
     ThemesLoaded(Vec<ThemeName>),
     MusicDirReloaded(PathBuf),
     CustomRowsReloaded(Vec<CustomSetting>),
-    SourceFailed { source: ConfigSource, text: String },
-    SourceRecovered(ConfigSource),
-    Failed(ConfigFailure),
+    SourceFailed { source: ConfigFile, text: String },
+    SourceRecovered(ConfigFile),
+    Error(ConfigError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, IntoStaticStr)]
@@ -180,14 +176,14 @@ pub enum PlaybackRequest {
     Release,
     Stop,
     Next,
-    Prev,
-    SeekBy(SeekStep),
-    NudgeVolume(VolumeStep),
+    Previous,
+    SeekBy { seconds: i64 },
+    NudgeVolume { steps: i8 },
     ToggleShuffle,
     CycleRepeat,
     CycleSleep,
     AbMark,
-    NudgeSpeed(SpeedStep),
+    NudgeSpeed { steps: i8 },
     SeekTo(Duration),
     SeekFraction(SeekTenths),
 }
@@ -225,32 +221,37 @@ pub enum BrowseRequest {
     Trash(PlaylistIndex),
     SavePlaylist(PlaylistFileName),
     ChordPrefix(ChordPrefix),
-    CursorBy(RowDelta),
+    CursorBy { rows: i64 },
     Top,
     Bottom,
     PlaySelected,
-    Enqueue,
-    EnqueueTrack(PlaylistIndex),
-    PlayNext,
-    Dequeue,
-    MoveInQueue(Nudge),
     CycleSort,
     Rescan,
     ToggleFavorite,
     CursorTo(PlaylistIndex),
-    PageBy(Nudge),
+    PageBy(Direction),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum QueueRequest {
+    Enqueue,
+    EnqueueTrack(PlaylistIndex),
+    PlayNext,
+    Dequeue,
+    MoveInQueue(Direction),
 }
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub enum LoadedRequest {
-    Jump(PlaylistIndex),
+pub enum PlaylistRequest {
+    JumpTo(PlaylistIndex),
     ShuffleRolled(Vec<usize>),
 }
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub enum LibraryFact {
+pub enum LibraryEvent {
     Loaded {
         tracks: Vec<Arc<Track>>,
         revision: Revision,
@@ -265,7 +266,7 @@ pub enum LibraryFact {
     },
     FavoritesLoaded(HashSet<PathBuf>),
     HistoryLoaded(Vec<HistoryEntry>),
-    Failed(LibraryFailure),
+    Error(LibraryError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -295,7 +296,7 @@ impl std::fmt::Display for LibrarySubject {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IoFault {
+pub enum IoError {
     Missing,
     Denied,
     Malformed,
@@ -303,43 +304,43 @@ pub enum IoFault {
     Other,
 }
 
-impl std::fmt::Display for IoFault {
+impl std::fmt::Display for IoError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let label = match self {
-            IoFault::Missing => "not found",
-            IoFault::Denied => "permission denied",
-            IoFault::Malformed => "corrupt data",
-            IoFault::Full => "disk full",
-            IoFault::Other => "an unknown error",
+            IoError::Missing => "not found",
+            IoError::Denied => "permission denied",
+            IoError::Malformed => "corrupt data",
+            IoError::Full => "disk full",
+            IoError::Other => "an unknown error",
         };
         formatter.write_str(label)
     }
 }
 
-impl From<std::io::ErrorKind> for IoFault {
+impl From<std::io::ErrorKind> for IoError {
     fn from(kind: std::io::ErrorKind) -> Self {
         if kind == std::io::ErrorKind::NotFound {
-            IoFault::Missing
+            IoError::Missing
         } else if kind == std::io::ErrorKind::PermissionDenied {
-            IoFault::Denied
+            IoError::Denied
         } else if kind == std::io::ErrorKind::StorageFull {
-            IoFault::Full
+            IoError::Full
         } else {
-            IoFault::Other
+            IoError::Other
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum LibraryFailure {
-    #[error("Could not read {subject} ({}): {fault}", path.display())]
+pub enum LibraryError {
+    #[error("Could not read {subject} ({}): {kind}", path.display())]
     File {
         subject: LibrarySubject,
         path: PathBuf,
-        fault: IoFault,
+        kind: IoError,
     },
     #[error("no library directory")]
-    NoDirectory,
+    NoUserDirs,
 }
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
@@ -349,18 +350,17 @@ pub enum AudioEvent {
     TrackChanged,
     Ended,
     Loaded { total: Option<Duration> },
-    Error(AudioFailure),
-    Rejected(EngineRejection),
-    DevicesLoaded(Vec<OutputDevice>),
-    DeviceFellBack(Option<DeviceName>),
+    Error(AudioError),
+    DevicesListed(Vec<ListedDevice>),
+    DeviceFellBack(OutputDevice),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub enum SystemEvent {
+pub enum MacosEvent {
     Volume(Percent),
     OutputRouteChanged,
-    HardwareWatchFailed(String),
+    HardwareWatchError(String),
     MediaKey(Gesture),
 }
 
@@ -385,7 +385,7 @@ impl From<Gesture> for PlaybackRequest {
             Gesture::Toggle => PlaybackRequest::Toggle,
             Gesture::Stop => PlaybackRequest::Stop,
             Gesture::Next => PlaybackRequest::Next,
-            Gesture::Previous => PlaybackRequest::Prev,
+            Gesture::Previous => PlaybackRequest::Previous,
             Gesture::SeekForward => PlaybackRequest::SeekForward,
             Gesture::SeekBack => PlaybackRequest::SeekBack,
             Gesture::Scrub(position) => PlaybackRequest::SeekTo(position),
@@ -394,43 +394,43 @@ impl From<Gesture> for PlaybackRequest {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DecodeFault {
+pub enum DecodeError {
     Unsupported,
     Corrupt,
-    Unreadable(IoFault),
+    Unreadable(IoError),
     Panicked,
 }
 
-impl std::fmt::Display for DecodeFault {
+impl std::fmt::Display for DecodeError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DecodeFault::Unsupported => formatter.write_str("unsupported format"),
-            DecodeFault::Corrupt => formatter.write_str("corrupt data"),
-            DecodeFault::Unreadable(fault) => write!(formatter, "{fault}"),
-            DecodeFault::Panicked => formatter.write_str("the decoder panicked"),
+            DecodeError::Unsupported => formatter.write_str("unsupported format"),
+            DecodeError::Corrupt => formatter.write_str("corrupt data"),
+            DecodeError::Unreadable(kind) => write!(formatter, "{kind}"),
+            DecodeError::Panicked => formatter.write_str("the decoder panicked"),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum AudioFailure {
-    #[error("Cannot decode {}: {fault}", path.display())]
-    Decode { path: PathBuf, fault: DecodeFault },
+pub enum AudioError {
+    #[error("Cannot decode {}: {kind}", path.display())]
+    Decode { path: PathBuf, kind: DecodeError },
     #[error("output device unavailable: {requested}")]
     Device { requested: String },
     #[error("audio output stream: {reason}")]
     Stream { reason: String },
-    #[error("Audio output lost: {fault}")]
-    OutputLost { fault: OutputFault },
-    #[error("Cannot preload {}: {fault}", path.display())]
-    Preload { path: PathBuf, fault: DecodeFault },
+    #[error("Audio output lost: {kind}")]
+    OutputLost { kind: StreamError },
+    #[error("Cannot preload {}: {kind}", path.display())]
+    Preload { path: PathBuf, kind: DecodeError },
     #[error("cannot seek: {reason}")]
     Seek { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EngineRejection {
-    WhileMuted(AudioFailure),
+pub enum EngineError {
+    WhileMuted(AudioError),
     WhileNotPlaying(PathBuf),
 }
 
@@ -439,34 +439,34 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        domain::{OutputFault, ThemeName},
+        domain::{StreamError, ThemeName},
         message::{
+            AudioError,
             AudioEvent,
-            AudioFailure,
-            ConfigFact,
-            DecodeFault,
-            IoFault,
-            LibraryFact,
-            LibraryFailure,
+            ConfigEvent,
+            DecodeError,
+            IoError,
+            LibraryError,
+            LibraryEvent,
             LibrarySubject,
+            MacosEvent,
             Message,
-            SystemEvent,
         },
     };
 
     #[rstest::rstest]
     #[case::audio(Message::from(AudioEvent::Ended), Message::Audio(AudioEvent::Ended))]
     #[case::system(
-        Message::from(SystemEvent::OutputRouteChanged),
-        Message::System(SystemEvent::OutputRouteChanged)
+        Message::from(MacosEvent::OutputRouteChanged),
+        Message::Macos(MacosEvent::OutputRouteChanged)
     )]
     #[case::library(
-        Message::from(LibraryFact::Failed(LibraryFailure::NoDirectory)),
-        Message::Library(LibraryFact::Failed(LibraryFailure::NoDirectory))
+        Message::from(LibraryEvent::Error(LibraryError::NoUserDirs)),
+        Message::Library(LibraryEvent::Error(LibraryError::NoUserDirs))
     )]
     #[case::config(
-        Message::from(ConfigFact::ThemeReloaded(ThemeName::from_static("noir"))),
-        Message::Config(ConfigFact::ThemeReloaded(ThemeName::from_static("noir")))
+        Message::from(ConfigEvent::ThemeReloaded(ThemeName::from_static("noir"))),
+        Message::Config(ConfigEvent::ThemeReloaded(ThemeName::from_static("noir")))
     )]
     fn a_fact_converts_into_its_message(
         #[case] converted: Message,
@@ -477,32 +477,32 @@ mod tests {
 
     #[rstest::rstest]
     #[case::missing_history(
-        LibraryFailure::File {
+        LibraryError::File {
             subject: LibrarySubject::History,
             path: PathBuf::from("/data/history.jsonl"),
-            fault: IoFault::Missing,
+            kind: IoError::Missing,
         },
         "Could not read the history file (/data/history.jsonl): not found"
     )]
     #[case::denied_playlist(
-        LibraryFailure::File {
+        LibraryError::File {
             subject: LibrarySubject::Playlist,
             path: PathBuf::from("/playlists/My Mix.m3u8"),
-            fault: IoFault::Denied,
+            kind: IoError::Denied,
         },
         "Could not read the playlist file (/playlists/My Mix.m3u8): permission denied"
     )]
     #[case::malformed_cache(
-        LibraryFailure::File {
+        LibraryError::File {
             subject: LibrarySubject::Cache,
             path: PathBuf::from("/data/cache.bin"),
-            fault: IoFault::Malformed,
+            kind: IoError::Malformed,
         },
         "Could not read the cache (/data/cache.bin): corrupt data"
     )]
-    #[case::no_directory(LibraryFailure::NoDirectory, "no library directory")]
+    #[case::no_directory(LibraryError::NoUserDirs, "no library directory")]
     fn a_library_failure_renders_its_cause(
-        #[case] failure: LibraryFailure,
+        #[case] failure: LibraryError,
         #[case] expected: &str,
     ) {
         assert_eq!(failure.to_string(), expected);
@@ -510,36 +510,36 @@ mod tests {
 
     #[rstest::rstest]
     #[case::decode_unsupported(
-        AudioFailure::Decode {
+        AudioError::Decode {
             path: PathBuf::from("song.flac"),
-            fault: DecodeFault::Unsupported,
+            kind: DecodeError::Unsupported,
         },
         "Cannot decode song.flac: unsupported format"
     )]
     #[case::preload_panicked(
-        AudioFailure::Preload {
+        AudioError::Preload {
             path: PathBuf::from("song.flac"),
-            fault: DecodeFault::Panicked,
+            kind: DecodeError::Panicked,
         },
         "Cannot preload song.flac: the decoder panicked"
     )]
     #[case::output_device_gone(
-        AudioFailure::OutputLost { fault: OutputFault::DeviceGone },
+        AudioError::OutputLost { kind: StreamError::DeviceGone },
         "Audio output lost: the device is gone"
     )]
     fn an_audio_failure_renders_its_cause(
-        #[case] failure: AudioFailure,
+        #[case] failure: AudioError,
         #[case] expected: &str,
     ) {
         assert_eq!(failure.to_string(), expected);
     }
 
     #[rstest::rstest]
-    #[case::not_found(std::io::ErrorKind::NotFound, IoFault::Missing)]
-    #[case::permission_denied(std::io::ErrorKind::PermissionDenied, IoFault::Denied)]
-    #[case::storage_full(std::io::ErrorKind::StorageFull, IoFault::Full)]
-    #[case::other(std::io::ErrorKind::Interrupted, IoFault::Other)]
-    fn io_fault_from_kind(#[case] kind: std::io::ErrorKind, #[case] expected: IoFault) {
-        assert_eq!(IoFault::from(kind), expected);
+    #[case::not_found(std::io::ErrorKind::NotFound, IoError::Missing)]
+    #[case::permission_denied(std::io::ErrorKind::PermissionDenied, IoError::Denied)]
+    #[case::storage_full(std::io::ErrorKind::StorageFull, IoError::Full)]
+    #[case::other(std::io::ErrorKind::Interrupted, IoError::Other)]
+    fn io_fault_from_kind(#[case] kind: std::io::ErrorKind, #[case] expected: IoError) {
+        assert_eq!(IoError::from(kind), expected);
     }
 }

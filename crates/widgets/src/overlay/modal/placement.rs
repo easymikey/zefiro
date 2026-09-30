@@ -27,7 +27,6 @@ pub(crate) enum OverlayContainer<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModalScrollAreas {
     pub outer: Rect,
-    pub painted: Rect,
     pub rows: Rect,
     pub content: Rect,
     pub scrollbar: Rect,
@@ -38,7 +37,6 @@ impl ModalScrollAreas {
     fn empty(outer: Rect) -> Self {
         Self {
             outer,
-            painted: outer,
             rows: Rect::default(),
             content: Rect::default(),
             scrollbar: Rect::default(),
@@ -51,7 +49,6 @@ impl ModalScrollAreas {
             outer: self.outer,
             body: self.content,
             hint_row: self.hint_row,
-            painted: self.painted,
         }
     }
 }
@@ -65,10 +62,10 @@ pub enum OverlayAreas {
 
 impl OverlayAreas {
     #[must_use]
-    pub fn painted(self) -> Rect {
+    pub fn outer(self) -> Rect {
         match self {
-            Self::List(areas) => areas.painted,
-            Self::Dialog(areas) => areas.painted,
+            Self::List(areas) => areas.outer,
+            Self::Dialog(areas) => areas.outer,
             Self::Banner(rect) => rect,
         }
     }
@@ -99,7 +96,7 @@ impl ModalBorder<'_> {
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Thick)
-            .border_style(Style::default().fg(self.theme.frame()))
+            .border_style(Style::default().fg(self.theme.border()))
             .padding(self.inset.padding())
             .title(spaced_title(self.title.clone()))
     }
@@ -113,7 +110,6 @@ impl ModalBorder<'_> {
         let scrollbar = scrollbar_column(self.area, inner, self.chrome.scrollbar_inset);
         ModalScrollAreas {
             outer: self.area,
-            painted: self.area,
             rows: row_band(self.area, inner, scrollbar),
             content: inner,
             scrollbar,
@@ -126,7 +122,7 @@ impl ModalBorder<'_> {
         Block::new()
             .style(
                 Style::default()
-                    .bg(self.theme.window_bg())
+                    .bg(self.theme.window_background())
                     .fg(self.theme.text()),
             )
             .render(self.area, buffer);
@@ -166,8 +162,8 @@ impl<'a> ModalPlacement<'a> {
                 content_rows: self.content_rows.max(1),
             },
             hint: self.hint.clone(),
-            border: self.theme.frame(),
-            window_background: self.theme.window_bg(),
+            border: self.theme.border(),
+            window_background: self.theme.window_background(),
         }
     }
 
@@ -176,7 +172,7 @@ impl<'a> ModalPlacement<'a> {
         match self.container {
             OverlayContainer::Pane(pane) => self.border(pane).areas(),
             OverlayContainer::Modal { avoid } => {
-                self.scroll_areas(&self.modal().frame(screen, avoid))
+                self.scroll_areas(&self.modal().areas(screen, avoid))
             }
         }
     }
@@ -189,7 +185,6 @@ impl<'a> ModalPlacement<'a> {
         );
         ModalScrollAreas {
             outer: modal_frame.outer,
-            painted: modal_frame.painted,
             rows: row_band(modal_frame.outer, modal_frame.body, scrollbar),
             content: modal_frame.body,
             scrollbar,
@@ -213,22 +208,22 @@ impl<'a> ModalPlacement<'a> {
 }
 
 #[must_use]
-pub(crate) fn lead_cells(areas: &ModalScrollAreas) -> u16 {
+pub(crate) fn leading_cells(areas: &ModalScrollAreas) -> u16 {
     areas.content.x.saturating_sub(areas.rows.x)
 }
 
 #[must_use]
-fn trail_cells(areas: &ModalScrollAreas) -> u16 {
+fn trailing_cells(areas: &ModalScrollAreas) -> u16 {
     areas.rows.right().saturating_sub(areas.content.right())
 }
 
 #[must_use]
 pub(crate) fn column_width(areas: &ModalScrollAreas) -> u16 {
-    areas.rows.width.saturating_sub(trail_cells(areas))
+    areas.rows.width.saturating_sub(trailing_cells(areas))
 }
 
 #[must_use]
-pub(crate) fn led(text: &str, lead: u16, width: u16) -> String {
+pub(crate) fn indented(text: &str, lead: u16, width: u16) -> String {
     let lead = usize::from(lead);
     let budget = usize::from(width).saturating_sub(lead);
     let fitted = truncate_to_width(text, budget, TruncateGlyphs::default());

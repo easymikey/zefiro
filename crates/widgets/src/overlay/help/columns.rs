@@ -13,7 +13,7 @@ use crate::{
     },
     primitive::{
         glyphs::HelpGlyphs,
-        span::{row, text},
+        span::{line, text},
     },
 };
 
@@ -64,15 +64,15 @@ fn column_lines(
             rows.push(Row::default());
         }
         max_width = max_width.max(group.title.width());
-        rows.push(full_width_row(row([text(group.title)
+        rows.push(full_width_row(line([text(group.title)
             .fg(colors.title)
             .bold()])));
         for (key, description) in &group.bindings {
             max_width = max_width
                 .max(chord_width + usize::from(layout.chord_gap) + description.width());
             rows.push(Row::new(vec![
-                Cell::from(row([text(key.clone()).fg(colors.key)]).right_aligned()),
-                Cell::from(row([text(description.clone()).fg(colors.description)])),
+                Cell::from(line([text(key.clone()).fg(colors.key)]).right_aligned()),
+                Cell::from(line([text(description.clone()).fg(colors.description)])),
             ]));
         }
     }
@@ -85,8 +85,8 @@ fn column_lines(
     }
 }
 
-fn height_spread(a: u16, b: u16, c: u16) -> u16 {
-    a.max(b).max(c) - a.min(b).min(c)
+fn height_spread(first: u16, second: u16, third: u16) -> u16 {
+    first.max(second).max(third) - first.min(second).min(third)
 }
 
 fn three_columns(
@@ -132,7 +132,7 @@ fn fit_column(column: HelpColumn, available_height: u16, hint: HelpHint) -> Help
     let keep = usize::from(available_height.saturating_sub(1));
     let mut rows = column.rows;
     rows.truncate(keep);
-    rows.push(full_width_row(row([text(hint.glyph).fg(hint.color)])));
+    rows.push(full_width_row(line([text(hint.glyph).fg(hint.color)])));
     HelpColumn {
         rows,
         chord_width: column.chord_width,

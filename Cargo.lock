@@ -1025,6 +1025,7 @@ dependencies = [
  "dirs",
  "insta",
  "kernel",
+ "library",
  "lofty",
  "rstest",
  "serde",

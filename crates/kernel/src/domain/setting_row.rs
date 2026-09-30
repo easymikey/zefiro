@@ -2,7 +2,7 @@ use std::num::NonZeroUsize;
 
 use crate::{
     cmd::Cue,
-    domain::{Nudge, ThemeName, overlay::SettingsCursor},
+    domain::{Direction, ThemeName},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,16 +36,16 @@ impl SettingRow {
         let mut rows = Vec::new();
         match custom.split_first() {
             Some((leading, rest)) => {
-                rows.push(SettingRow::Custom(leading.spec.id));
+                rows.push(SettingRow::Custom(leading.custom.id));
                 rows.push(SettingRow::Theme);
-                rows.extend(rest.iter().map(|slot| SettingRow::Custom(slot.spec.id)));
+                rows.extend(rest.iter().map(|slot| SettingRow::Custom(slot.custom.id)));
             }
             None => rows.push(SettingRow::Theme),
         }
         rows.extend(
             SETTINGS
                 .iter()
-                .map(|spec| spec.row)
+                .map(|entry| entry.row)
                 .filter(|row| *row != SettingRow::Theme),
         );
         rows
@@ -56,44 +56,44 @@ impl SettingRow {
         match self {
             SettingRow::Custom(id) => custom
                 .iter()
-                .find(|slot| slot.spec.id == id)
-                .map(|slot| SettingControl::Custom(slot.spec.control)),
+                .find(|slot| slot.custom.id == id)
+                .map(|slot| SettingControl::Custom(slot.custom.control)),
             SettingRow::Theme
             | SettingRow::Crossfade
             | SettingRow::Replaygain
             | SettingRow::OutputDevice
             | SettingRow::SleepPresets => SETTINGS
                 .iter()
-                .find(|spec| spec.row == self)
-                .map(|spec| spec.control),
+                .find(|entry| entry.row == self)
+                .map(|entry| entry.control),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SettingSpec {
+pub struct SettingEntry {
     pub row: SettingRow,
     pub control: SettingControl,
 }
 
-pub const SETTINGS: [SettingSpec; 5] = [
-    SettingSpec {
+pub const SETTINGS: [SettingEntry; 5] = [
+    SettingEntry {
         row: SettingRow::Theme,
         control: SettingControl::Ring,
     },
-    SettingSpec {
+    SettingEntry {
         row: SettingRow::Crossfade,
         control: SettingControl::Step,
     },
-    SettingSpec {
+    SettingEntry {
         row: SettingRow::Replaygain,
         control: SettingControl::Toggle,
     },
-    SettingSpec {
+    SettingEntry {
         row: SettingRow::OutputDevice,
         control: SettingControl::Ring,
     },
-    SettingSpec {
+    SettingEntry {
         row: SettingRow::SleepPresets,
         control: SettingControl::Ring,
     },
@@ -174,17 +174,17 @@ pub enum Choice {
 
 impl Choice {
     #[must_use]
-    pub fn nudged(self, control: CustomControl, nudge: Nudge) -> OptionIndex {
+    pub fn nudged(self, control: CustomControl, direction: Direction) -> OptionIndex {
         let count = control.count();
         match self {
             Choice::Mixed => clamped(count, 0),
             Choice::Option(index) => {
                 let next = match control {
                     CustomControl::Toggle | CustomControl::Cycle(_) => {
-                        wrapped(index.get(), count.get(), nudge)
+                        direction.wrapped(index.get(), count.get())
                     }
                     CustomControl::Step(_) => {
-                        saturated(index.get(), count.get(), nudge)
+                        saturated(index.get(), count.get(), direction)
                     }
                 };
                 clamped(count, next)
@@ -193,24 +193,10 @@ impl Choice {
     }
 }
 
-fn wrapped(current: usize, len: usize, nudge: Nudge) -> usize {
-    let delta: isize = match nudge {
-        Nudge::Up => 1,
-        Nudge::Down => -1,
-    };
-    let (Ok(len), Ok(current)) =
-        (isize::try_from(len.max(1)), isize::try_from(current))
-    else {
-        return current;
-    };
-    let wrapped = (current + delta).rem_euclid(len);
-    usize::try_from(wrapped).unwrap_or(0)
-}
-
-fn saturated(current: usize, len: usize, nudge: Nudge) -> usize {
-    match nudge {
-        Nudge::Up => current.saturating_add(1).min(len.saturating_sub(1)),
-        Nudge::Down => current.saturating_sub(1),
+fn saturated(current: usize, len: usize, direction: Direction) -> usize {
+    match direction {
+        Direction::Next => current.saturating_add(1).min(len.saturating_sub(1)),
+        Direction::Previous => current.saturating_sub(1),
     }
 }
 
@@ -221,7 +207,7 @@ fn clamped(count: OptionCount, position: usize) -> OptionIndex {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CustomSpec {
+pub struct CustomRow {
     pub id: SettingId,
     pub control: CustomControl,
     pub cue: Option<Cue>,
@@ -230,44 +216,34 @@ pub struct CustomSpec {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CustomSetting {
-    pub spec: &'static CustomSpec,
+    pub custom: &'static CustomRow,
     pub choice: Choice,
 }
 
-impl SettingsCursor {
+impl SettingRow {
     #[must_use]
     pub fn first(custom: &[CustomSetting]) -> Self {
-        let rows = SettingRow::all(custom);
-        Self {
-            selected: rows.first().copied().unwrap_or(SettingRow::Theme),
-        }
+        SettingRow::all(custom)
+            .first()
+            .copied()
+            .unwrap_or(SettingRow::Theme)
     }
 
     #[must_use]
-    pub fn moved(self, rows: &[SettingRow], nudge: Nudge) -> Self {
-        let current = rows
-            .iter()
-            .position(|row| *row == self.selected)
-            .unwrap_or(0);
-        let delta: isize = match nudge {
-            Nudge::Up => -1,
-            Nudge::Down => 1,
-        };
+    pub fn moved(self, rows: &[SettingRow], direction: Direction) -> Self {
+        let current = rows.iter().position(|row| *row == self).unwrap_or(0);
+        let delta = direction.sign();
         let last = rows.len().saturating_sub(1);
         let next = current.checked_add_signed(delta).unwrap_or(0).min(last);
-        Self {
-            selected: rows.get(next).copied().unwrap_or(self.selected),
-        }
+        rows.get(next).copied().unwrap_or(self)
     }
 
     #[must_use]
     pub fn kept(self, rows: &[SettingRow]) -> Self {
-        if rows.contains(&self.selected) {
+        if rows.contains(&self) {
             self
         } else {
-            Self {
-                selected: rows.first().copied().unwrap_or(self.selected),
-            }
+            rows.first().copied().unwrap_or(self)
         }
     }
 }
@@ -276,7 +252,7 @@ impl SettingsCursor {
 mod tests {
     use rstest::rstest;
 
-    use crate::domain::{Choice, CustomControl, Nudge, OptionCount, OptionIndex};
+    use crate::domain::{Choice, CustomControl, Direction, OptionCount, OptionIndex};
 
     fn option(count: usize, at: usize) -> OptionIndex {
         OptionCount::new(count).unwrap().index(at).unwrap()
@@ -285,7 +261,7 @@ mod tests {
     struct NudgeRow {
         choice: Choice,
         control: CustomControl,
-        nudge: Nudge,
+        direction: Direction,
         expected: OptionIndex,
     }
 
@@ -293,53 +269,53 @@ mod tests {
     #[case::toggle_up_from_0(NudgeRow {
         choice: Choice::Option(option(2, 0)),
         control: CustomControl::Toggle,
-        nudge: Nudge::Up,
+        direction: Direction::Next,
         expected: option(2, 1),
     })]
     #[case::toggle_down_from_0(NudgeRow {
         choice: Choice::Option(option(2, 0)),
         control: CustomControl::Toggle,
-        nudge: Nudge::Down,
+        direction: Direction::Previous,
         expected: option(2, 1),
     })]
     #[case::cycle_wraps_up_at_the_end(NudgeRow {
         choice: Choice::Option(option(3, 2)),
         control: CustomControl::Cycle(OptionCount::new(3).unwrap()),
-        nudge: Nudge::Up,
+        direction: Direction::Next,
         expected: option(3, 0),
     })]
     #[case::cycle_wraps_down_at_0(NudgeRow {
         choice: Choice::Option(option(3, 0)),
         control: CustomControl::Cycle(OptionCount::new(3).unwrap()),
-        nudge: Nudge::Down,
+        direction: Direction::Previous,
         expected: option(3, 2),
     })]
     #[case::step_stops_at_the_top(NudgeRow {
         choice: Choice::Option(option(3, 2)),
         control: CustomControl::Step(OptionCount::new(3).unwrap()),
-        nudge: Nudge::Up,
+        direction: Direction::Next,
         expected: option(3, 2),
     })]
     #[case::step_stops_at_0(NudgeRow {
         choice: Choice::Option(option(3, 0)),
         control: CustomControl::Step(OptionCount::new(3).unwrap()),
-        nudge: Nudge::Down,
+        direction: Direction::Previous,
         expected: option(3, 0),
     })]
     #[case::mixed_up(NudgeRow {
         choice: Choice::Mixed,
         control: CustomControl::Cycle(OptionCount::new(3).unwrap()),
-        nudge: Nudge::Up,
+        direction: Direction::Next,
         expected: option(3, 0),
     })]
     #[case::mixed_down(NudgeRow {
         choice: Choice::Mixed,
         control: CustomControl::Cycle(OptionCount::new(3).unwrap()),
-        nudge: Nudge::Down,
+        direction: Direction::Previous,
         expected: option(3, 0),
     })]
     fn choice_nudges_onto_a_real_option(#[case] row: NudgeRow) {
-        assert_eq!(row.choice.nudged(row.control, row.nudge), row.expected);
+        assert_eq!(row.choice.nudged(row.control, row.direction), row.expected);
     }
 
     #[test]

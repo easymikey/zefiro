@@ -2,24 +2,24 @@ mod audio;
 mod browse;
 mod config;
 mod driver;
+mod error;
 pub mod keymap;
 mod loaded;
 mod machine;
+mod macos;
 pub mod overlay;
 mod playback;
 pub mod player;
 mod playlist;
-mod rejection;
 mod settings;
 mod startup;
-mod system;
 mod timer;
 mod transport;
 mod workspace;
 
-pub use driver::DriverRejection;
-pub use machine::{Machine, Never, Rejected};
-pub use rejection::Rejection;
+pub use driver::DriverStatusError;
+pub use error::UpdateError;
+pub use machine::{Machine, Rejected};
 
 use crate::{
     cmd::{AudioCmd, Cmd, Cue, Effect, LibraryCmd, WindowColorsCmd},
@@ -31,13 +31,13 @@ use crate::{
         Workspace,
         playlist::{PlayOrder, Playlist},
     },
-    message::{BrowseRequest, Message, SystemEvent, Timer, WorkspaceRequest},
+    message::{BrowseRequest, MacosEvent, Message, Timer, WorkspaceRequest},
 };
 
 pub fn startup(startup: Startup) -> (Model, Cmd) {
     let mut model = Model::default();
     let mut cmd = startup::seed_model(&mut model, startup);
-    stamp(&mut model, &mut cmd, Moment::default());
+    stamp_revisions(&mut model, &mut cmd, Moment::default());
     let cmd = cmd.then(roll_pending(&model.playlist));
     (model, cmd)
 }
@@ -46,7 +46,7 @@ pub fn update(
     model: &mut Model,
     message: Message,
     now: Moment,
-) -> Result<Cmd, Rejection> {
+) -> Result<Cmd, UpdateError> {
     if let Message::Quit = message {
         return Ok(quit());
     }
@@ -63,7 +63,7 @@ pub fn update(
         message
     };
     let mut cmd = update_model(model, message, now)?;
-    stamp(model, &mut cmd, now);
+    stamp_revisions(model, &mut cmd, now);
     Ok(cmd.then(roll_pending(&model.playlist)))
 }
 
@@ -86,15 +86,16 @@ impl Input {
     fn of(message: &Message) -> Self {
         match message {
             Message::Browse(BrowseRequest::ChordPrefix(_)) => Input::ChordPrefix,
-            Message::System(SystemEvent::MediaKey(_))
+            Message::Macos(MacosEvent::MediaKey(_))
             | Message::Overlay(_)
             | Message::Adjust { .. }
             | Message::Playback(_)
-            | Message::Browse(_) => Input::Key,
-            Message::System(
-                SystemEvent::Volume(_)
-                | SystemEvent::OutputRouteChanged
-                | SystemEvent::HardwareWatchFailed(_),
+            | Message::Browse(_)
+            | Message::Queue(_) => Input::Key,
+            Message::Macos(
+                MacosEvent::Volume(_)
+                | MacosEvent::OutputRouteChanged
+                | MacosEvent::HardwareWatchError(_),
             )
             | Message::Workspace(_)
             | Message::Loaded(_)
@@ -120,16 +121,13 @@ fn roll_pending(playlist: &Playlist) -> Cmd {
     }
 }
 
-fn stamp(model: &mut Model, cmd: &mut Cmd, now: Moment) {
+fn stamp_revisions(model: &mut Model, cmd: &mut Cmd, now: Moment) {
     for effect in cmd.effects_mut() {
         match effect {
-            Effect::Library(
-                LibraryCmd::Rescan { revision: slot, .. }
-                | LibraryCmd::ScanLibrary { revision: slot, .. },
-            ) => {
-                let issued = model.effects.bump();
+            Effect::Library(LibraryCmd::Scan { revision: slot, .. }) => {
+                let issued = model.revisions.effects.bump();
                 *slot = issued;
-                model.scan_generation = issued;
+                model.revisions.scan = issued;
             }
             Effect::Library(LibraryCmd::AppendHistory { at, .. }) => {
                 *at = UnixSeconds::of(now);
@@ -138,12 +136,12 @@ fn stamp(model: &mut Model, cmd: &mut Cmd, now: Moment) {
                 AudioCmd::Load { revision: slot, .. }
                 | AudioCmd::Preload { revision: slot, .. },
             ) => {
-                *slot = model.effects.bump();
+                *slot = model.revisions.effects.bump();
             }
             Effect::After { message, .. } => stamp_timer(model, message),
             Effect::Restart(_)
             | Effect::Audio(
-                AudioCmd::Pause(_)
+                AudioCmd::Playback(_)
                 | AudioCmd::Seek(_)
                 | AudioCmd::SetSpeed(_)
                 | AudioCmd::Stop
@@ -161,12 +159,11 @@ fn stamp(model: &mut Model, cmd: &mut Cmd, now: Moment) {
                 | LibraryCmd::TagTracks { .. }
                 | LibraryCmd::PrefetchCover(_),
             )
-            | Effect::System(_)
+            | Effect::Macos(_)
             | Effect::Config(_)
             | Effect::Animate(_)
             | Effect::RollShuffle { .. }
             | Effect::WindowColors(_)
-            | Effect::Setting { .. }
             | Effect::Quit => {}
         }
     }
@@ -174,12 +171,12 @@ fn stamp(model: &mut Model, cmd: &mut Cmd, now: Moment) {
 
 fn stamp_timer(model: &mut Model, timer: &mut Timer) {
     let (slot, generation) = match timer {
-        Timer::Toast(slot) => (slot, &mut model.toast_generation),
-        Timer::Sleep(slot) => (slot, &mut model.sleep_generation),
-        Timer::Mark(slot) => (slot, &mut model.mark_generation),
+        Timer::Toast(slot) => (slot, &mut model.revisions.toast),
+        Timer::Sleep(slot) => (slot, &mut model.revisions.sleep),
+        Timer::Mark(slot) => (slot, &mut model.revisions.mark),
         Timer::Restart(_) => return,
     };
-    let issued = model.effects.bump();
+    let issued = model.revisions.effects.bump();
     *slot = issued;
     *generation = issued;
 }
@@ -188,7 +185,7 @@ fn update_model(
     model: &mut Model,
     message: Message,
     now: Moment,
-) -> Result<Cmd, Rejection> {
+) -> Result<Cmd, UpdateError> {
     let input = Input::of(&message);
     let dismissed = dismissal(&model.workspace, input);
     let cmd = branch(model, message, now)?;
@@ -219,20 +216,27 @@ fn released(workspace: &mut Workspace, input: Input, cmd: &Cmd) {
     }
 }
 
-fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Rejection> {
+fn branch(
+    model: &mut Model,
+    message: Message,
+    now: Moment,
+) -> Result<Cmd, UpdateError> {
     match message {
         Message::Overlay(request) => overlay::update(model, request, now),
-        Message::Adjust { row, nudge } => settings::adjust(model, row, nudge),
-        Message::Workspace(workspace_request) => workspace(model, workspace_request),
+        Message::Adjust { row, direction } => settings::adjust(model, row, direction),
+        Message::Workspace(workspace_request) => {
+            update_workspace(model, workspace_request)
+        }
         Message::Playback(playback_request) => {
-            playback::playback(model, playback_request, now)
+            playback::update(model, playback_request, now)
         }
         Message::Browse(browse_request) => browse::update(model, browse_request),
-        Message::Loaded(loaded_request) => loaded::loaded(model, loaded_request),
-        Message::Library(fact) => loaded::library(model, fact),
-        Message::Config(fact) => config::config(model, fact),
-        Message::Audio(audio_event) => audio::audio(model, audio_event, now),
-        Message::System(event) => system::system(model, event, now),
+        Message::Queue(queue_request) => browse::queue(model, queue_request),
+        Message::Loaded(loaded_request) => loaded::update(model, loaded_request),
+        Message::Library(event) => loaded::library(model, event),
+        Message::Config(event) => config::update(model, event),
+        Message::Audio(audio_event) => audio::update(model, audio_event, now),
+        Message::Macos(event) => macos::update(model, event, now),
         Message::Elapsed(timer) => timer::update(model, timer, now),
         Message::Driver(driver, driver_message) => {
             driver::update(model, (driver, driver_message), now)
@@ -242,7 +246,10 @@ fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Rejec
     }
 }
 
-fn workspace(model: &mut Model, request: WorkspaceRequest) -> Result<Cmd, Rejection> {
+fn update_workspace(
+    model: &mut Model,
+    request: WorkspaceRequest,
+) -> Result<Cmd, UpdateError> {
     Ok(model.workspace.update(request)?)
 }
 
@@ -255,7 +262,7 @@ mod tests {
     use crate::{
         cmd::{Cmd, Effect, LibraryCmd},
         domain::{Moment, Shuffle, Startup, Track, UnixSeconds},
-        update::{stamp, startup},
+        update::{stamp_revisions, startup},
     };
 
     fn startup_with(shuffle: Shuffle) -> Startup {
@@ -301,7 +308,7 @@ mod tests {
         }));
         let now = Moment::new(Duration::from_secs(9));
 
-        stamp(&mut model, &mut cmd, now);
+        stamp_revisions(&mut model, &mut cmd, now);
 
         let at = cmd.effects().find_map(|effect| {
             if let Effect::Library(LibraryCmd::AppendHistory { at, .. }) = effect {

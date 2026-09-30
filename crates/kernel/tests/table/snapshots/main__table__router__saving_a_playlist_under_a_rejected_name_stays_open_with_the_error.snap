@@ -1,5 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
+assertion_line: 414
 expression: "walked(model, messages)"
 ---
 [
@@ -43,7 +44,6 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,
@@ -86,7 +86,6 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,
@@ -129,7 +128,6 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,
@@ -172,7 +170,6 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,
@@ -213,7 +210,6 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,

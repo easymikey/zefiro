@@ -1,24 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RowDelta(i64);
-
-impl RowDelta {
-    #[must_use]
-    pub const fn new(rows: i64) -> Self {
-        Self(rows)
-    }
-
-    #[must_use]
-    pub const fn get(self) -> i64 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum CursorDirection {
-    #[default]
-    Forward,
-    Backward,
-}
+use crate::domain::direction::Direction;
 
 #[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -69,13 +49,9 @@ impl Cursor {
         Self::with_len(self.len).at(clamped_step(self.index, self.len, delta))
     }
 
-    pub(crate) fn page(self, rows: usize, direction: CursorDirection) -> Self {
+    pub(crate) fn page(self, rows: usize, direction: Direction) -> Self {
         let magnitude = isize::try_from(rows).unwrap_or(isize::MAX);
-        let delta = match direction {
-            CursorDirection::Forward => magnitude,
-            CursorDirection::Backward => magnitude.checked_neg().unwrap_or(isize::MIN),
-        };
-        self.step(delta)
+        self.step(magnitude.saturating_mul(direction.sign()))
     }
 
     pub fn first(self) -> Self {
@@ -104,26 +80,19 @@ fn clamped_step(index: usize, len: usize, delta: isize) -> usize {
 mod tests {
     use rstest::rstest;
 
-    use crate::domain::cursor::{Cursor, CursorDirection, RowDelta};
-
-    #[rstest]
-    #[case::negative(-4)]
-    #[case::positive(4)]
-    fn steps_convert(#[case] value: i64) {
-        assert_eq!(RowDelta::new(value).get(), value);
-    }
+    use crate::domain::{cursor::Cursor, direction::Direction};
 
     struct PageRow {
         index: usize,
         len: usize,
         rows: usize,
-        direction: CursorDirection,
+        direction: Direction,
         expected_index: usize,
     }
 
     #[rstest]
-    #[case(PageRow { index: 3, len: 5, rows: 10, direction: CursorDirection::Forward, expected_index: 4 })]
-    #[case(PageRow { index: 1, len: 5, rows: 10, direction: CursorDirection::Backward, expected_index: 0 })]
+    #[case(PageRow { index: 3, len: 5, rows: 10, direction: Direction::Next, expected_index: 4 })]
+    #[case(PageRow { index: 1, len: 5, rows: 10, direction: Direction::Previous, expected_index: 0 })]
     fn page_clamps_at_the_end(#[case] row: PageRow) {
         let cursor = Cursor::with_len(row.len)
             .at(row.index)

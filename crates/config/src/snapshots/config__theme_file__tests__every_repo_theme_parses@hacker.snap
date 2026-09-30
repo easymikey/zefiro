@@ -6,49 +6,49 @@ expression: "parse_theme(source, name).unwrap()"
 ThemeFile {
     name: "hacker",
     colors: ThemeColors {
-        background: Hex(
+        background: Rgb(
             [
                 11,
                 12,
                 22,
             ],
         ),
-        foreground: Hex(
+        foreground: Rgb(
             [
                 142,
                 149,
                 184,
             ],
         ),
-        bright_foreground: Hex(
+        bright_foreground: Rgb(
             [
                 221,
                 247,
                 255,
             ],
         ),
-        accent: Hex(
+        accent: Rgb(
             [
                 130,
                 251,
                 156,
             ],
         ),
-        green: Hex(
+        green: Rgb(
             [
                 46,
                 194,
                 126,
             ],
         ),
-        yellow: Hex(
+        yellow: Rgb(
             [
                 247,
                 223,
                 80,
             ],
         ),
-        red: Hex(
+        red: Rgb(
             [
                 255,
                 95,

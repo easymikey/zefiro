@@ -15,10 +15,10 @@ use widgets::{
     lines_into,
 };
 
-use crate::pixels::cover::{CoverArtOwner, CoverMoment};
+use crate::pixels::cover::{CoverMoment, OwnedCoverArt};
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MilkdropSources<'a> {
+pub(crate) struct MilkdropParts<'a> {
     pub(crate) moment: CoverMoment<'a>,
     pub(crate) colors: MilkdropColors,
     pub(crate) layout: FrameLayout,
@@ -75,8 +75,8 @@ pub(crate) struct MilkdropCover {
 }
 
 impl MilkdropCover {
-    pub(crate) fn refresh(&mut self, sources: MilkdropSources<'_>) -> CoverArtOwner {
-        let MilkdropSources {
+    pub(crate) fn refresh(&mut self, sources: MilkdropParts<'_>) -> OwnedCoverArt {
+        let MilkdropParts {
             moment,
             colors,
             layout,
@@ -85,7 +85,7 @@ impl MilkdropCover {
             self.field = None;
             self.tick = None;
             self.lines = Arc::default();
-            return CoverArtOwner::Missing;
+            return OwnedCoverArt::Missing;
         };
         let width = usize::from(rect.width);
         let height = usize::from(rect.height);
@@ -109,7 +109,7 @@ impl MilkdropCover {
             }
             MilkdropPlan::Reuse => {}
         }
-        CoverArtOwner::Text(Arc::clone(&self.lines))
+        OwnedCoverArt::Text(Arc::clone(&self.lines))
     }
 
     fn advance(&mut self, moment: CoverMoment<'_>, seed: u64) {

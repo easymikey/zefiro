@@ -6,9 +6,9 @@ use crate::domain::{Crossfade, SLEEP_PRESET_BUNDLES, time::SECONDS_PER_MINUTE};
 pub struct DeviceName(String);
 
 impl DeviceName {
-    pub fn new(name: String) -> Result<Self, DeviceNameRejection> {
+    pub fn new(name: String) -> Result<Self, DeviceNameError> {
         if name.is_empty() {
-            return Err(DeviceNameRejection::Empty);
+            return Err(DeviceNameError::Empty);
         }
         Ok(Self(name))
     }
@@ -26,7 +26,7 @@ impl fmt::Display for DeviceName {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum DeviceNameRejection {
+pub enum DeviceNameError {
     #[error("enter a device name")]
     Empty,
 }
@@ -37,8 +37,25 @@ pub enum DeviceDefault {
     Named,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum OutputDevice {
+    #[default]
+    SystemDefault,
+    Named(DeviceName),
+}
+
+impl OutputDevice {
+    #[must_use]
+    pub fn named(&self) -> Option<&DeviceName> {
+        match self {
+            Self::SystemDefault => None,
+            Self::Named(name) => Some(name),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutputDevice {
+pub struct ListedDevice {
     pub name: DeviceName,
     pub default: DeviceDefault,
 }
@@ -47,8 +64,8 @@ pub struct OutputDevice {
 pub struct Settings {
     pub crossfade: Crossfade,
     pub replaygain: Replaygain,
-    pub output_device: Option<DeviceName>,
-    pub output_devices: Vec<OutputDevice>,
+    pub output_device: OutputDevice,
+    pub output_devices: Vec<ListedDevice>,
     pub sleep_presets: Box<[Duration]>,
 }
 
@@ -64,7 +81,7 @@ impl Default for Settings {
         Self {
             crossfade: Crossfade::default(),
             replaygain: Replaygain::Off,
-            output_device: None,
+            output_device: OutputDevice::SystemDefault,
             output_devices: Vec::new(),
             sleep_presets: SLEEP_PRESET_BUNDLES.first(),
         }
@@ -91,7 +108,7 @@ mod tests {
 
     use crate::domain::settings::{
         DeviceName,
-        DeviceNameRejection,
+        DeviceNameError,
         format_sleep_presets_label,
     };
 
@@ -109,11 +126,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::empty("".to_string(), Err(DeviceNameRejection::Empty))]
+    #[case::empty("".to_string(), Err(DeviceNameError::Empty))]
     #[case::named("Speakers".to_string(), Ok(()))]
     fn a_device_name_is_never_empty(
         #[case] name: String,
-        #[case] expected: Result<(), DeviceNameRejection>,
+        #[case] expected: Result<(), DeviceNameError>,
     ) {
         assert_eq!(DeviceName::new(name).map(|_| ()), expected);
     }

@@ -20,7 +20,7 @@ use crate::{
 const MARGIN: u16 = 0;
 const CHROME_CELLS: u16 = 4;
 const BORDER_ROWS: u16 = 2;
-const MOST_ROWS: u16 = 3;
+const MAX_ROWS: u16 = 3;
 const WIDTH_SHARE_PERCENT: u32 = 40;
 
 const CARD_INSET: Inset = Inset {
@@ -79,7 +79,7 @@ fn fitted(text: &str, width: usize, rows: usize) -> Vec<String> {
     shown
 }
 
-fn width_cap(screen: Rect) -> u16 {
+fn max_width(screen: Rect) -> u16 {
     let share = u16::try_from(u32::from(screen.width) * WIDTH_SHARE_PERCENT / 100)
         .unwrap_or(u16::MAX);
     share.min(screen.width.saturating_sub(MARGIN * 2))
@@ -121,13 +121,13 @@ impl ToastCard<'_> {
     }
 
     fn lines(self, screen: Rect) -> Option<Vec<String>> {
-        let text_room = width_cap(screen)
+        let text_room = max_width(screen)
             .checked_sub(CHROME_CELLS)
             .filter(|room| *room > 0)?;
         let rows = screen
             .height
             .saturating_sub(MARGIN + BORDER_ROWS)
-            .min(MOST_ROWS);
+            .min(MAX_ROWS);
         if rows == 0 {
             return None;
         }
@@ -143,7 +143,7 @@ impl ToastCard<'_> {
         let lines = self.lines(screen)?;
         let width = card_width(&lines);
         let height = u16::try_from(lines.len())
-            .unwrap_or(MOST_ROWS)
+            .unwrap_or(MAX_ROWS)
             .max(1)
             .saturating_add(BORDER_ROWS);
         let outer = top_right(screen, width, height);
@@ -159,7 +159,7 @@ impl ToastCard<'_> {
             return;
         };
         let outer = areas.outer;
-        let window_background = self.theme.window_bg();
+        let window_background = self.theme.window_background();
         let block = self.block();
         let inner = block.inner(outer);
         Clear.render(outer, buffer);
@@ -228,8 +228,8 @@ mod tests {
         };
         let painted = card.areas(screen(100, 30)).unwrap().painted;
         const BORDER_ROWS: u16 = 2;
-        const MOST_ROWS: u16 = 3;
-        assert!(painted.height <= MOST_ROWS + BORDER_ROWS);
+        const MAX_ROWS: u16 = 3;
+        assert!(painted.height <= MAX_ROWS + BORDER_ROWS);
     }
 
     #[test]

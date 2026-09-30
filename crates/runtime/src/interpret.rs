@@ -1,59 +1,41 @@
-use std::time::Instant;
+use std::{ops::ControlFlow, time::Instant};
 
 use kernel::{
     AudioCmd,
     Cmd,
     ConfigCmd,
-    ConfigPatch,
     Effect,
     LibraryCmd,
-    LoadedRequest,
+    MacosCmd,
     Message,
-    SystemCmd,
-    domain::{Driver, Drivers, OptionIndex, SettingId},
+    PlaylistRequest,
+    domain::{Driver, Drivers},
 };
-use strum::IntoStaticStr;
 
 use crate::{
-    library::cover::CoverRequest,
     port::Ports,
-    shell::{Flow, ShellEffect},
+    shell::ShellEffect,
     timers::Timers,
     trace::{Trace, TraceEntry},
 };
 
-#[derive(Debug, Clone, PartialEq, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
-pub enum ConfigCommand {
-    Save(ConfigPatch),
-    SelectTheme(String),
-    Setting { id: SettingId, option: OptionIndex },
-}
-
-#[derive(Debug, Clone, PartialEq, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
-pub enum LibraryCommand {
-    Kernel(LibraryCmd),
-    Cover(CoverRequest),
-}
-
-impl From<ConfigCmd> for ConfigCommand {
-    fn from(command: ConfigCmd) -> Self {
-        match command {
-            ConfigCmd::Save(patch) => ConfigCommand::Save(patch),
-            ConfigCmd::SelectTheme(choice) => {
-                ConfigCommand::SelectTheme(choice.to_string())
-            }
-        }
-    }
-}
-
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct Interpreted {
     pub answers: Vec<Message>,
-    pub shell: Vec<ShellEffect>,
-    pub flow: Flow,
-    pub relaunch: Option<(Driver, Vec<Effect>)>,
+    pub shell_effects: Vec<ShellEffect>,
+    pub flow: ControlFlow<()>,
+    pub restart: Option<(Driver, Vec<Effect>)>,
+}
+
+impl Default for Interpreted {
+    fn default() -> Self {
+        Self {
+            answers: Vec::new(),
+            shell_effects: Vec::new(),
+            flow: ControlFlow::Continue(()),
+            restart: None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -65,30 +47,30 @@ pub(crate) struct Interpreter<'a> {
 }
 
 impl Interpreter<'_> {
-    fn deliver(&mut self, result: Result<(), crate::port::Undelivered>) {
+    fn trace_undelivered(&mut self, result: Result<(), crate::port::Undelivered>) {
         if let Err(undelivered) = result {
             self.trace.push(undelivered.into());
         }
     }
 
-    fn audio(&mut self, command: AudioCmd) {
+    fn send_audio(&mut self, command: AudioCmd) {
         let result = self.ports.audio.send(self.drivers, command);
-        self.deliver(result);
+        self.trace_undelivered(result);
     }
 
-    fn library(&mut self, command: LibraryCmd) {
+    fn send_library(&mut self, command: LibraryCmd) {
         let result = self.ports.library.send_command(self.drivers, command);
-        self.deliver(result);
+        self.trace_undelivered(result);
     }
 
-    fn system(&mut self, command: SystemCmd) {
+    fn send_macos(&mut self, command: MacosCmd) {
         let result = self.ports.macos.send(self.drivers, command);
-        self.deliver(result);
+        self.trace_undelivered(result);
     }
 
-    fn config(&mut self, command: ConfigCommand) {
+    fn config(&mut self, command: ConfigCmd) {
         let result = self.ports.config.send(self.drivers, command);
-        self.deliver(result);
+        self.trace_undelivered(result);
     }
 }
 
@@ -98,40 +80,41 @@ fn shuffle_order(len: usize) -> Vec<usize> {
     order
 }
 
-pub(crate) fn interpret(cmd: Cmd, runtime: &mut Interpreter<'_>) -> Interpreted {
+pub(crate) fn interpret(cmd: Cmd, interpreter: &mut Interpreter<'_>) -> Interpreted {
     let mut interpreted = Interpreted::default();
     let mut effects = cmd.into_iter();
     while let Some(effect) = effects.next() {
         match effect {
-            Effect::Audio(command) => runtime.audio(command),
-            Effect::Library(command) => runtime.library(command),
-            Effect::System(command) => runtime.system(command),
-            Effect::Config(command) => runtime.config(command.into()),
+            Effect::Audio(command) => interpreter.send_audio(command),
+            Effect::Library(command) => interpreter.send_library(command),
+            Effect::Macos(command) => interpreter.send_macos(command),
+            Effect::Config(command) => interpreter.config(command),
             Effect::WindowColors(command) => {
-                interpreted.shell.push(ShellEffect::WindowColors(command));
+                interpreted
+                    .shell_effects
+                    .push(ShellEffect::WindowColors(command));
             }
-            Effect::Animate(cue) => interpreted.shell.push(ShellEffect::Animate(cue)),
+            Effect::Animate(cue) => {
+                interpreted.shell_effects.push(ShellEffect::Animate(cue));
+            }
             Effect::RollShuffle { len } => {
                 interpreted.answers.push(Message::Loaded(
-                    LoadedRequest::ShuffleRolled(shuffle_order(len)),
+                    PlaylistRequest::ShuffleRolled(shuffle_order(len)),
                 ));
-            }
-            Effect::Setting { id, option } => {
-                runtime.config(ConfigCommand::Setting { id, option });
             }
             Effect::After { delay, message } => {
                 if let Some(deadline) = Instant::now().checked_add(delay) {
-                    runtime.timers.schedule(deadline, message);
+                    interpreter.timers.schedule(deadline, message);
                 } else {
                     let timer: &'static str = (&message).into();
-                    runtime.trace.push(TraceEntry::TimerOverflow { timer });
+                    interpreter.trace.push(TraceEntry::TimerOverflow { timer });
                 }
             }
             Effect::Restart(driver) => {
-                interpreted.relaunch = Some((driver, effects.collect()));
+                interpreted.restart = Some((driver, effects.collect()));
                 return interpreted;
             }
-            Effect::Quit => interpreted.flow = Flow::Stop,
+            Effect::Quit => interpreted.flow = ControlFlow::Break(()),
         }
     }
     interpreted
@@ -150,19 +133,28 @@ mod tests {
         Cue,
         Effect,
         LibraryCmd,
-        LoadedRequest,
+        MacosCmd,
         Message,
-        SystemCmd,
+        PlaylistRequest,
         Timer,
         WindowColorsCmd,
-        domain::{Driver, DriverStatus, Model, OptionCount, Revision, SettingId},
+        domain::{
+            Driver,
+            DriverStatus,
+            Model,
+            OptionCount,
+            OutputDevice,
+            Revision,
+            SettingId,
+        },
     };
 
     use crate::{
-        interpret::{ConfigCommand, Interpreter, LibraryCommand, interpret},
-        mailbox::Congestion,
+        interpret::{Interpreter, interpret},
+        library::machine::LibraryMessage,
         port::{LibraryPort, Port, Ports},
-        shell::{Flow, ShellEffect},
+        sender::FullEdge,
+        shell::ShellEffect,
         timers::Timers,
         trace::{DropReason, Trace, TraceEntry},
     };
@@ -171,9 +163,9 @@ mod tests {
         model: Model,
         ports: Ports,
         audio_rx: Receiver<AudioCmd>,
-        library_rx: Receiver<LibraryCommand>,
-        config_rx: Receiver<ConfigCommand>,
-        macos_rx: Receiver<SystemCmd>,
+        library_rx: Receiver<LibraryMessage>,
+        config_rx: Receiver<ConfigCmd>,
+        macos_rx: Receiver<MacosCmd>,
         timers: Timers,
         trace: Trace,
     }
@@ -184,17 +176,17 @@ mod tests {
             let (library_tx, library_rx) = unbounded();
             let (config_tx, config_rx) = unbounded();
             let (macos_tx, macos_rx) = unbounded();
-            let macos_port = Port::new(Driver::Macos, macos_tx, Congestion::default());
+            let macos_port = Port::new(Driver::Macos, macos_tx, FullEdge::default());
             Self {
                 model: Model::default(),
                 ports: Ports {
-                    audio: Port::new(Driver::Audio, audio_tx, Congestion::default()),
+                    audio: Port::new(Driver::Audio, audio_tx, FullEdge::default()),
                     library: LibraryPort::new(Port::new(
                         Driver::Library,
                         library_tx,
-                        Congestion::default(),
+                        FullEdge::default(),
                     )),
-                    config: Port::new(Driver::Config, config_tx, Congestion::default()),
+                    config: Port::new(Driver::Config, config_tx, FullEdge::default()),
                     macos: macos_port,
                 },
                 audio_rx,
@@ -234,18 +226,18 @@ mod tests {
         let cmd = Cmd::Batch(vec![
             Effect::Restart(Driver::Audio),
             Effect::Audio(AudioCmd::Stop),
-            Effect::Audio(AudioCmd::SetDevice(None)),
+            Effect::Audio(AudioCmd::SetDevice(OutputDevice::SystemDefault)),
         ]);
 
         let interpreted = interpret(cmd, &mut interpreter);
 
         assert_eq!(
-            interpreted.relaunch,
+            interpreted.restart,
             Some((
                 Driver::Audio,
                 vec![
                     Effect::Audio(AudioCmd::Stop),
-                    Effect::Audio(AudioCmd::SetDevice(None)),
+                    Effect::Audio(AudioCmd::SetDevice(OutputDevice::SystemDefault)),
                 ]
             ))
         );
@@ -296,9 +288,7 @@ mod tests {
         let mut interpreter = fixture.interpreter();
 
         interpret(
-            Cmd::One(Effect::System(
-                SystemCmd::Volume(kernel::Percent::default()),
-            )),
+            Cmd::One(Effect::Macos(MacosCmd::Volume(kernel::Percent::default()))),
             &mut interpreter,
         );
 
@@ -319,9 +309,7 @@ mod tests {
         let mut interpreter = fixture.interpreter();
 
         interpret(
-            Cmd::One(Effect::System(
-                SystemCmd::Volume(kernel::Percent::default()),
-            )),
+            Cmd::One(Effect::Macos(MacosCmd::Volume(kernel::Percent::default()))),
             &mut interpreter,
         );
 
@@ -345,10 +333,10 @@ mod tests {
             &mut interpreter,
         );
 
-        assert_eq!(
+        assert!(matches!(
             fixture.library_rx.try_recv(),
-            Ok(LibraryCommand::Kernel(LibraryCmd::LoadFavorites))
-        );
+            Ok(LibraryMessage::Cmd(LibraryCmd::LoadFavorites))
+        ));
     }
 
     #[test]
@@ -367,7 +355,7 @@ mod tests {
 
         assert!(matches!(
             fixture.config_rx.try_recv(),
-            Ok(ConfigCommand::Save(patch))
+            Ok(ConfigCmd::Save(patch))
                 if patch.theme.as_ref().map(kernel::domain::ThemeName::as_str) == Some("dark")
         ));
     }
@@ -386,7 +374,7 @@ mod tests {
         );
 
         assert_eq!(
-            interpreted.shell,
+            interpreted.shell_effects,
             vec![
                 ShellEffect::WindowColors(WindowColorsCmd::Reset),
                 ShellEffect::Animate(Cue::TrackChanged),
@@ -404,7 +392,7 @@ mod tests {
             &mut interpreter,
         );
 
-        assert_eq!(interpreted.flow, Flow::Stop);
+        assert_eq!(interpreted.flow, std::ops::ControlFlow::Break(()));
         assert_eq!(fixture.audio_rx.try_recv(), Ok(AudioCmd::Stop));
     }
 
@@ -415,7 +403,7 @@ mod tests {
 
         let interpreted =
             interpret(Cmd::One(Effect::RollShuffle { len: 5 }), &mut interpreter);
-        let [Message::Loaded(LoadedRequest::ShuffleRolled(order))] =
+        let [Message::Loaded(PlaylistRequest::ShuffleRolled(order))] =
             interpreted.answers.as_slice()
         else {
             panic!("expected a single shuffle answer");
@@ -439,8 +427,8 @@ mod tests {
         );
 
         let [
-            Message::Loaded(LoadedRequest::ShuffleRolled(first)),
-            Message::Loaded(LoadedRequest::ShuffleRolled(second)),
+            Message::Loaded(PlaylistRequest::ShuffleRolled(first)),
+            Message::Loaded(PlaylistRequest::ShuffleRolled(second)),
         ] = interpreted.answers.as_slice()
         else {
             panic!("expected two shuffle answers in order");
@@ -450,7 +438,7 @@ mod tests {
     }
 
     fn setting_id(field: config::AppearanceField) -> SettingId {
-        config::APPEARANCE_ROWS[field as usize].spec.id
+        config::APPEARANCE_ROWS[field as usize].custom.id
     }
 
     #[test]
@@ -460,14 +448,16 @@ mod tests {
         let id = setting_id(config::AppearanceField::CoverBrackets);
         let option = OptionCount::new(2).unwrap().index(0).unwrap();
 
-        let interpreted =
-            interpret(Cmd::One(Effect::Setting { id, option }), &mut interpreter);
+        let interpreted = interpret(
+            Cmd::One(Effect::Config(ConfigCmd::Setting { id, option })),
+            &mut interpreter,
+        );
 
         assert_eq!(
             fixture.config_rx.try_recv(),
-            Ok(ConfigCommand::Setting { id, option })
+            Ok(ConfigCmd::Setting { id, option })
         );
-        assert!(interpreted.shell.is_empty());
+        assert!(interpreted.shell_effects.is_empty());
         assert!(fixture.trace.iter().next().is_none());
     }
 

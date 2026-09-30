@@ -1,19 +1,19 @@
 use kernel::{
     AudioCmd,
+    AudioError,
     AudioEvent,
-    AudioFailure,
-    EngineRejection,
+    EngineError,
     Playback,
-    domain::{Crossfade, DeviceName, Replaygain, Speed},
+    domain::{Crossfade, OutputDevice, Replaygain, Speed},
     update::Rejected,
 };
 
 use crate::{
     EngineConfig,
-    deck::Reopening,
+    deck::DeviceOpened,
     engine::{
-        effect::{EngineEffect, EngineMessage, devices_fact},
-        state::{Engine, Live, Mix, Muted, PendingLoad, Transition, announce},
+        effect::{EngineEffect, EngineMessage, devices_event},
+        state::{Engine, Live, Mix, Muted, TrackRequest, Transition, announce},
     },
 };
 
@@ -27,7 +27,7 @@ impl Muted {
                 path,
                 gain,
                 revision,
-            }) => Transition::from(self.wait_for(PendingLoad {
+            }) => Transition::from(self.wait_for(TrackRequest {
                 path,
                 gain,
                 revision,
@@ -53,9 +53,9 @@ impl Muted {
             }
             EngineMessage::DevicesListed(result) => Transition::Next(
                 Engine::Muted(self),
-                EngineEffect::Send(devices_fact(result)),
+                EngineEffect::Send(devices_event(result)),
             ),
-            EngineMessage::Cmd(AudioCmd::Pause(Playback::Paused))
+            EngineMessage::Cmd(AudioCmd::Playback(Playback::Paused))
             | EngineMessage::Decoded(_)
             | EngineMessage::Preloaded(_)
             | EngineMessage::Failed(_)
@@ -66,17 +66,17 @@ impl Muted {
                 Transition::Next(Engine::Muted(self), EngineEffect::Nothing)
             }
             EngineMessage::Cmd(
-                AudioCmd::Pause(Playback::Playing)
+                AudioCmd::Playback(Playback::Playing)
                 | AudioCmd::Seek(_)
                 | AudioCmd::Preload { .. },
             ) => Transition::Rejected(Rejected {
-                reason: EngineRejection::WhileMuted(self.fault.clone()),
+                reason: EngineError::WhileMuted(self.error.clone()),
                 state: Engine::Muted(self),
             }),
         }
     }
 
-    fn retry(self, device: Option<DeviceName>) -> (Engine, EngineEffect) {
+    fn retry(self, device: OutputDevice) -> (Engine, EngineEffect) {
         let speed = self.mix.speed;
         let asked = Muted {
             config: EngineConfig {
@@ -88,7 +88,7 @@ impl Muted {
         (Engine::Muted(asked), EngineEffect::Open { device, speed })
     }
 
-    fn wait_for(self, pending: PendingLoad) -> (Engine, EngineEffect) {
+    fn wait_for(self, pending: TrackRequest) -> (Engine, EngineEffect) {
         let device = self.config.device.clone();
         let speed = self.mix.speed;
         let waiting = Muted {
@@ -133,9 +133,9 @@ impl Muted {
         (Engine::Muted(stopped), EngineEffect::Nothing)
     }
 
-    fn stays_silent(self, error: AudioFailure) -> (Engine, EngineEffect) {
+    fn stays_silent(self, error: AudioError) -> (Engine, EngineEffect) {
         let kept = Muted {
-            fault: error.clone(),
+            error: error.clone(),
             pending: None,
             ..self
         };
@@ -145,8 +145,8 @@ impl Muted {
         )
     }
 
-    fn reopened(self, reopened: Reopening) -> (Engine, EngineEffect) {
-        let Reopening { device, opened, .. } = reopened;
+    fn reopened(self, reopened: DeviceOpened) -> (Engine, EngineEffect) {
+        let DeviceOpened { device, opened, .. } = reopened;
         let live = Live::with_mix(
             EngineConfig {
                 device: device.clone(),
@@ -154,11 +154,11 @@ impl Muted {
             },
             self.mix,
         );
-        let (engine, io) = match self.pending {
+        let (engine, effect) = match self.pending {
             None => (Engine::Live(live), EngineEffect::Nothing),
             Some(pending) => live.load(pending),
         };
-        (engine, announce(opened, device, io))
+        (engine, announce(opened, device, effect))
     }
 }
 
@@ -168,12 +168,12 @@ mod tests {
 
     use kernel::{
         AudioCmd,
+        AudioError,
         AudioEvent,
-        AudioFailure,
         Bounded,
-        EngineRejection,
+        EngineError,
         Playback,
-        domain::{DeviceName, Replaygain, Speed},
+        domain::{DeviceName, OutputDevice, Replaygain, Speed},
         update::Machine,
     };
     use rstest::rstest;
@@ -187,19 +187,19 @@ mod tests {
                 Live,
                 Mix,
                 Muted,
-                PendingLoad,
+                TrackRequest,
                 fixtures::{
                     TOTAL,
                     cmd,
                     config,
                     config_on,
                     crossfade,
-                    decode_fault,
+                    decode_error,
+                    error,
                     failed,
-                    fault,
                     fell_back,
                     first,
-                    landed,
+                    installed,
                     load,
                     loaded_at,
                     loading,
@@ -209,7 +209,7 @@ mod tests {
                     playing,
                     preload,
                     preload_b,
-                    secs,
+                    seconds,
                     set_crossfade,
                     waiting_for,
                 },
@@ -229,34 +229,34 @@ mod tests {
         (current, log)
     }
 
-    fn silenced(engine: Engine) -> (AudioFailure, Option<PendingLoad>) {
+    fn silenced(engine: Engine) -> (AudioError, Option<TrackRequest>) {
         match engine {
             Engine::Muted(Muted {
-                fault,
+                error,
                 config: held,
                 pending,
                 ..
             }) => {
                 assert_eq!(held, config());
-                (fault, pending)
+                (error, pending)
             }
             Engine::Live(_) => panic!("the engine must be muted"),
         }
     }
 
-    struct Transition {
+    struct Cell {
         next: Engine,
-        io: EngineEffect,
+        effect: EngineEffect,
     }
 
     #[rstest]
     #[case::muted_retries_a_device(
         muted(),
-        cmd(AudioCmd::SetDevice(Some(DeviceName::new("usb".to_string()).unwrap()))),
-        Transition {
-            next: Engine::Muted(Muted { fault: fault(), config: config_on("usb"), pending: None, mix: Mix::default() }),
-            io: EngineEffect::Open {
-                device: Some(DeviceName::new("usb".to_string()).unwrap()),
+        cmd(AudioCmd::SetDevice(OutputDevice::Named(DeviceName::new("usb".to_string()).unwrap()))),
+        Cell {
+            next: Engine::Muted(Muted { error: error(), config: config_on("usb"), pending: None, mix: Mix::default() }),
+            effect: EngineEffect::Open {
+                device: OutputDevice::Named(DeviceName::new("usb".to_string()).unwrap()),
                 speed: Speed::default(),
             },
         }
@@ -264,41 +264,42 @@ mod tests {
     #[case::muted_lists_devices(
         muted(),
         cmd(AudioCmd::ListDevices),
-        Transition { next: muted(), io: EngineEffect::ListDevices }
+        Cell { next: muted(), effect: EngineEffect::ListDevices }
     )]
     #[case::muted_goes_live_once_opened(
         muted(),
-        opened(Some("usb"), Duration::ZERO, Playback::Playing),
-        Transition { next: Engine::Live(Live::new(config_on("usb"))), io: EngineEffect::Nothing }
+        opened(
+            OutputDevice::Named(DeviceName::new("usb".to_string()).unwrap()), Duration::ZERO, Playback::Playing),
+        Cell { next: Engine::Live(Live::new(config_on("usb"))), effect: EngineEffect::Nothing }
     )]
     #[case::muted_adopts_the_device_that_actually_opened(
-        Engine::Muted(Muted { fault: fault(), config: config_on("usb"), pending: None, mix: Mix::default() }),
-        opened(None, Duration::ZERO, Playback::Playing),
-        Transition { next: Engine::Live(Live::new(config())), io: EngineEffect::Nothing }
+        Engine::Muted(Muted { error: error(), config: config_on("usb"), pending: None, mix: Mix::default() }),
+        opened(OutputDevice::SystemDefault, Duration::ZERO, Playback::Playing),
+        Cell { next: Engine::Live(Live::new(config())), effect: EngineEffect::Nothing }
     )]
     #[case::muted_tells_the_world_the_device_fell_back(
-        Engine::Muted(Muted { fault: fault(), config: config_on("usb"), pending: None, mix: Mix::default() }),
+        Engine::Muted(Muted { error: error(), config: config_on("usb"), pending: None, mix: Mix::default() }),
         fell_back(Duration::ZERO, Playback::Playing),
-        Transition {
+        Cell {
             next: Engine::Live(Live::new(config())),
-            io: EngineEffect::Send(AudioEvent::DeviceFellBack(None)),
+            effect: EngineEffect::Send(AudioEvent::DeviceFellBack(OutputDevice::SystemDefault)),
         }
     )]
     #[case::a_waiting_load_starts_once_the_stream_is_back(
         waiting_for("/a"),
-        opened(None, Duration::ZERO, Playback::Playing),
-        Transition {
+        opened(OutputDevice::SystemDefault, Duration::ZERO, Playback::Playing),
+        Cell {
             next: Engine::Live(loaded_at(loading(), first())),
-            io: EngineEffect::StartLoad { path: "/a".into(), speed: Speed::default() },
+            effect: EngineEffect::StartLoad { path: "/a".into(), speed: Speed::default() },
         }
     )]
     #[case::a_waiting_load_starts_after_the_fallback_is_announced(
         waiting_for("/a"),
         fell_back(Duration::ZERO, Playback::Playing),
-        Transition {
+        Cell {
             next: Engine::Live(loaded_at(loading(), first())),
-            io: EngineEffect::Many(vec![
-                EngineEffect::Send(AudioEvent::DeviceFellBack(None)),
+            effect: EngineEffect::Batch(vec![
+                EngineEffect::Send(AudioEvent::DeviceFellBack(OutputDevice::SystemDefault)),
                 EngineEffect::StartLoad { path: "/a".into(), speed: Speed::default() },
             ]),
         }
@@ -306,86 +307,86 @@ mod tests {
     #[case::a_waiting_load_is_dropped_when_the_stream_stays_dead(
         waiting_for("/a"),
         EngineMessage::Opened(Err(output_lost())),
-        Transition {
-            next: Engine::Muted(Muted { fault: output_lost(), config: config(), pending: None, mix: Mix::default() }),
-            io: EngineEffect::Send(AudioEvent::Error(output_lost())),
+        Cell {
+            next: Engine::Muted(Muted { error: output_lost(), config: config(), pending: None, mix: Mix::default() }),
+            effect: EngineEffect::Send(AudioEvent::Error(output_lost())),
         }
     )]
     #[case::muted_keeps_the_new_fault(
         muted(),
-        EngineMessage::Opened(Err(decode_fault())),
-        Transition {
-            next: Engine::Muted(Muted { fault: decode_fault(), config: config(), pending: None, mix: Mix::default() }),
-            io: EngineEffect::Send(AudioEvent::Error(decode_fault())),
+        EngineMessage::Opened(Err(decode_error())),
+        Cell {
+            next: Engine::Muted(Muted { error: decode_error(), config: config(), pending: None, mix: Mix::default() }),
+            effect: EngineEffect::Send(AudioEvent::Error(decode_error())),
         }
     )]
     #[case::muted_remembers_the_speed(
         muted(),
         cmd(AudioCmd::SetSpeed(Speed::clamped(1.5))),
-        Transition {
+        Cell {
             next: Engine::Muted(Muted {
-                fault: fault(),
+                error: error(),
                 config: config(),
                 pending: None,
                 mix: Mix { speed: Speed::clamped(1.5), ..Mix::default() },
             }),
-            io: EngineEffect::Nothing,
+            effect: EngineEffect::Nothing,
         }
     )]
     #[case::muted_remembers_the_crossfade(
         muted(),
         set_crossfade(4),
-        Transition {
+        Cell {
             next: Engine::Muted(Muted {
-                fault: fault(),
+                error: error(),
                 config: EngineConfig { crossfade: crossfade(4), ..config() },
                 pending: None,
                 mix: Mix::default(),
             }),
-            io: EngineEffect::Nothing,
+            effect: EngineEffect::Nothing,
         }
     )]
     #[case::muted_remembers_the_replaygain(
         muted(),
         cmd(AudioCmd::SetReplaygain(Replaygain::On)),
-        Transition {
+        Cell {
             next: Engine::Muted(Muted {
-                fault: fault(),
+                error: error(),
                 config: EngineConfig { replaygain: Replaygain::On, ..config() },
                 pending: None,
                 mix: Mix::default(),
             }),
-            io: EngineEffect::Nothing,
+            effect: EngineEffect::Nothing,
         }
     )]
     #[case::muted_stop_clears_a_pending_load(
         waiting_for("/a"),
         cmd(AudioCmd::Stop),
-        Transition {
+        Cell {
             next: Engine::Muted(Muted {
-                fault: fault(),
+                error: error(),
                 config: config(),
                 pending: None,
                 mix: Mix::default(),
             }),
-            io: EngineEffect::Nothing,
+            effect: EngineEffect::Nothing,
         }
     )]
     fn a_cell_moves_the_engine_and_names_its_io(
         #[case] start: Engine,
         #[case] message: EngineMessage,
-        #[case] moved: Transition,
+        #[case] moved: Cell,
     ) {
         let mut state = start;
         let effect = state.update(message).unwrap();
         assert_eq!(state, moved.next);
-        assert_eq!(effect, moved.io);
+        assert_eq!(effect, moved.effect);
     }
 
     #[rstest]
-    #[case::muted_ignores_a_pause(muted(), cmd(AudioCmd::Pause(Playback::Paused)))]
+    #[case::muted_ignores_a_pause(muted(), cmd(AudioCmd::Playback(Playback::Paused)))]
     #[case::muted_ignores_a_decode(muted(), EngineMessage::Decoded(Ok(None)))]
-    #[case::muted_ignores_a_preload_answer(muted(), landed(preload_b()))]
+    #[case::muted_ignores_a_preload_answer(muted(), installed(preload_b()))]
     #[case::muted_ignores_a_retiring_fact(muted(), EngineMessage::Retiring { from: 0.0 })]
     #[case::muted_ignores_a_second_stream_fault(muted(), failed())]
     fn a_stale_cell_leaves_the_muted_engine_alone(
@@ -398,27 +399,24 @@ mod tests {
     }
 
     #[rstest]
-    #[case::muted_refuses_a_resume(muted(), cmd(AudioCmd::Pause(Playback::Playing)))]
-    #[case::muted_refuses_seek(muted(), cmd(AudioCmd::Seek(secs(5))))]
+    #[case::muted_refuses_a_resume(muted(), cmd(AudioCmd::Playback(Playback::Playing)))]
+    #[case::muted_refuses_seek(muted(), cmd(AudioCmd::Seek(seconds(5))))]
     #[case::muted_refuses_preload(muted(), preload("/b"))]
     fn a_refused_cell_hands_the_state_back_with_the_fault(
         #[case] start: Engine,
         #[case] message: EngineMessage,
     ) {
         let mut state = start.clone();
-        assert_eq!(
-            state.update(message),
-            Err(EngineRejection::WhileMuted(fault()))
-        );
+        assert_eq!(state.update(message), Err(EngineError::WhileMuted(error())));
         assert_eq!(state, start);
     }
 
     #[rstest]
     #[case::a_stream_fault_while_live(failed(), output_lost())]
-    #[case::a_failed_reopen_while_live(EngineMessage::Opened(Err(fault())), fault())]
+    #[case::a_failed_reopen_while_live(EngineMessage::Opened(Err(error())), error())]
     fn a_fault_mutes_the_engine_once(
         #[case] message: EngineMessage,
-        #[case] expected: AudioFailure,
+        #[case] expected: AudioError,
     ) {
         let (engine, log) = trace(Engine::Live(playing()), vec![message]);
         assert_eq!(log, vec![EngineEffect::Mute(expected.clone())]);
@@ -444,7 +442,7 @@ mod tests {
         let (engine, tail) = trace(
             engine,
             vec![
-                opened(None, secs(0), Playback::Playing),
+                opened(OutputDevice::SystemDefault, seconds(0), Playback::Playing),
                 EngineMessage::Decoded(Ok(Some(TOTAL))),
             ],
         );
@@ -463,7 +461,7 @@ mod tests {
             log,
             vec![
                 EngineEffect::Open {
-                    device: None,
+                    device: OutputDevice::SystemDefault,
                     speed: Speed::default()
                 },
                 EngineEffect::Send(AudioEvent::Error(output_lost())),

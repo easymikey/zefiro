@@ -53,7 +53,11 @@ pub(crate) fn format_chip_fit(
     let time_chip_line = matches!(visibility, FormatChips::Shown)
         .then(|| {
             current.and_then(|track| {
-                format_chips::build_fit(track.audio_format(), colors, chip_budget)
+                format_chips::fit_format_chips(
+                    track.audio_format(),
+                    colors,
+                    chip_budget,
+                )
             })
         })
         .flatten();

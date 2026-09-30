@@ -7,32 +7,32 @@ use std::{
 
 use crossbeam_channel::{Receiver, Select, SelectedOperation, bounded};
 use kernel::{
-    Delivery,
+    MacosCmd,
+    MacosEvent,
     NowPlaying,
     Outbox,
     Percent,
-    SystemCmd,
-    SystemEvent,
-    update::{Machine, Never, Rejected},
+    SendError,
+    update::{Machine, Rejected},
 };
 use objc2::rc::autoreleasepool;
 use objc2_core_audio::AudioObjectID;
 
 use crate::{
-    audio_hardware::{HardwareWatch, current_default_device},
+    audio_hardware::{HardwareWatch, default_output_device},
     clock::PanelClock,
     cover::{Cover, CoverBytes, CoverReader, CoverWorker},
     cover_slot::{CoverEffect, CoverMessage, CoverSlot},
     echo::{VolumeEcho, VolumeEffect, VolumeMessage},
     now_playing::{Panel, publish},
-    output::{DefaultOutput, OutputEffect, OutputPolled},
-    volume::{Written, read_volume, write_volume},
+    output::{DefaultOutput, OutputEffect, OutputMessage},
+    volume::{read_volume, write_volume},
 };
 
 #[derive(Debug)]
-pub struct SystemLoop {
+pub struct MacosLoop {
     read_cover: CoverReader,
-    showing: NowPlaying,
+    now_playing: NowPlaying,
     artwork: Option<Cover>,
     slot: CoverSlot,
     cover_worker: Option<CoverWorker>,
@@ -46,14 +46,14 @@ enum Flow {
     Stop,
 }
 
-struct HardwarePair<'a> {
+struct HardwareChannel<'a> {
     watch: &'a mut HardwareWatch,
-    rings: &'a Receiver<()>,
+    notified: &'a Receiver<()>,
 }
 
-struct Session<'a, O> {
-    commands: &'a Receiver<SystemCmd>,
-    hardware: Option<HardwarePair<'a>>,
+struct LoopChannels<'a, O> {
+    commands: &'a Receiver<MacosCmd>,
+    hardware: Option<HardwareChannel<'a>>,
     arrivals: Option<&'a Receiver<CoverBytes>>,
     outbox: &'a O,
 }
@@ -73,7 +73,7 @@ fn rebind_decision(tracked: AudioObjectID, current: AudioObjectID) -> RebindDeci
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct HardwareRead {
+pub(crate) struct HardwareMessage {
     pub(crate) tracked_device: AudioObjectID,
     pub(crate) current_device: AudioObjectID,
     pub(crate) volume: Option<Percent>,
@@ -82,7 +82,7 @@ pub(crate) struct HardwareRead {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct HardwareEffect {
     pub(crate) rebind: Option<AudioObjectID>,
-    pub(crate) facts: Vec<SystemEvent>,
+    pub(crate) events: Vec<MacosEvent>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -92,48 +92,48 @@ pub(crate) struct HardwareState {
 }
 
 impl HardwareState {
-    fn note_written(&mut self, volume: Percent) {
+    fn record_written(&mut self, volume: Percent) {
         let Ok(_) = self.echo.update(VolumeMessage::Written(volume));
     }
 }
 
 impl Machine for HardwareState {
-    type Message = HardwareRead;
-    type Rejection = Never;
+    type Message = HardwareMessage;
+    type Error = std::convert::Infallible;
     type Effect = HardwareEffect;
 
     fn transition(
         self,
-        read: HardwareRead,
+        read: HardwareMessage,
     ) -> Result<(Self, HardwareEffect), Rejected<Self>> {
-        let mut facts = Vec::new();
+        let mut events = Vec::new();
         let echo = read.volume.map_or(self.echo, |volume| {
             let Ok((echo, effect)) =
                 self.echo.transition(VolumeMessage::Polled(volume));
-            if let VolumeEffect::Report(reported) = effect {
-                facts.push(SystemEvent::Volume(reported));
+            if let VolumeEffect::Changed(reported) = effect {
+                events.push(MacosEvent::Volume(reported));
             }
             echo
         });
         let Ok((output, effect)) =
-            self.output.transition(OutputPolled(read.current_device));
+            self.output.transition(OutputMessage(read.current_device));
         if let OutputEffect::Changed = effect {
-            facts.push(SystemEvent::OutputRouteChanged);
+            events.push(MacosEvent::OutputRouteChanged);
         }
         let rebind = match rebind_decision(read.tracked_device, read.current_device) {
             RebindDecision::Unchanged => None,
             RebindDecision::Changed(device) => Some(device),
         };
-        Ok((Self { echo, output }, HardwareEffect { rebind, facts }))
+        Ok((Self { echo, output }, HardwareEffect { rebind, events }))
     }
 }
 
-impl SystemLoop {
+impl MacosLoop {
     #[must_use]
     pub fn new(read_cover: CoverReader) -> Self {
         Self {
             read_cover,
-            showing: NowPlaying::Cleared,
+            now_playing: NowPlaying::Cleared,
             artwork: None,
             slot: CoverSlot::default(),
             cover_worker: None,
@@ -142,28 +142,28 @@ impl SystemLoop {
         }
     }
 
-    pub fn run<O: Outbox<SystemEvent>>(
+    pub fn run<O: Outbox<MacosEvent>>(
         mut self,
-        commands: &Receiver<SystemCmd>,
+        commands: &Receiver<MacosCmd>,
         outbox: &O,
     ) {
         autoreleasepool(|_| self.publish(Instant::now()));
         let arrivals = self.spawn_cover_worker();
-        let (bell, rings) = bounded(1);
-        match HardwareWatch::new(bell) {
+        let (notify, notified) = bounded(1);
+        match HardwareWatch::new(notify) {
             Ok(mut watch) => {
                 autoreleasepool(|_| self.poll(&mut watch, outbox));
-                self.serve(Session {
+                self.serve(LoopChannels {
                     commands,
-                    hardware: Some(HardwarePair {
+                    hardware: Some(HardwareChannel {
                         watch: &mut watch,
-                        rings: &rings,
+                        notified: &notified,
                     }),
                     arrivals: arrivals.as_ref(),
                     outbox,
                 });
             }
-            Err(_) => self.serve(Session {
+            Err(_) => self.serve(LoopChannels {
                 commands,
                 hardware: None,
                 arrivals: arrivals.as_ref(),
@@ -182,30 +182,33 @@ impl SystemLoop {
         }
     }
 
-    fn serve<O: Outbox<SystemEvent>>(&mut self, mut session: Session<'_, O>) {
+    fn serve<O: Outbox<MacosEvent>>(&mut self, mut session: LoopChannels<'_, O>) {
         loop {
-            if let Flow::Stop = self.tick(&mut session) {
+            if let Flow::Stop = self.select_once(&mut session) {
                 return;
             }
         }
     }
 
-    fn tick<O: Outbox<SystemEvent>>(&mut self, session: &mut Session<'_, O>) -> Flow {
+    fn select_once<O: Outbox<MacosEvent>>(
+        &mut self,
+        session: &mut LoopChannels<'_, O>,
+    ) -> Flow {
         let mut select = Select::new();
         let command_case = select.recv(session.commands);
-        let ring = session
+        let hardware_case = session
             .hardware
             .as_ref()
-            .map(|hardware| select.recv(hardware.rings));
+            .map(|hardware| select.recv(hardware.notified));
         let arrival = session.arrivals.map(|arrivals| select.recv(arrivals));
         let selected = select.select();
         let index = selected.index();
         if index == command_case {
             self.on_command(selected, session.commands)
-        } else if Some(index) == ring {
-            self.on_ring(selected, session)
+        } else if Some(index) == hardware_case {
+            self.on_hardware_changed(selected, session)
         } else if Some(index) == arrival {
-            self.on_arrival(selected, session)
+            self.on_cover_read(selected, session)
         } else {
             Flow::Stop
         }
@@ -214,7 +217,7 @@ impl SystemLoop {
     fn on_command(
         &mut self,
         selected: SelectedOperation<'_>,
-        commands: &Receiver<SystemCmd>,
+        commands: &Receiver<MacosCmd>,
     ) -> Flow {
         selected.recv(commands).map_or(Flow::Stop, |first| {
             self.drain_commands(first, commands);
@@ -222,35 +225,35 @@ impl SystemLoop {
         })
     }
 
-    fn on_ring<O: Outbox<SystemEvent>>(
+    fn on_hardware_changed<O: Outbox<MacosEvent>>(
         &mut self,
         selected: SelectedOperation<'_>,
-        session: &mut Session<'_, O>,
+        session: &mut LoopChannels<'_, O>,
     ) -> Flow {
         let Some(hardware) = &mut session.hardware else {
             return Flow::Stop;
         };
-        match selected.recv(hardware.rings) {
+        match selected.recv(hardware.notified) {
             Ok(()) => autoreleasepool(|_| self.poll(hardware.watch, session.outbox)),
             Err(_) => Flow::Stop,
         }
     }
 
-    fn on_arrival<O: Outbox<SystemEvent>>(
+    fn on_cover_read<O: Outbox<MacosEvent>>(
         &mut self,
         selected: SelectedOperation<'_>,
-        session: &Session<'_, O>,
+        session: &LoopChannels<'_, O>,
     ) -> Flow {
         let Some(arrivals) = session.arrivals else {
             return Flow::Stop;
         };
         selected.recv(arrivals).map_or(Flow::Stop, |bytes| {
-            autoreleasepool(|_| self.arrived(bytes));
+            autoreleasepool(|_| self.cover_read(bytes));
             Flow::Continue
         })
     }
 
-    fn drain_commands(&mut self, first: SystemCmd, commands: &Receiver<SystemCmd>) {
+    fn drain_commands(&mut self, first: MacosCmd, commands: &Receiver<MacosCmd>) {
         let batch = iter::once(first).chain(commands.try_iter()).collect();
         autoreleasepool(|_| {
             coalesced(batch).into_iter().for_each(|command| {
@@ -259,21 +262,20 @@ impl SystemLoop {
         });
     }
 
-    fn perform(&mut self, command: SystemCmd, now: Instant) {
+    fn perform(&mut self, command: MacosCmd, now: Instant) {
         match command {
-            SystemCmd::NowPlaying(now_playing) => self.show(now_playing, now),
-            SystemCmd::PlaybackState(playback) => {
+            MacosCmd::NowPlaying(now_playing) => self.show(now_playing, now),
+            MacosCmd::PlaybackState(playback) => {
                 self.clock = self.clock.with_playback(playback, now);
                 self.publish(now);
             }
-            SystemCmd::PlaybackPosition(at) => {
+            MacosCmd::PlaybackPosition(at) => {
                 self.clock = self.clock.seek(at, now);
                 self.publish(now);
             }
-            SystemCmd::Volume(volume) => {
-                if let Written::Landed = write_volume(current_default_device(), volume)
-                {
-                    self.hardware.note_written(volume);
+            MacosCmd::Volume(volume) => {
+                if write_volume(default_output_device(), volume).is_ok() {
+                    self.hardware.record_written(volume);
                 }
             }
         }
@@ -284,14 +286,14 @@ impl SystemLoop {
             NowPlaying::Track { path, .. } => Some(path.clone()),
             NowPlaying::Cleared => None,
         };
-        let Ok(effect) = self.slot.update(CoverMessage::Showing(track));
+        let Ok(effect) = self.slot.update(CoverMessage::TrackShown(track));
         self.apply_cover_effect(effect);
-        self.showing = now_playing;
+        self.now_playing = now_playing;
         self.clock = self.clock.seek(Duration::ZERO, now);
         self.publish(now);
     }
 
-    fn arrived(&mut self, bytes: CoverBytes) {
+    fn cover_read(&mut self, bytes: CoverBytes) {
         let Ok(effect) = self.slot.update(CoverMessage::Arrived(bytes));
         self.apply_cover_effect(effect);
         self.publish(Instant::now());
@@ -300,11 +302,11 @@ impl SystemLoop {
     fn apply_cover_effect(&mut self, effect: CoverEffect) {
         match effect {
             CoverEffect::Nothing => {}
-            CoverEffect::Clear | CoverEffect::ShowNone => self.artwork = None,
-            CoverEffect::CoverWanted(track) => {
+            CoverEffect::Clear => self.artwork = None,
+            CoverEffect::Request(track) => {
                 self.artwork = None;
                 if let Some(worker) = &self.cover_worker {
-                    worker.want(track);
+                    worker.request(track);
                 }
             }
             CoverEffect::Show(bytes) => self.artwork = Some(Cover::from_bytes(&bytes)),
@@ -313,20 +315,20 @@ impl SystemLoop {
 
     fn publish(&self, now: Instant) {
         let panel = Panel {
-            showing: &self.showing,
+            showing: &self.now_playing,
             clock: self.clock,
             artwork: self.artwork.as_ref().and_then(Cover::artwork),
         };
         publish(panel, now);
     }
 
-    fn poll<O: Outbox<SystemEvent>>(
+    fn poll<O: Outbox<MacosEvent>>(
         &mut self,
         watch: &mut HardwareWatch,
         outbox: &O,
     ) -> Flow {
-        let current = current_default_device();
-        let read = HardwareRead {
+        let current = default_output_device();
+        let read = HardwareMessage {
             tracked_device: watch.tracked_device(),
             current_device: current,
             volume: read_volume(current),
@@ -336,34 +338,34 @@ impl SystemLoop {
             && let Err(failure) = watch.rebind_to(device)
         {
             effect
-                .facts
-                .push(SystemEvent::HardwareWatchFailed(failure.to_string()));
+                .events
+                .push(MacosEvent::HardwareWatchError(failure.to_string()));
         }
-        deliver(effect.facts, outbox)
+        send_events(effect.events, outbox)
     }
 }
 
-fn deliver<O: Outbox<SystemEvent>>(facts: Vec<SystemEvent>, outbox: &O) -> Flow {
-    for fact in facts {
-        match outbox.send(fact) {
-            Delivery::Sent | Delivery::Congested => {}
-            Delivery::Closed => return Flow::Stop,
+fn send_events<O: Outbox<MacosEvent>>(events: Vec<MacosEvent>, outbox: &O) -> Flow {
+    for event in events {
+        match outbox.send(event) {
+            Ok(()) | Err(SendError::Full) => {}
+            Err(SendError::Closed) => return Flow::Stop,
         }
     }
     Flow::Continue
 }
 
-fn coalesced(commands: Vec<SystemCmd>) -> Vec<SystemCmd> {
+fn coalesced(commands: Vec<MacosCmd>) -> Vec<MacosCmd> {
     let last_volume = commands.iter().rev().find_map(|command| match command {
-        SystemCmd::Volume(volume) => Some(*volume),
-        SystemCmd::NowPlaying(_)
-        | SystemCmd::PlaybackState(_)
-        | SystemCmd::PlaybackPosition(_) => None,
+        MacosCmd::Volume(volume) => Some(*volume),
+        MacosCmd::NowPlaying(_)
+        | MacosCmd::PlaybackState(_)
+        | MacosCmd::PlaybackPosition(_) => None,
     });
     commands
         .into_iter()
-        .filter(|command| !matches!(command, SystemCmd::Volume(_)))
-        .chain(last_volume.map(SystemCmd::Volume))
+        .filter(|command| !matches!(command, MacosCmd::Volume(_)))
+        .chain(last_volume.map(MacosCmd::Volume))
         .collect()
 }
 
@@ -373,30 +375,30 @@ mod tests {
 
     use kernel::{
         Bounded,
-        Delivery,
+        MacosCmd,
+        MacosEvent,
         Outbox,
         Percent,
         Playback,
-        SystemCmd,
-        SystemEvent,
+        SendError,
         update::Machine,
     };
     use objc2_core_audio::AudioObjectID;
     use rstest::rstest;
 
-    use crate::system_loop::{
+    use crate::macos_loop::{
         Flow,
         HardwareEffect,
-        HardwareRead,
+        HardwareMessage,
         HardwareState,
         RebindDecision,
         coalesced,
-        deliver,
         rebind_decision,
+        send_events,
     };
 
-    fn volume(value: u8) -> SystemCmd {
-        SystemCmd::Volume(Percent::clamped(value))
+    fn volume(value: u8) -> MacosCmd {
+        MacosCmd::Volume(Percent::clamped(value))
     }
 
     #[rstest]
@@ -406,24 +408,24 @@ mod tests {
     )]
     #[case::volumes_among_other_commands(
         vec![
-            SystemCmd::PlaybackState(Playback::Playing),
+            MacosCmd::PlaybackState(Playback::Playing),
             volume(10),
-            SystemCmd::PlaybackState(Playback::Paused),
+            MacosCmd::PlaybackState(Playback::Paused),
             volume(20),
         ],
         vec![
-            SystemCmd::PlaybackState(Playback::Playing),
-            SystemCmd::PlaybackState(Playback::Paused),
+            MacosCmd::PlaybackState(Playback::Playing),
+            MacosCmd::PlaybackState(Playback::Paused),
             volume(20),
         ]
     )]
     #[case::no_volume_at_all(
-        vec![SystemCmd::PlaybackState(Playback::Playing)],
-        vec![SystemCmd::PlaybackState(Playback::Playing)]
+        vec![MacosCmd::PlaybackState(Playback::Playing)],
+        vec![MacosCmd::PlaybackState(Playback::Playing)]
     )]
     fn coalesced_keeps_the_last_volume_last_and_the_rest_in_order(
-        #[case] commands: Vec<SystemCmd>,
-        #[case] applied: Vec<SystemCmd>,
+        #[case] commands: Vec<MacosCmd>,
+        #[case] applied: Vec<MacosCmd>,
     ) {
         assert_eq!(coalesced(commands), applied);
     }
@@ -431,9 +433,9 @@ mod tests {
     fn read(
         devices: (AudioObjectID, AudioObjectID),
         volume: Option<u8>,
-    ) -> HardwareRead {
+    ) -> HardwareMessage {
         let (tracked_device, current_device) = devices;
-        HardwareRead {
+        HardwareMessage {
             tracked_device,
             current_device,
             volume: volume.map(Percent::clamped),
@@ -462,7 +464,7 @@ mod tests {
             HardwareEffect::default(),
             HardwareEffect {
                 rebind: Some(2),
-                facts: vec![SystemEvent::OutputRouteChanged],
+                events: vec![MacosEvent::OutputRouteChanged],
             },
             HardwareEffect::default(),
         ]
@@ -472,13 +474,13 @@ mod tests {
         vec![
             HardwareEffect {
                 rebind: None,
-                facts: vec![SystemEvent::Volume(Percent::clamped(30))],
+                events: vec![MacosEvent::Volume(Percent::clamped(30))],
             },
             HardwareEffect::default(),
         ]
     )]
-    fn hardware_state_transitions_as_a_table(
-        #[case] reads: Vec<HardwareRead>,
+    fn a_hardware_read_reports_only_what_changed(
+        #[case] reads: Vec<HardwareMessage>,
         #[case] effects: Vec<HardwareEffect>,
     ) {
         let mut hardware = HardwareState::default();
@@ -493,36 +495,36 @@ mod tests {
     }
 
     struct FakeOutbox {
-        sent: RefCell<Vec<SystemEvent>>,
-        delivery: Delivery,
+        sent: RefCell<Vec<MacosEvent>>,
+        delivery: Result<(), SendError>,
     }
 
-    impl Outbox<SystemEvent> for FakeOutbox {
-        fn send(&self, fact: SystemEvent) -> Delivery {
-            self.sent.borrow_mut().push(fact);
+    impl Outbox<MacosEvent> for FakeOutbox {
+        fn send(&self, event: MacosEvent) -> Result<(), SendError> {
+            self.sent.borrow_mut().push(event);
             self.delivery
         }
     }
 
     #[rstest]
-    #[case::sent(Delivery::Sent, Flow::Continue, 2)]
-    #[case::congested(Delivery::Congested, Flow::Continue, 2)]
-    #[case::closed(Delivery::Closed, Flow::Stop, 1)]
+    #[case::sent(Ok(()), Flow::Continue, 2)]
+    #[case::congested(Err(SendError::Full), Flow::Continue, 2)]
+    #[case::closed(Err(SendError::Closed), Flow::Stop, 1)]
     fn deliver_stops_only_on_a_closed_outbox(
-        #[case] delivery: Delivery,
+        #[case] delivery: Result<(), SendError>,
         #[case] flow: Flow,
         #[case] delivered: usize,
     ) {
-        let facts = vec![
-            SystemEvent::OutputRouteChanged,
-            SystemEvent::OutputRouteChanged,
+        let events = vec![
+            MacosEvent::OutputRouteChanged,
+            MacosEvent::OutputRouteChanged,
         ];
         let outbox = FakeOutbox {
             sent: RefCell::new(Vec::new()),
             delivery,
         };
 
-        let observed = deliver(facts, &outbox);
+        let observed = send_events(events, &outbox);
 
         assert_eq!(observed, flow);
         assert_eq!(outbox.sent.borrow().len(), delivered);

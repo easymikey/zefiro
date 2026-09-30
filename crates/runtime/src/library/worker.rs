@@ -8,35 +8,41 @@ use crossbeam_channel::{Receiver, Sender, TrySendError};
 use kernel::domain::Driver;
 
 use crate::{
-    cells::Latest,
-    error::RuntimeError,
-    library::cover::{CachedOutcome, CoverDecoded, CoverDone, CoverRequest, decode},
+    cells::LatestSender,
+    error::Error,
+    library::cover::{
+        CachedOutcome,
+        CoverDecoded,
+        CoverRequest,
+        DecodeFinished,
+        decode,
+    },
 };
 
 pub(crate) struct CoverWorker {
     pending: Arc<ArcSwapOption<CoverRequest>>,
-    doorbell: Sender<()>,
+    notify: Sender<()>,
     handle: JoinHandle<()>,
 }
 
 impl CoverWorker {
     pub(crate) fn spawn(
-        cover: Latest<CoverDecoded>,
-    ) -> Result<(Self, Receiver<CoverDone>), RuntimeError> {
+        cover: LatestSender<CoverDecoded>,
+    ) -> Result<(Self, Receiver<DecodeFinished>), Error> {
         Self::spawn_with(cover, decode)
     }
 
     pub(crate) fn spawn_with<Decode>(
-        cover: Latest<CoverDecoded>,
+        cover: LatestSender<CoverDecoded>,
         decode: Decode,
-    ) -> Result<(Self, Receiver<CoverDone>), RuntimeError>
+    ) -> Result<(Self, Receiver<DecodeFinished>), Error>
     where
         Decode: Fn(&CoverRequest) -> CoverDecoded + Send + 'static,
     {
         let pending: Arc<ArcSwapOption<CoverRequest>> =
             Arc::new(ArcSwapOption::empty());
-        let (doorbell, wake) = crossbeam_channel::bounded(1);
-        let (results, done) = crossbeam_channel::unbounded();
+        let (notify, wake) = crossbeam_channel::bounded(1);
+        let (finished, done) = crossbeam_channel::unbounded();
         let worker_pending = Arc::clone(&pending);
         let handle = thread::Builder::new()
             .name("sifr-cover".to_owned())
@@ -45,19 +51,19 @@ impl CoverWorker {
                     wake,
                     pending: worker_pending,
                     cover,
-                    results,
+                    finished,
                     decode,
                 }
                 .run();
             })
-            .map_err(|source| RuntimeError::Spawn {
+            .map_err(|source| Error::Spawn {
                 driver: Driver::Library,
                 source,
             })?;
         Ok((
             Self {
                 pending,
-                doorbell,
+                notify,
                 handle,
             },
             done,
@@ -66,14 +72,14 @@ impl CoverWorker {
 
     pub(crate) fn request(&self, request: CoverRequest) {
         self.pending.store(Some(Arc::new(request)));
-        match self.doorbell.try_send(()) {
+        match self.notify.try_send(()) {
             Ok(()) | Err(TrySendError::Full(())) => {}
             Err(TrySendError::Disconnected(())) => self.pending.store(None),
         }
     }
 
     pub(crate) fn join(self) -> Result<(), CoverPanicked> {
-        drop(self.doorbell);
+        drop(self.notify);
         self.handle.join().map_err(|_| CoverPanicked)
     }
 }
@@ -84,8 +90,8 @@ pub(crate) struct CoverPanicked;
 struct CoverLoop<Decode> {
     wake: Receiver<()>,
     pending: Arc<ArcSwapOption<CoverRequest>>,
-    cover: Latest<CoverDecoded>,
-    results: Sender<CoverDone>,
+    cover: LatestSender<CoverDecoded>,
+    finished: Sender<DecodeFinished>,
     decode: Decode,
 }
 
@@ -99,13 +105,13 @@ where
                 continue;
             };
             let decoded = (self.decode)(&request);
-            let done = CoverDone {
+            let done = DecodeFinished {
                 path: decoded.path.clone(),
                 side: decoded.side,
                 cached: CachedOutcome::from_outcome(&decoded.outcome),
             };
             self.cover.publish(decoded);
-            if self.results.send(done).is_err() {
+            if self.finished.send(done).is_err() {
                 return;
             }
         }
@@ -129,7 +135,7 @@ mod tests {
 
     #[test]
     fn a_newer_cover_request_replaces_a_pending_one() {
-        let (writers, _cells, _doorbell) = cells();
+        let (writers, _cells, _notified) = cells();
         let (release, wait) = crossbeam_channel::bounded(0);
         let (started, entered) = crossbeam_channel::unbounded();
         let decode_fn = move |request: &CoverRequest| {
@@ -137,7 +143,7 @@ mod tests {
             wait.recv().unwrap();
             CoverDecoded {
                 path: request.path.clone(),
-                side: request.side,
+                side: request.size_px,
                 outcome: CoverOutcome::NoArt,
             }
         };
@@ -145,7 +151,7 @@ mod tests {
             CoverWorker::spawn_with(writers.cover, decode_fn).unwrap();
         let request = |name: &str| CoverRequest {
             path: PathBuf::from(name),
-            side: 64,
+            size_px: 64,
         };
 
         worker.request(request("a"));
@@ -168,7 +174,7 @@ mod tests {
 
     #[test]
     fn a_panicking_decode_fails_the_join() {
-        let (writers, _cells, _doorbell) = cells();
+        let (writers, _cells, _notified) = cells();
         let (worker, _results) = CoverWorker::spawn_with(
             writers.cover,
             |_request: &CoverRequest| -> CoverDecoded { panic!("decode blew up") },
@@ -177,7 +183,7 @@ mod tests {
 
         worker.request(CoverRequest {
             path: PathBuf::from("a"),
-            side: 64,
+            size_px: 64,
         });
 
         assert_eq!(worker.join(), Err(CoverPanicked));

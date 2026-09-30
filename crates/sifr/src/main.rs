@@ -10,9 +10,9 @@ use std::{io::Write, process::ExitCode, thread};
 
 use crossbeam_channel::bounded;
 use error::Error;
-use runtime::{Launchers, Runtime};
+use runtime::{Runtime, Spawners};
 use shell::ShellInput;
-use startup::{Boot, BootLook};
+use startup::{Look, Prepared};
 use terminal::{
     CapabilityProbe,
     InputLoop,
@@ -38,34 +38,35 @@ fn print_error(error: &Error) {
 
 fn run() -> Result<(), Error> {
     terminal::install_panic_hook(signal::remember_worker_panic);
-    let Boot {
+    let Prepared {
         startup,
         paths,
         look,
-    } = startup::boot()?;
-    let runtime = Runtime::boot(startup, &paths, &Launchers::system())?;
-    runtime::host(runtime, move |runtime| body(runtime, look)).map_err(Error::from)?
+    } = startup::prepare()?;
+    let runtime = Runtime::start(startup, &paths, &Spawners::hardware())?;
+    runtime::run_on_main_thread(runtime, move |runtime| run_shell(runtime, look))
+        .map_err(Error::from)?
 }
 
-fn body(runtime: Runtime, look: BootLook) -> Result<(), Error> {
+fn run_shell(runtime: Runtime, look: Look) -> Result<(), Error> {
     let mut session = TerminalSession::enter()?;
-    let upgrade = capability_upgrade();
+    let upgrade = probe_capabilities();
 
     let (input_sender, input_receiver) = bounded(256);
-    signal::install(input_sender.clone())?;
+    signal::apply_reload(input_sender.clone())?;
     let mut shell = shell::Shell::new(session.terminal_mut(), look)?;
     if let Some(answer) = upgrade {
-        shell.adopt(answer);
+        shell.apply_probe_answer(answer);
     }
     spawn_terminal_input(input_sender);
 
     let outcome = runtime::run(runtime, &mut shell, &input_receiver);
     let teardown = session.restore();
-    with_worker_panic(combine(outcome, teardown))
+    with_worker_panic(merge_exit_errors(outcome, teardown))
 }
 
-fn capability_upgrade() -> Option<ProbeAnswer> {
-    let brand = terminal::detect(&TerminalEnvironment::current());
+fn probe_capabilities() -> Option<ProbeAnswer> {
+    let brand = terminal::Brand::detect(&TerminalEnvironment::current());
     CapabilityProbe::new(brand).and_then(CapabilityProbe::run)
 }
 
@@ -74,20 +75,20 @@ fn spawn_terminal_input(shell_input: crossbeam_channel::Sender<ShellInput>) {
 }
 
 fn with_worker_panic(result: Result<(), Error>) -> Result<(), Error> {
-    match (result, signal::taken_worker_panic()) {
+    match (result, signal::take_worker_panic()) {
         (Ok(()), Some(report)) => Err(Error::WorkerPanic { report }),
         (result, _) => result,
     }
 }
 
-fn combine(
-    outcome: Result<(), runtime::RunError<std::io::Error>>,
+fn merge_exit_errors(
+    outcome: Result<(), runtime::Error>,
     teardown: Result<(), std::io::Error>,
 ) -> Result<(), Error> {
     match (outcome, teardown) {
         (Ok(()), Ok(())) => Ok(()),
         (Ok(()), Err(teardown_error)) => {
-            Err(terminal::TerminalError::Teardown(teardown_error).into())
+            Err(terminal::Error::Teardown(teardown_error).into())
         }
         (Err(run_error), Ok(())) => Err(run_error.into()),
         (Err(run), Err(teardown)) => Err(Error::RunAndTeardown { run, teardown }),

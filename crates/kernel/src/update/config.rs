@@ -1,77 +1,82 @@
 use crate::{
     cmd::{Cmd, Cue, Effect, LibraryCmd, WindowColorsCmd},
-    domain::{CustomSetting, Model, Overlay, Revision, SettingRow, ThemeName, Toast},
-    message::ConfigFact,
-    update::{
-        rejection::Rejection,
-        workspace::{KeymapReload, SourceOutcome},
+    domain::{
+        CustomSetting,
+        Model,
+        Overlay,
+        Revision,
+        ScanMode,
+        SettingRow,
+        ThemeName,
+        Toast,
+        WindowColors,
     },
+    message::ConfigEvent,
+    update::{error::UpdateError, workspace::SourceOutcome},
 };
 
-pub(crate) fn config(model: &mut Model, fact: ConfigFact) -> Result<Cmd, Rejection> {
-    match fact {
-        ConfigFact::KeymapReloaded(keys) => {
-            let reload = model.workspace.keymap_reload(&keys);
+pub(crate) fn update(
+    model: &mut Model,
+    event: ConfigEvent,
+) -> Result<Cmd, UpdateError> {
+    match event {
+        ConfigEvent::KeymapReloaded(keys) => {
+            let changed = model.workspace.keymap.config() != &*keys;
             let cmd = model.workspace.keymap_reloaded(*keys);
-            if let KeymapReload::Fresh = reload {
-                let _ = model.config_generation.bump();
+            if changed {
+                let _ = model.revisions.config.bump();
             }
             Ok(cmd)
         }
-        ConfigFact::ThemeReloaded(name) => Ok(theme_reloaded(model, name)),
-        ConfigFact::ThemesLoaded(themes) => {
+        ConfigEvent::ThemeReloaded(name) => Ok(theme_reloaded(model, name)),
+        ConfigEvent::ThemesLoaded(themes) => {
             model.themes.names = themes;
             Ok(Cmd::None)
         }
-        ConfigFact::MusicDirReloaded(reloaded) => {
+        ConfigEvent::MusicDirReloaded(reloaded) => {
             Ok(music_dir_reloaded(&mut model.music_dir, reloaded))
         }
-        ConfigFact::CustomRowsReloaded(rows) => {
+        ConfigEvent::CustomRowsReloaded(rows) => {
             reload_custom_rows(model, rows);
             Ok(Cmd::None)
         }
-        ConfigFact::SourceFailed { source, text } => {
+        ConfigEvent::SourceFailed { source, text } => {
             Ok(model.workspace.source_result(SourceOutcome {
                 source,
                 text: Some(text),
             }))
         }
-        ConfigFact::SourceRecovered(source) => {
+        ConfigEvent::SourceRecovered(source) => {
             Ok(model.workspace.source_recovered(source))
         }
-        ConfigFact::Failed(failure) => {
+        ConfigEvent::Error(failure) => {
             Ok(model.workspace.show(Toast::error(failure.to_string())))
         }
     }
 }
 
 fn theme_reloaded(model: &mut Model, name: ThemeName) -> Cmd {
-    let _ = model.theme_generation.bump();
-    let window_colors = window_colors_change(model.window_colors.as_ref(), &name);
-    model.window_colors = Some(name);
-    window_colors
-        .map_or(Cmd::None, |command| Effect::WindowColors(command).into())
-        .then(Cue::ThemeChanged.into())
+    let _ = model.revisions.theme.bump();
+    let window_colors = window_colors_change(&name);
+    model.window_colors = WindowColors::Themed(name);
+    Cmd::from(Effect::WindowColors(window_colors)).then(Cue::ThemeChanged.into())
 }
 
-pub(crate) fn window_colors_change(
-    _previous: Option<&ThemeName>,
-    current: &ThemeName,
-) -> Option<WindowColorsCmd> {
-    Some(WindowColorsCmd::Apply(current.clone()))
+pub(crate) fn window_colors_change(current: &ThemeName) -> WindowColorsCmd {
+    WindowColorsCmd::Apply(current.clone())
 }
 
 fn reload_custom_rows(model: &mut Model, rows: Vec<CustomSetting>) {
-    model.custom_rows = rows;
+    model.custom_settings = rows;
     let Model {
         workspace,
-        custom_rows,
+        custom_settings,
         ..
     } = model;
-    let Some(Overlay::Settings(cursor)) = &mut workspace.overlay else {
+    let Some(Overlay::Settings { selected }) = &mut workspace.overlay else {
         return;
     };
-    *cursor = cursor.kept(&SettingRow::all(custom_rows));
+    *selected = selected.kept(&SettingRow::all(custom_settings));
 }
 
 fn music_dir_reloaded(
@@ -82,9 +87,10 @@ fn music_dir_reloaded(
         Cmd::None
     } else {
         *music_dir = reloaded.clone();
-        Effect::Library(LibraryCmd::Rescan {
-            root: reloaded,
+        Effect::Library(LibraryCmd::Scan {
+            music_dir: reloaded,
             revision: Revision::UNSTAMPED,
+            mode: ScanMode::Full,
         })
         .into()
     }
@@ -98,7 +104,7 @@ mod tests {
         cmd::{Cmd, Effect, LibraryCmd},
         domain::{
             Action,
-            ConfigFailure,
+            ConfigError,
             KeyOverride,
             KeymapOverrides,
             Model,
@@ -106,49 +112,51 @@ mod tests {
             Themes,
             ToastLevel,
         },
-        message::ConfigFact,
-        update::config::config,
+        message::ConfigEvent,
+        update::config::update,
     };
 
     #[test]
-    fn keymap_reload_bumps_the_config_generation() {
+    fn keymap_reload_bumps_the_config_revision() {
         let mut model = Model::default();
-        let before = model.config_generation;
+        let before = model.revisions.config;
 
         let keys = KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]);
-        let _ = config(&mut model, ConfigFact::KeymapReloaded(Box::new(keys))).unwrap();
+        let _ =
+            update(&mut model, ConfigEvent::KeymapReloaded(Box::new(keys))).unwrap();
 
-        assert_ne!(model.config_generation, before);
+        assert_ne!(model.revisions.config, before);
     }
 
     #[test]
-    fn unchanged_keymap_keeps_the_generation() {
+    fn unchanged_keymap_keeps_the_revision() {
         let mut model = Model::default();
         let keys = model.workspace.keymap.config().clone();
-        let _ = config(
+        let _ = update(
             &mut model,
-            ConfigFact::KeymapReloaded(Box::new(keys.clone())),
+            ConfigEvent::KeymapReloaded(Box::new(keys.clone())),
         )
         .unwrap();
-        let before = model.config_generation;
+        let before = model.revisions.config;
 
-        let _ = config(&mut model, ConfigFact::KeymapReloaded(Box::new(keys))).unwrap();
+        let _ =
+            update(&mut model, ConfigEvent::KeymapReloaded(Box::new(keys))).unwrap();
 
-        assert_eq!(model.config_generation, before);
+        assert_eq!(model.revisions.config, before);
     }
 
     #[test]
-    fn theme_reload_bumps_the_theme_generation_and_cues() {
+    fn theme_reload_bumps_the_theme_revision_and_cues() {
         let mut model = Model::default();
-        let before = model.theme_generation;
+        let before = model.revisions.theme;
 
-        let cmd = config(
+        let cmd = update(
             &mut model,
-            ConfigFact::ThemeReloaded(ThemeName::from_static("noir")),
+            ConfigEvent::ThemeReloaded(ThemeName::from_static("noir")),
         )
         .unwrap();
 
-        assert_ne!(model.theme_generation, before);
+        assert_ne!(model.revisions.theme, before);
         assert!(matches!(cmd, Cmd::Batch(_)));
     }
 
@@ -156,9 +164,9 @@ mod tests {
     fn watch_failure_raises_the_error_toast() {
         let mut model = Model::default();
 
-        let _ = config(
+        let _ = update(
             &mut model,
-            ConfigFact::Failed(ConfigFailure::Watch {
+            ConfigEvent::Error(ConfigError::Watch {
                 detail: "x".to_string(),
             }),
         )
@@ -171,8 +179,8 @@ mod tests {
 
     fn rescanned_root(cmd: &Cmd) -> Option<PathBuf> {
         match cmd {
-            Cmd::One(Effect::Library(LibraryCmd::Rescan { root, .. })) => {
-                Some(root.clone())
+            Cmd::One(Effect::Library(LibraryCmd::Scan { music_dir, .. })) => {
+                Some(music_dir.clone())
             }
             Cmd::None | Cmd::One(_) | Cmd::Batch(_) => None,
         }
@@ -190,8 +198,8 @@ mod tests {
             ..Model::default()
         };
 
-        let cmd =
-            config(&mut model, ConfigFact::MusicDirReloaded(reloaded.clone())).unwrap();
+        let cmd = update(&mut model, ConfigEvent::MusicDirReloaded(reloaded.clone()))
+            .unwrap();
 
         assert_eq!(rescanned_root(&cmd), expected);
         assert_eq!(model.music_dir, reloaded);
@@ -207,9 +215,9 @@ mod tests {
             ..Model::default()
         };
 
-        let cmd = config(
+        let cmd = update(
             &mut model,
-            ConfigFact::ThemesLoaded(vec![ThemeName::from_static("wafer")]),
+            ConfigEvent::ThemesLoaded(vec![ThemeName::from_static("wafer")]),
         )
         .unwrap();
 
@@ -218,26 +226,19 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case::first_reload_applies(None, "noir", Some("noir"))]
-    #[case::same_name_again_applies(Some("noir"), "noir", Some("noir"))]
-    #[case::other_name_applies(Some("noir"), "solar", Some("solar"))]
-    fn window_colors_follow_a_theme_reload(
-        #[case] previous: Option<&str>,
-        #[case] current: &str,
-        #[case] expected: Option<&str>,
-    ) {
-        let previous = previous.map(|name| ThemeName::new(name.to_string()).unwrap());
+    #[case::noir_applies("noir")]
+    #[case::solar_applies("solar")]
+    fn window_colors_follow_a_theme_reload(#[case] current: &str) {
         let current = ThemeName::new(current.to_string()).unwrap();
 
-        let applied =
-            crate::update::config::window_colors_change(previous.as_ref(), &current);
+        let applied = crate::update::config::window_colors_change(&current);
 
         assert_eq!(
-            applied.map(|command| match command {
+            match applied {
                 crate::cmd::WindowColorsCmd::Apply(name) => name.to_string(),
                 crate::cmd::WindowColorsCmd::Reset => String::new(),
-            }),
-            expected.map(str::to_string)
+            },
+            current.to_string()
         );
     }
 }

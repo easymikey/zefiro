@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use kernel::{
-    AudioFailure,
-    DecodeFault,
-    IoFault,
-    domain::{DeviceName, OutputFault},
+    AudioError,
+    DecodeError,
+    IoError,
+    domain::{DeviceName, OutputDevice, StreamError},
 };
 use rodio::cpal;
 
@@ -14,7 +14,7 @@ pub enum DeviceError {
     NotFound { name: DeviceName },
     #[error("no output device available: {source}")]
     NoDevice {
-        name: Option<DeviceName>,
+        name: OutputDevice,
         #[source]
         source: rodio::StreamError,
     },
@@ -25,17 +25,22 @@ pub enum DeviceError {
 impl DeviceError {
     fn requested(&self) -> String {
         match self {
-            DeviceError::NotFound { name } => name.to_string(),
-            DeviceError::NoDevice { name, .. } => name
-                .as_ref()
-                .map_or_else(|| "default".to_owned(), DeviceName::to_string),
-            DeviceError::Unlisted(_) => "default".to_owned(),
+            DeviceError::NotFound { name }
+            | DeviceError::NoDevice {
+                name: OutputDevice::Named(name),
+                ..
+            } => name.to_string(),
+            DeviceError::NoDevice {
+                name: OutputDevice::SystemDefault,
+                ..
+            }
+            | DeviceError::Unlisted(_) => "default".to_owned(),
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum AudioError {
+pub enum Error {
     #[error("cannot open {}: {source}", path.display())]
     Open {
         path: PathBuf,
@@ -56,70 +61,70 @@ pub enum AudioError {
     WorkerPanicked { path: PathBuf },
 }
 
-fn decode_fault(source: &rodio::decoder::DecoderError) -> DecodeFault {
+fn decode_error(source: &rodio::decoder::DecoderError) -> DecodeError {
     match source {
-        rodio::decoder::DecoderError::UnrecognizedFormat => DecodeFault::Unsupported,
+        rodio::decoder::DecoderError::UnrecognizedFormat => DecodeError::Unsupported,
         rodio::decoder::DecoderError::IoError(_) => {
-            DecodeFault::Unreadable(IoFault::Other)
+            DecodeError::Unreadable(IoError::Other)
         }
         rodio::decoder::DecoderError::DecodeError(_)
         | rodio::decoder::DecoderError::LimitError(_)
         | rodio::decoder::DecoderError::ResetRequired
-        | rodio::decoder::DecoderError::NoStreams => DecodeFault::Corrupt,
+        | rodio::decoder::DecoderError::NoStreams => DecodeError::Corrupt,
     }
 }
 
-impl From<&AudioError> for AudioFailure {
-    fn from(error: &AudioError) -> Self {
+impl From<&Error> for AudioError {
+    fn from(error: &Error) -> Self {
         match error {
-            AudioError::Open { path, source } => AudioFailure::Decode {
+            Error::Open { path, source } => AudioError::Decode {
                 path: path.clone(),
-                fault: DecodeFault::Unreadable(IoFault::from(source.kind())),
+                kind: DecodeError::Unreadable(IoError::from(source.kind())),
             },
-            AudioError::Decode { path, source } => AudioFailure::Decode {
+            Error::Decode { path, source } => AudioError::Decode {
                 path: path.clone(),
-                fault: decode_fault(source),
+                kind: decode_error(source),
             },
-            AudioError::Spawn(source) => AudioFailure::Stream {
+            Error::Spawn(source) => AudioError::Stream {
                 reason: source.to_string(),
             },
-            AudioError::Device(source) => AudioFailure::Device {
+            Error::Device(source) => AudioError::Device {
                 requested: source.requested(),
             },
-            AudioError::WorkerPanicked { path } => AudioFailure::Decode {
+            Error::WorkerPanicked { path } => AudioError::Decode {
                 path: path.clone(),
-                fault: DecodeFault::Panicked,
+                kind: DecodeError::Panicked,
             },
         }
     }
 }
 
-pub(crate) fn device_fault(error: DeviceError) -> AudioFailure {
-    AudioFailure::from(&AudioError::from(error))
+pub(crate) fn device_error(error: DeviceError) -> AudioError {
+    AudioError::from(&Error::from(error))
 }
 
-pub(crate) fn output_lost(error: &cpal::StreamError) -> AudioFailure {
-    let fault = match error {
-        cpal::StreamError::DeviceNotAvailable => OutputFault::DeviceGone,
-        cpal::StreamError::BackendSpecific { .. } => OutputFault::Backend,
+pub(crate) fn output_lost(error: &cpal::StreamError) -> AudioError {
+    let kind = match error {
+        cpal::StreamError::DeviceNotAvailable => StreamError::DeviceGone,
+        cpal::StreamError::BackendSpecific { .. } => StreamError::Backend,
     };
-    AudioFailure::OutputLost { fault }
+    AudioError::OutputLost { kind }
 }
 
-pub(crate) fn seek_fault(error: &rodio::source::SeekError) -> AudioFailure {
-    AudioFailure::Seek {
+pub(crate) fn seek_error(error: &rodio::source::SeekError) -> AudioError {
+    AudioError::Seek {
         reason: error.to_string(),
     }
 }
 
-pub(crate) fn preload_fault(error: &AudioError) -> AudioFailure {
-    match AudioFailure::from(error) {
-        AudioFailure::Decode { path, fault } => AudioFailure::Preload { path, fault },
-        other @ (AudioFailure::Device { .. }
-        | AudioFailure::Stream { .. }
-        | AudioFailure::OutputLost { .. }
-        | AudioFailure::Preload { .. }
-        | AudioFailure::Seek { .. }) => other,
+pub(crate) fn preload_error(error: &Error) -> AudioError {
+    match AudioError::from(error) {
+        AudioError::Decode { path, kind } => AudioError::Preload { path, kind },
+        other @ (AudioError::Device { .. }
+        | AudioError::Stream { .. }
+        | AudioError::OutputLost { .. }
+        | AudioError::Preload { .. }
+        | AudioError::Seek { .. }) => other,
     }
 }
 
@@ -128,14 +133,14 @@ mod tests {
     use std::path::PathBuf;
 
     use kernel::{
-        AudioFailure,
-        DecodeFault,
-        IoFault,
-        domain::{DeviceName, OutputFault},
+        AudioError,
+        DecodeError,
+        IoError,
+        domain::{DeviceName, StreamError},
     };
     use rstest::rstest;
 
-    use crate::error::{AudioError, DeviceError, output_lost};
+    use crate::error::{DeviceError, Error, output_lost};
 
     fn device_name(name: &str) -> DeviceName {
         DeviceName::new(name.to_string()).unwrap()
@@ -143,33 +148,33 @@ mod tests {
 
     #[rstest]
     #[case::open_not_found(
-        AudioError::Open {
+        Error::Open {
             path: PathBuf::from("/music/track.flac"),
             source: std::io::Error::from(std::io::ErrorKind::NotFound),
         },
         "cannot open /music/track.flac: entity not found"
     )]
     #[case::decode(
-        AudioError::Decode {
+        Error::Decode {
             path: PathBuf::from("/music/track.flac"),
             source: rodio::decoder::DecoderError::UnrecognizedFormat,
         },
         "cannot decode /music/track.flac: Unrecognized format"
     )]
     #[case::spawn(
-        AudioError::Spawn(std::io::Error::other("thread limit reached")),
+        Error::Spawn(std::io::Error::other("thread limit reached")),
         "cannot start a decode thread: thread limit reached"
     )]
     #[case::device(
-        AudioError::from(DeviceError::NotFound { name: device_name("usb-dac") }),
+        Error::from(DeviceError::NotFound { name: device_name("usb-dac") }),
         "audio device 'usb-dac' not found, using default"
     )]
     #[case::worker_panicked(
-        AudioError::WorkerPanicked { path: PathBuf::from("/music/track.flac") },
+        Error::WorkerPanicked { path: PathBuf::from("/music/track.flac") },
         "the decode worker panicked on /music/track.flac"
     )]
     fn audio_error_display_carries_its_source(
-        #[case] error: AudioError,
+        #[case] error: Error,
         #[case] expected: &str,
     ) {
         assert_eq!(error.to_string(), expected);
@@ -178,73 +183,73 @@ mod tests {
     #[rstest]
     #[case::unrecognized_format(
         rodio::decoder::DecoderError::UnrecognizedFormat,
-        DecodeFault::Unsupported
+        DecodeError::Unsupported
     )]
     #[case::io_error(
         rodio::decoder::DecoderError::IoError("broken pipe".to_string()),
-        DecodeFault::Unreadable(IoFault::Other)
+        DecodeError::Unreadable(IoError::Other)
     )]
     #[case::decode_error(
         rodio::decoder::DecoderError::DecodeError("bad frame"),
-        DecodeFault::Corrupt
+        DecodeError::Corrupt
     )]
     #[case::limit_error(
         rodio::decoder::DecoderError::LimitError("too large"),
-        DecodeFault::Corrupt
+        DecodeError::Corrupt
     )]
     #[case::reset_required(
         rodio::decoder::DecoderError::ResetRequired,
-        DecodeFault::Corrupt
+        DecodeError::Corrupt
     )]
-    #[case::no_streams(rodio::decoder::DecoderError::NoStreams, DecodeFault::Corrupt)]
+    #[case::no_streams(rodio::decoder::DecoderError::NoStreams, DecodeError::Corrupt)]
     fn a_decode_error_maps_to_its_fault(
         #[case] source: rodio::decoder::DecoderError,
-        #[case] expected: DecodeFault,
+        #[case] expected: DecodeError,
     ) {
-        let error = AudioError::Decode {
+        let error = Error::Decode {
             path: PathBuf::from("/music/track.flac"),
             source,
         };
-        let failure = AudioFailure::from(&error);
+        let failure = AudioError::from(&error);
         assert_eq!(
             failure,
-            AudioFailure::Decode {
+            AudioError::Decode {
                 path: PathBuf::from("/music/track.flac"),
-                fault: expected,
+                kind: expected,
             }
         );
     }
 
     #[rstest]
     #[case::open_not_found(
-        AudioError::Open {
+        Error::Open {
             path: PathBuf::from("/a"),
             source: std::io::Error::from(std::io::ErrorKind::NotFound),
         },
-        AudioFailure::Decode {
+        AudioError::Decode {
             path: PathBuf::from("/a"),
-            fault: DecodeFault::Unreadable(IoFault::Missing),
+            kind: DecodeError::Unreadable(IoError::Missing),
         }
     )]
     #[case::worker_panicked(
-        AudioError::WorkerPanicked { path: PathBuf::from("/a") },
-        AudioFailure::Decode { path: PathBuf::from("/a"), fault: DecodeFault::Panicked }
+        Error::WorkerPanicked { path: PathBuf::from("/a") },
+        AudioError::Decode { path: PathBuf::from("/a"), kind: DecodeError::Panicked }
     )]
     #[case::device_not_found(
-        AudioError::from(DeviceError::NotFound { name: device_name("usb") }),
-        AudioFailure::Device { requested: "usb".to_string() }
+        Error::from(DeviceError::NotFound { name: device_name("usb") }),
+        AudioError::Device { requested: "usb".to_string() }
     )]
     fn an_audio_error_becomes_a_failure_with_its_path(
-        #[case] error: AudioError,
-        #[case] expected: AudioFailure,
+        #[case] error: Error,
+        #[case] expected: AudioError,
     ) {
-        assert_eq!(AudioFailure::from(&error), expected);
+        assert_eq!(AudioError::from(&error), expected);
     }
 
     #[rstest]
     #[case::device_not_available(
         rodio::cpal::StreamError::DeviceNotAvailable,
-        OutputFault::DeviceGone
+        StreamError::DeviceGone
     )]
     #[case::backend_specific(
         rodio::cpal::StreamError::BackendSpecific {
@@ -252,15 +257,15 @@ mod tests {
                 description: "underrun".to_string(),
             },
         },
-        OutputFault::Backend
+        StreamError::Backend
     )]
     fn a_stream_error_maps_to_its_output_fault(
         #[case] error: rodio::cpal::StreamError,
-        #[case] expected: OutputFault,
+        #[case] expected: StreamError,
     ) {
         assert_eq!(
             output_lost(&error),
-            AudioFailure::OutputLost { fault: expected }
+            AudioError::OutputLost { kind: expected }
         );
     }
 }

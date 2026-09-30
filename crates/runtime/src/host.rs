@@ -1,9 +1,9 @@
 use std::thread;
 
-use crate::{error::HostError, runtime::Runtime};
+use crate::{error::Error, runtime::Runtime};
 
 #[cfg(target_os = "macos")]
-pub fn host<R, F>(runtime: Runtime, body: F) -> Result<R, HostError>
+pub fn run_on_main_thread<R, F>(runtime: Runtime, body: F) -> Result<R, Error>
 where
     R: Send + 'static,
     F: FnOnce(Runtime) -> R + Send + 'static,
@@ -12,7 +12,7 @@ where
         crate::registry::row(kernel::domain::Driver::Macos).placement,
         crate::registry::Placement::WorkerWithMainLoop
     ));
-    let Some(main) = ::macos::MainLoop::attach(&runtime.mailbox_sender()) else {
+    let Some(main) = ::macos::MainLoop::attach(&runtime.sender()) else {
         let mut runtime = runtime;
         runtime
             .trace
@@ -26,13 +26,13 @@ where
             let _guard = guard;
             body(runtime)
         })
-        .map_err(HostError::Spawn)?;
+        .map_err(Error::Host)?;
     main.run();
-    handle.join().map_err(|_| HostError::EventLoopPanicked)
+    handle.join().map_err(|_| Error::EventLoopPanicked)
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn host<R, F>(runtime: Runtime, body: F) -> Result<R, HostError>
+pub fn run_on_main_thread<R, F>(runtime: Runtime, body: F) -> Result<R, Error>
 where
     R: Send + 'static,
     F: FnOnce(Runtime) -> R + Send + 'static,
@@ -54,7 +54,12 @@ impl Drop for StopOnDrop {
 mod tests {
     use kernel::domain::Startup;
 
-    use crate::{host::host, runtime::Runtime, trace::Trace, wiring::Wiring};
+    use crate::{
+        host::run_on_main_thread,
+        runtime::Runtime,
+        trace::Trace,
+        wiring::Wiring,
+    };
 
     fn idle_runtime() -> Runtime {
         let (wiring, ..) = Wiring::idle();
@@ -66,7 +71,7 @@ mod tests {
     fn off_the_main_thread_the_body_runs_inline() {
         let runtime = idle_runtime();
 
-        let outcome = host(runtime, |runtime| {
+        let outcome = run_on_main_thread(runtime, |runtime| {
             #[cfg(target_os = "macos")]
             assert!(runtime.trace().iter().any(|entry| matches!(
                 entry,

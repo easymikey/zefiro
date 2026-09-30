@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use kernel::{
-    BrowseRequest,
+    QueueRequest,
     SearchEdit,
-    domain::{Cursor, CursorOver, Nudge, PlaylistIndex, SearchQuery, Track},
-    update::overlay::{FollowUp, OverlayEffect, SearchMessage, SearchRejection},
+    domain::{Cursor, CursorOver, Direction, PlaylistIndex, SearchQuery, Track},
+    update::overlay::{FollowUp, OverlayEffect, SearchError, SearchMessage},
 };
 use rstest::rstest;
 
@@ -17,7 +17,7 @@ fn query(input: &str, matches: Vec<usize>, selected: usize) -> CursorOver<Search
     let len = matches.len();
     CursorOver {
         cursor: Cursor::with_len(len).at(selected),
-        rows: SearchQuery {
+        content: SearchQuery {
             input: input.to_string(),
             matches,
         },
@@ -55,21 +55,21 @@ fn titled(titles: &[&str]) -> Vec<Arc<Track>> {
     edit(SearchEdit::Char('z'), titled(&["mo", "moon"])),
     Ok((query("zzz", vec![], 0), OverlayEffect::default()))
 )]
-#[case::nav_down_steps(query("mo", vec![0, 2], 0), SearchMessage::Navigate(Nudge::Down), Ok((query("mo", vec![0, 2], 1), OverlayEffect::default())))]
-#[case::nav_up_clamps_at_the_top(query("mo", vec![0, 2], 0), SearchMessage::Navigate(Nudge::Up), Ok((query("mo", vec![0, 2], 0), OverlayEffect::default())))]
-#[case::nav_down_clamps_at_the_bottom(query("mo", vec![0, 2], 1), SearchMessage::Navigate(Nudge::Down), Ok((query("mo", vec![0, 2], 1), OverlayEffect::default())))]
+#[case::nav_down_steps(query("mo", vec![0, 2], 0), SearchMessage::Navigate(Direction::Next), Ok((query("mo", vec![0, 2], 1), OverlayEffect::default())))]
+#[case::nav_up_clamps_at_the_top(query("mo", vec![0, 2], 0), SearchMessage::Navigate(Direction::Previous), Ok((query("mo", vec![0, 2], 0), OverlayEffect::default())))]
+#[case::nav_down_clamps_at_the_bottom(query("mo", vec![0, 2], 1), SearchMessage::Navigate(Direction::Next), Ok((query("mo", vec![0, 2], 1), OverlayEffect::default())))]
 #[case::enqueue_hands_the_router_the_selected_match(
     query("mo", vec![0, 2], 1),
     SearchMessage::Enqueue,
     Ok((
         query("mo", vec![0, 2], 1),
-        OverlayEffect::from(FollowUp::Browse(BrowseRequest::EnqueueTrack(PlaylistIndex::new(2))))
+        OverlayEffect::from(FollowUp::Queue(QueueRequest::EnqueueTrack(PlaylistIndex::new(2))))
     ))
 )]
 #[case::enqueue_without_a_match_is_refused(
     query("zzz", vec![], 0),
     SearchMessage::Enqueue,
-    Err(SearchRejection::NothingSelected)
+    Err(SearchError::NothingSelected)
 )]
 fn search_cell(
     #[case] start: CursorOver<SearchQuery>,

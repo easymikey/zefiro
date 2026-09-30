@@ -1,3 +1,4 @@
+use kernel::domain::Shuffle;
 use ratatui::{
     layout::Rect,
     style::{Color, Style},
@@ -8,7 +9,7 @@ use ratatui::{
 use crate::{
     playlist::pane::PlaylistView,
     primitive::{inset::Inset, list_chrome::spaced_title},
-    status_line::{self, ScanProgress, Shuffle, StatusLineColors, StatusLineView},
+    status_line::{self, ScanProgress, StatusLineColors, StatusLineView},
     theme::ActiveTheme,
 };
 
@@ -41,9 +42,9 @@ pub(crate) fn pane_title<'a>(
     theme: ActiveTheme<'a>,
 ) -> Line<'a> {
     let shuffle = if view.playlist.play_order.is_shuffle() {
-        Shuffle::On
+        Shuffle::Enabled
     } else {
-        Shuffle::Off
+        Shuffle::Disabled
     };
     let status = StatusLineView {
         shuffle,
@@ -56,11 +57,11 @@ pub(crate) fn pane_title<'a>(
         sleep_left: view.sleep_left,
     };
     let colors = StatusLineColors {
-        frame: theme.frame(),
+        frame: theme.border(),
         dim: theme.dim(),
         accent: theme.accent(),
     };
-    status_line::build(status, colors, title_budget(area))
+    status_line::status_line(status, colors, title_budget(area))
 }
 
 #[cfg(test)]

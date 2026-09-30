@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use crate::domain::{
     Crossfade,
     CustomSetting,
-    DeviceName,
+    OutputDevice,
     Percent,
     PlaylistIndex,
     Replaygain,
@@ -29,11 +29,11 @@ pub struct Startup {
     pub shuffle: Shuffle,
     pub crossfade: Crossfade,
     pub replaygain: Replaygain,
-    pub output_device: Option<DeviceName>,
+    pub output_device: OutputDevice,
     pub sleep_presets: Box<[Duration]>,
     pub theme: ThemeChoice,
     pub volume: Percent,
     pub themes: Vec<ThemeName>,
-    pub custom_rows: Vec<CustomSetting>,
-    pub notices: Vec<String>,
+    pub custom_settings: Vec<CustomSetting>,
+    pub toasts: Vec<String>,
 }

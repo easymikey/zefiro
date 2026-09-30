@@ -11,27 +11,27 @@ pub fn read_if_present(path: &Path) -> io::Result<Option<String>> {
     }
 }
 
-pub fn create_parent(path: &Path) -> io::Result<()> {
+pub fn create_parent_dir(path: &Path) -> io::Result<()> {
     path.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .map_or(Ok(()), std::fs::create_dir_all)
 }
 
-pub fn persist(path: &Path, contents: &[u8]) -> io::Result<()> {
+pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
-    tmp.write_all(contents)?;
-    tmp.as_file().sync_all()?;
-    tmp.persist(path).map_err(|error| error.error)?;
+    let mut staging = tempfile::NamedTempFile::new_in(parent)?;
+    staging.write_all(contents)?;
+    staging.as_file().sync_all()?;
+    staging.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::files::{create_parent, persist, read_if_present};
+    use crate::files::{create_parent_dir, read_if_present, write_atomic};
 
     #[test]
     fn a_missing_file_reads_as_nothing_rather_than_an_error() {
@@ -49,13 +49,13 @@ mod tests {
     }
 
     #[test]
-    fn create_parent_makes_the_whole_chain_and_is_happy_twice() {
+    fn create_parent_makes_the_whole_chain_and_succeeds_when_repeated() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("one").join("two").join("file.json");
-        create_parent(&path).unwrap();
+        create_parent_dir(&path).unwrap();
         let parent = path.parent().unwrap();
         assert!(parent.is_dir());
-        create_parent(&path).unwrap();
+        create_parent_dir(&path).unwrap();
     }
 
     #[test]
@@ -63,7 +63,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("favorites.json");
 
-        persist(&path, b"[]").unwrap();
+        write_atomic(&path, b"[]").unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"[]".to_vec());
         let leftovers: Vec<_> = std::fs::read_dir(directory.path()).unwrap().collect();
@@ -76,7 +76,7 @@ mod tests {
         let path = directory.path().join("favorites.json");
         std::fs::write(&path, b"[1]").unwrap();
 
-        persist(&path, b"[2]").unwrap();
+        write_atomic(&path, b"[2]").unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"[2]".to_vec());
     }

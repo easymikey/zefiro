@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
-assertion_line: 404
+assertion_line: 414
 expression: "walked(model, messages)"
 ---
 [
@@ -76,7 +76,6 @@ expression: "walked(model, messages)"
                     10s,
                 ),
             ),
-            preload_lead: 10s,
             output: Ready,
         },
         None,
@@ -88,7 +87,7 @@ expression: "walked(model, messages)"
             ),
         ),
         One(
-            System(
+            Macos(
                 PlaybackPosition(
                     20s,
                 ),
@@ -161,7 +160,6 @@ expression: "walked(model, messages)"
                     10s,
                 ),
             ),
-            preload_lead: 10s,
             output: Ready,
         },
         None,
@@ -239,7 +237,6 @@ expression: "walked(model, messages)"
                     b: 20s,
                 },
             ),
-            preload_lead: 10s,
             output: Ready,
         },
         None,
@@ -312,7 +309,6 @@ expression: "walked(model, messages)"
             ),
             sleep: None,
             ab: None,
-            preload_lead: 10s,
             output: Ready,
         },
         None,

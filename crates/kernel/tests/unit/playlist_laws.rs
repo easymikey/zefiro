@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use kernel::{
-    domain::{AbLoop, Cursor, CursorDirection},
-    playlist::{PlayOrder, Playlist, skip},
+    domain::{AbLoop, Cursor, Direction},
+    playlist::{PlayOrder, Playlist},
 };
 use proptest::prelude::{Just, prop_assert, prop_assert_eq, prop_oneof, proptest};
 
@@ -15,7 +15,7 @@ proptest! {
         start in 0usize..8,
         repeat in repeat_mode(),
         shuffled in proptest::bool::ANY,
-        direction in prop_oneof![Just(CursorDirection::Forward), Just(CursorDirection::Backward)],
+        direction in prop_oneof![Just(Direction::Next), Just(Direction::Previous)],
     ) {
         let tracks = (0..len).map(bare_track).collect::<Vec<_>>();
         let play_order = if shuffled && len > 0 {
@@ -25,15 +25,15 @@ proptest! {
         };
         let mut playlist = Playlist {
             tracks,
-            at: Cursor::with_len(len).at(start),
+            cursor: Cursor::with_len(len).at(start),
             play_order,
             repeat,
         };
-        skip(&mut playlist, direction);
+        playlist.skip(direction);
         if len == 0 {
-            prop_assert!(playlist.at.is_empty());
+            prop_assert!(playlist.cursor.is_empty());
         } else {
-            prop_assert!(playlist.at.index() < len);
+            prop_assert!(playlist.cursor.index() < len);
         }
         if let PlayOrder::Shuffle(order) = &playlist.play_order {
             let mut sorted = order.clone();

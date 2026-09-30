@@ -378,7 +378,7 @@ pub(crate) fn row_chunks_mut(
         .take(dimensions.height)
 }
 
-pub(crate) fn kaleido4_into(
+pub(crate) fn kaleidoscope_quadrants_into(
     source: &[f32],
     dest: &mut [f32],
     dimensions: FieldDimensions,

@@ -2,43 +2,43 @@ use std::time::Duration;
 
 use crate::{
     cmd::{Cmd, Cue},
-    domain::{Model, Moment, Output, SeekStep, SeekSteps, SpeedStep, VolumeStep},
+    domain::{Model, Moment, Output, SeekSteps},
     message::{PlaybackRequest, SeekTenths},
     update::{
         audio,
+        error::UpdateError,
         machine::Machine,
-        player::{self, Anchor, PlayerMessage, Resume},
+        player::{self, Anchor, PlayerMessage},
         playlist::PlaylistMessage,
-        rejection::Rejection,
         transport::TransportMessage,
     },
 };
 
-pub(crate) fn playback(
+pub(crate) fn update(
     model: &mut Model,
     message: PlaybackRequest,
     now: Moment,
-) -> Result<Cmd, Rejection> {
+) -> Result<Cmd, UpdateError> {
     match message {
         PlaybackRequest::Toggle => play_pause(model, now),
         PlaybackRequest::Play => resume_playback(model, now),
         PlaybackRequest::Pause => pause_playback(model, now),
         PlaybackRequest::SeekForward => {
-            step(model, SeekStep::new(SeekSteps::default().medium), now)
+            seek_by(model, SeekSteps::default().medium, now)
         }
-        PlaybackRequest::SeekBack => {
-            step(model, SeekStep::new(-SeekSteps::default().medium), now)
+        PlaybackRequest::SeekBack => seek_by(model, -SeekSteps::default().medium, now),
+        PlaybackRequest::Hold => {
+            player::update_player(model, PlayerMessage::Hold(now), now)
         }
-        PlaybackRequest::Hold => player::account(model, PlayerMessage::Hold(now), now),
         PlaybackRequest::Release => release(model, now),
-        PlaybackRequest::Stop => player::account(model, PlayerMessage::Stop, now),
+        PlaybackRequest::Stop => player::update_player(model, PlayerMessage::Stop, now),
         PlaybackRequest::Next => audio::next(model),
-        PlaybackRequest::Prev => audio::previous(model),
+        PlaybackRequest::Previous => audio::previous(model),
         PlaybackRequest::ToggleShuffle => shuffle_toggled(model),
         PlaybackRequest::CycleRepeat => repeat_cycled(model),
-        PlaybackRequest::SeekBy(seconds) => step(model, seconds, now),
-        PlaybackRequest::NudgeVolume(delta) => volume_nudged(model, delta),
-        PlaybackRequest::NudgeSpeed(delta) => speed_nudged(model, delta, now),
+        PlaybackRequest::SeekBy { seconds } => seek_by(model, seconds, now),
+        PlaybackRequest::NudgeVolume { steps } => volume_nudged(model, steps),
+        PlaybackRequest::NudgeSpeed { steps } => speed_nudged(model, steps, now),
         PlaybackRequest::CycleSleep => sleep_cycled(model),
         PlaybackRequest::AbMark => ab_marked(model, now),
         PlaybackRequest::SeekTo(target) => seek_to(model, target, now),
@@ -46,7 +46,7 @@ pub(crate) fn playback(
     }
 }
 
-fn resume_playback(model: &mut Model, now: Moment) -> Result<Cmd, Rejection> {
+fn resume_playback(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
     if model.player.is_playing() {
         Ok(Cmd::None)
     } else {
@@ -54,7 +54,7 @@ fn resume_playback(model: &mut Model, now: Moment) -> Result<Cmd, Rejection> {
     }
 }
 
-fn pause_playback(model: &mut Model, now: Moment) -> Result<Cmd, Rejection> {
+fn pause_playback(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
     if model.player.is_playing() {
         play_pause(model, now)
     } else {
@@ -62,45 +62,43 @@ fn pause_playback(model: &mut Model, now: Moment) -> Result<Cmd, Rejection> {
     }
 }
 
-fn shuffle_toggled(model: &mut Model) -> Result<Cmd, Rejection> {
+fn shuffle_toggled(model: &mut Model) -> Result<Cmd, UpdateError> {
     let cmd = model.playlist.update(PlaylistMessage::ToggleShuffle)?;
     Ok(cmd.then(Cue::PlayOrderChanged.into()))
 }
 
-fn repeat_cycled(model: &mut Model) -> Result<Cmd, Rejection> {
+fn repeat_cycled(model: &mut Model) -> Result<Cmd, UpdateError> {
     let cmd = model.playlist.update(PlaylistMessage::CycleRepeat)?;
     Ok(cmd.then(Cue::PlayOrderChanged.into()))
 }
 
-fn volume_nudged(model: &mut Model, delta: VolumeStep) -> Result<Cmd, Rejection> {
+fn volume_nudged(model: &mut Model, steps: i8) -> Result<Cmd, UpdateError> {
     let cmd = model
         .transport
-        .update(TransportMessage::NudgeVolume(delta))?;
+        .update(TransportMessage::StepVolume { steps })?;
     Ok(cmd.then(Cue::VolumeChanged.into()))
 }
 
-fn speed_nudged(
-    model: &mut Model,
-    delta: SpeedStep,
-    now: Moment,
-) -> Result<Cmd, Rejection> {
+fn speed_nudged(model: &mut Model, steps: i8, now: Moment) -> Result<Cmd, UpdateError> {
     let cmd = model
         .transport
-        .update(TransportMessage::NudgeSpeed(delta))?;
+        .update(TransportMessage::StepSpeed { steps })?;
     let since = player::playing_since(&model.player);
     model.player =
         std::mem::take(&mut model.player).reanchored(now, model.transport.speed);
-    player::accumulate(&mut model.workspace, since, now);
+    if let Some(since) = since {
+        player::accumulate(&mut model.workspace, since, now);
+    }
     Ok(cmd.then(player::arm(model, now, player::PositionReport::Pending)))
 }
 
-fn sleep_cycled(model: &mut Model) -> Result<Cmd, Rejection> {
+fn sleep_cycled(model: &mut Model) -> Result<Cmd, UpdateError> {
     Ok(model.transport.update(TransportMessage::CycleSleep(
         model.settings.sleep_presets.clone(),
     ))?)
 }
 
-fn ab_marked(model: &mut Model, now: Moment) -> Result<Cmd, Rejection> {
+fn ab_marked(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
     let position = model
         .player
         .current()
@@ -110,26 +108,30 @@ fn ab_marked(model: &mut Model, now: Moment) -> Result<Cmd, Rejection> {
         .update(TransportMessage::AbMark { position })?)
 }
 
-fn seek_to(model: &mut Model, target: Duration, now: Moment) -> Result<Cmd, Rejection> {
-    let target = clamped(model, target);
-    seek(model, target, now)
+fn seek_to(
+    model: &mut Model,
+    target: Duration,
+    now: Moment,
+) -> Result<Cmd, UpdateError> {
+    clamped(model, target)
+        .map_or_else(|| Ok(Cmd::None), |target| seek(model, target, now))
 }
 
 fn seek_fraction(
     model: &mut Model,
     tenths: SeekTenths,
     now: Moment,
-) -> Result<Cmd, Rejection> {
-    let target = fraction_target(model, tenths);
+) -> Result<Cmd, UpdateError> {
+    fraction_target(model, tenths)
+        .map_or_else(|| Ok(Cmd::None), |target| seek(model, target, now))
+}
+
+fn seek_by(model: &mut Model, seconds: i64, now: Moment) -> Result<Cmd, UpdateError> {
+    let target = relative_target(model, seconds, now);
     seek(model, target, now)
 }
 
-fn step(model: &mut Model, seconds: SeekStep, now: Moment) -> Result<Cmd, Rejection> {
-    let target = relative_target(model, seconds, now);
-    seek(model, Some(target), now)
-}
-
-pub(crate) fn play_pause(model: &mut Model, now: Moment) -> Result<Cmd, Rejection> {
+pub(crate) fn play_pause(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
     if matches!(model.transport.output, Output::Lost { .. })
         && !model.player.is_playing()
     {
@@ -143,31 +145,23 @@ pub(crate) fn play_pause(model: &mut Model, now: Moment) -> Result<Cmd, Rejectio
         });
     }
     let current = model.playlist.current().cloned();
-    let resume = Resume {
-        anchor: Anchor {
-            now,
-            speed: model.transport.speed,
-        },
-    };
-    player::account(model, PlayerMessage::Toggle { current, resume }, now)
-}
-
-fn release(model: &mut Model, now: Moment) -> Result<Cmd, Rejection> {
     let anchor = Anchor {
         now,
         speed: model.transport.speed,
     };
-    player::account(model, PlayerMessage::Release(anchor), now)
+    player::update_player(model, PlayerMessage::Toggle { current, anchor }, now)
 }
 
-fn seek(
-    model: &mut Model,
-    target: Option<Duration>,
-    now: Moment,
-) -> Result<Cmd, Rejection> {
-    target.map_or(Ok(Cmd::None), |target| {
-        player::account(model, PlayerMessage::Seek { target, now }, now)
-    })
+fn release(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
+    let anchor = Anchor {
+        now,
+        speed: model.transport.speed,
+    };
+    player::update_player(model, PlayerMessage::Release(anchor), now)
+}
+
+fn seek(model: &mut Model, target: Duration, now: Moment) -> Result<Cmd, UpdateError> {
+    player::update_player(model, PlayerMessage::Seek { target, now }, now)
 }
 
 fn duration_of(model: &Model) -> Duration {
@@ -190,8 +184,7 @@ fn fraction_target(model: &Model, tenths: SeekTenths) -> Option<Duration> {
     clamped(model, duration * u32::from(tenths.tenths()) / 10)
 }
 
-fn relative_target(model: &Model, seconds: SeekStep, now: Moment) -> Duration {
-    let seconds = seconds.get();
+fn relative_target(model: &Model, seconds: i64, now: Moment) -> Duration {
     let at = model.player.position_at(now);
     let moved = if seconds < 0 {
         at.saturating_sub(Duration::from_secs(seconds.unsigned_abs()))
@@ -221,7 +214,7 @@ mod tests {
             Track,
         },
         message::{PlaybackRequest, SeekTenths},
-        update::playback::playback,
+        update::playback::update,
     };
 
     fn playing_track_at(duration: Option<Duration>, at: Duration) -> Model {
@@ -275,7 +268,7 @@ mod tests {
     fn seek_fraction_seeks_by_tenths(#[case] case: SeekFractionCase) {
         let mut model = playing_track_at(case.duration, case.at);
         let tenths = SeekTenths::try_from(case.tenths).unwrap();
-        let cmd = playback(
+        let cmd = update(
             &mut model,
             PlaybackRequest::SeekFraction(tenths),
             Moment::default(),

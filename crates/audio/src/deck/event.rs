@@ -1,8 +1,8 @@
-use kernel::domain::OutputDevice;
+use kernel::domain::ListedDevice;
 
 use crate::{
     deck::source::TrackDecoder,
-    error::{AudioError, DeviceError},
+    error::{DeviceError, Error},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -15,15 +15,15 @@ impl Ticket {
 }
 
 pub(crate) enum DeckEvent {
-    Fault(rodio::cpal::StreamError),
+    OutputLost(rodio::cpal::StreamError),
     Decoded {
         ticket: Ticket,
-        outcome: Result<TrackDecoder, AudioError>,
+        outcome: Result<TrackDecoder, Error>,
     },
     Preloaded {
         ticket: Ticket,
-        outcome: Result<TrackDecoder, AudioError>,
+        outcome: Result<TrackDecoder, Error>,
     },
-    DevicesListed(Result<Vec<OutputDevice>, DeviceError>),
+    DevicesListed(Result<Vec<ListedDevice>, DeviceError>),
     Track(Ticket),
 }

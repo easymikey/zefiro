@@ -13,10 +13,10 @@ pub struct MainLoop {
 
 impl MainLoop {
     #[must_use]
-    pub fn attach(mailbox: &Sender<Message>) -> Option<Self> {
+    pub fn attach(sender: &Sender<Message>) -> Option<Self> {
         let main_thread = MainThreadMarker::new()?;
         Some(Self {
-            _controls: Controls::attach(main_thread, mailbox),
+            _controls: Controls::attach(main_thread, sender),
         })
     }
 

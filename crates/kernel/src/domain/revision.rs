@@ -19,12 +19,9 @@ impl Revision {
         *self
     }
 
-    pub fn delivery(self, performed: Self) -> Delivery {
-        if self > performed {
-            Delivery::Fresh
-        } else {
-            Delivery::Replay
-        }
+    #[must_use]
+    pub fn is_stale(self, latest: Self) -> bool {
+        self <= latest
     }
 
     pub fn reply(self, awaited: Self) -> Reply {
@@ -36,11 +33,15 @@ impl Revision {
     }
 }
 
-#[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Delivery {
-    Fresh,
-    Replay,
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Revisions {
+    pub effects: Revision,
+    pub config: Revision,
+    pub theme: Revision,
+    pub scan: Revision,
+    pub toast: Revision,
+    pub sleep: Revision,
+    pub mark: Revision,
 }
 
 #[must_use]
@@ -54,23 +55,23 @@ pub enum Reply {
 mod tests {
     use rstest::rstest;
 
-    use crate::domain::revision::{Delivery, Reply, Revision};
+    use crate::domain::revision::{Reply, Revision};
 
     fn bumped(times: u64) -> Revision {
         (0..times).fold(Revision::default(), |revision, _| revision.next())
     }
 
     #[rstest]
-    #[case::above(1, 0, Delivery::Fresh)]
-    #[case::equal(1, 1, Delivery::Replay)]
-    #[case::below(1, 2, Delivery::Replay)]
-    #[case::untouched(0, 0, Delivery::Replay)]
-    fn a_stamp_no_higher_than_the_performed_one_is_a_replay(
+    #[case::above(1, 0, false)]
+    #[case::equal(1, 1, true)]
+    #[case::below(1, 2, true)]
+    #[case::untouched(0, 0, true)]
+    fn a_stamp_no_higher_than_the_latest_one_is_stale(
         #[case] stamp: u64,
-        #[case] performed: u64,
-        #[case] delivery: Delivery,
+        #[case] latest: u64,
+        #[case] stale: bool,
     ) {
-        assert_eq!(bumped(stamp).delivery(bumped(performed)), delivery);
+        assert_eq!(bumped(stamp).is_stale(bumped(latest)), stale);
     }
 
     #[rstest]

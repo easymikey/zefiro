@@ -5,7 +5,7 @@ use raster::channel_byte;
 use tachyonfx::Interpolation;
 use widgets::AnimationTimings;
 
-pub(crate) const CLEAR: Rgba<u8> = Rgba([0, 0, 0, 0]);
+pub(crate) const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CrossfadeStage {
@@ -60,7 +60,7 @@ impl CoverCrossfade {
         }
     }
 
-    pub(crate) fn settle(&mut self, now: Duration) {
+    pub(crate) fn finish_if_done(&mut self, now: Duration) {
         if self.stage(now) == CrossfadeStage::Over {
             self.fade = None;
         }
@@ -73,23 +73,23 @@ impl CoverCrossfade {
     ) -> Option<RgbaImage> {
         let fading = self.fade.as_ref()?;
         let alpha = self.alpha(now)?;
-        Some(blended(&fading.outgoing, incoming, alpha))
+        Some(blend_images(&fading.outgoing, incoming, alpha))
     }
 }
 
-fn blended(outgoing: &RgbaImage, incoming: &RgbaImage, alpha: f32) -> RgbaImage {
+fn blend_images(outgoing: &RgbaImage, incoming: &RgbaImage, alpha: f32) -> RgbaImage {
     RgbaImage::from_fn(incoming.width(), incoming.height(), |column, row| {
         let front = incoming
             .get_pixel_checked(column, row)
             .copied()
-            .unwrap_or(CLEAR);
+            .unwrap_or(TRANSPARENT);
         outgoing
             .get_pixel_checked(column, row)
-            .map_or(front, |back| mixed(*back, front, alpha))
+            .map_or(front, |back| blend_pixel(*back, front, alpha))
     })
 }
 
-pub(crate) fn mixed(back: Rgba<u8>, front: Rgba<u8>, alpha: f32) -> Rgba<u8> {
+pub(crate) fn blend_pixel(back: Rgba<u8>, front: Rgba<u8>, alpha: f32) -> Rgba<u8> {
     let Rgba(back) = back;
     let Rgba(front) = front;
     Rgba(std::array::from_fn(|channel| {
@@ -167,9 +167,9 @@ mod tests {
     fn a_crossfade_settles_once_it_is_played_out() {
         let mut crossfade = running();
         assert_eq!(crossfade.stage(whole() / 2), CrossfadeStage::Running);
-        crossfade.settle(whole() / 2);
+        crossfade.finish_if_done(whole() / 2);
         assert_eq!(crossfade.stage(whole()), CrossfadeStage::Over);
-        crossfade.settle(whole());
+        crossfade.finish_if_done(whole());
         assert_eq!(crossfade.stage(whole()), CrossfadeStage::Idle);
     }
 

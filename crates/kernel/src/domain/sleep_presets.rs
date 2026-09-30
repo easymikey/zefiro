@@ -9,19 +9,19 @@ const MAX_PRESETS: usize = 5;
 pub struct SleepPresets(Box<[Duration]>);
 
 impl SleepPresets {
-    pub fn from_minutes(minutes: &[u64]) -> Result<Self, SleepPresetRejection> {
+    pub fn from_minutes(minutes: &[u64]) -> Result<Self, SleepPresetError> {
         if minutes.len() > MAX_PRESETS {
-            return Err(SleepPresetRejection::TooMany {
+            return Err(SleepPresetError::TooMany {
                 count: minutes.len(),
             });
         }
         let mut previous = 0;
         for &value in minutes {
             if value == 0 || value > MAX_MINUTES {
-                return Err(SleepPresetRejection::OutOfRange { minutes: value });
+                return Err(SleepPresetError::OutOfRange { minutes: value });
             }
             if value <= previous {
-                return Err(SleepPresetRejection::NotAscending { minutes: value });
+                return Err(SleepPresetError::NotAscending { minutes: value });
             }
             previous = value;
         }
@@ -49,7 +49,7 @@ impl From<SleepPresets> for Box<[Duration]> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum SleepPresetRejection {
+pub enum SleepPresetError {
     #[error("sleep preset of {minutes} minutes is out of range (must be 1..=720)")]
     OutOfRange { minutes: u64 },
     #[error(
@@ -66,7 +66,7 @@ mod tests {
 
     use rstest::rstest;
 
-    use crate::domain::sleep_presets::{SleepPresetRejection, SleepPresets};
+    use crate::domain::sleep_presets::{SleepPresetError, SleepPresets};
 
     #[rstest]
     #[case::empty_means_off(&[], vec![])]
@@ -83,14 +83,14 @@ mod tests {
     }
 
     #[rstest]
-    #[case::zero_minutes(&[0], SleepPresetRejection::OutOfRange { minutes: 0 })]
-    #[case::over_the_ceiling(&[721], SleepPresetRejection::OutOfRange { minutes: 721 })]
-    #[case::not_ascending(&[30, 20], SleepPresetRejection::NotAscending { minutes: 20 })]
-    #[case::repeated(&[30, 30], SleepPresetRejection::NotAscending { minutes: 30 })]
-    #[case::too_many(&[1, 2, 3, 4, 5, 6], SleepPresetRejection::TooMany { count: 6 })]
+    #[case::zero_minutes(&[0], SleepPresetError::OutOfRange { minutes: 0 })]
+    #[case::over_the_ceiling(&[721], SleepPresetError::OutOfRange { minutes: 721 })]
+    #[case::not_ascending(&[30, 20], SleepPresetError::NotAscending { minutes: 20 })]
+    #[case::repeated(&[30, 30], SleepPresetError::NotAscending { minutes: 30 })]
+    #[case::too_many(&[1, 2, 3, 4, 5, 6], SleepPresetError::TooMany { count: 6 })]
     fn sleep_presets_from_minutes_rejects_what_it_cannot_place(
         #[case] minutes: &[u64],
-        #[case] expected: SleepPresetRejection,
+        #[case] expected: SleepPresetError,
     ) {
         assert_eq!(SleepPresets::from_minutes(minutes), Err(expected));
     }

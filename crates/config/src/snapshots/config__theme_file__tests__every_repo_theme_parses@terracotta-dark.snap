@@ -6,49 +6,49 @@ expression: "parse_theme(source, name).unwrap()"
 ThemeFile {
     name: "terracotta-dark",
     colors: ThemeColors {
-        background: Hex(
+        background: Rgb(
             [
                 31,
                 30,
                 29,
             ],
         ),
-        foreground: Hex(
+        foreground: Rgb(
             [
                 184,
                 181,
                 173,
             ],
         ),
-        bright_foreground: Hex(
+        bright_foreground: Rgb(
             [
                 240,
                 238,
                 230,
             ],
         ),
-        accent: Hex(
+        accent: Rgb(
             [
                 217,
                 119,
                 87,
             ],
         ),
-        green: Hex(
+        green: Rgb(
             [
                 106,
                 159,
                 106,
             ],
         ),
-        yellow: Hex(
+        yellow: Rgb(
             [
                 217,
                 164,
                 65,
             ],
         ),
-        red: Hex(
+        red: Rgb(
             [
                 200,
                 85,

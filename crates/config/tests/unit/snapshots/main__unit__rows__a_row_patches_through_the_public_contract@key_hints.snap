@@ -7,7 +7,7 @@ AppearancePatch {
     cover_brackets: None,
     format_chips: None,
     speed_chip: None,
-    progress_remaining: None,
+    progress_time: None,
     key_hints: Some(
         Hidden,
     ),

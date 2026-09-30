@@ -1,5 +1,5 @@
 use crossbeam_channel::Sender;
-use kernel::domain::{DeviceDefault, DeviceName, OutputDevice};
+use kernel::domain::{DeviceDefault, DeviceName, ListedDevice, OutputDevice};
 use rodio::{
     cpal,
     cpal::traits::{DeviceTrait, HostTrait},
@@ -7,7 +7,7 @@ use rodio::{
 
 use crate::{deck::DeckEvent, error::DeviceError};
 
-pub(crate) fn list_output_devices() -> Result<Vec<OutputDevice>, DeviceError> {
+pub(crate) fn list_output_devices() -> Result<Vec<ListedDevice>, DeviceError> {
     let host = cpal::default_host();
     let default_name = host
         .default_output_device()
@@ -23,25 +23,28 @@ pub(crate) fn list_output_devices() -> Result<Vec<OutputDevice>, DeviceError> {
             };
             DeviceName::new(name)
                 .ok()
-                .map(|name| OutputDevice { name, default })
+                .map(|name| ListedDevice { name, default })
         })
         .collect())
 }
 
-fn report(
-    wake: &Sender<DeckEvent>,
+fn stream_error_callback(
+    events: &Sender<DeckEvent>,
 ) -> impl FnMut(cpal::StreamError) + Clone + Send + 'static {
-    let wake = wake.clone();
+    let events = events.clone();
     move |error: cpal::StreamError| {
-        let _ = wake.try_send(DeckEvent::Fault(error));
+        let _ = events.try_send(DeckEvent::OutputLost(error));
     }
 }
 
 pub(crate) fn open_stream(
-    device: Option<&DeviceName>,
+    device: &OutputDevice,
     wake: &Sender<DeckEvent>,
 ) -> Result<rodio::OutputStream, DeviceError> {
-    device.map_or_else(|| open_default(wake), |name| open_named(name, wake))
+    match device {
+        OutputDevice::Named(name) => open_named(name, wake),
+        OutputDevice::SystemDefault => open_default(wake),
+    }
 }
 
 fn open_named(
@@ -52,21 +55,24 @@ fn open_named(
         return Err(DeviceError::NotFound { name: name.clone() });
     };
     rodio::OutputStreamBuilder::from_device(device)
-        .map(|builder| builder.with_error_callback(report(wake)))
+        .map(|builder| builder.with_error_callback(stream_error_callback(wake)))
         .and_then(rodio::OutputStreamBuilder::open_stream)
         .map(silence_drop_log)
         .map_err(|source| DeviceError::NoDevice {
-            name: Some(name.clone()),
+            name: OutputDevice::Named(name.clone()),
             source,
         })
 }
 
 fn open_default(wake: &Sender<DeckEvent>) -> Result<rodio::OutputStream, DeviceError> {
     rodio::OutputStreamBuilder::from_default_device()
-        .map(|builder| builder.with_error_callback(report(wake)))
+        .map(|builder| builder.with_error_callback(stream_error_callback(wake)))
         .and_then(|builder| builder.open_stream_or_fallback())
         .map(silence_drop_log)
-        .map_err(|source| DeviceError::NoDevice { name: None, source })
+        .map_err(|source| DeviceError::NoDevice {
+            name: OutputDevice::SystemDefault,
+            source,
+        })
 }
 
 fn silence_drop_log(mut stream: rodio::OutputStream) -> rodio::OutputStream {
@@ -83,7 +89,7 @@ fn find_by_name(name: &DeviceName) -> Option<cpal::Device> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{DeviceDefault, DeviceName};
+    use kernel::domain::{DeviceDefault, DeviceName, OutputDevice};
     use rodio::{cpal, cpal::traits::HostTrait};
 
     use crate::{
@@ -116,7 +122,7 @@ mod tests {
 
         let (wake, _heard) = crossbeam_channel::bounded(1);
         let name = DeviceName::new("no-such-device-xyz".to_string()).unwrap();
-        let refusal = open_stream(Some(&name), &wake).err();
+        let refusal = open_stream(&OutputDevice::Named(name), &wake).err();
         assert!(matches!(refusal, Some(DeviceError::NotFound { .. })));
         assert_eq!(
             refusal.map(|refusal| refusal.to_string()),
@@ -125,6 +131,6 @@ mod tests {
             )
         );
 
-        assert!(open_stream(None, &wake).is_ok());
+        assert!(open_stream(&OutputDevice::SystemDefault, &wake).is_ok());
     }
 }

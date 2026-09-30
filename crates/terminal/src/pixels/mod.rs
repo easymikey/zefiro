@@ -8,25 +8,25 @@ use widgets::{FrameLayout, OverlayAreas};
 
 use crate::pixels::cover::CoverPixels;
 pub use crate::pixels::cover::{
-    CoverArtOwner,
     CoverFade,
     CoverKey,
     CoverLook,
     CoverMoment,
     CoverMotion,
+    CoverParts,
     CoverPlacement,
-    CoverSources,
     CoverWash,
     DecodedCover,
+    OwnedCoverArt,
 };
 
 #[derive(Debug)]
-pub struct Pixels {
+pub struct CoverRenderer {
     picker: Picker,
     cover: CoverPixels,
 }
 
-impl Pixels {
+impl CoverRenderer {
     #[must_use]
     pub fn new(picker: Picker) -> Self {
         Self {
@@ -35,16 +35,16 @@ impl Pixels {
         }
     }
 
-    pub fn adopt(&mut self, picker: Picker) {
+    pub fn set_picker(&mut self, picker: Picker) {
         self.picker = picker;
         self.cover.discard_protocol();
     }
 
-    pub fn decoded_cover(&mut self, cover: DecodedCover) {
-        self.cover.accept(cover);
+    pub fn set_cover(&mut self, cover: DecodedCover) {
+        self.cover.set_cover(cover);
     }
 
-    pub fn refresh(&mut self, sources: CoverSources<'_>) -> CoverArtOwner {
+    pub fn refresh(&mut self, sources: CoverParts<'_>) -> OwnedCoverArt {
         self.cover.refresh(&self.picker, sources)
     }
 
@@ -90,7 +90,7 @@ fn place_protocol(buffer: &mut Buffer, placement: Placement<'_>) {
 }
 
 fn hidden_by_overlay(rect: Rect, layout: &FrameLayout) -> bool {
-    let overlay = layout.overlay.map(OverlayAreas::painted);
+    let overlay = layout.overlay.map(OverlayAreas::outer);
     let toast = layout.toast.map(|toast| toast.painted);
     [overlay, toast]
         .into_iter()
@@ -102,7 +102,7 @@ fn hidden_by_overlay(rect: Rect, layout: &FrameLayout) -> bool {
 mod tests {
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
-    use config::{AppearanceFile, Hex, ThemeColors};
+    use config::{AppearanceFile, Rgb, ThemeColors};
     use image::{Rgba, RgbaImage};
     use kernel::{
         Moment,
@@ -132,23 +132,23 @@ mod tests {
         CoverLook,
         CoverMoment,
         CoverMotion,
+        CoverParts,
         CoverPlacement,
-        CoverSources,
+        CoverRenderer,
         CoverWash,
         DecodedCover,
-        Pixels,
         hidden_by_overlay,
     };
 
     fn theme() -> Theme {
         let colors = ThemeColors {
-            background: Hex([0x10, 0x10, 0x10]),
-            foreground: Hex([0x80, 0x80, 0x80]),
-            bright_foreground: Hex([0xe0, 0xe0, 0xe0]),
-            accent: Hex([0xff, 0, 0]),
-            green: Hex([0, 0xff, 0]),
-            yellow: Hex([0xff, 0xff, 0]),
-            red: Hex([0xff, 0, 0]),
+            background: Rgb([0x10, 0x10, 0x10]),
+            foreground: Rgb([0x80, 0x80, 0x80]),
+            bright_foreground: Rgb([0xe0, 0xe0, 0xe0]),
+            accent: Rgb([0xff, 0, 0]),
+            green: Rgb([0, 0xff, 0]),
+            yellow: Rgb([0xff, 0xff, 0]),
+            red: Rgb([0xff, 0, 0]),
             window_background: None,
         };
         Theme {
@@ -198,11 +198,11 @@ mod tests {
             }
         }
 
-        fn sources(&self, layout: FrameLayout, fade: CoverFade) -> CoverSources<'_> {
-            CoverSources {
+        fn sources(&self, layout: FrameLayout, fade: CoverFade) -> CoverParts<'_> {
+            CoverParts {
                 key: CoverKey {
-                    config_generation: self.model.config_generation,
-                    theme_generation: self.model.theme_generation,
+                    config_generation: self.model.revisions.config,
+                    theme_generation: self.model.revisions.theme,
                 },
                 look: CoverLook {
                     style: self.appearance.cover.style,
@@ -263,11 +263,11 @@ mod tests {
     #[test]
     fn a_vinyl_rebuild_with_permission_on_a_new_path_crossfades_then_settles() {
         let fixture = Fixture::playing();
-        let mut pixels = Pixels::new(Picker::halfblocks());
+        let mut pixels = CoverRenderer::new(Picker::halfblocks());
         let layout = layout_with_cover(Rect::new(0, 0, 10, 10));
-        pixels.decoded_cover(decoded_cover("a.jpg"));
+        pixels.set_cover(decoded_cover("a.jpg"));
         pixels.refresh(fixture.sources(layout, CoverFade::Allowed));
-        pixels.decoded_cover(decoded_cover("b.jpg"));
+        pixels.set_cover(decoded_cover("b.jpg"));
         pixels.refresh(fixture.sources(layout, CoverFade::Allowed));
         assert_eq!(
             pixels.cover_motion(Duration::ZERO),
@@ -289,11 +289,11 @@ mod tests {
     #[test]
     fn a_vinyl_rebuild_without_permission_never_crossfades() {
         let fixture = Fixture::playing();
-        let mut pixels = Pixels::new(Picker::halfblocks());
+        let mut pixels = CoverRenderer::new(Picker::halfblocks());
         let layout = layout_with_cover(Rect::new(0, 0, 10, 10));
-        pixels.decoded_cover(decoded_cover("a.jpg"));
+        pixels.set_cover(decoded_cover("a.jpg"));
         pixels.refresh(fixture.sources(layout, CoverFade::Allowed));
-        pixels.decoded_cover(decoded_cover("b.jpg"));
+        pixels.set_cover(decoded_cover("b.jpg"));
         pixels.refresh(fixture.sources(layout, CoverFade::Withheld));
         assert_eq!(pixels.cover_motion(Duration::ZERO), CoverMotion::Still);
     }
@@ -301,8 +301,8 @@ mod tests {
     #[test]
     fn a_vinyl_rebuild_for_a_new_rect_on_the_same_path_never_crossfades() {
         let fixture = Fixture::playing();
-        let mut pixels = Pixels::new(Picker::halfblocks());
-        pixels.decoded_cover(decoded_cover("a.jpg"));
+        let mut pixels = CoverRenderer::new(Picker::halfblocks());
+        pixels.set_cover(decoded_cover("a.jpg"));
         pixels.refresh(fixture.sources(
             layout_with_cover(Rect::new(0, 0, 10, 10)),
             CoverFade::Allowed,

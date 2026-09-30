@@ -6,49 +6,49 @@ expression: "parse_theme(source, name).unwrap()"
 ThemeFile {
     name: "oreo",
     colors: ThemeColors {
-        background: Hex(
+        background: Rgb(
             [
                 11,
                 11,
                 11,
             ],
         ),
-        foreground: Hex(
+        foreground: Rgb(
             [
                 143,
                 138,
                 128,
             ],
         ),
-        bright_foreground: Hex(
+        bright_foreground: Rgb(
             [
                 245,
                 241,
                 232,
             ],
         ),
-        accent: Hex(
+        accent: Rgb(
             [
                 243,
                 233,
                 210,
             ],
         ),
-        green: Hex(
+        green: Rgb(
             [
                 245,
                 241,
                 232,
             ],
         ),
-        yellow: Hex(
+        yellow: Rgb(
             [
                 201,
                 194,
                 180,
             ],
         ),
-        red: Hex(
+        red: Rgb(
             [
                 143,
                 138,

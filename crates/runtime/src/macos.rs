@@ -1,39 +1,39 @@
 #![cfg(target_os = "macos")]
 
-use ::macos::{CoverReader, SystemLoop};
+use ::macos::{CoverReader, MacosLoop};
 use crossbeam_channel::{Receiver, Sender};
-use kernel::{Message, SystemCmd, SystemEvent, domain::Driver};
+use kernel::{MacosCmd, MacosEvent, Message, domain::Driver};
 
 use crate::{
     driver::{DriverLoop, DriverThread, spawn_loop},
-    error::RuntimeError,
-    mailbox::Mailbox,
+    error::Error,
     registry,
+    sender::DriverSender,
 };
 
 #[derive(Debug)]
-pub(crate) struct SystemStart(CoverReader);
+pub(crate) struct MacosStart(CoverReader);
 
-impl SystemStart {
+impl MacosStart {
     pub(crate) fn new(read_cover: CoverReader) -> Self {
         Self(read_cover)
     }
 }
 
-impl DriverLoop<SystemCmd, SystemEvent> for SystemStart {
-    fn run(self, inbox: &Receiver<SystemCmd>, outbox: &Mailbox<SystemEvent>) {
-        SystemLoop::new(self.0).run(inbox, outbox);
+impl DriverLoop<MacosCmd, MacosEvent> for MacosStart {
+    fn run(self, inbox: &Receiver<MacosCmd>, outbox: &DriverSender<MacosEvent>) {
+        MacosLoop::new(self.0).run(inbox, outbox);
     }
 }
 
 pub(crate) fn spawn<M>(
-    system: M,
-    mailbox: &Sender<Message>,
-) -> Result<DriverThread<SystemCmd>, RuntimeError>
+    macos: M,
+    sender: &Sender<Message>,
+) -> Result<DriverThread<MacosCmd>, Error>
 where
-    M: DriverLoop<SystemCmd, SystemEvent>,
+    M: DriverLoop<MacosCmd, MacosEvent>,
 {
-    spawn_loop(registry::row(Driver::Macos), system, mailbox)
+    spawn_loop(registry::row(Driver::Macos), macos, sender)
 }
 
 #[cfg(test)]

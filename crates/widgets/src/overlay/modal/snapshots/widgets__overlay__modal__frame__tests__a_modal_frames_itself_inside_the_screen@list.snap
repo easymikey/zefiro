@@ -21,10 +21,4 @@ ModalAreas {
         width: 20,
         height: 0,
     },
-    painted: Rect {
-        x: 28,
-        y: 9,
-        width: 24,
-        height: 7,
-    },
 }

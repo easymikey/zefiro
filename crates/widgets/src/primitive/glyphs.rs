@@ -290,12 +290,12 @@ impl Default for JumpToTimeGlyphs {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SourceDirGlyphs {
+pub(crate) struct MusicDirGlyphs {
     pub title_word: &'static str,
     pub hint: &'static str,
 }
 
-impl Default for SourceDirGlyphs {
+impl Default for MusicDirGlyphs {
     fn default() -> Self {
         Self {
             title_word: "LIBRARY FOLDER",

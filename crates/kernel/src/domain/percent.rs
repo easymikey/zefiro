@@ -39,7 +39,7 @@ impl Percent {
         f32::from(self.0) / f32::from(MAX)
     }
 
-    pub fn nudge(self, delta: i8) -> Self {
+    pub fn step(self, delta: i8) -> Self {
         Self::clamped(self.0.saturating_add_signed(delta))
     }
 }
@@ -87,7 +87,7 @@ mod tests {
         #[case] delta: i8,
         #[case] expected: u8,
     ) {
-        assert_eq!(Percent::clamped(start).nudge(delta).value(), expected);
+        assert_eq!(Percent::clamped(start).step(delta).value(), expected);
     }
 
     #[test]

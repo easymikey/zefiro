@@ -3,15 +3,15 @@ use std::cell::Cell;
 use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
     AudioCmd,
+    ConfigCmd,
     LibraryCmd,
-    SystemCmd,
+    MacosCmd,
     domain::{Driver, DriverStatus, Drivers},
 };
 
 use crate::{
-    interpret::{ConfigCommand, LibraryCommand},
-    library::cover::CoverRequest,
-    mailbox::Congestion,
+    library::{cover::CoverRequest, machine::LibraryMessage},
+    sender::FullEdge,
     trace::{DropReason, TraceEntry},
 };
 
@@ -19,7 +19,7 @@ use crate::{
 pub(crate) struct Port<C> {
     driver: Driver,
     sender: Sender<C>,
-    congestion: Congestion,
+    full_edge: FullEdge,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,20 +40,16 @@ impl From<Undelivered> for TraceEntry {
 }
 
 impl<C> Port<C> {
-    pub(crate) fn new(
-        driver: Driver,
-        sender: Sender<C>,
-        congestion: Congestion,
-    ) -> Self {
+    pub(crate) fn new(driver: Driver, sender: Sender<C>, full_edge: FullEdge) -> Self {
         Self {
             driver,
             sender,
-            congestion,
+            full_edge,
         }
     }
 
-    pub(crate) fn congestion(&self) -> &Congestion {
-        &self.congestion
+    pub(crate) fn full_edge(&self) -> &FullEdge {
+        &self.full_edge
     }
 }
 
@@ -77,7 +73,7 @@ where
         match self.sender.try_send(command) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
-                self.congestion.raise();
+                self.full_edge.raise();
                 Err(Undelivered {
                     driver: self.driver,
                     command: label,
@@ -95,20 +91,20 @@ where
 
 #[derive(Debug)]
 pub(crate) struct LibraryPort {
-    port: Port<LibraryCommand>,
+    port: Port<LibraryMessage>,
     side: Cell<Option<u32>>,
 }
 
 impl LibraryPort {
-    pub(crate) fn new(port: Port<LibraryCommand>) -> Self {
+    pub(crate) fn new(port: Port<LibraryMessage>) -> Self {
         Self {
             port,
             side: Cell::new(None),
         }
     }
 
-    pub(crate) fn congestion(&self) -> &Congestion {
-        self.port.congestion()
+    pub(crate) fn full_edge(&self) -> &FullEdge {
+        self.port.full_edge()
     }
 
     pub(crate) fn send_command(
@@ -118,19 +114,23 @@ impl LibraryPort {
     ) -> Result<(), Undelivered> {
         match command {
             LibraryCmd::PrefetchCover(path) => self.side.get().map_or(Ok(()), |side| {
-                self.port
-                    .send(drivers, LibraryCommand::Cover(CoverRequest { path, side }))
+                self.port.send(
+                    drivers,
+                    LibraryMessage::Cover(CoverRequest {
+                        path,
+                        size_px: side,
+                    }),
+                )
             }),
             other @ (LibraryCmd::AppendHistory { .. }
             | LibraryCmd::SaveFavorites(_)
             | LibraryCmd::LoadFavorites
             | LibraryCmd::Trash(_)
             | LibraryCmd::LoadHistory { .. }
-            | LibraryCmd::Rescan { .. }
+            | LibraryCmd::Scan { .. }
             | LibraryCmd::SavePlaylist { .. }
-            | LibraryCmd::ScanLibrary { .. }
             | LibraryCmd::TagTracks { .. }) => {
-                self.port.send(drivers, LibraryCommand::Kernel(other))
+                self.port.send(drivers, LibraryMessage::Cmd(other))
             }
         }
     }
@@ -140,8 +140,8 @@ impl LibraryPort {
         drivers: &Drivers,
         request: CoverRequest,
     ) -> Result<(), Undelivered> {
-        self.side.set(Some(request.side));
-        self.port.send(drivers, LibraryCommand::Cover(request))
+        self.side.set(Some(request.size_px));
+        self.port.send(drivers, LibraryMessage::Cover(request))
     }
 }
 
@@ -149,17 +149,17 @@ impl LibraryPort {
 pub(crate) struct Ports {
     pub(crate) audio: Port<AudioCmd>,
     pub(crate) library: LibraryPort,
-    pub(crate) config: Port<ConfigCommand>,
-    pub(crate) macos: Port<SystemCmd>,
+    pub(crate) config: Port<ConfigCmd>,
+    pub(crate) macos: Port<MacosCmd>,
 }
 
 impl Ports {
-    pub(crate) fn congestion(&self, driver: Driver) -> Option<&Congestion> {
+    pub(crate) fn full_edge(&self, driver: Driver) -> Option<&FullEdge> {
         match driver {
-            Driver::Audio => Some(self.audio.congestion()),
-            Driver::Library => Some(self.library.congestion()),
-            Driver::Config => Some(self.config.congestion()),
-            Driver::Macos => Some(self.macos.congestion()),
+            Driver::Audio => Some(self.audio.full_edge()),
+            Driver::Library => Some(self.library.full_edge()),
+            Driver::Config => Some(self.config.full_edge()),
+            Driver::Macos => Some(self.macos.full_edge()),
         }
     }
 }
@@ -173,11 +173,7 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::{
-        mailbox::{Congestion, Crowding},
-        port::Port,
-        trace::DropReason,
-    };
+    use crate::{port::Port, sender::FullEdge, trace::DropReason};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Inbox {
@@ -193,7 +189,7 @@ mod tests {
         Err(DropReason::NotRunning)
     )]
     #[case::dead(
-        DriverStatus::Dead(kernel::domain::DriverFailure::Panicked("boom".to_owned())),
+        DriverStatus::Dead(kernel::domain::DriverError::Panicked("boom".to_owned())),
         Inbox::Connected,
         Err(DropReason::NotRunning)
     )]
@@ -213,7 +209,7 @@ mod tests {
         }
         let mut drivers = Drivers::default();
         drivers.record_mut(Driver::Audio).status = status;
-        let port = Port::new(Driver::Audio, sender, Congestion::default());
+        let port = Port::new(Driver::Audio, sender, FullEdge::default());
 
         let sent = port.send(&drivers, AudioCmd::Stop);
 
@@ -225,8 +221,8 @@ mod tests {
         let (sender, _receiver) = bounded(1);
         let mut drivers = Drivers::default();
         drivers.record_mut(Driver::Audio).status = DriverStatus::Running;
-        let congestion = Congestion::default();
-        let port = Port::new(Driver::Audio, sender, congestion.clone());
+        let full_edge = FullEdge::default();
+        let port = Port::new(Driver::Audio, sender, full_edge.clone());
 
         port.send(&drivers, AudioCmd::Stop).unwrap();
         let second = port.send(&drivers, AudioCmd::Stop);
@@ -235,6 +231,6 @@ mod tests {
             second.map_err(|undelivered| undelivered.reason),
             Err(DropReason::Full)
         );
-        assert_eq!(congestion.settle(), Crowding::Crowded);
+        assert!(full_edge.take());
     }
 }

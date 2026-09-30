@@ -7,37 +7,37 @@ mod settings;
 mod text;
 mod track_details;
 
-pub use history::{HistoryMessage, HistoryPick, HistoryRejection};
-pub use jump::JumpRejection;
-pub use search::{SearchMessage, SearchRejection};
-pub use settings::SettingsMessage;
+pub use history::{HistoryError, HistoryMessage, HistoryPick};
+pub use jump::JumpError;
+pub use search::{SearchError, SearchMessage};
+pub use settings::SettingsCursorMessage;
 
 use crate::{
     cmd::{Cmd, Effect, LibraryCmd},
     domain::{
         CursorOver,
+        Direction,
+        HISTORY_LIMIT,
         JumpDigits,
         Model,
         Moment,
-        Nudge,
         Overlay,
         OverlayName,
         SearchQuery,
         SettingRow,
-        SettingsCursor,
         TextEntry,
     },
     message::{
         BrowseRequest,
-        JumpRequest,
-        LoadedRequest,
         Message,
         OverlayRequest,
         PlaybackRequest,
+        PlaylistRequest,
+        QueueRequest,
         SearchRequest,
         TextRequest,
     },
-    update::{branch, machine::Machine, rejection::Rejection},
+    update::{branch, error::UpdateError, machine::Machine},
 };
 
 #[derive(Debug)]
@@ -51,30 +51,34 @@ pub enum OverlayMessage {
 #[derive(Debug, Clone, PartialEq)]
 pub enum InnerMessage {
     Search(SearchMessage),
-    Settings(SettingsMessage),
+    Settings(SettingsCursorMessage),
     Text(TextRequest),
-    Jump(JumpRequest),
+    Jump(TextRequest),
     History(HistoryMessage),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OverlayRejection {
+pub enum OverlayError {
     WhileClosed,
     NoTrack,
     WrongOverlay,
     NoConfirm,
     NothingSelected,
-    Jump(JumpRejection),
-    Search(SearchRejection),
-    History(HistoryRejection),
+    Jump(JumpError),
+    Search(SearchError),
+    History(HistoryError),
 }
 
 #[derive(Debug, PartialEq)]
 pub enum FollowUp {
     Playback(PlaybackRequest),
     Browse(BrowseRequest),
-    Loaded(LoadedRequest),
-    Adjust { row: SettingRow, nudge: Nudge },
+    Queue(QueueRequest),
+    Loaded(PlaylistRequest),
+    Adjust {
+        row: SettingRow,
+        direction: Direction,
+    },
 }
 
 impl From<FollowUp> for Message {
@@ -82,8 +86,9 @@ impl From<FollowUp> for Message {
         match follow_up {
             FollowUp::Playback(message) => Self::Playback(message),
             FollowUp::Browse(message) => Self::Browse(message),
+            FollowUp::Queue(message) => Self::Queue(message),
             FollowUp::Loaded(message) => Self::Loaded(message),
-            FollowUp::Adjust { row, nudge } => Self::Adjust { row, nudge },
+            FollowUp::Adjust { row, direction } => Self::Adjust { row, direction },
         }
     }
 }
@@ -116,7 +121,7 @@ pub(crate) fn update(
     model: &mut Model,
     request: OverlayRequest,
     now: Moment,
-) -> Result<Cmd, Rejection> {
+) -> Result<Cmd, UpdateError> {
     match request {
         OverlayRequest::Open(name) => open_request(model, name, now),
         OverlayRequest::Close => update_overlay(model, OverlayMessage::Close, now),
@@ -141,7 +146,7 @@ fn open_request(
     model: &mut Model,
     name: OverlayName,
     now: Moment,
-) -> Result<Cmd, Rejection> {
+) -> Result<Cmd, UpdateError> {
     let (opened, cmd) = overlay_for(model, name)?;
     Ok(cmd.then(update_overlay(model, OverlayMessage::Open(opened), now)?))
 }
@@ -150,14 +155,14 @@ fn search_request(
     model: &mut Model,
     request: SearchRequest,
     now: Moment,
-) -> Result<Cmd, Rejection> {
+) -> Result<Cmd, UpdateError> {
     match request {
         SearchRequest::Edit(edit) => {
             let tracks = model.playlist.tracks.clone();
             update_overlay(model, inner_search(SearchMessage::Edit(edit, tracks)), now)
         }
-        SearchRequest::Navigate(nudge) => {
-            update_overlay(model, inner_search(SearchMessage::Navigate(nudge)), now)
+        SearchRequest::Navigate(direction) => {
+            update_overlay(model, inner_search(SearchMessage::Navigate(direction)), now)
         }
         SearchRequest::Enqueue => {
             update_overlay(model, inner_search(SearchMessage::Enqueue), now)
@@ -172,7 +177,7 @@ fn inner_search(message: SearchMessage) -> OverlayMessage {
 fn overlay_for(
     model: &Model,
     name: OverlayName,
-) -> Result<(Overlay, Cmd), OverlayRejection> {
+) -> Result<(Overlay, Cmd), OverlayError> {
     match name {
         OverlayName::Help => Ok((Overlay::Help, Cmd::None)),
         OverlayName::Search => {
@@ -194,29 +199,31 @@ fn overlay_for(
         OverlayName::History => Ok((
             Overlay::History(CursorOver::default()),
             Effect::Library(LibraryCmd::LoadHistory {
-                limit: model.history.view_cap,
+                limit: HISTORY_LIMIT,
             })
             .into(),
         )),
         OverlayName::Settings => Ok((
-            Overlay::Settings(SettingsCursor::first(&model.custom_rows)),
+            Overlay::Settings {
+                selected: SettingRow::first(&model.custom_settings),
+            },
             Cmd::None,
         )),
         OverlayName::ConfirmDelete => {
             confirm_delete::candidate(&model.playlist, &model.workspace)
                 .map(|candidate| (Overlay::ConfirmDelete(candidate), Cmd::None))
-                .ok_or(OverlayRejection::NoTrack)
+                .ok_or(OverlayError::NoTrack)
         }
         OverlayName::TrackDetails => {
             track_details::candidate(&model.playlist, &model.player, &model.workspace)
                 .map(|track| (Overlay::TrackDetails(track), Cmd::None))
-                .ok_or(OverlayRejection::NoTrack)
+                .ok_or(OverlayError::NoTrack)
         }
         OverlayName::JumpToTime => {
             Ok((Overlay::JumpToTime(JumpDigits::default()), Cmd::None))
         }
-        OverlayName::SourceDir => Ok((
-            Overlay::SourceDir {
+        OverlayName::MusicDir => Ok((
+            Overlay::MusicDir {
                 typed: TextEntry {
                     input: model.music_dir.display().to_string(),
                 },
@@ -231,7 +238,7 @@ fn update_overlay(
     model: &mut Model,
     message: OverlayMessage,
     now: Moment,
-) -> Result<Cmd, Rejection> {
+) -> Result<Cmd, UpdateError> {
     let effect = model.workspace.overlay.update(message)?;
     follow(model, effect, now)
 }
@@ -240,7 +247,7 @@ pub(crate) fn follow(
     model: &mut Model,
     effect: OverlayEffect,
     now: Moment,
-) -> Result<Cmd, Rejection> {
+) -> Result<Cmd, UpdateError> {
     let OverlayEffect { cmd, follow_up } = effect;
     match follow_up {
         Some(follow_up) => Ok(cmd.then(branch(model, follow_up.into(), now)?)),

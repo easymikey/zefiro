@@ -5,7 +5,7 @@ use kernel::domain::{
     Overlay,
     PlaylistIndex,
     SearchQuery,
-    SettingsCursor,
+    SettingRow,
     TextEntry,
 };
 use ratatui::layout::Rect;
@@ -55,7 +55,9 @@ fn the_history_overlay_is_painted_over_the_full_frame() {
 
 #[test]
 fn the_settings_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::Settings(SettingsCursor::default()));
+    let text = frame_with_overlay(Overlay::Settings {
+        selected: SettingRow::Theme,
+    });
     assert!(text.contains("SETTINGS"), "got {text:?}");
 }
 
@@ -83,7 +85,7 @@ fn the_track_details_overlay_is_painted_over_the_full_frame() {
 
 #[test]
 fn the_source_dir_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::SourceDir {
+    let text = frame_with_overlay(Overlay::MusicDir {
         typed: TextEntry::default(),
         error: None,
     });

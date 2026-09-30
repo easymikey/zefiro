@@ -3,15 +3,16 @@
 #![deny(unreachable_pub)]
 
 mod cover;
+mod error;
 mod memo;
-mod meters;
 mod numeric;
 mod paint;
 mod progress;
+mod track_identity;
 mod vinyl;
 
 pub use cover::cover_aspect_ratio;
-pub use meters::TrackIdentity;
+pub use error::Error;
 pub use numeric::{
     channel_byte,
     dimension_f32,
@@ -22,8 +23,8 @@ pub use numeric::{
     round_usize,
     unit_fraction,
 };
-pub use paint::RenderError;
 pub use progress::{BarColorOverrides, BarColors, ProgressGeometry, color_overrides};
+pub use track_identity::TrackIdentity;
 pub use vinyl::{
     ArtCacheState,
     DecodedArt,

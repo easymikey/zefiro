@@ -1,8 +1,9 @@
 ---
 source: crates/config/tests/unit/config_file.rs
+assertion_line: 28
 expression: round_tripped
 ---
-ConfigFile {
+ConfigToml {
     music_dir: Some(
         "/music",
     ),
@@ -19,7 +20,7 @@ ConfigFile {
             0ns,
         ),
         replaygain: Off,
-        device: Some(
+        device: Named(
             DeviceName(
                 "Speakers",
             ),

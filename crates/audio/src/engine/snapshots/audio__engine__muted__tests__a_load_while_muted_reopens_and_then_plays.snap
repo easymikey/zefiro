@@ -1,10 +1,11 @@
 ---
 source: crates/audio/src/engine/muted.rs
+assertion_line: 450
 expression: log
 ---
 [
     Open {
-        device: None,
+        device: SystemDefault,
         speed: Speed(
             1.0,
         ),
@@ -15,7 +16,7 @@ expression: log
             1.0,
         ),
     },
-    Many(
+    Batch(
         [
             Start {
                 volume: 1.0,

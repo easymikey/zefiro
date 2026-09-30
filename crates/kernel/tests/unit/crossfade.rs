@@ -76,7 +76,7 @@ fn a_tick_near_the_end_arms_the_preload() {
         Moment::default(),
     )
     .unwrap();
-    let first_mark = model.mark_generation;
+    let first_mark = model.revisions.mark;
     let early = update(
         &mut model,
         Message::Elapsed(Timer::Mark(first_mark)),
@@ -91,7 +91,7 @@ fn a_tick_near_the_end_arms_the_preload() {
         Moment::default(),
     )
     .unwrap();
-    let second_mark = model.mark_generation;
+    let second_mark = model.revisions.mark;
     let late = update(
         &mut model,
         Message::Elapsed(Timer::Mark(second_mark)),
@@ -117,7 +117,7 @@ fn the_armed_preload_is_stamped_fresh() {
         Moment::default(),
     )
     .unwrap();
-    let mark = model.mark_generation;
+    let mark = model.revisions.mark;
     let cmd = update(
         &mut model,
         Message::Elapsed(Timer::Mark(mark)),
@@ -140,7 +140,7 @@ fn the_hand_off_adopts_the_preloaded_track_without_a_second_load() {
         Moment::default(),
     )
     .unwrap();
-    let mark = model.mark_generation;
+    let mark = model.revisions.mark;
     let _ = update(
         &mut model,
         Message::Elapsed(Timer::Mark(mark)),

@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::{
-    card::{CardContext, CardMetrics},
+    card::{CardMetrics, CardParts},
     primitive::{span::text, text::truncate},
 };
 
@@ -62,7 +62,7 @@ pub(crate) fn status_label(status: CardStatus) -> StatusLabel {
     }
 }
 
-pub(crate) fn paint(buffer: &mut Buffer, context: &CardContext<'_>) {
+pub(crate) fn paint(buffer: &mut Buffer, context: &CardParts<'_>) {
     let metrics: &CardMetrics = context.metrics;
     let text_color: Color = context.theme.text();
     let dim_color: Color = context.theme.dim();
@@ -77,7 +77,7 @@ pub(crate) fn paint(buffer: &mut Buffer, context: &CardContext<'_>) {
 
     let status = card_status(context.view.output, context.view.player);
     let status_color = match status {
-        CardStatus::OutputLost => context.theme.accent2(),
+        CardStatus::OutputLost => context.theme.secondary_accent(),
         CardStatus::Playing => accent_color,
         CardStatus::Paused => text_color,
         CardStatus::Stopped => dim_color,

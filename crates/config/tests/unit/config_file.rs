@@ -1,4 +1,4 @@
-use config::{parse_config, parse_keymap, patched};
+use config::{parse_config, parse_config_reload, patch_config_text};
 use kernel::{
     Bounded,
     ConfigPatch,
@@ -23,14 +23,14 @@ fn a_patch_round_trips_through_the_public_parser() {
             DeviceName::new("Speakers".to_string()).unwrap(),
         ))
         .build();
-    let written = patched(COMMENTED_CONFIG, patch).unwrap();
+    let written = patch_config_text(COMMENTED_CONFIG, patch).unwrap();
     let round_tripped = parse_config(&written).unwrap();
     insta::assert_debug_snapshot!(round_tripped);
 }
 
 #[test]
 fn parse_keymap_reads_the_keymap_and_the_root_music_dir() {
-    let parsed = parse_keymap(
+    let parsed = parse_config_reload(
         "music_dir = \"/tmp/music\"\ntheme = \"dark\"\n\n[keymap]\nnext = \"x\"\n",
     )
     .unwrap();

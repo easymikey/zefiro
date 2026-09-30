@@ -1,21 +1,21 @@
-use config::{AppearanceFile, ConfigError, ParsedKeymap, ThemeFile};
+use config::{AppearanceFile, ConfigReload, ThemeFile};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum ThemeReloadError {
     #[error(transparent)]
-    Parse(#[from] ConfigError),
+    Parse(#[from] config::Error),
     #[error("no theme named `{name}`")]
     Unknown { name: String },
 }
 
 pub(crate) fn appearance_reload(
     text: Option<&str>,
-) -> Result<AppearanceFile, ConfigError> {
+) -> Result<AppearanceFile, config::Error> {
     text.map_or_else(|| Ok(AppearanceFile::default()), config::parse_appearance)
 }
 
-pub(crate) fn keymap_reload(text: Option<&str>) -> Result<ParsedKeymap, ConfigError> {
-    config::parse_keymap(text.unwrap_or(""))
+pub(crate) fn config_reload(text: Option<&str>) -> Result<ConfigReload, config::Error> {
+    config::parse_config_reload(text.unwrap_or(""))
 }
 
 pub(crate) fn theme_reload(
@@ -34,12 +34,11 @@ pub(crate) fn theme_reload(
 
 #[cfg(test)]
 mod tests {
-    use config::ConfigError;
 
     use crate::config::reload::{
         ThemeReloadError,
         appearance_reload,
-        keymap_reload,
+        config_reload,
         theme_reload,
     };
 
@@ -54,13 +53,13 @@ mod tests {
     fn a_broken_appearance_file_reports_a_parse_fault() {
         assert!(matches!(
             appearance_reload(Some("[cover\nnot toml")),
-            Err(ConfigError::Parse { .. })
+            Err(config::Error::Parse { .. })
         ));
     }
 
     #[test]
     fn a_missing_keys_file_reloads_with_no_music_dir() {
-        let parsed = keymap_reload(None).unwrap();
+        let parsed = config_reload(None).unwrap();
 
         assert_eq!(parsed.music_dir, None);
     }

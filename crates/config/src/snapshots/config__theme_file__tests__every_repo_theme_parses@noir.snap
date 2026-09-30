@@ -6,49 +6,49 @@ expression: "parse_theme(source, name).unwrap()"
 ThemeFile {
     name: "noir",
     colors: ThemeColors {
-        background: Hex(
+        background: Rgb(
             [
                 10,
                 12,
                 16,
             ],
         ),
-        foreground: Hex(
+        foreground: Rgb(
             [
                 107,
                 114,
                 128,
             ],
         ),
-        bright_foreground: Hex(
+        bright_foreground: Rgb(
             [
                 216,
                 221,
                 230,
             ],
         ),
-        accent: Hex(
+        accent: Rgb(
             [
                 217,
                 119,
                 87,
             ],
         ),
-        green: Hex(
+        green: Rgb(
             [
                 107,
                 114,
                 128,
             ],
         ),
-        yellow: Hex(
+        yellow: Rgb(
             [
                 217,
                 119,
                 87,
             ],
         ),
-        red: Hex(
+        red: Rgb(
             [
                 242,
                 168,

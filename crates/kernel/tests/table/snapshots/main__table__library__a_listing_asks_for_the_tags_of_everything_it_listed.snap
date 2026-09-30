@@ -5,7 +5,7 @@ expression: effects(cmd)
 [
     Library(
         TagTracks {
-            root: "/music",
+            music_dir: "/music",
             paths: [
                 "/music/a.flac",
                 "/music/b.flac",

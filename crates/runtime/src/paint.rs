@@ -3,9 +3,9 @@ use std::time::Instant;
 use kernel::Message;
 
 use crate::{
-    error::RunError,
+    error::Error,
     event_loop::EventLoop,
-    repaint::{FRAME, Repaint, Source},
+    repaint::{FRAME_INTERVAL, Repaint, Source},
     shell::{FrameDue, Shell},
 };
 
@@ -14,7 +14,7 @@ where
     S::Error: std::error::Error + 'static,
 {
     pub(crate) fn frame_deadline(&self, now: Instant) -> Instant {
-        self.last_paint.map_or(now, |last| last + FRAME)
+        self.last_paint.map_or(now, |last| last + FRAME_INTERVAL)
     }
 
     pub(crate) fn deadline(
@@ -29,7 +29,7 @@ where
         let immediate = match self.repaint {
             Repaint::Settled => None,
             Repaint::Now => Some(now),
-            Repaint::Frame => Some(self.frame_deadline(now)),
+            Repaint::NextFrame => Some(self.frame_deadline(now)),
         };
         [self.runtime.timers.next_deadline(), frame, immediate]
             .into_iter()
@@ -41,12 +41,12 @@ where
         &mut self,
         now: Instant,
         frame_due: FrameDue,
-    ) -> Result<(), RunError<S::Error>> {
+    ) -> Result<(), Error<S::Error>> {
         let frame_passed =
             matches!(frame_due, FrameDue::At(at) if self.runtime.instant_of(at) <= now);
         let should_paint = match self.repaint {
             Repaint::Now => true,
-            Repaint::Frame => frame_passed || self.frame_deadline(now) <= now,
+            Repaint::NextFrame => frame_passed || self.frame_deadline(now) <= now,
             Repaint::Settled => frame_passed,
         };
         if !should_paint {
@@ -55,19 +55,17 @@ where
         let painted = self
             .shell
             .paint(self.runtime.view(now))
-            .map_err(RunError::Paint)?;
+            .map_err(Error::Paint)?;
         self.repaint = Repaint::Settled;
         self.last_paint = Some(now);
         if let Some(request) = painted.cover {
             self.runtime.request_cover(request);
         }
-        if let Some(visible_rows) = painted.viewport {
-            let change = self.runtime.step(Message::Viewport { visible_rows });
-            self.note(change, Source::Fact);
+        if let Some(visible_rows) = painted.visible_rows {
+            self.step_and_repaint(Message::Viewport { visible_rows }, Source::Event);
         }
         for message in painted.failures {
-            let change = self.runtime.step(message);
-            self.note(change, Source::Fact);
+            self.step_and_repaint(message, Source::Event);
         }
         Ok(())
     }
@@ -124,7 +122,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_fact_batch_waits_for_the_frame(Repaint::Frame, 0)]
+    #[case::a_fact_batch_waits_for_the_frame(Repaint::NextFrame, 0)]
     #[case::a_key_batch_paints_at_once(Repaint::Now, 1)]
     fn paint_if_due_respects_the_frame_cap(
         #[case] repaint: Repaint,

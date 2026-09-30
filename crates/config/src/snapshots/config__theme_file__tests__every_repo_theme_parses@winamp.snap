@@ -6,49 +6,49 @@ expression: "parse_theme(source, name).unwrap()"
 ThemeFile {
     name: "winamp",
     colors: ThemeColors {
-        background: Hex(
+        background: Rgb(
             [
                 0,
                 0,
                 0,
             ],
         ),
-        foreground: Hex(
+        foreground: Rgb(
             [
                 150,
                 150,
                 150,
             ],
         ),
-        bright_foreground: Hex(
+        bright_foreground: Rgb(
             [
                 255,
                 255,
                 255,
             ],
         ),
-        accent: Hex(
+        accent: Rgb(
             [
                 0,
                 255,
                 0,
             ],
         ),
-        green: Hex(
+        green: Rgb(
             [
                 41,
                 206,
                 16,
             ],
         ),
-        yellow: Hex(
+        yellow: Rgb(
             [
                 214,
                 181,
                 33,
             ],
         ),
-        red: Hex(
+        red: Rgb(
             [
                 239,
                 49,

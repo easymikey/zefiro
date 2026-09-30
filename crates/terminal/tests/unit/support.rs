@@ -19,7 +19,7 @@ use kernel::{
     update::keymap::{Bindings, KeyBinding},
 };
 use raster::VinylColors;
-use terminal::{CoverKey, CoverLook, CoverMoment, CoverPlacement, CoverSources};
+use terminal::{CoverKey, CoverLook, CoverMoment, CoverParts, CoverPlacement};
 use widgets::{
     CellAspect,
     ColorDepth,
@@ -114,7 +114,7 @@ impl Scenery {
         }
     }
 
-    pub(crate) fn sources(&self, placement: CoverPlacement) -> CoverSources<'_> {
+    pub(crate) fn sources(&self, placement: CoverPlacement) -> CoverParts<'_> {
         self.sources_at(placement, Duration::ZERO)
     }
 
@@ -122,12 +122,12 @@ impl Scenery {
         &self,
         placement: CoverPlacement,
         clock: Duration,
-    ) -> CoverSources<'_> {
+    ) -> CoverParts<'_> {
         let scene = self.scene_at(clock);
-        CoverSources {
+        CoverParts {
             key: CoverKey {
-                config_generation: scene.model.config_generation,
-                theme_generation: scene.model.theme_generation,
+                config_generation: scene.model.revisions.config,
+                theme_generation: scene.model.revisions.theme,
             },
             look: CoverLook {
                 style: scene.cover_style(),

@@ -136,15 +136,15 @@ fn elapsed_is_the_clock_delta_while_an_animation_is_running() {
     assert!(stage.is_running(), "sanity: something needs the delta");
 
     assert_eq!(
-        stage.elapsed_since(Duration::from_millis(100)),
+        stage.advance_clock(Duration::from_millis(100)),
         Duration::from_millis(100)
     );
     assert_eq!(
-        stage.elapsed_since(Duration::from_millis(133)),
+        stage.advance_clock(Duration::from_millis(133)),
         Duration::from_millis(33)
     );
     assert_eq!(
-        stage.elapsed_since(Duration::from_millis(100)),
+        stage.advance_clock(Duration::from_millis(100)),
         Duration::ZERO
     );
 }
@@ -152,13 +152,13 @@ fn elapsed_is_the_clock_delta_while_an_animation_is_running() {
 #[test]
 fn an_idle_gap_is_not_charged_to_the_animation_the_next_frame_stages() {
     let mut stage = AnimationStage::default();
-    let first = stage.elapsed_since(Duration::ZERO);
+    let first = stage.advance_clock(Duration::ZERO);
     stage.play(Vec::new(), &overlay_backdrop(None));
     let mut buffer = animation_frame();
     stage.advance(&mut buffer, first);
     assert!(!stage.is_running(), "sanity: an idle, empty stage");
 
-    let gap = stage.elapsed_since(Duration::from_secs(4));
+    let gap = stage.advance_clock(Duration::from_secs(4));
     stage.play(vec![Cue::OverlayOpened], &overlay_backdrop(Some(AREA)));
     assert_eq!(gap, Duration::ZERO, "nothing was running to step");
 
@@ -190,8 +190,8 @@ fn the_same_cue_twice_in_one_frame_stages_it_once() {
     single.play(vec![Cue::FavoriteToggled], &pane_backdrop());
 
     assert_eq!(
-        doubled.staged(),
-        single.staged(),
+        doubled.staged_count(),
+        single.staged_count(),
         "one batch of identical cues is one visible change"
     );
 }
@@ -200,11 +200,15 @@ fn the_same_cue_twice_in_one_frame_stages_it_once() {
 fn a_frame_with_no_cues_leaves_a_running_animation_alone() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::FavoriteToggled], &pane_backdrop());
-    let staged = stage.staged();
+    let staged = stage.staged_count();
 
     stage.play(Vec::new(), &pane_backdrop());
 
-    assert_eq!(stage.staged(), staged, "nothing was cued, nothing changes");
+    assert_eq!(
+        stage.staged_count(),
+        staged,
+        "nothing was cued, nothing changes"
+    );
 }
 
 #[test]
@@ -433,7 +437,7 @@ fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
     };
 
     let mut stage = AnimationStage::default();
-    let start = stage.elapsed_since(scene.clock);
+    let start = stage.advance_clock(scene.clock);
     stage.play(vec![Cue::ThemeChanged], &backdrop);
     assert!(
         stage.is_running(),
@@ -443,14 +447,14 @@ fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
     let mut buffer = Buffer::empty(crate::unit::support::SCREEN);
     stage.advance(&mut buffer, start);
     let mid = scene.clock + slice(|t| t.screen_wash, 4);
-    let elapsed = stage.elapsed_since(mid);
+    let elapsed = stage.advance_clock(mid);
     stage.advance(&mut buffer, elapsed);
     assert!(
         stage.is_running(),
         "the wash is still under way midway through, driven only by the scene's clock"
     );
 
-    let same_reading = stage.elapsed_since(mid);
+    let same_reading = stage.advance_clock(mid);
     assert_eq!(
         same_reading,
         Duration::ZERO,

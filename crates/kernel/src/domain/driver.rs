@@ -31,7 +31,7 @@ impl Driver {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum DriverFailure {
+pub enum DriverError {
     #[error("panicked: {0}")]
     Panicked(String),
 }
@@ -40,7 +40,7 @@ pub enum DriverFailure {
 pub enum DriverStatus {
     #[default]
     Running,
-    Dead(DriverFailure),
+    Dead(DriverError),
     Stopped,
 }
 
@@ -123,9 +123,9 @@ mod tests {
 
     #[test]
     fn with_strategy_replaces_one_row() {
-        use crate::domain::{Notice, Supervision};
+        use crate::domain::{Announce, Fallback, Supervision};
 
-        let replacement = Supervision::Degrade(Notice::Silent);
+        let replacement = Supervision::Fallback(Fallback::Degrade(Announce::Silent));
         let drivers = Drivers::default().with_strategy(Driver::Audio, replacement);
 
         assert_eq!(drivers.record(Driver::Audio).strategy, replacement);

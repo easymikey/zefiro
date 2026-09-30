@@ -193,7 +193,7 @@ const FORBIDDEN_TYPE_SUFFIXES: &[&str] = &["Spec", "Slot"];
 const TYPE_DECL_KEYWORDS: &[&str] = &["struct", "enum", "type", "trait"];
 const TYPE_SUFFIX_CRATE_PENDING: &[&str] = &["widgets"];
 const TYPE_SUFFIX_NAME_PENDING: &[(&str, &str)] =
-    &[("kernel/src/domain/setting_row.rs", "SettingSpec")];
+    &[("kernel/src/domain/setting_row.rs", "SettingEntry")];
 
 fn is_pending_type(relative: &str, name: &str) -> bool {
     TYPE_SUFFIX_NAME_PENDING

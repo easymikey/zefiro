@@ -3,6 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use kernel::domain::{
     Crossfade,
     DeviceName,
+    OutputDevice,
     Percent,
     Replaygain,
     SleepPresets,
@@ -12,16 +13,16 @@ use kernel::domain::{
 use serde::{Deserialize, Deserializer};
 
 use crate::{
-    appearance::two_state,
-    error::{ConfigError, CrossfadeRejection, TomlFile, named_toml},
+    appearance::from_bool,
+    error::{CrossfadeError, Error, TomlFile, parse_toml},
     keymap::KeymapFile,
 };
 
 pub const CONFIG_FILE_NAME: &str = "config.toml";
 
-fn parse_crossfade(raw: &str) -> Result<Crossfade, CrossfadeRejection> {
+fn parse_crossfade(raw: &str) -> Result<Crossfade, CrossfadeError> {
     let trimmed = raw.trim();
-    let number = |source| CrossfadeRejection::Number {
+    let number = |source| CrossfadeError::Number {
         value: raw.to_string(),
         source,
     };
@@ -33,7 +34,7 @@ fn parse_crossfade(raw: &str) -> Result<Crossfade, CrossfadeRejection> {
             .map_err(number)?
     } else {
         let Some(seconds) = trimmed.strip_suffix('s') else {
-            return Err(CrossfadeRejection::MissingSuffix {
+            return Err(CrossfadeError::MissingSuffix {
                 value: raw.to_string(),
             });
         };
@@ -86,10 +87,10 @@ fn replaygain<'de, D>(deserializer: D) -> Result<Replaygain, D::Error>
 where
     D: Deserializer<'de>,
 {
-    two_state(deserializer, Replaygain::On, Replaygain::Off)
+    from_bool(deserializer, Replaygain::On, Replaygain::Off)
 }
 
-fn device<'de, D>(deserializer: D) -> Result<Option<DeviceName>, D::Error>
+fn device<'de, D>(deserializer: D) -> Result<OutputDevice, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -97,6 +98,7 @@ where
         .map(DeviceName::new)
         .transpose()
         .map_err(serde::de::Error::custom)
+        .map(|name| name.map_or(OutputDevice::SystemDefault, OutputDevice::Named))
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -107,7 +109,7 @@ pub struct AudioConfig {
     #[serde(deserialize_with = "replaygain")]
     pub replaygain: Replaygain,
     #[serde(deserialize_with = "device")]
-    pub device: Option<DeviceName>,
+    pub device: OutputDevice,
     #[serde(deserialize_with = "sleep_presets")]
     pub sleep_presets: SleepPresets,
 }
@@ -117,7 +119,7 @@ impl Default for AudioConfig {
         Self {
             crossfade: Crossfade::default(),
             replaygain: Replaygain::Off,
-            device: None,
+            device: OutputDevice::SystemDefault,
             sleep_presets: SleepPresets::default(),
         }
     }
@@ -126,7 +128,7 @@ impl Default for AudioConfig {
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct ConfigFile {
+pub struct ConfigToml {
     pub music_dir: Option<PathBuf>,
     #[serde(deserialize_with = "theme")]
     pub theme: ThemeChoice,
@@ -136,7 +138,7 @@ pub struct ConfigFile {
     pub keymap: KeymapFile,
 }
 
-impl Default for ConfigFile {
+impl Default for ConfigToml {
     fn default() -> Self {
         Self {
             music_dir: None,
@@ -148,8 +150,8 @@ impl Default for ConfigFile {
     }
 }
 
-pub fn parse_config(text: &str) -> Result<ConfigFile, ConfigError> {
-    named_toml(text, TomlFile::Config)
+pub fn parse_config(text: &str) -> Result<ConfigToml, Error> {
+    parse_toml(text, TomlFile::Config)
 }
 
 #[cfg(test)]
@@ -162,7 +164,7 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::{config_file::parse_config, error::ConfigError};
+    use crate::{config_file::parse_config, error::Error};
 
     #[rstest]
     #[case::an_empty_file("defaults", "")]
@@ -185,7 +187,7 @@ mod tests {
     #[test]
     fn invalid_toml_becomes_a_typed_parse_fault() {
         let parsed = parse_config("volume = \"not-a-number\"");
-        assert!(matches!(parsed, Err(ConfigError::Parse { .. })));
+        assert!(matches!(parsed, Err(Error::Parse { .. })));
     }
 
     #[rstest]
@@ -225,7 +227,7 @@ mod tests {
     fn crossfade_rejects_what_it_cannot_place(#[case] spelling: &str) {
         let text = format!("[audio]\ncrossfade = \"{spelling}\"\n");
         assert!(
-            matches!(parse_config(&text), Err(ConfigError::Parse { .. })),
+            matches!(parse_config(&text), Err(Error::Parse { .. })),
             "{spelling:?} must not parse"
         );
     }
@@ -249,7 +251,7 @@ mod tests {
     #[case::device_empty("[audio]\ndevice = \"\"\n")]
     fn config_values_out_of_range_are_rejected(#[case] text: &str) {
         assert!(
-            matches!(parse_config(text), Err(ConfigError::Parse { .. })),
+            matches!(parse_config(text), Err(Error::Parse { .. })),
             "{text:?} must not parse"
         );
     }

@@ -3,14 +3,14 @@ use std::{sync::Arc, time::Duration};
 use crate::{
     cmd::{Cmd, PlaybackChange},
     domain::{Moment, Pause, Player, Playhead, Preload, Track},
-    update::player::{Anchor, Resume, StartOrigin, Transition, seek_effect, start},
+    update::player::{Anchor, StartOrigin, Transition, seek_effect, start},
 };
 
 impl Player {
     pub(crate) fn toggle(
         self,
         current: Option<Arc<Track>>,
-        resume: Resume,
+        anchor: Anchor,
     ) -> Transition {
         match self {
             Player::Stopped => current.map_or_else(
@@ -21,7 +21,7 @@ impl Player {
             Player::Playing { track, head, .. } => Ok((
                 Player::Paused {
                     track,
-                    at: head.position_at(resume.anchor.now),
+                    at: head.position_at(anchor.now),
                     pause: Pause::ByListener,
                 },
                 PlaybackChange::Pause.cued(),
@@ -29,11 +29,7 @@ impl Player {
             Player::Paused { track, at, .. } => Ok((
                 Player::Playing {
                     track,
-                    head: Playhead::anchored(
-                        at,
-                        resume.anchor.now,
-                        resume.anchor.speed,
-                    ),
+                    head: Playhead::anchored(at, anchor.now, anchor.speed),
                     preload: Preload::None,
                 },
                 PlaybackChange::Play.cued(),

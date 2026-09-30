@@ -1,4 +1,4 @@
-use config::Hex;
+use config::Rgb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SleeveFace {
@@ -8,25 +8,25 @@ pub enum SleeveFace {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VinylColors {
-    pub paper: Hex,
-    pub border: Hex,
-    pub record: Hex,
-    pub groove: Hex,
-    pub accent: Hex,
-    pub shadow: Hex,
-    pub blank_paper: Hex,
+    pub paper: Rgb,
+    pub border: Rgb,
+    pub record: Rgb,
+    pub groove: Rgb,
+    pub accent: Rgb,
+    pub shadow: Rgb,
+    pub blank_paper: Rgb,
 }
 
 impl Default for VinylColors {
     fn default() -> Self {
         Self {
-            paper: Hex([0xec, 0xe6, 0xd6]),
-            border: Hex([0x3a, 0x3a, 0x3a]),
-            record: Hex([0x10, 0x10, 0x10]),
-            groove: Hex([0xff, 0xff, 0xff]),
-            accent: Hex([0xff, 0x6b, 0x3d]),
-            shadow: Hex([0x00, 0x00, 0x00]),
-            blank_paper: Hex([0x1a, 0x1a, 0x1a]),
+            paper: Rgb([0xec, 0xe6, 0xd6]),
+            border: Rgb([0x3a, 0x3a, 0x3a]),
+            record: Rgb([0x10, 0x10, 0x10]),
+            groove: Rgb([0xff, 0xff, 0xff]),
+            accent: Rgb([0xff, 0x6b, 0x3d]),
+            shadow: Rgb([0x00, 0x00, 0x00]),
+            blank_paper: Rgb([0x1a, 0x1a, 0x1a]),
         }
     }
 }

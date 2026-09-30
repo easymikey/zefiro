@@ -8,7 +8,7 @@ use crate::domain::{
     Loaded,
     Player,
     PlaylistIndex,
-    Revision,
+    Revisions,
     Settings,
     ThemeName,
     Themes,
@@ -30,6 +30,13 @@ pub enum ScanStatus {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum WindowColors {
+    Themed(ThemeName),
+    #[default]
+    Default,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Model {
     pub workspace: Workspace,
@@ -44,16 +51,10 @@ pub struct Model {
     pub history: History,
     pub favorites: Favorites,
     pub settings: Settings,
-    pub custom_rows: Vec<CustomSetting>,
-    pub config_generation: Revision,
-    pub theme_generation: Revision,
-    pub scan_generation: Revision,
-    pub toast_generation: Revision,
-    pub sleep_generation: Revision,
-    pub mark_generation: Revision,
-    pub effects: Revision,
+    pub custom_settings: Vec<CustomSetting>,
+    pub revisions: Revisions,
     pub themes: Themes,
-    pub window_colors: Option<ThemeName>,
+    pub window_colors: WindowColors,
     pub drivers: Drivers,
 }
 
@@ -68,7 +69,7 @@ impl Model {
     #[must_use]
     pub fn playing_index(&self) -> Option<PlaylistIndex> {
         let current = self.player.current()?;
-        let index = self.playlist.anchor()?;
+        let index = self.playlist.playing_index()?;
         let at_index = self.playlist.current()?;
         (current.path() == at_index.path()).then_some(index)
     }
@@ -189,7 +190,7 @@ mod playing_index_tests {
     fn model_with(tracks: Vec<Arc<Track>>, index: Option<PlaylistIndex>) -> Model {
         Model {
             playlist: Playlist {
-                at: Cursor::with_len(tracks.len())
+                cursor: Cursor::with_len(tracks.len())
                     .at(index.map_or(0, PlaylistIndex::get)),
                 tracks,
                 ..Playlist::default()

@@ -4,6 +4,7 @@ mod crossfade;
 mod cursor;
 mod cursor_over;
 mod digit;
+mod direction;
 mod driver;
 mod favorites;
 mod history;
@@ -20,6 +21,7 @@ mod player;
 mod playhead;
 pub mod playlist;
 mod revision;
+mod scan_mode;
 mod setting_row;
 mod settings;
 mod sleep;
@@ -36,17 +38,17 @@ mod workspace;
 pub use bounded::Bounded;
 pub use chord::{CharSink, Chord, ChordParseError, ChordPrefix, KeyPattern};
 pub use crossfade::{Crossfade, CrossfadeOutOfRange};
-pub use cursor::{Cursor, CursorDirection, RowDelta};
-pub use cursor_over::{CursorOver, Nudge};
-pub(crate) use cursor_over::{ListMotion, cycled};
+pub use cursor::Cursor;
+pub use cursor_over::CursorOver;
+pub(crate) use cursor_over::cycled;
 pub(crate) use digit::digit_char;
 pub use digit::digits;
-pub use driver::{Driver, DriverFailure, DriverRecord, DriverStatus, Drivers};
+pub use direction::Direction;
+pub use driver::{Driver, DriverError, DriverRecord, DriverStatus, Drivers};
 pub use favorites::Favorites;
-pub use history::{History, HistoryEntry};
+pub use history::{HISTORY_LIMIT, History, HistoryEntry};
 pub use index::{PlaylistIndex, TrackIndex};
 pub use key::{Key, KeyCode, KeyPress, Modifiers};
-pub(crate) use keymap::KeyValidationErrors;
 pub use keymap::{
     Action,
     DefaultBinding,
@@ -57,62 +59,62 @@ pub use keymap::{
     KeymapOverrides,
 };
 pub use loaded::Loaded;
-pub use model::{Model, ScanStatus};
+pub use model::{Model, ScanStatus, WindowColors};
 pub use moment::{Moment, UnixSeconds};
 pub(crate) use overlay::JumpInputLimits;
 pub use overlay::{
     DeleteCandidate,
     JumpDigits,
+    MusicDirError,
     Overlay,
     OverlayName,
     SearchQuery,
-    SettingsCursor,
-    SourceDirError,
     TextCapture,
     TextEntry,
 };
 pub use percent::Percent;
-pub use player::{AbLoop, Pause, PlaybackMotion, Player, Preload};
+pub use player::{AbLoop, Pause, Player, Preload};
 pub use playhead::Playhead;
-pub use revision::{Delivery, Reply, Revision};
+pub use revision::{Reply, Revision, Revisions};
+pub use scan_mode::ScanMode;
 pub use setting_row::{
     Choice,
     CustomControl,
+    CustomRow,
     CustomSetting,
-    CustomSpec,
     OptionCount,
     OptionIndex,
     SETTINGS,
     SettingControl,
+    SettingEntry,
     SettingId,
     SettingRow,
-    SettingSpec,
 };
 pub use settings::{
     DeviceDefault,
     DeviceName,
-    DeviceNameRejection,
+    DeviceNameError,
+    ListedDevice,
     OutputDevice,
     Replaygain,
     Settings,
     format_sleep_presets_label,
 };
 pub use sleep::{SLEEP_PRESET_BUNDLES, SleepPresetBundles, SleepTimer};
-pub use sleep_presets::{SleepPresetRejection, SleepPresets};
+pub use sleep_presets::{SleepPresetError, SleepPresets};
 pub use speed::Speed;
 pub use startup::{Shuffle, Startup};
-pub use supervision::{Decision, Fallback, Notice, Restarts, Supervision, supervise};
-pub use theme::{ThemeChoice, ThemeName, ThemeNameRejection, Themes};
+pub use supervision::{Announce, Decision, Fallback, Restarts, Supervision, supervise};
+pub use theme::{ThemeChoice, ThemeName, ThemeNameError, Themes};
 pub(crate) use time::parse_timecode;
 pub use time::{TimecodeError, format_time};
 pub use track::{AudioFormat, Tagging, Tags, Track};
 pub(crate) use transport::SeekSteps;
-pub use transport::{Output, OutputFault, SeekStep, SpeedStep, Transport, VolumeStep};
+pub use transport::{Output, PRELOAD_LEAD, StreamError, Transport};
 pub use workspace::{
     Browse,
-    ConfigFailure,
+    ConfigError,
     ConfigFile,
-    ConfigSource,
     SaveLine,
     SavePhase,
     TOAST_LIFETIME,

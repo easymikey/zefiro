@@ -2,12 +2,10 @@ use std::time::Duration;
 
 use kernel::{
     AudioCmd,
-    AudioEvent,
     Cmd,
     Cue,
     DriverMessage,
     Effect,
-    EngineRejection,
     LibraryCmd,
     Message,
     Model,
@@ -20,8 +18,8 @@ use kernel::{
     Speed,
     Timer,
     ToastLevel,
-    domain::{Driver, DriverFailure, DriverStatus, Fallback, Notice, Supervision},
-    update::{Rejection, update},
+    domain::{Announce, Driver, DriverError, DriverStatus, Fallback, Supervision},
+    update::update,
 };
 
 use crate::support::{bare_track, dated_track, first_toast_expiry, playing_model};
@@ -29,7 +27,7 @@ use crate::support::{bare_track, dated_track, first_toast_expiry, playing_model}
 fn died(driver: Driver) -> Message {
     Message::Driver(
         driver,
-        DriverMessage::Died(DriverFailure::Panicked("index out of bounds".to_string())),
+        DriverMessage::Died(DriverError::Panicked("index out of bounds".to_string())),
     )
 }
 
@@ -49,7 +47,7 @@ fn a_driver_death_is_recorded_and_told_as_an_error() {
 
     assert_eq!(
         model.drivers.status(Driver::Config),
-        &DriverStatus::Dead(DriverFailure::Panicked("index out of bounds".to_string()))
+        &DriverStatus::Dead(DriverError::Panicked("index out of bounds".to_string()))
     );
     assert_eq!(
         model
@@ -64,21 +62,6 @@ fn a_driver_death_is_recorded_and_told_as_an_error() {
     );
 }
 
-#[test]
-fn an_engine_rejection_is_returned_without_a_toast() {
-    let mut model = playing_model(3);
-    let rejection = EngineRejection::WhileNotPlaying("/tmp/track1.flac".into());
-
-    let outcome = update(
-        &mut model,
-        Message::Audio(AudioEvent::Rejected(rejection.clone())),
-        Moment::default(),
-    );
-
-    assert_eq!(outcome, Err(Rejection::Engine(rejection)));
-    assert!(model.workspace.toast.is_none());
-}
-
 struct StrategyRow {
     driver: Driver,
     strategy: Option<Supervision>,
@@ -87,7 +70,7 @@ struct StrategyRow {
     check: fn(&Cmd),
 }
 
-fn starts_with_restart_and_boots_audio(cmd: &Cmd) {
+fn starts_with_restart_and_starts_audio(cmd: &Cmd) {
     let effects: Vec<&Effect> = cmd.effects().collect();
     assert!(matches!(
         effects.first(),
@@ -134,10 +117,11 @@ fn restarts_and_rescans_library(cmd: &Cmd) {
         effects.first(),
         Some(Effect::Restart(Driver::Library))
     ));
-    assert!(effects.iter().any(|effect| matches!(
-        effect,
-        Effect::Library(LibraryCmd::ScanLibrary { .. })
-    )));
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Library(LibraryCmd::Scan { .. })))
+    );
 }
 
 #[rstest::rstest]
@@ -146,13 +130,13 @@ fn restarts_and_rescans_library(cmd: &Cmd) {
     strategy: None,
     prior_restarts: 0,
     expected_status: || DriverStatus::Running,
-    check: starts_with_restart_and_boots_audio,
+    check: starts_with_restart_and_starts_audio,
 })]
 #[case::restart_budget_spent_degrades_with_a_toast(StrategyRow {
     driver: Driver::Audio,
     strategy: None,
     prior_restarts: 3,
-    expected_status: || DriverStatus::Dead(DriverFailure::Panicked(
+    expected_status: || DriverStatus::Dead(DriverError::Panicked(
         "index out of bounds".to_string()
     )),
     check: degrades_audio_with_a_toast,
@@ -163,10 +147,10 @@ fn restarts_and_rescans_library(cmd: &Cmd) {
         attempts: 3,
         first: Duration::from_secs(1),
         longest: Duration::from_secs(8),
-        then: Fallback::Degrade(Notice::Toast),
+        then: Fallback::Degrade(Announce::Toast),
     }),
     prior_restarts: 0,
-    expected_status: || DriverStatus::Dead(DriverFailure::Panicked(
+    expected_status: || DriverStatus::Dead(DriverError::Panicked(
         "index out of bounds".to_string()
     )),
     check: schedules_a_one_second_restart,
@@ -175,16 +159,16 @@ fn restarts_and_rescans_library(cmd: &Cmd) {
     driver: Driver::Macos,
     strategy: None,
     prior_restarts: 0,
-    expected_status: || DriverStatus::Dead(DriverFailure::Panicked(
+    expected_status: || DriverStatus::Dead(DriverError::Panicked(
         "index out of bounds".to_string()
     )),
     check: changes_nothing,
 })]
 #[case::fatal_quits(StrategyRow {
     driver: Driver::Config,
-    strategy: Some(Supervision::Fatal),
+    strategy: Some(Supervision::Fallback(Fallback::Quit)),
     prior_restarts: 0,
-    expected_status: || DriverStatus::Dead(DriverFailure::Panicked(
+    expected_status: || DriverStatus::Dead(DriverError::Panicked(
         "index out of bounds".to_string()
     )),
     check: quits,
@@ -224,7 +208,7 @@ struct TimerRow {
 
 #[rstest::rstest]
 #[case::dead_restarts(TimerRow {
-    start: DriverStatus::Dead(DriverFailure::Panicked("boom".to_string())),
+    start: DriverStatus::Dead(DriverError::Panicked("boom".to_string())),
     expected_status: DriverStatus::Running,
     landed: |cmd| cmd
         .effects()
@@ -262,7 +246,7 @@ fn congestion_raises_one_toast_naming_the_driver() {
 
     let cmd = update(
         &mut model,
-        Message::Driver(Driver::Library, DriverMessage::Congested),
+        Message::Driver(Driver::Library, DriverMessage::Full),
         Moment::default(),
     )
     .unwrap();
@@ -345,7 +329,7 @@ fn an_audio_restart_resumes_from_the_same_place(#[case] row: ResumeRow) {
     )));
     assert!(effects.iter().any(|effect| matches!(
         effect,
-        Effect::Audio(AudioCmd::Pause(playback)) if *playback == row.playback
+        Effect::Audio(AudioCmd::Playback(playback)) if *playback == row.playback
     )));
     assert_eq!(model.drivers.status(Driver::Audio), &DriverStatus::Running);
 }

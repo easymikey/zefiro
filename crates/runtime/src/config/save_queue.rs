@@ -9,21 +9,25 @@ use kernel::{ConfigPatch, DevicePatch};
 use crate::{
     config::{
         ConfigPaths,
-        write::{Written, save, save_appearance},
+        write::{Written, save_appearance, save_config},
     },
     error::SaveError,
 };
 
 #[derive(Debug, Default)]
-pub(crate) struct Flushed {
+pub(crate) struct Saved {
     pub config: Option<Result<Written, SaveError>>,
     pub appearance: Option<Result<Written, SaveError>>,
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct SavePatches {
-    pub config: Option<ConfigPatch>,
-    pub appearance: Option<AppearancePatch>,
+pub(crate) enum SavePatches {
+    Config(ConfigPatch),
+    Appearance(AppearancePatch),
+    Both {
+        config: ConfigPatch,
+        appearance: AppearancePatch,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -62,7 +66,7 @@ impl SaveQueue {
         .min()
     }
 
-    pub(crate) fn queue(&mut self, now: Instant, patch: ConfigPatch) {
+    pub(crate) fn queue_config(&mut self, now: Instant, patch: ConfigPatch) {
         let base = self.pending_config.take().map(|pending| pending.patch);
         self.pending_config = Some(PendingSave {
             patch: merge_config_patch(base, patch),
@@ -106,10 +110,13 @@ fn gather(
     config: Option<ConfigPatch>,
     appearance: Option<AppearancePatch>,
 ) -> Option<SavePatches> {
-    if config.is_none() && appearance.is_none() {
-        None
-    } else {
-        Some(SavePatches { config, appearance })
+    match (config, appearance) {
+        (None, None) => None,
+        (Some(config), None) => Some(SavePatches::Config(config)),
+        (None, Some(appearance)) => Some(SavePatches::Appearance(appearance)),
+        (Some(config), Some(appearance)) => {
+            Some(SavePatches::Both { config, appearance })
+        }
     }
 }
 
@@ -142,7 +149,7 @@ fn merge_appearance_patch(
         cover_brackets: next.cover_brackets.or(base.cover_brackets),
         format_chips: next.format_chips.or(base.format_chips),
         speed_chip: next.speed_chip.or(base.speed_chip),
-        progress_remaining: next.progress_remaining.or(base.progress_remaining),
+        progress_time: next.progress_time.or(base.progress_time),
         key_hints: next.key_hints.or(base.key_hints),
         animations: next.animations.or(base.animations),
         layout_mode: next.layout_mode.or(base.layout_mode),
@@ -151,7 +158,7 @@ fn merge_appearance_patch(
 
 #[derive(Debug)]
 pub(crate) struct SavePaths {
-    config: Option<PathBuf>,
+    config: PathBuf,
     appearance: PathBuf,
 }
 
@@ -165,20 +172,22 @@ impl SavePaths {
     }
 
     #[must_use]
-    pub(crate) fn write(&self, patches: SavePatches) -> Flushed {
-        Flushed {
-            config: patches
-                .config
-                .map(|patch| run_save(self.config.as_ref(), patch)),
-            appearance: patches
-                .appearance
-                .map(|patch| save_appearance(&self.appearance, patch)),
+    pub(crate) fn write(&self, patches: SavePatches) -> Saved {
+        match patches {
+            SavePatches::Config(config) => Saved {
+                config: Some(save_config(&self.config, config)),
+                appearance: None,
+            },
+            SavePatches::Appearance(appearance) => Saved {
+                config: None,
+                appearance: Some(save_appearance(&self.appearance, appearance)),
+            },
+            SavePatches::Both { config, appearance } => Saved {
+                config: Some(save_config(&self.config, config)),
+                appearance: Some(save_appearance(&self.appearance, appearance)),
+            },
         }
     }
-}
-
-fn run_save(path: Option<&PathBuf>, patch: ConfigPatch) -> Result<Written, SaveError> {
-    path.map_or(Err(SaveError::NoConfigDirectory), |path| save(path, patch))
 }
 
 #[cfg(test)]
@@ -193,14 +202,11 @@ mod tests {
         domain::{Crossfade, DeviceName, ThemeName},
     };
 
-    use crate::{
-        config::coalesce::{
-            SavePatches,
-            SavePaths,
-            merge_appearance_patch,
-            merge_config_patch,
-        },
-        error::SaveError,
+    use crate::config::save_queue::{
+        SavePatches,
+        SavePaths,
+        merge_appearance_patch,
+        merge_config_patch,
     };
 
     fn crossfade(seconds: u64) -> Crossfade {
@@ -208,14 +214,11 @@ mod tests {
     }
 
     fn theme_only(name: &'static str) -> SavePatches {
-        SavePatches {
-            config: Some(
-                ConfigPatch::builder()
-                    .theme(ThemeName::from_static(name))
-                    .build(),
-            ),
-            appearance: None,
-        }
+        SavePatches::Config(
+            ConfigPatch::builder()
+                .theme(ThemeName::from_static(name))
+                .build(),
+        )
     }
 
     #[test]
@@ -272,7 +275,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.toml");
         let paths = SavePaths {
-            config: Some(path.clone()),
+            config: path.clone(),
             appearance: directory.path().join("window.toml"),
         };
 
@@ -282,21 +285,5 @@ mod tests {
         assert!(text.contains("theme = \"dark\""));
         assert!(matches!(flushed.config, Some(Ok(_))));
         assert!(flushed.appearance.is_none());
-    }
-
-    #[test]
-    fn a_save_with_no_path_reports_no_config_dir() {
-        let directory = tempfile::tempdir().unwrap();
-        let paths = SavePaths {
-            config: None,
-            appearance: directory.path().join("window.toml"),
-        };
-
-        let flushed = paths.write(theme_only("dark"));
-
-        assert!(matches!(
-            flushed.config,
-            Some(Err(SaveError::NoConfigDirectory))
-        ));
     }
 }

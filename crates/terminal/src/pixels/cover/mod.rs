@@ -1,4 +1,5 @@
 mod crossfade;
+mod lifecycle;
 mod milkdrop;
 mod pixel;
 mod protocol;
@@ -20,9 +21,8 @@ use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
 use widgets::{CoverArt, FrameLayout, MilkdropColors, Playing, Spectrum};
 
 use crate::pixels::cover::{
-    milkdrop::{MilkdropCover, MilkdropSources},
-    pixel::{PlainCover, PlainSources},
-    vinyl::{VinylCover, VinylSources},
+    lifecycle::{Cover, CoverRefresh, PixmapSource},
+    milkdrop::{MilkdropCover, MilkdropParts},
 };
 
 /// A cover already decoded to pixels, handed in from outside the crate.
@@ -32,16 +32,17 @@ pub struct DecodedCover {
     pub image: Arc<RgbaImage>,
 }
 
-/// A frame's cover art, owned outside `Pixels` so the shell can borrow it
-/// across a single `terminal.draw` call while `Pixels::place` runs inside.
+/// A frame's cover art, owned outside `CoverRenderer` so the shell can borrow
+/// it across a single `terminal.draw` call while `CoverRenderer::place` runs
+/// inside.
 #[derive(Debug, Clone)]
-pub enum CoverArtOwner {
+pub enum OwnedCoverArt {
     Missing,
     Image,
     Text(Arc<[Line<'static>]>),
 }
 
-impl CoverArtOwner {
+impl OwnedCoverArt {
     #[must_use]
     pub fn as_cover_art(&self) -> CoverArt<'_> {
         match self {
@@ -84,7 +85,7 @@ pub struct CoverPlacement {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct CoverSources<'a> {
+pub struct CoverParts<'a> {
     pub key: CoverKey,
     pub look: CoverLook,
     pub moment: CoverMoment<'a>,
@@ -113,17 +114,29 @@ pub struct CoverMoment<'a> {
     pub bands: &'a Spectrum,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub(crate) struct CoverPixels {
     decoded: Option<DecodedCover>,
     active: Option<CoverStyle>,
-    plain: PlainCover,
-    vinyl: VinylCover,
+    plain: Cover,
+    vinyl: Cover,
     milkdrop: MilkdropCover,
 }
 
+impl Default for CoverPixels {
+    fn default() -> Self {
+        Self {
+            decoded: None,
+            active: None,
+            plain: Cover::new(PixmapSource::Plain),
+            vinyl: Cover::new(PixmapSource::Vinyl(Box::default())),
+            milkdrop: MilkdropCover::default(),
+        }
+    }
+}
+
 impl CoverPixels {
-    pub(crate) fn accept(&mut self, cover: DecodedCover) {
+    pub(crate) fn set_cover(&mut self, cover: DecodedCover) {
         self.decoded = Some(cover);
     }
 
@@ -135,9 +148,9 @@ impl CoverPixels {
     pub(crate) fn refresh(
         &mut self,
         picker: &Picker,
-        sources: CoverSources<'_>,
-    ) -> CoverArtOwner {
-        let CoverSources {
+        sources: CoverParts<'_>,
+    ) -> OwnedCoverArt {
+        let CoverParts {
             key,
             look,
             moment,
@@ -145,34 +158,21 @@ impl CoverPixels {
         } = sources;
         let CoverPlacement { layout, fade, wash } = placement;
         self.active = Some(look.style);
-        let decoded = self.decoded.as_ref();
+        let refresh = CoverRefresh {
+            key,
+            colors: look.vinyl,
+            clock: moment.clock,
+            animations: look.animations,
+            layout,
+            decoded: self.decoded.as_ref(),
+            fade,
+            wash,
+        };
         match look.style {
-            CoverStyle::Off => CoverArtOwner::Missing,
-            CoverStyle::Plain => self.plain.refresh(
-                picker,
-                PlainSources {
-                    clock: moment.clock,
-                    animations: look.animations,
-                    layout,
-                    decoded,
-                    fade,
-                    wash,
-                },
-            ),
-            CoverStyle::Vinyl => self.vinyl.refresh(
-                picker,
-                VinylSources {
-                    key,
-                    colors: look.vinyl,
-                    clock: moment.clock,
-                    animations: look.animations,
-                    layout,
-                    decoded,
-                    fade,
-                    wash,
-                },
-            ),
-            CoverStyle::Milkdrop => self.milkdrop.refresh(MilkdropSources {
+            CoverStyle::Off => OwnedCoverArt::Missing,
+            CoverStyle::Plain => self.plain.refresh(picker, refresh),
+            CoverStyle::Vinyl => self.vinyl.refresh(picker, refresh),
+            CoverStyle::Milkdrop => self.milkdrop.refresh(MilkdropParts {
                 moment,
                 colors: look.milkdrop,
                 layout,

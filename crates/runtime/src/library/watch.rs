@@ -5,8 +5,6 @@ use kernel::{
     update::{Machine, Rejected},
 };
 
-use crate::library::repoint;
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct LibraryWatch {
     pub(crate) registered: Registered,
@@ -18,7 +16,7 @@ pub(crate) enum Registered {
     #[default]
     Unrooted,
     On {
-        root: PathBuf,
+        music_dir: PathBuf,
         burst: Burst,
     },
 }
@@ -30,32 +28,35 @@ pub(crate) enum Burst {
 }
 
 #[derive(Debug)]
-pub(crate) enum LibraryWatchMessage {
-    Rescan { root: PathBuf, revision: Revision },
+pub(crate) enum WatchMessage {
+    Rescan {
+        music_dir: PathBuf,
+        revision: Revision,
+    },
     FilesystemChange(Result<(), notify::Error>),
     DebounceElapsed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LibraryWatchRejection {
+pub(crate) enum WatchError {
     Unwatched,
     Settled,
 }
 
 #[derive(Debug, Default)]
-pub(crate) enum WatchIo {
-    Move {
+pub(crate) enum WatchEffect {
+    Rename {
         from: PathBuf,
         to: PathBuf,
         revision: Revision,
     },
     ArmDebounce,
     Rescan {
-        root: PathBuf,
+        music_dir: PathBuf,
         revision: Revision,
     },
     RegisterAndRescan {
-        root: PathBuf,
+        music_dir: PathBuf,
         revision: Revision,
     },
     Report(notify::Error),
@@ -63,28 +64,28 @@ pub(crate) enum WatchIo {
     Nothing,
 }
 
-type Step = Result<(LibraryWatch, WatchIo), Rejected<LibraryWatch>>;
-pub(crate) type Row =
-    Result<(Registered, WatchIo), (Registered, LibraryWatchRejection)>;
+type Step = Result<(LibraryWatch, WatchEffect), Rejected<LibraryWatch>>;
+pub(crate) type Row = Result<(Registered, WatchEffect), (Registered, WatchError)>;
 
 impl Machine for LibraryWatch {
-    type Message = LibraryWatchMessage;
-    type Rejection = LibraryWatchRejection;
-    type Effect = WatchIo;
+    type Message = WatchMessage;
+    type Error = WatchError;
+    type Effect = WatchEffect;
 
-    fn transition(self, message: LibraryWatchMessage) -> Step {
+    fn transition(self, message: WatchMessage) -> Step {
         let LibraryWatch {
             registered,
             last_scan,
         } = self;
         match message {
-            LibraryWatchMessage::Rescan { root, revision } => {
-                Ok(repoint::rescan(registered, root, revision))
-            }
-            LibraryWatchMessage::FilesystemChange(event) => {
+            WatchMessage::Rescan {
+                music_dir,
+                revision,
+            } => Ok(rescan(registered, music_dir, revision)),
+            WatchMessage::FilesystemChange(event) => {
                 reseat(filesystem_change(registered, event), last_scan)
             }
-            LibraryWatchMessage::DebounceElapsed => {
+            WatchMessage::DebounceElapsed => {
                 reseat(debounce_elapsed(registered, last_scan), last_scan)
             }
         }
@@ -94,43 +95,42 @@ impl Machine for LibraryWatch {
 fn filesystem_change(registered: Registered, event: Result<(), notify::Error>) -> Row {
     match (registered, event) {
         (registered @ Registered::Unrooted, Ok(()) | Err(_)) => {
-            Err((registered, LibraryWatchRejection::Unwatched))
+            Err((registered, WatchError::Unwatched))
         }
-        (Registered::On { root, .. }, Ok(())) => Ok((
+        (Registered::On { music_dir, .. }, Ok(())) => Ok((
             Registered::On {
-                root,
+                music_dir,
                 burst: Burst::Armed,
             },
-            WatchIo::ArmDebounce,
+            WatchEffect::ArmDebounce,
         )),
-        (Registered::On { root, burst }, Err(error)) => {
-            Ok((Registered::On { root, burst }, WatchIo::Report(error)))
-        }
+        (Registered::On { music_dir, burst }, Err(error)) => Ok((
+            Registered::On { music_dir, burst },
+            WatchEffect::Report(error),
+        )),
     }
 }
 
 fn debounce_elapsed(registered: Registered, last_scan: Revision) -> Row {
     match registered {
-        registered @ Registered::Unrooted => {
-            Err((registered, LibraryWatchRejection::Unwatched))
-        }
+        registered @ Registered::Unrooted => Err((registered, WatchError::Unwatched)),
         Registered::On {
-            root,
+            music_dir,
             burst: Burst::Armed,
         } => Ok((
             Registered::On {
-                root: root.clone(),
+                music_dir: music_dir.clone(),
                 burst: Burst::Quiet,
             },
-            WatchIo::Rescan {
-                root,
+            WatchEffect::Rescan {
+                music_dir,
                 revision: last_scan,
             },
         )),
         registered @ Registered::On {
             burst: Burst::Quiet,
             ..
-        } => Err((registered, LibraryWatchRejection::Settled)),
+        } => Err((registered, WatchError::Settled)),
     }
 }
 
@@ -153,6 +153,61 @@ fn reseat(row: Row, last_scan: Revision) -> Step {
     }
 }
 
+fn rescan(
+    registered: Registered,
+    music_dir: PathBuf,
+    revision: Revision,
+) -> (LibraryWatch, WatchEffect) {
+    let (registered, io) = rewatch(registered, music_dir, revision);
+    (
+        LibraryWatch {
+            registered,
+            last_scan: revision,
+        },
+        io,
+    )
+}
+
+fn rewatch(
+    registered: Registered,
+    target: PathBuf,
+    revision: Revision,
+) -> (Registered, WatchEffect) {
+    match registered {
+        Registered::Unrooted => (
+            Registered::On {
+                music_dir: target.clone(),
+                burst: Burst::Quiet,
+            },
+            WatchEffect::RegisterAndRescan {
+                music_dir: target,
+                revision,
+            },
+        ),
+        Registered::On { music_dir, .. } if music_dir == target => (
+            Registered::On {
+                music_dir,
+                burst: Burst::Quiet,
+            },
+            WatchEffect::Rescan {
+                music_dir: target,
+                revision,
+            },
+        ),
+        Registered::On { music_dir, .. } => (
+            Registered::On {
+                music_dir: target.clone(),
+                burst: Burst::Quiet,
+            },
+            WatchEffect::Rename {
+                from: music_dir,
+                to: target,
+                revision,
+            },
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -163,13 +218,13 @@ mod tests {
     use crate::library::watch::{
         Burst,
         LibraryWatch,
-        LibraryWatchMessage,
-        LibraryWatchRejection,
         Registered,
-        WatchIo,
+        WatchEffect,
+        WatchError,
+        WatchMessage,
     };
 
-    fn root() -> PathBuf {
+    fn music_dir() -> PathBuf {
         PathBuf::from("/music")
     }
 
@@ -194,21 +249,21 @@ mod tests {
 
     fn quiet() -> LibraryWatch {
         watch(Registered::On {
-            root: root(),
+            music_dir: music_dir(),
             burst: Burst::Quiet,
         })
     }
 
-    fn quiet_at(root: PathBuf) -> LibraryWatch {
+    fn quiet_at(music_dir: PathBuf) -> LibraryWatch {
         watch(Registered::On {
-            root,
+            music_dir,
             burst: Burst::Quiet,
         })
     }
 
     fn armed() -> LibraryWatch {
         watch(Registered::On {
-            root: root(),
+            music_dir: music_dir(),
             burst: Burst::Armed,
         })
     }
@@ -220,26 +275,24 @@ mod tests {
         }
     }
 
-    fn rescan(root: PathBuf, bumps: u64) -> LibraryWatchMessage {
-        LibraryWatchMessage::Rescan {
-            root,
+    fn rescan(music_dir: PathBuf, bumps: u64) -> WatchMessage {
+        WatchMessage::Rescan {
+            music_dir,
             revision: revision(bumps),
         }
     }
 
-    fn change() -> LibraryWatchMessage {
-        LibraryWatchMessage::FilesystemChange(Ok(()))
+    fn change() -> WatchMessage {
+        WatchMessage::FilesystemChange(Ok(()))
     }
 
-    fn watcher_error() -> LibraryWatchMessage {
-        LibraryWatchMessage::FilesystemChange(Err(notify::Error::generic(
-            "stream stalled",
-        )))
+    fn watcher_error() -> WatchMessage {
+        WatchMessage::FilesystemChange(Err(notify::Error::generic("stream stalled")))
     }
 
-    fn render(io: &WatchIo) -> String {
+    fn render(io: &WatchEffect) -> String {
         match io {
-            WatchIo::Move { from, to, revision } => {
+            WatchEffect::Rename { from, to, revision } => {
                 format!(
                     "move {} -> {} @ {}",
                     from.display(),
@@ -247,25 +300,31 @@ mod tests {
                     revision.get()
                 )
             }
-            WatchIo::ArmDebounce => "arm".to_string(),
-            WatchIo::Rescan { root, revision } => {
-                format!("rescan {} @ {}", root.display(), revision.get())
+            WatchEffect::ArmDebounce => "arm".to_string(),
+            WatchEffect::Rescan {
+                music_dir,
+                revision,
+            } => {
+                format!("rescan {} @ {}", music_dir.display(), revision.get())
             }
-            WatchIo::RegisterAndRescan { root, revision } => {
+            WatchEffect::RegisterAndRescan {
+                music_dir,
+                revision,
+            } => {
                 format!(
                     "register and rescan {} @ {}",
-                    root.display(),
+                    music_dir.display(),
                     revision.get()
                 )
             }
-            WatchIo::Report(error) => format!("report {error}"),
-            WatchIo::Nothing => "nothing".to_string(),
+            WatchEffect::Report(error) => format!("report {error}"),
+            WatchEffect::Nothing => "nothing".to_string(),
         }
     }
 
     struct Cell {
         start: LibraryWatch,
-        message: LibraryWatchMessage,
+        message: WatchMessage,
         next: LibraryWatch,
         io: &'static str,
     }
@@ -273,19 +332,19 @@ mod tests {
     #[rstest]
     #[case::unrooted_registers_on_the_first_scan(Cell {
         start: unrooted(),
-        message: rescan(root(), 1),
+        message: rescan(music_dir(), 1),
         next: scanned(quiet(), 1),
         io: "register and rescan /music @ 1",
     })]
     #[case::on_rescans_its_root(Cell {
         start: quiet(),
-        message: rescan(root(), 1),
+        message: rescan(music_dir(), 1),
         next: scanned(quiet(), 1),
         io: "rescan /music @ 1",
     })]
     #[case::armed_rescan_drops_the_burst(Cell {
         start: armed(),
-        message: rescan(root(), 1),
+        message: rescan(music_dir(), 1),
         next: scanned(quiet(), 1),
         io: "rescan /music @ 1",
     })]
@@ -327,7 +386,7 @@ mod tests {
     })]
     #[case::armed_deadline_rescans_at_the_last_seen_revision(Cell {
         start: scanned(armed(), 3),
-        message: LibraryWatchMessage::DebounceElapsed,
+        message: WatchMessage::DebounceElapsed,
         next: scanned(quiet(), 3),
         io: "rescan /music @ 3",
     })]
@@ -338,25 +397,21 @@ mod tests {
     }
 
     #[rstest]
-    #[case::unrooted_refuses_a_change(
-        unrooted(),
-        change(),
-        LibraryWatchRejection::Unwatched
-    )]
+    #[case::unrooted_refuses_a_change(unrooted(), change(), WatchError::Unwatched)]
     #[case::unrooted_refuses_a_deadline(
         unrooted(),
-        LibraryWatchMessage::DebounceElapsed,
-        LibraryWatchRejection::Unwatched
+        WatchMessage::DebounceElapsed,
+        WatchError::Unwatched
     )]
     #[case::quiet_refuses_a_deadline(
         quiet(),
-        LibraryWatchMessage::DebounceElapsed,
-        LibraryWatchRejection::Settled
+        WatchMessage::DebounceElapsed,
+        WatchError::Settled
     )]
     fn a_refused_cell_hands_the_state_back(
         #[case] start: LibraryWatch,
-        #[case] message: LibraryWatchMessage,
-        #[case] reason: LibraryWatchRejection,
+        #[case] message: WatchMessage,
+        #[case] reason: WatchError,
     ) {
         let expected = start.clone();
         let rejected = start.transition(message).err().unwrap();
@@ -366,8 +421,8 @@ mod tests {
 
     #[test]
     fn a_rescan_always_applies_even_if_the_revision_repeats() {
-        let (state, _) = quiet().transition(rescan(root(), 1)).unwrap();
-        let (state, effect) = state.transition(rescan(root(), 1)).unwrap();
+        let (state, _) = quiet().transition(rescan(music_dir(), 1)).unwrap();
+        let (state, effect) = state.transition(rescan(music_dir(), 1)).unwrap();
         assert_eq!(state, scanned(quiet(), 1));
         assert_eq!(render(&effect), "rescan /music @ 1");
     }
