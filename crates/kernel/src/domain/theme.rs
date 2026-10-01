@@ -27,6 +27,12 @@ impl ThemeName {
     }
 }
 
+impl PartialEq<ThemeName> for &str {
+    fn eq(&self, other: &ThemeName) -> bool {
+        *self == other.as_str()
+    }
+}
+
 impl fmt::Display for ThemeName {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())

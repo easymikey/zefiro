@@ -50,19 +50,6 @@ impl Default for Transport {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SeekSteps {
-    pub small: i64,
-    pub medium: i64,
-    pub large: i64,
-}
-
-impl Default for SeekSteps {
-    fn default() -> Self {
-        Self {
-            small: 5,
-            medium: 10,
-            large: 30,
-        }
-    }
-}
+pub(crate) const SEEK_SMALL: i64 = 5;
+pub(crate) const SEEK_MEDIUM: i64 = 10;
+pub(crate) const SEEK_LARGE: i64 = 30;

@@ -13,10 +13,8 @@ crossbeam-channel = { workspace = true }
 crossterm = { workspace = true }
 image = { workspace = true }
 kernel = { workspace = true }
-raster = { workspace = true }
 ratatui = { workspace = true }
 ratatui-image = { workspace = true }
-tachyonfx = { workspace = true }
 thiserror = { workspace = true }
 widgets = { workspace = true }
 

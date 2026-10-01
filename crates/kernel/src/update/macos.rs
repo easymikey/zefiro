@@ -1,12 +1,11 @@
 use crate::{
     cmd::Cmd,
     domain::{Model, Moment, Toast},
-    message::{MacosEvent, WorkspaceRequest},
+    message::{MacosEvent, PlaybackRequest},
     update::{
         error::UpdateError,
         machine::Machine,
         playback,
-        player::{self, Anchor, PlayerMessage},
         transport::TransportMessage,
     },
 };
@@ -21,14 +20,11 @@ pub(crate) fn update(
             .transport
             .update(TransportMessage::SetVolume(volume))?),
         MacosEvent::OutputRouteChanged => route_changed(model, now),
-        MacosEvent::HardwareWatchError(detail) => {
-            Ok(model
-                .workspace
-                .update(WorkspaceRequest::ShowToast(Toast::error(format!(
-                    "Audio device watch failed: {detail}"
-                ))))?)
-        }
-        MacosEvent::MediaKey(gesture) => playback::update(model, gesture.into(), now),
+        MacosEvent::HardwareWatchError(detail) => Ok(model.workspace.show(
+            Toast::error(format!("Audio device watch failed: {detail}")),
+            &mut model.revisions,
+        )),
+        MacosEvent::MediaKey(request) => playback::update(model, request, now),
     }
 }
 
@@ -36,26 +32,17 @@ fn route_changed(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
     if !model.player.is_playing() {
         return Ok(Cmd::None);
     }
-    let current = model.playlist.current().cloned();
-    let anchor = Anchor {
-        now,
-        speed: model.transport.speed,
-    };
-    let paused =
-        player::update_player(model, PlayerMessage::Toggle { current, anchor }, now)?;
-    let raised = model
-        .workspace
-        .update(WorkspaceRequest::ShowToast(Toast::info(
-            "Output changed — paused".to_string(),
-        )))?;
+    let paused = playback::update(model, PlaybackRequest::Pause, now)?;
+    let raised = model.workspace.show(
+        Toast::info("Output changed — paused".to_string()),
+        &mut model.revisions,
+    );
     Ok(raised.then(paused))
 }
 
 #[cfg(test)]
 mod tests {
     use std::{sync::Arc, time::Duration};
-
-    use rstest::rstest;
 
     use crate::{
         cmd::{Cmd, Cue, Effect},
@@ -72,29 +59,9 @@ mod tests {
             Tags,
             Track,
         },
-        message::{Gesture, MacosEvent, PlaybackRequest},
+        message::{MacosEvent, PlaybackRequest},
         update::{macos::update, playback},
     };
-
-    #[rstest]
-    #[case::play(Gesture::Play, PlaybackRequest::Play)]
-    #[case::pause(Gesture::Pause, PlaybackRequest::Pause)]
-    #[case::toggle(Gesture::Toggle, PlaybackRequest::Toggle)]
-    #[case::stop(Gesture::Stop, PlaybackRequest::Stop)]
-    #[case::next(Gesture::Next, PlaybackRequest::Next)]
-    #[case::previous(Gesture::Previous, PlaybackRequest::Previous)]
-    #[case::seek_forward(Gesture::SeekForward, PlaybackRequest::SeekForward)]
-    #[case::seek_back(Gesture::SeekBack, PlaybackRequest::SeekBack)]
-    #[case::scrub(
-        Gesture::Scrub(Duration::from_millis(42_500)),
-        PlaybackRequest::SeekTo(Duration::from_millis(42_500))
-    )]
-    fn a_gesture_maps_to_its_request(
-        #[case] gesture: Gesture,
-        #[case] expected: PlaybackRequest,
-    ) {
-        assert_eq!(PlaybackRequest::from(gesture), expected);
-    }
 
     fn playing_model() -> Model {
         let track = Arc::new(
@@ -161,9 +128,12 @@ mod tests {
         let mut via_system = playing_model();
         let mut via_playback = playing_model();
         let now = Moment::default();
-        let system_cmd =
-            update(&mut via_system, MacosEvent::MediaKey(Gesture::Toggle), now)
-                .unwrap();
+        let system_cmd = update(
+            &mut via_system,
+            MacosEvent::MediaKey(PlaybackRequest::Toggle),
+            now,
+        )
+        .unwrap();
         let playback_cmd =
             playback::update(&mut via_playback, PlaybackRequest::Toggle, now).unwrap();
         assert_eq!(system_cmd, playback_cmd);

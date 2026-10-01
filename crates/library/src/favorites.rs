@@ -1,32 +1,26 @@
-use std::{
-    collections::{BTreeSet, HashSet},
-    path::PathBuf,
-};
+use std::{collections::BTreeSet, path::PathBuf};
 
-use kernel::LibrarySubject;
+use kernel::{Favorites, LibrarySubject};
 
 use crate::{dirs::LibraryDirs, error::Error};
 
-pub(crate) fn save(
-    dirs: &LibraryDirs,
-    favorites: &HashSet<PathBuf>,
-) -> Result<(), Error> {
+pub(crate) fn save(dirs: &LibraryDirs, favorites: &Favorites) -> Result<(), Error> {
     let path = dirs.data_dir.join("favorites.json");
     crate::files::create_parent_dir(&path)
-        .map_err(Error::write(LibrarySubject::Favorites, &path))?;
+        .map_err(Error::io(LibrarySubject::Favorites, &path))?;
     let list: BTreeSet<&PathBuf> = favorites.iter().collect();
     let json = serde_json::to_string(&list)
         .map_err(Error::json(LibrarySubject::Favorites, &path))?;
     crate::files::write_atomic(&path, json.as_bytes())
-        .map_err(Error::write(LibrarySubject::Favorites, &path))
+        .map_err(Error::io(LibrarySubject::Favorites, &path))
 }
 
-pub(crate) fn load(dirs: &LibraryDirs) -> Result<HashSet<PathBuf>, Error> {
+pub(crate) fn load(dirs: &LibraryDirs) -> Result<Favorites, Error> {
     let path = dirs.data_dir.join("favorites.json");
     let read = crate::files::read_if_present(&path);
-    let Some(content) = read.map_err(Error::read(LibrarySubject::Favorites, &path))?
+    let Some(content) = read.map_err(Error::io(LibrarySubject::Favorites, &path))?
     else {
-        return Ok(HashSet::new());
+        return Ok(Favorites::default());
     };
     let list: Vec<PathBuf> = serde_json::from_str(&content)
         .map_err(Error::json(LibrarySubject::Favorites, &path))?;
@@ -35,7 +29,9 @@ pub(crate) fn load(dirs: &LibraryDirs) -> Result<HashSet<PathBuf>, Error> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, path::PathBuf};
+    use std::path::PathBuf;
+
+    use kernel::Favorites;
 
     use crate::{dirs::LibraryDirs, favorites};
 
@@ -44,22 +40,22 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let dirs = LibraryDirs::under(directory.path());
 
-        assert_eq!(favorites::load(&dirs).unwrap(), HashSet::new());
+        assert_eq!(favorites::load(&dirs).unwrap(), Favorites::default());
 
-        let mut first = HashSet::new();
-        first.insert(PathBuf::from("/music/a.flac"));
-        first.insert(PathBuf::from("/music/b.flac"));
+        let first: Favorites = ["/music/a.flac", "/music/b.flac"]
+            .map(PathBuf::from)
+            .into_iter()
+            .collect();
         favorites::save(&dirs, &first).unwrap();
         assert_eq!(favorites::load(&dirs).unwrap(), first);
         let raw =
             std::fs::read_to_string(dirs.data_dir.join("favorites.json")).unwrap();
         insta::assert_snapshot!(raw);
 
-        let mut second = HashSet::new();
-        second.insert(PathBuf::from("/music/c.flac"));
+        let second: Favorites = [PathBuf::from("/music/c.flac")].into_iter().collect();
         favorites::save(&dirs, &second).unwrap();
         let loaded = favorites::load(&dirs).unwrap();
         assert_eq!(loaded, second);
-        assert!(!loaded.contains(&PathBuf::from("/music/a.flac")));
+        assert!(!loaded.is_favorite(&PathBuf::from("/music/a.flac")));
     }
 }

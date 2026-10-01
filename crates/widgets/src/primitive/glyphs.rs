@@ -1,330 +1,121 @@
-use ratatui::symbols::{block, line, scrollbar, shade};
+use ratatui::symbols::block;
 
 pub(crate) const TITLE_SEPARATOR: &str = " ── ";
+pub(crate) const ELLIPSIS: char = '\u{2026}';
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ScrollbarGlyphs {
-    pub up: &'static str,
-    pub down: &'static str,
-    pub track: &'static str,
-    pub thumb: &'static str,
+pub(crate) mod scrollbar {
+    use ratatui::symbols::{block, scrollbar as ratatui_scrollbar, shade};
+
+    pub(crate) const UP: &str = ratatui_scrollbar::DOUBLE_VERTICAL.begin;
+    pub(crate) const DOWN: &str = ratatui_scrollbar::DOUBLE_VERTICAL.end;
+    pub(crate) const TRACK: &str = shade::LIGHT;
+    pub(crate) const THUMB: &str = block::FULL;
 }
 
-impl Default for ScrollbarGlyphs {
-    fn default() -> Self {
-        Self {
-            up: scrollbar::DOUBLE_VERTICAL.begin,
-            down: scrollbar::DOUBLE_VERTICAL.end,
-            track: shade::LIGHT,
-            thumb: block::FULL,
-        }
-    }
+pub(crate) mod playlist {
+    pub(crate) const PLAYING: &str = "▶";
+    pub(crate) const FAVORITE: &str = "★";
+    pub(crate) const QUEUED: &str = "q";
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct PlaylistGlyphs {
-    pub playing: &'static str,
-    pub favorite: &'static str,
-    pub queued: &'static str,
+pub(crate) mod progress_line {
+    use ratatui::symbols::line;
+
+    pub(crate) const FULL: &str = line::THICK_HORIZONTAL;
+    pub(crate) const PARTIAL: &str = "╸";
+    pub(crate) const EMPTY: &str = line::HORIZONTAL;
 }
 
-impl Default for PlaylistGlyphs {
-    fn default() -> Self {
-        Self {
-            playing: "▶",
-            favorite: "★",
-            queued: "q",
-        }
-    }
+pub(crate) const VOLUME_BLOCK: &str = block::FULL;
+
+pub(crate) mod speed_chip {
+    pub(crate) const MULTIPLY: char = '\u{00D7}';
+    pub(crate) const MARKER: &str = "\u{00BB} ";
+    pub(crate) const GAP: &str = "  ";
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ProgressLineGlyphs {
-    pub full: &'static str,
-    pub partial: &'static str,
-    pub empty: &'static str,
+pub(crate) mod corner {
+    pub(crate) const TOP_LEFT: char = '⌜';
+    pub(crate) const TOP_RIGHT: char = '⌝';
+    pub(crate) const BOTTOM_LEFT: char = '⌞';
+    pub(crate) const BOTTOM_RIGHT: char = '⌟';
 }
 
-impl Default for ProgressLineGlyphs {
-    fn default() -> Self {
-        Self {
-            full: line::THICK_HORIZONTAL,
-            partial: "╸",
-            empty: line::HORIZONTAL,
-        }
-    }
+pub(crate) mod chip {
+    pub(crate) const OPEN: char = '[';
+    pub(crate) const CLOSE: char = ']';
+    pub(crate) const PAD: char = ' ';
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct CardGlyphs {
-    pub volume_filled: &'static str,
-    pub volume_empty: &'static str,
+pub(crate) mod key_hints {
+    pub(crate) const SEPARATOR: &str = " ";
 }
 
-impl Default for CardGlyphs {
-    fn default() -> Self {
-        Self {
-            volume_filled: block::FULL,
-            volume_empty: block::FULL,
-        }
-    }
+pub(crate) mod help {
+    pub(crate) const OVERFLOW_HINT: &str = "↓ more";
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct SpeedChipGlyphs {
-    pub multiply: char,
-    pub marker: &'static str,
-    pub gap: &'static str,
+pub(crate) mod search {
+    pub(crate) const TITLE_WORD: &str = "SEARCH";
+    pub(crate) const HEADER_PREFIX: &str = "/ ";
+    pub(crate) const CURSOR: &str = "_";
+    pub(crate) const HEADER_GAP: &str = "   ";
+    pub(crate) const SELECTED_MARKER: &str = "> ";
+    pub(crate) const UNSELECTED_MARKER: &str = "  ";
+    pub(crate) const RULE: &str = "─";
+    pub(crate) const MATCH_SINGULAR: &str = "match";
+    pub(crate) const MATCH_PLURAL: &str = "matches";
+    pub(crate) const OF: &str = "of";
+    pub(crate) const TOTAL: &str = "total";
+    pub(crate) const NO_MATCHES: &str = "No matches";
 }
 
-impl Default for SpeedChipGlyphs {
-    fn default() -> Self {
-        Self {
-            multiply: '\u{00D7}',
-            marker: "\u{00BB} ",
-            gap: "  ",
-        }
-    }
+pub(crate) mod history {
+    pub(crate) const TITLE_WORD: &str = "HISTORY";
+    pub(crate) const EMPTY_PLACEHOLDER: &str = "History is empty";
+    pub(crate) const LABEL_SEPARATOR: &str = " — ";
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct TruncateGlyphs {
-    pub ellipsis: char,
+pub(crate) mod track_details {
+    pub(crate) const TITLE_WORD: &str = "TRACK INFO";
+    pub(crate) const HINT: &str = "any key · close";
+    pub(crate) const TITLE_LABEL: &str = "TITLE";
+    pub(crate) const ARTIST_LABEL: &str = "ARTIST";
+    pub(crate) const ALBUM_LABEL: &str = "ALBUM";
+    pub(crate) const YEAR_LABEL: &str = "YEAR";
+    pub(crate) const TRACK_LABEL: &str = "TRACK";
+    pub(crate) const DURATION_LABEL: &str = "DURATION";
+    pub(crate) const FORMAT_LABEL: &str = "FORMAT";
+    pub(crate) const PATH_LABEL: &str = "PATH";
+    pub(crate) const LEADER_DASH: char = '─';
+    pub(crate) const GAP: &str = "  ";
+    pub(crate) const MISSING: &str = "—";
 }
 
-impl Default for TruncateGlyphs {
-    fn default() -> Self {
-        Self {
-            ellipsis: '\u{2026}',
-        }
-    }
+pub(crate) mod confirm_delete {
+    pub(crate) const TITLE_WORD: &str = "MOVE TO TRASH?";
+    pub(crate) const HINT: &str = "[y] yes   [n] no";
+    pub(crate) const QUOTE_OPEN: char = '"';
+    pub(crate) const QUOTE_CLOSE: char = '"';
+    pub(crate) const ARTIST_SEPARATOR: &str = " — ";
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct CornerGlyphs {
-    pub top_left: char,
-    pub top_right: char,
-    pub bottom_left: char,
-    pub bottom_right: char,
+pub(crate) mod jump_to_time {
+    pub(crate) const TITLE_WORD: &str = "JUMP TO TIME";
+    pub(crate) const HINT: &str = "Enter jump · Esc cancel";
 }
 
-impl Default for CornerGlyphs {
-    fn default() -> Self {
-        Self {
-            top_left: '⌜',
-            top_right: '⌝',
-            bottom_left: '⌞',
-            bottom_right: '⌟',
-        }
-    }
+pub(crate) mod music_dir {
+    pub(crate) const TITLE_WORD: &str = "LIBRARY FOLDER";
+    pub(crate) const HINT: &str = "Enter save · Esc cancel";
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ChipGlyphs {
-    pub open: char,
-    pub close: char,
-    pub pad: char,
-}
-
-impl Default for ChipGlyphs {
-    fn default() -> Self {
-        Self {
-            open: '[',
-            close: ']',
-            pad: ' ',
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct KeyHintsGlyphs {
-    pub separator: &'static str,
-    pub shade: &'static str,
-}
-
-impl Default for KeyHintsGlyphs {
-    fn default() -> Self {
-        Self {
-            separator: " ",
-            shade: shade::LIGHT,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct HelpGlyphs {
-    pub overflow_hint: &'static str,
-}
-
-impl Default for HelpGlyphs {
-    fn default() -> Self {
-        Self {
-            overflow_hint: "↓ more",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct SearchGlyphs {
-    pub title_word: &'static str,
-    pub header_prefix: &'static str,
-    pub cursor: &'static str,
-    pub header_gap: &'static str,
-    pub selected_marker: &'static str,
-    pub unselected_marker: &'static str,
-    pub rule: &'static str,
-    pub match_singular: &'static str,
-    pub match_plural: &'static str,
-    pub of: &'static str,
-    pub total: &'static str,
-    pub no_matches: &'static str,
-}
-
-impl Default for SearchGlyphs {
-    fn default() -> Self {
-        Self {
-            title_word: "SEARCH",
-            header_prefix: "/ ",
-            cursor: "_",
-            header_gap: "   ",
-            selected_marker: "> ",
-            unselected_marker: "  ",
-            rule: "─",
-            match_singular: "match",
-            match_plural: "matches",
-            of: "of",
-            total: "total",
-            no_matches: "No matches",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct HistoryGlyphs {
-    pub title_word: &'static str,
-    pub empty_placeholder: &'static str,
-    pub label_separator: &'static str,
-}
-
-impl Default for HistoryGlyphs {
-    fn default() -> Self {
-        Self {
-            title_word: "HISTORY",
-            empty_placeholder: "History is empty",
-            label_separator: " — ",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TrackDetailsGlyphs {
-    pub title_word: &'static str,
-    pub hint: &'static str,
-    pub title_label: &'static str,
-    pub artist_label: &'static str,
-    pub album_label: &'static str,
-    pub year_label: &'static str,
-    pub track_label: &'static str,
-    pub duration_label: &'static str,
-    pub format_label: &'static str,
-    pub path_label: &'static str,
-    pub leader_dash: char,
-    pub gap: &'static str,
-    pub missing: &'static str,
-}
-
-impl Default for TrackDetailsGlyphs {
-    fn default() -> Self {
-        Self {
-            title_word: "TRACK INFO",
-            hint: "any key · close",
-            title_label: "TITLE",
-            artist_label: "ARTIST",
-            album_label: "ALBUM",
-            year_label: "YEAR",
-            track_label: "TRACK",
-            duration_label: "DURATION",
-            format_label: "FORMAT",
-            path_label: "PATH",
-            leader_dash: '─',
-            gap: "  ",
-            missing: "—",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ConfirmDeleteGlyphs {
-    pub title_word: &'static str,
-    pub hint: &'static str,
-    pub quote_open: char,
-    pub quote_close: char,
-    pub artist_separator: &'static str,
-}
-
-impl Default for ConfirmDeleteGlyphs {
-    fn default() -> Self {
-        Self {
-            title_word: "MOVE TO TRASH?",
-            hint: "[y] yes   [n] no",
-            quote_open: '"',
-            quote_close: '"',
-            artist_separator: " — ",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct JumpToTimeGlyphs {
-    pub title_word: &'static str,
-    pub hint: &'static str,
-}
-
-impl Default for JumpToTimeGlyphs {
-    fn default() -> Self {
-        Self {
-            title_word: "JUMP TO TIME",
-            hint: "Enter jump · Esc cancel",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MusicDirGlyphs {
-    pub title_word: &'static str,
-    pub hint: &'static str,
-}
-
-impl Default for MusicDirGlyphs {
-    fn default() -> Self {
-        Self {
-            title_word: "LIBRARY FOLDER",
-            hint: "Enter save · Esc cancel",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SettingsGlyphs {
-    pub toggle_on: &'static str,
-    pub toggle_off: &'static str,
-    pub pick_left: &'static str,
-    pub pick_right: &'static str,
-    pub duration_unit: &'static str,
-    pub title_word: &'static str,
-    pub output_device_default: &'static str,
-}
-
-impl Default for SettingsGlyphs {
-    fn default() -> Self {
-        Self {
-            toggle_on: "\u{25c9} on",
-            toggle_off: "\u{25cb} off",
-            pick_left: "\u{2039} ",
-            pick_right: " \u{203a}",
-            duration_unit: " s",
-            title_word: "SETTINGS",
-            output_device_default: "System default",
-        }
-    }
+pub(crate) mod settings {
+    pub(crate) const TOGGLE_ON: &str = "\u{25c9} on";
+    pub(crate) const TOGGLE_OFF: &str = "\u{25cb} off";
+    pub(crate) const PICK_LEFT: &str = "\u{2039} ";
+    pub(crate) const PICK_RIGHT: &str = " \u{203a}";
+    pub(crate) const DURATION_UNIT: &str = " s";
+    pub(crate) const TITLE_WORD: &str = "SETTINGS";
+    pub(crate) const OUTPUT_DEVICE_DEFAULT: &str = "System default";
 }

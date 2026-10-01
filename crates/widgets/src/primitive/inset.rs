@@ -8,8 +8,9 @@ pub(crate) struct Inset {
     pub bottom: u16,
 }
 
-impl Default for Inset {
-    fn default() -> Self {
+impl Inset {
+    #[must_use]
+    pub(crate) const fn overlay() -> Self {
         Self {
             top: 0,
             left: 1,
@@ -17,9 +18,7 @@ impl Default for Inset {
             bottom: 0,
         }
     }
-}
 
-impl Inset {
     #[must_use]
     pub(crate) const fn card() -> Self {
         Self {

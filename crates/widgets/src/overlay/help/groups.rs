@@ -2,27 +2,20 @@ use std::borrow::Cow;
 
 use kernel::{domain::Action, update::keymap::KeyBinding};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HelpRow {
+    pub(crate) chord: String,
+    pub(crate) label: Cow<'static, str>,
+}
+
 pub(crate) struct HelpGroup {
     pub(crate) title: &'static str,
-    pub(crate) bindings: Vec<(String, Cow<'static, str>)>,
+    pub(crate) bindings: Vec<HelpRow>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct HelpLayout {
-    pub(crate) column_gap: u16,
-    pub(crate) chord_gap: u16,
-    pub(crate) minimum_description: u16,
-}
-
-impl Default for HelpLayout {
-    fn default() -> Self {
-        Self {
-            column_gap: 3,
-            chord_gap: 2,
-            minimum_description: 10,
-        }
-    }
-}
+pub(crate) const COLUMN_GAP: u16 = 3;
+pub(crate) const CHORD_GAP: u16 = 2;
+pub(crate) const MINIMUM_DESCRIPTION: u16 = 10;
 
 pub(crate) fn small_count_u16(count: usize) -> u16 {
     u16::try_from(count).unwrap_or(u16::MAX)
@@ -87,7 +80,7 @@ const PLAYLIST_ACTIONS: &[(Action, &str)] = &[
     (Action::Favorite, "Favorite"),
     (Action::Delete, "Delete (asks first)"),
     (Action::SavePlaylist, "Save playlist"),
-    (Action::Rescan, "Rescan"),
+    (Action::FullScan, "Rescan"),
     (Action::TrackDetails, "Track info"),
 ];
 
@@ -143,18 +136,19 @@ fn continues_digit_run(previous: &str, current: &str) -> bool {
             .is_some_and(|(previous, current)| current == previous.saturating_add(1))
 }
 
-fn collapse_digit_runs(
-    rows: &[(String, &'static str)],
-) -> Vec<(String, Cow<'static, str>)> {
+fn collapse_digit_runs(rows: &[(String, &'static str)]) -> Vec<HelpRow> {
     rows.chunk_by(|(previous, _), (current, _)| continues_digit_run(previous, current))
         .flat_map(|run| match run {
-            [(first_chord, first_help), .., (last_chord, _)] => vec![(
-                format!("{first_chord}-{last_chord}"),
-                Cow::Owned(first_help.replacen(first_chord.as_str(), "N", 1)),
-            )],
+            [(first_chord, first_help), .., (last_chord, _)] => vec![HelpRow {
+                chord: format!("{first_chord}-{last_chord}"),
+                label: Cow::Owned(first_help.replacen(first_chord.as_str(), "N", 1)),
+            }],
             run => run
                 .iter()
-                .map(|(chord, help)| (chord.clone(), Cow::Borrowed(*help)))
+                .map(|(chord, help)| HelpRow {
+                    chord: chord.clone(),
+                    label: Cow::Borrowed(*help),
+                })
                 .collect(),
         })
         .collect()
@@ -194,7 +188,7 @@ mod tests {
 
     use rstest::rstest;
 
-    use crate::overlay::help::groups::collapse_digit_runs;
+    use crate::overlay::help::groups::{HelpRow, collapse_digit_runs};
 
     fn rows(pairs: &[(&str, &'static str)]) -> Vec<(String, &'static str)> {
         pairs
@@ -223,9 +217,12 @@ mod tests {
         #[case] expected: &[(&str, &'static str)],
     ) {
         let merged = collapse_digit_runs(&rows(given));
-        let expected: Vec<(String, Cow<'static, str>)> = expected
+        let expected: Vec<HelpRow> = expected
             .iter()
-            .map(|(chord, help)| ((*chord).to_string(), Cow::Borrowed(*help)))
+            .map(|(chord, help)| HelpRow {
+                chord: (*chord).to_string(),
+                label: Cow::Borrowed(*help),
+            })
             .collect();
         assert_eq!(merged, expected);
     }

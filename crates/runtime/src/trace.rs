@@ -4,14 +4,14 @@ use kernel::{domain::Driver, update::UpdateError};
 use strum::IntoStaticStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
-pub enum DropReason {
+pub(crate) enum DropReason {
     NotRunning,
     Full,
     Closed,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TraceEntry {
+pub(crate) enum TraceEntry {
     Rejected {
         message: &'static str,
         error: UpdateError,
@@ -34,31 +34,40 @@ pub enum TraceEntry {
 }
 
 #[derive(Debug, Default)]
-pub struct Trace {
+pub(crate) struct Trace {
     entries: VecDeque<TraceEntry>,
 }
 
 impl Trace {
-    pub const CAPACITY: usize = 128;
+    pub(crate) const CAPACITY: usize = 128;
 
-    pub fn push(&mut self, entry: TraceEntry) {
+    pub(crate) fn push(&mut self, entry: TraceEntry) {
         if self.entries.len() == Self::CAPACITY {
             self.entries.pop_front();
         }
         self.entries.push_back(entry);
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &TraceEntry> {
+    pub(crate) fn record(&mut self, result: Result<(), TraceEntry>) {
+        if let Err(entry) = result {
+            self.push(entry);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &TraceEntry> {
         self.entries.iter()
     }
 
+    #[cfg(test)]
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
 
+    #[cfg(test)]
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 }

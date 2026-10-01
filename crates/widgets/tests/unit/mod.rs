@@ -2,7 +2,7 @@ mod animation_actions;
 mod animation_catalogue;
 mod animation_stage;
 mod animation_volume;
-mod redraw;
+mod repaint;
 mod screen_breakpoint;
 mod screen_layout;
 mod screen_overlays;

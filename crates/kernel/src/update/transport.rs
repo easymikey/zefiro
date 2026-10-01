@@ -2,18 +2,27 @@ use std::time::Duration;
 
 use crate::{
     cmd::{AudioCmd, Cmd, Cue, Effect, MacosCmd},
-    domain::{AbLoop, Percent, Revision, SleepTimer, Transport},
+    domain::{AbLoop, Percent, Revision, SleepPresets, SleepTimer, Transport},
     message::Timer,
     update::machine::{Machine, Rejected},
 };
 
 #[derive(Debug, Clone)]
 pub enum TransportMessage {
-    StepVolume { steps: i8 },
+    StepVolume {
+        steps: i8,
+    },
     SetVolume(Percent),
-    StepSpeed { steps: i8 },
-    CycleSleep(Box<[Duration]>),
-    AbMark { position: Option<Duration> },
+    StepSpeed {
+        steps: i8,
+    },
+    CycleSleep {
+        presets: SleepPresets,
+        revision: Revision,
+    },
+    AbMark {
+        position: Option<Duration>,
+    },
 }
 
 impl Machine for Transport {
@@ -43,12 +52,12 @@ impl Machine for Transport {
                 self.speed = self.speed.step_down();
                 Effect::Audio(AudioCmd::SetSpeed(self.speed)).into()
             }
-            TransportMessage::CycleSleep(sleep_presets) => {
-                self.sleep = next_sleep(self.sleep, &sleep_presets);
+            TransportMessage::CycleSleep { presets, revision } => {
+                self.sleep = next_sleep(self.sleep, presets.as_slice());
                 self.sleep.map_or(Cmd::None, |timer| {
                     Effect::After {
                         delay: timer.delay,
-                        message: Timer::Sleep(Revision::UNSTAMPED),
+                        message: Timer::Sleep(revision),
                     }
                     .into()
                 })

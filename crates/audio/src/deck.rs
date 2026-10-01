@@ -9,15 +9,19 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender};
 pub(crate) use event::{DeckEvent, Ticket};
 use kernel::{AudioError, AudioEvent, Playback, domain::OutputDevice};
+use rodio::Source;
 
 use crate::{
     deck::{
-        envelope::{Curve, EnvelopeControl, Envelopes, Flags, Ramp},
+        envelope::{Curve, Envelopes, Ramp, Signals, envelope},
         output::{Output, open_output_stream},
-        source::{Decoding, PreloadRequest},
+        source::{DecodeResult, Decoding, PreloadRequest},
     },
-    engine::effect::{EngineMessage, Slot},
-    error::{device_error, output_lost},
+    engine::{
+        effect::{EngineMessage, Preload, SinkRole},
+        phase::CurrentTrack,
+    },
+    error::{device_error, output_lost, preload_error},
     tap::Handoff,
 };
 
@@ -76,7 +80,7 @@ impl Deck {
         self.events.drain(..)
     }
 
-    pub(crate) fn heard(&self) -> &Receiver<DeckEvent> {
+    pub(crate) fn events(&self) -> &Receiver<DeckEvent> {
         &self.heard
     }
 
@@ -87,45 +91,67 @@ impl Deck {
             }
             DeckEvent::Decoded { ticket, outcome } => self
                 .source
-                .accept_decode((ticket, outcome))
+                .accept_decode(ticket, outcome)
                 .map(EngineMessage::Decoded)
                 .into_iter()
                 .collect(),
             DeckEvent::Preloaded { ticket, outcome } => {
-                let Some(preloaded) = self
-                    .source
-                    .accept_preload((ticket, outcome), self.output.as_mut())
-                else {
-                    return Vec::new();
-                };
-                vec![EngineMessage::Preloaded(preloaded)]
+                self.preloaded(ticket, outcome).into_iter().collect()
             }
-            DeckEvent::DevicesListed(result) => {
-                vec![EngineMessage::DevicesListed(result.map_err(device_error))]
+            DeckEvent::DevicesListed(devices) => {
+                vec![EngineMessage::DevicesListed(devices)]
             }
             DeckEvent::Track(ticket) => self.track_events(ticket),
         }
+    }
+
+    fn preloaded(
+        &mut self,
+        ticket: Ticket,
+        outcome: DecodeResult,
+    ) -> Option<EngineMessage> {
+        let request = self.source.take_preloading(ticket)?;
+        let source = match outcome {
+            Ok(source) => source,
+            Err(error) => {
+                return Some(EngineMessage::Preloaded(Err(preload_error(&error))));
+            }
+        };
+        let output = self.output.as_mut()?;
+        let total = source.total_duration();
+        let (wrapped, control) = envelope(source, ticket, self.wake.clone());
+        let preload = match request {
+            PreloadRequest::Gapless(path) => {
+                output.append(wrapped);
+                self.source.envelopes.queued = Some(control);
+                Preload::Gapless(path)
+            }
+            PreloadRequest::Crossfade { path, gain, speed } => {
+                output.stage(wrapped, speed.get());
+                self.source.envelopes.incoming = Some(control);
+                Preload::Crossfade(CurrentTrack { total, gain, path })
+            }
+        };
+        Some(EngineMessage::Preloaded(Ok(preload)))
     }
 
     fn track_events(&self, ticket: Ticket) -> Vec<EngineMessage> {
         let Some(control) = self.source.envelopes.holding(ticket) else {
             return Vec::new();
         };
-        let flags = control.take_flags();
-        let slot = slot_for(&self.source.envelopes, ticket);
-        let mut messages = Vec::new();
-        if flags.contains(Flags::CUED) && matches!(slot, Some(Slot::Primary)) {
-            messages.push(EngineMessage::Cued);
-        }
-        if let Some(slot) = slot {
-            if flags.contains(Flags::RAMPED) {
-                messages.push(EngineMessage::Ramped(slot));
-            }
-            if flags.contains(Flags::FINISHED) {
-                messages.push(EngineMessage::Finished(slot));
-            }
-        }
-        messages
+        let flags = control.take_signals();
+        let role = sink_role_for(&self.source.envelopes, ticket);
+        [
+            (flags.contains(Signals::CUED) && matches!(role, Some(SinkRole::Primary)))
+                .then_some(EngineMessage::Cued),
+            role.filter(|_| flags.contains(Signals::RAMPED))
+                .map(EngineMessage::Ramped),
+            role.filter(|_| flags.contains(Signals::FINISHED))
+                .map(EngineMessage::Finished),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     pub(crate) fn advance(&mut self) {
@@ -167,12 +193,12 @@ impl Deck {
         })
     }
 
-    pub(crate) fn spawn_decode(
+    pub(crate) fn start_decode(
         &mut self,
         path: std::path::PathBuf,
     ) -> Option<EngineMessage> {
         self.source
-            .spawn_decode(path)
+            .start_decode(path)
             .map(|error| EngineMessage::Decoded(Err(error)))
     }
 
@@ -260,7 +286,7 @@ impl Deck {
         preload.play();
     }
 
-    pub(crate) fn unfade(&mut self) {
+    pub(crate) fn cancel_crossfade(&mut self) {
         if let Some(control) = self.source.envelopes.primary.as_mut() {
             control.ramp(Ramp {
                 from: 1.0,
@@ -293,17 +319,6 @@ impl Deck {
         self.source.envelopes.outgoing = None;
     }
 
-    pub(crate) fn retiring_gain(&self) -> f32 {
-        let envelope = self
-            .source
-            .envelopes
-            .outgoing
-            .as_ref()
-            .map_or(0.0, EnvelopeControl::gain);
-        let sink = self.outgoing().map_or(1.0, rodio::Sink::volume);
-        envelope * sink
-    }
-
     pub(crate) fn ramp_handover(&mut self, length: Duration, playing: f32) {
         if let Some(control) = self.source.envelopes.outgoing.as_mut() {
             let frames = control.frames(length);
@@ -332,12 +347,6 @@ impl Deck {
         self.output.as_ref().map(|output| &output.primary)
     }
 
-    pub(crate) fn outgoing(&self) -> Option<&rodio::Sink> {
-        self.output
-            .as_ref()
-            .and_then(|output| output.outgoing.as_ref())
-    }
-
     pub(crate) fn sinks(&self) -> impl Iterator<Item = &rodio::Sink> {
         self.output.iter().flat_map(Output::sinks)
     }
@@ -347,25 +356,25 @@ impl Deck {
     }
 }
 
-fn slot_for(envelopes: &Envelopes, ticket: Ticket) -> Option<Slot> {
+fn sink_role_for(envelopes: &Envelopes, ticket: Ticket) -> Option<SinkRole> {
     if envelopes
         .primary
         .as_ref()
         .is_some_and(|control| control.ticket() == ticket)
     {
-        Some(Slot::Primary)
+        Some(SinkRole::Primary)
     } else if envelopes
         .incoming
         .as_ref()
         .is_some_and(|control| control.ticket() == ticket)
     {
-        Some(Slot::Incoming)
+        Some(SinkRole::Incoming)
     } else if envelopes
         .outgoing
         .as_ref()
         .is_some_and(|control| control.ticket() == ticket)
     {
-        Some(Slot::Outgoing)
+        Some(SinkRole::Outgoing)
     } else {
         None
     }
@@ -381,7 +390,7 @@ mod tests {
 
     use crate::{
         deck::{Deck, DeckEvent, Ticket, envelope::envelope, source::PreloadRequest},
-        engine::effect::{EngineMessage, Slot},
+        engine::effect::{EngineMessage, SinkRole},
         error::Error,
         tap,
     };
@@ -394,7 +403,7 @@ mod tests {
     fn no_pending(_deck: &mut Deck) {}
 
     fn decode_pending(deck: &mut Deck) {
-        deck.spawn_decode(PathBuf::from("/a"));
+        deck.start_decode(PathBuf::from("/a"));
     }
 
     fn preload_pending(deck: &mut Deck) {
@@ -462,7 +471,7 @@ mod tests {
         },
         Expected::DecodeError
     )]
-    #[case::stream_fault(
+    #[case::stream_error(
         no_pending,
         DeckEvent::OutputLost(rodio::cpal::StreamError::DeviceNotAvailable),
         Expected::OutputLost
@@ -494,12 +503,12 @@ mod tests {
         let messages = deck.messages_for(DeckEvent::Track(ticket));
         assert!(matches!(
             messages.as_slice(),
-            [EngineMessage::Finished(Slot::Primary)]
+            [EngineMessage::Finished(SinkRole::Primary)]
         ));
     }
 
     #[test]
-    fn track_unknown_ticket() {
+    fn a_track_event_with_an_unknown_ticket_gives_no_message() {
         let mut deck = deck_with_no_output();
         let messages = deck.messages_for(DeckEvent::Track(Ticket::default()));
         assert!(messages.is_empty());

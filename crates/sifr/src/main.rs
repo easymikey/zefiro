@@ -2,47 +2,35 @@
 
 mod error;
 mod shell;
-mod signal;
 mod startup;
-mod toast;
+mod termination;
 
 use std::{io::Write, process::ExitCode, thread};
 
 use crossbeam_channel::bounded;
 use error::Error;
 use runtime::{Runtime, Spawners};
-use shell::ShellInput;
-use startup::{Look, Prepared};
-use terminal::{
-    CapabilityProbe,
-    InputLoop,
-    ProbeAnswer,
-    TerminalEnvironment,
-    TerminalSession,
-};
+use shell::{Painter, ShellEvent};
+use startup::{Boot, Look};
+use terminal::{TerminalEnvironment, TerminalSession, run_input};
 
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            print_error(&error);
+            let _ = writeln!(std::io::stderr(), "sifr: {error}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn print_error(error: &Error) {
-    let mut stderr = std::io::stderr();
-    let _ = writeln!(stderr, "sifr: {error}");
-}
-
 fn run() -> Result<(), Error> {
-    terminal::install_panic_hook(signal::remember_worker_panic);
-    let Prepared {
+    terminal::install_panic_hook(termination::remember_worker_panic);
+    let Boot {
         startup,
         paths,
         look,
-    } = startup::prepare()?;
+    } = startup::boot()?;
     let runtime = Runtime::start(startup, &paths, &Spawners::hardware())?;
     runtime::run_on_main_thread(runtime, move |runtime| run_shell(runtime, look))
         .map_err(Error::from)?
@@ -50,32 +38,21 @@ fn run() -> Result<(), Error> {
 
 fn run_shell(runtime: Runtime, look: Look) -> Result<(), Error> {
     let mut session = TerminalSession::enter()?;
-    let upgrade = probe_capabilities();
+    let brand = terminal::Brand::detect(&TerminalEnvironment::current());
+    let probe_answer = terminal::probe(brand);
 
     let (input_sender, input_receiver) = bounded(256);
-    signal::apply_reload(input_sender.clone())?;
-    let mut shell = shell::Shell::new(session.terminal_mut(), look)?;
-    if let Some(answer) = upgrade {
-        shell.apply_probe_answer(answer);
-    }
-    spawn_terminal_input(input_sender);
+    termination::install(input_sender.clone())?;
+    let mut painter = Painter::new(session.terminal_mut(), look, probe_answer);
+    thread::spawn(move || run_input(ShellEvent::Terminal, &input_sender));
 
-    let outcome = runtime::run(runtime, &mut shell, &input_receiver);
+    let outcome = runtime::run(runtime, &mut painter, &input_receiver);
     let teardown = session.restore();
     with_worker_panic(merge_exit_errors(outcome, teardown))
 }
 
-fn probe_capabilities() -> Option<ProbeAnswer> {
-    let brand = terminal::Brand::detect(&TerminalEnvironment::current());
-    CapabilityProbe::new(brand).and_then(CapabilityProbe::run)
-}
-
-fn spawn_terminal_input(shell_input: crossbeam_channel::Sender<ShellInput>) {
-    thread::spawn(move || InputLoop.run(ShellInput::Terminal, &shell_input));
-}
-
 fn with_worker_panic(result: Result<(), Error>) -> Result<(), Error> {
-    match (result, signal::take_worker_panic()) {
+    match (result, termination::take_worker_panic()) {
         (Ok(()), Some(report)) => Err(Error::WorkerPanic { report }),
         (result, _) => result,
     }

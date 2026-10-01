@@ -10,7 +10,7 @@ use crate::{
     playlist::pane::PlaylistView,
     primitive::{inset::Inset, list_chrome::spaced_title},
     status_line::{self, ScanProgress, StatusLineColors, StatusLineView},
-    theme::ActiveTheme,
+    theme::{ActiveTheme, Role},
 };
 
 const TITLE_CELLS: u16 = 2;
@@ -21,7 +21,7 @@ pub(crate) fn pane_block<'a>(title: Option<Line<'a>>, border: Color) -> Block<'a
         .borders(Borders::ALL)
         .border_type(BorderType::Thick)
         .border_style(Style::default().fg(border))
-        .padding(Inset::default().padding());
+        .padding(Inset::overlay().padding());
     match title {
         Some(title) => block.title(spaced_title(title)),
         None => block,
@@ -57,9 +57,9 @@ pub(crate) fn pane_title<'a>(
         sleep_left: view.sleep_left,
     };
     let colors = StatusLineColors {
-        frame: theme.border(),
-        dim: theme.dim(),
-        accent: theme.accent(),
+        frame: theme.role(Role::Frame),
+        dim: theme.role(Role::Dim),
+        accent: theme.role(Role::Accent),
     };
     status_line::status_line(status, colors, title_budget(area))
 }
@@ -77,7 +77,7 @@ mod tests {
             chrome::pane_title,
             pane::{LibraryLoad, PlaylistView},
         },
-        scene::fixtures::noir,
+        test_support::noir,
         theme::{ActiveTheme, ColorDepth},
     };
 

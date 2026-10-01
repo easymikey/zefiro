@@ -21,19 +21,19 @@ use kernel::{
         CustomSetting,
         ListedDevice,
         Replaygain,
-        SLEEP_PRESET_BUNDLES,
         SettingId,
         SettingRow,
+        SleepPresets,
         ThemeName,
         format_sleep_presets_label,
     },
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::primitive::glyphs::SettingsGlyphs;
+use crate::primitive::glyphs;
 
 #[derive(Debug, Clone, Copy)]
-pub struct SettingsView<'a> {
+pub(crate) struct SettingsView<'a> {
     pub crossfade: Crossfade,
     pub replaygain: Replaygain,
     pub theme: &'a str,
@@ -136,59 +136,46 @@ fn appearance_field_label(field: AppearanceField) -> &'static str {
 }
 
 pub(crate) fn value_text(row: SettingRow, values: &SettingsView<'_>) -> String {
-    let glyphs = SettingsGlyphs::default();
     match row {
-        SettingRow::Theme => format_pick(values.theme, glyphs),
-        SettingRow::Crossfade => format_duration_step(values.crossfade.value(), glyphs),
-        SettingRow::Replaygain => {
-            format_toggle(Toggle::from(values.replaygain), glyphs)
-        }
+        SettingRow::Theme => format_pick(values.theme),
+        SettingRow::Crossfade => format_duration_step(values.crossfade.get()),
+        SettingRow::Replaygain => format_toggle(Toggle::from(values.replaygain)),
         SettingRow::OutputDevice => {
-            let name = values.output_device.unwrap_or(glyphs.output_device_default);
-            format_pick(name, glyphs)
+            let name = values
+                .output_device
+                .unwrap_or(glyphs::settings::OUTPUT_DEVICE_DEFAULT);
+            format_pick(name)
         }
         SettingRow::SleepPresets => {
-            format_pick(&format_sleep_presets_label(values.sleep_presets), glyphs)
+            format_pick(&format_sleep_presets_label(values.sleep_presets))
         }
-        SettingRow::Custom(id) => custom_value_text(id, values, glyphs),
+        SettingRow::Custom(id) => custom_value_text(id, values),
     }
 }
 
-fn custom_value_text(
-    id: SettingId,
-    values: &SettingsView<'_>,
-    glyphs: SettingsGlyphs,
-) -> String {
+fn custom_value_text(id: SettingId, values: &SettingsView<'_>) -> String {
     let Some(row) = appearance_row(id) else {
         return String::new();
     };
     let appearance = values.appearance;
     match row.field {
-        AppearanceField::Preset => format_pick(preset_label(appearance), glyphs),
-        AppearanceField::CoverStyle => {
-            format_pick(&appearance.cover_style.to_string(), glyphs)
-        }
+        AppearanceField::Preset => format_pick(preset_label(appearance)),
+        AppearanceField::CoverStyle => format_pick(&appearance.cover_style.to_string()),
         AppearanceField::CoverBrackets => {
-            format_toggle(Toggle::from(appearance.cover_brackets), glyphs)
+            format_toggle(Toggle::from(appearance.cover_brackets))
         }
         AppearanceField::FormatChips => {
-            format_toggle(Toggle::from(appearance.format_chips), glyphs)
+            format_toggle(Toggle::from(appearance.format_chips))
         }
-        AppearanceField::SpeedChip => {
-            format_pick(&appearance.speed_chip.to_string(), glyphs)
-        }
+        AppearanceField::SpeedChip => format_pick(&appearance.speed_chip.to_string()),
         AppearanceField::ProgressRemaining => {
-            format_toggle(Toggle::from(appearance.progress_time), glyphs)
+            format_toggle(Toggle::from(appearance.progress_time))
         }
-        AppearanceField::KeyHints => {
-            format_toggle(Toggle::from(appearance.key_hints), glyphs)
-        }
+        AppearanceField::KeyHints => format_toggle(Toggle::from(appearance.key_hints)),
         AppearanceField::Animations => {
-            format_toggle(Toggle::from(appearance.animations), glyphs)
+            format_toggle(Toggle::from(appearance.animations))
         }
-        AppearanceField::LayoutMode => {
-            format_pick(&appearance.layout_mode.to_string(), glyphs)
-        }
+        AppearanceField::LayoutMode => format_pick(&appearance.layout_mode.to_string()),
     }
 }
 
@@ -201,60 +188,53 @@ fn preset_label(appearance: Appearance) -> &'static str {
 }
 
 pub(crate) fn max_value_width(row: SettingRow, values: &SettingsView<'_>) -> usize {
-    let glyphs = SettingsGlyphs::default();
     match row {
         SettingRow::Theme => {
-            widest_pick(values.themes.iter().map(ThemeName::to_string), glyphs)
+            widest_pick(values.themes.iter().map(ThemeName::to_string))
         }
-        SettingRow::Crossfade => format_duration_step(Crossfade::MAX, glyphs).width(),
-        SettingRow::Replaygain => widest_toggle(glyphs),
+        SettingRow::Crossfade => format_duration_step(Crossfade::MAX).width(),
+        SettingRow::Replaygain => widest_toggle(),
         SettingRow::OutputDevice => widest_pick(
             values
                 .output_devices
                 .iter()
                 .map(|device| device.name.to_string())
-                .chain(std::iter::once(glyphs.output_device_default.to_string())),
-            glyphs,
+                .chain(std::iter::once(
+                    glyphs::settings::OUTPUT_DEVICE_DEFAULT.to_string(),
+                )),
         ),
         SettingRow::SleepPresets => widest_pick(
-            SLEEP_PRESET_BUNDLES
-                .bundles
+            SleepPresets::BUNDLES
                 .iter()
                 .map(|bundle| format_sleep_presets_label(bundle)),
-            glyphs,
         ),
-        SettingRow::Custom(id) => custom_max_value_width(id, values, glyphs),
+        SettingRow::Custom(id) => custom_max_value_width(id, values),
     }
 }
 
-fn widest_toggle(glyphs: SettingsGlyphs) -> usize {
-    format_toggle(Toggle::On, glyphs)
+fn widest_toggle() -> usize {
+    format_toggle(Toggle::On)
         .width()
-        .max(format_toggle(Toggle::Off, glyphs).width())
+        .max(format_toggle(Toggle::Off).width())
 }
 
-fn widest_pick(labels: impl Iterator<Item = String>, glyphs: SettingsGlyphs) -> usize {
+fn widest_pick(labels: impl Iterator<Item = String>) -> usize {
     labels
-        .map(|label| format_pick(&label, glyphs).width())
+        .map(|label| format_pick(&label).width())
         .max()
         .unwrap_or(0)
 }
 
-fn custom_max_value_width(
-    id: SettingId,
-    values: &SettingsView<'_>,
-    glyphs: SettingsGlyphs,
-) -> usize {
+fn custom_max_value_width(id: SettingId, values: &SettingsView<'_>) -> usize {
     let Some(row) = appearance_row(id) else {
         return 0;
     };
     let count = row.custom.control.count();
     (0..count.get())
         .filter_map(|position| count.index(position))
-        .filter_map(|option| appearance_patch(id, option).ok())
+        .filter_map(|option| appearance_patch(id, option))
         .map(|patch| {
-            custom_value_text(id, &with_patched_appearance(values, patch), glyphs)
-                .width()
+            custom_value_text(id, &with_patched_appearance(values, patch)).width()
         })
         .max()
         .unwrap_or(0)
@@ -283,19 +263,27 @@ fn apply_patch(appearance: Appearance, patch: AppearancePatch) -> Appearance {
     }
 }
 
-fn format_toggle(toggle: Toggle, glyphs: SettingsGlyphs) -> String {
+fn format_toggle(toggle: Toggle) -> String {
     match toggle {
-        Toggle::On => glyphs.toggle_on.to_string(),
-        Toggle::Off => glyphs.toggle_off.to_string(),
+        Toggle::On => glyphs::settings::TOGGLE_ON.to_string(),
+        Toggle::Off => glyphs::settings::TOGGLE_OFF.to_string(),
     }
 }
 
-fn format_duration_step(duration: Duration, glyphs: SettingsGlyphs) -> String {
-    format!("{:.1}{}", duration.as_secs_f64(), glyphs.duration_unit)
+fn format_duration_step(duration: Duration) -> String {
+    format!(
+        "{:.1}{}",
+        duration.as_secs_f64(),
+        glyphs::settings::DURATION_UNIT
+    )
 }
 
-fn format_pick(current: &str, glyphs: SettingsGlyphs) -> String {
-    format!("{}{current}{}", glyphs.pick_left, glyphs.pick_right)
+fn format_pick(current: &str) -> String {
+    format!(
+        "{}{current}{}",
+        glyphs::settings::PICK_LEFT,
+        glyphs::settings::PICK_RIGHT
+    )
 }
 
 #[cfg(test)]
@@ -303,9 +291,9 @@ mod tests {
     use config::{APPEARANCE_ROWS, AppearanceField, CoverStyle};
     use kernel::domain::{Replaygain, SettingId, SettingRow};
 
-    use crate::{
-        overlay::settings::values::{SettingsView, settings_label, value_text},
-        scene::fixtures::{custom_settings, settings_values},
+    use crate::overlay::settings::{
+        test_support::{custom_settings, settings_values},
+        values::{SettingsView, settings_label, value_text},
     };
 
     #[test]

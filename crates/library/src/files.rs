@@ -49,7 +49,7 @@ mod tests {
     }
 
     #[test]
-    fn create_parent_makes_the_whole_chain_and_succeeds_when_repeated() {
+    fn create_parent_dir_makes_the_whole_chain_and_succeeds_when_repeated() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("one").join("two").join("file.json");
         create_parent_dir(&path).unwrap();
@@ -59,7 +59,7 @@ mod tests {
     }
 
     #[test]
-    fn persist_writes_the_final_file_and_leaves_no_temp_behind() {
+    fn write_atomic_writes_the_final_file_and_leaves_no_temp_behind() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("favorites.json");
 
@@ -71,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn persist_overwrites_an_existing_file() {
+    fn write_atomic_overwrites_an_existing_file() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("favorites.json");
         std::fs::write(&path, b"[1]").unwrap();

@@ -7,10 +7,10 @@ use kernel::{
     Cue,
     DecodeError,
     Effect,
+    HistoryEntry,
     LibraryCmd,
     MacosCmd,
     Moment,
-    NowPlaying,
     Pause,
     PlaybackChange,
     Player,
@@ -18,8 +18,9 @@ use kernel::{
     Preload,
     Speed,
     Track,
-    domain::{Revision, UnixSeconds},
-    update::player::{Anchor, Lookahead, PlayerError, PlayerMessage},
+    TrackRequest,
+    domain::Revision,
+    update::player::{Anchor, Lookahead, PlayerError, PlayerMessage, Stamp},
 };
 use rstest::rstest;
 
@@ -43,8 +44,19 @@ fn speed() -> Speed {
 
 fn anchor() -> Anchor {
     Anchor {
-        now: now(),
+        since: now(),
         speed: speed(),
+    }
+}
+
+fn revision() -> Revision {
+    Revision::default().next()
+}
+
+fn stamp() -> Stamp {
+    Stamp {
+        anchor: anchor(),
+        revision: revision(),
     }
 }
 
@@ -61,14 +73,14 @@ fn decode_error() -> AudioError {
 
 fn error() -> PlayerMessage {
     PlayerMessage::Error {
-        failure: decode_error(),
+        error: decode_error(),
         now: now(),
     }
 }
 
 fn seek_error() -> PlayerMessage {
     PlayerMessage::Error {
-        failure: AudioError::Seek {
+        error: AudioError::Seek {
             reason: "the source cannot seek".to_string(),
         },
         now: now(),
@@ -84,6 +96,7 @@ fn tick(at: u64, ab: Option<(u64, u64)>, next: Option<Arc<Track>>) -> PlayerMess
             next,
             duration: TRACK_LENGTH,
             now: now(),
+            revision: revision(),
         },
     }
 }
@@ -93,28 +106,28 @@ fn track_changed(next: Option<Arc<Track>>) -> PlayerMessage {
 }
 
 fn next(track: Arc<Track>) -> PlayerMessage {
-    PlayerMessage::Start { track }
+    PlayerMessage::Start {
+        track,
+        stamp: stamp(),
+    }
 }
 
 fn ended(next: Option<Arc<Track>>) -> PlayerMessage {
-    PlayerMessage::Ended { next }
+    PlayerMessage::Ended {
+        next,
+        stamp: stamp(),
+    }
 }
 
 fn now_playing(track: &Arc<Track>) -> Effect {
-    Effect::Macos(MacosCmd::NowPlaying(NowPlaying::Track {
-        title: track.song_title(),
-        artist: track.tags().artist.clone(),
-        album: track.tags().album.clone(),
-        duration: track.duration().unwrap_or_default(),
-        path: track.path().to_path_buf(),
-    }))
+    Effect::Macos(MacosCmd::NowPlaying(Some(Arc::clone(track))))
 }
 
 fn appended_to_history(track: &Arc<Track>) -> Effect {
-    Effect::Library(LibraryCmd::AppendHistory {
-        track: Arc::clone(track),
-        at: UnixSeconds::UNSTAMPED,
-    })
+    Effect::Library(LibraryCmd::AppendHistory(HistoryEntry::from_track(
+        track,
+        now(),
+    )))
 }
 
 fn handed_off(track: &Arc<Track>, playback: PlaybackChange) -> Cmd {
@@ -175,17 +188,13 @@ fn held(track: Arc<Track>, at: Duration) -> Player {
 fn toggle(current: Option<Arc<Track>>) -> PlayerMessage {
     PlayerMessage::Toggle {
         current,
-        anchor: anchor(),
+        stamp: stamp(),
     }
 }
 
 fn faded_in(track: &Arc<Track>) -> Cmd {
     let mut effects = vec![
-        Effect::Audio(AudioCmd::Load {
-            path: track.path().to_path_buf(),
-            gain: track.audio_format().replay_gain,
-            revision: Revision::UNSTAMPED,
-        }),
+        Effect::Audio(AudioCmd::Load(TrackRequest::for_track(track, revision()))),
         appended_to_history(track),
         now_playing(track),
     ];
@@ -201,18 +210,17 @@ fn cut_in(track: &Arc<Track>) -> Cmd {
 
 fn stopped() -> Cmd {
     let mut effects = PlaybackChange::Stop.effects().to_vec();
-    effects.push(Effect::Macos(MacosCmd::NowPlaying(NowPlaying::Cleared)));
+    effects.push(Effect::Macos(MacosCmd::NowPlaying(None)));
     effects.push(Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Stop)));
     Cmd::Batch(effects)
 }
 
 fn preloads(track: &Arc<Track>) -> Cmd {
     Cmd::Batch(vec![
-        Effect::Audio(AudioCmd::Preload {
-            path: track.path().to_path_buf(),
-            gain: track.audio_format().replay_gain,
-            revision: Revision::UNSTAMPED,
-        }),
+        Effect::Audio(AudioCmd::Preload(TrackRequest::for_track(
+            track,
+            revision(),
+        ))),
         Effect::Library(LibraryCmd::PrefetchCover(track.path().to_path_buf())),
     ])
 }

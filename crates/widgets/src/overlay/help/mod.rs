@@ -12,35 +12,28 @@ use ratatui::{
 use crate::{
     overlay::{
         help::{
-            columns::{HelpColors, HelpColumn, HelpColumnFit, select_help_columns},
-            groups::{HelpLayout, build_help_groups, small_count_u16},
+            columns::{HelpColors, HelpColumn, select_help_columns},
+            groups::{CHORD_GAP, COLUMN_GAP, build_help_groups, small_count_u16},
         },
-        modal::{ModalChrome, ModalPlacement, OverlayAreas, OverlayContainer},
+        modal::{ModalPlacement, OverlayAreas, OverlayContainer},
     },
-    primitive::{canvas::Canvas, glyphs::HelpGlyphs, inset::Inset},
-    theme::ActiveTheme,
+    primitive::{canvas::Canvas, inset::Inset},
+    theme::{ActiveTheme, Role},
 };
 
-struct HelpColumnLayout {
-    body: Rect,
-    columns: Vec<HelpColumn>,
-    column_gap: u16,
-}
-
-fn render_help_columns(input: &HelpColumnLayout, buffer: &mut Buffer) {
-    let body = input.body;
-    let widths: Vec<Constraint> = input
+fn render_help_columns(body: Rect, content: &HelpContent, buffer: &mut Buffer) {
+    let widths: Vec<Constraint> = content
         .columns
         .iter()
         .map(|column| Constraint::Length(column.width.min(body.width)))
         .collect();
     let rects = Layout::horizontal(widths)
-        .spacing(input.column_gap)
+        .spacing(content.column_gap)
         .flex(Flex::Center)
         .split(body);
-    let chord_gap = HelpLayout::default().chord_gap;
+    let chord_gap = CHORD_GAP;
 
-    for (&rect, column) in rects.iter().zip(&input.columns) {
+    for (&rect, column) in rects.iter().zip(&content.columns) {
         let constraints = column.constraints();
         Table::new(column.rows.clone(), constraints)
             .column_spacing(chord_gap)
@@ -51,7 +44,7 @@ fn render_help_columns(input: &HelpColumnLayout, buffer: &mut Buffer) {
 const TITLE: &str = "KEYS";
 
 #[derive(Debug)]
-pub struct HelpOverlay<'a> {
+pub(crate) struct HelpOverlay<'a> {
     pub theme: ActiveTheme<'a>,
     pub bindings: &'a [KeyBinding],
     pub avoid: &'a [Rect],
@@ -64,11 +57,11 @@ struct HelpContent {
 
 impl<'a> HelpOverlay<'a> {
     #[must_use]
-    pub fn areas(&self, screen: Rect) -> OverlayAreas {
+    pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
         OverlayAreas::List(self.placement(&self.content(screen)).areas(screen))
     }
 
-    pub fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
+    pub(crate) fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
         let OverlayAreas::List(areas) = areas else {
             return;
         };
@@ -84,40 +77,22 @@ impl<'a> HelpOverlay<'a> {
         if areas.content.width == 0 || areas.content.height == 0 {
             return;
         }
-        render_help_columns(
-            &HelpColumnLayout {
-                body: areas.content,
-                columns: content.columns,
-                column_gap: content.column_gap,
-            },
-            buffer,
-        );
+        render_help_columns(areas.content, &content, buffer);
     }
 
     fn colors(&self) -> HelpColors {
         let theme = self.theme;
         HelpColors {
-            title: theme.border(),
+            title: theme.role(Role::Frame),
             key: theme.muted_accent(),
-            description: theme.text(),
+            description: theme.role(Role::Text),
         }
     }
 
     fn content(&self, screen: Rect) -> HelpContent {
-        let layout = HelpLayout::default();
         let groups = build_help_groups(self.bindings);
-        let columns = select_help_columns(&HelpColumnFit {
-            groups: &groups,
-            colors: self.colors(),
-            layout,
-            glyphs: HelpGlyphs::default(),
-            full: screen,
-        });
-        let column_gap = if columns.len() > 1 {
-            layout.column_gap
-        } else {
-            0
-        };
+        let columns = select_help_columns(&groups, self.colors(), screen);
+        let column_gap = if columns.len() > 1 { COLUMN_GAP } else { 0 };
         HelpContent {
             columns,
             column_gap,
@@ -134,7 +109,7 @@ impl<'a> HelpOverlay<'a> {
         let columns = &content.columns;
         let gaps = small_count_u16(columns.len().saturating_sub(1));
         ModalPlacement {
-            inset: Inset::default(),
+            inset: Inset::overlay(),
             container: OverlayContainer::Modal { avoid: self.avoid },
             border_title: Line::default(),
             modal_title: TITLE,
@@ -146,38 +121,21 @@ impl<'a> HelpOverlay<'a> {
                 .fold(0u16, u16::max),
             hint: None,
             theme: self.theme,
-            chrome: ModalChrome::default(),
         }
-    }
-}
-
-impl Widget for &HelpOverlay<'_> {
-    fn render(self, area: Rect, buffer: &mut Buffer) {
-        self.render_in(self.areas(area), Canvas { area, buffer });
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use kernel::{
-        domain::KeymapOverrides,
-        update::keymap::{Bindings, KeyBinding},
-    };
     use rstest::rstest;
 
     use crate::{
-        overlay::help::HelpOverlay,
-        scene::fixtures::{noir, painted},
+        overlay::{help::HelpOverlay, rendered_canvas},
+        test_support::{bindings, noir},
         theme::{ActiveTheme, ColorDepth},
     };
 
-    fn bindings() -> Vec<KeyBinding> {
-        Bindings::new(&KeymapOverrides::default())
-            .as_slice()
-            .to_vec()
-    }
-
-    fn rendered(width: u16, height: u16) -> String {
+    fn help_frame(width: u16, height: u16) -> String {
         let theme = noir();
         let bindings = bindings();
         let overlay = HelpOverlay {
@@ -185,20 +143,26 @@ mod tests {
             bindings: &bindings,
             avoid: &[],
         };
-        painted(&overlay, width, height)
+        rendered_canvas(width, height, |canvas| {
+            overlay.render_in(overlay.areas(canvas.area), canvas);
+        })
+        .to_string()
     }
 
     #[rstest]
     #[case::wide(120, 40)]
     #[case::narrow(50, 16)]
-    fn help_overlay_layout_by_terminal_size(#[case] width: u16, #[case] height: u16) {
+    fn help_overlay_fits_its_columns_to_the_terminal(
+        #[case] width: u16,
+        #[case] height: u16,
+    ) {
         insta::with_settings!({ snapshot_suffix => format!("{width}x{height}") }, {
-            insta::assert_snapshot!(rendered(width, height));
+            insta::assert_snapshot!(help_frame(width, height));
         });
     }
 
     #[test]
     fn help_overlay_does_not_panic_on_a_tiny_terminal() {
-        let _ = rendered(4, 3);
+        let _ = help_frame(4, 3);
     }
 }

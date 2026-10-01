@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
-assertion_line: 414
+assertion_line: 366
 expression: "walked(model, messages)"
 ---
 [
@@ -91,60 +91,62 @@ expression: "walked(model, messages)"
         Batch(
             [
                 Audio(
-                    Load {
-                        path: "/tmp/track2.flac",
-                        gain: None,
-                        revision: Revision(
-                            1,
-                        ),
-                    },
+                    Load(
+                        TrackRequest {
+                            path: "/tmp/track2.flac",
+                            gain: None,
+                            revision: Revision(
+                                1,
+                            ),
+                        },
+                    ),
                 ),
                 Library(
-                    AppendHistory {
-                        track: Track {
+                    AppendHistory(
+                        HistoryEntry {
                             path: "/tmp/track2.flac",
-                            duration: Some(
-                                100s,
+                            title: "track2",
+                            artist: None,
+                            at: Moment(
+                                0ns,
                             ),
-                            tags: Tags {
-                                title: None,
-                                artist: None,
-                                album: None,
-                                album_artist: None,
-                                date: None,
-                                genre: None,
-                                track: None,
-                                track_total: None,
-                                disc: None,
-                                composer: None,
-                                comment: None,
-                                lyrics: None,
-                            },
-                            audio_format: AudioFormat {
-                                format: None,
-                                bitrate_kbps: None,
-                                sample_rate_hz: None,
-                                bits_per_sample: None,
-                                channels: None,
-                                replay_gain: None,
-                            },
-                            display: "track2.flac",
-                            tagging: Read,
                         },
-                        at: UnixSeconds(
-                            0,
-                        ),
-                    },
+                    ),
                 ),
                 Macos(
                     NowPlaying(
-                        Track {
-                            title: "track2",
-                            artist: None,
-                            album: None,
-                            duration: 100s,
-                            path: "/tmp/track2.flac",
-                        },
+                        Some(
+                            Track {
+                                path: "/tmp/track2.flac",
+                                duration: Some(
+                                    100s,
+                                ),
+                                tags: Tags {
+                                    title: None,
+                                    artist: None,
+                                    album: None,
+                                    album_artist: None,
+                                    date: None,
+                                    genre: None,
+                                    track: None,
+                                    track_total: None,
+                                    disc: None,
+                                    composer: None,
+                                    comment: None,
+                                    lyrics: None,
+                                },
+                                audio_format: AudioFormat {
+                                    format: None,
+                                    bitrate_kbps: None,
+                                    sample_rate_hz: None,
+                                    bits_per_sample: None,
+                                    channels: None,
+                                    replay_gain: None,
+                                },
+                                display: "track2.flac",
+                                tagging: Read,
+                            },
+                        ),
                     ),
                 ),
                 Audio(

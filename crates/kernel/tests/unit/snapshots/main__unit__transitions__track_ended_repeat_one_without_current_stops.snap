@@ -13,7 +13,7 @@ expression: effs
     ),
     Macos(
         NowPlaying(
-            Cleared,
+            None,
         ),
     ),
 ]

@@ -6,7 +6,7 @@ use crate::{
         modal::{ModalRowColors, indented},
         settings::values::{SettingsView, settings_label, value_text},
     },
-    primitive::{glyphs::TruncateGlyphs, text::truncate_to_width},
+    primitive::text::truncate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,10 +57,8 @@ pub(crate) fn settings_row(
 
 fn settings_cells(view: &SettingsRowView<'_>) -> [String; 2] {
     let columns = view.columns;
-    let cell = |value: &str, width: u16| {
-        truncate_to_width(value, usize::from(width), TruncateGlyphs::default())
-            .into_owned()
-    };
+    let cell =
+        |value: &str, width: u16| truncate(value, usize::from(width)).into_owned();
     [
         indented(settings_label(view.row), columns.lead, columns.label),
         cell(&value_text(view.row, view.values), columns.value),
@@ -72,9 +70,9 @@ mod tests {
     use kernel::domain::{CustomSetting, SettingRow};
     use unicode_width::UnicodeWidthStr;
 
-    use crate::{
-        overlay::settings::rows::{SettingsColumns, SettingsRowView, settings_cells},
-        scene::fixtures::{custom_settings, settings_values},
+    use crate::overlay::settings::{
+        rows::{SettingsColumns, SettingsRowView, settings_cells},
+        test_support::{custom_settings, settings_values},
     };
 
     fn all_rows(custom_settings: &[CustomSetting]) -> Vec<SettingRow> {

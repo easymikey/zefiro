@@ -11,7 +11,7 @@ use crate::{
 pub struct FullScreen<'a> {
     pub scene: Scene<'a>,
     pub layout: &'a FrameLayout,
-    pub cover_art: CoverArt<'a>,
+    pub cover_art: &'a CoverArt,
 }
 
 impl Widget for &FullScreen<'_> {

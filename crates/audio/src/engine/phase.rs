@@ -2,8 +2,6 @@ use std::{path::PathBuf, time::Duration};
 
 use kernel::Playback;
 
-use crate::engine::effect::PreloadedTrack;
-
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) enum Phase {
     #[default]
@@ -19,13 +17,11 @@ impl Phase {
             Phase::Playing(Playing { current, .. })
             | Phase::Handover(Handover {
                 incoming: Incoming::Playing(current),
-                ..
             }) => Some(current),
             Phase::Idle
             | Phase::Loading(_)
             | Phase::Handover(Handover {
                 incoming: Incoming::Loading(_),
-                ..
             }) => None,
         }
     }
@@ -51,7 +47,6 @@ impl Playing {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Handover {
-    pub(crate) outgoing: Outgoing,
     pub(crate) incoming: Incoming,
 }
 
@@ -59,11 +54,6 @@ pub(crate) struct Handover {
 pub(crate) enum Incoming {
     Loading(Loading),
     Playing(CurrentTrack),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Outgoing {
-    pub(crate) from: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,49 +69,36 @@ pub(crate) enum Next {
     None,
     Gapless(PathBuf),
     Crossfading {
-        preload: PreloadedTrack,
-        fade: Fade,
+        preload: CurrentTrack,
+        fading: bool,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum Fade {
-    #[default]
-    Idle,
-    Fading,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Loading {
     pub(crate) path: PathBuf,
     pub(crate) gain: Option<f32>,
-    pub(crate) after_load: AfterLoad,
+    pub(crate) after_load: Option<Resume>,
 }
 
 impl Loading {
     pub(crate) fn into_current(
         self,
         decoded: Option<Duration>,
-    ) -> (CurrentTrack, AfterLoad) {
+    ) -> (CurrentTrack, Option<Resume>) {
         let Loading {
             path,
             gain,
             after_load,
         } = self;
-        let total = match &after_load {
-            AfterLoad::None => decoded,
-            AfterLoad::Resume { total, .. } => *total,
-        };
+        let total = after_load.as_ref().map_or(decoded, |resume| resume.total);
         (CurrentTrack { total, gain, path }, after_load)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum AfterLoad {
-    None,
-    Resume {
-        position: Duration,
-        playback: Playback,
-        total: Option<Duration>,
-    },
+pub(crate) struct Resume {
+    pub(crate) position: Duration,
+    pub(crate) playback: Playback,
+    pub(crate) total: Option<Duration>,
 }

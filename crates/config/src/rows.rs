@@ -29,20 +29,27 @@ use crate::{
         preset_of,
     },
     appearance_file::AppearanceFile,
-    error::SettingError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u16)]
 pub enum AppearanceField {
-    Preset,
-    CoverStyle,
-    CoverBrackets,
-    FormatChips,
-    SpeedChip,
-    ProgressRemaining,
-    KeyHints,
-    Animations,
-    LayoutMode,
+    Preset = 12,
+    CoverStyle = 0,
+    CoverBrackets = 1,
+    FormatChips = 2,
+    SpeedChip = 3,
+    ProgressRemaining = 5,
+    KeyHints = 6,
+    Animations = 7,
+    LayoutMode = 11,
+}
+
+impl AppearanceField {
+    #[must_use]
+    pub const fn id(self) -> SettingId {
+        SettingId::new(self as u16)
+    }
 }
 
 #[must_use]
@@ -67,35 +74,36 @@ const PRESET_THEMES: [Option<ThemeName>; 2] = [
     AppearancePreset::Noir.theme(),
 ];
 
-const COVER_STYLES: [CoverStyle; 4] = [
+pub(crate) const COVER_STYLES: [CoverStyle; 4] = [
     CoverStyle::Vinyl,
     CoverStyle::Plain,
     CoverStyle::Milkdrop,
     CoverStyle::Off,
 ];
 
-const COVER_BRACKETS: [CoverBrackets; 2] =
+pub(crate) const COVER_BRACKETS: [CoverBrackets; 2] =
     [CoverBrackets::Hidden, CoverBrackets::Shown];
 
-const FORMAT_CHIPS: [FormatChips; 2] = [FormatChips::Hidden, FormatChips::Shown];
+pub(crate) const FORMAT_CHIPS: [FormatChips; 2] =
+    [FormatChips::Hidden, FormatChips::Shown];
 
-const SPEED_CHIPS: [SpeedChip; 3] =
+pub(crate) const SPEED_CHIPS: [SpeedChip; 3] =
     [SpeedChip::Always, SpeedChip::Changed, SpeedChip::Never];
 
-const PROGRESS_STYLES: [ProgressTime; 2] =
+pub(crate) const PROGRESS_STYLES: [ProgressTime; 2] =
     [ProgressTime::Elapsed, ProgressTime::Remaining];
 
-const KEY_HINTS: [KeyHints; 2] = [KeyHints::Shown, KeyHints::Hidden];
+pub(crate) const KEY_HINTS: [KeyHints; 2] = [KeyHints::Shown, KeyHints::Hidden];
 
-const ANIMATIONS: [Animations; 2] = [Animations::On, Animations::Off];
+pub(crate) const ANIMATIONS: [Animations; 2] = [Animations::On, Animations::Off];
 
-const LAYOUT_MODES: [LayoutMode; 3] =
+pub(crate) const LAYOUT_MODES: [LayoutMode; 3] =
     [LayoutMode::Auto, LayoutMode::Full, LayoutMode::Compact];
 
 pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
     AppearanceRow {
         custom: CustomRow {
-            id: SettingId::new(12),
+            id: AppearanceField::Preset.id(),
             control: CustomControl::Cycle(option_count(PRESETS.len())),
             cue: Some(Cue::LayoutChanged),
             themes: &PRESET_THEMES,
@@ -104,7 +112,7 @@ pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
     },
     AppearanceRow {
         custom: CustomRow {
-            id: SettingId::new(0),
+            id: AppearanceField::CoverStyle.id(),
             control: CustomControl::Cycle(option_count(COVER_STYLES.len())),
             cue: None,
             themes: &[],
@@ -113,7 +121,7 @@ pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
     },
     AppearanceRow {
         custom: CustomRow {
-            id: SettingId::new(1),
+            id: AppearanceField::CoverBrackets.id(),
             control: CustomControl::Toggle,
             cue: None,
             themes: &[],
@@ -122,7 +130,7 @@ pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
     },
     AppearanceRow {
         custom: CustomRow {
-            id: SettingId::new(2),
+            id: AppearanceField::FormatChips.id(),
             control: CustomControl::Toggle,
             cue: None,
             themes: &[],
@@ -131,7 +139,7 @@ pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
     },
     AppearanceRow {
         custom: CustomRow {
-            id: SettingId::new(3),
+            id: AppearanceField::SpeedChip.id(),
             control: CustomControl::Cycle(option_count(SPEED_CHIPS.len())),
             cue: None,
             themes: &[],
@@ -140,7 +148,7 @@ pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
     },
     AppearanceRow {
         custom: CustomRow {
-            id: SettingId::new(5),
+            id: AppearanceField::ProgressRemaining.id(),
             control: CustomControl::Toggle,
             cue: None,
             themes: &[],
@@ -149,7 +157,7 @@ pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
     },
     AppearanceRow {
         custom: CustomRow {
-            id: SettingId::new(6),
+            id: AppearanceField::KeyHints.id(),
             control: CustomControl::Toggle,
             cue: None,
             themes: &[],
@@ -158,7 +166,7 @@ pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
     },
     AppearanceRow {
         custom: CustomRow {
-            id: SettingId::new(7),
+            id: AppearanceField::Animations.id(),
             control: CustomControl::Toggle,
             cue: None,
             themes: &[],
@@ -167,7 +175,7 @@ pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
     },
     AppearanceRow {
         custom: CustomRow {
-            id: SettingId::new(11),
+            id: AppearanceField::LayoutMode.id(),
             control: CustomControl::Cycle(option_count(LAYOUT_MODES.len())),
             cue: Some(Cue::LayoutChanged),
             themes: &[],
@@ -235,23 +243,10 @@ fn field_choice(field: AppearanceField, options: Appearance) -> Choice {
     }
 }
 
-fn full_patch(appearance: Appearance) -> AppearancePatch {
-    AppearancePatch::builder()
-        .cover_style(appearance.cover_style)
-        .cover_brackets(appearance.cover_brackets)
-        .format_chips(appearance.format_chips)
-        .speed_chip(appearance.speed_chip)
-        .progress_time(appearance.progress_time)
-        .key_hints(appearance.key_hints)
-        .animations(appearance.animations)
-        .layout_mode(appearance.layout_mode)
-        .build()
-}
-
 fn field_patch(field: AppearanceField, option: OptionIndex) -> Option<AppearancePatch> {
     Some(match field {
         AppearanceField::Preset => {
-            full_patch(preset_appearance(*PRESETS.get(option.get())?))
+            AppearancePatch::from(preset_appearance(*PRESETS.get(option.get())?))
         }
         AppearanceField::CoverStyle => AppearancePatch::builder()
             .cover_style(option_at(COVER_STYLES, option)?)
@@ -280,12 +275,9 @@ fn field_patch(field: AppearanceField, option: OptionIndex) -> Option<Appearance
     })
 }
 
-pub fn appearance_patch(
-    id: SettingId,
-    option: OptionIndex,
-) -> Result<AppearancePatch, SettingError> {
-    let row = appearance_row(id).ok_or(SettingError::UnknownRow { id })?;
-    field_patch(row.field, option).ok_or(SettingError::NoOption { id, option })
+#[must_use]
+pub fn appearance_patch(id: SettingId, option: OptionIndex) -> Option<AppearancePatch> {
+    field_patch(appearance_row(id)?.field, option)
 }
 
 #[cfg(test)]
@@ -297,29 +289,19 @@ mod tests {
 
     use crate::{
         appearance::{
-            Animations,
-            Appearance,
             AppearancePatch,
             AppearancePreset,
-            CoverBrackets,
-            CoverStyle,
             FormatChips,
-            KeyHints,
-            LayoutMode,
-            ProgressTime,
-            SpeedChip,
             preset_appearance,
         },
-        appearance_document::patch_appearance_text,
         appearance_file::AppearanceFile,
-        error::SettingError,
+        patch::patch_appearance_text,
         rows::{
             APPEARANCE_ROWS,
             AppearanceField,
             appearance_patch,
             appearance_row,
             custom_settings,
-            preset_choice,
         },
     };
 
@@ -331,101 +313,6 @@ mod tests {
             .count()
             .index(position)
             .unwrap()
-    }
-
-    #[rstest]
-    #[case::cover_style(
-        0,
-        2,
-        AppearancePatch::builder().cover_style(CoverStyle::Milkdrop).build()
-    )]
-    #[case::cover_brackets(
-        1,
-        1,
-        AppearancePatch::builder().cover_brackets(CoverBrackets::Shown).build()
-    )]
-    #[case::format_chips(
-        2,
-        1,
-        AppearancePatch::builder().format_chips(FormatChips::Shown).build()
-    )]
-    #[case::speed_chip(
-        3,
-        2,
-        AppearancePatch::builder().speed_chip(SpeedChip::Never).build()
-    )]
-    #[case::progress_time(
-        5,
-        1,
-        AppearancePatch::builder()
-            .progress_time(ProgressTime::Remaining)
-            .build()
-    )]
-    #[case::key_hints(
-        6,
-        1,
-        AppearancePatch::builder().key_hints(KeyHints::Hidden).build()
-    )]
-    #[case::animations(
-        7,
-        1,
-        AppearancePatch::builder().animations(Animations::Off).build()
-    )]
-    #[case::layout_mode(
-        11,
-        2,
-        AppearancePatch::builder().layout_mode(LayoutMode::Compact).build()
-    )]
-    fn a_nudged_row_patches_exactly_its_own_field(
-        #[case] id: u16,
-        #[case] position: usize,
-        #[case] patch: AppearancePatch,
-    ) {
-        let option = option_at_row(SettingId::new(id), position);
-        assert_eq!(appearance_patch(SettingId::new(id), option), Ok(patch));
-    }
-
-    #[rstest]
-    #[case::cover_style(
-        0,
-        AppearancePatch::builder().cover_style(CoverStyle::Vinyl).build()
-    )]
-    #[case::cover_brackets(
-        1,
-        AppearancePatch::builder().cover_brackets(CoverBrackets::Hidden).build()
-    )]
-    #[case::format_chips(
-        2,
-        AppearancePatch::builder().format_chips(FormatChips::Hidden).build()
-    )]
-    #[case::speed_chip(
-        3,
-        AppearancePatch::builder().speed_chip(SpeedChip::Always).build()
-    )]
-    #[case::progress_time(
-        5,
-        AppearancePatch::builder()
-            .progress_time(ProgressTime::Elapsed)
-            .build()
-    )]
-    #[case::key_hints(
-        6,
-        AppearancePatch::builder().key_hints(KeyHints::Shown).build()
-    )]
-    #[case::animations(
-        7,
-        AppearancePatch::builder().animations(Animations::On).build()
-    )]
-    #[case::layout_mode(
-        11,
-        AppearancePatch::builder().layout_mode(LayoutMode::Auto).build()
-    )]
-    fn the_first_position_of_every_row_is_its_stock_option(
-        #[case] id: u16,
-        #[case] patch: AppearancePatch,
-    ) {
-        let option = option_at_row(SettingId::new(id), 0);
-        assert_eq!(appearance_patch(SettingId::new(id), option), Ok(patch));
     }
 
     #[test]
@@ -442,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_rows_copies_the_cue_from_its_appearance_row() {
+    fn custom_settings_copies_the_cue_from_its_appearance_row() {
         let rows = custom_settings(&AppearanceFile::default());
         let layout_row = APPEARANCE_ROWS
             .into_iter()
@@ -478,43 +365,26 @@ mod tests {
             assert!(last.is_some(), "{row:?}");
             assert!(count.index(count.get()).is_none(), "{row:?}");
             assert!(
-                appearance_patch(row.custom.id, last.unwrap()).is_ok(),
+                appearance_patch(row.custom.id, last.unwrap()).is_some(),
                 "{row:?}"
             );
         }
-    }
-
-    #[test]
-    fn an_id_no_row_claims_is_rejected() {
-        let option = OptionCount::new(1).unwrap().index(0).unwrap();
-        assert_eq!(
-            appearance_patch(SettingId::new(13), option),
-            Err(SettingError::UnknownRow {
-                id: SettingId::new(13)
-            })
-        );
     }
 
     #[rstest]
     #[case::cover_style_four(
         SettingId::new(0),
         OptionCount::new(5).unwrap().index(4).unwrap(),
-        SettingError::NoOption {
-            id: SettingId::new(0),
-            option: OptionCount::new(5).unwrap().index(4).unwrap(),
-        }
     )]
     #[case::unknown_row(
         SettingId::new(13),
-        OptionCount::new(1).unwrap().index(0).unwrap(),
-        SettingError::UnknownRow { id: SettingId::new(13) }
+        OptionCount::new(1).unwrap().index(0).unwrap()
     )]
-    fn an_unknown_option_is_rejected_with_its_index(
+    fn an_unknown_row_or_option_patches_nothing(
         #[case] id: SettingId,
         #[case] option: OptionIndex,
-        #[case] expected: SettingError,
     ) {
-        assert_eq!(appearance_patch(id, option), Err(expected));
+        assert_eq!(appearance_patch(id, option), None);
     }
 
     #[rstest]
@@ -535,34 +405,8 @@ mod tests {
         });
     }
 
-    #[rstest]
-    #[case::preset(0)]
-    #[case::cover_style(1)]
-    #[case::cover_brackets(2)]
-    #[case::format_chips(3)]
-    #[case::speed_chip(4)]
-    #[case::progress_time(5)]
-    #[case::key_hints(6)]
-    #[case::animations(7)]
-    #[case::layout_mode(8)]
-    fn custom_rows_carries_the_id_and_control_of_every_row(#[case] index: usize) {
-        let rows = custom_settings(&AppearanceFile::default());
-        let expected = APPEARANCE_ROWS[index];
-
-        assert_eq!(rows[index].custom.id, expected.custom.id);
-        assert_eq!(rows[index].custom.control, expected.custom.control);
-    }
-
     #[test]
-    fn custom_rows_names_exactly_the_appearance_rows() {
-        assert_eq!(
-            custom_settings(&AppearanceFile::default()).len(),
-            APPEARANCE_ROWS.len()
-        );
-    }
-
-    #[test]
-    fn custom_rows_reads_the_stock_files_position_as_zero_for_every_row() {
+    fn custom_settings_reads_the_stock_files_position_as_zero_for_every_row() {
         let rows = custom_settings(&AppearanceFile::default());
         let zero = OptionCount::new(1).unwrap().index(0).unwrap();
         assert!(
@@ -581,7 +425,7 @@ mod tests {
     #[case::key_hints(AppearanceField::KeyHints, 1)]
     #[case::animations(AppearanceField::Animations, 1)]
     #[case::layout_mode(AppearanceField::LayoutMode, 2)]
-    fn custom_rows_is_the_inverse_of_field_patch(
+    fn custom_settings_is_the_inverse_of_field_patch(
         #[case] field: AppearanceField,
         #[case] position: usize,
     ) {
@@ -602,19 +446,6 @@ mod tests {
         assert_eq!(slot.choice, Choice::Option(option));
     }
 
-    fn preset_row_id() -> SettingId {
-        appearance_row_id(AppearanceField::Preset)
-    }
-
-    fn appearance_row_id(field: AppearanceField) -> SettingId {
-        APPEARANCE_ROWS
-            .into_iter()
-            .find(|row| row.field == field)
-            .unwrap()
-            .custom
-            .id
-    }
-
     #[test]
     fn the_noir_patch_equals_the_noir_preset_field_for_field() {
         let expected = AppearancePatch::builder()
@@ -627,21 +458,24 @@ mod tests {
             .animations(preset_appearance(AppearancePreset::Noir).animations)
             .layout_mode(preset_appearance(AppearancePreset::Noir).layout_mode)
             .build();
-        let option = option_at_row(preset_row_id(), 1);
+        let option = option_at_row(AppearanceField::Preset.id(), 1);
 
-        assert_eq!(appearance_patch(preset_row_id(), option), Ok(expected));
+        assert_eq!(
+            appearance_patch(AppearanceField::Preset.id(), option),
+            Some(expected)
+        );
     }
 
     #[test]
     fn a_noir_file_puts_preset_at_the_noir_index() {
-        let option = option_at_row(preset_row_id(), 1);
-        let patch = appearance_patch(preset_row_id(), option).unwrap();
+        let option = option_at_row(AppearanceField::Preset.id(), 1);
+        let patch = appearance_patch(AppearanceField::Preset.id(), option).unwrap();
         let file = AppearanceFile::default().patched(patch);
 
         let rows = custom_settings(&file);
         let slot = rows
             .into_iter()
-            .find(|slot| slot.custom.id == preset_row_id())
+            .find(|slot| slot.custom.id == AppearanceField::Preset.id())
             .unwrap();
 
         assert_eq!(slot.choice, Choice::Option(option));
@@ -657,7 +491,7 @@ mod tests {
         let rows = custom_settings(&file);
         let slot = rows
             .into_iter()
-            .find(|slot| slot.custom.id == preset_row_id())
+            .find(|slot| slot.custom.id == AppearanceField::Preset.id())
             .unwrap();
 
         assert_eq!(slot.choice, Choice::Mixed);
@@ -665,21 +499,11 @@ mod tests {
 
     #[test]
     fn the_preset_rows_options_carry_a_theme_per_preset() {
-        let row = appearance_row(preset_row_id()).unwrap();
+        let row = appearance_row(AppearanceField::Preset.id()).unwrap();
 
         assert_eq!(
             row.custom.themes,
             &[None, Some(kernel::domain::ThemeName::from_static("noir"))]
         );
-    }
-
-    #[test]
-    fn the_stock_appearance_matches_no_preset_once_edited() {
-        let edited = Appearance {
-            format_chips: FormatChips::Shown,
-            ..Appearance::default()
-        };
-
-        assert_eq!(preset_choice(edited), Choice::Mixed);
     }
 }

@@ -25,21 +25,20 @@ impl Favorites {
         self.0.is_empty()
     }
 
-    #[must_use]
-    pub fn into_inner(self) -> Arc<HashSet<PathBuf>> {
-        self.0
+    pub fn iter(&self) -> impl Iterator<Item = &PathBuf> {
+        self.0.iter()
     }
 }
 
-impl From<HashSet<PathBuf>> for Favorites {
-    fn from(paths: HashSet<PathBuf>) -> Self {
-        Self(Arc::new(paths))
+impl FromIterator<PathBuf> for Favorites {
+    fn from_iter<I: IntoIterator<Item = PathBuf>>(paths: I) -> Self {
+        Self(Arc::new(paths.into_iter().collect()))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, path::PathBuf};
+    use std::path::PathBuf;
 
     use crate::domain::favorites::Favorites;
 
@@ -69,12 +68,10 @@ mod tests {
     }
 
     #[test]
-    fn from_hash_set_and_into_inner_round_trip() {
-        let mut set = HashSet::new();
-        set.insert(path("/a.flac"));
+    fn collecting_paths_and_iterating_round_trip() {
+        let favorites: Favorites = [path("/a.flac")].into_iter().collect();
 
-        let favorites = Favorites::from(set.clone());
         assert!(favorites.is_favorite(&path("/a.flac")));
-        assert_eq!(*favorites.into_inner(), set);
+        assert_eq!(favorites.iter().collect::<Vec<_>>(), [&path("/a.flac")]);
     }
 }

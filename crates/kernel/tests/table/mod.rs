@@ -3,6 +3,7 @@ mod cues;
 mod history;
 mod jump;
 mod keymap;
+mod keymap_overrides;
 mod library;
 mod output_lost;
 mod overlay_outer;

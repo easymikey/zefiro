@@ -2,7 +2,7 @@ use crate::{
     cmd::{Cmd, Cue},
     domain::{Model, Moment, Reply, Revision, Workspace},
     message::Timer,
-    update::{audio, driver, error::UpdateError, player, player::PlayerMessage},
+    update::{audio, error::UpdateError, player, player::PlayerMessage},
 };
 
 pub(crate) fn update(
@@ -17,7 +17,6 @@ pub(crate) fn update(
         )),
         Timer::Sleep(revision) => sleep_fired(model, revision, now),
         Timer::Mark(revision) => audio::mark_fired(model, revision, now),
-        Timer::Restart(restarting) => Ok(driver::restart_due(model, restarting, now)),
     }
 }
 

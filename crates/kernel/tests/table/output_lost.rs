@@ -80,7 +80,7 @@ fn play_while_the_output_is_lost_loads_again_so_the_engine_reopens() {
 
     assert!(
         cmd.effects()
-            .any(|effect| matches!(effect, Effect::Audio(AudioCmd::Load { .. }))),
+            .any(|effect| matches!(effect, Effect::Audio(AudioCmd::Load(_)))),
         "expected a load among {cmd:?}"
     );
     assert!(matches!(model.player, Player::Loading { .. }));

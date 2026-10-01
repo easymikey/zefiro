@@ -1,13 +1,11 @@
-use std::{collections::HashMap, fmt, path::PathBuf};
+use std::{collections::HashMap, fmt};
 
-use kernel::domain::{self, Action, KeyContext, KeyOverride};
+use kernel::domain::{Action, KeyContext, KeyOverride};
 use serde::{
     Deserialize,
     de::{Deserializer, MapAccess, Visitor, value::MapAccessDeserializer},
 };
 use strum::IntoEnumIterator;
-
-use crate::{config_file::parse_config, error::Error};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -17,7 +15,7 @@ struct KeyBindingTable {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-struct KeyBindingEntry(KeyOverride);
+pub(crate) struct KeyBindingEntry(pub(crate) KeyOverride);
 
 impl fmt::Debug for KeyBindingEntry {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -63,7 +61,7 @@ type KeymapByName = HashMap<String, KeyBindingEntry>;
 
 #[derive(Clone, Default, PartialEq, Deserialize)]
 #[serde(try_from = "KeymapByName")]
-pub struct KeymapFile(HashMap<Action, KeyBindingEntry>);
+pub struct KeymapFile(pub(crate) HashMap<Action, KeyBindingEntry>);
 
 impl TryFrom<KeymapByName> for KeymapFile {
     type Error = strum::ParseError;
@@ -85,72 +83,5 @@ impl fmt::Debug for KeymapFile {
                 Some((spelling, self.0.get(&action)?))
             }))
             .finish()
-    }
-}
-
-impl From<KeymapFile> for domain::KeymapOverrides {
-    fn from(file: KeymapFile) -> Self {
-        file.0
-            .into_iter()
-            .map(|(action, binding)| (action, binding.0))
-            .collect()
-    }
-}
-
-#[must_use]
-#[derive(Debug, Clone, PartialEq)]
-pub struct ConfigReload {
-    pub keymap: domain::KeymapOverrides,
-    pub music_dir: Option<PathBuf>,
-}
-
-pub fn parse_config_reload(text: &str) -> Result<ConfigReload, Error> {
-    parse_config(text).map(|config| ConfigReload {
-        keymap: config.keymap.into(),
-        music_dir: config.music_dir,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use kernel::domain::{Action, KeyOverride, KeymapOverrides};
-
-    use crate::{
-        error::Error,
-        keymap::{ConfigReload, parse_config_reload},
-    };
-
-    #[test]
-    fn keymap_error_names_the_file_and_the_line() {
-        let Err(error) = parse_config_reload("[keymap]\nnext = \"x\"\n[keymap]\n")
-        else {
-            panic!("a broken config file must not parse");
-        };
-        let text = error.to_string();
-        assert_eq!(text.lines().nth(1), Some("config.toml:3"), "was {text:?}");
-    }
-
-    #[test]
-    fn a_config_file_yields_its_keymap_and_its_root_and_ignores_other_tables() {
-        let parsed = parse_config_reload(
-            "music_dir = \"/tmp\"\ntheme = \"dark\"\n\n[audio]\ncrossfade = \"3s\"\n\n[keymap]\nnext = \"x\"\n",
-        );
-        assert_eq!(
-            parsed.ok(),
-            Some(ConfigReload {
-                keymap: KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]),
-                music_dir: Some(PathBuf::from("/tmp")),
-            })
-        );
-    }
-
-    #[test]
-    fn a_broken_config_file_reports_a_parse_fault() {
-        assert!(matches!(
-            parse_config_reload("[keymap\nnot toml"),
-            Err(Error::Parse { .. })
-        ));
     }
 }

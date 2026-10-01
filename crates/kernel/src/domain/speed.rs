@@ -28,7 +28,7 @@ impl Speed {
     pub const STEP: f32 = 0.25;
 
     #[must_use]
-    pub const fn value(self) -> f32 {
+    pub const fn get(self) -> f32 {
         self.0
     }
 
@@ -43,11 +43,6 @@ impl Speed {
     #[must_use]
     pub fn label(self) -> Option<String> {
         (self != Self::default()).then(|| self.trimmed_label())
-    }
-
-    #[must_use]
-    pub fn label_always(self) -> String {
-        self.trimmed_label()
     }
 
     fn trimmed_label(self) -> String {
@@ -80,12 +75,12 @@ mod tests {
     #[case::saturates_below_the_floor(0.0, 0.25)]
     #[case::nan_resets_to_unity(f32::NAN, 1.0)]
     fn clamped_saturates(#[case] raw: f32, #[case] expected: f32) {
-        assert_eq!(Speed::clamped(raw).value(), expected);
+        assert_eq!(Speed::clamped(raw).get(), expected);
     }
 
     #[test]
     fn default_is_unity() {
-        assert_eq!(Speed::default().value(), 1.0);
+        assert_eq!(Speed::default().get(), 1.0);
     }
 
     #[rstest]
@@ -102,7 +97,7 @@ mod tests {
         #[case] step: fn(Speed) -> Speed,
         #[case] expected: f32,
     ) {
-        assert_eq!(step(start).value(), expected);
+        assert_eq!(step(start).get(), expected);
     }
 
     #[test]
@@ -119,16 +114,8 @@ mod tests {
     }
 
     #[test]
-    fn label_always_reports_the_default_as_one() {
-        assert_eq!(Speed::default().label_always(), "1");
-    }
-
-    #[test]
-    fn label_always_matches_label_away_from_the_default() {
-        assert_eq!(
-            Speed::clamped(1.25).label(),
-            Some(Speed::clamped(1.25).label_always())
-        );
+    fn display_reports_the_default_as_one() {
+        assert_eq!(Speed::default().to_string(), "1");
     }
 
     #[rstest]

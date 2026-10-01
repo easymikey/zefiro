@@ -104,10 +104,10 @@ pub(crate) fn model_with_dated_tracks(count: usize) -> Model {
 }
 
 pub(crate) fn model_playing_at(count: usize, k: usize, at: Duration) -> Model {
-    let mut m = model_with_tracks(count);
+    let mut m = model_with_dated_tracks(count);
     m.playlist.cursor = Cursor::with_len(count).at(k);
     m.player = Player::Playing {
-        track: bare_track(k),
+        track: dated_track(k),
         head: Playhead::anchored(at, Moment::default(), Speed::default()),
         preload: Preload::None,
     };

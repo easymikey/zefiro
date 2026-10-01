@@ -1,7 +1,7 @@
 use audio::SpectrumTap;
 use kernel::{Cue, Message, Moment, WindowColorsCmd, domain::Model};
 
-use crate::{cells::Receivers, library::cover::CoverRequest};
+use crate::{latest::LatestReceivers, library::cover::CoverRequest};
 
 pub trait Shell {
     type Input;
@@ -9,8 +9,8 @@ pub trait Shell {
 
     fn input(&mut self, event: Self::Input) -> Reaction;
     fn effect(&mut self, effect: ShellEffect);
-    fn frame_due(&self, view: &FrameInput<'_>) -> FrameDue;
-    fn paint(&mut self, view: FrameInput<'_>) -> Result<Painted, Self::Error>;
+    fn frame_due(&self, frame: &Frame<'_>) -> FrameDue;
+    fn paint(&mut self, frame: Frame<'_>) -> Result<Painted, Self::Error>;
 }
 
 #[must_use]
@@ -35,10 +35,10 @@ pub enum FrameDue {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct FrameInput<'a> {
+pub struct Frame<'a> {
     pub model: &'a Model,
     pub spectrum: &'a SpectrumTap,
-    pub cells: &'a Receivers,
+    pub latest: &'a LatestReceivers,
     pub sleep_deadline: Option<Moment>,
     pub now: Moment,
 }
@@ -47,5 +47,5 @@ pub struct FrameInput<'a> {
 pub struct Painted {
     pub cover: Option<CoverRequest>,
     pub visible_rows: Option<usize>,
-    pub failures: Vec<Message>,
+    pub toasts: Vec<Message>,
 }

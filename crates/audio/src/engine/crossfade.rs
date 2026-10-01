@@ -2,8 +2,6 @@ use std::{f32::consts::FRAC_PI_2, time::Duration};
 
 use kernel::domain::Replaygain;
 
-use crate::{EngineConfig, UnityVolume, engine::phase::Fade};
-
 #[must_use]
 pub(crate) fn gain_in(fraction: f32) -> f32 {
     (fraction.clamp(0.0, 1.0) * FRAC_PI_2).sin()
@@ -15,35 +13,11 @@ pub(crate) fn gain_out(fraction: f32) -> f32 {
 }
 
 #[must_use]
-pub(crate) fn effective_volume(
-    config: &EngineConfig,
-    gain_db: Option<f32>,
-    volume: f32,
-) -> f32 {
-    let user = if matches!(config.unity_volume, UnityVolume::Pinned) {
-        1.0
-    } else {
-        volume
-    };
-    let gain = if matches!(config.replaygain, Replaygain::On) {
+pub(crate) fn replaygain_factor(replaygain: Replaygain, gain_db: Option<f32>) -> f32 {
+    if matches!(replaygain, Replaygain::On) {
         gain_db.map_or(1.0, |g| 10f32.powf(g / 20.0))
     } else {
         1.0
-    };
-    user * gain
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Promotion {
-    Preload,
-    Nothing,
-}
-
-#[must_use]
-pub(crate) fn promotion_on_abandon(fade: Fade) -> Promotion {
-    match fade {
-        Fade::Fading => Promotion::Preload,
-        Fade::Idle => Promotion::Nothing,
     }
 }
 
@@ -59,93 +33,41 @@ pub(crate) fn arm_cue(
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::{Crossfade, OutputDevice, Replaygain};
+    use kernel::domain::Replaygain;
     use proptest::prelude::{prop_assert, proptest};
     use rstest::rstest;
 
-    use crate::{
-        EngineConfig,
-        UnityVolume,
-        engine::{
-            crossfade::{
-                Promotion,
-                arm_cue,
-                effective_volume,
-                gain_in,
-                gain_out,
-                promotion_on_abandon,
-            },
-            phase::Fade,
-        },
-    };
+    use crate::engine::crossfade::{arm_cue, gain_in, gain_out, replaygain_factor};
 
     struct VolumeRow {
         replaygain: Replaygain,
-        unity_volume: UnityVolume,
         gain: Option<f32>,
-        volume: f32,
         expected: f32,
     }
 
     #[rstest]
     #[case::no_cached_gain(VolumeRow {
         replaygain: Replaygain::On,
-        unity_volume: UnityVolume::Free,
         gain: None,
-        volume: 0.5,
-        expected: 0.5,
+        expected: 1.0,
     })]
     #[case::replaygain_disabled_ignores_the_gain(VolumeRow {
         replaygain: Replaygain::Off,
-        unity_volume: UnityVolume::Free,
         gain: Some(-6.0),
-        volume: 1.0,
         expected: 1.0,
     })]
     #[case::replaygain_applies_decibels_as_a_linear_factor(VolumeRow {
         replaygain: Replaygain::On,
-        unity_volume: UnityVolume::Free,
         gain: Some(-6.0),
-        volume: 1.0,
         expected: 0.501_187,
     })]
-    #[case::unity_volume_pins_a_quiet_user_factor(VolumeRow {
-        replaygain: Replaygain::On,
-        unity_volume: UnityVolume::Pinned,
-        gain: Some(-6.0),
-        volume: 0.1,
-        expected: 0.501_187,
-    })]
-    #[case::unity_volume_pins_a_loud_user_factor(VolumeRow {
-        replaygain: Replaygain::On,
-        unity_volume: UnityVolume::Pinned,
-        gain: Some(-6.0),
-        volume: 0.9,
-        expected: 0.501_187,
-    })]
-    fn effective_volume_combines_gain_and_user_factor(#[case] row: VolumeRow) {
-        let engine_config = EngineConfig {
-            crossfade: Crossfade::default(),
-            replaygain: row.replaygain,
-            unity_volume: row.unity_volume,
-            device: OutputDevice::SystemDefault,
-        };
-        let factor = effective_volume(&engine_config, row.gain, row.volume);
+    fn replaygain_factor_turns_decibels_into_a_linear_factor(#[case] row: VolumeRow) {
+        let factor = replaygain_factor(row.replaygain, row.gain);
         let expected = row.expected;
         assert!(
             (factor - expected).abs() < 1e-4,
             "expected ~{expected}, got {factor}"
         );
-    }
-
-    #[rstest]
-    #[case::idle(Fade::Idle, Promotion::Nothing)]
-    #[case::fading(Fade::Fading, Promotion::Preload)]
-    fn abandoning_a_crossfade_promotes_only_a_fading_preload(
-        #[case] fade: Fade,
-        #[case] promotion: Promotion,
-    ) {
-        assert_eq!(promotion_on_abandon(fade), promotion);
     }
 
     #[rstest]

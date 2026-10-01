@@ -16,14 +16,14 @@ use crate::{
             Modal,
             ModalBorder,
             ModalBounds,
-            ModalChrome,
-            ModalMetrics,
             ModalRowColors,
             ModalScrollAreas,
             ModalSize,
             OverlayAreas,
             OverlayContainer,
             PlacedModal,
+            QUERY_ROWS,
+            SCROLL_PADDING,
             leading_cells,
             modal_title,
         },
@@ -31,11 +31,11 @@ use crate::{
     },
     primitive::{
         canvas::Canvas,
-        glyphs::SearchGlyphs,
+        glyphs,
         inset::Inset,
         span::{line, text},
     },
-    theme::ActiveTheme,
+    theme::{ActiveTheme, Role},
 };
 
 #[derive(Debug)]
@@ -108,31 +108,27 @@ impl SearchOverlay<'_> {
         ModalBorder {
             area,
             title: search_title(&self.header(), theme),
-            inset: Inset::default(),
+            inset: Inset::overlay(),
             theme,
-            chrome: ModalChrome::default(),
         }
     }
 
     fn modal(&self) -> Modal<'static> {
         let theme = self.theme;
         Modal {
-            title: SearchGlyphs::default().title_word,
+            title: glyphs::search::TITLE_WORD,
             size: ModalSize::FrameWidth {
                 bounds: self.bounds,
                 content_rows: content_rows(self.search),
             },
             hint: None,
-            border: theme.border(),
-            window_background: theme.window_background(),
+            border: theme.role(Role::Frame),
+            window_background: theme.role(Role::WindowBackground),
         }
     }
 
     fn vertical(&self) -> Layout {
-        Layout::vertical([
-            Constraint::Length(ModalMetrics::default().query_rows),
-            Constraint::Min(0),
-        ])
+        Layout::vertical([Constraint::Length(QUERY_ROWS), Constraint::Min(0)])
     }
 
     fn render_pane(&self, areas: ModalScrollAreas, buffer: &mut Buffer) {
@@ -190,10 +186,8 @@ impl SearchOverlay<'_> {
         if rule_row.width == 0 || rule_row.height == 0 {
             return;
         }
-        let rule = SearchGlyphs::default()
-            .rule
-            .repeat(usize::from(rule_row.width));
-        let border = self.theme.border();
+        let rule = glyphs::search::RULE.repeat(usize::from(rule_row.width));
+        let border = self.theme.role(Role::Frame);
         Paragraph::new(line([text(rule).fg(border)])).render(rule_row, buffer);
     }
 
@@ -204,54 +198,49 @@ impl SearchOverlay<'_> {
             search: self.search,
             colors: self.colors(),
             lead,
-            scroll_padding: ModalMetrics::default().scroll_padding,
+            scroll_padding: SCROLL_PADDING,
         }
     }
 }
 
-impl Widget for &SearchOverlay<'_> {
-    fn render(self, area: Rect, buffer: &mut Buffer) {
-        self.render_in(self.areas(area), Canvas { area, buffer });
-    }
-}
-
 fn search_title(header: &SearchHeader<'_>, theme: ActiveTheme<'_>) -> Line<'static> {
-    let glyphs = SearchGlyphs::default();
     modal_title(
-        glyphs.title_word,
-        format!("{} {} {}", header.matches, glyphs.of, header.total),
+        glyphs::search::TITLE_WORD,
+        format!("{} {} {}", header.matches, glyphs::search::OF, header.total),
         theme,
     )
 }
 
 fn query_line(header: &SearchHeader<'_>, colors: ModalRowColors) -> Line<'static> {
-    let glyphs = SearchGlyphs::default();
     line([
-        text(glyphs.header_prefix).fg(colors.accent),
+        text(glyphs::search::HEADER_PREFIX).fg(colors.accent),
         text(header.query.to_string()).fg(colors.text),
-        text(glyphs.cursor).fg(colors.accent),
+        text(glyphs::search::CURSOR).fg(colors.accent),
     ])
 }
 
 fn header_line(header: &SearchHeader<'_>, colors: ModalRowColors) -> Line<'static> {
-    let glyphs = SearchGlyphs::default();
-    let summary = match_count_text(header.matches, header.total, glyphs);
+    let summary = match_count_text(header.matches, header.total);
     line([
-        text(glyphs.header_prefix).fg(colors.accent),
+        text(glyphs::search::HEADER_PREFIX).fg(colors.accent),
         text(header.query.to_string()).fg(colors.text),
-        text(glyphs.cursor).fg(colors.accent),
-        text(glyphs.header_gap).fg(colors.text),
+        text(glyphs::search::CURSOR).fg(colors.accent),
+        text(glyphs::search::HEADER_GAP).fg(colors.text),
         text(summary).fg(colors.dim),
     ])
 }
 
-fn match_count_text(matches: usize, total: usize, glyphs: SearchGlyphs) -> String {
+fn match_count_text(matches: usize, total: usize) -> String {
     let noun = if matches == 1 {
-        glyphs.match_singular
+        glyphs::search::MATCH_SINGULAR
     } else {
-        glyphs.match_plural
+        glyphs::search::MATCH_PLURAL
     };
-    format!("{matches} {noun} {} {total} {}", glyphs.of, glyphs.total)
+    format!(
+        "{matches} {noun} {} {total} {}",
+        glyphs::search::OF,
+        glyphs::search::TOTAL
+    )
 }
 
 fn content_rows(search: &CursorOver<SearchQuery>) -> u16 {
@@ -265,28 +254,29 @@ fn content_rows(search: &CursorOver<SearchQuery>) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::sync::Arc;
 
-    use kernel::domain::{AudioFormat, Cursor, CursorOver, SearchQuery, Tags, Track};
+    use kernel::domain::{Cursor, CursorOver, SearchQuery, Track};
     use ratatui::layout::Rect;
     use rstest::rstest;
 
     use crate::{
-        overlay::{modal::OverlayContainer, search::SearchOverlay},
-        scene::fixtures::{find_text, noir, painted, painted_buffer},
-        theme::{ActiveTheme, ColorDepth},
+        overlay::{modal::OverlayContainer, rendered_canvas, search::SearchOverlay},
+        primitive::canvas::find_text,
+        test_support::noir,
+        theme::{ActiveTheme, ColorDepth, Role},
     };
 
     fn titled_track(title: &str) -> Arc<Track> {
         Arc::new(
             Track::builder()
                 .path(format!("{title}.mp3"))
-                .duration(Duration::from_secs(180))
-                .tags(Tags {
+                .duration(std::time::Duration::from_secs(180))
+                .tags(kernel::domain::Tags {
                     title: Some(title.to_string()),
-                    ..Tags::default()
+                    ..kernel::domain::Tags::default()
                 })
-                .audio_format(AudioFormat::default())
+                .audio_format(kernel::domain::AudioFormat::default())
                 .build(),
         )
     }
@@ -326,7 +316,12 @@ mod tests {
             bounds: Rect::new(0, 0, 80, 28),
             container: pane_container(Rect::new(0, 0, 80, 28)),
         };
-        insta::assert_snapshot!(painted(&overlay, 80, 28));
+        insta::assert_snapshot!(
+            rendered_canvas(80, 28, |canvas| {
+                overlay.render_in(overlay.areas(canvas.area), canvas);
+            })
+            .to_string()
+        );
     }
 
     #[test]
@@ -341,7 +336,12 @@ mod tests {
             bounds: Rect::new(0, 0, 80, 28),
             container: pane_container(Rect::new(0, 0, 80, 28)),
         };
-        insta::assert_snapshot!(painted(&overlay, 80, 28));
+        insta::assert_snapshot!(
+            rendered_canvas(80, 28, |canvas| {
+                overlay.render_in(overlay.areas(canvas.area), canvas);
+            })
+            .to_string()
+        );
     }
 
     #[test]
@@ -356,7 +356,12 @@ mod tests {
             bounds: Rect::new(0, 0, 80, 28),
             container: pane_container(Rect::new(0, 0, 80, 28)),
         };
-        insta::assert_snapshot!(painted(&overlay, 80, 28));
+        insta::assert_snapshot!(
+            rendered_canvas(80, 28, |canvas| {
+                overlay.render_in(overlay.areas(canvas.area), canvas);
+            })
+            .to_string()
+        );
     }
 
     #[rstest]
@@ -378,7 +383,9 @@ mod tests {
             container: OverlayContainer::Modal { avoid: &[] },
         };
         insta::with_settings!({ snapshot_suffix => label }, {
-            insta::assert_snapshot!(painted(&overlay, 80, 28));
+            insta::assert_snapshot!(rendered_canvas(80, 28, |canvas| {
+            overlay.render_in(overlay.areas(canvas.area), canvas);
+        }).to_string());
         });
     }
 
@@ -395,8 +402,12 @@ mod tests {
             bounds: Rect::new(0, 0, 80, 28),
             container: pane_container(Rect::new(0, 0, 80, 28)),
         };
-        let buffer = painted_buffer(&overlay, 80, 28);
-        let selection_bg = active.selection_background();
+        let buffer = rendered_canvas(80, 28, |canvas| {
+            overlay.render_in(overlay.areas(canvas.area), canvas);
+        })
+        .buffer()
+        .clone();
+        let selection_bg = active.role(Role::SelectionBackground);
         let (alpha_x, alpha_y) = find_text(&buffer, "Alpha").unwrap();
         let (beta_x, beta_y) = find_text(&buffer, "Beta").unwrap();
         assert_eq!(buffer[(beta_x, beta_y)].style().bg, Some(selection_bg));
@@ -417,7 +428,11 @@ mod tests {
             container: pane_container(pane),
         };
         assert_eq!(overlay.areas(pane).outer(), pane);
-        let buffer = painted_buffer(&overlay, 80, 28);
+        let buffer = rendered_canvas(80, 28, |canvas| {
+            overlay.render_in(overlay.areas(canvas.area), canvas);
+        })
+        .buffer()
+        .clone();
         let (_, title_row) = find_text(&buffer, "SEARCH").unwrap();
         assert_eq!(title_row, pane.y);
     }
@@ -438,6 +453,9 @@ mod tests {
             bounds: Rect::new(0, 0, 4, 3),
             container,
         };
-        let _ = painted(&overlay, 4, 3);
+        let _ = rendered_canvas(4, 3, |canvas| {
+            overlay.render_in(overlay.areas(canvas.area), canvas);
+        })
+        .to_string();
     }
 }

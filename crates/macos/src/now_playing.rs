@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use kernel::{NowPlaying, Playback};
+use kernel::{Playback, Track};
 use objc2::{rc::Retained, runtime::AnyObject};
 use objc2_foundation::{NSDictionary, NSNumber, NSString};
 use objc2_media_player::{MPMediaItemArtwork, MPNowPlayingPlaybackState};
@@ -15,41 +15,9 @@ const PAUSED_RATE: f64 = 0.0;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Panel<'a> {
-    pub(crate) showing: &'a NowPlaying,
+    pub(crate) track: Option<&'a Track>,
     pub(crate) clock: PanelClock,
     pub(crate) artwork: Option<&'a MPMediaItemArtwork>,
-}
-
-struct Tags<'a> {
-    title: &'a str,
-    artist: Option<&'a str>,
-    album: Option<&'a str>,
-    duration: Duration,
-}
-
-impl<'a> From<&'a NowPlaying> for Tags<'a> {
-    fn from(now_playing: &'a NowPlaying) -> Self {
-        match now_playing {
-            NowPlaying::Cleared => Self {
-                title: PLACEHOLDER_TITLE,
-                artist: None,
-                album: None,
-                duration: Duration::ZERO,
-            },
-            NowPlaying::Track {
-                title,
-                artist,
-                album,
-                duration,
-                ..
-            } => Self {
-                title: title.as_str(),
-                artist: artist.as_deref(),
-                album: album.as_deref(),
-                duration: *duration,
-            },
-        }
-    }
 }
 
 fn rate(playback: Playback) -> f64 {
@@ -63,11 +31,21 @@ pub(crate) fn now_playing_info(
     panel: Panel<'_>,
     now: Instant,
 ) -> Retained<NSDictionary<NSString, AnyObject>> {
-    let tags = Tags::from(panel.showing);
-    let title = NSString::from_str(tags.title);
-    let artist = tags.artist.map(NSString::from_str);
-    let album = tags.album.map(NSString::from_str);
-    let duration = NSNumber::new_f64(tags.duration.as_secs_f64());
+    let (title, artist, album, duration) = panel.track.map_or_else(
+        || (PLACEHOLDER_TITLE.to_owned(), None, None, Duration::ZERO),
+        |track| {
+            (
+                track.song_title(),
+                track.tags().artist.as_deref(),
+                track.tags().album.as_deref(),
+                track.duration().unwrap_or(Duration::ZERO),
+            )
+        },
+    );
+    let title = NSString::from_str(&title);
+    let artist = artist.map(NSString::from_str);
+    let album = album.map(NSString::from_str);
+    let duration = NSNumber::new_f64(duration.as_secs_f64());
     let elapsed = NSNumber::new_f64(panel.clock.elapsed(now).as_secs_f64());
     let rate = NSNumber::new_f64(rate(panel.clock.playback()));
     let keys = [
@@ -109,12 +87,9 @@ pub(crate) fn publish(panel: Panel<'_>, now: Instant) {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        path::PathBuf,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
 
-    use kernel::{NowPlaying, Playback};
+    use kernel::{AudioFormat, Playback, Tags, Track};
     use objc2::runtime::AnyObject;
     use objc2_foundation::{NSDictionary, NSNumber, NSString};
 
@@ -144,7 +119,7 @@ mod tests {
     fn a_cleared_panel_still_carries_a_title() {
         let start = Instant::now();
         let panel = Panel {
-            showing: &NowPlaying::Cleared,
+            track: None,
             clock: PanelClock::new(start),
             artwork: None,
         };
@@ -155,19 +130,22 @@ mod tests {
 
     #[test]
     fn a_track_carries_the_tags_it_has_and_where_the_clock_is() {
-        let track = NowPlaying::Track {
-            title: "Tuonela".to_owned(),
-            artist: Some("Amorphis".to_owned()),
-            album: None,
-            duration: Duration::from_secs(42),
-            path: PathBuf::from("/tmp/tuonela.flac"),
-        };
+        let track = Track::builder()
+            .path("/tmp/tuonela.flac")
+            .duration(Duration::from_secs(42))
+            .tags(Tags {
+                title: Some("Tuonela".to_owned()),
+                artist: Some("Amorphis".to_owned()),
+                ..Tags::default()
+            })
+            .audio_format(AudioFormat::default())
+            .build();
         let start = Instant::now();
         let panel = Panel {
-            showing: &track,
+            track: Some(&track),
             clock: PanelClock::new(start)
                 .seek(Duration::from_secs(7), start)
-                .with_playback(Playback::Playing, start),
+                .change_playback(Playback::Playing, start),
             artwork: None,
         };
         let info = now_playing_info(panel, start + Duration::from_secs(3));

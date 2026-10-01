@@ -30,11 +30,6 @@ impl PlaylistFileName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    #[must_use]
-    pub fn into_inner(self) -> String {
-        self.0
-    }
 }
 
 fn truncated_to_bytes(input: &str, max_bytes: usize) -> String {
@@ -134,11 +129,12 @@ impl Playlist {
         }
     }
 
-    pub(crate) fn relist(&mut self, tracks: Vec<Arc<Track>>, anchor: Relist) {
-        let index = match anchor {
-            Relist::KeepCursor => self.cursor.index(),
-            Relist::At(index) => index.get(),
-        };
+    pub(crate) fn relist(
+        &mut self,
+        tracks: Vec<Arc<Track>>,
+        anchor: Option<PlaylistIndex>,
+    ) {
+        let index = anchor.map_or_else(|| self.cursor.index(), PlaylistIndex::get);
         self.cursor = Cursor::with_len(tracks.len()).at(index);
         self.tracks = tracks;
     }
@@ -201,12 +197,6 @@ impl Playlist {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Relist {
-    KeepCursor,
-    At(PlaylistIndex),
-}
-
 pub(crate) fn index_of_path(
     path: &std::path::Path,
     tracks: &[Arc<Track>],
@@ -250,11 +240,5 @@ mod playlist_file_name_tests {
         let long = "a".repeat(300);
         let name = PlaylistFileName::new(&long).unwrap();
         assert_eq!(name.as_str().len(), 255);
-    }
-
-    #[test]
-    fn into_inner_returns_the_owned_string() {
-        let name = PlaylistFileName::new("mix").unwrap();
-        assert_eq!(name.into_inner(), "mix".to_string());
     }
 }

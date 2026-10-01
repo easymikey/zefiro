@@ -1,12 +1,8 @@
 use std::{ops::ControlFlow, time::Instant};
 
 use kernel::{
-    AudioCmd,
     Cmd,
-    ConfigCmd,
     Effect,
-    LibraryCmd,
-    MacosCmd,
     Message,
     PlaylistRequest,
     domain::{Driver, Drivers},
@@ -21,10 +17,10 @@ use crate::{
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Interpreted {
-    pub answers: Vec<Message>,
-    pub shell_effects: Vec<ShellEffect>,
-    pub flow: ControlFlow<()>,
-    pub restart: Option<(Driver, Vec<Effect>)>,
+    pub(crate) answers: Vec<Message>,
+    pub(crate) shell_effects: Vec<ShellEffect>,
+    pub(crate) flow: ControlFlow<()>,
+    pub(crate) restart: Option<(Driver, Vec<Effect>)>,
 }
 
 impl Default for Interpreted {
@@ -40,38 +36,10 @@ impl Default for Interpreted {
 
 #[derive(Debug)]
 pub(crate) struct Interpreter<'a> {
-    pub drivers: &'a Drivers,
-    pub ports: &'a Ports,
-    pub timers: &'a mut Timers,
-    pub trace: &'a mut Trace,
-}
-
-impl Interpreter<'_> {
-    fn trace_undelivered(&mut self, result: Result<(), crate::port::Undelivered>) {
-        if let Err(undelivered) = result {
-            self.trace.push(undelivered.into());
-        }
-    }
-
-    fn send_audio(&mut self, command: AudioCmd) {
-        let result = self.ports.audio.send(self.drivers, command);
-        self.trace_undelivered(result);
-    }
-
-    fn send_library(&mut self, command: LibraryCmd) {
-        let result = self.ports.library.send_command(self.drivers, command);
-        self.trace_undelivered(result);
-    }
-
-    fn send_macos(&mut self, command: MacosCmd) {
-        let result = self.ports.macos.send(self.drivers, command);
-        self.trace_undelivered(result);
-    }
-
-    fn config(&mut self, command: ConfigCmd) {
-        let result = self.ports.config.send(self.drivers, command);
-        self.trace_undelivered(result);
-    }
+    pub(crate) drivers: &'a Drivers,
+    pub(crate) ports: &'a Ports,
+    pub(crate) timers: &'a mut Timers,
+    pub(crate) trace: &'a mut Trace,
 }
 
 fn shuffle_order(len: usize) -> Vec<usize> {
@@ -85,10 +53,25 @@ pub(crate) fn interpret(cmd: Cmd, interpreter: &mut Interpreter<'_>) -> Interpre
     let mut effects = cmd.into_iter();
     while let Some(effect) = effects.next() {
         match effect {
-            Effect::Audio(command) => interpreter.send_audio(command),
-            Effect::Library(command) => interpreter.send_library(command),
-            Effect::Macos(command) => interpreter.send_macos(command),
-            Effect::Config(command) => interpreter.config(command),
+            Effect::Audio(command) => {
+                let sent = interpreter.ports.audio.send(interpreter.drivers, command);
+                interpreter.trace.record(sent);
+            }
+            Effect::Library(command) => {
+                let sent = interpreter
+                    .ports
+                    .library
+                    .send_command(interpreter.drivers, command);
+                interpreter.trace.record(sent);
+            }
+            Effect::Macos(command) => {
+                let sent = interpreter.ports.macos.send(interpreter.drivers, command);
+                interpreter.trace.record(sent);
+            }
+            Effect::Config(command) => {
+                let sent = interpreter.ports.config.send(interpreter.drivers, command);
+                interpreter.trace.record(sent);
+            }
             Effect::WindowColors(command) => {
                 interpreted
                     .shell_effects
@@ -98,7 +81,7 @@ pub(crate) fn interpret(cmd: Cmd, interpreter: &mut Interpreter<'_>) -> Interpre
                 interpreted.shell_effects.push(ShellEffect::Animate(cue));
             }
             Effect::RollShuffle { len } => {
-                interpreted.answers.push(Message::Loaded(
+                interpreted.answers.push(Message::Playlist(
                     PlaylistRequest::ShuffleRolled(shuffle_order(len)),
                 ));
             }
@@ -138,15 +121,7 @@ mod tests {
         PlaylistRequest,
         Timer,
         WindowColorsCmd,
-        domain::{
-            Driver,
-            DriverStatus,
-            Model,
-            OptionCount,
-            OutputDevice,
-            Revision,
-            SettingId,
-        },
+        domain::{Driver, DriverStatus, Model, OptionCount, OutputDevice, Revision},
     };
 
     use crate::{
@@ -282,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn a_system_command_to_a_stopped_macos_driver_is_dropped_and_traced() {
+    fn a_macos_command_to_a_stopped_macos_driver_is_dropped_and_traced() {
         let mut fixture = Fixture::new();
         fixture.model.drivers.record_mut(Driver::Macos).status = DriverStatus::Stopped;
         let mut interpreter = fixture.interpreter();
@@ -303,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn a_system_send_onto_a_lost_macos_inbox_is_dropped_and_traced() {
+    fn a_macos_send_onto_a_lost_macos_inbox_is_dropped_and_traced() {
         let mut fixture = Fixture::new();
         fixture.macos_rx = never();
         let mut interpreter = fixture.interpreter();
@@ -403,7 +378,7 @@ mod tests {
 
         let interpreted =
             interpret(Cmd::One(Effect::RollShuffle { len: 5 }), &mut interpreter);
-        let [Message::Loaded(PlaylistRequest::ShuffleRolled(order))] =
+        let [Message::Playlist(PlaylistRequest::ShuffleRolled(order))] =
             interpreted.answers.as_slice()
         else {
             panic!("expected a single shuffle answer");
@@ -427,8 +402,8 @@ mod tests {
         );
 
         let [
-            Message::Loaded(PlaylistRequest::ShuffleRolled(first)),
-            Message::Loaded(PlaylistRequest::ShuffleRolled(second)),
+            Message::Playlist(PlaylistRequest::ShuffleRolled(first)),
+            Message::Playlist(PlaylistRequest::ShuffleRolled(second)),
         ] = interpreted.answers.as_slice()
         else {
             panic!("expected two shuffle answers in order");
@@ -437,15 +412,11 @@ mod tests {
         assert_eq!(second.len(), 3);
     }
 
-    fn setting_id(field: config::AppearanceField) -> SettingId {
-        config::APPEARANCE_ROWS[field as usize].custom.id
-    }
-
     #[test]
     fn a_setting_effect_reaches_the_config_inbox_as_a_setting_command() {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
-        let id = setting_id(config::AppearanceField::CoverBrackets);
+        let id = config::AppearanceField::CoverBrackets.id();
         let option = OptionCount::new(2).unwrap().index(0).unwrap();
 
         let interpreted = interpret(

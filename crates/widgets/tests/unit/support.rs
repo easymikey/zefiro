@@ -1,160 +1,32 @@
 #![cfg(test)]
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use config::{AppearanceFile, Rgb};
+use config::Rgb;
 use kernel::{
     Moment,
-    domain::{
-        AudioFormat,
-        KeymapOverrides,
-        Model,
-        Player,
-        Playhead,
-        Preload,
-        Speed,
-        Tags,
-        Track,
-    },
-    playlist::Playlist,
-    update::keymap::{Bindings, KeyBinding},
+    domain::{Model, Player, Playhead, Preload, Speed},
 };
 use ratatui::{
-    Terminal,
-    backend::TestBackend,
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
-    widgets::Widget,
 };
 use widgets::{
     AnimationTimings,
     Backdrop,
     Breakpoint,
     CardMetrics,
-    CellAspect,
     ColorDepth,
     FrameLayout,
-    PixelPath,
     PlaylistAreas,
-    SPECTRUM_BANDS,
-    Scene,
-    Spectrum,
-    Theme,
     color_at_depth,
     lerp_rgb,
 };
 
-pub(crate) fn noir_theme() -> Theme {
-    let file =
-        config::parse_theme(include_str!("../../../../themes/noir.toml"), "noir")
-            .unwrap();
-    Theme::from(file)
-}
+#[path = "../../src/test_support.rs"] mod test_support;
 
-pub(crate) fn bindings() -> Vec<KeyBinding> {
-    Bindings::new(&KeymapOverrides::default())
-        .as_slice()
-        .to_vec()
-}
-
-pub(crate) fn silent_spectrum() -> Spectrum {
-    [0.0; SPECTRUM_BANDS]
-}
-
-pub(crate) fn track(title: &str) -> Arc<Track> {
-    Arc::new(
-        Track::builder()
-            .path(format!("/music/{title}.mp3"))
-            .duration(Duration::from_secs(245))
-            .tags(Tags {
-                title: Some(title.to_string()),
-                artist: Some("Test Artist".to_string()),
-                ..Tags::default()
-            })
-            .audio_format(AudioFormat::default())
-            .build(),
-    )
-}
-
-pub(crate) fn playing_track(title: &str) -> Model {
-    let track = track(title);
-    Model {
-        player: Player::Playing {
-            track,
-            head: Playhead::anchored(
-                Duration::from_secs(30),
-                Moment::default(),
-                Speed::default(),
-            ),
-            preload: Preload::None,
-        },
-        ..Model::default()
-    }
-}
-
-pub(crate) fn model_with_tracks(count: usize) -> Model {
-    Model {
-        playlist: Playlist {
-            tracks: (0..count)
-                .map(|index| track(&format!("song{index:02}")))
-                .collect(),
-            ..Playlist::default()
-        },
-        ..Model::default()
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct Scenery {
-    pub(crate) model: Model,
-    pub(crate) theme: Theme,
-    pub(crate) appearance: AppearanceFile,
-    pub(crate) bindings: Vec<KeyBinding>,
-    pub(crate) spectrum: Spectrum,
-}
-
-impl Scenery {
-    #[must_use]
-    pub(crate) fn new(model: Model) -> Self {
-        Self {
-            model,
-            theme: noir_theme(),
-            appearance: AppearanceFile::default(),
-            bindings: bindings(),
-            spectrum: silent_spectrum(),
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn scene(&self) -> Scene<'_> {
-        Scene {
-            model: &self.model,
-            theme: &self.theme,
-            color_depth: ColorDepth::TrueColor,
-            appearance: &self.appearance,
-            bindings: &self.bindings,
-            spectrum: &self.spectrum,
-            pixel_path: PixelPath::Halfblocks,
-            cell_aspect: CellAspect::default(),
-            clock: Duration::ZERO,
-            now: Moment::default(),
-            music_dir: "/home/user/Music",
-            sleep_left: None,
-        }
-    }
-}
-
-pub(crate) fn painted<W>(widget: &W, width: u16, height: u16) -> String
-where
-    for<'a> &'a W: Widget,
-{
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal
-        .draw(|frame| frame.render_widget(widget, frame.area()))
-        .unwrap();
-    format!("{}", terminal.backend())
-}
+pub(crate) use test_support::{SceneSources, model_with_tracks, rendered, track};
 
 pub(crate) const AREA: Rect = Rect {
     x: 0,
@@ -428,4 +300,19 @@ pub(crate) fn slice(
     Duration::from_millis(u64::from(
         pick(AnimationTimings::default()).0 / parts.max(1),
     ))
+}
+
+pub(crate) fn playing_track(title: &str) -> Model {
+    Model {
+        player: Player::Playing {
+            track: track(title),
+            head: Playhead::anchored(
+                Duration::from_secs(30),
+                Moment::default(),
+                Speed::default(),
+            ),
+            preload: Preload::None,
+        },
+        ..Model::default()
+    }
 }

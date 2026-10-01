@@ -4,13 +4,5 @@ use kernel::domain::{Crossfade, OutputDevice, Replaygain};
 pub struct EngineConfig {
     pub crossfade: Crossfade,
     pub replaygain: Replaygain,
-    pub unity_volume: UnityVolume,
     pub device: OutputDevice,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum UnityVolume {
-    Pinned,
-    #[default]
-    Free,
 }

@@ -12,22 +12,9 @@ pub(crate) struct BandRange {
     pub(crate) end: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BandSplit {
-    pub(crate) low: BandRange,
-    pub(crate) mid: BandRange,
-    pub(crate) high: BandRange,
-}
-
-impl Default for BandSplit {
-    fn default() -> Self {
-        Self {
-            low: BandRange { start: 0, end: 3 },
-            mid: BandRange { start: 3, end: 9 },
-            high: BandRange { start: 9, end: 16 },
-        }
-    }
-}
+const LOW_BAND: BandRange = BandRange { start: 0, end: 3 };
+const MID_BAND: BandRange = BandRange { start: 3, end: 9 };
+const HIGH_BAND: BandRange = BandRange { start: 9, end: 16 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct BandLevels {
@@ -44,11 +31,11 @@ pub(crate) fn band_mean(bands: &Spectrum, range: BandRange) -> f32 {
     slice.iter().sum::<f32>() / usize_to_f32(slice.len())
 }
 
-pub(crate) fn band_levels(bands: &Spectrum, split: &BandSplit) -> BandLevels {
+pub(crate) fn band_levels(bands: &Spectrum) -> BandLevels {
     BandLevels {
-        bass: band_mean(bands, split.low),
-        mid: band_mean(bands, split.mid),
-        treble: band_mean(bands, split.high),
+        bass: band_mean(bands, LOW_BAND),
+        mid: band_mean(bands, MID_BAND),
+        treble: band_mean(bands, HIGH_BAND),
     }
 }
 
@@ -76,91 +63,42 @@ impl Default for Preset {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct PresetTable([Preset; 3]);
-
-impl Default for PresetTable {
-    fn default() -> Self {
-        Self([
-            Preset {
-                base_zoom: 1.12,
-                base_rotation: 0.04,
-                mirror: Mirror::None,
-            },
-            Preset {
-                base_zoom: 0.94,
-                base_rotation: -0.05,
-                mirror: Mirror::Horizontal,
-            },
-            Preset {
-                base_zoom: 1.18,
-                base_rotation: 0.07,
-                mirror: Mirror::Kaleido4,
-            },
-        ])
-    }
-}
+const PRESETS: [Preset; 3] = [
+    Preset {
+        base_zoom: 1.12,
+        base_rotation: 0.04,
+        mirror: Mirror::None,
+    },
+    Preset {
+        base_zoom: 0.94,
+        base_rotation: -0.05,
+        mirror: Mirror::Horizontal,
+    },
+    Preset {
+        base_zoom: 1.18,
+        base_rotation: 0.07,
+        mirror: Mirror::Kaleido4,
+    },
+];
 
 pub(crate) fn preset_for_seed(seed: u64) -> Preset {
-    let presets = PresetTable::default().0;
-    let index = usize::try_from(seed % presets.len() as u64).unwrap_or(0);
-    presets.get(index).copied().unwrap_or_default()
+    let index = usize::try_from(seed % PRESETS.len() as u64).unwrap_or(0);
+    PRESETS.get(index).copied().unwrap_or_default()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct MilkdropCoefficients {
-    pub(crate) decay: f32,
-    pub(crate) zoom_gain: f32,
-    pub(crate) rotation_gain: f32,
-    pub(crate) core_radius: f32,
-    pub(crate) core_gain: f32,
-    pub(crate) spark_count: u32,
-    pub(crate) aspect_x: f32,
-}
+pub(crate) const DECAY: f32 = 0.85;
+pub(crate) const ZOOM_GAIN: f32 = 0.35;
+pub(crate) const ROTATION_GAIN: f32 = 0.5;
+pub(crate) const CORE_RADIUS: f32 = 1.2;
+pub(crate) const CORE_GAIN: f32 = 1.8;
+pub(crate) const SPARK_COUNT: u32 = 3;
+pub(crate) const ASPECT_X: f32 = 0.5;
 
-impl Default for MilkdropCoefficients {
-    fn default() -> Self {
-        Self {
-            decay: 0.85,
-            zoom_gain: 0.35,
-            rotation_gain: 0.5,
-            core_radius: 1.2,
-            core_gain: 1.8,
-            spark_count: 3,
-            aspect_x: 0.5,
-        }
-    }
-}
+pub(crate) const RAMP: [&str; 5] = [" ", "░", "▒", "▓", "█"];
+pub(crate) const RAMP_FALLBACK: &str = "█";
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct MilkdropGlyphs {
-    pub(crate) ramp: [&'static str; 5],
-    pub(crate) fallback: &'static str,
-}
-
-impl Default for MilkdropGlyphs {
-    fn default() -> Self {
-        Self {
-            ramp: [" ", "░", "▒", "▓", "█"],
-            fallback: "█",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct MilkdropColorBands {
-    pub(crate) mid: f32,
-    pub(crate) high: f32,
-}
-
-impl Default for MilkdropColorBands {
-    fn default() -> Self {
-        Self {
-            mid: 0.35,
-            high: 0.7,
-        }
-    }
-}
+pub(crate) const COLOR_BAND_MID: f32 = 0.35;
+pub(crate) const COLOR_BAND_HIGH: f32 = 0.7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CellPosition {
@@ -169,7 +107,7 @@ pub(crate) struct CellPosition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct FieldDimensions {
+pub(crate) struct FieldSize {
     pub(crate) width: usize,
     pub(crate) height: usize,
 }
@@ -180,10 +118,10 @@ pub(crate) struct FieldCenter {
     pub(crate) row: f32,
 }
 
-pub(crate) fn field_center(dimensions: FieldDimensions) -> FieldCenter {
+pub(crate) fn field_center(size: FieldSize) -> FieldCenter {
     FieldCenter {
-        column: usize_to_f32(dimensions.width.saturating_sub(1)) / 2.0,
-        row: usize_to_f32(dimensions.height.saturating_sub(1)) / 2.0,
+        column: usize_to_f32(size.width.saturating_sub(1)) / 2.0,
+        row: usize_to_f32(size.height.saturating_sub(1)) / 2.0,
     }
 }
 
@@ -232,11 +170,11 @@ pub(crate) fn warp_source(position: CellPosition, warp: &Warp) -> PlaneOffset {
 
 pub(crate) fn bilinear_sample(
     cells: &[f32],
-    dimensions: FieldDimensions,
+    size: FieldSize,
     source: PlaneOffset,
 ) -> f32 {
-    let last_column = usize_to_f32(dimensions.width.saturating_sub(1));
-    let last_row = usize_to_f32(dimensions.height.saturating_sub(1));
+    let last_column = usize_to_f32(size.width.saturating_sub(1));
+    let last_row = usize_to_f32(size.height.saturating_sub(1));
     let out_of_bounds = source.column < 0.0
         || source.row < 0.0
         || source.column > last_column
@@ -245,18 +183,15 @@ pub(crate) fn bilinear_sample(
         return 0.0;
     }
 
-    let column_low = raster::floor_usize(source.column);
-    let row_low = raster::floor_usize(source.row);
-    let column_high = (column_low + 1).min(dimensions.width.saturating_sub(1));
-    let row_high = (row_low + 1).min(dimensions.height.saturating_sub(1));
+    let column_low = crate::pixels::floor::<usize>(source.column);
+    let row_low = crate::pixels::floor::<usize>(source.row);
+    let column_high = (column_low + 1).min(size.width.saturating_sub(1));
+    let row_high = (row_low + 1).min(size.height.saturating_sub(1));
     let column_fraction = source.column - usize_to_f32(column_low);
     let row_fraction = source.row - usize_to_f32(row_low);
 
     let at = |row: usize, column: usize| {
-        cells
-            .get(row * dimensions.width + column)
-            .copied()
-            .unwrap_or(0.0)
+        cells.get(row * size.width + column).copied().unwrap_or(0.0)
     };
     let top = lerp(
         at(row_low, column_low),
@@ -294,12 +229,8 @@ pub(crate) fn xorshift64(state: u64) -> u64 {
     value
 }
 
-pub(crate) fn inject(
-    cells: &mut [f32],
-    dimensions: FieldDimensions,
-    injection: &Injection,
-) {
-    for (row, cells_row) in row_chunks_mut(cells, dimensions).enumerate() {
+pub(crate) fn inject(cells: &mut [f32], size: FieldSize, injection: &Injection) {
+    for (row, cells_row) in row_chunks_mut(cells, size).enumerate() {
         for (column, cell) in cells_row.iter_mut().enumerate() {
             let position = CellPosition { column, row };
             let offset =
@@ -312,15 +243,15 @@ pub(crate) fn inject(
         }
     }
 
-    let width = dimensions.width.max(1) as u64;
-    let height = dimensions.height.max(1) as u64;
+    let width = size.width.max(1) as u64;
+    let height = size.height.max(1) as u64;
     let mut state = (injection.seed ^ injection.tick) | 1;
     for _ in 0..injection.spark_count {
         state = xorshift64(state);
         let column = usize::try_from(state % width).unwrap_or(0);
         state = xorshift64(state);
         let row = usize::try_from(state % height).unwrap_or(0);
-        let index = row * dimensions.width + column;
+        let index = row * size.width + column;
         if let Some(cell) = cells.get_mut(index) {
             *cell = cell.max(injection.treble);
         }
@@ -330,12 +261,12 @@ pub(crate) fn inject(
 pub(crate) fn mirror_horizontal_into(
     source: &[f32],
     dest: &mut [f32],
-    dimensions: FieldDimensions,
+    size: FieldSize,
 ) {
     for (dest_row, source_row) in
-        row_chunks_mut(dest, dimensions).zip(row_chunks(source, dimensions))
+        row_chunks_mut(dest, size).zip(row_chunks(source, size))
     {
-        write_mirrored_row(dest_row, source_row, dimensions.width);
+        write_mirrored_row(dest_row, source_row, size.width);
     }
 }
 
@@ -362,31 +293,27 @@ pub(crate) fn mirrored(position: usize, extent: usize) -> usize {
 
 pub(crate) fn row_chunks(
     cells: &[f32],
-    dimensions: FieldDimensions,
+    size: FieldSize,
 ) -> impl Iterator<Item = &[f32]> {
-    cells
-        .chunks_exact(dimensions.width.max(1))
-        .take(dimensions.height)
+    cells.chunks_exact(size.width.max(1)).take(size.height)
 }
 
 pub(crate) fn row_chunks_mut(
     cells: &mut [f32],
-    dimensions: FieldDimensions,
+    size: FieldSize,
 ) -> impl Iterator<Item = &mut [f32]> {
-    cells
-        .chunks_exact_mut(dimensions.width.max(1))
-        .take(dimensions.height)
+    cells.chunks_exact_mut(size.width.max(1)).take(size.height)
 }
 
 pub(crate) fn kaleidoscope_quadrants_into(
     source: &[f32],
     dest: &mut [f32],
-    dimensions: FieldDimensions,
+    size: FieldSize,
 ) {
-    for (row, dest_row) in row_chunks_mut(dest, dimensions).enumerate() {
-        let source_row = row_chunks(source, dimensions)
-            .nth(mirrored(row, dimensions.height))
+    for (row, dest_row) in row_chunks_mut(dest, size).enumerate() {
+        let source_row = row_chunks(source, size)
+            .nth(mirrored(row, size.height))
             .unwrap_or_default();
-        write_mirrored_row(dest_row, source_row, dimensions.width);
+        write_mirrored_row(dest_row, source_row, size.width);
     }
 }

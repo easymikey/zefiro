@@ -3,10 +3,7 @@ use kernel::domain::Speed;
 use ratatui::{style::Color, text::Span};
 use unicode_width::UnicodeWidthStr;
 
-use crate::primitive::{
-    glyphs::{ChipGlyphs, SpeedChipGlyphs},
-    span::text,
-};
+use crate::primitive::{glyphs, span::text};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ChipColors {
@@ -16,13 +13,12 @@ pub(crate) struct ChipColors {
 
 #[must_use]
 pub(crate) fn spans(label: &str, colors: ChipColors) -> Vec<Span<'static>> {
-    let glyphs = ChipGlyphs::default();
     vec![
-        text(format!("{}{}", glyphs.open, glyphs.pad))
+        text(format!("{}{}", glyphs::chip::OPEN, glyphs::chip::PAD))
             .fg(colors.border)
             .into(),
         text(label.to_uppercase()).fg(colors.value).into(),
-        text(format!("{}{}", glyphs.pad, glyphs.close))
+        text(format!("{}{}", glyphs::chip::PAD, glyphs::chip::CLOSE))
             .fg(colors.border)
             .into(),
     ]
@@ -30,29 +26,34 @@ pub(crate) fn spans(label: &str, colors: ChipColors) -> Vec<Span<'static>> {
 
 #[must_use]
 pub(crate) fn compact(label: &str) -> String {
-    let glyphs = ChipGlyphs::default();
-    format!("{}{}{}", glyphs.open, label.to_lowercase(), glyphs.close)
+    format!(
+        "{}{}{}",
+        glyphs::chip::OPEN,
+        label.to_lowercase(),
+        glyphs::chip::CLOSE
+    )
 }
 
 #[must_use]
 pub(crate) fn width(label: &str) -> u16 {
-    let glyphs = ChipGlyphs::default();
     let decoration = format!(
         "{}{}{}{}",
-        glyphs.open, glyphs.pad, glyphs.pad, glyphs.close
+        glyphs::chip::OPEN,
+        glyphs::chip::PAD,
+        glyphs::chip::PAD,
+        glyphs::chip::CLOSE
     );
     let cells = decoration.width() + label.to_uppercase().width();
     u16::try_from(cells).unwrap_or(u16::MAX)
 }
 
 fn speed_chip_text(speed: Speed, mode: SpeedChip) -> Option<String> {
-    let glyphs = SpeedChipGlyphs::default();
     let label = match mode {
         SpeedChip::Never => None,
         SpeedChip::Changed => speed.label(),
-        SpeedChip::Always => Some(speed.label_always()),
+        SpeedChip::Always => Some(speed.to_string()),
     };
-    label.map(|label| format!("{label}{}", glyphs.multiply))
+    label.map(|label| format!("{label}{}", glyphs::speed_chip::MULTIPLY))
 }
 
 #[must_use]
@@ -60,8 +61,9 @@ pub(crate) fn speed_chip_width(speed: Speed, mode: SpeedChip) -> u16 {
     let Some(label) = speed_chip_text(speed, mode) else {
         return 0;
     };
-    let glyphs = SpeedChipGlyphs::default();
-    let width = glyphs.gap.width() + glyphs.marker.width() + label.width();
+    let width = glyphs::speed_chip::GAP.width()
+        + glyphs::speed_chip::MARKER.width()
+        + label.width();
     u16::try_from(width).unwrap_or(u16::MAX)
 }
 
@@ -72,10 +74,12 @@ pub(crate) fn speed_chip_spans(
     colors: ChipColors,
 ) -> Option<Vec<Span<'static>>> {
     let label = speed_chip_text(speed, mode)?;
-    let glyphs = SpeedChipGlyphs::default();
     Some(vec![
-        text(glyphs.gap).into(),
-        text(glyphs.marker).fg(colors.border).dim().into(),
+        text(glyphs::speed_chip::GAP).into(),
+        text(glyphs::speed_chip::MARKER)
+            .fg(colors.border)
+            .dim()
+            .into(),
         text(label).fg(colors.value).dim().into(),
     ])
 }

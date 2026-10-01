@@ -6,16 +6,7 @@ use ratatui::text::Line;
 
 use crate::primitive::{chip::ChipColors, format_chips};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct FormatChipsLayout {
-    gap: usize,
-}
-
-impl Default for FormatChipsLayout {
-    fn default() -> Self {
-        Self { gap: 2 }
-    }
-}
+const CHIP_GAP: usize = 2;
 
 pub(crate) struct FormatChipFit {
     pub(crate) line: Option<Line<'static>>,
@@ -46,10 +37,9 @@ pub(crate) fn format_chip_fit(
         available_width: row_width,
         elapsed_width,
     } = budget;
-    let chip_gap = FormatChipsLayout::default().gap;
     let chip_budget = usize::from(row_width)
         .saturating_sub(elapsed_width)
-        .saturating_sub(chip_gap);
+        .saturating_sub(CHIP_GAP);
     let time_chip_line = matches!(visibility, FormatChips::Shown)
         .then(|| {
             current.and_then(|track| {
@@ -66,7 +56,7 @@ pub(crate) fn format_chip_fit(
         .map_or(0, |line| crate::primitive::span::width(&line.spans));
     let elapsed_budget =
         usize::from(row_width).saturating_sub(if time_chip_width > 0 {
-            time_chip_width + chip_gap
+            time_chip_width + CHIP_GAP
         } else {
             0
         });

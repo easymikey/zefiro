@@ -27,22 +27,10 @@ pub trait Machine: Default {
     }
 }
 
+#[derive(Debug)]
 pub struct Rejected<S: Machine> {
     pub state: S,
     pub reason: S::Error,
-}
-
-impl<S: Machine> std::fmt::Debug for Rejected<S>
-where
-    S: std::fmt::Debug,
-    S::Error: std::fmt::Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Rejected")
-            .field("state", &self.state)
-            .field("reason", &self.reason)
-            .finish()
-    }
 }
 
 #[cfg(test)]

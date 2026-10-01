@@ -1,12 +1,20 @@
+use std::path::PathBuf;
+
 use kernel::{
-    EngineError,
+    AudioError,
     update::{Machine, Rejected},
 };
 
 use crate::engine::{
     effect::{EngineEffect, EngineMessage},
-    state::{Engine, Transition},
+    state::Engine,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EngineError {
+    WhileMuted(AudioError),
+    WhileNotPlaying(PathBuf),
+}
 
 impl Machine for Engine {
     type Message = EngineMessage;
@@ -17,38 +25,33 @@ impl Machine for Engine {
         self,
         message: EngineMessage,
     ) -> Result<(Self, EngineEffect), Rejected<Self>> {
-        let moved = match (self, message) {
-            (Engine::Muted(muted), message) => muted.transition(message),
-            (Engine::Live(live), EngineMessage::Cmd(cmd)) => live.command(cmd),
+        match (self, message) {
+            (Engine::Muted(muted), message) => {
+                muted.transition(message).map_err(|rejected| *rejected)
+            }
+            (Engine::Live(live), EngineMessage::Cmd(cmd)) => {
+                live.command(cmd).map_err(|rejected| *rejected)
+            }
             (Engine::Live(live), EngineMessage::Opened(outcome)) => {
-                Transition::from(live.opened(outcome))
+                Ok(live.opened(outcome))
             }
             (Engine::Live(live), EngineMessage::Decoded(outcome)) => {
-                Transition::from(live.decoded(outcome))
+                Ok(live.decoded(outcome))
             }
             (Engine::Live(live), EngineMessage::Preloaded(outcome)) => {
-                Transition::from(live.preloaded(outcome))
+                Ok(live.preloaded(outcome))
             }
             (Engine::Live(live), EngineMessage::Failed(error)) => {
-                Transition::from(live.failed(error))
+                Ok(live.failed(error))
             }
-            (Engine::Live(live), EngineMessage::Retiring { from }) => {
-                Transition::from(live.retiring(from))
+            (Engine::Live(live), EngineMessage::DevicesListed(devices)) => {
+                Ok(live.devices_listed(devices))
             }
-            (Engine::Live(live), EngineMessage::DevicesListed(result)) => {
-                Transition::from(live.devices_listed(result))
+            (Engine::Live(live), EngineMessage::Finished(role)) => {
+                Ok(live.finished(role))
             }
-            (Engine::Live(live), EngineMessage::Finished(slot)) => {
-                Transition::from(live.finished(slot))
-            }
-            (Engine::Live(live), EngineMessage::Cued) => Transition::from(live.cued()),
-            (Engine::Live(live), EngineMessage::Ramped(slot)) => {
-                Transition::from(live.ramped(slot))
-            }
-        };
-        match moved {
-            Transition::Next(engine, effect) => Ok((engine, effect)),
-            Transition::Rejected(rejected) => Err(rejected),
+            (Engine::Live(live), EngineMessage::Cued) => Ok(live.cued()),
+            (Engine::Live(live), EngineMessage::Ramped(role)) => Ok(live.ramped(role)),
         }
     }
 }
@@ -76,8 +79,9 @@ mod tests {
     use crate::{
         EngineConfig,
         engine::{
-            effect::{EngineEffect, EngineMessage, Slot},
-            state::{Engine, Live, fixtures::config},
+            effect::{EngineEffect, EngineMessage, SinkRole},
+            state::{Engine, Live},
+            test_support::{config, live},
         },
     };
 
@@ -107,10 +111,13 @@ mod tests {
     }
 
     fn engine_with_crossfade() -> Engine {
-        Engine::Live(Live::new(EngineConfig {
-            crossfade: Crossfade::clamped(CROSSFADE),
-            ..config()
-        }))
+        Engine::Live(Live {
+            config: EngineConfig {
+                crossfade: Crossfade::clamped(CROSSFADE),
+                ..config()
+            },
+            ..live()
+        })
     }
 
     fn as_audio(effect: &Effect) -> Option<AudioCmd> {
@@ -159,13 +166,12 @@ mod tests {
                     self.preload = None;
                     self.outgoing = None;
                 }
-                EngineEffect::StartFade { path, .. } => {
+                EngineEffect::StartHandover { path, .. } => {
                     self.outgoing = self.primary.replace(path.clone());
                     self.preload = None;
                 }
-                EngineEffect::PreloadCrossfade { path, .. }
-                | EngineEffect::PreloadGapless(path) => {
-                    self.preload = Some(path.clone());
+                EngineEffect::Preload(request) => {
+                    self.preload = Some(request.path().to_path_buf());
                 }
                 EngineEffect::Promote { .. } => {
                     self.primary = self.preload.take();
@@ -185,7 +191,7 @@ mod tests {
                 | EngineEffect::SetVolume(_)
                 | EngineEffect::Arm { .. }
                 | EngineEffect::Crossfade { .. }
-                | EngineEffect::Unfade
+                | EngineEffect::CancelCrossfade
                 | EngineEffect::Ramp { .. }
                 | EngineEffect::SetSpeed(_)
                 | EngineEffect::RestartGapless(_)
@@ -235,7 +241,7 @@ mod tests {
         }
 
         fn handover_settles(&mut self) {
-            self.engine_step(EngineMessage::Ramped(Slot::Outgoing));
+            self.engine_step(EngineMessage::Ramped(SinkRole::Outgoing));
         }
 
         fn at_most_two_streams(&self, named: &str) {
@@ -302,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn three_skips_inside_one_fade_end_on_a_single_stream() {
+    fn three_skips_inside_one_crossfade_end_on_a_single_stream() {
         let mut wiring = Wiring::new();
 
         wiring.press(Message::Playback(PlaybackRequest::Play));

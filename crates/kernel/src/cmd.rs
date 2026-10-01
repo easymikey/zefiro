@@ -1,43 +1,42 @@
-use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use strum::{EnumIter, IntoStaticStr};
 
 use crate::{
     domain::{
         Crossfade,
-        DeviceName,
         Driver,
+        Favorites,
+        HistoryEntry,
         OptionIndex,
         OutputDevice,
         Percent,
         Replaygain,
         Revision,
-        ScanMode,
         SettingId,
+        SleepPresets,
         Speed,
         ThemeChoice,
         ThemeName,
         Track,
-        UnixSeconds,
         playlist::PlaylistFileName,
     },
     message::Timer,
 };
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum DevicePatch {
-    Keep,
-    SystemDefault,
-    Named(DeviceName),
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ScanMode {
+    #[default]
+    Full,
+    Cached,
 }
 
 #[derive(Debug, Clone, PartialEq, bon::Builder)]
-#[builder(on(String, into))]
 pub struct ConfigPatch {
     #[builder(setters(option_fn(name = with_crossfade)))]
     pub crossfade: Option<Crossfade>,
-    #[builder(default = DevicePatch::Keep, setters(option_fn(name = with_device)))]
-    pub device: DevicePatch,
+    #[builder(setters(option_fn(name = with_device)))]
+    pub device: Option<OutputDevice>,
     #[builder(setters(option_fn(name = with_replaygain)))]
     pub replaygain: Option<Replaygain>,
     #[builder(setters(option_fn(name = with_theme)))]
@@ -45,9 +44,9 @@ pub struct ConfigPatch {
     #[builder(setters(option_fn(name = with_volume)))]
     pub volume: Option<Percent>,
     #[builder(setters(option_fn(name = with_sleep_presets)))]
-    pub sleep_presets: Option<Vec<Duration>>,
+    pub sleep_presets: Option<SleepPresets>,
     #[builder(setters(option_fn(name = with_music_dir)))]
-    pub music_dir: Option<String>,
+    pub music_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,23 +63,33 @@ pub enum ConfigCmd {
     Setting { id: SettingId, option: OptionIndex },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackRequest {
+    pub path: PathBuf,
+    pub gain: Option<f32>,
+    pub revision: Revision,
+}
+
+impl TrackRequest {
+    #[must_use]
+    pub fn for_track(track: &Track, revision: Revision) -> Self {
+        Self {
+            path: track.path().to_path_buf(),
+            gain: track.audio_format().replay_gain,
+            revision,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum AudioCmd {
-    Load {
-        path: PathBuf,
-        gain: Option<f32>,
-        revision: Revision,
-    },
+    Load(TrackRequest),
     Playback(Playback),
     Seek(Duration),
     SetSpeed(Speed),
     Stop,
-    Preload {
-        path: PathBuf,
-        gain: Option<f32>,
-        revision: Revision,
-    },
+    Preload(TrackRequest),
     SetCrossfade(Crossfade),
     SetReplaygain(Replaygain),
     SetDevice(OutputDevice),
@@ -90,11 +99,8 @@ pub enum AudioCmd {
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum LibraryCmd {
-    AppendHistory {
-        track: Arc<Track>,
-        at: UnixSeconds,
-    },
-    SaveFavorites(Arc<HashSet<PathBuf>>),
+    AppendHistory(HistoryEntry),
+    SaveFavorites(Favorites),
     LoadFavorites,
     Trash(PathBuf),
     LoadHistory {
@@ -120,23 +126,10 @@ pub enum LibraryCmd {
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum MacosCmd {
-    NowPlaying(NowPlaying),
+    NowPlaying(Option<Arc<Track>>),
     PlaybackState(Playback),
     PlaybackPosition(Duration),
     Volume(Percent),
-}
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub enum NowPlaying {
-    #[default]
-    Cleared,
-    Track {
-        title: String,
-        artist: Option<String>,
-        album: Option<String>,
-        duration: Duration,
-        path: PathBuf,
-    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,14 +235,6 @@ impl Cmd {
         }
     }
 
-    pub fn effects_mut(&mut self) -> std::slice::IterMut<'_, Effect> {
-        match self {
-            Cmd::None => [].iter_mut(),
-            Cmd::One(effect) => std::slice::from_mut(effect).iter_mut(),
-            Cmd::Batch(effects) => effects.iter_mut(),
-        }
-    }
-
     pub fn then(self, other: Cmd) -> Cmd {
         match (self, other) {
             (Cmd::None, other) => other,
@@ -289,7 +274,7 @@ mod tests {
     use crate::cmd::{AudioCmd, Cmd, Effect, Playback};
 
     #[test]
-    fn then_none_is_identity() {
+    fn then_with_none_keeps_the_other_cmd() {
         let leading = Cmd::One(Effect::Audio(AudioCmd::Stop));
         assert!(matches!(Cmd::None.then(leading), Cmd::One(_)));
         let trailing = Cmd::One(Effect::Audio(AudioCmd::Stop));
@@ -297,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn then_merges_two_ones_into_batch() {
+    fn then_merges_two_single_effects_into_a_batch() {
         let first = Cmd::One(Effect::Audio(AudioCmd::Playback(Playback::Paused)));
         let second = Cmd::One(Effect::Audio(AudioCmd::Stop));
         let merged = first.then(second);
@@ -305,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn into_iter_yields_batch_effects_in_order() {
+    fn a_batch_iterates_its_effects_in_order() {
         let cmd = Cmd::Batch(vec![
             Effect::Audio(AudioCmd::Playback(Playback::Paused)),
             Effect::Audio(AudioCmd::Stop),

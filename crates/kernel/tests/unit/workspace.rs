@@ -6,7 +6,6 @@ use kernel::{
     Message,
     Moment,
     Timer,
-    WorkspaceRequest,
     domain::{
         Action,
         ConfigError,
@@ -56,10 +55,7 @@ fn showing_a_toast_installs_it_and_clearing_takes_it_away() {
     assert!(model.workspace.toast.is_none());
 
     let toast = Toast::error("boom".into());
-    let cmd = reduce(
-        &mut model,
-        Message::Workspace(WorkspaceRequest::ShowToast(toast.clone())),
-    );
+    let cmd = reduce(&mut model, Message::Toast(toast.clone()));
     assert_eq!(model.workspace.toast, Some(toast));
     assert_eq!(
         cmd,
@@ -68,27 +64,20 @@ fn showing_a_toast_installs_it_and_clearing_takes_it_away() {
             first_toast_expiry()
         ])
     );
-
-    let cleared = reduce(&mut model, Message::Workspace(WorkspaceRequest::ClearToast));
-    assert!(model.workspace.toast.is_none());
-    assert!(matches!(cleared, Cmd::None));
 }
 
 #[test]
 fn a_shown_toast_schedules_its_expiry_after_the_one_lifetime() {
     let mut model = Model::default();
 
-    let cmd = reduce(
-        &mut model,
-        Message::Workspace(WorkspaceRequest::ShowToast(Toast::error("boom".into()))),
-    );
+    let cmd = reduce(&mut model, Message::Toast(Toast::error("boom".into())));
 
     assert!(cmd.effects().any(|effect| *effect
         == Effect::After {
             delay: TOAST_LIFETIME,
             message: Timer::Toast(model.revisions.toast),
         }));
-    assert_ne!(model.revisions.toast, Revision::UNSTAMPED);
+    assert_ne!(model.revisions.toast, Revision::default());
 }
 
 #[test]
@@ -126,7 +115,7 @@ fn keys_reloaded_installs_the_merged_table() {
         &mut model,
         Message::Config(ConfigEvent::KeymapReloaded(Box::new(config.clone()))),
     );
-    assert_eq!(model.workspace.keymap.config(), &config);
+    assert_eq!(model.workspace.keymap.overrides(), &config);
     assert!(matches!(cmd, Cmd::None));
 }
 

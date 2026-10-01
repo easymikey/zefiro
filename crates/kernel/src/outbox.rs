@@ -39,7 +39,7 @@ mod tests {
     }
 
     #[test]
-    fn a_fake_outbox_delivers_facts_as_messages() {
+    fn a_fake_outbox_sends_events_as_messages() {
         let outbox = FakeOutbox {
             sent: RefCell::new(Vec::new()),
         };

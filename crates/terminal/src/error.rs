@@ -6,14 +6,6 @@ pub enum Error {
     Setup(#[source] io::Error),
     #[error("terminal teardown: {0}")]
     Teardown(#[source] io::Error),
-    #[error("a worker thread panicked: {report}")]
-    WorkerPanic { report: String },
-    #[error("{session} (teardown after also failed: {teardown})")]
-    TeardownAfter {
-        #[source]
-        session: Box<Error>,
-        teardown: io::Error,
-    },
 }
 
 #[cfg(test)]
@@ -32,10 +24,6 @@ mod tests {
     #[case::teardown(
         Error::Teardown(io::Error::other("broken pipe")),
         "terminal teardown: broken pipe"
-    )]
-    #[case::a_worker_thread_that_fell_over(
-        Error::WorkerPanic { report: String::from("panicked at src/input.rs:9:5: no tty") },
-        "a worker thread panicked: panicked at src/input.rs:9:5: no tty"
     )]
     fn every_terminal_error_names_what_went_wrong(
         #[case] error: Error,

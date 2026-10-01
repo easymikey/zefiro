@@ -13,30 +13,21 @@ mod window_colors;
 pub use capabilities::{
     Brand,
     Capabilities,
-    CapabilityProbe,
     ProbeAnswer,
     TerminalEnvironment,
     cell_aspect,
+    probe,
 };
 pub use error::Error;
-pub use input::InputLoop;
+pub use input::run_input;
 pub use keys::{LayoutTranslation, from_event};
 pub use pixels::{
-    CoverFade,
-    CoverKey,
-    CoverLook,
-    CoverMoment,
     CoverMotion,
-    CoverParts,
-    CoverPlacement,
+    CoverRefreshParts,
     CoverRenderer,
     CoverWash,
+    CrossfadePermit,
     DecodedCover,
-    OwnedCoverArt,
 };
 pub use session::{TerminalSession, install_panic_hook};
-pub use window_colors::{
-    UnknownThemeError,
-    window_colors_sequence,
-    write_window_colors,
-};
+pub use window_colors::{UnknownThemeError, write_window_colors};

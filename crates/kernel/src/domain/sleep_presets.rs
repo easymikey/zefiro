@@ -1,14 +1,44 @@
 use std::time::Duration;
 
-use crate::domain::SLEEP_PRESET_BUNDLES;
+use crate::domain::time::SECONDS_PER_MINUTE;
 
 const MAX_MINUTES: u64 = 720;
 const MAX_PRESETS: usize = 5;
+
+const fn minutes(value: u64) -> Duration {
+    Duration::from_secs(value * SECONDS_PER_MINUTE)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SleepPresets(Box<[Duration]>);
 
 impl SleepPresets {
+    pub const BUNDLES: &[&[Duration]] = &[
+        &[minutes(15), minutes(30), minutes(60)],
+        &[minutes(10), minutes(20), minutes(45)],
+        &[minutes(30), minutes(60), minutes(90)],
+        &[minutes(45), minutes(90), minutes(120)],
+        &[],
+    ];
+
+    #[must_use]
+    pub fn bundle_index(current: &[Duration]) -> Option<usize> {
+        Self::BUNDLES.iter().position(|bundle| *bundle == current)
+    }
+
+    #[must_use]
+    pub fn nearest_bundle(current: &[Duration]) -> usize {
+        let current_total: Duration = current.iter().sum();
+        Self::BUNDLES
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, bundle)| {
+                let total: Duration = bundle.iter().sum();
+                total.abs_diff(current_total)
+            })
+            .map_or(0, |(index, _)| index)
+    }
+
     pub fn from_minutes(minutes: &[u64]) -> Result<Self, SleepPresetError> {
         if minutes.len() > MAX_PRESETS {
             return Err(SleepPresetError::TooMany {
@@ -31,6 +61,13 @@ impl SleepPresets {
     }
 
     #[must_use]
+    pub fn bundle(index: usize) -> Option<Self> {
+        SleepPresets::BUNDLES
+            .get(index)
+            .map(|&bundle| Self(bundle.into()))
+    }
+
+    #[must_use]
     pub fn as_slice(&self) -> &[Duration] {
         &self.0
     }
@@ -38,13 +75,7 @@ impl SleepPresets {
 
 impl Default for SleepPresets {
     fn default() -> Self {
-        Self(SLEEP_PRESET_BUNDLES.first())
-    }
-}
-
-impl From<SleepPresets> for Box<[Duration]> {
-    fn from(presets: SleepPresets) -> Self {
-        presets.0
+        Self(SleepPresets::BUNDLES.first().copied().unwrap_or(&[]).into())
     }
 }
 
@@ -67,6 +98,41 @@ mod tests {
     use rstest::rstest;
 
     use crate::domain::sleep_presets::{SleepPresetError, SleepPresets};
+
+    #[test]
+    fn the_default_bundles_are_the_five_documented_ones() {
+        let minutes = |bundle: &[Duration]| -> Vec<u64> {
+            bundle.iter().map(|preset| preset.as_secs() / 60).collect()
+        };
+        assert_eq!(
+            SleepPresets::BUNDLES
+                .iter()
+                .map(|b| minutes(b))
+                .collect::<Vec<_>>(),
+            vec![
+                vec![15, 30, 60],
+                vec![10, 20, 45],
+                vec![30, 60, 90],
+                vec![45, 90, 120],
+                Vec::<u64>::new(),
+            ]
+        );
+    }
+
+    #[test]
+    fn bundle_index_finds_an_exact_match_only() {
+        let third = SleepPresets::BUNDLES.get(2).copied();
+        assert_eq!(third.and_then(SleepPresets::bundle_index), Some(2));
+        let custom = [Duration::from_secs(5 * 60)];
+        assert_eq!(SleepPresets::bundle_index(&custom), None);
+    }
+
+    #[test]
+    fn nearest_bundle_snaps_by_total_minutes() {
+        let custom = [Duration::from_secs(100 * 60)];
+        assert_eq!(SleepPresets::nearest_bundle(&custom), 0);
+        assert_eq!(SleepPresets::nearest_bundle(&[]), 4);
+    }
 
     #[rstest]
     #[case::empty_means_off(&[], vec![])]

@@ -18,7 +18,6 @@ use kernel::{
     QueueRequest,
     Timer,
     Toast,
-    WorkspaceRequest,
     domain::{Bounded, Percent, PlaylistIndex, Revision, ThemeName},
     message::AudioEvent,
     update::update,
@@ -58,9 +57,7 @@ fn open(name: OverlayName) -> Message {
 }
 
 fn toasted() -> Message {
-    Message::Workspace(WorkspaceRequest::ShowToast(Toast::error(
-        "boom".to_string(),
-    )))
+    Message::Toast(Toast::error("boom".to_string()))
 }
 
 #[rstest]

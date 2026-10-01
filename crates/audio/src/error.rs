@@ -202,7 +202,7 @@ mod tests {
         DecodeError::Corrupt
     )]
     #[case::no_streams(rodio::decoder::DecoderError::NoStreams, DecodeError::Corrupt)]
-    fn a_decode_error_maps_to_its_fault(
+    fn a_decode_error_maps_to_its_audio_error(
         #[case] source: rodio::decoder::DecoderError,
         #[case] expected: DecodeError,
     ) {
@@ -239,7 +239,7 @@ mod tests {
         Error::from(DeviceError::NotFound { name: device_name("usb") }),
         AudioError::Device { requested: "usb".to_string() }
     )]
-    fn an_audio_error_becomes_a_failure_with_its_path(
+    fn an_error_becomes_an_audio_error_with_its_path(
         #[case] error: Error,
         #[case] expected: AudioError,
     ) {
@@ -259,7 +259,7 @@ mod tests {
         },
         StreamError::Backend
     )]
-    fn a_stream_error_maps_to_its_output_fault(
+    fn a_stream_error_maps_to_its_output_lost_error(
         #[case] error: rodio::cpal::StreamError,
         #[case] expected: StreamError,
     ) {

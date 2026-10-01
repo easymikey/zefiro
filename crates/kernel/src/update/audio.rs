@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use crate::{
     cmd::Cmd,
@@ -13,18 +13,17 @@ use crate::{
         PlaylistIndex,
         Reply,
         Revision,
-        Settings,
         Toast,
         Track,
         Transport,
         Workspace,
         playlist::{Playlist, RepeatMode},
     },
-    message::{AudioError, AudioEvent, WorkspaceRequest},
+    message::{AudioError, AudioEvent},
     update::{
         error::UpdateError,
         machine::Machine,
-        player::{self, Anchor, PlayerMessage},
+        player::{self, Anchor, PlayerMessage, Stamp},
     },
 };
 
@@ -35,7 +34,11 @@ pub(crate) fn update(
 ) -> Result<Cmd, UpdateError> {
     match event {
         AudioEvent::Playhead(offset) => {
-            let cmd = positioned(model, offset, now)?;
+            let cmd = player::update_player(
+                model,
+                PlayerMessage::Playhead { offset, now },
+                now,
+            )?;
             output_recovered(&mut model.transport);
             Ok(cmd)
         }
@@ -43,14 +46,13 @@ pub(crate) fn update(
         AudioEvent::Ended => {
             let following = was_following(&model.workspace, &model.playlist);
             let cmd = ended(model, now)?;
-            follow_if(following, &mut model.workspace, &model.playlist);
+            if following {
+                follow_playback(&mut model.workspace, &model.playlist);
+            }
             Ok(cmd)
         }
         AudioEvent::Loaded { total } => {
-            let anchor = Anchor {
-                now,
-                speed: model.transport.speed,
-            };
+            let anchor = Anchor::at(model, now);
             let cmd = player::update_player(
                 model,
                 PlayerMessage::Loaded { total, anchor },
@@ -64,30 +66,12 @@ pub(crate) fn update(
             model.settings.output_devices = devices;
             Ok(Cmd::None)
         }
-        AudioEvent::DeviceFellBack(opened) => fell_back(
-            FallbackParts {
-                settings: &mut model.settings,
-                workspace: &mut model.workspace,
-            },
-            &opened,
-        ),
+        AudioEvent::DeviceFellBack(opened) => fell_back(model, &opened),
     }
 }
 
-struct FallbackParts<'a> {
-    settings: &'a mut Settings,
-    workspace: &'a mut Workspace,
-}
-
-fn fell_back(
-    slices: FallbackParts<'_>,
-    opened: &OutputDevice,
-) -> Result<Cmd, UpdateError> {
-    let FallbackParts {
-        settings,
-        workspace,
-    } = slices;
-    let requested = std::mem::replace(&mut settings.output_device, opened.clone());
+fn fell_back(model: &mut Model, opened: &OutputDevice) -> Result<Cmd, UpdateError> {
+    let requested = std::mem::replace(&mut model.settings.audio.device, opened.clone());
     let OutputDevice::Named(requested) = requested else {
         return Ok(Cmd::None);
     };
@@ -99,7 +83,9 @@ fn fell_back(
         crate::domain::DeviceName::to_string,
     );
     let told = format!("output device '{requested}' is gone — playing on {opened}");
-    Ok(workspace.update(WorkspaceRequest::ShowToast(Toast::error(told)))?)
+    Ok(model
+        .workspace
+        .show(Toast::error(told), &mut model.revisions))
 }
 
 fn output_recovered(transport: &mut Transport) {
@@ -110,37 +96,37 @@ fn output_recovered(transport: &mut Transport) {
 
 fn error(
     model: &mut Model,
-    failure: AudioError,
+    error: AudioError,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    let (told, lost) = match &failure {
+    let (told, lost) = match &error {
         AudioError::OutputLost { kind } => (
-            output_lost_text(&model.player, &failure),
+            output_lost_text(&model.player, &error),
             Some(Output::Lost { kind: *kind }),
         ),
         AudioError::Decode { .. }
         | AudioError::Device { .. }
         | AudioError::Stream { .. }
         | AudioError::Preload { .. }
-        | AudioError::Seek { .. } => (failure.to_string(), None),
+        | AudioError::Seek { .. } => (error.to_string(), None),
     };
     let stopped =
-        player::update_player(model, PlayerMessage::Error { failure, now }, now)?;
+        player::update_player(model, PlayerMessage::Error { error, now }, now)?;
     if let Some(lost) = lost {
         model.transport.output = lost;
     }
     let raised = model
         .workspace
-        .update(WorkspaceRequest::ShowToast(Toast::error(told)))?;
+        .show(Toast::error(told), &mut model.revisions);
     Ok(raised.then(stopped))
 }
 
-fn output_lost_text(player: &Player, failure: &AudioError) -> String {
+fn output_lost_text(player: &Player, error: &AudioError) -> String {
     match player {
         Player::Playing { .. } | Player::Paused { .. } => {
             "Output lost — paused".to_string()
         }
-        Player::Loading { .. } | Player::Stopped => failure.to_string(),
+        Player::Loading { .. } | Player::Stopped => error.to_string(),
     }
 }
 
@@ -159,34 +145,34 @@ fn pop_queued_track(
     Some(track)
 }
 
-pub(crate) fn next(model: &mut Model) -> Result<Cmd, UpdateError> {
+pub(crate) fn next(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
     let cmd = pop_queued_track(&mut model.playlist, &mut model.queue)
         .or_else(|| model.playlist.skip(Direction::Next).cloned())
-        .map_or(Ok(Cmd::None), |track| {
-            start(&mut model.transport, &mut model.player, track)
-        })?;
-    follow_if(Follow::Playback, &mut model.workspace, &model.playlist);
+        .map_or(Ok(Cmd::None), |track| start(model, track, now))?;
+    follow_playback(&mut model.workspace, &model.playlist);
     Ok(cmd)
 }
 
-pub(crate) fn previous(model: &mut Model) -> Result<Cmd, UpdateError> {
+pub(crate) fn jump_to(
+    model: &mut Model,
+    index: PlaylistIndex,
+    now: Moment,
+) -> Result<Cmd, UpdateError> {
+    model
+        .playlist
+        .jump(index)
+        .cloned()
+        .map_or(Ok(Cmd::None), |track| start(model, track, now))
+}
+
+pub(crate) fn previous(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
     let cmd = model
         .playlist
         .skip(Direction::Previous)
         .cloned()
-        .map_or(Ok(Cmd::None), |track| {
-            start(&mut model.transport, &mut model.player, track)
-        })?;
-    follow_if(Follow::Playback, &mut model.workspace, &model.playlist);
+        .map_or(Ok(Cmd::None), |track| start(model, track, now))?;
+    follow_playback(&mut model.workspace, &model.playlist);
     Ok(cmd)
-}
-
-fn positioned(
-    model: &mut Model,
-    offset: Duration,
-    now: Moment,
-) -> Result<Cmd, UpdateError> {
-    player::update_player(model, PlayerMessage::Playhead { offset, now }, now)
 }
 
 pub(crate) fn mark_fired(
@@ -194,10 +180,9 @@ pub(crate) fn mark_fired(
     revision: Revision,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    if let Reply::Stale = revision.reply(model.revisions.mark) {
-        return Ok(Cmd::None);
-    }
-    if !model.player.is_playing() {
+    if matches!(revision.reply(model.revisions.mark), Reply::Stale)
+        || !model.player.is_playing()
+    {
         return Ok(Cmd::None);
     }
     let offset = model.player.position_at(now);
@@ -209,6 +194,7 @@ fn ended(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
     let pick = successor(&model.playlist, &model.queue);
     let message = PlayerMessage::Ended {
         next: pick.track().cloned(),
+        stamp: Stamp::issue(model, now),
     };
     let cmd = player::update_player(model, message, now)?;
     if pick.track().is_some() {
@@ -232,35 +218,24 @@ fn track_changed(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
     let cmd = player::update_player(model, message, now)?;
     model.transport.ab = None;
     move_onto(&mut model.playlist, &mut model.queue, pick);
-    follow_if(following, &mut model.workspace, &model.playlist);
+    if following {
+        follow_playback(&mut model.workspace, &model.playlist);
+    }
     Ok(cmd)
 }
 
-fn was_following(workspace: &Workspace, playlist: &Playlist) -> Follow {
-    if playlist.playing_index() == Some(workspace.browse.selected()) {
-        Follow::Playback
-    } else {
-        Follow::Nothing
+fn was_following(workspace: &Workspace, playlist: &Playlist) -> bool {
+    playlist.playing_index() == Some(workspace.browse.selected())
+}
+
+fn follow_playback(workspace: &mut Workspace, playlist: &Playlist) {
+    if let Some(anchor) = playlist.playing_index() {
+        workspace.browse.cursor =
+            Cursor::with_len(playlist.tracks.len()).at(anchor.get());
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Follow {
-    Playback,
-    Nothing,
-}
-
-fn follow_if(follow: Follow, workspace: &mut Workspace, playlist: &Playlist) {
-    match (follow, playlist.playing_index()) {
-        (Follow::Playback, Some(anchor)) => {
-            workspace.browse.cursor =
-                Cursor::with_len(playlist.tracks.len()).at(anchor.get());
-        }
-        (Follow::Playback, None) | (Follow::Nothing, _) => {}
-    }
-}
-
-enum Successor {
+pub(crate) enum Successor {
     Preloaded(Arc<Track>),
     Repeating(Arc<Track>),
     Queued {
@@ -272,7 +247,7 @@ enum Successor {
 }
 
 impl Successor {
-    fn track(&self) -> Option<&Arc<Track>> {
+    pub(crate) fn track(&self) -> Option<&Arc<Track>> {
         match self {
             Successor::Preloaded(track)
             | Successor::Repeating(track)
@@ -283,7 +258,7 @@ impl Successor {
     }
 }
 
-fn successor(playlist: &Playlist, queue: &[PlaylistIndex]) -> Successor {
+pub(crate) fn successor(playlist: &Playlist, queue: &[PlaylistIndex]) -> Successor {
     if matches!(playlist.repeat, RepeatMode::One) {
         return playlist
             .current()
@@ -340,16 +315,14 @@ fn move_onto_preloaded(
     cursor_to(playlist, committed_index);
 }
 
-pub(crate) fn track_duration(track: &Arc<Track>) -> Duration {
-    track.duration().unwrap_or_default()
-}
-
 pub(crate) fn start(
-    transport: &mut Transport,
-    player: &mut Player,
+    model: &mut Model,
     track: Arc<Track>,
+    now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    let cmd = player.update(PlayerMessage::Start { track })?;
-    transport.ab = None;
+    let stamp = Stamp::issue(model, now);
+    let cmd = model.player.update(PlayerMessage::Start { track, stamp })?;
+    player::committed(&mut model.revisions, stamp.revision, &cmd);
+    model.transport.ab = None;
     Ok(cmd)
 }

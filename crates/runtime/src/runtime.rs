@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     mem,
     ops::ControlFlow,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use crossbeam_channel::Sender;
@@ -21,11 +21,11 @@ use crate::{
     interpret::{Interpreter, interpret},
     library::cover::CoverRequest,
     registry,
-    shell::{FrameInput, ShellEffect},
+    shell::{Frame, ShellEffect},
     spawn::Spawners,
     timers::Timers,
     trace::{Trace, TraceEntry},
-    wiring::{RestartParts, Wiring, await_exits, drop_ports, join_exited},
+    wiring::{Wiring, await_exits, join_exited},
 };
 
 #[derive(Debug, Clone)]
@@ -41,6 +41,7 @@ pub struct Runtime {
     pub(crate) timers: Timers,
     pub(crate) trace: Trace,
     epoch: Instant,
+    unix_offset: Duration,
     flow: ControlFlow<()>,
     shell_effects: Vec<ShellEffect>,
     cover: Option<CoverRequest>,
@@ -66,10 +67,7 @@ impl Runtime {
     }
 
     pub(crate) fn seeded(startup: Startup) -> Seed {
-        let (mut model, cmd) = kernel::startup(startup);
-        for row in registry::REGISTRY {
-            model.drivers = model.drivers.with_strategy(row.driver, row.supervision);
-        }
+        let (model, cmd) = kernel::startup(startup);
         Seed { model, cmd }
     }
 
@@ -81,6 +79,9 @@ impl Runtime {
             timers: Timers::default(),
             trace,
             epoch: Instant::now(),
+            unix_offset: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO),
             flow: ControlFlow::Continue(()),
             shell_effects: Vec::new(),
             cover: None,
@@ -91,7 +92,10 @@ impl Runtime {
         }
         for row in registry::REGISTRY {
             if !row.platform.present() {
-                runtime.step(Message::Driver(row.driver, DriverMessage::Stopped));
+                runtime.step(Message::Driver {
+                    driver: row.driver,
+                    event: DriverMessage::Stopped,
+                });
             }
         }
         runtime
@@ -114,18 +118,19 @@ impl Runtime {
             if self.flow.is_break() {
                 return;
             }
-            let Some(full_edge) = self.wiring.ports.full_edge(row.driver) else {
-                continue;
-            };
-            if full_edge.take() {
+            if self.wiring.ports.full_edge(row.driver).take() {
                 self.full_episodes += 1;
-                self.step(Message::Driver(row.driver, DriverMessage::Full));
+                self.step(Message::Driver {
+                    driver: row.driver,
+                    event: DriverMessage::Full,
+                });
             }
         }
     }
 
+    #[cfg(test)]
     #[must_use]
-    pub fn trace(&self) -> &Trace {
+    pub(crate) fn trace(&self) -> &Trace {
         &self.trace
     }
 
@@ -133,7 +138,7 @@ impl Runtime {
     pub(crate) fn sleep_deadline(&self) -> Option<Moment> {
         self.timers
             .sleep_deadline(self.model.transport.sleep)
-            .map(|deadline| Moment::new(deadline.saturating_duration_since(self.epoch)))
+            .map(|deadline| self.moment_of(deadline))
     }
 
     pub(crate) fn flow(&self) -> ControlFlow<()> {
@@ -144,22 +149,26 @@ impl Runtime {
         mem::take(&mut self.shell_effects)
     }
 
-    pub(crate) fn view(&self, now: Instant) -> FrameInput<'_> {
-        FrameInput {
+    pub(crate) fn frame(&self, now: Instant) -> Frame<'_> {
+        Frame {
             model: &self.model,
             spectrum: &self.wiring.spectrum,
-            cells: &self.wiring.cells,
+            latest: &self.wiring.cells,
             sleep_deadline: self.sleep_deadline(),
-            now: Moment::new(now.saturating_duration_since(self.epoch)),
+            now: self.moment_of(now),
         }
     }
 
     pub(crate) fn now(&self) -> Moment {
-        Moment::new(Instant::now().saturating_duration_since(self.epoch))
+        self.moment_of(Instant::now())
+    }
+
+    fn moment_of(&self, instant: Instant) -> Moment {
+        Moment::new(self.unix_offset + instant.saturating_duration_since(self.epoch))
     }
 
     pub(crate) fn instant_of(&self, moment: Moment) -> Instant {
-        self.epoch + moment.since_epoch()
+        self.epoch + moment.since_epoch().saturating_sub(self.unix_offset)
     }
 
     pub(crate) fn request_cover(&mut self, request: CoverRequest) {
@@ -172,9 +181,7 @@ impl Runtime {
             .library
             .send_cover(&self.model.drivers, request.clone());
         self.cover = Some(request);
-        if let Err(undelivered) = sent {
-            self.trace.push(undelivered.into());
-        }
+        self.trace.record(sent);
     }
 
     #[must_use]
@@ -191,13 +198,12 @@ impl Runtime {
         } = self;
         let Wiring {
             receiver,
-            mut handles,
-            ports,
+            mut ports,
             ..
         } = wiring;
-        drop_ports(ports);
+        ports.hang_up();
         let reported = await_exits(&model, &receiver, Self::DRAIN);
-        join_exited(&mut handles, &reported, &mut trace);
+        join_exited(&mut ports, &reported, &mut trace);
     }
 
     fn update(&mut self, message: Message) -> Option<Vec<Message>> {
@@ -234,11 +240,9 @@ impl Runtime {
             let Some((driver, effects)) = interpreted.restart else {
                 break;
             };
-            let restart_parts = RestartParts {
-                model: &self.model,
-                trace: &mut self.trace,
-            };
-            self.wiring.restart(driver, restart_parts);
+            for entry in self.wiring.restart(driver, &self.model) {
+                self.trace.push(entry);
+            }
             pending = Cmd::Batch(effects);
         }
         answers
@@ -251,6 +255,7 @@ mod tests {
         cell::RefCell,
         convert::Infallible,
         path::{Path, PathBuf},
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -261,7 +266,6 @@ mod tests {
         DriverMessage,
         Message,
         Toast,
-        WorkspaceRequest,
         domain::{Driver, DriverStatus, SettingRow, Startup},
     };
     use library::LibraryDirs;
@@ -269,17 +273,20 @@ mod tests {
 
     use crate::{
         config::{ConfigPaths, SeenTexts},
-        driver::DriverLoop,
         error::Error,
         event_loop::run,
         library::{cover::CoverRequest, machine::LibraryMessage},
         runtime::{Runtime, StartupPaths},
         sender::DriverSender,
-        shell::{FrameDue, FrameInput, Painted, Reaction, Shell, ShellEffect},
-        spawn::{AudioSpawned, SpawnParts, Spawners, spawn_audio_loop, spawn_config},
+        shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
+        spawn::{AudioDriver, SpawnParts, Spawners, spawn_audio_loop, spawn_config},
         trace::{DropReason, Trace, TraceEntry},
         wiring::Wiring,
     };
+
+    fn boom() -> ! {
+        panic!("boom")
+    }
 
     fn stock_startup() -> Startup {
         Startup::default()
@@ -294,11 +301,7 @@ mod tests {
                 theme: None,
                 seen: SeenTexts::default(),
             },
-            library: LibraryDirs {
-                cache_dir: directory.join("cache"),
-                data_dir: directory.join("data"),
-                playlists_dir: directory.join("playlists"),
-            },
+            library: LibraryDirs::under(directory),
         }
     }
 
@@ -314,11 +317,11 @@ mod tests {
 
         fn effect(&mut self, _effect: ShellEffect) {}
 
-        fn frame_due(&self, _view: &FrameInput<'_>) -> FrameDue {
+        fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
         }
 
-        fn paint(&mut self, _view: FrameInput<'_>) -> Result<Painted, Infallible> {
+        fn paint(&mut self, _frame: Frame<'_>) -> Result<Painted, Infallible> {
             Ok(Painted::default())
         }
     }
@@ -327,23 +330,18 @@ mod tests {
         static AUDIO_TAP: RefCell<Option<Sender<AudioCmd>>> = const { RefCell::new(None) };
     }
 
-    struct RecordingAudio {
-        forward: Sender<AudioCmd>,
-    }
-
-    impl DriverLoop<AudioCmd, AudioEvent> for RecordingAudio {
-        fn run(self, inbox: &Receiver<AudioCmd>, _outbox: &DriverSender<AudioEvent>) {
-            while let Ok(command) = inbox.recv() {
-                if self.forward.send(command).is_err() {
-                    return;
-                }
-            }
-        }
-    }
-
-    fn recording_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioSpawned, Error> {
+    fn recording_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioDriver, Error> {
         let forward = AUDIO_TAP.with(|tap| tap.borrow().clone()).unwrap();
-        spawn_audio_loop(RecordingAudio { forward }, spawn_parts)
+        spawn_audio_loop(
+            move |inbox: &Receiver<AudioCmd>, _: &DriverSender<AudioEvent>| {
+                while let Ok(command) = inbox.recv() {
+                    if forward.send(command).is_err() {
+                        return;
+                    }
+                }
+            },
+            spawn_parts,
+        )
     }
 
     fn recording_spawners() -> (Spawners, Receiver<AudioCmd>) {
@@ -358,16 +356,11 @@ mod tests {
         )
     }
 
-    struct PanickingAudio;
-
-    impl DriverLoop<AudioCmd, AudioEvent> for PanickingAudio {
-        fn run(self, _inbox: &Receiver<AudioCmd>, _outbox: &DriverSender<AudioEvent>) {
-            panic!("boom");
-        }
-    }
-
-    fn panicking_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioSpawned, Error> {
-        spawn_audio_loop(PanickingAudio, spawn_parts)
+    fn panicking_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioDriver, Error> {
+        spawn_audio_loop(
+            |_: &Receiver<AudioCmd>, _: &DriverSender<AudioEvent>| boom(),
+            spawn_parts,
+        )
     }
 
     fn panicking_spawners() -> Spawners {
@@ -419,11 +412,11 @@ mod tests {
 
         fn effect(&mut self, _effect: ShellEffect) {}
 
-        fn frame_due(&self, _view: &FrameInput<'_>) -> FrameDue {
+        fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
         }
 
-        fn paint(&mut self, _view: FrameInput<'_>) -> Result<Painted, Infallible> {
+        fn paint(&mut self, _frame: Frame<'_>) -> Result<Painted, Infallible> {
             Ok(Painted::default())
         }
     }
@@ -480,13 +473,13 @@ mod tests {
 
         fn effect(&mut self, _effect: ShellEffect) {}
 
-        fn frame_due(&self, _view: &FrameInput<'_>) -> FrameDue {
+        fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
         }
 
-        fn paint(&mut self, view: FrameInput<'_>) -> Result<Painted, Infallible> {
+        fn paint(&mut self, frame: Frame<'_>) -> Result<Painted, Infallible> {
             self.paints += 1;
-            self.restarts = view.model.drivers.record(Driver::Audio).restarts.count();
+            self.restarts = frame.model.drivers.record(Driver::Audio).restarts.count();
             let next = if self.restarts > 0 || self.paints >= 20 {
                 LifeStep::Quit
             } else {
@@ -498,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn a_driver_panic_is_supervised_through_view() {
+    fn a_driver_panic_is_supervised_through_frame() {
         let directory = tempfile::tempdir().unwrap();
         let startup = stock_startup();
         let runtime = Runtime::start(
@@ -532,6 +525,23 @@ mod tests {
         let mut runtime = Runtime::assemble(seed, wiring, Trace::default());
         runtime.model.drivers.record_mut(Driver::Library).status = library;
         (runtime, cover_inbox)
+    }
+
+    #[test]
+    fn now_is_anchored_to_the_wall_clock_and_round_trips_through_instant_of() {
+        let (runtime, _cover_inbox) = start(DriverStatus::Running);
+
+        let now = runtime.now();
+
+        let wall = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let apart = wall.abs_diff(now.since_epoch());
+        assert!(
+            apart < Duration::from_secs(5),
+            "now is {apart:?} off the wall clock"
+        );
+        let back = runtime.moment_of(runtime.instant_of(now));
+        assert_eq!(back, now);
+        runtime.drain();
     }
 
     #[test]
@@ -587,12 +597,12 @@ mod tests {
     #[rstest]
     #[case::an_accepted_message_applies(
         DriverStatus::Running,
-        Message::Workspace(WorkspaceRequest::ShowToast(Toast::error("hello".to_owned()))),
+        Message::Toast(Toast::error("hello".to_owned())),
         true
     )]
     #[case::a_rejected_message_is_refused(
         DriverStatus::Stopped,
-        Message::Driver(Driver::Library, DriverMessage::Stopped),
+        Message::Driver { driver: Driver::Library, event: DriverMessage::Stopped },
         false
     )]
     fn step_reports_whether_the_message_changed_the_model(

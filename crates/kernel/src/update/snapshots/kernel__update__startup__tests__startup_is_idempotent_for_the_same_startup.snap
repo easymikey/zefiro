@@ -1,22 +1,26 @@
 ---
 source: crates/kernel/src/update/startup.rs
-assertion_line: 261
+assertion_line: 276
 expression: projected
 ---
 (
-    Crossfade(
-        3s,
-    ),
-    On,
-    Named(
-        DeviceName(
-            "Speakers",
+    AudioSettings {
+        crossfade: Crossfade(
+            3s,
         ),
-    ),
-    [
-        900s,
-        1800s,
-    ],
+        replaygain: On,
+        device: Named(
+            DeviceName(
+                "Speakers",
+            ),
+        ),
+        sleep_presets: SleepPresets(
+            [
+                900s,
+                1800s,
+            ],
+        ),
+    },
     Percent(
         42,
     ),

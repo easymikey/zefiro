@@ -8,10 +8,13 @@ use kernel::{
     domain::{ListedDevice, OutputDevice, Speed},
 };
 
-use crate::deck::DeviceOpened;
+use crate::{
+    deck::{DeviceOpened, source::PreloadRequest},
+    engine::phase::CurrentTrack,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Slot {
+pub(crate) enum SinkRole {
     Primary,
     Outgoing,
     Incoming,
@@ -20,14 +23,7 @@ pub(crate) enum Slot {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Preload {
     Gapless(PathBuf),
-    Crossfade(PreloadedTrack),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PreloadedTrack {
-    pub(crate) path: PathBuf,
-    pub(crate) gain: Option<f32>,
-    pub(crate) total: Option<Duration>,
+    Crossfade(CurrentTrack),
 }
 
 #[derive(Debug, Clone)]
@@ -37,20 +33,10 @@ pub(crate) enum EngineMessage {
     Decoded(Result<Option<Duration>, AudioError>),
     Preloaded(Result<Preload, AudioError>),
     Failed(AudioError),
-    Retiring { from: f32 },
-    Finished(Slot),
+    Finished(SinkRole),
     Cued,
-    Ramped(Slot),
-    DevicesListed(Result<Vec<ListedDevice>, AudioError>),
-}
-
-pub(crate) fn devices_event(
-    devices: Result<Vec<ListedDevice>, AudioError>,
-) -> AudioEvent {
-    devices.map_or_else(
-        |_error| AudioEvent::DevicesListed(Vec::new()),
-        AudioEvent::DevicesListed,
-    )
+    Ramped(SinkRole),
+    DevicesListed(Vec<ListedDevice>),
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -68,7 +54,7 @@ pub(crate) enum EngineEffect {
         path: PathBuf,
         speed: Speed,
     },
-    StartFade {
+    StartHandover {
         path: PathBuf,
         speed: Speed,
     },
@@ -80,7 +66,7 @@ pub(crate) enum EngineEffect {
     Resume {
         volume: f32,
         position: Duration,
-        paused: Playback,
+        playback: Playback,
     },
     Play,
     Pause,
@@ -93,7 +79,7 @@ pub(crate) enum EngineEffect {
         length: Duration,
         incoming: f32,
     },
-    Unfade,
+    CancelCrossfade,
     Ramp {
         length: Duration,
         playing: f32,
@@ -101,12 +87,7 @@ pub(crate) enum EngineEffect {
     DropOutgoing,
     SetSpeed(Speed),
     Clear,
-    PreloadGapless(PathBuf),
-    PreloadCrossfade {
-        path: PathBuf,
-        gain: Option<f32>,
-        speed: Speed,
-    },
+    Preload(PreloadRequest),
     RestartGapless(PathBuf),
     Promote {
         volume: f32,

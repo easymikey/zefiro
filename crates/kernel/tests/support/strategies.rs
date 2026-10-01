@@ -9,7 +9,7 @@ use kernel::{
     DecodeError,
     Direction,
     DriverMessage,
-    Gesture,
+    Favorites,
     HistoryRequest,
     Key,
     KeyCode,
@@ -32,7 +32,6 @@ use kernel::{
     TextRequest,
     Timer,
     Toast,
-    WorkspaceRequest,
     domain::{
         ChordPrefix,
         Driver,
@@ -52,6 +51,7 @@ use proptest::{
     prelude::{Just, Strategy, prop_oneof},
     sample::select,
 };
+use strum::IntoEnumIterator;
 
 use crate::support::{model_with_dated_tracks, playing_model};
 
@@ -108,17 +108,7 @@ fn playlist_index() -> impl Strategy<Value = PlaylistIndex> {
 }
 
 fn overlay_name() -> impl Strategy<Value = OverlayName> {
-    select(vec![
-        OverlayName::Help,
-        OverlayName::Search,
-        OverlayName::SavePlaylist,
-        OverlayName::History,
-        OverlayName::Settings,
-        OverlayName::ConfirmDelete,
-        OverlayName::TrackDetails,
-        OverlayName::JumpToTime,
-        OverlayName::MusicDir,
-    ])
+    select(OverlayName::iter().collect::<Vec<_>>())
 }
 
 fn overlay_input() -> impl Strategy<Value = OverlayRequest> {
@@ -206,7 +196,7 @@ fn browse() -> impl Strategy<Value = BrowseRequest> {
             BrowseRequest::Bottom,
             BrowseRequest::PlaySelected,
             BrowseRequest::CycleSort,
-            BrowseRequest::Rescan,
+            BrowseRequest::FullScan,
             BrowseRequest::ToggleFavorite,
             BrowseRequest::SavePlaylist(PlaylistFileName::new("mix").unwrap()),
         ]),
@@ -263,7 +253,7 @@ fn loaded() -> impl Strategy<Value = PlaylistRequest> {
 fn library() -> impl Strategy<Value = LibraryEvent> {
     select(vec![
         LibraryEvent::HistoryLoaded(Vec::new()),
-        LibraryEvent::FavoritesLoaded(std::collections::HashSet::new()),
+        LibraryEvent::FavoritesLoaded(Favorites::default()),
         LibraryEvent::Error(LibraryError::NoUserDirs),
     ])
 }
@@ -277,12 +267,7 @@ fn config() -> impl Strategy<Value = ConfigEvent> {
 }
 
 fn driver() -> impl Strategy<Value = Message> {
-    let driver = select(vec![
-        Driver::Audio,
-        Driver::Library,
-        Driver::Config,
-        Driver::Macos,
-    ]);
+    let driver = select(Driver::ALL.to_vec());
     let change = prop_oneof![
         Just(DriverMessage::Died(DriverError::Panicked(
             "boom".to_string()
@@ -290,12 +275,15 @@ fn driver() -> impl Strategy<Value = Message> {
         Just(DriverMessage::Stopped),
         Just(DriverMessage::Full),
     ];
-    (driver, change).prop_map(|(driver, change)| Message::Driver(driver, change))
+    (driver, change).prop_map(|(driver, change)| Message::Driver {
+        driver,
+        event: change,
+    })
 }
 
 fn stamped() -> impl Strategy<Value = Revision> {
     (0u64..20).prop_map(|stamp| {
-        (0..stamp).fold(Revision::UNSTAMPED, |revision, _| revision.next())
+        (0..stamp).fold(Revision::default(), |revision, _| revision.next())
     })
 }
 
@@ -306,20 +294,9 @@ fn event() -> impl Strategy<Value = Message> {
             direction()
         )
             .prop_map(|(row, direction)| Message::Adjust { row, direction }),
-        select(vec![
-            WorkspaceRequest::ShowToast(Toast::info("hello".to_string())),
-            WorkspaceRequest::ClearToast,
-        ])
-        .prop_map(Message::Workspace),
+        Just(Message::Toast(Toast::info("hello".to_string()))),
         stamped().prop_map(|revision| Message::Elapsed(Timer::Toast(revision))),
         stamped().prop_map(|revision| Message::Elapsed(Timer::Sleep(revision))),
-        select(vec![
-            Driver::Audio,
-            Driver::Library,
-            Driver::Config,
-            Driver::Macos
-        ])
-        .prop_map(|driver| Message::Elapsed(Timer::Restart(driver))),
         (0usize..50).prop_map(|visible_rows| Message::Viewport { visible_rows }),
         key_press().prop_map(Message::Key),
     ]
@@ -330,17 +307,17 @@ fn system() -> impl Strategy<Value = MacosEvent> {
         (0u8..=100).prop_map(|volume| MacosEvent::Volume(Percent::clamped(volume))),
         Just(MacosEvent::OutputRouteChanged),
         select(vec![
-            Gesture::Play,
-            Gesture::Pause,
-            Gesture::Toggle,
-            Gesture::Stop,
-            Gesture::Next,
-            Gesture::Previous,
-            Gesture::SeekForward,
-            Gesture::SeekBack,
+            PlaybackRequest::Play,
+            PlaybackRequest::Pause,
+            PlaybackRequest::Toggle,
+            PlaybackRequest::Stop,
+            PlaybackRequest::Next,
+            PlaybackRequest::Previous,
+            PlaybackRequest::SeekForward,
+            PlaybackRequest::SeekBack,
         ])
         .prop_map(MacosEvent::MediaKey),
-        (0u64..200).prop_map(|secs| MacosEvent::MediaKey(Gesture::Scrub(
+        (0u64..200).prop_map(|secs| MacosEvent::MediaKey(PlaybackRequest::SeekTo(
             Duration::from_secs(secs)
         ))),
     ]
@@ -353,7 +330,7 @@ pub(crate) fn message() -> impl Strategy<Value = Message> {
         browse().prop_map(Message::Browse),
         queue().prop_map(Message::Queue),
         audio().prop_map(Message::Audio),
-        loaded().prop_map(Message::Loaded),
+        loaded().prop_map(Message::Playlist),
         library().prop_map(Message::Library),
         config().prop_map(Message::Config),
         driver(),

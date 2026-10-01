@@ -1,7 +1,4 @@
-use std::time::Duration;
-
 use config::ProgressTime;
-use raster::unit_fraction;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -11,85 +8,57 @@ use ratatui::{
 };
 
 use crate::{
-    braille::{BrailleBuffers, CanvasSize, MeterFill, RowRounding},
+    braille::{BrailleBuffers, CanvasSize, MeterFill},
     card::{
+        Card,
         CardMetrics,
-        CardParts,
-        CardView,
+        SPECTRUM_MAX_DOTS,
         chips::{self, ChipBudget, FormatChipContent},
     },
+    pixels::unit_fraction,
     primitive::{
-        bar::{
-            BarFill,
-            HudProgressColors,
-            HudProgressRow,
-            fill_line,
-            hud_progress_line,
-        },
+        bar::{BarFill, HudProgressColors, HudProgressRow, fill, hud_progress_line},
         chip::{self, ChipColors},
         relative_time::elapsed_of,
         spectrum_meter,
         text::truncate,
     },
+    theme::{ActiveTheme, BarStyle, Role},
 };
 
-#[cfg(test)]
-#[must_use]
-pub(crate) fn volume_cell_size() -> (u16, u16) {
-    let layout = crate::card::CardLayout::default();
-    (layout.volume_bar_width, layout.volume_height)
+pub(crate) fn paint(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
+    paint_time_row(buffer, card, metrics);
+    paint_progress_text(buffer, card, metrics);
+    paint_volume_row(buffer, card, metrics);
 }
 
-fn remaining(view: CardView<'_>) -> Duration {
-    let duration = view
-        .displayed_track
-        .and_then(|track| track.duration())
-        .unwrap_or(Duration::ZERO);
-    duration.saturating_sub(view.player.position_at(view.now))
-}
-
-pub(crate) fn paint(
-    buffer: &mut Buffer,
-    context: &CardParts<'_>,
-    spectrum_buffers: &mut BrailleBuffers,
-) {
-    paint_time_row(buffer, context);
-    paint_progress_text(buffer, context);
-    paint_volume_row(buffer, context, spectrum_buffers);
-}
-
-fn paint_time_row(buffer: &mut Buffer, context: &CardParts<'_>) {
-    let metrics: &CardMetrics = context.metrics;
+fn paint_time_row(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
     let row_width = metrics.row_width;
-    let dim_color: Color = context.theme.dim();
-    let accent_color: Color = context.theme.accent();
-    let text_color: Color = context.theme.text();
+    let dim_color: Color = card.theme.role(Role::Dim);
+    let accent_color: Color = card.theme.role(Role::Accent);
+    let text_color: Color = card.theme.role(Role::Text);
 
-    let current = context.view.displayed_track;
-    let duration = current
-        .and_then(|track| track.duration())
-        .unwrap_or(Duration::ZERO);
-    let position = context.view.player.position_at(context.view.now);
-    let elapsed_total = elapsed_of(position, duration);
+    let current = card.view.displayed_track;
+    let elapsed_total = elapsed_of(card.view.position(), card.view.duration());
     let time_row = metrics.time_row;
     let elapsed_width = elapsed_total.chars().count();
     let speed_spans = chip::speed_chip_spans(
-        context.view.speed,
-        context.appearance.speed_chip,
+        card.view.speed,
+        card.appearance.speed_chip,
         ChipColors {
             border: dim_color,
             value: accent_color,
         },
     );
     let speed_width = usize::from(chip::speed_chip_width(
-        context.view.speed,
-        context.appearance.speed_chip,
+        card.view.speed,
+        card.appearance.speed_chip,
     ));
     let left_width = elapsed_width + speed_width;
     let fit = chips::format_chip_fit(
         &FormatChipContent {
             current,
-            visibility: context.appearance.format_chips,
+            visibility: card.appearance.format_chips,
             colors: ChipColors {
                 border: dim_color,
                 value: text_color,
@@ -129,43 +98,38 @@ fn paint_format_chips_row(buffer: &mut Buffer, time_row: Rect, line: Line<'stati
         .render(time_row, buffer);
 }
 
-fn chip_colors(context: &CardParts<'_>) -> ChipColors {
+fn chip_colors(theme: ActiveTheme<'_>) -> ChipColors {
     ChipColors {
-        border: context.theme.dim(),
-        value: context.theme.text(),
+        border: theme.role(Role::Dim),
+        value: theme.role(Role::Text),
     }
 }
 
-fn paint_progress_text(buffer: &mut Buffer, context: &CardParts<'_>) {
-    let metrics: &CardMetrics = context.metrics;
+fn paint_progress_text(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
     let row_width = metrics.row_width;
-    let bar_colors = context.theme.progress_colors();
+    let bar_colors = BarStyle::progress(&card.theme);
 
-    let current = context.view.displayed_track;
-    let duration = current
-        .and_then(|track| track.duration())
-        .unwrap_or(Duration::ZERO);
-    let position = context.view.player.position_at(context.view.now);
+    let duration = card.view.duration();
     let fraction = if duration.is_zero() {
         0.0
     } else {
-        position.as_secs_f64() / duration.as_secs_f64()
+        card.view.position().as_secs_f64() / duration.as_secs_f64()
     };
     let progress_row = metrics.progress_row;
-    match context.appearance.progress_time {
+    match card.appearance.progress_time {
         ProgressTime::Remaining => Paragraph::new(hud_progress_line(
             &HudProgressRow {
                 fraction: unit_fraction(fraction),
                 row_width: usize::from(row_width),
-                remaining: remaining(context.view),
+                remaining: card.view.remaining(),
             },
             &HudProgressColors {
                 bar: bar_colors,
-                chip: chip_colors(context),
+                chip: chip_colors(card.theme),
             },
         ))
         .render(progress_row, buffer),
-        ProgressTime::Elapsed => Paragraph::new(fill_line(
+        ProgressTime::Elapsed => Paragraph::new(fill(
             &BarFill::progress(unit_fraction(fraction), usize::from(row_width)),
             bar_colors,
         ))
@@ -173,18 +137,11 @@ fn paint_progress_text(buffer: &mut Buffer, context: &CardParts<'_>) {
     }
 }
 
-fn paint_volume_row(
-    buffer: &mut Buffer,
-    context: &CardParts<'_>,
-    spectrum_buffers: &mut BrailleBuffers,
-) {
-    let metrics: &CardMetrics = context.metrics;
-    let layout = context.layout;
-
+fn paint_volume_row(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
     let bar_area = metrics.volume_row;
-    Paragraph::new(fill_line(
-        &BarFill::volume(context.view.volume.ratio(), usize::from(bar_area.width)),
-        context.theme.volume_fill_colors(),
+    Paragraph::new(fill(
+        &BarFill::volume(card.view.volume.ratio(), usize::from(bar_area.width)),
+        BarStyle::volume(&card.theme),
     ))
     .render(bar_area, buffer);
 
@@ -195,12 +152,11 @@ fn paint_volume_row(
                 width: spectrum_area.width,
                 height: spectrum_area.height,
             },
-            levels: context.view.spectrum,
-            max_dots: layout.spectrum_max_dots,
-            rounding: RowRounding::default(),
+            levels: card.view.spectrum,
+            max_dots: SPECTRUM_MAX_DOTS,
         },
-        |t| context.theme.spectrum_color_at(t),
-        spectrum_buffers,
+        |t| card.theme.spectrum_color_at(t),
+        &mut BrailleBuffers::default(),
     );
     Paragraph::new(spectrum_lines).render(spectrum_area, buffer);
 }
@@ -229,10 +185,11 @@ mod tests {
     use ratatui::{buffer::Buffer, layout::Rect};
 
     use crate::{
-        card::{CardLayout, CardParts, CardView, card_metrics, meters::paint_time_row},
-        geometry::{CellAspect, CoverSizing},
-        scene::fixtures::{find_text, noir},
+        card::{Card, CardView, CoverArt, card_metrics, meters::paint_time_row},
+        geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
+        primitive::canvas::find_text,
         spectrum::{SPECTRUM_BANDS, Spectrum},
+        test_support::noir,
         theme::{ActiveTheme, ColorDepth},
     };
 
@@ -273,16 +230,17 @@ mod tests {
         };
         let area = Rect::new(0, 0, 60, 12);
         let card_metrics =
-            card_metrics(area, CellAspect::default(), CoverSizing::default());
-        let context = CardParts {
+            card_metrics(area, DEFAULT_CELL_ASPECT, CoverSizing::default());
+        let card = Card {
             view,
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            cell_aspect: DEFAULT_CELL_ASPECT,
+            cover_sizing: CoverSizing::default(),
             appearance: Appearance::default(),
-            metrics: &card_metrics,
-            layout: CardLayout::default(),
+            cover_art: &CoverArt::Missing,
         };
         let mut buffer = Buffer::empty(area);
-        paint_time_row(&mut buffer, &context);
+        paint_time_row(&mut buffer, &card, &card_metrics);
         assert!(
             find_text(&buffer, "0:15").is_some(),
             "expected the elapsed time to read 0:15, offset by the view's now"

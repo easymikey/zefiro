@@ -7,19 +7,18 @@ use std::{
 };
 
 use crossbeam_channel::Sender;
-use kernel::AudioError;
+use kernel::{AudioError, domain::Speed};
 use rodio::Source;
 
 use crate::{
     deck::{
         DeckEvent,
         Ticket,
-        envelope::{EnvelopeControl, Envelopes, envelope},
+        envelope::{Envelopes, envelope},
         output::Output,
         worker::{AudioWorker, DecodeRequest, Job},
     },
-    engine::effect::{Preload, PreloadedTrack},
-    error::{Error, preload_error},
+    error::Error,
 };
 
 pub(crate) type TrackDecoder = rodio::Decoder<BufReader<File>>;
@@ -27,38 +26,24 @@ pub(crate) type DecodeResult = Result<TrackDecoder, Error>;
 
 const READ_CAPACITY: usize = 1 << 20;
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PreloadRequest {
     Gapless(PathBuf),
     Crossfade {
         path: PathBuf,
         gain: Option<f32>,
-        speed: f32,
+        speed: Speed,
     },
 }
 
 impl PreloadRequest {
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         match self {
             PreloadRequest::Gapless(path) | PreloadRequest::Crossfade { path, .. } => {
                 path
             }
         }
     }
-}
-
-struct PendingPreload {
-    request: PreloadRequest,
-}
-
-struct Decoded {
-    source: TrackDecoder,
-    total: Option<Duration>,
-    ticket: Ticket,
-}
-
-struct InstallParts<'a> {
-    output: Option<&'a mut Output>,
-    wake: Sender<DeckEvent>,
 }
 
 pub(crate) fn decode(path: &Path) -> DecodeResult {
@@ -82,40 +67,10 @@ pub(crate) fn decode(path: &Path) -> DecodeResult {
     })
 }
 
-fn install(
-    request: PreloadRequest,
-    decoded: Decoded,
-    parts: InstallParts<'_>,
-) -> (Option<Preload>, Option<EnvelopeControl>) {
-    let Decoded {
-        source,
-        total,
-        ticket,
-    } = decoded;
-    let InstallParts { output, wake } = parts;
-    let Some(output) = output else {
-        return (None, None);
-    };
-    let (wrapped, control) = envelope(source, ticket, wake);
-    match request {
-        PreloadRequest::Gapless(path) => {
-            output.append(wrapped);
-            (Some(Preload::Gapless(path)), Some(control))
-        }
-        PreloadRequest::Crossfade { path, gain, speed } => {
-            output.stage(wrapped, speed);
-            (
-                Some(Preload::Crossfade(PreloadedTrack { path, gain, total })),
-                Some(control),
-            )
-        }
-    }
-}
-
 pub(crate) struct Decoding {
     decode_ticket: Ticket,
     preload_ticket: Ticket,
-    preloading: Option<PendingPreload>,
+    preloading: Option<PreloadRequest>,
     staged: Option<TrackDecoder>,
     worker: Result<AudioWorker, AudioError>,
     wake: Sender<DeckEvent>,
@@ -137,7 +92,7 @@ impl Decoding {
         }
     }
 
-    pub(crate) fn spawn_decode(&mut self, path: PathBuf) -> Option<AudioError> {
+    pub(crate) fn start_decode(&mut self, path: PathBuf) -> Option<AudioError> {
         self.staged = None;
         self.decode_ticket = self.decode_ticket.next();
         match &self.worker {
@@ -168,7 +123,7 @@ impl Decoding {
             }
             Err(error) => Some(error.clone()),
         };
-        self.preloading = Some(PendingPreload { request });
+        self.preloading = Some(request);
         outcome
     }
 
@@ -190,9 +145,9 @@ impl Decoding {
 
     pub(crate) fn accept_decode(
         &mut self,
-        landed: (Ticket, Result<TrackDecoder, Error>),
+        ticket: Ticket,
+        outcome: DecodeResult,
     ) -> Option<Result<Option<Duration>, AudioError>> {
-        let (ticket, outcome) = landed;
         if ticket != self.decode_ticket {
             return None;
         }
@@ -206,42 +161,11 @@ impl Decoding {
         })
     }
 
-    pub(crate) fn accept_preload(
-        &mut self,
-        landed: (Ticket, Result<TrackDecoder, Error>),
-        output: Option<&mut Output>,
-    ) -> Option<Result<Preload, AudioError>> {
-        let (ticket, outcome) = landed;
+    pub(crate) fn take_preloading(&mut self, ticket: Ticket) -> Option<PreloadRequest> {
         if ticket != self.preload_ticket {
             return None;
         }
-        let pending = self.preloading.take()?;
-        match outcome {
-            Ok(source) => {
-                let total = source.total_duration();
-                let decoded = Decoded {
-                    source,
-                    total,
-                    ticket,
-                };
-                let parts = InstallParts {
-                    output,
-                    wake: self.wake.clone(),
-                };
-                let (installed, control) = install(pending.request, decoded, parts);
-                match (&installed, control) {
-                    (Some(Preload::Gapless(_)), Some(control)) => {
-                        self.envelopes.queued = Some(control);
-                    }
-                    (Some(Preload::Crossfade(_)), Some(control)) => {
-                        self.envelopes.incoming = Some(control);
-                    }
-                    (_, _) => {}
-                }
-                installed.map(Ok)
-            }
-            Err(error) => Some(Err(preload_error(&error))),
-        }
+        self.preloading.take()
     }
 
     pub(crate) fn append_staged(&mut self, output: &Output) {

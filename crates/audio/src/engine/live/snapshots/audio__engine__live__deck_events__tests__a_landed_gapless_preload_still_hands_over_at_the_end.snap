@@ -1,0 +1,22 @@
+---
+source: crates/audio/src/engine/live/track.rs
+assertion_line: 207
+expression: log
+---
+[
+    Preload(
+        Gapless(
+            "/b",
+        ),
+    ),
+    Nothing,
+    Batch(
+        [
+            Advance,
+            Send(
+                TrackChanged,
+            ),
+            Report,
+        ],
+    ),
+]

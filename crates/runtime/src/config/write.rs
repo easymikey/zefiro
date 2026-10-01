@@ -10,6 +10,8 @@ pub(crate) struct Written {
     pub text: String,
 }
 
+pub(crate) type SaveResult = Result<Written, SaveError>;
+
 pub(crate) fn save_config(
     path: &Path,
     patch: ConfigPatch,

@@ -4,7 +4,9 @@ assertion_line: 93
 expression: "parse_theme(source, name).unwrap()"
 ---
 ThemeFile {
-    name: "ristretto",
+    name: ThemeName(
+        "ristretto",
+    ),
     colors: ThemeColors {
         background: Rgb(
             [

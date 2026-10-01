@@ -1,7 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use crate::{
-    cmd::{AudioCmd, Cmd, Effect, Playback},
+    cmd::{AudioCmd, Cmd, Effect, Playback, TrackRequest},
     domain::{
         Announce,
         Decision,
@@ -11,17 +11,13 @@ use crate::{
         Model,
         Moment,
         Player,
-        Revision,
         Toast,
-        Track,
-        Workspace,
         supervise,
     },
-    message::{DriverMessage, Timer, WorkspaceRequest},
+    message::DriverMessage,
     update::{
         error::UpdateError,
         machine::{Machine, Rejected},
-        quit,
         startup::startup_cmd,
     },
 };
@@ -82,49 +78,35 @@ impl Machine for DriverStatus {
     }
 }
 
-struct Died {
-    driver: Driver,
-    failure: DriverError,
+pub(crate) struct Died {
+    pub(crate) driver: Driver,
+    pub(crate) failure: DriverError,
 }
 
 pub(crate) fn update(
     model: &mut Model,
-    message: (Driver, DriverMessage),
-    now: Moment,
-) -> Result<Cmd, UpdateError> {
-    let (driver, driver_message) = message;
-    let signal = model
+    driver: Driver,
+    event: DriverMessage,
+) -> Result<Option<DriverSignal>, UpdateError> {
+    model
         .drivers
         .record_mut(driver)
         .status
-        .update(driver_message)
-        .map_err(|reason| UpdateError::Driver(driver, reason))?;
-    match signal {
-        Some(DriverSignal::Died(failure)) => {
-            Ok(decided(model, Died { driver, failure }, now))
-        }
-        Some(DriverSignal::Congested) => Ok(show_toast(
-            &mut model.workspace,
-            Toast::info(format!("The {driver} driver is falling behind")),
-        )),
-        None => Ok(Cmd::None),
-    }
+        .update(event)
+        .map_err(|reason| UpdateError::Driver(driver, reason))
 }
 
-pub(crate) fn restart_due(model: &mut Model, driver: Driver, now: Moment) -> Cmd {
-    match model.drivers.status(driver) {
-        DriverStatus::Dead(_) => {
-            model.drivers.record_mut(driver).status = DriverStatus::Running;
-            restarted(model, driver, now)
-        }
-        DriverStatus::Running | DriverStatus::Stopped => Cmd::None,
-    }
+pub(crate) fn inbox_full(model: &mut Model, driver: Driver) -> Cmd {
+    model.workspace.show(
+        Toast::info(format!("The {driver} driver is falling behind")),
+        &mut model.revisions,
+    )
 }
 
-fn decided(model: &mut Model, died: Died, now: Moment) -> Cmd {
+pub(crate) fn decided(model: &mut Model, died: Died, now: Moment) -> Cmd {
     let Died { driver, failure } = died;
     let record = model.drivers.record(driver);
-    let decision = supervise(record.strategy, &record.restarts, now);
+    let decision = supervise(record.supervision, &record.restarts, now);
     match decision {
         Decision::Restart => {
             let restarting = model.drivers.record_mut(driver);
@@ -132,58 +114,38 @@ fn decided(model: &mut Model, died: Died, now: Moment) -> Cmd {
             restarting.status = DriverStatus::Running;
             restarted(model, driver, now)
         }
-        Decision::RestartAfter(delay) => {
-            model.drivers.record_mut(driver).restarts.record(now);
-            Effect::After {
-                delay,
-                message: Timer::Restart(driver),
-            }
-            .into()
-        }
-        Decision::Degrade(Announce::Toast) => show_toast(
-            &mut model.workspace,
+        Decision::Degrade(Announce::Toast) => model.workspace.show(
             Toast::error(format!("The {driver} driver stopped: {failure}")),
+            &mut model.revisions,
         ),
         Decision::Degrade(Announce::Silent) => Cmd::None,
-        Decision::Quit => quit(),
     }
 }
 
-fn restarted(model: &Model, driver: Driver, now: Moment) -> Cmd {
+fn restarted(model: &mut Model, driver: Driver, now: Moment) -> Cmd {
     Cmd::from(Effect::Restart(driver))
         .then(startup_cmd(model, driver))
         .then(resume(model, driver, now))
 }
 
-fn show_toast(workspace: &mut Workspace, toast: Toast) -> Cmd {
-    match workspace.update(WorkspaceRequest::ShowToast(toast)) {
-        Ok(cmd) => cmd,
-        Err(never) => match never {},
-    }
-}
-
-fn resume(model: &Model, driver: Driver, now: Moment) -> Cmd {
-    if driver != Driver::Audio {
-        return Cmd::None;
-    }
+fn resume(model: &mut Model, driver: Driver, now: Moment) -> Cmd {
     let playback = match &model.player {
-        Player::Playing { .. } => Playback::Playing,
-        Player::Paused { .. } => Playback::Paused,
-        Player::Stopped | Player::Loading { .. } => return Cmd::None,
+        Player::Playing { .. } => Some(Playback::Playing),
+        Player::Paused { .. } => Some(Playback::Paused),
+        Player::Stopped | Player::Loading { .. } => None,
     };
-    let Some(track) = model.player.current() else {
+    let (Driver::Audio, Some(track), Some(playback)) =
+        (driver, model.player.current(), playback)
+    else {
         return Cmd::None;
     };
-    loaded_at(track, model.player.position_at(now), playback)
+    let request = TrackRequest::for_track(track, model.revisions.issue_effect());
+    load_at(request, model.player.position_at(now), playback)
 }
 
-fn loaded_at(track: &Arc<Track>, at: Duration, playback: Playback) -> Cmd {
+fn load_at(request: TrackRequest, at: Duration, playback: Playback) -> Cmd {
     Cmd::Batch(vec![
-        Effect::Audio(AudioCmd::Load {
-            path: track.path().to_path_buf(),
-            gain: track.audio_format().replay_gain,
-            revision: Revision::UNSTAMPED,
-        }),
+        Effect::Audio(AudioCmd::Load(request)),
         Effect::Audio(AudioCmd::Seek(at)),
         Effect::Audio(AudioCmd::Playback(playback)),
     ])

@@ -64,52 +64,25 @@ fn to_key(event: KeyEvent) -> Option<Key> {
         | CrosstermCode::Media(_)
         | CrosstermCode::Modifier(_) => return None,
     };
-    let mut modifiers = Modifiers::NONE;
-    if event.modifiers.contains(KeyModifiers::CONTROL) {
-        modifiers = modifiers.with(Modifiers::CTRL);
-    }
-    if event.modifiers.contains(KeyModifiers::ALT) {
-        modifiers = modifiers.with(Modifiers::ALT);
-    }
-    if event.modifiers.contains(KeyModifiers::SUPER) {
-        modifiers = modifiers.with(Modifiers::SUPER);
-    }
-    if reportable_shift(event.code, event.modifiers) {
-        modifiers = modifiers.with(Modifiers::SHIFT);
-    }
+    let modifiers = [
+        (KeyModifiers::CONTROL, Modifiers::CTRL),
+        (KeyModifiers::ALT, Modifiers::ALT),
+        (KeyModifiers::SUPER, Modifiers::SUPER),
+        (KeyModifiers::SHIFT, Modifiers::SHIFT),
+    ]
+    .into_iter()
+    .filter(|(held, _)| {
+        event.modifiers.contains(*held)
+            && (*held != KeyModifiers::SHIFT || reportable_shift(event.code))
+    })
+    .fold(Modifiers::NONE, |modifiers, (_, mapped)| {
+        modifiers.with(mapped)
+    });
     Some(Key { code, modifiers })
 }
 
-fn reportable_shift(code: CrosstermCode, modifiers: KeyModifiers) -> bool {
-    match code {
-        CrosstermCode::Char(_) => false,
-        CrosstermCode::Backspace
-        | CrosstermCode::Enter
-        | CrosstermCode::Left
-        | CrosstermCode::Right
-        | CrosstermCode::Up
-        | CrosstermCode::Down
-        | CrosstermCode::Home
-        | CrosstermCode::End
-        | CrosstermCode::PageUp
-        | CrosstermCode::PageDown
-        | CrosstermCode::Tab
-        | CrosstermCode::BackTab
-        | CrosstermCode::Delete
-        | CrosstermCode::Insert
-        | CrosstermCode::F(_)
-        | CrosstermCode::Null
-        | CrosstermCode::Esc
-        | CrosstermCode::CapsLock
-        | CrosstermCode::ScrollLock
-        | CrosstermCode::NumLock
-        | CrosstermCode::PrintScreen
-        | CrosstermCode::Pause
-        | CrosstermCode::Menu
-        | CrosstermCode::KeypadBegin
-        | CrosstermCode::Media(_)
-        | CrosstermCode::Modifier(_) => modifiers.contains(KeyModifiers::SHIFT),
-    }
+fn reportable_shift(code: CrosstermCode) -> bool {
+    !matches!(code, CrosstermCode::Char(_))
 }
 
 #[cfg(test)]

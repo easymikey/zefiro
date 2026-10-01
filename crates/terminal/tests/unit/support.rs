@@ -18,14 +18,10 @@ use kernel::{
     },
     update::keymap::{Bindings, KeyBinding},
 };
-use raster::VinylColors;
-use terminal::{CoverKey, CoverLook, CoverMoment, CoverParts, CoverPlacement};
 use widgets::{
-    CellAspect,
     ColorDepth,
-    MilkdropColors,
+    DEFAULT_CELL_ASPECT,
     PixelPath,
-    Playing,
     SPECTRUM_BANDS,
     Scene,
     Spectrum,
@@ -106,7 +102,7 @@ impl Scenery {
             bindings: &self.bindings,
             spectrum: &self.spectrum,
             pixel_path: PixelPath::Protocol,
-            cell_aspect: CellAspect::default(),
+            cell_aspect: DEFAULT_CELL_ASPECT,
             clock,
             now: Moment::default(),
             music_dir: "/home/user/Music",
@@ -114,38 +110,7 @@ impl Scenery {
         }
     }
 
-    pub(crate) fn sources(&self, placement: CoverPlacement) -> CoverParts<'_> {
-        self.sources_at(placement, Duration::ZERO)
-    }
-
-    pub(crate) fn sources_at(
-        &self,
-        placement: CoverPlacement,
-        clock: Duration,
-    ) -> CoverParts<'_> {
-        let scene = self.scene_at(clock);
-        CoverParts {
-            key: CoverKey {
-                config_generation: scene.model.revisions.config,
-                theme_generation: scene.model.revisions.theme,
-            },
-            look: CoverLook {
-                style: scene.cover_style(),
-                animations: scene.appearance.window.animations,
-                vinyl: VinylColors::from(scene.theme),
-                milkdrop: MilkdropColors::from_theme(&scene.active_theme()),
-            },
-            moment: CoverMoment {
-                clock: scene.clock,
-                playing: if scene.model.player.is_playing() {
-                    Playing::Yes
-                } else {
-                    Playing::No
-                },
-                track: scene.model.player.current().map(|track| track.path()),
-                bands: scene.spectrum,
-            },
-            placement,
-        }
+    pub(crate) fn scene(&self) -> Scene<'_> {
+        self.scene_at(Duration::ZERO)
     }
 }

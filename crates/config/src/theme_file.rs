@@ -1,8 +1,9 @@
-use serde::Deserialize;
+use kernel::domain::ThemeName;
+use serde::{Deserialize, Deserializer};
 
 use crate::{
     error::{Error, TomlFile, parse_toml},
-    hex::Rgb,
+    rgb::Rgb,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -24,6 +25,13 @@ pub struct ThemeColors {
 
 const DEFAULT_SCANNING_LABEL: &str = "scanning…";
 
+fn theme_name<'de, D>(deserializer: D) -> Result<ThemeName, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    ThemeName::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+}
+
 fn default_scanning_label() -> String {
     DEFAULT_SCANNING_LABEL.to_owned()
 }
@@ -32,7 +40,8 @@ fn default_scanning_label() -> String {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ThemeFile {
-    pub name: String,
+    #[serde(deserialize_with = "theme_name")]
+    pub name: ThemeName,
     pub colors: ThemeColors,
     #[serde(default = "default_scanning_label")]
     pub scanning_label: String,
@@ -51,47 +60,20 @@ pub fn parse_theme(source: &str, name: &str) -> Result<ThemeFile, Error> {
 mod tests {
     use rstest::rstest;
 
-    use crate::{error::Error, hex::Rgb, theme_file::parse_theme};
+    use crate::{
+        embedded_theme::EMBEDDED_THEMES,
+        error::Error,
+        rgb::Rgb,
+        theme_file::parse_theme,
+    };
 
-    #[rstest]
-    #[case::terracotta_dark(
-        "terracotta-dark",
-        include_str!("../../../themes/terracotta-dark.toml")
-    )]
-    #[case::terracotta_light(
-        "terracotta-light",
-        include_str!("../../../themes/terracotta-light.toml")
-    )]
-    #[case::ember("ember", include_str!("../../../themes/ember.toml"))]
-    #[case::gruvbox("gruvbox", include_str!("../../../themes/gruvbox.toml"))]
-    #[case::gruvbox_light(
-        "gruvbox-light",
-        include_str!("../../../themes/gruvbox-light.toml")
-    )]
-    #[case::hacker("hacker", include_str!("../../../themes/hacker.toml"))]
-    #[case::macaroon("macaroon", include_str!("../../../themes/macaroon.toml"))]
-    #[case::neobrutalism_dark(
-        "neobrutalism-dark",
-        include_str!("../../../themes/neobrutalism-dark.toml")
-    )]
-    #[case::neobrutalism_light(
-        "neobrutalism-light",
-        include_str!("../../../themes/neobrutalism-light.toml")
-    )]
-    #[case::noir("noir", include_str!("../../../themes/noir.toml"))]
-    #[case::oreo("oreo", include_str!("../../../themes/oreo.toml"))]
-    #[case::ristretto("ristretto", include_str!("../../../themes/ristretto.toml"))]
-    #[case::rose_pine("rose-pine", include_str!("../../../themes/rose-pine.toml"))]
-    #[case::rose_pine_dawn(
-        "rose-pine-dawn",
-        include_str!("../../../themes/rose-pine-dawn.toml")
-    )]
-    #[case::wafer("wafer", include_str!("../../../themes/wafer.toml"))]
-    #[case::winamp("winamp", include_str!("../../../themes/winamp.toml"))]
-    fn every_repo_theme_parses(#[case] name: &str, #[case] source: &str) {
-        insta::with_settings!({ snapshot_suffix => name }, {
-            insta::assert_debug_snapshot!(parse_theme(source, name).unwrap());
-        });
+    #[test]
+    fn every_repo_theme_parses() {
+        for &(name, source) in EMBEDDED_THEMES {
+            insta::with_settings!({ snapshot_suffix => name }, {
+                insta::assert_debug_snapshot!(parse_theme(source, name).unwrap());
+            });
+        }
     }
 
     #[rstest]

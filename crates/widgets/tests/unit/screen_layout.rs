@@ -3,14 +3,14 @@ use ratatui::layout::Rect;
 use rstest::rstest;
 use widgets::FrameLayout;
 
-use crate::unit::support::{Scenery, model_with_tracks};
+use crate::unit::support::{SceneSources, model_with_tracks};
 
 fn playlist_rows(key_hints: KeyHints, mode: LayoutMode) -> u16 {
-    let mut sources = Scenery::new(model_with_tracks(3));
+    let mut sources = SceneSources::new(model_with_tracks(3));
     sources.appearance.window.key_hints = key_hints;
     sources.appearance.layout.mode = mode;
     let layout =
-        FrameLayout::new(&sources.scene().layout_inputs(), Rect::new(0, 0, 120, 40));
+        FrameLayout::new(&sources.scene().layout_parts(), Rect::new(0, 0, 120, 40));
     layout.playlist.map_or(0, |areas| areas.rows.height)
 }
 

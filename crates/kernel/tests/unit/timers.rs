@@ -13,7 +13,6 @@ use kernel::{
     Player,
     Timer,
     Toast,
-    WorkspaceRequest,
     update::update,
 };
 
@@ -36,10 +35,7 @@ fn scheduled(cmd: &Cmd) -> Vec<Timer> {
 }
 
 fn toast_shown(model: &mut Model, text: &str) -> Timer {
-    let cmd = sent(
-        model,
-        Message::Workspace(WorkspaceRequest::ShowToast(Toast::info(text.to_string()))),
-    );
+    let cmd = sent(model, Message::Toast(Toast::info(text.to_string())));
     let timers = scheduled(&cmd);
     assert!(matches!(timers.as_slice(), [Timer::Toast(_)]), "{timers:?}");
     timers[0]
@@ -95,7 +91,7 @@ fn a_replaced_toast_outlives_the_first_timer() {
 #[test]
 fn arming_the_sleep_timer_schedules_the_first_preset() {
     let mut model = playing_model(3);
-    let first_preset = model.settings.sleep_presets[0];
+    let first_preset = model.settings.audio.sleep_presets.as_slice()[0];
 
     let cmd = sleep_cycled(&mut model);
 
@@ -141,7 +137,7 @@ fn a_rearmed_sleep_timer_ignores_the_first_one() {
 #[test]
 fn a_cancelled_sleep_timer_changes_nothing() {
     let mut model = playing_model(3);
-    let presets = model.settings.sleep_presets.len();
+    let presets = model.settings.audio.sleep_presets.as_slice().len();
     let armed: Vec<Timer> = (0..presets)
         .flat_map(|_| scheduled(&sleep_cycled(&mut model)))
         .collect();

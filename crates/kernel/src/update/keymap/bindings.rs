@@ -5,7 +5,6 @@ use strum::IntoEnumIterator;
 use crate::{
     domain::{
         Action,
-        DefaultBinding,
         KeyPattern,
         KeyValidationError,
         KeymapOverrides,
@@ -17,33 +16,15 @@ use crate::{
     },
 };
 
-fn template_bindings(base: &[KeyBinding]) -> Vec<DefaultBinding> {
-    base.iter()
-        .filter_map(|binding| {
-            Some(DefaultBinding {
-                action: binding.action?,
-                chord: binding.pattern.chord()?,
-                key_context: binding.key_context,
-            })
-        })
-        .collect()
-}
-
-#[must_use]
-pub fn default_bindings() -> Vec<DefaultBinding> {
-    template_bindings(&table::defaults())
-}
-
 fn resolved_bindings(
-    config: &KeymapOverrides,
+    overrides: &KeymapOverrides,
 ) -> (Vec<KeyBinding>, Vec<KeyValidationError>) {
     let base = table::defaults();
-    let defaults = template_bindings(&base);
     let Resolution {
         errors,
         final_chords,
         contexts,
-    } = resolve(config, &defaults);
+    } = resolve(overrides, &base);
 
     let rebindable: HashSet<Action> = Action::iter()
         .filter(|&action| base.iter().any(|binding| binding.action == Some(action)))
@@ -87,9 +68,15 @@ pub struct Bindings(Vec<KeyBinding>);
 
 impl Bindings {
     #[must_use]
-    pub fn new(config: &KeymapOverrides) -> Self {
-        let (bindings, _) = resolved_bindings(config);
-        Self(bindings)
+    pub fn new(overrides: &KeymapOverrides) -> Self {
+        Self::resolved(overrides).0
+    }
+
+    pub(crate) fn resolved(
+        overrides: &KeymapOverrides,
+    ) -> (Self, Vec<KeyValidationError>) {
+        let (bindings, errors) = resolved_bindings(overrides);
+        (Self(bindings), errors)
     }
 
     #[must_use]

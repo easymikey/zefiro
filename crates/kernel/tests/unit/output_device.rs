@@ -14,7 +14,7 @@ use crate::support::{device, first_toast_expiry};
 #[test]
 fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
     let mut m = Model::default();
-    m.settings.output_device = OutputDevice::Named(device("usb-dac"));
+    m.settings.audio.device = OutputDevice::Named(device("usb-dac"));
 
     let cmd = update(
         &mut m,
@@ -25,7 +25,7 @@ fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
     )
     .unwrap();
 
-    assert_eq!(m.settings.output_device, OutputDevice::SystemDefault);
+    assert_eq!(m.settings.audio.device, OutputDevice::SystemDefault);
     assert_eq!(
         cmd,
         Cmd::Batch(vec![
@@ -43,7 +43,7 @@ fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
 #[test]
 fn a_device_that_opened_as_asked_leaves_the_toast_alone() {
     let mut m = Model::default();
-    m.settings.output_device = OutputDevice::Named(device("usb-dac"));
+    m.settings.audio.device = OutputDevice::Named(device("usb-dac"));
 
     let cmd = update(
         &mut m,
@@ -55,7 +55,7 @@ fn a_device_that_opened_as_asked_leaves_the_toast_alone() {
     .unwrap();
 
     assert_eq!(
-        m.settings.output_device,
+        m.settings.audio.device,
         OutputDevice::Named(device("usb-dac"))
     );
     assert_eq!(cmd, Cmd::None);

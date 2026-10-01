@@ -65,7 +65,7 @@ pub enum Action {
     Favorite,
     Delete,
     SavePlaylist,
-    Rescan,
+    FullScan,
     TrackDetails,
     Search,
     History,
@@ -158,10 +158,22 @@ pub enum KeyValidationError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DefaultBinding {
-    pub action: Action,
-    pub chord: Chord,
-    pub key_context: KeyContext,
+struct DefaultBinding {
+    action: Action,
+    chord: Chord,
+    key_context: KeyContext,
+}
+
+fn template_bindings(base: &[KeyBinding]) -> Vec<DefaultBinding> {
+    base.iter()
+        .filter_map(|binding| {
+            Some(DefaultBinding {
+                action: binding.action?,
+                chord: binding.pattern.chord()?,
+                key_context: binding.key_context,
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -194,7 +206,7 @@ fn bound(
 }
 
 fn desired_bindings(
-    config: &KeymapOverrides,
+    overrides: &KeymapOverrides,
     defaults: &[DefaultBinding],
 ) -> (Vec<Candidate>, Vec<KeyValidationError>) {
     let mut errors = Vec::new();
@@ -209,7 +221,7 @@ fn desired_bindings(
                 .filter(|default| default.action == action)
                 .map(|default| default.chord)
                 .collect();
-            let configured = config
+            let configured = overrides
                 .binding(action)
                 .and_then(|rebind| bound(rebind, &mut errors));
             Some(Candidate {
@@ -300,11 +312,8 @@ pub(crate) struct Resolution {
     pub(crate) contexts: HashMap<Action, KeyContext>,
 }
 
-pub(crate) fn resolve(
-    config: &KeymapOverrides,
-    defaults: &[DefaultBinding],
-) -> Resolution {
-    let (desired, mut errors) = desired_bindings(config, defaults);
+pub(crate) fn resolve(overrides: &KeymapOverrides, base: &[KeyBinding]) -> Resolution {
+    let (desired, mut errors) = desired_bindings(overrides, &template_bindings(base));
     let mut placement = configured_placement(&desired, &mut errors);
     let final_chords = default_chords(&desired, &mut placement, &mut errors);
     let contexts = placement
@@ -321,26 +330,25 @@ pub(crate) fn resolve(
 
 #[derive(Debug, Clone, Default)]
 pub struct Keymap {
-    pub(crate) config: KeymapOverrides,
+    pub(crate) overrides: KeymapOverrides,
     pub(crate) errors: Vec<KeyValidationError>,
     pub(crate) bindings: Bindings,
 }
 
 impl Keymap {
     #[must_use]
-    pub fn new(config: KeymapOverrides, defaults: &[DefaultBinding]) -> Self {
-        let errors = resolve(&config, defaults).errors;
-        let bindings = Bindings::new(&config);
+    pub fn new(overrides: KeymapOverrides) -> Self {
+        let (bindings, errors) = Bindings::resolved(&overrides);
         Self {
-            config,
+            overrides,
             errors,
             bindings,
         }
     }
 
     #[must_use]
-    pub fn config(&self) -> &KeymapOverrides {
-        &self.config
+    pub fn overrides(&self) -> &KeymapOverrides {
+        &self.overrides
     }
 
     #[must_use]

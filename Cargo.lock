@@ -1025,7 +1025,6 @@ dependencies = [
  "dirs",
  "insta",
  "kernel",
- "library",
  "lofty",
  "rstest",
  "serde",
@@ -1836,21 +1835,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "raster"
-version = "0.1.0"
-dependencies = [
- "config",
- "fast_image_resize",
- "image",
- "insta",
- "kernel",
- "num-traits",
- "rstest",
- "thiserror 2.0.20",
- "tiny-skia",
-]
-
-[[package]]
 name = "ratatui"
 version = "0.30.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2244,7 +2228,6 @@ dependencies = [
  "insta",
  "kernel",
  "library",
- "raster",
  "ratatui",
  "rstest",
  "runtime",
@@ -2631,11 +2614,9 @@ dependencies = [
  "image",
  "insta",
  "kernel",
- "raster",
  "ratatui",
  "ratatui-image",
  "rstest",
- "tachyonfx",
  "thiserror 2.0.20",
  "widgets",
 ]
@@ -3023,16 +3004,18 @@ name = "widgets"
 version = "0.1.0"
 dependencies = [
  "config",
+ "fast_image_resize",
+ "image",
  "insta",
  "kernel",
  "num-traits",
  "palette",
  "proptest",
- "raster",
  "ratatui",
  "rstest",
  "strum",
  "tachyonfx",
+ "tiny-skia",
  "unicode-width",
 ]
 

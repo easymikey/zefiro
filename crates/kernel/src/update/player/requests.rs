@@ -3,33 +3,29 @@ use std::{sync::Arc, time::Duration};
 use crate::{
     cmd::{Cmd, PlaybackChange},
     domain::{Moment, Pause, Player, Playhead, Preload, Track},
-    update::player::{Anchor, StartOrigin, Transition, seek_effect, start},
+    update::player::{Anchor, Stamp, StartOrigin, Transition, seek_effect, start},
 };
 
 impl Player {
     pub(crate) fn toggle(
         self,
         current: Option<Arc<Track>>,
-        anchor: Anchor,
+        stamp: Stamp,
     ) -> Transition {
+        let anchor = stamp.anchor;
         match self {
             Player::Stopped => current.map_or_else(
                 || Player::Stopped.refuse(),
-                |track| Ok(start(track, StartOrigin::User)),
+                |track| Ok(start(track, StartOrigin::User, stamp)),
             ),
             loading @ Player::Loading { .. } => loading.refuse(),
-            Player::Playing { track, head, .. } => Ok((
-                Player::Paused {
-                    track,
-                    at: head.position_at(anchor.now),
-                    pause: Pause::ByListener,
-                },
-                PlaybackChange::Pause.cued(),
-            )),
+            playing @ Player::Playing { .. } => {
+                playing.pause(anchor.since, Pause::ByListener)
+            }
             Player::Paused { track, at, .. } => Ok((
                 Player::Playing {
                     track,
-                    head: Playhead::anchored(at, anchor.now, anchor.speed),
+                    head: Playhead::anchored(at, anchor.since, anchor.speed),
                     preload: Preload::None,
                 },
                 PlaybackChange::Play.cued(),
@@ -63,29 +59,13 @@ impl Player {
         }
     }
 
-    pub(crate) fn sleep_fired(self, now: Moment) -> Transition {
+    pub(crate) fn pause(self, now: Moment, pause: Pause) -> Transition {
         match self {
             Player::Playing { track, head, .. } => Ok((
                 Player::Paused {
                     track,
                     at: head.position_at(now),
-                    pause: Pause::ByListener,
-                },
-                PlaybackChange::Pause.cued(),
-            )),
-            other @ (Player::Paused { .. }
-            | Player::Loading { .. }
-            | Player::Stopped) => Ok((other, Cmd::None)),
-        }
-    }
-
-    pub(crate) fn hold(self, now: Moment) -> Transition {
-        match self {
-            Player::Playing { track, head, .. } => Ok((
-                Player::Paused {
-                    track,
-                    at: head.position_at(now),
-                    pause: Pause::ByOverlay,
+                    pause,
                 },
                 PlaybackChange::Pause.cued(),
             )),
@@ -104,7 +84,7 @@ impl Player {
             } => Ok((
                 Player::Playing {
                     track,
-                    head: Playhead::anchored(at, anchor.now, anchor.speed),
+                    head: Playhead::anchored(at, anchor.since, anchor.speed),
                     preload: Preload::None,
                 },
                 PlaybackChange::Play.cued(),

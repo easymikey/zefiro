@@ -8,8 +8,8 @@ use crossbeam_channel::{Receiver, Sender, TrySendError};
 use kernel::domain::Driver;
 
 use crate::{
-    cells::LatestSender,
     error::Error,
+    latest::LatestSender,
     library::cover::{
         CachedOutcome,
         CoverDecoded,
@@ -78,14 +78,11 @@ impl CoverWorker {
         }
     }
 
-    pub(crate) fn join(self) -> Result<(), CoverPanicked> {
+    pub(crate) fn join(self) -> thread::Result<()> {
         drop(self.notify);
-        self.handle.join().map_err(|_| CoverPanicked)
+        self.handle.join()
     }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CoverPanicked;
 
 struct CoverLoop<Decode> {
     wake: Receiver<()>,
@@ -123,10 +120,10 @@ mod tests {
     use std::{path::PathBuf, time::Duration};
 
     use crate::{
-        cells::cells,
+        latest::latest_channels,
         library::{
             cover::{CoverDecoded, CoverOutcome, CoverRequest},
-            worker::{CoverPanicked, CoverWorker},
+            worker::CoverWorker,
         },
     };
 
@@ -135,7 +132,7 @@ mod tests {
 
     #[test]
     fn a_newer_cover_request_replaces_a_pending_one() {
-        let (writers, _cells, _notified) = cells();
+        let (writers, _cells, _notified) = latest_channels();
         let (release, wait) = crossbeam_channel::bounded(0);
         let (started, entered) = crossbeam_channel::unbounded();
         let decode_fn = move |request: &CoverRequest| {
@@ -174,7 +171,7 @@ mod tests {
 
     #[test]
     fn a_panicking_decode_fails_the_join() {
-        let (writers, _cells, _notified) = cells();
+        let (writers, _cells, _notified) = latest_channels();
         let (worker, _results) = CoverWorker::spawn_with(
             writers.cover,
             |_request: &CoverRequest| -> CoverDecoded { panic!("decode blew up") },
@@ -186,6 +183,6 @@ mod tests {
             size_px: 64,
         });
 
-        assert_eq!(worker.join(), Err(CoverPanicked));
+        assert!(worker.join().is_err());
     }
 }

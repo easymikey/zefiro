@@ -11,7 +11,7 @@ pub struct LibraryDirs {
 }
 
 impl LibraryDirs {
-    pub fn from_dirs() -> Result<Self, Error> {
+    pub fn user() -> Result<Self, Error> {
         let cache_dir = dirs::cache_dir().ok_or(Error::NoUserDirs)?.join("sifr");
         let data_dir = dirs::data_dir().ok_or(Error::NoUserDirs)?.join("sifr");
         let playlists_dir = dirs::config_dir()

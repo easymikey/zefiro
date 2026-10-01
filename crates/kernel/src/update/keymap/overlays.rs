@@ -11,8 +11,6 @@ use crate::{
         KeyContext,
         KeyPattern,
         Modifiers,
-        digit_char,
-        digits,
     },
     message::{
         HistoryRequest,
@@ -23,39 +21,22 @@ use crate::{
         SettingsRowRequest,
         TextRequest,
     },
-    update::keymap::chord::{ActionRow, KeyBinding, KeyContextRow, KeyOutcome},
+    update::keymap::{
+        chord::{ActionRow, KeyBinding, KeyContextRow, KeyOutcome, bare, key},
+        table::{digit_char, digits},
+    },
 };
 
 fn plain(code: KeyCode) -> KeyPattern {
-    KeyPattern::Chord(Chord::Key(Key::plain(code)))
+    KeyPattern::Chord(bare(code))
 }
 
 fn letter(character: char) -> KeyPattern {
-    plain(KeyCode::Char(character))
+    KeyPattern::Chord(key(character))
 }
 
 fn held(modifiers: Modifiers, code: KeyCode) -> KeyPattern {
     KeyPattern::Chord(Chord::Key(Key::new(code, modifiers)))
-}
-
-fn key_chord(code: KeyCode) -> Chord {
-    Chord::Key(Key::plain(code))
-}
-
-fn letter_chord(character: char) -> Chord {
-    key_chord(KeyCode::Char(character))
-}
-
-fn settings_action_row(
-    (action, chord, message): (Action, Chord, Message),
-) -> KeyBinding {
-    ActionRow {
-        action,
-        chord,
-        message,
-        key_context: KeyContext::Settings,
-    }
-    .into()
 }
 
 fn settings_bindings(
@@ -65,7 +46,15 @@ fn settings_bindings(
 ) -> Vec<KeyBinding> {
     chords
         .iter()
-        .map(|&chord| settings_action_row((action, chord, message.clone())))
+        .map(|&chord| {
+            ActionRow {
+                action,
+                chord,
+                message: message.clone(),
+                key_context: KeyContext::Settings,
+            }
+            .into()
+        })
         .collect()
 }
 
@@ -93,9 +82,10 @@ fn confirm() -> KeyOutcome {
     overlay(OverlayRequest::Confirm)
 }
 
-type KeyContextRows = (KeyContext, Vec<(KeyPattern, KeyOutcome)>);
-
-fn rows_in((key_context, rows): KeyContextRows) -> Vec<KeyBinding> {
+fn rows_in(
+    key_context: KeyContext,
+    rows: Vec<(KeyPattern, KeyOutcome)>,
+) -> Vec<KeyBinding> {
     rows.into_iter()
         .map(|(pattern, outcome)| {
             KeyContextRow {
@@ -109,7 +99,7 @@ fn rows_in((key_context, rows): KeyContextRows) -> Vec<KeyBinding> {
 }
 
 fn text_prompt_rows() -> Vec<KeyBinding> {
-    rows_in((
+    rows_in(
         KeyContext::TextPrompt,
         vec![
             (plain(KeyCode::Enter), confirm()),
@@ -120,11 +110,11 @@ fn text_prompt_rows() -> Vec<KeyBinding> {
             ),
             (KeyPattern::AnyChar, KeyOutcome::TypeChar(CharSink::Text)),
         ],
-    ))
+    )
 }
 
 fn search_rows() -> Vec<KeyBinding> {
-    rows_in((
+    rows_in(
         KeyContext::Search,
         vec![
             (
@@ -157,22 +147,22 @@ fn search_rows() -> Vec<KeyBinding> {
             (plain(KeyCode::Tab), search(SearchRequest::Enqueue)),
             (KeyPattern::AnyChar, KeyOutcome::TypeChar(CharSink::Search)),
         ],
-    ))
+    )
 }
 
 fn help_rows() -> Vec<KeyBinding> {
-    rows_in((
+    rows_in(
         KeyContext::Help,
         vec![
             (plain(KeyCode::Esc), close()),
             (letter('q'), KeyOutcome::Message(Message::Quit)),
             (held(Modifiers::CTRL, KeyCode::Char('k')), close()),
         ],
-    ))
+    )
 }
 
 fn history_rows() -> Vec<KeyBinding> {
-    rows_in((
+    rows_in(
         KeyContext::History,
         vec![
             (
@@ -202,7 +192,7 @@ fn history_rows() -> Vec<KeyBinding> {
             ),
             (letter('G'), history(HistoryRequest::Bottom)),
         ],
-    ))
+    )
 }
 
 fn settings_rows() -> Vec<KeyBinding> {
@@ -220,32 +210,32 @@ fn settings_rows() -> Vec<KeyBinding> {
     [
         settings_bindings(
             SettingsClose,
-            &[key_chord(KeyCode::Esc)],
+            &[bare(KeyCode::Esc)],
             &Message::Overlay(OverlayRequest::Close),
         ),
         settings_bindings(
             SettingsActivate,
-            &[key_chord(KeyCode::Enter), letter_chord(' ')],
+            &[bare(KeyCode::Enter), key(' ')],
             &settings(Activate),
         ),
         settings_bindings(
             SettingsNavigateDown,
-            &[letter_chord('j'), key_chord(KeyCode::Down)],
+            &[key('j'), bare(KeyCode::Down)],
             &settings(Navigate(Direction::Next)),
         ),
         settings_bindings(
             SettingsNavigateUp,
-            &[letter_chord('k'), key_chord(KeyCode::Up)],
+            &[key('k'), bare(KeyCode::Up)],
             &settings(Navigate(Direction::Previous)),
         ),
         settings_bindings(
             SettingsAdjustDown,
-            &[letter_chord('h'), key_chord(KeyCode::Left)],
+            &[key('h'), bare(KeyCode::Left)],
             &settings(Adjust(Direction::Previous)),
         ),
         settings_bindings(
             SettingsAdjustUp,
-            &[letter_chord('l'), key_chord(KeyCode::Right)],
+            &[key('l'), bare(KeyCode::Right)],
             &settings(Adjust(Direction::Next)),
         ),
     ]
@@ -253,7 +243,7 @@ fn settings_rows() -> Vec<KeyBinding> {
 }
 
 fn confirm_delete_rows() -> Vec<KeyBinding> {
-    rows_in((
+    rows_in(
         KeyContext::ConfirmDelete,
         vec![
             (letter('y'), confirm()),
@@ -261,7 +251,7 @@ fn confirm_delete_rows() -> Vec<KeyBinding> {
             (letter('n'), close()),
             (plain(KeyCode::Esc), close()),
         ],
-    ))
+    )
 }
 
 fn jump_rows() -> Vec<KeyBinding> {
@@ -282,14 +272,14 @@ fn jump_rows() -> Vec<KeyBinding> {
             overlay(OverlayRequest::Jump(TextRequest::Char(character))),
         )
     }));
-    rows_in((KeyContext::JumpToTime, rows))
+    rows_in(KeyContext::JumpToTime, rows)
 }
 
 fn track_details_rows() -> Vec<KeyBinding> {
-    rows_in((
+    rows_in(
         KeyContext::TrackDetails,
         vec![(KeyPattern::AnyKey, close())],
-    ))
+    )
 }
 
 pub(crate) fn rows() -> Vec<KeyBinding> {

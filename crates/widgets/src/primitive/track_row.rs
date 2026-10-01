@@ -8,17 +8,18 @@ use crate::{
     Playing,
     primitive::{
         chip,
-        glyphs::{PlaylistGlyphs, TruncateGlyphs},
         marker::{
+            FAVORITE_COLUMNS,
             Favorite,
-            MarkerColumns,
+            MARKERS_WIDTH,
+            PLAYING_COLUMNS,
             QueuePosition,
             column_padding,
             favorite_marker,
             playing_marker,
         },
         span::{line, text},
-        text::{blanks, truncate_to_width},
+        text::{blanks, truncate},
     },
 };
 
@@ -37,8 +38,6 @@ pub(crate) struct TrackRowView<'a> {
     pub(crate) favorite: Favorite,
     pub(crate) playing: Playing,
     pub(crate) queued: Option<QueuePosition>,
-    pub(crate) columns: MarkerColumns,
-    pub(crate) glyphs: PlaylistGlyphs,
     pub(crate) row_width: usize,
 }
 
@@ -55,15 +54,15 @@ pub(crate) fn track_row_line(
     view: &TrackRowView<'_>,
     colors: RowColors,
 ) -> Line<'static> {
-    let favorite_width = usize::from(view.columns.favorite);
-    let playing_width = usize::from(view.columns.playing);
-    let fav = favorite_marker(view.favorite, view.glyphs);
-    let playing = playing_marker(view.playing, view.glyphs);
-    let markers_width = usize::from(view.columns.total());
+    let favorite_width = usize::from(FAVORITE_COLUMNS);
+    let playing_width = usize::from(PLAYING_COLUMNS);
+    let fav = favorite_marker(view.favorite);
+    let playing = playing_marker(view.playing);
+    let markers_width = usize::from(MARKERS_WIDTH);
     let body_width = view.row_width.saturating_sub(markers_width);
     let chip = view
         .queued
-        .map(|position| chip::compact(&position.label(view.glyphs)))
+        .map(|position| chip::compact(&position.label()))
         .unwrap_or_default();
     let title_width = if chip.is_empty() {
         body_width
@@ -72,8 +71,7 @@ pub(crate) fn track_row_line(
             .saturating_sub(chip.width())
             .saturating_sub(CHIP_GAP)
     };
-    let title = truncate_to_width(view.title, title_width, TruncateGlyphs::default())
-        .into_owned();
+    let title = truncate(view.title, title_width).into_owned();
     let gap = if chip.is_empty() || title.is_empty() {
         0
     } else {
@@ -102,8 +100,7 @@ mod tests {
     use crate::{
         Playing,
         primitive::{
-            glyphs::PlaylistGlyphs,
-            marker::{Favorite, MarkerColumns, QueuePosition},
+            marker::{Favorite, MARKERS_WIDTH, QueuePosition},
             track_row::{RowColors, Selected, TrackRowView, track_row_line},
         },
     };
@@ -124,30 +121,21 @@ mod tests {
             favorite: Favorite::No,
             playing: Playing::No,
             queued: None,
-            columns: MarkerColumns::default(),
-            glyphs: PlaylistGlyphs::default(),
             row_width,
         }
-    }
-
-    fn rendered(view: &TrackRowView<'_>) -> String {
-        track_row_line(view, colors())
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
     }
 
     #[test]
     fn long_ascii_title_truncates_to_row_width_with_ellipsis() {
         let row_width = 20;
-        let text = rendered(&base_props(
-            "a very long track title that will not fit",
-            row_width,
-        ));
+        let text = track_row_line(
+            &base_props("a very long track title that will not fit", row_width),
+            colors(),
+        )
+        .to_string();
         assert_eq!(text.width(), row_width);
         assert!(text.ends_with('…'));
-        let fixed_width = usize::from(MarkerColumns::default().total());
+        let fixed_width = usize::from(MARKERS_WIDTH);
         assert_eq!(
             text.get(..fixed_width),
             Some(" ".repeat(fixed_width).as_str())
@@ -158,7 +146,7 @@ mod tests {
     fn the_chip_follows_the_title_with_one_space_and_carries_the_position() {
         let mut view = base_props("song", 20);
         view.queued = Some(QueuePosition::new(12));
-        let text = rendered(&view);
+        let text = track_row_line(&view, colors()).to_string();
         assert!(text.ends_with("song [q12]"));
     }
 
@@ -167,7 +155,7 @@ mod tests {
         let row_width = 20;
         let mut view = base_props("a very long track title", row_width);
         view.queued = Some(QueuePosition::new(1));
-        let text = rendered(&view);
+        let text = track_row_line(&view, colors()).to_string();
         assert_eq!(text.width(), row_width);
         assert!(text.ends_with("… [q1]"));
     }
@@ -175,9 +163,10 @@ mod tests {
     #[test]
     fn cjk_title_truncates_on_a_cell_boundary() {
         let row_width = 12;
-        let fixed_width = usize::from(MarkerColumns::default().total());
+        let fixed_width = usize::from(MARKERS_WIDTH);
         let title_width = row_width - fixed_width;
-        let text = rendered(&base_props("界界界界界界界界", row_width));
+        let text = track_row_line(&base_props("界界界界界界界界", row_width), colors())
+            .to_string();
         let title_part = text.get(fixed_width..).unwrap_or_default().trim_end();
         assert!(title_part.width() <= title_width);
         assert!(title_part.ends_with('…'));

@@ -11,6 +11,7 @@ use std::{
 
 use block2::RcBlock;
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
+use kernel::update::{Machine, Rejected};
 use objc2::{AllocAnyThread, rc::Retained};
 use objc2_app_kit::NSImage;
 use objc2_core_foundation::CGSize;
@@ -33,7 +34,7 @@ const COVER_NAMES: [&str; 6] = [
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CoverBytes {
     pub(crate) track: PathBuf,
-    pub(crate) bytes: Option<Vec<u8>>,
+    pub(crate) bytes: Vec<u8>,
 }
 
 pub(crate) struct CoverWorker {
@@ -48,7 +49,7 @@ impl CoverWorker {
     ) -> Result<(Self, Receiver<CoverBytes>), io::Error> {
         let (wanted, tasks) = bounded::<PathBuf>(1);
         let stale = tasks.clone();
-        let (results, arrivals) = bounded::<CoverBytes>(1);
+        let (results, covers_read) = bounded::<CoverBytes>(1);
         let handle = thread::Builder::new()
             .name("sifr-cover".to_string())
             .spawn(move || read_covers(tasks, read, &results))?;
@@ -58,7 +59,7 @@ impl CoverWorker {
                 stale,
                 handle: Some(handle),
             },
-            arrivals,
+            covers_read,
         ))
     }
 
@@ -102,28 +103,11 @@ fn read_covers(
     results: &Sender<CoverBytes>,
 ) {
     for track in tasks {
-        let bytes = cover_bytes(&track, read);
+        let bytes = cover_bytes(&track, read).unwrap_or_default();
         match results.send(CoverBytes { track, bytes }) {
             Ok(()) => {}
             Err(_) => return,
         }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct Cover {
-    artwork: Option<Retained<MPMediaItemArtwork>>,
-}
-
-impl Cover {
-    pub(crate) fn from_bytes(bytes: &[u8]) -> Self {
-        Self {
-            artwork: artwork(bytes),
-        }
-    }
-
-    pub(crate) fn artwork(&self) -> Option<&MPMediaItemArtwork> {
-        self.artwork.as_deref()
     }
 }
 
@@ -139,11 +123,72 @@ fn folder_cover(track: &Path) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-fn artwork(bytes: &[u8]) -> Option<Retained<MPMediaItemArtwork>> {
+pub(crate) fn artwork(bytes: &[u8]) -> Option<Retained<MPMediaItemArtwork>> {
+    if bytes.is_empty() {
+        return None;
+    }
     let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(bytes))?;
     let bounds = image.size();
     let handler = RcBlock::new(move |_requested: CGSize| NonNull::from(&*image));
     Some(ffi::media_item_artwork(bounds, &handler))
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct CoverState {
+    track: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CoverMessage {
+    TrackShown(Option<PathBuf>),
+    Read(CoverBytes),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CoverEffect {
+    Nothing,
+    Clear,
+    Request(PathBuf),
+    Show(Vec<u8>),
+}
+
+impl Machine for CoverState {
+    type Message = CoverMessage;
+    type Error = std::convert::Infallible;
+    type Effect = CoverEffect;
+
+    fn transition(
+        self,
+        message: CoverMessage,
+    ) -> Result<(Self, CoverEffect), Rejected<Self>> {
+        Ok(match message {
+            CoverMessage::TrackShown(track) => track_shown(self, track),
+            CoverMessage::Read(bytes) => cover_read(self, bytes),
+        })
+    }
+}
+
+fn track_shown(cover: CoverState, track: Option<PathBuf>) -> (CoverState, CoverEffect) {
+    if cover.track == track {
+        (cover, CoverEffect::Nothing)
+    } else {
+        track.map_or((CoverState { track: None }, CoverEffect::Clear), |wanted| {
+            (
+                CoverState {
+                    track: Some(wanted.clone()),
+                },
+                CoverEffect::Request(wanted),
+            )
+        })
+    }
+}
+
+fn cover_read(cover: CoverState, bytes: CoverBytes) -> (CoverState, CoverEffect) {
+    if cover.track.as_deref() == Some(bytes.track.as_path()) {
+        (cover, CoverEffect::Show(bytes.bytes))
+    } else {
+        (cover, CoverEffect::Nothing)
+    }
 }
 
 #[cfg(test)]
@@ -155,8 +200,19 @@ mod tests {
     };
 
     use crossbeam_channel::{Receiver, Sender, bounded};
+    use kernel::update::Machine;
+    use rstest::rstest;
 
-    use crate::cover::{CoverWorker, artwork, cover_bytes, folder_cover};
+    use crate::cover::{
+        CoverBytes,
+        CoverEffect,
+        CoverMessage,
+        CoverState,
+        CoverWorker,
+        artwork,
+        cover_bytes,
+        folder_cover,
+    };
 
     fn embedded(_track: &Path) -> Option<Vec<u8>> {
         Some(b"embedded".to_vec())
@@ -197,6 +253,7 @@ mod tests {
     #[test]
     fn undecodable_cover_bytes_give_no_artwork() {
         assert!(artwork(b"not an image").is_none());
+        assert!(artwork(b"").is_none());
     }
 
     fn started() -> &'static (Sender<()>, Receiver<()>) {
@@ -221,20 +278,95 @@ mod tests {
 
     #[test]
     fn the_latest_wanted_track_wins() {
-        let (worker, arrivals) = CoverWorker::spawn(blocking_read).unwrap();
+        let (worker, covers_read) = CoverWorker::spawn(blocking_read).unwrap();
 
         worker.request(PathBuf::from("A"));
         started().1.recv().unwrap();
         worker.request(PathBuf::from("B"));
         worker.request(PathBuf::from("C"));
         gate().0.send(()).unwrap();
-        let first = arrivals.recv().unwrap();
+        let first = covers_read.recv().unwrap();
 
         started().1.recv().unwrap();
         gate().0.send(()).unwrap();
-        let second = arrivals.recv().unwrap();
+        let second = covers_read.recv().unwrap();
 
         assert_eq!(first.track, PathBuf::from("A"));
         assert_eq!(second.track, PathBuf::from("C"));
+    }
+
+    fn track(name: &str) -> PathBuf {
+        PathBuf::from(name)
+    }
+
+    struct Row {
+        cover: CoverState,
+        message: CoverMessage,
+        next: CoverState,
+        effect: CoverEffect,
+    }
+
+    #[rstest]
+    #[case::first_track_requests_its_cover(Row {
+        cover: CoverState::default(),
+        message: CoverMessage::TrackShown(Some(track("a.flac"))),
+        next: CoverState { track: Some(track("a.flac")) },
+        effect: CoverEffect::Request(track("a.flac")),
+    })]
+    #[case::the_same_track_keeps_it(Row {
+        cover: CoverState { track: Some(track("a.flac")) },
+        message: CoverMessage::TrackShown(Some(track("a.flac"))),
+        next: CoverState { track: Some(track("a.flac")) },
+        effect: CoverEffect::Nothing,
+    })]
+    #[case::a_new_track_clears_and_requests(Row {
+        cover: CoverState { track: Some(track("a.flac")) },
+        message: CoverMessage::TrackShown(Some(track("b.flac"))),
+        next: CoverState { track: Some(track("b.flac")) },
+        effect: CoverEffect::Request(track("b.flac")),
+    })]
+    #[case::the_cover_read_shows_it(Row {
+        cover: CoverState { track: Some(track("a.flac")) },
+        message: CoverMessage::Read(CoverBytes {
+            track: track("a.flac"),
+            bytes: b"art".to_vec(),
+        }),
+        next: CoverState { track: Some(track("a.flac")) },
+        effect: CoverEffect::Show(b"art".to_vec()),
+    })]
+    #[case::a_stale_cover_read_is_ignored(Row {
+        cover: CoverState { track: Some(track("b.flac")) },
+        message: CoverMessage::Read(CoverBytes {
+            track: track("a.flac"),
+            bytes: b"art".to_vec(),
+        }),
+        next: CoverState { track: Some(track("b.flac")) },
+        effect: CoverEffect::Nothing,
+    })]
+    #[case::cleared_clears(Row {
+        cover: CoverState { track: Some(track("a.flac")) },
+        message: CoverMessage::TrackShown(None),
+        next: CoverState { track: None },
+        effect: CoverEffect::Clear,
+    })]
+    #[case::a_track_without_cover_shows_nothing(Row {
+        cover: CoverState { track: Some(track("a.flac")) },
+        message: CoverMessage::Read(CoverBytes {
+            track: track("a.flac"),
+            bytes: Vec::new(),
+        }),
+        next: CoverState { track: Some(track("a.flac")) },
+        effect: CoverEffect::Show(Vec::new()),
+    })]
+    fn the_cover_slot_requests_clears_or_shows_by_the_track_it_holds(#[case] row: Row) {
+        let Row {
+            mut cover,
+            message,
+            next,
+            effect,
+        } = row;
+        let Ok(observed_effect) = cover.update(message);
+        assert_eq!(cover, next);
+        assert_eq!(observed_effect, effect);
     }
 }

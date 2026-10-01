@@ -33,12 +33,12 @@ pub(crate) enum Job {
     ListDevices,
 }
 
-pub(crate) struct Slot<T> {
+pub(crate) struct Latest<T> {
     sender: Sender<T>,
     drain: Receiver<T>,
 }
 
-impl<T> Slot<T> {
+impl<T> Latest<T> {
     fn new() -> Self {
         let (sender, drain) = crossbeam_channel::bounded(1);
         Self { sender, drain }
@@ -62,9 +62,9 @@ impl<T> Slot<T> {
 }
 
 pub(crate) struct AudioWorker {
-    decode: Slot<DecodeRequest>,
-    preload: Slot<DecodeRequest>,
-    devices: Slot<()>,
+    decode: Latest<DecodeRequest>,
+    preload: Latest<DecodeRequest>,
+    devices: Latest<()>,
     handle: Option<JoinHandle<Result<(), SendError<DeckEvent>>>>,
 }
 
@@ -77,9 +77,9 @@ struct WorkerChannels {
 
 impl AudioWorker {
     pub(crate) fn spawn(wake: Sender<DeckEvent>) -> Result<Self, Error> {
-        let decode = Slot::new();
-        let preload = Slot::new();
-        let devices = Slot::new();
+        let decode = Latest::new();
+        let preload = Latest::new();
+        let devices = Latest::new();
         let channels = WorkerChannels {
             decode: decode.drain.clone(),
             preload: preload.drain.clone(),
@@ -176,7 +176,9 @@ fn decode_job(
 }
 
 fn list_devices(wake: &Sender<DeckEvent>) -> Result<(), SendError<DeckEvent>> {
-    wake.send(DeckEvent::DevicesListed(list_output_devices()))
+    wake.send(DeckEvent::DevicesListed(
+        list_output_devices().unwrap_or_default(),
+    ))
 }
 
 #[cfg(test)]
@@ -192,7 +194,7 @@ mod tests {
 
     use crate::deck::{
         Ticket,
-        worker::{AudioWorker, DecodeRequest, Job, Slot},
+        worker::{AudioWorker, DecodeRequest, Job, Latest},
     };
 
     fn never_opening_file() -> Option<PathBuf> {
@@ -205,7 +207,7 @@ mod tests {
 
     #[test]
     fn a_replaced_request_is_never_opened() {
-        let slot = Slot::new();
+        let slot = Latest::new();
         slot.replace(DecodeRequest {
             path: PathBuf::from("/first"),
             ticket: Ticket::default(),

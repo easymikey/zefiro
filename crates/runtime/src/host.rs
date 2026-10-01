@@ -9,8 +9,8 @@ where
     F: FnOnce(Runtime) -> R + Send + 'static,
 {
     debug_assert!(matches!(
-        crate::registry::row(kernel::domain::Driver::Macos).placement,
-        crate::registry::Placement::WorkerWithMainLoop
+        crate::registry::row(kernel::domain::Driver::Macos).hosting,
+        crate::registry::Hosting::WorkerWithMainLoop
     ));
     let Some(main) = ::macos::MainLoop::attach(&runtime.sender()) else {
         let mut runtime = runtime;

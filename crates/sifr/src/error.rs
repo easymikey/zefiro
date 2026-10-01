@@ -23,17 +23,17 @@ pub(crate) enum Error {
         source: config::Error,
     },
     #[error("no music directory configured and no default audio directory available")]
-    MusicDirectoryUnset,
+    MusicDirUnset,
     #[error("music directory not found: {path}")]
-    MusicDirectoryMissing { path: PathBuf },
+    MusicDirMissing { path: PathBuf },
     #[error("--playlist {name:?}: {source}")]
     PlaylistName {
         name: String,
         #[source]
         source: kernel::playlist::PlaylistNameError,
     },
-    #[error(transparent)]
-    SignalInstall(#[from] crate::signal::AlreadyInstalled),
+    #[error("the signal handler is already installed")]
+    SignalHandlerInstalled,
     #[error("a background thread panicked: {report}")]
     WorkerPanic { report: String },
     #[error("{run} (teardown after also failed: {teardown})")]
@@ -51,8 +51,8 @@ mod tests {
     use crate::error::Error;
 
     #[test]
-    fn music_directory_unset_message_is_readable() {
-        let error = Error::MusicDirectoryUnset;
+    fn music_dir_unset_message_is_readable() {
+        let error = Error::MusicDirUnset;
 
         assert_eq!(
             error.to_string(),
@@ -71,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn run_and_teardown_message_names_both_failures() {
+    fn run_and_teardown_message_names_both_errors() {
         let error = Error::RunAndTeardown {
             run: runtime::Error::InputClosed,
             teardown: io::Error::other("broken pipe"),

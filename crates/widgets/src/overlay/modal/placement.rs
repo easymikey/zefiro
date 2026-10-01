@@ -7,15 +7,17 @@ use ratatui::{
 };
 
 use crate::{
-    overlay::modal::frame::{Modal, ModalAreas, ModalBounds, ModalSize, PlacedModal},
+    overlay::modal::{
+        frame::{Modal, ModalAreas, ModalBounds, ModalSize, PlacedModal},
+        metrics::SCROLLBAR_INSET,
+    },
     primitive::{
         canvas::Canvas,
-        glyphs::TruncateGlyphs,
         inset::Inset,
         list_chrome::{row_band, scrollbar_column, spaced_title},
-        text::truncate_to_width,
+        text::truncate,
     },
-    theme::ActiveTheme,
+    theme::{ActiveTheme, Role},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -71,24 +73,12 @@ impl OverlayAreas {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ModalChrome {
-    pub(crate) scrollbar_inset: u16,
-}
-
-impl Default for ModalChrome {
-    fn default() -> Self {
-        Self { scrollbar_inset: 2 }
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct ModalBorder<'a> {
     pub(crate) area: Rect,
     pub(crate) title: Line<'static>,
     pub(crate) inset: Inset,
     pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) chrome: ModalChrome,
 }
 
 impl ModalBorder<'_> {
@@ -96,7 +86,7 @@ impl ModalBorder<'_> {
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Thick)
-            .border_style(Style::default().fg(self.theme.border()))
+            .border_style(Style::default().fg(self.theme.role(Role::Frame)))
             .padding(self.inset.padding())
             .title(spaced_title(self.title.clone()))
     }
@@ -107,7 +97,7 @@ impl ModalBorder<'_> {
         if inner.width == 0 || inner.height == 0 {
             return ModalScrollAreas::empty(self.area);
         }
-        let scrollbar = scrollbar_column(self.area, inner, self.chrome.scrollbar_inset);
+        let scrollbar = scrollbar_column(self.area, inner, SCROLLBAR_INSET);
         ModalScrollAreas {
             outer: self.area,
             rows: row_band(self.area, inner, scrollbar),
@@ -122,8 +112,8 @@ impl ModalBorder<'_> {
         Block::new()
             .style(
                 Style::default()
-                    .bg(self.theme.window_background())
-                    .fg(self.theme.text()),
+                    .bg(self.theme.role(Role::WindowBackground))
+                    .fg(self.theme.role(Role::Text)),
             )
             .render(self.area, buffer);
         self.block().render(self.area, buffer);
@@ -140,7 +130,6 @@ pub(crate) struct ModalPlacement<'a> {
     pub(crate) content_rows: u16,
     pub(crate) hint: Option<Line<'static>>,
     pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) chrome: ModalChrome,
 }
 
 impl<'a> ModalPlacement<'a> {
@@ -150,7 +139,6 @@ impl<'a> ModalPlacement<'a> {
             title: self.border_title.clone(),
             inset: self.inset,
             theme: self.theme,
-            chrome: self.chrome,
         }
     }
 
@@ -162,8 +150,8 @@ impl<'a> ModalPlacement<'a> {
                 content_rows: self.content_rows.max(1),
             },
             hint: self.hint.clone(),
-            border: self.theme.border(),
-            window_background: self.theme.window_background(),
+            border: self.theme.role(Role::Frame),
+            window_background: self.theme.role(Role::WindowBackground),
         }
     }
 
@@ -178,11 +166,8 @@ impl<'a> ModalPlacement<'a> {
     }
 
     fn scroll_areas(&self, modal_frame: &ModalAreas) -> ModalScrollAreas {
-        let scrollbar = scrollbar_column(
-            modal_frame.outer,
-            modal_frame.body,
-            self.chrome.scrollbar_inset,
-        );
+        let scrollbar =
+            scrollbar_column(modal_frame.outer, modal_frame.body, SCROLLBAR_INSET);
         ModalScrollAreas {
             outer: modal_frame.outer,
             rows: row_band(modal_frame.outer, modal_frame.body, scrollbar),
@@ -226,6 +211,6 @@ pub(crate) fn column_width(areas: &ModalScrollAreas) -> u16 {
 pub(crate) fn indented(text: &str, lead: u16, width: u16) -> String {
     let lead = usize::from(lead);
     let budget = usize::from(width).saturating_sub(lead);
-    let fitted = truncate_to_width(text, budget, TruncateGlyphs::default());
+    let fitted = truncate(text, budget);
     format!("{:lead$}{fitted}", "")
 }

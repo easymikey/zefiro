@@ -1,5 +1,4 @@
 use ratatui::{
-    buffer::Buffer,
     layout::Rect,
     style::Color,
     text::Line,
@@ -11,27 +10,14 @@ use crate::{
     overlay::modal::frame::{Modal, ModalAreas, ModalBounds, ModalSize, PlacedModal},
     primitive::{
         canvas::Canvas,
-        glyphs::TruncateGlyphs,
         span::{line, text},
-        text::truncate_to_width,
+        text::truncate,
     },
-    theme::ActiveTheme,
+    theme::{ActiveTheme, Role},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PromptGlyphs {
-    marker: &'static str,
-    cursor: &'static str,
-}
-
-impl Default for PromptGlyphs {
-    fn default() -> Self {
-        Self {
-            marker: "> ",
-            cursor: "_",
-        }
-    }
-}
+const MARKER: &str = "> ";
+const CURSOR: &str = "_";
 
 #[derive(Debug)]
 pub(crate) enum PromptBody<'a> {
@@ -41,25 +27,21 @@ pub(crate) enum PromptBody<'a> {
 
 impl PromptBody<'_> {
     fn width(&self) -> usize {
-        let glyphs = PromptGlyphs::default();
         match self {
-            PromptBody::Entry(input) => {
-                glyphs.marker.width() + input.width() + glyphs.cursor.width()
-            }
+            PromptBody::Entry(input) => MARKER.width() + input.width() + CURSOR.width(),
             PromptBody::Sentence(sentence) => sentence.width(),
         }
     }
 
     fn line(&self, width: usize, color: Color) -> Line<'static> {
-        let glyphs = PromptGlyphs::default();
         match self {
             PromptBody::Entry(input) => line([
-                text(glyphs.marker).fg(color),
+                text(MARKER).fg(color),
                 text((*input).to_string()).fg(color),
-                text(glyphs.cursor).fg(color),
+                text(CURSOR).fg(color),
             ]),
             PromptBody::Sentence(sentence) => {
-                line([text(truncated(sentence, width)).fg(color)])
+                line([text(truncate(sentence, width).into_owned()).fg(color)])
             }
         }
     }
@@ -74,10 +56,6 @@ pub(crate) struct Prompt<'a> {
     pub(crate) error: Option<String>,
     pub(crate) avoid: &'a [Rect],
     pub(crate) theme: ActiveTheme<'a>,
-}
-
-fn truncated(text: &str, width: usize) -> String {
-    truncate_to_width(text, width, TruncateGlyphs::default()).into_owned()
 }
 
 impl Prompt<'_> {
@@ -98,22 +76,29 @@ impl Prompt<'_> {
                     .max(u16::try_from(widest).unwrap_or(self.min_width)),
                 content_lines: 1 + u16::from(self.error.is_some()),
             },
-            hint: Some(line([text(self.hint).fg(self.theme.dim())])),
-            border: self.theme.border(),
-            window_background: self.theme.window_background(),
+            hint: Some(line([text(self.hint).fg(self.theme.role(Role::Dim))])),
+            border: self.theme.role(Role::Frame),
+            window_background: self.theme.role(Role::WindowBackground),
         }
     }
 
     fn lines(&self, width: usize) -> Vec<Line<'static>> {
-        let mut lines = vec![self.body.line(width, self.theme.text())];
+        let mut lines = vec![self.body.line(width, self.theme.role(Role::Text))];
         if let Some(error) = &self.error {
-            lines.push(line([text(truncated(error, width)).fg(self.theme.alert())]));
+            lines.push(line([
+                text(truncate(error, width).into_owned()).fg(self.theme.alert())
+            ]));
         }
         lines
     }
 }
 
-impl Prompt<'_> {
+impl<'a> Prompt<'a> {
+    #[must_use]
+    pub(crate) fn avoiding(self, avoid: &'a [Rect]) -> Self {
+        Self { avoid, ..self }
+    }
+
     pub(crate) fn render_in(&self, areas: ModalAreas, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
         self.modal().paint(
@@ -131,11 +116,5 @@ impl Prompt<'_> {
         }
         Paragraph::new(self.lines(usize::from(areas.body.width)))
             .render(areas.body, buffer);
-    }
-}
-
-impl Widget for &Prompt<'_> {
-    fn render(self, area: Rect, buffer: &mut Buffer) {
-        self.render_in(self.areas(area), Canvas { area, buffer });
     }
 }

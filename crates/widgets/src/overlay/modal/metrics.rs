@@ -8,27 +8,13 @@ use crate::{
         glyphs::TITLE_SEPARATOR,
         span::{line, text},
     },
-    theme::ActiveTheme,
+    theme::{ActiveTheme, Role},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ModalMetrics {
-    pub(crate) column_spacing: u16,
-    pub(crate) query_rows: u16,
-    pub(crate) scroll_padding: usize,
-    pub(crate) scrollbar_inset: u16,
-}
-
-impl Default for ModalMetrics {
-    fn default() -> Self {
-        Self {
-            column_spacing: 1,
-            query_rows: 2,
-            scroll_padding: 1,
-            scrollbar_inset: 2,
-        }
-    }
-}
+pub(crate) const COLUMN_SPACING: u16 = 1;
+pub(crate) const QUERY_ROWS: u16 = 2;
+pub(crate) const SCROLL_PADDING: usize = 1;
+pub(crate) const SCROLLBAR_INSET: u16 = 2;
 
 #[must_use]
 pub(crate) fn modal_title(
@@ -37,8 +23,8 @@ pub(crate) fn modal_title(
     theme: ActiveTheme<'_>,
 ) -> Line<'static> {
     line([
-        text(format!("{word}{TITLE_SEPARATOR}")).fg(theme.border()),
-        text(detail).fg(theme.dim()),
+        text(format!("{word}{TITLE_SEPARATOR}")).fg(theme.role(Role::Frame)),
+        text(detail).fg(theme.role(Role::Dim)),
     ])
 }
 
@@ -55,11 +41,11 @@ impl ModalRowColors {
     #[must_use]
     pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         Self {
-            text: theme.text(),
-            dim: theme.dim(),
-            selected_text: theme.selection_foreground(),
-            selected_background: theme.selection_background(),
-            accent: theme.accent(),
+            text: theme.role(Role::Text),
+            dim: theme.role(Role::Dim),
+            selected_text: theme.role(Role::SelectionForeground),
+            selected_background: theme.role(Role::SelectionBackground),
+            accent: theme.role(Role::Accent),
         }
     }
 

@@ -1,5 +1,5 @@
 use crate::{
-    domain::{JumpDigits, JumpInputLimits},
+    domain::JumpDigits,
     message::TextRequest,
     update::{
         machine::{Machine, Rejected},
@@ -32,9 +32,7 @@ impl Machine for JumpDigits {
                     reason: JumpError::NotTimecodeChar,
                 })
             }
-            TextRequest::Char(_)
-                if self.input.len() >= JumpInputLimits::default().max_len =>
-            {
+            TextRequest::Char(_) if self.input.len() >= JumpDigits::MAX_LEN => {
                 Err(Rejected {
                     state: self,
                     reason: JumpError::Full,

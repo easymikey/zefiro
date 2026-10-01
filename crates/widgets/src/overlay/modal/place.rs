@@ -3,7 +3,21 @@ use ratatui::{
     widgets::{Block, Padding},
 };
 
-use crate::overlay::modal::frame::{Hint, ModalLayout};
+use crate::overlay::modal::frame::Hint;
+
+const BORDER_CELLS: u16 = 2;
+const PADDING_X: u16 = 1;
+const PADDING_TOP: u16 = 0;
+const HINT_ROWS: u16 = 1;
+pub(crate) const LIST_SCREEN_MARGIN: u16 = 2;
+pub(crate) const DIALOG_SCREEN_MARGIN: u16 = 4;
+
+fn hint_rows_for(hint: Hint) -> u16 {
+    match hint {
+        Hint::Present => HINT_ROWS,
+        Hint::Absent => 0,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ContentSize {
@@ -14,22 +28,18 @@ pub(crate) struct ContentSize {
     pub(crate) screen_margin: u16,
 }
 
-pub(crate) fn content_size(
-    area: Rect,
-    layout: ModalLayout,
-    size: ContentSize,
-) -> (u16, u16) {
-    let hint_rows = layout.hint_rows_for(size.hint);
+pub(crate) fn content_size(area: Rect, size: ContentSize) -> (u16, u16) {
+    let hint_rows = hint_rows_for(size.hint);
     let height = size
         .content_rows
-        .saturating_add(layout.padding_top)
+        .saturating_add(PADDING_TOP)
         .saturating_add(hint_rows)
-        .saturating_add(layout.border_cells);
+        .saturating_add(BORDER_CELLS);
     let width = size
         .content_width
         .max(size.min_width)
-        .saturating_add(layout.padding_x * 2)
-        .saturating_add(layout.border_cells);
+        .saturating_add(PADDING_X * 2)
+        .saturating_add(BORDER_CELLS);
 
     let max_width = area.width.saturating_sub(size.screen_margin);
     let max_height = area.height.saturating_sub(size.screen_margin);
@@ -45,17 +55,13 @@ pub(crate) struct FrameWidth {
     pub(crate) content_rows: u16,
 }
 
-pub(crate) fn anchored_frame(
-    layout: ModalLayout,
-    hint: Hint,
-    spec: FrameWidth,
-) -> Rect {
-    let hint_rows = layout.hint_rows_for(hint);
+pub(crate) fn width(hint: Hint, spec: FrameWidth) -> Rect {
+    let hint_rows = hint_rows_for(hint);
     let height = spec
         .content_rows
-        .saturating_add(layout.padding_top)
+        .saturating_add(PADDING_TOP)
         .saturating_add(hint_rows)
-        .saturating_add(layout.border_cells)
+        .saturating_add(BORDER_CELLS)
         .min(spec.bounds.height);
     Rect {
         x: spec.bounds.x,
@@ -67,17 +73,16 @@ pub(crate) fn anchored_frame(
 
 #[must_use]
 pub(crate) fn list_capacity(area: Rect, hint: Hint) -> (u16, u16) {
-    let layout = ModalLayout::default();
-    let hint_rows = layout.hint_rows_for(hint);
-    let max_width = area.width.saturating_sub(layout.list_screen_margin);
-    let max_height = area.height.saturating_sub(layout.list_screen_margin);
+    let hint_rows = hint_rows_for(hint);
+    let max_width = area.width.saturating_sub(LIST_SCREEN_MARGIN);
+    let max_height = area.height.saturating_sub(LIST_SCREEN_MARGIN);
     let content_width = max_width
-        .saturating_sub(layout.padding_x * 2)
-        .saturating_sub(layout.border_cells);
+        .saturating_sub(PADDING_X * 2)
+        .saturating_sub(BORDER_CELLS);
     let content_rows = max_height
-        .saturating_sub(layout.padding_top)
+        .saturating_sub(PADDING_TOP)
         .saturating_sub(hint_rows)
-        .saturating_sub(layout.border_cells);
+        .saturating_sub(BORDER_CELLS);
     (content_width, content_rows)
 }
 
@@ -129,13 +134,13 @@ pub(crate) fn place(area: Rect, size: PlacedSize, avoid: &[Rect]) -> Rect {
         .unwrap_or(candidate)
 }
 
-pub(crate) fn padded_content(outer: Rect, layout: ModalLayout) -> Rect {
-    let border = layout.border_cells / 2;
+pub(crate) fn padded_content(outer: Rect) -> Rect {
+    let border = BORDER_CELLS / 2;
     Block::default()
         .padding(Padding::new(
-            border + layout.padding_x,
-            border + layout.padding_x,
-            border + layout.padding_top,
+            border + PADDING_X,
+            border + PADDING_X,
+            border + PADDING_TOP,
             border,
         ))
         .inner(outer)

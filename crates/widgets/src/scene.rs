@@ -6,17 +6,16 @@ use kernel::{
     domain::{DeviceName, Model, Overlay, ThemeChoice},
     update::keymap::KeyBinding,
 };
-use raster::color_overrides;
 
 use crate::{
     card::{CardMetrics, CardView, compact_progress_bar_width},
-    geometry::{CellAspect, CoverSizing, cover_sizing},
+    geometry::{CoverSizing, cover_sizing},
     key_hints::KeyHintsContent,
     overlay::{layer::OverlayContent, settings::SettingsView},
     playlist::{LibraryLoad, PlaylistPane, PlaylistView},
     primitive::bar::hud_progress_bar_width,
-    redraw::{OnScreen, Presence},
-    screen::{Breakpoint, FrameLayout, LayoutInputs, minimal_progress_bar_width},
+    repaint::{OnScreen, Presence},
+    screen::{Breakpoint, FrameLayout, FrameLayoutParts, minimal_progress_bar_width},
     spectrum::Spectrum,
     theme::{ActiveTheme, ColorDepth, Theme},
     toast::ToastCard,
@@ -37,7 +36,7 @@ pub struct Scene<'a> {
     pub bindings: &'a [KeyBinding],
     pub spectrum: &'a Spectrum,
     pub pixel_path: PixelPath,
-    pub cell_aspect: CellAspect,
+    pub cell_aspect: f32,
     pub clock: Duration,
     pub now: Moment,
     pub music_dir: &'a str,
@@ -48,7 +47,7 @@ impl<'a> Scene<'a> {
     #[must_use]
     pub fn active_theme(&self) -> ActiveTheme<'a> {
         ActiveTheme::new(self.theme, self.color_depth)
-            .with_bars(color_overrides(&self.appearance.progress))
+            .with_progress(&self.appearance.progress)
     }
 
     #[must_use]
@@ -77,7 +76,7 @@ impl<'a> Scene<'a> {
             favorites: &model.favorites,
             browse_selected: model.workspace.browse.selected().get(),
             playing: model.playing_index(),
-            library_loading: if model.library.is_loading() {
+            library_loading: if model.library.is_none() {
                 LibraryLoad::Loading
             } else {
                 LibraryLoad::Ready
@@ -90,14 +89,15 @@ impl<'a> Scene<'a> {
     #[must_use]
     pub(crate) fn settings_view(&self) -> SettingsView<'a> {
         let settings = &self.model.settings;
+        let audio = &settings.audio;
         SettingsView {
-            crossfade: settings.crossfade,
-            replaygain: settings.replaygain,
+            crossfade: audio.crossfade,
+            replaygain: audio.replaygain,
             theme: theme_label(&self.model.themes.selected),
             themes: &self.model.themes.names,
-            sleep_presets: &settings.sleep_presets,
+            sleep_presets: audio.sleep_presets.as_slice(),
             music_dir: self.music_dir,
-            output_device: settings.output_device.named().map(DeviceName::as_str),
+            output_device: audio.device.named().map(DeviceName::as_str),
             output_devices: &settings.output_devices,
             appearance: self.appearance.appearance(),
             custom_settings: &self.model.custom_settings,
@@ -139,14 +139,12 @@ impl<'a> Scene<'a> {
 
     #[must_use]
     pub(crate) fn overlay_content(&self) -> OverlayContent<'a> {
-        let model = self.model;
         OverlayContent {
-            workspace: &model.workspace,
+            model: self.model,
             theme: self.active_theme(),
-            tracks: &model.playlist.tracks,
-            history: &model.history.view,
             settings_view: self.settings_view(),
             bindings: self.bindings,
+            now: self.now,
         }
     }
 
@@ -160,8 +158,8 @@ impl<'a> Scene<'a> {
     }
 
     #[must_use]
-    pub fn layout_inputs(&self) -> LayoutInputs<'a> {
-        LayoutInputs {
+    pub fn layout_parts(&self) -> FrameLayoutParts<'a> {
+        FrameLayoutParts {
             layout: &self.appearance.layout,
             window: self.appearance.window,
             cell_aspect: self.cell_aspect,
@@ -231,14 +229,7 @@ impl<'a> Scene<'a> {
         let row_width = metrics.progress_row.width;
         match self.appearance.appearance().progress_time {
             ProgressTime::Remaining => {
-                let view = self.card_view();
-                let duration = view
-                    .displayed_track
-                    .and_then(|track| track.duration())
-                    .unwrap_or(Duration::ZERO);
-                let remaining =
-                    duration.saturating_sub(view.player.position_at(view.now));
-                hud_progress_bar_width(row_width, remaining)
+                hud_progress_bar_width(row_width, self.card_view().remaining())
             }
             ProgressTime::Elapsed => row_width,
         }
@@ -273,182 +264,8 @@ pub fn abbreviate_home(path: &Path, home: &Path) -> String {
 }
 
 #[cfg(test)]
-pub(crate) mod fixtures {
-    use std::{sync::Arc, time::Duration};
-
-    use config::{Appearance, AppearanceFile};
-    use kernel::{
-        Moment,
-        domain::{
-            AudioFormat,
-            Crossfade,
-            CustomSetting,
-            KeymapOverrides,
-            Model,
-            Replaygain,
-            Tags,
-            Track,
-        },
-        playlist::Playlist,
-        update::keymap::Bindings,
-    };
-    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, widgets::Widget};
-
-    use crate::{
-        geometry::CellAspect,
-        overlay::settings::SettingsView,
-        scene::{PixelPath, Scene},
-        spectrum::{SPECTRUM_BANDS, Spectrum},
-        theme::{ColorDepth, Theme},
-    };
-
-    pub(crate) fn noir() -> Theme {
-        let file =
-            config::parse_theme(include_str!("../../../themes/noir.toml"), "noir")
-                .unwrap();
-        Theme::from(file)
-    }
-
-    pub(crate) fn painted<W>(widget: &W, width: u16, height: u16) -> String
-    where
-        for<'a> &'a W: Widget,
-    {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal
-            .draw(|frame| frame.render_widget(widget, frame.area()))
-            .unwrap();
-        format!("{}", terminal.backend())
-    }
-
-    pub(crate) fn painted_buffer<W>(widget: &W, width: u16, height: u16) -> Buffer
-    where
-        for<'a> &'a W: Widget,
-    {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal
-            .draw(|frame| frame.render_widget(widget, frame.area()))
-            .unwrap();
-        terminal.backend().buffer().clone()
-    }
-
-    pub(crate) fn find_text(buffer: &Buffer, needle: &str) -> Option<(u16, u16)> {
-        let wanted: Vec<char> = needle.chars().collect();
-        let width = wanted.len();
-        if width == 0 {
-            return None;
-        }
-        for y in 0..buffer.area.height {
-            let symbols: Vec<&str> = (0..buffer.area.width)
-                .filter_map(|x| buffer.cell((x, y)))
-                .map(ratatui::buffer::Cell::symbol)
-                .collect();
-            if symbols.len() < width {
-                continue;
-            }
-            for start in 0..=symbols.len() - width {
-                let matched = wanted.iter().enumerate().all(|(offset, glyph)| {
-                    symbols
-                        .get(start + offset)
-                        .is_some_and(|symbol| *symbol == glyph.to_string())
-                });
-                if matched {
-                    return u16::try_from(start).ok().map(|x| (x, y));
-                }
-            }
-        }
-        None
-    }
-
-    pub(crate) fn custom_settings() -> Vec<CustomSetting> {
-        config::custom_settings(&AppearanceFile::default())
-    }
-
-    pub(crate) fn settings_values(
-        custom_settings: &[CustomSetting],
-    ) -> SettingsView<'_> {
-        SettingsView {
-            crossfade: Crossfade::default(),
-            replaygain: Replaygain::On,
-            theme: "noir",
-            themes: &[],
-            sleep_presets: &[],
-            music_dir: "/home/user/Music",
-            output_device: None,
-            output_devices: &[],
-            appearance: Appearance::default(),
-            custom_settings,
-        }
-    }
-
-    pub(crate) fn track(title: &str) -> Arc<Track> {
-        Arc::new(
-            Track::builder()
-                .path(format!("/music/{title}.mp3"))
-                .duration(Duration::from_secs(245))
-                .tags(Tags {
-                    title: Some(title.to_string()),
-                    artist: Some("Test Artist".to_string()),
-                    ..Tags::default()
-                })
-                .audio_format(AudioFormat::default())
-                .build(),
-        )
-    }
-
-    pub(crate) fn model_with_tracks(count: usize) -> Model {
-        Model {
-            playlist: Playlist {
-                tracks: (0..count)
-                    .map(|index| track(&format!("song{index:02}")))
-                    .collect(),
-                ..Playlist::default()
-            },
-            ..Model::default()
-        }
-    }
-
-    #[derive(Debug)]
-    pub(crate) struct SceneSources {
-        pub(crate) model: Model,
-        pub(crate) theme: Theme,
-        pub(crate) appearance: AppearanceFile,
-        pub(crate) bindings: Bindings,
-        pub(crate) spectrum: Spectrum,
-    }
-
-    impl SceneSources {
-        pub(crate) fn new(model: Model) -> Self {
-            Self {
-                model,
-                theme: noir(),
-                appearance: AppearanceFile::default(),
-                bindings: Bindings::new(&KeymapOverrides::default()),
-                spectrum: [0.0; SPECTRUM_BANDS],
-            }
-        }
-
-        pub(crate) fn scene(&self) -> Scene<'_> {
-            Scene {
-                model: &self.model,
-                theme: &self.theme,
-                color_depth: ColorDepth::TrueColor,
-                appearance: &self.appearance,
-                bindings: self.bindings.as_slice(),
-                spectrum: &self.spectrum,
-                pixel_path: PixelPath::Halfblocks,
-                cell_aspect: CellAspect::default(),
-                clock: Duration::ZERO,
-                now: Moment::default(),
-                music_dir: "/home/user/Music",
-                sleep_left: None,
-            }
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
-    use std::{path::Path, time::Duration};
+    use std::path::Path;
 
     use config::{CoverStyle, ProgressTime};
     use ratatui::layout::{Rect, Size};
@@ -457,14 +274,10 @@ mod tests {
     use crate::{
         card::compact_progress_bar_width,
         primitive::bar::hud_progress_bar_width,
-        redraw::Presence,
-        scene::{
-            PixelPath,
-            abbreviate_home,
-            fixtures::{SceneSources, model_with_tracks},
-            painted_cover_style,
-        },
+        repaint::Presence,
+        scene::{PixelPath, abbreviate_home, painted_cover_style},
         screen::{Breakpoint, FrameLayout},
+        test_support::{SceneSources, model_with_tracks},
     };
 
     #[rstest]
@@ -556,7 +369,7 @@ mod tests {
         }
         let scene = sources.scene();
         let layout = FrameLayout::new(
-            &scene.layout_inputs(),
+            &scene.layout_parts(),
             Rect::new(0, 0, size.width, size.height),
         );
         let on_screen = scene.on_screen(&layout);
@@ -567,14 +380,7 @@ mod tests {
                 let row_width = metrics.progress_row.width;
                 let expected = match style.unwrap() {
                     ProgressTime::Remaining => {
-                        let view = scene.card_view();
-                        let duration = view
-                            .displayed_track
-                            .and_then(|track| track.duration())
-                            .unwrap_or(Duration::ZERO);
-                        let remaining =
-                            duration.saturating_sub(view.player.position_at(view.now));
-                        hud_progress_bar_width(row_width, remaining)
+                        hud_progress_bar_width(row_width, scene.card_view().remaining())
                     }
                     ProgressTime::Elapsed => row_width,
                 };

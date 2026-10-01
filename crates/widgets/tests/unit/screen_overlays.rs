@@ -11,27 +11,29 @@ use kernel::domain::{
 use ratatui::layout::Rect;
 use widgets::{CoverArt, FrameLayout, Screen};
 
-use crate::unit::support::{Scenery, model_with_tracks, painted, track};
+use crate::unit::support::{SceneSources, model_with_tracks, rendered, track};
 
 fn frame_with_overlay(overlay: Overlay) -> String {
-    let mut sources = Scenery::new(model_with_tracks(3));
+    let mut sources = SceneSources::new(model_with_tracks(3));
     sources.model.workspace.overlay = Some(overlay);
     let scene = sources.scene();
     let area = Rect::new(0, 0, 80, 24);
-    let layout = FrameLayout::new(&scene.layout_inputs(), area);
+    let layout = FrameLayout::new(&scene.layout_parts(), area);
     assert!(
         layout.overlay.is_some(),
         "an active overlay must claim a rect in the full frame's layout"
     );
-    painted(
-        &Screen {
-            scene,
-            layout: &layout,
-            cover_art: CoverArt::Missing,
-        },
-        80,
-        24,
-    )
+    rendered(80, 24, |frame| {
+        frame.render_widget(
+            &Screen {
+                scene,
+                layout: &layout,
+                cover_art: &CoverArt::Missing,
+            },
+            frame.area(),
+        );
+    })
+    .to_string()
 }
 
 #[test]
@@ -94,7 +96,7 @@ fn the_source_dir_overlay_is_painted_over_the_full_frame() {
 
 #[test]
 fn the_save_playlist_banner_is_painted_over_the_full_frame() {
-    let mut sources = Scenery::new(model_with_tracks(3));
+    let mut sources = SceneSources::new(model_with_tracks(3));
     sources.model.workspace.overlay = Some(Overlay::SavePlaylist {
         typed: TextEntry {
             input: "mixtape".to_string(),
@@ -103,16 +105,18 @@ fn the_save_playlist_banner_is_painted_over_the_full_frame() {
     });
     let scene = sources.scene();
     let area = Rect::new(0, 0, 80, 24);
-    let layout = FrameLayout::new(&scene.layout_inputs(), area);
-    let text = painted(
-        &Screen {
-            scene,
-            layout: &layout,
-            cover_art: CoverArt::Missing,
-        },
-        80,
-        24,
-    );
+    let layout = FrameLayout::new(&scene.layout_parts(), area);
+    let text = rendered(80, 24, |frame| {
+        frame.render_widget(
+            &Screen {
+                scene,
+                layout: &layout,
+                cover_art: &CoverArt::Missing,
+            },
+            frame.area(),
+        );
+    })
+    .to_string();
     assert!(text.contains("mixtape"), "got {text:?}");
     assert!(
         text.contains("song00"),

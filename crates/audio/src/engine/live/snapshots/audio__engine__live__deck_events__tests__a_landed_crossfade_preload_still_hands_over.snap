@@ -1,0 +1,20 @@
+---
+source: crates/audio/src/engine/live/track.rs
+expression: log
+---
+[
+    Preload(
+        Crossfade {
+            path: "/b",
+            gain: None,
+            speed: Speed(
+                1.0,
+            ),
+        },
+    ),
+    Arm {
+        cue: Some(
+            90s,
+        ),
+    },
+]

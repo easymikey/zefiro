@@ -5,60 +5,62 @@ expression: effects(cmd)
 ---
 [
     Audio(
-        Load {
-            path: "/tmp/track1.flac",
-            gain: None,
-            revision: Revision(
-                1,
-            ),
-        },
+        Load(
+            TrackRequest {
+                path: "/tmp/track1.flac",
+                gain: None,
+                revision: Revision(
+                    1,
+                ),
+            },
+        ),
     ),
     Library(
-        AppendHistory {
-            track: Track {
+        AppendHistory(
+            HistoryEntry {
                 path: "/tmp/track1.flac",
-                duration: Some(
-                    100s,
+                title: "track1",
+                artist: None,
+                at: Moment(
+                    0ns,
                 ),
-                tags: Tags {
-                    title: None,
-                    artist: None,
-                    album: None,
-                    album_artist: None,
-                    date: None,
-                    genre: None,
-                    track: None,
-                    track_total: None,
-                    disc: None,
-                    composer: None,
-                    comment: None,
-                    lyrics: None,
-                },
-                audio_format: AudioFormat {
-                    format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
-                    bits_per_sample: None,
-                    channels: None,
-                    replay_gain: None,
-                },
-                display: "track1.flac",
-                tagging: Read,
             },
-            at: UnixSeconds(
-                0,
-            ),
-        },
+        ),
     ),
     Macos(
         NowPlaying(
-            Track {
-                title: "track1",
-                artist: None,
-                album: None,
-                duration: 100s,
-                path: "/tmp/track1.flac",
-            },
+            Some(
+                Track {
+                    path: "/tmp/track1.flac",
+                    duration: Some(
+                        100s,
+                    ),
+                    tags: Tags {
+                        title: None,
+                        artist: None,
+                        album: None,
+                        album_artist: None,
+                        date: None,
+                        genre: None,
+                        track: None,
+                        track_total: None,
+                        disc: None,
+                        composer: None,
+                        comment: None,
+                        lyrics: None,
+                    },
+                    audio_format: AudioFormat {
+                        format: None,
+                        bitrate_kbps: None,
+                        sample_rate_hz: None,
+                        bits_per_sample: None,
+                        channels: None,
+                        replay_gain: None,
+                    },
+                    display: "track1.flac",
+                    tagging: Read,
+                },
+            ),
         ),
     ),
     Audio(

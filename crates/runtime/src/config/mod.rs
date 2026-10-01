@@ -8,7 +8,7 @@ pub(crate) mod session;
 pub(crate) mod watch;
 pub(crate) mod write;
 
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 #[must_use]
 #[derive(Debug, Clone)]
@@ -27,29 +27,32 @@ pub struct SeenTexts {
     pub config: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ConfigTiming {
-    pub(crate) save_debounce: Duration,
-}
-
-impl Default for ConfigTiming {
-    fn default() -> Self {
-        Self {
-            save_debounce: Duration::from_millis(200),
-        }
-    }
-}
-
 #[cfg(test)]
-mod tests {
+pub(crate) mod fixtures {
     use std::time::Duration;
 
-    use crate::config::ConfigTiming;
+    use crossbeam_channel::Receiver;
 
-    #[test]
-    fn the_stock_timing_debounces_a_save_by_two_hundred_milliseconds() {
-        let timing = ConfigTiming::default();
+    use crate::config::{ConfigPaths, SeenTexts};
 
-        assert_eq!(timing.save_debounce, Duration::from_millis(200));
+    pub(crate) const RECV_TIMEOUT: Duration = Duration::from_secs(2);
+    pub(crate) const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
+
+    pub(crate) fn paths(directory: &tempfile::TempDir) -> ConfigPaths {
+        ConfigPaths {
+            config: directory.path().join("config.toml"),
+            appearance: directory.path().join("sifr-ui.toml"),
+            themes: directory.path().join("themes"),
+            theme: Some("noir".to_string()),
+            seen: SeenTexts::default(),
+        }
+    }
+
+    pub(crate) fn drain<T>(receiver: &Receiver<T>) -> Vec<T> {
+        let mut collected = vec![receiver.recv_timeout(RECV_TIMEOUT).unwrap()];
+        while let Ok(item) = receiver.recv_timeout(SETTLE_TIMEOUT) {
+            collected.push(item);
+        }
+        collected
     }
 }

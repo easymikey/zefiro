@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use strum::IntoStaticStr;
 
@@ -10,6 +10,7 @@ use crate::domain::{
     Direction,
     Driver,
     DriverError,
+    Favorites,
     HistoryEntry,
     KeyPress,
     KeymapOverrides,
@@ -35,17 +36,20 @@ pub enum Message {
         row: SettingRow,
         direction: Direction,
     },
-    Workspace(WorkspaceRequest),
+    Toast(Toast),
     Playback(PlaybackRequest),
     Browse(BrowseRequest),
     Queue(QueueRequest),
-    Loaded(PlaylistRequest),
+    Playlist(PlaylistRequest),
     Library(LibraryEvent),
     Config(ConfigEvent),
     Audio(AudioEvent),
     Macos(MacosEvent),
     Elapsed(Timer),
-    Driver(Driver, DriverMessage),
+    Driver {
+        driver: Driver,
+        event: DriverMessage,
+    },
     Key(KeyPress),
     Viewport {
         visible_rows: usize,
@@ -83,7 +87,6 @@ pub enum Timer {
     Toast(Revision),
     Sleep(Revision),
     Mark(Revision),
-    Restart(Driver),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, IntoStaticStr)]
@@ -145,12 +148,6 @@ pub enum HistoryRequest {
     Enqueue,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum WorkspaceRequest {
-    ShowToast(Toast),
-    ClearToast,
-}
-
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum ConfigEvent {
@@ -158,7 +155,7 @@ pub enum ConfigEvent {
     ThemeReloaded(ThemeName),
     ThemesLoaded(Vec<ThemeName>),
     MusicDirReloaded(PathBuf),
-    CustomRowsReloaded(Vec<CustomSetting>),
+    CustomSettingsReloaded(Vec<CustomSetting>),
     SourceFailed { source: ConfigFile, text: String },
     SourceRecovered(ConfigFile),
     Error(ConfigError),
@@ -226,7 +223,7 @@ pub enum BrowseRequest {
     Bottom,
     PlaySelected,
     CycleSort,
-    Rescan,
+    FullScan,
     ToggleFavorite,
     CursorTo(PlaylistIndex),
     PageBy(Direction),
@@ -264,7 +261,7 @@ pub enum LibraryEvent {
         tracks: Vec<Arc<Track>>,
         revision: Revision,
     },
-    FavoritesLoaded(HashSet<PathBuf>),
+    FavoritesLoaded(Favorites),
     HistoryLoaded(Vec<HistoryEntry>),
     Error(LibraryError),
 }
@@ -355,42 +352,13 @@ pub enum AudioEvent {
     DeviceFellBack(OutputDevice),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, IntoStaticStr)]
+#[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum MacosEvent {
     Volume(Percent),
     OutputRouteChanged,
     HardwareWatchError(String),
-    MediaKey(Gesture),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Gesture {
-    Play,
-    Pause,
-    Toggle,
-    Stop,
-    Next,
-    Previous,
-    SeekForward,
-    SeekBack,
-    Scrub(Duration),
-}
-
-impl From<Gesture> for PlaybackRequest {
-    fn from(gesture: Gesture) -> Self {
-        match gesture {
-            Gesture::Play => PlaybackRequest::Play,
-            Gesture::Pause => PlaybackRequest::Pause,
-            Gesture::Toggle => PlaybackRequest::Toggle,
-            Gesture::Stop => PlaybackRequest::Stop,
-            Gesture::Next => PlaybackRequest::Next,
-            Gesture::Previous => PlaybackRequest::Previous,
-            Gesture::SeekForward => PlaybackRequest::SeekForward,
-            Gesture::SeekBack => PlaybackRequest::SeekBack,
-            Gesture::Scrub(position) => PlaybackRequest::SeekTo(position),
-        }
-    }
+    MediaKey(PlaybackRequest),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -428,12 +396,6 @@ pub enum AudioError {
     Seek { reason: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EngineError {
-    WhileMuted(AudioError),
-    WhileNotPlaying(PathBuf),
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -456,7 +418,7 @@ mod tests {
 
     #[rstest::rstest]
     #[case::audio(Message::from(AudioEvent::Ended), Message::Audio(AudioEvent::Ended))]
-    #[case::system(
+    #[case::macos(
         Message::from(MacosEvent::OutputRouteChanged),
         Message::Macos(MacosEvent::OutputRouteChanged)
     )]
@@ -468,7 +430,7 @@ mod tests {
         Message::from(ConfigEvent::ThemeReloaded(ThemeName::from_static("noir"))),
         Message::Config(ConfigEvent::ThemeReloaded(ThemeName::from_static("noir")))
     )]
-    fn a_fact_converts_into_its_message(
+    fn an_event_converts_into_its_message(
         #[case] converted: Message,
         #[case] expected: Message,
     ) {

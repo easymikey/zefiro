@@ -8,18 +8,13 @@ mod error;
 mod spectrum;
 mod tap;
 
-pub use config::{EngineConfig, UnityVolume};
+pub use config::EngineConfig;
 use crossbeam_channel::Receiver as CmdReceiver;
-pub use error::{DeviceError, Error};
 use kernel::{AudioCmd, AudioEvent, Outbox, Refusals};
 pub use spectrum::SpectrumAnalyzer;
 pub use tap::SpectrumTap;
 
-use crate::{
-    deck::Deck,
-    engine::thread::{EngineThread, audio_thread, start},
-    tap::Handoff,
-};
+use crate::{engine::audio_loop::run_audio_loop, tap::Handoff};
 
 pub const DECODABLE_EXTENSIONS: &[&str] =
     &["flac", "mp3", "mp4", "m4a", "m4b", "ogg", "wav", "mkv"];
@@ -42,16 +37,6 @@ impl AudioLoop {
         commands: &CmdReceiver<AudioCmd>,
         outbox: &O,
     ) {
-        let AudioLoop { config, spectrum } = self;
-        let mut deck = Deck::new(spectrum);
-        let state = start(config, &mut deck);
-        audio_thread(
-            commands,
-            EngineThread {
-                engine: state,
-                deck,
-            },
-            outbox,
-        );
+        run_audio_loop(commands, self, outbox);
     }
 }

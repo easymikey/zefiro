@@ -4,13 +4,11 @@ use crate::domain::{
     CustomSetting,
     Drivers,
     Favorites,
-    History,
-    Loaded,
+    HistoryEntry,
     Player,
     PlaylistIndex,
     Revisions,
     Settings,
-    ThemeName,
     Themes,
     Track,
     Transport,
@@ -30,17 +28,10 @@ pub enum ScanStatus {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum WindowColors {
-    Themed(ThemeName),
-    #[default]
-    Default,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct Model {
     pub workspace: Workspace,
-    pub library: Loaded<Library>,
+    pub library: Option<Library>,
     pub music_dir: PathBuf,
     pub scan_status: ScanStatus,
     pub playlist: Playlist,
@@ -48,22 +39,23 @@ pub struct Model {
     pub queue: Vec<PlaylistIndex>,
     pub player: Player,
     pub transport: Transport,
-    pub history: History,
+    pub history: Vec<HistoryEntry>,
     pub favorites: Favorites,
     pub settings: Settings,
     pub custom_settings: Vec<CustomSetting>,
     pub revisions: Revisions,
     pub themes: Themes,
-    pub window_colors: WindowColors,
     pub drivers: Drivers,
 }
 
 impl Model {
     #[must_use]
     pub fn displayed_track(&self) -> Option<&Arc<Track>> {
-        self.player
-            .current()
-            .or_else(|| self.library.view_track(self.workspace.browse.selected()))
+        self.player.current().or_else(|| {
+            self.library.as_ref().and_then(|library| {
+                library.view_track(self.workspace.browse.selected())
+            })
+        })
     }
 
     #[must_use]
@@ -97,7 +89,6 @@ mod displayed_track_tests {
     use crate::domain::{
         Browse,
         Cursor,
-        Loaded,
         Moment,
         Player,
         Playhead,
@@ -112,7 +103,7 @@ mod displayed_track_tests {
     #[test]
     fn playing_track_wins_over_the_playlist_selection() {
         let mut model = Model {
-            library: Loaded::Ready(Library {
+            library: Some(Library {
                 all: vec![titled_track("selected")],
                 view: vec![TrackIndex::new(0)],
             }),
@@ -137,7 +128,7 @@ mod displayed_track_tests {
     #[test]
     fn stopped_falls_back_to_the_selected_playlist_track() {
         let model = Model {
-            library: Loaded::Ready(Library {
+            library: Some(Library {
                 all: vec![titled_track("a"), titled_track("b")],
                 view: vec![TrackIndex::new(0), TrackIndex::new(1)],
             }),

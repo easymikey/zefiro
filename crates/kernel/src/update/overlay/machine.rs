@@ -100,17 +100,15 @@ fn open(previous: Option<&Overlay>, opened: Overlay) -> Transition {
     ))
 }
 
-fn hold() -> FollowUp {
-    FollowUp::Playback(PlaybackRequest::Hold)
-}
-
 fn release() -> FollowUp {
     FollowUp::Playback(PlaybackRequest::Release)
 }
 
 fn opened_playback(previous: Option<&Overlay>, opened: &Overlay) -> Option<FollowUp> {
     match (previous, opened) {
-        (_, Overlay::Settings { .. }) => Some(hold()),
+        (_, Overlay::Settings { .. }) => {
+            Some(FollowUp::Playback(PlaybackRequest::Hold))
+        }
         (Some(Overlay::Settings { .. }), _) => Some(release()),
         (_, _) => None,
     }
@@ -155,7 +153,7 @@ fn confirm_search(search: CursorOver<SearchQuery>) -> Transition {
     };
     Ok((
         None,
-        OverlayEffect::from(FollowUp::Loaded(PlaylistRequest::JumpTo(
+        OverlayEffect::from(FollowUp::Playlist(PlaylistRequest::JumpTo(
             PlaylistIndex::new(index),
         ))),
     ))
@@ -199,7 +197,9 @@ fn confirm_music_dir(typed: TextEntry) -> Transition {
         return Ok((Some(open), OverlayEffect::default()));
     }
     let save = Effect::Config(ConfigCmd::Save(
-        ConfigPatch::builder().music_dir(typed.input).build(),
+        ConfigPatch::builder()
+            .music_dir(std::path::PathBuf::from(typed.input))
+            .build(),
     ));
     Ok((None, OverlayEffect::from(Cmd::from(save))))
 }

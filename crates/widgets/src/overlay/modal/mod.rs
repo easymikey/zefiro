@@ -6,11 +6,17 @@ mod prompt;
 
 pub use frame::ModalAreas;
 pub(crate) use frame::{Hint, Modal, ModalBounds, ModalSize, PlacedModal};
-pub(crate) use metrics::{ModalMetrics, ModalRowColors, modal_title};
+pub(crate) use metrics::{
+    COLUMN_SPACING,
+    ModalRowColors,
+    QUERY_ROWS,
+    SCROLL_PADDING,
+    SCROLLBAR_INSET,
+    modal_title,
+};
 pub(crate) use place::list_capacity;
 pub(crate) use placement::{
     ModalBorder,
-    ModalChrome,
     ModalPlacement,
     OverlayContainer,
     column_width,

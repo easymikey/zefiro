@@ -1,8 +1,5 @@
-use std::time::Duration;
-
 use config::SpeedChip;
 use kernel::playlist::RepeatMode;
-use raster::unit_fraction;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -13,14 +10,15 @@ use ratatui::{
 
 use crate::{
     card::{CardStatus, CardView, card_status, status_label},
+    pixels::unit_fraction,
     primitive::{
-        bar::{BarFill, fill_line},
+        bar::{BarFill, fill},
         chip::{ChipColors, speed_chip_spans, speed_chip_width},
         relative_time::elapsed_of,
         span::{line, text},
         text::truncate,
     },
-    theme::{ActiveTheme, FillColors},
+    theme::{ActiveTheme, BarStyle, Role},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -56,12 +54,7 @@ pub(crate) fn progress_bar_width(
     speed_chip: SpeedChip,
     width: u16,
 ) -> u16 {
-    let duration = view
-        .displayed_track
-        .and_then(|track| track.duration())
-        .unwrap_or(Duration::ZERO);
-    let position = view.player.position_at(view.now);
-    let time = elapsed_of(position, duration);
+    let time = elapsed_of(view.position(), view.duration());
     let time_width = u16::try_from(time.chars().count())
         .unwrap_or(u16::MAX)
         .min(width);
@@ -74,10 +67,10 @@ impl MinimalScreen<'_> {
     fn title_line(&self, width: u16) -> Line<'static> {
         let status = card_status(self.view.output, self.view.player);
         let color = match status {
-            CardStatus::OutputLost => self.theme.secondary_accent(),
-            CardStatus::Playing => self.theme.accent(),
-            CardStatus::Paused => self.theme.text(),
-            CardStatus::Stopped => self.theme.dim(),
+            CardStatus::OutputLost => self.theme.role(Role::Accent2),
+            CardStatus::Playing => self.theme.role(Role::Accent),
+            CardStatus::Paused => self.theme.role(Role::Text),
+            CardStatus::Stopped => self.theme.role(Role::Dim),
         };
         let title = self
             .view
@@ -88,14 +81,10 @@ impl MinimalScreen<'_> {
     }
 
     fn progress_line(&self, width: u16) -> Line<'static> {
-        let accent = self.theme.accent();
-        let dim = self.theme.dim();
-        let duration = self
-            .view
-            .displayed_track
-            .and_then(|track| track.duration())
-            .unwrap_or_default();
-        let position = self.view.player.position_at(self.view.now);
+        let accent = self.theme.role(Role::Accent);
+        let dim = self.theme.role(Role::Dim);
+        let duration = self.view.duration();
+        let position = self.view.position();
         let fraction = if duration.is_zero() {
             0.0
         } else {
@@ -108,9 +97,12 @@ impl MinimalScreen<'_> {
         let gap = u16::from(width > time_width);
         let chip_width = speed_chip_width(self.view.speed, self.speed_chip);
         let bar_width = progress_bar_width(self.view, self.speed_chip, width);
-        let mut spans = fill_line(
+        let mut spans = fill(
             &BarFill::progress(unit_fraction(fraction), usize::from(bar_width)),
-            FillColors { accent, dim },
+            BarStyle {
+                fill: accent,
+                track: dim,
+            },
         )
         .spans;
         if bar_width > 0 && gap > 0 {
@@ -118,7 +110,7 @@ impl MinimalScreen<'_> {
         }
         spans.push(
             text(truncate(&time, usize::from(time_width)).into_owned())
-                .fg(self.theme.text())
+                .fg(self.theme.role(Role::Text))
                 .into(),
         );
         let chip = speed_chip_spans(
@@ -148,11 +140,11 @@ impl MinimalScreen<'_> {
         };
         let status = format!(
             "Vol {}%  Shuf {shuffle}  Rep {repeat}",
-            self.view.volume.value()
+            self.view.volume.get()
         );
         Line::from(Span::styled(
             truncate(&status, usize::from(width)).into_owned(),
-            Style::default().fg(self.theme.dim()),
+            Style::default().fg(self.theme.role(Role::Dim)),
         ))
     }
 }

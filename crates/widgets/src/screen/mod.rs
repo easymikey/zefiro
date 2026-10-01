@@ -8,7 +8,7 @@ mod too_small;
 
 pub use breakpoint::Breakpoint;
 pub(crate) use compact::CompactScreen;
-pub use frame_layout::{FrameLayout, LayoutInputs};
+pub use frame_layout::{FrameLayout, FrameLayoutParts};
 pub(crate) use full::FullScreen;
 pub(crate) use minimal::{
     MinimalScreen,

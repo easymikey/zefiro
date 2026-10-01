@@ -2,23 +2,10 @@ use std::{cmp::Reverse, sync::Arc};
 
 use crate::domain::Track;
 
-struct ScoreWeights {
-    match_score: i32,
-    consecutive_bonus: i32,
-    boundary_bonus: i32,
-    position_penalty_divisor: i32,
-}
-
-impl Default for ScoreWeights {
-    fn default() -> Self {
-        Self {
-            match_score: 16,
-            consecutive_bonus: 15,
-            boundary_bonus: 8,
-            position_penalty_divisor: 8,
-        }
-    }
-}
+const MATCH_SCORE: i32 = 16;
+const CONSECUTIVE_BONUS: i32 = 15;
+const BOUNDARY_BONUS: i32 = 8;
+const POSITION_PENALTY_DIVISOR: i32 = 8;
 
 #[cfg(test)]
 #[must_use]
@@ -35,34 +22,29 @@ struct Scoring {
     previous_char: Option<char>,
 }
 
-struct MatchContext<'a> {
-    query_chars: &'a [char],
-    weights: &'a ScoreWeights,
-}
-
 impl Scoring {
     fn advance(
         mut self,
-        context: &MatchContext<'_>,
+        query_chars: &[char],
         step: (usize, char),
     ) -> Result<Self, Self> {
         let (position, haystack_char) = step;
-        let Some(&query_char) = context.query_chars.get(self.query_index) else {
+        let Some(&query_char) = query_chars.get(self.query_index) else {
             return Err(self);
         };
         if haystack_char == query_char {
-            self.total += context.weights.match_score;
+            self.total += MATCH_SCORE;
             let starts_word = self
                 .previous_char
                 .is_none_or(|previous| !previous.is_alphanumeric());
             if starts_word {
-                self.total += context.weights.boundary_bonus;
+                self.total += BOUNDARY_BONUS;
             }
             if self
                 .previous_matched
                 .is_some_and(|previous| previous + 1 == position)
             {
-                self.total += context.weights.consecutive_bonus;
+                self.total += CONSECUTIVE_BONUS;
             }
             self.previous_matched = Some(position);
             self.query_index += 1;
@@ -76,17 +58,12 @@ fn score_chars(query_chars: &[char], haystack: &str) -> Option<i32> {
     if query_chars.is_empty() {
         return Some(0);
     }
-    let weights = ScoreWeights::default();
-    let context = MatchContext {
-        query_chars,
-        weights: &weights,
-    };
     let scoring = haystack
         .chars()
         .flat_map(char::to_lowercase)
         .enumerate()
         .try_fold(Scoring::default(), |scoring, step| {
-            scoring.advance(&context, step)
+            scoring.advance(query_chars, step)
         })
         .unwrap_or_else(|finished| finished);
 
@@ -96,7 +73,7 @@ fn score_chars(query_chars: &[char], haystack: &str) -> Option<i32> {
     let mut total = scoring.total;
     if let Some(last) = scoring.previous_matched {
         let last = i32::try_from(last).unwrap_or(i32::MAX);
-        total -= last / weights.position_penalty_divisor;
+        total -= last / POSITION_PENALTY_DIVISOR;
     }
     Some(total)
 }
@@ -182,18 +159,18 @@ mod score_tests {
     }
 
     #[test]
-    fn none_when_query_chars_are_not_a_subsequence() {
+    fn a_query_that_is_not_a_subsequence_scores_none() {
         assert_eq!(score("xyz", "Moon River"), None);
     }
 
     #[test]
-    fn some_when_query_is_a_subsequence_case_insensitively() {
+    fn a_query_that_is_a_subsequence_scores_some_ignoring_case() {
         assert!(score("mnrv", "Moon River").is_some());
         assert!(score("MNRV", "moon river").is_some());
     }
 
     #[test]
-    fn ranks_contiguous_prefix_above_scattered_subsequence() {
+    fn a_contiguous_prefix_ranks_above_a_scattered_subsequence() {
         let tight = score("moon", "Moon River").unwrap();
         let scattered = score("mnrv", "Moon River").unwrap();
         assert!(
@@ -204,7 +181,7 @@ mod score_tests {
 
     #[rstest]
     #[case("ist", "İst", 79)]
-    fn matches_through_expanded_non_ascii_lowercasing(
+    fn a_match_survives_non_ascii_lowercase_expansion(
         #[case] query: &str,
         #[case] haystack: &str,
         #[case] expected: i32,

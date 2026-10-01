@@ -10,8 +10,9 @@ use ratatui::{
 };
 
 use crate::{
-    card::{CardMetrics, CardParts},
+    card::{Card, CardMetrics},
     primitive::{span::text, text::truncate},
+    theme::Role,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,22 +63,21 @@ pub(crate) fn status_label(status: CardStatus) -> StatusLabel {
     }
 }
 
-pub(crate) fn paint(buffer: &mut Buffer, context: &CardParts<'_>) {
-    let metrics: &CardMetrics = context.metrics;
-    let text_color: Color = context.theme.text();
-    let dim_color: Color = context.theme.dim();
-    let accent_color: Color = context.theme.accent();
+pub(crate) fn paint(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
+    let text_color: Color = card.theme.role(Role::Text);
+    let dim_color: Color = card.theme.role(Role::Dim);
+    let accent_color: Color = card.theme.role(Role::Accent);
 
-    let current = context.view.displayed_track;
+    let current = card.view.displayed_track;
     let title: Cow<'_, str> =
         current.map_or_else(|| "No track".into(), |track| track.song_title().into());
     let artist = current
         .and_then(|track| track.tags().artist.as_deref())
         .unwrap_or("");
 
-    let status = card_status(context.view.output, context.view.player);
+    let status = card_status(card.view.output, card.view.player);
     let status_color = match status {
-        CardStatus::OutputLost => context.theme.secondary_accent(),
+        CardStatus::OutputLost => card.theme.role(Role::Accent2),
         CardStatus::Playing => accent_color,
         CardStatus::Paused => text_color,
         CardStatus::Stopped => dim_color,

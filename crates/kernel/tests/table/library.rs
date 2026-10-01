@@ -1,8 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use kernel::{
     BrowseRequest,
@@ -24,11 +20,7 @@ use kernel::{
 };
 use rstest::rstest;
 
-use crate::support::effects;
-
-fn listed(path: &str) -> Arc<Track> {
-    Arc::new(Track::listed(Path::new(path)))
-}
+use crate::support::{effects, track_at};
 
 fn tagged(path: &str, title: &str, seconds: u64) -> Arc<Track> {
     Arc::new(
@@ -53,7 +45,7 @@ fn openings(cmd: Cmd) -> usize {
 
 fn listed_library(paths: &[&str]) -> (Model, Cmd) {
     let mut model = Model::default();
-    let tracks = paths.iter().copied().map(listed).collect();
+    let tracks = paths.iter().copied().map(track_at).collect();
     let cmd = update(
         &mut model,
         Message::Library(LibraryEvent::Listed {
@@ -111,7 +103,7 @@ fn an_empty_listing_opens_the_library_at_once() {
 fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
     let (mut model, _) = listed_library(&["/music/a.flac", "/music/b.flac"]);
     model.player = Player::Playing {
-        track: listed("/music/a.flac"),
+        track: track_at("/music/a.flac"),
         head: Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default()),
         preload: Preload::None,
     };
@@ -158,7 +150,7 @@ fn a_tagged_chunk_reaches_the_library_behind_the_playlist() {
     .unwrap();
 
     assert_eq!(
-        model.library.ready().map(|ready| ready
+        model.library.as_ref().map(|ready| ready
             .all
             .iter()
             .map(|track| track.display().to_owned())
@@ -234,7 +226,7 @@ fn rescanning_model() -> Model {
     };
     let cmd = update(
         &mut model,
-        Message::Browse(BrowseRequest::Rescan),
+        Message::Browse(BrowseRequest::FullScan),
         Moment::default(),
     )
     .unwrap();
@@ -271,7 +263,7 @@ fn only_the_awaited_scan_generation_lands(
     let cmd = update(
         &mut model,
         Message::Library(LibraryEvent::Loaded {
-            tracks: vec![listed("/music/a.flac")],
+            tracks: vec![track_at("/music/a.flac")],
             revision: revision(bumps),
         }),
         Moment::default(),
@@ -279,7 +271,7 @@ fn only_the_awaited_scan_generation_lands(
     .unwrap();
 
     assert_eq!(
-        model.library.ready().map(|ready| ready.all.len()),
+        model.library.as_ref().map(|ready| ready.all.len()),
         installed
     );
     assert_eq!(model.scan_status, scan_status);
@@ -296,7 +288,7 @@ fn a_listing_asks_for_the_tags_of_everything_it_listed() {
     let cmd = update(
         &mut model,
         Message::Library(LibraryEvent::Listed {
-            tracks: vec![listed("/music/a.flac"), listed("/music/b.flac")],
+            tracks: vec![track_at("/music/a.flac"), track_at("/music/b.flac")],
             revision: Revision::default(),
         }),
         Moment::default(),
@@ -313,8 +305,8 @@ fn a_listing_from_a_superseded_scan_asks_for_no_tags() {
     let cmd = update(
         &mut model,
         Message::Library(LibraryEvent::Listed {
-            tracks: vec![listed("/music/a.flac")],
-            revision: Revision::UNSTAMPED,
+            tracks: vec![track_at("/music/a.flac")],
+            revision: Revision::default(),
         }),
         Moment::default(),
     )

@@ -1,8 +1,10 @@
 use std::{path::PathBuf, time::Duration};
 
 use kernel::domain::{
+    AudioSettings,
     Crossfade,
     DeviceName,
+    KeymapOverrides,
     OutputDevice,
     Percent,
     Replaygain,
@@ -13,7 +15,7 @@ use kernel::domain::{
 use serde::{Deserialize, Deserializer};
 
 use crate::{
-    appearance::from_bool,
+    appearance::{Flag, flag},
     error::{CrossfadeError, Error, TomlFile, parse_toml},
     keymap::KeymapFile,
 };
@@ -83,11 +85,9 @@ where
     SleepPresets::from_minutes(&minutes).map_err(serde::de::Error::custom)
 }
 
-fn replaygain<'de, D>(deserializer: D) -> Result<Replaygain, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    from_bool(deserializer, Replaygain::On, Replaygain::Off)
+impl Flag for Replaygain {
+    const ON: Self = Self::On;
+    const OFF: Self = Self::Off;
 }
 
 fn device<'de, D>(deserializer: D) -> Result<OutputDevice, D::Error>
@@ -101,12 +101,12 @@ where
         .map(|name| name.map_or(OutputDevice::SystemDefault, OutputDevice::Named))
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AudioConfig {
     #[serde(deserialize_with = "crossfade")]
     pub crossfade: Crossfade,
-    #[serde(deserialize_with = "replaygain")]
+    #[serde(deserialize_with = "flag")]
     pub replaygain: Replaygain,
     #[serde(deserialize_with = "device")]
     pub device: OutputDevice,
@@ -114,13 +114,13 @@ pub struct AudioConfig {
     pub sleep_presets: SleepPresets,
 }
 
-impl Default for AudioConfig {
-    fn default() -> Self {
+impl From<AudioConfig> for AudioSettings {
+    fn from(config: AudioConfig) -> Self {
         Self {
-            crossfade: Crossfade::default(),
-            replaygain: Replaygain::Off,
-            device: OutputDevice::SystemDefault,
-            sleep_presets: SleepPresets::default(),
+            crossfade: config.crossfade,
+            replaygain: config.replaygain,
+            device: config.device,
+            sleep_presets: config.sleep_presets,
         }
     }
 }
@@ -154,17 +154,46 @@ pub fn parse_config(text: &str) -> Result<ConfigToml, Error> {
     parse_toml(text, TomlFile::Config)
 }
 
+#[must_use]
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConfigReload {
+    pub keymap: KeymapOverrides,
+    pub music_dir: Option<PathBuf>,
+}
+
+pub fn parse_config_reload(text: &str) -> Result<ConfigReload, Error> {
+    parse_config(text).map(|config| ConfigReload {
+        keymap: config
+            .keymap
+            .0
+            .into_iter()
+            .map(|(action, binding)| (action, binding.0))
+            .collect(),
+        music_dir: config.music_dir,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{path::PathBuf, time::Duration};
 
     use kernel::{
         Bounded,
-        domain::{Crossfade, ThemeChoice, ThemeName},
+        domain::{
+            Action,
+            Crossfade,
+            KeyOverride,
+            KeymapOverrides,
+            ThemeChoice,
+            ThemeName,
+        },
     };
     use rstest::rstest;
 
-    use crate::{config_file::parse_config, error::Error};
+    use crate::{
+        config_file::{ConfigReload, parse_config, parse_config_reload},
+        error::Error,
+    };
 
     #[rstest]
     #[case::an_empty_file("defaults", "")]
@@ -185,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_toml_becomes_a_typed_parse_fault() {
+    fn invalid_toml_becomes_a_typed_parse_error() {
         let parsed = parse_config("volume = \"not-a-number\"");
         assert!(matches!(parsed, Err(Error::Parse { .. })));
     }
@@ -276,5 +305,37 @@ mod tests {
             config.theme,
             ThemeChoice::Named(ThemeName::from_static("AUTO"))
         );
+    }
+
+    #[test]
+    fn keymap_error_names_the_file_and_the_line() {
+        let Err(error) = parse_config_reload("[keymap]\nnext = \"x\"\n[keymap]\n")
+        else {
+            panic!("a broken config file must not parse");
+        };
+        let text = error.to_string();
+        assert_eq!(text.lines().nth(1), Some("config.toml:3"), "was {text:?}");
+    }
+
+    #[test]
+    fn a_config_file_yields_its_keymap_and_its_music_dir_and_ignores_other_tables() {
+        let parsed = parse_config_reload(
+            "music_dir = \"/tmp\"\ntheme = \"dark\"\n\n[audio]\ncrossfade = \"3s\"\n\n[keymap]\nnext = \"x\"\n",
+        );
+        assert_eq!(
+            parsed.ok(),
+            Some(ConfigReload {
+                keymap: KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]),
+                music_dir: Some(PathBuf::from("/tmp")),
+            })
+        );
+    }
+
+    #[test]
+    fn a_broken_config_file_reports_a_parse_error() {
+        assert!(matches!(
+            parse_config_reload("[keymap\nnot toml"),
+            Err(Error::Parse { .. })
+        ));
     }
 }

@@ -9,11 +9,11 @@ use ratatui::{
 
 use crate::{
     primitive::{
-        glyphs::{KeyHintsGlyphs, TruncateGlyphs},
+        glyphs,
         span::{line, text},
         text::truncate_line_to_width,
     },
-    theme::ActiveTheme,
+    theme::{ActiveTheme, Role},
 };
 
 const KEY_HINTS: &[(Action, &str)] = &[
@@ -139,12 +139,10 @@ fn key_hints_line(
     content: KeyHintsContent<'_>,
     width: u16,
 ) -> Line<'static> {
-    let chip_text: Color = theme.window_background();
+    let chip_text: Color = theme.role(Role::WindowBackground);
     let chip_background: Color = theme.muted_accent();
-    let label: Color = theme.text();
-    let separator_color: Color = theme.dim();
-    let glyphs = KeyHintsGlyphs::default();
-    let truncation = TruncateGlyphs::default();
+    let label: Color = theme.role(Role::Text);
+    let separator_color: Color = theme.role(Role::Dim);
 
     let pairs = pairs_for(content);
     let compact: Vec<ChipPair> = match content {
@@ -163,8 +161,9 @@ fn key_hints_line(
                 .iter()
                 .enumerate()
                 .flat_map(|(position, (key, name))| {
-                    let separator_piece = (position > 0)
-                        .then(|| text(glyphs.separator).fg(separator_color));
+                    let separator_piece = (position > 0).then(|| {
+                        text(glyphs::key_hints::SEPARATOR).fg(separator_color)
+                    });
                     separator_piece.into_iter().chain([
                         text(format!(" {key} ")).fg(chip_text).bg(chip_background),
                         text(format!(" {name}")).fg(label),
@@ -180,37 +179,19 @@ fn key_hints_line(
         render(&compact)
     };
 
-    truncate_line_to_width(line, usize::from(width), truncation)
+    truncate_line_to_width(line, usize::from(width))
 }
 
 #[cfg(test)]
 mod tests {
-    use kernel::{
-        domain::{Action, KeymapOverrides},
-        update::keymap::{Bindings, KeyBinding},
-    };
-    use ratatui::{Terminal, backend::TestBackend, widgets::Widget};
+    use kernel::{domain::Action, update::keymap::KeyBinding};
     use rstest::rstest;
 
     use crate::{
         key_hints::{KeyHintsContent, KeyHintsLine, chord_for_action},
-        scene::fixtures::noir,
+        test_support::{bindings, noir, rendered},
         theme::{ActiveTheme, ColorDepth},
     };
-
-    fn bindings() -> Vec<KeyBinding> {
-        Bindings::new(&KeymapOverrides::default())
-            .as_slice()
-            .to_vec()
-    }
-
-    fn widget_snapshot<W: Widget>(widget: W, width: u16, height: u16) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal
-            .draw(|frame| frame.render_widget(widget, frame.area()))
-            .unwrap();
-        format!("{}", terminal.backend())
-    }
 
     #[rstest]
     #[case(80)]
@@ -224,8 +205,9 @@ mod tests {
             content: KeyHintsContent::Keys(&bindings),
         };
         insta::assert_snapshot!(
-            format!("key_hints_chips_{width}"),
-            widget_snapshot(&widget, width, 1)
+            format!("key_hints_drop_chips_as_the_width_shrinks_{width}"),
+            rendered(width, 1, |frame| frame.render_widget(&widget, frame.area()))
+                .to_string()
         );
     }
 
@@ -255,7 +237,8 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             content: KeyHintsContent::SettingsHints(&bindings),
         };
-        let text = widget_snapshot(&widget, 80, 1);
+        let text = rendered(80, 1, |frame| frame.render_widget(&widget, frame.area()))
+            .to_string();
         assert!(text.contains("Enter/Space"), "got {text:?}");
     }
 }

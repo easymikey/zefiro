@@ -1,8 +1,6 @@
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
 };
 
 use kernel::{
@@ -12,28 +10,21 @@ use kernel::{
     Cmd,
     Cue,
     Effect,
+    Favorites,
+    HistoryEntry,
     LibraryCmd,
     MacosCmd,
     Message,
     Model,
     Moment,
-    NowPlaying,
     Playback,
     PlaybackChange,
     PlaybackRequest,
     Player,
     QueueRequest,
-    domain::{
-        Cursor,
-        Direction,
-        Loaded,
-        PlaylistIndex,
-        Revision,
-        ScanMode,
-        ScanStatus,
-        TrackIndex,
-        UnixSeconds,
-    },
+    TrackRequest,
+    cmd::ScanMode,
+    domain::{Cursor, Direction, PlaylistIndex, Revision, ScanStatus, TrackIndex},
     library::{Library, SortKey},
     playlist::PlayOrder,
     update::update,
@@ -80,9 +71,9 @@ fn queue_changed() -> Cmd {
 }
 
 fn favorites_saved(paths: &[&str]) -> Cmd {
-    let saved: HashSet<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let saved: Favorites = paths.iter().map(PathBuf::from).collect();
     Cmd::Batch(vec![
-        Effect::Library(LibraryCmd::SaveFavorites(Arc::new(saved))),
+        Effect::Library(LibraryCmd::SaveFavorites(saved)),
         Effect::Animate(Cue::FavoriteToggled),
     ])
 }
@@ -299,7 +290,7 @@ fn unsorted_library() -> Model {
     ];
     let view = (0..all.len()).map(TrackIndex::new).collect();
     Model {
-        library: Loaded::Ready(Library { all, view }),
+        library: Some(Library { all, view }),
         ..Default::default()
     }
 }
@@ -328,12 +319,13 @@ fn cycle_sort_to_artist_reorders_the_view_and_the_playlist_under_it() {
     ];
     let view: Vec<PathBuf> = model
         .library
-        .view_tracks()
+        .iter()
+        .flat_map(Library::view_tracks)
         .map(|(_, track)| track.path().to_path_buf())
         .collect();
     assert_eq!(view, sorted);
     assert_eq!(paths(&model.playlist.tracks), sorted);
-    let all = model.library.ready().unwrap().all.len();
+    let all = model.library.as_ref().unwrap().all.len();
     assert_eq!(all, 3);
 }
 
@@ -384,22 +376,16 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
         effects,
         Cmd::Batch(vec![
             Effect::Audio(AudioCmd::Stop),
-            Effect::Audio(AudioCmd::Load {
+            Effect::Audio(AudioCmd::Load(TrackRequest {
                 path: track.path().to_path_buf(),
                 gain: None,
-                revision: Revision::UNSTAMPED.next(),
-            }),
-            Effect::Library(LibraryCmd::AppendHistory {
-                track: Arc::clone(&track),
-                at: UnixSeconds::UNSTAMPED,
-            }),
-            Effect::Macos(MacosCmd::NowPlaying(NowPlaying::Track {
-                title: track.song_title(),
-                artist: None,
-                album: None,
-                duration: Duration::ZERO,
-                path: track.path().to_path_buf(),
+                revision: Revision::default().next(),
             })),
+            Effect::Library(LibraryCmd::AppendHistory(HistoryEntry::from_track(
+                &track,
+                Moment::default(),
+            ))),
+            Effect::Macos(MacosCmd::NowPlaying(Some(track))),
             Effect::Audio(AudioCmd::Playback(Playback::Playing)),
             Effect::Macos(MacosCmd::PlaybackState(Playback::Playing)),
             Effect::Animate(Cue::TrackChanged),
@@ -435,7 +421,7 @@ fn play_selected_retires_the_stream_the_media_key_started() {
         .position(|effect| matches!(effect, Effect::Audio(AudioCmd::Stop)));
     let loaded = audio
         .iter()
-        .position(|effect| matches!(effect, Effect::Audio(AudioCmd::Load { .. })));
+        .position(|effect| matches!(effect, Effect::Audio(AudioCmd::Load(_))));
     assert!(
         matches!((retired, loaded), (Some(retired), Some(loaded)) if retired < loaded),
         "the media key's stream must be retired before the picked row loads, \
@@ -459,18 +445,18 @@ fn rescan_asks_once_until_the_scan_lands() {
         ..Default::default()
     };
 
-    let effects = browse(&mut model, BrowseRequest::Rescan);
+    let effects = browse(&mut model, BrowseRequest::FullScan);
     assert_eq!(
         effects,
         Cmd::One(Effect::Library(LibraryCmd::Scan {
             music_dir: PathBuf::from("/music"),
-            revision: Revision::UNSTAMPED.next(),
+            revision: Revision::default().next(),
             mode: ScanMode::Full,
         }))
     );
     assert_eq!(model.scan_status, ScanStatus::Scanning);
 
-    let repeated = browse(&mut model, BrowseRequest::Rescan);
+    let repeated = browse(&mut model, BrowseRequest::FullScan);
     assert_eq!(repeated, Cmd::None);
     assert_eq!(model.scan_status, ScanStatus::Scanning);
 }
@@ -482,7 +468,7 @@ fn scanned(paths: &[&str]) -> Model {
         .collect();
     let view = (0..all.len()).map(TrackIndex::new).collect();
     let mut model = Model {
-        library: Loaded::Ready(Library {
+        library: Some(Library {
             all: all.clone(),
             view,
         }),
@@ -498,11 +484,12 @@ fn trash_removes_the_track_everywhere_and_asks_for_the_file_to_go() {
     let effects = browse(&mut model, BrowseRequest::Trash(PlaylistIndex::new(0)));
 
     let left = vec![PathBuf::from("/music/b.flac")];
-    let all = paths(&model.library.ready().unwrap().all);
+    let all = paths(&model.library.as_ref().unwrap().all);
     assert_eq!(all, left);
     let view: Vec<PathBuf> = model
         .library
-        .view_tracks()
+        .iter()
+        .flat_map(Library::view_tracks)
         .map(|(_, track)| track.path().to_path_buf())
         .collect();
     assert_eq!(view, left);
@@ -537,6 +524,6 @@ fn trash_remaps_the_queue_and_drops_the_deleted_entry() {
 fn trash_on_an_empty_library_removes_nothing() {
     let mut model = scanned(&[]);
     let effects = browse(&mut model, BrowseRequest::Trash(PlaylistIndex::new(0)));
-    assert!(model.library.ready().unwrap().all.is_empty());
+    assert!(model.library.as_ref().unwrap().all.is_empty());
     assert_eq!(effects, Cmd::None);
 }

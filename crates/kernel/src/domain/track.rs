@@ -78,7 +78,7 @@ impl Track {
     }
 
     #[must_use]
-    pub fn compute_display(path: &Path, tags: &Tags) -> Box<str> {
+    fn compute_display(path: &Path, tags: &Tags) -> Box<str> {
         let computed = match (&tags.title, &tags.artist) {
             (Some(title), Some(artist)) => format!("{artist} — {title}"),
             (Some(title), None) => title.clone(),

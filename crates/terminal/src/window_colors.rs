@@ -23,41 +23,17 @@ fn osc_reset(code: u16) -> String {
     format!("{OSC}{code}{BEL}")
 }
 
-fn set_background(rgb: Rgb) -> String {
-    osc_set(OSC_SET_BACKGROUND, rgb)
-}
-
-fn set_foreground(rgb: Rgb) -> String {
-    osc_set(OSC_SET_FOREGROUND, rgb)
-}
-
-fn set_cursor(rgb: Rgb) -> String {
-    osc_set(OSC_SET_CURSOR, rgb)
-}
-
-fn reset_background() -> String {
-    osc_reset(OSC_RESET_BACKGROUND)
-}
-
-fn reset_foreground() -> String {
-    osc_reset(OSC_RESET_FOREGROUND)
-}
-
-fn reset_cursor() -> String {
-    osc_reset(OSC_RESET_CURSOR)
-}
-
 fn set_sequence(background: Rgb, foreground: Rgb) -> String {
-    let mut sequence = set_background(background);
-    sequence.push_str(&set_foreground(foreground));
-    sequence.push_str(&set_cursor(foreground));
+    let mut sequence = osc_set(OSC_SET_BACKGROUND, background);
+    sequence.push_str(&osc_set(OSC_SET_FOREGROUND, foreground));
+    sequence.push_str(&osc_set(OSC_SET_CURSOR, foreground));
     sequence
 }
 
 fn reset_sequence() -> String {
-    let mut sequence = reset_background();
-    sequence.push_str(&reset_foreground());
-    sequence.push_str(&reset_cursor());
+    let mut sequence = osc_reset(OSC_RESET_BACKGROUND);
+    sequence.push_str(&osc_reset(OSC_RESET_FOREGROUND));
+    sequence.push_str(&osc_reset(OSC_RESET_CURSOR));
     sequence
 }
 
@@ -90,7 +66,7 @@ fn sequence_for(name: &ThemeName, theme: &Theme) -> Result<String, UnknownThemeE
     }
 }
 
-pub fn window_colors_sequence(
+pub(crate) fn window_colors_sequence(
     command: &WindowColorsCmd,
     theme: &Theme,
 ) -> Result<String, UnknownThemeError> {
@@ -136,7 +112,7 @@ mod tests {
 
     fn theme() -> Theme {
         Theme {
-            name: KNOWN_THEME.to_string(),
+            name: ThemeName::from_static(KNOWN_THEME),
             colors: Colors::derive(&ThemeColors {
                 background: Rgb([0x10, 0x10, 0x10]),
                 foreground: Rgb([0xe0, 0xe0, 0xe0]),

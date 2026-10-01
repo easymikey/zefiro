@@ -1,6 +1,7 @@
 use std::ptr::NonNull;
 
 use block2::RcBlock;
+use kernel::PlaybackRequest;
 use objc2::{AnyThread, rc::Retained, runtime::AnyObject};
 use objc2_app_kit::NSImage;
 use objc2_core_foundation::CGSize;
@@ -25,6 +26,8 @@ use objc2_media_player::{
     MPSeekCommandEventType,
 };
 
+use crate::controls::Trigger;
+
 pub(crate) fn shared_command_center() -> Retained<MPRemoteCommandCenter> {
     // SAFETY: no arguments; returns the process-wide singleton.
     unsafe { MPRemoteCommandCenter::sharedCommandCenter() }
@@ -32,19 +35,40 @@ pub(crate) fn shared_command_center() -> Retained<MPRemoteCommandCenter> {
 
 pub(crate) fn remote_commands(
     center: &MPRemoteCommandCenter,
-) -> [Retained<MPRemoteCommand>; 9] {
+) -> [(Retained<MPRemoteCommand>, Trigger); 9] {
     // SAFETY: plain property getters on the live shared center.
     unsafe {
         [
-            center.playCommand(),
-            center.pauseCommand(),
-            center.togglePlayPauseCommand(),
-            center.stopCommand(),
-            center.nextTrackCommand(),
-            center.previousTrackCommand(),
-            center.seekForwardCommand(),
-            center.seekBackwardCommand(),
-            Retained::into_super(center.changePlaybackPositionCommand()),
+            (center.playCommand(), Trigger::Press(PlaybackRequest::Play)),
+            (
+                center.pauseCommand(),
+                Trigger::Press(PlaybackRequest::Pause),
+            ),
+            (
+                center.togglePlayPauseCommand(),
+                Trigger::Press(PlaybackRequest::Toggle),
+            ),
+            (center.stopCommand(), Trigger::Press(PlaybackRequest::Stop)),
+            (
+                center.nextTrackCommand(),
+                Trigger::Press(PlaybackRequest::Next),
+            ),
+            (
+                center.previousTrackCommand(),
+                Trigger::Press(PlaybackRequest::Previous),
+            ),
+            (
+                center.seekForwardCommand(),
+                Trigger::Hold(PlaybackRequest::SeekForward),
+            ),
+            (
+                center.seekBackwardCommand(),
+                Trigger::Hold(PlaybackRequest::SeekBack),
+            ),
+            (
+                Retained::into_super(center.changePlaybackPositionCommand()),
+                Trigger::Scrub,
+            ),
         ]
     }
 }

@@ -17,7 +17,6 @@ crossterm = { workspace = true }
 dirs = { workspace = true }
 kernel = { workspace = true }
 library = { workspace = true }
-raster = { workspace = true }
 ratatui = { workspace = true }
 runtime = { workspace = true }
 terminal = { workspace = true }

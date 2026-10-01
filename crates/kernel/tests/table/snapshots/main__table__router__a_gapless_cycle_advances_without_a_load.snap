@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
-assertion_line: 414
+assertion_line: 366
 expression: "walked(model, messages)"
 ---
 [
@@ -95,13 +95,15 @@ expression: "walked(model, messages)"
         Batch(
             [
                 Audio(
-                    Preload {
-                        path: "/tmp/track1.flac",
-                        gain: None,
-                        revision: Revision(
-                            1,
-                        ),
-                    },
+                    Preload(
+                        TrackRequest {
+                            path: "/tmp/track1.flac",
+                            gain: None,
+                            revision: Revision(
+                                1,
+                            ),
+                        },
+                    ),
                 ),
                 Library(
                     PrefetchCover(
@@ -220,51 +222,51 @@ expression: "walked(model, messages)"
         Batch(
             [
                 Library(
-                    AppendHistory {
-                        track: Track {
+                    AppendHistory(
+                        HistoryEntry {
                             path: "/tmp/track1.flac",
-                            duration: Some(
-                                100s,
+                            title: "track1",
+                            artist: None,
+                            at: Moment(
+                                0ns,
                             ),
-                            tags: Tags {
-                                title: None,
-                                artist: None,
-                                album: None,
-                                album_artist: None,
-                                date: None,
-                                genre: None,
-                                track: None,
-                                track_total: None,
-                                disc: None,
-                                composer: None,
-                                comment: None,
-                                lyrics: None,
-                            },
-                            audio_format: AudioFormat {
-                                format: None,
-                                bitrate_kbps: None,
-                                sample_rate_hz: None,
-                                bits_per_sample: None,
-                                channels: None,
-                                replay_gain: None,
-                            },
-                            display: "track1.flac",
-                            tagging: Read,
                         },
-                        at: UnixSeconds(
-                            0,
-                        ),
-                    },
+                    ),
                 ),
                 Macos(
                     NowPlaying(
-                        Track {
-                            title: "track1",
-                            artist: None,
-                            album: None,
-                            duration: 100s,
-                            path: "/tmp/track1.flac",
-                        },
+                        Some(
+                            Track {
+                                path: "/tmp/track1.flac",
+                                duration: Some(
+                                    100s,
+                                ),
+                                tags: Tags {
+                                    title: None,
+                                    artist: None,
+                                    album: None,
+                                    album_artist: None,
+                                    date: None,
+                                    genre: None,
+                                    track: None,
+                                    track_total: None,
+                                    disc: None,
+                                    composer: None,
+                                    comment: None,
+                                    lyrics: None,
+                                },
+                                audio_format: AudioFormat {
+                                    format: None,
+                                    bitrate_kbps: None,
+                                    sample_rate_hz: None,
+                                    bits_per_sample: None,
+                                    channels: None,
+                                    replay_gain: None,
+                                },
+                                display: "track1.flac",
+                                tagging: Read,
+                            },
+                        ),
                     ),
                 ),
                 Audio(
@@ -458,13 +460,15 @@ expression: "walked(model, messages)"
         Batch(
             [
                 Audio(
-                    Preload {
-                        path: "/tmp/track2.flac",
-                        gain: None,
-                        revision: Revision(
-                            3,
-                        ),
-                    },
+                    Preload(
+                        TrackRequest {
+                            path: "/tmp/track2.flac",
+                            gain: None,
+                            revision: Revision(
+                                3,
+                            ),
+                        },
+                    ),
                 ),
                 Library(
                     PrefetchCover(

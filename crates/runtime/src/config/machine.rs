@@ -12,22 +12,12 @@ use kernel::{
 };
 use strum::IntoStaticStr;
 
-use crate::{
-    config::{
-        ConfigPaths,
-        disk::Listing,
-        reload::{appearance_reload, config_reload, theme_reload},
-        save_queue::{SavePatches, SaveQueue, Saved},
-        watch::{
-            ConfigChange,
-            ConfigWatch,
-            ConfigWatchError,
-            WatchEffect,
-            WatchMessage,
-        },
-        write::Written,
-    },
-    error::SaveError,
+use crate::config::{
+    ConfigPaths,
+    reload::{appearance_reload, config_reload, theme_reload},
+    save_queue::{SavePatches, SaveQueue},
+    watch::{ConfigChange, ConfigWatch, ConfigWatchError, WatchEffect, WatchMessage},
+    write::{SaveResult, Written},
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -36,6 +26,8 @@ pub(crate) enum Sighting {
     First,
     Repeat,
 }
+
+pub(crate) const SAVE_DEBOUNCE: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct ConfigState {
@@ -61,11 +53,14 @@ pub(crate) enum ConfigMessage {
         file: ConfigFile,
         detail: String,
     },
-    Listed(Listing),
+    Listed(Result<Vec<String>, String>),
     SaveDue {
         now: Instant,
     },
-    Saved(Saved),
+    Saved {
+        config: Option<SaveResult>,
+        appearance: Option<SaveResult>,
+    },
     Stopping,
 }
 
@@ -88,12 +83,6 @@ pub(crate) enum ConfigEffect {
 struct SettingChange {
     id: SettingId,
     option: OptionIndex,
-}
-
-#[derive(Clone, Copy)]
-struct SaveTarget {
-    file: ConfigFile,
-    wrote: fn(String) -> WatchMessage,
 }
 
 impl ConfigState {
@@ -145,20 +134,20 @@ impl Machine for ConfigState {
             ConfigMessage::Unreadable { file, detail } => {
                 self.drive(WatchMessage::Unreadable { file, detail })
             }
-            ConfigMessage::Listed(Listing::Names(names)) => {
-                self.drive(WatchMessage::Listed(names))
-            }
-            ConfigMessage::Listed(Listing::Unreadable(detail)) => {
+            ConfigMessage::Listed(Ok(names)) => self.drive(WatchMessage::Listed(names)),
+            ConfigMessage::Listed(Err(detail)) => {
                 self.drive(WatchMessage::ThemesUnreadable(detail))
             }
             ConfigMessage::SaveDue { now } => {
                 let writes = self.saves.take_due(now);
-                Ok((self, write_outputs(writes)))
+                Ok((self, writes.map(ConfigEffect::Save).into_iter().collect()))
             }
-            ConfigMessage::Saved(flushed) => Ok(self.saved(flushed)),
+            ConfigMessage::Saved { config, appearance } => {
+                Ok(self.saved(config, appearance))
+            }
             ConfigMessage::Stopping => {
                 let writes = self.saves.take_all();
-                Ok((self, write_outputs(writes)))
+                Ok((self, writes.map(ConfigEffect::Save).into_iter().collect()))
             }
         }
     }
@@ -198,18 +187,19 @@ impl ConfigState {
             ConfigChange::Keymap(text) => self.keymap_changed(text.as_deref()),
             ConfigChange::Theme { name, text } => theme_changed(&name, text.as_deref()),
             ConfigChange::Themes(names) => {
-                vec![emit(ConfigEvent::ThemesLoaded(embedded_and_user(names)))]
+                vec![ConfigEffect::Event(ConfigEvent::ThemesLoaded(
+                    embedded_and_user(names),
+                ))]
             }
             ConfigChange::ThemesUnreadable(detail) => {
-                vec![emit(ConfigEvent::Error(ConfigError::ThemesUnreadable {
-                    detail,
-                }))]
+                vec![ConfigEffect::Event(ConfigEvent::Error(
+                    ConfigError::ThemesUnreadable { detail },
+                ))]
             }
             ConfigChange::Unreadable { file, detail } => {
-                vec![emit(ConfigEvent::Error(ConfigError::Unreadable {
-                    file,
-                    detail,
-                }))]
+                vec![ConfigEffect::Event(ConfigEvent::Error(
+                    ConfigError::Unreadable { file, detail },
+                ))]
             }
         }
     }
@@ -224,7 +214,7 @@ impl ConfigState {
             return (self, Vec::new());
         }
         match config::appearance_patch(id, option) {
-            Ok(patch) => {
+            Some(patch) => {
                 *self.appearance_file = self.appearance_file.patched(patch);
                 self.saves.queue_appearance(now, patch);
                 let published = (*self.appearance_file).clone();
@@ -232,7 +222,7 @@ impl ConfigState {
                     vec![ConfigEffect::Changed(Published::Appearance(published))];
                 (self, outputs)
             }
-            Err(_) => (self, Vec::new()),
+            None => (self, Vec::new()),
         }
     }
 
@@ -243,12 +233,15 @@ impl ConfigState {
                 if sighting == Sighting::First {
                     return Vec::new();
                 }
-                let mut outputs =
-                    vec![emit(ConfigEvent::KeymapReloaded(Box::new(parsed.keymap)))];
-                if let Some(music_dir) = parsed.music_dir {
-                    outputs.push(emit(ConfigEvent::MusicDirReloaded(music_dir)));
-                }
-                outputs
+                std::iter::once(ConfigEffect::Event(ConfigEvent::KeymapReloaded(
+                    Box::new(parsed.keymap),
+                )))
+                .chain(
+                    parsed.music_dir.map(|dir| {
+                        ConfigEffect::Event(ConfigEvent::MusicDirReloaded(dir))
+                    }),
+                )
+                .collect()
             }
             Err(error) => vec![source_failed(ConfigFile::Config, error.to_string())],
         }
@@ -273,43 +266,43 @@ impl ConfigState {
         (self, outputs)
     }
 
-    fn saved(mut self, flushed: Saved) -> (Self, Vec<ConfigEffect>) {
-        let mut outputs = Vec::new();
-        if let Some(result) = flushed.config {
-            let target = SaveTarget {
-                file: ConfigFile::Config,
-                wrote: WatchMessage::WroteConfig,
-            };
-            let (next, mut more) = self.apply_save_result(result, target);
-            self = next;
-            outputs.append(&mut more);
-        }
-        if let Some(result) = flushed.appearance {
-            let target = SaveTarget {
-                file: ConfigFile::Appearance,
-                wrote: WatchMessage::WroteAppearance,
-            };
-            let (next, mut more) = self.apply_save_result(result, target);
-            self = next;
-            outputs.append(&mut more);
-        }
-        (self, outputs)
+    fn saved(
+        self,
+        config: Option<SaveResult>,
+        appearance: Option<SaveResult>,
+    ) -> (Self, Vec<ConfigEffect>) {
+        [
+            (ConfigFile::Config, config),
+            (ConfigFile::Appearance, appearance),
+        ]
+        .into_iter()
+        .filter_map(|(file, result)| Some((file, result?)))
+        .fold(
+            (self, Vec::new()),
+            |(state, mut outputs), (file, result)| {
+                let (next, mut more) = state.apply_save_result(file, result);
+                outputs.append(&mut more);
+                (next, outputs)
+            },
+        )
     }
 
     fn apply_save_result(
         self,
-        result: Result<Written, SaveError>,
-        target: SaveTarget,
+        file: ConfigFile,
+        result: SaveResult,
     ) -> (Self, Vec<ConfigEffect>) {
         match result {
-            Ok(written) => match self.drive((target.wrote)(written.text)) {
-                Ok(pair) => pair,
-                Err(rejected) => (rejected.state, Vec::new()),
-            },
+            Ok(Written { text }) => {
+                match self.drive(WatchMessage::Wrote { file, text }) {
+                    Ok(pair) => pair,
+                    Err(rejected) => (rejected.state, Vec::new()),
+                }
+            }
             Err(error) => (
                 self,
-                vec![emit(ConfigEvent::Error(ConfigError::Save {
-                    file: target.file,
+                vec![ConfigEffect::Event(ConfigEvent::Error(ConfigError::Save {
+                    file,
                     detail: error.to_string(),
                 }))],
             ),
@@ -326,7 +319,7 @@ impl ConfigState {
                 self.appearance = Sighting::Repeat;
                 vec![
                     ConfigEffect::Changed(Published::Appearance(file)),
-                    emit(ConfigEvent::CustomRowsReloaded(rows)),
+                    ConfigEffect::Event(ConfigEvent::CustomSettingsReloaded(rows)),
                     source_recovered(ConfigFile::Appearance),
                 ]
             }
@@ -339,38 +332,28 @@ impl ConfigState {
 
 fn theme_changed(name: &str, text: Option<&str>) -> Vec<ConfigEffect> {
     match theme_reload(name, text) {
-        Ok(file) => {
-            let mut outputs = vec![ConfigEffect::Changed(Published::Theme(file))];
-            if let Ok(theme_name) = ThemeName::new(name.to_string()) {
-                outputs.push(emit(ConfigEvent::ThemeReloaded(theme_name)));
-            }
-            outputs.push(source_recovered(ConfigFile::Theme));
-            outputs
-        }
+        Ok(file) => std::iter::once(ConfigEffect::Changed(Published::Theme(file)))
+            .chain(ThemeName::new(name.to_string()).ok().map(|theme_name| {
+                ConfigEffect::Event(ConfigEvent::ThemeReloaded(theme_name))
+            }))
+            .chain(std::iter::once(source_recovered(ConfigFile::Theme)))
+            .collect(),
         Err(error) => vec![source_failed(ConfigFile::Theme, error.to_string())],
     }
 }
 
-fn write_outputs(writes: Option<SavePatches>) -> Vec<ConfigEffect> {
-    writes.map(ConfigEffect::Save).into_iter().collect()
-}
-
 fn source_recovered(source: ConfigFile) -> ConfigEffect {
-    emit(ConfigEvent::SourceRecovered(source))
+    ConfigEffect::Event(ConfigEvent::SourceRecovered(source))
 }
 
 fn source_failed(source: ConfigFile, text: String) -> ConfigEffect {
-    emit(ConfigEvent::SourceFailed { source, text })
-}
-
-fn emit(event: ConfigEvent) -> ConfigEffect {
-    ConfigEffect::Event(event)
+    ConfigEffect::Event(ConfigEvent::SourceFailed { source, text })
 }
 
 fn embedded_and_user(user: Vec<String>) -> Vec<ThemeName> {
     config::EMBEDDED_THEMES
         .iter()
-        .map(|name| (*name).to_string())
+        .map(|&(name, _)| name.to_string())
         .chain(user)
         .filter_map(|name| ThemeName::new(name).ok())
         .fold(Vec::new(), |mut names, name| {
@@ -400,10 +383,15 @@ mod tests {
     use crate::{
         config::{
             ConfigPaths,
-            ConfigTiming,
-            machine::{ConfigEffect, ConfigMessage, ConfigState, Published, Sighting},
-            save_queue::{SavePatches, Saved},
-            session::moment,
+            machine::{
+                ConfigEffect,
+                ConfigMessage,
+                ConfigState,
+                Published,
+                SAVE_DEBOUNCE,
+                Sighting,
+            },
+            save_queue::SavePatches,
             write::Written,
         },
         error::SaveError,
@@ -422,11 +410,7 @@ mod tests {
     }
 
     fn driver(theme: Option<&str>) -> ConfigState {
-        ConfigState::new(&paths(theme), debounce())
-    }
-
-    fn debounce() -> Duration {
-        ConfigTiming::default().save_debounce
+        ConfigState::new(&paths(theme), SAVE_DEBOUNCE)
     }
 
     fn save(state: ConfigState, patch: ConfigPatch, at: Instant) -> ConfigState {
@@ -438,10 +422,6 @@ mod tests {
             .unwrap();
         assert!(outputs.is_empty());
         next
-    }
-
-    fn setting_id(field: config::AppearanceField) -> SettingId {
-        config::APPEARANCE_ROWS[field as usize].custom.id
     }
 
     fn with_appearance_read(state: ConfigState) -> ConfigState {
@@ -530,7 +510,7 @@ mod tests {
 
     #[test]
     fn a_failed_save_tells_save_failed() {
-        let flushed = Saved {
+        let saved = ConfigMessage::Saved {
             config: Some(Err(SaveError::Read {
                 path: PathBuf::from("/config/config.toml"),
                 source: std::io::Error::other("denied"),
@@ -538,9 +518,7 @@ mod tests {
             appearance: None,
         };
 
-        let (_, outputs) = driver(None)
-            .transition(ConfigMessage::Saved(flushed))
-            .unwrap();
+        let (_, outputs) = driver(None).transition(saved).unwrap();
 
         assert!(matches!(
             outputs.as_slice(),
@@ -555,16 +533,14 @@ mod tests {
 
     #[test]
     fn a_successful_appearance_save_tells_nothing() {
-        let flushed = Saved {
+        let saved = ConfigMessage::Saved {
             config: None,
             appearance: Some(Ok(Written {
                 text: "[window]\nkey_hints = true\n".to_string(),
             })),
         };
 
-        let (_, outputs) = driver(None)
-            .transition(ConfigMessage::Saved(flushed))
-            .unwrap();
+        let (_, outputs) = driver(None).transition(saved).unwrap();
 
         assert!(outputs.is_empty());
     }
@@ -574,7 +550,7 @@ mod tests {
         let (_, outputs) = driver(None)
             .transition(ConfigMessage::Command {
                 cmd: ConfigCmd::SelectTheme("noir".parse().unwrap()),
-                now: moment(),
+                now: Instant::now(),
             })
             .unwrap();
 
@@ -599,20 +575,23 @@ mod tests {
         let patch = ConfigPatch::builder()
             .theme(ThemeName::from_static("dark"))
             .build();
-        let pending = save(driver(None), patch.clone(), moment());
+        let pending = save(driver(None), patch.clone(), Instant::now());
 
         let (next, outputs) = pending.transition(ConfigMessage::Stopping).unwrap();
 
         assert_eq!(
             outputs,
-            vec![ConfigEffect::Save(SavePatches::Config(patch))]
+            vec![ConfigEffect::Save(SavePatches {
+                config: Some(patch),
+                appearance: None
+            })]
         );
         assert_eq!(next.save_deadline(), None);
     }
 
     #[test]
     fn a_burst_of_saves_becomes_one_write_carrying_every_field() {
-        let start = moment();
+        let start = Instant::now();
         let mut current = save(
             driver(None),
             ConfigPatch::builder()
@@ -628,7 +607,7 @@ mod tests {
             current = save(current, patch, at);
             assert_eq!(
                 current.save_deadline(),
-                Some(at + debounce()),
+                Some(at + SAVE_DEBOUNCE),
                 "every new save in the burst pushes the trailing edge out"
             );
         }
@@ -640,7 +619,7 @@ mod tests {
         assert!(early.is_empty(), "the window has not elapsed yet");
         let (current, due) = current
             .transition(ConfigMessage::SaveDue {
-                now: last + debounce(),
+                now: last + SAVE_DEBOUNCE,
             })
             .unwrap();
 
@@ -648,7 +627,11 @@ mod tests {
             .theme(ThemeName::from_static("noir"))
             .volume(Percent::clamped(50))
             .build();
-        assert_eq!(due, vec![ConfigEffect::Save(SavePatches::Config(expected))]);
+        let patches = SavePatches {
+            config: Some(expected),
+            appearance: None,
+        };
+        assert_eq!(due, vec![ConfigEffect::Save(patches)]);
         assert_eq!(current.save_deadline(), None);
     }
 
@@ -658,17 +641,17 @@ mod tests {
         let option = OptionCount::new(2).unwrap().index(1).unwrap();
 
         let patch = config::appearance_patch(
-            setting_id(config::AppearanceField::CoverBrackets),
+            config::AppearanceField::CoverBrackets.id(),
             option,
         )
         .unwrap();
         let expected = seeded.appearance_file.patched(patch);
-        let at = moment();
+        let at = Instant::now();
 
         let (next, outputs) = seeded
             .transition(ConfigMessage::Command {
                 cmd: ConfigCmd::Setting {
-                    id: setting_id(config::AppearanceField::CoverBrackets),
+                    id: config::AppearanceField::CoverBrackets.id(),
                     option,
                 },
                 now: at,
@@ -679,7 +662,7 @@ mod tests {
             outputs.as_slice(),
             [ConfigEffect::Changed(Published::Appearance(_))]
         ));
-        assert_eq!(next.save_deadline(), Some(at + debounce()));
+        assert_eq!(next.save_deadline(), Some(at + SAVE_DEBOUNCE));
         assert_eq!(*next.appearance_file, expected);
     }
 
@@ -693,7 +676,7 @@ mod tests {
                     id: SettingId::new(u16::MAX),
                     option: OptionCount::new(1).unwrap().index(0).unwrap(),
                 },
-                now: moment(),
+                now: Instant::now(),
             })
             .unwrap();
 
@@ -705,10 +688,10 @@ mod tests {
         let (next, outputs) = driver(None)
             .transition(ConfigMessage::Command {
                 cmd: ConfigCmd::Setting {
-                    id: setting_id(config::AppearanceField::CoverBrackets),
+                    id: config::AppearanceField::CoverBrackets.id(),
                     option: OptionCount::new(2).unwrap().index(1).unwrap(),
                 },
-                now: moment(),
+                now: Instant::now(),
             })
             .unwrap();
 
@@ -718,10 +701,10 @@ mod tests {
 
     #[test]
     fn a_command_save_queues_the_patch() {
-        let at = moment();
+        let at = Instant::now();
 
         let next = save(driver(None), ConfigPatch::builder().build(), at);
 
-        assert_eq!(next.save_deadline(), Some(at + debounce()));
+        assert_eq!(next.save_deadline(), Some(at + SAVE_DEBOUNCE));
     }
 }

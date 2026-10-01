@@ -1,24 +1,28 @@
 ---
 source: crates/kernel/src/update/startup.rs
-assertion_line: 180
+assertion_line: 198
 expression: "(model.settings, model.transport.volume, model.themes,)"
 ---
 (
     Settings {
-        crossfade: Crossfade(
-            3s,
-        ),
-        replaygain: On,
-        output_device: Named(
-            DeviceName(
-                "Speakers",
+        audio: AudioSettings {
+            crossfade: Crossfade(
+                3s,
             ),
-        ),
+            replaygain: On,
+            device: Named(
+                DeviceName(
+                    "Speakers",
+                ),
+            ),
+            sleep_presets: SleepPresets(
+                [
+                    900s,
+                    1800s,
+                ],
+            ),
+        },
         output_devices: [],
-        sleep_presets: [
-            900s,
-            1800s,
-        ],
     },
     Percent(
         42,

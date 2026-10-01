@@ -22,62 +22,49 @@ pub(crate) struct DriverThread<C> {
     pub(crate) full_edge: FullEdge,
 }
 
-pub(crate) trait DriverLoop<C, F>: Send + 'static {
-    fn run(self, inbox: &Receiver<C>, outbox: &DriverSender<F>);
-}
+const INBOX: usize = 64;
 
-#[derive(Debug, Default)]
-pub(crate) struct NoDriver;
-
-impl<C: Send + 'static, F: Send + 'static> DriverLoop<C, F> for NoDriver {
-    fn run(self, inbox: &Receiver<C>, _outbox: &DriverSender<F>) {
-        while inbox.recv().is_ok() {}
-    }
-}
-
-pub(crate) fn spawn_loop<C, F, L>(
+pub(crate) fn spawn_idle<C: Send + 'static>(
     row: &DriverRow,
-    driver_loop: L,
-    mailbox: &Sender<Message>,
-) -> Result<DriverThread<C>, Error>
-where
-    C: Send + 'static,
-    F: Send + 'static,
-    L: DriverLoop<C, F>,
-{
+    inbox: &Sender<Message>,
+) -> Result<DriverThread<C>, Error> {
     spawn_driver(
         row,
-        move |inbox, outbox| driver_loop.run(inbox, outbox),
-        mailbox,
+        |inbox: &Receiver<C>, _: &DriverSender<Message>| while inbox.recv().is_ok() {},
+        inbox,
     )
 }
 
 pub(crate) fn spawn_driver<C, F, R>(
     row: &DriverRow,
     run: R,
-    mailbox: &Sender<Message>,
+    inbox: &Sender<Message>,
 ) -> Result<DriverThread<C>, Error>
 where
     C: Send + 'static,
     F: Send + 'static,
     R: FnOnce(&Receiver<C>, &DriverSender<F>) + Send + 'static,
 {
-    let (commands, inbox): (Sender<C>, Receiver<C>) = bounded(row.inbox);
+    let (commands, command_inbox): (Sender<C>, Receiver<C>) = bounded(INBOX);
     let full_edge = FullEdge::default();
-    let outbox = DriverSender::new(mailbox.clone(), full_edge.clone());
-    let report_sender = mailbox.clone();
+    let outbox = DriverSender::new(inbox.clone(), full_edge.clone());
+    let report_sender = inbox.clone();
     let driver = row.driver;
     let handle = thread::Builder::new()
-        .name(row.thread.to_owned())
+        .name(row.thread_name.to_owned())
         .spawn(move || -> Exit {
-            let outcome = catch_unwind(AssertUnwindSafe(|| run(&inbox, &outbox)));
+            let outcome =
+                catch_unwind(AssertUnwindSafe(|| run(&command_inbox, &outbox)));
             let report = match outcome {
                 Ok(()) => DriverMessage::Stopped,
                 Err(payload) => {
                     DriverMessage::Died(DriverError::Panicked(panic_text(&*payload)))
                 }
             };
-            report_sender.send(Message::Driver(driver, report))
+            report_sender.send(Message::Driver {
+                driver,
+                event: report,
+            })
         })
         .map_err(|source| Error::Spawn { driver, source })?;
     Ok(DriverThread {
@@ -107,7 +94,7 @@ mod tests {
     };
 
     use crate::{
-        driver::{NoDriver, spawn_driver, spawn_loop},
+        driver::{spawn_driver, spawn_idle},
         registry,
         sender::DriverSender,
     };
@@ -116,11 +103,11 @@ mod tests {
 
     #[test]
     fn a_panicking_driver_becomes_died() {
-        let (mailbox, reports) = unbounded();
+        let (inbox, reports) = unbounded();
         let thread = spawn_driver(
             registry::row(Driver::Audio),
             |_inbox: &Receiver<()>, _outbox: &DriverSender<Message>| panic!("boom"),
-            &mailbox,
+            &inbox,
         )
         .unwrap();
 
@@ -129,20 +116,20 @@ mod tests {
 
         assert_eq!(
             message,
-            Message::Driver(
-                Driver::Audio,
-                DriverMessage::Died(DriverError::Panicked("boom".to_owned()))
-            )
+            Message::Driver {
+                driver: Driver::Audio,
+                event: DriverMessage::Died(DriverError::Panicked("boom".to_owned()))
+            }
         );
     }
 
     #[test]
     fn a_returning_driver_becomes_stopped() {
-        let (mailbox, reports) = unbounded();
+        let (inbox, reports) = unbounded();
         let thread = spawn_driver(
             registry::row(Driver::Library),
             |_inbox: &Receiver<()>, _outbox: &DriverSender<Message>| {},
-            &mailbox,
+            &inbox,
         )
         .unwrap();
 
@@ -151,19 +138,22 @@ mod tests {
 
         assert_eq!(
             message,
-            Message::Driver(Driver::Library, DriverMessage::Stopped)
+            Message::Driver {
+                driver: Driver::Library,
+                event: DriverMessage::Stopped
+            }
         );
     }
 
     #[test]
     fn a_closed_inbox_stops_the_driver() {
-        let (mailbox, reports) = unbounded();
+        let (inbox, reports) = unbounded();
         let thread = spawn_driver(
             registry::row(Driver::Macos),
             |inbox: &Receiver<()>, _outbox: &DriverSender<Message>| {
                 let _ = inbox.recv();
             },
-            &mailbox,
+            &inbox,
         )
         .unwrap();
         drop(thread.commands);
@@ -173,19 +163,17 @@ mod tests {
 
         assert_eq!(
             message,
-            Message::Driver(Driver::Macos, DriverMessage::Stopped)
+            Message::Driver {
+                driver: Driver::Macos,
+                event: DriverMessage::Stopped
+            }
         );
     }
 
     #[test]
-    fn a_driver_loop_stops_once_its_inbox_closes() {
-        let (mailbox, reports) = unbounded();
-        let thread = spawn_loop::<(), Message, NoDriver>(
-            registry::row(Driver::Audio),
-            NoDriver,
-            &mailbox,
-        )
-        .unwrap();
+    fn an_idle_driver_stops_once_its_inbox_closes() {
+        let (inbox, reports) = unbounded();
+        let thread = spawn_idle::<()>(registry::row(Driver::Audio), &inbox).unwrap();
         drop(thread.commands);
 
         thread.handle.join().unwrap().unwrap();
@@ -193,7 +181,10 @@ mod tests {
 
         assert_eq!(
             message,
-            Message::Driver(Driver::Audio, DriverMessage::Stopped)
+            Message::Driver {
+                driver: Driver::Audio,
+                event: DriverMessage::Stopped
+            }
         );
     }
 }

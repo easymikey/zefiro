@@ -1,9 +1,8 @@
 use kernel::domain::DeleteCandidate;
-use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
 use crate::{
-    overlay::modal::{OverlayAreas, Prompt, PromptBody},
-    primitive::{canvas::Canvas, glyphs::ConfirmDeleteGlyphs},
+    overlay::modal::{Prompt, PromptBody},
+    primitive::glyphs,
     theme::ActiveTheme,
 };
 
@@ -11,53 +10,28 @@ const MIN_WIDTH: u16 = 24;
 
 #[must_use]
 fn sentence(candidate: &DeleteCandidate) -> String {
-    let glyphs = ConfirmDeleteGlyphs::default();
     format!(
         "{}{}{}{}{}",
-        glyphs.quote_open,
+        glyphs::confirm_delete::QUOTE_OPEN,
         candidate.title,
-        glyphs.quote_close,
-        glyphs.artist_separator,
+        glyphs::confirm_delete::QUOTE_CLOSE,
+        glyphs::confirm_delete::ARTIST_SEPARATOR,
         candidate.artist
     )
 }
 
-#[derive(Debug)]
-pub(crate) struct ConfirmDeleteOverlay<'a> {
-    pub(crate) candidate: &'a DeleteCandidate,
-    pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) avoid: &'a [Rect],
-}
-
-impl ConfirmDeleteOverlay<'_> {
-    #[must_use]
-    pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::Dialog(self.prompt().areas(screen))
-    }
-
-    pub(crate) fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
-        if let OverlayAreas::Dialog(areas) = areas {
-            self.prompt().render_in(areas, canvas);
-        }
-    }
-
-    fn prompt(&self) -> Prompt<'_> {
-        let glyphs = ConfirmDeleteGlyphs::default();
-        Prompt {
-            title: glyphs.title_word,
-            hint: glyphs.hint,
-            min_width: MIN_WIDTH,
-            body: PromptBody::Sentence(sentence(self.candidate)),
-            error: None,
-            avoid: self.avoid,
-            theme: self.theme,
-        }
-    }
-}
-
-impl Widget for &ConfirmDeleteOverlay<'_> {
-    fn render(self, area: Rect, buffer: &mut Buffer) {
-        self.render_in(self.areas(area), Canvas { area, buffer });
+pub(crate) fn prompt<'a>(
+    candidate: &DeleteCandidate,
+    theme: ActiveTheme<'a>,
+) -> Prompt<'a> {
+    Prompt {
+        title: glyphs::confirm_delete::TITLE_WORD,
+        hint: glyphs::confirm_delete::HINT,
+        min_width: MIN_WIDTH,
+        body: PromptBody::Sentence(sentence(candidate)),
+        error: None,
+        avoid: &[],
+        theme,
     }
 }
 
@@ -66,8 +40,11 @@ mod tests {
     use kernel::domain::{DeleteCandidate, PlaylistIndex};
 
     use crate::{
-        overlay::confirm_delete::{ConfirmDeleteOverlay, sentence},
-        scene::fixtures::{noir, painted},
+        overlay::{
+            confirm_delete::{prompt, sentence},
+            rendered_canvas,
+        },
+        test_support::noir,
         theme::{ActiveTheme, ColorDepth},
     };
 
@@ -79,33 +56,30 @@ mod tests {
         }
     }
 
+    fn frame(width: u16, height: u16) -> String {
+        let theme = noir();
+        let prompt = prompt(
+            &candidate(),
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
+        rendered_canvas(width, height, |canvas| {
+            prompt.render_in(prompt.areas(canvas.area), canvas);
+        })
+        .to_string()
+    }
+
     #[test]
     fn the_sentence_quotes_the_title_and_names_the_artist() {
-        let candidate = candidate();
-        assert_eq!(sentence(&candidate), "\"Moon River\" — Audrey Hepburn");
+        assert_eq!(sentence(&candidate()), "\"Moon River\" — Audrey Hepburn");
     }
 
     #[test]
     fn confirm_delete_shows_the_quoted_title_and_artist() {
-        let theme = noir();
-        let candidate = candidate();
-        let overlay = ConfirmDeleteOverlay {
-            candidate: &candidate,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            avoid: &[],
-        };
-        insta::assert_snapshot!(painted(&overlay, 60, 12));
+        insta::assert_snapshot!(frame(60, 12));
     }
 
     #[test]
     fn confirm_delete_does_not_panic_on_a_tiny_terminal() {
-        let theme = noir();
-        let candidate = candidate();
-        let overlay = ConfirmDeleteOverlay {
-            candidate: &candidate,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            avoid: &[],
-        };
-        let _ = painted(&overlay, 4, 3);
+        let _ = frame(4, 3);
     }
 }

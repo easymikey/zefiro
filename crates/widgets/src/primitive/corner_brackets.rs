@@ -1,6 +1,6 @@
 use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
 
-use crate::primitive::glyphs::CornerGlyphs;
+use crate::primitive::glyphs;
 
 #[must_use]
 pub(crate) fn expand(area: Rect, margin: u16) -> Rect {
@@ -13,11 +13,11 @@ pub(crate) fn expand(area: Rect, margin: u16) -> Rect {
 }
 
 #[derive(Debug)]
-pub(crate) struct CornerRing {
+pub(crate) struct CornerBrackets {
     pub(crate) color: Color,
 }
 
-impl Widget for &CornerRing {
+impl Widget for &CornerBrackets {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         for (x, y, glyph) in corner_positions(area) {
             if let Some(cell) = buffer.cell_mut((x, y)) {
@@ -29,40 +29,27 @@ impl Widget for &CornerRing {
 
 #[must_use]
 pub(crate) fn corner_positions(area: Rect) -> [(u16, u16, char); 4] {
-    let glyphs = CornerGlyphs::default();
     let right = area.x + area.width.saturating_sub(1);
     let bottom = area.y + area.height.saturating_sub(1);
     [
-        (area.x, area.y, glyphs.top_left),
-        (right, area.y, glyphs.top_right),
-        (area.x, bottom, glyphs.bottom_left),
-        (right, bottom, glyphs.bottom_right),
+        (area.x, area.y, glyphs::corner::TOP_LEFT),
+        (right, area.y, glyphs::corner::TOP_RIGHT),
+        (area.x, bottom, glyphs::corner::BOTTOM_LEFT),
+        (right, bottom, glyphs::corner::BOTTOM_RIGHT),
     ]
 }
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{
-        Terminal,
-        backend::TestBackend,
-        buffer::Buffer,
-        layout::Rect,
-        style::Color,
-        widgets::Widget,
-    };
+    use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
 
-    use crate::primitive::{
-        corner_brackets::{CornerRing, corner_positions, expand},
-        glyphs::CornerGlyphs,
+    use crate::{
+        primitive::{
+            corner_brackets::{CornerBrackets, corner_positions, expand},
+            glyphs,
+        },
+        test_support::rendered,
     };
-
-    fn widget_snapshot<W: Widget>(widget: W, width: u16, height: u16) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal
-            .draw(|frame| frame.render_widget(widget, frame.area()))
-            .unwrap();
-        format!("{}", terminal.backend())
-    }
 
     fn symbols(buffer: &Buffer) -> String {
         (0..buffer.area.height)
@@ -74,10 +61,10 @@ mod tests {
     }
 
     #[test]
-    fn corner_ring_paints_only_the_four_corners() {
+    fn corner_brackets_paints_only_the_four_corners() {
         let area = Rect::new(0, 0, 5, 3);
         let mut buffer = Buffer::empty(area);
-        CornerRing {
+        CornerBrackets {
             color: Color::White,
         }
         .render(area, &mut buffer);
@@ -91,10 +78,10 @@ mod tests {
     }
 
     #[test]
-    fn corner_ring_off_buffer_drops_the_corners_that_fall_outside() {
+    fn corner_brackets_off_buffer_drops_the_corners_that_fall_outside() {
         let buffer_area = Rect::new(0, 0, 4, 2);
         let mut buffer = Buffer::empty(buffer_area);
-        CornerRing {
+        CornerBrackets {
             color: Color::White,
         }
         .render(Rect::new(2, 1, 5, 4), &mut buffer);
@@ -103,15 +90,17 @@ mod tests {
     }
 
     #[test]
-    fn corner_ring_widget_snapshot() {
-        let rendered = widget_snapshot(
-            &CornerRing {
-                color: Color::White,
-            },
-            8,
-            4,
-        );
-        insta::assert_snapshot!("corner_ring_8x4", rendered);
+    fn corner_brackets_widget_snapshot() {
+        let rendered = rendered(8, 4, |frame| {
+            frame.render_widget(
+                &CornerBrackets {
+                    color: Color::White,
+                },
+                frame.area(),
+            );
+        })
+        .to_string();
+        insta::assert_snapshot!("corner_brackets_frame_an_8x4_area", rendered);
     }
 
     #[test]
@@ -130,14 +119,13 @@ mod tests {
     #[test]
     fn positions_land_on_the_four_corners() {
         let area = Rect::new(2, 3, 10, 4);
-        let glyphs = CornerGlyphs::default();
         assert_eq!(
             corner_positions(area),
             [
-                (2, 3, glyphs.top_left),
-                (11, 3, glyphs.top_right),
-                (2, 6, glyphs.bottom_left),
-                (11, 6, glyphs.bottom_right),
+                (2, 3, glyphs::corner::TOP_LEFT),
+                (11, 3, glyphs::corner::TOP_RIGHT),
+                (2, 6, glyphs::corner::BOTTOM_LEFT),
+                (11, 6, glyphs::corner::BOTTOM_RIGHT),
             ]
         );
     }
@@ -145,11 +133,10 @@ mod tests {
     #[test]
     fn single_cell_area_collapses_all_corners_to_it() {
         let area = Rect::new(5, 5, 1, 1);
-        let glyphs = CornerGlyphs::default();
         for (x, y, _) in corner_positions(area) {
             assert_eq!((x, y), (5, 5));
         }
-        assert_eq!(corner_positions(area)[3].2, glyphs.bottom_right);
+        assert_eq!(corner_positions(area)[3].2, glyphs::corner::BOTTOM_RIGHT);
     }
 
     #[test]

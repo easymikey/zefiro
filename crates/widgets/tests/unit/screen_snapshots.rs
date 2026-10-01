@@ -3,21 +3,23 @@ use ratatui::layout::Rect;
 use rstest::rstest;
 use widgets::{CoverArt, FrameLayout, PixelPath, Scene, Screen};
 
-use crate::unit::support::{Scenery, model_with_tracks, painted, playing_track};
+use crate::unit::support::{SceneSources, model_with_tracks, playing_track, rendered};
 
 fn painted_frame(scene: Scene<'_>, size: (u16, u16)) -> (FrameLayout, String) {
     let (width, height) = size;
     let layout =
-        FrameLayout::new(&scene.layout_inputs(), Rect::new(0, 0, width, height));
-    let text = painted(
-        &Screen {
-            scene,
-            layout: &layout,
-            cover_art: CoverArt::Missing,
-        },
-        width,
-        height,
-    );
+        FrameLayout::new(&scene.layout_parts(), Rect::new(0, 0, width, height));
+    let text = rendered(width, height, |frame| {
+        frame.render_widget(
+            &Screen {
+                scene,
+                layout: &layout,
+                cover_art: &CoverArt::Missing,
+            },
+            frame.area(),
+        );
+    })
+    .to_string();
     (layout, text)
 }
 
@@ -35,7 +37,7 @@ fn tiny_breakpoints() -> LayoutConfig {
 
 #[test]
 fn full_layout_at_a_large_terminal_shows_the_cover_and_the_playlist() {
-    let sources = Scenery::new(model_with_tracks(3));
+    let sources = SceneSources::new(model_with_tracks(3));
     let scene = Scene {
         pixel_path: PixelPath::Protocol,
         ..sources.scene()
@@ -47,7 +49,7 @@ fn full_layout_at_a_large_terminal_shows_the_cover_and_the_playlist() {
 
 #[test]
 fn compact_layout_at_a_small_terminal_hides_the_cover_and_shows_the_playlist() {
-    let mut sources = Scenery::new(playing_track("Test Song"));
+    let mut sources = SceneSources::new(playing_track("Test Song"));
     sources.appearance.layout = tiny_breakpoints();
     let bp = sources.appearance.layout;
     let text = frame(
@@ -60,7 +62,7 @@ fn compact_layout_at_a_small_terminal_hides_the_cover_and_shows_the_playlist() {
 
 #[test]
 fn minimal_layout_renders_all_three_rows_when_height_allows() {
-    let mut sources = Scenery::new(playing_track("Test Song"));
+    let mut sources = SceneSources::new(playing_track("Test Song"));
     sources.appearance.layout = tiny_breakpoints();
     let text = frame(sources.scene(), (25, 3));
     assert!(text.contains("Test Song"), "got {text:?}");
@@ -68,7 +70,7 @@ fn minimal_layout_renders_all_three_rows_when_height_allows() {
 
 #[test]
 fn one_row_terminal_shows_the_too_small_message_instead_of_a_degraded_minimal_row() {
-    let mut sources = Scenery::new(playing_track("Test Song"));
+    let mut sources = SceneSources::new(playing_track("Test Song"));
     sources.appearance.layout = tiny_breakpoints();
     let text = frame(sources.scene(), (25, 1));
     assert!(text.contains("Terminal too small."), "got {text:?}");
@@ -77,7 +79,7 @@ fn one_row_terminal_shows_the_too_small_message_instead_of_a_degraded_minimal_ro
 
 #[test]
 fn narrowing_one_column_below_full_switches_from_the_card_to_the_compact_arrangement() {
-    let sources = Scenery::new(model_with_tracks(3));
+    let sources = SceneSources::new(model_with_tracks(3));
     let scene = Scene {
         pixel_path: PixelPath::Protocol,
         ..sources.scene()
@@ -91,7 +93,7 @@ fn narrowing_one_column_below_full_switches_from_the_card_to_the_compact_arrange
 
 #[test]
 fn narrowing_one_column_below_compact_drops_the_playlist_pane_entirely() {
-    let mut sources = Scenery::new(playing_track("Boundary Song"));
+    let mut sources = SceneSources::new(playing_track("Boundary Song"));
     sources.appearance.layout = tiny_breakpoints();
     let bp = sources.appearance.layout;
 
@@ -114,7 +116,7 @@ fn narrowing_one_column_below_compact_drops_the_playlist_pane_entirely() {
 
 #[test]
 fn a_vinyl_cover_at_the_full_floor_still_leaves_the_title_visible() {
-    let mut sources = Scenery::new(playing_track("Vinyl Floor Song"));
+    let mut sources = SceneSources::new(playing_track("Vinyl Floor Song"));
     sources.appearance.cover.style = CoverStyle::Vinyl;
     let scene = Scene {
         pixel_path: PixelPath::Protocol,
@@ -130,7 +132,7 @@ fn the_key_hints_and_layout_rows_shape_the_whole_frame(
     #[values(KeyHints::Shown, KeyHints::Hidden)] key_hints: KeyHints,
     #[values(LayoutMode::Auto, LayoutMode::Compact)] mode: LayoutMode,
 ) {
-    let mut sources = Scenery::new(model_with_tracks(3));
+    let mut sources = SceneSources::new(model_with_tracks(3));
     sources.appearance.window.key_hints = key_hints;
     sources.appearance.layout.mode = mode;
     let text = frame(sources.scene(), (120, 40));

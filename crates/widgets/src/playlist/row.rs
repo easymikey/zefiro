@@ -8,17 +8,17 @@ use ratatui::{
 
 use crate::{
     Playing,
-    overlay::modal::ModalMetrics,
+    overlay::modal::SCROLLBAR_INSET,
     playlist::{
         chrome::pane_block,
         pane::{PlaylistPane, PlaylistView},
     },
     primitive::{
-        glyphs::PlaylistGlyphs,
         list_chrome::{row_band, scroll_offset, scrollbar_column},
-        marker::{Favorite, MarkerColumns, QueuePosition},
+        marker::{FAVORITE_COLUMNS, Favorite, QueuePosition},
         track_row::{self, RowColors, Selected, TrackRowView},
     },
+    theme::Role,
 };
 
 pub(crate) struct VisibleRows {
@@ -34,12 +34,12 @@ pub(crate) struct WindowFit<'a> {
     pub(crate) height: u16,
 }
 
-pub(crate) fn visible_rows(input: &WindowFit<'_>) -> VisibleRows {
+pub(crate) fn visible_rows(fit: &WindowFit<'_>) -> VisibleRows {
     let &WindowFit {
         view,
         playing_index,
         height,
-    } = input;
+    } = fit;
     let selected_line = if view.playlist.tracks.is_empty() {
         0
     } else {
@@ -129,20 +129,18 @@ fn build_line(
         playing,
         queued: queue_position(view.queue, index)
             .filter(|_| context.playing_index != Some(index)),
-        columns: MarkerColumns::default(),
-        glyphs: PlaylistGlyphs::default(),
         row_width: context.row_width,
     };
     track_row::track_row_line(&row_view, context.colors)
 }
 
-pub(crate) fn paint_rows(buffer: &mut Buffer, input: PlaylistRows<'_>) {
+pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
     let PlaylistRows {
         pane,
         rows,
         playing_index,
         window,
-    } = input;
+    } = playlist_rows;
     let view = pane.view;
     let theme = pane.theme;
     let context = PlaylistRowParts {
@@ -150,10 +148,10 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, input: PlaylistRows<'_>) {
         playing_index,
         row_width: usize::from(rows.width),
         colors: RowColors {
-            text: theme.text(),
-            selection_text: theme.selection_foreground(),
+            text: theme.role(Role::Text),
+            selection_text: theme.role(Role::SelectionForeground),
             favorite: theme.favorite(),
-            queue: theme.highlight(),
+            queue: theme.role(Role::Highlight),
         },
     };
 
@@ -173,7 +171,7 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, input: PlaylistRows<'_>) {
 
     let list = List::new(lines)
         .highlight_spacing(HighlightSpacing::Never)
-        .highlight_style(Style::default().fg(theme.highlight()));
+        .highlight_style(Style::default().fg(theme.role(Role::Highlight)));
     let mut playing_row = ListState::default().with_selected(
         playing_index
             .and_then(|index| index.checked_sub(start))
@@ -182,7 +180,10 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, input: PlaylistRows<'_>) {
     StatefulWidget::render(list, rows, buffer, &mut playing_row);
 
     if let Some(band) = cursor_band(rows, window, view.browse_selected) {
-        buffer.set_style(band, Style::default().bg(theme.selection_background()));
+        buffer.set_style(
+            band,
+            Style::default().bg(theme.role(Role::SelectionBackground)),
+        );
     }
 }
 
@@ -208,8 +209,7 @@ pub(crate) fn cursor_row(area: Rect, view: PlaylistView<'_>) -> Option<Rect> {
     if inner.width == 0 || inner.height == 0 {
         return None;
     }
-    let scrollbar_inset = ModalMetrics::default().scrollbar_inset;
-    let band = row_band(area, inner, scrollbar_column(area, inner, scrollbar_inset));
+    let band = row_band(area, inner, scrollbar_column(area, inner, SCROLLBAR_INSET));
     let window = visible_rows(&WindowFit {
         view,
         playing_index: view.playing.map(PlaylistIndex::get),
@@ -229,7 +229,7 @@ pub(crate) fn cursor_row(area: Rect, view: PlaylistView<'_>) -> Option<Rect> {
 
 #[must_use]
 pub fn favorite_cell(row: Rect) -> Rect {
-    let width = MarkerColumns::default().favorite.min(row.width);
+    let width = FAVORITE_COLUMNS.min(row.width);
     Rect {
         x: row.x,
         y: row.y,

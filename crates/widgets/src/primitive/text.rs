@@ -3,33 +3,28 @@ use std::borrow::Cow;
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::primitive::glyphs::TruncateGlyphs;
+use crate::primitive::glyphs::ELLIPSIS;
 
 fn cell_width(ch: char) -> usize {
     ch.width().unwrap_or(1)
 }
 
 #[must_use]
-pub(crate) fn truncate_to_width(
-    text: &str,
-    width: usize,
-    glyphs: TruncateGlyphs,
-) -> Cow<'_, str> {
+pub(crate) fn truncate(text: &str, width: usize) -> Cow<'_, str> {
     if width == 0 {
         return Cow::Borrowed("");
     }
     if text.width() <= width {
         return Cow::Borrowed(text);
     }
-    let ellipsis = glyphs.ellipsis;
-    let keep_width = width.saturating_sub(cell_width(ellipsis));
+    let keep_width = width.saturating_sub(cell_width(ELLIPSIS));
     let out: String = text
         .chars()
         .scan(0usize, |kept_width, ch| {
             *kept_width += cell_width(ch);
             (*kept_width <= keep_width).then_some(ch)
         })
-        .chain(std::iter::once(ellipsis))
+        .chain(std::iter::once(ELLIPSIS))
         .collect();
     Cow::Owned(out)
 }
@@ -44,11 +39,6 @@ pub(crate) fn blanks(width: usize) -> Cow<'static, str> {
 }
 
 #[must_use]
-pub(crate) fn truncate(text: &str, max: usize) -> Cow<'_, str> {
-    truncate_to_width(text, max, TruncateGlyphs::default())
-}
-
-#[must_use]
 pub(crate) fn truncate_from_left(text: &str, width: usize) -> Cow<'_, str> {
     if width == 0 {
         return Cow::Borrowed("");
@@ -56,8 +46,7 @@ pub(crate) fn truncate_from_left(text: &str, width: usize) -> Cow<'_, str> {
     if text.width() <= width {
         return Cow::Borrowed(text);
     }
-    let glyphs = TruncateGlyphs::default();
-    let keep_width = width.saturating_sub(cell_width(glyphs.ellipsis));
+    let keep_width = width.saturating_sub(cell_width(ELLIPSIS));
     let start = text
         .char_indices()
         .rev()
@@ -67,25 +56,19 @@ pub(crate) fn truncate_from_left(text: &str, width: usize) -> Cow<'_, str> {
         })
         .last()
         .unwrap_or(text.len());
-    let mut out =
-        String::with_capacity(glyphs.ellipsis.len_utf8() + text.len() - start);
-    out.push(glyphs.ellipsis);
+    let mut out = String::with_capacity(ELLIPSIS.len_utf8() + text.len() - start);
+    out.push(ELLIPSIS);
     out.push_str(text.get(start..).unwrap_or_default());
     Cow::Owned(out)
 }
 
 #[must_use]
-pub(crate) fn truncate_line_to_width<'a>(
-    line: Line<'a>,
-    width: usize,
-    glyphs: TruncateGlyphs,
-) -> Line<'a> {
+pub(crate) fn truncate_line_to_width<'a>(line: Line<'a>, width: usize) -> Line<'a> {
     if line.width() <= width {
         return line;
     }
     let clipped = |span: Span<'a>, budget: usize| {
-        let clipped_text =
-            truncate_to_width(&span.content, budget, glyphs).into_owned();
+        let clipped_text = truncate(&span.content, budget).into_owned();
         (!clipped_text.is_empty()).then(|| {
             crate::primitive::span::text(clipped_text)
                 .style(span.style)
@@ -116,27 +99,27 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     use crate::primitive::{
+        glyphs::ELLIPSIS,
         span::{line, text},
-        text::{TruncateGlyphs, truncate, truncate_line_to_width, truncate_to_width},
+        text::{truncate, truncate_line_to_width},
     };
 
     proptest! {
         #[test]
         fn truncation_never_exceeds_requested_width(text in "(?s:.)*", width in 0usize..40) {
-            let out = truncate_to_width(&text, width, TruncateGlyphs::default());
+            let out = truncate(&text, width);
             prop_assert!(out.width() <= width);
         }
 
         #[test]
         fn truncation_never_splits_a_character(text in "(?s:.)*", width in 0usize..40) {
-            let glyphs = TruncateGlyphs::default();
-            let out = truncate_to_width(&text, width, glyphs);
+            let out = truncate(&text, width);
             if width == 0 {
                 prop_assert_eq!(out.as_ref(), "");
             } else if text.width() <= width {
                 prop_assert_eq!(out.as_ref(), text.as_str());
             } else {
-                let kept = out.strip_suffix(glyphs.ellipsis);
+                let kept = out.strip_suffix(ELLIPSIS);
                 prop_assert!(
                     kept.is_some_and(|kept| text.starts_with(kept)),
                     "truncated output must end with the ellipsis and keep a prefix"
@@ -155,7 +138,7 @@ mod tests {
         #[case] width: usize,
         #[case] expected: &str,
     ) {
-        let truncated = truncate_to_width(text, width, TruncateGlyphs::default());
+        let truncated = truncate(text, width);
         assert_eq!(truncated, expected);
         assert!(truncated.width() <= width);
         assert_eq!(
@@ -179,12 +162,11 @@ mod tests {
         let line = styled_line();
         let whole = line.width();
 
-        let untouched =
-            truncate_line_to_width(line.clone(), whole, TruncateGlyphs::default());
+        let untouched = truncate_line_to_width(line.clone(), whole);
         assert_eq!(untouched.spans.len(), line.spans.len());
         assert_eq!(untouched.width(), whole);
 
-        let cut = truncate_line_to_width(line, 20, TruncateGlyphs::default());
+        let cut = truncate_line_to_width(line, 20);
         assert!(cut.width() <= 20);
         let text: String = cut.spans.iter().map(|span| span.content.as_ref()).collect();
         assert!(text.starts_with("[Shuffle: on] "));
@@ -194,7 +176,7 @@ mod tests {
             "spans past the truncation point must be dropped, got:\n{text}"
         );
 
-        let empty = truncate_line_to_width(styled_line(), 0, TruncateGlyphs::default());
+        let empty = truncate_line_to_width(styled_line(), 0);
         assert_eq!(empty.width(), 0);
     }
 }

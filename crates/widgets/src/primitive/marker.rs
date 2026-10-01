@@ -1,36 +1,15 @@
 use unicode_width::UnicodeWidthStr;
 
-use crate::{Playing, primitive::glyphs::PlaylistGlyphs};
+use crate::{Playing, primitive::glyphs};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MarkerColumns {
-    pub favorite: u16,
-    pub playing: u16,
-}
-
-impl Default for MarkerColumns {
-    fn default() -> Self {
-        Self {
-            favorite: 2,
-            playing: 2,
-        }
-    }
-}
-
-impl MarkerColumns {
-    #[must_use]
-    pub(crate) const fn total(self) -> u16 {
-        self.favorite + self.playing
-    }
-}
+pub(crate) const FAVORITE_COLUMNS: u16 = 2;
+pub(crate) const PLAYING_COLUMNS: u16 = 2;
+pub(crate) const MARKERS_WIDTH: u16 = FAVORITE_COLUMNS + PLAYING_COLUMNS;
 
 #[must_use]
-pub(crate) fn favorite_marker(
-    favorite: Favorite,
-    glyphs: PlaylistGlyphs,
-) -> &'static str {
+pub(crate) fn favorite_marker(favorite: Favorite) -> &'static str {
     match favorite {
-        Favorite::Yes => glyphs.favorite,
+        Favorite::Yes => glyphs::playlist::FAVORITE,
         Favorite::No => "",
     }
 }
@@ -42,9 +21,9 @@ pub(crate) enum Favorite {
 }
 
 #[must_use]
-pub(crate) fn playing_marker(playing: Playing, glyphs: PlaylistGlyphs) -> &'static str {
+pub(crate) fn playing_marker(playing: Playing) -> &'static str {
     match playing {
-        Playing::Yes => glyphs.playing,
+        Playing::Yes => glyphs::playlist::PLAYING,
         Playing::No => "",
     }
 }
@@ -59,8 +38,8 @@ impl QueuePosition {
     }
 
     #[must_use]
-    pub(crate) fn label(self, glyphs: PlaylistGlyphs) -> String {
-        format!("{}{}", glyphs.queued, self.0)
+    pub(crate) fn label(self) -> String {
+        format!("{}{}", glyphs::playlist::QUEUED, self.0)
     }
 }
 

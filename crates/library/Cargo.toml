@@ -19,11 +19,7 @@ thiserror = { workspace = true }
 trash = { workspace = true }
 walkdir = { workspace = true }
 
-[features]
-fixtures = []
-
 [dev-dependencies]
-library = { path = ".", features = ["fixtures"] }
 insta = { workspace = true }
 rstest = { workspace = true }
 

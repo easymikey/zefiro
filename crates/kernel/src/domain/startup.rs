@@ -1,12 +1,10 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc};
 
 use crate::domain::{
-    Crossfade,
+    AudioSettings,
     CustomSetting,
-    OutputDevice,
     Percent,
     PlaylistIndex,
-    Replaygain,
     ThemeChoice,
     ThemeName,
     Track,
@@ -27,10 +25,7 @@ pub struct Startup {
     pub playlist_index: Option<PlaylistIndex>,
     pub playlist_source: PlaylistSource,
     pub shuffle: Shuffle,
-    pub crossfade: Crossfade,
-    pub replaygain: Replaygain,
-    pub output_device: OutputDevice,
-    pub sleep_presets: Box<[Duration]>,
+    pub audio: AudioSettings,
     pub theme: ThemeChoice,
     pub volume: Percent,
     pub themes: Vec<ThemeName>,

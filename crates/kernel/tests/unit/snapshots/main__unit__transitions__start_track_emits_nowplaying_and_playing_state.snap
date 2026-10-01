@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/unit/transitions.rs
-assertion_line: 522
+assertion_line: 520
 expression: effs
 ---
 [
@@ -8,66 +8,68 @@ expression: effs
         Stop,
     ),
     Audio(
-        Load {
-            path: "/tmp/track0.flac",
-            gain: None,
-            revision: Revision(
-                1,
-            ),
-        },
+        Load(
+            TrackRequest {
+                path: "/tmp/track0.flac",
+                gain: None,
+                revision: Revision(
+                    1,
+                ),
+            },
+        ),
     ),
     Library(
-        AppendHistory {
-            track: Track {
+        AppendHistory(
+            HistoryEntry {
                 path: "/tmp/track0.flac",
-                duration: Some(
-                    200s,
-                ),
-                tags: Tags {
-                    title: Some(
-                        "Song",
-                    ),
-                    artist: Some(
-                        "Artist",
-                    ),
-                    album: None,
-                    album_artist: None,
-                    date: None,
-                    genre: None,
-                    track: None,
-                    track_total: None,
-                    disc: None,
-                    composer: None,
-                    comment: None,
-                    lyrics: None,
-                },
-                audio_format: AudioFormat {
-                    format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
-                    bits_per_sample: None,
-                    channels: None,
-                    replay_gain: None,
-                },
-                display: "Artist — Song",
-                tagging: Read,
-            },
-            at: UnixSeconds(
-                0,
-            ),
-        },
-    ),
-    Macos(
-        NowPlaying(
-            Track {
                 title: "Song",
                 artist: Some(
                     "Artist",
                 ),
-                album: None,
-                duration: 200s,
-                path: "/tmp/track0.flac",
+                at: Moment(
+                    0ns,
+                ),
             },
+        ),
+    ),
+    Macos(
+        NowPlaying(
+            Some(
+                Track {
+                    path: "/tmp/track0.flac",
+                    duration: Some(
+                        200s,
+                    ),
+                    tags: Tags {
+                        title: Some(
+                            "Song",
+                        ),
+                        artist: Some(
+                            "Artist",
+                        ),
+                        album: None,
+                        album_artist: None,
+                        date: None,
+                        genre: None,
+                        track: None,
+                        track_total: None,
+                        disc: None,
+                        composer: None,
+                        comment: None,
+                        lyrics: None,
+                    },
+                    audio_format: AudioFormat {
+                        format: None,
+                        bitrate_kbps: None,
+                        sample_rate_hz: None,
+                        bits_per_sample: None,
+                        channels: None,
+                        replay_gain: None,
+                    },
+                    display: "Artist — Song",
+                    tagging: Read,
+                },
+            ),
         ),
     ),
     Audio(

@@ -1,15 +1,15 @@
 ---
 source: crates/library/src/history.rs
-assertion_line: 175
-expression: "parse_history(HISTORY_LOG, 10).entries"
+assertion_line: 163
+expression: "parse_history(HISTORY_LOG, 10)"
 ---
 [
     HistoryEntry {
         path: "/music/third.flac",
         title: "Third",
         artist: None,
-        at: UnixSeconds(
-            7000,
+        at: Moment(
+            7000s,
         ),
     },
     HistoryEntry {
@@ -18,16 +18,16 @@ expression: "parse_history(HISTORY_LOG, 10).entries"
         artist: Some(
             "Artist",
         ),
-        at: UnixSeconds(
-            6000,
+        at: Moment(
+            6000s,
         ),
     },
     HistoryEntry {
         path: "/music/good.flac",
         title: "Good",
         artist: None,
-        at: UnixSeconds(
-            5000,
+        at: Moment(
+            5000s,
         ),
     },
 ]

@@ -51,10 +51,13 @@ impl<F> DriverSender<F> {
         driver: Driver,
         message: DriverMessage,
     ) -> Result<(), SendError> {
-        self.deliver(Message::Driver(driver, message))
+        self.send_message(Message::Driver {
+            driver,
+            event: message,
+        })
     }
 
-    fn deliver(&self, message: Message) -> Result<(), SendError> {
+    fn send_message(&self, message: Message) -> Result<(), SendError> {
         match self.sender.try_send(message) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(message)) => {
@@ -77,7 +80,7 @@ impl Refusals for DriverSender<AudioEvent> {
 
 impl<F: Into<Message>> Outbox<F> for DriverSender<F> {
     fn send(&self, event: F) -> Result<(), SendError> {
-        self.deliver(event.into())
+        self.send_message(event.into())
     }
 }
 
@@ -102,7 +105,7 @@ mod tests {
     #[case::room(Scenario::Room, Ok(()), false)]
     #[case::receiver_dropped(Scenario::ReceiverDropped, Err(SendError::Closed), false)]
     #[case::full(Scenario::Full, Err(SendError::Full), true)]
-    fn a_sender_reports_its_delivery(
+    fn a_sender_reports_the_outcome_of_a_send(
         #[case] scenario: Scenario,
         #[case] expected: Result<(), SendError>,
         #[case] raised: bool,

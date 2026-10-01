@@ -1,19 +1,27 @@
 use ratatui::{
     layout::{Constraint, Rect},
     style::Color,
-    text::Line,
+    text::{Line, Span},
     widgets::{Cell, Row},
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     overlay::{
-        help::groups::{HelpGroup, HelpGroups, HelpLayout, small_count_u16},
+        help::groups::{
+            CHORD_GAP,
+            COLUMN_GAP,
+            HelpGroup,
+            HelpGroups,
+            HelpRow,
+            MINIMUM_DESCRIPTION,
+            small_count_u16,
+        },
         modal::{Hint, list_capacity},
     },
     primitive::{
-        glyphs::HelpGlyphs,
-        span::{line, text},
+        glyphs,
+        span::{StyledText, line, text},
     },
 };
 
@@ -42,7 +50,7 @@ fn widest_chord(groups: &[&HelpGroup]) -> usize {
     groups
         .iter()
         .flat_map(|group| group.bindings.iter())
-        .map(|(chord, _)| chord.width())
+        .map(|row| row.chord.width())
         .max()
         .unwrap_or(0)
 }
@@ -51,11 +59,7 @@ fn full_width_row(line: Line<'static>) -> Row<'static> {
     Row::new(vec![Cell::from(line).column_span(2)])
 }
 
-fn column_lines(
-    groups: &[&HelpGroup],
-    colors: HelpColors,
-    layout: HelpLayout,
-) -> HelpColumn {
+fn column_lines(groups: &[&HelpGroup], colors: HelpColors) -> HelpColumn {
     let chord_width = widest_chord(groups);
     let mut rows: Vec<Row<'static>> = Vec::new();
     let mut max_width = 0usize;
@@ -67,12 +71,12 @@ fn column_lines(
         rows.push(full_width_row(line([text(group.title)
             .fg(colors.title)
             .bold()])));
-        for (key, description) in &group.bindings {
-            max_width = max_width
-                .max(chord_width + usize::from(layout.chord_gap) + description.width());
+        for HelpRow { chord, label } in &group.bindings {
+            max_width =
+                max_width.max(chord_width + usize::from(CHORD_GAP) + label.width());
             rows.push(Row::new(vec![
-                Cell::from(line([text(key.clone()).fg(colors.key)]).right_aligned()),
-                Cell::from(line([text(description.clone()).fg(colors.description)])),
+                Cell::from(line([text(chord.clone()).fg(colors.key)]).right_aligned()),
+                Cell::from(line([text(label.clone()).fg(colors.description)])),
             ]));
         }
     }
@@ -92,14 +96,13 @@ fn height_spread(first: u16, second: u16, third: u16) -> u16 {
 fn three_columns(
     groups: [&HelpGroup; 4],
     colors: HelpColors,
-    layout: HelpLayout,
 ) -> (HelpColumn, HelpColumn, HelpColumn) {
     let [playback, general, navigation, playlist] = groups;
-    let playback_column = column_lines(&[playback], colors, layout);
-    let general_and_navigation = column_lines(&[general, navigation], colors, layout);
-    let playlist_alone = column_lines(&[playlist], colors, layout);
-    let general_alone = column_lines(&[general], colors, layout);
-    let navigation_and_playlist = column_lines(&[navigation, playlist], colors, layout);
+    let playback_column = column_lines(&[playback], colors);
+    let general_and_navigation = column_lines(&[general, navigation], colors);
+    let playlist_alone = column_lines(&[playlist], colors);
+    let general_alone = column_lines(&[general], colors);
+    let navigation_and_playlist = column_lines(&[navigation, playlist], colors);
 
     let navigation_after_general = height_spread(
         playback_column.height,
@@ -119,24 +122,23 @@ fn three_columns(
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct HelpHint {
-    glyph: &'static str,
-    color: Color,
-}
-
-fn fit_column(column: HelpColumn, available_height: u16, hint: HelpHint) -> HelpColumn {
+fn fit_column(
+    column: HelpColumn,
+    available_height: u16,
+    hint: StyledText<'static>,
+) -> HelpColumn {
     if available_height == 0 || column.height <= available_height {
         return column;
     }
     let keep = usize::from(available_height.saturating_sub(1));
     let mut rows = column.rows;
     rows.truncate(keep);
-    rows.push(full_width_row(line([text(hint.glyph).fg(hint.color)])));
+    let hint_width = small_count_u16(Span::from(hint.clone()).width());
+    rows.push(full_width_row(line([hint])));
     HelpColumn {
         rows,
         chord_width: column.chord_width,
-        width: column.width.max(small_count_u16(hint.glyph.width())),
+        width: column.width.max(hint_width),
         height: available_height,
     }
 }
@@ -154,34 +156,28 @@ fn columns_width(columns: &[HelpColumn], column_gap: u16) -> u16 {
     )
 }
 
-fn squeezed_width(columns: &[HelpColumn], layout: HelpLayout) -> u16 {
+fn squeezed_width(columns: &[HelpColumn]) -> u16 {
     let content = columns.iter().fold(0u16, |total, column| {
         total.saturating_add(
             column
                 .chord_width
-                .saturating_add(layout.chord_gap)
-                .saturating_add(layout.minimum_description),
+                .saturating_add(CHORD_GAP)
+                .saturating_add(MINIMUM_DESCRIPTION),
         )
     });
     content.saturating_add(
-        layout
-            .column_gap
-            .saturating_mul(small_count_u16(columns.len().saturating_sub(1))),
+        COLUMN_GAP.saturating_mul(small_count_u16(columns.len().saturating_sub(1))),
     )
 }
 
-fn columns_that_fit(
-    candidates: Vec<Vec<HelpColumn>>,
-    inner: u16,
-    layout: HelpLayout,
-) -> Vec<HelpColumn> {
+fn columns_that_fit(candidates: Vec<Vec<HelpColumn>>, inner: u16) -> Vec<HelpColumn> {
     let last = candidates.len().saturating_sub(1);
     let natural = candidates
         .iter()
-        .position(|candidate| columns_width(candidate, layout.column_gap) <= inner);
+        .position(|candidate| columns_width(candidate, COLUMN_GAP) <= inner);
     let squeezed = candidates
         .iter()
-        .position(|candidate| squeezed_width(candidate, layout) <= inner);
+        .position(|candidate| squeezed_width(candidate) <= inner);
     let picked = match natural {
         Some(index) if index < last => Some(index),
         Some(_) | None => squeezed.or(natural),
@@ -196,22 +192,11 @@ fn columns_that_fit(
     fallback
 }
 
-pub(crate) struct HelpColumnFit<'a> {
-    pub(crate) groups: &'a HelpGroups,
-    pub(crate) colors: HelpColors,
-    pub(crate) layout: HelpLayout,
-    pub(crate) glyphs: HelpGlyphs,
-    pub(crate) full: Rect,
-}
-
-pub(crate) fn select_help_columns(input: &HelpColumnFit<'_>) -> Vec<HelpColumn> {
-    let HelpColumnFit {
-        groups,
-        colors,
-        layout,
-        glyphs,
-        full,
-    } = *input;
+pub(crate) fn select_help_columns(
+    groups: &HelpGroups,
+    colors: HelpColors,
+    full: Rect,
+) -> Vec<HelpColumn> {
     let HelpGroups {
         playback,
         navigation,
@@ -221,24 +206,22 @@ pub(crate) fn select_help_columns(input: &HelpColumnFit<'_>) -> Vec<HelpColumn> 
 
     let (_, available_height) = list_capacity(full, Hint::Absent);
 
-    let single =
-        column_lines(&[playback, navigation, playlist, general], colors, layout);
+    let single = column_lines(&[playback, navigation, playlist, general], colors);
     let columns: Vec<HelpColumn> = if single.height <= available_height {
         vec![single]
     } else {
         let (left, middle, right) =
-            three_columns([playback, general, navigation, playlist], colors, layout);
+            three_columns([playback, general, navigation, playlist], colors);
         columns_that_fit(
             vec![
                 vec![left, middle, right],
                 vec![
-                    column_lines(&[playback], colors, layout),
-                    column_lines(&[general, navigation, playlist], colors, layout),
+                    column_lines(&[playback], colors),
+                    column_lines(&[general, navigation, playlist], colors),
                 ],
                 vec![single],
             ],
             available_width(full),
-            layout,
         )
     };
 
@@ -248,10 +231,7 @@ pub(crate) fn select_help_columns(input: &HelpColumnFit<'_>) -> Vec<HelpColumn> 
             fit_column(
                 column,
                 available_height,
-                HelpHint {
-                    glyph: glyphs.overflow_hint,
-                    color: colors.key,
-                },
+                text(glyphs::help::OVERFLOW_HINT).fg(colors.key),
             )
         })
         .collect()
@@ -275,7 +255,7 @@ mod tests {
             squeezed_width,
             three_columns,
         },
-        groups::{HelpGroup, HelpLayout},
+        groups::{COLUMN_GAP, HelpGroup, HelpRow},
     };
 
     fn colors() -> HelpColors {
@@ -290,23 +270,24 @@ mod tests {
         HelpGroup {
             title,
             bindings: (0..row_count)
-                .map(|index| {
-                    (format!("k{index}"), Cow::Owned(format!("Do thing {index}")))
+                .map(|index| HelpRow {
+                    chord: format!("k{index}"),
+                    label: Cow::Owned(format!("Do thing {index}")),
                 })
                 .collect(),
         }
     }
 
-    struct HelpRow {
+    struct Balance {
         group_rows: [usize; 4],
         heights: (u16, u16, u16),
     }
 
     #[rstest]
-    #[case::navigation_joins_the_middle(HelpRow { group_rows: [18, 8, 2, 16], heights: (19, 13, 17) })]
-    #[case::navigation_joins_the_last(HelpRow { group_rows: [19, 14, 7, 2], heights: (20, 15, 12) })]
+    #[case::navigation_joins_the_middle(Balance { group_rows: [18, 8, 2, 16], heights: (19, 13, 17) })]
+    #[case::navigation_joins_the_last(Balance { group_rows: [19, 14, 7, 2], heights: (20, 15, 12) })]
     fn three_columns_moves_navigation_to_the_column_that_balances_better(
-        #[case] row: HelpRow,
+        #[case] row: Balance,
     ) {
         let [playback_rows, general_rows, navigation_rows, playlist_rows] =
             row.group_rows;
@@ -314,11 +295,8 @@ mod tests {
         let general = synthetic_group("General", general_rows);
         let navigation = synthetic_group("Navigation", navigation_rows);
         let playlist = synthetic_group("Playlist", playlist_rows);
-        let (left, middle, right) = three_columns(
-            [&playback, &general, &navigation, &playlist],
-            colors(),
-            HelpLayout::default(),
-        );
+        let (left, middle, right) =
+            three_columns([&playback, &general, &navigation, &playlist], colors());
         assert_eq!((left.height, middle.height, right.height), row.heights);
     }
 
@@ -328,30 +306,14 @@ mod tests {
         let left_second = synthetic_group("B", 4);
         let right_first = synthetic_group("C", 5);
         let right_second = synthetic_group("D", 4);
-        let left = column_lines(
-            &[&left_first, &left_second],
-            colors(),
-            HelpLayout::default(),
-        );
-        let right = column_lines(
-            &[&right_first, &right_second],
-            colors(),
-            HelpLayout::default(),
-        );
+        let left = column_lines(&[&left_first, &left_second], colors());
+        let right = column_lines(&[&right_first, &right_second], colors());
         assert!(
             left.height.abs_diff(right.height) <= 3,
             "columns should stay balanced: left={} right={}",
             left.height,
             right.height
         );
-    }
-
-    fn column_gap() -> u16 {
-        HelpLayout::default().column_gap
-    }
-
-    fn layout() -> HelpLayout {
-        HelpLayout::default()
     }
 
     fn column(width: u16) -> HelpColumn {
@@ -382,18 +344,16 @@ mod tests {
     ) {
         let available = match width {
             Width::ThreeColumns => {
-                columns_width(&candidates().swap_remove(0), column_gap())
+                columns_width(&candidates().swap_remove(0), COLUMN_GAP)
             }
             Width::OneCellShortOfThree => {
-                columns_width(&candidates().swap_remove(0), column_gap()) - 1
+                columns_width(&candidates().swap_remove(0), COLUMN_GAP) - 1
             }
-            Width::TwoSqueezed => {
-                squeezed_width(&candidates().swap_remove(1), layout())
-            }
+            Width::TwoSqueezed => squeezed_width(&candidates().swap_remove(1)),
             Width::Nothing => 1,
         };
         assert_eq!(
-            columns_that_fit(candidates(), available, layout()),
+            columns_that_fit(candidates(), available),
             candidates().swap_remove(expected)
         );
     }
@@ -409,7 +369,7 @@ mod tests {
     #[test]
     fn the_squeeze_is_narrower_than_the_natural_width() {
         let two = candidates().swap_remove(1);
-        assert!(squeezed_width(&two, layout()) < columns_width(&two, column_gap()));
+        assert!(squeezed_width(&two) < columns_width(&two, COLUMN_GAP));
     }
 
     #[test]

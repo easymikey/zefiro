@@ -1,51 +1,26 @@
 use kernel::domain::{MusicDirError, TextEntry};
-use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
 use crate::{
-    overlay::modal::{OverlayAreas, Prompt, PromptBody},
-    primitive::{canvas::Canvas, glyphs::MusicDirGlyphs},
+    overlay::modal::{Prompt, PromptBody},
+    primitive::glyphs,
     theme::ActiveTheme,
 };
 
 const MIN_WIDTH: u16 = 40;
 
-#[derive(Debug)]
-pub(crate) struct MusicDirOverlay<'a> {
-    pub(crate) typed: &'a TextEntry,
-    pub(crate) error: Option<&'a MusicDirError>,
-    pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) avoid: &'a [Rect],
-}
-
-impl MusicDirOverlay<'_> {
-    #[must_use]
-    pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::Dialog(self.prompt().areas(screen))
-    }
-
-    pub(crate) fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
-        if let OverlayAreas::Dialog(areas) = areas {
-            self.prompt().render_in(areas, canvas);
-        }
-    }
-
-    fn prompt(&self) -> Prompt<'_> {
-        let glyphs = MusicDirGlyphs::default();
-        Prompt {
-            title: glyphs.title_word,
-            hint: glyphs.hint,
-            min_width: MIN_WIDTH,
-            body: PromptBody::Entry(&self.typed.input),
-            error: self.error.map(ToString::to_string),
-            avoid: self.avoid,
-            theme: self.theme,
-        }
-    }
-}
-
-impl Widget for &MusicDirOverlay<'_> {
-    fn render(self, area: Rect, buffer: &mut Buffer) {
-        self.render_in(self.areas(area), Canvas { area, buffer });
+pub(crate) fn prompt<'a>(
+    typed: &'a TextEntry,
+    error: Option<&MusicDirError>,
+    theme: ActiveTheme<'a>,
+) -> Prompt<'a> {
+    Prompt {
+        title: glyphs::music_dir::TITLE_WORD,
+        hint: glyphs::music_dir::HINT,
+        min_width: MIN_WIDTH,
+        body: PromptBody::Entry(&typed.input),
+        error: error.map(ToString::to_string),
+        avoid: &[],
+        theme,
     }
 }
 
@@ -54,54 +29,39 @@ mod tests {
     use kernel::domain::{MusicDirError, TextEntry};
 
     use crate::{
-        overlay::music_dir::MusicDirOverlay,
-        scene::fixtures::{noir, painted},
+        overlay::{music_dir::prompt, rendered_canvas},
+        test_support::noir,
         theme::{ActiveTheme, ColorDepth},
     };
 
-    #[test]
-    fn source_dir_overlay_shows_title_input_and_hint() {
+    fn frame(input: &str, error: Option<MusicDirError>, size: (u16, u16)) -> String {
         let theme = noir();
         let typed = TextEntry {
-            input: "/home/user/Music".to_string(),
+            input: input.to_string(),
         };
-        let overlay = MusicDirOverlay {
-            typed: &typed,
-            error: None,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            avoid: &[],
-        };
-        insta::assert_snapshot!(painted(&overlay, 80, 24));
+        let prompt = prompt(
+            &typed,
+            error.as_ref(),
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
+        rendered_canvas(size.0, size.1, |canvas| {
+            prompt.render_in(prompt.areas(canvas.area), canvas);
+        })
+        .to_string()
     }
 
     #[test]
-    fn source_dir_overlay_shows_the_error_line_when_the_folder_is_empty() {
-        let theme = noir();
-        let typed = TextEntry {
-            input: String::new(),
-        };
-        let error = MusicDirError::Empty;
-        let overlay = MusicDirOverlay {
-            typed: &typed,
-            error: Some(&error),
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            avoid: &[],
-        };
-        insta::assert_snapshot!(painted(&overlay, 80, 24));
+    fn music_dir_overlay_shows_title_input_and_hint() {
+        insta::assert_snapshot!(frame("/home/user/Music", None, (80, 24)));
     }
 
     #[test]
-    fn source_dir_overlay_does_not_panic_on_a_tiny_terminal() {
-        let theme = noir();
-        let typed = TextEntry {
-            input: String::new(),
-        };
-        let overlay = MusicDirOverlay {
-            typed: &typed,
-            error: None,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            avoid: &[],
-        };
-        let _ = painted(&overlay, 4, 3);
+    fn music_dir_overlay_shows_the_error_line_when_the_folder_is_empty() {
+        insta::assert_snapshot!(frame("", Some(MusicDirError::Empty), (80, 24)));
+    }
+
+    #[test]
+    fn music_dir_overlay_does_not_panic_on_a_tiny_terminal() {
+        let _ = frame("", None, (4, 3));
     }
 }

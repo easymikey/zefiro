@@ -1,13 +1,14 @@
 use config::Rgb;
 use num_traits::ToPrimitive;
-use raster::{channel_byte, floor_usize};
 use ratatui::style::Color;
+
+use crate::pixels::{channel_byte, floor};
 
 pub(crate) fn scale_channel(value: u8, factor: f32) -> u8 {
     channel_byte(f32::from(value) * factor)
 }
 
-pub(crate) fn shade(color: Rgb, factor: f32) -> Rgb {
+pub fn shade(color: Rgb, factor: f32) -> Rgb {
     Rgb([
         scale_channel(color.0[0], factor),
         scale_channel(color.0[1], factor),
@@ -37,7 +38,7 @@ pub(crate) fn gradient_at(stops: &[Rgb], t: f32) -> Option<Rgb> {
             let t = t.clamp(0.0, 1.0);
             let segments = (count - 1).to_f32().unwrap_or(f32::MAX);
             let scaled = t * segments;
-            let index = floor_usize(scaled).min(count - 2);
+            let index = floor::<usize>(scaled).min(count - 2);
             let local_t = scaled - index.to_f32().unwrap_or(f32::MAX);
             stops
                 .get(index)

@@ -30,7 +30,7 @@ impl Percent {
     }
 
     #[must_use]
-    pub const fn value(self) -> u8 {
+    pub const fn get(self) -> u8 {
         self.0
     }
 
@@ -50,12 +50,6 @@ impl fmt::Display for Percent {
     }
 }
 
-impl From<Percent> for u8 {
-    fn from(percent: Percent) -> Self {
-        percent.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -66,7 +60,7 @@ mod tests {
     #[case::at_the_ceiling_is_accepted(100, Some(100))]
     #[case::past_the_ceiling_is_rejected(101, None)]
     fn new_rejects_anything_above_100(#[case] raw: u8, #[case] expected: Option<u8>) {
-        assert_eq!(Percent::new(raw).map(Percent::value), expected);
+        assert_eq!(Percent::new(raw).map(Percent::get), expected);
     }
 
     #[rstest]
@@ -87,7 +81,7 @@ mod tests {
         #[case] delta: i8,
         #[case] expected: u8,
     ) {
-        assert_eq!(Percent::clamped(start).step(delta).value(), expected);
+        assert_eq!(Percent::clamped(start).step(delta).get(), expected);
     }
 
     #[test]

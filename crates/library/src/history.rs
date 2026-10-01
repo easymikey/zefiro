@@ -1,104 +1,105 @@
-use std::io::Write;
+use std::{io::Write, path::PathBuf};
 
-use kernel::{HistoryEntry, LibrarySubject, Track, UnixSeconds};
+use kernel::{HistoryEntry, LibrarySubject, Moment};
+use serde::{Deserialize, Serialize};
 
-use crate::{dirs::LibraryDirs, error::Error, record::HistoryRecord};
+use crate::{dirs::LibraryDirs, error::Error};
 
-pub(crate) fn append(
-    dirs: &LibraryDirs,
-    track: &Track,
-    at: UnixSeconds,
-) -> Result<(), Error> {
+#[derive(Serialize, Deserialize)]
+struct HistoryRecord {
+    path: PathBuf,
+    title: String,
+    artist: Option<String>,
+    #[serde(rename = "ts")]
+    at: i64,
+}
+
+impl From<HistoryRecord> for HistoryEntry {
+    fn from(record: HistoryRecord) -> Self {
+        Self {
+            path: record.path,
+            title: record.title,
+            artist: record.artist,
+            at: Moment::new(std::time::Duration::from_secs(
+                u64::try_from(record.at).unwrap_or(0),
+            )),
+        }
+    }
+}
+
+pub(crate) fn append(dirs: &LibraryDirs, entry: &HistoryEntry) -> Result<(), Error> {
     let path = dirs.data_dir.join("history.jsonl");
     crate::files::create_parent_dir(&path)
-        .map_err(Error::write(LibrarySubject::History, &path))?;
-    let entry = HistoryEntry {
-        path: track.path().to_path_buf(),
-        title: track.song_title(),
-        artist: track.tags().artist.clone(),
-        at,
+        .map_err(Error::io(LibrarySubject::History, &path))?;
+    let record = HistoryRecord {
+        path: entry.path.clone(),
+        title: entry.title.clone(),
+        artist: entry.artist.clone(),
+        at: i64::try_from(entry.at.since_epoch().as_secs()).unwrap_or(i64::MAX),
     };
-    let record = HistoryRecord::from(entry);
     let json = serde_json::to_string(&record)
         .map_err(Error::json(LibrarySubject::History, &path))?;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(Error::write(LibrarySubject::History, &path))?;
-    writeln!(file, "{json}").map_err(Error::write(LibrarySubject::History, &path))
+        .map_err(Error::io(LibrarySubject::History, &path))?;
+    writeln!(file, "{json}").map_err(Error::io(LibrarySubject::History, &path))
 }
 
-pub(crate) struct LoadedHistory {
-    pub entries: Vec<HistoryEntry>,
-    pub skipped_lines: usize,
-}
-
-pub(crate) fn load(dirs: &LibraryDirs, limit: usize) -> Result<LoadedHistory, Error> {
+pub(crate) fn load(
+    dirs: &LibraryDirs,
+    limit: usize,
+) -> Result<Vec<HistoryEntry>, Error> {
     let path = dirs.data_dir.join("history.jsonl");
     let read = crate::files::read_if_present(&path);
-    let Some(contents) = read.map_err(Error::read(LibrarySubject::History, &path))?
-    else {
-        return Ok(LoadedHistory {
-            entries: Vec::new(),
-            skipped_lines: 0,
-        });
-    };
-    Ok(parse_history(&contents, limit))
+    let contents = read.map_err(Error::io(LibrarySubject::History, &path))?;
+    Ok(contents.map_or_else(Vec::new, |text| parse_history(&text, limit)))
 }
 
-fn parse_history(contents: &str, limit: usize) -> LoadedHistory {
-    let mut entries = Vec::new();
-    let mut skipped_lines = 0;
-    for line in contents.lines().rev() {
-        if entries.len() >= limit {
-            break;
-        }
-        match serde_json::from_str::<HistoryRecord>(line) {
-            Ok(record) => entries.push(HistoryEntry::from(record)),
-            Err(_) => skipped_lines += 1,
-        }
-    }
-    LoadedHistory {
-        entries,
-        skipped_lines,
-    }
+fn parse_history(contents: &str, limit: usize) -> Vec<HistoryEntry> {
+    contents
+        .lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<HistoryRecord>(line).ok())
+        .map(HistoryEntry::from)
+        .take(limit)
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use kernel::{Tags, Track, UnixSeconds};
+    use kernel::{HistoryEntry, Moment};
     use rstest::rstest;
 
     use crate::{
         dirs::LibraryDirs,
-        history::{self, parse_history},
-        record::HistoryRecord,
-        test_support,
+        history::{self, HistoryRecord, parse_history},
     };
 
     const HISTORY_LOG: &str = include_str!("../tests/fixtures/history.jsonl");
 
-    fn track(path: &str, title: &str, artist: Option<&str>) -> Track {
-        test_support::track(
-            path,
-            Tags {
-                title: Some(title.to_string()),
-                artist: artist.map(str::to_string),
-                ..Tags::default()
-            },
-        )
+    fn entry(path: &str, title: &str, artist: Option<&str>) -> HistoryEntry {
+        HistoryEntry {
+            path: PathBuf::from(path),
+            title: title.to_string(),
+            artist: artist.map(str::to_string),
+            at: Moment::default(),
+        }
     }
 
     #[test]
-    fn history_append_writes_one_json_line() {
+    fn append_writes_one_json_line() {
         let directory = tempfile::tempdir().unwrap();
         let dirs = LibraryDirs::under(directory.path());
 
-        let sample_track = track("/music/song.flac", "Song", Some("Artist"));
-        history::append(&dirs, &sample_track, UnixSeconds::new(1_700_000_000)).unwrap();
+        let sample = HistoryEntry {
+            at: Moment::new(std::time::Duration::from_secs(1_700_000_000)),
+            ..entry("/music/song.flac", "Song", Some("Artist"))
+        };
+        history::append(&dirs, &sample).unwrap();
 
         let contents =
             std::fs::read_to_string(dirs.data_dir.join("history.jsonl")).unwrap();
@@ -106,28 +107,33 @@ mod tests {
     }
 
     #[test]
-    fn read_round_trips_appended_entries_newest_first() {
+    fn load_returns_appended_entries_newest_first() {
         let directory = tempfile::tempdir().unwrap();
         let dirs = LibraryDirs::under(directory.path());
 
-        let first = track("/music/first.flac", "First", Some("Artist A"));
-        let second = track("/music/second.flac", "Second", None);
-        history::append(&dirs, &first, UnixSeconds::new(1_000)).unwrap();
-        history::append(&dirs, &second, UnixSeconds::new(2_000)).unwrap();
+        let first = HistoryEntry {
+            at: Moment::new(std::time::Duration::from_secs(1_000)),
+            ..entry("/music/first.flac", "First", Some("Artist A"))
+        };
+        let second = HistoryEntry {
+            at: Moment::new(std::time::Duration::from_secs(2_000)),
+            ..entry("/music/second.flac", "Second", None)
+        };
+        history::append(&dirs, &first).unwrap();
+        history::append(&dirs, &second).unwrap();
 
-        let read = history::load(&dirs, 10).unwrap();
-        insta::assert_debug_snapshot!(read.entries);
+        let entries = history::load(&dirs, 10).unwrap();
+        insta::assert_debug_snapshot!(entries);
     }
 
     #[test]
-    fn read_returns_empty_vec_when_file_is_missing() {
+    fn a_missing_history_file_loads_empty() {
         let directory = tempfile::tempdir().unwrap();
         let dirs = LibraryDirs::under(directory.path());
 
-        let read = history::load(&dirs, 10).unwrap();
+        let entries = history::load(&dirs, 10).unwrap();
 
-        assert!(read.entries.is_empty());
-        assert_eq!(read.skipped_lines, 0);
+        assert!(entries.is_empty());
     }
 
     fn parses(line: &&str) -> bool {
@@ -154,7 +160,7 @@ mod tests {
 
     #[test]
     fn parse_history_skips_a_corrupt_line_and_reverses_the_rest() {
-        insta::assert_debug_snapshot!(parse_history(HISTORY_LOG, 10).entries);
+        insta::assert_debug_snapshot!(parse_history(HISTORY_LOG, 10));
     }
 
     #[rstest]
@@ -163,21 +169,9 @@ mod tests {
     #[case::more_than_there_are(9, &["/music/third.flac", "/music/also-good.flac", "/music/good.flac"])]
     fn parse_history_caps_at_limit(#[case] limit: usize, #[case] expected: &[&str]) {
         let dirs: Vec<PathBuf> = parse_history(HISTORY_LOG, limit)
-            .entries
             .into_iter()
             .map(|entry| entry.path)
             .collect();
         assert_eq!(dirs, expected.iter().map(PathBuf::from).collect::<Vec<_>>());
-    }
-
-    #[rstest]
-    #[case::the_corrupt_line_is_older_than_the_first_entry_asked_for(1, 0)]
-    #[case::the_whole_file_is_visited(9, 1)]
-    fn parse_history_counts_the_lines_it_skips(
-        #[case] limit: usize,
-        #[case] expected_skipped: usize,
-    ) {
-        let read = parse_history(HISTORY_LOG, limit);
-        assert_eq!(read.skipped_lines, expected_skipped);
     }
 }

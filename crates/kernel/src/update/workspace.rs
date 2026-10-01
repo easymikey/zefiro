@@ -4,16 +4,12 @@ use crate::{
         ConfigFile,
         Keymap,
         KeymapOverrides,
-        Revision,
+        Revisions,
         TOAST_LIFETIME,
         Toast,
         Workspace,
     },
-    message::{Timer, WorkspaceRequest},
-    update::{
-        keymap::default_bindings,
-        machine::{Machine, Rejected},
-    },
+    message::Timer,
 };
 
 pub(crate) struct SourceOutcome {
@@ -22,35 +18,46 @@ pub(crate) struct SourceOutcome {
 }
 
 impl Workspace {
-    pub(crate) fn keymap_reloaded(&mut self, keys: KeymapOverrides) -> Cmd {
-        if self.keymap.config() == &keys {
+    pub(crate) fn keymap_reloaded(
+        &mut self,
+        keys: KeymapOverrides,
+        revisions: &mut Revisions,
+    ) -> Cmd {
+        if self.keymap.overrides() == &keys {
             return Cmd::None;
         }
-        self.keymap = Keymap::new(keys, &default_bindings());
+        self.keymap = Keymap::new(keys);
         let text = self.keymap.error_text();
-        self.source_result(SourceOutcome {
-            source: ConfigFile::Config,
-            text,
-        })
+        self.source_result(
+            SourceOutcome {
+                source: ConfigFile::Config,
+                text,
+            },
+            revisions,
+        )
     }
 
-    pub(crate) fn show(&mut self, toast: Toast) -> Cmd {
+    pub(crate) fn show(&mut self, toast: Toast, revisions: &mut Revisions) -> Cmd {
         self.toast = Some(toast);
         Cmd::Batch(vec![
             Effect::Animate(Cue::ToastRaised),
             Effect::After {
                 delay: TOAST_LIFETIME,
-                message: Timer::Toast(Revision::UNSTAMPED),
+                message: Timer::Toast(revisions.issue_toast()),
             },
         ])
     }
 
-    pub(crate) fn source_result(&mut self, outcome: SourceOutcome) -> Cmd {
+    pub(crate) fn source_result(
+        &mut self,
+        outcome: SourceOutcome,
+        revisions: &mut Revisions,
+    ) -> Cmd {
         let SourceOutcome { source, text } = outcome;
         match text {
             Some(text) => {
                 let fresh = self.source_errors.insert_if_changed(source, text);
-                fresh.map_or(Cmd::None, |told| self.show(Toast::error(told)))
+                fresh.map_or(Cmd::None, |told| self.show(Toast::error(told), revisions))
             }
             None => self.source_recovered(source),
         }
@@ -61,25 +68,5 @@ impl Workspace {
         self.toast
             .take_if(|toast| Some(toast.text.as_str()) == cleared.as_deref())
             .map_or(Cmd::None, |_| Cue::ToastDismissed.into())
-    }
-}
-
-impl Machine for Workspace {
-    type Message = WorkspaceRequest;
-    type Error = std::convert::Infallible;
-    type Effect = Cmd;
-
-    fn transition(
-        mut self,
-        request: WorkspaceRequest,
-    ) -> Result<(Self, Cmd), Rejected<Self>> {
-        let cmd = match request {
-            WorkspaceRequest::ShowToast(toast) => self.show(toast),
-            WorkspaceRequest::ClearToast => {
-                self.toast = None;
-                Cmd::None
-            }
-        };
-        Ok((self, cmd))
     }
 }

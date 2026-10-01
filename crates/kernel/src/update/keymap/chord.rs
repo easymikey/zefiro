@@ -1,5 +1,14 @@
 use crate::{
-    domain::{Action, CharSink, Chord, KeyContext, KeyPattern},
+    domain::{
+        Action,
+        CharSink,
+        Chord,
+        Key,
+        KeyCode,
+        KeyContext,
+        KeyPattern,
+        Modifiers,
+    },
     message::Message,
 };
 
@@ -59,4 +68,20 @@ impl From<KeyContextRow> for KeyBinding {
             source: BindingSource::Default,
         }
     }
+}
+
+pub(crate) fn key(character: char) -> Chord {
+    bare(KeyCode::Char(character))
+}
+
+pub(crate) fn bare(code: KeyCode) -> Chord {
+    Chord::Key(Key::plain(code))
+}
+
+pub(crate) fn shifted(code: KeyCode) -> Chord {
+    Chord::Key(Key::new(code, Modifiers::SHIFT))
+}
+
+pub(crate) fn ctrl(character: char) -> Chord {
+    Chord::Key(Key::ctrl(KeyCode::Char(character)))
 }

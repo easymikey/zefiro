@@ -1,33 +1,18 @@
-use std::{
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use config::AppearancePatch;
-use kernel::{ConfigPatch, DevicePatch};
-
-use crate::{
-    config::{
-        ConfigPaths,
-        write::{Written, save_appearance, save_config},
-    },
-    error::SaveError,
-};
-
-#[derive(Debug, Default)]
-pub(crate) struct Saved {
-    pub config: Option<Result<Written, SaveError>>,
-    pub appearance: Option<Result<Written, SaveError>>,
-}
+use kernel::ConfigPatch;
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum SavePatches {
-    Config(ConfigPatch),
-    Appearance(AppearancePatch),
-    Both {
-        config: ConfigPatch,
-        appearance: AppearancePatch,
-    },
+pub(crate) struct SavePatches {
+    pub config: Option<ConfigPatch>,
+    pub appearance: Option<AppearancePatch>,
+}
+
+impl SavePatches {
+    fn nonempty(self) -> Option<Self> {
+        (self.config.is_some() || self.appearance.is_some()).then_some(self)
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -78,7 +63,7 @@ impl SaveQueue {
         let merged = self
             .pending_appearance
             .take()
-            .map_or(patch, |prev| merge_appearance_patch(prev.patch, patch));
+            .map_or(patch, |prev| prev.patch.then(patch));
         self.pending_appearance = Some(PendingSave {
             patch: merged,
             deadline: now + self.debounce,
@@ -88,13 +73,13 @@ impl SaveQueue {
     pub(crate) fn take_due(&mut self, now: Instant) -> Option<SavePatches> {
         let config = take_if_due(&mut self.pending_config, now);
         let appearance = take_if_due(&mut self.pending_appearance, now);
-        gather(config, appearance)
+        SavePatches { config, appearance }.nonempty()
     }
 
     pub(crate) fn take_all(&mut self) -> Option<SavePatches> {
         let config = self.pending_config.take().map(|pending| pending.patch);
         let appearance = self.pending_appearance.take().map(|pending| pending.patch);
-        gather(config, appearance)
+        SavePatches { config, appearance }.nonempty()
     }
 }
 
@@ -106,32 +91,13 @@ fn take_if_due<P>(slot: &mut Option<PendingSave<P>>, now: Instant) -> Option<P> 
     }
 }
 
-fn gather(
-    config: Option<ConfigPatch>,
-    appearance: Option<AppearancePatch>,
-) -> Option<SavePatches> {
-    match (config, appearance) {
-        (None, None) => None,
-        (Some(config), None) => Some(SavePatches::Config(config)),
-        (None, Some(appearance)) => Some(SavePatches::Appearance(appearance)),
-        (Some(config), Some(appearance)) => {
-            Some(SavePatches::Both { config, appearance })
-        }
-    }
-}
-
 fn merge_config_patch(base: Option<ConfigPatch>, next: ConfigPatch) -> ConfigPatch {
     let Some(base) = base else {
         return next;
     };
     ConfigPatch {
         crossfade: next.crossfade.or(base.crossfade),
-        device: match next.device {
-            DevicePatch::Keep => base.device,
-            overriding @ (DevicePatch::SystemDefault | DevicePatch::Named(_)) => {
-                overriding
-            }
-        },
+        device: next.device.or(base.device),
         replaygain: next.replaygain.or(base.replaygain),
         theme: next.theme.or(base.theme),
         volume: next.volume.or(base.volume),
@@ -140,85 +106,20 @@ fn merge_config_patch(base: Option<ConfigPatch>, next: ConfigPatch) -> ConfigPat
     }
 }
 
-fn merge_appearance_patch(
-    base: AppearancePatch,
-    next: AppearancePatch,
-) -> AppearancePatch {
-    AppearancePatch {
-        cover_style: next.cover_style.or(base.cover_style),
-        cover_brackets: next.cover_brackets.or(base.cover_brackets),
-        format_chips: next.format_chips.or(base.format_chips),
-        speed_chip: next.speed_chip.or(base.speed_chip),
-        progress_time: next.progress_time.or(base.progress_time),
-        key_hints: next.key_hints.or(base.key_hints),
-        animations: next.animations.or(base.animations),
-        layout_mode: next.layout_mode.or(base.layout_mode),
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct SavePaths {
-    config: PathBuf,
-    appearance: PathBuf,
-}
-
-impl SavePaths {
-    #[must_use]
-    pub(crate) fn new(paths: &ConfigPaths) -> Self {
-        Self {
-            config: paths.config.clone(),
-            appearance: paths.appearance.clone(),
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn write(&self, patches: SavePatches) -> Saved {
-        match patches {
-            SavePatches::Config(config) => Saved {
-                config: Some(save_config(&self.config, config)),
-                appearance: None,
-            },
-            SavePatches::Appearance(appearance) => Saved {
-                config: None,
-                appearance: Some(save_appearance(&self.appearance, appearance)),
-            },
-            SavePatches::Both { config, appearance } => Saved {
-                config: Some(save_config(&self.config, config)),
-                appearance: Some(save_appearance(&self.appearance, appearance)),
-            },
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use config::{CoverStyle, FormatChips, KeyHints};
     use kernel::{
         Bounded,
         ConfigPatch,
-        DevicePatch,
-        domain::{Crossfade, DeviceName, ThemeName},
+        domain::{Crossfade, DeviceName, OutputDevice, ThemeName},
     };
 
-    use crate::config::save_queue::{
-        SavePatches,
-        SavePaths,
-        merge_appearance_patch,
-        merge_config_patch,
-    };
+    use crate::config::save_queue::merge_config_patch;
 
     fn crossfade(seconds: u64) -> Crossfade {
         Crossfade::clamped(Duration::from_secs(seconds))
-    }
-
-    fn theme_only(name: &'static str) -> SavePatches {
-        SavePatches::Config(
-            ConfigPatch::builder()
-                .theme(ThemeName::from_static(name))
-                .build(),
-        )
     }
 
     #[test]
@@ -238,52 +139,19 @@ mod tests {
     #[test]
     fn merge_config_patch_device_keep_does_not_override() {
         let earlier = ConfigPatch::builder()
-            .device(DevicePatch::Named(
+            .device(OutputDevice::Named(
                 DeviceName::new("Speakers".to_string()).unwrap(),
             ))
             .build();
-        let later = ConfigPatch::builder().device(DevicePatch::Keep).build();
+        let later = ConfigPatch::builder().build();
 
         let merged = merge_config_patch(Some(earlier), later);
 
         assert_eq!(
             merged.device,
-            DevicePatch::Named(DeviceName::new("Speakers".to_string()).unwrap())
+            Some(OutputDevice::Named(
+                DeviceName::new("Speakers".to_string()).unwrap()
+            ))
         );
-    }
-
-    #[test]
-    fn merge_appearance_patch_folds_disjoint_fields_and_later_field_wins() {
-        let earlier = config::AppearancePatch::builder()
-            .format_chips(FormatChips::Hidden)
-            .cover_style(CoverStyle::Vinyl)
-            .build();
-        let later = config::AppearancePatch::builder()
-            .cover_style(CoverStyle::Off)
-            .key_hints(KeyHints::Hidden)
-            .build();
-
-        let merged = merge_appearance_patch(earlier, later);
-
-        assert_eq!(merged.format_chips, Some(FormatChips::Hidden));
-        assert_eq!(merged.key_hints, Some(KeyHints::Hidden));
-        assert_eq!(merged.cover_style, Some(CoverStyle::Off));
-    }
-
-    #[test]
-    fn write_lands_a_config_patch_on_disk() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("config.toml");
-        let paths = SavePaths {
-            config: path.clone(),
-            appearance: directory.path().join("window.toml"),
-        };
-
-        let flushed = paths.write(theme_only("dark"));
-
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("theme = \"dark\""));
-        assert!(matches!(flushed.config, Some(Ok(_))));
-        assert!(flushed.appearance.is_none());
     }
 }

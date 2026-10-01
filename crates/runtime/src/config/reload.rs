@@ -68,14 +68,14 @@ mod tests {
     fn a_user_theme_file_is_parsed_over_the_embedded_one() {
         let theme = theme_reload("noir", Some("name = \"mine\"\n[colors]\nbg = \"#000000\"\nfg = \"#000000\"\nbright_fg = \"#000000\"\naccent = \"#000000\"\ngreen = \"#000000\"\nyellow = \"#000000\"\nred = \"#000000\"\n")).unwrap();
 
-        assert_eq!(theme.name, "mine");
+        assert_eq!(theme.name.as_str(), "mine");
     }
 
     #[test]
     fn an_embedded_theme_resolves_when_no_user_file_exists() {
         let theme = theme_reload("noir", None).unwrap();
 
-        assert_eq!(theme.name, "noir");
+        assert_eq!(theme.name.as_str(), "noir");
     }
 
     #[test]

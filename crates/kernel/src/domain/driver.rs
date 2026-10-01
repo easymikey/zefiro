@@ -47,7 +47,7 @@ pub enum DriverStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DriverRecord {
     pub status: DriverStatus,
-    pub strategy: Supervision,
+    pub supervision: Supervision,
     pub restarts: Restarts,
 }
 
@@ -58,7 +58,7 @@ impl Default for Drivers {
     fn default() -> Self {
         Self(Driver::ALL.map(|driver| DriverRecord {
             status: DriverStatus::default(),
-            strategy: Supervision::standard(driver),
+            supervision: Supervision::standard(driver),
             restarts: Restarts::default(),
         }))
     }
@@ -90,12 +90,6 @@ impl Drivers {
             Driver::Macos => macos,
         }
     }
-
-    #[must_use]
-    pub fn with_strategy(mut self, driver: Driver, strategy: Supervision) -> Self {
-        self.record_mut(driver).strategy = strategy;
-        self
-    }
 }
 
 #[cfg(test)]
@@ -119,19 +113,5 @@ mod tests {
                 assert_eq!(drivers.status(other), expected);
             }
         }
-    }
-
-    #[test]
-    fn with_strategy_replaces_one_row() {
-        use crate::domain::{Announce, Fallback, Supervision};
-
-        let replacement = Supervision::Fallback(Fallback::Degrade(Announce::Silent));
-        let drivers = Drivers::default().with_strategy(Driver::Audio, replacement);
-
-        assert_eq!(drivers.record(Driver::Audio).strategy, replacement);
-        assert_eq!(
-            drivers.record(Driver::Library).strategy,
-            Supervision::standard(Driver::Library)
-        );
     }
 }

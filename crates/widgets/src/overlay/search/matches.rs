@@ -13,10 +13,10 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     overlay::modal::{ModalRowColors, indented},
     primitive::{
-        glyphs::{SearchGlyphs, TruncateGlyphs},
+        glyphs,
         list_chrome::scroll_offset,
         span::{line, text},
-        text::truncate_to_width,
+        text::truncate,
         track_row::Selected,
     },
 };
@@ -31,7 +31,7 @@ pub(crate) struct SearchMatchList<'a> {
 }
 
 fn match_count_line(count: usize, dim: Color) -> Option<Line<'static>> {
-    (count == 0).then(|| line([text(SearchGlyphs::default().no_matches).fg(dim)]))
+    (count == 0).then(|| line([text(glyphs::search::NO_MATCHES).fg(dim)]))
 }
 
 pub(crate) fn render_match_pane(list: &SearchMatchList<'_>, buffer: &mut Buffer) {
@@ -124,18 +124,17 @@ pub(crate) fn render_match_rows(list: &SearchMatchList<'_>, buffer: &mut Buffer)
 }
 
 fn match_line<'a>(hit: &MatchRow<'a>, colors: ModalRowColors) -> Line<'a> {
-    let glyphs = SearchGlyphs::default();
     let base_text = match hit.selected {
         Selected::Yes => colors.selected_text,
         Selected::No => colors.text,
     };
     let marker = match hit.selected {
-        Selected::Yes => glyphs.selected_marker,
-        Selected::No => glyphs.unselected_marker,
+        Selected::Yes => glyphs::search::SELECTED_MARKER,
+        Selected::No => glyphs::search::UNSELECTED_MARKER,
     };
 
     let title_width = hit.row_width.saturating_sub(marker.width());
-    let content = truncate_to_width(hit.title, title_width, TruncateGlyphs::default());
+    let content = truncate(hit.title, title_width);
 
     let marker_piece = match hit.selected {
         Selected::Yes => text(marker).fg(base_text).bg(colors.selected_background),

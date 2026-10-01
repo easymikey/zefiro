@@ -81,8 +81,10 @@ pub(crate) enum WatchMessage {
     ThemesUnreadable(String),
     Listed(Vec<String>),
     SelectTheme(String),
-    WroteAppearance(String),
-    WroteConfig(String),
+    Wrote {
+        file: ConfigFile,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,8 +159,18 @@ impl Machine for ConfigWatch {
                 WatchEffect::Changed(ConfigChange::ThemesUnreadable(detail)),
             )),
             WatchMessage::SelectTheme(name) => self.select_theme(name),
-            WatchMessage::WroteAppearance(text) => Ok(self.appearance_written(&text)),
-            WatchMessage::WroteConfig(text) => Ok(self.keys_written(&text)),
+            WatchMessage::Wrote {
+                file: ConfigFile::Appearance,
+                text,
+            } => Ok(self.appearance_written(&text)),
+            WatchMessage::Wrote {
+                file: ConfigFile::Config,
+                text,
+            } => Ok(self.keys_written(&text)),
+            WatchMessage::Wrote {
+                file: ConfigFile::Theme,
+                ..
+            } => Ok((self, WatchEffect::Nothing)),
         }
     }
 }
@@ -469,23 +481,16 @@ mod tests {
         assert_eq!(content.as_deref(), Some(second));
     }
 
-    fn wrote_appearance() -> fn(String) -> WatchMessage {
-        WatchMessage::WroteAppearance
-    }
-
-    fn wrote_keys() -> fn(String) -> WatchMessage {
-        WatchMessage::WroteConfig
-    }
-
     #[rstest]
-    #[case(ConfigFile::Appearance, wrote_appearance())]
-    #[case(ConfigFile::Config, wrote_keys())]
-    fn the_drivers_own_write_is_not_reported_back(
-        #[case] file: ConfigFile,
-        #[case] wrote: fn(String) -> WatchMessage,
-    ) {
+    #[case(ConfigFile::Appearance)]
+    #[case(ConfigFile::Config)]
+    fn the_drivers_own_write_is_not_reported_back(#[case] file: ConfigFile) {
         let written = "written\n";
-        let (after_write, io) = step(selected("noir"), wrote(written.to_string()));
+        let wrote = WatchMessage::Wrote {
+            file,
+            text: written.to_string(),
+        };
+        let (after_write, io) = step(selected("noir"), wrote);
         assert!(is_nothing(&io));
         let (_, io_after_observe) = step(after_write, observed(file, Some(written)));
         assert!(is_nothing(&io_after_observe));

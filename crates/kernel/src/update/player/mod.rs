@@ -14,25 +14,26 @@ use crate::{
         Effect,
         LibraryCmd,
         MacosCmd,
-        NowPlaying,
         PlaybackChange,
+        TrackRequest,
     },
     domain::{
         AbLoop,
+        HistoryEntry,
         Model,
         Moment,
         PRELOAD_LEAD,
+        Pause,
         Player,
-        PlaylistIndex,
         Revision,
+        Revisions,
         Speed,
         Track,
-        UnixSeconds,
         Workspace,
-        playlist::{Playlist, RepeatMode},
     },
     message::{AudioError, Timer},
     update::{
+        audio,
         error::UpdateError,
         machine::{Machine, Rejected},
     },
@@ -40,15 +41,39 @@ use crate::{
 
 #[derive(Debug, Clone, Copy)]
 pub struct Anchor {
-    pub now: Moment,
+    pub since: Moment,
     pub speed: Speed,
+}
+
+impl Anchor {
+    pub(crate) fn at(model: &Model, now: Moment) -> Self {
+        Anchor {
+            since: now,
+            speed: model.transport.speed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Stamp {
+    pub anchor: Anchor,
+    pub revision: Revision,
+}
+
+impl Stamp {
+    pub(crate) fn issue(model: &Model, now: Moment) -> Self {
+        Stamp {
+            anchor: Anchor::at(model, now),
+            revision: model.revisions.effects.next(),
+        }
+    }
 }
 
 #[derive(Debug)]
 pub enum PlayerMessage {
     Toggle {
         current: Option<Arc<Track>>,
-        anchor: Anchor,
+        stamp: Stamp,
     },
     Stop,
     Hold(Moment),
@@ -60,13 +85,14 @@ pub enum PlayerMessage {
     SleepFired(Moment),
     Start {
         track: Arc<Track>,
+        stamp: Stamp,
     },
     Loaded {
         total: Option<Duration>,
         anchor: Anchor,
     },
     Error {
-        failure: AudioError,
+        error: AudioError,
         now: Moment,
     },
     MarkReached {
@@ -83,6 +109,7 @@ pub enum PlayerMessage {
     },
     Ended {
         next: Option<Arc<Track>>,
+        stamp: Stamp,
     },
 }
 
@@ -103,21 +130,23 @@ impl Machine for Player {
 
     fn transition(self, message: PlayerMessage) -> Transition {
         match message {
-            PlayerMessage::Toggle { current, anchor } => self.toggle(current, anchor),
+            PlayerMessage::Toggle { current, stamp } => self.toggle(current, stamp),
             PlayerMessage::Stop => Ok((Player::Stopped, stopped_effects())),
-            PlayerMessage::Hold(now) => self.hold(now),
+            PlayerMessage::Hold(now) => self.pause(now, Pause::ByOverlay),
             PlayerMessage::Release(anchor) => self.release(anchor),
             PlayerMessage::Seek { target, now } => self.seek(target, now),
-            PlayerMessage::SleepFired(now) => self.sleep_fired(now),
-            PlayerMessage::Start { track } => Ok(start(track, StartOrigin::User)),
+            PlayerMessage::SleepFired(now) => self.pause(now, Pause::ByListener),
+            PlayerMessage::Start { track, stamp } => {
+                Ok(start(track, StartOrigin::User, stamp))
+            }
             PlayerMessage::Loaded { total, anchor } => self.loaded(total, anchor),
-            PlayerMessage::Error { failure, now } => Ok(self.failed(&failure, now)),
+            PlayerMessage::Error { error, now } => Ok(self.failed(&error, now)),
             PlayerMessage::MarkReached { offset, lookahead } => {
                 self.positioned(offset, lookahead)
             }
             PlayerMessage::Playhead { offset, now } => self.reported(offset, now),
             PlayerMessage::TrackChanged { next, now } => self.track_changed(next, now),
-            PlayerMessage::Ended { next } => self.ended(next),
+            PlayerMessage::Ended { next, stamp } => self.ended(next, stamp),
         }
     }
 }
@@ -143,29 +172,41 @@ pub(crate) fn update_player(
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
     let since = playing_since(&model.player);
+    let candidate = model.revisions.effects.next();
     let cmd = model.player.update(message)?;
+    committed(&mut model.revisions, candidate, &cmd);
     if let Some(since) = since {
         accumulate(&mut model.workspace, since, now);
     }
-    let position = position_report(&cmd);
-    Ok(cmd.then(arm(model, now, position)))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PositionReport {
-    AlreadySent,
-    Pending,
-}
-
-fn position_report(cmd: &Cmd) -> PositionReport {
-    let sent = cmd
+    let position_sent = cmd
         .effects()
         .any(|effect| matches!(effect, Effect::Macos(MacosCmd::PlaybackPosition(_))));
-    if sent {
-        PositionReport::AlreadySent
+    let armed = if position_sent {
+        timer(model, now)
     } else {
-        PositionReport::Pending
+        arm(model, now)
+    };
+    Ok(cmd.then(armed))
+}
+
+pub(crate) fn committed(revisions: &mut Revisions, candidate: Revision, cmd: &Cmd) {
+    let loads = cmd.effects().any(|effect| {
+        matches!(
+            effect,
+            Effect::Audio(AudioCmd::Load(_) | AudioCmd::Preload(_))
+        )
+    });
+    if loads {
+        revisions.effects = candidate;
     }
+}
+
+pub(crate) fn duration_of(model: &Model) -> Duration {
+    model
+        .player
+        .current()
+        .and_then(|track| track.duration())
+        .unwrap_or_default()
 }
 
 pub(crate) fn lookahead(model: &Model, now: Moment) -> Lookahead {
@@ -173,47 +214,39 @@ pub(crate) fn lookahead(model: &Model, now: Moment) -> Lookahead {
         Some(AbLoop::Full { a, b }) => Some((a, b)),
         Some(AbLoop::AOnly(_)) | None => None,
     };
-    let duration = model.player.current().map_or(Duration::ZERO, |track| {
-        track.duration().unwrap_or(Duration::ZERO)
-    });
     Lookahead {
         preload_lead: PRELOAD_LEAD,
         ab_loop,
-        next: next_track(&model.playlist, &model.queue),
-        duration,
+        next: audio::successor(&model.playlist, &model.queue)
+            .track()
+            .cloned(),
+        duration: duration_of(model),
         now,
+        revision: model.revisions.effects.next(),
     }
 }
 
-fn next_track(playlist: &Playlist, queue: &[PlaylistIndex]) -> Option<Arc<Track>> {
-    if matches!(playlist.repeat, RepeatMode::One) {
-        return playlist.current().cloned();
-    }
-    if let Some(index) = queue.first() {
-        return playlist.tracks.get(index.get()).cloned();
-    }
-    playlist.upcoming().cloned()
-}
-
-pub(crate) fn arm(model: &Model, now: Moment, position: PositionReport) -> Cmd {
+pub(crate) fn arm(model: &mut Model, now: Moment) -> Cmd {
     let Player::Playing { head, .. } = &model.player else {
         return Cmd::None;
     };
-    let reported = match position {
-        PositionReport::Pending => {
-            Effect::Macos(MacosCmd::PlaybackPosition(head.position_at(now))).into()
-        }
-        PositionReport::AlreadySent => Cmd::None,
+    Cmd::from(Effect::Macos(MacosCmd::PlaybackPosition(
+        head.position_at(now),
+    )))
+    .then(timer(model, now))
+}
+
+fn timer(model: &mut Model, now: Moment) -> Cmd {
+    let Player::Playing { head, .. } = &model.player else {
+        return Cmd::None;
     };
-    let look = lookahead(model, now);
-    let timer = next_decision(*head, &look, now).map_or(Cmd::None, |delay| {
+    next_decision(*head, &lookahead(model, now)).map_or(Cmd::None, |delay| {
         Effect::After {
             delay,
-            message: Timer::Mark(Revision::UNSTAMPED),
+            message: Timer::Mark(model.revisions.issue_mark()),
         }
         .into()
-    });
-    reported.then(timer)
+    })
 }
 
 pub(crate) fn playing_since(player: &Player) -> Option<Moment> {
@@ -233,30 +266,28 @@ enum StartOrigin {
     TrackEnded,
 }
 
-fn start(track: Arc<Track>, origin: StartOrigin) -> (Player, Cmd) {
-    let path = track.path().to_path_buf();
-    let gain = track.audio_format().replay_gain;
-    let mut effects = match origin {
-        StartOrigin::User => vec![Effect::Audio(AudioCmd::Stop)],
-        StartOrigin::TrackEnded => Vec::new(),
-    };
-    effects.extend([
-        Effect::Audio(AudioCmd::Load {
-            path,
-            gain,
-            revision: Revision::UNSTAMPED,
-        }),
-        Effect::Library(LibraryCmd::AppendHistory {
-            track: Arc::clone(&track),
-            at: UnixSeconds::UNSTAMPED,
-        }),
-        Effect::Macos(MacosCmd::NowPlaying(now_playing(&track))),
-    ]);
-    effects.extend(PlaybackChange::Play.effects());
-    effects.extend([
-        Effect::Animate(Cue::TrackChanged),
-        Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Play)),
-    ]);
+impl StartOrigin {
+    fn stop(self) -> Option<Effect> {
+        match self {
+            StartOrigin::User => Some(Effect::Audio(AudioCmd::Stop)),
+            StartOrigin::TrackEnded => None,
+        }
+    }
+}
+
+fn start(track: Arc<Track>, origin: StartOrigin, stamp: Stamp) -> (Player, Cmd) {
+    let request = TrackRequest::for_track(&track, stamp.revision);
+    let load = Effect::Audio(AudioCmd::Load(request));
+    let effects = origin
+        .stop()
+        .into_iter()
+        .chain([load])
+        .chain(handover_effects(
+            &track,
+            PlaybackChange::Play,
+            stamp.anchor.since,
+        ))
+        .collect();
     (
         Player::Loading {
             track,
@@ -273,13 +304,12 @@ fn seek_effect(target: Duration) -> Cmd {
     ])
 }
 
-fn handoff_effects(track: &Arc<Track>, playback: PlaybackChange) -> Cmd {
+fn handover_effects(track: &Arc<Track>, playback: PlaybackChange, now: Moment) -> Cmd {
     let mut effects = vec![
-        Effect::Library(LibraryCmd::AppendHistory {
-            track: Arc::clone(track),
-            at: UnixSeconds::UNSTAMPED,
-        }),
-        Effect::Macos(MacosCmd::NowPlaying(now_playing(track))),
+        Effect::Library(LibraryCmd::AppendHistory(HistoryEntry::from_track(
+            track, now,
+        ))),
+        Effect::Macos(MacosCmd::NowPlaying(Some(Arc::clone(track)))),
     ];
     effects.extend(playback.effects());
     effects.extend([
@@ -292,18 +322,8 @@ fn handoff_effects(track: &Arc<Track>, playback: PlaybackChange) -> Cmd {
 pub(crate) fn stopped_effects() -> Cmd {
     let mut effects = PlaybackChange::Stop.effects().to_vec();
     effects.extend([
-        Effect::Macos(MacosCmd::NowPlaying(NowPlaying::default())),
+        Effect::Macos(MacosCmd::NowPlaying(None)),
         Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Stop)),
     ]);
     Cmd::Batch(effects)
-}
-
-fn now_playing(track: &Track) -> NowPlaying {
-    NowPlaying::Track {
-        title: track.song_title(),
-        artist: track.tags().artist.clone(),
-        album: track.tags().album.clone(),
-        duration: track.duration().unwrap_or_default(),
-        path: track.path().to_path_buf(),
-    }
 }

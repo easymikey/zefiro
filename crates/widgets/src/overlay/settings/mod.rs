@@ -6,7 +6,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     text::Line,
-    widgets::{StatefulWidget, Table, TableState, Widget},
+    widgets::{StatefulWidget, Table, TableState},
 };
 use unicode_width::UnicodeWidthStr;
 pub(crate) use values::SettingsView;
@@ -14,7 +14,6 @@ pub(crate) use values::SettingsView;
 use crate::{
     overlay::{
         modal::{
-            ModalChrome,
             ModalPlacement,
             ModalRowColors,
             ModalScrollAreas,
@@ -30,7 +29,7 @@ use crate::{
     },
     primitive::{
         canvas::Canvas,
-        glyphs::{SettingsGlyphs, TITLE_SEPARATOR},
+        glyphs::{self, TITLE_SEPARATOR},
         inset::Inset,
         list_chrome::scroll_offset,
         text::truncate_from_left,
@@ -41,7 +40,7 @@ use crate::{
 const LABEL_GAP: usize = 2;
 
 #[derive(Debug)]
-pub struct SettingsOverlay<'a> {
+pub(crate) struct SettingsOverlay<'a> {
     pub theme: ActiveTheme<'a>,
     pub values: SettingsView<'a>,
     pub selected: usize,
@@ -50,11 +49,11 @@ pub struct SettingsOverlay<'a> {
 
 impl<'a> SettingsOverlay<'a> {
     #[must_use]
-    pub fn areas(&self, screen: Rect) -> OverlayAreas {
+    pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
         OverlayAreas::List(self.placement(&self.modal_title()).areas(screen))
     }
 
-    pub fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
+    pub(crate) fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
         let OverlayAreas::List(areas) = areas else {
             return;
         };
@@ -89,7 +88,7 @@ impl<'a> SettingsOverlay<'a> {
         'a: 'title,
     {
         ModalPlacement {
-            inset: Inset::default(),
+            inset: Inset::overlay(),
             container: OverlayContainer::Modal { avoid: self.avoid },
             border_title: Line::default(),
             modal_title,
@@ -97,7 +96,6 @@ impl<'a> SettingsOverlay<'a> {
             content_rows: u16::try_from(self.rows().len()).unwrap_or(u16::MAX),
             hint: None,
             theme: self.theme,
-            chrome: ModalChrome::default(),
         }
     }
 
@@ -135,18 +133,11 @@ impl<'a> SettingsOverlay<'a> {
     }
 }
 
-impl Widget for &SettingsOverlay<'_> {
-    fn render(self, area: Rect, buffer: &mut Buffer) {
-        self.render_in(self.areas(area), Canvas { area, buffer });
-    }
-}
-
 fn modal_title_text(music_dir: &str, content_width: u16) -> String {
-    let glyphs = SettingsGlyphs::default();
-    let fixed_width = glyphs.title_word.width() + TITLE_SEPARATOR.width();
+    let fixed_width = glyphs::settings::TITLE_WORD.width() + TITLE_SEPARATOR.width();
     let path_budget = usize::from(content_width).saturating_sub(fixed_width);
     let path = truncate_from_left(music_dir, path_budget);
-    format!("{}{TITLE_SEPARATOR}{path}", glyphs.title_word)
+    format!("{}{TITLE_SEPARATOR}{path}", glyphs::settings::TITLE_WORD)
 }
 
 fn label_column_width(rows: &[SettingRow]) -> usize {
@@ -169,22 +160,52 @@ fn settings_content_width(rows: &[SettingRow], values: &SettingsView<'_>) -> u16
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use config::{Appearance, AppearanceFile};
+    use kernel::domain::{Crossfade, CustomSetting, Replaygain};
+
+    use crate::overlay::settings::SettingsView;
+
+    pub(crate) fn custom_settings() -> Vec<CustomSetting> {
+        config::custom_settings(&AppearanceFile::default())
+    }
+
+    pub(crate) fn settings_values(
+        custom_settings: &[CustomSetting],
+    ) -> SettingsView<'_> {
+        SettingsView {
+            crossfade: Crossfade::default(),
+            replaygain: Replaygain::On,
+            theme: "noir",
+            themes: &[],
+            sleep_presets: &[],
+            music_dir: "/home/user/Music",
+            output_device: None,
+            output_devices: &[],
+            appearance: Appearance::default(),
+            custom_settings,
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use config::CoverStyle;
     use kernel::domain::ThemeName;
     use ratatui::layout::Rect;
 
     use crate::{
-        overlay::{modal::OverlayAreas, settings::SettingsOverlay},
-        scene::fixtures::{
-            custom_settings,
-            find_text,
-            noir,
-            painted,
-            painted_buffer,
-            settings_values,
+        overlay::{
+            modal::OverlayAreas,
+            rendered_canvas,
+            settings::{
+                SettingsOverlay,
+                test_support::{custom_settings, settings_values},
+            },
         },
-        theme::{ActiveTheme, ColorDepth},
+        primitive::canvas::find_text,
+        test_support::noir,
+        theme::{ActiveTheme, ColorDepth, Role},
     };
 
     fn outer_rect(overlay: &SettingsOverlay<'_>, screen: Rect) -> Option<Rect> {
@@ -204,7 +225,12 @@ mod tests {
             selected: 0,
             avoid: &[],
         };
-        insta::assert_snapshot!(painted(&overlay, 80, 28));
+        insta::assert_snapshot!(
+            rendered_canvas(80, 28, |canvas| {
+                overlay.render_in(overlay.areas(canvas.area), canvas);
+            })
+            .to_string()
+        );
     }
 
     #[test]
@@ -218,8 +244,12 @@ mod tests {
             selected: 1 + custom.len(),
             avoid: &[],
         };
-        let buffer = painted_buffer(&overlay, 80, 28);
-        let selection_bg = active.selection_background();
+        let buffer = rendered_canvas(80, 28, |canvas| {
+            overlay.render_in(overlay.areas(canvas.area), canvas);
+        })
+        .buffer()
+        .clone();
+        let selection_bg = active.role(Role::SelectionBackground);
         let (theme_x, theme_y) = find_text(&buffer, "Theme").unwrap();
         let (crossfade_x, crossfade_y) = find_text(&buffer, "Crossfade").unwrap();
         assert_eq!(
@@ -239,7 +269,11 @@ mod tests {
             selected: 0,
             avoid: &[],
         };
-        let buffer = painted_buffer(&overlay, 80, 28);
+        let buffer = rendered_canvas(80, 28, |canvas| {
+            overlay.render_in(overlay.areas(canvas.area), canvas);
+        })
+        .buffer()
+        .clone();
         assert!(find_text(&buffer, "noir").is_some());
         assert!(find_text(&buffer, "Cover style").is_some());
     }
@@ -257,7 +291,11 @@ mod tests {
             selected: 0,
             avoid: &[],
         };
-        let buffer = painted_buffer(&overlay, 60, 19);
+        let buffer = rendered_canvas(60, 19, |canvas| {
+            overlay.render_in(overlay.areas(canvas.area), canvas);
+        })
+        .buffer()
+        .clone();
         assert!(find_text(&buffer, "apple-music").is_some());
     }
 
@@ -309,6 +347,9 @@ mod tests {
             selected: 0,
             avoid: &[],
         };
-        let _ = painted(&overlay, 4, 3);
+        let _ = rendered_canvas(4, 3, |canvas| {
+            overlay.render_in(overlay.areas(canvas.area), canvas);
+        })
+        .to_string();
     }
 }

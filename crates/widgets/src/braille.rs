@@ -1,5 +1,6 @@
 use num_traits::ToPrimitive;
-use raster::floor_u32;
+
+use crate::pixels::floor;
 
 const BASE: u32 = 0x2800;
 
@@ -24,42 +25,29 @@ pub(crate) fn dot_coord(value: u32) -> u16 {
     u16::try_from(value).unwrap_or(u16::MAX)
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct RowRounding {
-    half_step_bias: f32,
-}
+const HALF_STEP_BIAS: f32 = 0.001;
 
-impl Default for RowRounding {
-    fn default() -> Self {
-        Self {
-            half_step_bias: 0.001,
-        }
-    }
-}
-
-fn scaled_dots(level: f32, max_dots: u32, rounding: RowRounding) -> u32 {
+fn scaled_dots(level: f32, max_dots: u32) -> u32 {
     let max_dots = max_dots.to_f32().unwrap_or(f32::MAX);
-    floor_u32(level * max_dots + 0.5 - rounding.half_step_bias)
+    floor::<u32>(level * max_dots + 0.5 - HALF_STEP_BIAS)
 }
 
 #[cfg(test)]
 mod rounding_tests {
-    use crate::braille::{RowRounding, scaled_dots};
+    use crate::braille::scaled_dots;
 
     #[test]
     fn scaled_dots_matches_plain_rounding_away_from_a_boundary() {
-        let rounding = RowRounding::default();
-        assert_eq!(scaled_dots(0.3, 10, rounding), 3);
-        assert_eq!(scaled_dots(0.76, 10, rounding), 8);
+        assert_eq!(scaled_dots(0.3, 10), 3);
+        assert_eq!(scaled_dots(0.76, 10), 8);
     }
 
     #[test]
     fn scaled_dots_does_not_flip_across_float_noise_at_a_half_step_boundary() {
         let boundary = 4.5 / 8.0;
-        let rounding = RowRounding::default();
         assert_eq!(
-            scaled_dots(boundary - 1e-6, 8, rounding),
-            scaled_dots(boundary + 1e-6, 8, rounding)
+            scaled_dots(boundary - 1e-6, 8),
+            scaled_dots(boundary + 1e-6, 8)
         );
     }
 }
@@ -157,7 +145,6 @@ fn fill_meter(canvas: &mut BrailleCanvas, fill: &MeterFill<'_>) {
         size,
         levels,
         max_dots,
-        rounding,
     } = *fill;
     if levels.is_empty() || size.width == 0 {
         return;
@@ -173,7 +160,7 @@ fn fill_meter(canvas: &mut BrailleCanvas, fill: &MeterFill<'_>) {
         let end = ((step + 1) * total_dot_cols / count).max(start + 1);
         let fill_end = if end > start + 1 { end - 1 } else { end };
         let level = level.clamp(0.0, 1.0);
-        let filled = scaled_dots(level, cap, rounding).max(floor);
+        let filled = scaled_dots(level, cap).max(floor);
         for x in start..fill_end {
             for k in 0..filled {
                 let y = base - 1 - k;
@@ -210,7 +197,6 @@ pub(crate) struct MeterFill<'a> {
     pub(crate) size: CanvasSize,
     pub(crate) levels: &'a [f32],
     pub(crate) max_dots: u32,
-    pub(crate) rounding: RowRounding,
 }
 
 #[cfg(test)]

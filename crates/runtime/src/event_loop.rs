@@ -27,7 +27,6 @@ enum Arrival<I> {
     Input(I),
     Message(Message),
     Notified,
-    Nothing,
 }
 
 pub(crate) struct EventLoop<'a, S: Shell> {
@@ -57,7 +56,7 @@ where
     }
 
     pub(crate) fn drive(mut self) -> Result<(), Error<S::Error>> {
-        let mut frame_due = self.shell.frame_due(&self.runtime.view(Instant::now()));
+        let mut frame_due = self.shell.frame_due(&self.runtime.frame(Instant::now()));
         loop {
             let now = Instant::now();
             let deadline = self.deadline(now, frame_due);
@@ -71,7 +70,7 @@ where
             if self.runtime.flow().is_break() {
                 return Ok(());
             }
-            frame_due = self.shell.frame_due(&self.runtime.view(now));
+            frame_due = self.shell.frame_due(&self.runtime.frame(now));
             self.paint_if_due(now, frame_due)?;
         }
     }
@@ -79,7 +78,7 @@ where
     fn wait(
         &mut self,
         deadline: Option<Instant>,
-    ) -> Result<Arrival<S::Input>, Error<S::Error>> {
+    ) -> Result<Option<Arrival<S::Input>>, Error<S::Error>> {
         let wiring = &mut self.runtime.wiring;
         let mut select = Select::new();
         let input_index = select.recv(self.input);
@@ -88,7 +87,7 @@ where
         let operation = match deadline {
             Some(deadline) => match select.select_deadline(deadline) {
                 Ok(operation) => operation,
-                Err(_) => return Ok(Arrival::Nothing),
+                Err(_) => return Ok(None),
             },
             None => select.select(),
         };
@@ -96,45 +95,42 @@ where
         if index == input_index {
             return operation
                 .recv(self.input)
-                .map(Arrival::Input)
+                .map(|event| Some(Arrival::Input(event)))
                 .map_err(|_| Error::InputClosed);
         }
         if index == sender_index {
             return Ok(operation.recv(&wiring.receiver).map_or_else(
                 |_| {
                     wiring.receiver = never();
-                    Arrival::Nothing
+                    None
                 },
-                Arrival::Message,
+                |message| Some(Arrival::Message(message)),
             ));
         }
         Ok(operation.recv(&wiring.notified).map_or_else(
             |_| {
                 wiring.notified = never();
-                Arrival::Nothing
+                None
             },
-            |()| Arrival::Notified,
+            |()| Some(Arrival::Notified),
         ))
     }
 
-    fn gather(&mut self, first: Arrival<S::Input>) {
-        if let Arrival::Nothing = first {
+    fn gather(&mut self, first: Option<Arrival<S::Input>>) {
+        let Some(first) = first else {
             return;
-        }
+        };
         let queued = self.runtime.wiring.receiver.clone();
         let notified = self.runtime.wiring.notified.clone();
-        let mut inputs = Vec::new();
-        let mut messages = Vec::new();
-        let mut rang = false;
-        match first {
-            Arrival::Input(event) => inputs.push(event),
-            Arrival::Message(message) => messages.push(message),
-            Arrival::Notified => rang = true,
-            Arrival::Nothing => {}
-        }
-        inputs.extend(ready(self.input));
-        messages.extend(ready(&queued));
-        rang = rang || ready(&notified).count() > 0;
+        let (first_input, first_message, first_rang) = match first {
+            Arrival::Input(event) => (Some(event), None, false),
+            Arrival::Message(message) => (None, Some(message), false),
+            Arrival::Notified => (None, None, true),
+        };
+        let inputs: Vec<_> = first_input.into_iter().chain(ready(self.input)).collect();
+        let messages: Vec<_> =
+            first_message.into_iter().chain(ready(&queued)).collect();
+        let rang = first_rang || ready(&notified).count() > 0;
         let arrivals = inputs
             .into_iter()
             .map(Arrival::Input)
@@ -165,7 +161,6 @@ where
             Arrival::Notified => {
                 self.repaint = repaint_after(self.repaint, Source::Event);
             }
-            Arrival::Nothing => {}
         }
     }
 
@@ -201,20 +196,19 @@ pub(crate) mod tests {
         Outbox,
         Timer,
         WindowColorsCmd,
-        WorkspaceRequest,
         domain::{Driver, DriverStatus, Startup, ThemeName, Toast},
         update::{DriverStatusError, UpdateError},
     };
 
     use crate::{
-        cells::Senders,
         error::Error,
         event_loop::EventLoop,
+        latest::LatestSenders,
         library::{cover::CoverRequest, machine::LibraryMessage},
         port::{LibraryPort, Port},
         runtime::Runtime,
         sender::{DriverSender, FullEdge},
-        shell::{FrameDue, FrameInput, Painted, Reaction, Shell, ShellEffect},
+        shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
         trace::{Trace, TraceEntry},
         wiring::Wiring,
     };
@@ -266,13 +260,13 @@ pub(crate) mod tests {
         fn input(&mut self, event: Key) -> Reaction {
             match event {
                 Key::Quit => Reaction::Message(Message::Quit),
-                Key::Stray => Reaction::Message(Message::Driver(
-                    Driver::Audio,
-                    DriverMessage::Stopped,
-                )),
-                Key::Ping => Reaction::Message(Message::Workspace(
-                    WorkspaceRequest::ShowToast(Toast::error("ping".to_owned())),
-                )),
+                Key::Stray => Reaction::Message(Message::Driver {
+                    driver: Driver::Audio,
+                    event: DriverMessage::Stopped,
+                }),
+                Key::Ping => {
+                    Reaction::Message(Message::Toast(Toast::error("ping".to_owned())))
+                }
                 Key::Resize => Reaction::Repaint,
             }
         }
@@ -282,15 +276,15 @@ pub(crate) mod tests {
             self.effects.push(effect);
         }
 
-        fn frame_due(&self, _view: &FrameInput<'_>) -> FrameDue {
+        fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
         }
 
-        fn paint(&mut self, view: FrameInput<'_>) -> Result<Painted, Infallible> {
-            if view.cells.theme.take().is_some() {
+        fn paint(&mut self, frame: Frame<'_>) -> Result<Painted, Infallible> {
+            if frame.latest.theme.take().is_some() {
                 self.order.push(Order::Reloaded);
             }
-            let toast = view.model.workspace.toast.as_ref();
+            let toast = frame.model.workspace.toast.as_ref();
             self.toasts.push(toast.map(|toast| toast.text.clone()));
             let next = if self.toasts.len() >= self.quit_after {
                 Key::Quit
@@ -301,7 +295,7 @@ pub(crate) mod tests {
             Ok(Painted {
                 cover: self.cover.clone(),
                 visible_rows: None,
-                failures: std::mem::take(&mut self.pending_failures),
+                toasts: std::mem::take(&mut self.pending_failures),
             })
         }
     }
@@ -309,7 +303,7 @@ pub(crate) mod tests {
     pub(crate) struct Fixture {
         pub(crate) runtime: Runtime,
         cover_inbox: Receiver<LibraryMessage>,
-        _writers: Senders,
+        _writers: LatestSenders,
     }
 
     pub(crate) fn stock_startup() -> Startup {
@@ -362,9 +356,7 @@ pub(crate) mod tests {
         let mut fixture = fixture();
         fixture
             .runtime
-            .step(Message::Workspace(WorkspaceRequest::ShowToast(
-                Toast::error("hello".to_owned()),
-            )));
+            .step(Message::Toast(Toast::error("hello".to_owned())));
         let generation = fixture.runtime.model.revisions.toast;
         fixture
             .runtime
@@ -469,7 +461,7 @@ pub(crate) mod tests {
 
     fn stub_theme() -> ThemeFile {
         ThemeFile {
-            name: "test".to_owned(),
+            name: ThemeName::from_static("test"),
             colors: ThemeColors {
                 background: Rgb([0, 0, 0]),
                 foreground: Rgb([255, 255, 255]),
@@ -485,7 +477,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_theme_reload_bumps_the_generation_and_animates_after_reloaded() {
+    fn a_theme_reload_bumps_the_revision_and_animates_after_reloaded() {
         let mut fixture = fixture();
         let before = fixture.runtime.model.revisions.theme;
         fixture._writers.theme.publish(stub_theme());
@@ -584,9 +576,7 @@ pub(crate) mod tests {
                 .runtime
                 .wiring
                 .sender
-                .send(Message::Workspace(WorkspaceRequest::ShowToast(
-                    Toast::error("event".to_owned()),
-                )))
+                .send(Message::Toast(Toast::error("event".to_owned())))
                 .unwrap();
         }
         let (keys, input) = unbounded();

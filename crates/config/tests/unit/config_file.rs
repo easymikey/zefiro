@@ -2,8 +2,7 @@ use config::{parse_config, parse_config_reload, patch_config_text};
 use kernel::{
     Bounded,
     ConfigPatch,
-    DevicePatch,
-    domain::{DeviceName, Percent, ThemeName},
+    domain::{DeviceName, OutputDevice, Percent, ThemeName},
 };
 
 const COMMENTED_CONFIG: &str = include_str!("../fixtures/config_commented.toml");
@@ -19,7 +18,7 @@ fn a_patch_round_trips_through_the_public_parser() {
     let patch = ConfigPatch::builder()
         .theme(ThemeName::from_static("noir"))
         .volume(Percent::clamped(42))
-        .device(DevicePatch::Named(
+        .device(OutputDevice::Named(
             DeviceName::new("Speakers".to_string()).unwrap(),
         ))
         .build();
@@ -29,7 +28,7 @@ fn a_patch_round_trips_through_the_public_parser() {
 }
 
 #[test]
-fn parse_keymap_reads_the_keymap_and_the_root_music_dir() {
+fn parse_config_reload_reads_the_keymap_and_the_music_dir() {
     let parsed = parse_config_reload(
         "music_dir = \"/tmp/music\"\ntheme = \"dark\"\n\n[keymap]\nnext = \"x\"\n",
     )

@@ -1,7 +1,7 @@
-use kernel::domain::{Driver, Supervision};
+use kernel::domain::Driver;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Placement {
+pub(crate) enum Hosting {
     Worker,
     WorkerWithMainLoop,
 }
@@ -25,45 +25,35 @@ impl Platform {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DriverRow {
     pub(crate) driver: Driver,
-    pub(crate) thread: &'static str,
-    pub(crate) placement: Placement,
+    pub(crate) thread_name: &'static str,
+    pub(crate) hosting: Hosting,
     pub(crate) platform: Platform,
-    pub(crate) inbox: usize,
-    pub(crate) supervision: Supervision,
 }
 
 pub(crate) const REGISTRY: [DriverRow; 4] = [
     DriverRow {
         driver: Driver::Audio,
-        thread: "sifr-audio",
-        placement: Placement::Worker,
+        thread_name: "sifr-audio",
+        hosting: Hosting::Worker,
         platform: Platform::Every,
-        inbox: 64,
-        supervision: Supervision::standard(Driver::Audio),
     },
     DriverRow {
         driver: Driver::Macos,
-        thread: "sifr-macos",
-        placement: Placement::WorkerWithMainLoop,
+        thread_name: "sifr-macos",
+        hosting: Hosting::WorkerWithMainLoop,
         platform: Platform::Macos,
-        inbox: 64,
-        supervision: Supervision::standard(Driver::Macos),
     },
     DriverRow {
         driver: Driver::Library,
-        thread: "sifr-library",
-        placement: Placement::Worker,
+        thread_name: "sifr-library",
+        hosting: Hosting::Worker,
         platform: Platform::Every,
-        inbox: 64,
-        supervision: Supervision::standard(Driver::Library),
     },
     DriverRow {
         driver: Driver::Config,
-        thread: "sifr-config",
-        placement: Placement::Worker,
+        thread_name: "sifr-config",
+        hosting: Hosting::Worker,
         platform: Platform::Every,
-        inbox: 64,
-        supervision: Supervision::standard(Driver::Config),
     },
 ];
 
@@ -80,7 +70,6 @@ pub(crate) const fn row(driver: Driver) -> &'static DriverRow {
 #[cfg(test)]
 mod tests {
     use kernel::domain::Driver;
-    use rstest::rstest;
 
     use crate::registry::{REGISTRY, row};
 
@@ -98,17 +87,5 @@ mod tests {
         for driver in Driver::ALL {
             assert_eq!(row(driver).driver, driver);
         }
-    }
-
-    #[rstest]
-    #[case::audio(Driver::Audio)]
-    #[case::library(Driver::Library)]
-    #[case::config(Driver::Config)]
-    #[case::macos(Driver::Macos)]
-    fn supervision_defaults_match_the_kernel_standard(#[case] driver: Driver) {
-        assert_eq!(
-            row(driver).supervision,
-            kernel::domain::Supervision::standard(driver)
-        );
     }
 }

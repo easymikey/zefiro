@@ -5,7 +5,7 @@ use crate::{
     domain::{
         CursorOver,
         Direction,
-        History,
+        HistoryEntry,
         Model,
         Moment,
         Overlay,
@@ -14,7 +14,7 @@ use crate::{
         Workspace,
         playlist::Playlist,
     },
-    message::{HistoryRequest, QueueRequest, WorkspaceRequest},
+    message::{HistoryRequest, QueueRequest},
     update::{
         error::UpdateError,
         machine::{Machine, Rejected},
@@ -95,7 +95,7 @@ pub(crate) fn request(
     request: HistoryRequest,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    let len = model.history.view.len();
+    let len = model.history.len();
     let message = match request {
         HistoryRequest::Navigate(direction) => {
             HistoryMessage::Navigate { direction, len }
@@ -114,9 +114,7 @@ pub(crate) fn request(
         .update(OverlayMessage::Inner(InnerMessage::History(message)))
     {
         Ok(effect) => follow(model, effect, now),
-        Err(OverlayError::History(HistoryError::NotInLibrary)) => {
-            not_in_library(&mut model.workspace)
-        }
+        Err(OverlayError::History(HistoryError::NotInLibrary)) => not_in_library(model),
         Err(
             rejection @ (OverlayError::WhileClosed
             | OverlayError::NoTrack
@@ -130,7 +128,11 @@ pub(crate) fn request(
     }
 }
 
-fn pick(workspace: &Workspace, history: &History, playlist: &Playlist) -> HistoryPick {
+fn pick(
+    workspace: &Workspace,
+    history: &[HistoryEntry],
+    playlist: &Playlist,
+) -> HistoryPick {
     selected_path(workspace, history).map_or(HistoryPick::Nothing, |path| {
         playlist
             .tracks
@@ -142,10 +144,12 @@ fn pick(workspace: &Workspace, history: &History, playlist: &Playlist) -> Histor
     })
 }
 
-fn selected_path<'a>(workspace: &Workspace, history: &'a History) -> Option<&'a Path> {
+fn selected_path<'a>(
+    workspace: &Workspace,
+    history: &'a [HistoryEntry],
+) -> Option<&'a Path> {
     match &workspace.overlay {
         Some(Overlay::History(cursor)) => history
-            .view
             .get(cursor.selected())
             .map(|entry| entry.path.as_path()),
         Some(
@@ -162,8 +166,9 @@ fn selected_path<'a>(workspace: &Workspace, history: &'a History) -> Option<&'a 
     }
 }
 
-fn not_in_library(workspace: &mut Workspace) -> Result<Cmd, UpdateError> {
-    Ok(workspace.update(WorkspaceRequest::ShowToast(Toast::info(
-        "Not in library".to_string(),
-    )))?)
+fn not_in_library(model: &mut Model) -> Result<Cmd, UpdateError> {
+    Ok(model.workspace.show(
+        Toast::info("Not in library".to_string()),
+        &mut model.revisions,
+    ))
 }

@@ -1,9 +1,6 @@
 use kernel::domain::ListedDevice;
 
-use crate::{
-    deck::source::TrackDecoder,
-    error::{DeviceError, Error},
-};
+use crate::{deck::source::TrackDecoder, error::Error};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct Ticket(u64);
@@ -24,6 +21,6 @@ pub(crate) enum DeckEvent {
         ticket: Ticket,
         outcome: Result<TrackDecoder, Error>,
     },
-    DevicesListed(Result<Vec<ListedDevice>, DeviceError>),
+    DevicesListed(Vec<ListedDevice>),
     Track(Ticket),
 }

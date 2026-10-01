@@ -2,69 +2,67 @@
 source: crates/library/src/cache.rs
 expression: decoded
 ---
-Ok(
-    [
-        Track {
-            path: "/music/one.flac",
-            duration: Some(
-                180s,
+[
+    Track {
+        path: "/music/one.flac",
+        duration: Some(
+            180s,
+        ),
+        tags: Tags {
+            title: Some(
+                "Moon River",
             ),
-            tags: Tags {
-                title: Some(
-                    "Moon River",
-                ),
-                artist: None,
-                album: None,
-                album_artist: None,
-                date: None,
-                genre: None,
-                track: None,
-                track_total: None,
-                disc: None,
-                composer: None,
-                comment: None,
-                lyrics: None,
-            },
-            audio_format: AudioFormat {
-                format: None,
-                bitrate_kbps: None,
-                sample_rate_hz: None,
-                bits_per_sample: None,
-                channels: None,
-                replay_gain: None,
-            },
-            display: "Moon River",
-            tagging: Read,
+            artist: None,
+            album: None,
+            album_artist: None,
+            date: None,
+            genre: None,
+            track: None,
+            track_total: None,
+            disc: None,
+            composer: None,
+            comment: None,
+            lyrics: None,
         },
-        Track {
-            path: "/music/two.flac",
-            duration: Some(
-                180s,
-            ),
-            tags: Tags {
-                title: None,
-                artist: None,
-                album: None,
-                album_artist: None,
-                date: None,
-                genre: None,
-                track: None,
-                track_total: None,
-                disc: None,
-                composer: None,
-                comment: None,
-                lyrics: None,
-            },
-            audio_format: AudioFormat {
-                format: None,
-                bitrate_kbps: None,
-                sample_rate_hz: None,
-                bits_per_sample: None,
-                channels: None,
-                replay_gain: None,
-            },
-            display: "two.flac",
-            tagging: Read,
+        audio_format: AudioFormat {
+            format: None,
+            bitrate_kbps: None,
+            sample_rate_hz: None,
+            bits_per_sample: None,
+            channels: None,
+            replay_gain: None,
         },
-    ],
-)
+        display: "Moon River",
+        tagging: Read,
+    },
+    Track {
+        path: "/music/two.flac",
+        duration: Some(
+            180s,
+        ),
+        tags: Tags {
+            title: None,
+            artist: None,
+            album: None,
+            album_artist: None,
+            date: None,
+            genre: None,
+            track: None,
+            track_total: None,
+            disc: None,
+            composer: None,
+            comment: None,
+            lyrics: None,
+        },
+        audio_format: AudioFormat {
+            format: None,
+            bitrate_kbps: None,
+            sample_rate_hz: None,
+            bits_per_sample: None,
+            channels: None,
+            replay_gain: None,
+        },
+        display: "two.flac",
+        tagging: Read,
+    },
+]

@@ -11,6 +11,7 @@ use kernel::{
     PlaybackRequest,
     Preload,
     Timer,
+    TrackRequest,
     update::update,
 };
 
@@ -25,7 +26,7 @@ fn preloaded(cmd: &Cmd) -> Option<PathBuf> {
 }
 
 fn preload_path(effect: &Effect) -> Option<PathBuf> {
-    if let Effect::Audio(AudioCmd::Preload { path, .. }) = effect {
+    if let Effect::Audio(AudioCmd::Preload(TrackRequest { path, .. })) = effect {
         return Some(path.clone());
     }
     None
@@ -36,14 +37,14 @@ fn loaded(cmd: &Cmd) -> Option<PathBuf> {
 }
 
 fn load_path(effect: &Effect) -> Option<PathBuf> {
-    if let Effect::Audio(AudioCmd::Load { path, .. }) = effect {
+    if let Effect::Audio(AudioCmd::Load(TrackRequest { path, .. })) = effect {
         return Some(path.clone());
     }
     None
 }
 
 fn preload_revision(effect: &Effect) -> Option<kernel::domain::Revision> {
-    if let Effect::Audio(AudioCmd::Preload { revision, .. }) = effect {
+    if let Effect::Audio(AudioCmd::Preload(TrackRequest { revision, .. })) = effect {
         return Some(*revision);
     }
     None
@@ -127,7 +128,7 @@ fn the_armed_preload_is_stamped_fresh() {
     let revision = cmd.effects().find_map(preload_revision);
     assert!(
         revision
-            .is_some_and(|revision| revision != kernel::domain::Revision::UNSTAMPED)
+            .is_some_and(|revision| revision != kernel::domain::Revision::default())
     );
 }
 

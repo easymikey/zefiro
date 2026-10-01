@@ -5,7 +5,6 @@ use kernel::{
     Cmd,
     ConfigCmd,
     ConfigEvent,
-    DevicePatch,
     Effect,
     Message,
     Model,
@@ -27,9 +26,9 @@ use kernel::{
         OptionCount,
         OutputDevice,
         Replaygain,
-        SLEEP_PRESET_BUNDLES,
         SettingId,
         SettingRow,
+        SleepPresets,
         ThemeChoice,
         ThemeName,
         Themes,
@@ -208,7 +207,7 @@ fn adjust_row_toggles_a_config_row() {
     let mut model = seeded();
     let cmd = step(&mut model, SettingRow::Replaygain, Direction::Next);
 
-    assert_eq!(model.settings.replaygain, Replaygain::On);
+    assert_eq!(model.settings.audio.replaygain, Replaygain::On);
     assert!(saved(&cmd));
     assert!(
         live_effects(&cmd)
@@ -217,7 +216,7 @@ fn adjust_row_toggles_a_config_row() {
     );
 
     let toggled_back = step(&mut model, SettingRow::Replaygain, Direction::Previous);
-    assert_eq!(model.settings.replaygain, Replaygain::Off);
+    assert_eq!(model.settings.audio.replaygain, Replaygain::Off);
     assert!(saved(&toggled_back));
 }
 
@@ -236,11 +235,11 @@ fn adjust_row_crossfade_steps_by_500ms_and_clamps_both_ends() {
     let half_second = Crossfade::try_from(Duration::from_millis(500)).unwrap();
 
     let cmd = step(&mut model, SettingRow::Crossfade, Direction::Previous);
-    assert_eq!(model.settings.crossfade, Crossfade::default());
+    assert_eq!(model.settings.audio.crossfade, Crossfade::default());
     assert_eq!(crossfade_patch(&cmd), Some(Crossfade::default()));
 
     let stepped_up = step(&mut model, SettingRow::Crossfade, Direction::Next);
-    assert_eq!(model.settings.crossfade, half_second);
+    assert_eq!(model.settings.audio.crossfade, half_second);
     assert!(
         stepped_up
             .effects()
@@ -251,7 +250,7 @@ fn adjust_row_crossfade_steps_by_500ms_and_clamps_both_ends() {
         let _ = step(&mut model, SettingRow::Crossfade, Direction::Next);
     }
     let ceiling = Crossfade::try_from(Duration::from_secs(10)).unwrap();
-    assert_eq!(model.settings.crossfade, ceiling);
+    assert_eq!(model.settings.audio.crossfade, ceiling);
 }
 
 #[test]
@@ -299,7 +298,8 @@ fn adjust_row_theme_cycles_model_themes_and_wraps(
 #[case::theme(SettingRow::Theme, |model: &Model| model.themes.selected == ThemeChoice::Auto)]
 #[case::output_device(SettingRow::OutputDevice, |model: &Model| model
     .settings
-    .output_device
+    .audio
+    .device
     == OutputDevice::SystemDefault)]
 fn adjust_row_does_nothing_until_the_shell_delivers_a_list(
     #[case] row: SettingRow,
@@ -315,26 +315,26 @@ fn adjust_row_does_nothing_until_the_shell_delivers_a_list(
 
 #[test]
 fn adjust_row_output_device_cycles_system_default_and_devices_and_wraps() {
-    fn device_patch(cmd: &Cmd) -> Option<DevicePatch> {
+    fn device_patch(cmd: &Cmd) -> Option<OutputDevice> {
         cmd.effects().find_map(|effect| {
             let Effect::Config(ConfigCmd::Save(patch)) = effect else {
                 return None;
             };
-            Some(patch.device.clone())
+            patch.device.clone()
         })
     }
 
     let mut model = seeded();
-    assert_eq!(model.settings.output_device, OutputDevice::SystemDefault);
+    assert_eq!(model.settings.audio.device, OutputDevice::SystemDefault);
 
     let cmd = step(&mut model, SettingRow::OutputDevice, Direction::Next);
     assert_eq!(
-        model.settings.output_device,
+        model.settings.audio.device,
         OutputDevice::Named(device("Speakers"))
     );
     assert_eq!(
         device_patch(&cmd),
-        Some(DevicePatch::Named(device("Speakers")))
+        Some(OutputDevice::Named(device("Speakers")))
     );
     assert!(
         cmd.effects()
@@ -343,23 +343,23 @@ fn adjust_row_output_device_cycles_system_default_and_devices_and_wraps() {
 
     let _ = step(&mut model, SettingRow::OutputDevice, Direction::Next);
     assert_eq!(
-        model.settings.output_device,
+        model.settings.audio.device,
         OutputDevice::Named(device("Headphones"))
     );
 
     let _ = step(&mut model, SettingRow::OutputDevice, Direction::Next);
-    assert_eq!(model.settings.output_device, OutputDevice::SystemDefault);
+    assert_eq!(model.settings.audio.device, OutputDevice::SystemDefault);
 
     let _ = step(&mut model, SettingRow::OutputDevice, Direction::Previous);
     assert_eq!(
-        model.settings.output_device,
+        model.settings.audio.device,
         OutputDevice::Named(device("Headphones"))
     );
 }
 
 #[test]
 fn adjust_row_sleep_presets_cycles_and_wraps_and_persists() {
-    fn sleep_presets_patch(cmd: &Cmd) -> Option<Vec<Duration>> {
+    fn sleep_presets_patch(cmd: &Cmd) -> Option<SleepPresets> {
         cmd.effects().find_map(|effect| {
             let Effect::Config(ConfigCmd::Save(patch)) = effect else {
                 return None;
@@ -368,41 +368,35 @@ fn adjust_row_sleep_presets_cycles_and_wraps_and_persists() {
         })
     }
 
-    let bundles = &SLEEP_PRESET_BUNDLES;
     let mut model = seeded();
     assert_eq!(
-        Some(model.settings.sleep_presets.as_ref()),
-        bundles.bundles.first().copied()
+        Some(model.settings.audio.sleep_presets.as_slice()),
+        SleepPresets::BUNDLES.first().copied()
     );
 
     let cmd = step(&mut model, SettingRow::SleepPresets, Direction::Next);
     assert_eq!(
-        Some(model.settings.sleep_presets.as_ref()),
-        bundles.bundles.get(1).copied()
+        Some(model.settings.audio.sleep_presets.as_slice()),
+        SleepPresets::BUNDLES.get(1).copied()
     );
-    assert_eq!(
-        sleep_presets_patch(&cmd),
-        bundles.bundles.get(1).map(|bundle| bundle.to_vec())
-    );
+    assert_eq!(sleep_presets_patch(&cmd), SleepPresets::bundle(1));
 
     let _ = step(&mut model, SettingRow::SleepPresets, Direction::Previous);
     let wrapped = step(&mut model, SettingRow::SleepPresets, Direction::Previous);
-    assert!(model.settings.sleep_presets.is_empty());
-    assert_eq!(sleep_presets_patch(&wrapped), Some(Vec::new()));
+    assert!(model.settings.audio.sleep_presets.as_slice().is_empty());
+    assert_eq!(sleep_presets_patch(&wrapped), SleepPresets::bundle(4));
 }
 
 #[test]
 fn adjust_row_sleep_presets_snaps_a_custom_value_to_the_nearest_bundle() {
     let mut model = seeded();
-    model.settings.sleep_presets =
-        vec![Duration::from_secs(100 * 60)].into_boxed_slice();
+    model.settings.audio.sleep_presets = SleepPresets::from_minutes(&[100]).unwrap();
 
     let _ = step(&mut model, SettingRow::SleepPresets, Direction::Next);
 
-    let bundles = &SLEEP_PRESET_BUNDLES;
     assert_eq!(
-        Some(model.settings.sleep_presets.as_ref()),
-        bundles.bundles.get(1).copied()
+        Some(model.settings.audio.sleep_presets.as_slice()),
+        SleepPresets::BUNDLES.get(1).copied()
     );
 }
 
@@ -569,7 +563,7 @@ fn a_custom_rows_reload_while_open_keeps_the_selection_on_the_same_row() {
     ];
     let _ = update(
         &mut model,
-        Message::Config(ConfigEvent::CustomRowsReloaded(reloaded)),
+        Message::Config(ConfigEvent::CustomSettingsReloaded(reloaded)),
         Moment::default(),
     )
     .unwrap();

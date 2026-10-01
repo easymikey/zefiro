@@ -8,13 +8,8 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    primitive::{
-        canvas::Canvas,
-        glyphs::TruncateGlyphs,
-        inset::Inset,
-        text::truncate_to_width,
-    },
-    theme::ActiveTheme,
+    primitive::{canvas::Canvas, inset::Inset, text::truncate},
+    theme::{ActiveTheme, Role},
 };
 
 const MARGIN: u16 = 0;
@@ -63,8 +58,7 @@ fn wrapped(text: &str, width: usize) -> Vec<String> {
 }
 
 fn fitted(text: &str, width: usize, rows: usize) -> Vec<String> {
-    let glyphs = TruncateGlyphs::default();
-    let clipped = |line: &String| truncate_to_width(line, width, glyphs).into_owned();
+    let clipped = |line: &String| truncate(line, width).into_owned();
     let lines = wrapped(text, width);
     if lines.len() <= rows {
         return lines.iter().map(clipped).collect();
@@ -75,7 +69,7 @@ fn fitted(text: &str, width: usize, rows: usize) -> Vec<String> {
         .map(|rest| rest.join(" "))
         .unwrap_or_default();
     let mut shown: Vec<String> = lines.iter().take(head).map(clipped).collect();
-    shown.push(truncate_to_width(&tail, width, glyphs).into_owned());
+    shown.push(truncate(&tail, width).into_owned());
     shown
 }
 
@@ -109,7 +103,7 @@ pub struct ToastAreas {
 
 impl ToastCard<'_> {
     fn accent(self) -> Color {
-        self.theme.accent()
+        self.theme.role(Role::Accent)
     }
 
     fn block(self) -> Block<'static> {
@@ -159,7 +153,7 @@ impl ToastCard<'_> {
             return;
         };
         let outer = areas.outer;
-        let window_background = self.theme.window_background();
+        let window_background = self.theme.role(Role::WindowBackground);
         let block = self.block();
         let inner = block.inner(outer);
         Clear.render(outer, buffer);
@@ -187,9 +181,9 @@ mod tests {
     use ratatui::layout::Rect;
 
     use crate::{
-        scene::fixtures::noir,
+        test_support::noir,
         theme::{ActiveTheme, ColorDepth},
-        toast::ToastCard,
+        toast::{BORDER_ROWS, MAX_ROWS, ToastCard},
     };
 
     fn screen(width: u16, height: u16) -> Rect {
@@ -227,8 +221,6 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
         let painted = card.areas(screen(100, 30)).unwrap().painted;
-        const BORDER_ROWS: u16 = 2;
-        const MAX_ROWS: u16 = 3;
         assert!(painted.height <= MAX_ROWS + BORDER_ROWS);
     }
 

@@ -1,55 +1,50 @@
+use std::time::Duration;
+
 use config::{AppearanceFile, ThemeFile};
 use crossbeam_channel::Sender;
 use kernel::{ConfigCmd, ConfigEvent, Message, domain::Driver};
 
 use crate::{
-    cells::LatestSender,
     config::{
         ConfigPaths,
-        ConfigTiming,
-        session::{ConfigLoop, Watching},
+        session::{ConfigLoop, Watch},
     },
     driver::{DriverThread, spawn_driver},
     error::Error,
+    latest::LatestSender,
     registry,
     sender::DriverSender,
 };
 
 pub(crate) struct ConfigParts {
     pub(crate) paths: ConfigPaths,
-    pub(crate) timing: ConfigTiming,
+    pub(crate) save_debounce: Duration,
     pub(crate) theme: LatestSender<ThemeFile>,
     pub(crate) appearance: LatestSender<AppearanceFile>,
 }
 
 pub(crate) fn spawn(
     parts: ConfigParts,
-    mailbox: &Sender<Message>,
+    inbox: &Sender<Message>,
 ) -> Result<DriverThread<ConfigCmd>, Error> {
-    let ConfigParts {
-        paths,
-        timing,
-        theme,
-        appearance,
-    } = parts;
     let thread = spawn_driver(
         registry::row(Driver::Config),
-        move |inbox, mailbox| {
+        move |inbox, outbox| {
             let outbound = Outbound {
-                mailbox,
-                theme: &theme,
-                appearance: &appearance,
+                outbox,
+                theme: &parts.theme,
+                appearance: &parts.appearance,
             };
-            let watching = Watching::recommended(mailbox);
-            ConfigLoop::new((&paths, timing), &outbound, watching).run(inbox);
+            let watching = Watch::recommended(outbox);
+            ConfigLoop::new(&parts, &outbound, watching).run(inbox);
         },
-        mailbox,
+        inbox,
     )?;
     Ok(thread)
 }
 
 pub(crate) struct Outbound<'a> {
-    pub(crate) mailbox: &'a DriverSender<ConfigEvent>,
+    pub(crate) outbox: &'a DriverSender<ConfigEvent>,
     pub(crate) theme: &'a LatestSender<ThemeFile>,
     pub(crate) appearance: &'a LatestSender<AppearanceFile>,
 }
@@ -71,73 +66,48 @@ mod tests {
     };
 
     use crate::{
-        cells::{Receivers, cells},
         config::{
             ConfigPaths,
-            ConfigTiming,
             driver::{ConfigParts, spawn as spawn_config},
+            fixtures::{SETTLE_TIMEOUT, drain, paths},
         },
         driver::DriverThread,
         error::Error,
+        latest::{LatestReceivers, latest_channels},
     };
-
-    const RECV_TIMEOUT: Duration = Duration::from_secs(2);
-    const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
 
     fn spawn(
         paths: ConfigPaths,
-        timing: ConfigTiming,
-        mailbox: &crossbeam_channel::Sender<Message>,
-    ) -> Result<(DriverThread<ConfigCmd>, Receivers, Receiver<()>), Error> {
-        let (writers, cells, doorbell) = cells();
+        save_debounce: Duration,
+        inbox: &crossbeam_channel::Sender<Message>,
+    ) -> Result<(DriverThread<ConfigCmd>, LatestReceivers, Receiver<()>), Error> {
+        let (writers, cells, doorbell) = latest_channels();
         let thread = spawn_config(
             ConfigParts {
                 paths,
-                timing,
+                save_debounce,
                 theme: writers.theme,
                 appearance: writers.appearance,
             },
-            mailbox,
+            inbox,
         )?;
         Ok((thread, cells, doorbell))
     }
 
-    fn paths(directory: &tempfile::TempDir) -> ConfigPaths {
-        ConfigPaths {
-            config: directory.path().join("config.toml"),
-            appearance: directory.path().join("sifr-ui.toml"),
-            themes: directory.path().join("themes"),
-            theme: Some("noir".to_string()),
-            seen: crate::config::SeenTexts::default(),
-        }
-    }
-
-    fn timing() -> ConfigTiming {
-        ConfigTiming {
-            save_debounce: Duration::from_millis(20),
-        }
-    }
-
-    fn drain<T>(receiver: &Receiver<T>) -> Vec<T> {
-        let mut collected = vec![receiver.recv_timeout(RECV_TIMEOUT).unwrap()];
-        while let Ok(item) = receiver.recv_timeout(SETTLE_TIMEOUT) {
-            collected.push(item);
-        }
-        collected
-    }
+    const TEST_DEBOUNCE: Duration = Duration::from_millis(20);
 
     #[test]
     fn a_hand_edit_of_the_theme_reaches_the_shell_parsed() {
         let directory = tempfile::tempdir().unwrap();
-        let (mailbox, _messages) = crossbeam_channel::unbounded();
+        let (inbox, _messages) = crossbeam_channel::unbounded();
         let (thread, cells, doorbell) =
-            spawn(paths(&directory), timing(), &mailbox).unwrap();
+            spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
 
         drain(&doorbell);
         let theme = cells.theme.take();
         assert_eq!(
             theme.map(|theme| theme.name.clone()),
-            Some("noir".to_string())
+            Some(ThemeName::from_static("noir"))
         );
 
         drop(thread.commands);
@@ -146,7 +116,7 @@ mod tests {
 
     fn wait_for_appearance_reload(
         doorbell: &Receiver<()>,
-        cells: &Receivers,
+        cells: &LatestReceivers,
         deadline: Instant,
     ) -> bool {
         while Instant::now() < deadline {
@@ -162,9 +132,9 @@ mod tests {
     #[test]
     fn a_hand_edit_after_spawn_reaches_the_shell_without_polling() {
         let directory = tempfile::tempdir().unwrap();
-        let (mailbox, messages) = crossbeam_channel::unbounded();
+        let (inbox, messages) = crossbeam_channel::unbounded();
         let (thread, cells, doorbell) =
-            spawn(paths(&directory), timing(), &mailbox).unwrap();
+            spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
         drain(&doorbell);
         let _ = cells.appearance.take();
         drain(&messages);
@@ -195,9 +165,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("config.toml"), "[keymap\nnot toml")
             .unwrap();
-        let (mailbox, messages) = crossbeam_channel::unbounded();
+        let (inbox, messages) = crossbeam_channel::unbounded();
         let (thread, _cells, _doorbell) =
-            spawn(paths(&directory), timing(), &mailbox).unwrap();
+            spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
 
         let failed = drain(&messages).into_iter().any(|message| {
             matches!(
@@ -222,9 +192,9 @@ mod tests {
             "[volume]\nmode = \"text\"\n",
         )
         .unwrap();
-        let (mailbox, messages) = crossbeam_channel::unbounded();
+        let (inbox, messages) = crossbeam_channel::unbounded();
         let (thread, _cells, _doorbell) =
-            spawn(paths(&directory), timing(), &mailbox).unwrap();
+            spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
 
         let failure = drain(&messages).into_iter().find_map(|message| {
             let Message::Config(ConfigEvent::SourceFailed {
@@ -247,9 +217,9 @@ mod tests {
     #[test]
     fn a_later_broken_appearance_edit_keeps_the_last_good_rows() {
         let directory = tempfile::tempdir().unwrap();
-        let (mailbox, messages) = crossbeam_channel::unbounded();
+        let (inbox, messages) = crossbeam_channel::unbounded();
         let (thread, _cells, doorbell) =
-            spawn(paths(&directory), timing(), &mailbox).unwrap();
+            spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
         drain(&doorbell);
         let first_rows = drain(&messages).into_iter().find_map(custom_rows_reloaded);
         assert!(
@@ -306,7 +276,7 @@ mod tests {
     }
 
     fn custom_rows_reloaded(message: Message) -> Option<Vec<CustomSetting>> {
-        let Message::Config(ConfigEvent::CustomRowsReloaded(rows)) = message else {
+        let Message::Config(ConfigEvent::CustomSettingsReloaded(rows)) = message else {
             return None;
         };
         Some(rows)
@@ -315,9 +285,9 @@ mod tests {
     #[test]
     fn an_unreadable_config_shows_a_toast() {
         let directory = tempfile::tempdir().unwrap();
-        let (mailbox, messages) = crossbeam_channel::unbounded();
+        let (inbox, messages) = crossbeam_channel::unbounded();
         let (thread, _cells, _doorbell) =
-            spawn(paths(&directory), timing(), &mailbox).unwrap();
+            spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
 
         let toast = drain(&messages).into_iter().find_map(toast_text);
         assert!(toast.is_none(), "a missing file must not be unreadable");
@@ -331,9 +301,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(directory.path().join("themes")).unwrap();
         std::fs::write(directory.path().join("themes/mine.toml"), "").unwrap();
-        let (mailbox, messages) = crossbeam_channel::unbounded();
+        let (inbox, messages) = crossbeam_channel::unbounded();
         let (thread, _cells, _doorbell) =
-            spawn(paths(&directory), timing(), &mailbox).unwrap();
+            spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
 
         let themes = drain(&messages)
             .into_iter()
@@ -388,8 +358,8 @@ mod tests {
             theme: None,
             seen: crate::config::SeenTexts::default(),
         };
-        let (mailbox, _messages) = crossbeam_channel::unbounded();
-        let (thread, _cells, doorbell) = spawn(paths, timing(), &mailbox).unwrap();
+        let (inbox, _messages) = crossbeam_channel::unbounded();
+        let (thread, _cells, doorbell) = spawn(paths, TEST_DEBOUNCE, &inbox).unwrap();
         drain(&doorbell);
         thread
             .commands
@@ -399,7 +369,7 @@ mod tests {
                     .build(),
             ))
             .unwrap();
-        let format_chips_id = setting_id(config::AppearanceField::FormatChips);
+        let format_chips_id = config::AppearanceField::FormatChips.id();
         thread
             .commands
             .send(ConfigCmd::Setting {
@@ -440,15 +410,6 @@ format_chips = true
 speed_chip = "always"
 "#;
 
-    fn setting_id(field: config::AppearanceField) -> SettingId {
-        config::APPEARANCE_ROWS
-            .into_iter()
-            .find(|row| row.field == field)
-            .unwrap()
-            .custom
-            .id
-    }
-
     fn option_at(id: SettingId, position: usize) -> OptionIndex {
         config::appearance_row(id)
             .unwrap()
@@ -469,7 +430,7 @@ speed_chip = "always"
             (config::AppearanceField::LayoutMode, 2),
         ]
         .map(|(field, position)| {
-            let id = setting_id(field);
+            let id = field.id();
             (id, option_at(id, position))
         })
     }
@@ -496,8 +457,8 @@ speed_chip = "always"
             theme: None,
             seen: crate::config::SeenTexts::default(),
         };
-        let (mailbox, _messages) = crossbeam_channel::unbounded();
-        let (thread, _cells, doorbell) = spawn(paths, timing(), &mailbox).unwrap();
+        let (inbox, _messages) = crossbeam_channel::unbounded();
+        let (thread, _cells, doorbell) = spawn(paths, TEST_DEBOUNCE, &inbox).unwrap();
         drain(&doorbell);
 
         for (id, position) in appearance_rows() {
@@ -539,12 +500,12 @@ speed_chip = "always"
     fn a_preset_write_lands_on_disk_and_never_selects_a_theme() {
         let directory = tempfile::tempdir().unwrap();
         let appearance_path = directory.path().join("sifr-ui.toml");
-        let (mailbox, _messages) = crossbeam_channel::unbounded();
+        let (inbox, _messages) = crossbeam_channel::unbounded();
         let (thread, _cells, doorbell) =
-            spawn(paths(&directory), timing(), &mailbox).unwrap();
+            spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
         drain(&doorbell);
 
-        let preset_id = setting_id(config::AppearanceField::Preset);
+        let preset_id = config::AppearanceField::Preset.id();
         let noir_option = option_at(preset_id, 1);
         thread
             .commands
@@ -576,13 +537,13 @@ speed_chip = "always"
     fn an_appearance_save_sends_no_custom_rows() {
         let directory = tempfile::tempdir().unwrap();
         let appearance_path = directory.path().join("sifr-ui.toml");
-        let (mailbox, messages) = crossbeam_channel::unbounded();
+        let (inbox, messages) = crossbeam_channel::unbounded();
         let (thread, _cells, doorbell) =
-            spawn(paths(&directory), timing(), &mailbox).unwrap();
+            spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
         drain(&doorbell);
         drain(&messages);
 
-        let format_chips_id = setting_id(config::AppearanceField::FormatChips);
+        let format_chips_id = config::AppearanceField::FormatChips.id();
         thread
             .commands
             .send(ConfigCmd::Setting {

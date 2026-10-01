@@ -4,7 +4,7 @@ mod headings;
 mod meters;
 mod metrics;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 pub(crate) use compact::{
     CompactCard,
@@ -19,7 +19,13 @@ use kernel::{
     playlist::{PlayOrder, RepeatMode},
 };
 pub use metrics::CardMetrics;
-pub(crate) use metrics::{CardLayout, card_height, card_metrics, content_rect};
+pub(crate) use metrics::{
+    BRACKET_MARGIN,
+    SPECTRUM_MAX_DOTS,
+    card_height,
+    card_metrics,
+    content_rect,
+};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Rect},
@@ -29,16 +35,15 @@ use ratatui::{
 };
 
 use crate::{
-    braille::BrailleBuffers,
-    geometry::{CellAspect, CoverSizing},
+    geometry::CoverSizing,
     primitive::{
         canvas::Canvas,
         corner_brackets,
-        corner_brackets::CornerRing,
+        corner_brackets::CornerBrackets,
         inset::Inset,
     },
     spectrum::Spectrum,
-    theme::ActiveTheme,
+    theme::{ActiveTheme, Role},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -55,35 +60,90 @@ pub struct CardView<'a> {
     pub now: Moment,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum CoverArt<'a> {
+/// What the card's cover square shows: nothing, a pixel image placed by the
+/// terminal layer, or cell-painted text art.
+#[derive(Debug, Clone)]
+pub enum CoverArt {
     Missing,
     Image,
-    Text(&'a [Line<'static>]),
+    Text(Arc<[Line<'static>]>),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Card<'a> {
     pub view: CardView<'a>,
     pub theme: ActiveTheme<'a>,
-    pub cell_aspect: CellAspect,
+    pub cell_aspect: f32,
     pub cover_sizing: CoverSizing,
     pub appearance: Appearance,
-    pub cover_art: CoverArt<'a>,
+    pub cover_art: &'a CoverArt,
 }
 
-#[derive(Debug)]
-pub(crate) struct CardParts<'a> {
-    pub(crate) view: CardView<'a>,
-    pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) appearance: Appearance,
-    pub(crate) metrics: &'a CardMetrics,
-    pub(crate) layout: CardLayout,
+impl CardView<'_> {
+    pub(crate) fn duration(&self) -> Duration {
+        self.displayed_track
+            .and_then(|track| track.duration())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn position(&self) -> Duration {
+        self.player.position_at(self.now)
+    }
+
+    pub(crate) fn remaining(&self) -> Duration {
+        self.duration().saturating_sub(self.position())
+    }
 }
 
 impl Card<'_> {
     pub fn render_in(&self, metrics: &CardMetrics, canvas: Canvas<'_>) {
-        render_card(self, metrics, canvas);
+        let Canvas { area, buffer } = canvas;
+        let frame_color: Color = self.theme.role(Role::Frame);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .padding(Inset::card().padding())
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(frame_color))
+            .title(" Sifr ")
+            .title_style(Style::default().fg(frame_color));
+        block.render(area, buffer);
+
+        if !metrics.cover_square.is_empty() {
+            self.paint_cover(buffer, metrics.cover_square);
+        }
+        headings::paint(buffer, self, metrics);
+        meters::paint(buffer, self, metrics);
+        if let Some(color) = self.bracket_color() {
+            (&CornerBrackets { color }).render(
+                corner_brackets::expand(content_rect(metrics), BRACKET_MARGIN),
+                buffer,
+            );
+        }
+    }
+
+    fn bracket_color(&self) -> Option<Color> {
+        matches!(self.appearance.cover_brackets, CoverBrackets::Shown)
+            .then(|| self.theme.role(Role::Accent))
+    }
+
+    fn paint_cover(&self, buffer: &mut Buffer, area: Rect) {
+        match self.cover_art {
+            CoverArt::Missing => Paragraph::new("No cover")
+                .style(Style::default().fg(self.theme.role(Role::Dim)))
+                .alignment(Alignment::Center)
+                .render(area, buffer),
+            CoverArt::Image => {}
+            CoverArt::Text(lines) => {
+                let rows = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+                Paragraph::new(lines.to_vec())
+                    .render(area.centered_vertically(Constraint::Length(rows)), buffer);
+            }
+        }
+        if let Some(color) = self.bracket_color() {
+            (&CornerBrackets { color })
+                .render(corner_brackets::expand(area, BRACKET_MARGIN), buffer);
+        }
     }
 }
 
@@ -92,87 +152,6 @@ impl Widget for &Card<'_> {
         let metrics = card_metrics(area, self.cell_aspect, self.cover_sizing);
         self.render_in(&metrics, Canvas { area, buffer });
     }
-}
-
-fn render_card(card: &Card<'_>, metrics: &CardMetrics, canvas: Canvas<'_>) {
-    let Canvas { area, buffer } = canvas;
-    let frame_color: Color = card.theme.border();
-    let accent_color: Color = card.theme.accent();
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .padding(Inset::card().padding())
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(frame_color))
-        .title(" Sifr ")
-        .title_style(Style::default().fg(frame_color));
-    block.render(area, buffer);
-
-    let bracket_color = matches!(card.appearance.cover_brackets, CoverBrackets::Shown)
-        .then_some(accent_color);
-    if !metrics.cover_square.is_empty() {
-        paint_cover(
-            buffer,
-            metrics.cover_square,
-            CoverPaint {
-                theme: card.theme,
-                art: card.cover_art,
-                bracket_color,
-            },
-        );
-    }
-
-    let context = CardParts {
-        view: card.view,
-        theme: card.theme,
-        appearance: card.appearance,
-        metrics,
-        layout: CardLayout::default(),
-    };
-    headings::paint(buffer, &context);
-    let mut spectrum_buffers = BrailleBuffers::default();
-    meters::paint(buffer, &context, &mut spectrum_buffers);
-    if let Some(color) = bracket_color {
-        paint_text_brackets(buffer, &context, color);
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct CoverPaint<'a> {
-    theme: ActiveTheme<'a>,
-    art: CoverArt<'a>,
-    bracket_color: Option<Color>,
-}
-
-fn paint_cover(buffer: &mut Buffer, area: Rect, paint: CoverPaint<'_>) {
-    match paint.art {
-        CoverArt::Missing => Paragraph::new("No cover")
-            .style(Style::default().fg(paint.theme.dim()))
-            .alignment(Alignment::Center)
-            .render(area, buffer),
-        CoverArt::Image => {}
-        CoverArt::Text(lines) => {
-            let rows = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-            Paragraph::new(lines.to_vec())
-                .render(area.centered_vertically(Constraint::Length(rows)), buffer);
-        }
-    }
-    if let Some(color) = paint.bracket_color {
-        (&CornerRing { color }).render(
-            corner_brackets::expand(area, CardLayout::default().bracket_margin),
-            buffer,
-        );
-    }
-}
-
-fn paint_text_brackets(buffer: &mut Buffer, context: &CardParts<'_>, color: Color) {
-    (&CornerRing { color }).render(
-        corner_brackets::expand(
-            content_rect(context.metrics),
-            context.layout.bracket_margin,
-        ),
-        buffer,
-    );
 }
 
 #[cfg(test)]
@@ -201,26 +180,11 @@ mod tests {
 
     use crate::{
         card::{Card, CardView, CoverArt, card_height},
-        geometry::{CellAspect, CoverSizing},
-        scene::fixtures::{noir, painted},
+        geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
         spectrum::{SPECTRUM_BANDS, Spectrum},
+        test_support::{noir, rendered, track},
         theme::{ActiveTheme, ColorDepth, Theme},
     };
-
-    fn track(title: &str, duration_secs: u64) -> Arc<Track> {
-        Arc::new(
-            Track::builder()
-                .path(format!("/music/{title}.mp3"))
-                .duration(Duration::from_secs(duration_secs))
-                .tags(Tags {
-                    title: Some(title.to_string()),
-                    artist: Some("Test Artist".to_string()),
-                    ..Tags::default()
-                })
-                .audio_format(AudioFormat::default())
-                .build(),
-        )
-    }
 
     fn full_format_track() -> Arc<Track> {
         Arc::new(
@@ -315,19 +279,23 @@ mod tests {
         Card {
             view,
             theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
-            cell_aspect: CellAspect::default(),
+            cell_aspect: DEFAULT_CELL_ASPECT,
             cover_sizing: CoverSizing::default(),
             appearance,
-            cover_art: CoverArt::Missing,
+            cover_art: &CoverArt::Missing,
         }
     }
 
     #[test]
     fn the_now_playing_card_shows_title_status_and_meters() {
         let theme = noir();
-        let fixture = Fixture::playing(track("Moon River", 245));
+        let fixture = Fixture::playing(track("Moon River"));
         let widget = card(fixture.view(), &theme, Appearance::default());
-        insta::assert_snapshot!(painted(&widget, 60, card_height()));
+        insta::assert_snapshot!(
+            rendered(60, card_height(), |frame| frame
+                .render_widget(&widget, frame.area()))
+            .to_string()
+        );
     }
 
     #[test]
@@ -335,7 +303,10 @@ mod tests {
         let theme = noir();
         let fixture = Fixture::stopped();
         let widget = card(fixture.view(), &theme, Appearance::default());
-        let text = painted(&widget, 60, card_height());
+        let text = rendered(60, card_height(), |frame| {
+            frame.render_widget(&widget, frame.area());
+        })
+        .to_string();
         assert!(text.contains("No track"), "got {text:?}");
         assert!(text.contains("Stopped"), "got {text:?}");
     }
@@ -343,9 +314,12 @@ mod tests {
     #[test]
     fn output_lost_reads_no_output_in_the_status_column() {
         let theme = noir();
-        let fixture = Fixture::output_lost(track("Moon River", 245));
+        let fixture = Fixture::output_lost(track("Moon River"));
         let widget = card(fixture.view(), &theme, Appearance::default());
-        let text = painted(&widget, 60, card_height());
+        let text = rendered(60, card_height(), |frame| {
+            frame.render_widget(&widget, frame.area());
+        })
+        .to_string();
         assert!(text.contains("No output"), "got {text:?}");
     }
 
@@ -354,7 +328,10 @@ mod tests {
         let theme = noir();
         let fixture = Fixture::playing(full_format_track());
         let widget = card(fixture.view(), &theme, Appearance::default());
-        let text = painted(&widget, 30, card_height());
+        let text = rendered(30, card_height(), |frame| {
+            frame.render_widget(&widget, frame.area());
+        })
+        .to_string();
         assert!(!text.contains("KBPS"), "got {text:?}");
         assert!(text.contains("00:3"), "got {text:?}");
     }
@@ -362,13 +339,16 @@ mod tests {
     #[test]
     fn progress_style_remaining_shows_a_countdown_chip() {
         let theme = noir();
-        let fixture = Fixture::playing(track("Moon River", 245));
+        let fixture = Fixture::playing(track("Moon River"));
         let appearance = Appearance {
             progress_time: ProgressTime::Remaining,
             ..Appearance::default()
         };
         let widget = card(fixture.view(), &theme, appearance);
-        let text = painted(&widget, 60, card_height());
+        let text = rendered(60, card_height(), |frame| {
+            frame.render_widget(&widget, frame.area());
+        })
+        .to_string();
         let remaining = format!("-{}", format_time(Duration::from_secs(245 - 30)));
         assert!(text.contains(&remaining), "got {text:?}");
     }
@@ -376,13 +356,16 @@ mod tests {
     #[test]
     fn progress_style_elapsed_shows_a_plain_fill_bar_without_a_countdown_chip() {
         let theme = noir();
-        let fixture = Fixture::playing(track("Moon River", 245));
+        let fixture = Fixture::playing(track("Moon River"));
         let appearance = Appearance {
             progress_time: ProgressTime::Elapsed,
             ..Appearance::default()
         };
         let widget = card(fixture.view(), &theme, appearance);
-        let text = painted(&widget, 60, card_height());
+        let text = rendered(60, card_height(), |frame| {
+            frame.render_widget(&widget, frame.area());
+        })
+        .to_string();
         let remaining = format!("-{}", format_time(Duration::from_secs(245 - 30)));
         assert!(!text.contains(&remaining), "got {text:?}");
     }
@@ -390,10 +373,13 @@ mod tests {
     #[test]
     fn cover_off_omits_the_no_cover_placeholder() {
         let theme = noir();
-        let fixture = Fixture::playing(track("Moon River", 245));
+        let fixture = Fixture::playing(track("Moon River"));
         let mut widget = card(fixture.view(), &theme, Appearance::default());
         widget.cover_sizing = CoverSizing::Off;
-        let text = painted(&widget, 60, card_height());
+        let text = rendered(60, card_height(), |frame| {
+            frame.render_widget(&widget, frame.area());
+        })
+        .to_string();
         assert!(!text.contains("No cover"), "got {text:?}");
     }
 }

@@ -1,0 +1,25 @@
+---
+source: crates/library/src/history.rs
+assertion_line: 126
+expression: entries
+---
+[
+    HistoryEntry {
+        path: "/music/second.flac",
+        title: "Second",
+        artist: None,
+        at: Moment(
+            2000s,
+        ),
+    },
+    HistoryEntry {
+        path: "/music/first.flac",
+        title: "First",
+        artist: Some(
+            "Artist A",
+        ),
+        at: Moment(
+            1000s,
+        ),
+    },
+]

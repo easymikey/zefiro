@@ -21,12 +21,7 @@ impl Crossfade {
     pub const STEP: Duration = Duration::from_millis(500);
 
     #[must_use]
-    pub fn new(length: Duration) -> Option<Self> {
-        (length <= Self::MAX).then_some(Self(length))
-    }
-
-    #[must_use]
-    pub const fn value(self) -> Duration {
+    pub const fn get(self) -> Duration {
         self.0
     }
 
@@ -65,7 +60,9 @@ impl TryFrom<Duration> for Crossfade {
     type Error = CrossfadeOutOfRange;
 
     fn try_from(length: Duration) -> Result<Self, Self::Error> {
-        Self::new(length).ok_or(CrossfadeOutOfRange { length })
+        (length <= Self::MAX)
+            .then_some(Self(length))
+            .ok_or(CrossfadeOutOfRange { length })
     }
 }
 
@@ -78,23 +75,13 @@ mod tests {
     use crate::domain::{Bounded, Direction, crossfade::Crossfade};
 
     #[rstest]
-    #[case::at_the_ceiling(Crossfade::MAX, Some(Crossfade::MAX))]
-    #[case::past_the_ceiling(Duration::from_secs(11), None)]
-    fn new_rejects_anything_above_max(
-        #[case] length: Duration,
-        #[case] expected: Option<Duration>,
-    ) {
-        assert_eq!(Crossfade::new(length).map(Crossfade::value), expected);
-    }
-
-    #[rstest]
     #[case::saturates_above_the_ceiling(Duration::from_secs(20), Crossfade::MAX)]
     #[case::saturates_below_the_floor(Duration::ZERO, Duration::ZERO)]
     fn clamped_saturates_both_directions(
         #[case] raw: Duration,
         #[case] expected: Duration,
     ) {
-        assert_eq!(Crossfade::clamped(raw).value(), expected);
+        assert_eq!(Crossfade::clamped(raw).get(), expected);
     }
 
     #[rstest]
@@ -118,7 +105,7 @@ mod tests {
         #[case] step: fn(Crossfade) -> Crossfade,
         #[case] expected: Duration,
     ) {
-        assert_eq!(step(start).value(), expected);
+        assert_eq!(step(start).get(), expected);
     }
 
     #[rstest]
@@ -142,24 +129,22 @@ mod tests {
         #[case] direction: Direction,
         #[case] expected: Duration,
     ) {
-        assert_eq!(start.step(direction).value(), expected);
+        assert_eq!(start.step(direction).get(), expected);
     }
 
     #[test]
     fn default_is_gapless() {
-        assert_eq!(Crossfade::default().value(), Duration::ZERO);
+        assert_eq!(Crossfade::default().get(), Duration::ZERO);
     }
 
     #[rstest]
+    #[case::at_the_ceiling(Crossfade::MAX, Some(Crossfade::MAX))]
     #[case::within_range(Duration::from_secs(3), Some(Duration::from_secs(3)))]
     #[case::out_of_range(Duration::from_secs(11), None)]
     fn try_from_duration_round_trips_through_the_valid_range(
         #[case] raw: Duration,
         #[case] expected: Option<Duration>,
     ) {
-        assert_eq!(
-            Crossfade::try_from(raw).map(Crossfade::value).ok(),
-            expected
-        );
+        assert_eq!(Crossfade::try_from(raw).map(Crossfade::get).ok(), expected);
     }
 }

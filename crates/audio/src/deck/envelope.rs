@@ -37,9 +37,9 @@ pub(crate) struct Order {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct Flags(u8);
+pub(crate) struct Signals(u8);
 
-impl Flags {
+impl Signals {
     pub(crate) const FINISHED: Self = Self(1);
     pub(crate) const CUED: Self = Self(2);
     pub(crate) const RAMPED: Self = Self(4);
@@ -127,10 +127,11 @@ impl EnvelopeControl {
     }
 
     #[must_use]
-    pub(crate) fn take_flags(&self) -> Flags {
-        Flags(self.published.flags.swap(0, Ordering::Acquire))
+    pub(crate) fn take_signals(&self) -> Signals {
+        Signals(self.published.flags.swap(0, Ordering::Acquire))
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn gain(&self) -> f32 {
         f32::from_bits(self.published.gain.load(Ordering::Relaxed))
@@ -213,7 +214,7 @@ fn curved_gain(ramp: Ramp, fraction: f32) -> f32 {
 }
 
 impl<S: Source> Envelope<S> {
-    fn raise(&self, flag: Flags) {
+    fn raise(&self, flag: Signals) {
         let previous = self.published.flags.fetch_or(flag.0, Ordering::Release);
         if previous & flag.0 == 0 {
             let _ = self.wake.try_send(DeckEvent::Track(self.ticket));
@@ -254,7 +255,7 @@ impl<S: Source> Envelope<S> {
             return;
         };
         if self.frames >= target {
-            self.raise(Flags::CUED);
+            self.raise(Signals::CUED);
             self.cue = None;
         }
     }
@@ -267,7 +268,7 @@ impl<S: Source> Envelope<S> {
         if running.elapsed >= running.ramp.frames {
             self.gain = running.ramp.to;
             self.running = None;
-            self.raise(Flags::RAMPED);
+            self.raise(Signals::RAMPED);
             return;
         }
         let elapsed = frames_to_duration(running.elapsed, self.rate);
@@ -311,7 +312,7 @@ impl<S: Source> Iterator for Envelope<S> {
 
     fn next(&mut self) -> Option<f32> {
         let Some(sample) = self.inner.next() else {
-            self.raise(Flags::FINISHED);
+            self.raise(Signals::FINISHED);
             return None;
         };
         let channels = self.inner.channels();
@@ -363,7 +364,7 @@ mod tests {
 
     use crate::deck::{
         Ticket,
-        envelope::{Curve, Flags, Ramp, envelope},
+        envelope::{Curve, Ramp, Signals, envelope},
     };
 
     fn tone(millis: u64) -> impl Source {
@@ -383,7 +384,7 @@ mod tests {
         let (wake, heard) = crossbeam_channel::bounded(4);
         let (source, control) = envelope(tone(100), Ticket::default(), wake);
         drain(source);
-        assert_eq!(control.take_flags(), Flags::FINISHED);
+        assert_eq!(control.take_signals(), Signals::FINISHED);
         assert_eq!(heard.len(), 1);
     }
 
@@ -393,9 +394,9 @@ mod tests {
         let (source, mut control) = envelope(tone(100), Ticket::default(), wake);
         control.cue(Some(Duration::from_millis(50)));
         drain(source);
-        let flags = control.take_flags();
-        assert!(flags.contains(Flags::CUED));
-        assert!(flags.contains(Flags::FINISHED));
+        let flags = control.take_signals();
+        assert!(flags.contains(Signals::CUED));
+        assert!(flags.contains(Signals::FINISHED));
     }
 
     #[rstest]
@@ -409,9 +410,9 @@ mod tests {
             frames: 441,
         });
         drain(source);
-        let flags = control.take_flags();
-        assert!(flags.contains(Flags::RAMPED));
-        assert!(flags.contains(Flags::FINISHED));
+        let flags = control.take_signals();
+        assert!(flags.contains(Signals::RAMPED));
+        assert!(flags.contains(Signals::FINISHED));
         assert!((control.gain() - 0.0).abs() < 1e-4);
     }
 
@@ -420,7 +421,7 @@ mod tests {
         let (wake, _heard) = crossbeam_channel::bounded(4);
         let (source, control) = envelope(tone(100), Ticket::default(), wake);
         drain(source);
-        assert_eq!(control.take_flags(), Flags::FINISHED);
+        assert_eq!(control.take_signals(), Signals::FINISHED);
         assert!((control.gain() - 1.0).abs() < 1e-6);
     }
 
@@ -431,7 +432,7 @@ mod tests {
             .unwrap();
         let (source, control) = envelope(tone(10), Ticket::default(), wake);
         drain(source);
-        assert!(control.take_flags().contains(Flags::FINISHED));
+        assert!(control.take_signals().contains(Signals::FINISHED));
         assert_eq!(heard.len(), 1);
     }
 

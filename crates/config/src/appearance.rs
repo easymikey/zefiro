@@ -39,18 +39,29 @@ pub enum LayoutMode {
     Compact,
 }
 
-pub(crate) fn from_bool<'de, D, Flag>(
-    deserializer: D,
-    on: Flag,
-    off: Flag,
-) -> Result<Flag, D::Error>
+pub(crate) trait Flag {
+    const ON: Self;
+    const OFF: Self;
+}
+
+macro_rules! flag_enum {
+    ($flag:ty, $on:ident, $off:ident) => {
+        impl Flag for $flag {
+            const ON: Self = Self::$on;
+            const OFF: Self = Self::$off;
+        }
+    };
+}
+
+pub(crate) fn flag<'de, D, F>(deserializer: D) -> Result<F, D::Error>
 where
     D: Deserializer<'de>,
+    F: Flag,
 {
     Ok(if bool::deserialize(deserializer)? {
-        on
+        F::ON
     } else {
-        off
+        F::OFF
     })
 }
 
@@ -61,12 +72,7 @@ pub enum CoverBrackets {
     Hidden,
 }
 
-pub(crate) fn cover_brackets<'de, D>(deserializer: D) -> Result<CoverBrackets, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    from_bool(deserializer, CoverBrackets::Shown, CoverBrackets::Hidden)
-}
+flag_enum!(CoverBrackets, Shown, Hidden);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FormatChips {
@@ -75,12 +81,7 @@ pub enum FormatChips {
     Hidden,
 }
 
-pub(crate) fn format_chips<'de, D>(deserializer: D) -> Result<FormatChips, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    from_bool(deserializer, FormatChips::Shown, FormatChips::Hidden)
-}
+flag_enum!(FormatChips, Shown, Hidden);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ProgressTime {
@@ -89,12 +90,7 @@ pub enum ProgressTime {
     Elapsed,
 }
 
-pub(crate) fn progress_style<'de, D>(deserializer: D) -> Result<ProgressTime, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    from_bool(deserializer, ProgressTime::Remaining, ProgressTime::Elapsed)
-}
+flag_enum!(ProgressTime, Remaining, Elapsed);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Animations {
@@ -103,12 +99,7 @@ pub enum Animations {
     Off,
 }
 
-pub(crate) fn animations<'de, D>(deserializer: D) -> Result<Animations, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    from_bool(deserializer, Animations::On, Animations::Off)
-}
+flag_enum!(Animations, On, Off);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum KeyHints {
@@ -117,12 +108,7 @@ pub enum KeyHints {
     Hidden,
 }
 
-pub(crate) fn key_hints<'de, D>(deserializer: D) -> Result<KeyHints, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    from_bool(deserializer, KeyHints::Shown, KeyHints::Hidden)
-}
+flag_enum!(KeyHints, Shown, Hidden);
 
 #[must_use]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -155,7 +141,7 @@ impl AppearancePreset {
     }
 }
 
-pub fn preset_appearance(preset: AppearancePreset) -> Appearance {
+pub(crate) fn preset_appearance(preset: AppearancePreset) -> Appearance {
     match preset {
         AppearancePreset::Stock => Appearance::default(),
         AppearancePreset::Noir => Appearance {
@@ -197,15 +183,60 @@ pub struct AppearancePatch {
     pub layout_mode: Option<LayoutMode>,
 }
 
+impl From<Appearance> for AppearancePatch {
+    fn from(appearance: Appearance) -> Self {
+        Self {
+            cover_style: Some(appearance.cover_style),
+            cover_brackets: Some(appearance.cover_brackets),
+            format_chips: Some(appearance.format_chips),
+            speed_chip: Some(appearance.speed_chip),
+            progress_time: Some(appearance.progress_time),
+            key_hints: Some(appearance.key_hints),
+            animations: Some(appearance.animations),
+            layout_mode: Some(appearance.layout_mode),
+        }
+    }
+}
+
+impl AppearancePatch {
+    pub fn apply(self, appearance: Appearance) -> Appearance {
+        Appearance {
+            cover_style: self.cover_style.unwrap_or(appearance.cover_style),
+            cover_brackets: self.cover_brackets.unwrap_or(appearance.cover_brackets),
+            format_chips: self.format_chips.unwrap_or(appearance.format_chips),
+            speed_chip: self.speed_chip.unwrap_or(appearance.speed_chip),
+            progress_time: self.progress_time.unwrap_or(appearance.progress_time),
+            key_hints: self.key_hints.unwrap_or(appearance.key_hints),
+            animations: self.animations.unwrap_or(appearance.animations),
+            layout_mode: self.layout_mode.unwrap_or(appearance.layout_mode),
+        }
+    }
+
+    pub fn then(self, later: Self) -> Self {
+        Self {
+            cover_style: later.cover_style.or(self.cover_style),
+            cover_brackets: later.cover_brackets.or(self.cover_brackets),
+            format_chips: later.format_chips.or(self.format_chips),
+            speed_chip: later.speed_chip.or(self.speed_chip),
+            progress_time: later.progress_time.or(self.progress_time),
+            key_hints: later.key_hints.or(self.key_hints),
+            animations: later.animations.or(self.animations),
+            layout_mode: later.layout_mode.or(self.layout_mode),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
     use crate::appearance::{
         Appearance,
+        AppearancePatch,
         AppearancePreset,
         CoverStyle,
         FormatChips,
+        KeyHints,
         LayoutMode,
         SpeedChip,
         preset_appearance,
@@ -213,12 +244,40 @@ mod tests {
     };
 
     #[test]
+    fn then_folds_disjoint_fields_and_the_later_field_wins() {
+        let earlier = AppearancePatch::builder()
+            .format_chips(FormatChips::Hidden)
+            .cover_style(CoverStyle::Vinyl)
+            .build();
+        let later = AppearancePatch::builder()
+            .cover_style(CoverStyle::Off)
+            .key_hints(KeyHints::Hidden)
+            .build();
+
+        let merged = earlier.then(later);
+
+        assert_eq!(merged.format_chips, Some(FormatChips::Hidden));
+        assert_eq!(merged.key_hints, Some(KeyHints::Hidden));
+        assert_eq!(merged.cover_style, Some(CoverStyle::Off));
+    }
+
+    #[test]
+    fn a_full_patch_applies_to_exactly_the_appearance_it_came_from() {
+        let noir = preset_appearance(AppearancePreset::Noir);
+
+        assert_eq!(
+            AppearancePatch::from(noir).apply(Appearance::default()),
+            noir
+        );
+    }
+
+    #[test]
     fn the_stock_appearance_is_every_vocabulary_default() {
         insta::assert_debug_snapshot!(Appearance::default());
     }
 
     #[test]
-    fn the_default_preset_is_exactly_the_stock_appearance() {
+    fn the_stock_preset_is_exactly_the_stock_appearance() {
         assert_eq!(
             preset_appearance(AppearancePreset::Stock),
             Appearance::default()

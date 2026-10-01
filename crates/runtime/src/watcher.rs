@@ -60,6 +60,38 @@ pub(crate) fn rewatch(
     unwatched.and(watched)
 }
 
+pub(crate) fn recommended<H: notify::EventHandler>(
+    handler: H,
+    report: impl FnOnce(&notify::Error),
+) -> Option<RecommendedWatcher> {
+    match notify::recommended_watcher(handler) {
+        Ok(watcher) => Some(watcher),
+        Err(error) => {
+            report(&error);
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct FakeWatch {
+    pub(crate) watched: Vec<PathBuf>,
+}
+
+#[cfg(test)]
+impl Watcher for FakeWatch {
+    fn watch(&mut self, path: &Path) -> Result<(), notify::Error> {
+        self.watched.push(path.to_path_buf());
+        Ok(())
+    }
+
+    fn unwatch(&mut self, path: &Path) -> Result<(), notify::Error> {
+        self.watched.retain(|watched| watched != path);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -68,25 +100,8 @@ mod tests {
 
     use crate::{
         config::ConfigPaths,
-        watcher::{Watcher, config_directory, rewatch, watch_if_present},
+        watcher::{FakeWatch, Watcher, config_directory, rewatch, watch_if_present},
     };
-
-    #[derive(Default)]
-    struct FakeWatch {
-        watched: Vec<PathBuf>,
-    }
-
-    impl Watcher for FakeWatch {
-        fn watch(&mut self, path: &Path) -> Result<(), notify::Error> {
-            self.watched.push(path.to_path_buf());
-            Ok(())
-        }
-
-        fn unwatch(&mut self, path: &Path) -> Result<(), notify::Error> {
-            self.watched.retain(|watched| watched != path);
-            Ok(())
-        }
-    }
 
     fn paths(appearance: &str, themes: &str) -> ConfigPaths {
         ConfigPaths {
@@ -140,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn a_watched_root_can_be_unwatched() {
+    fn a_watched_directory_can_be_unwatched() {
         let mut watcher = FakeWatch::default();
         watcher.watch(Path::new("/music")).unwrap();
         assert_eq!(watcher.watched, vec![PathBuf::from("/music")]);
@@ -149,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn rewatching_moves_the_watch_to_the_new_root() {
+    fn rewatching_moves_the_watch_to_the_new_directory() {
         let mut watcher = FakeWatch::default();
         watcher.watch(Path::new("/music")).unwrap();
         rewatch(&mut watcher, Path::new("/music"), Path::new("/tunes")).unwrap();

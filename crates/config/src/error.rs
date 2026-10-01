@@ -1,6 +1,6 @@
 use std::{fmt, num::ParseIntError};
 
-use kernel::domain::{CrossfadeOutOfRange, OptionIndex, SettingId};
+use kernel::domain::CrossfadeOutOfRange;
 use serde::de::DeserializeOwned;
 
 use crate::{
@@ -44,12 +44,10 @@ pub enum Error {
     NotATable { key: String },
     #[error("{}", .0.message())]
     Document(#[from] toml_edit::TomlError),
-    #[error(transparent)]
-    Crossfade(#[from] CrossfadeError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum CrossfadeError {
+pub(crate) enum CrossfadeError {
     #[error("invalid crossfade {value:?}: {source}")]
     Number {
         value: String,
@@ -68,14 +66,6 @@ pub enum CrossfadeError {
 #[error("invalid color `{input}`: expected 6 hex digits as #rrggbb")]
 pub struct ColorError {
     pub input: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum SettingError {
-    #[error("no appearance row carries the id {}", .id.get())]
-    UnknownRow { id: SettingId },
-    #[error("appearance row {} has no option at position {}", .id.get(), .option.get())]
-    NoOption { id: SettingId, option: OptionIndex },
 }
 
 fn line_at(source: &str, offset: usize) -> usize {

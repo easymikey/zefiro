@@ -14,7 +14,6 @@ use kernel::{
     Message,
     Model,
     Moment,
-    NowPlaying,
     Percent,
     PlaybackRequest,
     Player,
@@ -26,6 +25,7 @@ use kernel::{
     Timer,
     ToastLevel,
     Track,
+    TrackRequest,
     Transport,
     WindowColorsCmd,
     domain::{
@@ -122,11 +122,11 @@ fn volume_clamped_0_100() {
         Moment::default(),
     )
     .unwrap();
-    assert_eq!(low.transport.volume.value(), 0);
+    assert_eq!(low.transport.volume.get(), 0);
     let effs = effects(cmd);
     assert!(matches!(
         effs.as_slice(),
-        [Effect::Macos(MacosCmd::Volume(system)), ..] if system.value() == 0
+        [Effect::Macos(MacosCmd::Volume(system)), ..] if system.get() == 0
     ));
 
     let mut hi = Model {
@@ -142,7 +142,7 @@ fn volume_clamped_0_100() {
         Moment::default(),
     )
     .unwrap();
-    assert_eq!(hi.transport.volume.value(), 100);
+    assert_eq!(hi.transport.volume.get(), 100);
 }
 
 #[rstest]
@@ -241,7 +241,7 @@ fn jump_request_starts_selected_track() {
     );
     let cmd = update(
         &mut m,
-        Message::Loaded(PlaylistRequest::JumpTo(PlaylistIndex::new(2))),
+        Message::Playlist(PlaylistRequest::JumpTo(PlaylistIndex::new(2))),
         Moment::default(),
     )
     .unwrap();
@@ -250,7 +250,7 @@ fn jump_request_starts_selected_track() {
     let loading = m.player.current().unwrap();
     assert_eq!(loading.path(), Path::new("/tmp/track2.flac"));
     assert!(effects(cmd).iter().any(
-        |e| matches!(e, Effect::Audio(AudioCmd::Load { path: p, .. }) if p == "/tmp/track2.flac")
+        |e| matches!(e, Effect::Audio(AudioCmd::Load(TrackRequest { path: p, .. })) if p == "/tmp/track2.flac")
     ));
 
     let _ = ack_loaded(&mut m);
@@ -271,7 +271,7 @@ fn jump_out_of_range_is_noop() {
     let mut m = model_with_tracks(3);
     let cmd = update(
         &mut m,
-        Message::Loaded(PlaylistRequest::JumpTo(PlaylistIndex::new(9))),
+        Message::Playlist(PlaylistRequest::JumpTo(PlaylistIndex::new(9))),
         Moment::default(),
     )
     .unwrap();
@@ -393,7 +393,7 @@ fn preload_peeks_queue_head_when_queue_nonempty() {
     .unwrap();
     assert!(cmd.effects().any(|effect| matches!(
         effect,
-        Effect::Audio(AudioCmd::Preload { path, .. }) if path.as_os_str() == "/tmp/track2.flac"
+        Effect::Audio(AudioCmd::Preload(TrackRequest { path, .. })) if path.as_os_str() == "/tmp/track2.flac"
     )));
 }
 
@@ -487,7 +487,7 @@ fn system_volume_sets_model_and_cues_without_an_audio_effect() {
         Moment::default(),
     )
     .unwrap();
-    assert_eq!(m.transport.volume.value(), 33);
+    assert_eq!(m.transport.volume.get(), 33);
     let raised: Vec<_> = cmd.effects().collect();
     assert!(matches!(
         raised.as_slice(),
@@ -521,7 +521,7 @@ fn start_track_emits_nowplaying_and_playing_state() {
     let now_playing = effs
         .iter()
         .find_map(|effect| match effect {
-            Effect::Macos(MacosCmd::NowPlaying(info)) => Some(info.clone()),
+            Effect::Macos(MacosCmd::NowPlaying(shown)) => Some(shown.clone()),
             Effect::Macos(
                 MacosCmd::PlaybackState(_)
                 | MacosCmd::PlaybackPosition(_)
@@ -538,16 +538,12 @@ fn start_track_emits_nowplaying_and_playing_state() {
             | Effect::Quit => None,
         })
         .unwrap();
-    assert_eq!(
-        now_playing,
-        NowPlaying::Track {
-            title: "Song".to_string(),
-            artist: Some("Artist".to_string()),
-            album: None,
-            duration: Duration::from_secs(200),
-            path: "/tmp/track0.flac".into(),
-        }
-    );
+    let shown = now_playing.expect("a track is shown");
+    assert_eq!(shown.song_title(), "Song");
+    assert_eq!(shown.tags().artist.as_deref(), Some("Artist"));
+    assert_eq!(shown.tags().album, None);
+    assert_eq!(shown.duration(), Some(Duration::from_secs(200)));
+    assert_eq!(shown.path(), Path::new("/tmp/track0.flac"));
 }
 
 #[test]
@@ -591,7 +587,7 @@ fn a_keymap_reload_moves_the_generation_only_when_the_file_says_something_new(
         model.revisions.config != before,
         keys != KeymapOverrides::default()
     );
-    assert_eq!(model.workspace.keymap.config(), &keys);
+    assert_eq!(model.workspace.keymap.overrides(), &keys);
     assert!(matches!(cmd, Cmd::None));
 }
 

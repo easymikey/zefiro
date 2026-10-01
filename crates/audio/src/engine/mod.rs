@@ -1,9 +1,10 @@
+pub(crate) mod audio_loop;
 pub(crate) mod crossfade;
 pub(crate) mod effect;
 mod live;
 mod machine;
 mod muted;
 pub(crate) mod perform;
-mod phase;
+pub(crate) mod phase;
 mod state;
-pub(crate) mod thread;
+#[cfg(test)] mod test_support;

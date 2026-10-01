@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget},
 };
 
-use crate::primitive::{glyphs::ScrollbarGlyphs, span::text};
+use crate::primitive::{glyphs, span::text};
 
 const TITLE_SPACE: &str = " ";
 
@@ -58,13 +58,12 @@ pub(crate) fn render_scrollbar(column: Rect, bar: ScrollbarTrack, buffer: &mut B
     if bar.total <= bar.viewport {
         return;
     }
-    let glyphs = ScrollbarGlyphs::default();
     let thumb = Style::default().fg(bar.thumb);
     let widget = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some(glyphs.up))
-        .end_symbol(Some(glyphs.down))
-        .track_symbol(Some(glyphs.track))
-        .thumb_symbol(glyphs.thumb)
+        .begin_symbol(Some(glyphs::scrollbar::UP))
+        .end_symbol(Some(glyphs::scrollbar::DOWN))
+        .track_symbol(Some(glyphs::scrollbar::TRACK))
+        .thumb_symbol(glyphs::scrollbar::THUMB)
         .begin_style(thumb)
         .end_style(thumb)
         .thumb_style(thumb)

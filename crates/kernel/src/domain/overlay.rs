@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use strum::IntoStaticStr;
+use strum::{EnumDiscriminants, EnumIter, IntoStaticStr};
 
 use crate::domain::{
     CursorOver,
@@ -11,8 +11,13 @@ use crate::domain::{
     playlist::PlaylistNameError,
 };
 
-#[derive(Debug, Clone, PartialEq, IntoStaticStr)]
+#[derive(Debug, Clone, PartialEq, IntoStaticStr, EnumDiscriminants)]
 #[strum(serialize_all = "snake_case")]
+#[strum_discriminants(
+    name(OverlayName),
+    derive(IntoStaticStr, EnumIter),
+    strum(serialize_all = "snake_case")
+)]
 pub enum Overlay {
     Help,
     Search(CursorOver<SearchQuery>),
@@ -35,39 +40,19 @@ pub enum Overlay {
 
 impl Overlay {
     #[must_use]
-    pub fn captures_text(&self) -> TextCapture {
+    pub fn captures_text(&self) -> bool {
         match self {
             Overlay::Search(_)
             | Overlay::SavePlaylist { .. }
-            | Overlay::MusicDir { .. } => TextCapture::Typing,
+            | Overlay::MusicDir { .. } => true,
             Overlay::Help
             | Overlay::History(_)
             | Overlay::Settings { .. }
             | Overlay::ConfirmDelete(_)
             | Overlay::JumpToTime(_)
-            | Overlay::TrackDetails(_) => TextCapture::Chording,
+            | Overlay::TrackDetails(_) => false,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
-pub enum OverlayName {
-    Help,
-    Search,
-    SavePlaylist,
-    History,
-    Settings,
-    ConfirmDelete,
-    TrackDetails,
-    JumpToTime,
-    MusicDir,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextCapture {
-    Typing,
-    Chording,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -102,15 +87,5 @@ pub struct JumpDigits {
 
 impl JumpDigits {
     pub const SEPARATOR: char = ':';
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct JumpInputLimits {
-    pub max_len: usize,
-}
-
-impl Default for JumpInputLimits {
-    fn default() -> Self {
-        Self { max_len: 8 }
-    }
+    pub const MAX_LEN: usize = 8;
 }

@@ -20,13 +20,14 @@ use crate::{
         MinimalScreen,
         TooSmallNotice,
     },
+    theme::Role,
 };
 
 #[derive(Debug, Clone, Copy)]
 pub struct Screen<'a> {
     pub scene: Scene<'a>,
     pub layout: &'a FrameLayout,
-    pub cover_art: CoverArt<'a>,
+    pub cover_art: &'a CoverArt,
 }
 
 impl Widget for &Screen<'_> {
@@ -35,8 +36,8 @@ impl Widget for &Screen<'_> {
         Block::new()
             .style(
                 Style::default()
-                    .bg(theme.window_background())
-                    .fg(theme.text()),
+                    .bg(theme.role(Role::WindowBackground))
+                    .fg(theme.role(Role::Text)),
             )
             .render(area, buffer);
         let layout = self.layout;
@@ -128,33 +129,32 @@ mod tests {
 
     use crate::{
         card::CoverArt,
-        scene::{
-            PixelPath,
-            Scene,
-            fixtures::{SceneSources, model_with_tracks, painted},
-        },
+        scene::{PixelPath, Scene},
         screen::{FrameLayout, Screen},
+        test_support::{SceneSources, model_with_tracks, rendered},
     };
 
-    fn frame(scene: Scene<'_>, cover_art: CoverArt<'_>, size: (u16, u16)) -> String {
+    fn frame(scene: Scene<'_>, cover_art: &CoverArt, size: (u16, u16)) -> String {
         let (width, height) = size;
         let layout =
-            FrameLayout::new(&scene.layout_inputs(), Rect::new(0, 0, width, height));
-        painted(
-            &Screen {
-                scene,
-                layout: &layout,
-                cover_art,
-            },
-            width,
-            height,
-        )
+            FrameLayout::new(&scene.layout_parts(), Rect::new(0, 0, width, height));
+        rendered(width, height, |frame| {
+            frame.render_widget(
+                &Screen {
+                    scene,
+                    layout: &layout,
+                    cover_art,
+                },
+                frame.area(),
+            );
+        })
+        .to_string()
     }
 
     #[test]
     fn a_full_frame_paints_the_card_the_playlist_and_the_key_hints() {
         let sources = SceneSources::new(model_with_tracks(3));
-        insta::assert_snapshot!(frame(sources.scene(), CoverArt::Missing, (80, 24)));
+        insta::assert_snapshot!(frame(sources.scene(), &CoverArt::Missing, (80, 24)));
     }
 
     #[test]
@@ -164,8 +164,8 @@ mod tests {
             pixel_path: PixelPath::Protocol,
             ..sources.scene()
         };
-        let missing = frame(scene, CoverArt::Missing, (80, 24));
-        let image = frame(scene, CoverArt::Image, (80, 24));
+        let missing = frame(scene, &CoverArt::Missing, (80, 24));
+        let image = frame(scene, &CoverArt::Image, (80, 24));
         assert!(missing.contains("No cover"), "got {missing}");
         assert!(!image.contains("No cover"), "got {image}");
     }
@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn a_short_terminal_paints_the_compact_card() {
         let sources = SceneSources::new(model_with_tracks(3));
-        let text = frame(sources.scene(), CoverArt::Missing, (80, 16));
+        let text = frame(sources.scene(), &CoverArt::Missing, (80, 16));
         assert!(text.contains("No track"), "got {text}");
         assert!(text.contains("song00"), "got {text}");
     }
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn a_terminal_below_the_minimum_shows_only_the_notice() {
         let sources = SceneSources::new(model_with_tracks(3));
-        let text = frame(sources.scene(), CoverArt::Missing, (40, 10));
+        let text = frame(sources.scene(), &CoverArt::Missing, (40, 10));
         assert!(text.contains("Terminal too small."), "got {text}");
         assert!(!text.contains("song00"), "got {text}");
     }
@@ -191,7 +191,7 @@ mod tests {
         let mut model = model_with_tracks(3);
         model.workspace.toast = Some(Toast::info("Saved".to_string()));
         let sources = SceneSources::new(model);
-        let text = frame(sources.scene(), CoverArt::Missing, (80, 24));
+        let text = frame(sources.scene(), &CoverArt::Missing, (80, 24));
         assert!(text.contains("Saved"), "got {text}");
     }
 }

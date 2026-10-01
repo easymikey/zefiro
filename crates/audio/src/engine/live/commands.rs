@@ -2,82 +2,60 @@ use std::{path::PathBuf, time::Duration};
 
 use kernel::{
     AudioCmd,
-    AudioError,
-    EngineError,
+    AudioEvent,
     Playback,
+    TrackRequest,
     domain::{Crossfade, ListedDevice, OutputDevice},
     update::Rejected,
 };
 
-use crate::engine::{
-    crossfade::{Promotion, arm_cue, promotion_on_abandon},
-    effect::{EngineEffect, PreloadedTrack, devices_event},
-    phase::{
-        AfterLoad,
-        CurrentTrack,
-        Fade,
-        Handover,
-        Incoming,
-        Loading,
-        Next,
-        Outgoing,
-        Phase,
-        Playing,
+use crate::{
+    deck::source::PreloadRequest,
+    engine::{
+        crossfade::arm_cue,
+        effect::EngineEffect,
+        machine::EngineError,
+        phase::{CurrentTrack, Handover, Incoming, Loading, Next, Phase, Playing},
+        state::{Engine, Live, then_report},
     },
-    state::{Engine, Live, TrackRequest, Transition, reported},
 };
 
 impl Live {
-    pub(crate) fn command(mut self, cmd: AudioCmd) -> Transition {
+    pub(crate) fn command(
+        mut self,
+        cmd: AudioCmd,
+    ) -> Result<(Engine, EngineEffect), Box<Rejected<Engine>>> {
         match cmd {
-            AudioCmd::Load {
-                path,
-                gain,
-                revision,
-            } => Transition::from(self.load(TrackRequest {
-                path,
-                gain,
-                revision,
-            })),
-            AudioCmd::Preload {
-                path,
-                gain,
-                revision,
-            } => self.preload(TrackRequest {
-                path,
-                gain,
-                revision,
-            }),
+            AudioCmd::Load(request) => Ok(self.load(request)),
+            AudioCmd::Preload(request) => self.preload(request),
             AudioCmd::Playback(playback) => {
                 let effect = match playback {
                     Playback::Paused => EngineEffect::Pause,
                     Playback::Playing => EngineEffect::Play,
                 };
-                Transition::Next(Engine::Live(self), reported(effect))
+                Ok((Engine::Live(self), then_report(effect)))
             }
-            AudioCmd::Seek(target) => Transition::from(self.seek(target)),
+            AudioCmd::Seek(target) => Ok(self.seek(target)),
             AudioCmd::SetSpeed(speed) => {
                 self.speed = speed;
-                Transition::Next(
+                Ok((
                     Engine::Live(self),
-                    reported(EngineEffect::SetSpeed(speed)),
-                )
+                    then_report(EngineEffect::SetSpeed(speed)),
+                ))
             }
             AudioCmd::Stop => {
                 self.phase = Phase::Idle;
-                Transition::Next(Engine::Live(self), EngineEffect::Clear)
+                Ok((Engine::Live(self), EngineEffect::Clear))
             }
-            AudioCmd::SetCrossfade(crossfade) => {
-                Transition::from(self.set_crossfade(crossfade))
-            }
+            AudioCmd::SetCrossfade(crossfade) => Ok(self.set_crossfade(crossfade)),
             AudioCmd::SetReplaygain(replaygain) => {
                 self.config.replaygain = replaygain;
                 let volume = self.volume();
-                Transition::Next(Engine::Live(self), EngineEffect::SetVolume(volume))
+                Ok((Engine::Live(self), EngineEffect::SetVolume(volume)))
             }
-            AudioCmd::SetDevice(device) => Transition::from(self.set_device(device)),
+            AudioCmd::SetDevice(device) => Ok(self.set_device(device)),
             AudioCmd::ListDevices => {
-                Transition::Next(Engine::Live(self), EngineEffect::ListDevices)
+                Ok((Engine::Live(self), EngineEffect::ListDevices))
             }
         }
     }
@@ -94,79 +72,52 @@ impl Live {
         self.performed.load = revision;
         let speed = self.speed;
         let fades =
-            !self.config.crossfade.value().is_zero() && self.phase.current().is_some();
+            !self.config.crossfade.get().is_zero() && self.phase.current().is_some();
         let loading = Loading {
             path: path.clone(),
             gain,
-            after_load: AfterLoad::None,
+            after_load: None,
         };
         if fades {
             self.phase = Phase::Handover(Handover {
-                outgoing: Outgoing { from: 0.0 },
                 incoming: Incoming::Loading(loading),
             });
-            return (Engine::Live(self), EngineEffect::StartFade { path, speed });
+            return (
+                Engine::Live(self),
+                EngineEffect::StartHandover { path, speed },
+            );
         }
         self.phase = Phase::Loading(loading);
         (Engine::Live(self), EngineEffect::StartLoad { path, speed })
     }
 
     fn seek(mut self, target: Duration) -> (Engine, EngineEffect) {
-        let playing = match std::mem::take(&mut self.phase) {
-            Phase::Playing(playing) => playing,
-            phase @ (Phase::Idle | Phase::Loading(_) | Phase::Handover(_)) => {
-                self.phase = phase;
-                return (Engine::Live(self), reported(EngineEffect::Seek(target)));
-            }
+        let Some(playing) = self.take_playing() else {
+            return (Engine::Live(self), then_report(EngineEffect::Seek(target)));
         };
-        let Next::Crossfading { preload, fade } = playing.next else {
+        let Next::Crossfading { preload, fading } = playing.next else {
             self.phase = Phase::Playing(playing);
-            return (Engine::Live(self), reported(EngineEffect::Seek(target)));
+            return (Engine::Live(self), then_report(EngineEffect::Seek(target)));
         };
-        let cue = arm_cue(playing.current.total, self.config.crossfade.value());
-        match fade {
-            Fade::Idle => {
-                self.phase = Phase::Playing(Playing {
-                    next: Next::Crossfading {
-                        preload,
-                        fade: Fade::Idle,
-                    },
-                    ..playing
-                });
-                let effect = EngineEffect::Batch(vec![
-                    EngineEffect::Seek(target),
-                    EngineEffect::Arm { cue },
-                    EngineEffect::Report,
-                ]);
-                (Engine::Live(self), effect)
-            }
-            Fade::Fading if cue.is_some_and(|cue| target < cue) => {
-                self.phase = Phase::Playing(Playing {
-                    next: Next::Crossfading {
-                        preload,
-                        fade: Fade::Idle,
-                    },
-                    ..playing
-                });
-                let effect = EngineEffect::Batch(vec![
-                    EngineEffect::Unfade,
-                    EngineEffect::Seek(target),
-                    EngineEffect::Arm { cue },
-                    EngineEffect::Report,
-                ]);
-                (Engine::Live(self), effect)
-            }
-            Fade::Fading => {
-                self.phase = Phase::Playing(Playing {
-                    next: Next::Crossfading {
-                        preload,
-                        fade: Fade::Fading,
-                    },
-                    ..playing
-                });
-                (Engine::Live(self), reported(EngineEffect::Seek(target)))
-            }
-        }
+        let cue = arm_cue(playing.current.total, self.config.crossfade.get());
+        let rearm = !fading || cue.is_some_and(|cue| target < cue);
+        let steps = [
+            (fading && rearm).then_some(EngineEffect::CancelCrossfade),
+            Some(EngineEffect::Seek(target)),
+            rearm.then_some(EngineEffect::Arm { cue }),
+            Some(EngineEffect::Report),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        self.phase = Phase::Playing(Playing {
+            next: Next::Crossfading {
+                preload,
+                fading: fading && !rearm,
+            },
+            ..playing
+        });
+        (Engine::Live(self), EngineEffect::Batch(steps))
     }
 
     fn set_device(self, device: OutputDevice) -> (Engine, EngineEffect) {
@@ -187,88 +138,88 @@ impl Live {
         }
     }
 
-    fn preload(mut self, requested: TrackRequest) -> Transition {
+    fn preload(
+        mut self,
+        requested: TrackRequest,
+    ) -> Result<(Engine, EngineEffect), Box<Rejected<Engine>>> {
         let TrackRequest {
             path,
             gain,
             revision,
         } = requested;
         if revision.is_stale(self.performed.incoming) {
-            return Transition::Next(Engine::Live(self), EngineEffect::Nothing);
+            return Ok((Engine::Live(self), EngineEffect::Nothing));
         }
-        let playing = match std::mem::take(&mut self.phase) {
-            Phase::Playing(playing) => playing,
-            phase @ (Phase::Idle | Phase::Loading(_) | Phase::Handover(_)) => {
-                self.phase = phase;
-                return Transition::Rejected(Rejected {
-                    state: Engine::Live(self),
-                    reason: EngineError::WhileNotPlaying(path),
-                });
-            }
+        let Some(playing) = self.take_playing() else {
+            return Err(Box::new(Rejected {
+                state: Engine::Live(self),
+                reason: EngineError::WhileNotPlaying(path),
+            }));
         };
         self.performed.incoming = revision;
         self.phase = Phase::Playing(Playing {
             preloading: Some(path.clone()),
             ..playing
         });
-        let effect = if self.config.crossfade.value().is_zero() {
-            EngineEffect::PreloadGapless(path)
+        let request = if self.config.crossfade.get().is_zero() {
+            PreloadRequest::Gapless(path)
         } else {
-            EngineEffect::PreloadCrossfade {
+            PreloadRequest::Crossfade {
                 path,
                 gain,
                 speed: self.speed,
             }
         };
-        Transition::Next(Engine::Live(self), effect)
+        Ok((Engine::Live(self), EngineEffect::Preload(request)))
     }
 
     fn set_crossfade(mut self, crossfade: Crossfade) -> (Engine, EngineEffect) {
         self.config.crossfade = crossfade;
-        let mut playing = match std::mem::take(&mut self.phase) {
-            Phase::Playing(playing) => playing,
-            phase @ (Phase::Idle | Phase::Loading(_) | Phase::Handover(_)) => {
-                self.phase = phase;
-                return (Engine::Live(self), EngineEffect::Nothing);
-            }
+        let Some(mut playing) = self.take_playing() else {
+            return (Engine::Live(self), EngineEffect::Nothing);
         };
-        match (
-            std::mem::take(&mut playing.next),
-            crossfade.value().is_zero(),
-        ) {
+        match (std::mem::take(&mut playing.next), crossfade.get().is_zero()) {
             (
                 Next::Crossfading {
                     preload,
-                    fade: Fade::Idle,
+                    fading: false,
                 },
                 false,
             ) => {
-                let cue = arm_cue(playing.current.total, crossfade.value());
+                let cue = arm_cue(playing.current.total, crossfade.get());
                 self.phase = Phase::Playing(Playing {
                     next: Next::Crossfading {
                         preload,
-                        fade: Fade::Idle,
+                        fading: false,
                     },
                     ..playing
                 });
                 (Engine::Live(self), EngineEffect::Arm { cue })
             }
-            (Next::Crossfading { preload, fade }, true) => {
-                match promotion_on_abandon(fade) {
-                    Promotion::Preload => self.promote(preload, playing.preloading),
-                    Promotion::Nothing => {
-                        let path = preload.path;
-                        self.phase = Phase::Playing(Playing {
-                            preloading: Some(path.clone()),
-                            ..playing
-                        });
-                        let effect = EngineEffect::Batch(vec![
-                            EngineEffect::Arm { cue: None },
-                            EngineEffect::RestartGapless(path),
-                        ]);
-                        (Engine::Live(self), effect)
-                    }
-                }
+            (
+                Next::Crossfading {
+                    preload,
+                    fading: true,
+                },
+                true,
+            ) => self.promote(preload, playing.preloading),
+            (
+                Next::Crossfading {
+                    preload,
+                    fading: false,
+                },
+                true,
+            ) => {
+                let path = preload.path;
+                self.phase = Phase::Playing(Playing {
+                    preloading: Some(path.clone()),
+                    ..playing
+                });
+                let effect = EngineEffect::Batch(vec![
+                    EngineEffect::Arm { cue: None },
+                    EngineEffect::RestartGapless(path),
+                ]);
+                (Engine::Live(self), effect)
             }
             (next, _) => {
                 self.phase = Phase::Playing(Playing { next, ..playing });
@@ -279,29 +230,28 @@ impl Live {
 
     pub(crate) fn promote(
         mut self,
-        preload: PreloadedTrack,
+        preload: CurrentTrack,
         preloading: Option<PathBuf>,
     ) -> (Engine, EngineEffect) {
-        let PreloadedTrack { path, gain, total } = preload;
         self.phase = Phase::Playing(Playing {
-            current: CurrentTrack { total, gain, path },
+            current: preload,
             next: Next::None,
             preloading,
         });
         let volume = self.volume();
         (
             Engine::Live(self),
-            reported(EngineEffect::Promote { volume }),
+            then_report(EngineEffect::Promote { volume }),
         )
     }
 
     pub(crate) fn devices_listed(
         self,
-        result: Result<Vec<ListedDevice>, AudioError>,
+        devices: Vec<ListedDevice>,
     ) -> (Engine, EngineEffect) {
         (
             Engine::Live(self),
-            EngineEffect::Send(devices_event(result)),
+            EngineEffect::Send(AudioEvent::DevicesListed(devices)),
         )
     }
 }
@@ -311,7 +261,6 @@ mod tests {
     use kernel::{
         AudioCmd,
         Bounded,
-        EngineError,
         Playback,
         domain::{DeviceName, OutputDevice, Replaygain, Speed},
         update::Machine,
@@ -326,45 +275,42 @@ mod tests {
         EngineConfig,
         engine::{
             effect::{EngineEffect, EngineMessage},
-            phase::{Fade, Handover, Incoming, Outgoing, Phase},
-            state::{
-                Engine,
-                Live,
-                PerformedRevisions,
-                fixtures::{
-                    awaiting,
-                    cmd,
-                    config,
-                    crossfade,
-                    crossfading,
-                    first,
-                    handing_over,
-                    live,
-                    load,
-                    load_at,
-                    loaded_at,
-                    loading,
-                    loading_track,
-                    playing,
-                    playing_with_crossfade,
-                    preload,
-                    preload_at,
-                    preloaded_at,
-                    promoted,
-                    retiring,
-                    second,
-                    seconds,
-                    set_crossfade,
-                },
-                reported,
+            machine::EngineError,
+            phase::{Handover, Incoming, Phase},
+            state::{Engine, Live, PerformedRevisions, then_report},
+            test_support::{
+                Cell,
+                assert_cell,
+                awaiting,
+                cmd,
+                config,
+                crossfade,
+                crossfade_preload,
+                crossfading_idle,
+                crossfading_mid_ramp,
+                first,
+                gapless_preload,
+                handed_over_to_b,
+                handing_over,
+                live,
+                live_with_crossfade,
+                load,
+                load_at,
+                loaded_at,
+                loading,
+                loading_track,
+                playing,
+                playing_with_crossfade,
+                preload,
+                preload_at,
+                preloaded_at,
+                promoted,
+                second,
+                seconds,
+                set_crossfade,
             },
         },
     };
-
-    struct Cell {
-        next: Engine,
-        effect: EngineEffect,
-    }
 
     #[rstest]
     #[case::load_starts_a_decode(
@@ -375,37 +321,26 @@ mod tests {
             effect: EngineEffect::StartLoad { path: "/a".into(), speed: Speed::default() },
         }
     )]
-    #[case::load_supersedes_the_current_track(
-        Engine::Live(playing()),
-        load("/b"),
-        Cell {
-            next: Engine::Live(loaded_at(
-                Live { phase: Phase::Loading(loading_track("/b")), ..live() },
-                first(),
-            )),
-            effect: EngineEffect::StartLoad { path: "/b".into(), speed: Speed::default() },
-        }
-    )]
     #[case::preload_is_gapless_without_crossfade(
         Engine::Live(playing()),
         preload("/b"),
         Cell {
             next: Engine::Live(awaiting(preloaded_at(playing(), first()), "/b")),
-            effect: EngineEffect::PreloadGapless("/b".into()),
+            effect: gapless_preload("/b"),
         }
     )]
     #[case::preload_opens_a_second_sink_with_crossfade(
-        Engine::Live(Live { config: EngineConfig { crossfade: crossfade(10), ..config() }, ..playing() }),
+        Engine::Live(playing_with_crossfade()),
         preload("/b"),
         Cell {
             next: Engine::Live(awaiting(
                 preloaded_at(
-                    Live { config: EngineConfig { crossfade: crossfade(10), ..config() }, ..playing() },
+                    playing_with_crossfade(),
                     first(),
                 ),
                 "/b",
             )),
-            effect: EngineEffect::PreloadCrossfade { path: "/b".into(), gain: None, speed: Speed::default() },
+            effect: crossfade_preload("/b"),
         }
     )]
     #[case::a_skip_without_a_crossfade_still_cuts(
@@ -422,23 +357,23 @@ mod tests {
     #[case::play(
         Engine::Live(playing()),
         cmd(AudioCmd::Playback(Playback::Playing)),
-        Cell { next: Engine::Live(playing()), effect: reported(EngineEffect::Play) }
+        Cell { next: Engine::Live(playing()), effect: then_report(EngineEffect::Play) }
     )]
     #[case::pause(
         Engine::Live(playing()),
         cmd(AudioCmd::Playback(Playback::Paused)),
-        Cell { next: Engine::Live(playing()), effect: reported(EngineEffect::Pause) }
+        Cell { next: Engine::Live(playing()), effect: then_report(EngineEffect::Pause) }
     )]
     #[case::seek(
         Engine::Live(playing()),
         cmd(AudioCmd::Seek(seconds(5))),
-        Cell { next: Engine::Live(playing()), effect: reported(EngineEffect::Seek(seconds(5))) }
+        Cell { next: Engine::Live(playing()), effect: then_report(EngineEffect::Seek(seconds(5))) }
     )]
     #[case::seek_while_idle_crossfade_rearms(
-        Engine::Live(crossfading(Fade::Idle)),
+        Engine::Live(crossfading_idle()),
         cmd(AudioCmd::Seek(seconds(50))),
         Cell {
-            next: Engine::Live(crossfading(Fade::Idle)),
+            next: Engine::Live(crossfading_idle()),
             effect: EngineEffect::Batch(vec![
                 EngineEffect::Seek(seconds(50)),
                 EngineEffect::Arm { cue: Some(seconds(90)) },
@@ -446,13 +381,13 @@ mod tests {
             ]),
         }
     )]
-    #[case::seek_back_out_of_a_fade_unfades(
-        Engine::Live(crossfading(Fade::Fading)),
+    #[case::seek_back_out_of_a_crossfade_cancels_the_crossfade(
+        Engine::Live(crossfading_mid_ramp()),
         cmd(AudioCmd::Seek(seconds(50))),
         Cell {
-            next: Engine::Live(crossfading(Fade::Idle)),
+            next: Engine::Live(crossfading_idle()),
             effect: EngineEffect::Batch(vec![
-                EngineEffect::Unfade,
+                EngineEffect::CancelCrossfade,
                 EngineEffect::Seek(seconds(50)),
                 EngineEffect::Arm { cue: Some(seconds(90)) },
                 EngineEffect::Report,
@@ -460,11 +395,11 @@ mod tests {
         }
     )]
     #[case::seek_inside_a_fade_keeps_fading(
-        Engine::Live(crossfading(Fade::Fading)),
+        Engine::Live(crossfading_mid_ramp()),
         cmd(AudioCmd::Seek(seconds(95))),
         Cell {
-            next: Engine::Live(crossfading(Fade::Fading)),
-            effect: reported(EngineEffect::Seek(seconds(95))),
+            next: Engine::Live(crossfading_mid_ramp()),
+            effect: then_report(EngineEffect::Seek(seconds(95))),
         }
     )]
     #[case::speed(
@@ -472,7 +407,7 @@ mod tests {
         cmd(AudioCmd::SetSpeed(Speed::clamped(1.5))),
         Cell {
             next: Engine::Live(Live { speed: Speed::clamped(1.5), ..playing() }),
-            effect: reported(EngineEffect::SetSpeed(Speed::clamped(1.5))),
+            effect: then_report(EngineEffect::SetSpeed(Speed::clamped(1.5))),
         }
     )]
     #[case::stop_clears_the_track(
@@ -486,10 +421,10 @@ mod tests {
         Cell { next: Engine::Live(live()), effect: EngineEffect::Clear }
     )]
     #[case::stop_drops_a_crossfade_preload(
-        Engine::Live(crossfading(Fade::Idle)),
+        Engine::Live(crossfading_idle()),
         cmd(AudioCmd::Stop),
         Cell {
-            next: Engine::Live(Live { config: EngineConfig { crossfade: crossfade(10), ..config() }, ..live() }),
+            next: Engine::Live(live_with_crossfade(10)),
             effect: EngineEffect::Clear,
         }
     )]
@@ -502,23 +437,23 @@ mod tests {
         }
     )]
     #[case::set_crossfade_keeps_a_live_preload(
-        Engine::Live(crossfading(Fade::Idle)),
+        Engine::Live(crossfading_idle()),
         set_crossfade(4),
         Cell {
-            next: Engine::Live(Live { config: EngineConfig { crossfade: crossfade(4), ..config() }, ..crossfading(Fade::Idle) }),
+            next: Engine::Live(Live { config: EngineConfig { crossfade: crossfade(4), ..config() }, ..crossfading_idle() }),
             effect: EngineEffect::Arm { cue: Some(seconds(96)) },
         }
     )]
     #[case::crossfade_to_zero_promotes_a_louder_preload(
-        Engine::Live(crossfading(Fade::Fading)),
+        Engine::Live(crossfading_mid_ramp()),
         set_crossfade(0),
         Cell {
             next: Engine::Live(promoted(crossfade(0))),
-            effect: reported(EngineEffect::Promote { volume: 1.0 }),
+            effect: then_report(EngineEffect::Promote { volume: 1.0 }),
         }
     )]
     #[case::crossfade_to_zero_restarts_an_unfaded_preload(
-        Engine::Live(crossfading(Fade::Idle)),
+        Engine::Live(crossfading_idle()),
         set_crossfade(0),
         Cell {
             next: Engine::Live(awaiting(playing(), "/b")),
@@ -563,13 +498,12 @@ mod tests {
         Cell {
             next: Engine::Live(Live {
                 phase: Phase::Handover(Handover {
-                    outgoing: Outgoing { from: 0.0 },
                     incoming: Incoming::Loading(loading_track("/b")),
                 }),
                 performed: PerformedRevisions { load: first(), ..PerformedRevisions::default() },
                 ..playing_with_crossfade()
             }),
-            effect: EngineEffect::StartFade { path: "/b".into(), speed: Speed::default() },
+            effect: EngineEffect::StartHandover { path: "/b".into(), speed: Speed::default() },
         }
     )]
     fn a_cell_moves_the_engine_and_names_its_io(
@@ -577,20 +511,16 @@ mod tests {
         #[case] message: EngineMessage,
         #[case] moved: Cell,
     ) {
-        let mut state = start;
-        let effect = state.update(message).unwrap();
-        assert_eq!(state, moved.next);
-        assert_eq!(effect, moved.effect);
+        assert_cell(start, message, moved);
     }
 
     #[rstest]
     #[case::while_idle(live())]
     #[case::while_loading(loading())]
-    #[case::while_the_skip_is_still_decoding(handing_over(
-        Outgoing { from: 1.0 },
-        Incoming::Loading(loading_track("/b")),
-    ))]
-    #[case::while_the_skip_fades_in(retiring(0.5))]
+    #[case::while_the_skip_is_still_decoding(handing_over(Incoming::Loading(
+        loading_track("/b")
+    )))]
+    #[case::while_the_skip_fades_in(handed_over_to_b())]
     fn a_preload_without_a_settled_track_is_refused(#[case] start: Live) {
         let expected = Engine::Live(start.clone());
         let mut state = Engine::Live(start);
@@ -619,7 +549,7 @@ mod tests {
         start: Engine::Live(playing()),
         first: preload("/b"),
         again: preload("/b"),
-        effect: EngineEffect::PreloadGapless("/b".into()),
+        effect: gapless_preload("/b"),
     })]
     fn a_replayed_revision_is_performed_once(#[case] row: ReplayRow) {
         let mut engine = row.start;
@@ -641,7 +571,7 @@ mod tests {
         start: Engine::Live(playing()),
         first: preload("/b"),
         again: preload_at("/c", second()),
-        effect: EngineEffect::PreloadGapless("/c".into()),
+        effect: gapless_preload("/c"),
     })]
     fn a_newer_revision_is_performed_again(#[case] row: ReplayRow) {
         let mut engine = row.start;

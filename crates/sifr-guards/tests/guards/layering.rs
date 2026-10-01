@@ -9,7 +9,7 @@ fn layer_of(crate_name: &str) -> Option<u8> {
     match crate_name {
         "kernel" => Some(1),
         "library" | "audio" | "macos" | "config" => Some(2),
-        "runtime" | "raster" => Some(3),
+        "runtime" => Some(3),
         "widgets" => Some(4),
         "terminal" => Some(5),
         "sifr" => Some(6),

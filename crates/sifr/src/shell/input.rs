@@ -4,27 +4,27 @@ use runtime::Reaction;
 use terminal::{LayoutTranslation, from_event};
 
 #[derive(Debug, Clone)]
-pub(crate) enum ShellInput {
+pub(crate) enum ShellEvent {
     Terminal(Event),
     Terminate,
 }
 
-pub(crate) fn message_for(input: ShellInput) -> Reaction {
+pub(crate) fn reaction_for(input: ShellEvent) -> Reaction {
     match input {
-        ShellInput::Terminate => Reaction::Message(Message::Quit),
-        ShellInput::Terminal(event) => terminal_message(&event),
+        ShellEvent::Terminate => Reaction::Message(Message::Quit),
+        ShellEvent::Terminal(event) => terminal_reaction(&event),
     }
 }
 
-fn terminal_message(event: &Event) -> Reaction {
+fn terminal_reaction(event: &Event) -> Reaction {
     match event {
-        Event::Key(key_event) => keyboard_message(*key_event),
+        Event::Key(key_event) => key_reaction(*key_event),
         Event::Resize(_, _) | Event::FocusGained => Reaction::Repaint,
         Event::FocusLost | Event::Mouse(_) | Event::Paste(_) => Reaction::Ignored,
     }
 }
 
-fn keyboard_message(key_event: KeyEvent) -> Reaction {
+fn key_reaction(key_event: KeyEvent) -> Reaction {
     if key_event.kind != KeyEventKind::Press {
         return Reaction::Ignored;
     }
@@ -36,12 +36,11 @@ fn keyboard_message(key_event: KeyEvent) -> Reaction {
 }
 
 fn key_press(key: Option<Key>, typed: Option<Key>) -> Option<KeyPress> {
-    match (key, typed) {
-        (Some(key), Some(typed)) => Some(KeyPress { key, typed }),
-        (Some(key), None) => Some(KeyPress { key, typed: key }),
-        (None, Some(typed)) => Some(KeyPress { key: typed, typed }),
-        (None, None) => None,
-    }
+    let key = key.or(typed)?;
+    Some(KeyPress {
+        key,
+        typed: typed.unwrap_or(key),
+    })
 }
 
 #[cfg(test)]
@@ -51,10 +50,10 @@ mod tests {
     use rstest::rstest;
     use runtime::Reaction;
 
-    use crate::shell::input::{ShellInput, message_for};
+    use crate::shell::input::{ShellEvent, reaction_for};
 
-    fn key_press(character: char) -> ShellInput {
-        ShellInput::Terminal(Event::Key(KeyEvent::new(
+    fn key_input(character: char) -> ShellEvent {
+        ShellEvent::Terminal(Event::Key(KeyEvent::new(
             CrosstermCode::Char(character),
             KeyModifiers::NONE,
         )))
@@ -62,28 +61,28 @@ mod tests {
 
     #[test]
     fn a_key_press_becomes_a_key_message() {
-        let message = message_for(key_press(' '));
+        let reaction = reaction_for(key_input(' '));
 
         let key = Key::plain(KeyCode::Char(' '));
         assert_eq!(
-            message,
+            reaction,
             Reaction::Message(Message::Key(KeyPress { key, typed: key }))
         );
     }
 
     #[test]
     fn terminate_quits_without_touching_the_model() {
-        let message = message_for(ShellInput::Terminate);
+        let reaction = reaction_for(ShellEvent::Terminate);
 
-        assert_eq!(message, Reaction::Message(Message::Quit));
+        assert_eq!(reaction, Reaction::Message(Message::Quit));
     }
 
     #[rstest]
-    #[case::a_resize(ShellInput::Terminal(Event::Resize(80, 24)))]
-    #[case::focus_gained(ShellInput::Terminal(Event::FocusGained))]
-    fn resize_and_focus_gained_ask_for_a_repaint(#[case] input: ShellInput) {
-        let message = message_for(input);
+    #[case::a_resize(ShellEvent::Terminal(Event::Resize(80, 24)))]
+    #[case::focus_gained(ShellEvent::Terminal(Event::FocusGained))]
+    fn resize_and_focus_gained_ask_for_a_repaint(#[case] input: ShellEvent) {
+        let reaction = reaction_for(input);
 
-        assert_eq!(message, Reaction::Repaint);
+        assert_eq!(reaction, Reaction::Repaint);
     }
 }

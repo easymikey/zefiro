@@ -74,7 +74,7 @@ pub enum FollowUp {
     Playback(PlaybackRequest),
     Browse(BrowseRequest),
     Queue(QueueRequest),
-    Loaded(PlaylistRequest),
+    Playlist(PlaylistRequest),
     Adjust {
         row: SettingRow,
         direction: Direction,
@@ -87,7 +87,7 @@ impl From<FollowUp> for Message {
             FollowUp::Playback(message) => Self::Playback(message),
             FollowUp::Browse(message) => Self::Browse(message),
             FollowUp::Queue(message) => Self::Queue(message),
-            FollowUp::Loaded(message) => Self::Loaded(message),
+            FollowUp::Playlist(message) => Self::Playlist(message),
             FollowUp::Adjust { row, direction } => Self::Adjust { row, direction },
         }
     }
@@ -147,8 +147,16 @@ fn open_request(
     name: OverlayName,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    let (opened, cmd) = overlay_for(model, name)?;
-    Ok(cmd.then(update_overlay(model, OverlayMessage::Open(opened), now)?))
+    let load_history = if matches!(name, OverlayName::History) {
+        Effect::Library(LibraryCmd::LoadHistory {
+            limit: HISTORY_LIMIT,
+        })
+        .into()
+    } else {
+        Cmd::None
+    };
+    let opened = overlay_for(model, name)?;
+    Ok(load_history.then(update_overlay(model, OverlayMessage::Open(opened), now)?))
 }
 
 fn search_request(
@@ -156,30 +164,23 @@ fn search_request(
     request: SearchRequest,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    match request {
+    let message = match request {
         SearchRequest::Edit(edit) => {
-            let tracks = model.playlist.tracks.clone();
-            update_overlay(model, inner_search(SearchMessage::Edit(edit, tracks)), now)
+            SearchMessage::Edit(edit, model.playlist.tracks.clone())
         }
-        SearchRequest::Navigate(direction) => {
-            update_overlay(model, inner_search(SearchMessage::Navigate(direction)), now)
-        }
-        SearchRequest::Enqueue => {
-            update_overlay(model, inner_search(SearchMessage::Enqueue), now)
-        }
-    }
+        SearchRequest::Navigate(direction) => SearchMessage::Navigate(direction),
+        SearchRequest::Enqueue => SearchMessage::Enqueue,
+    };
+    update_overlay(model, inner_search(message), now)
 }
 
 fn inner_search(message: SearchMessage) -> OverlayMessage {
     OverlayMessage::Inner(InnerMessage::Search(message))
 }
 
-fn overlay_for(
-    model: &Model,
-    name: OverlayName,
-) -> Result<(Overlay, Cmd), OverlayError> {
+fn overlay_for(model: &Model, name: OverlayName) -> Result<Overlay, OverlayError> {
     match name {
-        OverlayName::Help => Ok((Overlay::Help, Cmd::None)),
+        OverlayName::Help => Ok(Overlay::Help),
         OverlayName::Search => {
             let matches = crate::search::rank(&model.playlist.tracks, "");
             let len = matches.len();
@@ -187,50 +188,33 @@ fn overlay_for(
                 input: String::new(),
                 matches,
             };
-            Ok((Overlay::Search(CursorOver::new(query, len)), Cmd::None))
+            Ok(Overlay::Search(CursorOver::new(query, len)))
         }
-        OverlayName::SavePlaylist => Ok((
-            Overlay::SavePlaylist {
-                typed: TextEntry::default(),
-                error: None,
-            },
-            Cmd::None,
-        )),
-        OverlayName::History => Ok((
-            Overlay::History(CursorOver::default()),
-            Effect::Library(LibraryCmd::LoadHistory {
-                limit: HISTORY_LIMIT,
-            })
-            .into(),
-        )),
-        OverlayName::Settings => Ok((
-            Overlay::Settings {
-                selected: SettingRow::first(&model.custom_settings),
-            },
-            Cmd::None,
-        )),
+        OverlayName::SavePlaylist => Ok(Overlay::SavePlaylist {
+            typed: TextEntry::default(),
+            error: None,
+        }),
+        OverlayName::History => Ok(Overlay::History(CursorOver::default())),
+        OverlayName::Settings => Ok(Overlay::Settings {
+            selected: SettingRow::first(&model.custom_settings),
+        }),
         OverlayName::ConfirmDelete => {
             confirm_delete::candidate(&model.playlist, &model.workspace)
-                .map(|candidate| (Overlay::ConfirmDelete(candidate), Cmd::None))
+                .map(Overlay::ConfirmDelete)
                 .ok_or(OverlayError::NoTrack)
         }
         OverlayName::TrackDetails => {
             track_details::candidate(&model.playlist, &model.player, &model.workspace)
-                .map(|track| (Overlay::TrackDetails(track), Cmd::None))
+                .map(Overlay::TrackDetails)
                 .ok_or(OverlayError::NoTrack)
         }
-        OverlayName::JumpToTime => {
-            Ok((Overlay::JumpToTime(JumpDigits::default()), Cmd::None))
-        }
-        OverlayName::MusicDir => Ok((
-            Overlay::MusicDir {
-                typed: TextEntry {
-                    input: model.music_dir.display().to_string(),
-                },
-                error: None,
+        OverlayName::JumpToTime => Ok(Overlay::JumpToTime(JumpDigits::default())),
+        OverlayName::MusicDir => Ok(Overlay::MusicDir {
+            typed: TextEntry {
+                input: model.music_dir.display().to_string(),
             },
-            Cmd::None,
-        )),
+            error: None,
+        }),
     }
 }
 

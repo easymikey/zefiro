@@ -9,7 +9,6 @@ use crate::{
         KeyPattern,
         KeyPress,
         Overlay,
-        TextCapture,
         Workspace,
     },
     message::{
@@ -45,9 +44,14 @@ pub fn route(workspace: &Workspace, press: KeyPress) -> Option<Message> {
 }
 
 fn pressed_key(workspace: &Workspace, press: KeyPress) -> Key {
-    match workspace.overlay.as_ref().map(Overlay::captures_text) {
-        Some(TextCapture::Typing) => press.typed,
-        Some(TextCapture::Chording) | None => press.key,
+    if workspace
+        .overlay
+        .as_ref()
+        .is_some_and(Overlay::captures_text)
+    {
+        press.typed
+    } else {
+        press.key
     }
 }
 

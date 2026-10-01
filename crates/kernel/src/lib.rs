@@ -15,13 +15,12 @@ pub use cmd::{
     ConfigCmd,
     ConfigPatch,
     Cue,
-    DevicePatch,
     Effect,
     LibraryCmd,
     MacosCmd,
-    NowPlaying,
     Playback,
     PlaybackChange,
+    TrackRequest,
     WindowColorsCmd,
 };
 pub use domain::{
@@ -55,7 +54,6 @@ pub use domain::{
     ToastLevel,
     Track,
     Transport,
-    UnixSeconds,
     Workspace,
     library,
     playlist,
@@ -67,8 +65,6 @@ pub use message::{
     ConfigEvent,
     DecodeError,
     DriverMessage,
-    EngineError,
-    Gesture,
     HistoryRequest,
     IoError,
     LibraryError,
@@ -85,7 +81,6 @@ pub use message::{
     SettingsRowRequest,
     TextRequest,
     Timer,
-    WorkspaceRequest,
 };
 pub use outbox::{Outbox, Refusals, SendError};
 pub use playlist::Playlist;

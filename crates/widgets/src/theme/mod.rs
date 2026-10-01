@@ -1,22 +1,19 @@
 use config::ThemeFile;
+use kernel::domain::ThemeName;
 
 mod active_theme;
-mod bars;
+mod colors;
 mod contrast;
-mod palette;
 mod rgb;
-mod vinyl_colors;
 
 pub use active_theme::ActiveTheme;
-pub(crate) use bars::FillColors;
-pub use bars::bar_colors;
-pub use palette::{Colors, Role};
-pub(crate) use rgb::shade;
-pub use rgb::{ColorDepth, color_at_depth, lerp_rgb};
+pub(crate) use active_theme::BarStyle;
+pub use colors::{Colors, Role};
+pub use rgb::{ColorDepth, color_at_depth, lerp_rgb, shade};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Theme {
-    pub name: String,
+    pub name: ThemeName,
     pub colors: Colors,
     pub scanning_label: String,
 }

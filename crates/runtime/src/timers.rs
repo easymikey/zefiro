@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use kernel::{SleepTimer, Timer, domain::Driver};
+use kernel::{SleepTimer, Timer};
 
 #[derive(Debug, Clone, Copy)]
 struct Scheduled {
@@ -9,45 +9,42 @@ struct Scheduled {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TimerSlot {
+enum TimerName {
     Toast,
     Sleep,
     Mark,
-    Restart(Driver),
 }
 
-impl TimerSlot {
-    const COUNT: usize = 3 + Driver::ALL.len();
+impl TimerName {
+    const COUNT: usize = 3;
 
     const fn index(self) -> usize {
         match self {
-            TimerSlot::Toast => 0,
-            TimerSlot::Sleep => 1,
-            TimerSlot::Mark => 2,
-            TimerSlot::Restart(driver) => 3 + driver.index(),
+            TimerName::Toast => 0,
+            TimerName::Sleep => 1,
+            TimerName::Mark => 2,
         }
     }
 }
 
-impl From<Timer> for TimerSlot {
+impl From<Timer> for TimerName {
     fn from(timer: Timer) -> Self {
         match timer {
-            Timer::Toast(_) => TimerSlot::Toast,
-            Timer::Sleep(_) => TimerSlot::Sleep,
-            Timer::Mark(_) => TimerSlot::Mark,
-            Timer::Restart(driver) => TimerSlot::Restart(driver),
+            Timer::Toast(_) => TimerName::Toast,
+            Timer::Sleep(_) => TimerName::Sleep,
+            Timer::Mark(_) => TimerName::Mark,
         }
     }
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct Timers {
-    scheduled: [Option<Scheduled>; TimerSlot::COUNT],
+    scheduled: [Option<Scheduled>; TimerName::COUNT],
 }
 
 impl Timers {
     pub(crate) fn schedule(&mut self, deadline: Instant, message: Timer) {
-        let slot = TimerSlot::from(message).index();
+        let slot = TimerName::from(message).index();
         if let Some(entry) = self.scheduled.get_mut(slot) {
             *entry = Some(Scheduled {
                 deadline,
@@ -67,16 +64,11 @@ impl Timers {
     }
 
     pub(crate) fn due(&mut self, now: Instant) -> Vec<Timer> {
-        let mut fired = Vec::new();
-        for slot in &mut self.scheduled {
-            match *slot {
-                Some(scheduled) if scheduled.deadline <= now => {
-                    fired.push(scheduled);
-                    *slot = None;
-                }
-                Some(_) | None => {}
-            }
-        }
+        let mut fired: Vec<_> = self
+            .scheduled
+            .iter_mut()
+            .filter_map(|slot| slot.take_if(|scheduled| scheduled.deadline <= now))
+            .collect();
         fired.sort_by_key(|scheduled| scheduled.deadline);
         fired.into_iter().map(|scheduled| scheduled.timer).collect()
     }
@@ -85,7 +77,7 @@ impl Timers {
     pub(crate) fn sleep_deadline(&self, sleep: Option<SleepTimer>) -> Option<Instant> {
         let deadline = self
             .scheduled
-            .get(TimerSlot::Sleep.index())
+            .get(TimerName::Sleep.index())
             .copied()
             .flatten()
             .map(|scheduled| scheduled.deadline);
@@ -97,11 +89,7 @@ impl Timers {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use kernel::{
-        SleepTimer,
-        Timer,
-        domain::{Driver, Revision},
-    };
+    use kernel::{SleepTimer, Timer, domain::Revision};
     use rstest::rstest;
 
     use crate::timers::Timers;
@@ -134,7 +122,7 @@ mod tests {
     #[rstest]
     #[case::toast(toast(1))]
     #[case::sleep(sleep(1))]
-    #[case::restart(Timer::Restart(Driver::Audio))]
+    #[case::mark(mark(1))]
     fn schedule_sets_the_next_deadline(#[case] message: Timer) {
         let mut timers = Timers::default();
         let now = Instant::now();
@@ -147,7 +135,7 @@ mod tests {
     #[rstest]
     #[case::toast(toast(1), toast(2))]
     #[case::mark(mark(1), mark(2))]
-    #[case::restart(Timer::Restart(Driver::Library), Timer::Restart(Driver::Library))]
+    #[case::sleep(sleep(1), sleep(2))]
     fn rescheduling_a_slot_replaces_its_deadline(
         #[case] first: Timer,
         #[case] second: Timer,
@@ -196,38 +184,13 @@ mod tests {
         assert_eq!(timers.next_deadline(), None);
     }
 
-    #[test]
-    fn restarts_of_two_drivers_keep_separate_slots() {
-        let mut timers = Timers::default();
-        let now = Instant::now();
-        timers.schedule(now + Duration::from_secs(1), Timer::Restart(Driver::Audio));
-        timers.schedule(
-            now + Duration::from_secs(1),
-            Timer::Restart(Driver::Library),
-        );
-
-        let fired = timers.due(now + Duration::from_secs(5));
-
-        assert_eq!(
-            fired,
-            vec![
-                Timer::Restart(Driver::Audio),
-                Timer::Restart(Driver::Library)
-            ]
-        );
-        assert_eq!(timers.next_deadline(), None);
-    }
-
     #[rstest]
-    #[case::toast(toast(1))]
-    #[case::sleep(sleep(1))]
-    #[case::mark(mark(1))]
-    #[case::restart_audio(Timer::Restart(Driver::Audio))]
-    #[case::restart_macos(Timer::Restart(Driver::Macos))]
-    fn a_timer_lands_in_its_own_slot(#[case] message: Timer) {
+    #[case::toast(toast(1), mark(1))]
+    #[case::sleep(sleep(1), toast(1))]
+    #[case::mark(mark(1), sleep(1))]
+    fn a_timer_lands_in_its_own_slot(#[case] message: Timer, #[case] sentinel: Timer) {
         let mut timers = Timers::default();
         let now = Instant::now();
-        let sentinel = Timer::Restart(Driver::Config);
 
         timers.schedule(now + Duration::from_secs(20), sentinel);
         timers.schedule(now + Duration::from_secs(5), message);
@@ -243,15 +206,12 @@ mod tests {
         let mut timers = Timers::default();
         let now = Instant::now();
         timers.schedule(now + Duration::from_secs(3), mark(1));
-        timers.schedule(now + Duration::from_secs(1), Timer::Restart(Driver::Audio));
+        timers.schedule(now + Duration::from_secs(1), sleep(1));
         timers.schedule(now + Duration::from_secs(2), toast(1));
 
         let fired = timers.due(now + Duration::from_secs(10));
 
-        assert_eq!(
-            fired,
-            vec![Timer::Restart(Driver::Audio), toast(1), mark(1)]
-        );
+        assert_eq!(fired, vec![sleep(1), toast(1), mark(1)]);
     }
 
     #[rstest]

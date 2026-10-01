@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/src/update/startup.rs
-assertion_line: 255
+assertion_line: 249
 expression: effects
 ---
 [
@@ -17,7 +17,7 @@ expression: effects
     ),
     Macos(
         NowPlaying(
-            Cleared,
+            None,
         ),
     ),
     Audio(
@@ -51,7 +51,7 @@ expression: effects
         Scan {
             music_dir: "/music",
             revision: Revision(
-                0,
+                1,
             ),
             mode: Cached,
         },

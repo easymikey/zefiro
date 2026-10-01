@@ -4,7 +4,7 @@ mod config;
 mod driver;
 mod error;
 pub mod keymap;
-mod loaded;
+mod library;
 mod machine;
 mod macos;
 pub mod overlay;
@@ -22,22 +22,20 @@ pub use error::UpdateError;
 pub use machine::{Machine, Rejected};
 
 use crate::{
-    cmd::{AudioCmd, Cmd, Cue, Effect, LibraryCmd, WindowColorsCmd},
+    cmd::{AudioCmd, Cmd, Cue, Effect, WindowColorsCmd},
     domain::{
         Model,
         Moment,
         Startup,
-        UnixSeconds,
         Workspace,
         playlist::{PlayOrder, Playlist},
     },
-    message::{BrowseRequest, MacosEvent, Message, Timer, WorkspaceRequest},
+    message::{BrowseRequest, MacosEvent, Message},
 };
 
 pub fn startup(startup: Startup) -> (Model, Cmd) {
     let mut model = Model::default();
-    let mut cmd = startup::seed_model(&mut model, startup);
-    stamp_revisions(&mut model, &mut cmd, Moment::default());
+    let cmd = startup::seed_model(&mut model, startup);
     let cmd = cmd.then(roll_pending(&model.playlist));
     (model, cmd)
 }
@@ -62,8 +60,7 @@ pub fn update(
     } else {
         message
     };
-    let mut cmd = update_model(model, message, now)?;
-    stamp_revisions(model, &mut cmd, now);
+    let cmd = update_model(model, message, now)?;
     Ok(cmd.then(roll_pending(&model.playlist)))
 }
 
@@ -97,13 +94,13 @@ impl Input {
                 | MacosEvent::OutputRouteChanged
                 | MacosEvent::HardwareWatchError(_),
             )
-            | Message::Workspace(_)
-            | Message::Loaded(_)
+            | Message::Toast(_)
+            | Message::Playlist(_)
             | Message::Library(_)
             | Message::Config(_)
             | Message::Audio(_)
             | Message::Elapsed(_)
-            | Message::Driver(..)
+            | Message::Driver { .. }
             | Message::Key(_)
             | Message::Viewport { .. }
             | Message::Quit => Input::Event,
@@ -119,66 +116,6 @@ fn roll_pending(playlist: &Playlist) -> Cmd {
         .into(),
         PlayOrder::Linear | PlayOrder::Shuffle(_) => Cmd::None,
     }
-}
-
-fn stamp_revisions(model: &mut Model, cmd: &mut Cmd, now: Moment) {
-    for effect in cmd.effects_mut() {
-        match effect {
-            Effect::Library(LibraryCmd::Scan { revision: slot, .. }) => {
-                let issued = model.revisions.effects.bump();
-                *slot = issued;
-                model.revisions.scan = issued;
-            }
-            Effect::Library(LibraryCmd::AppendHistory { at, .. }) => {
-                *at = UnixSeconds::of(now);
-            }
-            Effect::Audio(
-                AudioCmd::Load { revision: slot, .. }
-                | AudioCmd::Preload { revision: slot, .. },
-            ) => {
-                *slot = model.revisions.effects.bump();
-            }
-            Effect::After { message, .. } => stamp_timer(model, message),
-            Effect::Restart(_)
-            | Effect::Audio(
-                AudioCmd::Playback(_)
-                | AudioCmd::Seek(_)
-                | AudioCmd::SetSpeed(_)
-                | AudioCmd::Stop
-                | AudioCmd::SetCrossfade(_)
-                | AudioCmd::SetReplaygain(_)
-                | AudioCmd::SetDevice(_)
-                | AudioCmd::ListDevices,
-            )
-            | Effect::Library(
-                LibraryCmd::SaveFavorites(_)
-                | LibraryCmd::LoadFavorites
-                | LibraryCmd::Trash(_)
-                | LibraryCmd::LoadHistory { .. }
-                | LibraryCmd::SavePlaylist { .. }
-                | LibraryCmd::TagTracks { .. }
-                | LibraryCmd::PrefetchCover(_),
-            )
-            | Effect::Macos(_)
-            | Effect::Config(_)
-            | Effect::Animate(_)
-            | Effect::RollShuffle { .. }
-            | Effect::WindowColors(_)
-            | Effect::Quit => {}
-        }
-    }
-}
-
-fn stamp_timer(model: &mut Model, timer: &mut Timer) {
-    let (slot, generation) = match timer {
-        Timer::Toast(slot) => (slot, &mut model.revisions.toast),
-        Timer::Sleep(slot) => (slot, &mut model.revisions.sleep),
-        Timer::Mark(slot) => (slot, &mut model.revisions.mark),
-        Timer::Restart(_) => return,
-    };
-    let issued = model.revisions.effects.bump();
-    *slot = issued;
-    *generation = issued;
 }
 
 fn update_model(
@@ -224,45 +161,46 @@ fn branch(
     match message {
         Message::Overlay(request) => overlay::update(model, request, now),
         Message::Adjust { row, direction } => settings::adjust(model, row, direction),
-        Message::Workspace(workspace_request) => {
-            update_workspace(model, workspace_request)
-        }
+        Message::Toast(toast) => Ok(model.workspace.show(toast, &mut model.revisions)),
         Message::Playback(playback_request) => {
             playback::update(model, playback_request, now)
         }
-        Message::Browse(browse_request) => browse::update(model, browse_request),
+        Message::Browse(browse_request) => browse::update(model, browse_request, now),
         Message::Queue(queue_request) => browse::queue(model, queue_request),
-        Message::Loaded(loaded_request) => loaded::update(model, loaded_request),
-        Message::Library(event) => loaded::library(model, event),
+        Message::Playlist(loaded_request) => {
+            library::update(model, loaded_request, now)
+        }
+        Message::Library(event) => library::library(model, event),
         Message::Config(event) => config::update(model, event),
         Message::Audio(audio_event) => audio::update(model, audio_event, now),
         Message::Macos(event) => macos::update(model, event, now),
         Message::Elapsed(timer) => timer::update(model, timer, now),
-        Message::Driver(driver, driver_message) => {
-            driver::update(model, (driver, driver_message), now)
+        Message::Driver { driver, event } => {
+            Ok(match driver::update(model, driver, event)? {
+                Some(driver::DriverSignal::Died(failure)) => {
+                    driver::decided(model, driver::Died { driver, failure }, now)
+                }
+                Some(driver::DriverSignal::Congested) => {
+                    driver::inbox_full(model, driver)
+                }
+                None => Cmd::None,
+            })
         }
         Message::Key(_) | Message::Viewport { .. } => Ok(Cmd::None),
         Message::Quit => Ok(quit()),
     }
 }
 
-fn update_workspace(
-    model: &mut Model,
-    request: WorkspaceRequest,
-) -> Result<Cmd, UpdateError> {
-    Ok(model.workspace.update(request)?)
-}
-
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc, time::Duration};
+    use std::{path::Path, sync::Arc};
 
     use rstest::rstest;
 
     use crate::{
-        cmd::{Cmd, Effect, LibraryCmd},
-        domain::{Moment, Shuffle, Startup, Track, UnixSeconds},
-        update::{stamp_revisions, startup},
+        cmd::{Cmd, Effect},
+        domain::{Shuffle, Startup, Track},
+        update::startup,
     };
 
     fn startup_with(shuffle: Shuffle) -> Startup {
@@ -296,27 +234,5 @@ mod tests {
         let (_, cmd) = startup(startup_with(shuffle));
 
         assert_eq!(rolled_len(cmd), expected);
-    }
-
-    #[test]
-    fn stamp_sets_the_append_history_timestamp_from_now() {
-        let (mut model, _) = startup(Startup::default());
-        let track = Arc::new(Track::listed(Path::new("/music/a.flac")));
-        let mut cmd = Cmd::One(Effect::Library(LibraryCmd::AppendHistory {
-            track,
-            at: UnixSeconds::UNSTAMPED,
-        }));
-        let now = Moment::new(Duration::from_secs(9));
-
-        stamp_revisions(&mut model, &mut cmd, now);
-
-        let at = cmd.effects().find_map(|effect| {
-            if let Effect::Library(LibraryCmd::AppendHistory { at, .. }) = effect {
-                Some(*at)
-            } else {
-                None
-            }
-        });
-        assert_eq!(at, Some(UnixSeconds::of(now)));
     }
 }

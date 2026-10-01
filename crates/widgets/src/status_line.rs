@@ -8,11 +8,10 @@ use ratatui::{style::Color, text::Line};
 
 use crate::{
     primitive::{
-        glyphs::TruncateGlyphs,
         span::{StyledText, line, text},
         text::truncate_line_to_width,
     },
-    redraw::ceil_minutes,
+    repaint::ceil_minutes,
 };
 
 const SHUFFLE_LABEL: &str = "shuffle ";
@@ -58,22 +57,8 @@ pub(crate) struct StatusLineColors {
     pub(crate) accent: Color,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct StatusGlyphs {
-    name: &'static str,
-    separator: &'static str,
-    flag_separator: &'static str,
-}
-
-impl Default for StatusGlyphs {
-    fn default() -> Self {
-        Self {
-            name: "Playlist",
-            separator: crate::primitive::glyphs::TITLE_SEPARATOR,
-            flag_separator: " · ",
-        }
-    }
-}
+const NAME: &str = "Playlist";
+const FLAG_SEPARATOR: &str = " · ";
 
 fn counts(status: StatusLineView<'_>) -> String {
     match status.scan {
@@ -99,7 +84,6 @@ pub(crate) fn status_line<'a>(
     colors: StatusLineColors,
     row_width: usize,
 ) -> Line<'a> {
-    let glyphs = StatusGlyphs::default();
     let pos_total = counts(status);
 
     let shuffle: &'static str = match status.shuffle {
@@ -111,13 +95,13 @@ pub(crate) fn status_line<'a>(
     let flag = |label: &'static str, value: Cow<'a, str>| -> Vec<StyledText<'a>> {
         vec![text(label).fg(colors.dim), text(value).fg(colors.accent)]
     };
-    let flag_separator = || text(glyphs.flag_separator).fg(colors.dim);
+    let flag_separator = || text(FLAG_SEPARATOR).fg(colors.dim);
 
     let head = [
-        text(glyphs.name).fg(colors.frame),
-        text(glyphs.separator).fg(colors.dim),
+        text(NAME).fg(colors.frame),
+        text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(colors.dim),
         text(pos_total).fg(colors.accent),
-        text(glyphs.separator).fg(colors.dim),
+        text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(colors.dim),
     ];
     let mut flags: Vec<(&'static str, Cow<'a, str>)> = vec![
         (SHUFFLE_LABEL, Cow::Borrowed(shuffle)),
@@ -139,7 +123,7 @@ pub(crate) fn status_line<'a>(
                 },
             ));
 
-    truncate_line_to_width(line(pieces), row_width, TruncateGlyphs::default())
+    truncate_line_to_width(line(pieces), row_width)
 }
 
 #[cfg(test)]
@@ -180,14 +164,6 @@ mod tests {
         }
     }
 
-    fn written(status: StatusLineView<'_>) -> String {
-        status_line(status, colors(), 80)
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
-    }
-
     #[test]
     fn tagging_counts_the_tracks_whose_tags_are_already_read() {
         let status = StatusLineView {
@@ -197,7 +173,7 @@ mod tests {
             },
             ..view()
         };
-        insta::assert_snapshot!(written(status));
+        insta::assert_snapshot!(status_line(status, colors(), 80).to_string());
     }
 
     #[test]
@@ -206,7 +182,7 @@ mod tests {
             scan: ScanProgress::Scanning("Scanning…"),
             ..view()
         };
-        insta::assert_snapshot!(written(status));
+        insta::assert_snapshot!(status_line(status, colors(), 80).to_string());
     }
 
     #[test]

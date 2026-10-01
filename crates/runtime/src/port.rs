@@ -1,4 +1,7 @@
-use std::cell::Cell;
+use std::{
+    cell::Cell,
+    thread::{self, JoinHandle},
+};
 
 use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
@@ -10,6 +13,7 @@ use kernel::{
 };
 
 use crate::{
+    driver::{DriverThread, Exit},
     library::{cover::CoverRequest, machine::LibraryMessage},
     sender::FullEdge,
     trace::{DropReason, TraceEntry},
@@ -18,38 +22,38 @@ use crate::{
 #[derive(Debug)]
 pub(crate) struct Port<C> {
     driver: Driver,
-    sender: Sender<C>,
+    sender: Option<Sender<C>>,
     full_edge: FullEdge,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Undelivered {
-    pub(crate) driver: Driver,
-    pub(crate) command: &'static str,
-    pub(crate) reason: DropReason,
-}
-
-impl From<Undelivered> for TraceEntry {
-    fn from(undelivered: Undelivered) -> Self {
-        TraceEntry::Dropped {
-            driver: undelivered.driver,
-            command: undelivered.command,
-            reason: undelivered.reason,
-        }
-    }
+    handle: Option<JoinHandle<Exit>>,
 }
 
 impl<C> Port<C> {
     pub(crate) fn new(driver: Driver, sender: Sender<C>, full_edge: FullEdge) -> Self {
         Self {
             driver,
-            sender,
+            sender: Some(sender),
             full_edge,
+            handle: None,
+        }
+    }
+
+    pub(crate) fn spawned(driver: Driver, thread: DriverThread<C>) -> Self {
+        Self {
+            handle: Some(thread.handle),
+            ..Self::new(driver, thread.commands, thread.full_edge)
         }
     }
 
     pub(crate) fn full_edge(&self) -> &FullEdge {
         &self.full_edge
+    }
+
+    pub(crate) fn hang_up(&mut self) {
+        self.sender = None;
+    }
+
+    pub(crate) fn join(&mut self) -> Option<thread::Result<Exit>> {
+        self.handle.take().map(JoinHandle::join)
     }
 }
 
@@ -57,35 +61,26 @@ impl<C> Port<C>
 where
     for<'a> &'a C: Into<&'static str>,
 {
-    pub(crate) fn send(
-        &self,
-        drivers: &Drivers,
-        command: C,
-    ) -> Result<(), Undelivered> {
-        let label: &'static str = (&command).into();
+    pub(crate) fn send(&self, drivers: &Drivers, command: C) -> Result<(), TraceEntry> {
+        let command_label: &'static str = (&command).into();
+        let dropped = |reason| TraceEntry::Dropped {
+            driver: self.driver,
+            command: command_label,
+            reason,
+        };
         if !matches!(drivers.status(self.driver), DriverStatus::Running) {
-            return Err(Undelivered {
-                driver: self.driver,
-                command: label,
-                reason: DropReason::NotRunning,
-            });
+            return Err(dropped(DropReason::NotRunning));
         }
-        match self.sender.try_send(command) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => {
+        let Some(sender) = &self.sender else {
+            return Err(dropped(DropReason::Closed));
+        };
+        sender.try_send(command).map_err(|error| match error {
+            TrySendError::Full(_) => {
                 self.full_edge.raise();
-                Err(Undelivered {
-                    driver: self.driver,
-                    command: label,
-                    reason: DropReason::Full,
-                })
+                dropped(DropReason::Full)
             }
-            Err(TrySendError::Disconnected(_)) => Err(Undelivered {
-                driver: self.driver,
-                command: label,
-                reason: DropReason::Closed,
-            }),
-        }
+            TrySendError::Disconnected(_) => dropped(DropReason::Closed),
+        })
     }
 }
 
@@ -103,15 +98,11 @@ impl LibraryPort {
         }
     }
 
-    pub(crate) fn full_edge(&self) -> &FullEdge {
-        self.port.full_edge()
-    }
-
     pub(crate) fn send_command(
         &self,
         drivers: &Drivers,
         command: LibraryCmd,
-    ) -> Result<(), Undelivered> {
+    ) -> Result<(), TraceEntry> {
         match command {
             LibraryCmd::PrefetchCover(path) => self.side.get().map_or(Ok(()), |side| {
                 self.port.send(
@@ -139,7 +130,7 @@ impl LibraryPort {
         &self,
         drivers: &Drivers,
         request: CoverRequest,
-    ) -> Result<(), Undelivered> {
+    ) -> Result<(), TraceEntry> {
         self.side.set(Some(request.size_px));
         self.port.send(drivers, LibraryMessage::Cover(request))
     }
@@ -154,12 +145,28 @@ pub(crate) struct Ports {
 }
 
 impl Ports {
-    pub(crate) fn full_edge(&self, driver: Driver) -> Option<&FullEdge> {
+    pub(crate) fn full_edge(&self, driver: Driver) -> &FullEdge {
         match driver {
-            Driver::Audio => Some(self.audio.full_edge()),
-            Driver::Library => Some(self.library.full_edge()),
-            Driver::Config => Some(self.config.full_edge()),
-            Driver::Macos => Some(self.macos.full_edge()),
+            Driver::Audio => self.audio.full_edge(),
+            Driver::Library => self.library.port.full_edge(),
+            Driver::Config => self.config.full_edge(),
+            Driver::Macos => self.macos.full_edge(),
+        }
+    }
+
+    pub(crate) fn hang_up(&mut self) {
+        self.audio.hang_up();
+        self.macos.hang_up();
+        self.library.port.hang_up();
+        self.config.hang_up();
+    }
+
+    pub(crate) fn join(&mut self, driver: Driver) -> Option<thread::Result<Exit>> {
+        match driver {
+            Driver::Audio => self.audio.join(),
+            Driver::Library => self.library.port.join(),
+            Driver::Config => self.config.join(),
+            Driver::Macos => self.macos.join(),
         }
     }
 }
@@ -173,7 +180,19 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::{port::Port, sender::FullEdge, trace::DropReason};
+    use crate::{
+        port::Port,
+        sender::FullEdge,
+        trace::{DropReason, TraceEntry},
+    };
+
+    fn dropped(reason: DropReason) -> TraceEntry {
+        TraceEntry::Dropped {
+            driver: Driver::Audio,
+            command: (&AudioCmd::Stop).into(),
+            reason,
+        }
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Inbox {
@@ -213,7 +232,7 @@ mod tests {
 
         let sent = port.send(&drivers, AudioCmd::Stop);
 
-        assert_eq!(sent.map_err(|undelivered| undelivered.reason), expected);
+        assert_eq!(sent, expected.map_err(dropped));
     }
 
     #[test]
@@ -227,10 +246,7 @@ mod tests {
         port.send(&drivers, AudioCmd::Stop).unwrap();
         let second = port.send(&drivers, AudioCmd::Stop);
 
-        assert_eq!(
-            second.map_err(|undelivered| undelivered.reason),
-            Err(DropReason::Full)
-        );
+        assert_eq!(second, Err(dropped(DropReason::Full)));
         assert!(full_edge.take());
     }
 }

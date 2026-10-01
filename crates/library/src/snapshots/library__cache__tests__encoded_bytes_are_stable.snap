@@ -3,7 +3,7 @@ source: crates/library/src/cache.rs
 expression: encoded(&tracks)
 ---
 [
-    5,
+    6,
     1,
     15,
     47,
@@ -21,7 +21,6 @@ expression: encoded(&tracks)
     108,
     97,
     99,
-    1,
     180,
     0,
     1,
@@ -53,16 +52,4 @@ expression: encoded(&tracks)
     0,
     0,
     0,
-    10,
-    77,
-    111,
-    111,
-    110,
-    32,
-    82,
-    105,
-    118,
-    101,
-    114,
-    1,
 ]

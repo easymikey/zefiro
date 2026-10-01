@@ -1,23 +1,22 @@
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
-    cmd::{Cmd, Cue, Effect, LibraryCmd},
+    cmd::{Cmd, Cue, Effect, LibraryCmd, ScanMode},
     domain::{
         Browse,
         Cursor,
         Direction,
         Model,
+        Moment,
         Player,
         PlaylistIndex,
-        Revision,
-        ScanMode,
         ScanStatus,
         Track,
         TrackIndex,
         Workspace,
         cycled,
         library::Library,
-        playlist::{self, Playlist, index_of_path},
+        playlist::{Playlist, index_of_path},
     },
     message::{BrowseRequest, QueueRequest},
     update::{
@@ -68,6 +67,7 @@ fn navigate(
 pub(crate) fn update(
     model: &mut Model,
     message: BrowseRequest,
+    now: Moment,
 ) -> Result<Cmd, UpdateError> {
     let len = model.playlist.tracks.len();
     model.workspace.browse.cursor = model.workspace.browse.cursor.resize(len);
@@ -87,12 +87,15 @@ pub(crate) fn update(
         BrowseRequest::CursorTo(index) if len > 0 => {
             navigate(&mut model.workspace, BrowseMessage::CursorTo(index.get()))
         }
-        BrowseRequest::PlaySelected => play_selected(model),
+        BrowseRequest::PlaySelected => {
+            let selected = model.workspace.browse.selected();
+            crate::update::audio::jump_to(model, selected, now)
+        }
         BrowseRequest::PageBy(direction) if len > 0 => {
             let rows = model.workspace.visible_rows;
             navigate(&mut model.workspace, BrowseMessage::PageBy(rows, direction))
         }
-        BrowseRequest::Rescan => Ok(rescan(&mut model.scan_status, &model.music_dir)),
+        BrowseRequest::FullScan => Ok(full_scan(model)),
         BrowseRequest::Trash(track_index) => Ok(trash_track(model, track_index)),
         BrowseRequest::SavePlaylist(name) => {
             Ok(Effect::Library(LibraryCmd::SavePlaylist {
@@ -127,13 +130,13 @@ fn selected_index(playlist: &Playlist, workspace: &Workspace) -> Option<Playlist
     playlist.tracks.get(selected.get()).map(|_| selected)
 }
 
-fn rescan(scan_status: &mut ScanStatus, music_dir: &Path) -> Cmd {
-    match scan_status {
+fn full_scan(model: &mut Model) -> Cmd {
+    match model.scan_status {
         ScanStatus::Idle => {
-            *scan_status = ScanStatus::Scanning;
+            model.scan_status = ScanStatus::Scanning;
             Effect::Library(LibraryCmd::Scan {
-                music_dir: music_dir.to_path_buf(),
-                revision: Revision::UNSTAMPED,
+                music_dir: model.music_dir.clone(),
+                revision: model.revisions.issue_scan(),
                 mode: ScanMode::Full,
             })
             .into()
@@ -150,9 +153,7 @@ fn toggle_favorite(model: &mut Model) -> Cmd {
     let path = track.path().to_path_buf();
     model.favorites.toggle(path);
     Cmd::Batch(vec![
-        Effect::Library(LibraryCmd::SaveFavorites(
-            model.favorites.clone().into_inner(),
-        )),
+        Effect::Library(LibraryCmd::SaveFavorites(model.favorites.clone())),
         Effect::Animate(Cue::FavoriteToggled),
     ])
 }
@@ -210,21 +211,12 @@ fn move_in_queue(model: &mut Model, direction: Direction) -> Cmd {
     Cmd::None
 }
 
-fn play_selected(model: &mut Model) -> Result<Cmd, UpdateError> {
-    model
-        .playlist
-        .jump(model.workspace.browse.selected())
-        .cloned()
-        .map_or(Ok(Cmd::None), |track| {
-            crate::update::audio::start(&mut model.transport, &mut model.player, track)
-        })
-}
-
 fn cycle_sort(model: &mut Model) -> Cmd {
     model.workspace.browse.sort = cycled(model.workspace.browse.sort, Direction::Next);
     let current: Vec<&Track> = model
         .library
-        .view_tracks()
+        .iter()
+        .flat_map(Library::view_tracks)
         .map(|(_, track)| track.as_ref())
         .collect();
     let order = crate::domain::library::sort_indices(
@@ -232,7 +224,7 @@ fn cycle_sort(model: &mut Model) -> Cmd {
         model.workspace.browse.sort,
         &model.favorites,
     );
-    let Some(library) = model.library.ready_mut() else {
+    let Some(library) = model.library.as_mut() else {
         return Cmd::None;
     };
     let old_view = std::mem::take(&mut library.view);
@@ -240,7 +232,7 @@ fn cycle_sort(model: &mut Model) -> Cmd {
         .into_iter()
         .filter_map(|position| old_view.get(position).copied())
         .collect();
-    resync_playlist(RelistParts {
+    resync_playlist(ResyncParts {
         library,
         player: &model.player,
         playlist: &mut model.playlist,
@@ -249,7 +241,7 @@ fn cycle_sort(model: &mut Model) -> Cmd {
     Cmd::None
 }
 
-pub(crate) struct RelistParts<'a> {
+pub(crate) struct ResyncParts<'a> {
     pub(crate) library: &'a mut Library,
     pub(crate) player: &'a Player,
     pub(crate) playlist: &'a mut Playlist,
@@ -260,7 +252,7 @@ fn trash_track(model: &mut Model, track_index: PlaylistIndex) -> Cmd {
     let Some(track) = model.playlist.tracks.get(track_index.get()).cloned() else {
         return Cmd::None;
     };
-    let Some(library) = model.library.ready_mut() else {
+    let Some(library) = model.library.as_mut() else {
         return Cmd::None;
     };
     let removed_position = library.all.iter().position(|t| t.path() == track.path());
@@ -279,7 +271,7 @@ fn trash_track(model: &mut Model, track_index: PlaylistIndex) -> Cmd {
             })
             .collect();
     }
-    resync_playlist(RelistParts {
+    resync_playlist(ResyncParts {
         library,
         player: &model.player,
         playlist: &mut model.playlist,
@@ -291,13 +283,13 @@ fn trash_track(model: &mut Model, track_index: PlaylistIndex) -> Cmd {
     ])
 }
 
-pub(crate) fn resync_playlist(slices: RelistParts<'_>) {
-    let RelistParts {
+pub(crate) fn resync_playlist(parts: ResyncParts<'_>) {
+    let ResyncParts {
         library,
         player,
         playlist,
         queue,
-    } = slices;
+    } = parts;
     let tracks: Vec<_> = library
         .view_tracks()
         .map(|(_, track)| Arc::clone(track))
@@ -306,7 +298,6 @@ pub(crate) fn resync_playlist(slices: RelistParts<'_>) {
         .current()
         .and_then(|track| index_of_path(track.path(), &tracks));
     remap_queue(&playlist.tracks, &tracks, queue);
-    let anchor = anchor.map_or(playlist::Relist::KeepCursor, playlist::Relist::At);
     playlist.relist(tracks, anchor);
     playlist.play_order = std::mem::take(&mut playlist.play_order).without_order();
 }

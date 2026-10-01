@@ -1,6 +1,6 @@
-use std::{borrow::Cow, path::Path};
+use std::{borrow::Cow, path::Path, sync::Arc};
 
-use kernel::{LibrarySubject, Track};
+use kernel::Track;
 use lofty::{
     config::ParseOptions,
     file::TaggedFile,
@@ -9,23 +9,27 @@ use lofty::{
     tag::{Accessor, ItemKey, Tag},
 };
 
-use crate::error::Error;
-
-fn owned_tag(tag: Option<Cow<'_, str>>) -> Option<String> {
+fn tag_text(tag: Option<Cow<'_, str>>) -> Option<String> {
     tag.map(Cow::into_owned)
 }
 
-pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
-    let file =
-        std::fs::File::open(path).map_err(Error::read(LibrarySubject::Scan, path))?;
+pub(crate) fn read_or_list(path: &Path) -> Arc<Track> {
+    Arc::new(read_track(path))
+}
+
+fn read_track(path: &Path) -> Track {
     let options = ParseOptions::new().read_cover_art(false);
-    let Some(tagged) = Probe::new(std::io::BufReader::new(file))
-        .options(options)
-        .guess_file_type()
+    let Some(tagged) = std::fs::File::open(path)
         .ok()
+        .and_then(|file| {
+            Probe::new(std::io::BufReader::new(file))
+                .options(options)
+                .guess_file_type()
+                .ok()
+        })
         .and_then(|probe| probe.read().ok())
     else {
-        return Ok(Track::listed(path));
+        return Track::listed(path);
     };
     let properties = tagged.properties();
     let duration = properties.duration();
@@ -41,21 +45,21 @@ pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
             .and_then(parse_replay_gain),
     };
     let tags = tag.map_or_else(kernel::Tags::default, tags_from);
-    Ok(Track::builder()
+    Track::builder()
         .path(path)
         .duration(duration)
         .tags(tags)
         .audio_format(audio_format)
-        .build())
+        .build()
 }
 
 fn tags_from(tag: &Tag) -> kernel::Tags {
     kernel::Tags {
-        title: owned_tag(tag.title()),
-        artist: owned_tag(tag.artist()),
-        album: owned_tag(tag.album()),
-        genre: owned_tag(tag.genre()),
-        comment: owned_tag(tag.comment()),
+        title: tag_text(tag.title()),
+        artist: tag_text(tag.artist()),
+        album: tag_text(tag.album()),
+        genre: tag_text(tag.genre()),
+        comment: tag_text(tag.comment()),
         lyrics: tag.get_string(ItemKey::Lyrics).map(str::to_owned),
         composer: tag.get_string(ItemKey::Composer).map(str::to_owned),
         album_artist: tag.get_string(ItemKey::AlbumArtist).map(str::to_owned),
@@ -95,8 +99,8 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use crate::{
-        tags::{embedded_cover, parse_replay_gain, read_track},
-        test_support::tmp_filters,
+        tags::{embedded_cover, parse_replay_gain, read_or_list},
+        test_support::temp_dir_filters,
     };
 
     #[fixture]
@@ -107,21 +111,21 @@ mod tests {
     }
 
     #[rstest]
-    fn an_unparseable_file_still_yields_meta_carrying_its_path(
+    fn an_unparseable_file_is_still_listed_by_path(
         unparseable_media: tempfile::TempDir,
     ) {
         let path = unparseable_media.path().join("clip.mkv");
-        let meta = read_track(&path).unwrap();
-        insta::with_settings!({ filters => tmp_filters() }, {
-            insta::assert_debug_snapshot!(meta);
+        let track = read_or_list(&path);
+        insta::with_settings!({ filters => temp_dir_filters() }, {
+            insta::assert_debug_snapshot!(track);
         });
     }
 
     #[rstest]
     fn unparseable_file_has_no_replay_gain(unparseable_media: tempfile::TempDir) {
         let path = unparseable_media.path().join("clip.mkv");
-        let meta = read_track(&path).unwrap();
-        assert_eq!(meta.audio_format().replay_gain, None);
+        let track = read_or_list(&path);
+        assert_eq!(track.audio_format().replay_gain, None);
     }
 
     #[rstest]
@@ -133,7 +137,10 @@ mod tests {
     #[case::empty("", None)]
     #[case::unit_only("dB", None)]
     #[case::non_numeric("not a number dB", None)]
-    fn replay_gain_db_parsing(#[case] raw: &str, #[case] expected: Option<f32>) {
+    fn replay_gain_reads_the_number_before_the_db_unit(
+        #[case] raw: &str,
+        #[case] expected: Option<f32>,
+    ) {
         assert_eq!(parse_replay_gain(raw), expected);
     }
 

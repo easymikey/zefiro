@@ -1,4 +1,8 @@
-use std::{path::Path, time::Instant};
+use std::{
+    ops::ControlFlow,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use config::{AppearanceFile, ThemeFile};
 use crossbeam_channel::{Receiver, Select, unbounded};
@@ -14,18 +18,16 @@ use kernel::{
 use notify::RecommendedWatcher;
 
 use crate::{
-    cells::LatestSender,
     config::{
-        ConfigPaths,
-        ConfigTiming,
         disk::{list_theme_names, read},
-        driver::Outbound,
+        driver::{ConfigParts, Outbound},
         machine::{ConfigEffect, ConfigMessage, ConfigState, Published},
-        save_queue::SavePaths,
-        watch::WatchMessage,
+        save_queue::SavePatches,
+        write::{SaveResult, save_appearance, save_config},
     },
+    latest::LatestSender,
     sender::DriverSender,
-    watcher::{Watcher, config_directory, watch_if_present},
+    watcher::{Watcher, config_directory, recommended, watch_if_present},
 };
 
 enum Wake {
@@ -36,28 +38,19 @@ enum Wake {
     Stopped,
 }
 
-enum Halt {
-    Continue,
-    Stop,
-}
-
-pub(crate) struct Watching<W> {
+pub(crate) struct Watch<W> {
     pub(crate) watcher: W,
     pub(crate) events: Receiver<notify::Result<notify::Event>>,
 }
 
-impl Watching<Option<RecommendedWatcher>> {
-    pub(crate) fn recommended(mailbox: &DriverSender<ConfigEvent>) -> Self {
+impl Watch<Option<RecommendedWatcher>> {
+    pub(crate) fn recommended(outbox: &DriverSender<ConfigEvent>) -> Self {
         let (events, receiver) = unbounded();
-        let watcher = notify::recommended_watcher(events).map_or_else(
-            |error| {
-                match mailbox.send(watch_failure(&error.to_string())) {
-                    Ok(()) | Err(SendError::Full | SendError::Closed) => {}
-                }
-                None
-            },
-            Some,
-        );
+        let watcher = recommended(events, |error| {
+            match outbox.send(watch_failure(&error.to_string())) {
+                Ok(()) | Err(SendError::Full | SendError::Closed) => {}
+            }
+        });
         Self {
             watcher,
             events: receiver,
@@ -69,25 +62,27 @@ pub(crate) struct ConfigLoop<'a, W> {
     driver: ConfigState,
     watcher: W,
     filesystem_events: Receiver<notify::Result<notify::Event>>,
-    saving: SavePaths,
-    mailbox: &'a DriverSender<ConfigEvent>,
+    config_path: PathBuf,
+    appearance_path: PathBuf,
+    outbox: &'a DriverSender<ConfigEvent>,
     theme: &'a LatestSender<ThemeFile>,
     appearance: &'a LatestSender<AppearanceFile>,
 }
 
 impl<'a, W: Watcher> ConfigLoop<'a, W> {
     pub(crate) fn new(
-        config: (&ConfigPaths, ConfigTiming),
+        parts: &ConfigParts,
         outbound: &Outbound<'a>,
-        watching: Watching<W>,
+        watching: Watch<W>,
     ) -> Self {
-        let (paths, timing) = config;
+        let paths = &parts.paths;
         let mut loaded = Self {
-            driver: ConfigState::new(paths, timing.save_debounce),
+            driver: ConfigState::new(paths, parts.save_debounce),
             watcher: watching.watcher,
             filesystem_events: watching.events,
-            saving: SavePaths::new(paths),
-            mailbox: outbound.mailbox,
+            config_path: paths.config.clone(),
+            appearance_path: paths.appearance.clone(),
+            outbox: outbound.outbox,
             theme: outbound.theme,
             appearance: outbound.appearance,
         };
@@ -97,12 +92,12 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
 
     fn mount(&mut self, directory: &Path) {
         if let Err(error) = watch_if_present(&mut self.watcher, directory) {
-            self.emit(watch_failure(&error.to_string()));
+            let _closed = self.emit(watch_failure(&error.to_string()));
         }
     }
 
     pub(crate) fn run(mut self, inbox: &Receiver<ConfigCmd>) {
-        if let Halt::Stop = self.feed(ConfigMessage::FilesChanged) {
+        if self.feed(ConfigMessage::FilesChanged).is_break() {
             return;
         }
         loop {
@@ -110,14 +105,14 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
                 Wake::Command(command) => {
                     let input = ConfigMessage::Command {
                         cmd: command,
-                        now: moment(),
+                        now: Instant::now(),
                     };
-                    if let Halt::Stop = self.feed(input) {
+                    if self.feed(input).is_break() {
                         return;
                     }
                 }
                 Wake::FilesystemChange => {
-                    if let Halt::Stop = self.feed(ConfigMessage::FilesChanged) {
+                    if self.feed(ConfigMessage::FilesChanged).is_break() {
                         return;
                     }
                 }
@@ -125,13 +120,15 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
                     self.filesystem_events = crossbeam_channel::never();
                 }
                 Wake::SaveDeadlineElapsed => {
-                    let due = ConfigMessage::SaveDue { now: moment() };
-                    if let Halt::Stop = self.feed(due) {
+                    let due = ConfigMessage::SaveDue {
+                        now: Instant::now(),
+                    };
+                    if self.feed(due).is_break() {
                         return;
                     }
                 }
                 Wake::Stopped => {
-                    self.feed(ConfigMessage::Stopping);
+                    let _flushed = self.feed(ConfigMessage::Stopping);
                     return;
                 }
             }
@@ -160,7 +157,7 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
         Wake::Stopped
     }
 
-    fn feed(&mut self, input: ConfigMessage) -> Halt {
+    fn feed(&mut self, input: ConfigMessage) -> ControlFlow<()> {
         let label: &'static str = (&input).into();
         match self.driver.update(input) {
             Ok(outputs) => self.act_all(outputs),
@@ -168,58 +165,49 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
         }
     }
 
-    fn act_all(&mut self, outputs: Vec<ConfigEffect>) -> Halt {
-        for output in outputs {
-            if let Halt::Stop = self.act(output) {
-                return Halt::Stop;
-            }
-        }
-        Halt::Continue
+    fn act_all(&mut self, outputs: Vec<ConfigEffect>) -> ControlFlow<()> {
+        outputs.into_iter().try_for_each(|output| self.act(output))
     }
 
-    fn reject(&self, input: &'static str) -> Halt {
+    fn reject(&self, input: &'static str) -> ControlFlow<()> {
         let rejected = DriverMessage::Rejected { input };
-        match self.mailbox.report(Driver::Config, rejected) {
-            Err(SendError::Closed) => Halt::Stop,
-            Ok(()) | Err(SendError::Full) => Halt::Continue,
+        match self.outbox.report(Driver::Config, rejected) {
+            Err(SendError::Closed) => ControlFlow::Break(()),
+            Ok(()) | Err(SendError::Full) => ControlFlow::Continue(()),
         }
     }
 
-    fn act(&mut self, output: ConfigEffect) -> Halt {
+    fn act(&mut self, output: ConfigEffect) -> ControlFlow<()> {
         match output {
             ConfigEffect::Read { file, path } => self.read(file, &path),
             ConfigEffect::List(dir) => self.list(&dir),
             ConfigEffect::Save(patches) => {
-                let flushed = self.saving.write(patches);
-                self.feed(ConfigMessage::Saved(flushed))
+                let saved = self.save(patches);
+                self.feed(saved)
             }
             ConfigEffect::Changed(published) => {
                 self.publish(published);
-                Halt::Continue
+                ControlFlow::Continue(())
             }
             ConfigEffect::Event(event) => self.emit(event),
         }
     }
 
-    fn read(&mut self, file: ConfigFile, path: &Path) -> Halt {
-        match read(file, path) {
-            WatchMessage::Observed { file, text } => {
-                self.feed(ConfigMessage::Read { file, text })
-            }
-            WatchMessage::Unreadable { file, detail } => {
-                self.feed(ConfigMessage::Unreadable { file, detail })
-            }
-            WatchMessage::Poll(_)
-            | WatchMessage::PollThemes
-            | WatchMessage::Listed(_)
-            | WatchMessage::ThemesUnreadable(_)
-            | WatchMessage::SelectTheme(_)
-            | WatchMessage::WroteAppearance(_)
-            | WatchMessage::WroteConfig(_) => Halt::Continue,
-        }
+    fn read(&mut self, file: ConfigFile, path: &Path) -> ControlFlow<()> {
+        self.feed(read(file, path))
     }
 
-    fn list(&mut self, dir: &Path) -> Halt {
+    fn save(&self, patches: SavePatches) -> ConfigMessage {
+        let config: Option<SaveResult> = patches
+            .config
+            .map(|patch| save_config(&self.config_path, patch));
+        let appearance: Option<SaveResult> = patches
+            .appearance
+            .map(|patch| save_appearance(&self.appearance_path, patch));
+        ConfigMessage::Saved { config, appearance }
+    }
+
+    fn list(&mut self, dir: &Path) -> ControlFlow<()> {
         let listing = list_theme_names(dir);
         self.feed(ConfigMessage::Listed(listing))
     }
@@ -231,16 +219,12 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
         }
     }
 
-    fn emit(&self, event: ConfigEvent) -> Halt {
-        match self.mailbox.send(event) {
-            Err(SendError::Closed) => Halt::Stop,
-            Ok(()) | Err(SendError::Full) => Halt::Continue,
+    fn emit(&self, event: ConfigEvent) -> ControlFlow<()> {
+        match self.outbox.send(event) {
+            Err(SendError::Closed) => ControlFlow::Break(()),
+            Ok(()) | Err(SendError::Full) => ControlFlow::Continue(()),
         }
     }
-}
-
-pub(crate) fn moment() -> Instant {
-    Instant::now()
 }
 
 fn watch_failure(reason: &str) -> ConfigEvent {
@@ -251,104 +235,72 @@ fn watch_failure(reason: &str) -> ConfigEvent {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        path::{Path, PathBuf},
-        time::Duration,
-    };
+    use std::time::Duration;
 
     use config::AppearanceField;
-    use crossbeam_channel::{Receiver, SendError, unbounded};
+    use crossbeam_channel::{SendError, unbounded};
     use kernel::{
         ConfigCmd,
         ConfigPatch,
         DriverMessage,
         Message,
-        domain::{ConfigFile, Driver},
+        domain::{ConfigFile, Driver, ThemeName},
     };
 
     use crate::{
-        cells::cells,
         config::{
             ConfigPaths,
-            ConfigTiming,
             driver::{ConfigParts, Outbound, spawn as spawn_config},
+            fixtures::{drain, paths},
             machine::ConfigMessage,
-            session::{ConfigLoop, Halt, Wake, Watching},
+            save_queue::SavePatches,
+            session::{ConfigLoop, Wake, Watch},
         },
+        latest::{LatestSenders, latest_channels},
         sender::{DriverSender, FullEdge},
-        watcher::Watcher,
+        watcher::FakeWatch,
     };
-
-    const RECV_TIMEOUT: Duration = Duration::from_secs(2);
-    const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
 
     const HAND_EDITED_THEME: &str = "name = \"mine\"\n[colors]\nbg = \"#000000\"\nfg = \"#000000\"\nbright_fg = \"#000000\"\naccent = \"#000000\"\ngreen = \"#000000\"\nyellow = \"#000000\"\nred = \"#000000\"\n";
 
-    #[derive(Default)]
-    struct FakeWatch {
-        watched: Vec<PathBuf>,
-    }
+    const TEST_DEBOUNCE: Duration = Duration::from_millis(20);
 
-    impl Watcher for FakeWatch {
-        fn watch(&mut self, path: &Path) -> Result<(), notify::Error> {
-            self.watched.push(path.to_path_buf());
-            Ok(())
+    fn parts(paths: ConfigPaths, writers: LatestSenders) -> ConfigParts {
+        ConfigParts {
+            paths,
+            save_debounce: TEST_DEBOUNCE,
+            theme: writers.theme,
+            appearance: writers.appearance,
         }
-
-        fn unwatch(&mut self, path: &Path) -> Result<(), notify::Error> {
-            self.watched.retain(|watched| watched != path);
-            Ok(())
-        }
-    }
-
-    fn paths(directory: &tempfile::TempDir) -> ConfigPaths {
-        ConfigPaths {
-            config: directory.path().join("config.toml"),
-            appearance: directory.path().join("sifr-ui.toml"),
-            themes: directory.path().join("themes"),
-            theme: Some("noir".to_string()),
-            seen: crate::config::SeenTexts::default(),
-        }
-    }
-
-    fn timing() -> ConfigTiming {
-        ConfigTiming {
-            save_debounce: Duration::from_millis(20),
-        }
-    }
-
-    fn drain<T>(receiver: &Receiver<T>) {
-        receiver.recv_timeout(RECV_TIMEOUT).unwrap();
-        while receiver.recv_timeout(SETTLE_TIMEOUT).is_ok() {}
     }
 
     #[test]
     fn a_fake_theme_change_publishes_the_theme() {
         let directory = tempfile::tempdir().unwrap();
         let (sender, _messages) = unbounded::<Message>();
-        let mailbox = DriverSender::new(sender, FullEdge::default());
-        let (writers, cells, _doorbell) = cells();
+        let outbox = DriverSender::new(sender, FullEdge::default());
+        let (writers, cells, _doorbell) = latest_channels();
+        let parts = parts(paths(&directory), writers);
         let outbound = Outbound {
-            mailbox: &mailbox,
-            theme: &writers.theme,
-            appearance: &writers.appearance,
+            outbox: &outbox,
+            theme: &parts.theme,
+            appearance: &parts.appearance,
         };
         let (events, receiver) = unbounded();
-        let watching = Watching {
+        let watching = Watch {
             watcher: FakeWatch::default(),
             events: receiver,
         };
-        let mut session =
-            ConfigLoop::new((&paths(&directory), timing()), &outbound, watching);
+        let mut session = ConfigLoop::new(&parts, &outbound, watching);
         assert_eq!(
             session.watcher.watched,
             vec![directory.path().to_path_buf()]
         );
-        session.feed(ConfigMessage::FilesChanged);
+        let _halt = session.feed(ConfigMessage::FilesChanged);
         let embedded = cells.theme.take();
         assert_eq!(
             embedded.map(|theme| theme.name.clone()),
-            Some("noir".to_string())
+            Some(ThemeName::from_static("noir"))
         );
 
         std::fs::create_dir_all(directory.path().join("themes")).unwrap();
@@ -357,66 +309,96 @@ mod tests {
         events.send(Ok(notify::Event::default())).unwrap();
         let (_commands, inbox) = unbounded();
         assert!(matches!(session.wait(&inbox), Wake::FilesystemChange));
-        session.feed(ConfigMessage::FilesChanged);
+        let _republished = session.feed(ConfigMessage::FilesChanged);
 
         let edited = cells.theme.take();
         assert!(edited.is_some(), "a changed theme file must be published");
     }
 
     #[test]
-    fn a_rejected_input_is_reported_to_the_mailbox() {
+    fn a_rejected_input_is_reported_to_the_inbox() {
         let directory = tempfile::tempdir().unwrap();
         let (sender, messages) = unbounded::<Message>();
-        let mailbox = DriverSender::new(sender, FullEdge::default());
-        let (writers, _cells, _doorbell) = cells();
+        let outbox = DriverSender::new(sender, FullEdge::default());
+        let (writers, _cells, _doorbell) = latest_channels();
+        let mut unselected = paths(&directory);
+        unselected.theme = None;
+        let parts = parts(unselected, writers);
         let outbound = Outbound {
-            mailbox: &mailbox,
-            theme: &writers.theme,
-            appearance: &writers.appearance,
+            outbox: &outbox,
+            theme: &parts.theme,
+            appearance: &parts.appearance,
         };
         let (_events, receiver) = unbounded();
-        let watching = Watching {
+        let watching = Watch {
             watcher: FakeWatch::default(),
             events: receiver,
         };
-        let mut unselected = paths(&directory);
-        unselected.theme = None;
-        let mut session = ConfigLoop::new((&unselected, timing()), &outbound, watching);
+        let mut session = ConfigLoop::new(&parts, &outbound, watching);
 
         let halt = session.feed(ConfigMessage::Read {
             file: ConfigFile::Theme,
             text: None,
         });
 
-        assert!(matches!(halt, Halt::Continue));
+        assert!(halt.is_continue());
         assert_eq!(
             messages.try_iter().collect::<Vec<_>>(),
-            vec![Message::Driver(
-                Driver::Config,
-                DriverMessage::Rejected { input: "Read" }
-            )]
+            vec![Message::Driver {
+                driver: Driver::Config,
+                event: DriverMessage::Rejected { input: "Read" }
+            }]
         );
+        assert!(session.feed(ConfigMessage::FilesChanged).is_continue());
+    }
+
+    #[test]
+    fn saving_lands_a_config_patch_on_disk() {
+        let directory = tempfile::tempdir().unwrap();
+        let (sender, _messages) = unbounded::<Message>();
+        let outbox = DriverSender::new(sender, FullEdge::default());
+        let (writers, _cells, _doorbell) = latest_channels();
+        let parts = parts(paths(&directory), writers);
+        let outbound = Outbound {
+            outbox: &outbox,
+            theme: &parts.theme,
+            appearance: &parts.appearance,
+        };
+        let (_events, receiver) = unbounded();
+        let watching = Watch {
+            watcher: FakeWatch::default(),
+            events: receiver,
+        };
+        let session = ConfigLoop::new(&parts, &outbound, watching);
+        let patches = SavePatches {
+            config: Some(
+                ConfigPatch::builder()
+                    .theme(ThemeName::from_static("dark"))
+                    .build(),
+            ),
+            appearance: None,
+        };
+
+        let saved = session.save(patches);
+
+        let text =
+            std::fs::read_to_string(directory.path().join("config.toml")).unwrap();
+        assert!(text.contains("theme = \"dark\""));
         assert!(matches!(
-            session.feed(ConfigMessage::FilesChanged),
-            Halt::Continue
+            saved,
+            ConfigMessage::Saved {
+                config: Some(Ok(_)),
+                appearance: None
+            }
         ));
     }
 
     #[test]
-    fn a_closed_mailbox_ends_the_config_driver() {
+    fn a_closed_inbox_ends_the_config_driver() {
         let directory = tempfile::tempdir().unwrap();
-        let (mailbox, messages) = unbounded();
-        let (writers, _cells, doorbell) = cells();
-        let thread = spawn_config(
-            ConfigParts {
-                paths: paths(&directory),
-                timing: timing(),
-                theme: writers.theme,
-                appearance: writers.appearance,
-            },
-            &mailbox,
-        )
-        .unwrap();
+        let (inbox, messages) = unbounded();
+        let (writers, _cells, doorbell) = latest_channels();
+        let thread = spawn_config(parts(paths(&directory), writers), &inbox).unwrap();
 
         drain(&doorbell);
         drain(&messages);
@@ -443,10 +425,10 @@ mod tests {
 
         assert_eq!(
             report,
-            Err(SendError(Message::Driver(
-                Driver::Config,
-                DriverMessage::Stopped
-            )))
+            Err(SendError(Message::Driver {
+                driver: Driver::Config,
+                event: DriverMessage::Stopped
+            }))
         );
         let content =
             std::fs::read_to_string(directory.path().join("sifr-ui.toml")).unwrap();

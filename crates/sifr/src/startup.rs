@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use config::{
@@ -9,21 +6,22 @@ use config::{
     AppearanceFile,
     CONFIG_FILE_NAME,
     ConfigToml,
+    Rgb,
+    ThemeColors,
     ThemeFile,
     parse_appearance,
     parse_config,
 };
 use kernel::{
     Bounded,
-    Track,
-    domain::{Percent, PlaylistIndex, Shuffle, Startup, ThemeChoice},
+    domain::{Percent, Shuffle, Startup, ThemeChoice, ThemeName},
     playlist::{PlaylistFileName, PlaylistSource},
 };
 use library::LibraryDirs;
 
-use crate::{error::Error, shell::fallback_theme_file};
+use crate::error::Error;
 
-pub(crate) struct Prepared {
+pub(crate) struct Boot {
     pub(crate) startup: Startup,
     pub(crate) paths: runtime::StartupPaths,
     pub(crate) look: Look,
@@ -35,25 +33,15 @@ pub(crate) struct Look {
     pub(crate) appearance: AppearanceFile,
 }
 
-struct Loaded<T> {
+struct ReadFile<T> {
     value: T,
     text: Option<String>,
     warning: Option<String>,
 }
 
-struct LoadedLook {
-    appearance: Loaded<AppearanceFile>,
-    theme: Loaded<ThemeFile>,
-}
-
-struct LoadedConfig {
-    file: ConfigToml,
-    text: Option<String>,
-}
-
 #[derive(Debug, Parser)]
 #[command(name = "sifr", about = "A terminal music player")]
-pub(crate) struct Cli {
+struct Cli {
     path: Option<PathBuf>,
 
     #[arg(long)]
@@ -77,28 +65,23 @@ fn shuffle_requested(count: u8) -> Shuffle {
     }
 }
 
-fn config_dir() -> PathBuf {
+fn user_config_dir() -> PathBuf {
     dirs::config_dir()
         .map_or_else(|| PathBuf::from("."), |directory| directory.join("sifr"))
 }
 
-fn read_config_file(path: &Path) -> Result<LoadedConfig, Error> {
-    let absent = LoadedConfig {
-        file: ConfigToml::default(),
-        text: None,
-    };
+fn read_config_file(path: &Path) -> Result<(ConfigToml, Option<String>), Error> {
     match std::fs::read_to_string(path) {
         Ok(text) => match parse_config(&text) {
-            Ok(file) => Ok(LoadedConfig {
-                file,
-                text: Some(text),
-            }),
+            Ok(file) => Ok((file, Some(text))),
             Err(source) => Err(Error::ConfigParse {
                 path: path.to_path_buf(),
                 source,
             }),
         },
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(absent),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            Ok((ConfigToml::default(), None))
+        }
         Err(source) => Err(Error::ConfigRead {
             path: path.to_path_buf(),
             source,
@@ -106,26 +89,25 @@ fn read_config_file(path: &Path) -> Result<LoadedConfig, Error> {
     }
 }
 
-fn appearance_path(root: &Path) -> PathBuf {
-    root.join(APPEARANCE_FILE_NAME)
+fn appearance_path(config_dir: &Path) -> PathBuf {
+    config_dir.join(APPEARANCE_FILE_NAME)
 }
 
-fn themes_dir(root: &Path) -> PathBuf {
-    root.join("themes")
+fn themes_dir(config_dir: &Path) -> PathBuf {
+    config_dir.join("themes")
 }
 
 fn config_paths(
-    root: &Path,
+    config_dir: &Path,
     choice: &ThemeChoice,
-    config: (PathBuf, runtime::SeenTexts),
+    config_file: PathBuf,
 ) -> runtime::ConfigPaths {
-    let (config, seen) = config;
     runtime::ConfigPaths {
-        config,
-        appearance: appearance_path(root),
-        themes: themes_dir(root),
+        config: config_file,
+        appearance: appearance_path(config_dir),
+        themes: themes_dir(config_dir),
         theme: Some(config::resolve_theme(choice).to_string()),
-        seen,
+        seen: runtime::SeenTexts::default(),
     }
 }
 
@@ -137,37 +119,54 @@ fn read_optional(path: &Path) -> Result<Option<String>, std::io::Error> {
     }
 }
 
-fn unreadable<T>(value: T, path: &Path, source: &std::io::Error) -> Loaded<T> {
-    Loaded {
-        value,
+fn fallback<T>(fallback: T, path: &Path, source: &std::io::Error) -> ReadFile<T> {
+    ReadFile {
+        value: fallback,
         text: None,
         warning: Some(format!("cannot read {}: {source}", path.display())),
     }
 }
 
-fn loaded_appearance(path: &Path) -> Loaded<AppearanceFile> {
+fn read_appearance(path: &Path) -> ReadFile<AppearanceFile> {
     let text = match read_optional(path) {
         Ok(Some(text)) => text,
         Ok(None) => {
-            return Loaded {
+            return ReadFile {
                 value: AppearanceFile::default(),
                 text: None,
                 warning: None,
             };
         }
-        Err(source) => return unreadable(AppearanceFile::default(), path, &source),
+        Err(source) => return fallback(AppearanceFile::default(), path, &source),
     };
     match parse_appearance(&text) {
-        Ok(value) => Loaded {
+        Ok(value) => ReadFile {
             value,
             text: Some(text),
             warning: None,
         },
-        Err(error) => Loaded {
+        Err(error) => ReadFile {
             value: AppearanceFile::default(),
             text: Some(text),
             warning: Some(error.to_string()),
         },
+    }
+}
+
+pub(crate) fn fallback_theme_file() -> ThemeFile {
+    ThemeFile {
+        name: ThemeName::from_static("fallback"),
+        colors: ThemeColors {
+            background: Rgb([0, 0, 0]),
+            foreground: Rgb([0xff, 0xff, 0xff]),
+            bright_foreground: Rgb([0xff, 0xff, 0xff]),
+            accent: Rgb([0xff, 0xff, 0xff]),
+            green: Rgb([0, 0xff, 0]),
+            yellow: Rgb([0xff, 0xff, 0]),
+            red: Rgb([0xff, 0, 0]),
+            window_background: None,
+        },
+        scanning_label: "scanning…".to_string(),
     }
 }
 
@@ -177,73 +176,50 @@ fn stock_theme() -> ThemeFile {
         .unwrap_or_else(fallback_theme_file)
 }
 
-enum ThemeSource {
-    Embedded,
-    File(String),
-}
-
-impl ThemeSource {
-    fn into_seen(self) -> Option<String> {
-        match self {
-            Self::Embedded => None,
-            Self::File(text) => Some(text),
-        }
-    }
-}
-
-fn parsed_theme(name: &str, text: &str, source: ThemeSource) -> Loaded<ThemeFile> {
+fn parsed_theme(name: &str, text: &str, seen: Option<String>) -> ReadFile<ThemeFile> {
     match config::parse_theme(text, name) {
-        Ok(value) => Loaded {
+        Ok(value) => ReadFile {
             value,
-            text: source.into_seen(),
+            text: seen,
             warning: None,
         },
-        Err(error) => Loaded {
+        Err(error) => ReadFile {
             value: stock_theme(),
-            text: source.into_seen(),
+            text: seen,
             warning: Some(error.to_string()),
         },
     }
 }
 
-fn missing_theme(name: &str) -> Loaded<ThemeFile> {
+fn embedded_or_stock_theme(name: &str) -> ReadFile<ThemeFile> {
     config::embedded_theme(name).map_or_else(
-        || Loaded {
+        || ReadFile {
             value: stock_theme(),
             text: None,
             warning: Some(format!("no theme named `{name}`")),
         },
-        |embedded| parsed_theme(name, embedded, ThemeSource::Embedded),
+        |embedded| parsed_theme(name, embedded, None),
     )
 }
 
-fn loaded_theme(choice: &ThemeChoice, themes: &Path) -> Loaded<ThemeFile> {
+fn read_theme(choice: &ThemeChoice, themes: &Path) -> ReadFile<ThemeFile> {
     let resolved = config::resolve_theme(choice);
     let name = resolved.as_str();
     let path = themes.join(config::theme_file_name(name));
     match read_optional(&path) {
-        Ok(Some(text)) => {
-            let source = ThemeSource::File(text.clone());
-            parsed_theme(name, &text, source)
-        }
-        Ok(None) => missing_theme(name),
-        Err(source) => unreadable(stock_theme(), &path, &source),
+        Ok(Some(text)) => parsed_theme(name, &text, Some(text.clone())),
+        Ok(None) => embedded_or_stock_theme(name),
+        Err(source) => fallback(stock_theme(), &path, &source),
     }
 }
 
-fn load_look(root: &Path, choice: &ThemeChoice) -> LoadedLook {
-    LoadedLook {
-        appearance: loaded_appearance(&appearance_path(root)),
-        theme: loaded_theme(choice, &themes_dir(root)),
-    }
-}
-
-fn seeded(
+fn with_look(
     startup: Startup,
-    loaded: LoadedLook,
+    config_dir: &Path,
     paths: runtime::StartupPaths,
-) -> Prepared {
-    let LoadedLook { appearance, theme } = loaded;
+) -> Boot {
+    let appearance = read_appearance(&appearance_path(config_dir));
+    let theme = read_theme(&startup.theme, &themes_dir(config_dir));
     let custom_settings = config::custom_settings(&appearance.value);
     let toasts = [appearance.warning, theme.warning]
         .into_iter()
@@ -252,7 +228,7 @@ fn seeded(
     let mut paths = paths;
     paths.config.seen.appearance = appearance.text;
     paths.config.seen.theme = theme.text;
-    Prepared {
+    Boot {
         startup: Startup {
             custom_settings,
             toasts,
@@ -267,128 +243,71 @@ fn seeded(
 }
 
 fn resolved_music_dir(
-    file: &ConfigToml,
-    override_path: Option<PathBuf>,
+    config_toml: &ConfigToml,
+    cli_path: Option<PathBuf>,
 ) -> Result<PathBuf, Error> {
-    let music_dir = override_path
-        .or_else(|| file.music_dir.clone())
+    let music_dir = cli_path
+        .or_else(|| config_toml.music_dir.clone())
         .or_else(dirs::audio_dir)
-        .ok_or(Error::MusicDirectoryUnset)?;
+        .ok_or(Error::MusicDirUnset)?;
     if music_dir.is_dir() {
         Ok(music_dir)
     } else {
-        Err(Error::MusicDirectoryMissing { path: music_dir })
+        Err(Error::MusicDirMissing { path: music_dir })
     }
 }
 
-struct LoadedPlaylist {
-    tracks: Vec<Arc<Track>>,
-    index: Option<PlaylistIndex>,
-    source: PlaylistSource,
-}
-
-impl LoadedPlaylist {
-    fn none() -> Self {
-        Self {
-            tracks: Vec::new(),
-            index: None,
-            source: PlaylistSource::Library,
-        }
-    }
-}
-
-fn loaded_playlist(library: &LibraryDirs, name: &str) -> Result<LoadedPlaylist, Error> {
+fn load_named_playlist(
+    startup: &mut Startup,
+    library: &LibraryDirs,
+    name: &str,
+) -> Result<(), Error> {
     let file_name =
         PlaylistFileName::new(name).map_err(|source| Error::PlaylistName {
             name: name.to_owned(),
             source,
         })?;
     let playlist = library::load_playlist(library, &file_name)?;
-    Ok(LoadedPlaylist {
-        index: playlist.playing_index(),
-        tracks: playlist.tracks,
-        source: PlaylistSource::Named,
-    })
-}
-
-struct Overrides {
-    theme: Option<String>,
-    volume: Option<u8>,
-}
-
-fn parse_cli_theme(raw: &str) -> ThemeChoice {
-    raw.parse().unwrap_or(ThemeChoice::Auto)
+    startup.playlist_index = playlist.playing_index();
+    startup.playlist_tracks = playlist.tracks;
+    startup.playlist_source = PlaylistSource::Named;
+    Ok(())
 }
 
 fn startup_from_file(
-    file: ConfigToml,
+    config_toml: ConfigToml,
     music_dir: PathBuf,
-    overrides: &Overrides,
+    cli: &Cli,
 ) -> Startup {
     Startup {
         music_dir,
-        playlist_tracks: Vec::new(),
-        playlist_index: None,
-        playlist_source: PlaylistSource::Library,
-        shuffle: Shuffle::Disabled,
-        crossfade: file.audio.crossfade,
-        replaygain: file.audio.replaygain,
-        output_device: file.audio.device,
-        sleep_presets: file.audio.sleep_presets.into(),
-        theme: overrides
-            .theme
-            .as_deref()
-            .map_or(file.theme, parse_cli_theme),
-        volume: overrides.volume.map_or(file.volume, Percent::clamped),
-        themes: Vec::new(),
-        custom_settings: Vec::new(),
-        toasts: Vec::new(),
+        shuffle: shuffle_requested(cli.shuffle),
+        audio: config_toml.audio.into(),
+        theme: cli.theme.as_deref().map_or(config_toml.theme, |raw| {
+            raw.parse().unwrap_or(ThemeChoice::Auto)
+        }),
+        volume: cli.volume.map_or(config_toml.volume, Percent::clamped),
+        ..Startup::default()
     }
 }
 
-fn with_playlist(
-    mut startup: Startup,
-    playlist: LoadedPlaylist,
-    shuffle: Shuffle,
-) -> Startup {
-    startup.shuffle = shuffle;
-    startup.playlist_tracks = playlist.tracks;
-    startup.playlist_index = playlist.index;
-    startup.playlist_source = playlist.source;
-    startup
-}
-
-pub(crate) fn prepare() -> Result<Prepared, Error> {
+pub(crate) fn boot() -> Result<Boot, Error> {
     let cli = Cli::parse();
-    let root = config_dir();
-    let config = root.join(CONFIG_FILE_NAME);
-    let LoadedConfig { file, text: keys } = read_config_file(&config)?;
-    let music_dir = resolved_music_dir(&file, cli.path)?;
-    let library = LibraryDirs::from_dirs()?;
-    let playlist = cli.playlist.as_deref().map_or_else(
-        || Ok(LoadedPlaylist::none()),
-        |name| loaded_playlist(&library, name),
-    )?;
-    let shuffle = shuffle_requested(cli.shuffle);
-    let overrides = Overrides {
-        theme: cli.theme,
-        volume: cli.volume,
-    };
-    let startup = with_playlist(
-        startup_from_file(file, music_dir, &overrides),
-        playlist,
-        shuffle,
-    );
-    let loaded = load_look(&root, &startup.theme);
-    let seen = runtime::SeenTexts {
-        config: keys,
-        ..runtime::SeenTexts::default()
-    };
-    let paths = runtime::StartupPaths {
-        config: config_paths(&root, &startup.theme, (config, seen)),
+    let config_dir = user_config_dir();
+    let config_file = config_dir.join(CONFIG_FILE_NAME);
+    let (config_toml, config_text) = read_config_file(&config_file)?;
+    let music_dir = resolved_music_dir(&config_toml, cli.path.clone())?;
+    let library = LibraryDirs::user()?;
+    let mut startup = startup_from_file(config_toml, music_dir, &cli);
+    if let Some(name) = cli.playlist.as_deref() {
+        load_named_playlist(&mut startup, &library, name)?;
+    }
+    let mut paths = runtime::StartupPaths {
+        config: config_paths(&config_dir, &startup.theme, config_file),
         library,
     };
-    Ok(seeded(startup, loaded, paths))
+    paths.config.seen.config = config_text;
+    Ok(with_look(startup, &config_dir, paths))
 }
 
 #[cfg(test)]
@@ -398,14 +317,7 @@ mod tests {
     use kernel::domain::{Shuffle, Startup, ThemeChoice, ThemeName};
     use rstest::rstest;
 
-    use crate::startup::{
-        CONFIG_FILE_NAME,
-        Cli,
-        Prepared,
-        load_look,
-        seeded,
-        shuffle_requested,
-    };
+    use crate::startup::{Boot, CONFIG_FILE_NAME, Cli, shuffle_requested, with_look};
 
     const COMPACT: &str = "[layout]\nmode = \"compact\"\n";
     const BROKEN: &str = "[volume]\nmode = \"text\"\n";
@@ -414,28 +326,28 @@ mod tests {
         ThemeChoice::Named(ThemeName::new(name.to_string()).unwrap())
     }
 
-    fn prepared(directory: &std::path::Path, theme: &ThemeChoice) -> Prepared {
-        let loaded = load_look(directory, theme);
+    fn booted(directory: &std::path::Path, theme: &ThemeChoice) -> Boot {
         let paths = runtime::StartupPaths {
             config: crate::startup::config_paths(
                 directory,
                 theme,
-                (
-                    directory.join(CONFIG_FILE_NAME),
-                    runtime::SeenTexts::default(),
-                ),
+                directory.join(CONFIG_FILE_NAME),
             ),
-            library: library::LibraryDirs::from_dirs().unwrap(),
+            library: library::LibraryDirs::user().unwrap(),
         };
-        seeded(Startup::default(), loaded, paths)
+        let startup = Startup {
+            theme: theme.clone(),
+            ..Startup::default()
+        };
+        with_look(startup, directory, paths)
     }
 
     #[rstest]
     #[case::valid(Some(COMPACT), "noir", &[])]
     #[case::broken(Some(BROKEN), "noir", &["sifr-ui.toml"])]
     #[case::missing(None, "noir", &[])]
-    #[case::missing_theme(None, "ghost", &["ghost"])]
-    fn a_broken_or_missing_config_falls_back_and_toasts_what_failed(
+    #[case::embedded_or_stock_theme(None, "ghost", &["ghost"])]
+    fn a_broken_appearance_or_missing_theme_falls_back_and_toasts_why(
         #[case] appearance: Option<&str>,
         #[case] theme: &str,
         #[case] toasts: &[&str],
@@ -445,38 +357,38 @@ mod tests {
             std::fs::write(directory.path().join("sifr-ui.toml"), text).unwrap();
         }
 
-        let prepared = prepared(directory.path(), &choice(theme));
+        let booted = booted(directory.path(), &choice(theme));
 
         let expected = if appearance == Some(COMPACT) {
             config::parse_appearance(COMPACT).unwrap()
         } else {
             AppearanceFile::default()
         };
-        assert_eq!(prepared.look.appearance, expected);
-        assert_eq!(prepared.startup.toasts.len(), toasts.len());
-        for (warning, fragment) in prepared.startup.toasts.iter().zip(toasts) {
+        assert_eq!(booted.look.appearance, expected);
+        assert_eq!(booted.startup.toasts.len(), toasts.len());
+        for (warning, fragment) in booted.startup.toasts.iter().zip(toasts) {
             assert!(warning.contains(fragment), "{warning} lacks {fragment}");
         }
-        assert!(!prepared.look.theme.name.is_empty());
+        assert!(!booted.look.theme.name.as_str().is_empty());
     }
 
     #[test]
     fn an_auto_theme_starts_as_noir_and_is_watched() {
         let directory = tempfile::tempdir().unwrap();
 
-        let prepared = prepared(directory.path(), &ThemeChoice::Auto);
+        let booted = booted(directory.path(), &ThemeChoice::Auto);
 
-        assert_eq!(prepared.look.theme.name, "noir");
-        assert_eq!(prepared.paths.config.theme.as_deref(), Some("noir"));
+        assert_eq!(booted.look.theme.name.as_str(), "noir");
+        assert_eq!(booted.paths.config.theme.as_deref(), Some("noir"));
     }
 
     #[test]
     fn a_named_theme_is_watched_under_its_name() {
         let directory = tempfile::tempdir().unwrap();
 
-        let prepared = prepared(directory.path(), &choice("ghost"));
+        let booted = booted(directory.path(), &choice("ghost"));
 
-        assert_eq!(prepared.paths.config.theme.as_deref(), Some("ghost"));
+        assert_eq!(booted.paths.config.theme.as_deref(), Some("ghost"));
     }
 
     #[test]
@@ -487,26 +399,26 @@ mod tests {
         let theme = config::embedded_theme("noir").unwrap();
         std::fs::write(directory.path().join("themes/mine.toml"), theme).unwrap();
 
-        let prepared = prepared(directory.path(), &choice("mine"));
+        let booted = booted(directory.path(), &choice("mine"));
 
-        let seen = prepared.paths.config.seen;
+        let seen = booted.paths.config.seen;
         assert_eq!(seen.appearance.as_deref(), Some(COMPACT));
         assert_eq!(seen.theme.as_deref(), Some(theme));
     }
 
     #[test]
-    fn the_custom_rows_and_the_shell_see_the_same_appearance() {
+    fn the_custom_settings_and_the_painter_see_the_same_appearance() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("sifr-ui.toml"), COMPACT).unwrap();
 
-        let prepared = prepared(directory.path(), &ThemeChoice::Auto);
+        let booted = booted(directory.path(), &ThemeChoice::Auto);
 
         assert_eq!(
-            prepared.startup.custom_settings,
-            config::custom_settings(&prepared.look.appearance)
+            booted.startup.custom_settings,
+            config::custom_settings(&booted.look.appearance)
         );
         assert_ne!(
-            prepared.startup.custom_settings,
+            booted.startup.custom_settings,
             config::custom_settings(&AppearanceFile::default())
         );
     }

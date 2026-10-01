@@ -7,22 +7,19 @@ use crate::{
         Effect,
         LibraryCmd,
         MacosCmd,
-        NowPlaying,
         Playback,
         PlaybackChange,
+        ScanMode,
     },
     domain::{
         Driver,
-        Loaded,
         Model,
-        Revision,
-        ScanMode,
         Settings,
         Shuffle,
         Startup,
         Themes,
         Toast,
-        playlist::{Playlist, Relist},
+        playlist::Playlist,
     },
     update::{machine::Machine, playlist::PlaylistMessage},
 };
@@ -30,53 +27,47 @@ use crate::{
 pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
     let toasts = startup.toasts;
     model.settings = Settings {
-        crossfade: startup.crossfade,
-        replaygain: startup.replaygain,
-        output_device: startup.output_device,
+        audio: startup.audio,
         output_devices: Vec::new(),
-        sleep_presets: startup.sleep_presets,
     };
     model.transport.volume = startup.volume;
     model.custom_settings = startup.custom_settings;
 
-    model.library = Loaded::Loading;
+    model.library = None;
     model.music_dir = startup.music_dir.clone();
     model.playlist_source = startup.playlist_source;
     model.themes = Themes {
         names: startup.themes,
         selected: startup.theme,
     };
-    model.playlist.relist(
-        startup.playlist_tracks,
-        startup
-            .playlist_index
-            .map_or(Relist::KeepCursor, Relist::At),
-    );
+    model
+        .playlist
+        .relist(startup.playlist_tracks, startup.playlist_index);
     let cmd = shuffled(&mut model.playlist, startup.shuffle);
 
     let mut effects = PlaybackChange::Stop.effects().to_vec();
-    effects.push(Effect::Macos(MacosCmd::NowPlaying(NowPlaying::default())));
-    let announced = announced(model, &toasts);
+    effects.push(Effect::Macos(MacosCmd::NowPlaying(None)));
+    let notices = toast_notices(model, &toasts);
     cmd.then(Cmd::Batch(effects))
         .then(startup_cmd(model, Driver::Audio))
         .then(startup_cmd(model, Driver::Library))
         .then(startup_cmd(model, Driver::Config))
-        .then(announced)
+        .then(notices)
 }
 
-pub(crate) fn startup_cmd(model: &Model, driver: Driver) -> Cmd {
+pub(crate) fn startup_cmd(model: &mut Model, driver: Driver) -> Cmd {
     match driver {
         Driver::Audio => Cmd::Batch(vec![
             Effect::Audio(AudioCmd::ListDevices),
-            Effect::Audio(AudioCmd::SetDevice(model.settings.output_device.clone())),
-            Effect::Audio(AudioCmd::SetCrossfade(model.settings.crossfade)),
-            Effect::Audio(AudioCmd::SetReplaygain(model.settings.replaygain)),
+            Effect::Audio(AudioCmd::SetDevice(model.settings.audio.device.clone())),
+            Effect::Audio(AudioCmd::SetCrossfade(model.settings.audio.crossfade)),
+            Effect::Audio(AudioCmd::SetReplaygain(model.settings.audio.replaygain)),
         ]),
         Driver::Library => Cmd::Batch(vec![
             Effect::Library(LibraryCmd::LoadFavorites),
             Effect::Library(LibraryCmd::Scan {
                 music_dir: model.music_dir.clone(),
-                revision: Revision::UNSTAMPED,
+                revision: model.revisions.issue_scan(),
                 mode: ScanMode::Cached,
             }),
         ]),
@@ -84,18 +75,20 @@ pub(crate) fn startup_cmd(model: &Model, driver: Driver) -> Cmd {
             Effect::Config(ConfigCmd::SelectTheme(model.themes.selected.clone())).into()
         }
         Driver::Macos => Cmd::Batch(vec![
-            Effect::Macos(MacosCmd::NowPlaying(NowPlaying::default())),
+            Effect::Macos(MacosCmd::NowPlaying(None)),
             Effect::Macos(MacosCmd::PlaybackState(Playback::Paused)),
             Effect::Macos(MacosCmd::Volume(model.transport.volume)),
         ]),
     }
 }
 
-fn announced(model: &mut Model, toasts: &[String]) -> Cmd {
+fn toast_notices(model: &mut Model, toasts: &[String]) -> Cmd {
     if toasts.is_empty() {
         return Cmd::None;
     }
-    model.workspace.show(Toast::error(toasts.join("\n")))
+    model
+        .workspace
+        .show(Toast::error(toasts.join("\n")), &mut model.revisions)
 }
 
 fn shuffled(playlist: &mut Playlist, shuffle: Shuffle) -> Cmd {
@@ -119,6 +112,7 @@ mod tests {
     use crate::{
         cmd::{Effect, LibraryCmd},
         domain::{
+            AudioSettings,
             Bounded,
             Crossfade,
             DeviceName,
@@ -128,6 +122,7 @@ mod tests {
             PlaylistIndex,
             Replaygain,
             Shuffle,
+            SleepPresets,
             Startup,
             ThemeChoice,
             ThemeName,
@@ -149,13 +144,14 @@ mod tests {
             playlist_index: Some(PlaylistIndex::new(0)),
             playlist_source: PlaylistSource::Named,
             shuffle: Shuffle::Enabled,
-            crossfade: Crossfade::clamped(Duration::from_secs(3)),
-            replaygain: Replaygain::On,
-            output_device: OutputDevice::Named(
-                DeviceName::new("Speakers".to_string()).unwrap(),
-            ),
-            sleep_presets: vec![Duration::from_secs(900), Duration::from_secs(1800)]
-                .into(),
+            audio: AudioSettings {
+                crossfade: Crossfade::clamped(Duration::from_secs(3)),
+                replaygain: Replaygain::On,
+                device: OutputDevice::Named(
+                    DeviceName::new("Speakers".to_string()).unwrap(),
+                ),
+                sleep_presets: SleepPresets::from_minutes(&[15, 30]).unwrap(),
+            },
             theme: ThemeChoice::Named(ThemeName::from_static("dark")),
             volume: Percent::clamped(42),
             themes: vec![
@@ -168,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_announces_raise_one_error_toast() {
+    fn startup_notices_raise_one_error_toast() {
         let mut model = Model::default();
         let startup = Startup {
             toasts: vec!["broken a".to_string(), "broken b".to_string()],
@@ -211,7 +207,7 @@ mod tests {
     fn startup_leaves_library_loading_and_seeds_the_playlist() {
         let model = startup_model();
 
-        assert!(model.library.is_loading());
+        assert!(model.library.is_none());
         assert_eq!(model.playlist.tracks.len(), 2);
         assert_eq!(model.playlist.playing_index(), Some(PlaylistIndex::new(0)));
     }
@@ -257,13 +253,10 @@ mod tests {
 
     fn idempotence_fields(model: &Model) -> impl std::fmt::Debug + PartialEq {
         (
-            model.settings.crossfade,
-            model.settings.replaygain,
-            model.settings.output_device.clone(),
-            model.settings.sleep_presets.clone(),
+            model.settings.audio.clone(),
             model.transport.volume,
             model.favorites.clone(),
-            model.library.is_loading(),
+            model.library.is_none(),
             model.playlist.tracks.len(),
             model.playlist.playing_index(),
             model.themes.clone(),

@@ -54,7 +54,7 @@ where
         }
         let painted = self
             .shell
-            .paint(self.runtime.view(now))
+            .paint(self.runtime.frame(now))
             .map_err(Error::Paint)?;
         self.repaint = Repaint::Settled;
         self.last_paint = Some(now);
@@ -64,7 +64,7 @@ where
         if let Some(visible_rows) = painted.visible_rows {
             self.step_and_repaint(Message::Viewport { visible_rows }, Source::Event);
         }
-        for message in painted.failures {
+        for message in painted.toasts {
             self.step_and_repaint(message, Source::Event);
         }
         Ok(())
@@ -76,7 +76,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crossbeam_channel::{bounded, unbounded};
-    use kernel::{Message, Moment, WorkspaceRequest, domain::Toast};
+    use kernel::{Message, Moment, domain::Toast};
     use rstest::rstest;
 
     use crate::{
@@ -94,8 +94,8 @@ mod tests {
         let (keys, input) = unbounded();
         let mut shell = Scripted::new(keys, usize::MAX);
         let now = Instant::now();
-        let view = fixture.runtime.view(now);
-        let moment = Moment::new(view.now.since_epoch() + Duration::from_millis(10));
+        let frame = fixture.runtime.frame(now);
+        let moment = Moment::new(frame.now.since_epoch() + Duration::from_millis(10));
         let mut event_loop = EventLoop::new(&mut fixture.runtime, &mut shell, &input);
         event_loop.repaint = Repaint::Settled;
 
@@ -106,13 +106,11 @@ mod tests {
     }
 
     #[test]
-    fn painted_failures_are_stepped_in_the_batch() {
+    fn painted_toasts_are_stepped_in_the_batch() {
         let mut fixture = fixture();
         let (keys, input) = bounded(1);
         let mut shell = Scripted::new(keys, 1);
-        shell.pending_failures = vec![Message::Workspace(WorkspaceRequest::ShowToast(
-            Toast::error("fail".to_owned()),
-        ))];
+        shell.pending_failures = vec![Message::Toast(Toast::error("fail".to_owned()))];
 
         let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 

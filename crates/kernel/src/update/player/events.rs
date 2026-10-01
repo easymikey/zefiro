@@ -1,14 +1,15 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::{
-    cmd::{AudioCmd, Cmd, Effect, LibraryCmd, PlaybackChange},
+    cmd::{AudioCmd, Cmd, Effect, LibraryCmd, PlaybackChange, TrackRequest},
     domain::{Moment, Pause, Player, Playhead, Preload, Revision, Track},
     message::AudioError,
     update::player::{
         Anchor,
+        Stamp,
         StartOrigin,
         Transition,
-        handoff_effects,
+        handover_effects,
         seek_effect,
         start,
         stopped_effects,
@@ -22,6 +23,7 @@ pub struct Lookahead {
     pub next: Option<Arc<Track>>,
     pub duration: Duration,
     pub now: Moment,
+    pub revision: Revision,
 }
 
 impl Lookahead {
@@ -43,11 +45,10 @@ impl Lookahead {
         let (preload, cmd) = match self.next {
             Some(next) if self.is_preload_due(at) => {
                 let cmd = Cmd::Batch(vec![
-                    Effect::Audio(AudioCmd::Preload {
-                        path: next.path().to_path_buf(),
-                        gain: next.audio_format().replay_gain,
-                        revision: Revision::UNSTAMPED,
-                    }),
+                    Effect::Audio(AudioCmd::Preload(TrackRequest::for_track(
+                        &next,
+                        self.revision,
+                    ))),
                     Effect::Library(LibraryCmd::PrefetchCover(
                         next.path().to_path_buf(),
                     )),
@@ -75,7 +76,7 @@ impl Player {
                     Some(total) => Arc::new(track.with_duration(total)),
                     None => track,
                 };
-                let head = Playhead::anchored(at, anchor.now, anchor.speed);
+                let head = Playhead::anchored(at, anchor.since, anchor.speed);
                 Ok((
                     Player::Playing {
                         track,
@@ -158,21 +159,9 @@ impl Player {
                 let anchored = Playhead::anchored(offset, lookahead.now, head.speed);
                 Ok(lookahead.preloading(track, anchored))
             }
-            (
-                Player::Playing {
-                    track,
-                    head,
-                    preload,
-                },
-                None,
-            ) => Ok((
-                Player::Playing {
-                    track,
-                    head: Playhead::anchored(offset, lookahead.now, head.speed),
-                    preload,
-                },
-                Cmd::None,
-            )),
+            (playing @ Player::Playing { .. }, None) => {
+                playing.reported(offset, lookahead.now)
+            }
             (Player::Paused { track, pause, .. }, Some(a)) => Ok((
                 Player::Paused {
                     track,
@@ -216,7 +205,7 @@ impl Player {
         match self {
             Player::Playing { track, head, .. } => {
                 let track = next.unwrap_or(track);
-                let effects = handoff_effects(&track, PlaybackChange::Play);
+                let effects = handover_effects(&track, PlaybackChange::Play, now);
                 Ok((
                     Player::Playing {
                         track,
@@ -228,7 +217,7 @@ impl Player {
             }
             Player::Paused { track, pause, .. } => {
                 let track = next.unwrap_or(track);
-                let effects = handoff_effects(&track, PlaybackChange::Pause);
+                let effects = handover_effects(&track, PlaybackChange::Pause, now);
                 Ok((
                     Player::Paused {
                         track,
@@ -242,11 +231,11 @@ impl Player {
         }
     }
 
-    pub(crate) fn ended(self, next: Option<Arc<Track>>) -> Transition {
+    pub(crate) fn ended(self, next: Option<Arc<Track>>, stamp: Stamp) -> Transition {
         match self {
             Player::Playing { .. } => Ok(next.map_or_else(
                 || (Player::Stopped, stopped_effects()),
-                |track| start(track, StartOrigin::TrackEnded),
+                |track| start(track, StartOrigin::TrackEnded, stamp),
             )),
             other @ (Player::Paused { .. }
             | Player::Loading { .. }
@@ -256,12 +245,8 @@ impl Player {
 }
 
 #[must_use]
-pub(crate) fn next_decision(
-    head: Playhead,
-    lookahead: &Lookahead,
-    now: Moment,
-) -> Option<Duration> {
-    let current = head.position_at(now);
+pub(crate) fn next_decision(head: Playhead, lookahead: &Lookahead) -> Option<Duration> {
+    let current = head.position_at(lookahead.now);
     let target = [
         lookahead.preload_due_at(),
         lookahead.ab_loop.map(|(_, b)| b),
@@ -270,7 +255,7 @@ pub(crate) fn next_decision(
     .flatten()
     .filter(|&point| point > current)
     .min()?;
-    Some((target - current).div_f32(head.speed.value()))
+    Some((target - current).div_f32(head.speed.get()))
 }
 
 #[cfg(test)]
@@ -280,7 +265,16 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        domain::{AudioFormat, Bounded, Moment, Playhead, Speed, Tags, Track},
+        domain::{
+            AudioFormat,
+            Bounded,
+            Moment,
+            Playhead,
+            Revision,
+            Speed,
+            Tags,
+            Track,
+        },
         update::player::events::{Lookahead, next_decision},
     };
 
@@ -319,6 +313,7 @@ mod tests {
             next: setup.next,
             duration: Duration::from_secs(setup.duration),
             now: Moment::new(Duration::ZERO),
+            revision: Revision::default(),
         }
     }
 
@@ -363,7 +358,7 @@ mod tests {
         #[case] lookahead: Lookahead,
         #[case] expected_secs: Option<u64>,
     ) {
-        let delay = next_decision(head, &lookahead, Moment::new(Duration::ZERO));
+        let delay = next_decision(head, &lookahead);
         assert_eq!(delay, expected_secs.map(Duration::from_secs));
     }
 }

@@ -12,7 +12,7 @@ use crate::unit::support::{
     BACKGROUND,
     COVER,
     PROGRESS_LINE,
-    Scenery,
+    SceneSources,
     ToastPresence,
     animation_frame,
     model_with_tracks,
@@ -422,9 +422,9 @@ fn a_second_toast_while_one_is_showing_slides_in_again() {
 
 #[test]
 fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
-    let sources = Scenery::new(model_with_tracks(3));
+    let sources = SceneSources::new(model_with_tracks(3));
     let scene = sources.scene();
-    let layout = FrameLayout::new(&scene.layout_inputs(), crate::unit::support::SCREEN);
+    let layout = FrameLayout::new(&scene.layout_parts(), crate::unit::support::SCREEN);
 
     let backdrop = Backdrop {
         animations: Animations::On,

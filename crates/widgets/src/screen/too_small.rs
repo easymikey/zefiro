@@ -10,29 +10,14 @@ use crate::{
         span::{line, text},
         text::truncate,
     },
-    theme::ActiveTheme,
+    theme::{ActiveTheme, Role},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TooSmallGlyphs {
-    headline: &'static str,
-    resize_prefix: &'static str,
-    dimension_separator: &'static str,
-    current_open: &'static str,
-    current_close: &'static str,
-}
-
-impl Default for TooSmallGlyphs {
-    fn default() -> Self {
-        Self {
-            headline: "Terminal too small.",
-            resize_prefix: "Resize to at least ",
-            dimension_separator: "\u{00d7}",
-            current_open: "(now ",
-            current_close: ")",
-        }
-    }
-}
+const HEADLINE: &str = "Terminal too small.";
+const RESIZE_PREFIX: &str = "Resize to at least ";
+const DIMENSION_SEPARATOR: &str = "\u{00d7}";
+const CURRENT_OPEN: &str = "(now ";
+const CURRENT_CLOSE: &str = ")";
 
 #[derive(Debug, Clone, Copy)]
 pub struct TooSmallNotice<'a> {
@@ -42,28 +27,20 @@ pub struct TooSmallNotice<'a> {
 
 impl Widget for &TooSmallNotice<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        let glyphs = TooSmallGlyphs::default();
-        let text_style = Style::default().fg(self.theme.text());
-        let dim_style = Style::default().fg(self.theme.dim());
+        let text_style = Style::default().fg(self.theme.role(Role::Text));
+        let dim_style = Style::default().fg(self.theme.role(Role::Dim));
         let width = usize::from(area.width);
         let fit = |line: String| truncate(&line, width).into_owned();
         let resize_line = fit(format!(
             "{}{}{}{}",
-            glyphs.resize_prefix,
-            self.minimum.width,
-            glyphs.dimension_separator,
-            self.minimum.height
+            RESIZE_PREFIX, self.minimum.width, DIMENSION_SEPARATOR, self.minimum.height
         ));
         let current_line = fit(format!(
             "{}{}{}{}{}",
-            glyphs.current_open,
-            area.width,
-            glyphs.dimension_separator,
-            area.height,
-            glyphs.current_close
+            CURRENT_OPEN, area.width, DIMENSION_SEPARATOR, area.height, CURRENT_CLOSE
         ));
         let lines = vec![
-            line([text(fit(glyphs.headline.to_string())).style(text_style)])
+            line([text(fit(HEADLINE.to_string())).style(text_style)])
                 .alignment(Alignment::Center),
             line([text(resize_line).style(text_style)]).alignment(Alignment::Center),
             line([text(current_line).style(dim_style)]).alignment(Alignment::Center),

@@ -55,7 +55,7 @@ pub(crate) fn fit_format_chips(
 #[cfg(test)]
 mod tests {
     use kernel::domain::AudioFormat;
-    use ratatui::{style::Color, text::Line};
+    use ratatui::style::Color;
     use rstest::rstest;
 
     use crate::primitive::{chip::ChipColors, format_chips::fit_format_chips};
@@ -65,13 +65,6 @@ mod tests {
             border: Color::Gray,
             value: Color::White,
         }
-    }
-
-    fn line_text(line: &Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.to_string())
-            .collect()
     }
 
     const FULL: &str = "[ MP3 ] [ 320 KBPS ] [ 44.1 KHZ ]";
@@ -111,6 +104,6 @@ mod tests {
         #[case] expected: Option<&str>,
     ) {
         let line = fit_format_chips(&audio_format, colors(), width);
-        assert_eq!(line.as_ref().map(line_text).as_deref(), expected);
+        assert_eq!(line.as_ref().map(ToString::to_string).as_deref(), expected);
     }
 }

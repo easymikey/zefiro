@@ -1,65 +1,76 @@
 use std::ops::Deref;
 
-use config::Rgb;
-use raster::{BarColorOverrides, BarColors};
+use config::{ProgressConfig, Rgb};
 use ratatui::style::Color;
 
 use crate::theme::{
     ColorDepth,
     Role,
     Theme,
-    bars::{FillColors, bar_colors},
     contrast::{MIN_MARKER_CONTRAST, raise_contrast},
     rgb::{color_at_depth, lerp_rgb, scale_channel},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BarStyle {
+    pub(crate) fill: Color,
+    pub(crate) track: Color,
+}
+
+impl BarStyle {
+    #[must_use]
+    pub(crate) fn progress(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            fill: theme.color(theme.fill.unwrap_or(theme.colors.role(Role::Accent))),
+            track: theme
+                .color(theme.track.unwrap_or(theme.colors.role(Role::BarGroove))),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn volume(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            fill: theme.role(Role::Accent),
+            track: theme.role(Role::BarGroove),
+        }
+    }
+}
+
+/// Colour contract for themed components: a component's colours come from
+/// `XStyle::from_theme`; painters take `&XStyle` and never read roles.
+/// Components following it now: progress and volume bars (`BarStyle`), vinyl
+/// (`VinylStyle`).
 #[derive(Debug, Clone, Copy)]
 pub struct ActiveTheme<'a> {
     pub theme: &'a Theme,
-    pub depth: ColorDepth,
-    bars: BarColorOverrides,
+    pub color_depth: ColorDepth,
+    fill: Option<Rgb>,
+    track: Option<Rgb>,
 }
 
 impl<'a> ActiveTheme<'a> {
     #[must_use]
-    pub fn new(theme: &'a Theme, depth: ColorDepth) -> Self {
+    pub fn new(theme: &'a Theme, color_depth: ColorDepth) -> Self {
         Self {
             theme,
-            depth,
-            bars: BarColorOverrides::default(),
+            color_depth,
+            fill: None,
+            track: None,
         }
     }
 
     #[must_use]
-    pub fn with_bars(self, bars: BarColorOverrides) -> Self {
-        Self { bars, ..self }
-    }
-
-    #[must_use]
-    pub fn volume_bar_colors(&self) -> BarColors {
-        bar_colors(BarColorOverrides::default(), self.theme)
-    }
-
-    fn fill_colors(&self, bar: BarColors) -> FillColors {
-        FillColors {
-            accent: self.color(bar.fill),
-            dim: self.color(bar.trough),
+    pub fn with_progress(self, progress: &ProgressConfig) -> Self {
+        Self {
+            fill: progress.fill,
+            track: progress.track,
+            ..self
         }
-    }
-
-    #[must_use]
-    pub fn progress_colors(&self) -> FillColors {
-        self.fill_colors(bar_colors(self.bars, self.theme))
-    }
-
-    #[must_use]
-    pub fn volume_fill_colors(&self) -> FillColors {
-        self.fill_colors(self.volume_bar_colors())
     }
 
     #[must_use]
     pub fn color(&self, rgb: Rgb) -> Color {
-        color_at_depth(rgb, self.depth)
+        color_at_depth(rgb, self.color_depth)
     }
 
     #[must_use]
@@ -75,21 +86,6 @@ impl<'a> ActiveTheme<'a> {
     #[must_use]
     pub fn role(&self, role: Role) -> Color {
         self.color(self.colors.role(role))
-    }
-
-    #[must_use]
-    pub fn text(&self) -> Color {
-        self.role(Role::Text)
-    }
-
-    #[must_use]
-    pub fn accent(&self) -> Color {
-        self.role(Role::Accent)
-    }
-
-    #[must_use]
-    pub fn secondary_accent(&self) -> Color {
-        self.role(Role::Accent2)
     }
 
     #[must_use]
@@ -111,41 +107,6 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
-    pub fn dim(&self) -> Color {
-        self.role(Role::Dim)
-    }
-
-    #[must_use]
-    pub fn border(&self) -> Color {
-        self.role(Role::Frame)
-    }
-
-    #[must_use]
-    pub fn window_background(&self) -> Color {
-        self.role(Role::WindowBackground)
-    }
-
-    #[must_use]
-    pub fn background(&self) -> Color {
-        self.role(Role::Background)
-    }
-
-    #[must_use]
-    pub fn selection_foreground(&self) -> Color {
-        self.role(Role::SelectionForeground)
-    }
-
-    #[must_use]
-    pub fn selection_background(&self) -> Color {
-        self.role(Role::SelectionBackground)
-    }
-
-    #[must_use]
-    pub fn highlight(&self) -> Color {
-        self.role(Role::Highlight)
-    }
-
-    #[must_use]
     pub fn alert(&self) -> Color {
         let [_, _, hot] = self.colors.spectrum;
         self.color(hot)
@@ -161,13 +122,14 @@ impl<'a> Deref for ActiveTheme<'a> {
 
 #[cfg(test)]
 mod tests {
+    use config::Rgb;
     use ratatui::style::Color;
 
     use crate::theme::{
         ColorDepth,
         Role,
         Theme,
-        active_theme::ActiveTheme,
+        active_theme::{ActiveTheme, BarStyle},
         color_at_depth,
     };
 
@@ -199,5 +161,28 @@ mod tests {
             theme.colors.role(Role::Frame),
             theme.colors.role(Role::Frame)
         );
+    }
+
+    #[test]
+    fn an_unset_progress_config_is_the_themes_accent_and_groove() {
+        let theme = noir();
+        let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        assert_eq!(BarStyle::progress(&active), BarStyle::volume(&active));
+        assert_eq!(BarStyle::progress(&active).fill, active.role(Role::Accent));
+    }
+
+    #[test]
+    fn a_set_progress_config_wins_over_the_theme() {
+        let theme = noir();
+        let progress = config::ProgressConfig {
+            fill: Some(Rgb([255, 0, 0])),
+            track: Some(Rgb([0, 255, 0])),
+            ..config::ProgressConfig::default()
+        };
+        let active =
+            ActiveTheme::new(&theme, ColorDepth::TrueColor).with_progress(&progress);
+        assert_eq!(BarStyle::progress(&active).fill, Color::Rgb(255, 0, 0));
+        assert_eq!(BarStyle::progress(&active).track, Color::Rgb(0, 255, 0));
+        assert_ne!(BarStyle::progress(&active), BarStyle::volume(&active));
     }
 }

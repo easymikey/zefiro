@@ -1,6 +1,5 @@
 use kernel::domain::{Track, format_time};
 use ratatui::{
-    buffer::Buffer,
     layout::Rect,
     text::Line,
     widgets::{Paragraph, Widget},
@@ -12,11 +11,11 @@ use crate::{
     primitive::{
         canvas::Canvas,
         format_chips::kilohertz,
-        glyphs::{TrackDetailsGlyphs, TruncateGlyphs},
+        glyphs,
         span::{line, text},
-        text::{truncate_from_left, truncate_to_width},
+        text::{truncate, truncate_from_left},
     },
-    theme::ActiveTheme,
+    theme::{ActiveTheme, Role},
 };
 
 const MIN_WIDTH: u16 = 28;
@@ -58,11 +57,10 @@ impl TrackDetailsOverlay<'_> {
     }
 
     fn modal(&self) -> Modal<'static> {
-        let glyphs = TrackDetailsGlyphs::default();
         let rows = self.rows();
         let content_width = rows
             .iter()
-            .filter(|detail_row| detail_row.label != glyphs.path_label)
+            .filter(|detail_row| detail_row.label != glyphs::track_details::PATH_LABEL)
             .map(|detail_row| {
                 u16::try_from(detail_row.prefix.width() + detail_row.value.width())
                     .unwrap_or(u16::MAX)
@@ -71,56 +69,40 @@ impl TrackDetailsOverlay<'_> {
             .unwrap_or(0)
             .max(MIN_WIDTH);
         Modal {
-            title: glyphs.title_word,
+            title: glyphs::track_details::TITLE_WORD,
             size: ModalSize::Dialog {
                 min_width: MIN_WIDTH,
                 content_width,
                 content_lines: u16::try_from(rows.len()).unwrap_or(u16::MAX),
             },
-            hint: Some(line([text(glyphs.hint).fg(self.theme.dim())])),
-            border: self.theme.accent(),
-            window_background: self.theme.window_background(),
+            hint: Some(line([
+                text(glyphs::track_details::HINT).fg(self.theme.role(Role::Dim))
+            ])),
+            border: self.theme.role(Role::Accent),
+            window_background: self.theme.role(Role::WindowBackground),
         }
     }
 
     fn rows(&self) -> Vec<TrackDetailsRow> {
-        value_rows(
-            self.track,
-            DetailsRowParts {
-                glyphs: TrackDetailsGlyphs::default(),
-                leader_column: LEADER_COLUMN,
-            },
-        )
+        value_rows(self.track)
     }
 
     fn lines(&self, width: usize) -> Vec<Line<'static>> {
-        let glyphs = TrackDetailsGlyphs::default();
         self.rows()
             .into_iter()
             .map(|detail_row| {
                 let budget = width.saturating_sub(detail_row.prefix.width());
-                let value = if detail_row.label == glyphs.path_label {
+                let value = if detail_row.label == glyphs::track_details::PATH_LABEL {
                     truncate_from_left(&detail_row.value, budget).into_owned()
                 } else {
-                    truncate_to_width(
-                        &detail_row.value,
-                        budget,
-                        TruncateGlyphs::default(),
-                    )
-                    .into_owned()
+                    truncate(&detail_row.value, budget).into_owned()
                 };
                 line([
-                    text(detail_row.prefix).fg(self.theme.dim()),
-                    text(value).fg(self.theme.text()),
+                    text(detail_row.prefix).fg(self.theme.role(Role::Dim)),
+                    text(value).fg(self.theme.role(Role::Text)),
                 ])
             })
             .collect()
-    }
-}
-
-impl Widget for &TrackDetailsOverlay<'_> {
-    fn render(self, area: Rect, buffer: &mut Buffer) {
-        self.render_in(self.areas(area), Canvas { area, buffer });
     }
 }
 
@@ -130,55 +112,49 @@ struct TrackDetailsRow {
     value: String,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct DetailsRowParts {
-    glyphs: TrackDetailsGlyphs,
-    leader_column: usize,
-}
-
-fn value_rows(track: &Track, context: DetailsRowParts) -> Vec<TrackDetailsRow> {
-    let glyphs = context.glyphs;
+fn value_rows(track: &Track) -> Vec<TrackDetailsRow> {
     let tags = track.tags();
     [
         (
-            glyphs.title_label,
+            glyphs::track_details::TITLE_LABEL,
             RowPrefix::Leader,
-            missing_or_value(tags.title.clone(), glyphs),
+            missing_or_value(tags.title.clone()),
         ),
         (
-            glyphs.artist_label,
+            glyphs::track_details::ARTIST_LABEL,
             RowPrefix::Leader,
-            missing_or_value(tags.artist.clone(), glyphs),
+            missing_or_value(tags.artist.clone()),
         ),
         (
-            glyphs.album_label,
+            glyphs::track_details::ALBUM_LABEL,
             RowPrefix::Leader,
-            missing_or_value(tags.album.clone(), glyphs),
+            missing_or_value(tags.album.clone()),
         ),
         (
-            glyphs.year_label,
+            glyphs::track_details::YEAR_LABEL,
             RowPrefix::Plain,
-            missing_or_value(tags.date.clone(), glyphs),
+            missing_or_value(tags.date.clone()),
         ),
         (
-            glyphs.track_label,
+            glyphs::track_details::TRACK_LABEL,
             RowPrefix::Plain,
-            track_number(track, glyphs),
+            track_number(track),
         ),
         (
-            glyphs.duration_label,
+            glyphs::track_details::DURATION_LABEL,
             RowPrefix::Plain,
-            track
-                .duration()
-                .map_or_else(|| glyphs.missing.to_string(), format_time),
+            track.duration().map_or_else(
+                || glyphs::track_details::MISSING.to_string(),
+                format_time,
+            ),
         ),
         (
-            glyphs.format_label,
+            glyphs::track_details::FORMAT_LABEL,
             RowPrefix::Plain,
-            format_summary(track, glyphs),
+            format_summary(track),
         ),
         (
-            glyphs.path_label,
+            glyphs::track_details::PATH_LABEL,
             RowPrefix::Plain,
             track.path().display().to_string(),
         ),
@@ -186,7 +162,7 @@ fn value_rows(track: &Track, context: DetailsRowParts) -> Vec<TrackDetailsRow> {
     .into_iter()
     .map(|(label, shape, value)| TrackDetailsRow {
         label,
-        prefix: shape.prefix(label, context),
+        prefix: shape.prefix(label),
         value,
     })
     .collect()
@@ -199,41 +175,41 @@ enum RowPrefix {
 }
 
 impl RowPrefix {
-    fn prefix(self, label: &str, context: DetailsRowParts) -> String {
+    fn prefix(self, label: &str) -> String {
         match self {
-            Self::Leader => leader_prefix(label, context),
-            Self::Plain => plain_prefix(label, context.glyphs),
+            Self::Leader => leader_prefix(label),
+            Self::Plain => plain_prefix(label),
         }
     }
 }
 
-fn leader_prefix(label: &str, context: DetailsRowParts) -> String {
-    let glyphs = context.glyphs;
-    let dashes = context
-        .leader_column
+fn leader_prefix(label: &str) -> String {
+    let dashes = LEADER_COLUMN
         .saturating_sub(label.width())
         .saturating_sub(1)
         .max(1);
     format!(
         "{label} {}{}",
-        glyphs.leader_dash.to_string().repeat(dashes),
-        glyphs.gap
+        glyphs::track_details::LEADER_DASH
+            .to_string()
+            .repeat(dashes),
+        glyphs::track_details::GAP
     )
 }
 
-fn plain_prefix(label: &str, glyphs: TrackDetailsGlyphs) -> String {
-    format!("{label}{}", glyphs.gap)
+fn plain_prefix(label: &str) -> String {
+    format!("{label}{}", glyphs::track_details::GAP)
 }
 
-fn track_number(track: &Track, glyphs: TrackDetailsGlyphs) -> String {
+fn track_number(track: &Track) -> String {
     match (track.tags().track, track.tags().track_total) {
         (Some(number), Some(total)) => format!("{number}/{total}"),
         (Some(number), None) => number.to_string(),
-        (None, _) => glyphs.missing.to_string(),
+        (None, _) => glyphs::track_details::MISSING.to_string(),
     }
 }
 
-fn format_summary(track: &Track, glyphs: TrackDetailsGlyphs) -> String {
+fn format_summary(track: &Track) -> String {
     let audio_format = track.audio_format();
     let mut parts = Vec::new();
     if let Some(format) = &audio_format.format {
@@ -246,14 +222,14 @@ fn format_summary(track: &Track, glyphs: TrackDetailsGlyphs) -> String {
         parts.push(format!("{:.1} kHz", kilohertz(sample_rate_hz)));
     }
     if parts.is_empty() {
-        glyphs.missing.to_string()
+        glyphs::track_details::MISSING.to_string()
     } else {
         parts.join(" · ")
     }
 }
 
-fn missing_or_value(tag: Option<String>, glyphs: TrackDetailsGlyphs) -> String {
-    tag.unwrap_or_else(|| glyphs.missing.to_string())
+fn missing_or_value(tag: Option<String>) -> String {
+    tag.unwrap_or_else(|| glyphs::track_details::MISSING.to_string())
 }
 
 #[cfg(test)]
@@ -263,8 +239,8 @@ mod tests {
     use kernel::domain::{AudioFormat, Tags, Track};
 
     use crate::{
-        overlay::track_details::TrackDetailsOverlay,
-        scene::fixtures::{noir, painted},
+        overlay::{rendered_canvas, track_details::TrackDetailsOverlay},
+        test_support::noir,
         theme::{ActiveTheme, ColorDepth},
     };
 
@@ -299,7 +275,12 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             avoid: &[],
         };
-        insta::assert_snapshot!(painted(&overlay, 80, 24));
+        insta::assert_snapshot!(
+            rendered_canvas(80, 24, |canvas| {
+                overlay.render_in(overlay.areas(canvas.area), canvas);
+            })
+            .to_string()
+        );
     }
 
     #[test]
@@ -321,7 +302,12 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             avoid: &[],
         };
-        insta::assert_snapshot!(painted(&overlay, 48, 16));
+        insta::assert_snapshot!(
+            rendered_canvas(48, 16, |canvas| {
+                overlay.render_in(overlay.areas(canvas.area), canvas);
+            })
+            .to_string()
+        );
     }
 
     #[test]
@@ -333,6 +319,9 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             avoid: &[],
         };
-        let _ = painted(&overlay, 4, 3);
+        let _ = rendered_canvas(4, 3, |canvas| {
+            overlay.render_in(overlay.areas(canvas.area), canvas);
+        })
+        .to_string();
     }
 }

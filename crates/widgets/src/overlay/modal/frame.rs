@@ -8,9 +8,10 @@ use ratatui::{
 
 use crate::overlay::modal::place::{
     ContentSize,
+    DIALOG_SCREEN_MARGIN,
     FrameWidth,
+    LIST_SCREEN_MARGIN,
     PlacedSize,
-    anchored_frame,
     content_size,
     padded_content,
     place,
@@ -63,58 +64,9 @@ pub(crate) struct PlacedModal<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ModalGlyphs {
-    pub(crate) title_prefix: &'static str,
-    pub(crate) title_suffix: &'static str,
-    pub(crate) shade: &'static str,
-}
-
-impl Default for ModalGlyphs {
-    fn default() -> Self {
-        Self {
-            title_prefix: " ",
-            title_suffix: " ",
-            shade: "\u{2591}",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ModalLayout {
-    pub(crate) border_cells: u16,
-    pub(crate) padding_x: u16,
-    pub(crate) padding_top: u16,
-    pub(crate) hint_rows: u16,
-    pub(crate) list_screen_margin: u16,
-    pub(crate) dialog_screen_margin: u16,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Hint {
     Present,
     Absent,
-}
-
-impl ModalLayout {
-    pub(crate) fn hint_rows_for(self, hint: Hint) -> u16 {
-        match hint {
-            Hint::Present => self.hint_rows,
-            Hint::Absent => 0,
-        }
-    }
-}
-
-impl Default for ModalLayout {
-    fn default() -> Self {
-        Self {
-            border_cells: 2,
-            padding_x: 1,
-            padding_top: 0,
-            hint_rows: 1,
-            list_screen_margin: 2,
-            dialog_screen_margin: 4,
-        }
-    }
 }
 
 impl<'a> Modal<'a> {
@@ -126,7 +78,7 @@ impl<'a> Modal<'a> {
             Hint::Absent
         };
         let outer = self.outer(ModalBounds { area, avoid }, hint);
-        let content = padded_content(outer, ModalLayout::default());
+        let content = padded_content(outer);
         let (body, hint_row) = split_hint_row(content, hint);
         ModalAreas {
             outer,
@@ -136,7 +88,6 @@ impl<'a> Modal<'a> {
     }
 
     fn outer(&self, bounds: ModalBounds<'_>, hint: Hint) -> Rect {
-        let layout = ModalLayout::default();
         match self.size {
             ModalSize::List {
                 content_width,
@@ -144,13 +95,12 @@ impl<'a> Modal<'a> {
             } => {
                 let (width, height) = content_size(
                     bounds.area,
-                    layout,
                     ContentSize {
                         min_width: 0,
                         content_width,
                         content_rows,
                         hint,
-                        screen_margin: layout.list_screen_margin,
+                        screen_margin: LIST_SCREEN_MARGIN,
                     },
                 );
                 place(bounds.area, PlacedSize { width, height }, bounds.avoid)
@@ -162,13 +112,12 @@ impl<'a> Modal<'a> {
             } => {
                 let (width, height) = content_size(
                     bounds.area,
-                    layout,
                     ContentSize {
                         min_width,
                         content_width,
                         content_rows: content_lines,
                         hint,
-                        screen_margin: layout.dialog_screen_margin,
+                        screen_margin: DIALOG_SCREEN_MARGIN,
                     },
                 );
                 place(bounds.area, PlacedSize { width, height }, bounds.avoid)
@@ -176,8 +125,7 @@ impl<'a> Modal<'a> {
             ModalSize::FrameWidth {
                 bounds: frame_bounds,
                 content_rows,
-            } => anchored_frame(
-                layout,
+            } => crate::overlay::modal::place::width(
                 hint,
                 FrameWidth {
                     bounds: frame_bounds,
@@ -194,11 +142,7 @@ impl<'a> Modal<'a> {
             .style(Style::default().bg(self.window_background))
             .render(modal_frame.outer, buffer);
 
-        let glyphs = ModalGlyphs::default();
-        let title = format!(
-            "{}{}{}",
-            glyphs.title_prefix, self.title, glyphs.title_suffix
-        );
+        let title = format!(" {} ", self.title);
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)

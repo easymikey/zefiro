@@ -9,19 +9,12 @@ pub enum Supervision {
         within: Duration,
         then: Fallback,
     },
-    Backoff {
-        attempts: u8,
-        first: Duration,
-        longest: Duration,
-        then: Fallback,
-    },
     Fallback(Fallback),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fallback {
     Degrade(Announce),
-    Quit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,16 +26,13 @@ pub enum Announce {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
     Restart,
-    RestartAfter(Duration),
     Degrade(Announce),
-    Quit,
 }
 
 impl From<Fallback> for Decision {
     fn from(fallback: Fallback) -> Self {
         match fallback {
             Fallback::Degrade(announce) => Decision::Degrade(announce),
-            Fallback::Quit => Decision::Quit,
         }
     }
 }
@@ -93,30 +83,15 @@ impl Supervision {
 }
 
 #[must_use]
-pub fn supervise(strategy: Supervision, history: &Restarts, now: Moment) -> Decision {
+pub fn supervise(strategy: Supervision, restarts: &Restarts, now: Moment) -> Decision {
     match strategy {
         Supervision::Restart {
             attempts,
             within,
             then,
         } => {
-            if history.within(within, now) < usize::from(attempts) {
+            if restarts.within(within, now) < usize::from(attempts) {
                 Decision::Restart
-            } else {
-                then.into()
-            }
-        }
-        Supervision::Backoff {
-            attempts,
-            first,
-            longest,
-            then,
-        } => {
-            let count = history.count();
-            if count < usize::from(attempts) {
-                let shift = u32::try_from(count).unwrap_or(u32::MAX);
-                let multiplier = 1u32.checked_shl(shift).unwrap_or(u32::MAX);
-                Decision::RestartAfter(first.saturating_mul(multiplier).min(longest))
             } else {
                 then.into()
             }
@@ -173,35 +148,10 @@ mod tests {
         &[10, 70, 90],
         Decision::Restart
     )]
-    #[case::restart_once_then_fatal(
-        Supervision::Restart { attempts: 1, within: std::time::Duration::from_secs(60), then: Fallback::Quit },
-        &[90],
-        Decision::Quit
-    )]
     #[case::restart_zero_attempts_falls_back(
         Supervision::Restart { attempts: 0, within: std::time::Duration::from_secs(60), then: Fallback::Degrade(Announce::Silent) },
         &[],
         Decision::Degrade(Announce::Silent)
-    )]
-    #[case::backoff_first_delay(
-        Supervision::Backoff { attempts: 3, first: std::time::Duration::from_secs(1), longest: std::time::Duration::from_secs(8), then: Fallback::Degrade(Announce::Toast) },
-        &[],
-        Decision::RestartAfter(std::time::Duration::from_secs(1))
-    )]
-    #[case::backoff_doubles(
-        Supervision::Backoff { attempts: 3, first: std::time::Duration::from_secs(1), longest: std::time::Duration::from_secs(8), then: Fallback::Degrade(Announce::Toast) },
-        &[10, 20],
-        Decision::RestartAfter(std::time::Duration::from_secs(4))
-    )]
-    #[case::backoff_caps_at_longest(
-        Supervision::Backoff { attempts: 10, first: std::time::Duration::from_secs(1), longest: std::time::Duration::from_secs(8), then: Fallback::Degrade(Announce::Toast) },
-        &[10, 20, 30, 40, 50],
-        Decision::RestartAfter(std::time::Duration::from_secs(8))
-    )]
-    #[case::backoff_spent_falls_back(
-        Supervision::Backoff { attempts: 3, first: std::time::Duration::from_secs(1), longest: std::time::Duration::from_secs(8), then: Fallback::Degrade(Announce::Toast) },
-        &[10, 20, 30],
-        Decision::Degrade(Announce::Toast)
     )]
     #[case::degrade_toast(
         Supervision::Fallback(Fallback::Degrade(Announce::Toast)),
@@ -213,7 +163,6 @@ mod tests {
         &[],
         Decision::Degrade(Announce::Silent)
     )]
-    #[case::fatal(Supervision::Fallback(Fallback::Quit), &[], Decision::Quit)]
     fn supervise_decides_by_strategy(
         #[case] strategy: Supervision,
         #[case] moments: &[u64],
@@ -221,22 +170,6 @@ mod tests {
     ) {
         let now = t(100);
         assert_eq!(supervise(strategy, &history(moments), now), expected);
-    }
-
-    #[test]
-    fn backoff_huge_count_saturates() {
-        let strategy = Supervision::Backoff {
-            attempts: 255,
-            first: std::time::Duration::from_secs(1),
-            longest: std::time::Duration::from_secs(8),
-            then: Fallback::Degrade(Announce::Toast),
-        };
-        let moments: Vec<u64> = (0..64).collect();
-        let now = t(100);
-        assert_eq!(
-            supervise(strategy, &history(&moments), now),
-            Decision::RestartAfter(std::time::Duration::from_secs(8))
-        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ use ratatui::{
 };
 
 use crate::{
-    overlay::modal::ModalMetrics,
+    overlay::modal::SCROLLBAR_INSET,
     playlist::{
         chrome::{pane_block, pane_title},
         row::{self, PlaylistRows, WindowFit, cursor_row, visible_rows},
@@ -23,7 +23,7 @@ use crate::{
         row_band,
         scrollbar_column,
     },
-    theme::ActiveTheme,
+    theme::{ActiveTheme, Role},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,8 +63,7 @@ impl PlaylistPane<'_> {
     #[must_use]
     pub(crate) fn areas(&self, pane: Rect) -> PlaylistAreas {
         let body = pane_block(None, Color::Reset).inner(pane);
-        let scrollbar =
-            scrollbar_column(pane, body, ModalMetrics::default().scrollbar_inset);
+        let scrollbar = scrollbar_column(pane, body, SCROLLBAR_INSET);
         PlaylistAreas {
             pane,
             body,
@@ -81,7 +80,7 @@ impl PlaylistPane<'_> {
         }
         pane_block(
             Some(pane_title(pane, self.view, self.theme)),
-            self.theme.border(),
+            self.theme.role(Role::Frame),
         )
         .render(pane, buffer);
         if areas.body.width == 0 || areas.body.height == 0 {
@@ -101,7 +100,7 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistPane<'_>
     let inner = areas.body;
     let view = pane.view;
     let theme = pane.theme;
-    let text_color: Color = theme.text();
+    let text_color: Color = theme.role(Role::Text);
 
     if view.playlist.tracks.is_empty() {
         let text: &str = match view.library_loading {
@@ -138,8 +137,8 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistPane<'_>
             total: window.total,
             offset: usize::from(window.offset),
             viewport: usize::from(areas.scrollbar.height),
-            thumb: theme.border(),
-            track: theme.dim(),
+            thumb: theme.role(Role::Frame),
+            track: theme.role(Role::Dim),
         },
         buffer,
     );
@@ -147,7 +146,7 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistPane<'_>
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc, time::Duration};
+    use std::{path::Path, sync::Arc};
 
     use kernel::{
         Message,
@@ -162,15 +161,16 @@ mod tests {
 
     use crate::{
         playlist::pane::{LibraryLoad, PlaylistPane, PlaylistView},
-        scene::fixtures::{find_text, noir, painted, painted_buffer},
-        theme::{ActiveTheme, ColorDepth},
+        primitive::canvas::find_text,
+        test_support::{noir, rendered},
+        theme::{ActiveTheme, ColorDepth, Role},
     };
 
     fn titled_track(title: &str) -> Arc<Track> {
         Arc::new(
             Track::builder()
                 .path(format!("{title}.mp3"))
-                .duration(Duration::from_secs(120))
+                .duration(std::time::Duration::from_secs(120))
                 .tags(kernel::domain::Tags {
                     title: Some(title.to_string()),
                     ..kernel::domain::Tags::default()
@@ -220,7 +220,8 @@ mod tests {
         let playlist = Playlist::default();
         let theme = noir();
         let widget = pane(&playlist, &theme);
-        let text = painted(&widget, 60, 24);
+        let text = rendered(60, 24, |frame| frame.render_widget(&widget, frame.area()))
+            .to_string();
         assert!(text.contains("Empty playlist"), "got {text:?}");
         assert!(text.contains("Playlist"), "got {text:?}");
     }
@@ -248,7 +249,10 @@ mod tests {
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
-        insta::assert_snapshot!(painted(&widget, 60, 8));
+        insta::assert_snapshot!(
+            rendered(60, 8, |frame| frame.render_widget(&widget, frame.area()))
+                .to_string()
+        );
     }
 
     #[test]
@@ -269,7 +273,10 @@ mod tests {
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
-        insta::assert_snapshot!(painted(&widget, 60, 14));
+        insta::assert_snapshot!(
+            rendered(60, 14, |frame| frame.render_widget(&widget, frame.area()))
+                .to_string()
+        );
     }
 
     #[test]
@@ -290,7 +297,10 @@ mod tests {
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
-        insta::assert_snapshot!(painted(&widget, 24, 8));
+        insta::assert_snapshot!(
+            rendered(24, 8, |frame| frame.render_widget(&widget, frame.area()))
+                .to_string()
+        );
     }
 
     #[test]
@@ -311,7 +321,10 @@ mod tests {
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
-        insta::assert_snapshot!(painted(&widget, 12, 8));
+        insta::assert_snapshot!(
+            rendered(12, 8, |frame| frame.render_widget(&widget, frame.area()))
+                .to_string()
+        );
     }
 
     #[test]
@@ -338,7 +351,10 @@ mod tests {
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
-        insta::assert_snapshot!(painted(&widget, 40, 8));
+        insta::assert_snapshot!(
+            rendered(40, 8, |frame| frame.render_widget(&widget, frame.area()))
+                .to_string()
+        );
     }
 
     #[test]
@@ -364,7 +380,8 @@ mod tests {
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
-        let text = painted(&widget, 80, 8);
+        let text = rendered(80, 8, |frame| frame.render_widget(&widget, frame.area()))
+            .to_string();
         assert!(text.contains("tagging 1/3"), "got {text:?}");
     }
 
@@ -382,7 +399,10 @@ mod tests {
         };
         let theme = noir();
         let widget = pane(&playlist, &theme);
-        let buffer = painted_buffer(&widget, 80, 24);
+        let buffer =
+            rendered(80, 24, |frame| frame.render_widget(&widget, frame.area()))
+                .buffer()
+                .clone();
 
         let (_, y) =
             find_text(&buffer, "Brooke Valentine").expect("the row is painted");
@@ -411,9 +431,9 @@ mod tests {
         let playlist = library(3);
         let theme = noir();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        let highlight = active.highlight();
-        let selection_text = active.selection_foreground();
-        let selection_background = active.selection_background();
+        let highlight = active.role(Role::Highlight);
+        let selection_text = active.role(Role::SelectionForeground);
+        let selection_background = active.role(Role::SelectionBackground);
 
         let widget = PlaylistPane {
             view: PlaylistView {
@@ -428,7 +448,10 @@ mod tests {
             },
             theme: active,
         };
-        let buffer = painted_buffer(&widget, 60, 24);
+        let buffer =
+            rendered(60, 24, |frame| frame.render_widget(&widget, frame.area()))
+                .buffer()
+                .clone();
 
         let (playing_x, playing_y) =
             find_text(&buffer, "▶ song01").expect("playing row visible");
@@ -452,7 +475,8 @@ mod tests {
         let playlist = library(3);
         let theme = noir();
         let selection_background: Color =
-            ActiveTheme::new(&theme, ColorDepth::TrueColor).selection_background();
+            ActiveTheme::new(&theme, ColorDepth::TrueColor)
+                .role(Role::SelectionBackground);
 
         let widget = PlaylistPane {
             view: PlaylistView {
@@ -467,7 +491,10 @@ mod tests {
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
-        let buffer = painted_buffer(&widget, 60, 24);
+        let buffer =
+            rendered(60, 24, |frame| frame.render_widget(&widget, frame.area()))
+                .buffer()
+                .clone();
 
         let (x, y) = find_text(&buffer, "song02").expect("cursor row visible");
         let banded: Vec<u16> = (0..buffer.area.width)
@@ -512,7 +539,10 @@ mod tests {
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
-        let buffer = painted_buffer(&widget, 50, 30);
+        let buffer =
+            rendered(50, 30, |frame| frame.render_widget(&widget, frame.area()))
+                .buffer()
+                .clone();
 
         let down_arrow = (0..buffer.area.height).find_map(|y| {
             (0..buffer.area.width)
@@ -545,7 +575,7 @@ mod tests {
         order.extend(1..39);
         let _ = update(
             &mut model,
-            Message::Loaded(PlaylistRequest::ShuffleRolled(order)),
+            Message::Playlist(PlaylistRequest::ShuffleRolled(order)),
             Moment::default(),
         );
         let _ = update(
@@ -580,7 +610,8 @@ mod tests {
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
-        let text = painted(&widget, 60, 28);
+        let text = rendered(60, 28, |frame| frame.render_widget(&widget, frame.area()))
+            .to_string();
         assert!(text.contains("▶ song39"), "got {text:?}");
     }
 }

@@ -165,7 +165,9 @@ fn closed(follow_up: Option<FollowUp>) -> OverlayEffect {
 fn saved_music_dir(path: &str) -> Cmd {
     Cmd::Batch(vec![
         Effect::Config(ConfigCmd::Save(
-            ConfigPatch::builder().music_dir(path).build(),
+            ConfigPatch::builder()
+                .music_dir(std::path::PathBuf::from(path))
+                .build(),
         )),
         Effect::Animate(Cue::OverlayClosed),
     ])
@@ -236,7 +238,7 @@ type Cell = crate::support::table::Cell<Option<Overlay>>;
     Err(OverlayError::NoConfirm)
 )]
 #[case::settings_confirm_closes_and_releases(Some(settings(3)), OverlayMessage::Confirm, Ok((None, closed(releases()))))]
-#[case::search_confirm_plays_the_selected_match(Some(search("mo", vec![0, 2], 1)), OverlayMessage::Confirm, Ok((None, closed(Some(FollowUp::Loaded(PlaylistRequest::JumpTo(PlaylistIndex::new(2))))))))]
+#[case::search_confirm_plays_the_selected_match(Some(search("mo", vec![0, 2], 1)), OverlayMessage::Confirm, Ok((None, closed(Some(FollowUp::Playlist(PlaylistRequest::JumpTo(PlaylistIndex::new(2))))))))]
 #[case::search_confirm_without_a_match_is_refused(Some(search("zzz", vec![], 0)), OverlayMessage::Confirm, Err(OverlayError::NothingSelected))]
 #[case::save_confirm_saves_under_the_name(Some(save("mix", None)), OverlayMessage::Confirm, Ok((None, closed(Some(FollowUp::Browse(BrowseRequest::SavePlaylist(saved_name("mix"))))))))]
 #[case::save_confirm_with_an_empty_name_stays_open_with_the_error(Some(save("", None)), OverlayMessage::Confirm, Ok((Some(save("", Some(PlaylistNameError::Empty))), OverlayEffect::default())))]

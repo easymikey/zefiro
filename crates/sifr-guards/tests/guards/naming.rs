@@ -160,9 +160,9 @@ fn parameter_name(slot: &str) -> Option<String> {
 }
 
 const MECHANISM_TYPE_SUFFIXES: &[&str] = &[
-    "Props", "Input", "State", "Tuning", "Sync", "Scratch", "Slices", "Info", "Kind",
-    "Type", "Inputs", "Values", "Flags", "Params", "Options", "Data", "Manager",
-    "Handler", "Helper", "Util", "Utils", "Wrapper", "Holder", "Draw",
+    "Props", "Input", "Tuning", "Sync", "Scratch", "Slices", "Info", "Kind", "Type",
+    "Inputs", "Values", "Flags", "Params", "Options", "Data", "Manager", "Handler",
+    "Helper", "Util", "Utils", "Wrapper", "Holder", "Draw",
 ];
 
 const TYPE_DECL_KEYWORDS: &[&str] = &["struct", "enum", "type", "trait"];
@@ -181,7 +181,6 @@ const RETIRED_NAMES: &[&str] = &[
     "Keys",
     "KeysConfig",
     "KeyGroup",
-    "Binding",
     "Group",
     "PaneChrome",
     "ModalFrame",
@@ -192,7 +191,6 @@ const RETIRED_NAMES: &[&str] = &[
     "UiRequest",
     "UiPreset",
     "UiMessage",
-    "BrowseMessage",
     "PlaybackMessage",
     "QueueMessage",
     "LoadedMessage",
@@ -219,7 +217,6 @@ const RETIRED_NAMES: &[&str] = &[
     "BatchFlags",
     "MediaWorker",
     "RingBuf",
-    "Announce",
     "NoticeLevel",
     "NoticeLifetime",
     "NoticeUpdate",
@@ -267,7 +264,6 @@ const RETIRED_NAMES: &[&str] = &[
     "MeterPlan",
     "ProgressImageKey",
     "ProgressImageSpec",
-    "QueueRequest",
 ];
 
 const RETIRED_DECL_KEYWORDS: &[&str] = &["struct", "enum", "type", "trait", "mod"];

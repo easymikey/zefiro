@@ -9,10 +9,9 @@ use kernel::{
     LibraryError,
     LibraryEvent,
     LibrarySubject,
-    domain::ScanMode,
+    cmd::ScanMode,
     update::{Machine, Rejected},
 };
-use library::Executed;
 use strum::IntoStaticStr;
 
 use crate::library::{
@@ -20,7 +19,6 @@ use crate::library::{
         CoverCache,
         CoverDecoded,
         CoverRequest,
-        DecodeEffect,
         DecodeFinished,
         DecodeMessage,
         Decoding,
@@ -54,7 +52,7 @@ pub(crate) enum LibraryMessage {
     DebounceDue,
     Cover(CoverRequest),
     Decoded(DecodeFinished),
-    Executed(Result<Executed, library::Error>),
+    Executed(Result<Option<LibraryEvent>, library::Error>),
     Stopping,
 }
 
@@ -221,12 +219,7 @@ impl LibraryState {
         match decoding.transition(DecodeMessage::Request(request)) {
             Ok((decoding, io)) => {
                 self.decoding = decoding;
-                let outputs = match io {
-                    DecodeEffect::Decode(pending) => {
-                        vec![LibraryEffect::Decode(pending)]
-                    }
-                    DecodeEffect::Nothing => Vec::new(),
-                };
+                let outputs = io.map(LibraryEffect::Decode).into_iter().collect();
                 Ok((self, outputs))
             }
             Err(Rejected { state, reason }) => {
@@ -250,11 +243,11 @@ impl LibraryState {
     }
 }
 
-fn executed_outputs(result: Result<Executed, library::Error>) -> Vec<LibraryEffect> {
+fn executed_outputs(
+    result: Result<Option<LibraryEvent>, library::Error>,
+) -> Vec<LibraryEffect> {
     match result {
-        Ok(Executed { event, .. }) => {
-            event.into_iter().map(LibraryEffect::Event).collect()
-        }
+        Ok(event) => event.into_iter().map(LibraryEffect::Event).collect(),
         Err(error) => {
             let failure: LibraryError = (&error).into();
             vec![LibraryEffect::Event(LibraryEvent::Error(failure))]
@@ -286,10 +279,10 @@ mod tests {
     use kernel::{
         LibraryCmd,
         LibraryEvent,
-        domain::{Revision, ScanMode},
+        cmd::ScanMode,
+        domain::Revision,
         update::{Machine, Rejected},
     };
-    use library::{Executed, LibraryWarning};
 
     use crate::library::{
         cover::{
@@ -407,13 +400,10 @@ mod tests {
 
     #[test]
     fn an_executed_fact_is_told() {
-        let executed = Executed {
-            event: Some(LibraryEvent::Loaded {
-                tracks: Vec::new(),
-                revision: Revision::default(),
-            }),
-            warnings: Vec::new(),
-        };
+        let executed = Some(LibraryEvent::Loaded {
+            tracks: Vec::new(),
+            revision: Revision::default(),
+        });
 
         let (_, outputs) = LibraryState::default()
             .transition(LibraryMessage::Executed(Ok(executed)))
@@ -438,14 +428,9 @@ mod tests {
     }
 
     #[test]
-    fn notes_are_dropped() {
-        let executed = Executed {
-            event: None,
-            warnings: vec![LibraryWarning::HistoryLinesSkipped { lines: 3 }],
-        };
-
+    fn an_execution_with_no_event_tells_nothing() {
         let (_, outputs) = LibraryState::default()
-            .transition(LibraryMessage::Executed(Ok(executed)))
+            .transition(LibraryMessage::Executed(Ok(None)))
             .unwrap();
 
         assert!(outputs.is_empty());

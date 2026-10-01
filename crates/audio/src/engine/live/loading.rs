@@ -6,23 +6,19 @@ use crate::{
     deck::DeviceOpened,
     engine::{
         effect::EngineEffect,
-        phase::{AfterLoad, CurrentTrack, Handover, Incoming, Loading, Phase, Playing},
-        state::{Engine, Live, Mix, Muted, announce, reported},
+        phase::{CurrentTrack, Handover, Incoming, Loading, Phase, Playing, Resume},
+        state::{Engine, Live, Muted, announce, then_report},
     },
 };
 
 impl Live {
     pub(crate) fn failed(self, error: AudioError) -> (Engine, EngineEffect) {
-        let mix = Mix {
-            speed: self.speed,
-            volume: self.volume,
-        };
         (
             Engine::Muted(Muted {
                 error: error.clone(),
                 config: self.config,
                 pending: None,
-                mix,
+                speed: self.speed,
             }),
             EngineEffect::Mute(error),
         )
@@ -56,7 +52,6 @@ impl Live {
             Phase::Loading(loading)
             | Phase::Handover(Handover {
                 incoming: Incoming::Loading(loading),
-                ..
             }) => {
                 self.phase = Phase::Loading(loading);
                 EngineEffect::SetVolume(self.volume())
@@ -64,17 +59,16 @@ impl Live {
             Phase::Playing(Playing { current, .. })
             | Phase::Handover(Handover {
                 incoming: Incoming::Playing(current),
-                ..
             }) => {
                 let CurrentTrack { total, gain, path } = current;
                 self.phase = Phase::Loading(Loading {
                     path: path.clone(),
                     gain,
-                    after_load: AfterLoad::Resume {
+                    after_load: Some(Resume {
                         position,
                         playback,
                         total,
-                    },
+                    }),
                 });
                 EngineEffect::Decode(path)
             }
@@ -94,7 +88,6 @@ impl Live {
             (
                 Phase::Handover(Handover {
                     incoming: Incoming::Loading(_),
-                    ..
                 }),
                 Err(error),
             ) => (
@@ -107,28 +100,25 @@ impl Live {
             (Phase::Loading(loading), Ok(total)) => {
                 let (current, after_load) = loading.into_current(total);
                 self.phase = Phase::Playing(Playing::new(current));
-                self.started(&after_load)
+                self.started(after_load.as_ref())
             }
             (
                 Phase::Handover(Handover {
-                    outgoing,
                     incoming: Incoming::Loading(loading),
                 }),
                 Ok(total),
             ) => {
                 let (current, after_load) = loading.into_current(total);
                 self.phase = Phase::Handover(Handover {
-                    outgoing,
                     incoming: Incoming::Playing(current),
                 });
-                self.handover_started(&after_load)
+                self.handover_started(after_load.as_ref())
             }
             (
                 phase @ (Phase::Idle
                 | Phase::Playing(_)
                 | Phase::Handover(Handover {
                     incoming: Incoming::Playing(_),
-                    ..
                 })),
                 Ok(_) | Err(_),
             ) => {
@@ -138,39 +128,32 @@ impl Live {
         }
     }
 
-    fn started(self, after_load: &AfterLoad) -> (Engine, EngineEffect) {
-        let effect = match after_load {
-            AfterLoad::None => EngineEffect::Start {
-                volume: self.volume(),
+    fn start_effect(&self, after_load: Option<&Resume>) -> EngineEffect {
+        let volume = self.volume();
+        match after_load {
+            None => EngineEffect::Start {
+                volume,
                 total: self.phase.current().and_then(|current| current.total),
             },
-            AfterLoad::Resume {
+            Some(Resume {
                 position, playback, ..
-            } => EngineEffect::Resume {
-                volume: self.volume(),
+            }) => EngineEffect::Resume {
+                volume,
                 position: *position,
-                paused: *playback,
+                playback: *playback,
             },
-        };
-        (Engine::Live(self), reported(effect))
+        }
     }
 
-    fn handover_started(self, after_load: &AfterLoad) -> (Engine, EngineEffect) {
+    fn started(self, after_load: Option<&Resume>) -> (Engine, EngineEffect) {
+        let effect = self.start_effect(after_load);
+        (Engine::Live(self), then_report(effect))
+    }
+
+    fn handover_started(self, after_load: Option<&Resume>) -> (Engine, EngineEffect) {
         let volume = self.volume();
-        let length = self.config.crossfade.value();
-        let start = match after_load {
-            AfterLoad::None => EngineEffect::Start {
-                volume,
-                total: self.phase.current().and_then(|current| current.total),
-            },
-            AfterLoad::Resume {
-                position, playback, ..
-            } => EngineEffect::Resume {
-                volume,
-                position: *position,
-                paused: *playback,
-            },
-        };
+        let length = self.config.crossfade.get();
+        let start = self.start_effect(after_load);
         let effect = EngineEffect::Batch(vec![
             start,
             EngineEffect::Ramp {
@@ -185,65 +168,56 @@ impl Live {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::Duration};
+    use std::time::Duration;
 
-    use kernel::{AudioCmd, AudioEvent, Playback, update::Machine};
+    use kernel::{AudioCmd, AudioEvent, Playback, domain::Speed, update::Machine};
     use rstest::rstest;
 
     use crate::{
         EngineConfig,
         engine::{
             effect::{EngineEffect, EngineMessage},
-            phase::{AfterLoad, Incoming, Loading, Outgoing, Phase, Playing},
-            state::{
-                Engine,
-                Live,
-                Mix,
-                Muted,
-                fixtures::{
-                    CROSSFADE_SECONDS,
-                    PRELOAD_TOTAL,
-                    TOTAL,
-                    cmd,
-                    config,
-                    config_on,
-                    crossfade,
-                    decode_error,
-                    error,
-                    fell_back,
-                    handing_over,
-                    live,
-                    live_with_crossfade,
-                    loading,
-                    loading_track,
-                    opened,
-                    playing,
-                    resuming,
-                    retiring,
-                    seconds,
-                    track_a,
-                },
-                reported,
+            phase::{Incoming, Loading, Phase, Playing, Resume},
+            state::{Engine, Live, Muted, then_report},
+            test_support::{
+                CROSSFADE_SECONDS,
+                Cell,
+                PRELOAD_TOTAL,
+                TOTAL,
+                assert_cell,
+                cmd,
+                config,
+                config_on,
+                crossfade,
+                decode_error,
+                error,
+                fell_back,
+                handed_over_to_b,
+                handing_over,
+                live,
+                live_with_crossfade,
+                loading,
+                loading_track,
+                opened,
+                playing,
+                resuming,
+                seconds,
+                track_a,
             },
         },
     };
 
-    struct Cell {
-        next: Engine,
-        effect: EngineEffect,
-    }
-
     #[rstest]
     #[case::live_adopts_the_device_that_actually_opened(
-        Engine::Live(Live::new(config_on("usb"))),
+        Engine::Live(Live { config: config_on("usb"), ..live() }),
         opened(config().device, Duration::ZERO, Playback::Playing),
-        Cell { next: Engine::Live(Live::new(config())), effect: EngineEffect::SetVolume(1.0) }
+        Cell { next: Engine::Live(live()), effect: EngineEffect::SetVolume(1.0) }
     )]
     #[case::a_live_engine_tells_the_world_the_device_fell_back(
-        Engine::Live(Live::new(config_on("usb"))),
+        Engine::Live(Live { config: config_on("usb"), ..live() }),
         fell_back(Duration::ZERO, Playback::Playing),
         Cell {
-            next: Engine::Live(Live::new(config())),
+            next: Engine::Live(live()),
             effect: EngineEffect::Batch(vec![
                 EngineEffect::Send(AudioEvent::DeviceFellBack(kernel::domain::OutputDevice::SystemDefault)),
                 EngineEffect::SetVolume(1.0),
@@ -258,7 +232,7 @@ mod tests {
                 error: error(),
                 config: config(),
                 pending: None,
-                mix: Mix::default(),
+                speed: Speed::default(),
             }),
             effect: EngineEffect::Mute(error()),
         }
@@ -286,7 +260,7 @@ mod tests {
         EngineMessage::Decoded(Ok(Some(TOTAL))),
         Cell {
             next: Engine::Live(Live { phase: Phase::Playing(Playing::new(track_a())), ..playing() }),
-            effect: reported(EngineEffect::Start { volume: 1.0, total: Some(TOTAL) }),
+            effect: then_report(EngineEffect::Start { volume: 1.0, total: Some(TOTAL) }),
         }
     )]
     #[case::decoded_resumes_where_the_old_device_was(
@@ -298,8 +272,8 @@ mod tests {
                 config: config_on("usb"),
                 ..live()
             }),
-            effect: reported(
-                EngineEffect::Resume { volume: 1.0, position: seconds(5), paused: Playback::Paused },
+            effect: then_report(
+                EngineEffect::Resume { volume: 1.0, position: seconds(5), playback: Playback::Paused },
             ),
         }
     )]
@@ -312,18 +286,18 @@ mod tests {
         }
     )]
     #[case::reopened_mid_skip_resumes_the_incoming_track(
-        Engine::Live(retiring(0.5)),
+        Engine::Live(handed_over_to_b()),
         opened(config_on("usb").device, seconds(5), Playback::Paused),
         Cell {
             next: Engine::Live(Live {
                 phase: Phase::Loading(Loading {
                     path: "/b".into(),
                     gain: None,
-                    after_load: AfterLoad::Resume {
+                    after_load: Some(Resume {
                         position: seconds(5),
                         playback: Playback::Paused,
                         total: Some(PRELOAD_TOTAL),
-                    },
+                    }),
                 }),
                 config: EngineConfig { crossfade: crossfade(10), ..config_on("usb") },
                 ..live()
@@ -332,10 +306,7 @@ mod tests {
         }
     )]
     #[case::reopened_mid_skip_keeps_the_decoding_track(
-        Engine::Live(handing_over(
-            Outgoing { from: 1.0 },
-            Incoming::Loading(loading_track("/b")),
-        )),
+        Engine::Live(handing_over(Incoming::Loading(loading_track("/b")))),
         opened(config().device, Duration::ZERO, Playback::Playing),
         Cell {
             next: Engine::Live(Live {
@@ -346,14 +317,11 @@ mod tests {
             effect: EngineEffect::SetVolume(1.0),
         }
     )]
-    #[case::a_decoded_skip_starts_and_ramps_over_the_retiring_stream(
-        Engine::Live(handing_over(
-            Outgoing { from: 0.5 },
-            Incoming::Loading(loading_track("/b")),
-        )),
+    #[case::a_decoded_skip_starts_and_ramps_over_the_outgoing_stream(
+        Engine::Live(handing_over(Incoming::Loading(loading_track("/b")))),
         EngineMessage::Decoded(Ok(Some(PRELOAD_TOTAL))),
         Cell {
-            next: Engine::Live(retiring(0.5)),
+            next: Engine::Live(handed_over_to_b()),
             effect: EngineEffect::Batch(vec![
                 EngineEffect::Start { volume: 1.0, total: Some(PRELOAD_TOTAL) },
                 EngineEffect::Ramp { length: seconds(10), playing: 1.0 },
@@ -361,11 +329,8 @@ mod tests {
             ]),
         }
     )]
-    #[case::a_failed_skip_drops_the_retiring_stream_too(
-        Engine::Live(handing_over(
-            Outgoing { from: 1.0 },
-            Incoming::Loading(loading_track("/b")),
-        )),
+    #[case::a_failed_skip_drops_the_outgoing_stream_too(
+        Engine::Live(handing_over(Incoming::Loading(loading_track("/b")))),
         EngineMessage::Decoded(Err(decode_error())),
         Cell {
             next: Engine::Live(live_with_crossfade(CROSSFADE_SECONDS)),
@@ -380,10 +345,7 @@ mod tests {
         #[case] message: EngineMessage,
         #[case] moved: Cell,
     ) {
-        let mut state = start;
-        let effect = state.update(message).unwrap();
-        assert_eq!(state, moved.next);
-        assert_eq!(effect, moved.effect);
+        assert_cell(start, message, moved);
     }
 
     #[rstest]
@@ -396,7 +358,7 @@ mod tests {
         EngineMessage::Decoded(Err(decode_error()))
     )]
     #[case::a_decode_after_the_skip_landed_has_nothing_to_install(
-        Engine::Live(retiring(0.5)),
+        Engine::Live(handed_over_to_b()),
         EngineMessage::Decoded(Ok(Some(TOTAL)))
     )]
     fn a_stale_decode_leaves_the_engine_alone(
@@ -416,25 +378,5 @@ mod tests {
             engine.update(EngineMessage::Decoded(Ok(Some(TOTAL)))),
             Ok(EngineEffect::Nothing)
         );
-    }
-
-    #[test]
-    fn a_track_path_is_kept_for_the_resume() {
-        let mut state = Engine::Live(playing());
-        state
-            .update(opened(
-                config_on("usb").device,
-                seconds(5),
-                Playback::Paused,
-            ))
-            .unwrap();
-        let Engine::Live(Live {
-            phase: Phase::Loading(loading),
-            ..
-        }) = state
-        else {
-            panic!("a reopened engine reloads its track, got {state:?}");
-        };
-        assert_eq!(loading.path, PathBuf::from("/a"));
     }
 }

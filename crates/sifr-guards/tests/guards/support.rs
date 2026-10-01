@@ -120,8 +120,8 @@ pub(crate) fn manifests() -> Vec<(String, toml::Value)> {
 }
 
 const WORKSPACE_CRATES: &[&str] = &[
-    "audio", "config", "kernel", "library", "macos", "raster", "runtime", "sifr",
-    "terminal", "widgets",
+    "audio", "config", "kernel", "library", "macos", "runtime", "sifr", "terminal",
+    "widgets",
 ];
 
 pub(crate) fn sifr_dependencies(manifest: &toml::Value, out: &mut BTreeSet<String>) {

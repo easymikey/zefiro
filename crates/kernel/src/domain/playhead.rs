@@ -22,7 +22,7 @@ impl Playhead {
     #[must_use]
     pub fn position_at(self, now: Moment) -> Duration {
         let elapsed = now.elapsed_since(self.since);
-        self.offset + elapsed.mul_f32(self.speed.value())
+        self.offset + elapsed.mul_f32(self.speed.get())
     }
 }
 

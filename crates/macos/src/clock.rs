@@ -41,7 +41,7 @@ impl PanelClock {
         }
     }
 
-    pub(crate) fn with_playback(self, playback: Playback, now: Instant) -> Self {
+    pub(crate) fn change_playback(self, playback: Playback, now: Instant) -> Self {
         Self {
             anchor: self.elapsed(now),
             since: now,
@@ -65,7 +65,7 @@ mod tests {
         let paused = PanelClock::new(start).seek(Duration::from_secs(5), start);
         assert_eq!(paused.elapsed(later), Duration::from_secs(5));
 
-        let playing = paused.with_playback(Playback::Playing, start);
+        let playing = paused.change_playback(Playback::Playing, start);
         assert_eq!(playing.elapsed(later), Duration::from_secs(35));
     }
 
@@ -74,7 +74,7 @@ mod tests {
         let start = Instant::now();
         let mid = start + Duration::from_secs(10);
         let clock = PanelClock::new(start)
-            .with_playback(Playback::Playing, start)
+            .change_playback(Playback::Playing, start)
             .seek(Duration::from_secs(90), mid);
         assert_eq!(clock.elapsed(mid), Duration::from_secs(90));
         assert_eq!(
@@ -88,8 +88,8 @@ mod tests {
         let start = Instant::now();
         let paused_at = start + Duration::from_secs(12);
         let clock = PanelClock::new(start)
-            .with_playback(Playback::Playing, start)
-            .with_playback(Playback::Paused, paused_at);
+            .change_playback(Playback::Playing, start)
+            .change_playback(Playback::Paused, paused_at);
         assert_eq!(
             clock.elapsed(paused_at + Duration::from_secs(60)),
             Duration::from_secs(12)

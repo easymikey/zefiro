@@ -22,12 +22,6 @@ pub struct CoverRequest {
     pub size_px: u32,
 }
 
-impl From<&CoverRequest> for &'static str {
-    fn from(_: &CoverRequest) -> Self {
-        "cover"
-    }
-}
-
 #[derive(Debug)]
 pub enum CoverOutcome {
     Art(RgbaImage),
@@ -61,19 +55,12 @@ pub(crate) enum DecodingError {
     WhileIdle,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) enum DecodeEffect {
-    Decode(CoverRequest),
-    #[default]
-    Nothing,
-}
-
-type Step = Result<(Decoding, DecodeEffect), Rejected<Decoding>>;
+type Step = Result<(Decoding, Option<CoverRequest>), Rejected<Decoding>>;
 
 impl Machine for Decoding {
     type Message = DecodeMessage;
     type Error = DecodingError;
-    type Effect = DecodeEffect;
+    type Effect = Option<CoverRequest>;
 
     fn transition(self, message: DecodeMessage) -> Step {
         match (self, message) {
@@ -90,7 +77,7 @@ impl Machine for Decoding {
             (Decoding::Busy(path), DecodeMessage::Decoded(answered))
                 if path == answered =>
             {
-                Ok((Decoding::Idle, DecodeEffect::Nothing))
+                Ok((Decoding::Idle, None))
             }
             (
                 state @ Decoding::Busy(_),
@@ -103,9 +90,9 @@ impl Machine for Decoding {
     }
 }
 
-fn requested(request: CoverRequest) -> (Decoding, DecodeEffect) {
+fn requested(request: CoverRequest) -> (Decoding, Option<CoverRequest>) {
     let path = request.path.clone();
-    (Decoding::Busy(path), DecodeEffect::Decode(request))
+    (Decoding::Busy(path), Some(request))
 }
 
 pub(crate) const CACHE_CAPACITY: usize = 8;
@@ -244,14 +231,13 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        cells::{Receivers, cells},
         driver::DriverThread,
+        latest::{LatestReceivers, latest_channels},
         library::{
             cover::{
                 CACHE_CAPACITY,
                 CoverOutcome,
                 CoverRequest,
-                DecodeEffect,
                 DecodeMessage,
                 Decoding,
                 DecodingError,
@@ -278,13 +264,13 @@ mod tests {
         Decoding::Busy(PathBuf::from(path))
     }
 
-    fn render(io: &DecodeEffect) -> String {
-        match io {
-            DecodeEffect::Decode(request) => {
+    fn render(io: &Option<CoverRequest>) -> String {
+        io.as_ref().map_or_else(
+            || "nothing".to_string(),
+            |request| {
                 format!("decode {} @ {}", request.path.display(), request.size_px)
-            }
-            DecodeEffect::Nothing => "nothing".to_string(),
-        }
+            },
+        )
     }
 
     struct Cell {
@@ -381,30 +367,22 @@ mod tests {
     const DECODABLE: &[&str] = &["mp3"];
 
     fn paths(directory: &tempfile::TempDir) -> LibraryDirs {
-        LibraryDirs {
-            cache_dir: directory.path().join("cache"),
-            data_dir: directory.path().join("data"),
-            playlists_dir: directory.path().join("playlists"),
-        }
+        LibraryDirs::under(directory.path())
     }
 
     fn spawned_with_covers(
         directory: &tempfile::TempDir,
     ) -> (
         DriverThread<LibraryMessage>,
-        Receivers,
+        LatestReceivers,
         Receiver<()>,
         Receiver<Message>,
     ) {
-        let (mailbox, messages) = crossbeam_channel::unbounded();
-        let (writers, cells, notified) = cells();
+        let (inbox, messages) = crossbeam_channel::unbounded();
+        let (writers, cells, notified) = latest_channels();
         let thread = spawn(
-            LibraryParts {
-                dirs: paths(directory),
-                decodable: DECODABLE,
-            },
-            &mailbox,
-            writers.cover,
+            LibraryParts::new(paths(directory), DECODABLE, writers.cover).unwrap(),
+            &inbox,
         )
         .unwrap();
         (thread, cells, notified, messages)
@@ -418,7 +396,7 @@ mod tests {
     }
 
     fn recv_cover(
-        cells: &Receivers,
+        cells: &LatestReceivers,
         notified: &Receiver<()>,
     ) -> crate::library::cover::CoverDecoded {
         notified.recv_timeout(RECV_TIMEOUT).unwrap();

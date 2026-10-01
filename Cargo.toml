@@ -6,7 +6,6 @@ members = [
   "crates/kernel",
   "crates/library",
   "crates/macos",
-  "crates/raster",
   "crates/runtime",
   "crates/sifr",
   "crates/sifr-guards",
@@ -138,7 +137,6 @@ config = { path = "crates/config" }
 kernel = { path = "crates/kernel" }
 library = { path = "crates/library" }
 macos = { path = "crates/macos" }
-raster = { path = "crates/raster" }
 runtime = { path = "crates/runtime" }
 terminal = { path = "crates/terminal" }
 widgets = { path = "crates/widgets" }

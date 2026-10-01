@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{AudioCmd, Cmd, ConfigCmd, ConfigPatch, DevicePatch, Effect},
+    cmd::{AudioCmd, Cmd, ConfigCmd, ConfigPatch, Effect},
     domain::{
         Choice,
         CustomSetting,
@@ -7,12 +7,11 @@ use crate::{
         Model,
         OutputDevice,
         Replaygain,
-        SLEEP_PRESET_BUNDLES,
         SettingId,
         SettingRow,
         Settings,
+        SleepPresets,
         ThemeChoice,
-        ThemeName,
         Themes,
     },
     update::{
@@ -20,34 +19,6 @@ use crate::{
         machine::{Machine, Rejected},
     },
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Target {
-    Setting(SettingsMessage),
-    Theme(Direction),
-    Custom(SettingId),
-}
-
-impl SettingRow {
-    fn target(self, direction: Direction) -> Target {
-        match self {
-            SettingRow::Theme => Target::Theme(direction),
-            SettingRow::Crossfade => {
-                Target::Setting(SettingsMessage::Crossfade(direction))
-            }
-            SettingRow::Replaygain => {
-                Target::Setting(SettingsMessage::ToggleReplaygain)
-            }
-            SettingRow::OutputDevice => {
-                Target::Setting(SettingsMessage::OutputDevice(direction))
-            }
-            SettingRow::SleepPresets => {
-                Target::Setting(SettingsMessage::SleepPresets(direction))
-            }
-            SettingRow::Custom(id) => Target::Custom(id),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsMessage {
@@ -68,11 +39,17 @@ pub(crate) fn adjust(
         custom_settings,
         ..
     } = model;
-    match row.target(direction) {
-        Target::Custom(id) => Ok(custom_nudged(custom_settings, id, direction)),
-        Target::Setting(message) => Ok(settings.update(message)?),
-        Target::Theme(direction) => Ok(theme_picked(themes, direction)),
-    }
+    let message = match row {
+        SettingRow::Theme => return Ok(theme_picked(themes, direction)),
+        SettingRow::Custom(id) => {
+            return Ok(custom_nudged(custom_settings, id, direction));
+        }
+        SettingRow::Crossfade => SettingsMessage::Crossfade(direction),
+        SettingRow::Replaygain => SettingsMessage::ToggleReplaygain,
+        SettingRow::OutputDevice => SettingsMessage::OutputDevice(direction),
+        SettingRow::SleepPresets => SettingsMessage::SleepPresets(direction),
+    };
+    Ok(settings.update(message)?)
 }
 
 fn custom_nudged(
@@ -110,15 +87,11 @@ fn theme_picked(themes: &mut Themes, direction: Direction) -> Cmd {
         return Cmd::None;
     };
     themes.selected = ThemeChoice::Named(next.clone());
-    theme_effects(next)
-}
-
-fn theme_effects(name: ThemeName) -> Cmd {
     Cmd::Batch(vec![
         Effect::Config(ConfigCmd::Save(
-            ConfigPatch::builder().theme(name.clone()).build(),
+            ConfigPatch::builder().theme(next.clone()).build(),
         )),
-        Effect::Config(ConfigCmd::SelectTheme(ThemeChoice::Named(name))),
+        Effect::Config(ConfigCmd::SelectTheme(ThemeChoice::Named(next))),
     ])
 }
 
@@ -148,27 +121,29 @@ impl Machine for Settings {
 }
 
 fn adjust_replaygain(settings: &mut Settings) -> Cmd {
-    settings.replaygain = match settings.replaygain {
+    settings.audio.replaygain = match settings.audio.replaygain {
         Replaygain::On => Replaygain::Off,
         Replaygain::Off => Replaygain::On,
     };
     Cmd::Batch(vec![
         Effect::Config(ConfigCmd::Save(
             ConfigPatch::builder()
-                .replaygain(settings.replaygain)
+                .replaygain(settings.audio.replaygain)
                 .build(),
         )),
-        Effect::Audio(AudioCmd::SetReplaygain(settings.replaygain)),
+        Effect::Audio(AudioCmd::SetReplaygain(settings.audio.replaygain)),
     ])
 }
 
 fn adjust_crossfade(settings: &mut Settings, direction: Direction) -> Cmd {
-    settings.crossfade = settings.crossfade.step(direction);
+    settings.audio.crossfade = settings.audio.crossfade.step(direction);
     Cmd::Batch(vec![
         Effect::Config(ConfigCmd::Save(
-            ConfigPatch::builder().crossfade(settings.crossfade).build(),
+            ConfigPatch::builder()
+                .crossfade(settings.audio.crossfade)
+                .build(),
         )),
-        Effect::Audio(AudioCmd::SetCrossfade(settings.crossfade)),
+        Effect::Audio(AudioCmd::SetCrossfade(settings.audio.crossfade)),
     ])
 }
 
@@ -177,7 +152,7 @@ fn adjust_output_device(settings: &mut Settings, direction: Direction) -> Cmd {
         return Cmd::None;
     }
     let ring_len = settings.output_devices.len() + 1;
-    let current = settings.output_device.named().map_or(0, |name| {
+    let current = settings.audio.device.named().map_or(0, |name| {
         settings
             .output_devices
             .iter()
@@ -191,29 +166,24 @@ fn adjust_output_device(settings: &mut Settings, direction: Direction) -> Cmd {
         .map_or(OutputDevice::SystemDefault, |device| {
             OutputDevice::Named(device.name.clone())
         });
-    settings.output_device = next.clone();
-    let device_patch = next.named().map_or(DevicePatch::SystemDefault, |name| {
-        DevicePatch::Named(name.clone())
-    });
+    settings.audio.device = next.clone();
     Cmd::Batch(vec![
         Effect::Config(ConfigCmd::Save(
-            ConfigPatch::builder().device(device_patch).build(),
+            ConfigPatch::builder().device(next.clone()).build(),
         )),
         Effect::Audio(AudioCmd::SetDevice(next)),
     ])
 }
 
 fn adjust_sleep_presets(settings: &mut Settings, direction: Direction) -> Cmd {
-    let bundles = &SLEEP_PRESET_BUNDLES;
-    let current = bundles
-        .index_of(&settings.sleep_presets)
-        .unwrap_or_else(|| bundles.nearest_index(&settings.sleep_presets));
-    let next_index = direction.wrapped(current, bundles.bundles.len());
-    let Some(next) = bundles.bundles.get(next_index).copied() else {
+    let presets = settings.audio.sleep_presets.as_slice();
+    let current = SleepPresets::bundle_index(presets)
+        .unwrap_or_else(|| SleepPresets::nearest_bundle(presets));
+    let next_index = direction.wrapped(current, SleepPresets::BUNDLES.len());
+    let Some(next) = SleepPresets::bundle(next_index) else {
         return Cmd::None;
     };
-    let next = next.to_vec();
-    settings.sleep_presets = next.clone().into_boxed_slice();
+    settings.audio.sleep_presets = next.clone();
     Effect::Config(ConfigCmd::Save(
         ConfigPatch::builder().sleep_presets(next).build(),
     ))

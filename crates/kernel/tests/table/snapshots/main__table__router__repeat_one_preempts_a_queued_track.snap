@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
-assertion_line: 414
+assertion_line: 366
 expression: "walked(model, messages)"
 ---
 [
@@ -97,13 +97,15 @@ expression: "walked(model, messages)"
         Batch(
             [
                 Audio(
-                    Preload {
-                        path: "/tmp/track1.flac",
-                        gain: None,
-                        revision: Revision(
-                            1,
-                        ),
-                    },
+                    Preload(
+                        TrackRequest {
+                            path: "/tmp/track1.flac",
+                            gain: None,
+                            revision: Revision(
+                                1,
+                            ),
+                        },
+                    ),
                 ),
                 Library(
                     PrefetchCover(

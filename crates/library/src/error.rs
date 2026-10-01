@@ -5,15 +5,7 @@ use kernel::{IoError, LibraryError, LibrarySubject};
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{subject} {path}: {source}")]
-    Read {
-        subject: LibrarySubject,
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("{subject} {path}: {source}")]
-    Write {
+    Io {
         subject: LibrarySubject,
         path: PathBuf,
         #[source]
@@ -47,24 +39,12 @@ pub enum Error {
 }
 
 impl Error {
-    pub(crate) fn read(
+    pub(crate) fn io(
         subject: LibrarySubject,
         path: &Path,
     ) -> impl FnOnce(std::io::Error) -> Error + use<> {
         let path = path.to_path_buf();
-        move |source| Error::Read {
-            subject,
-            path,
-            source,
-        }
-    }
-
-    pub(crate) fn write(
-        subject: LibrarySubject,
-        path: &Path,
-    ) -> impl FnOnce(std::io::Error) -> Error + use<> {
-        let path = path.to_path_buf();
-        move |source| Error::Write {
+        move |source| Error::Io {
             subject,
             path,
             source,
@@ -100,12 +80,7 @@ fn trash_error(source: &trash::Error) -> IoError {
 impl From<&Error> for LibraryError {
     fn from(error: &Error) -> Self {
         match error {
-            Error::Read {
-                subject,
-                path,
-                source,
-            }
-            | Error::Write {
+            Error::Io {
                 subject,
                 path,
                 source,
@@ -141,77 +116,37 @@ mod tests {
 
     use crate::error::Error;
 
-    #[rstest]
-    #[case::no_directory(Error::NoUserDirs, "no such directory")]
-    #[case::read(
-        Error::Read {
-            subject: LibrarySubject::Scan,
-            path: "/music".into(),
-            source: std::io::Error::from(std::io::ErrorKind::NotFound),
-        },
-        "a scan /music: entity not found"
-    )]
-    #[case::write(
-        Error::Write {
-            subject: LibrarySubject::Favorites,
-            path: "/data/favorites.json".into(),
-            source: std::io::Error::from(std::io::ErrorKind::NotFound),
-        },
-        "the favorites file /data/favorites.json: entity not found"
-    )]
-    #[case::json(
-        Error::Json {
-            subject: LibrarySubject::History,
-            path: "/data/history.jsonl".into(),
-            source: serde_json::from_str::<serde_json::Value>("")
-                .expect_err("empty input must fail to parse"),
-        },
-        "the history file /data/history.jsonl: json: EOF while parsing a value at line 1 column 0"
-    )]
-    #[case::cache(
-        Error::Encode {
-            path: "/data/library.bin".into(),
-            source: bincode::error::EncodeError::UnexpectedEnd,
-        },
-        "cache encode /data/library.bin: UnexpectedEnd"
-    )]
-    #[case::trash(
-        Error::Trash {
-            path: "/music/gone.flac".into(),
-            source: trash::Error::Unknown {
-                description: "no trash service".to_string(),
-            },
-        },
-        "trash /music/gone.flac: Error during a `trash` operation: Unknown { description: \"no trash service\" }"
-    )]
-    fn errors_render_readable_messages(#[case] error: Error, #[case] expected: &str) {
-        assert_eq!(error.to_string(), expected);
+    fn file(subject: LibrarySubject, path: &str, kind: IoError) -> LibraryError {
+        LibraryError::File {
+            subject,
+            path: path.into(),
+            kind,
+        }
     }
 
     #[rstest]
+    #[case::no_user_dirs(
+        Error::NoUserDirs,
+        "no such directory",
+        LibraryError::NoUserDirs
+    )]
     #[case::read_missing(
-        Error::Read {
+        Error::Io {
             subject: LibrarySubject::Scan,
             path: "/music".into(),
             source: std::io::Error::from(std::io::ErrorKind::NotFound),
         },
-        LibraryError::File {
-            subject: LibrarySubject::Scan,
-            path: "/music".into(),
-            kind: IoError::Missing,
-        }
+        "a scan /music: entity not found",
+        file(LibrarySubject::Scan, "/music", IoError::Missing)
     )]
     #[case::write_denied(
-        Error::Write {
+        Error::Io {
             subject: LibrarySubject::Favorites,
             path: "/data/favorites.json".into(),
             source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
         },
-        LibraryError::File {
-            subject: LibrarySubject::Favorites,
-            path: "/data/favorites.json".into(),
-            kind: IoError::Denied,
-        }
+        "the favorites file /data/favorites.json: permission denied",
+        file(LibrarySubject::Favorites, "/data/favorites.json", IoError::Denied)
     )]
     #[case::json(
         Error::Json {
@@ -220,22 +155,16 @@ mod tests {
             source: serde_json::from_str::<serde_json::Value>("")
                 .expect_err("empty input must fail to parse"),
         },
-        LibraryError::File {
-            subject: LibrarySubject::History,
-            path: "/data/history.jsonl".into(),
-            kind: IoError::Malformed,
-        }
+        "the history file /data/history.jsonl: json: EOF while parsing a value at line 1 column 0",
+        file(LibrarySubject::History, "/data/history.jsonl", IoError::Malformed)
     )]
     #[case::cache_encode(
         Error::Encode {
             path: "/data/library.bin".into(),
             source: bincode::error::EncodeError::UnexpectedEnd,
         },
-        LibraryError::File {
-            subject: LibrarySubject::Cache,
-            path: "/data/library.bin".into(),
-            kind: IoError::Malformed,
-        }
+        "cache encode /data/library.bin: UnexpectedEnd",
+        file(LibrarySubject::Cache, "/data/library.bin", IoError::Malformed)
     )]
     #[case::trash_unknown(
         Error::Trash {
@@ -244,18 +173,15 @@ mod tests {
                 description: "no trash service".to_string(),
             },
         },
-        LibraryError::File {
-            subject: LibrarySubject::Trash,
-            path: "/music/gone.flac".into(),
-            kind: IoError::Other,
-        }
+        "trash /music/gone.flac: Error during a `trash` operation: Unknown { description: \"no trash service\" }",
+        file(LibrarySubject::Trash, "/music/gone.flac", IoError::Other)
     )]
-    #[case::no_directory(Error::NoUserDirs, LibraryError::NoUserDirs)]
-    fn a_library_error_becomes_a_structured_failure(
+    fn errors_render_messages_and_structured_errors(
         #[case] error: Error,
-        #[case] expected: LibraryError,
+        #[case] message: &str,
+        #[case] failure: LibraryError,
     ) {
-        let failure: LibraryError = (&error).into();
-        assert_eq!(failure, expected);
+        assert_eq!(error.to_string(), message);
+        assert_eq!(LibraryError::from(&error), failure);
     }
 }

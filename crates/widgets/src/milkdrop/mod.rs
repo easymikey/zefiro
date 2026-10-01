@@ -5,15 +5,22 @@ use ratatui::{style::Color, text::Line};
 use crate::{
     Playing,
     milkdrop::field::{
-        BandSplit,
+        ASPECT_X,
+        COLOR_BAND_HIGH,
+        COLOR_BAND_MID,
+        CORE_GAIN,
+        CORE_RADIUS,
         CellPosition,
-        FieldDimensions,
+        DECAY,
+        FieldSize,
         Injection,
-        MilkdropCoefficients,
-        MilkdropColorBands,
-        MilkdropGlyphs,
         Mirror,
+        RAMP,
+        RAMP_FALLBACK,
+        ROTATION_GAIN,
+        SPARK_COUNT,
         Warp,
+        ZOOM_GAIN,
         band_levels,
         bilinear_sample,
         field_center,
@@ -26,21 +33,17 @@ use crate::{
     },
     primitive::span::text,
     spectrum::Spectrum,
-    theme::ActiveTheme,
+    theme::{ActiveTheme, Role},
 };
 
-fn resolve_mirror(
-    field: &mut MilkdropField,
-    dimensions: FieldDimensions,
-    mirror: Mirror,
-) {
+fn resolve_mirror(field: &mut MilkdropField, size: FieldSize, mirror: Mirror) {
     match mirror {
         Mirror::None => std::mem::swap(&mut field.cells, &mut field.scratch),
         Mirror::Horizontal => {
-            mirror_horizontal_into(&field.scratch, &mut field.cells, dimensions);
+            mirror_horizontal_into(&field.scratch, &mut field.cells, size);
         }
         Mirror::Kaleido4 => {
-            kaleidoscope_quadrants_into(&field.scratch, &mut field.cells, dimensions);
+            kaleidoscope_quadrants_into(&field.scratch, &mut field.cells, size);
         }
     }
 }
@@ -96,51 +99,49 @@ pub struct MilkdropAdvance<'a> {
 
 impl MilkdropField {
     pub fn advance(&mut self, input: &MilkdropAdvance<'_>) {
-        let tuning = MilkdropCoefficients::default();
-        let split = BandSplit::default();
-        let levels = band_levels(input.bands, &split);
+        let levels = band_levels(input.bands);
         let preset = preset_for_seed(input.seed);
 
-        let dimensions = FieldDimensions {
+        let size = FieldSize {
             width: self.width,
             height: self.height,
         };
-        let center = field_center(dimensions);
-        let zoom = preset.base_zoom + levels.bass * tuning.zoom_gain;
-        let rotation = preset.base_rotation + levels.mid * tuning.rotation_gain;
+        let center = field_center(size);
+        let zoom = preset.base_zoom + levels.bass * ZOOM_GAIN;
+        let rotation = preset.base_rotation + levels.mid * ROTATION_GAIN;
         let warp = Warp {
             center,
             zoom,
             rotation,
-            aspect_x: tuning.aspect_x,
+            aspect_x: ASPECT_X,
         };
 
         self.scratch.clear();
         for row in 0..self.height {
             for column in 0..self.width {
                 let source = warp_source(CellPosition { column, row }, &warp);
-                let warped = bilinear_sample(&self.cells, dimensions, source);
-                self.scratch.push(warped * tuning.decay);
+                let warped = bilinear_sample(&self.cells, size, source);
+                self.scratch.push(warped * DECAY);
             }
         }
 
         if input.playing == Playing::Yes {
             inject(
                 &mut self.scratch,
-                dimensions,
+                size,
                 &Injection {
                     center,
-                    aspect_x: tuning.aspect_x,
-                    core_radius: tuning.core_radius + levels.bass * tuning.core_gain,
+                    aspect_x: ASPECT_X,
+                    core_radius: CORE_RADIUS + levels.bass * CORE_GAIN,
                     treble: levels.treble,
-                    spark_count: tuning.spark_count,
+                    spark_count: SPARK_COUNT,
                     seed: input.seed,
                     tick: input.tick,
                 },
             );
         }
 
-        resolve_mirror(self, dimensions, preset.mirror);
+        resolve_mirror(self, size, preset.mirror);
         self.phase = (self.phase + rotation).rem_euclid(std::f32::consts::TAU)
             - std::f32::consts::PI;
     }
@@ -157,17 +158,16 @@ impl MilkdropColors {
     #[must_use]
     pub fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         Self {
-            dim: theme.dim(),
-            accent: theme.accent(),
-            bright: theme.text(),
+            dim: theme.role(Role::Dim),
+            accent: theme.role(Role::Accent),
+            bright: theme.role(Role::Text),
         }
     }
 
     fn color_for(&self, intensity: f32) -> Color {
-        let bands = MilkdropColorBands::default();
-        if intensity < bands.mid {
+        if intensity < COLOR_BAND_MID {
             self.dim
-        } else if intensity < bands.high {
+        } else if intensity < COLOR_BAND_HIGH {
             self.accent
         } else {
             self.bright
@@ -175,15 +175,13 @@ impl MilkdropColors {
     }
 }
 
-fn ramp_glyph(intensity: f32, glyphs: &MilkdropGlyphs) -> &'static str {
-    let last_index = glyphs.ramp.len() - 1;
+fn ramp_glyph(intensity: f32) -> &'static str {
+    let last_index = RAMP.len() - 1;
     let clamped = intensity.clamp(0.0, 1.0);
-    let index = raster::round_usize(clamped * usize_to_f32(last_index));
-    glyphs
-        .ramp
-        .get(index.min(last_index))
+    let index = crate::pixels::round::<usize>(clamped * usize_to_f32(last_index));
+    RAMP.get(index.min(last_index))
         .copied()
-        .unwrap_or(glyphs.fallback)
+        .unwrap_or(RAMP_FALLBACK)
 }
 
 pub fn lines_into(
@@ -191,7 +189,6 @@ pub fn lines_into(
     colors: &MilkdropColors,
     output: &mut Vec<Line<'static>>,
 ) {
-    let glyphs = MilkdropGlyphs::default();
     if output.len() != field.height {
         output.clear();
         output.resize_with(field.height, Line::default);
@@ -200,7 +197,7 @@ pub fn lines_into(
         line.spans.clear();
         for column in 0..field.width {
             let intensity = field.cell(CellPosition { column, row });
-            let glyph = ramp_glyph(intensity, &glyphs);
+            let glyph = ramp_glyph(intensity);
             line.spans
                 .push(text(glyph).fg(colors.color_for(intensity)).into());
         }

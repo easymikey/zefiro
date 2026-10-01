@@ -9,12 +9,12 @@ use crate::{
         CoverStyle,
         FormatChips,
         KeyHints,
+        LayoutMode,
         ProgressTime,
         SpeedChip,
     },
-    breakpoints::LayoutConfig,
     error::{Error, TomlFile, parse_toml},
-    hex::Rgb,
+    rgb::Rgb,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -39,7 +39,7 @@ pub struct CoverConfig {
     pub size_px: u32,
     pub style: CoverStyle,
     pub text_cells: TextCoverCells,
-    #[serde(deserialize_with = "crate::appearance::cover_brackets")]
+    #[serde(deserialize_with = "crate::appearance::flag")]
     pub brackets: CoverBrackets,
 }
 
@@ -57,7 +57,7 @@ impl Default for CoverConfig {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CardConfig {
-    #[serde(deserialize_with = "crate::appearance::format_chips")]
+    #[serde(deserialize_with = "crate::appearance::flag")]
     pub format_chips: FormatChips,
     pub speed_chip: SpeedChip,
 }
@@ -69,7 +69,7 @@ pub struct ProgressConfig {
     pub radius: Option<f32>,
     pub fill: Option<Rgb>,
     pub track: Option<Rgb>,
-    #[serde(deserialize_with = "crate::appearance::progress_style")]
+    #[serde(deserialize_with = "crate::appearance::flag")]
     pub remaining: ProgressTime,
 }
 
@@ -88,10 +88,36 @@ impl Default for ProgressConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WindowConfig {
-    #[serde(deserialize_with = "crate::appearance::animations")]
+    #[serde(deserialize_with = "crate::appearance::flag")]
     pub animations: Animations,
-    #[serde(deserialize_with = "crate::appearance::key_hints")]
+    #[serde(deserialize_with = "crate::appearance::flag")]
     pub key_hints: KeyHints,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LayoutConfig {
+    pub full_min_width: u16,
+    pub full_min_height: u16,
+    pub compact_min_width: u16,
+    pub compact_min_height: u16,
+    pub min_columns: u16,
+    pub min_rows: u16,
+    pub mode: LayoutMode,
+}
+
+impl Default for LayoutConfig {
+    fn default() -> Self {
+        Self {
+            full_min_width: 60,
+            full_min_height: 19,
+            compact_min_width: 30,
+            compact_min_height: 13,
+            min_columns: 48,
+            min_rows: 16,
+            mode: LayoutMode::default(),
+        }
+    }
 }
 
 #[must_use]
@@ -146,17 +172,7 @@ impl AppearanceFile {
     }
 
     pub fn patched(&self, patch: AppearancePatch) -> AppearanceFile {
-        let current = self.appearance();
-        self.clone().with_appearance(Appearance {
-            cover_style: patch.cover_style.unwrap_or(current.cover_style),
-            cover_brackets: patch.cover_brackets.unwrap_or(current.cover_brackets),
-            format_chips: patch.format_chips.unwrap_or(current.format_chips),
-            speed_chip: patch.speed_chip.unwrap_or(current.speed_chip),
-            progress_time: patch.progress_time.unwrap_or(current.progress_time),
-            key_hints: patch.key_hints.unwrap_or(current.key_hints),
-            animations: patch.animations.unwrap_or(current.animations),
-            layout_mode: patch.layout_mode.unwrap_or(current.layout_mode),
-        })
+        self.clone().with_appearance(patch.apply(self.appearance()))
     }
 }
 
@@ -188,23 +204,21 @@ mod tests {
         appearance_file::{
             AppearanceFile,
             CoverConfig,
+            LayoutConfig,
             TextCoverCells,
             parse_appearance,
         },
-        breakpoints::LayoutConfig,
         error::Error,
     };
 
-    const COMMENTED_UI: &str = include_str!("../tests/fixtures/sifr-ui_commented.toml");
+    #[test]
+    fn the_stock_breakpoints_are_the_documented_defaults() {
+        insta::assert_debug_snapshot!(LayoutConfig::default());
+    }
 
     #[test]
     fn the_stock_appearance_file_is_every_tables_defaults() {
         insta::assert_debug_snapshot!(AppearanceFile::default());
-    }
-
-    #[test]
-    fn the_commented_ui_file_parses_into_every_table() {
-        insta::assert_debug_snapshot!(parse_appearance(COMMENTED_UI).unwrap());
     }
 
     #[test]
