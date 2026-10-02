@@ -1,6 +1,4 @@
-// GUARD: no `macro_rules!` and no proc-macro crate of our own — a generic type
-// or a derive from std/serde/strum does the job while staying visible to the
-// reader.
+// GUARD: no `macro_rules!` and no proc-macro crate of our own.
 
 use crate::guards::support::{self, Allow};
 

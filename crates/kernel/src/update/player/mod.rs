@@ -15,28 +15,27 @@ use crate::{
         LibraryCmd,
         MacosCmd,
         PlaybackChange,
-        TrackRequest,
+        TrackLoad,
     },
     domain::{
         AbLoop,
         HistoryEntry,
-        Model,
         Moment,
         PRELOAD_LEAD,
-        Pause,
+        PausedBy,
         Player,
         Revision,
         Revisions,
+        Settings,
         Speed,
         Track,
+        Transport,
+        ViewIndex,
         Workspace,
+        playlist::Playlist,
     },
     message::{AudioError, Timer},
-    update::{
-        audio,
-        error::UpdateError,
-        machine::{Machine, Rejected},
-    },
+    update::{audio, error::UpdateError, machine::Machine},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -46,10 +45,10 @@ pub struct Anchor {
 }
 
 impl Anchor {
-    pub(crate) fn at(model: &Model, now: Moment) -> Self {
+    pub(crate) fn at(transport: &Transport, now: Moment) -> Self {
         Anchor {
             since: now,
-            speed: model.transport.speed,
+            speed: transport.speed,
         }
     }
 }
@@ -61,12 +60,26 @@ pub struct Stamp {
 }
 
 impl Stamp {
-    pub(crate) fn issue(model: &Model, now: Moment) -> Self {
+    pub(crate) fn pending(
+        transport: &Transport,
+        revisions: &Revisions,
+        now: Moment,
+    ) -> Self {
         Stamp {
-            anchor: Anchor::at(model, now),
-            revision: model.revisions.effects.next(),
+            anchor: Anchor::at(transport, now),
+            revision: revisions.effects.next(),
         }
     }
+}
+
+pub(crate) struct PlaybackParts<'a> {
+    pub(crate) player: &'a mut Player,
+    pub(crate) transport: &'a mut Transport,
+    pub(crate) playlist: &'a mut Playlist,
+    pub(crate) queue: &'a mut Vec<ViewIndex>,
+    pub(crate) workspace: &'a mut Workspace,
+    pub(crate) revisions: &'a mut Revisions,
+    pub(crate) settings: &'a mut Settings,
 }
 
 #[derive(Debug)]
@@ -95,7 +108,7 @@ pub enum PlayerMessage {
         error: AudioError,
         now: Moment,
     },
-    MarkReached {
+    LookaheadReached {
         offset: Duration,
         lookahead: Lookahead,
     },
@@ -113,35 +126,37 @@ pub enum PlayerMessage {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PlayerError {
+    #[error("player is stopped")]
     Stopped,
+    #[error("player is loading")]
     Loading,
+    #[error("player is playing")]
     Playing,
+    #[error("player is paused")]
     Paused,
 }
-
-type Transition = Result<(Player, Cmd), Rejected<Player>>;
 
 impl Machine for Player {
     type Message = PlayerMessage;
     type Error = PlayerError;
     type Effect = Cmd;
 
-    fn transition(self, message: PlayerMessage) -> Transition {
+    fn transition(&mut self, message: PlayerMessage) -> Result<Cmd, PlayerError> {
         match message {
             PlayerMessage::Toggle { current, stamp } => self.toggle(current, stamp),
-            PlayerMessage::Stop => Ok((Player::Stopped, stopped_effects())),
-            PlayerMessage::Hold(now) => self.pause(now, Pause::ByOverlay),
-            PlayerMessage::Release(anchor) => self.release(anchor),
+            PlayerMessage::Stop => Ok(self.stop()),
+            PlayerMessage::Hold(now) => Ok(self.pause(now, PausedBy::Overlay)),
+            PlayerMessage::Release(anchor) => Ok(self.release(anchor)),
             PlayerMessage::Seek { target, now } => self.seek(target, now),
-            PlayerMessage::SleepFired(now) => self.pause(now, Pause::ByListener),
+            PlayerMessage::SleepFired(now) => Ok(self.pause(now, PausedBy::Listener)),
             PlayerMessage::Start { track, stamp } => {
-                Ok(start(track, StartOrigin::User, stamp))
+                Ok(self.start(track, StartOrigin::User(stamp)))
             }
             PlayerMessage::Loaded { total, anchor } => self.loaded(total, anchor),
             PlayerMessage::Error { error, now } => Ok(self.failed(&error, now)),
-            PlayerMessage::MarkReached { offset, lookahead } => {
+            PlayerMessage::LookaheadReached { offset, lookahead } => {
                 self.positioned(offset, lookahead)
             }
             PlayerMessage::Playhead { offset, now } => self.reported(offset, now),
@@ -152,44 +167,65 @@ impl Machine for Player {
 }
 
 impl Player {
-    fn refuse(self) -> Transition {
-        let reason = match &self {
+    fn refusal(&self) -> PlayerError {
+        match self {
             Player::Stopped => PlayerError::Stopped,
             Player::Loading { .. } => PlayerError::Loading,
             Player::Playing { .. } => PlayerError::Playing,
             Player::Paused { .. } => PlayerError::Paused,
+        }
+    }
+
+    fn stop(&mut self) -> Cmd {
+        *self = Player::Stopped;
+        stopped_effects()
+    }
+
+    fn start(&mut self, track: Arc<Track>, origin: StartOrigin) -> Cmd {
+        let request = TrackLoad::for_track(&track, origin.stamp().revision);
+        let load = Effect::Audio(AudioCmd::Load(request));
+        let effects = origin
+            .stop()
+            .into_iter()
+            .chain([load])
+            .chain(handover_effects(
+                &track,
+                PlaybackChange::Play,
+                origin.stamp().anchor.since,
+            ))
+            .collect();
+        *self = Player::Loading {
+            track,
+            at: Duration::ZERO,
         };
-        Err(Rejected {
-            state: self,
-            reason,
-        })
+        Cmd::Batch(effects)
     }
 }
 
 pub(crate) fn update_player(
-    model: &mut Model,
+    playback: &mut PlaybackParts<'_>,
     message: PlayerMessage,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    let since = playing_since(&model.player);
-    let candidate = model.revisions.effects.next();
-    let cmd = model.player.update(message)?;
-    committed(&mut model.revisions, candidate, &cmd);
+    let since = playing_since(playback.player);
+    let candidate = playback.revisions.effects.next();
+    let cmd = playback.player.transition(message)?;
+    commit(playback.revisions, candidate, &cmd);
     if let Some(since) = since {
-        accumulate(&mut model.workspace, since, now);
+        accumulate(playback.workspace, since, now);
     }
     let position_sent = cmd
         .effects()
         .any(|effect| matches!(effect, Effect::Macos(MacosCmd::PlaybackPosition(_))));
     let armed = if position_sent {
-        timer(model, now)
+        timer(playback, now)
     } else {
-        arm(model, now)
+        arm(playback, now)
     };
     Ok(cmd.then(armed))
 }
 
-pub(crate) fn committed(revisions: &mut Revisions, candidate: Revision, cmd: &Cmd) {
+pub(crate) fn commit(revisions: &mut Revisions, candidate: Revision, cmd: &Cmd) {
     let loads = cmd.effects().any(|effect| {
         matches!(
             effect,
@@ -201,49 +237,48 @@ pub(crate) fn committed(revisions: &mut Revisions, candidate: Revision, cmd: &Cm
     }
 }
 
-pub(crate) fn duration_of(model: &Model) -> Duration {
-    model
-        .player
+pub(crate) fn duration_of(player: &Player) -> Duration {
+    player
         .current()
         .and_then(|track| track.duration())
-        .unwrap_or_default()
+        .unwrap_or(Duration::ZERO)
 }
 
-pub(crate) fn lookahead(model: &Model, now: Moment) -> Lookahead {
-    let ab_loop = match model.transport.ab {
+pub(crate) fn lookahead(playback: &PlaybackParts<'_>, now: Moment) -> Lookahead {
+    let ab_loop = match playback.transport.ab_loop {
         Some(AbLoop::Full { a, b }) => Some((a, b)),
         Some(AbLoop::AOnly(_)) | None => None,
     };
     Lookahead {
         preload_lead: PRELOAD_LEAD,
         ab_loop,
-        next: audio::successor(&model.playlist, &model.queue)
+        next: audio::successor(playback.playlist, playback.queue)
             .track()
             .cloned(),
-        duration: duration_of(model),
+        duration: duration_of(playback.player),
         now,
-        revision: model.revisions.effects.next(),
+        revision: playback.revisions.effects.next(),
     }
 }
 
-pub(crate) fn arm(model: &mut Model, now: Moment) -> Cmd {
-    let Player::Playing { head, .. } = &model.player else {
+pub(crate) fn arm(playback: &mut PlaybackParts<'_>, now: Moment) -> Cmd {
+    let Player::Playing { head, .. } = &*playback.player else {
         return Cmd::None;
     };
     Cmd::from(Effect::Macos(MacosCmd::PlaybackPosition(
         head.position_at(now),
     )))
-    .then(timer(model, now))
+    .then(timer(playback, now))
 }
 
-fn timer(model: &mut Model, now: Moment) -> Cmd {
-    let Player::Playing { head, .. } = &model.player else {
+fn timer(playback: &mut PlaybackParts<'_>, now: Moment) -> Cmd {
+    let Player::Playing { head, .. } = &*playback.player else {
         return Cmd::None;
     };
-    next_decision(*head, &lookahead(model, now)).map_or(Cmd::None, |delay| {
+    next_decision(*head, &lookahead(playback, now)).map_or(Cmd::None, |delay| {
         Effect::After {
             delay,
-            message: Timer::Mark(model.revisions.issue_mark()),
+            timer: Timer::Lookahead(playback.revisions.issue_lookahead()),
         }
         .into()
     })
@@ -262,39 +297,23 @@ pub(crate) fn accumulate(workspace: &mut Workspace, since: Moment, now: Moment) 
 
 #[derive(Clone, Copy)]
 enum StartOrigin {
-    User,
-    TrackEnded,
+    User(Stamp),
+    TrackEnded(Stamp),
 }
 
 impl StartOrigin {
-    fn stop(self) -> Option<Effect> {
+    fn stamp(self) -> Stamp {
         match self {
-            StartOrigin::User => Some(Effect::Audio(AudioCmd::Stop)),
-            StartOrigin::TrackEnded => None,
+            StartOrigin::User(stamp) | StartOrigin::TrackEnded(stamp) => stamp,
         }
     }
-}
 
-fn start(track: Arc<Track>, origin: StartOrigin, stamp: Stamp) -> (Player, Cmd) {
-    let request = TrackRequest::for_track(&track, stamp.revision);
-    let load = Effect::Audio(AudioCmd::Load(request));
-    let effects = origin
-        .stop()
-        .into_iter()
-        .chain([load])
-        .chain(handover_effects(
-            &track,
-            PlaybackChange::Play,
-            stamp.anchor.since,
-        ))
-        .collect();
-    (
-        Player::Loading {
-            track,
-            at: Duration::ZERO,
-        },
-        Cmd::Batch(effects),
-    )
+    fn stop(self) -> Option<Effect> {
+        match self {
+            StartOrigin::User(_) => Some(Effect::Audio(AudioCmd::Stop)),
+            StartOrigin::TrackEnded(_) => None,
+        }
+    }
 }
 
 fn seek_effect(target: Duration) -> Cmd {
@@ -305,25 +324,32 @@ fn seek_effect(target: Duration) -> Cmd {
 }
 
 fn handover_effects(track: &Arc<Track>, playback: PlaybackChange, now: Moment) -> Cmd {
-    let mut effects = vec![
-        Effect::Library(LibraryCmd::AppendHistory(HistoryEntry::from_track(
-            track, now,
-        ))),
-        Effect::Macos(MacosCmd::NowPlaying(Some(Arc::clone(track)))),
-    ];
-    effects.extend(playback.effects());
-    effects.extend([
-        Effect::Animate(Cue::TrackChanged),
-        Effect::Animate(Cue::PlaybackChanged(playback)),
-    ]);
-    Cmd::Batch(effects)
+    Cmd::Batch(
+        [
+            Effect::Library(LibraryCmd::AppendHistory(HistoryEntry::from_track(
+                track, now,
+            ))),
+            Effect::Macos(MacosCmd::NowPlaying(Some(Arc::clone(track)))),
+        ]
+        .into_iter()
+        .chain(playback.effects())
+        .chain([
+            Effect::Animate(Cue::TrackChanged),
+            Effect::Animate(Cue::PlaybackChanged(playback)),
+        ])
+        .collect(),
+    )
 }
 
 pub(crate) fn stopped_effects() -> Cmd {
-    let mut effects = PlaybackChange::Stop.effects().to_vec();
-    effects.extend([
-        Effect::Macos(MacosCmd::NowPlaying(None)),
-        Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Stop)),
-    ]);
-    Cmd::Batch(effects)
+    Cmd::Batch(
+        PlaybackChange::Stop
+            .effects()
+            .into_iter()
+            .chain([
+                Effect::Macos(MacosCmd::NowPlaying(None)),
+                Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Stop)),
+            ])
+            .collect(),
+    )
 }

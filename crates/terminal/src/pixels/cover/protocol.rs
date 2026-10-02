@@ -4,14 +4,8 @@ use ratatui_image::{
     protocol::{StatefulProtocol, StatefulProtocolType, kitty::StatefulKitty},
 };
 
-/// The kitty image id the cover slot always transmits under. Reusing it lets
-/// a re-transmit replace the previously stored image instead of leaving an
-/// orphan in the terminal's image store.
 const COVER_KITTY_ID: u32 = 1;
 
-/// Builds a protocol for the cover slot. For the kitty protocol this pins the
-/// image id so a repaint replaces the stored image rather than allocating a
-/// new one; every other protocol keeps the picker's own resize protocol.
 pub(crate) fn cover_protocol(picker: &Picker, image: DynamicImage) -> StatefulProtocol {
     if picker.protocol_type() != ProtocolType::Kitty {
         return picker.new_resize_protocol(image);

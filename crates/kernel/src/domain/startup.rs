@@ -1,13 +1,14 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crate::domain::{
+    AppearanceSetting,
     AudioSettings,
-    CustomSetting,
     Percent,
-    PlaylistIndex,
     ThemeChoice,
     ThemeName,
     Track,
+    ViewIndex,
+    appearance::Look,
     playlist::PlaylistSource,
 };
 
@@ -22,13 +23,14 @@ pub enum Shuffle {
 pub struct Startup {
     pub music_dir: PathBuf,
     pub playlist_tracks: Vec<Arc<Track>>,
-    pub playlist_index: Option<PlaylistIndex>,
+    pub playlist_index: Option<ViewIndex>,
     pub playlist_source: PlaylistSource,
     pub shuffle: Shuffle,
     pub audio: AudioSettings,
+    pub look: Look,
     pub theme: ThemeChoice,
     pub volume: Percent,
     pub themes: Vec<ThemeName>,
-    pub custom_settings: Vec<CustomSetting>,
-    pub toasts: Vec<String>,
+    pub appearance_settings: Vec<AppearanceSetting>,
+    pub toast_texts: Vec<String>,
 }

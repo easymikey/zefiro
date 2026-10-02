@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use audio::SpectrumTap;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use kernel::{
-    DriverMessage,
+    DriverEvent,
     Message,
     domain::{Driver, DriverStatus, Model},
 };
@@ -140,7 +140,7 @@ pub(crate) fn await_exits(
         };
         if let Message::Driver {
             driver,
-            event: DriverMessage::Stopped | DriverMessage::Died(_),
+            event: DriverEvent::Stopped | DriverEvent::Died(_),
         } = message
         {
             awaited.retain(|waiting| *waiting != driver);
@@ -168,7 +168,8 @@ pub(crate) mod tests {
     use kernel::{
         AudioCmd,
         ConfigCmd,
-        DriverMessage,
+        Congestion,
+        DriverEvent,
         MacosCmd,
         Message,
         domain::Driver,
@@ -183,7 +184,6 @@ pub(crate) mod tests {
         port::{LibraryPort, Port, Ports},
         registry,
         runtime::StartupPaths,
-        sender::FullEdge,
         spawn::Spawners,
         wiring::Wiring,
     };
@@ -222,13 +222,13 @@ pub(crate) mod tests {
             }
             report_sender.send(Message::Driver {
                 driver: Driver::Library,
-                event: DriverMessage::Stopped,
+                event: DriverEvent::Stopped,
             })
         });
         DriverThread {
             commands,
             handle,
-            full_edge: FullEdge::default(),
+            full_edge: Congestion::default(),
         }
     }
 

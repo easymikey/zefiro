@@ -80,7 +80,7 @@ pub use repaint::{
     next_progress_step,
     next_sleep_minute,
 };
-pub use scene::{PixelPath, Scene, abbreviate_home};
+pub use scene::{PixelPath, Scene, ScenePresentation, abbreviate_home};
 pub use screen::{Breakpoint, FrameLayout, FrameLayoutParts, Screen};
 pub use spectrum::{SPECTRUM_BANDS, Spectrum, SpectrumMotion, SpectrumSmoothing};
 pub use theme::{
@@ -89,6 +89,7 @@ pub use theme::{
     Colors,
     Role,
     Theme,
+    ThemeSeed,
     color_at_depth,
     lerp_rgb,
     shade,

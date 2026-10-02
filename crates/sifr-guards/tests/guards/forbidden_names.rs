@@ -1,5 +1,4 @@
-// GUARD: the Forbidden list from the naming rules, gated per crate so kernel is
-// asserted now.
+// GUARD: the Forbidden naming list, gated per crate.
 
 use crate::guards::support;
 
@@ -191,9 +190,8 @@ fn no_constructors_named_by_mechanism() {
 
 const FORBIDDEN_TYPE_SUFFIXES: &[&str] = &["Spec", "Slot"];
 const TYPE_DECL_KEYWORDS: &[&str] = &["struct", "enum", "type", "trait"];
-const TYPE_SUFFIX_CRATE_PENDING: &[&str] = &["widgets"];
-const TYPE_SUFFIX_NAME_PENDING: &[(&str, &str)] =
-    &[("kernel/src/domain/setting_row.rs", "SettingEntry")];
+const TYPE_SUFFIX_CRATE_PENDING: &[&str] = &[];
+const TYPE_SUFFIX_NAME_PENDING: &[(&str, &str)] = &[];
 
 fn is_pending_type(relative: &str, name: &str) -> bool {
     TYPE_SUFFIX_NAME_PENDING
@@ -259,7 +257,7 @@ fn no_forbidden_type_suffixes() {
     );
 }
 
-const REFUSED_FAULT_PROBLEM_PENDING: &[&str] = &["widgets", "audio", "runtime"];
+const REFUSED_FAULT_PROBLEM_PENDING: &[&str] = &[];
 
 fn ends_in_third_word(word: &str) -> bool {
     (word.len() > "Refused".len() && word.ends_with("Refused"))

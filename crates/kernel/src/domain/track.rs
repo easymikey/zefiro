@@ -35,7 +35,7 @@ pub enum Tagging {
     Read,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Track {
     path: PathBuf,
     duration: Option<Duration>,
@@ -131,12 +131,8 @@ impl Track {
     #[must_use]
     pub fn with_duration(&self, duration: Duration) -> Self {
         Self {
-            path: self.path.clone(),
             duration: Some(duration),
-            tags: self.tags.clone(),
-            audio_format: self.audio_format.clone(),
-            display: self.display.clone(),
-            tagging: self.tagging,
+            ..self.clone()
         }
     }
 }

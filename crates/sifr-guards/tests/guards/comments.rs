@@ -1,5 +1,4 @@
-// GUARD: a comment is a violation unless it is one of the one-line survivors
-// listed below.
+// GUARD: a comment is a violation unless it is a listed one-line survivor.
 
 use std::collections::BTreeSet;
 
@@ -25,6 +24,81 @@ const ATTRIBUTE_RULES: &[support::Rule] = &[
 ];
 
 const ALLOW: &[Allow] = &[
+    Allow::new(
+        "sifr-guards/tests/guards/comments.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/config_doc_cli.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/config_doc_render.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/demeter.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/demeter_views.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/dispatch.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/errors.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/forbidden_names.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/hardware.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/imports.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/layering.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/macros.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/mod.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/purity.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/support.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
     Allow::new(
         "sifr-guards/tests/guards/fault.rs",
         "GUARD:",
@@ -196,6 +270,12 @@ fn every_comment_is_a_listed_one_liner() {
                 violations.push(format!(
                     "{relative}:{number}: a comment after code — the name says it, or docs/ does"
                 ));
+            } else if comment.token == "SAFETY:" {
+                if lines.contains(&(number + 1)) {
+                    violations.push(format!(
+                        "{relative}:{number}: `SAFETY:` runs past one line"
+                    ));
+                }
             } else if let Some(row) = allow_row(&relative, &comment.token) {
                 if lines.contains(&(number + 1)) {
                     violations.push(format!(
@@ -220,8 +300,8 @@ fn every_comment_is_a_listed_one_liner() {
 
     support::report(
         "comments guard (docs/principles.md): the code has no comments. The only \
-         survivors are the one-liners listed in this guard's ALLOW — a `SAFETY:` \
-         above an unsafe block, a `PROTOCOL:` recording a terminal or AppKit event, \
+         survivors are a one-line `SAFETY:` above an unsafe block and the \
+         one-liners listed in this guard's ALLOW — a `PROTOCOL:` recording a terminal or AppKit event, \
          a `GUARD:` saying why a guard exists — each exactly one line.",
         &violations,
         &support::stale(ALLOW, &seen),

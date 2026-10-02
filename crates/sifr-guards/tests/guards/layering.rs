@@ -1,31 +1,22 @@
-// GUARD: crates and modules depend downwards only, in the order
-// `docs/principles.md` sets out.
+// GUARD: crates and modules depend downwards only, per `docs/principles.md`.
 
 use std::collections::BTreeSet;
 
 use crate::guards::support;
 
-fn layer_of(crate_name: &str) -> Option<u8> {
-    match crate_name {
-        "kernel" => Some(1),
-        "library" | "audio" | "macos" | "config" => Some(2),
-        "runtime" => Some(3),
-        "widgets" => Some(4),
-        "terminal" => Some(5),
-        "sifr" => Some(6),
-        _ => None,
-    }
-}
+const ALL: &[&str] = &[
+    "kernel", "audio", "library", "macos", "config", "runtime", "widgets", "terminal",
+];
 
-fn allowed_dep_layers(crate_layer: u8) -> &'static [u8] {
-    match crate_layer {
-        1 => &[],
-        2 => &[1],
-        3 => &[1, 2],
-        4 => &[1, 2, 3],
-        5 => &[1, 2, 3, 4],
-        6 => &[1, 2, 3, 4, 5],
-        _ => &[],
+fn allowed_deps(crate_name: &str) -> Option<&'static [&'static str]> {
+    match crate_name {
+        "kernel" => Some(&[]),
+        "audio" | "library" | "macos" | "config" => Some(&["kernel"]),
+        "runtime" => Some(&["audio", "library", "macos", "config", "kernel"]),
+        "widgets" => Some(&["kernel"]),
+        "terminal" => Some(&["kernel", "widgets"]),
+        "sifr" => Some(ALL),
+        _ => None,
     }
 }
 
@@ -38,25 +29,22 @@ fn crate_dependencies_only_point_left() {
     let mut unplaced = Vec::new();
 
     for (crate_name, doc) in found {
-        let Some(crate_layer) = layer_of(&crate_name) else {
+        let Some(allowed) = allowed_deps(&crate_name) else {
             continue;
         };
-        let allowed = allowed_dep_layers(crate_layer);
 
         let mut deps = BTreeSet::new();
-        support::sifr_dependencies(&doc, &mut deps);
+        support::sifr_runtime_dependencies(&doc, &mut deps);
 
         for dep_name in deps {
-            let Some(dep_layer) = layer_of(&dep_name) else {
+            if allowed_deps(&dep_name).is_none() {
                 unplaced.push(format!(
                     "unknown sifr crate `{dep_name}` referenced by `{crate_name}` — add it \
-                     to `layer_of` in this guard"
+                     to `allowed_deps` in this guard"
                 ));
-                continue;
-            };
-            if !allowed.contains(&dep_layer) {
+            } else if !allowed.contains(&dep_name.as_str()) {
                 violations.push(format!(
-                    "{crate_name} -> {dep_name} (layer {crate_layer} -> {dep_layer})"
+                    "{crate_name} -> {dep_name} is not in the allow-map"
                 ));
             }
         }
@@ -65,8 +53,8 @@ fn crate_dependencies_only_point_left() {
     violations.extend(unplaced);
 
     support::report(
-        "layering guard: a crate depends only on crates strictly to its left \
-         (docs/principles.md Level 4). There is no allowlist.",
+        "layering guard: a crate depends only on the crates its allow-map entry names \
+         (docs/principles.md Level 4).",
         &violations,
         &[],
     );

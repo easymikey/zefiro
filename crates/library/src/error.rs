@@ -184,4 +184,16 @@ mod tests {
         assert_eq!(error.to_string(), message);
         assert_eq!(LibraryError::from(&error), failure);
     }
+
+    #[rstest]
+    #[case::not_found(std::io::ErrorKind::NotFound, IoError::Missing)]
+    #[case::permission_denied(std::io::ErrorKind::PermissionDenied, IoError::Denied)]
+    #[case::storage_full(std::io::ErrorKind::StorageFull, IoError::Full)]
+    #[case::other(std::io::ErrorKind::Interrupted, IoError::Other)]
+    fn io_error_maps_kinds(
+        #[case] kind: std::io::ErrorKind,
+        #[case] expected: IoError,
+    ) {
+        assert_eq!(IoError::from(kind), expected);
+    }
 }

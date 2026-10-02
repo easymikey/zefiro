@@ -11,11 +11,17 @@ pub(crate) use compact::{
     compact_height,
     progress_bar_width as compact_progress_bar_width,
 };
-use config::{Appearance, CoverBrackets};
 pub(crate) use headings::{CardStatus, card_status, status_label};
 use kernel::{
     Moment,
-    domain::{Output, Percent, Player, Speed, Track},
+    domain::{
+        Output,
+        Percent,
+        Player,
+        Speed,
+        Track,
+        appearance::{Appearance, CoverBrackets},
+    },
     playlist::{PlayOrder, RepeatMode},
 };
 pub use metrics::CardMetrics;
@@ -60,8 +66,6 @@ pub struct CardView<'a> {
     pub now: Moment,
 }
 
-/// What the card's cover square shows: nothing, a pixel image placed by the
-/// terminal layer, or cell-painted text art.
 #[derive(Debug, Clone)]
 pub enum CoverArt {
     Missing,
@@ -158,7 +162,6 @@ impl Widget for &Card<'_> {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use config::{Appearance, ProgressTime};
     use kernel::{
         Bounded,
         Moment,
@@ -173,6 +176,7 @@ mod tests {
             StreamError,
             Tags,
             Track,
+            appearance::{Appearance, ProgressTime},
             format_time,
         },
         playlist::PlayOrder,

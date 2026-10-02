@@ -59,7 +59,11 @@ fn a_lost_output_is_mirrored_in_the_model(
     assert_eq!(cmd, expected);
     assert!(matches!(model.transport.output, Output::Lost { .. }));
     assert_eq!(
-        model.workspace.toast.map(|shown| shown.text).as_deref(),
+        model
+            .workspace
+            .toasts
+            .first()
+            .and_then(|shown| shown.text.as_deref()),
         Some(toast)
     );
     if was_playing {

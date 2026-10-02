@@ -2,127 +2,90 @@ use std::num::NonZeroUsize;
 
 use crate::{
     cmd::Cue,
-    domain::{Direction, ThemeName},
+    domain::{Direction, ThemeName, appearance_rows::AppearanceField},
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SettingId(u16);
-
-impl SettingId {
-    #[must_use]
-    pub const fn new(id: u16) -> Self {
-        Self(id)
-    }
-
-    #[must_use]
-    pub const fn get(self) -> u16 {
-        self.0
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettingRow {
     Theme,
     Crossfade,
-    Replaygain,
+    ReplayGain,
     OutputDevice,
     SleepPresets,
-    Custom(SettingId),
+    Appearance(AppearanceField),
 }
+
+const FIXED_ROWS: [SettingRow; 4] = [
+    SettingRow::Crossfade,
+    SettingRow::ReplayGain,
+    SettingRow::OutputDevice,
+    SettingRow::SleepPresets,
+];
 
 impl SettingRow {
     #[must_use]
-    pub fn all(custom: &[CustomSetting]) -> Vec<SettingRow> {
-        let mut rows = Vec::new();
-        match custom.split_first() {
-            Some((leading, rest)) => {
-                rows.push(SettingRow::Custom(leading.custom.id));
-                rows.push(SettingRow::Theme);
-                rows.extend(rest.iter().map(|slot| SettingRow::Custom(slot.custom.id)));
-            }
-            None => rows.push(SettingRow::Theme),
-        }
-        rows.extend(
-            SETTINGS
-                .iter()
-                .map(|entry| entry.row)
-                .filter(|row| *row != SettingRow::Theme),
-        );
-        rows
+    pub fn all(appearance: &[AppearanceSetting]) -> Vec<SettingRow> {
+        let appearance_row =
+            |slot: &AppearanceSetting| SettingRow::Appearance(slot.row.field);
+        let (leading, rest) = match appearance.split_first() {
+            Some((leading, rest)) => (Some(appearance_row(leading)), rest),
+            None => (None, appearance),
+        };
+        leading
+            .into_iter()
+            .chain([SettingRow::Theme])
+            .chain(rest.iter().map(appearance_row))
+            .chain(FIXED_ROWS)
+            .collect()
     }
 
     #[must_use]
-    pub fn control(self, custom: &[CustomSetting]) -> Option<SettingControl> {
+    pub fn control(
+        self,
+        appearance: &[AppearanceSetting],
+    ) -> Option<AppearanceControl> {
         match self {
-            SettingRow::Custom(id) => custom
+            SettingRow::Appearance(field) => appearance
                 .iter()
-                .find(|slot| slot.custom.id == id)
-                .map(|slot| SettingControl::Custom(slot.custom.control)),
+                .find(|slot| slot.row.field == field)
+                .map(|slot| slot.row.control),
             SettingRow::Theme
             | SettingRow::Crossfade
-            | SettingRow::Replaygain
+            | SettingRow::ReplayGain
             | SettingRow::OutputDevice
-            | SettingRow::SleepPresets => SETTINGS
-                .iter()
-                .find(|entry| entry.row == self)
-                .map(|entry| entry.control),
+            | SettingRow::SleepPresets => None,
+        }
+    }
+
+    #[must_use]
+    pub fn activates(self, appearance: &[AppearanceSetting]) -> bool {
+        match self {
+            SettingRow::Crossfade => false,
+            SettingRow::Appearance(_) => self.control(appearance).is_some(),
+            SettingRow::Theme
+            | SettingRow::ReplayGain
+            | SettingRow::OutputDevice
+            | SettingRow::SleepPresets => true,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SettingEntry {
-    pub row: SettingRow,
-    pub control: SettingControl,
-}
-
-pub const SETTINGS: [SettingEntry; 5] = [
-    SettingEntry {
-        row: SettingRow::Theme,
-        control: SettingControl::Ring,
-    },
-    SettingEntry {
-        row: SettingRow::Crossfade,
-        control: SettingControl::Step,
-    },
-    SettingEntry {
-        row: SettingRow::Replaygain,
-        control: SettingControl::Toggle,
-    },
-    SettingEntry {
-        row: SettingRow::OutputDevice,
-        control: SettingControl::Ring,
-    },
-    SettingEntry {
-        row: SettingRow::SleepPresets,
-        control: SettingControl::Ring,
-    },
-];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingControl {
-    Toggle,
-    Step,
-    Ring,
-    Custom(CustomControl),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CustomControl {
+pub enum AppearanceControl {
     Toggle,
     Cycle(OptionCount),
     Step(OptionCount),
 }
 
-impl CustomControl {
+impl AppearanceControl {
     #[must_use]
     pub const fn count(self) -> OptionCount {
         match self {
-            CustomControl::Toggle => match OptionCount::new(2) {
+            AppearanceControl::Toggle => match OptionCount::new(2) {
                 Some(count) => count,
                 None => OptionCount::ONE,
             },
-            CustomControl::Cycle(count) | CustomControl::Step(count) => count,
+            AppearanceControl::Cycle(count) | AppearanceControl::Step(count) => count,
         }
     }
 }
@@ -174,16 +137,20 @@ pub enum Choice {
 
 impl Choice {
     #[must_use]
-    pub fn nudged(self, control: CustomControl, direction: Direction) -> OptionIndex {
+    pub fn stepped(
+        self,
+        control: AppearanceControl,
+        direction: Direction,
+    ) -> OptionIndex {
         let count = control.count();
         match self {
             Choice::Mixed => clamped(count, 0),
             Choice::Option(index) => {
                 let next = match control {
-                    CustomControl::Toggle | CustomControl::Cycle(_) => {
+                    AppearanceControl::Toggle | AppearanceControl::Cycle(_) => {
                         direction.wrapped(index.get(), count.get())
                     }
-                    CustomControl::Step(_) => {
+                    AppearanceControl::Step(_) => {
                         saturated(index.get(), count.get(), direction)
                     }
                 };
@@ -207,23 +174,23 @@ fn clamped(count: OptionCount, position: usize) -> OptionIndex {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CustomRow {
-    pub id: SettingId,
-    pub control: CustomControl,
+pub struct AppearanceRow {
+    pub field: AppearanceField,
+    pub control: AppearanceControl,
     pub cue: Option<Cue>,
     pub themes: &'static [Option<ThemeName>],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CustomSetting {
-    pub custom: &'static CustomRow,
+pub struct AppearanceSetting {
+    pub row: &'static AppearanceRow,
     pub choice: Choice,
 }
 
 impl SettingRow {
     #[must_use]
-    pub fn first(custom: &[CustomSetting]) -> Self {
-        SettingRow::all(custom)
+    pub fn first(appearance: &[AppearanceSetting]) -> Self {
+        SettingRow::all(appearance)
             .first()
             .copied()
             .unwrap_or(SettingRow::Theme)
@@ -252,7 +219,13 @@ impl SettingRow {
 mod tests {
     use rstest::rstest;
 
-    use crate::domain::{Choice, CustomControl, Direction, OptionCount, OptionIndex};
+    use crate::domain::{
+        AppearanceControl,
+        Choice,
+        Direction,
+        OptionCount,
+        OptionIndex,
+    };
 
     fn option(count: usize, at: usize) -> OptionIndex {
         OptionCount::new(count).unwrap().index(at).unwrap()
@@ -260,7 +233,7 @@ mod tests {
 
     struct NudgeRow {
         choice: Choice,
-        control: CustomControl,
+        control: AppearanceControl,
         direction: Direction,
         expected: OptionIndex,
     }
@@ -268,54 +241,54 @@ mod tests {
     #[rstest]
     #[case::toggle_up_from_0(NudgeRow {
         choice: Choice::Option(option(2, 0)),
-        control: CustomControl::Toggle,
+        control: AppearanceControl::Toggle,
         direction: Direction::Next,
         expected: option(2, 1),
     })]
     #[case::toggle_down_from_0(NudgeRow {
         choice: Choice::Option(option(2, 0)),
-        control: CustomControl::Toggle,
+        control: AppearanceControl::Toggle,
         direction: Direction::Previous,
         expected: option(2, 1),
     })]
     #[case::cycle_wraps_up_at_the_end(NudgeRow {
         choice: Choice::Option(option(3, 2)),
-        control: CustomControl::Cycle(OptionCount::new(3).unwrap()),
+        control: AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
         direction: Direction::Next,
         expected: option(3, 0),
     })]
     #[case::cycle_wraps_down_at_0(NudgeRow {
         choice: Choice::Option(option(3, 0)),
-        control: CustomControl::Cycle(OptionCount::new(3).unwrap()),
+        control: AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
         direction: Direction::Previous,
         expected: option(3, 2),
     })]
     #[case::step_stops_at_the_top(NudgeRow {
         choice: Choice::Option(option(3, 2)),
-        control: CustomControl::Step(OptionCount::new(3).unwrap()),
+        control: AppearanceControl::Step(OptionCount::new(3).unwrap()),
         direction: Direction::Next,
         expected: option(3, 2),
     })]
     #[case::step_stops_at_0(NudgeRow {
         choice: Choice::Option(option(3, 0)),
-        control: CustomControl::Step(OptionCount::new(3).unwrap()),
+        control: AppearanceControl::Step(OptionCount::new(3).unwrap()),
         direction: Direction::Previous,
         expected: option(3, 0),
     })]
     #[case::mixed_up(NudgeRow {
         choice: Choice::Mixed,
-        control: CustomControl::Cycle(OptionCount::new(3).unwrap()),
+        control: AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
         direction: Direction::Next,
         expected: option(3, 0),
     })]
     #[case::mixed_down(NudgeRow {
         choice: Choice::Mixed,
-        control: CustomControl::Cycle(OptionCount::new(3).unwrap()),
+        control: AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
         direction: Direction::Previous,
         expected: option(3, 0),
     })]
     fn choice_nudges_onto_a_real_option(#[case] row: NudgeRow) {
-        assert_eq!(row.choice.nudged(row.control, row.direction), row.expected);
+        assert_eq!(row.choice.stepped(row.control, row.direction), row.expected);
     }
 
     #[test]

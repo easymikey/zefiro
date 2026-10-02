@@ -118,8 +118,6 @@ pub struct Capabilities {
     pub color_depth: ColorDepth,
 }
 
-// A terminal can confirm both Kitty and Sixel at once, in which case
-// `protocol_type` resolves to Kitty and Sixel stays a separate fact.
 fn select_protocol_type(
     choices: &[Protocol],
     protocol_type: ProtocolType,

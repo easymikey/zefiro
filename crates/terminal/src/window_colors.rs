@@ -1,7 +1,9 @@
 use std::io::{self, Write};
 
-use config::Rgb;
-use kernel::{WindowColorsCmd, domain::ThemeName};
+use kernel::{
+    WindowColorsCmd,
+    domain::{ThemeName, appearance::Rgb},
+};
 use widgets::{Role, Theme};
 
 const OSC: &str = "\x1b]";
@@ -86,10 +88,12 @@ pub fn write_window_colors(
 
 #[cfg(test)]
 mod tests {
-    use config::{Rgb, ThemeColors};
-    use kernel::{WindowColorsCmd, domain::ThemeName};
+    use kernel::{
+        WindowColorsCmd,
+        domain::{ThemeName, appearance::Rgb},
+    };
     use rstest::rstest;
-    use widgets::{Colors, Role, Theme};
+    use widgets::{Colors, Role, Theme, ThemeSeed};
 
     use crate::window_colors::{
         UnknownThemeError,
@@ -113,7 +117,7 @@ mod tests {
     fn theme() -> Theme {
         Theme {
             name: ThemeName::from_static(KNOWN_THEME),
-            colors: Colors::derive(&ThemeColors {
+            colors: Colors::derive(&ThemeSeed {
                 background: Rgb([0x10, 0x10, 0x10]),
                 foreground: Rgb([0xe0, 0xe0, 0xe0]),
                 bright_foreground: Rgb([0xf0, 0xf0, 0xf0]),

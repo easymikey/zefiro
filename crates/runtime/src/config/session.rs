@@ -4,12 +4,12 @@ use std::{
     time::Instant,
 };
 
-use config::{AppearanceFile, ThemeFile};
+use config::ThemeFile;
 use crossbeam_channel::{Receiver, Select, unbounded};
 use kernel::{
     ConfigCmd,
     ConfigEvent,
-    DriverMessage,
+    DriverEvent,
     Outbox,
     SendError,
     domain::{ConfigError, ConfigFile, Driver},
@@ -23,10 +23,9 @@ use crate::{
         driver::{ConfigParts, Outbound},
         machine::{ConfigEffect, ConfigMessage, ConfigState, Published},
         save_queue::SavePatches,
-        write::{SaveResult, save_appearance, save_config},
+        write::{save_appearance, save_config},
     },
     latest::LatestSender,
-    sender::DriverSender,
     watcher::{Watcher, config_directory, recommended, watch_if_present},
 };
 
@@ -44,7 +43,7 @@ pub(crate) struct Watch<W> {
 }
 
 impl Watch<Option<RecommendedWatcher>> {
-    pub(crate) fn recommended(outbox: &DriverSender<ConfigEvent>) -> Self {
+    pub(crate) fn recommended(outbox: &Outbox<ConfigEvent>) -> Self {
         let (events, receiver) = unbounded();
         let watcher = recommended(events, |error| {
             match outbox.send(watch_failure(&error.to_string())) {
@@ -64,9 +63,8 @@ pub(crate) struct ConfigLoop<'a, W> {
     filesystem_events: Receiver<notify::Result<notify::Event>>,
     config_path: PathBuf,
     appearance_path: PathBuf,
-    outbox: &'a DriverSender<ConfigEvent>,
+    outbox: &'a Outbox<ConfigEvent>,
     theme: &'a LatestSender<ThemeFile>,
-    appearance: &'a LatestSender<AppearanceFile>,
 }
 
 impl<'a, W: Watcher> ConfigLoop<'a, W> {
@@ -84,7 +82,6 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
             appearance_path: paths.appearance.clone(),
             outbox: outbound.outbox,
             theme: outbound.theme,
-            appearance: outbound.appearance,
         };
         loaded.mount(&config_directory(paths));
         loaded
@@ -159,7 +156,7 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
 
     fn feed(&mut self, input: ConfigMessage) -> ControlFlow<()> {
         let label: &'static str = (&input).into();
-        match self.driver.update(input) {
+        match self.driver.transition(input) {
             Ok(outputs) => self.act_all(outputs),
             Err(_) => self.reject(label),
         }
@@ -170,7 +167,7 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
     }
 
     fn reject(&self, input: &'static str) -> ControlFlow<()> {
-        let rejected = DriverMessage::Rejected { input };
+        let rejected = DriverEvent::Rejected { input };
         match self.outbox.report(Driver::Config, rejected) {
             Err(SendError::Closed) => ControlFlow::Break(()),
             Ok(()) | Err(SendError::Full) => ControlFlow::Continue(()),
@@ -198,13 +195,10 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
     }
 
     fn save(&self, patches: SavePatches) -> ConfigMessage {
-        let config: Option<SaveResult> = patches
-            .config
-            .map(|patch| save_config(&self.config_path, patch));
-        let appearance: Option<SaveResult> = patches
-            .appearance
-            .map(|patch| save_appearance(&self.appearance_path, patch));
-        ConfigMessage::Saved { config, appearance }
+        ConfigMessage::Saved(patches.map(
+            |patch| save_config(&self.config_path, patch),
+            |patch| save_appearance(&self.appearance_path, patch),
+        ))
     }
 
     fn list(&mut self, dir: &Path) -> ControlFlow<()> {
@@ -215,7 +209,11 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
     fn publish(&self, published: Published) {
         match published {
             Published::Theme(file) => self.theme.publish(file),
-            Published::Appearance(file) => self.appearance.publish(file),
+            Published::Appearance(file) => {
+                let _ = self
+                    .outbox
+                    .send(ConfigEvent::AppearanceReloaded(file.look()));
+            }
         }
     }
 
@@ -237,14 +235,15 @@ fn watch_failure(reason: &str) -> ConfigEvent {
 mod tests {
     use std::time::Duration;
 
-    use config::AppearanceField;
     use crossbeam_channel::{SendError, unbounded};
     use kernel::{
         ConfigCmd,
         ConfigPatch,
-        DriverMessage,
+        Congestion,
+        DriverEvent,
         Message,
-        domain::{ConfigFile, Driver, ThemeName},
+        Outbox,
+        domain::{ConfigFile, Driver, ThemeName, appearance_rows::AppearanceField},
     };
 
     use crate::{
@@ -253,11 +252,10 @@ mod tests {
             driver::{ConfigParts, Outbound, spawn as spawn_config},
             fixtures::{drain, paths},
             machine::ConfigMessage,
-            save_queue::SavePatches,
+            save_queue::{SavePatches, Saves},
             session::{ConfigLoop, Wake, Watch},
         },
         latest::{LatestSenders, latest_channels},
-        sender::{DriverSender, FullEdge},
         watcher::FakeWatch,
     };
 
@@ -270,7 +268,6 @@ mod tests {
             paths,
             save_debounce: TEST_DEBOUNCE,
             theme: writers.theme,
-            appearance: writers.appearance,
         }
     }
 
@@ -278,13 +275,12 @@ mod tests {
     fn a_fake_theme_change_publishes_the_theme() {
         let directory = tempfile::tempdir().unwrap();
         let (sender, _messages) = unbounded::<Message>();
-        let outbox = DriverSender::new(sender, FullEdge::default());
+        let outbox = Outbox::new(sender, Congestion::default());
         let (writers, cells, _doorbell) = latest_channels();
         let parts = parts(paths(&directory), writers);
         let outbound = Outbound {
             outbox: &outbox,
             theme: &parts.theme,
-            appearance: &parts.appearance,
         };
         let (events, receiver) = unbounded();
         let watching = Watch {
@@ -319,7 +315,7 @@ mod tests {
     fn a_rejected_input_is_reported_to_the_inbox() {
         let directory = tempfile::tempdir().unwrap();
         let (sender, messages) = unbounded::<Message>();
-        let outbox = DriverSender::new(sender, FullEdge::default());
+        let outbox = Outbox::new(sender, Congestion::default());
         let (writers, _cells, _doorbell) = latest_channels();
         let mut unselected = paths(&directory);
         unselected.theme = None;
@@ -327,7 +323,6 @@ mod tests {
         let outbound = Outbound {
             outbox: &outbox,
             theme: &parts.theme,
-            appearance: &parts.appearance,
         };
         let (_events, receiver) = unbounded();
         let watching = Watch {
@@ -346,7 +341,7 @@ mod tests {
             messages.try_iter().collect::<Vec<_>>(),
             vec![Message::Driver {
                 driver: Driver::Config,
-                event: DriverMessage::Rejected { input: "Read" }
+                event: DriverEvent::Rejected { input: "Read" }
             }]
         );
         assert!(session.feed(ConfigMessage::FilesChanged).is_continue());
@@ -356,13 +351,12 @@ mod tests {
     fn saving_lands_a_config_patch_on_disk() {
         let directory = tempfile::tempdir().unwrap();
         let (sender, _messages) = unbounded::<Message>();
-        let outbox = DriverSender::new(sender, FullEdge::default());
+        let outbox = Outbox::new(sender, Congestion::default());
         let (writers, _cells, _doorbell) = latest_channels();
         let parts = parts(paths(&directory), writers);
         let outbound = Outbound {
             outbox: &outbox,
             theme: &parts.theme,
-            appearance: &parts.appearance,
         };
         let (_events, receiver) = unbounded();
         let watching = Watch {
@@ -370,27 +364,18 @@ mod tests {
             events: receiver,
         };
         let session = ConfigLoop::new(&parts, &outbound, watching);
-        let patches = SavePatches {
-            config: Some(
-                ConfigPatch::builder()
-                    .theme(ThemeName::from_static("dark"))
-                    .build(),
-            ),
-            appearance: None,
-        };
+        let patches = SavePatches::Config(
+            ConfigPatch::builder()
+                .theme(ThemeName::from_static("dark"))
+                .build(),
+        );
 
         let saved = session.save(patches);
 
         let text =
             std::fs::read_to_string(directory.path().join("config.toml")).unwrap();
         assert!(text.contains("theme = \"dark\""));
-        assert!(matches!(
-            saved,
-            ConfigMessage::Saved {
-                config: Some(Ok(_)),
-                appearance: None
-            }
-        ));
+        assert!(matches!(saved, ConfigMessage::Saved(Saves::Config(Ok(_)))));
     }
 
     #[test]
@@ -403,15 +388,15 @@ mod tests {
         drain(&doorbell);
         drain(&messages);
 
-        let row = config::APPEARANCE_ROWS
+        let row = kernel::domain::appearance_rows::APPEARANCE_ROWS
             .into_iter()
             .find(|row| row.field == AppearanceField::KeyHints)
             .unwrap();
         thread
             .commands
             .send(ConfigCmd::Setting {
-                id: row.custom.id,
-                option: row.custom.control.count().index(1).unwrap(),
+                field: row.field,
+                option: row.control.count().index(1).unwrap(),
             })
             .unwrap();
         thread
@@ -427,7 +412,7 @@ mod tests {
             report,
             Err(SendError(Message::Driver {
                 driver: Driver::Config,
-                event: DriverMessage::Stopped
+                event: DriverEvent::Stopped
             }))
         );
         let content =

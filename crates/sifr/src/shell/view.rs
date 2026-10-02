@@ -1,14 +1,12 @@
 use std::path::PathBuf;
 
-use config::AppearanceFile;
 use runtime::Frame;
-use widgets::{ColorDepth, FrameLayout, PixelPath, Scene, Theme};
+use widgets::{ColorDepth, FrameLayout, PixelPath, Scene, ScenePresentation, Theme};
 
 use crate::shell::motion::Motion;
 
 pub(crate) struct Presentation {
     pub(in crate::shell) theme: Theme,
-    pub(in crate::shell) appearance: AppearanceFile,
     pub(in crate::shell) pixel_path: PixelPath,
     pub(in crate::shell) color_depth: ColorDepth,
     pub(in crate::shell) cell_aspect: f32,
@@ -27,22 +25,23 @@ pub(crate) fn view<'a>(
     presentation: &'a Presentation,
     motion: &'a Motion,
 ) -> LaidOutScene<'a> {
-    let scene = Scene {
-        model: frame.model,
-        theme: &presentation.theme,
-        color_depth: presentation.color_depth,
-        appearance: &presentation.appearance,
-        bindings: frame.model.workspace.keymap.bindings(),
-        spectrum: motion.spectrum_smoothing.bands(),
-        pixel_path: presentation.pixel_path,
-        cell_aspect: presentation.cell_aspect,
-        clock: frame.now.elapsed_since(motion.first_paint),
-        now: frame.now,
-        music_dir: &presentation.music_dir_label,
-        sleep_left: frame
-            .sleep_deadline
-            .map(|deadline| deadline.elapsed_since(frame.now)),
-    };
+    let scene = Scene::from_model(
+        frame.model,
+        ScenePresentation {
+            theme: &presentation.theme,
+            color_depth: presentation.color_depth,
+            bindings: frame.model.workspace.keymap.bindings(),
+            spectrum: motion.spectrum_smoothing.bands(),
+            pixel_path: presentation.pixel_path,
+            cell_aspect: presentation.cell_aspect,
+            clock: frame.now.elapsed_since(motion.first_paint),
+            now: frame.now,
+            music_dir: &presentation.music_dir_label,
+            sleep_left: frame
+                .sleep_deadline
+                .map(|deadline| deadline.elapsed_since(frame.now)),
+        },
+    );
     let layout = FrameLayout::new(&scene.layout_parts(), motion.area);
     LaidOutScene { scene, layout }
 }
@@ -50,8 +49,7 @@ pub(crate) fn view<'a>(
 #[cfg(test)]
 pub(in crate::shell) fn test_presentation() -> Presentation {
     Presentation {
-        theme: Theme::from(crate::startup::fallback_theme_file()),
-        appearance: AppearanceFile::default(),
+        theme: crate::startup::theme_from_file(crate::startup::fallback_theme_file()),
         pixel_path: PixelPath::Halfblocks,
         color_depth: ColorDepth::TrueColor,
         cell_aspect: widgets::DEFAULT_CELL_ASPECT,

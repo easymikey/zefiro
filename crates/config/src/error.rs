@@ -62,12 +62,6 @@ pub(crate) enum CrossfadeError {
     OutOfRange(#[from] CrossfadeOutOfRange),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("invalid color `{input}`: expected 6 hex digits as #rrggbb")]
-pub struct ColorError {
-    pub input: String,
-}
-
 fn line_at(source: &str, offset: usize) -> usize {
     source
         .get(..offset)

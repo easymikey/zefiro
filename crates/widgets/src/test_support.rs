@@ -1,27 +1,48 @@
 use std::{sync::Arc, time::Duration};
 
-use config::AppearanceFile;
 use kernel::{
     Moment,
-    domain::{AudioFormat, KeymapOverrides, Model, Tags, Track},
+    domain::{AudioFormat, KeymapOverrides, Model, Tags, Track, appearance::Look},
     playlist::Playlist,
     update::keymap::{Bindings, KeyBinding},
 };
 use ratatui::{Frame, Terminal, backend::TestBackend};
 use widgets::{
     ColorDepth,
+    Colors,
     DEFAULT_CELL_ASPECT,
     PixelPath,
     SPECTRUM_BANDS,
     Scene,
+    ScenePresentation,
     Spectrum,
     Theme,
+    ThemeSeed,
 };
 
 pub(crate) fn noir() -> Theme {
     let file =
         config::parse_theme(include_str!("../../../themes/noir.toml"), "noir").unwrap();
-    Theme::from(file)
+    theme_of(file)
+}
+
+pub(crate) fn theme_of(file: config::ThemeFile) -> Theme {
+    let c = file.colors;
+    let palette = ThemeSeed {
+        background: c.background,
+        foreground: c.foreground,
+        bright_foreground: c.bright_foreground,
+        accent: c.accent,
+        green: c.green,
+        yellow: c.yellow,
+        red: c.red,
+        window_background: c.window_background,
+    };
+    Theme {
+        name: file.name,
+        colors: Colors::derive(&palette),
+        scanning_label: file.scanning_label,
+    }
 }
 
 pub(crate) fn bindings() -> Vec<KeyBinding> {
@@ -61,7 +82,6 @@ pub(crate) fn model_with_tracks(count: usize) -> Model {
 pub(crate) struct SceneSources {
     pub(crate) model: Model,
     pub(crate) theme: Theme,
-    pub(crate) appearance: AppearanceFile,
     pub(crate) bindings: Vec<KeyBinding>,
     pub(crate) spectrum: Spectrum,
 }
@@ -71,27 +91,31 @@ impl SceneSources {
         Self {
             model,
             theme: noir(),
-            appearance: AppearanceFile::default(),
             bindings: bindings(),
             spectrum: [0.0; SPECTRUM_BANDS],
         }
     }
 
+    pub(crate) fn look_mut(&mut self) -> &mut Look {
+        &mut self.model.settings.look
+    }
+
     pub(crate) fn scene(&self) -> Scene<'_> {
-        Scene {
-            model: &self.model,
-            theme: &self.theme,
-            color_depth: ColorDepth::TrueColor,
-            appearance: &self.appearance,
-            bindings: &self.bindings,
-            spectrum: &self.spectrum,
-            pixel_path: PixelPath::Halfblocks,
-            cell_aspect: DEFAULT_CELL_ASPECT,
-            clock: Duration::ZERO,
-            now: Moment::default(),
-            music_dir: "/home/user/Music",
-            sleep_left: None,
-        }
+        Scene::from_model(
+            &self.model,
+            ScenePresentation {
+                theme: &self.theme,
+                color_depth: ColorDepth::TrueColor,
+                bindings: &self.bindings,
+                spectrum: &self.spectrum,
+                pixel_path: PixelPath::Halfblocks,
+                cell_aspect: DEFAULT_CELL_ASPECT,
+                clock: Duration::ZERO,
+                now: Moment::default(),
+                music_dir: "/home/user/Music",
+                sleep_left: None,
+            },
+        )
     }
 }
 

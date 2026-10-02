@@ -25,7 +25,7 @@ impl Widget for &FullScreen<'_> {
             theme: scene.active_theme(),
             cell_aspect: scene.cell_aspect,
             cover_sizing: scene.cover_sizing(),
-            appearance: scene.appearance.appearance(),
+            appearance: scene.look().appearance,
             cover_art: self.cover_art,
         }
         .render_in(

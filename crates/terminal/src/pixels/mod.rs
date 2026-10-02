@@ -2,7 +2,7 @@ mod cover;
 
 use std::time::Duration;
 
-use config::CoverStyle;
+use kernel::domain::appearance::CoverStyle;
 use ratatui::{buffer::Buffer, layout::Rect, widgets::StatefulWidget};
 use ratatui_image::{StatefulImage, picker::Picker};
 use widgets::{

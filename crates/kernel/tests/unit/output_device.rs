@@ -33,7 +33,11 @@ fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
             first_toast_expiry()
         ])
     );
-    let toast = m.workspace.toast.map(|toast| toast.text);
+    let toast = m
+        .workspace
+        .toasts
+        .first()
+        .and_then(|toast| toast.text.clone());
     assert_eq!(
         toast.as_deref(),
         Some("output device 'usb-dac' is gone — playing on the system default")
@@ -59,7 +63,7 @@ fn a_device_that_opened_as_asked_leaves_the_toast_alone() {
         OutputDevice::Named(device("usb-dac"))
     );
     assert_eq!(cmd, Cmd::None);
-    assert!(m.workspace.toast.is_none());
+    assert!(m.workspace.toasts.is_empty());
 }
 
 #[test]

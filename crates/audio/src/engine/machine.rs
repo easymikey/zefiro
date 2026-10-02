@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 
-use kernel::{
-    AudioError,
-    update::{Machine, Rejected},
-};
+use kernel::{AudioError, AudioEvent, update::Machine};
 
 use crate::engine::{
     effect::{EngineEffect, EngineMessage},
@@ -22,30 +19,36 @@ impl Machine for Engine {
     type Effect = EngineEffect;
 
     fn transition(
-        self,
+        &mut self,
         message: EngineMessage,
-    ) -> Result<(Self, EngineEffect), Rejected<Self>> {
-        match (self, message) {
-            (Engine::Muted(muted), message) => {
-                muted.transition(message).map_err(|rejected| *rejected)
+    ) -> Result<EngineEffect, EngineError> {
+        match (&mut *self, message) {
+            (_, EngineMessage::DevicesListed(devices)) => {
+                Ok(EngineEffect::Send(AudioEvent::DevicesListed(devices)))
             }
-            (Engine::Live(live), EngineMessage::Cmd(cmd)) => {
-                live.command(cmd).map_err(|rejected| *rejected)
+            (Engine::Muted(muted), EngineMessage::Opened(Ok(reopened))) => {
+                let (live, effect) = muted.reopened(reopened);
+                *self = Engine::Live(live);
+                Ok(effect)
             }
-            (Engine::Live(live), EngineMessage::Opened(outcome)) => {
-                Ok(live.opened(outcome))
+            (Engine::Muted(muted), message) => muted.transition(message),
+            (
+                Engine::Live(live),
+                EngineMessage::Failed(error) | EngineMessage::Opened(Err(error)),
+            ) => {
+                let (muted, effect) = live.failed(error);
+                *self = Engine::Muted(muted);
+                Ok(effect)
+            }
+            (Engine::Live(live), EngineMessage::Cmd(cmd)) => live.command(cmd),
+            (Engine::Live(live), EngineMessage::Opened(Ok(reopened))) => {
+                Ok(live.opened(reopened))
             }
             (Engine::Live(live), EngineMessage::Decoded(outcome)) => {
                 Ok(live.decoded(outcome))
             }
             (Engine::Live(live), EngineMessage::Preloaded(outcome)) => {
                 Ok(live.preloaded(outcome))
-            }
-            (Engine::Live(live), EngineMessage::Failed(error)) => {
-                Ok(live.failed(error))
-            }
-            (Engine::Live(live), EngineMessage::DevicesListed(devices)) => {
-                Ok(live.devices_listed(devices))
             }
             (Engine::Live(live), EngineMessage::Finished(role)) => {
                 Ok(live.finished(role))
@@ -220,7 +223,7 @@ mod tests {
         }
 
         fn engine_step(&mut self, message: EngineMessage) {
-            let effect = self.engine.update(message).unwrap();
+            let effect = self.engine.transition(message).unwrap();
             self.sinks.apply(&effect);
             self.log.push(effect);
         }

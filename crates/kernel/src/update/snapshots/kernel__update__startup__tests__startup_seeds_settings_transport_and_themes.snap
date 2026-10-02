@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/src/update/startup.rs
-assertion_line: 198
+assertion_line: 203
 expression: "(model.settings, model.transport.volume, model.themes,)"
 ---
 (
@@ -9,7 +9,7 @@ expression: "(model.settings, model.transport.volume, model.themes,)"
             crossfade: Crossfade(
                 3s,
             ),
-            replaygain: On,
+            replay_gain: On,
             device: Named(
                 DeviceName(
                     "Speakers",
@@ -23,6 +23,37 @@ expression: "(model.settings, model.transport.volume, model.themes,)"
             ),
         },
         output_devices: [],
+        look: Look {
+            appearance: Appearance {
+                cover_style: Vinyl,
+                cover_brackets: Hidden,
+                format_chips: Hidden,
+                speed_chip: Always,
+                progress_time: Elapsed,
+                key_hints: Shown,
+                animations: On,
+                layout_mode: Auto,
+            },
+            cover_size_px: 160,
+            cover_cells: CoverCells {
+                width: 20,
+                height: 8,
+            },
+            breakpoints: Breakpoints {
+                full_min_width: 60,
+                full_min_height: 19,
+                compact_min_width: 30,
+                compact_min_height: 13,
+                min_columns: 48,
+                min_rows: 16,
+            },
+            progress: ProgressBar {
+                height_px: 4.0,
+                radius: None,
+                fill: None,
+                track: None,
+            },
+        },
     },
     Percent(
         42,

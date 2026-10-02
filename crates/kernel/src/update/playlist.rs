@@ -2,29 +2,22 @@ use crate::{
     cmd::Cmd,
     domain::{
         Direction,
+        TrackIndex,
         cycled,
         playlist::{PlayOrder, Playlist, RepeatMode},
     },
-    update::machine::{Machine, Rejected},
 };
 
 #[derive(Debug, Clone)]
 pub enum PlaylistMessage {
     ToggleShuffle,
-    ShuffleRolled(Vec<usize>),
+    ShuffleRolled(Vec<TrackIndex>),
     CycleRepeat,
 }
 
-impl Machine for Playlist {
-    type Message = PlaylistMessage;
-    type Error = std::convert::Infallible;
-    type Effect = Cmd;
-
-    fn transition(
-        mut self,
-        message: PlaylistMessage,
-    ) -> Result<(Self, Cmd), Rejected<Self>> {
-        let cmd = match message {
+impl Playlist {
+    pub fn apply(&mut self, message: PlaylistMessage) -> Cmd {
+        match message {
             PlaylistMessage::ToggleShuffle => {
                 self.play_order = match &self.play_order {
                     PlayOrder::Linear => PlayOrder::ShufflePending,
@@ -38,7 +31,7 @@ impl Machine for Playlist {
                 self.play_order = match &self.play_order {
                     PlayOrder::Linear => PlayOrder::Linear,
                     PlayOrder::ShufflePending | PlayOrder::Shuffle(_) => {
-                        PlayOrder::Shuffle(order)
+                        PlayOrder::Shuffle(order.into_iter().map(usize::from).collect())
                     }
                 };
                 Cmd::None
@@ -47,8 +40,7 @@ impl Machine for Playlist {
                 self.repeat = cycle_repeat(self.repeat);
                 Cmd::None
             }
-        };
-        Ok((self, cmd))
+        }
     }
 }
 

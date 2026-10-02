@@ -2,8 +2,8 @@ use num_traits::ToPrimitive;
 
 use crate::spectrum::Spectrum;
 
-pub(crate) fn usize_to_f32(value: usize) -> f32 {
-    value.to_f32().unwrap_or(f32::MAX)
+pub(crate) fn usize_to_f32(count: usize) -> f32 {
+    count.to_f32().unwrap_or(f32::MAX)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

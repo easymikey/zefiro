@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use config::{ProgressConfig, Rgb};
+use kernel::domain::appearance::{ProgressBar, Rgb};
 use ratatui::style::Color;
 
 use crate::theme::{
@@ -36,10 +36,6 @@ impl BarStyle {
     }
 }
 
-/// Colour contract for themed components: a component's colours come from
-/// `XStyle::from_theme`; painters take `&XStyle` and never read roles.
-/// Components following it now: progress and volume bars (`BarStyle`), vinyl
-/// (`VinylStyle`).
 #[derive(Debug, Clone, Copy)]
 pub struct ActiveTheme<'a> {
     pub theme: &'a Theme,
@@ -60,7 +56,7 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
-    pub fn with_progress(self, progress: &ProgressConfig) -> Self {
+    pub fn with_progress(self, progress: ProgressBar) -> Self {
         Self {
             fill: progress.fill,
             track: progress.track,
@@ -122,23 +118,19 @@ impl<'a> Deref for ActiveTheme<'a> {
 
 #[cfg(test)]
 mod tests {
-    use config::Rgb;
+    use kernel::domain::appearance::{ProgressBar, Rgb};
     use ratatui::style::Color;
 
-    use crate::theme::{
-        ColorDepth,
-        Role,
-        Theme,
-        active_theme::{ActiveTheme, BarStyle},
-        color_at_depth,
+    use crate::{
+        test_support::noir,
+        theme::{
+            ColorDepth,
+            Role,
+            Theme,
+            active_theme::{ActiveTheme, BarStyle},
+            color_at_depth,
+        },
     };
-
-    fn noir() -> Theme {
-        let file =
-            config::parse_theme(include_str!("../../../../themes/noir.toml"), "noir")
-                .unwrap();
-        Theme::from(file)
-    }
 
     #[test]
     fn theme_color_resolves_at_its_own_depth() {
@@ -174,13 +166,13 @@ mod tests {
     #[test]
     fn a_set_progress_config_wins_over_the_theme() {
         let theme = noir();
-        let progress = config::ProgressConfig {
+        let progress = ProgressBar {
             fill: Some(Rgb([255, 0, 0])),
             track: Some(Rgb([0, 255, 0])),
-            ..config::ProgressConfig::default()
+            ..ProgressBar::default()
         };
         let active =
-            ActiveTheme::new(&theme, ColorDepth::TrueColor).with_progress(&progress);
+            ActiveTheme::new(&theme, ColorDepth::TrueColor).with_progress(progress);
         assert_eq!(BarStyle::progress(&active).fill, Color::Rgb(255, 0, 0));
         assert_eq!(BarStyle::progress(&active).track, Color::Rgb(0, 255, 0));
         assert_ne!(BarStyle::progress(&active), BarStyle::volume(&active));

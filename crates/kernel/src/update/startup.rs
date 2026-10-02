@@ -21,20 +21,21 @@ use crate::{
         Toast,
         playlist::Playlist,
     },
-    update::{machine::Machine, playlist::PlaylistMessage},
+    update::playlist::PlaylistMessage,
 };
 
 pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
-    let toasts = startup.toasts;
+    let toasts = startup.toast_texts;
     model.settings = Settings {
         audio: startup.audio,
         output_devices: Vec::new(),
+        look: startup.look,
     };
     model.transport.volume = startup.volume;
-    model.custom_settings = startup.custom_settings;
+    model.appearance_settings = startup.appearance_settings;
 
     model.library = None;
-    model.music_dir = startup.music_dir.clone();
+    model.music_dir = startup.music_dir;
     model.playlist_source = startup.playlist_source;
     model.themes = Themes {
         names: startup.themes,
@@ -45,8 +46,11 @@ pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
         .relist(startup.playlist_tracks, startup.playlist_index);
     let cmd = shuffled(&mut model.playlist, startup.shuffle);
 
-    let mut effects = PlaybackChange::Stop.effects().to_vec();
-    effects.push(Effect::Macos(MacosCmd::NowPlaying(None)));
+    let effects = PlaybackChange::Stop
+        .effects()
+        .into_iter()
+        .chain([Effect::Macos(MacosCmd::NowPlaying(None))])
+        .collect();
     let notices = toast_notices(model, &toasts);
     cmd.then(Cmd::Batch(effects))
         .then(startup_cmd(model, Driver::Audio))
@@ -61,7 +65,7 @@ pub(crate) fn startup_cmd(model: &mut Model, driver: Driver) -> Cmd {
             Effect::Audio(AudioCmd::ListDevices),
             Effect::Audio(AudioCmd::SetDevice(model.settings.audio.device.clone())),
             Effect::Audio(AudioCmd::SetCrossfade(model.settings.audio.crossfade)),
-            Effect::Audio(AudioCmd::SetReplaygain(model.settings.audio.replaygain)),
+            Effect::Audio(AudioCmd::SetReplayGain(model.settings.audio.replay_gain)),
         ]),
         Driver::Library => Cmd::Batch(vec![
             Effect::Library(LibraryCmd::LoadFavorites),
@@ -86,18 +90,18 @@ fn toast_notices(model: &mut Model, toasts: &[String]) -> Cmd {
     if toasts.is_empty() {
         return Cmd::None;
     }
-    model
-        .workspace
-        .show(Toast::error(toasts.join("\n")), &mut model.revisions)
+    model.workspace.show(
+        Toast::error("Started with fallbacks").with_text(toasts.join("\n")),
+        &mut model.revisions,
+    )
 }
 
 fn shuffled(playlist: &mut Playlist, shuffle: Shuffle) -> Cmd {
     match shuffle {
         Shuffle::Disabled => Cmd::None,
-        Shuffle::Enabled => {
-            let Ok(toggled) = playlist.update(PlaylistMessage::ToggleShuffle);
-            toggled.then(Cue::PlayOrderChanged.into())
-        }
+        Shuffle::Enabled => playlist
+            .apply(PlaylistMessage::ToggleShuffle)
+            .then(Cue::PlayOrderChanged.into()),
     }
 }
 
@@ -119,14 +123,14 @@ mod tests {
             Model,
             OutputDevice,
             Percent,
-            PlaylistIndex,
-            Replaygain,
+            ReplayGain,
             Shuffle,
             SleepPresets,
             Startup,
             ThemeChoice,
             ThemeName,
             Track,
+            ViewIndex,
             playlist::{PlayOrder, PlaylistSource},
         },
         update::startup::seed_model,
@@ -141,25 +145,26 @@ mod tests {
         Startup {
             music_dir: PathBuf::from("/music"),
             playlist_tracks: tracks,
-            playlist_index: Some(PlaylistIndex::new(0)),
+            playlist_index: Some(ViewIndex::new(0)),
             playlist_source: PlaylistSource::Named,
             shuffle: Shuffle::Enabled,
             audio: AudioSettings {
                 crossfade: Crossfade::clamped(Duration::from_secs(3)),
-                replaygain: Replaygain::On,
+                replay_gain: ReplayGain::On,
                 device: OutputDevice::Named(
                     DeviceName::new("Speakers".to_string()).unwrap(),
                 ),
                 sleep_presets: SleepPresets::from_minutes(&[15, 30]).unwrap(),
             },
+            look: crate::domain::appearance::Look::default(),
             theme: ThemeChoice::Named(ThemeName::from_static("dark")),
             volume: Percent::clamped(42),
             themes: vec![
                 ThemeName::from_static("noir"),
                 ThemeName::from_static("solar"),
             ],
-            custom_settings: Vec::new(),
-            toasts: Vec::new(),
+            appearance_settings: Vec::new(),
+            toast_texts: Vec::new(),
         }
     }
 
@@ -167,15 +172,16 @@ mod tests {
     fn startup_notices_raise_one_error_toast() {
         let mut model = Model::default();
         let startup = Startup {
-            toasts: vec!["broken a".to_string(), "broken b".to_string()],
+            toast_texts: vec!["broken a".to_string(), "broken b".to_string()],
             ..stock_startup()
         };
 
         let _ = seed_model(&mut model, startup);
 
-        let toast = model.workspace.toast.unwrap();
-        assert_eq!(toast.level, crate::domain::ToastLevel::Error);
-        assert_eq!(toast.text, "broken a\nbroken b");
+        assert_eq!(model.workspace.toasts.len(), 1);
+        let toast = model.workspace.toasts.first().unwrap();
+        assert_eq!(toast.kind, crate::domain::ToastKind::Error);
+        assert_eq!(toast.text.as_deref(), Some("broken a\nbroken b"));
     }
 
     #[test]
@@ -183,7 +189,7 @@ mod tests {
         let mut model = Model::default();
         let _ = seed_model(&mut model, stock_startup());
 
-        assert!(model.workspace.toast.is_none());
+        assert!(model.workspace.toasts.is_empty());
     }
 
     fn startup_model() -> Model {
@@ -209,7 +215,7 @@ mod tests {
 
         assert!(model.library.is_none());
         assert_eq!(model.playlist.tracks.len(), 2);
-        assert_eq!(model.playlist.playing_index(), Some(PlaylistIndex::new(0)));
+        assert_eq!(model.playlist.playing_index(), Some(ViewIndex::new(0)));
     }
 
     #[test]

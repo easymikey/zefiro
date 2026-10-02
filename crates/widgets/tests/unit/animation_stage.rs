@@ -336,14 +336,14 @@ fn the_frame_after_the_last_animation_is_asked_for_so_the_row_it_covered_comes_b
 
     assert_eq!(last, screen_frame(), "the burst ends on the painted frame");
     assert!(
-        stage.wants_frame(),
+        stage.is_animating(),
         "the tick after the last animation still asks for a frame"
     );
     stage.play(Vec::new(), &toast_card_backdrop());
     let settled = step_over(&mut stage, screen_frame, Duration::ZERO);
     assert_eq!(settled, screen_frame());
     assert!(
-        !stage.wants_frame(),
+        !stage.is_animating(),
         "and once that frame is painted the stage settles"
     );
 }

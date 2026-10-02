@@ -7,7 +7,7 @@ use kernel::domain::{
     KeymapOverrides,
     OutputDevice,
     Percent,
-    Replaygain,
+    ReplayGain,
     SleepPresets,
     ThemeChoice,
     Transport,
@@ -85,7 +85,7 @@ where
     SleepPresets::from_minutes(&minutes).map_err(serde::de::Error::custom)
 }
 
-impl Flag for Replaygain {
+impl Flag for ReplayGain {
     const ON: Self = Self::On;
     const OFF: Self = Self::Off;
 }
@@ -107,7 +107,8 @@ pub struct AudioConfig {
     #[serde(deserialize_with = "crossfade")]
     pub crossfade: Crossfade,
     #[serde(deserialize_with = "flag")]
-    pub replaygain: Replaygain,
+    #[serde(rename = "replaygain")]
+    pub replay_gain: ReplayGain,
     #[serde(deserialize_with = "device")]
     pub device: OutputDevice,
     #[serde(deserialize_with = "sleep_presets")]
@@ -118,7 +119,7 @@ impl From<AudioConfig> for AudioSettings {
     fn from(config: AudioConfig) -> Self {
         Self {
             crossfade: config.crossfade,
-            replaygain: config.replaygain,
+            replay_gain: config.replay_gain,
             device: config.device,
             sleep_presets: config.sleep_presets,
         }

@@ -103,16 +103,11 @@ impl Revision {
         *self
     }
 
-    #[must_use]
-    pub fn is_stale(self, latest: Self) -> bool {
-        self <= latest
-    }
-
-    pub fn reply(self, awaited: Self) -> Reply {
+    pub fn reply(self, awaited: Self) -> Freshness {
         if self == awaited {
-            Reply::Awaited
+            Freshness::Awaited
         } else {
-            Reply::Stale
+            Freshness::Stale
         }
     }
 }
@@ -125,7 +120,7 @@ pub struct Revisions {
     pub scan: Revision,
     pub toast: Revision,
     pub sleep: Revision,
-    pub mark: Revision,
+    pub lookahead: Revision,
 }
 
 impl Revisions {
@@ -145,9 +140,9 @@ impl Revisions {
         issued
     }
 
-    pub fn issue_mark(&mut self) -> Revision {
+    pub fn issue_lookahead(&mut self) -> Revision {
         let issued = self.effects.bump();
-        self.mark = issued;
+        self.lookahead = issued;
         issued
     }
 
@@ -159,7 +154,7 @@ impl Revisions {
 
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reply {
+pub enum Freshness {
     Awaited,
     Stale,
 }
@@ -171,8 +166,8 @@ mod tests {
     use rstest::rstest;
 
     use crate::domain::time::{
+        Freshness,
         Moment,
-        Reply,
         Revision,
         TimecodeError,
         format_time,
@@ -249,27 +244,14 @@ mod tests {
     }
 
     #[rstest]
-    #[case::above(1, 0, false)]
-    #[case::equal(1, 1, true)]
-    #[case::below(1, 2, true)]
-    #[case::untouched(0, 0, true)]
-    fn a_stamp_no_higher_than_the_latest_one_is_stale(
-        #[case] stamp: u64,
-        #[case] latest: u64,
-        #[case] stale: bool,
-    ) {
-        assert_eq!(bumped(stamp).is_stale(bumped(latest)), stale);
-    }
-
-    #[rstest]
-    #[case::same_generation(2, 2, Reply::Awaited)]
-    #[case::superseded(1, 2, Reply::Stale)]
-    #[case::ahead(3, 2, Reply::Stale)]
-    #[case::untouched(0, 0, Reply::Awaited)]
+    #[case::same_generation(2, 2, Freshness::Awaited)]
+    #[case::superseded(1, 2, Freshness::Stale)]
+    #[case::ahead(3, 2, Freshness::Stale)]
+    #[case::untouched(0, 0, Freshness::Awaited)]
     fn only_the_awaited_generation_answers(
         #[case] stamp: u64,
         #[case] awaited: u64,
-        #[case] reply: Reply,
+        #[case] reply: Freshness,
     ) {
         assert_eq!(bumped(stamp).reply(bumped(awaited)), reply);
     }

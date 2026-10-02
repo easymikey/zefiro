@@ -1,5 +1,4 @@
-// GUARD: an error carries named context — no `Box<dyn Error>`, no string
-// payload, no swallowed write.
+// GUARD: an error carries named context: no boxed, string or swallowed error.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -205,6 +204,22 @@ fn from_field_type(line: &str) -> Option<&str> {
     Some(bare_ident(&after[..end]))
 }
 
+fn resolve_enum<'a>(
+    enum_crate: &'a BTreeMap<String, BTreeSet<String>>,
+    name: &str,
+    from: &str,
+) -> Option<&'a str> {
+    let crates = enum_crate.get(name)?;
+    if let Some(own) = crates.get(from) {
+        return Some(own);
+    }
+    let mut all = crates.iter();
+    match (all.next(), all.next()) {
+        (Some(only), None) => Some(only),
+        _ => None,
+    }
+}
+
 struct Edge<'a> {
     rel: &'a str,
     line_idx: usize,
@@ -215,7 +230,7 @@ struct Edge<'a> {
 
 fn check_from_edge(
     edge: &Edge<'_>,
-    enum_crate: &BTreeMap<String, String>,
+    enum_crate: &BTreeMap<String, BTreeSet<String>>,
     deps: &BTreeMap<String, BTreeSet<String>>,
 ) -> Vec<String> {
     let Edge {
@@ -225,12 +240,13 @@ fn check_from_edge(
         x_name,
         line,
     } = edge;
-    let (Some(y_crate), Some(x_crate)) =
-        (enum_crate.get(*y_name), enum_crate.get(*x_name))
-    else {
+    let c = crate_of_rel(rel);
+    let (Some(y_crate), Some(x_crate)) = (
+        resolve_enum(enum_crate, y_name, c),
+        resolve_enum(enum_crate, x_name, c),
+    ) else {
         return Vec::new();
     };
-    let c = crate_of_rel(rel);
     let visible = |crate_name: &str| {
         crate_name == c || deps.get(c).is_some_and(|d| d.contains(crate_name))
     };
@@ -249,12 +265,15 @@ fn every_error_variant_has_error_attr_and_from_follows_dependency_graph() {
     let mut violations: Vec<String> = Vec::new();
 
     let files = support::source_files(&["src"]);
-    let mut enum_crate: BTreeMap<String, String> = BTreeMap::new();
+    let mut enum_crate: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (rel, path) in &files {
         let content = support::read(path);
         for line in content.lines() {
             if let Some(name) = pub_error_enum_name(line) {
-                enum_crate.insert(name.to_owned(), crate_of_rel(rel).to_owned());
+                enum_crate
+                    .entry(name.to_owned())
+                    .or_default()
+                    .insert(crate_of_rel(rel).to_owned());
             }
         }
     }

@@ -83,7 +83,7 @@ pub struct Themes {
 
 impl Themes {
     #[must_use]
-    pub fn nudged(&self, direction: Direction) -> Option<ThemeName> {
+    pub fn stepped(&self, direction: Direction) -> Option<ThemeName> {
         if self.names.is_empty() {
             return None;
         }
@@ -164,7 +164,7 @@ mod tests {
     fn themes_nudge_onto_a_listed_name(#[case] row: NudgeRow) {
         assert_eq!(
             row.themes
-                .nudged(row.direction)
+                .stepped(row.direction)
                 .map(|name| name.as_str().to_string()),
             row.expected.map(str::to_string)
         );

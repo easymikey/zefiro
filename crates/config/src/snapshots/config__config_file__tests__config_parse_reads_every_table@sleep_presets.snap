@@ -13,7 +13,7 @@ ConfigToml {
         crossfade: Crossfade(
             0ns,
         ),
-        replaygain: Off,
+        replay_gain: Off,
         device: SystemDefault,
         sleep_presets: SleepPresets(
             [

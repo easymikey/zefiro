@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
-use config::{AppearanceFile, ThemeFile};
+use config::ThemeFile;
 use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::library::cover::CoverDecoded;
@@ -13,8 +13,8 @@ pub struct LatestSender<T> {
 }
 
 impl<T> LatestSender<T> {
-    pub(crate) fn publish(&self, value: T) {
-        self.value.store(Some(Arc::new(value)));
+    pub(crate) fn publish(&self, latest: T) {
+        self.value.store(Some(Arc::new(latest)));
         let _ = self.notify.try_send(());
     }
 }
@@ -43,14 +43,12 @@ impl<T> LatestReceiver<T> {
 #[derive(Debug)]
 pub struct LatestReceivers {
     pub theme: LatestReceiver<ThemeFile>,
-    pub appearance: LatestReceiver<AppearanceFile>,
     pub cover: LatestReceiver<CoverDecoded>,
 }
 
 #[derive(Debug, Clone)]
 pub struct LatestSenders {
     pub theme: LatestSender<ThemeFile>,
-    pub appearance: LatestSender<AppearanceFile>,
     pub cover: LatestSender<CoverDecoded>,
 }
 
@@ -58,15 +56,10 @@ pub struct LatestSenders {
 pub fn latest_channels() -> (LatestSenders, LatestReceivers, Receiver<()>) {
     let (ring, notified) = bounded(1);
     let theme = Arc::new(ArcSwapOption::empty());
-    let appearance = Arc::new(ArcSwapOption::empty());
     let cover = Arc::new(ArcSwapOption::empty());
     let writers = LatestSenders {
         theme: LatestSender {
             value: Arc::clone(&theme),
-            notify: ring.clone(),
-        },
-        appearance: LatestSender {
-            value: Arc::clone(&appearance),
             notify: ring.clone(),
         },
         cover: LatestSender {
@@ -76,7 +69,6 @@ pub fn latest_channels() -> (LatestSenders, LatestReceivers, Receiver<()>) {
     };
     let cells = LatestReceivers {
         theme: LatestReceiver { value: theme },
-        appearance: LatestReceiver { value: appearance },
         cover: LatestReceiver { value: cover },
     };
     (writers, cells, notified)

@@ -8,7 +8,7 @@ pub trait Shell {
     type Error: std::error::Error + 'static;
 
     fn input(&mut self, event: Self::Input) -> Reaction;
-    fn effect(&mut self, effect: ShellEffect);
+    fn effect(&mut self, effect: ShellEffect, animations: config::Animations);
     fn frame_due(&self, frame: &Frame<'_>) -> FrameDue;
     fn paint(&mut self, frame: Frame<'_>) -> Result<Painted, Self::Error>;
 }

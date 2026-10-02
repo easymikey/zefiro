@@ -73,7 +73,7 @@ pub(crate) fn spawn_audio_loop<R>(
 where
     R: FnOnce(
             &crossbeam_channel::Receiver<AudioCmd>,
-            &crate::sender::DriverSender<kernel::AudioEvent>,
+            &kernel::Outbox<kernel::AudioEvent>,
         ) + Send
         + 'static,
 {
@@ -118,7 +118,6 @@ pub(crate) fn spawn_config(
         paths: config_paths,
         save_debounce: SAVE_DEBOUNCE,
         theme: spawn_parts.writers.theme.clone(),
-        appearance: spawn_parts.writers.appearance.clone(),
     };
     crate::config::driver::spawn(parts, spawn_parts.sender)
 }
@@ -142,6 +141,7 @@ mod tests {
         AudioCmd,
         AudioEvent,
         Message,
+        Outbox,
         domain::{Direction, Driver, DriverStatus, SettingRow, Startup},
     };
     use library::LibraryDirs;
@@ -152,7 +152,6 @@ mod tests {
         driver::{DriverThread, spawn_driver},
         error::Error,
         runtime::{Runtime, StartupPaths},
-        sender::DriverSender,
         spawn::{
             AudioDriver,
             ConfigCmd,
@@ -262,9 +261,9 @@ mod tests {
         audio.handle.join().unwrap().unwrap();
     }
 
-    fn died_from_replaygain_nudge(runtime: &mut Runtime) -> Message {
+    fn died_from_replay_gain_step(runtime: &mut Runtime) -> Message {
         runtime.step(Message::Adjust {
-            row: SettingRow::Replaygain,
+            row: SettingRow::ReplayGain,
             direction: Direction::Next,
         });
         runtime.wiring.receiver.recv_timeout(RECV_TIMEOUT).unwrap()
@@ -284,7 +283,7 @@ mod tests {
             .with(|slot| slot.borrow().clone())
             .unwrap();
         spawn_audio_loop(
-            move |inbox: &Receiver<AudioCmd>, _: &DriverSender<AudioEvent>| {
+            move |inbox: &Receiver<AudioCmd>, _: &Outbox<AudioEvent>| {
                 if AUDIO_RESTART_SPAWNES.fetch_add(1, Ordering::SeqCst) == 0 {
                     let _ = inbox.recv();
                     boom();
@@ -316,7 +315,7 @@ mod tests {
         )
         .unwrap();
 
-        let died = died_from_replaygain_nudge(&mut runtime);
+        let died = died_from_replay_gain_step(&mut runtime);
         runtime.step(died);
 
         let received: Vec<AudioCmd> = (0..4)
@@ -325,7 +324,7 @@ mod tests {
         assert!(matches!(received[0], AudioCmd::ListDevices));
         assert!(matches!(received[1], AudioCmd::SetDevice(_)));
         assert!(matches!(received[2], AudioCmd::SetCrossfade(_)));
-        assert!(matches!(received[3], AudioCmd::SetReplaygain(_)));
+        assert!(matches!(received[3], AudioCmd::SetReplayGain(_)));
         assert_eq!(
             *runtime.model.drivers.status(Driver::Audio),
             DriverStatus::Running
@@ -353,7 +352,7 @@ mod tests {
             SECOND_SPAWN_ORDER.store(order, Ordering::SeqCst);
         }
         spawn_audio_loop(
-            |inbox: &Receiver<AudioCmd>, _: &DriverSender<AudioEvent>| {
+            |inbox: &Receiver<AudioCmd>, _: &Outbox<AudioEvent>| {
                 let _sequenced = SequencedAudio;
                 let _ = inbox.recv();
                 boom();
@@ -380,7 +379,7 @@ mod tests {
         )
         .unwrap();
 
-        let died = died_from_replaygain_nudge(&mut runtime);
+        let died = died_from_replay_gain_step(&mut runtime);
         runtime.step(died);
 
         assert!(
@@ -399,7 +398,7 @@ mod tests {
         RESTART_LIBRARY_CALLS.fetch_add(1, Ordering::SeqCst);
         spawn_driver(
             crate::registry::row(Driver::Library),
-            |_: &Receiver<LibraryMessage>, _: &DriverSender<Message>| boom(),
+            |_: &Receiver<LibraryMessage>, _: &Outbox<Message>| boom(),
             spawn_parts.sender,
         )
     }
@@ -410,7 +409,7 @@ mod tests {
         RESTART_CONFIG_CALLS.fetch_add(1, Ordering::SeqCst);
         spawn_driver(
             crate::registry::row(Driver::Config),
-            |_: &Receiver<ConfigCmd>, _: &DriverSender<Message>| boom(),
+            |_: &Receiver<ConfigCmd>, _: &Outbox<Message>| boom(),
             spawn_parts.sender,
         )
     }
@@ -466,7 +465,7 @@ mod tests {
         }
 
         assert_eq!(row.calls.load(Ordering::SeqCst), row.spawns);
-        assert!(runtime.model.workspace.toast.is_some());
+        assert!(!runtime.model.workspace.toasts.is_empty());
         runtime.drain();
     }
 }

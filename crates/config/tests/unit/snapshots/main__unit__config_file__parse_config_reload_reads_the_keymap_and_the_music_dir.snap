@@ -1,12 +1,13 @@
 ---
 source: crates/config/tests/unit/config_file.rs
+assertion_line: 36
 expression: parsed
 ---
 ConfigReload {
     keymap: {
         "next": KeyOverride {
             chord: "x",
-            context: Global,
+            key_context: Global,
         },
     },
     music_dir: Some(

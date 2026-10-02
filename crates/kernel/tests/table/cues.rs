@@ -18,7 +18,7 @@ use kernel::{
     QueueRequest,
     Timer,
     Toast,
-    domain::{Bounded, Percent, PlaylistIndex, Revision, ThemeName},
+    domain::{Bounded, Percent, Revision, ThemeName, ViewIndex},
     message::AudioEvent,
     update::update,
 };
@@ -89,7 +89,7 @@ fn toasted() -> Message {
 )]
 #[case::queuing_a_track_raises_a_cue(
     model_with_tracks(3),
-    vec![Message::Queue(QueueRequest::EnqueueTrack(PlaylistIndex::new(1)))],
+    vec![Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(1)))],
     Cue::QueueChanged
 )]
 #[case::favoriting_raises_a_cue(
@@ -109,7 +109,7 @@ fn toasted() -> Message {
 )]
 #[case::nudging_the_volume_raises_a_cue(
     model_with_tracks(3),
-    vec![Message::Playback(PlaybackRequest::NudgeVolume { steps: 1 })],
+    vec![Message::Playback(PlaybackRequest::StepVolume { steps: 1 })],
     Cue::VolumeChanged
 )]
 #[case::the_system_raising_the_volume_raises_a_cue(
@@ -216,7 +216,7 @@ fn favoriting_twice_raises_two_cues_where_the_diff_saw_none() {
 #[test]
 fn enqueuing_the_same_track_twice_empties_the_queue_and_raises_a_cue_each_time() {
     let mut model = model_with_tracks(3);
-    let queued = Message::Queue(QueueRequest::EnqueueTrack(PlaylistIndex::new(1)));
+    let queued = Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(1)));
     let seen = cues(&mut model, vec![queued.clone(), queued]);
 
     assert!(model.queue.is_empty());

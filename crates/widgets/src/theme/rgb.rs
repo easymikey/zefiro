@@ -1,11 +1,11 @@
-use config::Rgb;
+use kernel::domain::appearance::Rgb;
 use num_traits::ToPrimitive;
 use ratatui::style::Color;
 
 use crate::pixels::{channel_byte, floor};
 
-pub(crate) fn scale_channel(value: u8, factor: f32) -> u8 {
-    channel_byte(f32::from(value) * factor)
+pub(crate) fn scale_channel(channel: u8, factor: f32) -> u8 {
+    channel_byte(f32::from(channel) * factor)
 }
 
 pub fn shade(color: Rgb, factor: f32) -> Rgb {
@@ -132,7 +132,7 @@ fn nearest_xterm256(rgb: Rgb) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use config::Rgb;
+    use kernel::domain::appearance::Rgb;
     use ratatui::style::Color;
     use rstest::rstest;
 

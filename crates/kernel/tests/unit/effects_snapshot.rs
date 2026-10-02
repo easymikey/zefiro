@@ -8,16 +8,16 @@ use kernel::{
     Moment,
     PlaybackRequest,
     domain::{
+        AppearanceControl,
+        AppearanceRow,
+        AppearanceSetting,
         Choice,
-        CustomControl,
-        CustomRow,
-        CustomSetting,
         Direction,
         OptionCount,
         Revision,
-        SettingId,
         SettingRow,
         ThemeName,
+        appearance_rows::AppearanceField,
     },
     update::update,
 };
@@ -51,22 +51,22 @@ fn play_selected_emits_its_effects() {
 #[test]
 fn adjusting_a_custom_row_emits_its_effect() {
     let mut m = Model::default();
-    let id = SettingId::new(3);
+    let id = AppearanceField::SpeedChip;
     let count = OptionCount::new(4).unwrap();
-    let custom: &'static CustomRow = Box::leak(Box::new(CustomRow {
-        id,
-        control: CustomControl::Cycle(count),
+    let row: &'static AppearanceRow = Box::leak(Box::new(AppearanceRow {
+        field: id,
+        control: AppearanceControl::Cycle(count),
         cue: None,
         themes: &[],
     }));
-    m.custom_settings.push(CustomSetting {
-        custom,
+    m.appearance_settings.push(AppearanceSetting {
+        row,
         choice: Choice::Option(count.index(0).unwrap()),
     });
     let cmd = update(
         &mut m,
         Message::Adjust {
-            row: SettingRow::Custom(id),
+            row: SettingRow::Appearance(id),
             direction: Direction::Next,
         },
         Moment::default(),

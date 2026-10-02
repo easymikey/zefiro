@@ -2,20 +2,12 @@ use std::time::Duration;
 
 use crate::domain::{AbLoop, Bounded, Percent, SleepTimer, Speed};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum StreamError {
+    #[error("the device is gone")]
     DeviceGone,
+    #[error("an audio backend error")]
     Backend,
-}
-
-impl std::fmt::Display for StreamError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let label = match self {
-            StreamError::DeviceGone => "the device is gone",
-            StreamError::Backend => "an audio backend error",
-        };
-        formatter.write_str(label)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -34,7 +26,7 @@ pub struct Transport {
     pub volume: Percent,
     pub speed: Speed,
     pub sleep: Option<SleepTimer>,
-    pub ab: Option<AbLoop>,
+    pub ab_loop: Option<AbLoop>,
     pub output: Output,
 }
 
@@ -44,7 +36,7 @@ impl Default for Transport {
             volume: Percent::clamped(50),
             speed: Speed::default(),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Output::Ready,
         }
     }

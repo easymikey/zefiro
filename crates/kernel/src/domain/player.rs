@@ -21,14 +21,14 @@ pub enum Player {
     Paused {
         track: Arc<Track>,
         at: Duration,
-        pause: Pause,
+        by: PausedBy,
     },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Pause {
-    ByListener,
-    ByOverlay,
+pub enum PausedBy {
+    Listener,
+    Overlay,
 }
 
 impl Player {

@@ -12,7 +12,7 @@ where
 {
     let before = start.clone();
     let mut state = start;
-    match (state.update(message), expected) {
+    match (state.transition(message), expected) {
         (Ok(effect), Ok(wanted)) => assert_eq!((state, effect), wanted),
         (Err(reason), Err(wanted)) => {
             assert_eq!(state, before);

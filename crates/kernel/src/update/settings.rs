@@ -1,71 +1,69 @@
 use crate::{
     cmd::{AudioCmd, Cmd, ConfigCmd, ConfigPatch, Effect},
     domain::{
+        AppearanceSetting,
         Choice,
-        CustomSetting,
         Direction,
-        Model,
         OutputDevice,
-        Replaygain,
-        SettingId,
+        ReplayGain,
         SettingRow,
         Settings,
         SleepPresets,
         ThemeChoice,
         Themes,
+        appearance_rows::AppearanceField,
     },
-    update::{
-        error::UpdateError,
-        machine::{Machine, Rejected},
-    },
+    update::config::ConfigParts,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsMessage {
-    ToggleReplaygain,
+    ToggleReplayGain,
     Crossfade(Direction),
     OutputDevice(Direction),
     SleepPresets(Direction),
 }
 
 pub(crate) fn adjust(
-    model: &mut Model,
+    config: ConfigParts<'_>,
     row: SettingRow,
     direction: Direction,
-) -> Result<Cmd, UpdateError> {
-    let Model {
+) -> Cmd {
+    let ConfigParts {
         themes,
         settings,
-        custom_settings,
+        appearance_settings,
         ..
-    } = model;
+    } = config;
     let message = match row {
-        SettingRow::Theme => return Ok(theme_picked(themes, direction)),
-        SettingRow::Custom(id) => {
-            return Ok(custom_nudged(custom_settings, id, direction));
+        SettingRow::Theme => return theme_picked(themes, direction),
+        SettingRow::Appearance(field) => {
+            return appearance_stepped(appearance_settings, field, direction);
         }
         SettingRow::Crossfade => SettingsMessage::Crossfade(direction),
-        SettingRow::Replaygain => SettingsMessage::ToggleReplaygain,
+        SettingRow::ReplayGain => SettingsMessage::ToggleReplayGain,
         SettingRow::OutputDevice => SettingsMessage::OutputDevice(direction),
         SettingRow::SleepPresets => SettingsMessage::SleepPresets(direction),
     };
-    Ok(settings.update(message)?)
+    settings.apply(message)
 }
 
-fn custom_nudged(
-    custom_settings: &mut [CustomSetting],
-    id: SettingId,
+fn appearance_stepped(
+    appearance_settings: &mut [AppearanceSetting],
+    field: AppearanceField,
     direction: Direction,
 ) -> Cmd {
-    let Some(slot) = custom_settings.iter_mut().find(|slot| slot.custom.id == id)
+    let Some(slot) = appearance_settings
+        .iter_mut()
+        .find(|slot| slot.row.field == field)
     else {
         return Cmd::None;
     };
-    let option = slot.choice.nudged(slot.custom.control, direction);
+    let option = slot.choice.stepped(slot.row.control, direction);
     slot.choice = Choice::Option(option);
-    let setting = Cmd::from(Effect::Config(ConfigCmd::Setting { id, option }));
+    let setting = Cmd::from(Effect::Config(ConfigCmd::Setting { field, option }));
     let theme = slot
-        .custom
+        .row
         .themes
         .get(option.get())
         .cloned()
@@ -75,7 +73,7 @@ fn custom_nudged(
                 name,
             ))))
         });
-    let cue = slot.custom.cue.map(Cmd::from);
+    let cue = slot.row.cue.map(Cmd::from);
     [Some(setting), theme, cue]
         .into_iter()
         .flatten()
@@ -83,7 +81,7 @@ fn custom_nudged(
 }
 
 fn theme_picked(themes: &mut Themes, direction: Direction) -> Cmd {
-    let Some(next) = themes.nudged(direction) else {
+    let Some(next) = themes.stepped(direction) else {
         return Cmd::None;
     };
     themes.selected = ThemeChoice::Named(next.clone());
@@ -95,43 +93,33 @@ fn theme_picked(themes: &mut Themes, direction: Direction) -> Cmd {
     ])
 }
 
-impl Machine for Settings {
-    type Message = SettingsMessage;
-    type Error = std::convert::Infallible;
-    type Effect = Cmd;
-
-    fn transition(
-        mut self,
-        message: SettingsMessage,
-    ) -> Result<(Self, Cmd), Rejected<Self>> {
-        let cmd = match message {
-            SettingsMessage::ToggleReplaygain => adjust_replaygain(&mut self),
-            SettingsMessage::Crossfade(direction) => {
-                adjust_crossfade(&mut self, direction)
-            }
+impl Settings {
+    pub fn apply(&mut self, message: SettingsMessage) -> Cmd {
+        match message {
+            SettingsMessage::ToggleReplayGain => adjust_replay_gain(self),
+            SettingsMessage::Crossfade(direction) => adjust_crossfade(self, direction),
             SettingsMessage::OutputDevice(direction) => {
-                adjust_output_device(&mut self, direction)
+                adjust_output_device(self, direction)
             }
             SettingsMessage::SleepPresets(direction) => {
-                adjust_sleep_presets(&mut self, direction)
+                adjust_sleep_presets(self, direction)
             }
-        };
-        Ok((self, cmd))
+        }
     }
 }
 
-fn adjust_replaygain(settings: &mut Settings) -> Cmd {
-    settings.audio.replaygain = match settings.audio.replaygain {
-        Replaygain::On => Replaygain::Off,
-        Replaygain::Off => Replaygain::On,
+fn adjust_replay_gain(settings: &mut Settings) -> Cmd {
+    settings.audio.replay_gain = match settings.audio.replay_gain {
+        ReplayGain::On => ReplayGain::Off,
+        ReplayGain::Off => ReplayGain::On,
     };
     Cmd::Batch(vec![
         Effect::Config(ConfigCmd::Save(
             ConfigPatch::builder()
-                .replaygain(settings.audio.replaygain)
+                .replay_gain(settings.audio.replay_gain)
                 .build(),
         )),
-        Effect::Audio(AudioCmd::SetReplaygain(settings.audio.replaygain)),
+        Effect::Audio(AudioCmd::SetReplayGain(settings.audio.replay_gain)),
     ])
 }
 

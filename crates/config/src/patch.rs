@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use kernel::{
     ConfigPatch,
-    domain::{Crossfade, OutputDevice, Replaygain, ThemeName},
+    domain::{Crossfade, OutputDevice, ReplayGain, ThemeName},
 };
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
@@ -129,7 +129,7 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> 
     let ConfigPatch {
         crossfade,
         device,
-        replaygain,
+        replay_gain,
         theme,
         volume,
         sleep_presets,
@@ -146,7 +146,7 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> 
             (
                 "audio",
                 "replaygain",
-                replaygain.map(|r| value(matches!(r, Replaygain::On))),
+                replay_gain.map(|r| value(matches!(r, ReplayGain::On))),
             ),
         ],
     )?;
@@ -203,15 +203,34 @@ mod tests {
         domain::{
             Crossfade,
             DeviceName,
+            OptionCount,
             OutputDevice,
             Percent,
-            Replaygain,
+            ReplayGain,
             SleepPresets,
             ThemeChoice,
             ThemeName,
+            appearance_rows::{
+                ANIMATIONS,
+                AppearanceField,
+                COVER_BRACKETS,
+                COVER_STYLES,
+                FORMAT_CHIPS,
+                KEY_HINTS,
+                LAYOUT_MODES,
+                PROGRESS_STYLES,
+                SPEED_CHIPS,
+            },
         },
     };
-    use proptest::{option::of as option_of, prelude::*, sample::select};
+    use proptest::{
+        option::of as option_of,
+        prelude::{Just, Strategy},
+        prop_assert_eq,
+        prop_oneof,
+        proptest,
+        sample::select,
+    };
     use rstest::rstest;
 
     use crate::{
@@ -234,16 +253,6 @@ mod tests {
             patch_appearance_text,
             patch_config_text,
             to_minutes,
-        },
-        rows::{
-            ANIMATIONS,
-            COVER_BRACKETS,
-            COVER_STYLES,
-            FORMAT_CHIPS,
-            KEY_HINTS,
-            LAYOUT_MODES,
-            PROGRESS_STYLES,
-            SPEED_CHIPS,
         },
     };
 
@@ -314,6 +323,27 @@ mod tests {
         let out = patch_appearance_text(text, patch).unwrap();
         insta::with_settings!({ snapshot_suffix => name }, {
             insta::assert_snapshot!(out);
+        });
+    }
+
+    #[rstest]
+    #[case::cover_style("cover_style", AppearanceField::CoverStyle, 3)]
+    #[case::key_hints("key_hints", AppearanceField::KeyHints, 1)]
+    #[case::layout_mode("layout_mode", AppearanceField::LayoutMode, 2)]
+    fn an_effect_lands_in_the_file_it_belongs_to(
+        #[case] name: &str,
+        #[case] id: AppearanceField,
+        #[case] position: usize,
+    ) {
+        let option = OptionCount::new(position + 1)
+            .and_then(|count| count.index(position))
+            .unwrap();
+        let patch =
+            kernel::domain::appearance_rows::appearance_patch(id, option).unwrap();
+        let written = patch_appearance_text("", patch).unwrap();
+
+        insta::with_settings!({ snapshot_suffix => name }, {
+            insta::assert_snapshot!(written);
         });
     }
 
@@ -421,7 +451,7 @@ mod tests {
     fn every_config_field() -> ConfigPatch {
         ConfigPatch {
             crossfade: Some(crossfade_milliseconds(250)),
-            replaygain: Some(Replaygain::On),
+            replay_gain: Some(ReplayGain::On),
             device: Some(OutputDevice::Named(
                 DeviceName::new("Speakers".to_string()).unwrap(),
             )),
@@ -519,8 +549,8 @@ mod tests {
             ),
             device_patch(),
             proptest::option::of(prop_oneof![
-                Just(Replaygain::On),
-                Just(Replaygain::Off)
+                Just(ReplayGain::On),
+                Just(ReplayGain::Off)
             ]),
             proptest::option::of(
                 prop_oneof![Just("dark"), Just("oreo"), Just("noir")]
@@ -541,7 +571,7 @@ mod tests {
                 |(
                     crossfade,
                     device,
-                    replaygain,
+                    replay_gain,
                     theme,
                     volume,
                     sleep_presets,
@@ -550,7 +580,7 @@ mod tests {
                     ConfigPatch {
                         crossfade,
                         device,
-                        replaygain,
+                        replay_gain,
                         theme,
                         volume,
                         sleep_presets,
@@ -575,8 +605,8 @@ mod tests {
                     patch.crossfade.unwrap_or(base.audio.crossfade)
                 );
                 prop_assert_eq!(
-                    parsed.audio.replaygain,
-                    patch.replaygain.unwrap_or(base.audio.replaygain)
+                    parsed.audio.replay_gain,
+                    patch.replay_gain.unwrap_or(base.audio.replay_gain)
                 );
                 prop_assert_eq!(
                     parsed.audio.device,

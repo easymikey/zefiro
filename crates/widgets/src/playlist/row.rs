@@ -1,4 +1,4 @@
-use kernel::domain::{PlaylistIndex, Track};
+use kernel::domain::{Track, ViewIndex};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -79,7 +79,7 @@ pub(crate) fn visible_rows(fit: &WindowFit<'_>) -> VisibleRows {
     }
 }
 
-fn queue_position(queue: &[PlaylistIndex], row: usize) -> Option<QueuePosition> {
+fn queue_position(queue: &[ViewIndex], row: usize) -> Option<QueuePosition> {
     queue
         .iter()
         .position(|&queued| queued.get() == row)
@@ -212,7 +212,7 @@ pub(crate) fn cursor_row(area: Rect, view: PlaylistView<'_>) -> Option<Rect> {
     let band = row_band(area, inner, scrollbar_column(area, inner, SCROLLBAR_INSET));
     let window = visible_rows(&WindowFit {
         view,
-        playing_index: view.playing.map(PlaylistIndex::get),
+        playing_index: view.playing.map(ViewIndex::get),
         height: inner.height,
     });
     if view.browse_selected >= window.end {

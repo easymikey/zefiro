@@ -4,7 +4,6 @@ use crate::{
     cmd::{AudioCmd, Cmd, Cue, Effect, MacosCmd},
     domain::{AbLoop, Percent, Revision, SleepPresets, SleepTimer, Transport},
     message::Timer,
-    update::machine::{Machine, Rejected},
 };
 
 #[derive(Debug, Clone)]
@@ -25,16 +24,9 @@ pub enum TransportMessage {
     },
 }
 
-impl Machine for Transport {
-    type Message = TransportMessage;
-    type Error = std::convert::Infallible;
-    type Effect = Cmd;
-
-    fn transition(
-        mut self,
-        message: TransportMessage,
-    ) -> Result<(Self, Cmd), Rejected<Self>> {
-        let cmd = match message {
+impl Transport {
+    pub fn apply(&mut self, message: TransportMessage) -> Cmd {
+        match message {
             TransportMessage::StepVolume { steps } => {
                 self.volume = self.volume.step(steps);
                 Effect::Macos(MacosCmd::Volume(self.volume)).into()
@@ -57,7 +49,7 @@ impl Machine for Transport {
                 self.sleep.map_or(Cmd::None, |timer| {
                     Effect::After {
                         delay: timer.delay,
-                        message: Timer::Sleep(revision),
+                        timer: Timer::Sleep(revision),
                     }
                     .into()
                 })
@@ -66,11 +58,10 @@ impl Machine for Transport {
             TransportMessage::AbMark {
                 position: Some(position),
             } => {
-                self.ab = AbLoop::mark(self.ab, position);
+                self.ab_loop = AbLoop::mark(self.ab_loop, position);
                 Cmd::None
             }
-        };
-        Ok((self, cmd))
+        }
     }
 }
 

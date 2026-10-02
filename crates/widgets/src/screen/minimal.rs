@@ -1,5 +1,4 @@
-use config::SpeedChip;
-use kernel::playlist::RepeatMode;
+use kernel::{domain::appearance::SpeedChip, playlist::RepeatMode};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,

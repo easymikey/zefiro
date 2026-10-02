@@ -4,20 +4,20 @@ use kernel::{
     AudioCmd,
     Cmd,
     Cue,
-    DriverMessage,
+    DriverEvent,
     Effect,
     LibraryCmd,
     Message,
     Model,
     Moment,
-    Pause,
+    PausedBy,
     Playback,
     Player,
     Playhead,
     Preload,
     Speed,
-    ToastLevel,
-    TrackRequest,
+    ToastKind,
+    TrackLoad,
     domain::{Driver, DriverError, DriverStatus},
     update::update,
 };
@@ -27,7 +27,7 @@ use crate::support::{bare_track, dated_track, first_toast_expiry, playing_model}
 fn died(driver: Driver) -> Message {
     Message::Driver {
         driver,
-        event: DriverMessage::Died(DriverError::Panicked(
+        event: DriverEvent::Died(DriverError::panicked(
             "index out of bounds".to_string(),
         )),
     }
@@ -49,17 +49,18 @@ fn a_driver_death_is_recorded_and_told_as_an_error() {
 
     assert_eq!(
         model.drivers.status(Driver::Config),
-        &DriverStatus::Dead(DriverError::Panicked("index out of bounds".to_string()))
+        &DriverStatus::Dead(DriverError::panicked("index out of bounds".to_string()))
     );
     assert_eq!(
-        model
-            .workspace
-            .toast
-            .as_ref()
-            .map(|toast| (toast.level, toast.text.as_str())),
+        model.workspace.toasts.first().map(|toast| (
+            toast.kind,
+            toast.title.as_str(),
+            toast.text.as_deref()
+        )),
         Some((
-            ToastLevel::Error,
-            "The config driver stopped: panicked: index out of bounds"
+            ToastKind::Error,
+            "The config driver stopped",
+            Some("panicked: index out of bounds")
         ))
     );
 }
@@ -120,7 +121,7 @@ fn restarts_and_rescans_library(cmd: &Cmd) {
 #[case::restart_budget_spent_degrades_with_a_toast(StrategyRow {
     driver: Driver::Audio,
     prior_restarts: 3,
-    expected_status: || DriverStatus::Dead(DriverError::Panicked(
+    expected_status: || DriverStatus::Dead(DriverError::panicked(
         "index out of bounds".to_string()
     )),
     check: degrades_audio_with_a_toast,
@@ -128,7 +129,7 @@ fn restarts_and_rescans_library(cmd: &Cmd) {
 #[case::degrade_silent_changes_nothing_but_status(StrategyRow {
     driver: Driver::Macos,
     prior_restarts: 0,
-    expected_status: || DriverStatus::Dead(DriverError::Panicked(
+    expected_status: || DriverStatus::Dead(DriverError::panicked(
         "index out of bounds".to_string()
     )),
     check: changes_nothing,
@@ -164,7 +165,7 @@ fn congestion_raises_one_toast_naming_the_driver() {
         &mut model,
         Message::Driver {
             driver: Driver::Library,
-            event: DriverMessage::Full,
+            event: DriverEvent::Full,
         },
         Moment::default(),
     )
@@ -180,10 +181,10 @@ fn congestion_raises_one_toast_naming_the_driver() {
     assert_eq!(
         model
             .workspace
-            .toast
-            .as_ref()
-            .map(|toast| (toast.level, toast.text.as_str())),
-        Some((ToastLevel::Info, "The library driver is falling behind"))
+            .toasts
+            .first()
+            .map(|toast| (toast.kind, toast.title.as_str())),
+        Some((ToastKind::Info, "The library driver is falling behind"))
     );
     assert_eq!(
         model.drivers.status(Driver::Library),
@@ -209,7 +210,7 @@ fn paused_at(at: Duration) -> Player {
     Player::Paused {
         track: bare_track(0),
         at,
-        pause: Pause::ByListener,
+        by: PausedBy::Listener,
     }
 }
 
@@ -240,7 +241,7 @@ fn an_audio_restart_resumes_from_the_same_place(#[case] row: ResumeRow) {
 
     assert!(effects.iter().any(|effect| matches!(
         effect,
-        Effect::Audio(AudioCmd::Load(TrackRequest { path: loaded, .. })) if loaded == &path
+        Effect::Audio(AudioCmd::Load(TrackLoad { path: loaded, .. })) if loaded == &path
     )));
     assert!(effects.iter().any(|effect| matches!(
         effect,

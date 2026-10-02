@@ -4,10 +4,12 @@ use strum::{EnumDiscriminants, EnumIter, IntoStaticStr};
 
 use crate::domain::{
     CursorOver,
-    PlaylistIndex,
+    SaveLine,
+    SavePhase,
     SettingRow,
     TimecodeError,
     Track,
+    ViewIndex,
     playlist::PlaylistNameError,
 };
 
@@ -53,6 +55,31 @@ impl Overlay {
             | Overlay::TrackDetails(_) => false,
         }
     }
+
+    #[must_use]
+    pub fn save_line(&self) -> Option<SaveLine> {
+        match self {
+            Overlay::SavePlaylist { typed, error: None } => Some(SaveLine {
+                text: format!("Save playlist: {}", typed.input),
+                phase: SavePhase::Prompt,
+            }),
+            Overlay::SavePlaylist {
+                error: Some(reason),
+                ..
+            } => Some(SaveLine {
+                text: reason.to_string(),
+                phase: SavePhase::Failure,
+            }),
+            Overlay::Help
+            | Overlay::Search(_)
+            | Overlay::History(_)
+            | Overlay::Settings { .. }
+            | Overlay::ConfirmDelete(_)
+            | Overlay::JumpToTime(_)
+            | Overlay::TrackDetails(_)
+            | Overlay::MusicDir { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -74,7 +101,7 @@ pub struct SearchQuery {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteCandidate {
-    pub track: PlaylistIndex,
+    pub index: ViewIndex,
     pub title: String,
     pub artist: String,
 }

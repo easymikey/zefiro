@@ -19,7 +19,7 @@ ConfigToml {
         crossfade: Crossfade(
             0ns,
         ),
-        replaygain: Off,
+        replay_gain: Off,
         device: Named(
             DeviceName(
                 "Speakers",

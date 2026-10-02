@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
-assertion_line: 414
+assertion_line: 368
 expression: "walked(model, messages)"
 ---
 [
@@ -11,7 +11,7 @@ expression: "walked(model, messages)"
         One(
             After {
                 delay: 900s,
-                message: Sleep(
+                timer: Sleep(
                     Revision(
                         1,
                     ),
@@ -44,10 +44,10 @@ expression: "walked(model, messages)"
                     delay: 900s,
                 },
             ),
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Playback(
@@ -56,7 +56,7 @@ expression: "walked(model, messages)"
         One(
             After {
                 delay: 1800s,
-                message: Sleep(
+                timer: Sleep(
                     Revision(
                         2,
                     ),
@@ -89,10 +89,10 @@ expression: "walked(model, messages)"
                     delay: 1800s,
                 },
             ),
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Playback(
@@ -101,7 +101,7 @@ expression: "walked(model, messages)"
         One(
             After {
                 delay: 3600s,
-                message: Sleep(
+                timer: Sleep(
                     Revision(
                         3,
                     ),
@@ -134,10 +134,10 @@ expression: "walked(model, messages)"
                     delay: 3600s,
                 },
             ),
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Playback(
@@ -165,9 +165,9 @@ expression: "walked(model, messages)"
                 1.0,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
 ]

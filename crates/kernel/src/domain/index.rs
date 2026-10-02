@@ -4,14 +4,14 @@ use std::{fmt, marker::PhantomData};
 pub struct TrackSpace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PlaylistSpace;
+pub struct ViewSpace;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Index<Space>(usize, PhantomData<Space>);
 
 pub type TrackIndex = Index<TrackSpace>;
 
-pub type PlaylistIndex = Index<PlaylistSpace>;
+pub type ViewIndex = Index<ViewSpace>;
 
 impl<Space> Index<Space> {
     pub const fn new(position: usize) -> Self {

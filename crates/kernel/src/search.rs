@@ -70,12 +70,10 @@ fn score_chars(query_chars: &[char], haystack: &str) -> Option<i32> {
     if scoring.query_index < query_chars.len() {
         return None;
     }
-    let mut total = scoring.total;
-    if let Some(last) = scoring.previous_matched {
+    Some(scoring.previous_matched.map_or(scoring.total, |last| {
         let last = i32::try_from(last).unwrap_or(i32::MAX);
-        total -= last / POSITION_PENALTY_DIVISOR;
-    }
-    Some(total)
+        scoring.total - last / POSITION_PENALTY_DIVISOR
+    }))
 }
 
 #[must_use]

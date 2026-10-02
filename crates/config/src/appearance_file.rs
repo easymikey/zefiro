@@ -1,3 +1,4 @@
+use kernel::domain::appearance::{Breakpoints, CoverCells, Look, ProgressBar};
 use serde::Deserialize;
 
 use crate::{
@@ -11,10 +12,12 @@ use crate::{
         KeyHints,
         LayoutMode,
         ProgressTime,
+        Rgb,
         SpeedChip,
+        from_str_option,
+        variant_field,
     },
     error::{Error, TomlFile, parse_toml},
-    rgb::Rgb,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -37,6 +40,7 @@ impl Default for TextCoverCells {
 #[serde(default, deny_unknown_fields)]
 pub struct CoverConfig {
     pub size_px: u32,
+    #[serde(deserialize_with = "variant_field")]
     pub style: CoverStyle,
     pub text_cells: TextCoverCells,
     #[serde(deserialize_with = "crate::appearance::flag")]
@@ -59,6 +63,7 @@ impl Default for CoverConfig {
 pub struct CardConfig {
     #[serde(deserialize_with = "crate::appearance::flag")]
     pub format_chips: FormatChips,
+    #[serde(deserialize_with = "variant_field")]
     pub speed_chip: SpeedChip,
 }
 
@@ -67,7 +72,9 @@ pub struct CardConfig {
 pub struct ProgressConfig {
     pub height_px: f32,
     pub radius: Option<f32>,
+    #[serde(deserialize_with = "from_str_option")]
     pub fill: Option<Rgb>,
+    #[serde(deserialize_with = "from_str_option")]
     pub track: Option<Rgb>,
     #[serde(deserialize_with = "crate::appearance::flag")]
     pub remaining: ProgressTime,
@@ -103,6 +110,7 @@ pub struct LayoutConfig {
     pub compact_min_height: u16,
     pub min_columns: u16,
     pub min_rows: u16,
+    #[serde(deserialize_with = "variant_field")]
     pub mode: LayoutMode,
 }
 
@@ -145,6 +153,31 @@ impl AppearanceFile {
         }
     }
 
+    pub fn look(&self) -> Look {
+        Look {
+            appearance: self.appearance(),
+            cover_size_px: self.cover.size_px,
+            cover_cells: CoverCells {
+                width: self.cover.text_cells.width,
+                height: self.cover.text_cells.height,
+            },
+            breakpoints: Breakpoints {
+                full_min_width: self.layout.full_min_width,
+                full_min_height: self.layout.full_min_height,
+                compact_min_width: self.layout.compact_min_width,
+                compact_min_height: self.layout.compact_min_height,
+                min_columns: self.layout.min_columns,
+                min_rows: self.layout.min_rows,
+            },
+            progress: ProgressBar {
+                height_px: self.progress.height_px,
+                radius: self.progress.radius,
+                fill: self.progress.fill,
+                track: self.progress.track,
+            },
+        }
+    }
+
     pub fn with_appearance(self, appearance: Appearance) -> Self {
         Self {
             card: CardConfig {
@@ -184,6 +217,7 @@ pub fn parse_appearance(source: &str) -> Result<AppearanceFile, Error> {
 
 #[cfg(test)]
 mod tests {
+    use kernel::domain::appearance::{Look, preset_appearance};
     use rstest::rstest;
 
     use crate::{
@@ -199,7 +233,6 @@ mod tests {
             LayoutMode,
             ProgressTime,
             SpeedChip,
-            preset_appearance,
         },
         appearance_file::{
             AppearanceFile,
@@ -226,6 +259,25 @@ mod tests {
         assert_eq!(
             AppearanceFile::default().appearance(),
             Appearance::default()
+        );
+    }
+
+    #[test]
+    fn the_stock_file_looks_like_the_stock_look() {
+        assert_eq!(AppearanceFile::default().look(), Look::default());
+    }
+
+    #[test]
+    fn an_unknown_variant_lists_the_ones_that_exist() {
+        let error = parse_appearance("[cover]\nstyle = \"bogus\"\n")
+            .expect_err("an unknown style must not parse")
+            .to_string();
+
+        assert!(
+            error.contains(
+                "unknown variant `bogus`, expected one of `vinyl`, `plain`, `milkdrop`, `off`"
+            ),
+            "{error}"
         );
     }
 

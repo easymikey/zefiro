@@ -4,8 +4,7 @@ use kernel::{
     Cmd,
     Effect,
     Message,
-    PlaylistRequest,
-    domain::{Driver, Drivers},
+    domain::{Driver, Drivers, TrackIndex},
 };
 
 use crate::{
@@ -42,8 +41,8 @@ pub(crate) struct Interpreter<'a> {
     pub(crate) trace: &'a mut Trace,
 }
 
-fn shuffle_order(len: usize) -> Vec<usize> {
-    let mut order: Vec<usize> = (0..len).collect();
+fn shuffle_order(len: usize) -> Vec<TrackIndex> {
+    let mut order: Vec<TrackIndex> = (0..len).map(TrackIndex::new).collect();
     fastrand::shuffle(&mut order);
     order
 }
@@ -81,11 +80,14 @@ pub(crate) fn interpret(cmd: Cmd, interpreter: &mut Interpreter<'_>) -> Interpre
                 interpreted.shell_effects.push(ShellEffect::Animate(cue));
             }
             Effect::RollShuffle { len } => {
-                interpreted.answers.push(Message::Playlist(
-                    PlaylistRequest::ShuffleRolled(shuffle_order(len)),
-                ));
+                interpreted
+                    .answers
+                    .push(Message::ShuffleRolled(shuffle_order(len)));
             }
-            Effect::After { delay, message } => {
+            Effect::After {
+                delay,
+                timer: message,
+            } => {
                 if let Some(deadline) = Instant::now().checked_add(delay) {
                     interpreter.timers.schedule(deadline, message);
                 } else {
@@ -113,22 +115,29 @@ mod tests {
         Cmd,
         ConfigCmd,
         ConfigPatch,
+        Congestion,
         Cue,
         Effect,
         LibraryCmd,
         MacosCmd,
         Message,
-        PlaylistRequest,
         Timer,
         WindowColorsCmd,
-        domain::{Driver, DriverStatus, Model, OptionCount, OutputDevice, Revision},
+        domain::{
+            Driver,
+            DriverStatus,
+            Model,
+            OptionCount,
+            OutputDevice,
+            Revision,
+            TrackIndex,
+        },
     };
 
     use crate::{
         interpret::{Interpreter, interpret},
         library::machine::LibraryMessage,
         port::{LibraryPort, Port, Ports},
-        sender::FullEdge,
         shell::ShellEffect,
         timers::Timers,
         trace::{DropReason, Trace, TraceEntry},
@@ -151,17 +160,17 @@ mod tests {
             let (library_tx, library_rx) = unbounded();
             let (config_tx, config_rx) = unbounded();
             let (macos_tx, macos_rx) = unbounded();
-            let macos_port = Port::new(Driver::Macos, macos_tx, FullEdge::default());
+            let macos_port = Port::new(Driver::Macos, macos_tx, Congestion::default());
             Self {
                 model: Model::default(),
                 ports: Ports {
-                    audio: Port::new(Driver::Audio, audio_tx, FullEdge::default()),
+                    audio: Port::new(Driver::Audio, audio_tx, Congestion::default()),
                     library: LibraryPort::new(Port::new(
                         Driver::Library,
                         library_tx,
-                        FullEdge::default(),
+                        Congestion::default(),
                     )),
-                    config: Port::new(Driver::Config, config_tx, FullEdge::default()),
+                    config: Port::new(Driver::Config, config_tx, Congestion::default()),
                     macos: macos_port,
                 },
                 audio_rx,
@@ -378,14 +387,12 @@ mod tests {
 
         let interpreted =
             interpret(Cmd::One(Effect::RollShuffle { len: 5 }), &mut interpreter);
-        let [Message::Playlist(PlaylistRequest::ShuffleRolled(order))] =
-            interpreted.answers.as_slice()
-        else {
+        let [Message::ShuffleRolled(order)] = interpreted.answers.as_slice() else {
             panic!("expected a single shuffle answer");
         };
         let mut sorted = order.clone();
         sorted.sort_unstable();
-        assert_eq!(sorted, vec![0, 1, 2, 3, 4]);
+        assert_eq!(sorted, (0..5).map(TrackIndex::new).collect::<Vec<_>>());
     }
 
     #[test]
@@ -402,8 +409,8 @@ mod tests {
         );
 
         let [
-            Message::Playlist(PlaylistRequest::ShuffleRolled(first)),
-            Message::Playlist(PlaylistRequest::ShuffleRolled(second)),
+            Message::ShuffleRolled(first),
+            Message::ShuffleRolled(second),
         ] = interpreted.answers.as_slice()
         else {
             panic!("expected two shuffle answers in order");
@@ -416,17 +423,17 @@ mod tests {
     fn a_setting_effect_reaches_the_config_inbox_as_a_setting_command() {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
-        let id = config::AppearanceField::CoverBrackets.id();
+        let field = kernel::domain::appearance_rows::AppearanceField::CoverBrackets;
         let option = OptionCount::new(2).unwrap().index(0).unwrap();
 
         let interpreted = interpret(
-            Cmd::One(Effect::Config(ConfigCmd::Setting { id, option })),
+            Cmd::One(Effect::Config(ConfigCmd::Setting { field, option })),
             &mut interpreter,
         );
 
         assert_eq!(
             fixture.config_rx.try_recv(),
-            Ok(ConfigCmd::Setting { id, option })
+            Ok(ConfigCmd::Setting { field, option })
         );
         assert!(interpreted.shell_effects.is_empty());
         assert!(fixture.trace.iter().next().is_none());
@@ -440,7 +447,7 @@ mod tests {
         interpret(
             Cmd::One(Effect::After {
                 delay: Duration::from_secs(1),
-                message: Timer::Toast(Revision::default()),
+                timer: Timer::Toast(Revision::default()),
             }),
             &mut interpreter,
         );
@@ -456,7 +463,7 @@ mod tests {
         interpret(
             Cmd::One(Effect::After {
                 delay: Duration::MAX,
-                message: Timer::Toast(Revision::default()),
+                timer: Timer::Toast(Revision::default()),
             }),
             &mut interpreter,
         );

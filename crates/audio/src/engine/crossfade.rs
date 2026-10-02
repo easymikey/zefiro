@@ -1,6 +1,6 @@
 use std::{f32::consts::FRAC_PI_2, time::Duration};
 
-use kernel::domain::Replaygain;
+use kernel::domain::ReplayGain;
 
 #[must_use]
 pub(crate) fn gain_in(fraction: f32) -> f32 {
@@ -13,8 +13,8 @@ pub(crate) fn gain_out(fraction: f32) -> f32 {
 }
 
 #[must_use]
-pub(crate) fn replaygain_factor(replaygain: Replaygain, gain_db: Option<f32>) -> f32 {
-    if matches!(replaygain, Replaygain::On) {
+pub(crate) fn replaygain_factor(replay_gain: ReplayGain, gain_db: Option<f32>) -> f32 {
+    if matches!(replay_gain, ReplayGain::On) {
         gain_db.map_or(1.0, |g| 10f32.powf(g / 20.0))
     } else {
         1.0
@@ -33,36 +33,36 @@ pub(crate) fn arm_cue(
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::Replaygain;
+    use kernel::domain::ReplayGain;
     use proptest::prelude::{prop_assert, proptest};
     use rstest::rstest;
 
     use crate::engine::crossfade::{arm_cue, gain_in, gain_out, replaygain_factor};
 
     struct VolumeRow {
-        replaygain: Replaygain,
+        replay_gain: ReplayGain,
         gain: Option<f32>,
         expected: f32,
     }
 
     #[rstest]
     #[case::no_cached_gain(VolumeRow {
-        replaygain: Replaygain::On,
+        replay_gain: ReplayGain::On,
         gain: None,
         expected: 1.0,
     })]
     #[case::replaygain_disabled_ignores_the_gain(VolumeRow {
-        replaygain: Replaygain::Off,
+        replay_gain: ReplayGain::Off,
         gain: Some(-6.0),
         expected: 1.0,
     })]
     #[case::replaygain_applies_decibels_as_a_linear_factor(VolumeRow {
-        replaygain: Replaygain::On,
+        replay_gain: ReplayGain::On,
         gain: Some(-6.0),
         expected: 0.501_187,
     })]
     fn replaygain_factor_turns_decibels_into_a_linear_factor(#[case] row: VolumeRow) {
-        let factor = replaygain_factor(row.replaygain, row.gain);
+        let factor = replaygain_factor(row.replay_gain, row.gain);
         let expected = row.expected;
         assert!(
             (factor - expected).abs() < 1e-4,

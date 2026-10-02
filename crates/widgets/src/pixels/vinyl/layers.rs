@@ -1,5 +1,5 @@
-use config::Rgb;
 use image::RgbaImage;
+use kernel::domain::appearance::Rgb;
 use tiny_skia::{
     Color,
     FillRule,
@@ -232,9 +232,6 @@ fn paint_sleeve(pixmap: &mut Pixmap, parts: &VinylParts<'_>) {
     );
 }
 
-/// Paints the layered drop shadow. `shape` receives the shadow offset
-/// `(dx, dy)` and the growth `dr` of one blur pass and returns that pass's
-/// path.
 fn paint_drop_shadow(
     pixmap: &mut Pixmap,
     style: &VinylFrameStyle,
@@ -322,7 +319,7 @@ fn stroke_path(pixmap: &mut Pixmap, path: Option<Path>, style: StrokeStyle) {
 
 #[cfg(test)]
 mod tests {
-    use config::Rgb;
+    use kernel::domain::appearance::Rgb;
     use rstest::rstest;
 
     use crate::pixels::vinyl::{

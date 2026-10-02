@@ -5,8 +5,8 @@ use crate::domain::time::SECONDS_PER_MINUTE;
 const MAX_MINUTES: u64 = 720;
 const MAX_PRESETS: usize = 5;
 
-const fn minutes(value: u64) -> Duration {
-    Duration::from_secs(value * SECONDS_PER_MINUTE)
+const fn minutes(count: u64) -> Duration {
+    Duration::from_secs(count * SECONDS_PER_MINUTE)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,9 +83,7 @@ impl Default for SleepPresets {
 pub enum SleepPresetError {
     #[error("sleep preset of {minutes} minutes is out of range (must be 1..=720)")]
     OutOfRange { minutes: u64 },
-    #[error(
-        "sleep preset of {minutes} minutes does not come after the preset before it"
-    )]
+    #[error("sleep preset of {minutes} minutes is not above the one before")]
     NotAscending { minutes: u64 },
     #[error("at most 5 sleep presets are allowed, found {count}")]
     TooMany { count: usize },

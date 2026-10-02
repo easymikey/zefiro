@@ -11,14 +11,14 @@ use kernel::{
     LibraryCmd,
     MacosCmd,
     Moment,
-    Pause,
+    PausedBy,
     PlaybackChange,
     Player,
     Playhead,
     Preload,
     Speed,
     Track,
-    TrackRequest,
+    TrackLoad,
     domain::Revision,
     update::player::{Anchor, Lookahead, PlayerError, PlayerMessage, Stamp},
 };
@@ -88,7 +88,7 @@ fn seek_error() -> PlayerMessage {
 }
 
 fn tick(at: u64, ab: Option<(u64, u64)>, next: Option<Arc<Track>>) -> PlayerMessage {
-    PlayerMessage::MarkReached {
+    PlayerMessage::LookaheadReached {
         offset: secs(at),
         lookahead: Lookahead {
             preload_lead: PRELOAD_LEAD,
@@ -173,7 +173,7 @@ fn paused(track: Arc<Track>, at: Duration) -> Player {
     Player::Paused {
         track,
         at,
-        pause: Pause::ByListener,
+        by: PausedBy::Listener,
     }
 }
 
@@ -181,7 +181,7 @@ fn held(track: Arc<Track>, at: Duration) -> Player {
     Player::Paused {
         track,
         at,
-        pause: Pause::ByOverlay,
+        by: PausedBy::Overlay,
     }
 }
 
@@ -194,7 +194,7 @@ fn toggle(current: Option<Arc<Track>>) -> PlayerMessage {
 
 fn faded_in(track: &Arc<Track>) -> Cmd {
     let mut effects = vec![
-        Effect::Audio(AudioCmd::Load(TrackRequest::for_track(track, revision()))),
+        Effect::Audio(AudioCmd::Load(TrackLoad::for_track(track, revision()))),
         appended_to_history(track),
         now_playing(track),
     ];
@@ -217,10 +217,7 @@ fn stopped() -> Cmd {
 
 fn preloads(track: &Arc<Track>) -> Cmd {
     Cmd::Batch(vec![
-        Effect::Audio(AudioCmd::Preload(TrackRequest::for_track(
-            track,
-            revision(),
-        ))),
+        Effect::Audio(AudioCmd::Preload(TrackLoad::for_track(track, revision()))),
         Effect::Library(LibraryCmd::PrefetchCover(track.path().to_path_buf())),
     ])
 }

@@ -5,99 +5,60 @@ use crate::{
         JumpDigits,
         MusicDirError,
         Overlay,
-        PlaylistIndex,
         SearchQuery,
         TextEntry,
+        ViewIndex,
         parse_timecode,
-        playlist::PlaylistFileName,
+        playlist::{PlaylistFileName, PlaylistNameError},
     },
     message::{BrowseRequest, PlaybackRequest, PlaylistRequest},
     update::{
-        machine::{Machine, Rejected},
+        machine::Machine,
         overlay::{
             FollowUp,
             InnerMessage,
-            OverlayEffect,
             OverlayError,
             OverlayMessage,
+            OverlayOutcome,
+            settings,
             text,
         },
     },
 };
 
-struct Lift<Inner: Machine> {
-    wrap: fn(Inner) -> Overlay,
-    reject: fn(Inner::Error) -> OverlayError,
-}
-
-fn lift<Inner: Machine>(
-    mut inner: Inner,
-    message: Inner::Message,
-    lens: &Lift<Inner>,
-) -> Transition
-where
-    Inner::Effect: Into<OverlayEffect>,
-{
-    let outcome = inner.update(message);
-    let state = Some((lens.wrap)(inner));
-    match outcome {
-        Ok(effect) => Ok((state, effect.into())),
-        Err(reason) => refuse(state, (lens.reject)(reason)),
-    }
-}
-
-type Transition = Result<(Option<Overlay>, OverlayEffect), Rejected<Option<Overlay>>>;
-
 impl Machine for Option<Overlay> {
     type Message = OverlayMessage;
     type Error = OverlayError;
-    type Effect = OverlayEffect;
+    type Effect = OverlayOutcome;
 
-    fn transition(self, message: OverlayMessage) -> Transition {
-        match (self, message) {
-            (previous, OverlayMessage::Open(opened)) => open(previous.as_ref(), opened),
-            (
-                None,
-                OverlayMessage::Close
-                | OverlayMessage::Confirm
-                | OverlayMessage::Inner(_),
-            ) => refuse(None, OverlayError::WhileClosed),
-            (Some(open), OverlayMessage::Close) => {
-                cued_close(Ok((None, closed_playback(&open))))
+    fn transition(
+        &mut self,
+        message: OverlayMessage,
+    ) -> Result<OverlayOutcome, OverlayError> {
+        match message {
+            OverlayMessage::Open(opened) => {
+                let follow_up = opened_playback(self.as_ref(), &opened);
+                *self = Some(opened);
+                Ok(OverlayOutcome {
+                    cmd: Cue::OverlayOpened.into(),
+                    follow_up,
+                })
             }
-            (Some(open), OverlayMessage::Confirm) => cued_close(confirm(open)),
-            (Some(open), OverlayMessage::Inner(inner)) => inner_transition(open, inner),
+            OverlayMessage::Close => {
+                let open = self.take().ok_or(OverlayError::WhileClosed)?;
+                Ok(cued_close(closed_playback(&open)))
+            }
+            OverlayMessage::Confirm => confirm(self),
+            OverlayMessage::Inner(inner) => inner_transition(self, inner),
         }
     }
 }
 
-fn refuse(state: Option<Overlay>, reason: OverlayError) -> Transition {
-    Err(Rejected { state, reason })
-}
-
-fn cued_close(transition: Transition) -> Transition {
-    match transition {
-        Ok((None, effect)) => Ok((
-            None,
-            OverlayEffect {
-                cmd: effect.cmd.then(Cue::OverlayClosed.into()),
-                follow_up: effect.follow_up,
-            },
-        )),
-        Ok((still_open @ Some(_), effect)) => Ok((still_open, effect)),
-        Err(rejected) => Err(rejected),
+fn cued_close(effect: OverlayOutcome) -> OverlayOutcome {
+    OverlayOutcome {
+        cmd: effect.cmd.then(Cue::OverlayClosed.into()),
+        follow_up: effect.follow_up,
     }
-}
-
-fn open(previous: Option<&Overlay>, opened: Overlay) -> Transition {
-    let follow_up = opened_playback(previous, &opened);
-    Ok((
-        Some(opened),
-        OverlayEffect {
-            cmd: Cue::OverlayOpened.into(),
-            follow_up,
-        },
-    ))
 }
 
 fn release() -> FollowUp {
@@ -107,16 +68,16 @@ fn release() -> FollowUp {
 fn opened_playback(previous: Option<&Overlay>, opened: &Overlay) -> Option<FollowUp> {
     match (previous, opened) {
         (_, Overlay::Settings { .. }) => {
-            Some(FollowUp::Playback(PlaybackRequest::Hold))
+            Some(FollowUp::Playback(PlaybackRequest::HoldForOverlay))
         }
         (Some(Overlay::Settings { .. }), _) => Some(release()),
         (_, _) => None,
     }
 }
 
-fn closed_playback(open: &Overlay) -> OverlayEffect {
+fn closed_playback(open: &Overlay) -> OverlayOutcome {
     match open {
-        Overlay::Settings { .. } => OverlayEffect::from(release()),
+        Overlay::Settings { .. } => OverlayOutcome::from(release()),
         Overlay::Help
         | Overlay::Search(_)
         | Overlay::SavePlaylist { .. }
@@ -124,136 +85,129 @@ fn closed_playback(open: &Overlay) -> OverlayEffect {
         | Overlay::ConfirmDelete(_)
         | Overlay::TrackDetails(_)
         | Overlay::JumpToTime(_)
-        | Overlay::MusicDir { .. } => OverlayEffect::default(),
+        | Overlay::MusicDir { .. } => OverlayOutcome::default(),
     }
 }
 
-fn confirm(open: Overlay) -> Transition {
+fn confirm(state: &mut Option<Overlay>) -> Result<OverlayOutcome, OverlayError> {
+    let open = state.as_mut().ok_or(OverlayError::WhileClosed)?;
+    let Some(effect) = confirmed(open)? else {
+        return Ok(OverlayOutcome::default());
+    };
+    *state = None;
+    Ok(cued_close(effect))
+}
+
+fn confirmed(open: &mut Overlay) -> Result<Option<OverlayOutcome>, OverlayError> {
     match open {
-        Overlay::Search(search) => confirm_search(search),
-        Overlay::SavePlaylist { typed, .. } => confirm_save_playlist(typed),
-        Overlay::ConfirmDelete(candidate) => Ok((
-            None,
-            OverlayEffect::from(FollowUp::Browse(BrowseRequest::Trash(
-                candidate.track,
-            ))),
-        )),
-        Overlay::JumpToTime(digits) => confirm_jump(digits),
-        Overlay::MusicDir { typed, .. } => confirm_music_dir(typed),
-        Overlay::Settings { .. } => Ok((None, OverlayEffect::from(release()))),
+        Overlay::Search(search) => confirm_search(search).map(Some),
+        Overlay::SavePlaylist { typed, error } => {
+            Ok(confirm_save_playlist(typed, error))
+        }
+        Overlay::ConfirmDelete(candidate) => Ok(Some(OverlayOutcome::from(
+            FollowUp::Browse(BrowseRequest::Trash(candidate.index)),
+        ))),
+        Overlay::JumpToTime(digits) => Ok(confirm_jump(digits)),
+        Overlay::MusicDir { typed, error } => Ok(confirm_music_dir(typed, error)),
+        Overlay::Settings { .. } => Ok(Some(OverlayOutcome::from(release()))),
         Overlay::Help | Overlay::TrackDetails(_) | Overlay::History(_) => {
-            refuse(Some(open), OverlayError::NoConfirm)
+            Err(OverlayError::NoConfirm)
         }
     }
 }
 
-fn confirm_search(search: CursorOver<SearchQuery>) -> Transition {
-    let Some(index) = search.content.matches.get(search.selected()).copied() else {
-        return refuse(Some(Overlay::Search(search)), OverlayError::NothingSelected);
-    };
-    Ok((
-        None,
-        OverlayEffect::from(FollowUp::Playlist(PlaylistRequest::JumpTo(
-            PlaylistIndex::new(index),
-        ))),
-    ))
+fn confirm_search(
+    search: &CursorOver<SearchQuery>,
+) -> Result<OverlayOutcome, OverlayError> {
+    let index = search
+        .content
+        .matches
+        .get(search.selected())
+        .copied()
+        .ok_or(OverlayError::NothingSelected)?;
+    Ok(OverlayOutcome::from(FollowUp::Playlist(
+        PlaylistRequest::JumpTo(ViewIndex::new(index)),
+    )))
 }
 
-fn confirm_jump(mut digits: JumpDigits) -> Transition {
+fn confirm_jump(digits: &mut JumpDigits) -> Option<OverlayOutcome> {
     match parse_timecode(&digits.input) {
-        Ok(target) => Ok((
-            None,
-            OverlayEffect::from(FollowUp::Playback(PlaybackRequest::SeekTo(target))),
-        )),
+        Ok(target) => Some(OverlayOutcome::from(FollowUp::Playback(
+            PlaybackRequest::SeekTo(target),
+        ))),
         Err(error) => {
             digits.error = Some(error);
-            Ok((Some(Overlay::JumpToTime(digits)), OverlayEffect::default()))
+            None
         }
     }
 }
 
-fn confirm_save_playlist(typed: TextEntry) -> Transition {
+fn confirm_save_playlist(
+    typed: &TextEntry,
+    error: &mut Option<PlaylistNameError>,
+) -> Option<OverlayOutcome> {
     match PlaylistFileName::new(&typed.input) {
-        Ok(name) => Ok((
-            None,
-            OverlayEffect::from(FollowUp::Browse(BrowseRequest::SavePlaylist(name))),
-        )),
+        Ok(name) => Some(OverlayOutcome::from(FollowUp::Browse(
+            BrowseRequest::SavePlaylist(name),
+        ))),
         Err(reason) => {
-            let open = Overlay::SavePlaylist {
-                typed,
-                error: Some(reason),
-            };
-            Ok((Some(open), OverlayEffect::default()))
+            *error = Some(reason);
+            None
         }
     }
 }
 
-fn confirm_music_dir(typed: TextEntry) -> Transition {
+fn confirm_music_dir(
+    typed: &mut TextEntry,
+    error: &mut Option<MusicDirError>,
+) -> Option<OverlayOutcome> {
     if typed.input.trim().is_empty() {
-        let open = Overlay::MusicDir {
-            typed,
-            error: Some(MusicDirError::Empty),
-        };
-        return Ok((Some(open), OverlayEffect::default()));
+        *error = Some(MusicDirError::Empty);
+        return None;
     }
     let save = Effect::Config(ConfigCmd::Save(
         ConfigPatch::builder()
-            .music_dir(std::path::PathBuf::from(typed.input))
+            .music_dir(std::path::PathBuf::from(std::mem::take(&mut typed.input)))
             .build(),
     ));
-    Ok((None, OverlayEffect::from(Cmd::from(save))))
+    Some(OverlayOutcome::from(Cmd::from(save)))
 }
 
-fn inner_transition(open: Overlay, inner: InnerMessage) -> Transition {
+fn inner_transition(
+    state: &mut Option<Overlay>,
+    inner: InnerMessage,
+) -> Result<OverlayOutcome, OverlayError> {
+    let open = state.as_mut().ok_or(OverlayError::WhileClosed)?;
     match (open, inner) {
-        (Overlay::Search(search), InnerMessage::Search(message)) => lift(
-            search,
-            message,
-            &Lift {
-                wrap: Overlay::Search,
-                reject: OverlayError::Search,
-            },
-        ),
-        (Overlay::Settings { selected }, InnerMessage::Settings(message)) => Ok(
-            crate::update::overlay::settings::transition(selected, message),
-        ),
-        (Overlay::SavePlaylist { typed, .. }, InnerMessage::Text(message)) => Ok((
-            Some(Overlay::SavePlaylist {
-                typed: text::retyped(typed, message),
-                error: None,
-            }),
-            OverlayEffect::default(),
-        )),
-        (Overlay::MusicDir { typed, .. }, InnerMessage::Text(message)) => Ok((
-            Some(Overlay::MusicDir {
-                typed: text::retyped(typed, message),
-                error: None,
-            }),
-            OverlayEffect::default(),
-        )),
-        (Overlay::JumpToTime(digits), InnerMessage::Jump(message)) => lift(
-            digits,
-            message,
-            &Lift {
-                wrap: Overlay::JumpToTime,
-                reject: OverlayError::Jump,
-            },
-        ),
-        (Overlay::History(cursor), InnerMessage::History(message)) => lift(
-            cursor,
-            message,
-            &Lift {
-                wrap: Overlay::History,
-                reject: OverlayError::History,
-            },
-        ),
+        (Overlay::Search(search), InnerMessage::Search(message)) => {
+            search.transition(message).map_err(OverlayError::Search)
+        }
+        (Overlay::Settings { selected }, InnerMessage::Settings(message)) => {
+            Ok(settings::transition(selected, message))
+        }
+        (Overlay::SavePlaylist { typed, error }, InnerMessage::Text(message)) => {
+            text::retype(typed, message);
+            *error = None;
+            Ok(OverlayOutcome::default())
+        }
+        (Overlay::MusicDir { typed, error }, InnerMessage::Text(message)) => {
+            text::retype(typed, message);
+            *error = None;
+            Ok(OverlayOutcome::default())
+        }
+        (Overlay::JumpToTime(digits), InnerMessage::Jump(message)) => {
+            digits.transition(message).map_err(OverlayError::Jump)
+        }
+        (Overlay::History(cursor), InnerMessage::History(message)) => {
+            cursor.transition(message).map_err(OverlayError::History)
+        }
         (
-            open,
+            _,
             InnerMessage::Search(_)
             | InnerMessage::Settings(_)
             | InnerMessage::Text(_)
             | InnerMessage::Jump(_)
             | InnerMessage::History(_),
-        ) => refuse(Some(open), OverlayError::WrongOverlay),
+        ) => Err(OverlayError::WrongOverlay),
     }
 }

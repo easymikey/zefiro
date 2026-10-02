@@ -41,26 +41,26 @@ impl Seen {
 
 #[cfg(test)]
 mod tests {
-    use proptest::prelude::*;
+    use proptest::{option, prop_assert, prop_assume, proptest};
 
     use crate::config::seen::Seen;
 
     proptest! {
         #[test]
-        fn a_fresh_target_always_reports_changed(text in proptest::option::of(".*")) {
+        fn a_fresh_target_always_reports_changed(text in option::of(".*")) {
             prop_assert!(Seen::Never.changed_by(text.as_deref()));
         }
 
         #[test]
-        fn its_own_text_never_reports_changed(text in proptest::option::of(".*")) {
+        fn its_own_text_never_reports_changed(text in option::of(".*")) {
             let seen = Seen::of(text.as_deref());
             prop_assert!(!seen.changed_by(text.as_deref()));
         }
 
         #[test]
         fn a_different_text_reports_changed(
-            first in proptest::option::of(".*"),
-            second in proptest::option::of(".*"),
+            first in option::of(".*"),
+            second in option::of(".*"),
         ) {
             prop_assume!(first != second);
             let seen = Seen::of(first.as_deref());

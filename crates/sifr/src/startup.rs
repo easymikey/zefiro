@@ -14,10 +14,18 @@ use config::{
 };
 use kernel::{
     Bounded,
-    domain::{Percent, Shuffle, Startup, ThemeChoice, ThemeName},
+    domain::{
+        Percent,
+        Shuffle,
+        Startup,
+        ThemeChoice,
+        ThemeName,
+        appearance_rows::appearance_settings,
+    },
     playlist::{PlaylistFileName, PlaylistSource},
 };
 use library::LibraryDirs;
+use widgets::{Colors, Theme, ThemeSeed};
 
 use crate::error::Error;
 
@@ -30,7 +38,6 @@ pub(crate) struct Boot {
 #[derive(Debug, Clone)]
 pub(crate) struct Look {
     pub(crate) theme: ThemeFile,
-    pub(crate) appearance: AppearanceFile,
 }
 
 struct ReadFile<T> {
@@ -111,14 +118,6 @@ fn config_paths(
     }
 }
 
-fn read_optional(path: &Path) -> Result<Option<String>, std::io::Error> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => Ok(Some(text)),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(source),
-    }
-}
-
 fn fallback<T>(fallback: T, path: &Path, source: &std::io::Error) -> ReadFile<T> {
     ReadFile {
         value: fallback,
@@ -128,7 +127,7 @@ fn fallback<T>(fallback: T, path: &Path, source: &std::io::Error) -> ReadFile<T>
 }
 
 fn read_appearance(path: &Path) -> ReadFile<AppearanceFile> {
-    let text = match read_optional(path) {
+    let text = match library::files::read_if_present(path) {
         Ok(Some(text)) => text,
         Ok(None) => {
             return ReadFile {
@@ -150,6 +149,34 @@ fn read_appearance(path: &Path) -> ReadFile<AppearanceFile> {
             text: Some(text),
             warning: Some(error.to_string()),
         },
+    }
+}
+
+pub(crate) fn theme_from_file(file: ThemeFile) -> Theme {
+    let ThemeColors {
+        background,
+        foreground,
+        bright_foreground,
+        accent,
+        green,
+        yellow,
+        red,
+        window_background,
+    } = file.colors;
+    let palette = ThemeSeed {
+        background,
+        foreground,
+        bright_foreground,
+        accent,
+        green,
+        yellow,
+        red,
+        window_background,
+    };
+    Theme {
+        name: file.name,
+        colors: Colors::derive(&palette),
+        scanning_label: file.scanning_label,
     }
 }
 
@@ -206,7 +233,7 @@ fn read_theme(choice: &ThemeChoice, themes: &Path) -> ReadFile<ThemeFile> {
     let resolved = config::resolve_theme(choice);
     let name = resolved.as_str();
     let path = themes.join(config::theme_file_name(name));
-    match read_optional(&path) {
+    match library::files::read_if_present(&path) {
         Ok(Some(text)) => parsed_theme(name, &text, Some(text.clone())),
         Ok(None) => embedded_or_stock_theme(name),
         Err(source) => fallback(stock_theme(), &path, &source),
@@ -220,7 +247,7 @@ fn with_look(
 ) -> Boot {
     let appearance = read_appearance(&appearance_path(config_dir));
     let theme = read_theme(&startup.theme, &themes_dir(config_dir));
-    let custom_settings = config::custom_settings(&appearance.value);
+    let appearance_settings = appearance_settings(appearance.value.appearance());
     let toasts = [appearance.warning, theme.warning]
         .into_iter()
         .flatten()
@@ -230,15 +257,13 @@ fn with_look(
     paths.config.seen.theme = theme.text;
     Boot {
         startup: Startup {
-            custom_settings,
-            toasts,
+            appearance_settings,
+            look: appearance.value.look(),
+            toast_texts: toasts,
             ..startup
         },
         paths,
-        look: Look {
-            theme: theme.value,
-            appearance: appearance.value,
-        },
+        look: Look { theme: theme.value },
     }
 }
 
@@ -314,7 +339,13 @@ pub(crate) fn boot() -> Result<Boot, Error> {
 mod tests {
     use clap::Parser;
     use config::AppearanceFile;
-    use kernel::domain::{Shuffle, Startup, ThemeChoice, ThemeName};
+    use kernel::domain::{
+        Shuffle,
+        Startup,
+        ThemeChoice,
+        ThemeName,
+        appearance_rows::appearance_settings,
+    };
     use rstest::rstest;
 
     use crate::startup::{Boot, CONFIG_FILE_NAME, Cli, shuffle_requested, with_look};
@@ -364,9 +395,9 @@ mod tests {
         } else {
             AppearanceFile::default()
         };
-        assert_eq!(booted.look.appearance, expected);
-        assert_eq!(booted.startup.toasts.len(), toasts.len());
-        for (warning, fragment) in booted.startup.toasts.iter().zip(toasts) {
+        assert_eq!(booted.startup.look, expected.look());
+        assert_eq!(booted.startup.toast_texts.len(), toasts.len());
+        for (warning, fragment) in booted.startup.toast_texts.iter().zip(toasts) {
             assert!(warning.contains(fragment), "{warning} lacks {fragment}");
         }
         assert!(!booted.look.theme.name.as_str().is_empty());
@@ -414,12 +445,14 @@ mod tests {
         let booted = booted(directory.path(), &ThemeChoice::Auto);
 
         assert_eq!(
-            booted.startup.custom_settings,
-            config::custom_settings(&booted.look.appearance)
+            booted.startup.appearance_settings,
+            appearance_settings(
+                config::parse_appearance(COMPACT).unwrap().appearance()
+            )
         );
         assert_ne!(
-            booted.startup.custom_settings,
-            config::custom_settings(&AppearanceFile::default())
+            booted.startup.appearance_settings,
+            appearance_settings(AppearanceFile::default().appearance())
         );
     }
 

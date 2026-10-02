@@ -1,49 +1,49 @@
 use num_traits::{Bounded, NumCast, ToPrimitive, Unsigned};
 
-fn saturate<T: Unsigned + Bounded + NumCast>(value: f32) -> T {
-    if value.is_nan() || value <= 0.0 {
+fn saturate<T: Unsigned + Bounded + NumCast>(raw: f32) -> T {
+    if raw.is_nan() || raw <= 0.0 {
         T::zero()
     } else {
-        T::from(value).unwrap_or_else(T::max_value)
+        T::from(raw).unwrap_or_else(T::max_value)
     }
 }
 
 #[inline]
 #[must_use]
-pub(crate) fn floor<T: Unsigned + Bounded + NumCast>(value: f32) -> T {
-    saturate(value.floor())
+pub(crate) fn floor<T: Unsigned + Bounded + NumCast>(raw: f32) -> T {
+    saturate(raw.floor())
 }
 
 #[inline]
 #[must_use]
-pub(crate) fn round<T: Unsigned + Bounded + NumCast>(value: f32) -> T {
-    saturate(value.round())
+pub(crate) fn round<T: Unsigned + Bounded + NumCast>(raw: f32) -> T {
+    saturate(raw.round())
 }
 
 #[inline]
 #[must_use]
-pub(crate) fn unit_fraction(value: f64) -> f32 {
-    let clamped = if value.is_nan() {
+pub(crate) fn unit_fraction(raw: f64) -> f32 {
+    let clamped = if raw.is_nan() {
         0.0
     } else {
-        value.clamp(0.0, 1.0)
+        raw.clamp(0.0, 1.0)
     };
     clamped.to_f32().unwrap_or(0.0)
 }
 
 #[inline]
 #[must_use]
-pub fn channel_byte(value: f32) -> u8 {
-    if value.is_nan() {
+pub fn channel_byte(raw: f32) -> u8 {
+    if raw.is_nan() {
         return 0;
     }
-    value.clamp(0.0, 255.0).to_u8().unwrap_or(u8::MAX)
+    raw.clamp(0.0, 255.0).to_u8().unwrap_or(u8::MAX)
 }
 
 #[inline]
 #[must_use]
-pub(crate) fn dimension_f32(value: u32) -> f32 {
-    value.to_f32().unwrap_or(f32::MAX)
+pub(crate) fn dimension_f32(pixels: u32) -> f32 {
+    pixels.to_f32().unwrap_or(f32::MAX)
 }
 
 #[cfg(test)]

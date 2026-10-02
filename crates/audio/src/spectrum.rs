@@ -93,12 +93,12 @@ fn band_magnitude(bins: &[Complex<f32>], scale: f32) -> f32 {
     (peak / scale).sqrt().clamp(0.0, 1.0)
 }
 
-fn usize_to_f32(value: usize) -> f32 {
-    f32::from(u16::try_from(value).unwrap_or(u16::MAX))
+fn usize_to_f32(count: usize) -> f32 {
+    f32::from(u16::try_from(count).unwrap_or(u16::MAX))
 }
 
-fn floor_to_usize(value: f32) -> usize {
-    value.to_usize().unwrap_or(0)
+fn floor_to_usize(position: f32) -> usize {
+    position.to_usize().unwrap_or(0)
 }
 
 #[cfg(test)]

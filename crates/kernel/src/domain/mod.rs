@@ -1,3 +1,5 @@
+pub mod appearance;
+pub mod appearance_rows;
 mod bounded;
 mod chord;
 mod crossfade;
@@ -40,7 +42,7 @@ pub use direction::Direction;
 pub use driver::{Driver, DriverError, DriverRecord, DriverStatus, Drivers};
 pub use favorites::Favorites;
 pub use history::{HISTORY_LIMIT, HistoryEntry};
-pub use index::{PlaylistIndex, TrackIndex};
+pub use index::{TrackIndex, ViewIndex};
 pub use key::{Key, KeyCode, KeyPress, Modifiers};
 pub use keymap::{
     Action,
@@ -61,19 +63,15 @@ pub use overlay::{
     TextEntry,
 };
 pub use percent::Percent;
-pub use player::{AbLoop, Pause, Player, Preload};
+pub use player::{AbLoop, PausedBy, Player, Preload};
 pub use playhead::Playhead;
 pub use setting_row::{
+    AppearanceControl,
+    AppearanceRow,
+    AppearanceSetting,
     Choice,
-    CustomControl,
-    CustomRow,
-    CustomSetting,
     OptionCount,
     OptionIndex,
-    SETTINGS,
-    SettingControl,
-    SettingEntry,
-    SettingId,
     SettingRow,
 };
 pub use settings::{
@@ -83,7 +81,7 @@ pub use settings::{
     DeviceNameError,
     ListedDevice,
     OutputDevice,
-    Replaygain,
+    ReplayGain,
     Settings,
     format_sleep_presets_label,
 };
@@ -91,10 +89,10 @@ pub use sleep::SleepTimer;
 pub use sleep_presets::{SleepPresetError, SleepPresets};
 pub use speed::Speed;
 pub use startup::{Shuffle, Startup};
-pub use supervision::{Announce, Decision, Fallback, Restarts, Supervision, supervise};
+pub use supervision::{Announce, Decision, Restarts, Supervision, supervise};
 pub use theme::{ThemeChoice, ThemeName, ThemeNameError, Themes};
 pub(crate) use time::parse_timecode;
-pub use time::{Moment, Reply, Revision, Revisions, TimecodeError, format_time};
+pub use time::{Freshness, Moment, Revision, Revisions, TimecodeError, format_time};
 pub use track::{AudioFormat, Tagging, Tags, Track};
 pub use transport::{Output, PRELOAD_LEAD, StreamError, Transport};
 pub(crate) use transport::{SEEK_LARGE, SEEK_MEDIUM, SEEK_SMALL};
@@ -105,7 +103,9 @@ pub use workspace::{
     SaveLine,
     SavePhase,
     TOAST_LIFETIME,
+    TOAST_SECONDS,
+    TOAST_STACK,
     Toast,
-    ToastLevel,
+    ToastKind,
     Workspace,
 };

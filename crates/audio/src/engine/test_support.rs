@@ -6,12 +6,12 @@ use kernel::{
     Bounded,
     DecodeError,
     Playback,
-    TrackRequest,
+    TrackLoad,
     domain::{
         Crossfade,
         DeviceName,
         OutputDevice,
-        Replaygain,
+        ReplayGain,
         Revision,
         Speed,
         StreamError,
@@ -53,7 +53,7 @@ pub(crate) fn crossfade(count: u64) -> Crossfade {
 pub(crate) fn config() -> EngineConfig {
     EngineConfig {
         crossfade: crossfade(0),
-        replaygain: Replaygain::Off,
+        replay_gain: ReplayGain::Off,
         device: OutputDevice::SystemDefault,
     }
 }
@@ -99,7 +99,7 @@ pub(crate) fn muted() -> Engine {
 
 pub(crate) fn waiting_for(path: &str) -> Engine {
     Engine::Muted(Muted {
-        pending: Some(TrackRequest {
+        pending: Some(TrackLoad {
             path: path.into(),
             gain: None,
             revision: first(),
@@ -257,7 +257,7 @@ pub(crate) fn second() -> Revision {
 }
 
 pub(crate) fn load_at(path: &str, revision: Revision) -> EngineMessage {
-    cmd(AudioCmd::Load(TrackRequest {
+    cmd(AudioCmd::Load(TrackLoad {
         path: path.into(),
         gain: None,
         revision,
@@ -269,7 +269,7 @@ pub(crate) fn load(path: &str) -> EngineMessage {
 }
 
 pub(crate) fn preload_at(path: &str, revision: Revision) -> EngineMessage {
-    cmd(AudioCmd::Preload(TrackRequest {
+    cmd(AudioCmd::Preload(TrackLoad {
         path: path.into(),
         gain: None,
         revision,
@@ -365,7 +365,7 @@ pub(crate) struct Cell {
 
 pub(crate) fn assert_cell(start: Engine, message: EngineMessage, moved: Cell) {
     let mut state = start;
-    let effect = state.update(message).unwrap();
+    let effect = state.transition(message).unwrap();
     let Cell {
         next,
         effect: expected,

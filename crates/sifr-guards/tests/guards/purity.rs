@@ -1,5 +1,4 @@
-// GUARD: `kernel` and `widgets` are pure — no IO, no clock, no threads, no
-// environment.
+// GUARD: `kernel`, `widgets`, `config` are pure: no IO, clock or threads.
 
 use crate::guards::support::{self, Allow};
 

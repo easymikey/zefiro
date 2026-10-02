@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 
-use config::Rgb;
 use image::RgbaImage;
-use kernel::domain::Revision;
+use kernel::domain::{Revision, appearance::Rgb};
 use tiny_skia::Pixmap;
 
 use crate::{ActiveTheme, Role, shade};
@@ -83,7 +82,7 @@ impl<K: PartialEq, V> Memo<K, V> {
         }
     }
 
-    fn get_or_insert_with(&mut self, key: K, f: impl FnOnce() -> V) -> &V {
+    fn cached_or_drawn(&mut self, key: K, f: impl FnOnce() -> V) -> &V {
         if self.key.as_ref() != Some(&key) {
             self.key = Some(key);
             self.remembered = None;
@@ -129,13 +128,13 @@ impl VinylCache {
         let geometry = VinylGeometry::new(style.size_px);
         let art = self
             .art
-            .get_or_insert_with((key.path.clone(), style.size_px), || {
+            .cached_or_drawn((key.path.clone(), style.size_px), || {
                 art.map(|image| prepare_art(image, style.size_px))
             })
             .as_ref();
         let record = self
             .record
-            .get_or_insert_with(
+            .cached_or_drawn(
                 (key.config_revision, key.theme_revision, style.size_px),
                 || paint_record_layer(style),
             )
@@ -143,7 +142,7 @@ impl VinylCache {
         let parts = VinylParts { style, art };
         let sleeve = self
             .sleeve
-            .get_or_insert_with(
+            .cached_or_drawn(
                 (
                     key.config_revision,
                     key.theme_revision,
@@ -153,13 +152,10 @@ impl VinylCache {
                 || paint_sleeve_layer(&parts),
             )
             .as_ref();
-        self.frame
-            .get_or_insert_with(key, || match (record, sleeve) {
-                (Some(record), Some(sleeve)) => {
-                    compose_vinyl_frame(record, sleeve, &parts)
-                }
-                _ => solid_fallback(geometry.width_px, geometry.height_px),
-            })
+        self.frame.cached_or_drawn(key, || match (record, sleeve) {
+            (Some(record), Some(sleeve)) => compose_vinyl_frame(record, sleeve, &parts),
+            _ => solid_fallback(geometry.width_px, geometry.height_px),
+        })
     }
 }
 
@@ -324,14 +320,14 @@ mod tests {
         let mut c: Memo<u32, u32> = Memo::new();
         let mut calls = 0;
         for _ in 0..3 {
-            c.get_or_insert_with(7, || {
+            c.cached_or_drawn(7, || {
                 calls += 1;
                 42
             });
         }
         assert_eq!(calls, 1);
         assert_eq!(
-            *c.get_or_insert_with(7, || panic!("key 7 is already cached")),
+            *c.cached_or_drawn(7, || panic!("key 7 is already cached")),
             42
         );
     }
@@ -341,7 +337,7 @@ mod tests {
         let mut cache: Memo<u32, u32> = Memo::new();
         let mut calls = 0;
         let mut val = |memo: &mut Memo<u32, u32>, k: u32| -> u32 {
-            *memo.get_or_insert_with(k, || {
+            *memo.cached_or_drawn(k, || {
                 calls += 1;
                 k * 2
             })
@@ -355,8 +351,8 @@ mod tests {
     #[test]
     fn a_second_value_for_the_same_key_is_ignored() {
         let mut c: Memo<u32, &'static str> = Memo::new();
-        c.get_or_insert_with(5, || "first");
-        assert_eq!(*c.get_or_insert_with(5, || "second"), "first");
+        c.cached_or_drawn(5, || "first");
+        assert_eq!(*c.cached_or_drawn(5, || "second"), "first");
     }
 
     fn revision(bumps: u64) -> Revision {
@@ -373,12 +369,12 @@ mod tests {
         };
         let key: VinylBaseCacheKey = (revision(1), revision(1), 128);
 
-        cache.record.get_or_insert_with(key, build);
-        cache.record.get_or_insert_with(key, build);
+        cache.record.cached_or_drawn(key, build);
+        cache.record.cached_or_drawn(key, build);
         assert_eq!(calls.get(), 1, "unchanged key must not rebuild");
 
         let theme_moved: VinylBaseCacheKey = (revision(1), revision(2), 128);
-        cache.record.get_or_insert_with(theme_moved, build);
+        cache.record.cached_or_drawn(theme_moved, build);
         assert_eq!(
             calls.get(),
             2,
@@ -386,7 +382,7 @@ mod tests {
         );
 
         let config_moved: VinylBaseCacheKey = (revision(2), revision(2), 128);
-        cache.record.get_or_insert_with(config_moved, build);
+        cache.record.cached_or_drawn(config_moved, build);
         assert_eq!(
             calls.get(),
             3,

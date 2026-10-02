@@ -1,18 +1,16 @@
-use std::{sync::Arc, time::Duration};
+use std::{mem, sync::Arc, time::Duration};
 
 use crate::{
-    cmd::{AudioCmd, Cmd, Effect, LibraryCmd, PlaybackChange, TrackRequest},
-    domain::{Moment, Pause, Player, Playhead, Preload, Revision, Track},
+    cmd::{AudioCmd, Cmd, Effect, LibraryCmd, PlaybackChange, TrackLoad},
+    domain::{Moment, PausedBy, Player, Playhead, Preload, Revision, Track},
     message::AudioError,
     update::player::{
         Anchor,
+        PlayerError,
         Stamp,
         StartOrigin,
-        Transition,
         handover_effects,
         seek_effect,
-        start,
-        stopped_effects,
     },
 };
 
@@ -40,12 +38,11 @@ impl Lookahead {
         self.preload_due_at().is_some_and(|due| at >= due)
     }
 
-    fn preloading(self, track: Arc<Track>, head: Playhead) -> (Player, Cmd) {
-        let at = head.offset;
-        let (preload, cmd) = match self.next {
+    fn preloading(self, at: Duration, preload: &mut Preload) -> Cmd {
+        match self.next {
             Some(next) if self.is_preload_due(at) => {
                 let cmd = Cmd::Batch(vec![
-                    Effect::Audio(AudioCmd::Preload(TrackRequest::for_track(
+                    Effect::Audio(AudioCmd::Preload(TrackLoad::for_track(
                         &next,
                         self.revision,
                     ))),
@@ -53,193 +50,157 @@ impl Lookahead {
                         next.path().to_path_buf(),
                     )),
                 ]);
-                (Preload::Queued(next), cmd)
+                *preload = Preload::Queued(next);
+                cmd
             }
-            Some(_) | None => (Preload::None, Cmd::None),
-        };
-        (
-            Player::Playing {
-                track,
-                head,
-                preload,
-            },
-            cmd,
-        )
+            Some(_) | None => Cmd::None,
+        }
     }
 }
 
 impl Player {
-    pub(crate) fn loaded(self, total: Option<Duration>, anchor: Anchor) -> Transition {
-        match self {
+    pub(crate) fn loaded(
+        &mut self,
+        total: Option<Duration>,
+        anchor: Anchor,
+    ) -> Result<Cmd, PlayerError> {
+        match mem::replace(self, Player::Stopped) {
             Player::Loading { track, at } => {
                 let track = match total {
                     Some(total) => Arc::new(track.with_duration(total)),
                     None => track,
                 };
-                let head = Playhead::anchored(at, anchor.since, anchor.speed);
-                Ok((
-                    Player::Playing {
-                        track,
-                        head,
-                        preload: Preload::None,
-                    },
-                    Cmd::None,
-                ))
+                *self = Player::Playing {
+                    track,
+                    head: Playhead::anchored(at, anchor.since, anchor.speed),
+                    preload: Preload::None,
+                };
+                Ok(Cmd::None)
             }
             other @ (Player::Playing { .. }
             | Player::Paused { .. }
-            | Player::Stopped) => other.refuse(),
+            | Player::Stopped) => {
+                let refusal = other.refusal();
+                *self = other;
+                Err(refusal)
+            }
         }
     }
 
-    pub(crate) fn failed(self, failure: &AudioError, now: Moment) -> (Player, Cmd) {
+    pub(crate) fn failed(&mut self, failure: &AudioError, now: Moment) -> Cmd {
         match failure {
             AudioError::OutputLost { .. } => self.output_lost(now),
             AudioError::Decode { .. }
             | AudioError::Device { .. }
             | AudioError::Stream { .. }
             | AudioError::Preload { .. } => self.load_failed(),
-            AudioError::Seek { .. } => (self, Cmd::None),
+            AudioError::Seek { .. } => Cmd::None,
         }
     }
 
-    fn output_lost(self, now: Moment) -> (Player, Cmd) {
+    fn output_lost(&mut self, now: Moment) -> Cmd {
         match self {
-            Player::Playing { track, head, .. } => (
-                Player::Paused {
-                    track,
-                    at: head.position_at(now),
-                    pause: Pause::ByListener,
-                },
-                PlaybackChange::Pause.cued(),
-            ),
-            Player::Loading { .. } => (Player::Stopped, stopped_effects()),
-            other @ (Player::Paused { .. } | Player::Stopped) => (other, Cmd::None),
+            Player::Playing { .. } => self.pause(now, PausedBy::Listener),
+            Player::Loading { .. } => self.stop(),
+            Player::Paused { .. } | Player::Stopped => Cmd::None,
         }
     }
 
-    fn load_failed(self) -> (Player, Cmd) {
+    fn load_failed(&mut self) -> Cmd {
         match self {
-            Player::Loading { .. } => (Player::Stopped, stopped_effects()),
-            other @ (Player::Playing { .. }
-            | Player::Paused { .. }
-            | Player::Stopped) => (other, Cmd::None),
+            Player::Loading { .. } => self.stop(),
+            Player::Playing { .. } | Player::Paused { .. } | Player::Stopped => {
+                Cmd::None
+            }
         }
     }
 
     pub(crate) fn positioned(
-        self,
+        &mut self,
         offset: Duration,
         lookahead: Lookahead,
-    ) -> Transition {
-        match (self, lookahead.loop_start(offset)) {
-            (
-                Player::Playing {
-                    track,
-                    head,
-                    preload,
-                },
-                Some(a),
-            ) => Ok((
-                Player::Playing {
-                    track,
-                    head: Playhead::anchored(a, lookahead.now, head.speed),
-                    preload: preload.seek_reset(),
-                },
-                seek_effect(a),
-            )),
-            (
-                Player::Playing {
-                    track,
-                    head,
-                    preload: Preload::None,
-                },
-                None,
-            ) => {
-                let anchored = Playhead::anchored(offset, lookahead.now, head.speed);
-                Ok(lookahead.preloading(track, anchored))
+    ) -> Result<Cmd, PlayerError> {
+        match (&mut *self, lookahead.loop_start(offset)) {
+            (Player::Playing { head, preload, .. }, Some(a)) => {
+                *head = Playhead::anchored(a, lookahead.now, head.speed);
+                *preload = mem::replace(preload, Preload::None).seek_reset();
+                Ok(seek_effect(a))
             }
-            (playing @ Player::Playing { .. }, None) => {
-                playing.reported(offset, lookahead.now)
+            (Player::Playing { head, preload, .. }, None) => {
+                *head = Playhead::anchored(offset, lookahead.now, head.speed);
+                match preload {
+                    Preload::None => Ok(lookahead.preloading(offset, preload)),
+                    Preload::Queued(_) | Preload::Stale(_) => Ok(Cmd::None),
+                }
             }
-            (Player::Paused { track, pause, .. }, Some(a)) => Ok((
-                Player::Paused {
-                    track,
-                    at: a,
-                    pause,
-                },
-                seek_effect(a),
-            )),
-            (paused @ Player::Paused { .. }, None) => paused.refuse(),
-            (other @ (Player::Loading { .. } | Player::Stopped), Some(_) | None) => {
-                other.refuse()
+            (Player::Paused { at, .. }, Some(a)) => {
+                *at = a;
+                Ok(seek_effect(a))
+            }
+            (Player::Paused { .. }, None) => Err(PlayerError::Paused),
+            (Player::Loading { .. }, Some(_) | None) => Err(PlayerError::Loading),
+            (Player::Stopped, Some(_) | None) => Err(PlayerError::Stopped),
+        }
+    }
+
+    pub(crate) fn reported(
+        &mut self,
+        offset: Duration,
+        now: Moment,
+    ) -> Result<Cmd, PlayerError> {
+        match self {
+            Player::Playing { head, .. } => {
+                *head = Playhead::anchored(offset, now, head.speed);
+                Ok(Cmd::None)
+            }
+            Player::Paused { .. } | Player::Loading { .. } | Player::Stopped => {
+                Err(self.refusal())
             }
         }
     }
 
-    pub(crate) fn reported(self, offset: Duration, now: Moment) -> Transition {
+    pub(crate) fn track_changed(
+        &mut self,
+        next: Option<Arc<Track>>,
+        now: Moment,
+    ) -> Result<Cmd, PlayerError> {
         match self {
             Player::Playing {
                 track,
                 head,
                 preload,
-            } => Ok((
-                Player::Playing {
-                    track,
-                    head: Playhead::anchored(offset, now, head.speed),
-                    preload,
-                },
-                Cmd::None,
-            )),
-            other @ (Player::Paused { .. }
-            | Player::Loading { .. }
-            | Player::Stopped) => other.refuse(),
+            } => {
+                if let Some(next) = next {
+                    *track = next;
+                }
+                *head = Playhead::anchored(Duration::ZERO, now, head.speed);
+                *preload = Preload::None;
+                Ok(handover_effects(track, PlaybackChange::Play, now))
+            }
+            Player::Paused { track, at, .. } => {
+                if let Some(next) = next {
+                    *track = next;
+                }
+                *at = Duration::ZERO;
+                Ok(handover_effects(track, PlaybackChange::Pause, now))
+            }
+            Player::Loading { .. } | Player::Stopped => Err(self.refusal()),
         }
     }
 
-    pub(crate) fn track_changed(
-        self,
+    pub(crate) fn ended(
+        &mut self,
         next: Option<Arc<Track>>,
-        now: Moment,
-    ) -> Transition {
+        stamp: Stamp,
+    ) -> Result<Cmd, PlayerError> {
         match self {
-            Player::Playing { track, head, .. } => {
-                let track = next.unwrap_or(track);
-                let effects = handover_effects(&track, PlaybackChange::Play, now);
-                Ok((
-                    Player::Playing {
-                        track,
-                        head: Playhead::anchored(Duration::ZERO, now, head.speed),
-                        preload: Preload::None,
-                    },
-                    effects,
-                ))
+            Player::Playing { .. } => Ok(match next {
+                Some(track) => self.start(track, StartOrigin::TrackEnded(stamp)),
+                None => self.stop(),
+            }),
+            Player::Paused { .. } | Player::Loading { .. } | Player::Stopped => {
+                Err(self.refusal())
             }
-            Player::Paused { track, pause, .. } => {
-                let track = next.unwrap_or(track);
-                let effects = handover_effects(&track, PlaybackChange::Pause, now);
-                Ok((
-                    Player::Paused {
-                        track,
-                        at: Duration::ZERO,
-                        pause,
-                    },
-                    effects,
-                ))
-            }
-            other @ (Player::Loading { .. } | Player::Stopped) => other.refuse(),
-        }
-    }
-
-    pub(crate) fn ended(self, next: Option<Arc<Track>>, stamp: Stamp) -> Transition {
-        match self {
-            Player::Playing { .. } => Ok(next.map_or_else(
-                || (Player::Stopped, stopped_effects()),
-                |track| start(track, StartOrigin::TrackEnded, stamp),
-            )),
-            other @ (Player::Paused { .. }
-            | Player::Loading { .. }
-            | Player::Stopped) => other.refuse(),
         }
     }
 }

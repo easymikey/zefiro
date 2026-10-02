@@ -1,4 +1,4 @@
-use config::{Rgb, ThemeColors};
+use kernel::domain::appearance::Rgb;
 use strum::{EnumCount, EnumIter};
 
 use crate::theme::{
@@ -30,6 +30,18 @@ pub enum Role {
     BarGroove,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThemeSeed {
+    pub background: Rgb,
+    pub foreground: Rgb,
+    pub bright_foreground: Rgb,
+    pub accent: Rgb,
+    pub green: Rgb,
+    pub yellow: Rgb,
+    pub red: Rgb,
+    pub window_background: Option<Rgb>,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Colors {
     roles: [Rgb; Role::COUNT],
@@ -46,7 +58,7 @@ impl Colors {
     }
 
     #[must_use]
-    pub fn derive(file: &ThemeColors) -> Colors {
+    pub fn derive(file: &ThemeSeed) -> Colors {
         let window_bg = file.window_background.unwrap_or_else(|| {
             lerp_rgb(file.background, file.foreground, WINDOW_BG_MIX)
         });
@@ -97,11 +109,11 @@ impl Colors {
 
 #[cfg(test)]
 mod tests {
-    use config::{Rgb, ThemeColors};
+    use kernel::domain::appearance::Rgb;
     use strum::IntoEnumIterator;
 
     use crate::theme::{
-        colors::{Colors, Role},
+        colors::{Colors, Role, ThemeSeed},
         contrast::{
             MIN_BAND_CONTRAST,
             MIN_MARKER_CONTRAST,
@@ -110,8 +122,8 @@ mod tests {
         },
     };
 
-    fn test_colors_file() -> ThemeColors {
-        ThemeColors {
+    fn test_colors_file() -> ThemeSeed {
+        ThemeSeed {
             background: Rgb([0x10, 0x20, 0x30]),
             foreground: Rgb([0x40, 0x50, 0x60]),
             bright_foreground: Rgb([0x70, 0x80, 0x90]),
@@ -139,7 +151,7 @@ mod tests {
     #[test]
     fn a_theme_whose_accent_is_its_text_still_derives_a_visible_band() {
         let cream = Rgb([0xf3, 0xe9, 0xd2]);
-        let file = ThemeColors {
+        let file = ThemeSeed {
             background: Rgb([0x0b, 0x0b, 0x0b]),
             foreground: Rgb([0x8f, 0x8a, 0x80]),
             bright_foreground: cream,
@@ -170,7 +182,7 @@ mod tests {
 
     #[test]
     fn window_bg_lightens_toward_fg_on_a_dark_theme() {
-        let file = ThemeColors {
+        let file = ThemeSeed {
             background: Rgb([0x10, 0x10, 0x10]),
             foreground: Rgb([0xe0, 0xe0, 0xe0]),
             ..test_colors_file()
@@ -184,7 +196,7 @@ mod tests {
 
     #[test]
     fn window_bg_darkens_toward_fg_on_a_light_theme() {
-        let file = ThemeColors {
+        let file = ThemeSeed {
             background: Rgb([0xe0, 0xe0, 0xe0]),
             foreground: Rgb([0x10, 0x10, 0x10]),
             ..test_colors_file()

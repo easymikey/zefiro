@@ -22,10 +22,14 @@ fn sent(model: &mut Model, message: Message) -> Cmd {
     update(model, message, Moment::default()).unwrap()
 }
 
+fn sent_at(model: &mut Model, message: Message, at: Moment) -> Cmd {
+    update(model, message, at).unwrap()
+}
+
 fn scheduled(cmd: &Cmd) -> Vec<Timer> {
     cmd.effects()
         .filter_map(|effect| {
-            if let Effect::After { message, .. } = effect {
+            if let Effect::After { timer: message, .. } = effect {
                 Some(*message)
             } else {
                 None
@@ -35,7 +39,7 @@ fn scheduled(cmd: &Cmd) -> Vec<Timer> {
 }
 
 fn toast_shown(model: &mut Model, text: &str) -> Timer {
-    let cmd = sent(model, Message::Toast(Toast::info(text.to_string())));
+    let cmd = sent(model, Message::Toast(Toast::info(text)));
     let timers = scheduled(&cmd);
     assert!(matches!(timers.as_slice(), [Timer::Toast(_)]), "{timers:?}");
     timers[0]
@@ -49,8 +53,8 @@ fn secs(seconds: u64) -> Duration {
     Duration::from_secs(seconds)
 }
 
-fn millis(value: u64) -> Duration {
-    Duration::from_millis(value)
+fn millis(count: u64) -> Duration {
+    Duration::from_millis(count)
 }
 
 fn position(at: Duration) -> Message {
@@ -66,26 +70,76 @@ fn an_elapsed_toast_timer_takes_the_toast_down() {
     let mut model = Model::default();
     let timer = toast_shown(&mut model, "hello");
 
-    let cmd = sent(&mut model, Message::Elapsed(timer));
+    let cmd = sent_at(&mut model, Message::Elapsed(timer), moment(5000));
 
     assert_eq!(cmd, Cmd::from(Cue::ToastDismissed));
-    assert!(model.workspace.toast.is_none());
+    assert!(model.workspace.toasts.is_empty());
 }
 
 #[test]
-fn a_replaced_toast_outlives_the_first_timer() {
+fn a_toast_timer_that_fires_early_keeps_the_toast_and_waits_again() {
+    let mut model = Model::default();
+    let timer = toast_shown(&mut model, "hello");
+
+    let cmd = sent_at(&mut model, Message::Elapsed(timer), moment(4000));
+
+    assert_eq!(
+        cmd,
+        Cmd::from(Effect::After {
+            delay: secs(1),
+            timer,
+        })
+    );
+    assert_eq!(model.workspace.toasts.len(), 1);
+}
+
+#[test]
+fn a_later_toast_shares_the_timer_and_expires_by_its_own_age() {
+    let mut model = Model::default();
+    let timer = toast_shown(&mut model, "first");
+    let second = sent_at(
+        &mut model,
+        Message::Toast(Toast::info("second")),
+        moment(3000),
+    );
+    assert_eq!(second, Cmd::from(Cue::ToastRaised));
+
+    let first_gone = sent_at(&mut model, Message::Elapsed(timer), moment(5000));
+    let titles: Vec<&str> = model
+        .workspace
+        .toasts
+        .iter()
+        .map(|toast| toast.title.as_str())
+        .collect();
+    assert_eq!(titles, ["second"]);
+    assert_eq!(
+        first_gone,
+        Cmd::Batch(vec![
+            Effect::Animate(Cue::ToastDismissed),
+            Effect::After {
+                delay: secs(3),
+                timer,
+            },
+        ])
+    );
+
+    let second_gone = sent_at(&mut model, Message::Elapsed(timer), moment(8000));
+    assert_eq!(second_gone, Cmd::from(Cue::ToastDismissed));
+    assert!(model.workspace.toasts.is_empty());
+}
+
+#[test]
+fn a_stale_toast_timer_changes_nothing() {
     let mut model = Model::default();
     let first = toast_shown(&mut model, "first");
+    model.workspace.toasts.clear();
     let second = toast_shown(&mut model, "second");
 
-    let stale = sent(&mut model, Message::Elapsed(first));
-    let shown = model.workspace.toast.clone().map(|toast| toast.text);
-    let expired = sent(&mut model, Message::Elapsed(second));
+    let stale = sent_at(&mut model, Message::Elapsed(first), moment(9000));
 
+    assert_ne!(first, second);
     assert_eq!(stale, Cmd::None);
-    assert_eq!(shown.as_deref(), Some("second"));
-    assert_eq!(expired, Cmd::from(Cue::ToastDismissed));
-    assert!(model.workspace.toast.is_none());
+    assert_eq!(model.workspace.toasts.len(), 1);
 }
 
 #[test]
@@ -99,7 +153,7 @@ fn arming_the_sleep_timer_schedules_the_first_preset() {
         cmd,
         Cmd::One(Effect::After {
             delay: first_preset,
-            message: Timer::Sleep(model.revisions.sleep),
+            timer: Timer::Sleep(model.revisions.sleep),
         })
     );
 }

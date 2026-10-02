@@ -1,4 +1,4 @@
-use config::{LayoutConfig, LayoutMode};
+use kernel::domain::appearance::{Breakpoints, LayoutMode};
 use ratatui::layout::Size;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,13 +25,13 @@ fn fit(size: Size, width: u16, height: u16) -> Fit {
 
 impl Breakpoint {
     #[must_use]
-    pub fn new(size: Size, layout: &LayoutConfig) -> Self {
+    pub fn new(size: Size, layout: &Breakpoints, mode: LayoutMode) -> Self {
         if fit(size, layout.min_columns, layout.min_rows) == Fit::Short {
             return Self::TooSmall;
         }
         let full = fit(size, layout.full_min_width, layout.full_min_height);
         let compact = fit(size, layout.compact_min_width, layout.compact_min_height);
-        match (layout.mode, full, compact) {
+        match (mode, full, compact) {
             (LayoutMode::Compact, _, Fit::Fits) => Self::Compact,
             (
                 LayoutMode::Auto | LayoutMode::Full | LayoutMode::Compact,
@@ -52,7 +52,7 @@ impl Breakpoint {
 
 #[cfg(test)]
 mod tests {
-    use config::{LayoutConfig, LayoutMode};
+    use kernel::domain::appearance::{Breakpoints, LayoutMode};
     use ratatui::layout::Size;
     use rstest::rstest;
 
@@ -80,22 +80,21 @@ mod tests {
         #[case] size: Size,
         #[case] expected: Breakpoint,
     ) {
-        let layout = LayoutConfig {
-            mode,
-            ..LayoutConfig::default()
-        };
-        assert_eq!(Breakpoint::new(size, &layout), expected);
+        assert_eq!(
+            Breakpoint::new(size, &Breakpoints::default(), mode),
+            expected
+        );
     }
 
     #[test]
     fn a_lowered_minimum_lets_the_minimal_breakpoint_through() {
-        let layout = LayoutConfig {
+        let layout = Breakpoints {
             min_columns: 10,
             min_rows: 3,
-            ..LayoutConfig::default()
+            ..Breakpoints::default()
         };
         assert_eq!(
-            Breakpoint::new(Size::new(20, 5), &layout),
+            Breakpoint::new(Size::new(20, 5), &layout, LayoutMode::Auto),
             Breakpoint::Minimal
         );
     }

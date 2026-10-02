@@ -15,7 +15,6 @@ mod port;
 mod registry;
 mod repaint;
 mod runtime;
-mod sender;
 mod shell;
 mod spawn;
 mod timers;

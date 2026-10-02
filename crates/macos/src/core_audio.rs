@@ -116,13 +116,13 @@ fn percent_from_scalar(scalar: f32) -> Percent {
 fn write_property<Value: Copy>(
     object: AudioObjectID,
     address: &AudioObjectPropertyAddress,
-    mut value: Value,
+    mut property_value: Value,
 ) -> Result<(), CoreAudioError> {
     let Ok(size) = u32::try_from(size_of::<Value>()) else {
         return Err(CoreAudioError { status: -1 });
     };
     let address = NonNull::from(address);
-    let data_ptr = NonNull::from(&mut value).cast::<c_void>();
+    let data_ptr = NonNull::from(&mut property_value).cast::<c_void>();
     // SAFETY: `address` and `data_ptr` are valid pointers to `size` live bytes.
     let status = unsafe {
         AudioObjectSetPropertyData(object, address, 0, ptr::null(), size, data_ptr)
@@ -137,8 +137,7 @@ fn write_property<Value: Copy>(
 impl Drop for HardwareWatch {
     fn drop(&mut self) {
         remove_listeners(self.notify.cast(), self.device);
-        // SAFETY: this pointer was created by `Box::into_raw` in `new` and
-        // every listener that was given it has just been removed above.
+        // SAFETY: from `Box::into_raw` in `new`; listeners are removed.
         drop(unsafe { Box::from_raw(self.notify) });
     }
 }
@@ -187,13 +186,11 @@ fn read_property<Value: Copy>(
     let address = NonNull::from(address);
     let size_ptr = NonNull::from(&mut size);
     let data_ptr = NonNull::new(value.as_mut_ptr().cast::<c_void>())?;
-    // SAFETY: `address`, `size_ptr` and `data_ptr` are valid live pointers, and
-    // `data_ptr` points at `size_of::<Value>()` writable bytes.
+    // SAFETY: all pointers are live and `data_ptr` has room for one `Value`.
     let status = unsafe {
         AudioObjectGetPropertyData(object, address, 0, ptr::null(), size_ptr, data_ptr)
     };
-    // SAFETY: a zero status means CoreAudio filled the buffer with a valid
-    // `Value`.
+    // SAFETY: status 0 means CoreAudio wrote a valid `Value`.
     (status == 0).then(|| unsafe { value.assume_init() })
 }
 
@@ -225,8 +222,7 @@ fn remove_listener(
     notify: *mut c_void,
 ) {
     let address = NonNull::from(address);
-    // SAFETY: same object, address and callback as the matching `add_listener`
-    // call.
+    // SAFETY: same object, address and callback as the matching `add_listener`.
     let _ = unsafe {
         AudioObjectRemovePropertyListener(
             object,

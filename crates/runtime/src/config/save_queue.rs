@@ -4,14 +4,43 @@ use config::AppearancePatch;
 use kernel::ConfigPatch;
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct SavePatches {
-    pub config: Option<ConfigPatch>,
-    pub appearance: Option<AppearancePatch>,
+pub(crate) enum Saves<C, A> {
+    Config(C),
+    Appearance(A),
+    Both { config: C, appearance: A },
 }
 
-impl SavePatches {
-    fn nonempty(self) -> Option<Self> {
-        (self.config.is_some() || self.appearance.is_some()).then_some(self)
+pub(crate) type SavePatches = Saves<ConfigPatch, AppearancePatch>;
+
+impl<C, A> Saves<C, A> {
+    fn from_options(config: Option<C>, appearance: Option<A>) -> Option<Self> {
+        match (config, appearance) {
+            (Some(config), Some(appearance)) => Some(Self::Both { config, appearance }),
+            (Some(config), None) => Some(Self::Config(config)),
+            (None, Some(appearance)) => Some(Self::Appearance(appearance)),
+            (None, None) => None,
+        }
+    }
+
+    pub(crate) fn map<C2, A2>(
+        self,
+        config: impl FnOnce(C) -> C2,
+        appearance: impl FnOnce(A) -> A2,
+    ) -> Saves<C2, A2> {
+        match self {
+            Self::Config(c) => Saves::Config(config(c)),
+            Self::Appearance(a) => Saves::Appearance(appearance(a)),
+            Self::Both {
+                config: c,
+                appearance: a,
+            } => {
+                let config = config(c);
+                Saves::Both {
+                    config,
+                    appearance: appearance(a),
+                }
+            }
+        }
     }
 }
 
@@ -21,7 +50,7 @@ struct PendingSave<P> {
     deadline: Instant,
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct SaveQueue {
     debounce: Duration,
     pending_config: Option<PendingSave<ConfigPatch>>,
@@ -73,13 +102,13 @@ impl SaveQueue {
     pub(crate) fn take_due(&mut self, now: Instant) -> Option<SavePatches> {
         let config = take_if_due(&mut self.pending_config, now);
         let appearance = take_if_due(&mut self.pending_appearance, now);
-        SavePatches { config, appearance }.nonempty()
+        Saves::from_options(config, appearance)
     }
 
     pub(crate) fn take_all(&mut self) -> Option<SavePatches> {
         let config = self.pending_config.take().map(|pending| pending.patch);
         let appearance = self.pending_appearance.take().map(|pending| pending.patch);
-        SavePatches { config, appearance }.nonempty()
+        Saves::from_options(config, appearance)
     }
 }
 
@@ -98,7 +127,7 @@ fn merge_config_patch(base: Option<ConfigPatch>, next: ConfigPatch) -> ConfigPat
     ConfigPatch {
         crossfade: next.crossfade.or(base.crossfade),
         device: next.device.or(base.device),
-        replaygain: next.replaygain.or(base.replaygain),
+        replay_gain: next.replay_gain.or(base.replay_gain),
         theme: next.theme.or(base.theme),
         volume: next.volume.or(base.volume),
         sleep_presets: next.sleep_presets.or(base.sleep_presets),

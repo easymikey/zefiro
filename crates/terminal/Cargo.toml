@@ -8,7 +8,6 @@ license.workspace = true
 publish = false
 
 [dependencies]
-config = { workspace = true }
 crossbeam-channel = { workspace = true }
 crossterm = { workspace = true }
 image = { workspace = true }
@@ -19,6 +18,7 @@ thiserror = { workspace = true }
 widgets = { workspace = true }
 
 [dev-dependencies]
+config = { workspace = true }
 insta = { workspace = true }
 rstest = { workspace = true }
 

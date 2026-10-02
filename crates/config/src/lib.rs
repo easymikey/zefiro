@@ -9,8 +9,6 @@ mod embedded_theme;
 mod error;
 mod keymap;
 mod patch;
-pub(crate) mod rgb;
-mod rows;
 pub(crate) mod theme_file;
 
 pub use appearance::{
@@ -24,6 +22,7 @@ pub use appearance::{
     KeyHints,
     LayoutMode,
     ProgressTime,
+    Rgb,
     SpeedChip,
     preset_of,
 };
@@ -47,12 +46,4 @@ pub use embedded_theme::{EMBEDDED_THEMES, embedded_theme, resolve_theme};
 pub use error::Error;
 pub use keymap::KeymapFile;
 pub use patch::{patch_appearance_text, patch_config_text};
-pub use rgb::Rgb;
-pub use rows::{
-    APPEARANCE_ROWS,
-    AppearanceField,
-    appearance_patch,
-    appearance_row,
-    custom_settings,
-};
 pub use theme_file::{ThemeColors, ThemeFile, parse_theme, theme_file_name};

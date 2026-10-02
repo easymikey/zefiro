@@ -5,9 +5,7 @@ expression: effects(cmd)
 [
     Config(
         Setting {
-            id: SettingId(
-                3,
-            ),
+            field: SpeedChip,
             option: OptionIndex(
                 1,
             ),

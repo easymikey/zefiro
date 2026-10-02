@@ -1,6 +1,6 @@
 use strum::{Display, IntoStaticStr};
 
-use crate::domain::{Restarts, Supervision};
+use crate::domain::Restarts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -32,8 +32,15 @@ impl Driver {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DriverError {
-    #[error("panicked: {0}")]
-    Panicked(String),
+    #[error("panicked: {text}")]
+    Panicked { text: String },
+}
+
+impl DriverError {
+    #[must_use]
+    pub fn panicked(text: impl Into<String>) -> Self {
+        DriverError::Panicked { text: text.into() }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -47,7 +54,6 @@ pub enum DriverStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DriverRecord {
     pub status: DriverStatus,
-    pub supervision: Supervision,
     pub restarts: Restarts,
 }
 
@@ -56,9 +62,8 @@ pub struct Drivers([DriverRecord; 4]);
 
 impl Default for Drivers {
     fn default() -> Self {
-        Self(Driver::ALL.map(|driver| DriverRecord {
+        Self(Driver::ALL.map(|_| DriverRecord {
             status: DriverStatus::default(),
-            supervision: Supervision::standard(driver),
             restarts: Restarts::default(),
         }))
     }

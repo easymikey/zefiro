@@ -43,8 +43,6 @@ pub(crate) fn prepare_art(art: &RgbaImage, size_px: u32) -> VinylArt {
     }
 }
 
-/// Where art lands: the clip path plus the pixel rectangle the resized art is
-/// drawn into.
 pub(crate) struct ArtClip {
     path: Path,
     x: f32,

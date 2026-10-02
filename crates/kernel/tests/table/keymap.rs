@@ -28,10 +28,10 @@ use kernel::{
         KeyContext,
         KeymapOverrides,
         Overlay,
-        PlaylistIndex,
         SettingRow,
         TextEntry,
         Track,
+        ViewIndex,
         Workspace,
     },
     update::{
@@ -69,7 +69,7 @@ fn history() -> Workspace {
 
 fn history_after_g() -> Workspace {
     let mut workspace = history();
-    workspace.chord = Some(ChordPrefix::G);
+    workspace.chord_prefix = Some(ChordPrefix::G);
     workspace
 }
 
@@ -79,7 +79,7 @@ fn settings_on(row: SettingRow) -> Workspace {
 
 fn confirming_delete() -> Workspace {
     with_overlay(Overlay::ConfirmDelete(DeleteCandidate {
-        track: PlaylistIndex::new(0),
+        index: ViewIndex::new(0),
         title: "Moon River".to_string(),
         artist: "Audrey Hepburn".to_string(),
     }))
@@ -310,27 +310,27 @@ fn confirm() -> Option<Message> {
     settings_row(SettingsRowRequest::Activate)
 )]
 #[case::settings_h_on_a_toggle_row_adjusts_never_seeks(
-    settings_on(SettingRow::Replaygain),
+    settings_on(SettingRow::ReplayGain),
     character('h'),
     settings_row(SettingsRowRequest::Adjust(Direction::Previous))
 )]
 #[case::settings_left_on_a_toggle_row_adjusts_never_seeks(
-    settings_on(SettingRow::Replaygain),
+    settings_on(SettingRow::ReplayGain),
     plain(KeyCode::Left),
     settings_row(SettingsRowRequest::Adjust(Direction::Previous))
 )]
 #[case::settings_l_on_a_toggle_row_adjusts_never_seeks(
-    settings_on(SettingRow::Replaygain),
+    settings_on(SettingRow::ReplayGain),
     character('l'),
     settings_row(SettingsRowRequest::Adjust(Direction::Next))
 )]
 #[case::settings_right_on_a_toggle_row_adjusts_never_seeks(
-    settings_on(SettingRow::Replaygain),
+    settings_on(SettingRow::ReplayGain),
     plain(KeyCode::Right),
     settings_row(SettingsRowRequest::Adjust(Direction::Next))
 )]
 #[case::settings_enter_on_a_toggle_row_activates_it(
-    settings_on(SettingRow::Replaygain),
+    settings_on(SettingRow::ReplayGain),
     plain(KeyCode::Enter),
     settings_row(SettingsRowRequest::Activate)
 )]
@@ -458,7 +458,7 @@ fn a_key_press_routes_through_update(
 ) {
     let mut model = crate::support::model_with_tracks(3);
     model.workspace.overlay = overlay;
-    model.workspace.toast = Some(Toast::info("hello".to_string()));
+    model.workspace.toasts = vec![Toast::info("hello")];
 
     let press = KeyPress { key, typed };
     let _ = update(&mut model, Message::Key(press), Moment::default()).unwrap();
@@ -474,10 +474,10 @@ fn a_key_press_routes_through_update(
             ));
         }
         KeyCode::Char('x') => {
-            assert_eq!(model.workspace.chord, Some(ChordPrefix::G));
+            assert_eq!(model.workspace.chord_prefix, Some(ChordPrefix::G));
         }
         KeyCode::Char('w') => {
-            assert!(model.workspace.toast.is_some());
+            assert!(!model.workspace.toasts.is_empty());
         }
         KeyCode::Char(_)
         | KeyCode::Enter
@@ -492,7 +492,7 @@ fn a_key_press_routes_through_update(
         | KeyCode::Tab
         | KeyCode::PageUp
         | KeyCode::PageDown => {
-            assert!(model.workspace.toast.is_none());
+            assert!(model.workspace.toasts.is_empty());
         }
     }
 }
@@ -560,7 +560,7 @@ fn every_compiled_binding_is_what_its_chord_routes_to() {
         let key = match chord {
             Chord::Key(key) => key,
             Chord::Sequence { prefix, key } => {
-                workspace.chord = Some(prefix);
+                workspace.chord_prefix = Some(prefix);
                 key
             }
         };

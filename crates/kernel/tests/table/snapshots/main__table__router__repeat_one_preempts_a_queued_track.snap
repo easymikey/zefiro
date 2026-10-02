@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
-assertion_line: 366
+assertion_line: 368
 expression: "walked(model, messages)"
 ---
 [
@@ -81,14 +81,14 @@ expression: "walked(model, messages)"
                 1.0,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Elapsed(
-            Mark(
+            Lookahead(
                 Revision(
                     0,
                 ),
@@ -98,7 +98,7 @@ expression: "walked(model, messages)"
             [
                 Audio(
                     Preload(
-                        TrackRequest {
+                        TrackLoad {
                             path: "/tmp/track1.flac",
                             gain: None,
                             revision: Revision(
@@ -214,9 +214,9 @@ expression: "walked(model, messages)"
                 1.0,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
 ]

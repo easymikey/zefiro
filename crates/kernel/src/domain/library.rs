@@ -2,24 +2,24 @@ use std::{borrow::Borrow, sync::Arc};
 
 use strum::EnumIter;
 
-use crate::domain::{Favorites, PlaylistIndex, Track, TrackIndex};
+use crate::domain::{Favorites, Track, TrackIndex, ViewIndex};
 
 #[derive(Debug, Clone, Default)]
 pub struct Library {
-    pub all: Vec<Arc<Track>>,
+    pub tracks: Vec<Arc<Track>>,
     pub view: Vec<TrackIndex>,
 }
 
 impl Library {
     #[must_use]
-    pub(crate) fn view_track(&self, row: PlaylistIndex) -> Option<&Arc<Track>> {
+    pub(crate) fn view_track(&self, row: ViewIndex) -> Option<&Arc<Track>> {
         let index = self.view.get(row.get())?;
-        self.all.get(index.get())
+        self.tracks.get(index.get())
     }
 
     pub fn view_tracks(&self) -> impl Iterator<Item = (TrackIndex, &Arc<Track>)> {
         self.view.iter().filter_map(move |&index| {
-            self.all.get(index.get()).map(|track| (index, track))
+            self.tracks.get(index.get()).map(|track| (index, track))
         })
     }
 }

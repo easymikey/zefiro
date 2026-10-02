@@ -1,4 +1,4 @@
-use config::{CoverStyle, KeyHints, LayoutConfig, WindowConfig};
+use kernel::domain::appearance::{CoverStyle, KeyHints, Look};
 use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
     },
     playlist::{PlaylistAreas, PlaylistPane},
     screen::Breakpoint,
-    toast::{ToastAreas, ToastCard},
+    toast::{ToastAreas, Toaster},
 };
 
 const MAX_WIDTH: u16 = 100;
@@ -19,14 +19,13 @@ const KEY_HINTS_ROWS: u16 = 1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct FrameLayoutParts<'a> {
-    pub layout: &'a LayoutConfig,
-    pub window: WindowConfig,
+    pub look: Look,
     pub cell_aspect: f32,
     pub cover_sizing: CoverSizing,
     pub cover_style: CoverStyle,
     pub(crate) playlist: Option<PlaylistPane<'a>>,
     pub(crate) overlay: OverlayContent<'a>,
-    pub(crate) toast: Option<ToastCard<'a>>,
+    pub(crate) toast: Option<Toaster<'a>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +54,9 @@ impl FrameLayout {
         Self {
             overlay: OverlayLayer::placed(parts.overlay, &body, parts.cover_style)
                 .areas(screen),
-            toast: parts.toast.and_then(|toast| toast.areas(screen)),
+            toast: parts
+                .toast
+                .and_then(|toaster| toaster.areas(screen, body.breakpoint)),
             ..body
         }
     }
@@ -96,8 +97,8 @@ fn content_area(screen: Rect) -> Rect {
     .centered_horizontally(Constraint::Length(width))
 }
 
-fn key_hint_rows(window: WindowConfig) -> u16 {
-    match window.key_hints {
+fn key_hint_rows(key_hints: KeyHints) -> u16 {
+    match key_hints {
         KeyHints::Hidden => 0,
         KeyHints::Shown => KEY_HINTS_ROWS,
     }
@@ -122,10 +123,14 @@ fn search_bounds(content: Rect, header_rows: u16, hint_rows: u16) -> Rect {
 }
 
 fn body(parts: &FrameLayoutParts<'_>, screen: Rect) -> FrameLayout {
-    let breakpoint = Breakpoint::new(screen.as_size(), parts.layout);
+    let breakpoint = Breakpoint::new(
+        screen.as_size(),
+        &parts.look.breakpoints,
+        parts.look.appearance.layout_mode,
+    );
     let content = content_area(screen);
     let header_rows = header_rows(breakpoint);
-    let hint_rows = key_hint_rows(parts.window);
+    let hint_rows = key_hint_rows(parts.look.appearance.key_hints);
     let [header, pane, hints] = content.layout(&Layout::vertical([
         Constraint::Length(header_rows),
         Constraint::Min(0),
@@ -177,8 +182,14 @@ fn playlist(parts: &FrameLayoutParts<'_>, pane: Rect) -> Option<PlaylistAreas> {
 
 #[cfg(test)]
 mod tests {
-    use config::CoverStyle;
-    use kernel::domain::{CursorOver, Overlay, SearchQuery, SettingRow, Toast};
+    use kernel::domain::{
+        CursorOver,
+        Overlay,
+        SearchQuery,
+        SettingRow,
+        Toast,
+        appearance::CoverStyle,
+    };
     use ratatui::layout::Rect;
     use rstest::rstest;
 
@@ -224,7 +235,7 @@ mod tests {
     #[test]
     fn a_text_art_cover_is_not_avoided_by_overlays() {
         let mut sources = SceneSources::new(model_with_tracks(3));
-        sources.appearance.cover.style = CoverStyle::Milkdrop;
+        sources.look_mut().appearance.cover_style = CoverStyle::Milkdrop;
         let scene = sources.scene();
         let layout = FrameLayout::new(&scene.layout_parts(), screen());
         assert!(layout.cover.is_some());
@@ -248,19 +259,19 @@ mod tests {
     #[test]
     fn the_toast_sits_in_the_top_right_corner_of_the_screen() {
         let mut model = model_with_tracks(3);
-        model.workspace.toast = Some(Toast::info("Saved".to_string()));
+        model.workspace.toasts = vec![Toast::info("Saved")];
         let sources = SceneSources::new(model);
         let toast = FrameLayout::new(&sources.scene().layout_parts(), screen())
             .toast
             .unwrap();
-        assert_eq!(toast.outer.y, 0);
-        assert_eq!(toast.outer.right(), screen().right());
+        assert_eq!(toast.outer.y, 1);
+        assert_eq!(toast.outer.right(), screen().right() - 1);
     }
 
     #[test]
     fn a_terminal_below_the_minimum_has_no_rects() {
         let mut model = model_with_tracks(3);
-        model.workspace.toast = Some(Toast::info("Saved".to_string()));
+        model.workspace.toasts = vec![Toast::info("Saved")];
         let sources = SceneSources::new(model);
         let layout =
             FrameLayout::new(&sources.scene().layout_parts(), Rect::new(0, 0, 40, 10));
@@ -327,7 +338,7 @@ mod tests {
         #[case] avoidance: CoverAvoidance,
     ) {
         let mut sources = SceneSources::new(model_with_tracks(3));
-        sources.appearance.cover.style = style;
+        sources.look_mut().appearance.cover_style = style;
         let scene = with_pixels(sources.scene());
         let layout = FrameLayout::new(&scene.layout_parts(), screen());
         let expected = match avoidance {

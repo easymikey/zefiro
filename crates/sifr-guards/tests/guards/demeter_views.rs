@@ -1,5 +1,4 @@
-// GUARD: below `screen`, no `widgets` component holds a whole `Model` — each
-// takes the narrow view it reads.
+// GUARD: below `screen`, no `widgets` component holds a whole `Model`.
 
 use std::path::PathBuf;
 
@@ -7,11 +6,9 @@ use crate::guards::support::{self, Allow};
 
 const RENDER_SOURCE: &str = "widgets/src/";
 
-const ALLOWED_FROM_MODEL_FILES: &[&str] = &[
-    "components/organisms/card/mod.rs",
-    "components/organisms/key_hints.rs",
-    "components/organisms/playlist.rs",
-];
+const ALLOWED_FROM_MODEL_FILES: &[&str] = &["scene.rs"];
+
+const TEST_ONLY_FILES: &[&str] = &["test_support.rs"];
 
 const SCREEN_ROOTS: &[&str] = &["screen/mod.rs"];
 
@@ -97,7 +94,7 @@ fn organisms_and_below_never_reach_a_whole_model_outside_from_model() {
     let mut violations = Vec::new();
 
     for (relative, path) in &files {
-        if is_screen_root(relative) {
+        if is_screen_root(relative) || TEST_ONLY_FILES.contains(&relative.as_str()) {
             continue;
         }
         let allowlisted = ALLOWED_FROM_MODEL_FILES.contains(&relative.as_str());
@@ -105,6 +102,7 @@ fn organisms_and_below_never_reach_a_whole_model_outside_from_model() {
 
         let mut in_constructor = false;
         let mut constructor_depth: i32 = 0;
+        let mut constructor_opened = false;
 
         for (i, raw_line) in content.lines().enumerate() {
             let trimmed = raw_line.trim_start();
@@ -118,11 +116,13 @@ fn organisms_and_below_never_reach_a_whole_model_outside_from_model() {
             if !in_constructor && allowlisted && trimmed.contains("fn from_model") {
                 in_constructor = true;
                 constructor_depth = 0;
+                constructor_opened = false;
             }
 
             if in_constructor {
                 constructor_depth += brace_delta(raw_line);
-                if constructor_depth <= 0 {
+                constructor_opened |= raw_line.contains('{');
+                if constructor_opened && constructor_depth <= 0 {
                     in_constructor = false;
                 }
             } else if line_reaches_into_model(raw_line) {
@@ -139,12 +139,7 @@ fn organisms_and_below_never_reach_a_whole_model_outside_from_model() {
     );
 }
 
-const UI_ALLOWLIST: &[Allow] = &[Allow::new(
-    "overlay/layer.rs",
-    "pub(crate) workspace: &'a Workspace,",
-    "OverlayView's own `workspace` field and the `OverlayFrame` that builds it — overlays \
-     genuinely need overlay state + theme; allowlisted by name, not narrowed.",
-)];
+const UI_ALLOWLIST: &[Allow] = &[];
 
 const SLICE_ALLOWLIST: &[Allow] = &[];
 

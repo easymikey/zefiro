@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use strum::{EnumIter, IntoStaticStr};
 
-use crate::domain::{Cursor, Direction, PlaylistIndex, Track};
+use crate::domain::{Cursor, Direction, Track, ViewIndex};
 
 const ILLEGAL_NAME_CHARS: [char; 9] = ['/', '\\', '?', '<', '>', ':', '*', '|', '"'];
 
@@ -116,8 +116,8 @@ impl Playlist {
     }
 
     #[must_use]
-    pub fn playing_index(&self) -> Option<PlaylistIndex> {
-        (!self.tracks.is_empty()).then(|| PlaylistIndex::new(self.cursor.index()))
+    pub fn playing_index(&self) -> Option<ViewIndex> {
+        (!self.tracks.is_empty()).then(|| ViewIndex::new(self.cursor.index()))
     }
 
     #[must_use]
@@ -132,9 +132,9 @@ impl Playlist {
     pub(crate) fn relist(
         &mut self,
         tracks: Vec<Arc<Track>>,
-        anchor: Option<PlaylistIndex>,
+        anchor: Option<ViewIndex>,
     ) {
-        let index = anchor.map_or_else(|| self.cursor.index(), PlaylistIndex::get);
+        let index = anchor.map_or_else(|| self.cursor.index(), ViewIndex::get);
         self.cursor = Cursor::with_len(tracks.len()).at(index);
         self.tracks = tracks;
     }
@@ -188,7 +188,7 @@ impl Playlist {
         self.tracks.get(next_index)
     }
 
-    pub fn jump(&mut self, index: PlaylistIndex) -> Option<&Arc<Track>> {
+    pub fn jump(&mut self, index: ViewIndex) -> Option<&Arc<Track>> {
         if index.get() >= self.tracks.len() {
             return None;
         }
@@ -200,11 +200,11 @@ impl Playlist {
 pub(crate) fn index_of_path(
     path: &std::path::Path,
     tracks: &[Arc<Track>],
-) -> Option<PlaylistIndex> {
+) -> Option<ViewIndex> {
     tracks
         .iter()
         .position(|track| track.path() == path)
-        .map(PlaylistIndex::new)
+        .map(ViewIndex::new)
 }
 
 #[cfg(test)]

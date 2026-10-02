@@ -169,10 +169,10 @@ pub(crate) fn now_playing_info_center() -> Retained<MPNowPlayingInfoCenter> {
 
 pub(crate) fn publish_now_playing_info(
     center: &MPNowPlayingInfoCenter,
-    info: &NSDictionary<NSString, AnyObject>,
+    dictionary: &NSDictionary<NSString, AnyObject>,
 ) {
     // SAFETY: each value has the class its `MP*Property*` key names.
-    unsafe { center.setNowPlayingInfo(Some(info)) };
+    unsafe { center.setNowPlayingInfo(Some(dictionary)) };
 }
 
 pub(crate) fn publish_playback_state(

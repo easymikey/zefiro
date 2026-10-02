@@ -9,7 +9,7 @@ expression: effects(cmd)
     ),
     Audio(
         Load(
-            TrackRequest {
+            TrackLoad {
                 path: "/tmp/track0.flac",
                 gain: None,
                 revision: Revision(

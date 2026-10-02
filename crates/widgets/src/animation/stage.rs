@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use config::Animations;
+use kernel::domain::appearance::Animations;
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 use tachyonfx::{CellFilter, Effect as Animation, EffectRenderer, RefRect};
 
@@ -19,7 +19,7 @@ impl Stage {
         matches!(self, Stage::Running(_))
     }
 
-    fn wants_frame(&self) -> bool {
+    fn is_animating(&self) -> bool {
         !matches!(self, Stage::Idle)
     }
 
@@ -126,8 +126,8 @@ impl AnimationStage {
     }
 
     #[must_use]
-    pub fn wants_frame(&self) -> bool {
-        self.stage.wants_frame()
+    pub fn is_animating(&self) -> bool {
+        self.stage.is_animating()
     }
 
     #[must_use]
@@ -250,7 +250,7 @@ mod tests {
     fn an_idle_stage_wants_no_frame_and_stages_nothing() {
         let stage = Stage::default();
         assert!(!stage.is_running());
-        assert!(!stage.wants_frame());
+        assert!(!stage.is_animating());
         assert_eq!(stage.staged_count(), 0);
     }
 
@@ -259,7 +259,7 @@ mod tests {
         let mut stage = Stage::default();
         stage.push((fade(900), INSIDE));
         assert!(stage.is_running());
-        assert!(stage.wants_frame());
+        assert!(stage.is_animating());
         assert_eq!(stage.staged_count(), 1);
     }
 

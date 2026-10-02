@@ -52,11 +52,11 @@ fn has_raised_a_toast(cmd: &Cmd) -> bool {
 #[test]
 fn showing_a_toast_installs_it_and_clearing_takes_it_away() {
     let mut model = Model::default();
-    assert!(model.workspace.toast.is_none());
+    assert!(model.workspace.toasts.is_empty());
 
-    let toast = Toast::error("boom".into());
+    let toast = Toast::error("boom");
     let cmd = reduce(&mut model, Message::Toast(toast.clone()));
-    assert_eq!(model.workspace.toast, Some(toast));
+    assert_eq!(model.workspace.toasts, vec![toast]);
     assert_eq!(
         cmd,
         Cmd::Batch(vec![
@@ -70,12 +70,12 @@ fn showing_a_toast_installs_it_and_clearing_takes_it_away() {
 fn a_shown_toast_schedules_its_expiry_after_the_one_lifetime() {
     let mut model = Model::default();
 
-    let cmd = reduce(&mut model, Message::Toast(Toast::error("boom".into())));
+    let cmd = reduce(&mut model, Message::Toast(Toast::error("boom")));
 
     assert!(cmd.effects().any(|effect| *effect
         == Effect::After {
             delay: TOAST_LIFETIME,
-            message: Timer::Toast(model.revisions.toast),
+            timer: Timer::Toast(model.revisions.toast),
         }));
     assert_ne!(model.revisions.toast, Revision::default());
 }
@@ -88,7 +88,7 @@ fn a_source_failing_again_with_the_same_words_does_not_raise_a_second_toast() {
         &mut model,
         Message::Config(fail(ConfigFile::Theme, "Theme: boom")),
     );
-    model.workspace.toast = None;
+    model.workspace.toasts.clear();
     let repeat = reduce(
         &mut model,
         Message::Config(fail(ConfigFile::Theme, "Theme: boom")),
@@ -102,7 +102,11 @@ fn a_source_failing_again_with_the_same_words_does_not_raise_a_second_toast() {
     assert!(matches!(repeat, Cmd::None));
     assert!(has_raised_a_toast(&changed), "{changed:?}");
     assert_eq!(
-        model.workspace.toast.map(|toast| toast.text),
+        model
+            .workspace
+            .toasts
+            .first()
+            .and_then(|toast| toast.text.clone()),
         Some("Theme: worse".to_string())
     );
 }
@@ -131,13 +135,13 @@ fn keys_reloaded_installs_the_merged_table() {
     ],
     None
 )]
-#[case::recovery_clears_without_reviving_another_sources_words(
+#[case::recovery_uncovers_the_toast_beneath(
     &[
         Message::Config(fail(ConfigFile::Config, "Keymap: bad chord")),
         Message::Config(fail(ConfigFile::Theme, "Theme: boom")),
         Message::Config(recovered(ConfigFile::Theme)),
     ],
-    None
+    Some("Keymap: bad chord")
 )]
 #[case::recovery_of_a_source_nobody_is_showing_keeps_the_toast(
     &[
@@ -164,9 +168,9 @@ fn source_errors_decide_which_toast_is_on_screen(
     assert_eq!(
         model
             .workspace
-            .toast
-            .as_ref()
-            .map(|toast| toast.text.as_str()),
+            .toasts
+            .first()
+            .and_then(|toast| toast.text.as_deref()),
         expected
     );
 }
@@ -185,7 +189,11 @@ fn a_config_failure_shows_the_kernels_own_words() {
 
     assert!(has_raised_a_toast(&cmd), "{cmd:?}");
     assert_eq!(
-        model.workspace.toast.map(|toast| toast.text),
+        model
+            .workspace
+            .toasts
+            .first()
+            .and_then(|toast| toast.text.clone()),
         Some("the appearance file is unreadable: permission denied".to_string())
     );
 }
@@ -202,7 +210,7 @@ fn a_repeated_config_failure_still_raises_its_own_toast() {
         &mut model,
         Message::Config(ConfigEvent::Error(failure.clone())),
     );
-    model.workspace.toast = None;
+    model.workspace.toasts.clear();
     let second = reduce(&mut model, Message::Config(ConfigEvent::Error(failure)));
 
     assert!(
@@ -227,17 +235,14 @@ fn config_failures_word_each_kind_distinctly() {
 #[test]
 fn theme_reloaded_leaves_the_toast_alone() {
     let mut model = Model::default();
-    model.workspace.toast = Some(Toast::error("Theme: boom".into()));
+    model.workspace.toasts = vec![Toast::error("Theme: boom")];
 
     let cmd = reduce(
         &mut model,
         Message::Config(ConfigEvent::ThemeReloaded(ThemeName::from_static("noir"))),
     );
 
-    assert_eq!(
-        model.workspace.toast,
-        Some(Toast::error("Theme: boom".into()))
-    );
+    assert_eq!(model.workspace.toasts, vec![Toast::error("Theme: boom")]);
     assert!(
         cmd.effects()
             .any(|effect| matches!(effect, Effect::Animate(Cue::ThemeChanged)))

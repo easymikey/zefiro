@@ -19,7 +19,7 @@ mod workspace;
 
 pub use driver::DriverStatusError;
 pub use error::UpdateError;
-pub use machine::{Machine, Rejected};
+pub use machine::Machine;
 
 use crate::{
     cmd::{AudioCmd, Cmd, Cue, Effect, WindowColorsCmd},
@@ -27,10 +27,11 @@ use crate::{
         Model,
         Moment,
         Startup,
+        Toast,
         Workspace,
         playlist::{PlayOrder, Playlist},
     },
-    message::{BrowseRequest, MacosEvent, Message},
+    message::{BrowseRequest, MacosEvent, Message, Timer},
 };
 
 pub fn startup(startup: Startup) -> (Model, Cmd) {
@@ -96,6 +97,7 @@ impl Input {
             )
             | Message::Toast(_)
             | Message::Playlist(_)
+            | Message::ShuffleRolled(_)
             | Message::Library(_)
             | Message::Config(_)
             | Message::Audio(_)
@@ -124,32 +126,95 @@ fn update_model(
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
     let input = Input::of(&message);
-    let dismissed = dismissal(&model.workspace, input);
-    let cmd = branch(model, message, now)?;
-    released(&mut model.workspace, input, &cmd);
-    Ok(dismissed.then(cmd))
-}
-
-fn dismissal(workspace: &Workspace, input: Input) -> Cmd {
-    match (input, &workspace.toast) {
-        (Input::Key | Input::ChordPrefix, Some(_)) => Cue::ToastDismissed.into(),
-        (Input::Key | Input::ChordPrefix, None) | (Input::Event, Some(_) | None) => {
-            Cmd::None
+    model.workspace.clock = now;
+    let dismissed = dismissal(&mut model.workspace, input);
+    let cmd = match branch(model, message, now) {
+        Ok(cmd) => cmd,
+        Err(refusal) => {
+            restore(&mut model.workspace, dismissed);
+            return Err(refusal);
         }
+    };
+    released(&mut model.workspace, input);
+    let cue = dismissed.map_or(Cmd::None, |_| Cue::ToastDismissed.into());
+    Ok(cue.then(cmd))
+}
+
+fn dismissal(workspace: &mut Workspace, input: Input) -> Option<Toast> {
+    match input {
+        Input::Key | Input::ChordPrefix => workspace.dismiss_newest(),
+        Input::Event => None,
     }
 }
 
-fn released(workspace: &mut Workspace, input: Input, cmd: &Cmd) {
-    match input {
-        Input::Event => return,
-        Input::Key => workspace.chord = None,
-        Input::ChordPrefix => {}
+fn restore(workspace: &mut Workspace, dismissed: Option<Toast>) {
+    if let Some(toast) = dismissed {
+        workspace.toasts.insert(0, toast);
     }
-    let raised = cmd
-        .effects()
-        .any(|effect| matches!(effect, Effect::Animate(Cue::ToastRaised)));
-    if !raised {
-        workspace.toast = None;
+}
+
+fn released(workspace: &mut Workspace, input: Input) {
+    match input {
+        Input::Key => workspace.chord_prefix = None,
+        Input::ChordPrefix | Input::Event => {}
+    }
+}
+
+fn config_parts(model: &mut Model) -> config::ConfigParts<'_> {
+    let Model {
+        workspace,
+        revisions,
+        settings,
+        themes,
+        appearance_settings,
+        music_dir,
+        ..
+    } = model;
+    config::ConfigParts {
+        workspace,
+        revisions,
+        settings,
+        themes,
+        appearance_settings,
+        music_dir,
+    }
+}
+
+pub(crate) fn playback_parts(model: &mut Model) -> player::PlaybackParts<'_> {
+    let Model {
+        player,
+        transport,
+        playlist,
+        queue,
+        workspace,
+        revisions,
+        settings,
+        ..
+    } = model;
+    player::PlaybackParts {
+        player,
+        transport,
+        playlist,
+        queue,
+        workspace,
+        revisions,
+        settings,
+    }
+}
+
+fn elapsed(model: &mut Model, timer: Timer, now: Moment) -> Result<Cmd, UpdateError> {
+    match timer {
+        Timer::Toast(revision) => Ok(timer::toast_expired(
+            &mut model.workspace,
+            revision,
+            revision.reply(model.revisions.toast),
+        )),
+        Timer::Sleep(revision) => {
+            timer::sleep_fired(&mut playback_parts(model), revision, now)
+        }
+        Timer::Lookahead(revision) => {
+            audio::mark_fired(&mut playback_parts(model), revision, now)
+        }
     }
 }
 
@@ -160,29 +225,35 @@ fn branch(
 ) -> Result<Cmd, UpdateError> {
     match message {
         Message::Overlay(request) => overlay::update(model, request, now),
-        Message::Adjust { row, direction } => settings::adjust(model, row, direction),
+        Message::Adjust { row, direction } => {
+            Ok(settings::adjust(config_parts(model), row, direction))
+        }
         Message::Toast(toast) => Ok(model.workspace.show(toast, &mut model.revisions)),
         Message::Playback(playback_request) => {
-            playback::update(model, playback_request, now)
+            playback::update(&mut playback_parts(model), playback_request, now)
         }
         Message::Browse(browse_request) => browse::update(model, browse_request, now),
         Message::Queue(queue_request) => browse::queue(model, queue_request),
         Message::Playlist(loaded_request) => {
             library::update(model, loaded_request, now)
         }
+        Message::ShuffleRolled(order) => Ok(model
+            .playlist
+            .apply(playlist::PlaylistMessage::ShuffleRolled(order))),
         Message::Library(event) => library::library(model, event),
-        Message::Config(event) => config::update(model, event),
-        Message::Audio(audio_event) => audio::update(model, audio_event, now),
-        Message::Macos(event) => macos::update(model, event, now),
-        Message::Elapsed(timer) => timer::update(model, timer, now),
+        Message::Config(event) => config::update(config_parts(model), event),
+        Message::Audio(audio_event) => {
+            audio::update(&mut playback_parts(model), audio_event, now)
+        }
+        Message::Macos(event) => macos::update(&mut playback_parts(model), event, now),
+        Message::Elapsed(timer) => elapsed(model, timer, now),
         Message::Driver { driver, event } => {
-            Ok(match driver::update(model, driver, event)? {
-                Some(driver::DriverSignal::Died(failure)) => {
-                    driver::decided(model, driver::Died { driver, failure }, now)
-                }
-                Some(driver::DriverSignal::Congested) => {
-                    driver::inbox_full(model, driver)
-                }
+            Ok(match driver::update(&mut model.drivers, driver, event)? {
+                Some(driver::DriverSignal::Died) => driver::decided(model, driver, now),
+                Some(driver::DriverSignal::Full) => model.workspace.show(
+                    Toast::info(format!("The {driver} driver is falling behind")),
+                    &mut model.revisions,
+                ),
                 None => Cmd::None,
             })
         }

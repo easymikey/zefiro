@@ -24,9 +24,9 @@ pub(crate) struct Listing {
 }
 
 impl Listing {
-    fn keeping(mut self, entry: walkdir::DirEntry, decodable: &[&str]) -> Self {
-        if is_decodable(entry.path(), decodable) {
-            self.paths.push(entry.into_path());
+    fn keeping(mut self, walked: walkdir::DirEntry, decodable: &[&str]) -> Self {
+        if is_decodable(walked.path(), decodable) {
+            self.paths.push(walked.into_path());
         }
         self
     }

@@ -1,12 +1,4 @@
-use kernel::{
-    AudioCmd,
-    AudioError,
-    AudioEvent,
-    Playback,
-    TrackRequest,
-    domain::OutputDevice,
-    update::Rejected,
-};
+use kernel::{AudioCmd, AudioError, AudioEvent, Playback};
 
 use crate::{
     EngineConfig,
@@ -14,128 +6,85 @@ use crate::{
     engine::{
         effect::{EngineEffect, EngineMessage},
         machine::EngineError,
-        state::{Engine, Live, Muted, announce},
+        state::{Live, Muted, announce},
     },
 };
 
 impl Muted {
     pub(crate) fn transition(
-        self,
+        &mut self,
         message: EngineMessage,
-    ) -> Result<(Engine, EngineEffect), Box<Rejected<Engine>>> {
+    ) -> Result<EngineEffect, EngineError> {
         match message {
-            EngineMessage::Cmd(AudioCmd::SetDevice(device)) => Ok(self.retry(device)),
-            EngineMessage::Cmd(AudioCmd::Load(request)) => Ok(self.wait_for(request)),
-            EngineMessage::Cmd(AudioCmd::ListDevices) => {
-                Ok((Engine::Muted(self), EngineEffect::ListDevices))
+            EngineMessage::Cmd(AudioCmd::SetDevice(device)) => {
+                self.config.device = device.clone();
+                Ok(EngineEffect::Open {
+                    device,
+                    speed: self.speed,
+                })
             }
-            EngineMessage::Cmd(AudioCmd::SetSpeed(speed)) => Ok((
-                Engine::Muted(Muted { speed, ..self }),
-                EngineEffect::Nothing,
-            )),
+            EngineMessage::Cmd(AudioCmd::Load(request)) => {
+                self.pending = Some(request);
+                Ok(EngineEffect::Open {
+                    device: self.config.device.clone(),
+                    speed: self.speed,
+                })
+            }
+            EngineMessage::Cmd(AudioCmd::ListDevices) => Ok(EngineEffect::ListDevices),
+            EngineMessage::Cmd(AudioCmd::SetSpeed(speed)) => {
+                self.speed = speed;
+                Ok(EngineEffect::Nothing)
+            }
             EngineMessage::Cmd(AudioCmd::SetCrossfade(crossfade)) => {
-                let config = EngineConfig {
-                    crossfade,
-                    ..self.config
-                };
-                Ok((
-                    Engine::Muted(Muted { config, ..self }),
-                    EngineEffect::Nothing,
-                ))
+                self.config.crossfade = crossfade;
+                Ok(EngineEffect::Nothing)
             }
-            EngineMessage::Cmd(AudioCmd::SetReplaygain(replaygain)) => {
-                let config = EngineConfig {
-                    replaygain,
-                    ..self.config
-                };
-                Ok((
-                    Engine::Muted(Muted { config, ..self }),
-                    EngineEffect::Nothing,
-                ))
+            EngineMessage::Cmd(AudioCmd::SetReplayGain(replay_gain)) => {
+                self.config.replay_gain = replay_gain;
+                Ok(EngineEffect::Nothing)
             }
-            EngineMessage::Cmd(AudioCmd::Stop) => Ok(self.stop()),
-            EngineMessage::Opened(Ok(reopened)) => Ok(self.reopened(reopened)),
+            EngineMessage::Cmd(AudioCmd::Stop) => {
+                self.pending = None;
+                Ok(EngineEffect::Nothing)
+            }
             EngineMessage::Opened(Err(error)) => Ok(self.stays_silent(error)),
-            EngineMessage::DevicesListed(devices) => Ok((
-                Engine::Muted(self),
-                EngineEffect::Send(AudioEvent::DevicesListed(devices)),
-            )),
             EngineMessage::Cmd(AudioCmd::Playback(Playback::Paused))
+            | EngineMessage::Opened(Ok(_))
+            | EngineMessage::DevicesListed(_)
             | EngineMessage::Decoded(_)
             | EngineMessage::Preloaded(_)
             | EngineMessage::Failed(_)
             | EngineMessage::Finished(_)
             | EngineMessage::Cued
-            | EngineMessage::Ramped(_) => {
-                Ok((Engine::Muted(self), EngineEffect::Nothing))
-            }
+            | EngineMessage::Ramped(_) => Ok(EngineEffect::Nothing),
             EngineMessage::Cmd(
                 AudioCmd::Playback(Playback::Playing)
                 | AudioCmd::Seek(_)
                 | AudioCmd::Preload(_),
-            ) => Err(Box::new(Rejected {
-                reason: EngineError::WhileMuted(self.error.clone()),
-                state: Engine::Muted(self),
-            })),
+            ) => Err(EngineError::WhileMuted(self.error.clone())),
         }
     }
 
-    fn retry(self, device: OutputDevice) -> (Engine, EngineEffect) {
-        let speed = self.speed;
-        let asked = Muted {
-            config: EngineConfig {
-                device: device.clone(),
-                ..self.config
-            },
-            ..self
-        };
-        (Engine::Muted(asked), EngineEffect::Open { device, speed })
+    fn stays_silent(&mut self, error: AudioError) -> EngineEffect {
+        self.error = error.clone();
+        self.pending = None;
+        EngineEffect::Send(AudioEvent::Error(error))
     }
 
-    fn wait_for(self, pending: TrackRequest) -> (Engine, EngineEffect) {
-        let device = self.config.device.clone();
-        let speed = self.speed;
-        let waiting = Muted {
-            pending: Some(pending),
-            ..self
-        };
-        (Engine::Muted(waiting), EngineEffect::Open { device, speed })
-    }
-
-    fn stop(self) -> (Engine, EngineEffect) {
-        let stopped = Muted {
-            pending: None,
-            ..self
-        };
-        (Engine::Muted(stopped), EngineEffect::Nothing)
-    }
-
-    fn stays_silent(self, error: AudioError) -> (Engine, EngineEffect) {
-        let kept = Muted {
-            error: error.clone(),
-            pending: None,
-            ..self
-        };
-        (
-            Engine::Muted(kept),
-            EngineEffect::Send(AudioEvent::Error(error)),
-        )
-    }
-
-    fn reopened(self, reopened: DeviceOpened) -> (Engine, EngineEffect) {
+    pub(crate) fn reopened(&self, reopened: DeviceOpened) -> (Live, EngineEffect) {
         let DeviceOpened { device, opened, .. } = reopened;
-        let live = Live::new(
+        let mut live = Live::new(
             EngineConfig {
                 device: device.clone(),
-                ..self.config
+                ..self.config.clone()
             },
             self.speed,
         );
-        let (engine, effect) = match self.pending {
-            None => (Engine::Live(live), EngineEffect::Nothing),
-            Some(pending) => live.load(pending),
-        };
-        (engine, announce(opened, device, effect))
+        let effect = self
+            .pending
+            .clone()
+            .map_or(EngineEffect::Nothing, |pending| live.load(pending));
+        (live, announce(opened, device, effect))
     }
 }
 
@@ -149,8 +98,8 @@ mod tests {
         AudioEvent,
         Bounded,
         Playback,
-        TrackRequest,
-        domain::{DeviceName, OutputDevice, Replaygain, Speed},
+        TrackLoad,
+        domain::{DeviceName, OutputDevice, ReplayGain, Speed},
         update::Machine,
     };
     use rstest::rstest;
@@ -199,12 +148,12 @@ mod tests {
         let mut current = state;
         let log = messages
             .into_iter()
-            .map(|message| current.update(message).unwrap())
+            .map(|message| current.transition(message).unwrap())
             .collect();
         (current, log)
     }
 
-    fn silenced(engine: Engine) -> (AudioError, Option<TrackRequest>) {
+    fn silenced(engine: Engine) -> (AudioError, Option<TrackLoad>) {
         match engine {
             Engine::Muted(Muted {
                 error,
@@ -318,11 +267,11 @@ mod tests {
     )]
     #[case::muted_remembers_the_replaygain(
         muted(),
-        cmd(AudioCmd::SetReplaygain(Replaygain::On)),
+        cmd(AudioCmd::SetReplayGain(ReplayGain::On)),
         Cell {
             next: Engine::Muted(Muted {
                 error: error(),
-                config: EngineConfig { replaygain: Replaygain::On, ..config() },
+                config: EngineConfig { replay_gain: ReplayGain::On, ..config() },
                 pending: None,
                 speed: Speed::default(),
             }),
@@ -360,7 +309,7 @@ mod tests {
         #[case] message: EngineMessage,
     ) {
         let mut state = start.clone();
-        assert_eq!(state.update(message), Ok(EngineEffect::Nothing));
+        assert_eq!(state.transition(message), Ok(EngineEffect::Nothing));
         assert_eq!(state, start);
     }
 
@@ -368,12 +317,15 @@ mod tests {
     #[case::muted_refuses_a_resume(muted(), cmd(AudioCmd::Playback(Playback::Playing)))]
     #[case::muted_refuses_seek(muted(), cmd(AudioCmd::Seek(seconds(5))))]
     #[case::muted_refuses_preload(muted(), preload("/b"))]
-    fn a_refused_cell_hands_the_state_back_with_the_error(
+    fn a_refused_cell_leaves_the_state_and_names_the_error(
         #[case] start: Engine,
         #[case] message: EngineMessage,
     ) {
         let mut state = start.clone();
-        assert_eq!(state.update(message), Err(EngineError::WhileMuted(error())));
+        assert_eq!(
+            state.transition(message),
+            Err(EngineError::WhileMuted(error()))
+        );
         assert_eq!(state, start);
     }
 

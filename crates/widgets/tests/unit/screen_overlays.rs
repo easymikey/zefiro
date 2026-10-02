@@ -3,10 +3,10 @@ use kernel::domain::{
     DeleteCandidate,
     JumpDigits,
     Overlay,
-    PlaylistIndex,
     SearchQuery,
     SettingRow,
     TextEntry,
+    ViewIndex,
 };
 use ratatui::layout::Rect;
 use widgets::{CoverArt, FrameLayout, Screen};
@@ -66,7 +66,7 @@ fn the_settings_overlay_is_painted_over_the_full_frame() {
 #[test]
 fn the_confirm_delete_overlay_is_painted_over_the_full_frame() {
     let text = frame_with_overlay(Overlay::ConfirmDelete(DeleteCandidate {
-        track: PlaylistIndex::new(0),
+        index: ViewIndex::new(0),
         title: "Moon River".to_string(),
         artist: "Audrey Hepburn".to_string(),
     }));

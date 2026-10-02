@@ -1,8 +1,8 @@
-use kernel::domain::{Crossfade, OutputDevice, Replaygain};
+use kernel::domain::{Crossfade, OutputDevice, ReplayGain};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct EngineConfig {
     pub crossfade: Crossfade,
-    pub replaygain: Replaygain,
+    pub replay_gain: ReplayGain,
     pub device: OutputDevice,
 }

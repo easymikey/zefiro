@@ -1,5 +1,4 @@
-// GUARD: `docs/config.md`'s `defaults:config` block still parses into
-// `Config::default()`.
+// GUARD: the `defaults:config` doc block parses into `Config::default()`.
 
 use config::{ConfigToml, parse_config};
 

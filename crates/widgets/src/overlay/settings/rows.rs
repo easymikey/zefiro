@@ -67,21 +67,21 @@ fn settings_cells(view: &SettingsRowView<'_>) -> [String; 2] {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{CustomSetting, SettingRow};
+    use kernel::domain::{AppearanceSetting, SettingRow};
     use unicode_width::UnicodeWidthStr;
 
     use crate::overlay::settings::{
         rows::{SettingsColumns, SettingsRowView, settings_cells},
-        test_support::{custom_settings, settings_values},
+        test_support::{appearance_settings, settings_values},
     };
 
-    fn all_rows(custom_settings: &[CustomSetting]) -> Vec<SettingRow> {
-        SettingRow::all(custom_settings)
+    fn all_rows(appearance_settings: &[AppearanceSetting]) -> Vec<SettingRow> {
+        SettingRow::all(appearance_settings)
     }
 
     #[test]
     fn every_row_fits_its_columns() {
-        let custom = custom_settings();
+        let custom = appearance_settings();
         let values = settings_values(&custom);
         let columns = SettingsColumns::for_width(60, 0, 20);
         for row in all_rows(&custom) {

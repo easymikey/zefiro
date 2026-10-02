@@ -1,6 +1,6 @@
 ---
 source: crates/config/src/config_file.rs
-assertion_line: 183
+assertion_line: 213
 expression: config
 ---
 ConfigToml {
@@ -13,7 +13,7 @@ ConfigToml {
         crossfade: Crossfade(
             0ns,
         ),
-        replaygain: Off,
+        replay_gain: Off,
         device: SystemDefault,
         sleep_presets: SleepPresets(
             [
@@ -26,7 +26,7 @@ ConfigToml {
     keymap: {
         "next": KeyOverride {
             chord: "not-a-key",
-            context: Global,
+            key_context: Global,
         },
     },
 }

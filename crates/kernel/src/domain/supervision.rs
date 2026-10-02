@@ -7,13 +7,8 @@ pub enum Supervision {
     Restart {
         attempts: u8,
         within: Duration,
-        then: Fallback,
+        then: Announce,
     },
-    Fallback(Fallback),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Fallback {
     Degrade(Announce),
 }
 
@@ -27,14 +22,6 @@ pub enum Announce {
 pub enum Decision {
     Restart,
     Degrade(Announce),
-}
-
-impl From<Fallback> for Decision {
-    fn from(fallback: Fallback) -> Self {
-        match fallback {
-            Fallback::Degrade(announce) => Decision::Degrade(announce),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -69,15 +56,15 @@ impl Supervision {
             Driver::Audio => Supervision::Restart {
                 attempts: 3,
                 within: Duration::from_secs(60),
-                then: Fallback::Degrade(Announce::Toast),
+                then: Announce::Toast,
             },
             Driver::Library => Supervision::Restart {
                 attempts: 1,
                 within: Duration::from_secs(60),
-                then: Fallback::Degrade(Announce::Toast),
+                then: Announce::Toast,
             },
-            Driver::Config => Supervision::Fallback(Fallback::Degrade(Announce::Toast)),
-            Driver::Macos => Supervision::Fallback(Fallback::Degrade(Announce::Silent)),
+            Driver::Config => Supervision::Degrade(Announce::Toast),
+            Driver::Macos => Supervision::Degrade(Announce::Silent),
         }
     }
 }
@@ -93,10 +80,10 @@ pub fn supervise(strategy: Supervision, restarts: &Restarts, now: Moment) -> Dec
             if restarts.within(within, now) < usize::from(attempts) {
                 Decision::Restart
             } else {
-                then.into()
+                Decision::Degrade(then)
             }
         }
-        Supervision::Fallback(fallback) => fallback.into(),
+        Supervision::Degrade(announce) => Decision::Degrade(announce),
     }
 }
 
@@ -108,7 +95,6 @@ mod tests {
         Announce,
         Decision,
         Driver,
-        Fallback,
         Moment,
         Restarts,
         Supervision,
@@ -129,37 +115,37 @@ mod tests {
 
     #[rstest]
     #[case::restart_with_no_history(
-        Supervision::Restart { attempts: 3, within: std::time::Duration::from_secs(60), then: Fallback::Degrade(Announce::Toast) },
+        Supervision::Restart { attempts: 3, within: std::time::Duration::from_secs(60), then: Announce::Toast },
         &[],
         Decision::Restart
     )]
     #[case::restart_under_budget(
-        Supervision::Restart { attempts: 3, within: std::time::Duration::from_secs(60), then: Fallback::Degrade(Announce::Toast) },
+        Supervision::Restart { attempts: 3, within: std::time::Duration::from_secs(60), then: Announce::Toast },
         &[50, 90],
         Decision::Restart
     )]
     #[case::restart_budget_spent_falls_back(
-        Supervision::Restart { attempts: 3, within: std::time::Duration::from_secs(60), then: Fallback::Degrade(Announce::Toast) },
+        Supervision::Restart { attempts: 3, within: std::time::Duration::from_secs(60), then: Announce::Toast },
         &[50, 70, 90],
         Decision::Degrade(Announce::Toast)
     )]
     #[case::restart_old_history_ages_out(
-        Supervision::Restart { attempts: 3, within: std::time::Duration::from_secs(60), then: Fallback::Degrade(Announce::Toast) },
+        Supervision::Restart { attempts: 3, within: std::time::Duration::from_secs(60), then: Announce::Toast },
         &[10, 70, 90],
         Decision::Restart
     )]
     #[case::restart_zero_attempts_falls_back(
-        Supervision::Restart { attempts: 0, within: std::time::Duration::from_secs(60), then: Fallback::Degrade(Announce::Silent) },
+        Supervision::Restart { attempts: 0, within: std::time::Duration::from_secs(60), then: Announce::Silent },
         &[],
         Decision::Degrade(Announce::Silent)
     )]
     #[case::degrade_toast(
-        Supervision::Fallback(Fallback::Degrade(Announce::Toast)),
+        Supervision::Degrade(Announce::Toast),
         &[],
         Decision::Degrade(Announce::Toast)
     )]
     #[case::degrade_silent(
-        Supervision::Fallback(Fallback::Degrade(Announce::Silent)),
+        Supervision::Degrade(Announce::Silent),
         &[],
         Decision::Degrade(Announce::Silent)
     )]
@@ -179,7 +165,7 @@ mod tests {
             Supervision::Restart {
                 attempts: 3,
                 within: std::time::Duration::from_secs(60),
-                then: Fallback::Degrade(Announce::Toast),
+                then: Announce::Toast,
             }
         );
         assert_eq!(
@@ -187,16 +173,16 @@ mod tests {
             Supervision::Restart {
                 attempts: 1,
                 within: std::time::Duration::from_secs(60),
-                then: Fallback::Degrade(Announce::Toast),
+                then: Announce::Toast,
             }
         );
         assert_eq!(
             Supervision::standard(Driver::Config),
-            Supervision::Fallback(Fallback::Degrade(Announce::Toast))
+            Supervision::Degrade(Announce::Toast)
         );
         assert_eq!(
             Supervision::standard(Driver::Macos),
-            Supervision::Fallback(Fallback::Degrade(Announce::Silent))
+            Supervision::Degrade(Announce::Silent)
         );
     }
 

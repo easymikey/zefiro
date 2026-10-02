@@ -1,30 +1,27 @@
 use std::time::Duration;
 
-use config::{
-    Animations,
-    Appearance,
-    AppearanceField,
-    AppearancePatch,
-    AppearancePreset,
-    CoverBrackets,
-    FormatChips,
-    KeyHints,
-    ProgressTime,
-    appearance_patch,
-    appearance_row,
-    preset_of,
-};
 use kernel::{
     Bounded,
     domain::{
+        AppearanceSetting,
         Crossfade,
-        CustomSetting,
         ListedDevice,
-        Replaygain,
-        SettingId,
+        ReplayGain,
         SettingRow,
         SleepPresets,
         ThemeName,
+        appearance::{
+            Animations,
+            Appearance,
+            AppearancePatch,
+            AppearancePreset,
+            CoverBrackets,
+            FormatChips,
+            KeyHints,
+            ProgressTime,
+            preset_of,
+        },
+        appearance_rows::{AppearanceField, appearance_patch, appearance_row},
         format_sleep_presets_label,
     },
 };
@@ -35,7 +32,7 @@ use crate::primitive::glyphs;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SettingsView<'a> {
     pub crossfade: Crossfade,
-    pub replaygain: Replaygain,
+    pub replay_gain: ReplayGain,
     pub theme: &'a str,
     pub themes: &'a [ThemeName],
     pub sleep_presets: &'a [Duration],
@@ -43,7 +40,7 @@ pub(crate) struct SettingsView<'a> {
     pub output_device: Option<&'a str>,
     pub output_devices: &'a [ListedDevice],
     pub appearance: Appearance,
-    pub custom_settings: &'a [CustomSetting],
+    pub appearance_settings: &'a [AppearanceSetting],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,18 +49,18 @@ enum Toggle {
     Off,
 }
 
-impl From<Replaygain> for Toggle {
-    fn from(value: Replaygain) -> Self {
-        match value {
-            Replaygain::On => Toggle::On,
-            Replaygain::Off => Toggle::Off,
+impl From<ReplayGain> for Toggle {
+    fn from(replay_gain: ReplayGain) -> Self {
+        match replay_gain {
+            ReplayGain::On => Toggle::On,
+            ReplayGain::Off => Toggle::Off,
         }
     }
 }
 
 impl From<CoverBrackets> for Toggle {
-    fn from(value: CoverBrackets) -> Self {
-        match value {
+    fn from(brackets: CoverBrackets) -> Self {
+        match brackets {
             CoverBrackets::Shown => Toggle::On,
             CoverBrackets::Hidden => Toggle::Off,
         }
@@ -71,8 +68,8 @@ impl From<CoverBrackets> for Toggle {
 }
 
 impl From<FormatChips> for Toggle {
-    fn from(value: FormatChips) -> Self {
-        match value {
+    fn from(chips: FormatChips) -> Self {
+        match chips {
             FormatChips::Shown => Toggle::On,
             FormatChips::Hidden => Toggle::Off,
         }
@@ -80,8 +77,8 @@ impl From<FormatChips> for Toggle {
 }
 
 impl From<ProgressTime> for Toggle {
-    fn from(value: ProgressTime) -> Self {
-        match value {
+    fn from(time: ProgressTime) -> Self {
+        match time {
             ProgressTime::Remaining => Toggle::On,
             ProgressTime::Elapsed => Toggle::Off,
         }
@@ -89,8 +86,8 @@ impl From<ProgressTime> for Toggle {
 }
 
 impl From<KeyHints> for Toggle {
-    fn from(value: KeyHints) -> Self {
-        match value {
+    fn from(hints: KeyHints) -> Self {
+        match hints {
             KeyHints::Shown => Toggle::On,
             KeyHints::Hidden => Toggle::Off,
         }
@@ -98,8 +95,8 @@ impl From<KeyHints> for Toggle {
 }
 
 impl From<Animations> for Toggle {
-    fn from(value: Animations) -> Self {
-        match value {
+    fn from(animations: Animations) -> Self {
+        match animations {
             Animations::On => Toggle::On,
             Animations::Off => Toggle::Off,
         }
@@ -110,14 +107,14 @@ pub(crate) fn settings_label(row: SettingRow) -> &'static str {
     match row {
         SettingRow::Theme => "Theme",
         SettingRow::Crossfade => "Crossfade",
-        SettingRow::Replaygain => "ReplayGain",
+        SettingRow::ReplayGain => "ReplayGain",
         SettingRow::OutputDevice => "Output device",
         SettingRow::SleepPresets => "Sleep presets",
-        SettingRow::Custom(id) => custom_label(id),
+        SettingRow::Appearance(id) => custom_label(id),
     }
 }
 
-fn custom_label(id: SettingId) -> &'static str {
+fn custom_label(id: AppearanceField) -> &'static str {
     appearance_row(id).map_or("", |row| appearance_field_label(row.field))
 }
 
@@ -139,7 +136,7 @@ pub(crate) fn value_text(row: SettingRow, values: &SettingsView<'_>) -> String {
     match row {
         SettingRow::Theme => format_pick(values.theme),
         SettingRow::Crossfade => format_duration_step(values.crossfade.get()),
-        SettingRow::Replaygain => format_toggle(Toggle::from(values.replaygain)),
+        SettingRow::ReplayGain => format_toggle(Toggle::from(values.replay_gain)),
         SettingRow::OutputDevice => {
             let name = values
                 .output_device
@@ -149,11 +146,11 @@ pub(crate) fn value_text(row: SettingRow, values: &SettingsView<'_>) -> String {
         SettingRow::SleepPresets => {
             format_pick(&format_sleep_presets_label(values.sleep_presets))
         }
-        SettingRow::Custom(id) => custom_value_text(id, values),
+        SettingRow::Appearance(id) => custom_value_text(id, values),
     }
 }
 
-fn custom_value_text(id: SettingId, values: &SettingsView<'_>) -> String {
+fn custom_value_text(id: AppearanceField, values: &SettingsView<'_>) -> String {
     let Some(row) = appearance_row(id) else {
         return String::new();
     };
@@ -193,7 +190,7 @@ pub(crate) fn max_value_width(row: SettingRow, values: &SettingsView<'_>) -> usi
             widest_pick(values.themes.iter().map(ThemeName::to_string))
         }
         SettingRow::Crossfade => format_duration_step(Crossfade::MAX).width(),
-        SettingRow::Replaygain => widest_toggle(),
+        SettingRow::ReplayGain => widest_toggle(),
         SettingRow::OutputDevice => widest_pick(
             values
                 .output_devices
@@ -208,7 +205,7 @@ pub(crate) fn max_value_width(row: SettingRow, values: &SettingsView<'_>) -> usi
                 .iter()
                 .map(|bundle| format_sleep_presets_label(bundle)),
         ),
-        SettingRow::Custom(id) => custom_max_value_width(id, values),
+        SettingRow::Appearance(id) => custom_max_value_width(id, values),
     }
 }
 
@@ -225,11 +222,11 @@ fn widest_pick(labels: impl Iterator<Item = String>) -> usize {
         .unwrap_or(0)
 }
 
-fn custom_max_value_width(id: SettingId, values: &SettingsView<'_>) -> usize {
+fn custom_max_value_width(id: AppearanceField, values: &SettingsView<'_>) -> usize {
     let Some(row) = appearance_row(id) else {
         return 0;
     };
-    let count = row.custom.control.count();
+    let count = row.control.count();
     (0..count.get())
         .filter_map(|position| count.index(position))
         .filter_map(|option| appearance_patch(id, option))
@@ -288,60 +285,54 @@ fn format_pick(current: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use config::{APPEARANCE_ROWS, AppearanceField, CoverStyle};
-    use kernel::domain::{Replaygain, SettingId, SettingRow};
+    use kernel::domain::{
+        ReplayGain,
+        SettingRow,
+        appearance::CoverStyle,
+        appearance_rows::{APPEARANCE_ROWS, AppearanceField},
+    };
 
     use crate::overlay::settings::{
-        test_support::{custom_settings, settings_values},
+        test_support::{appearance_settings, settings_values},
         values::{SettingsView, settings_label, value_text},
     };
 
     #[test]
     fn toggle_on_off_render_distinct_glyphs() {
-        let custom = custom_settings();
+        let custom = appearance_settings();
         let on = settings_values(&custom);
         let off = SettingsView {
-            replaygain: Replaygain::Off,
+            replay_gain: ReplayGain::Off,
             ..on
         };
         assert_ne!(
-            value_text(SettingRow::Replaygain, &on),
-            value_text(SettingRow::Replaygain, &off)
+            value_text(SettingRow::ReplayGain, &on),
+            value_text(SettingRow::ReplayGain, &off)
         );
     }
 
     #[test]
     fn pick_row_shows_current_theme() {
-        let custom = custom_settings();
+        let custom = appearance_settings();
         let values = settings_values(&custom);
         assert!(value_text(SettingRow::Theme, &values).contains("noir"));
     }
 
     #[test]
     fn a_custom_row_renders_its_appearance_fields_label_and_value() {
-        let custom = custom_settings();
+        let custom = appearance_settings();
         let values = settings_values(&custom);
-        let cover_style_row = SettingRow::Custom(
+        let cover_style_row = SettingRow::Appearance(
             APPEARANCE_ROWS
                 .into_iter()
                 .find(|row| row.field == AppearanceField::CoverStyle)
                 .unwrap()
-                .custom
-                .id,
+                .field,
         );
         assert_eq!(settings_label(cover_style_row), "Cover style");
         assert!(
             value_text(cover_style_row, &values)
                 .contains(&CoverStyle::default().to_string())
         );
-    }
-
-    #[test]
-    fn an_unregistered_custom_id_names_nothing() {
-        let custom = Vec::new();
-        let values = settings_values(&custom);
-        let unknown = SettingRow::Custom(SettingId::new(9_999));
-        assert_eq!(settings_label(unknown), "");
-        assert_eq!(value_text(unknown, &values), "");
     }
 }

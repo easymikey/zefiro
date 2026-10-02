@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use config::FormatChips;
-use kernel::domain::Track;
+use kernel::domain::{Track, appearance::FormatChips};
 use ratatui::text::Line;
 
 use crate::primitive::{chip::ChipColors, format_chips};

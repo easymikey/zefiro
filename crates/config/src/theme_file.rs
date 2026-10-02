@@ -2,24 +2,28 @@ use kernel::domain::ThemeName;
 use serde::{Deserialize, Deserializer};
 
 use crate::{
+    appearance::{Rgb, from_str_field, from_str_option},
     error::{Error, TomlFile, parse_toml},
-    rgb::Rgb,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ThemeColors {
-    #[serde(rename = "bg")]
+    #[serde(rename = "bg", deserialize_with = "from_str_field")]
     pub background: Rgb,
-    #[serde(rename = "fg")]
+    #[serde(rename = "fg", deserialize_with = "from_str_field")]
     pub foreground: Rgb,
-    #[serde(rename = "bright_fg")]
+    #[serde(rename = "bright_fg", deserialize_with = "from_str_field")]
     pub bright_foreground: Rgb,
+    #[serde(deserialize_with = "from_str_field")]
     pub accent: Rgb,
+    #[serde(deserialize_with = "from_str_field")]
     pub green: Rgb,
+    #[serde(deserialize_with = "from_str_field")]
     pub yellow: Rgb,
+    #[serde(deserialize_with = "from_str_field")]
     pub red: Rgb,
-    #[serde(default, rename = "window_bg")]
+    #[serde(default, rename = "window_bg", deserialize_with = "from_str_option")]
     pub window_background: Option<Rgb>,
 }
 
@@ -61,9 +65,9 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
+        appearance::Rgb,
         embedded_theme::EMBEDDED_THEMES,
         error::Error,
-        rgb::Rgb,
         theme_file::parse_theme,
     };
 

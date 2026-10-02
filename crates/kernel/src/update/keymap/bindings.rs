@@ -36,16 +36,15 @@ fn resolved_bindings(
             let chords = final_chords.get(&action)?;
             let configured = contexts.get(&action).copied();
             let key_context = configured.unwrap_or(template.key_context);
-            Some(chords.iter().map(move |&chord| {
-                let mut binding = template.clone();
-                binding.pattern = KeyPattern::Chord(chord);
-                binding.source = if configured.is_some() {
+            Some(chords.iter().map(move |&chord| KeyBinding {
+                pattern: KeyPattern::Chord(chord),
+                source: if configured.is_some() {
                     BindingSource::Configured
                 } else {
                     BindingSource::Default
-                };
-                binding.key_context = key_context;
-                binding
+                },
+                key_context,
+                ..template.clone()
             }))
         })
         .flatten()

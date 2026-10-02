@@ -15,23 +15,23 @@ use kernel::{
     PlaybackRequest,
     SettingsRowRequest,
     domain::{
+        AppearanceControl,
+        AppearanceRow,
+        AppearanceSetting,
         Choice,
         Crossfade,
-        CustomControl,
-        CustomRow,
-        CustomSetting,
         DeviceDefault,
         Direction,
         ListedDevice,
         OptionCount,
         OutputDevice,
-        Replaygain,
-        SettingId,
+        ReplayGain,
         SettingRow,
         SleepPresets,
         ThemeChoice,
         ThemeName,
         Themes,
+        appearance_rows::AppearanceField,
     },
     update::update,
 };
@@ -45,8 +45,7 @@ fn all_rows() -> Vec<SettingRow> {
 
 fn row_index(row: SettingRow) -> usize {
     let found = all_rows().iter().position(|candidate| *candidate == row);
-    assert!(found.is_some());
-    found.unwrap_or_default()
+    found.unwrap_or_else(|| panic!("row missing from the settings list: {row:?}"))
 }
 
 fn opened_settings() -> Model {
@@ -116,7 +115,7 @@ fn navigate_down_clamps_at_the_last_row() {
 
 #[rstest]
 #[case::adjust_hands_the_router_the_selected_row(
-    SettingRow::Replaygain,
+    SettingRow::ReplayGain,
     Direction::Next
 )]
 #[case::adjust_keeps_the_direction(SettingRow::Crossfade, Direction::Previous)]
@@ -205,18 +204,18 @@ fn adjust_row_toggles_a_config_row() {
     }
 
     let mut model = seeded();
-    let cmd = step(&mut model, SettingRow::Replaygain, Direction::Next);
+    let cmd = step(&mut model, SettingRow::ReplayGain, Direction::Next);
 
-    assert_eq!(model.settings.audio.replaygain, Replaygain::On);
+    assert_eq!(model.settings.audio.replay_gain, ReplayGain::On);
     assert!(saved(&cmd));
     assert!(
         live_effects(&cmd)
             .iter()
-            .any(|effect| effect == "SetReplaygain(On)")
+            .any(|effect| effect == "SetReplayGain(On)")
     );
 
-    let toggled_back = step(&mut model, SettingRow::Replaygain, Direction::Previous);
-    assert_eq!(model.settings.audio.replaygain, Replaygain::Off);
+    let toggled_back = step(&mut model, SettingRow::ReplayGain, Direction::Previous);
+    assert_eq!(model.settings.audio.replay_gain, ReplayGain::Off);
     assert!(saved(&toggled_back));
 }
 
@@ -425,21 +424,25 @@ fn adjust_row_sleep_presets_leaves_the_clamp_to_the_next_cycle() {
 fn adjust_row_keeps_the_two_config_files_apart() {
     let mut model = seeded();
 
-    let audio = step(&mut model, SettingRow::Replaygain, Direction::Next);
+    let audio = step(&mut model, SettingRow::ReplayGain, Direction::Next);
     let audio_effects: Vec<&Effect> = audio
         .effects()
         .filter(|effect| matches!(effect, Effect::Audio(_) | Effect::Library(_)))
         .collect();
     assert!(matches!(
         audio_effects.as_slice(),
-        [Effect::Audio(AudioCmd::SetReplaygain(Replaygain::On))]
+        [Effect::Audio(AudioCmd::SetReplayGain(ReplayGain::On))]
     ));
 
-    let custom_id = SettingId::new(11);
+    let custom_id = AppearanceField::LayoutMode;
     model
-        .custom_settings
-        .push(custom_row(custom_id, CustomControl::Toggle));
-    let custom = step(&mut model, SettingRow::Custom(custom_id), Direction::Next);
+        .appearance_settings
+        .push(custom_row(custom_id, AppearanceControl::Toggle));
+    let custom = step(
+        &mut model,
+        SettingRow::Appearance(custom_id),
+        Direction::Next,
+    );
     assert!(
         !custom
             .effects()
@@ -457,28 +460,28 @@ fn adjust_row_keeps_the_two_config_files_apart() {
     );
 }
 
-fn custom_row(id: SettingId, control: CustomControl) -> CustomSetting {
-    let custom: &'static CustomRow = Box::leak(Box::new(CustomRow {
-        id,
+fn custom_row(id: AppearanceField, control: AppearanceControl) -> AppearanceSetting {
+    let row: &'static AppearanceRow = Box::leak(Box::new(AppearanceRow {
+        field: id,
         control,
         cue: None,
         themes: &[],
     }));
-    CustomSetting {
-        custom,
+    AppearanceSetting {
+        row,
         choice: Choice::Option(control.count().index(0).unwrap()),
     }
 }
 
 fn model_with_appearance_rows() -> Model {
     Model {
-        custom_settings: vec![
-            custom_row(SettingId::new(1), CustomControl::Toggle),
+        appearance_settings: vec![
+            custom_row(AppearanceField::CoverBrackets, AppearanceControl::Toggle),
             custom_row(
-                SettingId::new(2),
-                CustomControl::Cycle(OptionCount::new(3).unwrap()),
+                AppearanceField::CoverStyle,
+                AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
             ),
-            custom_row(SettingId::new(3), CustomControl::Toggle),
+            custom_row(AppearanceField::SpeedChip, AppearanceControl::Toggle),
         ],
         ..Model::default()
     }
@@ -505,7 +508,7 @@ fn navigate_down(model: &mut Model) {
 #[test]
 fn the_highlighted_row_is_the_row_that_changes_across_nudges() {
     let mut model = model_with_appearance_rows();
-    let cover_style = SettingId::new(2);
+    let cover_style = AppearanceField::CoverStyle;
 
     let _ = update(
         &mut model,
@@ -515,7 +518,10 @@ fn the_highlighted_row_is_the_row_that_changes_across_nudges() {
     .unwrap();
     navigate_down(&mut model);
     navigate_down(&mut model);
-    assert_eq!(selected_row(&model), Some(SettingRow::Custom(cover_style)));
+    assert_eq!(
+        selected_row(&model),
+        Some(SettingRow::Appearance(cover_style))
+    );
 
     for _ in 0..3 {
         let cmd = update(
@@ -527,20 +533,23 @@ fn the_highlighted_row_is_the_row_that_changes_across_nudges() {
         )
         .unwrap();
         let emitted_id = cmd.effects().find_map(|effect| {
-            let Effect::Config(ConfigCmd::Setting { id, .. }) = effect else {
+            let Effect::Config(ConfigCmd::Setting { field, .. }) = effect else {
                 return None;
             };
-            Some(*id)
+            Some(*field)
         });
         assert_eq!(emitted_id, Some(cover_style));
-        assert_eq!(selected_row(&model), Some(SettingRow::Custom(cover_style)));
+        assert_eq!(
+            selected_row(&model),
+            Some(SettingRow::Appearance(cover_style))
+        );
     }
 }
 
 #[test]
 fn a_custom_rows_reload_while_open_keeps_the_selection_on_the_same_row() {
     let mut model = model_with_appearance_rows();
-    let cover_style = SettingId::new(2);
+    let cover_style = AppearanceField::CoverStyle;
 
     let _ = update(
         &mut model,
@@ -550,23 +559,29 @@ fn a_custom_rows_reload_while_open_keeps_the_selection_on_the_same_row() {
     .unwrap();
     navigate_down(&mut model);
     navigate_down(&mut model);
-    assert_eq!(selected_row(&model), Some(SettingRow::Custom(cover_style)));
+    assert_eq!(
+        selected_row(&model),
+        Some(SettingRow::Appearance(cover_style))
+    );
 
     let reloaded = vec![
-        custom_row(SettingId::new(4), CustomControl::Toggle),
-        custom_row(SettingId::new(1), CustomControl::Toggle),
+        custom_row(AppearanceField::KeyHints, AppearanceControl::Toggle),
+        custom_row(AppearanceField::CoverBrackets, AppearanceControl::Toggle),
         custom_row(
             cover_style,
-            CustomControl::Cycle(OptionCount::new(3).unwrap()),
+            AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
         ),
-        custom_row(SettingId::new(3), CustomControl::Toggle),
+        custom_row(AppearanceField::SpeedChip, AppearanceControl::Toggle),
     ];
     let _ = update(
         &mut model,
-        Message::Config(ConfigEvent::CustomSettingsReloaded(reloaded)),
+        Message::Config(ConfigEvent::AppearanceSettingsReloaded(reloaded)),
         Moment::default(),
     )
     .unwrap();
 
-    assert_eq!(selected_row(&model), Some(SettingRow::Custom(cover_style)));
+    assert_eq!(
+        selected_row(&model),
+        Some(SettingRow::Appearance(cover_style))
+    );
 }

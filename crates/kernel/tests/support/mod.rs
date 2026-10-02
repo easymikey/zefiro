@@ -131,6 +131,6 @@ pub(crate) fn effects(cmd: Cmd) -> Vec<Effect> {
 pub(crate) fn first_toast_expiry() -> Effect {
     Effect::After {
         delay: TOAST_LIFETIME,
-        message: Timer::Toast(Revision::default().next()),
+        timer: Timer::Toast(Revision::default().next()),
     }
 }

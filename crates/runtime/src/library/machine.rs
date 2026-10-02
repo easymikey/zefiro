@@ -10,7 +10,7 @@ use kernel::{
     LibraryEvent,
     LibrarySubject,
     cmd::ScanMode,
-    update::{Machine, Rejected},
+    update::Machine,
 };
 use strum::IntoStaticStr;
 
@@ -31,7 +31,7 @@ const DEBOUNCE: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct LibraryState {
-    watch: Box<LibraryWatch>,
+    watch: LibraryWatch,
     decoding: Decoding,
     cover_cache: CoverCache,
     scan_mode: ScanMode,
@@ -77,14 +77,15 @@ pub(crate) enum LibraryEffect {
     Event(LibraryEvent),
 }
 
-type Step = Result<(LibraryState, Vec<LibraryEffect>), Rejected<LibraryState>>;
-
 impl Machine for LibraryState {
     type Message = LibraryMessage;
     type Error = LibraryDriverError;
     type Effect = Vec<LibraryEffect>;
 
-    fn transition(self, input: LibraryMessage) -> Step {
+    fn transition(
+        &mut self,
+        input: LibraryMessage,
+    ) -> Result<Vec<LibraryEffect>, LibraryDriverError> {
         match input {
             LibraryMessage::Cmd(LibraryCmd::Scan {
                 music_dir,
@@ -97,9 +98,7 @@ impl Machine for LibraryState {
                 },
                 mode,
             ),
-            LibraryMessage::Cmd(other) => {
-                Ok((self, vec![LibraryEffect::Execute(other)]))
-            }
+            LibraryMessage::Cmd(other) => Ok(vec![LibraryEffect::Execute(other)]),
             LibraryMessage::FilesChanged { at, event } => {
                 self.drive_filesystem_change(event, at)
             }
@@ -107,14 +106,13 @@ impl Machine for LibraryState {
                 self.drive_filesystem_change(Ok(()), at)
             }
             LibraryMessage::DebounceDue => {
-                let mut driven = self;
-                driven.debounce = None;
-                driven.drive_scan(WatchMessage::DebounceElapsed, ScanMode::Full)
+                self.debounce = None;
+                self.drive_scan(WatchMessage::DebounceElapsed, ScanMode::Full)
             }
             LibraryMessage::Cover(request) => self.request_decode(request),
             LibraryMessage::Decoded(done) => Ok(self.finish_decode(done)),
-            LibraryMessage::Executed(result) => Ok((self, executed_outputs(result))),
-            LibraryMessage::Stopping => Ok((self, Vec::new())),
+            LibraryMessage::Executed(result) => Ok(executed_outputs(result)),
+            LibraryMessage::Stopping => Ok(Vec::new()),
         }
     }
 }
@@ -124,50 +122,38 @@ impl LibraryState {
         self.debounce
     }
 
-    fn drive_scan(mut self, message: WatchMessage, scan_mode: ScanMode) -> Step {
+    fn drive_scan(
+        &mut self,
+        message: WatchMessage,
+        scan_mode: ScanMode,
+    ) -> Result<Vec<LibraryEffect>, LibraryDriverError> {
+        let io = self
+            .watch
+            .transition(message)
+            .map_err(LibraryDriverError::Watch)?;
         self.scan_mode = scan_mode;
-        let watch = std::mem::take(&mut self.watch);
-        let result = watch.transition(message);
-        self.apply_watch_result(result)
+        Ok(self.outputs_for(io))
     }
 
     fn drive_filesystem_change(
-        mut self,
+        &mut self,
         event: Result<(), notify::Error>,
         at: Instant,
-    ) -> Step {
+    ) -> Result<Vec<LibraryEffect>, LibraryDriverError> {
+        let io = self
+            .watch
+            .transition(WatchMessage::FilesystemChange(event))
+            .map_err(LibraryDriverError::Watch)?;
         self.scan_mode = ScanMode::Full;
-        let watch = std::mem::take(&mut self.watch);
-        let result = watch.transition(WatchMessage::FilesystemChange(event));
-        if let Ok((_, WatchEffect::ArmDebounce)) = &result {
+        if matches!(io, WatchEffect::ArmDebounce) {
             self.debounce = Some(at + DEBOUNCE);
         }
-        self.apply_watch_result(result)
-    }
-
-    fn apply_watch_result(
-        mut self,
-        result: Result<(LibraryWatch, WatchEffect), Rejected<LibraryWatch>>,
-    ) -> Step {
-        match result {
-            Ok((watch, io)) => {
-                self.watch = Box::new(watch);
-                let outputs = self.outputs_for(io);
-                Ok((self, outputs))
-            }
-            Err(Rejected { state, reason }) => {
-                self.watch = Box::new(state);
-                Err(Rejected {
-                    state: self,
-                    reason: LibraryDriverError::Watch(reason),
-                })
-            }
-        }
+        Ok(self.outputs_for(io))
     }
 
     fn outputs_for(&self, io: WatchEffect) -> Vec<LibraryEffect> {
         match io {
-            WatchEffect::Nothing | WatchEffect::ArmDebounce => Vec::new(),
+            WatchEffect::ArmDebounce => Vec::new(),
             WatchEffect::Rename { from, to, revision } => vec![
                 LibraryEffect::Watch(WatchChange::Rewatch {
                     from,
@@ -206,40 +192,29 @@ impl LibraryState {
         }
     }
 
-    fn request_decode(mut self, request: CoverRequest) -> Step {
+    fn request_decode(
+        &mut self,
+        request: CoverRequest,
+    ) -> Result<Vec<LibraryEffect>, LibraryDriverError> {
         if let Some(outcome) = self.cover_cache.answer(&request) {
             let decoded = CoverDecoded {
                 path: request.path,
                 side: request.size_px,
                 outcome,
             };
-            return Ok((self, vec![LibraryEffect::Publish(decoded)]));
+            return Ok(vec![LibraryEffect::Publish(decoded)]);
         }
-        let decoding = std::mem::take(&mut self.decoding);
-        match decoding.transition(DecodeMessage::Request(request)) {
-            Ok((decoding, io)) => {
-                self.decoding = decoding;
-                let outputs = io.map(LibraryEffect::Decode).into_iter().collect();
-                Ok((self, outputs))
-            }
-            Err(Rejected { state, reason }) => {
-                self.decoding = state;
-                Err(Rejected {
-                    state: self,
-                    reason: LibraryDriverError::Decoding(reason),
-                })
-            }
-        }
+        let io = self
+            .decoding
+            .transition(DecodeMessage::Request(request))
+            .map_err(LibraryDriverError::Decoding)?;
+        Ok(io.map(LibraryEffect::Decode).into_iter().collect())
     }
 
-    fn finish_decode(mut self, done: DecodeFinished) -> (Self, Vec<LibraryEffect>) {
+    fn finish_decode(&mut self, done: DecodeFinished) -> Vec<LibraryEffect> {
         self.cover_cache.remember(&done);
-        let decoding = std::mem::take(&mut self.decoding);
-        self.decoding = match decoding.transition(DecodeMessage::Decoded(done.path)) {
-            Ok((decoding, _)) => decoding,
-            Err(Rejected { state, .. }) => state,
-        };
-        (self, Vec::new())
+        let _ = self.decoding.transition(DecodeMessage::Decoded(done.path));
+        Vec::new()
     }
 }
 
@@ -281,7 +256,7 @@ mod tests {
         LibraryEvent,
         cmd::ScanMode,
         domain::Revision,
-        update::{Machine, Rejected},
+        update::Machine,
     };
 
     use crate::library::{
@@ -305,7 +280,8 @@ mod tests {
 
     #[test]
     fn a_rescan_command_executes_a_full_scan() {
-        let (_, outputs) = LibraryState::default()
+        let mut state = LibraryState::default();
+        let outputs = state
             .transition(LibraryMessage::Cmd(LibraryCmd::Scan {
                 music_dir: PathBuf::from("/music"),
                 revision: Revision::default(),
@@ -327,7 +303,8 @@ mod tests {
 
     #[test]
     fn scan_library_executes_a_cached_scan() {
-        let (_, outputs) = LibraryState::default()
+        let mut state = LibraryState::default();
+        let outputs = state
             .transition(LibraryMessage::Cmd(LibraryCmd::Scan {
                 music_dir: PathBuf::from("/music"),
                 revision: Revision::default(),
@@ -350,7 +327,8 @@ mod tests {
     #[test]
     fn a_file_change_arms_the_debounce_and_the_due_debounce_rescans_once() {
         let music_dir = PathBuf::from("/music");
-        let (driver, _) = LibraryState::default()
+        let mut driver = LibraryState::default();
+        driver
             .transition(LibraryMessage::Cmd(LibraryCmd::Scan {
                 music_dir: music_dir.clone(),
                 revision: Revision::default(),
@@ -359,13 +337,14 @@ mod tests {
             .unwrap();
 
         let at = Instant::now();
-        let (armed, outputs) = driver
+        let mut armed = driver;
+        let outputs = armed
             .transition(LibraryMessage::FilesChanged { at, event: Ok(()) })
             .unwrap();
         assert!(outputs.is_empty());
         assert_eq!(armed.deadline(), Some(at + DEBOUNCE));
 
-        let (_, due_outputs) = armed.transition(LibraryMessage::DebounceDue).unwrap();
+        let due_outputs = armed.transition(LibraryMessage::DebounceDue).unwrap();
         assert!(matches!(
             due_outputs.as_slice(),
             [LibraryEffect::Execute(LibraryCmd::Scan { music_dir: rescanned, .. })]
@@ -376,7 +355,8 @@ mod tests {
     #[test]
     fn an_overflowed_event_channel_rescans_once() {
         let music_dir = PathBuf::from("/music");
-        let (driver, _) = LibraryState::default()
+        let mut driver = LibraryState::default();
+        driver
             .transition(LibraryMessage::Cmd(LibraryCmd::Scan {
                 music_dir: music_dir.clone(),
                 revision: Revision::default(),
@@ -385,12 +365,13 @@ mod tests {
             .unwrap();
 
         let at = Instant::now();
-        let (armed, outputs) = driver
+        let mut armed = driver;
+        let outputs = armed
             .transition(LibraryMessage::EventsOverflowed { at })
             .unwrap();
         assert!(outputs.is_empty());
 
-        let (_, due_outputs) = armed.transition(LibraryMessage::DebounceDue).unwrap();
+        let due_outputs = armed.transition(LibraryMessage::DebounceDue).unwrap();
         assert!(matches!(
             due_outputs.as_slice(),
             [LibraryEffect::Execute(LibraryCmd::Scan { music_dir: rescanned, .. })]
@@ -405,7 +386,8 @@ mod tests {
             revision: Revision::default(),
         });
 
-        let (_, outputs) = LibraryState::default()
+        let mut state = LibraryState::default();
+        let outputs = state
             .transition(LibraryMessage::Executed(Ok(executed)))
             .unwrap();
 
@@ -417,7 +399,8 @@ mod tests {
 
     #[test]
     fn an_execution_error_tells_a_library_failure() {
-        let (_, outputs) = LibraryState::default()
+        let mut state = LibraryState::default();
+        let outputs = state
             .transition(LibraryMessage::Executed(Err(library::Error::NoUserDirs)))
             .unwrap();
 
@@ -429,7 +412,8 @@ mod tests {
 
     #[test]
     fn an_execution_with_no_event_tells_nothing() {
-        let (_, outputs) = LibraryState::default()
+        let mut state = LibraryState::default();
+        let outputs = state
             .transition(LibraryMessage::Executed(Ok(None)))
             .unwrap();
 
@@ -443,9 +427,8 @@ mod tests {
             size_px: 64,
         };
 
-        let (_, outputs) = LibraryState::default()
-            .transition(LibraryMessage::Cover(request))
-            .unwrap();
+        let mut state = LibraryState::default();
+        let outputs = state.transition(LibraryMessage::Cover(request)).unwrap();
 
         assert!(matches!(outputs.as_slice(), [LibraryEffect::Decode(_)]));
     }
@@ -453,7 +436,8 @@ mod tests {
     #[test]
     fn a_cover_request_while_decoding_waits() {
         let path = PathBuf::from("/music/one.mp3");
-        let (driver, _) = LibraryState::default()
+        let mut driver = LibraryState::default();
+        driver
             .transition(LibraryMessage::Cover(CoverRequest {
                 path: path.clone(),
                 size_px: 64,
@@ -465,10 +449,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(Rejected {
-                reason: LibraryDriverError::Decoding(DecodingError::WhileBusy),
-                ..
-            })
+            Err(LibraryDriverError::Decoding(DecodingError::WhileBusy))
         ));
     }
 
@@ -485,7 +466,7 @@ mod tests {
         let mut driver = LibraryState::default();
         driver.cover_cache.remember(&finished("/music/one.mp3"));
 
-        let (_, outputs) = driver
+        let outputs = driver
             .transition(LibraryMessage::Cover(CoverRequest {
                 path: PathBuf::from("/music/one.mp3"),
                 size_px: 64,
@@ -508,14 +489,13 @@ mod tests {
             path: PathBuf::from("/music/one.mp3"),
             size_px: 64,
         };
-        let (driver, first) = LibraryState::default()
-            .transition(LibraryMessage::Cover(request()))
-            .unwrap();
-        let (driver, _) = driver
+        let mut driver = LibraryState::default();
+        let first = driver.transition(LibraryMessage::Cover(request())).unwrap();
+        driver
             .transition(LibraryMessage::Decoded(finished("/music/one.mp3")))
             .unwrap();
 
-        let (_, second) = driver.transition(LibraryMessage::Cover(request())).unwrap();
+        let second = driver.transition(LibraryMessage::Cover(request())).unwrap();
 
         assert!(matches!(first.as_slice(), [LibraryEffect::Decode(_)]));
         assert!(matches!(second.as_slice(), [LibraryEffect::Publish(_)]));

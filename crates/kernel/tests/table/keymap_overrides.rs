@@ -102,7 +102,7 @@ fn next_in_search() -> KeymapOverrides {
         Action::Next,
         KeyOverride {
             chord: "n".to_string(),
-            context: KeyContext::Search,
+            key_context: KeyContext::Search,
         },
     )])
 }

@@ -4,19 +4,23 @@ use crate::domain::{
     ChordPrefix,
     Cursor,
     Keymap,
+    Moment,
     Overlay,
-    PlaylistIndex,
+    ViewIndex,
     library::SortKey,
 };
 
-pub const TOAST_LIFETIME: Duration = Duration::from_secs(3);
+pub const TOAST_SECONDS: u64 = 5;
+pub const TOAST_LIFETIME: Duration = Duration::from_secs(TOAST_SECONDS);
+pub const TOAST_STACK: usize = 3;
 
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
     pub overlay: Option<Overlay>,
     pub browse: Browse,
-    pub chord: Option<ChordPrefix>,
-    pub toast: Option<Toast>,
+    pub chord_prefix: Option<ChordPrefix>,
+    pub toasts: Vec<Toast>,
+    pub clock: Moment,
     pub keymap: Keymap,
     pub visible_rows: usize,
     pub played_for: Duration,
@@ -82,37 +86,62 @@ pub struct Browse {
 
 impl Browse {
     #[must_use]
-    pub fn selected(&self) -> PlaylistIndex {
-        PlaylistIndex::new(self.cursor.index())
+    pub fn selected(&self) -> ViewIndex {
+        ViewIndex::new(self.cursor.index())
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToastLevel {
+pub enum ToastKind {
     Info,
+    Success,
+    Warning,
     Error,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Toast {
-    pub level: ToastLevel,
-    pub text: String,
+    pub kind: ToastKind,
+    pub title: String,
+    pub text: Option<String>,
+    pub raised_at: Moment,
 }
 
 impl Toast {
-    #[must_use]
-    pub fn error(text: String) -> Self {
+    fn of(kind: ToastKind, title: impl Into<String>) -> Self {
         Self {
-            level: ToastLevel::Error,
-            text,
+            kind,
+            title: title.into(),
+            text: None,
+            raised_at: Moment::default(),
         }
     }
 
     #[must_use]
-    pub fn info(text: String) -> Self {
+    pub fn info(title: impl Into<String>) -> Self {
+        Self::of(ToastKind::Info, title)
+    }
+
+    #[must_use]
+    pub fn success(title: impl Into<String>) -> Self {
+        Self::of(ToastKind::Success, title)
+    }
+
+    #[must_use]
+    pub fn warning(title: impl Into<String>) -> Self {
+        Self::of(ToastKind::Warning, title)
+    }
+
+    #[must_use]
+    pub fn error(title: impl Into<String>) -> Self {
+        Self::of(ToastKind::Error, title)
+    }
+
+    #[must_use]
+    pub fn with_text(self, text: impl Into<String>) -> Self {
         Self {
-            level: ToastLevel::Info,
-            text,
+            text: Some(text.into()),
+            ..self
         }
     }
 }
@@ -132,20 +161,7 @@ pub struct SaveLine {
 impl Workspace {
     #[must_use]
     pub fn save_line(&self) -> Option<SaveLine> {
-        match &self.overlay {
-            Some(Overlay::SavePlaylist { typed, error: None }) => Some(SaveLine {
-                text: format!("Save playlist: {}", typed.input),
-                phase: SavePhase::Prompt,
-            }),
-            Some(Overlay::SavePlaylist {
-                error: Some(reason),
-                ..
-            }) => Some(SaveLine {
-                text: reason.to_string(),
-                phase: SavePhase::Failure,
-            }),
-            Some(_) | None => None,
-        }
+        self.overlay.as_ref().and_then(Overlay::save_line)
     }
 }
 
@@ -167,7 +183,7 @@ mod save_line_tests {
                 },
                 error: None,
             }),
-            toast: Some(Toast::error("stale error".into())),
+            toasts: vec![Toast::error("stale error")],
             ..Workspace::default()
         };
         assert_eq!(

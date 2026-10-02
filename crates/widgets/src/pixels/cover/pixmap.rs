@@ -58,8 +58,8 @@ pub(crate) fn vinyl_key(
     size_px: u32,
 ) -> VinylCacheKey {
     VinylCacheKey {
-        config_revision: scene.model.revisions.config,
-        theme_revision: scene.model.revisions.theme,
+        config_revision: scene.revisions.config,
+        theme_revision: scene.revisions.theme,
         path: decoded.map(|cover| cover.path.clone()),
         size_px,
         colors: VinylStyle::from_theme(&scene.active_theme()),

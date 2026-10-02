@@ -1,5 +1,4 @@
-// GUARD: every file-scanning guard in the workspace, all built on one `support`
-// module.
+// GUARD: every file-scanning guard, built on one `support` module.
 
 mod support;
 

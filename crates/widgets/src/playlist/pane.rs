@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use kernel::{
-    domain::{Favorites, PlaylistIndex, ScanStatus},
+    domain::{Favorites, ScanStatus, ViewIndex},
     playlist::Playlist,
 };
 use ratatui::{
@@ -27,7 +27,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LibraryLoad {
+pub enum LibraryLoad {
     Loading,
     Ready,
 }
@@ -35,10 +35,10 @@ pub(crate) enum LibraryLoad {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PlaylistView<'a> {
     pub(crate) playlist: &'a Playlist,
-    pub(crate) queue: &'a [PlaylistIndex],
+    pub(crate) queue: &'a [ViewIndex],
     pub(crate) favorites: &'a Favorites,
     pub(crate) browse_selected: usize,
-    pub(crate) playing: Option<PlaylistIndex>,
+    pub(crate) playing: Option<ViewIndex>,
     pub(crate) library_loading: LibraryLoad,
     pub(crate) scan: ScanStatus,
     pub(crate) sleep_left: Option<Duration>,
@@ -113,7 +113,7 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistPane<'_>
         return;
     }
 
-    let playing_index = view.playing.map(PlaylistIndex::get);
+    let playing_index = view.playing.map(ViewIndex::get);
 
     let window = visible_rows(&WindowFit {
         view,
@@ -152,8 +152,7 @@ mod tests {
         Message,
         Moment,
         PlaybackRequest,
-        PlaylistRequest,
-        domain::{Cursor, Favorites, Model, PlaylistIndex, ScanStatus, Track},
+        domain::{Cursor, Favorites, Model, ScanStatus, Track, TrackIndex, ViewIndex},
         playlist::Playlist,
         update::update,
     };
@@ -231,7 +230,7 @@ mod tests {
         let mut playlist = library(3);
         playlist.cursor = Cursor::with_len(3).at(1);
         let theme = noir();
-        let queue = [PlaylistIndex::new(2)];
+        let queue = [ViewIndex::new(2)];
         let mut favorites = Favorites::default();
         if let Some(first) = playlist.tracks.first() {
             favorites.toggle(first.path().to_path_buf());
@@ -242,7 +241,7 @@ mod tests {
                 queue: &queue,
                 favorites: &favorites,
                 browse_selected: 0,
-                playing: Some(PlaylistIndex::new(1)),
+                playing: Some(ViewIndex::new(1)),
                 library_loading: LibraryLoad::Ready,
                 scan: ScanStatus::Idle,
                 sleep_left: None,
@@ -259,14 +258,14 @@ mod tests {
     fn every_queued_row_ends_with_its_position_chip() {
         let playlist = library(14);
         let theme = noir();
-        let queue: Vec<PlaylistIndex> = (1..13).map(PlaylistIndex::new).collect();
+        let queue: Vec<ViewIndex> = (1..13).map(ViewIndex::new).collect();
         let widget = PlaylistPane {
             view: PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
                 browse_selected: 0,
-                playing: Some(PlaylistIndex::new(0)),
+                playing: Some(ViewIndex::new(0)),
                 library_loading: LibraryLoad::Ready,
                 scan: ScanStatus::Idle,
                 sleep_left: None,
@@ -283,14 +282,14 @@ mod tests {
     fn a_narrow_pane_truncates_the_title_and_keeps_the_chip_room_for_the_title() {
         let playlist = library(3);
         let theme = noir();
-        let queue = [PlaylistIndex::new(1), PlaylistIndex::new(2)];
+        let queue = [ViewIndex::new(1), ViewIndex::new(2)];
         let widget = PlaylistPane {
             view: PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
                 browse_selected: 0,
-                playing: Some(PlaylistIndex::new(0)),
+                playing: Some(ViewIndex::new(0)),
                 library_loading: LibraryLoad::Ready,
                 scan: ScanStatus::Idle,
                 sleep_left: None,
@@ -307,14 +306,14 @@ mod tests {
     fn a_narrow_pane_truncates_the_title_and_keeps_the_chip_room_for_the_chip_alone() {
         let playlist = library(3);
         let theme = noir();
-        let queue = [PlaylistIndex::new(1), PlaylistIndex::new(2)];
+        let queue = [ViewIndex::new(1), ViewIndex::new(2)];
         let widget = PlaylistPane {
             view: PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
                 browse_selected: 0,
-                playing: Some(PlaylistIndex::new(0)),
+                playing: Some(ViewIndex::new(0)),
                 library_loading: LibraryLoad::Ready,
                 scan: ScanStatus::Idle,
                 sleep_left: None,
@@ -337,7 +336,7 @@ mod tests {
             ..Playlist::default()
         };
         let theme = noir();
-        let queue = [PlaylistIndex::new(0)];
+        let queue = [ViewIndex::new(0)];
         let widget = PlaylistPane {
             view: PlaylistView {
                 playlist: &playlist,
@@ -441,7 +440,7 @@ mod tests {
                 queue: &[],
                 favorites: &EMPTY_FAVORITES,
                 browse_selected: 2,
-                playing: Some(PlaylistIndex::new(1)),
+                playing: Some(ViewIndex::new(1)),
                 library_loading: LibraryLoad::Ready,
                 scan: ScanStatus::Idle,
                 sleep_left: None,
@@ -484,7 +483,7 @@ mod tests {
                 queue: &[],
                 favorites: &EMPTY_FAVORITES,
                 browse_selected: 2,
-                playing: Some(PlaylistIndex::new(0)),
+                playing: Some(ViewIndex::new(0)),
                 library_loading: LibraryLoad::Ready,
                 scan: ScanStatus::Idle,
                 sleep_left: None,
@@ -571,13 +570,9 @@ mod tests {
             Message::Playback(PlaybackRequest::ToggleShuffle),
             Moment::default(),
         );
-        let mut order: Vec<usize> = vec![0, 39];
-        order.extend(1..39);
-        let _ = update(
-            &mut model,
-            Message::Playlist(PlaylistRequest::ShuffleRolled(order)),
-            Moment::default(),
-        );
+        let mut order: Vec<TrackIndex> = vec![TrackIndex::new(0), TrackIndex::new(39)];
+        order.extend((1..39).map(TrackIndex::new));
+        let _ = update(&mut model, Message::ShuffleRolled(order), Moment::default());
         let _ = update(
             &mut model,
             Message::Playback(PlaybackRequest::Next),

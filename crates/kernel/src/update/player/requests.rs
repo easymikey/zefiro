@@ -1,101 +1,100 @@
-use std::{sync::Arc, time::Duration};
+use std::{mem, sync::Arc, time::Duration};
 
 use crate::{
     cmd::{Cmd, PlaybackChange},
-    domain::{Moment, Pause, Player, Playhead, Preload, Track},
-    update::player::{Anchor, Stamp, StartOrigin, Transition, seek_effect, start},
+    domain::{Moment, PausedBy, Player, Playhead, Preload, Track},
+    update::player::{Anchor, PlayerError, Stamp, StartOrigin, seek_effect},
 };
 
 impl Player {
     pub(crate) fn toggle(
-        self,
+        &mut self,
         current: Option<Arc<Track>>,
         stamp: Stamp,
-    ) -> Transition {
-        let anchor = stamp.anchor;
+    ) -> Result<Cmd, PlayerError> {
         match self {
-            Player::Stopped => current.map_or_else(
-                || Player::Stopped.refuse(),
-                |track| Ok(start(track, StartOrigin::User, stamp)),
-            ),
-            loading @ Player::Loading { .. } => loading.refuse(),
-            playing @ Player::Playing { .. } => {
-                playing.pause(anchor.since, Pause::ByListener)
+            Player::Stopped => {
+                let track = current.ok_or(PlayerError::Stopped)?;
+                Ok(self.start(track, StartOrigin::User(stamp)))
             }
-            Player::Paused { track, at, .. } => Ok((
-                Player::Playing {
-                    track,
-                    head: Playhead::anchored(at, anchor.since, anchor.speed),
-                    preload: Preload::None,
-                },
-                PlaybackChange::Play.cued(),
-            )),
+            Player::Loading { .. } => Err(PlayerError::Loading),
+            Player::Playing { .. } => {
+                Ok(self.pause(stamp.anchor.since, PausedBy::Listener))
+            }
+            Player::Paused { .. } => Ok(self.resume(stamp.anchor)),
         }
     }
 
-    pub(crate) fn seek(self, target: Duration, now: Moment) -> Transition {
+    pub(crate) fn seek(
+        &mut self,
+        target: Duration,
+        now: Moment,
+    ) -> Result<Cmd, PlayerError> {
         match self {
-            Player::Playing {
-                track,
-                head,
-                preload,
-            } => Ok((
-                Player::Playing {
-                    track,
-                    head: Playhead::anchored(target, now, head.speed),
-                    preload: preload.seek_reset(),
-                },
-                seek_effect(target),
-            )),
-            Player::Paused { track, pause, .. } => Ok((
-                Player::Paused {
-                    track,
-                    at: target,
-                    pause,
-                },
-                seek_effect(target),
-            )),
-            other @ (Player::Loading { .. } | Player::Stopped) => other.refuse(),
+            Player::Playing { head, preload, .. } => {
+                *head = Playhead::anchored(target, now, head.speed);
+                *preload = mem::replace(preload, Preload::None).seek_reset();
+                Ok(seek_effect(target))
+            }
+            Player::Paused { at, .. } => {
+                *at = target;
+                Ok(seek_effect(target))
+            }
+            Player::Loading { .. } | Player::Stopped => Err(self.refusal()),
         }
     }
 
-    pub(crate) fn pause(self, now: Moment, pause: Pause) -> Transition {
-        match self {
-            Player::Playing { track, head, .. } => Ok((
-                Player::Paused {
+    pub(crate) fn pause(&mut self, now: Moment, by: PausedBy) -> Cmd {
+        match mem::replace(self, Player::Stopped) {
+            Player::Playing { track, head, .. } => {
+                *self = Player::Paused {
                     track,
                     at: head.position_at(now),
-                    pause,
-                },
-                PlaybackChange::Pause.cued(),
-            )),
+                    by,
+                };
+                PlaybackChange::Pause.cued()
+            }
             other @ (Player::Paused { .. }
             | Player::Loading { .. }
-            | Player::Stopped) => Ok((other, Cmd::None)),
+            | Player::Stopped) => {
+                *self = other;
+                Cmd::None
+            }
         }
     }
 
-    pub(crate) fn release(self, anchor: Anchor) -> Transition {
+    pub(crate) fn release(&mut self, anchor: Anchor) -> Cmd {
         match self {
             Player::Paused {
-                track,
-                at,
-                pause: Pause::ByOverlay,
-            } => Ok((
-                Player::Playing {
-                    track,
-                    head: Playhead::anchored(at, anchor.since, anchor.speed),
-                    preload: Preload::None,
-                },
-                PlaybackChange::Play.cued(),
-            )),
-            other @ (Player::Paused {
-                pause: Pause::ByListener,
+                by: PausedBy::Overlay,
+                ..
+            } => self.resume(anchor),
+            Player::Paused {
+                by: PausedBy::Listener,
                 ..
             }
             | Player::Playing { .. }
             | Player::Loading { .. }
-            | Player::Stopped) => Ok((other, Cmd::None)),
+            | Player::Stopped => Cmd::None,
+        }
+    }
+
+    fn resume(&mut self, anchor: Anchor) -> Cmd {
+        match mem::replace(self, Player::Stopped) {
+            Player::Paused { track, at, .. } => {
+                *self = Player::Playing {
+                    track,
+                    head: Playhead::anchored(at, anchor.since, anchor.speed),
+                    preload: Preload::None,
+                };
+                PlaybackChange::Play.cued()
+            }
+            other @ (Player::Playing { .. }
+            | Player::Loading { .. }
+            | Player::Stopped) => {
+                *self = other;
+                Cmd::None
+            }
         }
     }
 }

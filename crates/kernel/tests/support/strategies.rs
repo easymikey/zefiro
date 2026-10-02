@@ -8,7 +8,7 @@ use kernel::{
     ConfigEvent,
     DecodeError,
     Direction,
-    DriverMessage,
+    DriverEvent,
     Favorites,
     HistoryRequest,
     Key,
@@ -37,11 +37,11 @@ use kernel::{
         Driver,
         DriverError,
         OutputDevice,
-        PlaylistIndex,
         Revision,
         SettingRow,
         StreamError,
         ThemeName,
+        ViewIndex,
     },
     message::SeekTenths,
     playlist::{PlaylistFileName, RepeatMode},
@@ -103,8 +103,8 @@ fn key_press() -> impl Strategy<Value = KeyPress> {
     })
 }
 
-fn playlist_index() -> impl Strategy<Value = PlaylistIndex> {
-    (0usize..6).prop_map(PlaylistIndex::new)
+fn playlist_index() -> impl Strategy<Value = ViewIndex> {
+    (0usize..6).prop_map(ViewIndex::new)
 }
 
 fn overlay_name() -> impl Strategy<Value = OverlayName> {
@@ -168,7 +168,7 @@ fn playback() -> impl Strategy<Value = PlaybackRequest> {
             PlaybackRequest::Pause,
             PlaybackRequest::SeekForward,
             PlaybackRequest::SeekBack,
-            PlaybackRequest::Hold,
+            PlaybackRequest::HoldForOverlay,
             PlaybackRequest::Release,
             PlaybackRequest::Stop,
             PlaybackRequest::Next,
@@ -179,11 +179,11 @@ fn playback() -> impl Strategy<Value = PlaybackRequest> {
             PlaybackRequest::AbMark,
         ]),
         (-30i64..30).prop_map(|seconds| PlaybackRequest::SeekBy { seconds }),
-        (-3i8..3).prop_map(|steps| PlaybackRequest::NudgeVolume { steps }),
-        (-3i8..3).prop_map(|steps| PlaybackRequest::NudgeSpeed { steps }),
+        (-3i8..3).prop_map(|steps| PlaybackRequest::StepVolume { steps }),
+        (-3i8..3).prop_map(|steps| PlaybackRequest::StepSpeed { steps }),
         (0u64..200).prop_map(|secs| PlaybackRequest::SeekTo(Duration::from_secs(secs))),
         (0u8..10).prop_map(|tenths| {
-            PlaybackRequest::SeekFraction(SeekTenths::try_from(tenths).unwrap())
+            PlaybackRequest::SeekTenths(SeekTenths::try_from(tenths).unwrap())
         }),
     ]
 }
@@ -202,7 +202,7 @@ fn browse() -> impl Strategy<Value = BrowseRequest> {
         ]),
         playlist_index().prop_map(BrowseRequest::Trash),
         playlist_index().prop_map(BrowseRequest::CursorTo),
-        (-4i64..4).prop_map(|rows| BrowseRequest::CursorBy { rows }),
+        (-4isize..4).prop_map(|rows| BrowseRequest::CursorBy { rows }),
         direction().prop_map(BrowseRequest::PageBy),
     ]
 }
@@ -243,11 +243,7 @@ fn audio() -> impl Strategy<Value = AudioEvent> {
 }
 
 fn loaded() -> impl Strategy<Value = PlaylistRequest> {
-    prop_oneof![
-        playlist_index().prop_map(PlaylistRequest::JumpTo),
-        proptest::collection::vec(0usize..6, 0..6)
-            .prop_map(PlaylistRequest::ShuffleRolled),
-    ]
+    playlist_index().prop_map(PlaylistRequest::JumpTo)
 }
 
 fn library() -> impl Strategy<Value = LibraryEvent> {
@@ -269,11 +265,9 @@ fn config() -> impl Strategy<Value = ConfigEvent> {
 fn driver() -> impl Strategy<Value = Message> {
     let driver = select(Driver::ALL.to_vec());
     let change = prop_oneof![
-        Just(DriverMessage::Died(DriverError::Panicked(
-            "boom".to_string()
-        ))),
-        Just(DriverMessage::Stopped),
-        Just(DriverMessage::Full),
+        Just(DriverEvent::Died(DriverError::panicked("boom".to_string()))),
+        Just(DriverEvent::Stopped),
+        Just(DriverEvent::Full),
     ];
     (driver, change).prop_map(|(driver, change)| Message::Driver {
         driver,
@@ -290,7 +284,7 @@ fn stamped() -> impl Strategy<Value = Revision> {
 fn event() -> impl Strategy<Value = Message> {
     prop_oneof![
         (
-            select(vec![SettingRow::Crossfade, SettingRow::Replaygain]),
+            select(vec![SettingRow::Crossfade, SettingRow::ReplayGain]),
             direction()
         )
             .prop_map(|(row, direction)| Message::Adjust { row, direction }),

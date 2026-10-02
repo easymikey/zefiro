@@ -2,7 +2,6 @@
 
 use std::{sync::Arc, time::Duration};
 
-use config::AppearanceFile;
 use kernel::{
     Moment,
     domain::{
@@ -15,24 +14,43 @@ use kernel::{
         Speed,
         Tags,
         Track,
+        appearance::Look,
     },
     update::keymap::{Bindings, KeyBinding},
 };
 use widgets::{
     ColorDepth,
+    Colors,
     DEFAULT_CELL_ASPECT,
     PixelPath,
     SPECTRUM_BANDS,
     Scene,
+    ScenePresentation,
     Spectrum,
     Theme,
+    ThemeSeed,
 };
 
 pub(crate) fn noir_theme() -> Theme {
     let file =
         config::parse_theme(include_str!("../../../../themes/noir.toml"), "noir")
             .unwrap();
-    Theme::from(file)
+    let c = file.colors;
+    let palette = ThemeSeed {
+        background: c.background,
+        foreground: c.foreground,
+        bright_foreground: c.bright_foreground,
+        accent: c.accent,
+        green: c.green,
+        yellow: c.yellow,
+        red: c.red,
+        window_background: c.window_background,
+    };
+    Theme {
+        name: file.name,
+        colors: Colors::derive(&palette),
+        scanning_label: file.scanning_label,
+    }
 }
 
 pub(crate) fn bindings() -> Vec<KeyBinding> {
@@ -77,7 +95,6 @@ pub(crate) fn playing_model(
 pub(crate) struct Scenery {
     pub(crate) model: Model,
     pub(crate) theme: Theme,
-    pub(crate) appearance: AppearanceFile,
     pub(crate) bindings: Vec<KeyBinding>,
     pub(crate) spectrum: Spectrum,
 }
@@ -87,27 +104,31 @@ impl Scenery {
         Self {
             model,
             theme: noir_theme(),
-            appearance: AppearanceFile::default(),
             bindings: bindings(),
             spectrum: [0.0; SPECTRUM_BANDS],
         }
     }
 
+    pub(crate) fn look_mut(&mut self) -> &mut Look {
+        &mut self.model.settings.look
+    }
+
     pub(crate) fn scene_at(&self, clock: Duration) -> Scene<'_> {
-        Scene {
-            model: &self.model,
-            theme: &self.theme,
-            color_depth: ColorDepth::TrueColor,
-            appearance: &self.appearance,
-            bindings: &self.bindings,
-            spectrum: &self.spectrum,
-            pixel_path: PixelPath::Protocol,
-            cell_aspect: DEFAULT_CELL_ASPECT,
-            clock,
-            now: Moment::default(),
-            music_dir: "/home/user/Music",
-            sleep_left: None,
-        }
+        Scene::from_model(
+            &self.model,
+            ScenePresentation {
+                theme: &self.theme,
+                color_depth: ColorDepth::TrueColor,
+                bindings: &self.bindings,
+                spectrum: &self.spectrum,
+                pixel_path: PixelPath::Protocol,
+                cell_aspect: DEFAULT_CELL_ASPECT,
+                clock,
+                now: Moment::default(),
+                music_dir: "/home/user/Music",
+                sleep_left: None,
+            },
+        )
     }
 
     pub(crate) fn scene(&self) -> Scene<'_> {

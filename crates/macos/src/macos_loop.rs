@@ -8,7 +8,7 @@ use std::{
 };
 
 use crossbeam_channel::{Receiver, Select, bounded, never};
-use kernel::{MacosCmd, MacosEvent, Outbox, SendError, Track, update::Machine};
+use kernel::{MacosCmd, MacosEvent, Outbox, SendError, Track};
 use objc2::rc::{Retained, autoreleasepool};
 use objc2_media_player::MPMediaItemArtwork;
 
@@ -64,11 +64,7 @@ impl MacosLoop {
         }
     }
 
-    pub fn run<O: Outbox<MacosEvent>>(
-        mut self,
-        commands: &Receiver<MacosCmd>,
-        outbox: &O,
-    ) {
+    pub fn run(mut self, commands: &Receiver<MacosCmd>, outbox: &Outbox<MacosEvent>) {
         autoreleasepool(|_| self.publish(Instant::now()));
         if autoreleasepool(|_| self.poll(outbox)).is_break() {
             return;
@@ -76,10 +72,10 @@ impl MacosLoop {
         while self.select_once(commands, outbox).is_continue() {}
     }
 
-    fn select_once<O: Outbox<MacosEvent>>(
+    fn select_once(
         &mut self,
         commands: &Receiver<MacosCmd>,
-        outbox: &O,
+        outbox: &Outbox<MacosEvent>,
     ) -> ControlFlow<()> {
         let mut select = Select::new();
         let command_case = select.recv(commands);
@@ -131,8 +127,7 @@ impl MacosLoop {
             }
             MacosCmd::Volume(volume) => {
                 if write_volume(default_output_device(), volume).is_ok() {
-                    let Ok(_) =
-                        self.hardware.echo.update(VolumeMessage::Written(volume));
+                    self.hardware.echo.apply(VolumeMessage::Written(volume));
                 }
             }
         }
@@ -142,7 +137,7 @@ impl MacosLoop {
         let track = now_playing
             .as_deref()
             .map(|track| track.path().to_path_buf());
-        let Ok(effect) = self.cover.update(CoverMessage::TrackShown(track));
+        let effect = self.cover.apply(CoverMessage::TrackShown(track));
         self.apply_cover_effect(effect);
         self.now_playing = now_playing;
         self.clock = self.clock.seek(Duration::ZERO, now);
@@ -150,7 +145,7 @@ impl MacosLoop {
     }
 
     fn cover_read(&mut self, bytes: CoverBytes) {
-        let Ok(effect) = self.cover.update(CoverMessage::Read(bytes));
+        let effect = self.cover.apply(CoverMessage::Read(bytes));
         self.apply_cover_effect(effect);
         self.publish(Instant::now());
     }
@@ -178,7 +173,7 @@ impl MacosLoop {
         publish(panel, now);
     }
 
-    fn poll<O: Outbox<MacosEvent>>(&mut self, outbox: &O) -> ControlFlow<()> {
+    fn poll(&mut self, outbox: &Outbox<MacosEvent>) -> ControlFlow<()> {
         let Some(watch) = &mut self.watch else {
             return ControlFlow::Continue(());
         };
@@ -188,21 +183,20 @@ impl MacosLoop {
             current_device: current,
             volume: read_volume(current),
         };
-        let Ok(mut effect) = self.hardware.update(polled);
+        let mut effect = self.hardware.apply(polled);
         if let Some(device) = effect.rebind
             && let Err(error) = watch.rebind_to(device)
         {
-            effect
-                .events
-                .push(MacosEvent::HardwareWatchError(error.to_string()));
+            let detail = error.to_string();
+            effect.events.push(MacosEvent::HardwareWatchError(detail));
         }
         send_events(effect.events, outbox)
     }
 }
 
-fn send_events<O: Outbox<MacosEvent>>(
+fn send_events(
     events: Vec<MacosEvent>,
-    outbox: &O,
+    outbox: &Outbox<MacosEvent>,
 ) -> ControlFlow<()> {
     for event in events {
         match outbox.send(event) {
@@ -229,15 +223,24 @@ fn keep_last_volume(commands: Vec<MacosCmd>) -> Vec<MacosCmd> {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, ops::ControlFlow};
+    use std::{ops::ControlFlow, thread, time::Duration};
 
-    use kernel::{Bounded, MacosCmd, MacosEvent, Outbox, Percent, Playback, SendError};
+    use crossbeam_channel::bounded;
+    use kernel::{
+        Bounded,
+        Congestion,
+        MacosCmd,
+        MacosEvent,
+        Outbox,
+        Percent,
+        Playback,
+    };
     use rstest::rstest;
 
     use crate::macos_loop::{keep_last_volume, send_events};
 
-    fn volume(value: u8) -> MacosCmd {
-        MacosCmd::Volume(Percent::clamped(value))
+    fn volume(level: u8) -> MacosCmd {
+        MacosCmd::Volume(Percent::clamped(level))
     }
 
     #[rstest]
@@ -269,39 +272,47 @@ mod tests {
         assert_eq!(keep_last_volume(commands), applied);
     }
 
-    struct FakeOutbox {
-        sent: RefCell<Vec<MacosEvent>>,
-        send_result: Result<(), SendError>,
-    }
-
-    impl Outbox<MacosEvent> for FakeOutbox {
-        fn send(&self, event: MacosEvent) -> Result<(), SendError> {
-            self.sent.borrow_mut().push(event);
-            self.send_result
-        }
+    #[derive(Clone, Copy)]
+    enum Listener {
+        Roomy,
+        Slow,
+        Gone,
     }
 
     #[rstest]
-    #[case::sent(Ok(()), ControlFlow::Continue(()), 2)]
-    #[case::full(Err(SendError::Full), ControlFlow::Continue(()), 2)]
-    #[case::closed(Err(SendError::Closed), ControlFlow::Break(()), 1)]
+    #[case::sent(Listener::Roomy, ControlFlow::Continue(()))]
+    #[case::full(Listener::Slow, ControlFlow::Continue(()))]
+    #[case::closed(Listener::Gone, ControlFlow::Break(()))]
     fn send_events_stops_only_on_a_closed_outbox(
-        #[case] send_result: Result<(), SendError>,
+        #[case] listener: Listener,
         #[case] flow: ControlFlow<()>,
-        #[case] sent_count: usize,
     ) {
         let events = vec![
             MacosEvent::OutputRouteChanged,
             MacosEvent::OutputRouteChanged,
         ];
-        let outbox = FakeOutbox {
-            sent: RefCell::new(Vec::new()),
-            send_result,
+        let capacity = if matches!(listener, Listener::Slow) {
+            1
+        } else {
+            2
+        };
+        let (sender, receiver) = bounded(capacity);
+        let outbox = Outbox::new(sender, Congestion::default());
+        let drainer = match listener {
+            Listener::Roomy | Listener::Slow => Some(thread::spawn(move || {
+                thread::sleep(Duration::from_millis(20));
+                receiver.iter().take(2).count()
+            })),
+            Listener::Gone => {
+                drop(receiver);
+                None
+            }
         };
 
         let observed = send_events(events, &outbox);
 
         assert_eq!(observed, flow);
-        assert_eq!(outbox.sent.borrow().len(), sent_count);
+        let delivered = drainer.map_or(0, |drainer| drainer.join().unwrap());
+        assert_eq!(delivered, if flow.is_continue() { 2 } else { 0 });
     }
 }

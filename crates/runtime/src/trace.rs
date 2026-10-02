@@ -41,11 +41,11 @@ pub(crate) struct Trace {
 impl Trace {
     pub(crate) const CAPACITY: usize = 128;
 
-    pub(crate) fn push(&mut self, entry: TraceEntry) {
+    pub(crate) fn push(&mut self, traced: TraceEntry) {
         if self.entries.len() == Self::CAPACITY {
             self.entries.pop_front();
         }
-        self.entries.push_back(entry);
+        self.entries.push_back(traced);
     }
 
     pub(crate) fn record(&mut self, result: Result<(), TraceEntry>) {

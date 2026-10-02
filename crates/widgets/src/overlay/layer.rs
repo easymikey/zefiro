@@ -1,6 +1,16 @@
-use config::CoverStyle;
+use std::sync::Arc;
+
 use kernel::{
-    domain::{Model, Moment, Overlay, SavePhase, SettingRow},
+    domain::{
+        HistoryEntry,
+        Moment,
+        Overlay,
+        SaveLine,
+        SavePhase,
+        SettingRow,
+        Track,
+        appearance::CoverStyle,
+    },
     update::keymap::KeyBinding,
 };
 use ratatui::{
@@ -29,7 +39,9 @@ use crate::{
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OverlayContent<'a> {
-    pub(crate) model: &'a Model,
+    pub(crate) overlay: Option<&'a Overlay>,
+    pub(crate) tracks: &'a [Arc<Track>],
+    pub(crate) history: &'a [HistoryEntry],
     pub(crate) theme: ActiveTheme<'a>,
     pub(crate) settings_view: SettingsView<'a>,
     pub(crate) bindings: &'a [KeyBinding],
@@ -119,7 +131,7 @@ impl<'a> OverlayLayer<'a> {
 
     fn active(&'a self) -> Option<ActiveOverlay<'a>> {
         let avoid = self.avoid.as_slice();
-        match self.content.model.workspace.overlay.as_ref()? {
+        match self.content.overlay? {
             Overlay::Help => Some(ActiveOverlay::Help(HelpOverlay {
                 theme: self.content.theme,
                 bindings: self.content.bindings,
@@ -127,20 +139,21 @@ impl<'a> OverlayLayer<'a> {
             })),
             Overlay::Search(search) => Some(ActiveOverlay::Search(SearchOverlay {
                 theme: self.content.theme,
-                tracks: &self.content.model.playlist.tracks,
+                tracks: self.content.tracks,
                 search,
                 bounds: self.layout.search_bounds,
                 container: self.container(avoid),
             })),
             Overlay::History(cursor) => Some(ActiveOverlay::History(HistoryOverlay {
                 theme: self.content.theme,
-                entries: &self.content.model.history,
+                entries: self.content.history,
                 now: self.content.now,
                 selected: cursor.selected(),
                 container: self.container(avoid),
             })),
             Overlay::Settings { selected: current } => {
-                let rows = SettingRow::all(self.content.settings_view.custom_settings);
+                let rows =
+                    SettingRow::all(self.content.settings_view.appearance_settings);
                 let selected =
                     rows.iter().position(|row| *row == *current).unwrap_or(0);
                 Some(ActiveOverlay::Settings(SettingsOverlay {
@@ -189,16 +202,20 @@ impl<'a> OverlayLayer<'a> {
         }
     }
 
+    fn save_line(&self) -> Option<SaveLine> {
+        self.content.overlay.and_then(Overlay::save_line)
+    }
+
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> Option<OverlayAreas> {
-        if self.content.model.workspace.save_line().is_some() {
+        if self.save_line().is_some() {
             return banner_area(screen).map(OverlayAreas::Banner);
         }
         Some(self.active()?.areas(screen))
     }
 
     pub(crate) fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
-        if let Some(save_line) = self.content.model.workspace.save_line() {
+        if let Some(save_line) = self.save_line() {
             if let OverlayAreas::Banner(banner) = areas {
                 Paragraph::new(save_line.text.as_str())
                     .style(
@@ -231,10 +248,10 @@ mod tests {
         Model,
         Moment,
         Overlay,
-        PlaylistIndex,
         SearchQuery,
         SettingRow,
         TextEntry,
+        ViewIndex,
     };
     use ratatui::layout::Rect;
     use rstest::rstest;
@@ -243,7 +260,7 @@ mod tests {
         overlay::{
             layer::{OverlayContent, OverlayLayer},
             modal::OverlayAreas,
-            settings::test_support::{custom_settings, settings_values},
+            settings::test_support::{appearance_settings, settings_values},
         },
         screen::{Breakpoint, FrameLayout},
         test_support::{noir, rendered},
@@ -280,7 +297,9 @@ mod tests {
     ) -> OverlayLayer<'a> {
         OverlayLayer {
             content: OverlayContent {
-                model,
+                overlay: model.workspace.overlay.as_ref(),
+                tracks: &model.playlist.tracks,
+                history: &model.history,
                 theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
                 settings_view: settings_values(&[]),
                 bindings: &[],
@@ -342,7 +361,7 @@ mod tests {
     #[test]
     fn settings_overlay_lists_the_settings_view() {
         let theme = noir();
-        let custom = custom_settings();
+        let custom = appearance_settings();
         let model = model_with(Overlay::Settings {
             selected: SettingRow::first(&custom),
         });
@@ -360,7 +379,7 @@ mod tests {
     fn confirm_delete_overlay_shows_the_prompt() {
         let theme = noir();
         let model = model_with(Overlay::ConfirmDelete(DeleteCandidate {
-            track: PlaylistIndex::new(0),
+            index: ViewIndex::new(0),
             title: "Moon River".to_string(),
             artist: "Audrey Hepburn".to_string(),
         }));

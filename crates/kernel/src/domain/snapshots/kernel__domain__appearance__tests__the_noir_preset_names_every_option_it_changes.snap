@@ -1,5 +1,5 @@
 ---
-source: crates/config/src/appearance.rs
+source: crates/kernel/src/domain/appearance.rs
 expression: "preset_appearance(AppearancePreset::Noir)"
 ---
 Appearance {

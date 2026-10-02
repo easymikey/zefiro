@@ -1,80 +1,113 @@
+use std::path::PathBuf;
+
 use crate::{
     cmd::{Cmd, Cue, Effect, LibraryCmd, ScanMode, WindowColorsCmd},
-    domain::{CustomSetting, Model, Overlay, SettingRow, ThemeName, Toast},
+    domain::{
+        AppearanceSetting,
+        Overlay,
+        Revisions,
+        SettingRow,
+        Settings,
+        ThemeName,
+        Themes,
+        Toast,
+        Workspace,
+    },
     message::ConfigEvent,
     update::{error::UpdateError, workspace::SourceOutcome},
 };
 
+pub(crate) struct ConfigParts<'a> {
+    pub(crate) workspace: &'a mut Workspace,
+    pub(crate) revisions: &'a mut Revisions,
+    pub(crate) settings: &'a mut Settings,
+    pub(crate) themes: &'a mut Themes,
+    pub(crate) appearance_settings: &'a mut Vec<AppearanceSetting>,
+    pub(crate) music_dir: &'a mut PathBuf,
+}
+
 pub(crate) fn update(
-    model: &mut Model,
+    config: ConfigParts<'_>,
     event: ConfigEvent,
 ) -> Result<Cmd, UpdateError> {
+    let ConfigParts {
+        workspace,
+        revisions,
+        settings,
+        themes,
+        appearance_settings,
+        music_dir,
+    } = config;
     match event {
         ConfigEvent::KeymapReloaded(keys) => {
-            let changed = model.workspace.keymap.overrides() != &*keys;
-            let cmd = model.workspace.keymap_reloaded(*keys, &mut model.revisions);
+            let changed = workspace.keymap.overrides() != &*keys;
+            let cmd = workspace.keymap_reloaded(*keys, revisions);
             if changed {
-                let _ = model.revisions.config.bump();
+                let _ = revisions.config.bump();
             }
             Ok(cmd)
         }
-        ConfigEvent::ThemeReloaded(name) => Ok(theme_reloaded(model, name)),
-        ConfigEvent::ThemesLoaded(themes) => {
-            model.themes.names = themes;
+        ConfigEvent::ThemeReloaded(name) => Ok(theme_reloaded(revisions, name)),
+        ConfigEvent::AppearanceReloaded(look) => {
+            settings.look = look;
+            Ok(Cmd::None)
+        }
+        ConfigEvent::ThemesLoaded(names) => {
+            themes.names = names;
             Ok(Cmd::None)
         }
         ConfigEvent::MusicDirReloaded(reloaded) => {
-            Ok(music_dir_reloaded(model, reloaded))
+            Ok(music_dir_reloaded(music_dir, revisions, reloaded))
         }
-        ConfigEvent::CustomSettingsReloaded(settings) => {
-            custom_settings_reloaded(model, settings);
+        ConfigEvent::AppearanceSettingsReloaded(reloaded) => {
+            custom_settings_reloaded(workspace, appearance_settings, reloaded);
             Ok(Cmd::None)
         }
-        ConfigEvent::SourceFailed { source, text } => {
-            Ok(model.workspace.source_result(
-                SourceOutcome {
-                    source,
-                    text: Some(text),
-                },
-                &mut model.revisions,
-            ))
-        }
-        ConfigEvent::SourceRecovered(source) => {
-            Ok(model.workspace.source_recovered(source))
-        }
-        ConfigEvent::Error(failure) => Ok(model
-            .workspace
-            .show(Toast::error(failure.to_string()), &mut model.revisions)),
+        ConfigEvent::SourceFailed { source, text } => Ok(workspace.source_result(
+            SourceOutcome {
+                source,
+                text: Some(text),
+            },
+            revisions,
+        )),
+        ConfigEvent::SourceRecovered(source) => Ok(workspace.source_recovered(source)),
+        ConfigEvent::Error(failure) => Ok(workspace.show(
+            Toast::error("Config error").with_text(failure.to_string()),
+            revisions,
+        )),
     }
 }
 
-fn theme_reloaded(model: &mut Model, name: ThemeName) -> Cmd {
-    let _ = model.revisions.theme.bump();
+fn theme_reloaded(revisions: &mut Revisions, name: ThemeName) -> Cmd {
+    let _ = revisions.theme.bump();
     Cmd::from(Effect::WindowColors(WindowColorsCmd::Apply(name)))
         .then(Cue::ThemeChanged.into())
 }
 
-fn custom_settings_reloaded(model: &mut Model, settings: Vec<CustomSetting>) {
-    model.custom_settings = settings;
-    let Model {
-        workspace,
-        custom_settings,
-        ..
-    } = model;
+fn custom_settings_reloaded(
+    workspace: &mut Workspace,
+    appearance_settings: &mut Vec<AppearanceSetting>,
+    reloaded: Vec<AppearanceSetting>,
+) {
+    *appearance_settings = reloaded;
     let Some(Overlay::Settings { selected }) = &mut workspace.overlay else {
         return;
     };
-    *selected = selected.kept(&SettingRow::all(custom_settings));
+    *selected = selected.kept(&SettingRow::all(appearance_settings));
 }
 
-fn music_dir_reloaded(model: &mut Model, reloaded: std::path::PathBuf) -> Cmd {
-    if reloaded == model.music_dir {
+fn music_dir_reloaded(
+    music_dir: &mut PathBuf,
+    revisions: &mut Revisions,
+    reloaded: PathBuf,
+) -> Cmd {
+    if reloaded == *music_dir {
         Cmd::None
     } else {
-        model.music_dir = reloaded.clone();
+        *music_dir = reloaded.clone();
         Effect::Library(LibraryCmd::Scan {
             music_dir: reloaded,
-            revision: model.revisions.issue_scan(),
+            revision: revisions.issue_scan(),
             mode: ScanMode::Full,
         })
         .into()
@@ -95,11 +128,15 @@ mod tests {
             Model,
             ThemeName,
             Themes,
-            ToastLevel,
+            ToastKind,
         },
         message::ConfigEvent,
-        update::config::update,
+        update::{UpdateError, config, config_parts},
     };
+
+    fn update(model: &mut Model, event: ConfigEvent) -> Result<Cmd, UpdateError> {
+        config::update(config_parts(model), event)
+    }
 
     #[test]
     fn keymap_reload_bumps_the_config_revision() {
@@ -157,9 +194,9 @@ mod tests {
         )
         .unwrap();
 
-        let toast = model.workspace.toast.unwrap();
-        assert_eq!(toast.level, ToastLevel::Error);
-        assert_eq!(toast.text, "Config watch failed: x");
+        let toast = model.workspace.toasts.first().unwrap();
+        assert_eq!(toast.kind, ToastKind::Error);
+        assert_eq!(toast.text.as_deref(), Some("Config watch failed: x"));
     }
 
     fn rescanned_music_dir(cmd: &Cmd) -> Option<PathBuf> {

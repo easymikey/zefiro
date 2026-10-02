@@ -1,11 +1,12 @@
 ---
 source: crates/kernel/tests/table/router.rs
+assertion_line: 368
 expression: "walked(model, messages)"
 ---
 [
     (
         Playback(
-            NudgeSpeed {
+            StepSpeed {
                 steps: -1,
             },
         ),
@@ -39,9 +40,9 @@ expression: "walked(model, messages)"
                 0.75,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
 ]

@@ -1,6 +1,11 @@
 use std::{fmt, time::Duration};
 
-use crate::domain::{Crossfade, SleepPresets, time::SECONDS_PER_MINUTE};
+use crate::domain::{
+    Crossfade,
+    SleepPresets,
+    appearance::Look,
+    time::SECONDS_PER_MINUTE,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DeviceName(String);
@@ -63,7 +68,7 @@ pub struct ListedDevice {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AudioSettings {
     pub crossfade: Crossfade,
-    pub replaygain: Replaygain,
+    pub replay_gain: ReplayGain,
     pub device: OutputDevice,
     pub sleep_presets: SleepPresets,
 }
@@ -72,10 +77,11 @@ pub struct AudioSettings {
 pub struct Settings {
     pub audio: AudioSettings,
     pub output_devices: Vec<ListedDevice>,
+    pub look: Look,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Replaygain {
+pub enum ReplayGain {
     On,
     #[default]
     Off,

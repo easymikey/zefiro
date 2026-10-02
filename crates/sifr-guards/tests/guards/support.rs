@@ -1,5 +1,4 @@
-// GUARD: the one directory walk, allowlist row and stale-row check every guard
-// here is built on.
+// GUARD: the shared directory walk, allowlist row and stale-row check.
 
 use std::{
     collections::BTreeSet,
@@ -123,6 +122,30 @@ const WORKSPACE_CRATES: &[&str] = &[
     "audio", "config", "kernel", "library", "macos", "runtime", "sifr", "terminal",
     "widgets",
 ];
+
+pub(crate) fn sifr_runtime_dependencies(
+    manifest: &toml::Value,
+    out: &mut BTreeSet<String>,
+) {
+    let Some(table) = manifest.as_table() else {
+        return;
+    };
+    for (key, nested) in table {
+        if key == "dev-dependencies" {
+            continue;
+        }
+        let is_dependency_table =
+            matches!(key.as_str(), "dependencies" | "build-dependencies");
+        if is_dependency_table && let Some(dependencies) = nested.as_table() {
+            for name in dependencies.keys() {
+                if WORKSPACE_CRATES.contains(&name.as_str()) {
+                    out.insert(name.clone());
+                }
+            }
+        }
+        sifr_runtime_dependencies(nested, out);
+    }
+}
 
 pub(crate) fn sifr_dependencies(manifest: &toml::Value, out: &mut BTreeSet<String>) {
     let Some(table) = manifest.as_table() else {

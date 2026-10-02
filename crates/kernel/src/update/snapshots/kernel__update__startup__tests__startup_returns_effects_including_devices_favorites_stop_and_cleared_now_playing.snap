@@ -40,7 +40,7 @@ expression: effects
         ),
     ),
     Audio(
-        SetReplaygain(
+        SetReplayGain(
             On,
         ),
     ),

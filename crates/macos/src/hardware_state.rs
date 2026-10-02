@@ -1,10 +1,6 @@
 #![forbid(unsafe_code)]
 
-use kernel::{
-    MacosEvent,
-    Percent,
-    update::{Machine, Rejected},
-};
+use kernel::{MacosEvent, Percent};
 use objc2_core_audio::AudioObjectID;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -25,41 +21,26 @@ pub(crate) enum VolumeEffect {
     Changed(Percent),
 }
 
-impl Machine for VolumeEcho {
-    type Message = VolumeMessage;
-    type Error = std::convert::Infallible;
-    type Effect = VolumeEffect;
-
-    fn transition(
-        self,
-        message: VolumeMessage,
-    ) -> Result<(Self, VolumeEffect), Rejected<Self>> {
-        Ok(match message {
-            VolumeMessage::Written(volume) => (
-                Self {
-                    pending: Some(volume),
-                    last_reported: self.last_reported,
-                },
-                VolumeEffect::Nothing,
-            ),
-            VolumeMessage::Polled(volume) if self.pending == Some(volume) => (
-                Self {
-                    pending: None,
-                    last_reported: Some(volume),
-                },
-                VolumeEffect::Nothing,
-            ),
-            VolumeMessage::Polled(volume) if self.last_reported == Some(volume) => {
-                (self, VolumeEffect::Nothing)
+impl VolumeEcho {
+    pub(crate) fn apply(&mut self, message: VolumeMessage) -> VolumeEffect {
+        match message {
+            VolumeMessage::Written(volume) => {
+                self.pending = Some(volume);
+                VolumeEffect::Nothing
             }
-            VolumeMessage::Polled(volume) => (
-                Self {
-                    pending: self.pending,
-                    last_reported: Some(volume),
-                },
-                VolumeEffect::Changed(volume),
-            ),
-        })
+            VolumeMessage::Polled(volume) if self.pending == Some(volume) => {
+                self.pending = None;
+                self.last_reported = Some(volume);
+                VolumeEffect::Nothing
+            }
+            VolumeMessage::Polled(volume) if self.last_reported == Some(volume) => {
+                VolumeEffect::Nothing
+            }
+            VolumeMessage::Polled(volume) => {
+                self.last_reported = Some(volume);
+                VolumeEffect::Changed(volume)
+            }
+        }
     }
 }
 
@@ -82,23 +63,13 @@ pub(crate) struct HardwareState {
     device: Option<AudioObjectID>,
 }
 
-impl Machine for HardwareState {
-    type Message = HardwareMessage;
-    type Error = std::convert::Infallible;
-    type Effect = HardwareEffect;
-
-    fn transition(
-        self,
-        message: HardwareMessage,
-    ) -> Result<(Self, HardwareEffect), Rejected<Self>> {
-        let (echo, volume) = message.volume.map_or((self.echo, None), |polled| {
-            let Ok((echo, effect)) =
-                self.echo.transition(VolumeMessage::Polled(polled));
-            let event = match effect {
+impl HardwareState {
+    pub(crate) fn apply(&mut self, message: HardwareMessage) -> HardwareEffect {
+        let volume = message.volume.and_then(|polled| {
+            match self.echo.apply(VolumeMessage::Polled(polled)) {
                 VolumeEffect::Changed(reported) => Some(MacosEvent::Volume(reported)),
                 VolumeEffect::Nothing => None,
-            };
-            (echo, event)
+            }
         });
         let route = self
             .device
@@ -106,22 +77,17 @@ impl Machine for HardwareState {
             .then_some(MacosEvent::OutputRouteChanged);
         let rebind = (message.tracked_device != message.current_device)
             .then_some(message.current_device);
-        Ok((
-            Self {
-                echo,
-                device: Some(message.current_device),
-            },
-            HardwareEffect {
-                rebind,
-                events: [volume, route].into_iter().flatten().collect(),
-            },
-        ))
+        self.device = Some(message.current_device);
+        HardwareEffect {
+            rebind,
+            events: [volume, route].into_iter().flatten().collect(),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use kernel::{Bounded, MacosEvent, Percent, update::Machine};
+    use kernel::{Bounded, MacosEvent, Percent};
     use objc2_core_audio::AudioObjectID;
     use rstest::rstest;
 
@@ -134,8 +100,8 @@ mod tests {
         VolumeMessage,
     };
 
-    fn percent(value: u8) -> Percent {
-        Percent::clamped(value)
+    fn percent(level: u8) -> Percent {
+        Percent::clamped(level)
     }
 
     #[rstest]
@@ -158,19 +124,16 @@ mod tests {
     ) {
         let mut echo = VolumeEcho::default();
         assert_eq!(
-            echo.update(VolumeMessage::Polled(percent(30))),
-            Ok(VolumeEffect::Changed(percent(30)))
+            echo.apply(VolumeMessage::Polled(percent(30))),
+            VolumeEffect::Changed(percent(30))
         );
         assert_eq!(
-            echo.update(VolumeMessage::Written(percent(40))),
-            Ok(VolumeEffect::Nothing)
+            echo.apply(VolumeMessage::Written(percent(40))),
+            VolumeEffect::Nothing
         );
         let observed: Vec<VolumeEffect> = polls
             .iter()
-            .map(|value| {
-                let Ok(effect) = echo.update(VolumeMessage::Polled(percent(*value)));
-                effect
-            })
+            .map(|value| echo.apply(VolumeMessage::Polled(percent(*value))))
             .collect();
         assert_eq!(observed, reported);
     }
@@ -250,10 +213,7 @@ mod tests {
         let mut hardware = HardwareState::default();
         let observed: Vec<HardwareEffect> = polls
             .into_iter()
-            .map(|message| {
-                let Ok(effect) = hardware.update(message);
-                effect
-            })
+            .map(|message| hardware.apply(message))
             .collect();
         assert_eq!(observed, effects);
     }

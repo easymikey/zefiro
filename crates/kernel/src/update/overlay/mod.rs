@@ -57,15 +57,23 @@ pub enum InnerMessage {
     History(HistoryMessage),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum OverlayError {
+    #[error("no overlay is open")]
     WhileClosed,
+    #[error("no track to act on")]
     NoTrack,
+    #[error("a different overlay is open")]
     WrongOverlay,
+    #[error("nothing to confirm")]
     NoConfirm,
+    #[error("nothing selected")]
     NothingSelected,
+    #[error("jump: {0}")]
     Jump(JumpError),
+    #[error("search: {0}")]
     Search(SearchError),
+    #[error("history: {0}")]
     History(HistoryError),
 }
 
@@ -94,12 +102,12 @@ impl From<FollowUp> for Message {
 }
 
 #[derive(Debug, Default, PartialEq)]
-pub struct OverlayEffect {
+pub struct OverlayOutcome {
     pub cmd: Cmd,
     pub follow_up: Option<FollowUp>,
 }
 
-impl From<Cmd> for OverlayEffect {
+impl From<Cmd> for OverlayOutcome {
     fn from(cmd: Cmd) -> Self {
         Self {
             cmd,
@@ -108,7 +116,7 @@ impl From<Cmd> for OverlayEffect {
     }
 }
 
-impl From<FollowUp> for OverlayEffect {
+impl From<FollowUp> for OverlayOutcome {
     fn from(follow_up: FollowUp) -> Self {
         Self {
             cmd: Cmd::None,
@@ -196,7 +204,7 @@ fn overlay_for(model: &Model, name: OverlayName) -> Result<Overlay, OverlayError
         }),
         OverlayName::History => Ok(Overlay::History(CursorOver::default())),
         OverlayName::Settings => Ok(Overlay::Settings {
-            selected: SettingRow::first(&model.custom_settings),
+            selected: SettingRow::first(&model.appearance_settings),
         }),
         OverlayName::ConfirmDelete => {
             confirm_delete::candidate(&model.playlist, &model.workspace)
@@ -223,16 +231,16 @@ fn update_overlay(
     message: OverlayMessage,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    let effect = model.workspace.overlay.update(message)?;
+    let effect = model.workspace.overlay.transition(message)?;
     follow(model, effect, now)
 }
 
 pub(crate) fn follow(
     model: &mut Model,
-    effect: OverlayEffect,
+    effect: OverlayOutcome,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    let OverlayEffect { cmd, follow_up } = effect;
+    let OverlayOutcome { cmd, follow_up } = effect;
     match follow_up {
         Some(follow_up) => Ok(cmd.then(branch(model, follow_up.into(), now)?)),
         None => Ok(cmd),

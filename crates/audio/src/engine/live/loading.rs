@@ -7,46 +7,29 @@ use crate::{
     engine::{
         effect::EngineEffect,
         phase::{CurrentTrack, Handover, Incoming, Loading, Phase, Playing, Resume},
-        state::{Engine, Live, Muted, announce, then_report},
+        state::{Live, Muted, announce, then_report},
     },
 };
 
 impl Live {
-    pub(crate) fn failed(self, error: AudioError) -> (Engine, EngineEffect) {
-        (
-            Engine::Muted(Muted {
-                error: error.clone(),
-                config: self.config,
-                pending: None,
-                speed: self.speed,
-            }),
-            EngineEffect::Mute(error),
-        )
+    pub(crate) fn failed(&self, error: AudioError) -> (Muted, EngineEffect) {
+        let muted = Muted {
+            error: error.clone(),
+            config: self.config.clone(),
+            pending: None,
+            speed: self.speed,
+        };
+        (muted, EngineEffect::Mute(error))
     }
 
-    pub(crate) fn opened(
-        self,
-        outcome: Result<DeviceOpened, AudioError>,
-    ) -> (Engine, EngineEffect) {
-        match outcome {
-            Err(error) => self.failed(error),
-            Ok(reopened) => {
-                let announcing = reopened.opened;
-                let device = reopened.device.clone();
-                let (engine, effect) = self.reopened(reopened);
-                (engine, announce(announcing, device, effect))
-            }
-        }
-    }
-
-    fn reopened(mut self, reopened: DeviceOpened) -> (Engine, EngineEffect) {
+    pub(crate) fn opened(&mut self, reopened: DeviceOpened) -> EngineEffect {
         let DeviceOpened {
             device,
             position,
             playback,
-            ..
+            opened,
         } = reopened;
-        self.config.device = device;
+        self.config.device = device.clone();
         let effect = match std::mem::take(&mut self.phase) {
             Phase::Idle => EngineEffect::SetVolume(self.volume()),
             Phase::Loading(loading)
@@ -73,34 +56,30 @@ impl Live {
                 EngineEffect::Decode(path)
             }
         };
-        (Engine::Live(self), effect)
+        announce(opened, device, effect)
     }
 
     pub(crate) fn decoded(
-        mut self,
+        &mut self,
         outcome: Result<Option<Duration>, AudioError>,
-    ) -> (Engine, EngineEffect) {
+    ) -> EngineEffect {
         match (std::mem::take(&mut self.phase), outcome) {
-            (Phase::Loading(_), Err(error)) => (
-                Engine::Live(self),
-                EngineEffect::Send(AudioEvent::Error(error)),
-            ),
+            (Phase::Loading(_), Err(error)) => {
+                EngineEffect::Send(AudioEvent::Error(error))
+            }
             (
                 Phase::Handover(Handover {
                     incoming: Incoming::Loading(_),
                 }),
                 Err(error),
-            ) => (
-                Engine::Live(self),
-                EngineEffect::Batch(vec![
-                    EngineEffect::Clear,
-                    EngineEffect::Send(AudioEvent::Error(error)),
-                ]),
-            ),
+            ) => EngineEffect::Batch(vec![
+                EngineEffect::Clear,
+                EngineEffect::Send(AudioEvent::Error(error)),
+            ]),
             (Phase::Loading(loading), Ok(total)) => {
                 let (current, after_load) = loading.into_current(total);
                 self.phase = Phase::Playing(Playing::new(current));
-                self.started(after_load.as_ref())
+                then_report(self.start_effect(after_load.as_ref()))
             }
             (
                 Phase::Handover(Handover {
@@ -123,7 +102,7 @@ impl Live {
                 Ok(_) | Err(_),
             ) => {
                 self.phase = phase;
-                (Engine::Live(self), EngineEffect::Nothing)
+                EngineEffect::Nothing
             }
         }
     }
@@ -145,24 +124,18 @@ impl Live {
         }
     }
 
-    fn started(self, after_load: Option<&Resume>) -> (Engine, EngineEffect) {
-        let effect = self.start_effect(after_load);
-        (Engine::Live(self), then_report(effect))
-    }
-
-    fn handover_started(self, after_load: Option<&Resume>) -> (Engine, EngineEffect) {
+    fn handover_started(&self, after_load: Option<&Resume>) -> EngineEffect {
         let volume = self.volume();
         let length = self.config.crossfade.get();
         let start = self.start_effect(after_load);
-        let effect = EngineEffect::Batch(vec![
+        EngineEffect::Batch(vec![
             start,
             EngineEffect::Ramp {
                 length,
                 playing: volume,
             },
             EngineEffect::Report,
-        ]);
-        (Engine::Live(self), effect)
+        ])
     }
 }
 
@@ -366,16 +339,19 @@ mod tests {
         #[case] message: EngineMessage,
     ) {
         let mut state = start.clone();
-        assert_eq!(state.update(message), Ok(EngineEffect::Nothing));
+        assert_eq!(state.transition(message), Ok(EngineEffect::Nothing));
         assert_eq!(state, start);
     }
 
     #[test]
     fn a_stop_then_a_landed_decode_sends_nothing() {
         let mut engine = Engine::Live(loading());
-        assert_eq!(engine.update(cmd(AudioCmd::Stop)), Ok(EngineEffect::Clear));
         assert_eq!(
-            engine.update(EngineMessage::Decoded(Ok(Some(TOTAL)))),
+            engine.transition(cmd(AudioCmd::Stop)),
+            Ok(EngineEffect::Clear)
+        );
+        assert_eq!(
+            engine.transition(EngineMessage::Decoded(Ok(Some(TOTAL)))),
             Ok(EngineEffect::Nothing)
         );
     }

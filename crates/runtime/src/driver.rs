@@ -5,13 +5,9 @@ use std::{
 };
 
 use crossbeam_channel::{Receiver, SendError, Sender, bounded};
-use kernel::{DriverMessage, Message, domain::DriverError};
+use kernel::{Congestion, DriverEvent, Message, Outbox, domain::DriverError};
 
-use crate::{
-    error::Error,
-    registry::DriverRow,
-    sender::{DriverSender, FullEdge},
-};
+use crate::{error::Error, registry::DriverRow};
 
 pub(crate) type Exit = Result<(), SendError<Message>>;
 
@@ -19,7 +15,7 @@ pub(crate) type Exit = Result<(), SendError<Message>>;
 pub(crate) struct DriverThread<C> {
     pub(crate) commands: Sender<C>,
     pub(crate) handle: JoinHandle<Exit>,
-    pub(crate) full_edge: FullEdge,
+    pub(crate) full_edge: Congestion,
 }
 
 const INBOX: usize = 64;
@@ -30,7 +26,7 @@ pub(crate) fn spawn_idle<C: Send + 'static>(
 ) -> Result<DriverThread<C>, Error> {
     spawn_driver(
         row,
-        |inbox: &Receiver<C>, _: &DriverSender<Message>| while inbox.recv().is_ok() {},
+        |inbox: &Receiver<C>, _: &Outbox<Message>| while inbox.recv().is_ok() {},
         inbox,
     )
 }
@@ -43,11 +39,11 @@ pub(crate) fn spawn_driver<C, F, R>(
 where
     C: Send + 'static,
     F: Send + 'static,
-    R: FnOnce(&Receiver<C>, &DriverSender<F>) + Send + 'static,
+    R: FnOnce(&Receiver<C>, &Outbox<F>) + Send + 'static,
 {
     let (commands, command_inbox): (Sender<C>, Receiver<C>) = bounded(INBOX);
-    let full_edge = FullEdge::default();
-    let outbox = DriverSender::new(inbox.clone(), full_edge.clone());
+    let full_edge = Congestion::default();
+    let outbox = Outbox::new(inbox.clone(), full_edge.clone());
     let report_sender = inbox.clone();
     let driver = row.driver;
     let handle = thread::Builder::new()
@@ -56,9 +52,9 @@ where
             let outcome =
                 catch_unwind(AssertUnwindSafe(|| run(&command_inbox, &outbox)));
             let report = match outcome {
-                Ok(()) => DriverMessage::Stopped,
+                Ok(()) => DriverEvent::Stopped,
                 Err(payload) => {
-                    DriverMessage::Died(DriverError::Panicked(panic_text(&*payload)))
+                    DriverEvent::Died(DriverError::panicked(panic_text(&*payload)))
                 }
             };
             report_sender.send(Message::Driver {
@@ -88,15 +84,15 @@ mod tests {
 
     use crossbeam_channel::{Receiver, unbounded};
     use kernel::{
-        DriverMessage,
+        DriverEvent,
         Message,
+        Outbox,
         domain::{Driver, DriverError},
     };
 
     use crate::{
         driver::{spawn_driver, spawn_idle},
         registry,
-        sender::DriverSender,
     };
 
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
@@ -106,7 +102,7 @@ mod tests {
         let (inbox, reports) = unbounded();
         let thread = spawn_driver(
             registry::row(Driver::Audio),
-            |_inbox: &Receiver<()>, _outbox: &DriverSender<Message>| panic!("boom"),
+            |_inbox: &Receiver<()>, _outbox: &Outbox<Message>| panic!("boom"),
             &inbox,
         )
         .unwrap();
@@ -118,7 +114,7 @@ mod tests {
             message,
             Message::Driver {
                 driver: Driver::Audio,
-                event: DriverMessage::Died(DriverError::Panicked("boom".to_owned()))
+                event: DriverEvent::Died(DriverError::panicked("boom".to_owned()))
             }
         );
     }
@@ -128,7 +124,7 @@ mod tests {
         let (inbox, reports) = unbounded();
         let thread = spawn_driver(
             registry::row(Driver::Library),
-            |_inbox: &Receiver<()>, _outbox: &DriverSender<Message>| {},
+            |_inbox: &Receiver<()>, _outbox: &Outbox<Message>| {},
             &inbox,
         )
         .unwrap();
@@ -140,7 +136,7 @@ mod tests {
             message,
             Message::Driver {
                 driver: Driver::Library,
-                event: DriverMessage::Stopped
+                event: DriverEvent::Stopped
             }
         );
     }
@@ -150,7 +146,7 @@ mod tests {
         let (inbox, reports) = unbounded();
         let thread = spawn_driver(
             registry::row(Driver::Macos),
-            |inbox: &Receiver<()>, _outbox: &DriverSender<Message>| {
+            |inbox: &Receiver<()>, _outbox: &Outbox<Message>| {
                 let _ = inbox.recv();
             },
             &inbox,
@@ -165,7 +161,7 @@ mod tests {
             message,
             Message::Driver {
                 driver: Driver::Macos,
-                event: DriverMessage::Stopped
+                event: DriverEvent::Stopped
             }
         );
     }
@@ -183,7 +179,7 @@ mod tests {
             message,
             Message::Driver {
                 driver: Driver::Audio,
-                event: DriverMessage::Stopped
+                event: DriverEvent::Stopped
             }
         );
     }

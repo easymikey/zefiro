@@ -1,0 +1,17 @@
+---
+source: crates/widgets/src/toast.rs
+assertion_line: 351
+expression: "painted(&toasts, (60, 12))"
+---
+"                                                            "
+"                 ╭────────────────────────────────────────╮ "
+"                 │ ! Careful                              │ "
+"                 │ The quick brown fox jumps over the     │ "
+"                 │ lazy dog and keeps running far away    │ "
+"                 ╰────────────────────────────────────────╯ "
+"                                                            "
+"                                                            "
+"                                                            "
+"                                                            "
+"                                                            "
+"                                                            "

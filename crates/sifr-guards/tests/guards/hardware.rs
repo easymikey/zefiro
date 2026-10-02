@@ -1,6 +1,4 @@
-// GUARD: any test whose body touches real audio, media watcher, or shell
-// hardware must say so with `#[ignore = "hardware..."]`, so a plain `cargo
-// test` never reaches a device, a watcher, or an external process.
+// GUARD: a test touching real hardware must carry `#[ignore = "hardware..."]`.
 
 use crate::guards::support::{self, Allow};
 

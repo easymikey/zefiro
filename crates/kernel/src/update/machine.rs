@@ -3,45 +3,25 @@
     label = "missing `impl Machine for {Self}`",
     note = "every (state, message) pair is a row of this machine's transition table"
 )]
-pub trait Machine: Default {
+pub trait Machine {
     type Message;
     type Error;
     type Effect;
 
     fn transition(
-        self,
+        &mut self,
         message: Self::Message,
-    ) -> Result<(Self, Self::Effect), Rejected<Self>>;
-
-    fn update(&mut self, message: Self::Message) -> Result<Self::Effect, Self::Error> {
-        match std::mem::take(self).transition(message) {
-            Ok((state, effect)) => {
-                *self = state;
-                Ok(effect)
-            }
-            Err(Rejected { state, reason }) => {
-                *self = state;
-                Err(reason)
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Rejected<S: Machine> {
-    pub state: S,
-    pub reason: S::Error,
+    ) -> Result<Self::Effect, Self::Error>;
 }
 
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
-    use crate::update::machine::{Machine, Rejected};
+    use crate::update::machine::Machine;
 
-    #[derive(Debug, Default, PartialEq)]
+    #[derive(Debug, PartialEq)]
     enum Latch {
-        #[default]
         Open,
         Closed,
     }
@@ -68,25 +48,18 @@ mod tests {
         type Error = LatchError;
         type Effect = Click;
 
-        fn transition(
-            self,
-            message: LatchMessage,
-        ) -> Result<(Self, Click), Rejected<Self>> {
-            match (self, message) {
+        fn transition(&mut self, message: LatchMessage) -> Result<Click, LatchError> {
+            match (&*self, message) {
                 (Latch::Open, LatchMessage::Close) => {
-                    Ok((Latch::Closed, Click::Clicked))
+                    *self = Latch::Closed;
+                    Ok(Click::Clicked)
                 }
                 (Latch::Closed, LatchMessage::Open) => {
-                    Ok((Latch::Open, Click::Clicked))
+                    *self = Latch::Open;
+                    Ok(Click::Clicked)
                 }
-                (Latch::Open, LatchMessage::Open) => Err(Rejected {
-                    state: Latch::Open,
-                    reason: LatchError::WhileOpen,
-                }),
-                (Latch::Closed, LatchMessage::Close) => Err(Rejected {
-                    state: Latch::Closed,
-                    reason: LatchError::WhileClosed,
-                }),
+                (Latch::Open, LatchMessage::Open) => Err(LatchError::WhileOpen),
+                (Latch::Closed, LatchMessage::Close) => Err(LatchError::WhileClosed),
             }
         }
     }
@@ -123,9 +96,9 @@ mod tests {
         next: Latch::Closed,
         outcome: Err(LatchError::WhileClosed),
     })]
-    fn update_writes_the_state_back_on_both_branches(#[case] row: LatchRow) {
+    fn transition_writes_only_on_success(#[case] row: LatchRow) {
         let mut slot = row.start;
-        let outcome = slot.update(row.message);
+        let outcome = slot.transition(row.message);
         assert_eq!(slot, row.next);
         assert_eq!(outcome, row.outcome);
     }

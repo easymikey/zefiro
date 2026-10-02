@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
-assertion_line: 414
+assertion_line: 368
 expression: "walked(model, messages)"
 ---
 [
@@ -16,8 +16,8 @@ expression: "walked(model, messages)"
                     ToastRaised,
                 ),
                 After {
-                    delay: 3s,
-                    message: Toast(
+                    delay: 5s,
+                    timer: Toast(
                         Revision(
                             1,
                         ),
@@ -56,14 +56,18 @@ expression: "walked(model, messages)"
                 1.0,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        Some(
+        [
             Toast {
-                level: Info,
-                text: "Not in library",
+                kind: Info,
+                title: "Not in library",
+                text: None,
+                raised_at: Moment(
+                    0ns,
+                ),
             },
-        ),
+        ],
     ),
 ]

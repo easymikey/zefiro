@@ -64,8 +64,17 @@ where
             self.gather(first);
             self.fire_timers(now);
             self.runtime.report_full();
-            for effect in self.runtime.take_shell_effects() {
-                self.shell.effect(effect);
+            let effects = self.runtime.take_shell_effects();
+            let animations = self
+                .runtime
+                .frame(now)
+                .model
+                .settings
+                .look
+                .appearance
+                .animations;
+            for effect in effects {
+                self.shell.effect(effect, animations);
             }
             if self.runtime.flow().is_break() {
                 return Ok(());
@@ -189,8 +198,9 @@ pub(crate) mod tests {
     use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
     use kernel::{
         ConfigEvent,
+        Congestion,
         Cue,
-        DriverMessage,
+        DriverEvent,
         LibraryEvent,
         Message,
         Outbox,
@@ -207,7 +217,6 @@ pub(crate) mod tests {
         library::{cover::CoverRequest, machine::LibraryMessage},
         port::{LibraryPort, Port},
         runtime::Runtime,
-        sender::{DriverSender, FullEdge},
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
         trace::{Trace, TraceEntry},
         wiring::Wiring,
@@ -262,7 +271,7 @@ pub(crate) mod tests {
                 Key::Quit => Reaction::Message(Message::Quit),
                 Key::Stray => Reaction::Message(Message::Driver {
                     driver: Driver::Audio,
-                    event: DriverMessage::Stopped,
+                    event: DriverEvent::Stopped,
                 }),
                 Key::Ping => {
                     Reaction::Message(Message::Toast(Toast::error("ping".to_owned())))
@@ -271,7 +280,7 @@ pub(crate) mod tests {
             }
         }
 
-        fn effect(&mut self, effect: ShellEffect) {
+        fn effect(&mut self, effect: ShellEffect, _animations: config::Animations) {
             self.order.push(Order::Effect(effect.clone()));
             self.effects.push(effect);
         }
@@ -284,8 +293,8 @@ pub(crate) mod tests {
             if frame.latest.theme.take().is_some() {
                 self.order.push(Order::Reloaded);
             }
-            let toast = frame.model.workspace.toast.as_ref();
-            self.toasts.push(toast.map(|toast| toast.text.clone()));
+            let toast = frame.model.workspace.toasts.first();
+            self.toasts.push(toast.map(|toast| toast.title.clone()));
             let next = if self.toasts.len() >= self.quit_after {
                 Key::Quit
             } else {
@@ -354,9 +363,7 @@ pub(crate) mod tests {
     #[test]
     fn a_timer_fires_elapsed_with_no_input() {
         let mut fixture = fixture();
-        fixture
-            .runtime
-            .step(Message::Toast(Toast::error("hello".to_owned())));
+        fixture.runtime.step(Message::Toast(Toast::error("hello")));
         let generation = fixture.runtime.model.revisions.toast;
         fixture
             .runtime
@@ -369,9 +376,9 @@ pub(crate) mod tests {
         let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Ok(())));
-        assert_eq!(shell.toasts, vec![None]);
+        assert_eq!(shell.toasts, vec![Some("hello".to_owned())]);
         assert!(
-            shell
+            !shell
                 .effects
                 .contains(&ShellEffect::Animate(Cue::ToastDismissed))
         );
@@ -518,7 +525,7 @@ pub(crate) mod tests {
 
     const CAPACITY: usize = 256;
 
-    fn fill_the_sender(outbox: &DriverSender<LibraryEvent>, full_edge: &FullEdge) {
+    fn fill_the_sender(outbox: &Outbox<LibraryEvent>, full_edge: &Congestion) {
         for _ in 0..CAPACITY {
             let delivery = outbox.send(LibraryEvent::HistoryLoaded(Vec::new()));
             assert!(matches!(delivery, Ok(())));
@@ -533,8 +540,17 @@ pub(crate) mod tests {
         let first = event_loop.wait(Some(Instant::now())).unwrap();
         event_loop.gather(first);
         event_loop.runtime.report_full();
-        for effect in event_loop.runtime.take_shell_effects() {
-            event_loop.shell.effect(effect);
+        let effects = event_loop.runtime.take_shell_effects();
+        let animations = event_loop
+            .runtime
+            .frame(Instant::now())
+            .model
+            .settings
+            .look
+            .appearance
+            .animations;
+        for effect in effects {
+            event_loop.shell.effect(effect, animations);
         }
         shell
             .effects
@@ -547,8 +563,8 @@ pub(crate) mod tests {
     fn a_full_sender_raises_a_toast_per_full_edge() {
         let mut fixture = fixture();
         let (sender, arrivals) = bounded(CAPACITY);
-        let full_edge = FullEdge::default();
-        let outbox = DriverSender::new(sender.clone(), full_edge.clone());
+        let full_edge = Congestion::default();
+        let outbox = Outbox::new(sender.clone(), full_edge.clone());
         let (library_commands, _library_inbox) = unbounded();
         fixture.runtime.wiring.receiver = arrivals;
         fixture.runtime.wiring.sender = sender;
@@ -588,7 +604,7 @@ pub(crate) mod tests {
         event_loop.gather(first);
 
         assert!(fixture.runtime.flow().is_break());
-        assert!(fixture.runtime.model.workspace.toast.is_none());
+        assert!(fixture.runtime.model.workspace.toasts.is_empty());
         fixture.runtime.drain();
     }
 }

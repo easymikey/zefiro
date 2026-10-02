@@ -11,7 +11,7 @@ use kernel::{
     PlaybackRequest,
     Preload,
     Timer,
-    TrackRequest,
+    TrackLoad,
     update::update,
 };
 
@@ -26,7 +26,7 @@ fn preloaded(cmd: &Cmd) -> Option<PathBuf> {
 }
 
 fn preload_path(effect: &Effect) -> Option<PathBuf> {
-    if let Effect::Audio(AudioCmd::Preload(TrackRequest { path, .. })) = effect {
+    if let Effect::Audio(AudioCmd::Preload(TrackLoad { path, .. })) = effect {
         return Some(path.clone());
     }
     None
@@ -37,14 +37,14 @@ fn loaded(cmd: &Cmd) -> Option<PathBuf> {
 }
 
 fn load_path(effect: &Effect) -> Option<PathBuf> {
-    if let Effect::Audio(AudioCmd::Load(TrackRequest { path, .. })) = effect {
+    if let Effect::Audio(AudioCmd::Load(TrackLoad { path, .. })) = effect {
         return Some(path.clone());
     }
     None
 }
 
 fn preload_revision(effect: &Effect) -> Option<kernel::domain::Revision> {
-    if let Effect::Audio(AudioCmd::Preload(TrackRequest { revision, .. })) = effect {
+    if let Effect::Audio(AudioCmd::Preload(TrackLoad { revision, .. })) = effect {
         return Some(*revision);
     }
     None
@@ -77,10 +77,10 @@ fn a_tick_near_the_end_arms_the_preload() {
         Moment::default(),
     )
     .unwrap();
-    let first_mark = model.revisions.mark;
+    let first_mark = model.revisions.lookahead;
     let early = update(
         &mut model,
-        Message::Elapsed(Timer::Mark(first_mark)),
+        Message::Elapsed(Timer::Lookahead(first_mark)),
         Moment::default(),
     )
     .unwrap();
@@ -92,10 +92,10 @@ fn a_tick_near_the_end_arms_the_preload() {
         Moment::default(),
     )
     .unwrap();
-    let second_mark = model.revisions.mark;
+    let second_mark = model.revisions.lookahead;
     let late = update(
         &mut model,
-        Message::Elapsed(Timer::Mark(second_mark)),
+        Message::Elapsed(Timer::Lookahead(second_mark)),
         Moment::default(),
     )
     .unwrap();
@@ -118,10 +118,10 @@ fn the_armed_preload_is_stamped_fresh() {
         Moment::default(),
     )
     .unwrap();
-    let mark = model.revisions.mark;
+    let mark = model.revisions.lookahead;
     let cmd = update(
         &mut model,
-        Message::Elapsed(Timer::Mark(mark)),
+        Message::Elapsed(Timer::Lookahead(mark)),
         Moment::default(),
     )
     .unwrap();
@@ -141,10 +141,10 @@ fn the_hand_off_adopts_the_preloaded_track_without_a_second_load() {
         Moment::default(),
     )
     .unwrap();
-    let mark = model.revisions.mark;
+    let mark = model.revisions.lookahead;
     let _ = update(
         &mut model,
-        Message::Elapsed(Timer::Mark(mark)),
+        Message::Elapsed(Timer::Lookahead(mark)),
         Moment::default(),
     )
     .unwrap();

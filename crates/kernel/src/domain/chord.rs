@@ -121,13 +121,10 @@ impl std::str::FromStr for Chord {
                 })?)
             }
         };
-        let mut modifiers = Modifiers::NONE;
-        if ctrl {
-            modifiers = modifiers.with(Modifiers::CTRL);
-        }
-        if shift {
-            modifiers = modifiers.with(Modifiers::SHIFT);
-        }
+        let modifiers = [(ctrl, Modifiers::CTRL), (shift, Modifiers::SHIFT)]
+            .into_iter()
+            .filter(|&(held, _)| held)
+            .fold(Modifiers::NONE, |all, (_, flag)| all.with(flag));
         Ok(Self::Key(Key { code, modifiers }))
     }
 }

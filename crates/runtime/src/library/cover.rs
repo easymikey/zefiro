@@ -7,7 +7,7 @@ use fast_image_resize::{
     images::{Image, ImageRef},
 };
 use image::{DynamicImage, RgbaImage};
-use kernel::update::{Machine, Rejected};
+use kernel::update::Machine;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) enum Decoding {
@@ -55,44 +55,46 @@ pub(crate) enum DecodingError {
     WhileIdle,
 }
 
-type Step = Result<(Decoding, Option<CoverRequest>), Rejected<Decoding>>;
-
 impl Machine for Decoding {
     type Message = DecodeMessage;
     type Error = DecodingError;
     type Effect = Option<CoverRequest>;
 
-    fn transition(self, message: DecodeMessage) -> Step {
-        match (self, message) {
-            (Decoding::Idle, DecodeMessage::Request(request)) => Ok(requested(request)),
-            (state @ Decoding::Idle, DecodeMessage::Decoded(_)) => Err(Rejected {
-                state,
-                reason: DecodingError::WhileIdle,
-            }),
+    fn transition(
+        &mut self,
+        message: DecodeMessage,
+    ) -> Result<Option<CoverRequest>, DecodingError> {
+        match (&*self, message) {
+            (Decoding::Idle, DecodeMessage::Request(request)) => {
+                Ok(self.start(request))
+            }
+            (Decoding::Idle, DecodeMessage::Decoded(_)) => {
+                Err(DecodingError::WhileIdle)
+            }
             (Decoding::Busy(path), DecodeMessage::Request(request))
-                if path != request.path =>
+                if *path != request.path =>
             {
-                Ok(requested(request))
+                Ok(self.start(request))
             }
             (Decoding::Busy(path), DecodeMessage::Decoded(answered))
-                if path == answered =>
+                if *path == answered =>
             {
-                Ok((Decoding::Idle, None))
+                *self = Decoding::Idle;
+                Ok(None)
             }
             (
-                state @ Decoding::Busy(_),
+                Decoding::Busy(_),
                 DecodeMessage::Request(_) | DecodeMessage::Decoded(_),
-            ) => Err(Rejected {
-                state,
-                reason: DecodingError::WhileBusy,
-            }),
+            ) => Err(DecodingError::WhileBusy),
         }
     }
 }
 
-fn requested(request: CoverRequest) -> (Decoding, Option<CoverRequest>) {
-    let path = request.path.clone();
-    (Decoding::Busy(path), Some(request))
+impl Decoding {
+    fn start(&mut self, request: CoverRequest) -> Option<CoverRequest> {
+        *self = Decoding::Busy(request.path.clone());
+        Some(request)
+    }
 }
 
 pub(crate) const CACHE_CAPACITY: usize = 8;
@@ -300,7 +302,8 @@ mod tests {
         io: "nothing",
     })]
     fn a_cell_moves_the_decode_and_names_its_io(#[case] cell: Cell) {
-        let (state, effect) = cell.start.transition(cell.message).unwrap();
+        let mut state = cell.start;
+        let effect = state.transition(cell.message).unwrap();
         assert_eq!(state, cell.next);
         assert_eq!(render(&effect), cell.io);
     }
@@ -327,9 +330,10 @@ mod tests {
         #[case] reason: DecodingError,
     ) {
         let expected = start.clone();
-        let rejected = start.transition(message).err().unwrap();
-        assert_eq!(rejected.state, expected);
-        assert_eq!(rejected.reason, reason);
+        let mut state = start;
+        let refused = state.transition(message).err().unwrap();
+        assert_eq!(state, expected);
+        assert_eq!(refused, reason);
     }
 
     #[test]

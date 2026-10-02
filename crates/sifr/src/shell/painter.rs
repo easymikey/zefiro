@@ -43,7 +43,6 @@ use widgets::{
     Role,
     SPECTRUM_BANDS,
     Screen,
-    Theme,
     abbreviate_home,
 };
 
@@ -68,7 +67,7 @@ use crate::{
         motion::{Advance, Motion, ScreenClear, SpectrumFeed},
         view::{self, LaidOutScene, Presentation},
     },
-    startup::Look,
+    startup::{Look, theme_from_file},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,8 +114,7 @@ impl<'terminal> Painter<'terminal> {
         Self {
             terminal,
             presentation: Presentation {
-                theme: Theme::from(look.theme),
-                appearance: look.appearance,
+                theme: theme_from_file(look.theme),
                 pixel_path,
                 color_depth,
                 cell_aspect,
@@ -146,10 +144,7 @@ impl<'terminal> Painter<'terminal> {
                 )
                 .role(Role::WindowBackground),
             );
-            self.presentation.theme = Theme::from(Arc::unwrap_or_clone(theme));
-        }
-        if let Some(appearance) = latest.appearance.take() {
-            self.presentation.appearance = Arc::unwrap_or_clone(appearance);
+            self.presentation.theme = theme_from_file(Arc::unwrap_or_clone(theme));
         }
         let Some(cover) = latest.cover.take() else {
             return;
@@ -177,8 +172,9 @@ impl<'terminal> Painter<'terminal> {
 
     fn apply_window_colors(&mut self, cmd: &WindowColorsCmd) {
         if let Err(error) = write_window_colors(cmd, &self.presentation.theme) {
-            self.toasts
-                .push(Message::Toast(Toast::error(error.to_string())));
+            self.toasts.push(Message::Toast(
+                Toast::error("Window colors failed").with_text(error.to_string()),
+            ));
         }
     }
 
@@ -195,22 +191,24 @@ impl<'terminal> Painter<'terminal> {
             CoverOutcome::NoArt => (CoverArrival::Missing, None),
             CoverOutcome::Failed(error) => (
                 CoverArrival::Missing,
-                Some(Message::Toast(Toast::error(format!("cover art: {error}")))),
+                Some(Message::Toast(
+                    Toast::error("Cover art failed").with_text(error.to_string()),
+                )),
             ),
         };
         self.record_cover_arrival(&path, arrival);
         toast
     }
 
-    fn backdrop(&self, layout: FrameLayout, cover_art: &CoverArt) -> Backdrop {
+    fn backdrop(&self, laid_out: &LaidOutScene<'_>, cover_art: &CoverArt) -> Backdrop {
         let theme =
             ActiveTheme::new(&self.presentation.theme, self.presentation.color_depth);
         let fill = theme.colors.role(Role::Accent);
         let background = theme.role(Role::WindowBackground);
         let mix = self.animation_stage.timings().volume_pulse_mix;
         Backdrop {
-            animations: self.presentation.appearance.window.animations,
-            layout: protected_layout(layout, cover_art),
+            animations: laid_out.scene.look().appearance.animations,
+            layout: protected_layout(laid_out.layout, cover_art),
             background,
             accent: theme.role(Role::Accent),
             volume_fill: theme.role(Role::Accent),
@@ -236,7 +234,7 @@ impl<'terminal> Painter<'terminal> {
             .layout
             .playlist
             .map_or(0, |areas| areas.body.height);
-        let size_px = self.presentation.appearance.cover.size_px;
+        let size_px = laid_out.scene.look().cover_size_px;
         let cover =
             wanted_cover(&mut self.motion.wanted_cover, current_track, cover_style)
                 .map(|path| CoverRequest { path, size_px });
@@ -306,18 +304,16 @@ impl runtime::Shell for Painter<'_> {
         input::reaction_for(event)
     }
 
-    fn effect(&mut self, effect: ShellEffect) {
+    fn effect(&mut self, effect: ShellEffect, animations: Animations) {
         match &effect {
-            ShellEffect::WindowColors(WindowColorsCmd::Apply(_)) => {
-                match self.presentation.appearance.window.animations {
-                    Animations::Off => self.apply_window_colors(
-                        &WindowColorsCmd::Apply(self.presentation.theme.name.clone()),
-                    ),
-                    Animations::On => {
-                        self.window_colors_write = WindowColorsWrite::Staged;
-                    }
+            ShellEffect::WindowColors(WindowColorsCmd::Apply(_)) => match animations {
+                Animations::Off => self.apply_window_colors(&WindowColorsCmd::Apply(
+                    self.presentation.theme.name.clone(),
+                )),
+                Animations::On => {
+                    self.window_colors_write = WindowColorsWrite::Staged;
                 }
-            }
+            },
             ShellEffect::WindowColors(cmd @ WindowColorsCmd::Reset) => {
                 self.apply_window_colors(cmd);
             }
@@ -360,8 +356,8 @@ impl runtime::Shell for Painter<'_> {
         self.refresh_music_dir(frame.model.music_dir.as_path());
         let raw_bands = self.raw_bands(&frame);
         let advance = self.advance(&frame, &raw_bands);
-        let LaidOutScene { scene, layout } =
-            view::view(&frame, &self.presentation, &self.motion);
+        let laid_out = view::view(&frame, &self.presentation, &self.motion);
+        let (scene, layout) = (laid_out.scene, laid_out.layout);
         let wash =
             cover_wash(self.animation_stage.wash_progress(), self.motion.area.width);
         let cover_art = self.cover_renderer.refresh(
@@ -373,7 +369,7 @@ impl runtime::Shell for Painter<'_> {
             },
         );
         let elapsed = self.animation_stage.advance_clock(scene.clock);
-        let backdrop = self.backdrop(layout, &cover_art);
+        let backdrop = self.backdrop(&laid_out, &cover_art);
         if advance.screen_clear == ScreenClear::Due {
             self.terminal.clear()?;
         }
@@ -414,7 +410,6 @@ mod tests {
     use std::{io, path::PathBuf, sync::Arc, time::Duration};
 
     use audio::SpectrumTap;
-    use config::AppearanceFile;
     use crossterm::event::Event;
     use image::RgbaImage;
     use kernel::{Cue, Message, Moment, Toast, domain::Model};
@@ -468,7 +463,6 @@ mod tests {
     fn test_look() -> Look {
         Look {
             theme: fallback_theme_file(),
-            appearance: AppearanceFile::default(),
         }
     }
 
@@ -494,7 +488,19 @@ mod tests {
                 painted: Rect::new(0, 0, 10, 1),
             }),
         };
-        painter.backdrop(layout, cover_art)
+        let model = Model::default();
+        let (_senders, latest, _doorbell) = runtime::latest_channels();
+        let spectrum = SpectrumTap::silent();
+        let frame = Frame {
+            model: &model,
+            spectrum: &spectrum,
+            latest: &latest,
+            sleep_deadline: None,
+            now: Moment::default(),
+        };
+        let mut laid_out = view::view(&frame, &painter.presentation, &painter.motion);
+        laid_out.layout = layout;
+        painter.backdrop(&laid_out, cover_art)
     }
 
     fn decoded(outcome: CoverOutcome) -> CoverDecoded {
@@ -516,10 +522,8 @@ mod tests {
     #[case::no_art(CoverOutcome::NoArt, None)]
     #[case::a_failed_decode(
         CoverOutcome::Failed(broken_cover_error()),
-        Some(Message::Toast(Toast::error(format!(
-            "cover art: {}",
-            broken_cover_error()
-        ))))
+        Some(Message::Toast(Toast::error("Cover art failed")
+            .with_text(broken_cover_error().to_string())))
     )]
     fn an_arriving_cover_raises_a_toast_only_when_the_decode_failed(
         #[case] outcome: CoverOutcome,
@@ -574,19 +578,19 @@ mod tests {
         let backdrop = test_backdrop(&CoverArt::Missing, None);
         let mut stage = AnimationStage::default();
         stage.play(vec![Cue::ToastRaised], &backdrop);
-        assert!(stage.wants_frame(), "sanity: the toast is animating");
+        assert!(stage.is_animating(), "sanity: the toast is animating");
         let mut buffer = Buffer::empty(backdrop.layout.screen);
 
         stage.advance(&mut buffer, Duration::from_secs(10));
         assert!(
-            stage.wants_frame(),
+            stage.is_animating(),
             "sanity: the settling frame is still owed once the effect ends"
         );
 
         stage.play(Vec::new(), &backdrop);
         stage.advance(&mut buffer, Duration::ZERO);
 
-        assert!(!stage.wants_frame());
+        assert!(!stage.is_animating());
     }
 
     #[test]

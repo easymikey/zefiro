@@ -2,185 +2,210 @@ use std::time::Duration;
 
 use crate::{
     cmd::{Cmd, Cue},
-    domain::{Model, Moment, Output, SEEK_MEDIUM},
+    domain::{Moment, Output, Player, SEEK_MEDIUM},
     message::{PlaybackRequest, SeekTenths},
     update::{
         audio,
         error::UpdateError,
-        machine::Machine,
-        player::{self, Anchor, PlayerMessage, Stamp},
+        player::{self, Anchor, PlaybackParts, PlayerMessage, Stamp},
         playlist::PlaylistMessage,
         transport::TransportMessage,
     },
 };
 
 pub(crate) fn update(
-    model: &mut Model,
+    playback: &mut PlaybackParts<'_>,
     message: PlaybackRequest,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
     match message {
-        PlaybackRequest::Toggle => play_pause(model, now),
-        PlaybackRequest::Play => resume_playback(model, now),
-        PlaybackRequest::Pause => pause_playback(model, now),
-        PlaybackRequest::SeekForward => seek_by(model, SEEK_MEDIUM, now),
-        PlaybackRequest::SeekBack => seek_by(model, -SEEK_MEDIUM, now),
-        PlaybackRequest::Hold => {
-            player::update_player(model, PlayerMessage::Hold(now), now)
+        PlaybackRequest::Toggle => play_pause(playback, now),
+        PlaybackRequest::Play => resume_playback(playback, now),
+        PlaybackRequest::Pause => pause_playback(playback, now),
+        PlaybackRequest::SeekForward => seek_by(playback, SEEK_MEDIUM, now),
+        PlaybackRequest::SeekBack => seek_by(playback, -SEEK_MEDIUM, now),
+        PlaybackRequest::HoldForOverlay => {
+            player::update_player(playback, PlayerMessage::Hold(now), now)
         }
-        PlaybackRequest::Release => release(model, now),
-        PlaybackRequest::Stop => player::update_player(model, PlayerMessage::Stop, now),
-        PlaybackRequest::Next => audio::next(model, now),
-        PlaybackRequest::Previous => audio::previous(model, now),
-        PlaybackRequest::ToggleShuffle => toggle_shuffle(model),
-        PlaybackRequest::CycleRepeat => cycle_repeat(model),
-        PlaybackRequest::SeekBy { seconds } => seek_by(model, seconds, now),
-        PlaybackRequest::NudgeVolume { steps } => nudge_volume(model, steps),
-        PlaybackRequest::NudgeSpeed { steps } => nudge_speed(model, steps, now),
-        PlaybackRequest::CycleSleep => cycle_sleep(model),
-        PlaybackRequest::AbMark => mark_ab(model, now),
-        PlaybackRequest::SeekTo(target) => seek_to(model, target, now),
-        PlaybackRequest::SeekFraction(tenths) => seek_fraction(model, tenths, now),
+        PlaybackRequest::Release => release(playback, now),
+        PlaybackRequest::Stop => {
+            player::update_player(playback, PlayerMessage::Stop, now)
+        }
+        PlaybackRequest::Next => audio::next(playback, now),
+        PlaybackRequest::Previous => audio::previous(playback, now),
+        PlaybackRequest::ToggleShuffle => toggle_shuffle(playback),
+        PlaybackRequest::CycleRepeat => cycle_repeat(playback),
+        PlaybackRequest::SeekBy { seconds } => seek_by(playback, seconds, now),
+        PlaybackRequest::StepVolume { steps } => step_volume(playback, steps),
+        PlaybackRequest::StepSpeed { steps } => step_speed(playback, steps, now),
+        PlaybackRequest::CycleSleep => cycle_sleep(playback),
+        PlaybackRequest::AbMark => mark_ab(playback, now),
+        PlaybackRequest::SeekTo(target) => seek_to(playback, target, now),
+        PlaybackRequest::SeekTenths(tenths) => seek_fraction(playback, tenths, now),
     }
 }
 
-fn resume_playback(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
-    if model.player.is_playing() {
+fn resume_playback(
+    playback: &mut PlaybackParts<'_>,
+    now: Moment,
+) -> Result<Cmd, UpdateError> {
+    if playback.player.is_playing() {
         Ok(Cmd::None)
     } else {
-        play_pause(model, now)
+        play_pause(playback, now)
     }
 }
 
-fn pause_playback(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
-    if model.player.is_playing() {
-        play_pause(model, now)
+fn pause_playback(
+    playback: &mut PlaybackParts<'_>,
+    now: Moment,
+) -> Result<Cmd, UpdateError> {
+    if playback.player.is_playing() {
+        play_pause(playback, now)
     } else {
         Ok(Cmd::None)
     }
 }
 
-fn toggle_shuffle(model: &mut Model) -> Result<Cmd, UpdateError> {
-    let cmd = model.playlist.update(PlaylistMessage::ToggleShuffle)?;
+fn toggle_shuffle(playback: &mut PlaybackParts<'_>) -> Result<Cmd, UpdateError> {
+    let cmd = playback.playlist.apply(PlaylistMessage::ToggleShuffle);
     Ok(cmd.then(Cue::PlayOrderChanged.into()))
 }
 
-fn cycle_repeat(model: &mut Model) -> Result<Cmd, UpdateError> {
-    let cmd = model.playlist.update(PlaylistMessage::CycleRepeat)?;
+fn cycle_repeat(playback: &mut PlaybackParts<'_>) -> Result<Cmd, UpdateError> {
+    let cmd = playback.playlist.apply(PlaylistMessage::CycleRepeat);
     Ok(cmd.then(Cue::PlayOrderChanged.into()))
 }
 
-fn nudge_volume(model: &mut Model, steps: i8) -> Result<Cmd, UpdateError> {
-    let cmd = model
+fn step_volume(
+    playback: &mut PlaybackParts<'_>,
+    steps: i8,
+) -> Result<Cmd, UpdateError> {
+    let cmd = playback
         .transport
-        .update(TransportMessage::StepVolume { steps })?;
+        .apply(TransportMessage::StepVolume { steps });
     Ok(cmd.then(Cue::VolumeChanged.into()))
 }
 
-fn nudge_speed(model: &mut Model, steps: i8, now: Moment) -> Result<Cmd, UpdateError> {
-    let cmd = model
+fn step_speed(
+    playback: &mut PlaybackParts<'_>,
+    steps: i8,
+    now: Moment,
+) -> Result<Cmd, UpdateError> {
+    let cmd = playback
         .transport
-        .update(TransportMessage::StepSpeed { steps })?;
-    let since = player::playing_since(&model.player);
-    model.player =
-        std::mem::take(&mut model.player).reanchored(now, model.transport.speed);
+        .apply(TransportMessage::StepSpeed { steps });
+    let since = player::playing_since(playback.player);
+    *playback.player =
+        std::mem::take(playback.player).reanchored(now, playback.transport.speed);
     if let Some(since) = since {
-        player::accumulate(&mut model.workspace, since, now);
+        player::accumulate(playback.workspace, since, now);
     }
-    Ok(cmd.then(player::arm(model, now)))
+    Ok(cmd.then(player::arm(playback, now)))
 }
 
-fn cycle_sleep(model: &mut Model) -> Result<Cmd, UpdateError> {
-    let candidate = model.revisions.effects.next();
-    let cmd = model.transport.update(TransportMessage::CycleSleep {
-        presets: model.settings.audio.sleep_presets.clone(),
+fn cycle_sleep(playback: &mut PlaybackParts<'_>) -> Result<Cmd, UpdateError> {
+    let candidate = playback.revisions.effects.next();
+    let cmd = playback.transport.apply(TransportMessage::CycleSleep {
+        presets: playback.settings.audio.sleep_presets.clone(),
         revision: candidate,
-    })?;
-    if model.transport.sleep.is_some() {
-        model.revisions.commit_sleep(candidate);
+    });
+    if playback.transport.sleep.is_some() {
+        playback.revisions.commit_sleep(candidate);
     }
     Ok(cmd)
 }
 
-fn mark_ab(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
-    let position = model
+fn mark_ab(playback: &mut PlaybackParts<'_>, now: Moment) -> Result<Cmd, UpdateError> {
+    let position = playback
         .player
         .current()
-        .map(|_| model.player.position_at(now));
-    Ok(model
+        .map(|_| playback.player.position_at(now));
+    Ok(playback
         .transport
-        .update(TransportMessage::AbMark { position })?)
+        .apply(TransportMessage::AbMark { position }))
 }
 
 fn seek_to(
-    model: &mut Model,
+    playback: &mut PlaybackParts<'_>,
     target: Duration,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    clamped(model, target)
-        .map_or_else(|| Ok(Cmd::None), |target| seek(model, target, now))
+    clamped(playback.player, target)
+        .map_or_else(|| Ok(Cmd::None), |target| seek(playback, target, now))
 }
 
 fn seek_fraction(
-    model: &mut Model,
+    playback: &mut PlaybackParts<'_>,
     tenths: SeekTenths,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    fraction_target(model, tenths)
-        .map_or_else(|| Ok(Cmd::None), |target| seek(model, target, now))
+    fraction_target(playback.player, tenths)
+        .map_or_else(|| Ok(Cmd::None), |target| seek(playback, target, now))
 }
 
-fn seek_by(model: &mut Model, seconds: i64, now: Moment) -> Result<Cmd, UpdateError> {
-    let target = relative_target(model, seconds, now);
-    seek(model, target, now)
+fn seek_by(
+    playback: &mut PlaybackParts<'_>,
+    seconds: i64,
+    now: Moment,
+) -> Result<Cmd, UpdateError> {
+    let target = relative_target(playback.player, seconds, now);
+    seek(playback, target, now)
 }
 
-pub(crate) fn play_pause(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
-    if matches!(model.transport.output, Output::Lost { .. })
-        && !model.player.is_playing()
+pub(crate) fn play_pause(
+    playback: &mut PlaybackParts<'_>,
+    now: Moment,
+) -> Result<Cmd, UpdateError> {
+    if matches!(playback.transport.output, Output::Lost { .. })
+        && !playback.player.is_playing()
     {
-        let again = model
+        let again = playback
             .player
             .current()
             .cloned()
-            .or_else(|| model.playlist.current().cloned());
-        return again.map_or(Ok(Cmd::None), |track| audio::start(model, track, now));
+            .or_else(|| playback.playlist.current().cloned());
+        return again.map_or(Ok(Cmd::None), |track| audio::start(playback, track, now));
     }
-    let current = model.playlist.current().cloned();
-    let stamp = Stamp::issue(model, now);
-    player::update_player(model, PlayerMessage::Toggle { current, stamp }, now)
+    let current = playback.playlist.current().cloned();
+    let stamp = Stamp::pending(playback.transport, playback.revisions, now);
+    player::update_player(playback, PlayerMessage::Toggle { current, stamp }, now)
 }
 
-fn release(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
-    let anchor = Anchor::at(model, now);
-    player::update_player(model, PlayerMessage::Release(anchor), now)
+fn release(playback: &mut PlaybackParts<'_>, now: Moment) -> Result<Cmd, UpdateError> {
+    let anchor = Anchor::at(playback.transport, now);
+    player::update_player(playback, PlayerMessage::Release(anchor), now)
 }
 
-fn seek(model: &mut Model, target: Duration, now: Moment) -> Result<Cmd, UpdateError> {
-    player::update_player(model, PlayerMessage::Seek { target, now }, now)
+fn seek(
+    playback: &mut PlaybackParts<'_>,
+    target: Duration,
+    now: Moment,
+) -> Result<Cmd, UpdateError> {
+    player::update_player(playback, PlayerMessage::Seek { target, now }, now)
 }
 
-fn clamped(model: &Model, target: Duration) -> Option<Duration> {
-    let duration = player::duration_of(model);
+fn clamped(player: &Player, target: Duration) -> Option<Duration> {
+    let duration = player::duration_of(player);
     (!duration.is_zero()).then(|| target.min(duration))
 }
 
-fn fraction_target(model: &Model, tenths: SeekTenths) -> Option<Duration> {
-    let duration = player::duration_of(model);
+fn fraction_target(player: &Player, tenths: SeekTenths) -> Option<Duration> {
+    let duration = player::duration_of(player);
     if duration.is_zero() {
         return None;
     }
-    clamped(model, duration * u32::from(tenths.tenths()) / 10)
+    clamped(player, duration * u32::from(tenths.get()) / 10)
 }
 
-fn relative_target(model: &Model, seconds: i64, now: Moment) -> Duration {
-    let at = model.player.position_at(now);
+fn relative_target(player: &Player, seconds: i64, now: Moment) -> Duration {
+    let at = player.position_at(now);
     let moved = if seconds < 0 {
         at.saturating_sub(Duration::from_secs(seconds.unsigned_abs()))
     } else {
         at + Duration::from_secs(u64::try_from(seconds).unwrap_or(0))
     };
-    moved.min(player::duration_of(model))
+    moved.min(player::duration_of(player))
 }
 
 #[cfg(test)]
@@ -203,7 +228,7 @@ mod tests {
             Track,
         },
         message::{PlaybackRequest, SeekTenths},
-        update::playback::update,
+        update::{playback::update, playback_parts},
     };
 
     fn playing_track_at(duration: Option<Duration>, at: Duration) -> Model {
@@ -258,8 +283,8 @@ mod tests {
         let mut model = playing_track_at(case.duration, case.at);
         let tenths = SeekTenths::try_from(case.tenths).unwrap();
         let cmd = update(
-            &mut model,
-            PlaybackRequest::SeekFraction(tenths),
+            &mut playback_parts(&mut model),
+            PlaybackRequest::SeekTenths(tenths),
             Moment::default(),
         )
         .unwrap();

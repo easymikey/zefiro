@@ -37,7 +37,7 @@ pub(crate) fn prompt<'a>(
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{DeleteCandidate, PlaylistIndex};
+    use kernel::domain::{DeleteCandidate, ViewIndex};
 
     use crate::{
         overlay::{
@@ -50,7 +50,7 @@ mod tests {
 
     fn candidate() -> DeleteCandidate {
         DeleteCandidate {
-            track: PlaylistIndex::new(0),
+            index: ViewIndex::new(0),
             title: "Moon River".to_string(),
             artist: "Audrey Hepburn".to_string(),
         }

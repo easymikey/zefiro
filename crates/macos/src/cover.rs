@@ -11,7 +11,6 @@ use std::{
 
 use block2::RcBlock;
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
-use kernel::update::{Machine, Rejected};
 use objc2::{AllocAnyThread, rc::Retained};
 use objc2_app_kit::NSImage;
 use objc2_core_foundation::CGSize;
@@ -152,42 +151,28 @@ pub(crate) enum CoverEffect {
     Show(Vec<u8>),
 }
 
-impl Machine for CoverState {
-    type Message = CoverMessage;
-    type Error = std::convert::Infallible;
-    type Effect = CoverEffect;
-
-    fn transition(
-        self,
-        message: CoverMessage,
-    ) -> Result<(Self, CoverEffect), Rejected<Self>> {
-        Ok(match message {
-            CoverMessage::TrackShown(track) => track_shown(self, track),
-            CoverMessage::Read(bytes) => cover_read(self, bytes),
-        })
+impl CoverState {
+    pub(crate) fn apply(&mut self, message: CoverMessage) -> CoverEffect {
+        match message {
+            CoverMessage::TrackShown(track) => self.track_shown(track),
+            CoverMessage::Read(bytes) => self.cover_read(bytes),
+        }
     }
-}
 
-fn track_shown(cover: CoverState, track: Option<PathBuf>) -> (CoverState, CoverEffect) {
-    if cover.track == track {
-        (cover, CoverEffect::Nothing)
-    } else {
-        track.map_or((CoverState { track: None }, CoverEffect::Clear), |wanted| {
-            (
-                CoverState {
-                    track: Some(wanted.clone()),
-                },
-                CoverEffect::Request(wanted),
-            )
-        })
+    fn track_shown(&mut self, track: Option<PathBuf>) -> CoverEffect {
+        if self.track == track {
+            return CoverEffect::Nothing;
+        }
+        self.track.clone_from(&track);
+        track.map_or(CoverEffect::Clear, CoverEffect::Request)
     }
-}
 
-fn cover_read(cover: CoverState, bytes: CoverBytes) -> (CoverState, CoverEffect) {
-    if cover.track.as_deref() == Some(bytes.track.as_path()) {
-        (cover, CoverEffect::Show(bytes.bytes))
-    } else {
-        (cover, CoverEffect::Nothing)
+    fn cover_read(&self, bytes: CoverBytes) -> CoverEffect {
+        if self.track.as_deref() == Some(bytes.track.as_path()) {
+            CoverEffect::Show(bytes.bytes)
+        } else {
+            CoverEffect::Nothing
+        }
     }
 }
 
@@ -200,7 +185,6 @@ mod tests {
     };
 
     use crossbeam_channel::{Receiver, Sender, bounded};
-    use kernel::update::Machine;
     use rstest::rstest;
 
     use crate::cover::{
@@ -365,7 +349,7 @@ mod tests {
             next,
             effect,
         } = row;
-        let Ok(observed_effect) = cover.update(message);
+        let observed_effect = cover.apply(message);
         assert_eq!(cover, next);
         assert_eq!(observed_effect, effect);
     }

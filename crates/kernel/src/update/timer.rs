@@ -1,47 +1,40 @@
 use crate::{
-    cmd::{Cmd, Cue},
-    domain::{Model, Moment, Reply, Revision, Workspace},
-    message::Timer,
-    update::{audio, error::UpdateError, player, player::PlayerMessage},
+    cmd::Cmd,
+    domain::{Freshness, Moment, Revision, Workspace},
+    update::{
+        error::UpdateError,
+        player::{self, PlaybackParts, PlayerMessage},
+    },
 };
 
-pub(crate) fn update(
-    model: &mut Model,
-    timer: Timer,
-    now: Moment,
-) -> Result<Cmd, UpdateError> {
-    match timer {
-        Timer::Toast(revision) => Ok(toast_expired(
-            &mut model.workspace,
-            revision.reply(model.revisions.toast),
-        )),
-        Timer::Sleep(revision) => sleep_fired(model, revision, now),
-        Timer::Mark(revision) => audio::mark_fired(model, revision, now),
-    }
-}
-
-fn toast_expired(workspace: &mut Workspace, reply: Reply) -> Cmd {
+pub(crate) fn toast_expired(
+    workspace: &mut Workspace,
+    revision: Revision,
+    reply: Freshness,
+) -> Cmd {
     match reply {
-        Reply::Awaited => workspace
-            .toast
-            .take()
-            .map_or(Cmd::None, |_| Cue::ToastDismissed.into()),
-        Reply::Stale => Cmd::None,
+        Freshness::Awaited => workspace.expire(revision),
+        Freshness::Stale => Cmd::None,
     }
 }
 
-fn sleep_fired(
-    model: &mut Model,
+pub(crate) fn sleep_fired(
+    playback: &mut PlaybackParts<'_>,
     revision: Revision,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    match (revision.reply(model.revisions.sleep), model.transport.sleep) {
-        (Reply::Awaited, Some(_)) => {
+    match (
+        revision.reply(playback.revisions.sleep),
+        playback.transport.sleep,
+    ) {
+        (Freshness::Awaited, Some(_)) => {
             let paused =
-                player::update_player(model, PlayerMessage::SleepFired(now), now)?;
-            model.transport.sleep = None;
+                player::update_player(playback, PlayerMessage::SleepFired(now), now)?;
+            playback.transport.sleep = None;
             Ok(paused)
         }
-        (Reply::Awaited, None) | (Reply::Stale, Some(_) | None) => Ok(Cmd::None),
+        (Freshness::Awaited, None) | (Freshness::Stale, Some(_) | None) => {
+            Ok(Cmd::None)
+        }
     }
 }

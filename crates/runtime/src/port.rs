@@ -7,6 +7,7 @@ use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
     AudioCmd,
     ConfigCmd,
+    Congestion,
     LibraryCmd,
     MacosCmd,
     domain::{Driver, DriverStatus, Drivers},
@@ -15,7 +16,6 @@ use kernel::{
 use crate::{
     driver::{DriverThread, Exit},
     library::{cover::CoverRequest, machine::LibraryMessage},
-    sender::FullEdge,
     trace::{DropReason, TraceEntry},
 };
 
@@ -23,12 +23,16 @@ use crate::{
 pub(crate) struct Port<C> {
     driver: Driver,
     sender: Option<Sender<C>>,
-    full_edge: FullEdge,
+    full_edge: Congestion,
     handle: Option<JoinHandle<Exit>>,
 }
 
 impl<C> Port<C> {
-    pub(crate) fn new(driver: Driver, sender: Sender<C>, full_edge: FullEdge) -> Self {
+    pub(crate) fn new(
+        driver: Driver,
+        sender: Sender<C>,
+        full_edge: Congestion,
+    ) -> Self {
         Self {
             driver,
             sender: Some(sender),
@@ -44,7 +48,7 @@ impl<C> Port<C> {
         }
     }
 
-    pub(crate) fn full_edge(&self) -> &FullEdge {
+    pub(crate) fn full_edge(&self) -> &Congestion {
         &self.full_edge
     }
 
@@ -145,7 +149,7 @@ pub(crate) struct Ports {
 }
 
 impl Ports {
-    pub(crate) fn full_edge(&self, driver: Driver) -> &FullEdge {
+    pub(crate) fn full_edge(&self, driver: Driver) -> &Congestion {
         match driver {
             Driver::Audio => self.audio.full_edge(),
             Driver::Library => self.library.port.full_edge(),
@@ -176,13 +180,13 @@ mod tests {
     use crossbeam_channel::{bounded, unbounded};
     use kernel::{
         AudioCmd,
+        Congestion,
         domain::{Driver, DriverStatus, Drivers},
     };
     use rstest::rstest;
 
     use crate::{
         port::Port,
-        sender::FullEdge,
         trace::{DropReason, TraceEntry},
     };
 
@@ -208,7 +212,7 @@ mod tests {
         Err(DropReason::NotRunning)
     )]
     #[case::dead(
-        DriverStatus::Dead(kernel::domain::DriverError::Panicked("boom".to_owned())),
+        DriverStatus::Dead(kernel::domain::DriverError::panicked("boom".to_owned())),
         Inbox::Connected,
         Err(DropReason::NotRunning)
     )]
@@ -228,7 +232,7 @@ mod tests {
         }
         let mut drivers = Drivers::default();
         drivers.record_mut(Driver::Audio).status = status;
-        let port = Port::new(Driver::Audio, sender, FullEdge::default());
+        let port = Port::new(Driver::Audio, sender, Congestion::default());
 
         let sent = port.send(&drivers, AudioCmd::Stop);
 
@@ -240,7 +244,7 @@ mod tests {
         let (sender, _receiver) = bounded(1);
         let mut drivers = Drivers::default();
         drivers.record_mut(Driver::Audio).status = DriverStatus::Running;
-        let full_edge = FullEdge::default();
+        let full_edge = Congestion::default();
         let port = Port::new(Driver::Audio, sender, full_edge.clone());
 
         port.send(&drivers, AudioCmd::Stop).unwrap();

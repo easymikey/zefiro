@@ -43,7 +43,7 @@ impl Widget for &Screen<'_> {
         let layout = self.layout;
         match layout.breakpoint {
             Breakpoint::TooSmall => {
-                let breakpoints = self.scene.appearance.layout;
+                let breakpoints = self.scene.look().breakpoints;
                 (&TooSmallNotice {
                     theme,
                     minimum: Size::new(breakpoints.min_columns, breakpoints.min_rows),
@@ -54,7 +54,7 @@ impl Widget for &Screen<'_> {
             Breakpoint::Minimal => (&MinimalScreen {
                 view: self.scene.card_view(),
                 theme,
-                speed_chip: self.scene.appearance.card.speed_chip,
+                speed_chip: self.scene.look().appearance.speed_chip,
             })
                 .render(layout.screen, buffer),
             Breakpoint::Full => (&FullScreen {
@@ -110,7 +110,7 @@ impl Screen<'_> {
                 },
             );
         }
-        if let Some((toast, areas)) = self.scene.toast_card().zip(self.layout.toast) {
+        if let Some((toast, areas)) = self.scene.toaster().zip(self.layout.toast) {
             toast.render_in(
                 areas,
                 Canvas {
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn the_toast_is_painted_over_the_frame() {
         let mut model = model_with_tracks(3);
-        model.workspace.toast = Some(Toast::info("Saved".to_string()));
+        model.workspace.toasts = vec![Toast::info("Saved")];
         let sources = SceneSources::new(model);
         let text = frame(sources.scene(), &CoverArt::Missing, (80, 24));
         assert!(text.contains("Saved"), "got {text}");

@@ -12,7 +12,7 @@ use kernel::{
     OverlayName,
     PlaybackRequest,
     Timer,
-    domain::{Cursor, Overlay, Player, PlaylistIndex, Revision, Transport},
+    domain::{Cursor, Overlay, Player, Revision, Transport, ViewIndex},
     playlist::{PlayOrder, RepeatMode},
     update::{
         UpdateError,
@@ -45,7 +45,6 @@ use crate::support::{
         moon_library_scanned,
         moon_library_selecting,
         near_the_end,
-        nudge_speed,
         open,
         playing_nothing_selected,
         queued,
@@ -57,6 +56,7 @@ use crate::support::{
         shuffle,
         shuffled,
         skip,
+        step_speed,
         text_char,
         toasted,
         typed,
@@ -70,11 +70,11 @@ type Step = (
     Option<Overlay>,
     Cursor,
     Cursor,
-    Vec<PlaylistIndex>,
+    Vec<ViewIndex>,
     RepeatMode,
     PlayOrder,
     Transport,
-    Option<kernel::Toast>,
+    Vec<kernel::Toast>,
 );
 
 fn walked(mut model: Model, messages: Vec<Message>) -> Vec<Step> {
@@ -95,17 +95,17 @@ fn walked(mut model: Model, messages: Vec<Message>) -> Vec<Step> {
                 model.playlist.repeat,
                 model.playlist.play_order.clone(),
                 model.transport.clone(),
-                model.workspace.toast.clone(),
+                model.workspace.toasts.clone(),
             )
         })
         .collect()
 }
 
 fn resolved(message: Message, model: &Model) -> Message {
-    if let Message::Elapsed(Timer::Mark(placeholder)) = message
+    if let Message::Elapsed(Timer::Lookahead(placeholder)) = message
         && placeholder == Revision::default()
     {
-        return Message::Elapsed(Timer::Mark(model.revisions.mark));
+        return Message::Elapsed(Timer::Lookahead(model.revisions.lookahead));
     }
     message
 }
@@ -326,7 +326,7 @@ fn resolved(message: Message, model: &Model) -> Message {
 #[case::a_track_change_clears_the_loop_it_was_marked_on(
     {
         let mut model = model_playing_at(3, 0, Duration::ZERO);
-        model.transport.ab = Some(AbLoop::Full {
+        model.transport.ab_loop = Some(AbLoop::Full {
             a: Duration::from_secs(5),
             b: Duration::from_secs(15),
         });
@@ -345,11 +345,11 @@ fn resolved(message: Message, model: &Model) -> Message {
 )]
 #[case::nudging_speed_up_saturates_at_the_top(
     Model::default(),
-    vec![nudge_speed(1), nudge_speed(1), nudge_speed(1), nudge_speed(1), nudge_speed(1)]
+    vec![step_speed(1), step_speed(1), step_speed(1), step_speed(1), step_speed(1)]
 )]
 #[case::nudging_speed_down_steps(
     Model::default(),
-    vec![nudge_speed(-1)]
+    vec![step_speed(-1)]
 )]
 #[case::a_track_change_leaves_the_speed_alone(
     {
@@ -360,11 +360,11 @@ fn resolved(message: Message, model: &Model) -> Message {
     vec![Message::Playback(PlaybackRequest::Toggle), skip()]
 )]
 fn router_trace(
-    #[context] ctx: Context,
+    #[context] case: Context,
     #[case] model: Model,
     #[case] messages: Vec<Message>,
 ) {
-    let name = ctx.description.expect("every case is named");
+    let name = case.description.expect("every case is named");
     insta::assert_debug_snapshot!(name, walked(model, messages));
 }
 

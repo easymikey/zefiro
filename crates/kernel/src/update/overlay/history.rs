@@ -9,21 +9,21 @@ use crate::{
         Model,
         Moment,
         Overlay,
-        PlaylistIndex,
         Toast,
+        ViewIndex,
         Workspace,
         playlist::Playlist,
     },
     message::{HistoryRequest, QueueRequest},
     update::{
         error::UpdateError,
-        machine::{Machine, Rejected},
+        machine::Machine,
         overlay::{
             FollowUp,
             InnerMessage,
-            OverlayEffect,
             OverlayError,
             OverlayMessage,
+            OverlayOutcome,
             follow,
         },
     },
@@ -31,7 +31,7 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryPick {
-    Queued(PlaylistIndex),
+    Queued(ViewIndex),
     Missing,
     Nothing,
 }
@@ -44,48 +44,48 @@ pub enum HistoryMessage {
     Enqueue(HistoryPick),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum HistoryError {
+    #[error("no history entry selected")]
     NothingSelected,
+    #[error("track is not in the library")]
     NotInLibrary,
 }
 
 impl Machine for CursorOver<()> {
     type Message = HistoryMessage;
     type Error = HistoryError;
-    type Effect = OverlayEffect;
+    type Effect = OverlayOutcome;
 
     fn transition(
-        mut self,
+        &mut self,
         message: HistoryMessage,
-    ) -> Result<(Self, OverlayEffect), Rejected<Self>> {
+    ) -> Result<OverlayOutcome, HistoryError> {
         match message {
             HistoryMessage::Navigate { direction, len } => {
                 self.resize(len);
                 self.navigate(direction);
-                Ok((self, OverlayEffect::default()))
+                Ok(OverlayOutcome::default())
             }
             HistoryMessage::Top => {
                 self.cursor = self.cursor.first();
-                Ok((self, OverlayEffect::default()))
+                Ok(OverlayOutcome::default())
             }
             HistoryMessage::Bottom { len } => {
                 self.resize(len);
                 self.cursor = self.cursor.last();
-                Ok((self, OverlayEffect::default()))
+                Ok(OverlayOutcome::default())
             }
             HistoryMessage::Enqueue(HistoryPick::Queued(index)) => {
                 let queued = FollowUp::Queue(QueueRequest::EnqueueTrack(index));
-                Ok((self, OverlayEffect::from(queued)))
+                Ok(OverlayOutcome::from(queued))
             }
-            HistoryMessage::Enqueue(HistoryPick::Missing) => Err(Rejected {
-                state: self,
-                reason: HistoryError::NotInLibrary,
-            }),
-            HistoryMessage::Enqueue(HistoryPick::Nothing) => Err(Rejected {
-                state: self,
-                reason: HistoryError::NothingSelected,
-            }),
+            HistoryMessage::Enqueue(HistoryPick::Missing) => {
+                Err(HistoryError::NotInLibrary)
+            }
+            HistoryMessage::Enqueue(HistoryPick::Nothing) => {
+                Err(HistoryError::NothingSelected)
+            }
         }
     }
 }
@@ -111,7 +111,7 @@ pub(crate) fn request(
     match model
         .workspace
         .overlay
-        .update(OverlayMessage::Inner(InnerMessage::History(message)))
+        .transition(OverlayMessage::Inner(InnerMessage::History(message)))
     {
         Ok(effect) => follow(model, effect, now),
         Err(OverlayError::History(HistoryError::NotInLibrary)) => not_in_library(model),
@@ -139,7 +139,7 @@ fn pick(
             .iter()
             .position(|track| track.path() == path)
             .map_or(HistoryPick::Missing, |index| {
-                HistoryPick::Queued(PlaylistIndex::new(index))
+                HistoryPick::Queued(ViewIndex::new(index))
             })
     })
 }

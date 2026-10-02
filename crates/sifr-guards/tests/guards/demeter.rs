@@ -1,19 +1,8 @@
-// GUARD: below its root router, no `kernel` update handler holds a whole
-// `Model` or dots into one.
+// GUARD: below the router, no `kernel` update handler holds a whole `Model`.
 
 use crate::guards::support::{self, Allow};
 
 const ALLOWED_MODEL_FUNCTIONS: &[Allow] = &[
-    Allow::new(
-        "playback.rs",
-        "playback",
-        "routes PlaybackRequest across transport, player and workspace",
-    ),
-    Allow::new(
-        "playback.rs",
-        "play_pause",
-        "toggles across player, transport and the queue",
-    ),
     Allow::new(
         "browse.rs",
         "update",
@@ -25,29 +14,54 @@ const ALLOWED_MODEL_FUNCTIONS: &[Allow] = &[
         "resorts the library view and resyncs playlist, queue and player",
     ),
     Allow::new(
-        "loaded.rs",
-        "loaded",
+        "browse.rs",
+        "queue",
+        "resolves the selection once across playlist, workspace and queue",
+    ),
+    Allow::new(
+        "browse.rs",
+        "full_scan",
+        "reads the scan status, music dir and revisions, and issues the scan",
+    ),
+    Allow::new(
+        "browse.rs",
+        "toggle_favorite",
+        "reads the selection from workspace and playlist and updates favorites",
+    ),
+    Allow::new(
+        "browse.rs",
+        "trash_track",
+        "removes a track across playlist, library, queue and player",
+    ),
+    Allow::new(
+        "library.rs",
+        "update",
         "routes PlaylistRequest across library, playlist and themes",
     ),
     Allow::new(
-        "loaded.rs",
+        "library.rs",
+        "library",
+        "applies a fresh scan across library, playlist and queue",
+    ),
+    Allow::new(
+        "library.rs",
+        "library_loaded",
+        "installs a fresh scan across library, playlist, queue and browse",
+    ),
+    Allow::new(
+        "library.rs",
         "whole_library",
         "applies a fresh scan across library, playlist and queue",
     ),
     Allow::new(
-        "loaded.rs",
+        "library.rs",
         "listed_library",
         "applies a fresh scan across library, playlist and queue",
     ),
     Allow::new(
-        "loaded.rs",
+        "library.rs",
         "tagged_tracks",
         "applies a fresh scan across library, playlist and queue",
-    ),
-    Allow::new(
-        "loaded.rs",
-        "scan_parts",
-        "decides where a rescan lands across library and playlist",
     ),
     Allow::new(
         "overlay/mod.rs",
@@ -73,6 +87,41 @@ const ALLOWED_MODEL_FUNCTIONS: &[Allow] = &[
         "settings.rs",
         "adjust",
         "routes a SettingRow nudge across themes, settings and appearance",
+    ),
+    Allow::new(
+        "driver.rs",
+        "decided",
+        "settles a died driver across audio, player, restarts and toasts",
+    ),
+    Allow::new(
+        "driver.rs",
+        "restarted",
+        "restarts a driver across audio, player and revisions",
+    ),
+    Allow::new(
+        "overlay/mod.rs",
+        "overlay_for",
+        "builds an overlay from playlist, player, workspace and settings",
+    ),
+    Allow::new(
+        "overlay/mod.rs",
+        "update_overlay",
+        "transitions the overlay then forwards to follow",
+    ),
+    Allow::new(
+        "overlay/mod.rs",
+        "follow",
+        "routes an overlay follow-up request to its handler",
+    ),
+    Allow::new(
+        "overlay/history.rs",
+        "not_in_library",
+        "raises a toast through workspace and revisions",
+    ),
+    Allow::new(
+        "overlay/settings.rs",
+        "request",
+        "routes a settings row request across settings, themes and appearance",
     ),
 ];
 
@@ -159,6 +208,7 @@ fn update_handlers_below_the_router_take_their_slices_not_a_whole_model() {
 
         let mut in_allowed_fn = false;
         let mut fn_depth: i32 = 0;
+        let mut fn_opened = false;
 
         for (i, raw_line) in content.lines().enumerate() {
             let trimmed = raw_line.trim_start();
@@ -177,18 +227,22 @@ fn update_handlers_below_the_router_take_their_slices_not_a_whole_model() {
             {
                 in_allowed_fn = true;
                 fn_depth = 0;
+                fn_opened = false;
                 seen.push((relative_str.clone(), row.pattern));
             }
 
             if in_allowed_fn {
                 for ch in raw_line.chars() {
                     match ch {
-                        '{' => fn_depth += 1,
+                        '{' => {
+                            fn_depth += 1;
+                            fn_opened = true;
+                        }
                         '}' => fn_depth -= 1,
                         _ => {}
                     }
                 }
-                if fn_depth <= 0 {
+                if fn_opened && fn_depth <= 0 {
                     in_allowed_fn = false;
                 }
                 continue;

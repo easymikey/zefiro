@@ -3,10 +3,10 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use strum::IntoStaticStr;
 
 use crate::domain::{
+    AppearanceSetting,
     ChordPrefix,
     ConfigError,
     ConfigFile,
-    CustomSetting,
     Direction,
     Driver,
     DriverError,
@@ -18,13 +18,15 @@ use crate::domain::{
     OutputDevice,
     OverlayName,
     Percent,
-    PlaylistIndex,
     Revision,
     SettingRow,
     StreamError,
     ThemeName,
     Toast,
     Track,
+    TrackIndex,
+    ViewIndex,
+    appearance::Look,
     playlist::PlaylistFileName,
 };
 
@@ -41,6 +43,7 @@ pub enum Message {
     Browse(BrowseRequest),
     Queue(QueueRequest),
     Playlist(PlaylistRequest),
+    ShuffleRolled(Vec<TrackIndex>),
     Library(LibraryEvent),
     Config(ConfigEvent),
     Audio(AudioEvent),
@@ -48,7 +51,7 @@ pub enum Message {
     Elapsed(Timer),
     Driver {
         driver: Driver,
-        event: DriverMessage,
+        event: DriverEvent,
     },
     Key(KeyPress),
     Viewport {
@@ -86,12 +89,12 @@ impl From<ConfigEvent> for Message {
 pub enum Timer {
     Toast(Revision),
     Sleep(Revision),
-    Mark(Revision),
+    Lookahead(Revision),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub enum DriverMessage {
+pub enum DriverEvent {
     Died(DriverError),
     Stopped,
     Full,
@@ -153,9 +156,10 @@ pub enum HistoryRequest {
 pub enum ConfigEvent {
     KeymapReloaded(Box<KeymapOverrides>),
     ThemeReloaded(ThemeName),
+    AppearanceReloaded(Look),
     ThemesLoaded(Vec<ThemeName>),
     MusicDirReloaded(PathBuf),
-    CustomSettingsReloaded(Vec<CustomSetting>),
+    AppearanceSettingsReloaded(Vec<AppearanceSetting>),
     SourceFailed { source: ConfigFile, text: String },
     SourceRecovered(ConfigFile),
     Error(ConfigError),
@@ -169,20 +173,20 @@ pub enum PlaybackRequest {
     Pause,
     SeekForward,
     SeekBack,
-    Hold,
+    HoldForOverlay,
     Release,
     Stop,
     Next,
     Previous,
     SeekBy { seconds: i64 },
-    NudgeVolume { steps: i8 },
+    StepVolume { steps: i8 },
     ToggleShuffle,
     CycleRepeat,
     CycleSleep,
     AbMark,
-    NudgeSpeed { steps: i8 },
+    StepSpeed { steps: i8 },
     SeekTo(Duration),
-    SeekFraction(SeekTenths),
+    SeekTenths(SeekTenths),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -190,7 +194,7 @@ pub struct SeekTenths(u8);
 
 impl SeekTenths {
     #[must_use]
-    pub fn tenths(self) -> u8 {
+    pub fn get(self) -> u8 {
         self.0
     }
 }
@@ -215,17 +219,17 @@ impl TryFrom<u8> for SeekTenths {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowseRequest {
-    Trash(PlaylistIndex),
+    Trash(ViewIndex),
     SavePlaylist(PlaylistFileName),
     ChordPrefix(ChordPrefix),
-    CursorBy { rows: i64 },
+    CursorBy { rows: isize },
     Top,
     Bottom,
     PlaySelected,
     CycleSort,
     FullScan,
     ToggleFavorite,
-    CursorTo(PlaylistIndex),
+    CursorTo(ViewIndex),
     PageBy(Direction),
 }
 
@@ -233,7 +237,7 @@ pub enum BrowseRequest {
 #[strum(serialize_all = "snake_case")]
 pub enum QueueRequest {
     Enqueue,
-    EnqueueTrack(PlaylistIndex),
+    EnqueueTrack(ViewIndex),
     PlayNext,
     Dequeue,
     MoveInQueue(Direction),
@@ -242,8 +246,7 @@ pub enum QueueRequest {
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum PlaylistRequest {
-    JumpTo(PlaylistIndex),
-    ShuffleRolled(Vec<usize>),
+    JumpTo(ViewIndex),
 }
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
@@ -292,26 +295,18 @@ impl std::fmt::Display for LibrarySubject {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum IoError {
+    #[error("not found")]
     Missing,
+    #[error("permission denied")]
     Denied,
+    #[error("corrupt data")]
     Malformed,
+    #[error("disk full")]
     Full,
+    #[error("an unknown error")]
     Other,
-}
-
-impl std::fmt::Display for IoError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let label = match self {
-            IoError::Missing => "not found",
-            IoError::Denied => "permission denied",
-            IoError::Malformed => "corrupt data",
-            IoError::Full => "disk full",
-            IoError::Other => "an unknown error",
-        };
-        formatter.write_str(label)
-    }
 }
 
 impl From<std::io::ErrorKind> for IoError {
@@ -361,23 +356,16 @@ pub enum MacosEvent {
     MediaKey(PlaybackRequest),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DecodeError {
+    #[error("unsupported format")]
     Unsupported,
+    #[error("corrupt data")]
     Corrupt,
+    #[error("{0}")]
     Unreadable(IoError),
+    #[error("the decoder panicked")]
     Panicked,
-}
-
-impl std::fmt::Display for DecodeError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DecodeError::Unsupported => formatter.write_str("unsupported format"),
-            DecodeError::Corrupt => formatter.write_str("corrupt data"),
-            DecodeError::Unreadable(kind) => write!(formatter, "{kind}"),
-            DecodeError::Panicked => formatter.write_str("the decoder panicked"),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -494,14 +482,5 @@ mod tests {
         #[case] expected: &str,
     ) {
         assert_eq!(failure.to_string(), expected);
-    }
-
-    #[rstest::rstest]
-    #[case::not_found(std::io::ErrorKind::NotFound, IoError::Missing)]
-    #[case::permission_denied(std::io::ErrorKind::PermissionDenied, IoError::Denied)]
-    #[case::storage_full(std::io::ErrorKind::StorageFull, IoError::Full)]
-    #[case::other(std::io::ErrorKind::Interrupted, IoError::Other)]
-    fn io_fault_from_kind(#[case] kind: std::io::ErrorKind, #[case] expected: IoError) {
-        assert_eq!(IoError::from(kind), expected);
     }
 }

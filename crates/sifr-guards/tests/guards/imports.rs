@@ -1,5 +1,4 @@
-// GUARD: every `use` names its path from `crate::` or an external crate, and
-// none ends in a glob.
+// GUARD: every `use` starts at `crate::` or an external crate, no glob.
 
 use crate::guards::support::{self, Allow};
 

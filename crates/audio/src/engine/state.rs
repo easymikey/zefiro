@@ -1,7 +1,7 @@
 use kernel::{
     AudioError,
     AudioEvent,
-    TrackRequest,
+    TrackLoad,
     domain::{OutputDevice, Revision, Speed},
 };
 
@@ -21,17 +21,11 @@ pub(crate) enum Engine {
     Live(Live),
 }
 
-impl Default for Engine {
-    fn default() -> Self {
-        Engine::Live(Live::new(EngineConfig::default(), Speed::default()))
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Muted {
     pub(crate) error: AudioError,
     pub(crate) config: EngineConfig,
-    pub(crate) pending: Option<TrackRequest>,
+    pub(crate) pending: Option<TrackLoad>,
     pub(crate) speed: Speed,
 }
 
@@ -72,7 +66,7 @@ impl Live {
 
     pub(crate) fn volume(&self) -> f32 {
         let gain = self.phase.current().and_then(|current| current.gain);
-        replaygain_factor(self.config.replaygain, gain)
+        replaygain_factor(self.config.replay_gain, gain)
     }
 }
 

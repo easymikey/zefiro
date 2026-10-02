@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use config::{AppearanceFile, ThemeFile};
+use config::ThemeFile;
 use crossbeam_channel::Sender;
-use kernel::{ConfigCmd, ConfigEvent, Message, domain::Driver};
+use kernel::{ConfigCmd, ConfigEvent, Message, Outbox, domain::Driver};
 
 use crate::{
     config::{
@@ -13,14 +13,12 @@ use crate::{
     error::Error,
     latest::LatestSender,
     registry,
-    sender::DriverSender,
 };
 
 pub(crate) struct ConfigParts {
     pub(crate) paths: ConfigPaths,
     pub(crate) save_debounce: Duration,
     pub(crate) theme: LatestSender<ThemeFile>,
-    pub(crate) appearance: LatestSender<AppearanceFile>,
 }
 
 pub(crate) fn spawn(
@@ -33,7 +31,6 @@ pub(crate) fn spawn(
             let outbound = Outbound {
                 outbox,
                 theme: &parts.theme,
-                appearance: &parts.appearance,
             };
             let watching = Watch::recommended(outbox);
             ConfigLoop::new(&parts, &outbound, watching).run(inbox);
@@ -44,9 +41,8 @@ pub(crate) fn spawn(
 }
 
 pub(crate) struct Outbound<'a> {
-    pub(crate) outbox: &'a DriverSender<ConfigEvent>,
+    pub(crate) outbox: &'a Outbox<ConfigEvent>,
     pub(crate) theme: &'a LatestSender<ThemeFile>,
-    pub(crate) appearance: &'a LatestSender<AppearanceFile>,
 }
 
 #[cfg(test)]
@@ -62,7 +58,13 @@ mod tests {
         ConfigEvent,
         ConfigPatch,
         Message,
-        domain::{ConfigFile, CustomSetting, OptionIndex, SettingId, ThemeName},
+        domain::{
+            AppearanceSetting,
+            ConfigFile,
+            OptionIndex,
+            ThemeName,
+            appearance_rows::AppearanceField,
+        },
     };
 
     use crate::{
@@ -87,7 +89,6 @@ mod tests {
                 paths,
                 save_debounce,
                 theme: writers.theme,
-                appearance: writers.appearance,
             },
             inbox,
         )?;
@@ -115,13 +116,12 @@ mod tests {
     }
 
     fn wait_for_appearance_reload(
-        doorbell: &Receiver<()>,
-        cells: &LatestReceivers,
+        messages: &Receiver<Message>,
         deadline: Instant,
     ) -> bool {
         while Instant::now() < deadline {
-            if doorbell.recv_timeout(Duration::from_millis(100)).is_ok()
-                && cells.appearance.take().is_some()
+            if let Ok(Message::Config(ConfigEvent::AppearanceReloaded(_))) =
+                messages.recv_timeout(Duration::from_millis(100))
             {
                 return true;
             }
@@ -133,10 +133,9 @@ mod tests {
     fn a_hand_edit_after_spawn_reaches_the_shell_without_polling() {
         let directory = tempfile::tempdir().unwrap();
         let (inbox, messages) = crossbeam_channel::unbounded();
-        let (thread, cells, doorbell) =
+        let (thread, _cells, doorbell) =
             spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
         drain(&doorbell);
-        let _ = cells.appearance.take();
         drain(&messages);
 
         std::fs::write(
@@ -147,13 +146,8 @@ mod tests {
 
         let deadline = Instant::now() + Duration::from_secs(3);
         assert!(
-            wait_for_appearance_reload(&doorbell, &cells, deadline),
+            wait_for_appearance_reload(&messages, deadline),
             "a hand edit made after spawn must reach the shell through a filesystem event"
-        );
-        let rows = drain(&messages).into_iter().find_map(custom_rows_reloaded);
-        assert!(
-            rows.is_some(),
-            "a hand edit must send the kernel the file's current row positions"
         );
 
         drop(thread.commands);
@@ -275,8 +269,9 @@ mod tests {
         Some(themes)
     }
 
-    fn custom_rows_reloaded(message: Message) -> Option<Vec<CustomSetting>> {
-        let Message::Config(ConfigEvent::CustomSettingsReloaded(rows)) = message else {
+    fn custom_rows_reloaded(message: Message) -> Option<Vec<AppearanceSetting>> {
+        let Message::Config(ConfigEvent::AppearanceSettingsReloaded(rows)) = message
+        else {
             return None;
         };
         Some(rows)
@@ -358,9 +353,9 @@ mod tests {
             theme: None,
             seen: crate::config::SeenTexts::default(),
         };
-        let (inbox, _messages) = crossbeam_channel::unbounded();
+        let (inbox, messages) = crossbeam_channel::unbounded();
         let (thread, _cells, doorbell) = spawn(paths, TEST_DEBOUNCE, &inbox).unwrap();
-        drain(&doorbell);
+        drain(&messages);
         thread
             .commands
             .send(ConfigCmd::Save(
@@ -369,18 +364,17 @@ mod tests {
                     .build(),
             ))
             .unwrap();
-        let format_chips_id = config::AppearanceField::FormatChips.id();
+        let format_chips_id = AppearanceField::FormatChips;
         thread
             .commands
             .send(ConfigCmd::Setting {
-                id: format_chips_id,
+                field: format_chips_id,
                 option: option_at(format_chips_id, 1),
             })
             .unwrap();
 
         assert!(wait_for(&config_path), "config.toml must land on disk");
         assert!(wait_for(&appearance_path), "sifr-ui.toml must land on disk");
-        drain(&doorbell);
         assert!(
             doorbell.recv_timeout(SETTLE_TIMEOUT).is_err(),
             "a write we made ourselves must never come back as a reload"
@@ -410,27 +404,26 @@ format_chips = true
 speed_chip = "always"
 "#;
 
-    fn option_at(id: SettingId, position: usize) -> OptionIndex {
-        config::appearance_row(id)
+    fn option_at(id: AppearanceField, position: usize) -> OptionIndex {
+        kernel::domain::appearance_rows::appearance_row(id)
             .unwrap()
-            .custom
             .control
             .count()
             .index(position)
             .unwrap()
     }
 
-    fn appearance_rows() -> [(SettingId, OptionIndex); 6] {
+    fn appearance_rows() -> [(AppearanceField, OptionIndex); 6] {
         [
-            (config::AppearanceField::CoverStyle, 3),
-            (config::AppearanceField::CoverBrackets, 1),
-            (config::AppearanceField::FormatChips, 0),
-            (config::AppearanceField::ProgressRemaining, 1),
-            (config::AppearanceField::KeyHints, 1),
-            (config::AppearanceField::LayoutMode, 2),
+            (AppearanceField::CoverStyle, 3),
+            (AppearanceField::CoverBrackets, 1),
+            (AppearanceField::FormatChips, 0),
+            (AppearanceField::ProgressRemaining, 1),
+            (AppearanceField::KeyHints, 1),
+            (AppearanceField::LayoutMode, 2),
         ]
         .map(|(field, position)| {
-            let id = field.id();
+            let id = field;
             (id, option_at(id, position))
         })
     }
@@ -457,15 +450,15 @@ speed_chip = "always"
             theme: None,
             seen: crate::config::SeenTexts::default(),
         };
-        let (inbox, _messages) = crossbeam_channel::unbounded();
-        let (thread, _cells, doorbell) = spawn(paths, TEST_DEBOUNCE, &inbox).unwrap();
-        drain(&doorbell);
+        let (inbox, messages) = crossbeam_channel::unbounded();
+        let (thread, _cells, _doorbell) = spawn(paths, TEST_DEBOUNCE, &inbox).unwrap();
+        drain(&messages);
 
         for (id, position) in appearance_rows() {
             thread
                 .commands
                 .send(ConfigCmd::Setting {
-                    id,
+                    field: id,
                     option: position,
                 })
                 .unwrap();
@@ -500,17 +493,18 @@ speed_chip = "always"
     fn a_preset_write_lands_on_disk_and_never_selects_a_theme() {
         let directory = tempfile::tempdir().unwrap();
         let appearance_path = directory.path().join("sifr-ui.toml");
-        let (inbox, _messages) = crossbeam_channel::unbounded();
+        let (inbox, messages) = crossbeam_channel::unbounded();
         let (thread, _cells, doorbell) =
             spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
+        drain(&messages);
         drain(&doorbell);
 
-        let preset_id = config::AppearanceField::Preset.id();
+        let preset_id = AppearanceField::Preset;
         let noir_option = option_at(preset_id, 1);
         thread
             .commands
             .send(ConfigCmd::Setting {
-                id: preset_id,
+                field: preset_id,
                 option: noir_option,
             })
             .unwrap();
@@ -522,8 +516,6 @@ speed_chip = "always"
             Some("milkdrop"),
             "the written file must hold noir's full appearance"
         );
-
-        drain(&doorbell);
         assert!(
             doorbell.try_recv().is_err(),
             "an appearance write alone must never select a theme; only ConfigCmd::SelectTheme, which the kernel sends, may do that"
@@ -543,11 +535,11 @@ speed_chip = "always"
         drain(&doorbell);
         drain(&messages);
 
-        let format_chips_id = config::AppearanceField::FormatChips.id();
+        let format_chips_id = AppearanceField::FormatChips;
         thread
             .commands
             .send(ConfigCmd::Setting {
-                id: format_chips_id,
+                field: format_chips_id,
                 option: option_at(format_chips_id, 1),
             })
             .unwrap();

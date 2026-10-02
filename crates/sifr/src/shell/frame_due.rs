@@ -18,7 +18,7 @@ pub(crate) fn animation_frame_due(
     cover_motion: CoverMotion,
     last_paint: Moment,
 ) -> Option<Moment> {
-    (stage.wants_frame() || cover_motion == CoverMotion::Animating)
+    (stage.is_animating() || cover_motion == CoverMotion::Animating)
         .then(|| next_frame(last_paint))
 }
 
@@ -84,7 +84,7 @@ mod tests {
         AudioFormat,
         Bounded,
         Moment,
-        Pause,
+        PausedBy,
         Player,
         Playhead,
         Preload,
@@ -139,7 +139,7 @@ mod tests {
         Player::Paused {
             track: track(duration),
             at,
-            pause: Pause::ByListener,
+            by: PausedBy::Listener,
         }
     }
 

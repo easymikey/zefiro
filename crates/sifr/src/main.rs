@@ -18,7 +18,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            let _ = writeln!(std::io::stderr(), "sifr: {error}");
+            drop(writeln!(std::io::stderr(), "sifr: {error}"));
             ExitCode::FAILURE
         }
     }

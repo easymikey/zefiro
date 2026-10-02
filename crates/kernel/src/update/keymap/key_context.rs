@@ -17,12 +17,12 @@ fn key_context_of(overlay: &Overlay) -> KeyContext {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContextStack {
+pub(crate) enum ActiveKeyContext {
     Overlay(KeyContext),
     Base,
 }
 
-impl ContextStack {
+impl ActiveKeyContext {
     #[must_use]
     pub(crate) fn primary(self) -> KeyContext {
         match self {
@@ -41,11 +41,11 @@ impl ContextStack {
 }
 
 #[must_use]
-pub(crate) fn key_context_stack(workspace: &Workspace) -> ContextStack {
+pub(crate) fn key_context_stack(workspace: &Workspace) -> ActiveKeyContext {
     workspace
         .overlay
         .as_ref()
-        .map_or(ContextStack::Base, |overlay| {
-            ContextStack::Overlay(key_context_of(overlay))
+        .map_or(ActiveKeyContext::Base, |overlay| {
+            ActiveKeyContext::Overlay(key_context_of(overlay))
         })
 }

@@ -54,7 +54,7 @@ fn digit_seek_rows() -> impl Iterator<Item = KeyBinding> {
         Some(row(KeyContext::Global)(
             Action::SeekTenth(digit),
             key(digit_char(digit)?),
-            Message::Playback(PlaybackRequest::SeekFraction(tenths)),
+            Message::Playback(PlaybackRequest::SeekTenths(tenths)),
         ))
     })
 }
@@ -79,16 +79,16 @@ fn global_rows() -> Vec<KeyBinding> {
         row(SeekForwardShort, bare(KeyCode::Right), Message::Playback(P::SeekBy { seconds: SEEK_SMALL })),
         row(SeekBackLong, shifted(KeyCode::Left), Message::Playback(P::SeekBy { seconds: -SEEK_LARGE })),
         row(SeekForwardLong, shifted(KeyCode::Right), Message::Playback(P::SeekBy { seconds: SEEK_LARGE })),
-        row(VolumeUp, key('+'), Message::Playback(P::NudgeVolume { steps: 5 })),
-        row(VolumeUp, key('='), Message::Playback(P::NudgeVolume { steps: 5 })),
-        row(VolumeDown, key('-'), Message::Playback(P::NudgeVolume { steps: -5 })),
-        row(VolumeDown, key('_'), Message::Playback(P::NudgeVolume { steps: -5 })),
+        row(VolumeUp, key('+'), Message::Playback(P::StepVolume { steps: 5 })),
+        row(VolumeUp, key('='), Message::Playback(P::StepVolume { steps: 5 })),
+        row(VolumeDown, key('-'), Message::Playback(P::StepVolume { steps: -5 })),
+        row(VolumeDown, key('_'), Message::Playback(P::StepVolume { steps: -5 })),
         row(Shuffle, key('s'), Message::Playback(P::ToggleShuffle)),
         row(Repeat, key('r'), Message::Playback(P::CycleRepeat)),
         row(SleepTimer, key('z'), Message::Playback(P::CycleSleep)),
         row(AbRepeat, key('b'), Message::Playback(P::AbMark)),
-        row(SpeedDown, key('['), Message::Playback(P::NudgeSpeed { steps: -1 })),
-        row(SpeedUp, key(']'), Message::Playback(P::NudgeSpeed { steps: 1 })),
+        row(SpeedDown, key('['), Message::Playback(P::StepSpeed { steps: -1 })),
+        row(SpeedUp, key(']'), Message::Playback(P::StepSpeed { steps: 1 })),
         row(JumpToTime, ctrl('j'), Message::Overlay(OverlayRequest::Open(OverlayName::JumpToTime))),
         row(Search, key('/'), Message::Overlay(OverlayRequest::Open(OverlayName::Search))),
         row(History, key('H'), Message::Overlay(OverlayRequest::Open(OverlayName::History))),
@@ -139,11 +139,12 @@ fn playlist_rows() -> Vec<KeyBinding> {
 }
 
 pub(crate) fn defaults() -> Vec<KeyBinding> {
-    let mut rows = global_rows();
-    rows.extend(playlist_rows());
-    rows.extend(digit_seek_rows());
-    rows.extend(overlays::rows());
-    rows
+    global_rows()
+        .into_iter()
+        .chain(playlist_rows())
+        .chain(digit_seek_rows())
+        .chain(overlays::rows())
+        .collect()
 }
 
 #[cfg(test)]

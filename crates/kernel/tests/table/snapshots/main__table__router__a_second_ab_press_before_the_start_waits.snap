@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
-assertion_line: 414
+assertion_line: 368
 expression: "walked(model, messages)"
 ---
 [
@@ -71,14 +71,14 @@ expression: "walked(model, messages)"
                 1.0,
             ),
             sleep: None,
-            ab: Some(
+            ab_loop: Some(
                 AOnly(
                     10s,
                 ),
             ),
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Audio(
@@ -155,14 +155,14 @@ expression: "walked(model, messages)"
                 1.0,
             ),
             sleep: None,
-            ab: Some(
+            ab_loop: Some(
                 AOnly(
                     10s,
                 ),
             ),
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Playback(
@@ -231,13 +231,13 @@ expression: "walked(model, messages)"
                 1.0,
             ),
             sleep: None,
-            ab: Some(
+            ab_loop: Some(
                 AOnly(
                     10s,
                 ),
             ),
             output: Ready,
         },
-        None,
+        [],
     ),
 ]

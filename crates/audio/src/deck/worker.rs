@@ -44,9 +44,9 @@ impl<T> Latest<T> {
         Self { sender, drain }
     }
 
-    pub(crate) fn replace(&self, value: T) {
+    pub(crate) fn replace(&self, latest: T) {
         let _ = self.drain.try_recv();
-        if let Err(TrySendError::Full(value)) = self.sender.try_send(value) {
+        if let Err(TrySendError::Full(value)) = self.sender.try_send(latest) {
             let _ = self.drain.try_recv();
             match self.sender.try_send(value) {
                 Ok(()) | Err(TrySendError::Disconnected(_) | TrySendError::Full(_)) => {
@@ -118,8 +118,8 @@ impl Drop for AudioWorker {
     }
 }
 
-fn join_quietly(handle: JoinHandle<Result<(), SendError<DeckEvent>>>) {
-    drop(handle.join());
+fn join_quietly(thread: JoinHandle<Result<(), SendError<DeckEvent>>>) {
+    drop(thread.join());
 }
 
 fn disconnected<T>(receiver: &Receiver<T>) -> bool {

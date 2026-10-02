@@ -1,17 +1,17 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crate::domain::{
-    CustomSetting,
+    AppearanceSetting,
     Drivers,
     Favorites,
     HistoryEntry,
     Player,
-    PlaylistIndex,
     Revisions,
     Settings,
     Themes,
     Track,
     Transport,
+    ViewIndex,
     Workspace,
     library::Library,
     playlist::{Playlist, PlaylistSource},
@@ -36,13 +36,13 @@ pub struct Model {
     pub scan_status: ScanStatus,
     pub playlist: Playlist,
     pub playlist_source: PlaylistSource,
-    pub queue: Vec<PlaylistIndex>,
+    pub queue: Vec<ViewIndex>,
     pub player: Player,
     pub transport: Transport,
     pub history: Vec<HistoryEntry>,
     pub favorites: Favorites,
     pub settings: Settings,
-    pub custom_settings: Vec<CustomSetting>,
+    pub appearance_settings: Vec<AppearanceSetting>,
     pub revisions: Revisions,
     pub themes: Themes,
     pub drivers: Drivers,
@@ -59,7 +59,7 @@ impl Model {
     }
 
     #[must_use]
-    pub fn playing_index(&self) -> Option<PlaylistIndex> {
+    pub fn playing_index(&self) -> Option<ViewIndex> {
         let current = self.player.current()?;
         let index = self.playlist.playing_index()?;
         let at_index = self.playlist.current()?;
@@ -104,7 +104,7 @@ mod displayed_track_tests {
     fn playing_track_wins_over_the_playlist_selection() {
         let mut model = Model {
             library: Some(Library {
-                all: vec![titled_track("selected")],
+                tracks: vec![titled_track("selected")],
                 view: vec![TrackIndex::new(0)],
             }),
             ..Model::default()
@@ -129,7 +129,7 @@ mod displayed_track_tests {
     fn stopped_falls_back_to_the_selected_playlist_track() {
         let model = Model {
             library: Some(Library {
-                all: vec![titled_track("a"), titled_track("b")],
+                tracks: vec![titled_track("a"), titled_track("b")],
                 view: vec![TrackIndex::new(0), TrackIndex::new(1)],
             }),
             workspace: Workspace {
@@ -163,13 +163,13 @@ mod playing_index_tests {
     use crate::domain::{
         Cursor,
         Moment,
-        Pause,
+        PausedBy,
         Player,
         Playhead,
-        PlaylistIndex,
         Preload,
         Speed,
         Track,
+        ViewIndex,
         model::{Model, titled_track},
         playlist::Playlist,
     };
@@ -178,11 +178,11 @@ mod playing_index_tests {
         Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default())
     }
 
-    fn model_with(tracks: Vec<Arc<Track>>, index: Option<PlaylistIndex>) -> Model {
+    fn model_with(tracks: Vec<Arc<Track>>, index: Option<ViewIndex>) -> Model {
         Model {
             playlist: Playlist {
                 cursor: Cursor::with_len(tracks.len())
-                    .at(index.map_or(0, PlaylistIndex::get)),
+                    .at(index.map_or(0, ViewIndex::get)),
                 tracks,
                 ..Playlist::default()
             },
@@ -195,27 +195,25 @@ mod playing_index_tests {
         track: titled_track("a"),
         head: anchored_at_zero(),
         preload: Preload::None,
-    }, Some(PlaylistIndex::new(0)))]
+    }, Some(ViewIndex::new(0)))]
     #[case::paused_reports_the_playlist_index(Player::Paused {
         track: titled_track("a"),
         at: Duration::ZERO,
-        pause: Pause::ByListener,
-    }, Some(PlaylistIndex::new(0)))]
+        by: PausedBy::Listener,
+    }, Some(ViewIndex::new(0)))]
     #[case::stopped_reports_none(Player::Stopped, None)]
     fn playing_index_reflects_the_player_state(
         #[case] player: Player,
-        #[case] expected: Option<PlaylistIndex>,
+        #[case] expected: Option<ViewIndex>,
     ) {
-        let mut model =
-            model_with(vec![titled_track("a")], Some(PlaylistIndex::new(0)));
+        let mut model = model_with(vec![titled_track("a")], Some(ViewIndex::new(0)));
         model.player = player;
         assert_eq!(model.playing_index(), expected);
     }
 
     #[test]
     fn a_rescan_that_reallocates_the_tracks_keeps_the_marker() {
-        let mut model =
-            model_with(vec![titled_track("a")], Some(PlaylistIndex::new(0)));
+        let mut model = model_with(vec![titled_track("a")], Some(ViewIndex::new(0)));
         model.player = Player::Playing {
             track: titled_track("a"),
             head: anchored_at_zero(),
@@ -224,14 +222,14 @@ mod playing_index_tests {
         let rescanned = titled_track("a");
         assert!(!Arc::ptr_eq(&rescanned, &titled_track("a")));
         model.playlist.tracks = vec![rescanned];
-        assert_eq!(model.playing_index(), Some(PlaylistIndex::new(0)));
+        assert_eq!(model.playing_index(), Some(ViewIndex::new(0)));
     }
 
     #[test]
     fn player_track_differing_from_the_playlist_index_reports_none() {
         let mut model = model_with(
             vec![titled_track("a"), titled_track("b")],
-            Some(PlaylistIndex::new(1)),
+            Some(ViewIndex::new(1)),
         );
         model.player = Player::Playing {
             track: titled_track("a"),

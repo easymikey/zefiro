@@ -1,4 +1,4 @@
-use config::SpeedChip;
+use kernel::domain::appearance::SpeedChip;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -261,11 +261,18 @@ fn paint_meter_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use config::SpeedChip;
     use kernel::{
         Bounded,
         Moment,
-        domain::{Output, Percent, Player, Playhead, Preload, Speed},
+        domain::{
+            Output,
+            Percent,
+            Player,
+            Playhead,
+            Preload,
+            Speed,
+            appearance::SpeedChip,
+        },
         playlist::PlayOrder,
     };
 

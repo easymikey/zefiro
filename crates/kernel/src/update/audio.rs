@@ -5,17 +5,16 @@ use crate::{
     domain::{
         Cursor,
         Direction,
-        Model,
+        Freshness,
         Moment,
         Output,
         OutputDevice,
         Player,
-        PlaylistIndex,
-        Reply,
         Revision,
         Toast,
         Track,
         Transport,
+        ViewIndex,
         Workspace,
         playlist::{Playlist, RepeatMode},
     },
@@ -23,55 +22,59 @@ use crate::{
     update::{
         error::UpdateError,
         machine::Machine,
-        player::{self, Anchor, PlayerMessage, Stamp},
+        player::{self, Anchor, PlaybackParts, PlayerMessage, Stamp},
     },
 };
 
 pub(crate) fn update(
-    model: &mut Model,
+    playback: &mut PlaybackParts<'_>,
     event: AudioEvent,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
     match event {
         AudioEvent::Playhead(offset) => {
             let cmd = player::update_player(
-                model,
+                playback,
                 PlayerMessage::Playhead { offset, now },
                 now,
             )?;
-            output_recovered(&mut model.transport);
+            output_recovered(playback.transport);
             Ok(cmd)
         }
-        AudioEvent::TrackChanged => track_changed(model, now),
+        AudioEvent::TrackChanged => track_changed(playback, now),
         AudioEvent::Ended => {
-            let following = was_following(&model.workspace, &model.playlist);
-            let cmd = ended(model, now)?;
+            let following = was_following(playback.workspace, playback.playlist);
+            let cmd = ended(playback, now)?;
             if following {
-                follow_playback(&mut model.workspace, &model.playlist);
+                follow_playback(playback.workspace, playback.playlist);
             }
             Ok(cmd)
         }
         AudioEvent::Loaded { total } => {
-            let anchor = Anchor::at(model, now);
+            let anchor = Anchor::at(playback.transport, now);
             let cmd = player::update_player(
-                model,
+                playback,
                 PlayerMessage::Loaded { total, anchor },
                 now,
             )?;
-            output_recovered(&mut model.transport);
+            output_recovered(playback.transport);
             Ok(cmd)
         }
-        AudioEvent::Error(failure) => error(model, failure, now),
+        AudioEvent::Error(failure) => error(playback, failure, now),
         AudioEvent::DevicesListed(devices) => {
-            model.settings.output_devices = devices;
+            playback.settings.output_devices = devices;
             Ok(Cmd::None)
         }
-        AudioEvent::DeviceFellBack(opened) => fell_back(model, &opened),
+        AudioEvent::DeviceFellBack(opened) => fell_back(playback, &opened),
     }
 }
 
-fn fell_back(model: &mut Model, opened: &OutputDevice) -> Result<Cmd, UpdateError> {
-    let requested = std::mem::replace(&mut model.settings.audio.device, opened.clone());
+fn fell_back(
+    playback: &mut PlaybackParts<'_>,
+    opened: &OutputDevice,
+) -> Result<Cmd, UpdateError> {
+    let requested =
+        std::mem::replace(&mut playback.settings.audio.device, opened.clone());
     let OutputDevice::Named(requested) = requested else {
         return Ok(Cmd::None);
     };
@@ -83,9 +86,10 @@ fn fell_back(model: &mut Model, opened: &OutputDevice) -> Result<Cmd, UpdateErro
         crate::domain::DeviceName::to_string,
     );
     let told = format!("output device '{requested}' is gone — playing on {opened}");
-    Ok(model
-        .workspace
-        .show(Toast::error(told), &mut model.revisions))
+    Ok(playback.workspace.show(
+        Toast::error("Output device lost").with_text(told),
+        playback.revisions,
+    ))
 }
 
 fn output_recovered(transport: &mut Transport) {
@@ -95,13 +99,13 @@ fn output_recovered(transport: &mut Transport) {
 }
 
 fn error(
-    model: &mut Model,
+    playback: &mut PlaybackParts<'_>,
     error: AudioError,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
     let (told, lost) = match &error {
         AudioError::OutputLost { kind } => (
-            output_lost_text(&model.player, &error),
+            output_lost_text(playback.player, &error),
             Some(Output::Lost { kind: *kind }),
         ),
         AudioError::Decode { .. }
@@ -111,13 +115,14 @@ fn error(
         | AudioError::Seek { .. } => (error.to_string(), None),
     };
     let stopped =
-        player::update_player(model, PlayerMessage::Error { error, now }, now)?;
+        player::update_player(playback, PlayerMessage::Error { error, now }, now)?;
     if let Some(lost) = lost {
-        model.transport.output = lost;
+        playback.transport.output = lost;
     }
-    let raised = model
-        .workspace
-        .show(Toast::error(told), &mut model.revisions);
+    let raised = playback.workspace.show(
+        Toast::error("Audio error").with_text(told),
+        playback.revisions,
+    );
     Ok(raised.then(stopped))
 }
 
@@ -130,13 +135,13 @@ fn output_lost_text(player: &Player, error: &AudioError) -> String {
     }
 }
 
-fn cursor_to(playlist: &mut Playlist, dequeued: PlaylistIndex) {
+fn cursor_to(playlist: &mut Playlist, dequeued: ViewIndex) {
     playlist.cursor = Cursor::with_len(playlist.tracks.len()).at(dequeued.get());
 }
 
 fn pop_queued_track(
     playlist: &mut Playlist,
-    queue: &mut Vec<PlaylistIndex>,
+    queue: &mut Vec<ViewIndex>,
 ) -> Option<Arc<Track>> {
     let index = *queue.first()?;
     queue.remove(0);
@@ -145,81 +150,98 @@ fn pop_queued_track(
     Some(track)
 }
 
-pub(crate) fn next(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
-    let cmd = pop_queued_track(&mut model.playlist, &mut model.queue)
-        .or_else(|| model.playlist.skip(Direction::Next).cloned())
-        .map_or(Ok(Cmd::None), |track| start(model, track, now))?;
-    follow_playback(&mut model.workspace, &model.playlist);
+pub(crate) fn next(
+    playback: &mut PlaybackParts<'_>,
+    now: Moment,
+) -> Result<Cmd, UpdateError> {
+    let cmd = pop_queued_track(playback.playlist, playback.queue)
+        .or_else(|| playback.playlist.skip(Direction::Next).cloned())
+        .map_or(Ok(Cmd::None), |track| start(playback, track, now))?;
+    follow_playback(playback.workspace, playback.playlist);
     Ok(cmd)
 }
 
 pub(crate) fn jump_to(
-    model: &mut Model,
-    index: PlaylistIndex,
+    playback: &mut PlaybackParts<'_>,
+    index: ViewIndex,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    model
+    playback
         .playlist
         .jump(index)
         .cloned()
-        .map_or(Ok(Cmd::None), |track| start(model, track, now))
+        .map_or(Ok(Cmd::None), |track| start(playback, track, now))
 }
 
-pub(crate) fn previous(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
-    let cmd = model
+pub(crate) fn previous(
+    playback: &mut PlaybackParts<'_>,
+    now: Moment,
+) -> Result<Cmd, UpdateError> {
+    let cmd = playback
         .playlist
         .skip(Direction::Previous)
         .cloned()
-        .map_or(Ok(Cmd::None), |track| start(model, track, now))?;
-    follow_playback(&mut model.workspace, &model.playlist);
+        .map_or(Ok(Cmd::None), |track| start(playback, track, now))?;
+    follow_playback(playback.workspace, playback.playlist);
     Ok(cmd)
 }
 
 pub(crate) fn mark_fired(
-    model: &mut Model,
+    playback: &mut PlaybackParts<'_>,
     revision: Revision,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    if matches!(revision.reply(model.revisions.mark), Reply::Stale)
-        || !model.player.is_playing()
+    if matches!(
+        revision.reply(playback.revisions.lookahead),
+        Freshness::Stale
+    ) || !playback.player.is_playing()
     {
         return Ok(Cmd::None);
     }
-    let offset = model.player.position_at(now);
-    let lookahead = player::lookahead(model, now);
-    player::update_player(model, PlayerMessage::MarkReached { offset, lookahead }, now)
+    let offset = playback.player.position_at(now);
+    let lookahead = player::lookahead(playback, now);
+    player::update_player(
+        playback,
+        PlayerMessage::LookaheadReached { offset, lookahead },
+        now,
+    )
 }
 
-fn ended(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
-    let pick = successor(&model.playlist, &model.queue);
+fn ended(playback: &mut PlaybackParts<'_>, now: Moment) -> Result<Cmd, UpdateError> {
+    let pick = successor(playback.playlist, playback.queue);
     let message = PlayerMessage::Ended {
         next: pick.track().cloned(),
-        stamp: Stamp::issue(model, now),
+        stamp: Stamp::pending(playback.transport, playback.revisions, now),
     };
-    let cmd = player::update_player(model, message, now)?;
+    let cmd = player::update_player(playback, message, now)?;
     if pick.track().is_some() {
-        model.transport.ab = None;
+        playback.transport.ab_loop = None;
     }
-    move_onto(&mut model.playlist, &mut model.queue, pick);
+    move_onto(playback.playlist, playback.queue, pick);
     Ok(cmd)
 }
 
-fn track_changed(model: &mut Model, now: Moment) -> Result<Cmd, UpdateError> {
-    let following = was_following(&model.workspace, &model.playlist);
-    let pick = match model.player.preloaded() {
+fn track_changed(
+    playback: &mut PlaybackParts<'_>,
+    now: Moment,
+) -> Result<Cmd, UpdateError> {
+    let following = was_following(playback.workspace, playback.playlist);
+    let pick = match playback.player.preloaded() {
         Some(committed) => Successor::Preloaded(Arc::clone(committed)),
-        None if matches!(model.playlist.repeat, RepeatMode::One) => Successor::Nothing,
-        None => successor(&model.playlist, &model.queue),
+        None if matches!(playback.playlist.repeat, RepeatMode::One) => {
+            Successor::Nothing
+        }
+        None => successor(playback.playlist, playback.queue),
     };
     let message = PlayerMessage::TrackChanged {
         next: pick.track().cloned(),
         now,
     };
-    let cmd = player::update_player(model, message, now)?;
-    model.transport.ab = None;
-    move_onto(&mut model.playlist, &mut model.queue, pick);
+    let cmd = player::update_player(playback, message, now)?;
+    playback.transport.ab_loop = None;
+    move_onto(playback.playlist, playback.queue, pick);
     if following {
-        follow_playback(&mut model.workspace, &model.playlist);
+        follow_playback(playback.workspace, playback.playlist);
     }
     Ok(cmd)
 }
@@ -238,10 +260,7 @@ fn follow_playback(workspace: &mut Workspace, playlist: &Playlist) {
 pub(crate) enum Successor {
     Preloaded(Arc<Track>),
     Repeating(Arc<Track>),
-    Queued {
-        index: PlaylistIndex,
-        track: Arc<Track>,
-    },
+    Queued { index: ViewIndex, track: Arc<Track> },
     Following(Arc<Track>),
     Nothing,
 }
@@ -258,7 +277,7 @@ impl Successor {
     }
 }
 
-pub(crate) fn successor(playlist: &Playlist, queue: &[PlaylistIndex]) -> Successor {
+pub(crate) fn successor(playlist: &Playlist, queue: &[ViewIndex]) -> Successor {
     if matches!(playlist.repeat, RepeatMode::One) {
         return playlist
             .current()
@@ -279,7 +298,7 @@ pub(crate) fn successor(playlist: &Playlist, queue: &[PlaylistIndex]) -> Success
         .map_or(Successor::Nothing, Successor::Following)
 }
 
-fn move_onto(playlist: &mut Playlist, queue: &mut Vec<PlaylistIndex>, pick: Successor) {
+fn move_onto(playlist: &mut Playlist, queue: &mut Vec<ViewIndex>, pick: Successor) {
     match pick {
         Successor::Preloaded(committed) => {
             move_onto_preloaded(playlist, queue, &committed);
@@ -297,7 +316,7 @@ fn move_onto(playlist: &mut Playlist, queue: &mut Vec<PlaylistIndex>, pick: Succ
 
 fn move_onto_preloaded(
     playlist: &mut Playlist,
-    queue: &mut Vec<PlaylistIndex>,
+    queue: &mut Vec<ViewIndex>,
     committed: &Arc<Track>,
 ) {
     let committed_index = playlist
@@ -307,7 +326,7 @@ fn move_onto_preloaded(
             Arc::ptr_eq(playlist_track, committed)
                 || playlist_track.path() == committed.path()
         })
-        .map(PlaylistIndex::new);
+        .map(ViewIndex::new);
     let Some(committed_index) = committed_index else {
         return;
     };
@@ -316,13 +335,15 @@ fn move_onto_preloaded(
 }
 
 pub(crate) fn start(
-    model: &mut Model,
+    playback: &mut PlaybackParts<'_>,
     track: Arc<Track>,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    let stamp = Stamp::issue(model, now);
-    let cmd = model.player.update(PlayerMessage::Start { track, stamp })?;
-    player::committed(&mut model.revisions, stamp.revision, &cmd);
-    model.transport.ab = None;
+    let stamp = Stamp::pending(playback.transport, playback.revisions, now);
+    let cmd = playback
+        .player
+        .transition(PlayerMessage::Start { track, stamp })?;
+    player::commit(playback.revisions, stamp.revision, &cmd);
+    playback.transport.ab_loop = None;
     Ok(cmd)
 }

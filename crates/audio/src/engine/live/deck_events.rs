@@ -6,33 +6,33 @@ use crate::engine::{
     crossfade::{arm_cue, replaygain_factor},
     effect::{EngineEffect, Preload, SinkRole},
     phase::{CurrentTrack, Handover, Incoming, Next, Phase, Playing},
-    state::{Engine, Live, then_report},
+    state::{Live, then_report},
 };
 
 impl Live {
-    pub(crate) fn finished(self, role: SinkRole) -> (Engine, EngineEffect) {
+    pub(crate) fn finished(&mut self, role: SinkRole) -> EngineEffect {
         self.settled(role, Live::finished_primary)
     }
 
-    pub(crate) fn ramped(self, role: SinkRole) -> (Engine, EngineEffect) {
+    pub(crate) fn ramped(&mut self, role: SinkRole) -> EngineEffect {
         self.settled(role, Live::ramped_primary)
     }
 
     fn settled(
-        self,
+        &mut self,
         role: SinkRole,
-        primary: fn(Live) -> (Engine, EngineEffect),
-    ) -> (Engine, EngineEffect) {
+        primary: fn(&mut Live) -> EngineEffect,
+    ) -> EngineEffect {
         match role {
             SinkRole::Primary => primary(self),
             SinkRole::Outgoing => self.handover_settled(),
-            SinkRole::Incoming => (Engine::Live(self), EngineEffect::Nothing),
+            SinkRole::Incoming => EngineEffect::Nothing,
         }
     }
 
-    fn finished_primary(mut self) -> (Engine, EngineEffect) {
+    fn finished_primary(&mut self) -> EngineEffect {
         let Some(playing) = self.take_playing() else {
-            return (Engine::Live(self), EngineEffect::Nothing);
+            return EngineEffect::Nothing;
         };
         match playing.next {
             Next::Gapless(path) => self.finished_gapless(path, playing.preloading),
@@ -44,10 +44,10 @@ impl Live {
     }
 
     fn finished_gapless(
-        mut self,
+        &mut self,
         path: PathBuf,
         preloading: Option<PathBuf>,
-    ) -> (Engine, EngineEffect) {
+    ) -> EngineEffect {
         self.phase = Phase::Playing(Playing {
             current: CurrentTrack {
                 path,
@@ -57,24 +57,20 @@ impl Live {
             next: Next::None,
             preloading,
         });
-        let effect = EngineEffect::Batch(vec![
+        then_report(EngineEffect::Batch(vec![
             EngineEffect::Advance,
             EngineEffect::Send(AudioEvent::TrackChanged),
-        ]);
-        (Engine::Live(self), then_report(effect))
+        ]))
     }
 
-    fn finished_idle(mut self) -> (Engine, EngineEffect) {
+    fn finished_idle(&mut self) -> EngineEffect {
         self.phase = Phase::Idle;
-        (
-            Engine::Live(self),
-            then_report(EngineEffect::Send(AudioEvent::Ended)),
-        )
+        then_report(EngineEffect::Send(AudioEvent::Ended))
     }
 
-    pub(crate) fn cued(mut self) -> (Engine, EngineEffect) {
+    pub(crate) fn cued(&mut self) -> EngineEffect {
         let Some(mut playing) = self.take_playing() else {
-            return (Engine::Live(self), EngineEffect::Nothing);
+            return EngineEffect::Nothing;
         };
         let taken = std::mem::take(&mut playing.next);
         let Next::Crossfading {
@@ -84,24 +80,21 @@ impl Live {
         else {
             playing.next = taken;
             self.phase = Phase::Playing(playing);
-            return (Engine::Live(self), EngineEffect::Nothing);
+            return EngineEffect::Nothing;
         };
-        let incoming = replaygain_factor(self.config.replaygain, preload.gain);
+        let incoming = replaygain_factor(self.config.replay_gain, preload.gain);
         let length = self.config.crossfade.get();
         playing.next = Next::Crossfading {
             preload,
             fading: true,
         };
         self.phase = Phase::Playing(playing);
-        (
-            Engine::Live(self),
-            EngineEffect::Crossfade { length, incoming },
-        )
+        EngineEffect::Crossfade { length, incoming }
     }
 
-    fn ramped_primary(mut self) -> (Engine, EngineEffect) {
+    fn ramped_primary(&mut self) -> EngineEffect {
         let Some(playing) = self.take_playing() else {
-            return (Engine::Live(self), EngineEffect::Nothing);
+            return EngineEffect::Nothing;
         };
         match playing.next {
             Next::Crossfading { preload, .. } => {
@@ -109,18 +102,18 @@ impl Live {
             }
             next @ (Next::None | Next::Gapless(_)) => {
                 self.phase = Phase::Playing(Playing { next, ..playing });
-                (Engine::Live(self), EngineEffect::Nothing)
+                EngineEffect::Nothing
             }
         }
     }
 
-    fn handover_settled(mut self) -> (Engine, EngineEffect) {
+    fn handover_settled(&mut self) -> EngineEffect {
         match std::mem::take(&mut self.phase) {
             Phase::Handover(Handover {
                 incoming: Incoming::Playing(current),
             }) => {
                 self.phase = Phase::Playing(Playing::new(current));
-                (Engine::Live(self), EngineEffect::DropOutgoing)
+                EngineEffect::DropOutgoing
             }
             phase @ (Phase::Idle
             | Phase::Loading(_)
@@ -129,23 +122,21 @@ impl Live {
                 incoming: Incoming::Loading(_),
             })) => {
                 self.phase = phase;
-                (Engine::Live(self), EngineEffect::Nothing)
+                EngineEffect::Nothing
             }
         }
     }
-}
 
-impl Live {
     pub(crate) fn preloaded(
-        mut self,
+        &mut self,
         outcome: Result<Preload, AudioError>,
-    ) -> (Engine, EngineEffect) {
+    ) -> EngineEffect {
         let Some(mut playing) = self.take_playing() else {
-            return (Engine::Live(self), EngineEffect::Nothing);
+            return EngineEffect::Nothing;
         };
         let Some(wanted) = playing.preloading.take() else {
             self.phase = Phase::Playing(playing);
-            return (Engine::Live(self), EngineEffect::Nothing);
+            return EngineEffect::Nothing;
         };
         let effect = match outcome {
             Err(error) => EngineEffect::Send(AudioEvent::Error(error)),
@@ -172,7 +163,7 @@ impl Live {
             }
         };
         self.phase = Phase::Playing(playing);
-        (Engine::Live(self), effect)
+        effect
     }
 }
 
@@ -270,7 +261,7 @@ mod tests {
         for row in rows {
             let mut state = row.start;
             let effect = state
-                .update(EngineMessage::Finished(SinkRole::Primary))
+                .transition(EngineMessage::Finished(SinkRole::Primary))
                 .unwrap();
             assert_eq!(effect, row.effect);
             assert_eq!(state, row.expected);
@@ -285,7 +276,7 @@ mod tests {
         let expected = start.clone();
         let mut state = start;
         assert_eq!(
-            state.update(EngineMessage::Finished(SinkRole::Primary)),
+            state.transition(EngineMessage::Finished(SinkRole::Primary)),
             Ok(EngineEffect::Nothing)
         );
         assert_eq!(state, expected);
@@ -299,7 +290,7 @@ mod tests {
     ) {
         let mut state = Engine::Live(playing());
         assert_eq!(
-            state.update(EngineMessage::Finished(role)),
+            state.transition(EngineMessage::Finished(role)),
             Ok(EngineEffect::Nothing)
         );
     }
@@ -308,7 +299,7 @@ mod tests {
     fn a_finish_mid_crossfade_promotes() {
         let mut state = Engine::Live(crossfading_mid_ramp());
         let effect = state
-            .update(EngineMessage::Finished(SinkRole::Primary))
+            .transition(EngineMessage::Finished(SinkRole::Primary))
             .unwrap();
         assert_eq!(
             effect,
@@ -326,7 +317,7 @@ mod tests {
     #[test]
     fn a_cued_track_fades_in_and_out() {
         let mut state = Engine::Live(crossfading_idle());
-        let effect = state.update(EngineMessage::Cued).unwrap();
+        let effect = state.transition(EngineMessage::Cued).unwrap();
         assert_eq!(
             effect,
             EngineEffect::Crossfade {
@@ -340,7 +331,10 @@ mod tests {
     #[test]
     fn a_second_cue_is_ignored() {
         let mut state = Engine::Live(crossfading_mid_ramp());
-        assert_eq!(state.update(EngineMessage::Cued), Ok(EngineEffect::Nothing));
+        assert_eq!(
+            state.transition(EngineMessage::Cued),
+            Ok(EngineEffect::Nothing)
+        );
         assert_eq!(state, Engine::Live(crossfading_mid_ramp()));
     }
 
@@ -350,7 +344,10 @@ mod tests {
     fn a_cue_while_idle_or_loading_is_ignored(#[case] start: Engine) {
         let expected = start.clone();
         let mut state = start;
-        assert_eq!(state.update(EngineMessage::Cued), Ok(EngineEffect::Nothing));
+        assert_eq!(
+            state.transition(EngineMessage::Cued),
+            Ok(EngineEffect::Nothing)
+        );
         assert_eq!(state, expected);
     }
 
@@ -358,7 +355,7 @@ mod tests {
     fn a_finished_ramp_promotes_the_incoming_track() {
         let mut state = Engine::Live(crossfading_mid_ramp());
         let effect = state
-            .update(EngineMessage::Ramped(SinkRole::Primary))
+            .transition(EngineMessage::Ramped(SinkRole::Primary))
             .unwrap();
         assert_eq!(
             effect,
@@ -379,7 +376,7 @@ mod tests {
     fn a_ramped_outgoing_or_incoming_is_ignored(#[case] role: SinkRole) {
         let mut state = Engine::Live(crossfading_mid_ramp());
         assert_eq!(
-            state.update(EngineMessage::Ramped(role)),
+            state.transition(EngineMessage::Ramped(role)),
             Ok(EngineEffect::Nothing)
         );
     }
@@ -464,7 +461,7 @@ mod tests {
         let mut current = state;
         let log = messages
             .into_iter()
-            .map(|message| current.update(message).unwrap())
+            .map(|message| current.transition(message).unwrap())
             .collect();
         (current, log)
     }
@@ -550,9 +547,9 @@ mod tests {
         ) {
             prop_assume!(requested != landed_path);
             let mut state = Engine::Live(playing());
-            state.update(preload(&requested)).map_err(rejected)?;
+            state.transition(preload(&requested)).map_err(rejected)?;
             let effect = state
-                .update(EngineMessage::Preloaded(Ok(Preload::Crossfade(CurrentTrack {
+                .transition(EngineMessage::Preloaded(Ok(Preload::Crossfade(CurrentTrack {
                     path: landed_path.into(),
                     gain: None,
                     total: None,

@@ -1,15 +1,7 @@
 use std::{collections::HashSet, mem::discriminant};
 
 use crossbeam_channel::Receiver as CmdReceiver;
-use kernel::{
-    AudioCmd,
-    AudioEvent,
-    Outbox,
-    Refusals,
-    SendError,
-    domain::Speed,
-    update::Machine,
-};
+use kernel::{AudioCmd, AudioEvent, Outbox, SendError, domain::Speed, update::Machine};
 
 use crate::{
     AudioLoop,
@@ -30,38 +22,36 @@ fn start(config: EngineConfig, deck: &mut Deck) -> Engine {
     state
 }
 
-pub(crate) fn run_audio_loop<O: Outbox<AudioEvent> + Refusals>(
-    commands: &CmdReceiver<AudioCmd>,
-    setup: AudioLoop,
-    outbox: &O,
-) {
-    let AudioLoop { config, spectrum } = setup;
-    let mut deck = Deck::new(spectrum);
-    let mut engine = start(config, &mut deck);
-    if flush(&mut deck, outbox).is_err() {
-        return;
-    }
-    let heard = deck.events().clone();
-    loop {
-        crossbeam_channel::select! {
-            recv(commands) -> received => {
-                let Ok(first) = received else { return; };
-                let mut batch = vec![first];
-                batch.extend(commands.try_iter());
-                for cmd in keep_last_idempotent(batch) {
-                    step(&mut engine, EngineMessage::Cmd(cmd), &mut deck);
-                }
-            },
-            recv(heard) -> event => {
-                if let Ok(event) = event {
-                    for message in deck.messages_for(event) {
-                        step(&mut engine, message, &mut deck);
-                    }
-                }
-            },
-        }
+impl AudioLoop {
+    pub fn run(self, commands: &CmdReceiver<AudioCmd>, outbox: &Outbox<AudioEvent>) {
+        let Self { config, spectrum } = self;
+        let mut deck = Deck::new(spectrum);
+        let mut engine = start(config, &mut deck);
         if flush(&mut deck, outbox).is_err() {
             return;
+        }
+        let heard = deck.events().clone();
+        loop {
+            crossbeam_channel::select! {
+                recv(commands) -> received => {
+                    let Ok(first) = received else { return; };
+                    let mut batch = vec![first];
+                    batch.extend(commands.try_iter());
+                    for cmd in keep_last_idempotent(batch) {
+                        step(&mut engine, EngineMessage::Cmd(cmd), &mut deck);
+                    }
+                },
+                recv(heard) -> event => {
+                    if let Ok(event) = event {
+                        for message in deck.messages_for(event) {
+                            step(&mut engine, message, &mut deck);
+                        }
+                    }
+                },
+            }
+            if flush(&mut deck, outbox).is_err() {
+                return;
+            }
         }
     }
 }
@@ -73,10 +63,7 @@ fn ignore_full(sent: Result<(), SendError>) -> Result<(), SendError> {
     }
 }
 
-fn flush<O: Outbox<AudioEvent> + Refusals>(
-    deck: &mut Deck,
-    outbox: &O,
-) -> Result<(), SendError> {
+fn flush(deck: &mut Deck, outbox: &Outbox<AudioEvent>) -> Result<(), SendError> {
     for event in deck.drain_events() {
         ignore_full(outbox.send(event))?;
     }
@@ -88,26 +75,23 @@ fn flush<O: Outbox<AudioEvent> + Refusals>(
 
 pub(crate) fn keep_last_idempotent(batch: Vec<AudioCmd>) -> Vec<AudioCmd> {
     let mut seen = HashSet::new();
-    let mut kept = Vec::new();
-    for cmd in batch.into_iter().rev() {
-        match &cmd {
+    let mut kept: Vec<AudioCmd> = batch
+        .into_iter()
+        .rev()
+        .filter(|cmd| match cmd {
             AudioCmd::Load(_) | AudioCmd::Stop => {
                 seen.clear();
-                kept.push(cmd);
+                true
             }
-            AudioCmd::SetSpeed(_) | AudioCmd::Seek(_) => {
-                if seen.insert(discriminant(&cmd)) {
-                    kept.push(cmd);
-                }
-            }
+            AudioCmd::SetSpeed(_) | AudioCmd::Seek(_) => seen.insert(discriminant(cmd)),
             AudioCmd::Playback(_)
             | AudioCmd::Preload(_)
             | AudioCmd::SetCrossfade(_)
-            | AudioCmd::SetReplaygain(_)
+            | AudioCmd::SetReplayGain(_)
             | AudioCmd::SetDevice(_)
-            | AudioCmd::ListDevices => kept.push(cmd),
-        }
-    }
+            | AudioCmd::ListDevices => true,
+        })
+        .collect();
     kept.reverse();
     kept
 }
@@ -130,7 +114,7 @@ fn step(state: &mut Engine, message: EngineMessage, deck: &mut Deck) {
     let mut next = Some(message);
     while let Some(current) = next {
         let input = input_name(&current);
-        next = if let Ok(effect) = state.update(current) {
+        next = if let Ok(effect) = state.transition(current) {
             perform(effect, deck)
         } else {
             deck.refuse(input);
@@ -141,59 +125,41 @@ fn step(state: &mut Engine, message: EngineMessage, deck: &mut Deck) {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        path::PathBuf,
-        sync::{Arc, Mutex},
-        thread,
-        time::{Duration, Instant},
-    };
+    use std::{path::PathBuf, thread, time::Duration};
 
-    use crossbeam_channel::Sender;
+    use crossbeam_channel::{Receiver, Sender, unbounded};
     use kernel::{
         AudioCmd,
         AudioError,
         AudioEvent,
+        Congestion,
+        Message,
         Outbox,
         Playback,
-        Refusals,
-        SendError,
-        TrackRequest,
-        domain::{Bounded, Crossfade, OutputDevice, Replaygain, Revision, Speed},
+        TrackLoad,
+        domain::{Bounded, Crossfade, OutputDevice, ReplayGain, Revision, Speed},
     };
     use rstest::rstest;
 
-    use crate::{
-        AudioLoop,
-        EngineConfig,
-        engine::audio_loop::{keep_last_idempotent, run_audio_loop},
-    };
+    use crate::{AudioLoop, EngineConfig, engine::audio_loop::keep_last_idempotent};
 
-    type Sent = Arc<Mutex<Vec<AudioEvent>>>;
-
-    fn spawn_loop(
-        reply: Result<(), SendError>,
-    ) -> (Sender<AudioCmd>, Sent, thread::JoinHandle<()>) {
-        let (command_sender, command_receiver) =
-            crossbeam_channel::unbounded::<AudioCmd>();
-        let sent: Sent = Arc::new(Mutex::new(Vec::new()));
-        let outbox_sent = Arc::clone(&sent);
+    fn spawn_loop() -> (Sender<AudioCmd>, Receiver<Message>, thread::JoinHandle<()>) {
+        let (command_sender, command_receiver) = unbounded::<AudioCmd>();
+        let (sender, sent) = unbounded();
         let handle = thread::spawn(move || {
-            let (thread, _spectrum_tap) = AudioLoop::new(EngineConfig {
+            let (audio_loop, _spectrum_tap) = AudioLoop::new(EngineConfig {
                 crossfade: Crossfade::clamped(Duration::ZERO),
-                replaygain: Replaygain::Off,
+                replay_gain: ReplayGain::Off,
                 device: OutputDevice::SystemDefault,
             });
-            let outbox = FakeOutbox {
-                sent: outbox_sent,
-                reply,
-            };
-            run_audio_loop(&command_receiver, thread, &outbox);
+            let outbox = Outbox::new(sender, Congestion::default());
+            audio_loop.run(&command_receiver, &outbox);
         });
         (command_sender, sent, handle)
     }
 
     fn missing_file_load() -> AudioCmd {
-        AudioCmd::Load(TrackRequest {
+        AudioCmd::Load(TrackLoad {
             path: "/no/such/sifr-test-file".into(),
             gain: None,
             revision: Revision::default().next(),
@@ -201,60 +167,27 @@ mod tests {
     }
 
     fn load(path: &str) -> AudioCmd {
-        AudioCmd::Load(TrackRequest {
+        AudioCmd::Load(TrackLoad {
             path: PathBuf::from(path),
             gain: None,
             revision: Revision::default(),
         })
     }
 
-    struct FakeOutbox {
-        sent: Arc<Mutex<Vec<AudioEvent>>>,
-        reply: Result<(), SendError>,
-    }
-
-    impl Refusals for FakeOutbox {
-        fn refused(&self, _input: &'static str) -> Result<(), SendError> {
-            self.reply
-        }
-    }
-
-    impl Outbox<AudioEvent> for FakeOutbox {
-        fn send(&self, event: AudioEvent) -> Result<(), SendError> {
-            self.sent.lock().unwrap().push(event);
-            self.reply
-        }
-    }
-
-    fn wait_for(
-        sent: &Arc<Mutex<Vec<AudioEvent>>>,
-        timeout: Duration,
-    ) -> Vec<AudioEvent> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            {
-                let guard = sent.lock().unwrap();
-                if !guard.is_empty() {
-                    return guard.clone();
-                }
-            }
-            if Instant::now() >= deadline {
-                return Vec::new();
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
+    fn is_decode_error(message: &Result<Message, impl Sized>) -> bool {
+        matches!(
+            message,
+            Ok(Message::Audio(AudioEvent::Error(AudioError::Decode { .. })))
+        )
     }
 
     #[test]
     fn a_missing_file_load_reports_a_decode_error_without_hardware() {
-        let (command_sender, sent, handle) = spawn_loop(Ok(()));
+        let (command_sender, sent, handle) = spawn_loop();
 
         assert!(command_sender.send(missing_file_load()).is_ok());
-        let events = wait_for(&sent, Duration::from_secs(2));
-        assert!(matches!(
-            events.as_slice(),
-            [AudioEvent::Error(AudioError::Decode { .. })]
-        ));
+        assert!(is_decode_error(&sent.recv_timeout(Duration::from_secs(2))));
+        assert!(sent.try_recv().is_err());
 
         drop(command_sender);
         assert!(handle.join().is_ok());
@@ -262,17 +195,13 @@ mod tests {
 
     #[test]
     fn an_idle_engine_reports_nothing_until_a_command_arrives() {
-        let (command_sender, sent, handle) = spawn_loop(Ok(()));
+        let (command_sender, sent, handle) = spawn_loop();
 
         thread::sleep(Duration::from_millis(250));
-        assert!(sent.lock().unwrap().is_empty());
+        assert!(sent.try_recv().is_err());
 
         assert!(command_sender.send(missing_file_load()).is_ok());
-        let events = wait_for(&sent, Duration::from_secs(2));
-        assert!(matches!(
-            events.as_slice(),
-            [AudioEvent::Error(AudioError::Decode { .. })]
-        ));
+        assert!(is_decode_error(&sent.recv_timeout(Duration::from_secs(2))));
 
         drop(command_sender);
         assert!(handle.join().is_ok());
@@ -280,7 +209,8 @@ mod tests {
 
     #[test]
     fn a_closed_outbox_ends_the_loop() {
-        let (command_sender, _sent, handle) = spawn_loop(Err(SendError::Closed));
+        let (command_sender, sent, handle) = spawn_loop();
+        drop(sent);
 
         assert!(command_sender.send(missing_file_load()).is_ok());
 

@@ -27,15 +27,15 @@ impl From<HistoryRecord> for HistoryEntry {
     }
 }
 
-pub(crate) fn append(dirs: &LibraryDirs, entry: &HistoryEntry) -> Result<(), Error> {
+pub(crate) fn append(dirs: &LibraryDirs, played: &HistoryEntry) -> Result<(), Error> {
     let path = dirs.data_dir.join("history.jsonl");
     crate::files::create_parent_dir(&path)
         .map_err(Error::io(LibrarySubject::History, &path))?;
     let record = HistoryRecord {
-        path: entry.path.clone(),
-        title: entry.title.clone(),
-        artist: entry.artist.clone(),
-        at: i64::try_from(entry.at.since_epoch().as_secs()).unwrap_or(i64::MAX),
+        path: played.path.clone(),
+        title: played.title.clone(),
+        artist: played.artist.clone(),
+        at: i64::try_from(played.at.since_epoch().as_secs()).unwrap_or(i64::MAX),
     };
     let json = serde_json::to_string(&record)
         .map_err(Error::json(LibrarySubject::History, &path))?;

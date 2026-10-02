@@ -9,7 +9,7 @@ use std::{
 
 use crossbeam_channel::{Receiver, Select, Sender, TrySendError};
 use kernel::{
-    DriverMessage,
+    DriverEvent,
     LibraryEvent,
     Message,
     Outbox,
@@ -35,7 +35,6 @@ use crate::{
         worker::CoverWorker,
     },
     registry,
-    sender::DriverSender,
     watcher::{Watcher, recommended, rewatch},
 };
 
@@ -122,7 +121,7 @@ struct Watch<W> {
 }
 
 impl Watch<Option<notify::RecommendedWatcher>> {
-    fn recommended(outbox: &DriverSender<LibraryEvent>) -> Self {
+    fn recommended(outbox: &Outbox<LibraryEvent>) -> Self {
         let overflow = Overflow::default();
         let (callback, events) = watch_events(overflow.clone());
         let watcher =
@@ -146,14 +145,14 @@ struct LibraryLoop<'a, W> {
     finished: Receiver<DecodeFinished>,
     paths: LibraryDirs,
     decodable: &'static [&'static str],
-    outbox: &'a DriverSender<LibraryEvent>,
+    outbox: &'a Outbox<LibraryEvent>,
     cover: LatestSender<CoverDecoded>,
 }
 
 impl<'a, W: Watcher> LibraryLoop<'a, W> {
     fn new(
         parts: LibraryParts,
-        outbox: &'a DriverSender<LibraryEvent>,
+        outbox: &'a Outbox<LibraryEvent>,
         watching: Watch<W>,
     ) -> Self {
         Self {
@@ -201,8 +200,8 @@ impl<'a, W: Watcher> LibraryLoop<'a, W> {
 
     fn retire(self) {
         if self.worker.join().is_err() {
-            let failure = DriverError::Panicked("cover worker".to_owned());
-            let died = DriverMessage::Died(failure);
+            let failure = DriverError::panicked("cover worker".to_owned());
+            let died = DriverEvent::Died(failure);
             match self.outbox.report(Driver::Library, died) {
                 Ok(()) | Err(SendError::Full | SendError::Closed) => {}
             }
@@ -255,7 +254,7 @@ impl<'a, W: Watcher> LibraryLoop<'a, W> {
 
     fn feed(&mut self, input: LibraryMessage) -> ControlFlow<()> {
         let label: &'static str = (&input).into();
-        match self.driver.update(input) {
+        match self.driver.transition(input) {
             Ok(outputs) => self.act_all(outputs),
             Err(_) => self.reject(label),
         }
@@ -266,7 +265,7 @@ impl<'a, W: Watcher> LibraryLoop<'a, W> {
     }
 
     fn reject(&self, input: &'static str) -> ControlFlow<()> {
-        let rejected = DriverMessage::Rejected { input };
+        let rejected = DriverEvent::Rejected { input };
         match self.outbox.report(Driver::Library, rejected) {
             Err(SendError::Closed) => ControlFlow::Break(()),
             Ok(()) | Err(SendError::Full) => ControlFlow::Continue(()),
@@ -323,12 +322,14 @@ mod tests {
 
     use crossbeam_channel::{Receiver, SendError};
     use kernel::{
-        DriverMessage,
+        Congestion,
+        DriverEvent,
         LibraryCmd,
         LibraryError,
         LibraryEvent,
         LibrarySubject,
         Message,
+        Outbox,
         cmd::ScanMode,
         domain::{Driver, DriverError, Revision},
     };
@@ -343,7 +344,6 @@ mod tests {
             machine::{LibraryMessage, LibraryState},
             worker::CoverWorker,
         },
-        sender::{DriverSender, FullEdge},
         watcher::FakeWatch,
     };
 
@@ -493,7 +493,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("one.mp3"), b"stub").unwrap();
         let (sender, messages) = crossbeam_channel::unbounded::<Message>();
-        let outbox = DriverSender::new(sender, FullEdge::default());
+        let outbox = Outbox::new(sender, Congestion::default());
         let (writers, _cells, _doorbell) = latest_channels();
         let (events, filesystem_events) = crossbeam_channel::unbounded();
         let parts =
@@ -553,7 +553,7 @@ mod tests {
     fn a_lost_filesystem_watcher_becomes_never_without_stopping_the_loop() {
         let directory = tempfile::tempdir().unwrap();
         let (sender, _messages) = crossbeam_channel::unbounded();
-        let outbox = DriverSender::new(sender, FullEdge::default());
+        let outbox = Outbox::new(sender, Congestion::default());
         let (writers, _cells, _doorbell) = latest_channels();
         let (events, filesystem_events) = crossbeam_channel::unbounded();
         drop(events);
@@ -606,7 +606,7 @@ mod tests {
             report,
             Err(SendError(Message::Driver {
                 driver: Driver::Library,
-                event: DriverMessage::Stopped
+                event: DriverEvent::Stopped
             }))
         );
     }
@@ -615,7 +615,7 @@ mod tests {
     fn a_rejected_input_is_reported_to_the_inbox() {
         let directory = tempfile::tempdir().unwrap();
         let (sender, messages) = crossbeam_channel::unbounded::<Message>();
-        let outbox = DriverSender::new(sender, FullEdge::default());
+        let outbox = Outbox::new(sender, Congestion::default());
         let (writers, _cells, _doorbell) = latest_channels();
         let (_events, filesystem_events) = crossbeam_channel::unbounded();
         let parts =
@@ -634,7 +634,7 @@ mod tests {
             messages.try_iter().collect::<Vec<_>>(),
             vec![Message::Driver {
                 driver: Driver::Library,
-                event: DriverMessage::Rejected {
+                event: DriverEvent::Rejected {
                     input: "debounce_due"
                 }
             }]
@@ -647,7 +647,7 @@ mod tests {
     fn a_panicking_cover_worker_is_reported_on_stop() {
         let directory = tempfile::tempdir().unwrap();
         let (sender, messages) = crossbeam_channel::unbounded::<Message>();
-        let outbox = DriverSender::new(sender, FullEdge::default());
+        let outbox = Outbox::new(sender, Congestion::default());
         let (writers, _cells, _doorbell) = latest_channels();
         let (_events, filesystem_events) = crossbeam_channel::unbounded();
         let (worker, finished) = CoverWorker::spawn_with(
@@ -679,7 +679,7 @@ mod tests {
             messages.try_iter().collect::<Vec<_>>(),
             vec![Message::Driver {
                 driver: Driver::Library,
-                event: DriverMessage::Died(DriverError::Panicked(
+                event: DriverEvent::Died(DriverError::panicked(
                     "cover worker".to_owned()
                 ))
             }]

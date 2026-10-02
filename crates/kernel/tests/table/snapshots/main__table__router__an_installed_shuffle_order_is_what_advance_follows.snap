@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
-assertion_line: 366
+assertion_line: 368
 expression: "walked(model, messages)"
 ---
 [
@@ -80,21 +80,19 @@ expression: "walked(model, messages)"
                 1.0,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
     (
-        Playlist(
-            ShuffleRolled(
-                [
-                    2,
-                    0,
-                    3,
-                    1,
-                ],
-            ),
+        ShuffleRolled(
+            [
+                Index(2),
+                Index(0),
+                Index(3),
+                Index(1),
+            ],
         ),
         None,
         Playing {
@@ -166,10 +164,10 @@ expression: "walked(model, messages)"
                 1.0,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Audio(
@@ -179,7 +177,7 @@ expression: "walked(model, messages)"
             [
                 Audio(
                     Load(
-                        TrackRequest {
+                        TrackLoad {
                             path: "/tmp/track3.flac",
                             gain: None,
                             revision: Revision(
@@ -316,10 +314,10 @@ expression: "walked(model, messages)"
                 1.0,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Audio(
@@ -336,7 +334,7 @@ expression: "walked(model, messages)"
                 ),
                 After {
                     delay: 90s,
-                    message: Mark(
+                    timer: Lookahead(
                         Revision(
                             2,
                         ),
@@ -413,10 +411,10 @@ expression: "walked(model, messages)"
                 1.0,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Audio(
@@ -426,7 +424,7 @@ expression: "walked(model, messages)"
             [
                 Audio(
                     Load(
-                        TrackRequest {
+                        TrackLoad {
                             path: "/tmp/track1.flac",
                             gain: None,
                             revision: Revision(
@@ -563,9 +561,9 @@ expression: "walked(model, messages)"
                 1.0,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
 ]

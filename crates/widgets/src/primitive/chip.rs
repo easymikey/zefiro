@@ -1,5 +1,4 @@
-use config::SpeedChip;
-use kernel::domain::Speed;
+use kernel::domain::{Speed, appearance::SpeedChip};
 use ratatui::{style::Color, text::Span};
 use unicode_width::UnicodeWidthStr;
 
@@ -86,8 +85,10 @@ pub(crate) fn speed_chip_spans(
 
 #[cfg(test)]
 mod tests {
-    use config::SpeedChip;
-    use kernel::{Bounded, domain::Speed};
+    use kernel::{
+        Bounded,
+        domain::{Speed, appearance::SpeedChip},
+    };
     use ratatui::style::{Color, Modifier};
     use rstest::rstest;
     use unicode_width::UnicodeWidthStr;

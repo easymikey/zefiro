@@ -72,7 +72,7 @@ impl<'a> SettingsOverlay<'a> {
     }
 
     fn rows(&self) -> Vec<SettingRow> {
-        SettingRow::all(self.values.custom_settings)
+        SettingRow::all(self.values.appearance_settings)
     }
 
     fn modal_title(&self) -> String {
@@ -162,20 +162,22 @@ fn settings_content_width(rows: &[SettingRow], values: &SettingsView<'_>) -> u16
 #[cfg(test)]
 pub(crate) mod test_support {
     use config::{Appearance, AppearanceFile};
-    use kernel::domain::{Crossfade, CustomSetting, Replaygain};
+    use kernel::domain::{AppearanceSetting, Crossfade, ReplayGain};
 
     use crate::overlay::settings::SettingsView;
 
-    pub(crate) fn custom_settings() -> Vec<CustomSetting> {
-        config::custom_settings(&AppearanceFile::default())
+    pub(crate) fn appearance_settings() -> Vec<AppearanceSetting> {
+        kernel::domain::appearance_rows::appearance_settings(
+            AppearanceFile::default().appearance(),
+        )
     }
 
     pub(crate) fn settings_values(
-        custom_settings: &[CustomSetting],
+        appearance_settings: &[AppearanceSetting],
     ) -> SettingsView<'_> {
         SettingsView {
             crossfade: Crossfade::default(),
-            replaygain: Replaygain::On,
+            replay_gain: ReplayGain::On,
             theme: "noir",
             themes: &[],
             sleep_presets: &[],
@@ -183,15 +185,14 @@ pub(crate) mod test_support {
             output_device: None,
             output_devices: &[],
             appearance: Appearance::default(),
-            custom_settings,
+            appearance_settings,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use config::CoverStyle;
-    use kernel::domain::ThemeName;
+    use kernel::domain::{ThemeName, appearance::CoverStyle};
     use ratatui::layout::Rect;
 
     use crate::{
@@ -200,7 +201,7 @@ mod tests {
             rendered_canvas,
             settings::{
                 SettingsOverlay,
-                test_support::{custom_settings, settings_values},
+                test_support::{appearance_settings, settings_values},
             },
         },
         primitive::canvas::find_text,
@@ -218,7 +219,7 @@ mod tests {
     #[test]
     fn settings_overlay_lists_every_row_with_its_label_and_value() {
         let theme = noir();
-        let custom = custom_settings();
+        let custom = appearance_settings();
         let overlay = SettingsOverlay {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             values: settings_values(&custom),
@@ -236,7 +237,7 @@ mod tests {
     #[test]
     fn settings_overlay_highlights_the_selected_row() {
         let theme = noir();
-        let custom = custom_settings();
+        let custom = appearance_settings();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let overlay = SettingsOverlay {
             theme: active,
@@ -262,7 +263,7 @@ mod tests {
     #[test]
     fn settings_overlay_shows_the_current_theme_and_a_custom_appearance_row() {
         let theme = noir();
-        let custom = custom_settings();
+        let custom = appearance_settings();
         let overlay = SettingsOverlay {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             values: settings_values(&custom),
@@ -281,7 +282,7 @@ mod tests {
     #[test]
     fn settings_title_keeps_the_path_tail_visible_at_a_narrow_width() {
         let theme = noir();
-        let custom = custom_settings();
+        let custom = appearance_settings();
         let mut with_long_path = settings_values(&custom);
         with_long_path.music_dir =
             "/Users/testuser/Music/Library/Deeply/Nested/Folder/apple-music";
@@ -302,7 +303,7 @@ mod tests {
     #[test]
     fn the_modal_outer_rect_stays_put_across_a_theme_and_an_appearance_change() {
         let theme = noir();
-        let custom = custom_settings();
+        let custom = appearance_settings();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let themes = [
             ThemeName::from_static("noir"),
@@ -340,7 +341,7 @@ mod tests {
     #[test]
     fn settings_overlay_does_not_panic_on_a_tiny_terminal() {
         let theme = noir();
-        let custom = custom_settings();
+        let custom = appearance_settings();
         let overlay = SettingsOverlay {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             values: settings_values(&custom),

@@ -10,7 +10,6 @@ use kernel::{
     OverlayName,
     OverlayRequest,
     PlaybackRequest,
-    PlaylistRequest,
     QueueRequest,
     SearchEdit,
     SearchRequest,
@@ -24,13 +23,13 @@ use kernel::{
         Overlay,
         Player,
         Playhead,
-        PlaylistIndex,
         Preload,
         Revision,
         Speed,
         Tags,
         Track,
         TrackIndex,
+        ViewIndex,
     },
     library::Library,
     playlist::RepeatMode,
@@ -148,7 +147,7 @@ pub(crate) fn playing_nothing_selected(duration: Duration) -> Model {
 pub(crate) fn moon_library_scanned() -> Model {
     let mut model = moon_library();
     model.library = Some(Library {
-        all: model.playlist.tracks.clone(),
+        tracks: model.playlist.tracks.clone(),
         view: (0..model.playlist.tracks.len())
             .map(TrackIndex::new)
             .collect(),
@@ -162,7 +161,7 @@ pub(crate) fn repeating(mut model: Model, repeat: RepeatMode) -> Model {
 }
 
 pub(crate) fn queued(mut model: Model, queue: &[usize]) -> Model {
-    model.queue = queue.iter().copied().map(PlaylistIndex::new).collect();
+    model.queue = queue.iter().copied().map(ViewIndex::new).collect();
     model
 }
 
@@ -187,7 +186,7 @@ pub(crate) fn skip() -> Message {
 }
 
 pub(crate) fn enqueue(track: usize) -> Message {
-    Message::Queue(QueueRequest::EnqueueTrack(PlaylistIndex::new(track)))
+    Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(track)))
 }
 
 pub(crate) fn shuffle() -> Message {
@@ -195,7 +194,7 @@ pub(crate) fn shuffle() -> Message {
 }
 
 pub(crate) fn shuffled(order: Vec<usize>) -> Message {
-    Message::Playlist(PlaylistRequest::ShuffleRolled(order))
+    Message::ShuffleRolled(order.into_iter().map(TrackIndex::new).collect())
 }
 
 pub(crate) fn a_lap_of(laps: usize) -> Vec<Message> {
@@ -211,19 +210,16 @@ pub(crate) fn mark_ab() -> Message {
 }
 
 pub(crate) fn mark_fires() -> Message {
-    Message::Elapsed(Timer::Mark(Revision::default()))
+    Message::Elapsed(Timer::Lookahead(Revision::default()))
 }
 
-pub(crate) fn nudge_speed(steps: i8) -> Message {
-    Message::Playback(PlaybackRequest::NudgeSpeed { steps })
+pub(crate) fn step_speed(steps: i8) -> Message {
+    Message::Playback(PlaybackRequest::StepSpeed { steps })
 }
 
 pub(crate) fn toasted() -> Model {
     let mut model = Model::default();
-    model.workspace.toast = Some(kernel::Toast {
-        level: kernel::ToastLevel::Info,
-        text: "a toast".to_string(),
-    });
+    model.workspace.toasts = vec![kernel::Toast::info("a toast")];
     model
 }
 

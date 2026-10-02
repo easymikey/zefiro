@@ -75,9 +75,9 @@ impl MilkdropCover {
         };
         let width = usize::from(rect.width);
         let height = usize::from(rect.height);
-        let track = scene.model.player.current().map(|track| track.path());
+        let track = scene.player.current().map(|track| track.path());
         let seed = milkdrop_seed(track);
-        let playing = if scene.model.player.is_playing() {
+        let playing = if scene.player.is_playing() {
             Playing::Yes
         } else {
             Playing::No

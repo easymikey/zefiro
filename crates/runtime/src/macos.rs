@@ -2,13 +2,12 @@
 
 use ::macos::{CoverReader, MacosLoop};
 use crossbeam_channel::{Receiver, Sender};
-use kernel::{MacosCmd, MacosEvent, Message, domain::Driver};
+use kernel::{MacosCmd, MacosEvent, Message, Outbox, domain::Driver};
 
 use crate::{
     driver::{DriverThread, spawn_driver},
     error::Error,
     registry,
-    sender::DriverSender,
 };
 
 pub(crate) fn spawn(
@@ -17,7 +16,7 @@ pub(crate) fn spawn(
 ) -> Result<DriverThread<MacosCmd>, Error> {
     spawn_driver(
         registry::row(Driver::Macos),
-        move |inbox: &Receiver<MacosCmd>, outbox: &DriverSender<MacosEvent>| {
+        move |inbox: &Receiver<MacosCmd>, outbox: &Outbox<MacosEvent>| {
             MacosLoop::new(read_cover).run(inbox, outbox);
         },
         sender,

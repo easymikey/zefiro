@@ -92,14 +92,14 @@ impl fmt::Display for Action {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyOverride {
     pub chord: String,
-    pub context: KeyContext,
+    pub key_context: KeyContext,
 }
 
 impl From<&str> for KeyOverride {
     fn from(chord: &str) -> Self {
         Self {
             chord: chord.to_string(),
-            context: KeyContext::default(),
+            key_context: KeyContext::default(),
         }
     }
 }
@@ -108,7 +108,7 @@ impl From<String> for KeyOverride {
     fn from(chord: String) -> Self {
         Self {
             chord,
-            context: KeyContext::default(),
+            key_context: KeyContext::default(),
         }
     }
 }
@@ -118,7 +118,7 @@ pub struct KeymapOverrides(HashMap<Action, KeyOverride>);
 
 impl KeymapOverrides {
     #[must_use]
-    pub fn binding(&self, action: Action) -> Option<&KeyOverride> {
+    pub fn get(&self, action: Action) -> Option<&KeyOverride> {
         self.0.get(&action)
     }
 }
@@ -196,7 +196,7 @@ fn bound(
     match rebind.chord.parse::<Chord>() {
         Ok(chord) => Some(Binding {
             chord,
-            key_context: rebind.context,
+            key_context: rebind.key_context,
         }),
         Err(error) => {
             errors.push(KeyValidationError::InvalidChord(error));
@@ -222,7 +222,7 @@ fn desired_bindings(
                 .map(|default| default.chord)
                 .collect();
             let configured = overrides
-                .binding(action)
+                .get(action)
                 .and_then(|rebind| bound(rebind, &mut errors));
             Some(Candidate {
                 action,

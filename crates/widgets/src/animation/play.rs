@@ -1,5 +1,4 @@
-use config::Animations;
-use kernel::{Cue, PlaybackChange};
+use kernel::{Cue, PlaybackChange, domain::appearance::Animations};
 use ratatui::style::Color;
 
 use crate::{
@@ -136,8 +135,7 @@ fn pulsed(change: PlaybackChange, backdrop: &Backdrop) -> Color {
 
 #[cfg(test)]
 mod tests {
-    use config::Animations;
-    use kernel::{Cue, PlaybackChange};
+    use kernel::{Cue, PlaybackChange, domain::appearance::Animations};
     use ratatui::{layout::Rect, style::Color};
 
     use crate::{

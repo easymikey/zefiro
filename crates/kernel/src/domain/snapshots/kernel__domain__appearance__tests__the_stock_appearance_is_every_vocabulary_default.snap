@@ -1,5 +1,5 @@
 ---
-source: crates/config/src/appearance.rs
+source: crates/kernel/src/domain/appearance.rs
 expression: "Appearance::default()"
 ---
 Appearance {

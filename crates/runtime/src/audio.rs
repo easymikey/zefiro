@@ -8,7 +8,7 @@ pub(crate) fn audio_loop(model: &Model) -> (AudioLoop, SpectrumTap) {
 fn engine_config(model: &Model) -> EngineConfig {
     EngineConfig {
         crossfade: model.settings.audio.crossfade,
-        replaygain: model.settings.audio.replaygain,
+        replay_gain: model.settings.audio.replay_gain,
         device: model.settings.audio.device.clone(),
     }
 }
@@ -40,7 +40,7 @@ mod tests {
         let config = engine_config(&model);
 
         assert_eq!(config.crossfade, model.settings.audio.crossfade);
-        assert_eq!(config.replaygain, model.settings.audio.replaygain);
+        assert_eq!(config.replay_gain, model.settings.audio.replay_gain);
         assert_eq!(config.device, model.settings.audio.device);
     }
 }

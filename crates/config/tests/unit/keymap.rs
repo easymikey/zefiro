@@ -9,7 +9,7 @@ use rstest::rstest;
 )]
 #[case::a_table_names_the_context(
     "next = { chord = \"y\", context = \"search\" }",
-    Some(KeyOverride { chord: String::from("y"), context: KeyContext::Search })
+    Some(KeyOverride { chord: String::from("y"), key_context: KeyContext::Search })
 )]
 #[case::a_table_without_a_context_is_global(
     "next = { chord = \"y\" }",
@@ -31,6 +31,6 @@ fn a_key_binding_reads_as_a_chord_with_its_context(
 ) {
     let parsed = parse_config_reload(&format!("[keymap]\n{spelling}\n"))
         .ok()
-        .and_then(|reload| reload.keymap.binding(Action::Next).cloned());
+        .and_then(|reload| reload.keymap.get(Action::Next).cloned());
     assert_eq!(parsed, expected);
 }

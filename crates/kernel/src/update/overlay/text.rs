@@ -1,13 +1,12 @@
 use crate::{domain::TextEntry, message::TextRequest};
 
-pub(crate) fn retyped(mut text: TextEntry, message: TextRequest) -> TextEntry {
+pub(crate) fn retype(text: &mut TextEntry, message: TextRequest) {
     match message {
         TextRequest::Char(character) => text.input.push(character),
         TextRequest::Backspace => {
             text.input.pop();
         }
     }
-    text
 }
 
 #[cfg(test)]
@@ -17,7 +16,7 @@ mod tests {
     use crate::{
         domain::TextEntry,
         message::TextRequest,
-        update::overlay::text::retyped,
+        update::overlay::text::retype,
     };
 
     fn entry(input: &str) -> TextEntry {
@@ -41,10 +40,11 @@ mod tests {
         entry("")
     )]
     fn text_entry_cell(
-        #[case] start: TextEntry,
+        #[case] mut start: TextEntry,
         #[case] message: TextRequest,
         #[case] next: TextEntry,
     ) {
-        assert_eq!(retyped(start, message), next);
+        retype(&mut start, message);
+        assert_eq!(start, next);
     }
 }

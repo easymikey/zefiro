@@ -9,50 +9,40 @@ use crate::{
         Model,
         Moment,
         Player,
-        PlaylistIndex,
         ScanStatus,
         Track,
         TrackIndex,
+        ViewIndex,
         Workspace,
         cycled,
         library::Library,
         playlist::{Playlist, index_of_path},
     },
     message::{BrowseRequest, QueueRequest},
-    update::{
-        error::UpdateError,
-        machine::{Machine, Rejected},
-    },
+    update::error::UpdateError,
 };
 
 #[derive(Debug, Clone, Copy)]
 pub enum BrowseMessage {
-    SelectBy(isize),
+    CursorBy(isize),
     Top,
     Bottom,
-    CursorTo(usize),
+    CursorTo(ViewIndex),
     PageBy(usize, Direction),
 }
 
-impl Machine for Browse {
-    type Message = BrowseMessage;
-    type Error = std::convert::Infallible;
-    type Effect = ();
-
-    fn transition(
-        mut self,
-        message: BrowseMessage,
-    ) -> Result<(Self, ()), Rejected<Self>> {
+impl Browse {
+    pub fn apply(&mut self, message: BrowseMessage) -> Cmd {
         self.cursor = match message {
-            BrowseMessage::SelectBy(delta) => self.cursor.step(delta),
+            BrowseMessage::CursorBy(delta) => self.cursor.step(delta),
             BrowseMessage::Top => self.cursor.first(),
             BrowseMessage::Bottom => self.cursor.last(),
             BrowseMessage::CursorTo(index) => {
-                Cursor::with_len(self.cursor.len()).at(index)
+                Cursor::with_len(self.cursor.len()).at(index.get())
             }
             BrowseMessage::PageBy(rows, direction) => self.cursor.page(rows, direction),
         };
-        Ok((self, ()))
+        Cmd::None
     }
 }
 
@@ -60,8 +50,7 @@ fn navigate(
     workspace: &mut Workspace,
     message: BrowseMessage,
 ) -> Result<Cmd, UpdateError> {
-    workspace.browse.update(message)?;
-    Ok(Cmd::None)
+    Ok(workspace.browse.apply(message))
 }
 
 pub(crate) fn update(
@@ -73,23 +62,26 @@ pub(crate) fn update(
     model.workspace.browse.cursor = model.workspace.browse.cursor.resize(len);
     match message {
         BrowseRequest::ChordPrefix(prefix) => {
-            model.workspace.chord = Some(prefix);
+            model.workspace.chord_prefix = Some(prefix);
             Ok(Cmd::None)
         }
-        BrowseRequest::CursorBy { rows } if len > 0 => isize::try_from(rows)
-            .map_or(Ok(Cmd::None), |delta| {
-                navigate(&mut model.workspace, BrowseMessage::SelectBy(delta))
-            }),
+        BrowseRequest::CursorBy { rows } if len > 0 => {
+            navigate(&mut model.workspace, BrowseMessage::CursorBy(rows))
+        }
         BrowseRequest::Top => navigate(&mut model.workspace, BrowseMessage::Top),
         BrowseRequest::Bottom => navigate(&mut model.workspace, BrowseMessage::Bottom),
         BrowseRequest::CycleSort => Ok(cycle_sort(model)),
         BrowseRequest::ToggleFavorite => Ok(toggle_favorite(model)),
         BrowseRequest::CursorTo(index) if len > 0 => {
-            navigate(&mut model.workspace, BrowseMessage::CursorTo(index.get()))
+            navigate(&mut model.workspace, BrowseMessage::CursorTo(index))
         }
         BrowseRequest::PlaySelected => {
             let selected = model.workspace.browse.selected();
-            crate::update::audio::jump_to(model, selected, now)
+            crate::update::audio::jump_to(
+                &mut crate::update::playback_parts(model),
+                selected,
+                now,
+            )
         }
         BrowseRequest::PageBy(direction) if len > 0 => {
             let rows = model.workspace.visible_rows;
@@ -116,16 +108,21 @@ pub(crate) fn queue(
 ) -> Result<Cmd, UpdateError> {
     let len = model.playlist.tracks.len();
     model.workspace.browse.cursor = model.workspace.browse.cursor.resize(len);
-    Ok(match message {
-        QueueRequest::Enqueue => enqueue_selected(model),
-        QueueRequest::EnqueueTrack(index) => toggle_queued(&mut model.queue, index),
-        QueueRequest::PlayNext => play_next_selected(model),
-        QueueRequest::Dequeue => dequeue_selected(model),
-        QueueRequest::MoveInQueue(direction) => move_in_queue(model, direction),
+    let selected = selected_index(&model.playlist, &model.workspace);
+    let queue = &mut model.queue;
+    Ok(match (message, selected) {
+        (QueueRequest::EnqueueTrack(index), _) => toggle_queued(queue, index),
+        (_, None) => Cmd::None,
+        (QueueRequest::Enqueue, Some(selected)) => toggle_queued(queue, selected),
+        (QueueRequest::PlayNext, Some(selected)) => play_next(queue, selected),
+        (QueueRequest::Dequeue, Some(selected)) => dequeue(queue, selected),
+        (QueueRequest::MoveInQueue(direction), Some(selected)) => {
+            move_in_queue(queue, selected, direction)
+        }
     })
 }
 
-fn selected_index(playlist: &Playlist, workspace: &Workspace) -> Option<PlaylistIndex> {
+fn selected_index(playlist: &Playlist, workspace: &Workspace) -> Option<ViewIndex> {
     let selected = workspace.browse.selected();
     playlist.tracks.get(selected.get()).map(|_| selected)
 }
@@ -158,14 +155,7 @@ fn toggle_favorite(model: &mut Model) -> Cmd {
     ])
 }
 
-fn enqueue_selected(model: &mut Model) -> Cmd {
-    let Some(selected) = selected_index(&model.playlist, &model.workspace) else {
-        return Cmd::None;
-    };
-    toggle_queued(&mut model.queue, selected)
-}
-
-fn toggle_queued(queue: &mut Vec<PlaylistIndex>, index: PlaylistIndex) -> Cmd {
+fn toggle_queued(queue: &mut Vec<ViewIndex>, index: ViewIndex) -> Cmd {
     match queue.iter().position(|queued| *queued == index) {
         Some(position) => {
             queue.remove(position);
@@ -175,38 +165,31 @@ fn toggle_queued(queue: &mut Vec<PlaylistIndex>, index: PlaylistIndex) -> Cmd {
     Cue::QueueChanged.into()
 }
 
-fn play_next_selected(model: &mut Model) -> Cmd {
-    let Some(selected) = selected_index(&model.playlist, &model.workspace) else {
-        return Cmd::None;
-    };
-    model.queue.retain(|&queued| queued != selected);
-    model.queue.insert(0, selected);
+fn play_next(queue: &mut Vec<ViewIndex>, selected: ViewIndex) -> Cmd {
+    queue.retain(|&queued| queued != selected);
+    queue.insert(0, selected);
     Cmd::None
 }
 
-fn dequeue_selected(model: &mut Model) -> Cmd {
-    let Some(selected) = selected_index(&model.playlist, &model.workspace) else {
-        return Cmd::None;
-    };
-    model.queue.retain(|&queued| queued != selected);
+fn dequeue(queue: &mut Vec<ViewIndex>, selected: ViewIndex) -> Cmd {
+    queue.retain(|&queued| queued != selected);
     Cmd::None
 }
 
-fn move_in_queue(model: &mut Model, direction: Direction) -> Cmd {
-    let Some(selected) = selected_index(&model.playlist, &model.workspace) else {
-        return Cmd::None;
-    };
-    let Some(index) = model.queue.iter().position(|&queued| queued == selected) else {
+fn move_in_queue(
+    queue: &mut [ViewIndex],
+    selected: ViewIndex,
+    direction: Direction,
+) -> Cmd {
+    let Some(index) = queue.iter().position(|&queued| queued == selected) else {
         return Cmd::None;
     };
     let neighbor = match direction {
         Direction::Previous => index.checked_sub(1),
-        Direction::Next => index
-            .checked_add(1)
-            .filter(|&next| next < model.queue.len()),
+        Direction::Next => index.checked_add(1).filter(|&next| next < queue.len()),
     };
     if let Some(neighbor) = neighbor {
-        model.queue.swap(index, neighbor);
+        queue.swap(index, neighbor);
     }
     Cmd::None
 }
@@ -245,18 +228,18 @@ pub(crate) struct ResyncParts<'a> {
     pub(crate) library: &'a mut Library,
     pub(crate) player: &'a Player,
     pub(crate) playlist: &'a mut Playlist,
-    pub(crate) queue: &'a mut Vec<PlaylistIndex>,
+    pub(crate) queue: &'a mut Vec<ViewIndex>,
 }
 
-fn trash_track(model: &mut Model, track_index: PlaylistIndex) -> Cmd {
+fn trash_track(model: &mut Model, track_index: ViewIndex) -> Cmd {
     let Some(track) = model.playlist.tracks.get(track_index.get()).cloned() else {
         return Cmd::None;
     };
     let Some(library) = model.library.as_mut() else {
         return Cmd::None;
     };
-    let removed_position = library.all.iter().position(|t| t.path() == track.path());
-    library.all.retain(|t| t.path() != track.path());
+    let removed_position = library.tracks.iter().position(|t| t.path() == track.path());
+    library.tracks.retain(|t| t.path() != track.path());
     if let Some(removed_position) = removed_position {
         library.view = library
             .view
@@ -305,7 +288,7 @@ pub(crate) fn resync_playlist(parts: ResyncParts<'_>) {
 fn remap_queue(
     old_tracks: &[Arc<Track>],
     new_tracks: &[Arc<Track>],
-    queue: &mut Vec<PlaylistIndex>,
+    queue: &mut Vec<ViewIndex>,
 ) {
     *queue = queue
         .iter()
@@ -315,6 +298,6 @@ fn remap_queue(
                 .iter()
                 .position(|candidate| candidate.path() == track.path())
         })
-        .map(PlaylistIndex::new)
+        .map(ViewIndex::new)
         .collect();
 }

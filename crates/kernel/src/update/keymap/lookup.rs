@@ -35,7 +35,7 @@ pub fn route(workspace: &Workspace, press: KeyPress) -> Option<Message> {
             bindings,
             &BindingScope {
                 key_context,
-                prefix: workspace.chord,
+                prefix: workspace.chord_prefix,
             },
             key,
         )

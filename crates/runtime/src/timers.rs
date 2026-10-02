@@ -12,7 +12,7 @@ struct Scheduled {
 enum TimerName {
     Toast,
     Sleep,
-    Mark,
+    Lookahead,
 }
 
 impl TimerName {
@@ -22,7 +22,7 @@ impl TimerName {
         match self {
             TimerName::Toast => 0,
             TimerName::Sleep => 1,
-            TimerName::Mark => 2,
+            TimerName::Lookahead => 2,
         }
     }
 }
@@ -32,7 +32,7 @@ impl From<Timer> for TimerName {
         match timer {
             Timer::Toast(_) => TimerName::Toast,
             Timer::Sleep(_) => TimerName::Sleep,
-            Timer::Mark(_) => TimerName::Mark,
+            Timer::Lookahead(_) => TimerName::Lookahead,
         }
     }
 }
@@ -107,7 +107,7 @@ mod tests {
     }
 
     fn mark(revision: u64) -> Timer {
-        Timer::Mark(
+        Timer::Lookahead(
             (0..revision).fold(Revision::default(), |revision, _| revision.next()),
         )
     }

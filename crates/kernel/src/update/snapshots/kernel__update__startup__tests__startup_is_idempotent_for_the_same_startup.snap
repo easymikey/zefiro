@@ -8,7 +8,7 @@ expression: projected
         crossfade: Crossfade(
             3s,
         ),
-        replaygain: On,
+        replay_gain: On,
         device: Named(
             DeviceName(
                 "Speakers",

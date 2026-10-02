@@ -1,11 +1,12 @@
 ---
 source: crates/kernel/tests/table/router.rs
+assertion_line: 368
 expression: "walked(model, messages)"
 ---
 [
     (
         Playback(
-            NudgeSpeed {
+            StepSpeed {
                 steps: 1,
             },
         ),
@@ -39,14 +40,14 @@ expression: "walked(model, messages)"
                 1.25,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Playback(
-            NudgeSpeed {
+            StepSpeed {
                 steps: 1,
             },
         ),
@@ -80,14 +81,14 @@ expression: "walked(model, messages)"
                 1.5,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Playback(
-            NudgeSpeed {
+            StepSpeed {
                 steps: 1,
             },
         ),
@@ -121,14 +122,14 @@ expression: "walked(model, messages)"
                 1.75,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Playback(
-            NudgeSpeed {
+            StepSpeed {
                 steps: 1,
             },
         ),
@@ -162,14 +163,14 @@ expression: "walked(model, messages)"
                 2.0,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
     (
         Playback(
-            NudgeSpeed {
+            StepSpeed {
                 steps: 1,
             },
         ),
@@ -203,9 +204,9 @@ expression: "walked(model, messages)"
                 2.25,
             ),
             sleep: None,
-            ab: None,
+            ab_loop: None,
             output: Ready,
         },
-        None,
+        [],
     ),
 ]

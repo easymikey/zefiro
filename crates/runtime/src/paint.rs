@@ -115,8 +115,8 @@ mod tests {
         let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Ok(())));
-        let toast = fixture.runtime.model.workspace.toast.as_ref().unwrap();
-        assert_eq!(toast.text, "fail");
+        let toast = fixture.runtime.model.workspace.toasts.first().unwrap();
+        assert_eq!(toast.title, "fail");
     }
 
     #[rstest]

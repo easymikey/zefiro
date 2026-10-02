@@ -22,9 +22,9 @@ use kernel::{
     PlaybackRequest,
     Player,
     QueueRequest,
-    TrackRequest,
+    TrackLoad,
     cmd::ScanMode,
-    domain::{Cursor, Direction, PlaylistIndex, Revision, ScanStatus, TrackIndex},
+    domain::{Cursor, Direction, Revision, ScanStatus, TrackIndex, ViewIndex},
     library::{Library, SortKey},
     playlist::PlayOrder,
     update::update,
@@ -41,8 +41,8 @@ fn queue(model: &mut Model, message: QueueRequest) -> Cmd {
     update(model, Message::Queue(message), Moment::default()).unwrap()
 }
 
-fn indices(queue: &[usize]) -> Vec<PlaylistIndex> {
-    queue.iter().copied().map(PlaylistIndex::new).collect()
+fn indices(queue: &[usize]) -> Vec<ViewIndex> {
+    queue.iter().copied().map(ViewIndex::new).collect()
 }
 
 fn paths(tracks: &[Arc<kernel::Track>]) -> Vec<PathBuf> {
@@ -194,21 +194,21 @@ struct CursorRow {
     tracks: 2,
     from: 0,
     visible_rows: 0,
-    message: BrowseRequest::CursorTo(PlaylistIndex::new(1)),
+    message: BrowseRequest::CursorTo(ViewIndex::new(1)),
     expected: 1,
 })]
 #[case::cursor_to_past_the_end_clamps(CursorRow {
     tracks: 2,
     from: 0,
     visible_rows: 0,
-    message: BrowseRequest::CursorTo(PlaylistIndex::new(99)),
+    message: BrowseRequest::CursorTo(ViewIndex::new(99)),
     expected: 1,
 })]
 #[case::cursor_to_on_an_empty_playlist_stays_at_zero(CursorRow {
     tracks: 0,
     from: 0,
     visible_rows: 0,
-    message: BrowseRequest::CursorTo(PlaylistIndex::new(0)),
+    message: BrowseRequest::CursorTo(ViewIndex::new(0)),
     expected: 0,
 })]
 #[case::page_down_moves_by_the_reported_rows(CursorRow {
@@ -290,7 +290,7 @@ fn unsorted_library() -> Model {
     ];
     let view = (0..all.len()).map(TrackIndex::new).collect();
     Model {
-        library: Some(Library { all, view }),
+        library: Some(Library { tracks: all, view }),
         ..Default::default()
     }
 }
@@ -325,7 +325,7 @@ fn cycle_sort_to_artist_reorders_the_view_and_the_playlist_under_it() {
         .collect();
     assert_eq!(view, sorted);
     assert_eq!(paths(&model.playlist.tracks), sorted);
-    let all = model.library.as_ref().unwrap().all.len();
+    let all = model.library.as_ref().unwrap().tracks.len();
     assert_eq!(all, 3);
 }
 
@@ -366,7 +366,7 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
     let mut model = browsing(2, 1, &[]);
     let effects = browse(&mut model, BrowseRequest::PlaySelected);
 
-    assert_eq!(model.playlist.playing_index(), Some(PlaylistIndex::new(1)));
+    assert_eq!(model.playlist.playing_index(), Some(ViewIndex::new(1)));
     assert!(matches!(
         &model.player,
         Player::Loading { track, .. } if track.path() == Path::new("/tmp/track1.flac")
@@ -376,7 +376,7 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
         effects,
         Cmd::Batch(vec![
             Effect::Audio(AudioCmd::Stop),
-            Effect::Audio(AudioCmd::Load(TrackRequest {
+            Effect::Audio(AudioCmd::Load(TrackLoad {
                 path: track.path().to_path_buf(),
                 gain: None,
                 revision: Revision::default().next(),
@@ -469,7 +469,7 @@ fn scanned(paths: &[&str]) -> Model {
     let view = (0..all.len()).map(TrackIndex::new).collect();
     let mut model = Model {
         library: Some(Library {
-            all: all.clone(),
+            tracks: all.clone(),
             view,
         }),
         ..Default::default()
@@ -481,10 +481,10 @@ fn scanned(paths: &[&str]) -> Model {
 #[test]
 fn trash_removes_the_track_everywhere_and_asks_for_the_file_to_go() {
     let mut model = scanned(&["/music/a.flac", "/music/b.flac"]);
-    let effects = browse(&mut model, BrowseRequest::Trash(PlaylistIndex::new(0)));
+    let effects = browse(&mut model, BrowseRequest::Trash(ViewIndex::new(0)));
 
     let left = vec![PathBuf::from("/music/b.flac")];
-    let all = paths(&model.library.as_ref().unwrap().all);
+    let all = paths(&model.library.as_ref().unwrap().tracks);
     assert_eq!(all, left);
     let view: Vec<PathBuf> = model
         .library
@@ -508,7 +508,7 @@ fn trash_remaps_the_queue_and_drops_the_deleted_entry() {
     let mut model = scanned(&["/music/a.flac", "/music/b.flac", "/music/c.flac"]);
     model.queue = indices(&[2, 0]);
 
-    let _ = browse(&mut model, BrowseRequest::Trash(PlaylistIndex::new(0)));
+    let _ = browse(&mut model, BrowseRequest::Trash(ViewIndex::new(0)));
 
     assert_eq!(
         paths(&model.playlist.tracks),
@@ -523,7 +523,7 @@ fn trash_remaps_the_queue_and_drops_the_deleted_entry() {
 #[test]
 fn trash_on_an_empty_library_removes_nothing() {
     let mut model = scanned(&[]);
-    let effects = browse(&mut model, BrowseRequest::Trash(PlaylistIndex::new(0)));
-    assert!(model.library.as_ref().unwrap().all.is_empty());
+    let effects = browse(&mut model, BrowseRequest::Trash(ViewIndex::new(0)));
+    assert!(model.library.as_ref().unwrap().tracks.is_empty());
     assert_eq!(effects, Cmd::None);
 }

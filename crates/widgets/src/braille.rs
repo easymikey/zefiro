@@ -21,8 +21,8 @@ fn small_len_u32(count: usize) -> u32 {
     u32::try_from(count).unwrap_or(u32::MAX)
 }
 
-pub(crate) fn dot_coord(value: u32) -> u16 {
-    u16::try_from(value).unwrap_or(u16::MAX)
+pub(crate) fn dot_coord(columns: u32) -> u16 {
+    u16::try_from(columns).unwrap_or(u16::MAX)
 }
 
 const HALF_STEP_BIAS: f32 = 0.001;

@@ -1,7 +1,7 @@
 use std::{fmt, path::PathBuf, sync::Arc, time::Duration};
 
-use config::Animations;
 use image::RgbaImage;
+use kernel::domain::appearance::Animations;
 use ratatui::layout::Rect;
 
 use crate::{
@@ -231,7 +231,7 @@ impl CoverLifecycle {
                 frame: self.advance(tick),
             };
         }
-        let crossfade = if scene.appearance.window.animations == Animations::On
+        let crossfade = if scene.look().appearance.animations == Animations::On
             && plan == PaintPlan::NewContent
         {
             crossfade
@@ -394,9 +394,8 @@ impl CoverLifecycle {
 mod tests {
     use std::{path::PathBuf, sync::Arc};
 
-    use config::Animations;
     use image::{Rgba, RgbaImage};
-    use kernel::domain::{Model, Revision};
+    use kernel::domain::{Model, Revision, appearance::Animations};
     use ratatui::layout::Rect;
     use rstest::rstest;
 
@@ -563,7 +562,7 @@ mod tests {
 
     fn animated_sources() -> SceneSources {
         let mut sources = SceneSources::new(Model::default());
-        sources.appearance.window.animations = Animations::On;
+        sources.look_mut().appearance.animations = Animations::On;
         sources
     }
 

@@ -11,14 +11,14 @@ use crate::{
         OptionIndex,
         OutputDevice,
         Percent,
-        Replaygain,
+        ReplayGain,
         Revision,
-        SettingId,
         SleepPresets,
         Speed,
         ThemeChoice,
         ThemeName,
         Track,
+        appearance_rows::AppearanceField,
         playlist::PlaylistFileName,
     },
     message::Timer,
@@ -37,8 +37,8 @@ pub struct ConfigPatch {
     pub crossfade: Option<Crossfade>,
     #[builder(setters(option_fn(name = with_device)))]
     pub device: Option<OutputDevice>,
-    #[builder(setters(option_fn(name = with_replaygain)))]
-    pub replaygain: Option<Replaygain>,
+    #[builder(setters(option_fn(name = with_replay_gain)))]
+    pub replay_gain: Option<ReplayGain>,
     #[builder(setters(option_fn(name = with_theme)))]
     pub theme: Option<ThemeName>,
     #[builder(setters(option_fn(name = with_volume)))]
@@ -60,17 +60,20 @@ pub enum WindowColorsCmd {
 pub enum ConfigCmd {
     Save(ConfigPatch),
     SelectTheme(ThemeChoice),
-    Setting { id: SettingId, option: OptionIndex },
+    Setting {
+        field: AppearanceField,
+        option: OptionIndex,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TrackRequest {
+pub struct TrackLoad {
     pub path: PathBuf,
     pub gain: Option<f32>,
     pub revision: Revision,
 }
 
-impl TrackRequest {
+impl TrackLoad {
     #[must_use]
     pub fn for_track(track: &Track, revision: Revision) -> Self {
         Self {
@@ -84,14 +87,14 @@ impl TrackRequest {
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum AudioCmd {
-    Load(TrackRequest),
+    Load(TrackLoad),
     Playback(Playback),
     Seek(Duration),
     SetSpeed(Speed),
     Stop,
-    Preload(TrackRequest),
+    Preload(TrackLoad),
     SetCrossfade(Crossfade),
-    SetReplaygain(Replaygain),
+    SetReplayGain(ReplayGain),
     SetDevice(OutputDevice),
     ListDevices,
 }
@@ -176,7 +179,7 @@ pub enum Effect {
     WindowColors(WindowColorsCmd),
     Animate(Cue),
     RollShuffle { len: usize },
-    After { delay: Duration, message: Timer },
+    After { delay: Duration, timer: Timer },
     Restart(Driver),
     Quit,
 }
@@ -199,9 +202,12 @@ impl PlaybackChange {
     }
 
     pub fn cued(self) -> Cmd {
-        let mut effects = self.effects().to_vec();
-        effects.push(Effect::Animate(Cue::PlaybackChanged(self)));
-        Cmd::Batch(effects)
+        Cmd::Batch(
+            self.effects()
+                .into_iter()
+                .chain([Effect::Animate(Cue::PlaybackChanged(self))])
+                .collect(),
+        )
     }
 }
 

@@ -20,7 +20,7 @@ pub use cmd::{
     MacosCmd,
     Playback,
     PlaybackChange,
-    TrackRequest,
+    TrackLoad,
     WindowColorsCmd,
 };
 pub use domain::{
@@ -39,7 +39,7 @@ pub use domain::{
     Moment,
     Overlay,
     OverlayName,
-    Pause,
+    PausedBy,
     Percent,
     Player,
     Playhead,
@@ -48,10 +48,12 @@ pub use domain::{
     SleepTimer,
     Speed,
     TOAST_LIFETIME,
+    TOAST_SECONDS,
+    TOAST_STACK,
     Tagging,
     Tags,
     Toast,
-    ToastLevel,
+    ToastKind,
     Track,
     Transport,
     Workspace,
@@ -64,7 +66,7 @@ pub use message::{
     BrowseRequest,
     ConfigEvent,
     DecodeError,
-    DriverMessage,
+    DriverEvent,
     HistoryRequest,
     IoError,
     LibraryError,
@@ -82,6 +84,6 @@ pub use message::{
     TextRequest,
     Timer,
 };
-pub use outbox::{Outbox, Refusals, SendError};
+pub use outbox::{Congestion, Outbox, SendError};
 pub use playlist::Playlist;
 pub use update::{keymap::route, startup};

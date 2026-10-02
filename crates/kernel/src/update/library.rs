@@ -3,10 +3,10 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{
     cmd::{Cmd, Cue, Effect, LibraryCmd},
     domain::{
+        Freshness,
         Model,
         Moment,
         Player,
-        Reply,
         Revision,
         ScanStatus,
         Toast,
@@ -16,58 +16,50 @@ use crate::{
         playlist::PlaylistSource,
     },
     message::{LibraryEvent, PlaylistRequest},
-    update::{audio, error::UpdateError, machine::Machine, playlist::PlaylistMessage},
+    update::{audio, error::UpdateError},
 };
 
 pub(crate) fn update(
     model: &mut Model,
-    message: PlaylistRequest,
+    PlaylistRequest::JumpTo(index): PlaylistRequest,
     now: Moment,
 ) -> Result<Cmd, UpdateError> {
-    match message {
-        PlaylistRequest::JumpTo(index) => audio::jump_to(model, index, now),
-        PlaylistRequest::ShuffleRolled(order) => Ok(model
-            .playlist
-            .update(PlaylistMessage::ShuffleRolled(order))?),
-    }
+    audio::jump_to(&mut crate::update::playback_parts(model), index, now)
 }
 
 pub(crate) fn library(
     model: &mut Model,
     event: LibraryEvent,
 ) -> Result<Cmd, UpdateError> {
+    if let LibraryEvent::Loaded { revision, .. }
+    | LibraryEvent::Listed { revision, .. }
+    | LibraryEvent::Tagged { revision, .. } = &event
+        && let Freshness::Stale = revision.reply(model.revisions.scan)
+    {
+        return Ok(Cmd::None);
+    }
     match event {
         LibraryEvent::FavoritesLoaded(favorites) => {
             model.favorites = favorites;
             Ok(Cmd::None)
         }
-        LibraryEvent::Loaded { tracks, revision } => {
-            Ok(whole_library(model, tracks, revision))
-        }
+        LibraryEvent::Loaded { tracks, .. } => Ok(whole_library(model, tracks)),
         LibraryEvent::Listed { tracks, revision } => {
             Ok(listed_library(model, tracks, revision))
         }
-        LibraryEvent::Tagged { tracks, revision } => {
-            Ok(tagged_tracks(model, tracks, revision))
-        }
+        LibraryEvent::Tagged { tracks, .. } => Ok(tagged_tracks(model, tracks)),
         LibraryEvent::HistoryLoaded(entries) => {
             model.history = entries;
             Ok(Cmd::None)
         }
-        LibraryEvent::Error(failure) => Ok(model
-            .workspace
-            .show(Toast::error(failure.to_string()), &mut model.revisions)),
+        LibraryEvent::Error(failure) => Ok(model.workspace.show(
+            Toast::error("Library error").with_text(failure.to_string()),
+            &mut model.revisions,
+        )),
     }
 }
 
-fn whole_library(
-    model: &mut Model,
-    tracks: Vec<Arc<Track>>,
-    revision: Revision,
-) -> Cmd {
-    if let Reply::Stale = revision.reply(model.revisions.scan) {
-        return Cmd::None;
-    }
+fn whole_library(model: &mut Model, tracks: Vec<Arc<Track>>) -> Cmd {
     model.scan_status = ScanStatus::Idle;
     let opening = match &model.library {
         None => Cmd::from(Cue::LibraryOpened),
@@ -82,9 +74,6 @@ fn listed_library(
     listed: Vec<Arc<Track>>,
     revision: Revision,
 ) -> Cmd {
-    if let Reply::Stale = revision.reply(model.revisions.scan) {
-        return Cmd::None;
-    }
     model.scan_status = ScanStatus::Tagging {
         done: 0,
         total: listed.len(),
@@ -113,21 +102,14 @@ fn tag_request(
     .into()
 }
 
-fn tagged_tracks(
-    model: &mut Model,
-    tagged: Vec<Arc<Track>>,
-    revision: Revision,
-) -> Cmd {
-    if let Reply::Stale = revision.reply(model.revisions.scan) {
-        return Cmd::None;
-    }
+fn tagged_tracks(model: &mut Model, tagged: Vec<Arc<Track>>) -> Cmd {
     let read = tagged.len();
     let tagged: Tagged = tagged
         .into_iter()
         .map(|track| (track.path().to_path_buf(), track))
         .collect();
     if let Some(ready) = &mut model.library {
-        retag_tracks(&mut ready.all, &tagged);
+        retag_tracks(&mut ready.tracks, &tagged);
     }
     retag_tracks(&mut model.playlist.tracks, &tagged);
     retag_player(&mut model.player, &tagged);
@@ -136,7 +118,6 @@ fn tagged_tracks(
 
 fn library_loaded(model: &mut Model, tracks: Vec<Arc<Track>>) {
     install_library(&mut model.library, tracks);
-    view_all(&mut model.library);
     match model.playlist_source {
         PlaylistSource::Named => {}
         PlaylistSource::Library => {
@@ -189,21 +170,8 @@ fn tagging_progress(scan_status: &mut ScanStatus, read: usize) -> Cmd {
 }
 
 fn install_library(library: &mut Option<Library>, tracks: Vec<Arc<Track>>) {
-    match library {
-        Some(existing) => existing.all = tracks,
-        None => {
-            *library = Some(Library {
-                all: tracks,
-                view: Vec::new(),
-            });
-        }
-    }
-}
-
-fn view_all(library: &mut Option<Library>) {
-    if let Some(library) = library {
-        library.view = (0..library.all.len()).map(TrackIndex::new).collect();
-    }
+    let view = (0..tracks.len()).map(TrackIndex::new).collect();
+    *library = Some(Library { tracks, view });
 }
 
 #[cfg(test)]
@@ -218,7 +186,7 @@ mod tests {
             Moment,
             Revision,
             TOAST_LIFETIME,
-            ToastLevel,
+            ToastKind,
             Track,
             TrackIndex,
             library::Library,
@@ -236,7 +204,7 @@ mod tests {
     fn library_loaded_replaces_the_library_and_mirrors_it_into_the_playlist() {
         let mut model = Model {
             library: Some(Library {
-                all: Vec::new(),
+                tracks: Vec::new(),
                 view: vec![TrackIndex::new(7)],
             }),
             ..Model::default()
@@ -253,7 +221,11 @@ mod tests {
 
         let library = model.library.as_ref();
         assert_eq!(
-            library.map(|ready| ready.all.iter().map(|t| t.path()).collect::<Vec<_>>()),
+            library.map(|ready| ready
+                .tracks
+                .iter()
+                .map(|t| t.path())
+                .collect::<Vec<_>>()),
             Some(vec![
                 std::path::Path::new("/music/a.flac"),
                 std::path::Path::new("/music/b.flac")
@@ -286,7 +258,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(model.playlist.tracks, named);
-        assert_eq!(model.library.as_ref().map(|ready| ready.all.len()), Some(2));
+        assert_eq!(
+            model.library.as_ref().map(|ready| ready.tracks.len()),
+            Some(2)
+        );
         assert!(matches!(cmd, Cmd::One(Effect::Animate(Cue::LibraryOpened))));
     }
 
@@ -297,16 +272,19 @@ mod tests {
         let cmd =
             library(&mut model, LibraryEvent::Error(LibraryError::NoUserDirs)).unwrap();
 
-        let toast = model.workspace.toast.unwrap();
-        assert_eq!(toast.level, ToastLevel::Error);
-        assert_eq!(toast.text, LibraryError::NoUserDirs.to_string());
+        let toast = model.workspace.toasts.first().unwrap();
+        assert_eq!(toast.kind, ToastKind::Error);
+        assert_eq!(
+            toast.text.as_deref(),
+            Some(LibraryError::NoUserDirs.to_string().as_str())
+        );
         assert_eq!(
             cmd,
             Cmd::Batch(vec![
                 Effect::Animate(Cue::ToastRaised),
                 Effect::After {
                     delay: TOAST_LIFETIME,
-                    message: Timer::Toast(Revision::default().next()),
+                    timer: Timer::Toast(Revision::default().next()),
                 },
             ])
         );

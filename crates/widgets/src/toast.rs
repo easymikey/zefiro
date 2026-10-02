@@ -1,22 +1,26 @@
-use kernel::domain::Toast;
+use kernel::domain::{Moment, TOAST_LIFETIME, Toast, ToastKind};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget},
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     primitive::{canvas::Canvas, inset::Inset, text::truncate},
+    screen::Breakpoint,
     theme::{ActiveTheme, Role},
 };
 
-const MARGIN: u16 = 0;
+const TOAST_WIDTH: u16 = 42;
+const GAP: u16 = 1;
+const INSET_CELLS: u16 = 1;
 const CHROME_CELLS: u16 = 4;
 const BORDER_ROWS: u16 = 2;
-const MAX_ROWS: u16 = 3;
-const WIDTH_SHARE_PERCENT: u32 = 40;
+const TITLE_ROWS: u16 = 1;
+const MAX_TEXT_ROWS: usize = 3;
+const WARNING_HEAT: f32 = 0.75;
 
 const CARD_INSET: Inset = Inset {
     top: 0,
@@ -26,9 +30,88 @@ const CARD_INSET: Inset = Inset {
 };
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ToastCard<'a> {
-    pub(crate) toast: &'a Toast,
-    pub(crate) theme: ActiveTheme<'a>,
+pub(crate) struct ToastStyle {
+    info: Color,
+    success: Color,
+    warning: Color,
+    error: Color,
+    text: Color,
+    background: Color,
+}
+
+impl ToastStyle {
+    #[must_use]
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            info: theme.role(Role::Accent),
+            success: theme.spectrum_color_at(0.0),
+            warning: theme.spectrum_color_at(WARNING_HEAT),
+            error: theme.alert(),
+            text: theme.role(Role::Text),
+            background: theme.role(Role::WindowBackground),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn accent(&self, kind: ToastKind) -> Color {
+        match kind {
+            ToastKind::Info => self.info,
+            ToastKind::Success => self.success,
+            ToastKind::Warning => self.warning,
+            ToastKind::Error => self.error,
+        }
+    }
+}
+
+fn icon(kind: ToastKind) -> &'static str {
+    match kind {
+        ToastKind::Info => "i",
+        ToastKind::Success => "\u{2713}",
+        ToastKind::Warning => "!",
+        ToastKind::Error => "\u{2717}",
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Toaster<'a> {
+    pub(crate) toasts: &'a [Toast],
+    pub(crate) now: Moment,
+    pub(crate) style: ToastStyle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToastAreas {
+    pub outer: Rect,
+    pub painted: Rect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Form {
+    Stack,
+    Line,
+}
+
+impl Form {
+    fn of(breakpoint: Breakpoint) -> Self {
+        match breakpoint {
+            Breakpoint::Full | Breakpoint::Compact => Form::Stack,
+            Breakpoint::Minimal | Breakpoint::TooSmall => Form::Line,
+        }
+    }
+
+    fn painted(areas: ToastAreas) -> Self {
+        if areas.outer.height == 1 {
+            Form::Line
+        } else {
+            Form::Stack
+        }
+    }
+}
+
+struct Placed<'a> {
+    toast: &'a Toast,
+    rect: Rect,
+    lines: Vec<String>,
 }
 
 fn wrapped_paragraph(text: &str, width: usize) -> Vec<String> {
@@ -73,74 +156,90 @@ fn fitted(text: &str, width: usize, rows: usize) -> Vec<String> {
     shown
 }
 
-fn max_width(screen: Rect) -> u16 {
-    let share = u16::try_from(u32::from(screen.width) * WIDTH_SHARE_PERCENT / 100)
-        .unwrap_or(u16::MAX);
-    share.min(screen.width.saturating_sub(MARGIN * 2))
+fn title_line(toast: &Toast, room: usize) -> String {
+    let line = format!("{} {}", icon(toast.kind), toast.title);
+    truncate(&line, room).into_owned()
 }
 
-fn card_width(lines: &[String]) -> u16 {
-    let widest = lines.iter().map(|line| line.width()).max().unwrap_or(0);
-    u16::try_from(widest)
-        .unwrap_or(u16::MAX)
-        .saturating_add(CHROME_CELLS)
-}
-
-fn top_right(screen: Rect, width: u16, height: u16) -> Rect {
-    Rect {
-        x: screen.right().saturating_sub(MARGIN + width),
-        y: screen.y.saturating_add(MARGIN),
-        width,
-        height,
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ToastAreas {
-    pub outer: Rect,
-    pub painted: Rect,
-}
-
-impl ToastCard<'_> {
-    fn accent(self) -> Color {
-        self.theme.role(Role::Accent)
+impl<'a> Toaster<'a> {
+    fn live(&self) -> impl Iterator<Item = &'a Toast> + use<'a> {
+        let now = self.now;
+        self.toasts
+            .iter()
+            .filter(move |toast| now.elapsed_since(toast.raised_at) < TOAST_LIFETIME)
     }
 
-    fn block(self) -> Block<'static> {
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(self.accent()))
-            .padding(CARD_INSET.padding())
-    }
-
-    fn lines(self, screen: Rect) -> Option<Vec<String>> {
-        let text_room = max_width(screen)
-            .checked_sub(CHROME_CELLS)
-            .filter(|room| *room > 0)?;
-        let rows = screen
-            .height
-            .saturating_sub(MARGIN + BORDER_ROWS)
-            .min(MAX_ROWS);
-        if rows == 0 {
-            return None;
+    fn placed(&self, screen: Rect, form: Form) -> Vec<Placed<'a>> {
+        match form {
+            Form::Stack => self.stacked(screen),
+            Form::Line => self.line(screen),
         }
-        Some(fitted(
-            self.toast.text.as_str(),
-            usize::from(text_room),
-            usize::from(rows),
-        ))
+    }
+
+    fn line(&self, screen: Rect) -> Vec<Placed<'a>> {
+        self.live()
+            .next()
+            .map(|toast| {
+                let title = title_line(toast, usize::from(screen.width));
+                let width = u16::try_from(title.width()).unwrap_or(screen.width);
+                Placed {
+                    toast,
+                    rect: Rect {
+                        x: screen.right().saturating_sub(width),
+                        y: screen.y,
+                        width,
+                        height: 1,
+                    },
+                    lines: vec![title],
+                }
+            })
+            .into_iter()
+            .collect()
+    }
+
+    fn stacked(&self, screen: Rect) -> Vec<Placed<'a>> {
+        let width = TOAST_WIDTH.min(screen.width.saturating_sub(INSET_CELLS * 2));
+        let Some(room) = width.checked_sub(CHROME_CELLS).filter(|room| *room > 0)
+        else {
+            return Vec::new();
+        };
+        let x = screen.right().saturating_sub(INSET_CELLS + width);
+        let mut top = screen.y.saturating_add(INSET_CELLS);
+        let mut placed = Vec::new();
+        for toast in self.live() {
+            let text = fitted(
+                toast.text.as_deref().map_or("", str::trim),
+                usize::from(room),
+                MAX_TEXT_ROWS,
+            );
+            let rows = u16::try_from(text.len()).unwrap_or(0);
+            let height = BORDER_ROWS + TITLE_ROWS + rows;
+            if top.saturating_add(height) > screen.bottom() {
+                break;
+            }
+            let mut lines = vec![title_line(toast, usize::from(room))];
+            lines.extend(text);
+            placed.push(Placed {
+                toast,
+                rect: Rect::new(x, top, width, height),
+                lines,
+            });
+            top = top.saturating_add(height + GAP);
+        }
+        placed
     }
 
     #[must_use]
-    pub(crate) fn areas(self, screen: Rect) -> Option<ToastAreas> {
-        let lines = self.lines(screen)?;
-        let width = card_width(&lines);
-        let height = u16::try_from(lines.len())
-            .unwrap_or(MAX_ROWS)
-            .max(1)
-            .saturating_add(BORDER_ROWS);
-        let outer = top_right(screen, width, height);
+    pub(crate) fn areas(
+        self,
+        screen: Rect,
+        breakpoint: Breakpoint,
+    ) -> Option<ToastAreas> {
+        let outer = self
+            .placed(screen, Form::of(breakpoint))
+            .iter()
+            .map(|placed| placed.rect)
+            .reduce(Rect::union)?;
         Some(ToastAreas {
             outer,
             painted: outer,
@@ -149,27 +248,52 @@ impl ToastCard<'_> {
 
     pub(crate) fn render_in(self, areas: ToastAreas, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
-        let Some(lines) = self.lines(area) else {
-            return;
-        };
-        let outer = areas.outer;
-        let window_background = self.theme.role(Role::WindowBackground);
-        let block = self.block();
-        let inner = block.inner(outer);
-        Clear.render(outer, buffer);
+        for placed in self.placed(area, Form::painted(areas)) {
+            self.paint(&placed, buffer);
+        }
+    }
+
+    fn paint(&self, placed: &Placed<'_>, buffer: &mut Buffer) {
+        let accent = self.style.accent(placed.toast.kind);
+        let rect = placed.rect;
+        Clear.render(rect, buffer);
         Block::new()
-            .style(Style::default().bg(window_background).fg(self.accent()))
-            .render(outer, buffer);
-        block.render(outer, buffer);
-        Paragraph::new(lines.join("\n"))
-            .style(Style::default().fg(self.accent()).bg(window_background))
-            .render(inner, buffer);
+            .style(
+                Style::default()
+                    .bg(self.style.background)
+                    .fg(self.style.text),
+            )
+            .render(rect, buffer);
+        let mut lines = placed.lines.iter();
+        let title = Paragraph::new(lines.next().map_or("", String::as_str))
+            .style(Style::default().fg(accent).add_modifier(Modifier::BOLD));
+        if rect.height == 1 {
+            title.render(rect, buffer);
+            return;
+        }
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(accent))
+            .padding(CARD_INSET.padding());
+        let inner = block.inner(rect);
+        block.render(rect, buffer);
+        title.render(Rect { height: 1, ..inner }, buffer);
+        let body = lines.cloned().collect::<Vec<_>>().join("\n");
+        let below = Rect {
+            y: inner.y.saturating_add(1),
+            height: inner.height.saturating_sub(1),
+            ..inner
+        };
+        Paragraph::new(body)
+            .style(Style::default().fg(self.style.text))
+            .render(below, buffer);
     }
 }
 
-impl Widget for &ToastCard<'_> {
+impl Widget for Toaster<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        if let Some(areas) = self.areas(area) {
+        if let Some(areas) = self.areas(area, Breakpoint::Full) {
             self.render_in(areas, Canvas { area, buffer });
         }
     }
@@ -177,64 +301,90 @@ impl Widget for &ToastCard<'_> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{Toast, ToastLevel};
+    use std::time::Duration;
+
+    use kernel::domain::{Moment, Toast, ToastKind};
     use ratatui::layout::Rect;
 
     use crate::{
-        test_support::noir,
+        screen::Breakpoint,
+        test_support::{noir, rendered},
         theme::{ActiveTheme, ColorDepth},
-        toast::{BORDER_ROWS, MAX_ROWS, ToastCard},
+        toast::{ToastStyle, Toaster, icon},
     };
 
-    fn screen(width: u16, height: u16) -> Rect {
-        Rect::new(0, 0, width, height)
+    fn style() -> ToastStyle {
+        let theme = noir();
+        ToastStyle::from_theme(&ActiveTheme::new(&theme, ColorDepth::TrueColor))
+    }
+
+    fn toaster(toasts: &[Toast]) -> Toaster<'_> {
+        Toaster {
+            toasts,
+            now: Moment::default(),
+            style: style(),
+        }
+    }
+
+    fn painted(toasts: &[Toast], size: (u16, u16)) -> String {
+        rendered(size.0, size.1, |frame| {
+            frame.render_widget(toaster(toasts), frame.area());
+        })
+        .to_string()
     }
 
     #[test]
-    fn a_short_toast_sits_in_the_top_right_corner() {
-        let theme = noir();
-        let toast = Toast {
-            level: ToastLevel::Info,
-            text: "Not in library".to_string(),
-        };
-        let card = ToastCard {
-            toast: &toast,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        };
-        let area = screen(100, 30);
-        let painted = card.areas(area).unwrap().painted;
-        assert!(painted.right() <= area.right());
-        assert_eq!(painted.y, 0);
+    fn a_toast_stack_shows_the_newest_on_top() {
+        let toasts = [
+            Toast::success("Saved").with_text("The playlist was written."),
+            Toast::error("Scan failed"),
+            Toast::info("Hello"),
+        ];
+        insta::assert_snapshot!(painted(&toasts, (60, 20)));
     }
 
     #[test]
-    fn a_long_toast_wraps_and_truncates_to_at_most_three_rows() {
-        let theme = noir();
-        let toast = Toast {
-            level: ToastLevel::Error,
-            text: "The output device changed while a track was playing, so playback \
-                   paused until sound returns"
-                .to_string(),
-        };
-        let card = ToastCard {
-            toast: &toast,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        };
-        let painted = card.areas(screen(100, 30)).unwrap().painted;
-        assert!(painted.height <= MAX_ROWS + BORDER_ROWS);
+    fn a_toast_wraps_its_text() {
+        let toasts = [Toast::warning("Careful").with_text(
+            "The quick brown fox jumps over the lazy dog and keeps running far away",
+        )];
+        insta::assert_snapshot!(painted(&toasts, (60, 12)));
     }
 
     #[test]
-    fn a_toast_with_no_room_has_no_areas() {
-        let theme = noir();
-        let toast = Toast {
-            level: ToastLevel::Info,
-            text: "Not in library".to_string(),
+    fn each_kind_has_its_own_accent_and_icon() {
+        let style = style();
+        let kinds = [
+            ToastKind::Info,
+            ToastKind::Success,
+            ToastKind::Warning,
+            ToastKind::Error,
+        ];
+        for (index, kind) in kinds.iter().enumerate() {
+            for other in kinds.iter().skip(index + 1) {
+                assert_ne!(style.accent(*kind), style.accent(*other));
+                assert_ne!(icon(*kind), icon(*other));
+            }
+        }
+    }
+
+    #[test]
+    fn a_minimal_screen_gets_one_plain_line_for_the_newest() {
+        let toasts = [Toast::info("new"), Toast::info("old")];
+        let areas = toaster(&toasts)
+            .areas(Rect::new(0, 0, 30, 6), Breakpoint::Minimal)
+            .unwrap();
+        assert_eq!((areas.outer.y, areas.outer.height), (0, 1));
+        assert_eq!(areas.outer.right(), 30);
+    }
+
+    #[test]
+    fn an_expired_toast_is_not_painted() {
+        let toasts = [Toast::info("old")];
+        let later = Toaster {
+            now: Moment::new(Duration::from_secs(9)),
+            ..toaster(&toasts)
         };
-        let card = ToastCard {
-            toast: &toast,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        };
-        assert_eq!(card.areas(screen(3, 30)), None);
+        assert_eq!(later.areas(Rect::new(0, 0, 60, 20), Breakpoint::Full), None);
     }
 }

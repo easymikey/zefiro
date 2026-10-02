@@ -1,6 +1,6 @@
 use config::parse_theme;
 use rstest::rstest;
-use widgets::Colors;
+use widgets::{Colors, ThemeSeed};
 
 #[rstest]
 #[case::terracotta_dark(
@@ -39,7 +39,17 @@ use widgets::Colors;
 #[case::winamp("winamp", include_str!("../../../../themes/winamp.toml"))]
 fn every_repo_theme_derives_its_own_palette(#[case] name: &str, #[case] source: &str) {
     let file = parse_theme(source, name).unwrap();
-    let colors = Colors::derive(&file.colors);
+    let c = file.colors;
+    let colors = Colors::derive(&ThemeSeed {
+        background: c.background,
+        foreground: c.foreground,
+        bright_foreground: c.bright_foreground,
+        accent: c.accent,
+        green: c.green,
+        yellow: c.yellow,
+        red: c.red,
+        window_background: c.window_background,
+    });
 
     insta::with_settings!({ snapshot_suffix => name }, {
         insta::assert_debug_snapshot!(colors);

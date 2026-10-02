@@ -255,23 +255,26 @@ fn confirm_delete_rows() -> Vec<KeyBinding> {
 }
 
 fn jump_rows() -> Vec<KeyBinding> {
-    let mut rows = vec![
+    let jump_keys = digits()
+        .filter_map(digit_char)
+        .chain([JumpDigits::SEPARATOR])
+        .map(|character| {
+            (
+                letter(character),
+                overlay(OverlayRequest::Jump(TextRequest::Char(character))),
+            )
+        });
+    let rows = [
         (plain(KeyCode::Esc), close()),
         (plain(KeyCode::Enter), confirm()),
         (
             plain(KeyCode::Backspace),
             overlay(OverlayRequest::Jump(TextRequest::Backspace)),
         ),
-    ];
-    let jump_keys = digits()
-        .filter_map(digit_char)
-        .chain([JumpDigits::SEPARATOR]);
-    rows.extend(jump_keys.map(|character| {
-        (
-            letter(character),
-            overlay(OverlayRequest::Jump(TextRequest::Char(character))),
-        )
-    }));
+    ]
+    .into_iter()
+    .chain(jump_keys)
+    .collect();
     rows_in(KeyContext::JumpToTime, rows)
 }
 

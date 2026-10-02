@@ -1,4 +1,4 @@
-use config::Rgb;
+use kernel::domain::appearance::Rgb;
 use palette::{Srgb, color_difference::Wcag21RelativeContrast};
 
 use crate::theme::rgb::lerp_rgb;
@@ -64,7 +64,7 @@ pub(crate) fn visible_band(window_bg: Rgb, text: Rgb, mix: f32) -> Rgb {
 
 #[cfg(test)]
 mod tests {
-    use config::Rgb;
+    use kernel::domain::appearance::Rgb;
 
     use crate::theme::contrast::{
         MIN_BAND_CONTRAST,

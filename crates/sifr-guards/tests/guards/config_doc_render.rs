@@ -1,5 +1,4 @@
-// GUARD: `docs/config.md`'s `defaults:window` block still parses into
-// `AppearanceConfig::default()`.
+// GUARD: the `defaults:window` doc block parses into the window default.
 
 use config::{AppearanceFile, parse_appearance};
 

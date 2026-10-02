@@ -8,7 +8,7 @@ use std::{
 use crossbeam_channel::Sender;
 use kernel::{
     Cmd,
-    DriverMessage,
+    DriverEvent,
     Message,
     Moment,
     domain::{Model, Startup},
@@ -94,7 +94,7 @@ impl Runtime {
             if !row.platform.present() {
                 runtime.step(Message::Driver {
                     driver: row.driver,
-                    event: DriverMessage::Stopped,
+                    event: DriverEvent::Stopped,
                 });
             }
         }
@@ -122,7 +122,7 @@ impl Runtime {
                 self.full_episodes += 1;
                 self.step(Message::Driver {
                     driver: row.driver,
-                    event: DriverMessage::Full,
+                    event: DriverEvent::Full,
                 });
             }
         }
@@ -263,8 +263,9 @@ mod tests {
         AudioCmd,
         AudioEvent,
         Direction,
-        DriverMessage,
+        DriverEvent,
         Message,
+        Outbox,
         Toast,
         domain::{Driver, DriverStatus, SettingRow, Startup},
     };
@@ -277,7 +278,6 @@ mod tests {
         event_loop::run,
         library::{cover::CoverRequest, machine::LibraryMessage},
         runtime::{Runtime, StartupPaths},
-        sender::DriverSender,
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
         spawn::{AudioDriver, SpawnParts, Spawners, spawn_audio_loop, spawn_config},
         trace::{DropReason, Trace, TraceEntry},
@@ -315,7 +315,7 @@ mod tests {
             Reaction::Message(Message::Quit)
         }
 
-        fn effect(&mut self, _effect: ShellEffect) {}
+        fn effect(&mut self, _effect: ShellEffect, _animations: config::Animations) {}
 
         fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
@@ -333,7 +333,7 @@ mod tests {
     fn recording_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioDriver, Error> {
         let forward = AUDIO_TAP.with(|tap| tap.borrow().clone()).unwrap();
         spawn_audio_loop(
-            move |inbox: &Receiver<AudioCmd>, _: &DriverSender<AudioEvent>| {
+            move |inbox: &Receiver<AudioCmd>, _: &Outbox<AudioEvent>| {
                 while let Ok(command) = inbox.recv() {
                     if forward.send(command).is_err() {
                         return;
@@ -358,7 +358,7 @@ mod tests {
 
     fn panicking_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioDriver, Error> {
         spawn_audio_loop(
-            |_: &Receiver<AudioCmd>, _: &DriverSender<AudioEvent>| boom(),
+            |_: &Receiver<AudioCmd>, _: &Outbox<AudioEvent>| boom(),
             spawn_parts,
         )
     }
@@ -403,14 +403,14 @@ mod tests {
         fn input(&mut self, event: SaveStep) -> Reaction {
             match event {
                 SaveStep::Adjust => Reaction::Message(Message::Adjust {
-                    row: SettingRow::Replaygain,
+                    row: SettingRow::ReplayGain,
                     direction: Direction::Next,
                 }),
                 SaveStep::Quit => Reaction::Message(Message::Quit),
             }
         }
 
-        fn effect(&mut self, _effect: ShellEffect) {}
+        fn effect(&mut self, _effect: ShellEffect, _animations: config::Animations) {}
 
         fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
@@ -444,7 +444,7 @@ mod tests {
         let text = std::fs::read_to_string(&config_path).unwrap();
         assert!(
             text.contains("replaygain"),
-            "drain must flush the pending replaygain save to disk"
+            "drain must flush the pending replay_gain save to disk"
         );
     }
 
@@ -471,7 +471,7 @@ mod tests {
             }
         }
 
-        fn effect(&mut self, _effect: ShellEffect) {}
+        fn effect(&mut self, _effect: ShellEffect, _animations: config::Animations) {}
 
         fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
@@ -602,7 +602,7 @@ mod tests {
     )]
     #[case::a_rejected_message_is_refused(
         DriverStatus::Stopped,
-        Message::Driver { driver: Driver::Library, event: DriverMessage::Stopped },
+        Message::Driver { driver: Driver::Library, event: DriverEvent::Stopped },
         false
     )]
     fn step_reports_whether_the_message_changed_the_model(

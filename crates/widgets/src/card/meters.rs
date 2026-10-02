@@ -1,4 +1,4 @@
-use config::ProgressTime;
+use kernel::domain::appearance::ProgressTime;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -85,8 +85,8 @@ fn paint_time_row(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
     }
 }
 
-fn truncated_span(value: &str, budget: usize, color: Color) -> Span<'static> {
-    crate::primitive::span::text(truncate(value, budget).into_owned())
+fn truncated_span(text: &str, budget: usize, color: Color) -> Span<'static> {
+    crate::primitive::span::text(truncate(text, budget).into_owned())
         .fg(color)
         .dim()
         .into()
@@ -165,7 +165,6 @@ fn paint_volume_row(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics)
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use config::Appearance;
     use kernel::{
         Bounded,
         Moment,
@@ -179,6 +178,7 @@ mod tests {
             Speed,
             Tags,
             Track,
+            appearance::Appearance,
         },
         playlist::PlayOrder,
     };

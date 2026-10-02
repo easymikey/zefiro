@@ -1,5 +1,4 @@
-// GUARD: the paint path only paints — no dispatch, no driver, no channel, no
-// clock.
+// GUARD: the paint path only paints: no dispatch, driver, channel or clock.
 
 use std::path::PathBuf;
 

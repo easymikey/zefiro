@@ -46,7 +46,7 @@ impl<'de> Visitor<'de> for KeyBindingVisitor {
         };
         Ok(KeyBindingEntry(KeyOverride {
             chord: table.chord,
-            context,
+            key_context: context,
         }))
     }
 }

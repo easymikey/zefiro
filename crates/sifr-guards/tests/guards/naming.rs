@@ -160,9 +160,9 @@ fn parameter_name(slot: &str) -> Option<String> {
 }
 
 const MECHANISM_TYPE_SUFFIXES: &[&str] = &[
-    "Props", "Input", "Tuning", "Sync", "Scratch", "Slices", "Info", "Kind", "Type",
-    "Inputs", "Values", "Flags", "Params", "Options", "Data", "Manager", "Handler",
-    "Helper", "Util", "Utils", "Wrapper", "Holder", "Draw",
+    "Props", "Tuning", "Sync", "Scratch", "Slices", "Info", "Type", "Inputs", "Values",
+    "Flags", "Params", "Options", "Data", "Manager", "Handler", "Helper", "Util",
+    "Utils", "Wrapper", "Holder", "Draw",
 ];
 
 const TYPE_DECL_KEYWORDS: &[&str] = &["struct", "enum", "type", "trait"];

@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 
-use kernel::{
-    domain::Revision,
-    update::{Machine, Rejected},
-};
+use kernel::{domain::Revision, update::Machine};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct LibraryWatch {
@@ -43,7 +40,7 @@ pub(crate) enum WatchError {
     Settled,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) enum WatchEffect {
     Rename {
         from: PathBuf,
@@ -60,151 +57,81 @@ pub(crate) enum WatchEffect {
         revision: Revision,
     },
     Report(notify::Error),
-    #[default]
-    Nothing,
 }
-
-type Step = Result<(LibraryWatch, WatchEffect), Rejected<LibraryWatch>>;
-pub(crate) type Row = Result<(Registered, WatchEffect), (Registered, WatchError)>;
 
 impl Machine for LibraryWatch {
     type Message = WatchMessage;
     type Error = WatchError;
     type Effect = WatchEffect;
 
-    fn transition(self, message: WatchMessage) -> Step {
-        let LibraryWatch {
-            registered,
-            last_scan,
-        } = self;
+    fn transition(&mut self, message: WatchMessage) -> Result<WatchEffect, WatchError> {
         match message {
             WatchMessage::Rescan {
                 music_dir,
                 revision,
-            } => Ok(rescan(registered, music_dir, revision)),
-            WatchMessage::FilesystemChange(event) => {
-                reseat(filesystem_change(registered, event), last_scan)
-            }
-            WatchMessage::DebounceElapsed => {
-                reseat(debounce_elapsed(registered, last_scan), last_scan)
-            }
+            } => Ok(self.rescan(music_dir, revision)),
+            WatchMessage::FilesystemChange(event) => self.filesystem_change(event),
+            WatchMessage::DebounceElapsed => self.debounce_elapsed(),
         }
     }
 }
 
-fn filesystem_change(registered: Registered, event: Result<(), notify::Error>) -> Row {
-    match (registered, event) {
-        (registered @ Registered::Unrooted, Ok(()) | Err(_)) => {
-            Err((registered, WatchError::Unwatched))
+impl LibraryWatch {
+    fn filesystem_change(
+        &mut self,
+        event: Result<(), notify::Error>,
+    ) -> Result<WatchEffect, WatchError> {
+        match (&mut self.registered, event) {
+            (Registered::Unrooted, Ok(()) | Err(_)) => Err(WatchError::Unwatched),
+            (Registered::On { burst, .. }, Ok(())) => {
+                *burst = Burst::Armed;
+                Ok(WatchEffect::ArmDebounce)
+            }
+            (Registered::On { .. }, Err(error)) => Ok(WatchEffect::Report(error)),
         }
-        (Registered::On { music_dir, .. }, Ok(())) => Ok((
-            Registered::On {
-                music_dir,
-                burst: Burst::Armed,
-            },
-            WatchEffect::ArmDebounce,
-        )),
-        (Registered::On { music_dir, burst }, Err(error)) => Ok((
-            Registered::On { music_dir, burst },
-            WatchEffect::Report(error),
-        )),
     }
-}
 
-fn debounce_elapsed(registered: Registered, last_scan: Revision) -> Row {
-    match registered {
-        registered @ Registered::Unrooted => Err((registered, WatchError::Unwatched)),
-        Registered::On {
-            music_dir,
-            burst: Burst::Armed,
-        } => Ok((
+    fn debounce_elapsed(&mut self) -> Result<WatchEffect, WatchError> {
+        match &mut self.registered {
+            Registered::Unrooted => Err(WatchError::Unwatched),
             Registered::On {
-                music_dir: music_dir.clone(),
                 burst: Burst::Quiet,
+                ..
+            } => Err(WatchError::Settled),
+            Registered::On { music_dir, burst } => {
+                *burst = Burst::Quiet;
+                Ok(WatchEffect::Rescan {
+                    music_dir: music_dir.clone(),
+                    revision: self.last_scan,
+                })
+            }
+        }
+    }
+
+    fn rescan(&mut self, target: PathBuf, revision: Revision) -> WatchEffect {
+        let effect = match &self.registered {
+            Registered::Unrooted => WatchEffect::RegisterAndRescan {
+                music_dir: target.clone(),
+                revision,
             },
-            WatchEffect::Rescan {
-                music_dir,
-                revision: last_scan,
+            Registered::On { music_dir, .. } if *music_dir == target => {
+                WatchEffect::Rescan {
+                    music_dir: target.clone(),
+                    revision,
+                }
+            }
+            Registered::On { music_dir, .. } => WatchEffect::Rename {
+                from: music_dir.clone(),
+                to: target.clone(),
+                revision,
             },
-        )),
-        registered @ Registered::On {
+        };
+        self.registered = Registered::On {
+            music_dir: target,
             burst: Burst::Quiet,
-            ..
-        } => Err((registered, WatchError::Settled)),
-    }
-}
-
-fn reseat(row: Row, last_scan: Revision) -> Step {
-    match row {
-        Ok((registered, io)) => Ok((
-            LibraryWatch {
-                registered,
-                last_scan,
-            },
-            io,
-        )),
-        Err((registered, reason)) => Err(Rejected {
-            state: LibraryWatch {
-                registered,
-                last_scan,
-            },
-            reason,
-        }),
-    }
-}
-
-fn rescan(
-    registered: Registered,
-    music_dir: PathBuf,
-    revision: Revision,
-) -> (LibraryWatch, WatchEffect) {
-    let (registered, io) = rewatch(registered, music_dir, revision);
-    (
-        LibraryWatch {
-            registered,
-            last_scan: revision,
-        },
-        io,
-    )
-}
-
-fn rewatch(
-    registered: Registered,
-    target: PathBuf,
-    revision: Revision,
-) -> (Registered, WatchEffect) {
-    match registered {
-        Registered::Unrooted => (
-            Registered::On {
-                music_dir: target.clone(),
-                burst: Burst::Quiet,
-            },
-            WatchEffect::RegisterAndRescan {
-                music_dir: target,
-                revision,
-            },
-        ),
-        Registered::On { music_dir, .. } if music_dir == target => (
-            Registered::On {
-                music_dir,
-                burst: Burst::Quiet,
-            },
-            WatchEffect::Rescan {
-                music_dir: target,
-                revision,
-            },
-        ),
-        Registered::On { music_dir, .. } => (
-            Registered::On {
-                music_dir: target.clone(),
-                burst: Burst::Quiet,
-            },
-            WatchEffect::Rename {
-                from: music_dir,
-                to: target,
-                revision,
-            },
-        ),
+        };
+        self.last_scan = revision;
+        effect
     }
 }
 
@@ -318,7 +245,6 @@ mod tests {
                 )
             }
             WatchEffect::Report(error) => format!("report {error}"),
-            WatchEffect::Nothing => "nothing".to_string(),
         }
     }
 
@@ -391,7 +317,8 @@ mod tests {
         io: "rescan /music @ 3",
     })]
     fn a_cell_moves_the_watch_and_names_its_io(#[case] cell: Cell) {
-        let (state, effect) = cell.start.transition(cell.message).unwrap();
+        let mut state = cell.start;
+        let effect = state.transition(cell.message).unwrap();
         assert_eq!(state, cell.next);
         assert_eq!(render(&effect), cell.io);
     }
@@ -414,15 +341,17 @@ mod tests {
         #[case] reason: WatchError,
     ) {
         let expected = start.clone();
-        let rejected = start.transition(message).err().unwrap();
-        assert_eq!(rejected.state, expected);
-        assert_eq!(rejected.reason, reason);
+        let mut state = start;
+        let refused = state.transition(message).err().unwrap();
+        assert_eq!(state, expected);
+        assert_eq!(refused, reason);
     }
 
     #[test]
     fn a_rescan_always_applies_even_if_the_revision_repeats() {
-        let (state, _) = quiet().transition(rescan(music_dir(), 1)).unwrap();
-        let (state, effect) = state.transition(rescan(music_dir(), 1)).unwrap();
+        let mut state = quiet();
+        state.transition(rescan(music_dir(), 1)).unwrap();
+        let effect = state.transition(rescan(music_dir(), 1)).unwrap();
         assert_eq!(state, scanned(quiet(), 1));
         assert_eq!(render(&effect), "rescan /music @ 1");
     }

@@ -9,7 +9,7 @@ expression: effs
     ),
     Audio(
         Load(
-            TrackRequest {
+            TrackLoad {
                 path: "/tmp/track0.flac",
                 gain: None,
                 revision: Revision(

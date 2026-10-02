@@ -2,11 +2,9 @@ use std::{path::PathBuf, time::Duration};
 
 use kernel::{
     AudioCmd,
-    AudioEvent,
     Playback,
-    TrackRequest,
-    domain::{Crossfade, ListedDevice, OutputDevice},
-    update::Rejected,
+    TrackLoad,
+    domain::{Crossfade, OutputDevice},
 };
 
 use crate::{
@@ -16,15 +14,15 @@ use crate::{
         effect::EngineEffect,
         machine::EngineError,
         phase::{CurrentTrack, Handover, Incoming, Loading, Next, Phase, Playing},
-        state::{Engine, Live, then_report},
+        state::{Live, then_report},
     },
 };
 
 impl Live {
     pub(crate) fn command(
-        mut self,
+        &mut self,
         cmd: AudioCmd,
-    ) -> Result<(Engine, EngineEffect), Box<Rejected<Engine>>> {
+    ) -> Result<EngineEffect, EngineError> {
         match cmd {
             AudioCmd::Load(request) => Ok(self.load(request)),
             AudioCmd::Preload(request) => self.preload(request),
@@ -33,41 +31,35 @@ impl Live {
                     Playback::Paused => EngineEffect::Pause,
                     Playback::Playing => EngineEffect::Play,
                 };
-                Ok((Engine::Live(self), then_report(effect)))
+                Ok(then_report(effect))
             }
             AudioCmd::Seek(target) => Ok(self.seek(target)),
             AudioCmd::SetSpeed(speed) => {
                 self.speed = speed;
-                Ok((
-                    Engine::Live(self),
-                    then_report(EngineEffect::SetSpeed(speed)),
-                ))
+                Ok(then_report(EngineEffect::SetSpeed(speed)))
             }
             AudioCmd::Stop => {
                 self.phase = Phase::Idle;
-                Ok((Engine::Live(self), EngineEffect::Clear))
+                Ok(EngineEffect::Clear)
             }
             AudioCmd::SetCrossfade(crossfade) => Ok(self.set_crossfade(crossfade)),
-            AudioCmd::SetReplaygain(replaygain) => {
-                self.config.replaygain = replaygain;
-                let volume = self.volume();
-                Ok((Engine::Live(self), EngineEffect::SetVolume(volume)))
+            AudioCmd::SetReplayGain(replay_gain) => {
+                self.config.replay_gain = replay_gain;
+                Ok(EngineEffect::SetVolume(self.volume()))
             }
             AudioCmd::SetDevice(device) => Ok(self.set_device(device)),
-            AudioCmd::ListDevices => {
-                Ok((Engine::Live(self), EngineEffect::ListDevices))
-            }
+            AudioCmd::ListDevices => Ok(EngineEffect::ListDevices),
         }
     }
 
-    pub(crate) fn load(mut self, pending: TrackRequest) -> (Engine, EngineEffect) {
-        let TrackRequest {
+    pub(crate) fn load(&mut self, pending: TrackLoad) -> EngineEffect {
+        let TrackLoad {
             path,
             gain,
             revision,
         } = pending;
-        if revision.is_stale(self.performed.load) {
-            return (Engine::Live(self), EngineEffect::Nothing);
+        if revision <= self.performed.load {
+            return EngineEffect::Nothing;
         }
         self.performed.load = revision;
         let speed = self.speed;
@@ -82,22 +74,19 @@ impl Live {
             self.phase = Phase::Handover(Handover {
                 incoming: Incoming::Loading(loading),
             });
-            return (
-                Engine::Live(self),
-                EngineEffect::StartHandover { path, speed },
-            );
+            return EngineEffect::StartHandover { path, speed };
         }
         self.phase = Phase::Loading(loading);
-        (Engine::Live(self), EngineEffect::StartLoad { path, speed })
+        EngineEffect::StartLoad { path, speed }
     }
 
-    fn seek(mut self, target: Duration) -> (Engine, EngineEffect) {
+    fn seek(&mut self, target: Duration) -> EngineEffect {
         let Some(playing) = self.take_playing() else {
-            return (Engine::Live(self), then_report(EngineEffect::Seek(target)));
+            return then_report(EngineEffect::Seek(target));
         };
         let Next::Crossfading { preload, fading } = playing.next else {
             self.phase = Phase::Playing(playing);
-            return (Engine::Live(self), then_report(EngineEffect::Seek(target)));
+            return then_report(EngineEffect::Seek(target));
         };
         let cue = arm_cue(playing.current.total, self.config.crossfade.get());
         let rearm = !fading || cue.is_some_and(|cue| target < cue);
@@ -117,44 +106,30 @@ impl Live {
             },
             ..playing
         });
-        (Engine::Live(self), EngineEffect::Batch(steps))
+        EngineEffect::Batch(steps)
     }
 
-    fn set_device(self, device: OutputDevice) -> (Engine, EngineEffect) {
+    fn set_device(&self, device: OutputDevice) -> EngineEffect {
         match device {
-            in_use if in_use == self.config.device => {
-                (Engine::Live(self), EngineEffect::Nothing)
-            }
-            other => {
-                let speed = self.speed;
-                (
-                    Engine::Live(self),
-                    EngineEffect::Open {
-                        device: other,
-                        speed,
-                    },
-                )
-            }
+            in_use if in_use == self.config.device => EngineEffect::Nothing,
+            other => EngineEffect::Open {
+                device: other,
+                speed: self.speed,
+            },
         }
     }
 
-    fn preload(
-        mut self,
-        requested: TrackRequest,
-    ) -> Result<(Engine, EngineEffect), Box<Rejected<Engine>>> {
-        let TrackRequest {
+    fn preload(&mut self, requested: TrackLoad) -> Result<EngineEffect, EngineError> {
+        let TrackLoad {
             path,
             gain,
             revision,
         } = requested;
-        if revision.is_stale(self.performed.incoming) {
-            return Ok((Engine::Live(self), EngineEffect::Nothing));
+        if revision <= self.performed.incoming {
+            return Ok(EngineEffect::Nothing);
         }
         let Some(playing) = self.take_playing() else {
-            return Err(Box::new(Rejected {
-                state: Engine::Live(self),
-                reason: EngineError::WhileNotPlaying(path),
-            }));
+            return Err(EngineError::WhileNotPlaying(path));
         };
         self.performed.incoming = revision;
         self.phase = Phase::Playing(Playing {
@@ -170,13 +145,13 @@ impl Live {
                 speed: self.speed,
             }
         };
-        Ok((Engine::Live(self), EngineEffect::Preload(request)))
+        Ok(EngineEffect::Preload(request))
     }
 
-    fn set_crossfade(mut self, crossfade: Crossfade) -> (Engine, EngineEffect) {
+    fn set_crossfade(&mut self, crossfade: Crossfade) -> EngineEffect {
         self.config.crossfade = crossfade;
         let Some(mut playing) = self.take_playing() else {
-            return (Engine::Live(self), EngineEffect::Nothing);
+            return EngineEffect::Nothing;
         };
         match (std::mem::take(&mut playing.next), crossfade.get().is_zero()) {
             (
@@ -194,7 +169,7 @@ impl Live {
                     },
                     ..playing
                 });
-                (Engine::Live(self), EngineEffect::Arm { cue })
+                EngineEffect::Arm { cue }
             }
             (
                 Next::Crossfading {
@@ -215,44 +190,30 @@ impl Live {
                     preloading: Some(path.clone()),
                     ..playing
                 });
-                let effect = EngineEffect::Batch(vec![
+                EngineEffect::Batch(vec![
                     EngineEffect::Arm { cue: None },
                     EngineEffect::RestartGapless(path),
-                ]);
-                (Engine::Live(self), effect)
+                ])
             }
             (next, _) => {
                 self.phase = Phase::Playing(Playing { next, ..playing });
-                (Engine::Live(self), EngineEffect::Nothing)
+                EngineEffect::Nothing
             }
         }
     }
 
     pub(crate) fn promote(
-        mut self,
+        &mut self,
         preload: CurrentTrack,
         preloading: Option<PathBuf>,
-    ) -> (Engine, EngineEffect) {
+    ) -> EngineEffect {
         self.phase = Phase::Playing(Playing {
             current: preload,
             next: Next::None,
             preloading,
         });
         let volume = self.volume();
-        (
-            Engine::Live(self),
-            then_report(EngineEffect::Promote { volume }),
-        )
-    }
-
-    pub(crate) fn devices_listed(
-        self,
-        devices: Vec<ListedDevice>,
-    ) -> (Engine, EngineEffect) {
-        (
-            Engine::Live(self),
-            EngineEffect::Send(AudioEvent::DevicesListed(devices)),
-        )
+        then_report(EngineEffect::Promote { volume })
     }
 }
 
@@ -262,7 +223,7 @@ mod tests {
         AudioCmd,
         Bounded,
         Playback,
-        domain::{DeviceName, OutputDevice, Replaygain, Speed},
+        domain::{DeviceName, OutputDevice, ReplayGain, Speed},
         update::Machine,
     };
     use proptest::{
@@ -465,9 +426,9 @@ mod tests {
     )]
     #[case::replaygain_reapplies_the_volume(
         Engine::Live(playing()),
-        cmd(AudioCmd::SetReplaygain(Replaygain::On)),
+        cmd(AudioCmd::SetReplayGain(ReplayGain::On)),
         Cell {
-            next: Engine::Live(Live { config: EngineConfig { replaygain: Replaygain::On, ..config() }, ..playing() }),
+            next: Engine::Live(Live { config: EngineConfig { replay_gain: ReplayGain::On, ..config() }, ..playing() }),
             effect: EngineEffect::SetVolume(1.0),
         }
     )]
@@ -525,7 +486,7 @@ mod tests {
         let expected = Engine::Live(start.clone());
         let mut state = Engine::Live(start);
         assert_eq!(
-            state.update(preload("/c")),
+            state.transition(preload("/c")),
             Err(EngineError::WhileNotPlaying("/c".into()))
         );
         assert_eq!(state, expected);
@@ -553,10 +514,10 @@ mod tests {
     })]
     fn a_replayed_revision_is_performed_once(#[case] row: ReplayRow) {
         let mut engine = row.start;
-        assert_eq!(engine.update(row.first), Ok(row.effect));
+        assert_eq!(engine.transition(row.first), Ok(row.effect));
 
         let before = engine.clone();
-        assert_eq!(engine.update(row.again), Ok(EngineEffect::Nothing));
+        assert_eq!(engine.transition(row.again), Ok(EngineEffect::Nothing));
         assert_eq!(engine, before);
     }
 
@@ -575,8 +536,8 @@ mod tests {
     })]
     fn a_newer_revision_is_performed_again(#[case] row: ReplayRow) {
         let mut engine = row.start;
-        engine.update(row.first).unwrap();
-        assert_eq!(engine.update(row.again), Ok(row.effect));
+        engine.transition(row.first).unwrap();
+        assert_eq!(engine.transition(row.again), Ok(row.effect));
     }
 
     fn rejected(reason: impl std::fmt::Debug) -> TestCaseError {
@@ -600,7 +561,7 @@ mod tests {
                 ..base
             };
             let mut state = Engine::Live(starting);
-            state.update(load("/next")).map_err(rejected)?;
+            state.transition(load("/next")).map_err(rejected)?;
             let Engine::Live(live) = state else {
                 return Err(rejected("the engine stays live across a load"));
             };

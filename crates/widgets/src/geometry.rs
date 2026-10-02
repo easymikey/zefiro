@@ -1,4 +1,4 @@
-use config::{CoverStyle, TextCoverCells};
+use kernel::domain::appearance::{CoverCells, CoverStyle};
 
 use crate::pixels::canvas_aspect_ratio;
 
@@ -22,7 +22,7 @@ impl Default for CoverSizing {
 }
 
 #[must_use]
-pub(crate) fn cover_sizing(style: CoverStyle, cells: TextCoverCells) -> CoverSizing {
+pub(crate) fn cover_sizing(style: CoverStyle, cells: CoverCells) -> CoverSizing {
     match style {
         CoverStyle::Off => CoverSizing::Off,
         CoverStyle::Milkdrop => CoverSizing::Fixed {
@@ -40,14 +40,14 @@ pub(crate) fn cover_sizing(style: CoverStyle, cells: TextCoverCells) -> CoverSiz
 
 #[cfg(test)]
 mod tests {
-    use config::{CoverStyle, TextCoverCells};
+    use kernel::domain::appearance::{CoverCells, CoverStyle};
     use rstest::rstest;
 
     use crate::geometry::{CoverSizing, canvas_aspect_ratio, cover_sizing};
 
     #[test]
     fn a_plain_cover_is_square() {
-        let cells = TextCoverCells {
+        let cells = CoverCells {
             width: 20,
             height: 8,
         };
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn a_vinyl_cover_uses_the_vinyl_canvas_aspect_ratio() {
-        let cells = TextCoverCells {
+        let cells = CoverCells {
             width: 20,
             height: 8,
         };
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn off_stays_off() {
-        let cells = TextCoverCells {
+        let cells = CoverCells {
             width: 20,
             height: 8,
         };
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn milkdrop_takes_a_fixed_text_grid() {
-        let cells = TextCoverCells {
+        let cells = CoverCells {
             width: 24,
             height: 9,
         };
@@ -102,7 +102,7 @@ mod tests {
     fn plain_and_vinyl_size_themselves_from_their_own_aspect_ratio(
         #[case] style: CoverStyle,
     ) {
-        let cells = TextCoverCells {
+        let cells = CoverCells {
             width: 20,
             height: 8,
         };

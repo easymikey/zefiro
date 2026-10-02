@@ -20,12 +20,12 @@ use kernel::{
         DeleteCandidate,
         JumpDigits,
         MusicDirError,
-        PlaylistIndex,
         SearchQuery,
         SettingRow,
         TextEntry,
         TimecodeError,
         Track,
+        ViewIndex,
         playlist::{PlaylistFileName, PlaylistNameError},
     },
     update::overlay::{
@@ -35,9 +35,9 @@ use kernel::{
         HistoryPick,
         InnerMessage,
         JumpError,
-        OverlayEffect,
         OverlayError,
         OverlayMessage,
+        OverlayOutcome,
         SearchError,
         SearchMessage,
         SettingsCursorMessage,
@@ -108,7 +108,7 @@ fn fresh_settings() -> Overlay {
 
 fn candidate() -> DeleteCandidate {
     DeleteCandidate {
-        track: PlaylistIndex::new(1),
+        index: ViewIndex::new(1),
         title: "Sun Song".to_string(),
         artist: "Someone".to_string(),
     }
@@ -148,15 +148,15 @@ fn text(message: TextRequest) -> OverlayMessage {
     inner(InnerMessage::Text(message))
 }
 
-fn opened(follow_up: Option<FollowUp>) -> OverlayEffect {
-    OverlayEffect {
+fn opened(follow_up: Option<FollowUp>) -> OverlayOutcome {
+    OverlayOutcome {
         cmd: Cue::OverlayOpened.into(),
         follow_up,
     }
 }
 
-fn closed(follow_up: Option<FollowUp>) -> OverlayEffect {
-    OverlayEffect {
+fn closed(follow_up: Option<FollowUp>) -> OverlayOutcome {
+    OverlayOutcome {
         cmd: Cue::OverlayClosed.into(),
         follow_up,
     }
@@ -174,7 +174,7 @@ fn saved_music_dir(path: &str) -> Cmd {
 }
 
 fn holds() -> Option<FollowUp> {
-    Some(FollowUp::Playback(PlaybackRequest::Hold))
+    Some(FollowUp::Playback(PlaybackRequest::HoldForOverlay))
 }
 
 fn releases() -> Option<FollowUp> {
@@ -238,21 +238,21 @@ type Cell = crate::support::table::Cell<Option<Overlay>>;
     Err(OverlayError::NoConfirm)
 )]
 #[case::settings_confirm_closes_and_releases(Some(settings(3)), OverlayMessage::Confirm, Ok((None, closed(releases()))))]
-#[case::search_confirm_plays_the_selected_match(Some(search("mo", vec![0, 2], 1)), OverlayMessage::Confirm, Ok((None, closed(Some(FollowUp::Playlist(PlaylistRequest::JumpTo(PlaylistIndex::new(2))))))))]
+#[case::search_confirm_plays_the_selected_match(Some(search("mo", vec![0, 2], 1)), OverlayMessage::Confirm, Ok((None, closed(Some(FollowUp::Playlist(PlaylistRequest::JumpTo(ViewIndex::new(2))))))))]
 #[case::search_confirm_without_a_match_is_refused(Some(search("zzz", vec![], 0)), OverlayMessage::Confirm, Err(OverlayError::NothingSelected))]
 #[case::save_confirm_saves_under_the_name(Some(save("mix", None)), OverlayMessage::Confirm, Ok((None, closed(Some(FollowUp::Browse(BrowseRequest::SavePlaylist(saved_name("mix"))))))))]
-#[case::save_confirm_with_an_empty_name_stays_open_with_the_error(Some(save("", None)), OverlayMessage::Confirm, Ok((Some(save("", Some(PlaylistNameError::Empty))), OverlayEffect::default())))]
-#[case::confirm_delete_confirm_trashes_the_candidate(Some(confirm_delete()), OverlayMessage::Confirm, Ok((None, closed(Some(FollowUp::Browse(BrowseRequest::Trash(PlaylistIndex::new(1))))))))]
+#[case::save_confirm_with_an_empty_name_stays_open_with_the_error(Some(save("", None)), OverlayMessage::Confirm, Ok((Some(save("", Some(PlaylistNameError::Empty))), OverlayOutcome::default())))]
+#[case::confirm_delete_confirm_trashes_the_candidate(Some(confirm_delete()), OverlayMessage::Confirm, Ok((None, closed(Some(FollowUp::Browse(BrowseRequest::Trash(ViewIndex::new(1))))))))]
 #[case::jump_confirm_seeks_to_the_parsed_time(Some(jump("1:40", None)), OverlayMessage::Confirm, Ok((None, closed(Some(FollowUp::Playback(PlaybackRequest::SeekTo(Duration::from_secs(100))))))))]
-#[case::jump_confirm_malformed_stays_open_with_the_error(Some(jump("5:", None)), OverlayMessage::Confirm, Ok((Some(jump("5:", Some(TimecodeError::Malformed))), OverlayEffect::default())))]
-#[case::source_dir_confirm_saves_the_folder(Some(source_dir("/music", None)), OverlayMessage::Confirm, Ok((None, OverlayEffect::from(saved_music_dir("/music")))))]
-#[case::source_dir_confirm_empty_stays_open_with_the_error(Some(source_dir("  ", None)), OverlayMessage::Confirm, Ok((Some(source_dir("  ", Some(MusicDirError::Empty))), OverlayEffect::default())))]
-#[case::save_types_a_char(Some(save("mi", None)), text(TextRequest::Char('x')), Ok((Some(save("mix", None)), OverlayEffect::default())))]
-#[case::save_backspace_erases(Some(save("mix", None)), text(TextRequest::Backspace), Ok((Some(save("mi", None)), OverlayEffect::default())))]
-#[case::save_types_a_char_and_clears_the_error(Some(save("", Some(PlaylistNameError::Empty))), text(TextRequest::Char('m')), Ok((Some(save("m", None)), OverlayEffect::default())))]
-#[case::source_dir_types_a_char_and_clears_the_error(Some(source_dir("", Some(MusicDirError::Empty))), text(TextRequest::Char('/')), Ok((Some(source_dir("/", None)), OverlayEffect::default())))]
-#[case::source_dir_backspace_clears_the_error(Some(source_dir("/x", Some(MusicDirError::Empty))), text(TextRequest::Backspace), Ok((Some(source_dir("/", None)), OverlayEffect::default())))]
-#[case::jump_types_a_digit_and_clears_the_error(Some(jump("5:", Some(TimecodeError::Malformed))), inner(InnerMessage::Jump(TextRequest::Char('3'))), Ok((Some(jump("5:3", None)), OverlayEffect::default())))]
+#[case::jump_confirm_malformed_stays_open_with_the_error(Some(jump("5:", None)), OverlayMessage::Confirm, Ok((Some(jump("5:", Some(TimecodeError::Malformed))), OverlayOutcome::default())))]
+#[case::source_dir_confirm_saves_the_folder(Some(source_dir("/music", None)), OverlayMessage::Confirm, Ok((None, OverlayOutcome::from(saved_music_dir("/music")))))]
+#[case::source_dir_confirm_empty_stays_open_with_the_error(Some(source_dir("  ", None)), OverlayMessage::Confirm, Ok((Some(source_dir("  ", Some(MusicDirError::Empty))), OverlayOutcome::default())))]
+#[case::save_types_a_char(Some(save("mi", None)), text(TextRequest::Char('x')), Ok((Some(save("mix", None)), OverlayOutcome::default())))]
+#[case::save_backspace_erases(Some(save("mix", None)), text(TextRequest::Backspace), Ok((Some(save("mi", None)), OverlayOutcome::default())))]
+#[case::save_types_a_char_and_clears_the_error(Some(save("", Some(PlaylistNameError::Empty))), text(TextRequest::Char('m')), Ok((Some(save("m", None)), OverlayOutcome::default())))]
+#[case::source_dir_types_a_char_and_clears_the_error(Some(source_dir("", Some(MusicDirError::Empty))), text(TextRequest::Char('/')), Ok((Some(source_dir("/", None)), OverlayOutcome::default())))]
+#[case::source_dir_backspace_clears_the_error(Some(source_dir("/x", Some(MusicDirError::Empty))), text(TextRequest::Backspace), Ok((Some(source_dir("/", None)), OverlayOutcome::default())))]
+#[case::jump_types_a_digit_and_clears_the_error(Some(jump("5:", Some(TimecodeError::Malformed))), inner(InnerMessage::Jump(TextRequest::Char('3'))), Ok((Some(jump("5:3", None)), OverlayOutcome::default())))]
 #[case::jump_refuses_a_letter(
     Some(jump("5", None)),
     inner(InnerMessage::Jump(TextRequest::Char('a'))),
@@ -261,21 +261,21 @@ type Cell = crate::support::table::Cell<Option<Overlay>>;
 #[case::search_types_a_char(
     Some(search("mo", vec![0], 0)),
     inner(InnerMessage::Search(SearchMessage::Edit(SearchEdit::Char('o'), titled(&["moo", "zzz"])))),
-    Ok((Some(search("moo", vec![0], 0)), OverlayEffect::default()))
+    Ok((Some(search("moo", vec![0], 0)), OverlayOutcome::default()))
 )]
 #[case::search_editing_installs_fresh_matches(
     Some(search("m", vec![], 0)),
     inner(InnerMessage::Search(SearchMessage::Edit(SearchEdit::Char('o'), titled(&["mo", "zzz", "moon"])))),
-    Ok((Some(search("mo", vec![0, 2], 0)), OverlayEffect::default()))
+    Ok((Some(search("mo", vec![0, 2], 0)), OverlayOutcome::default()))
 )]
-#[case::search_enqueues_the_selected_match(Some(search("mo", vec![0, 2], 1)), inner(InnerMessage::Search(SearchMessage::Enqueue)), Ok((Some(search("mo", vec![0, 2], 1)), OverlayEffect::from(FollowUp::Queue(QueueRequest::EnqueueTrack(PlaylistIndex::new(2)))))))]
+#[case::search_enqueues_the_selected_match(Some(search("mo", vec![0, 2], 1)), inner(InnerMessage::Search(SearchMessage::Enqueue)), Ok((Some(search("mo", vec![0, 2], 1)), OverlayOutcome::from(FollowUp::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(2)))))))]
 #[case::search_enqueue_without_a_match_is_refused(
     Some(search("zzz", vec![], 0)),
     inner(InnerMessage::Search(SearchMessage::Enqueue)),
     Err(OverlayError::Search(SearchError::NothingSelected))
 )]
-#[case::history_navigates(Some(history(0, 3)), inner(InnerMessage::History(HistoryMessage::Navigate { direction: Direction::Next, len: 3 })), Ok((Some(history(1, 3)), OverlayEffect::default())))]
-#[case::history_enqueues_the_resolved_entry(Some(history(1, 2)), inner(InnerMessage::History(HistoryMessage::Enqueue(HistoryPick::Queued(PlaylistIndex::new(3))))), Ok((Some(history(1, 2)), OverlayEffect::from(FollowUp::Queue(QueueRequest::EnqueueTrack(PlaylistIndex::new(3)))))))]
+#[case::history_navigates(Some(history(0, 3)), inner(InnerMessage::History(HistoryMessage::Navigate { direction: Direction::Next, len: 3 })), Ok((Some(history(1, 3)), OverlayOutcome::default())))]
+#[case::history_enqueues_the_resolved_entry(Some(history(1, 2)), inner(InnerMessage::History(HistoryMessage::Enqueue(HistoryPick::Queued(ViewIndex::new(3))))), Ok((Some(history(1, 2)), OverlayOutcome::from(FollowUp::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(3)))))))]
 #[case::history_enqueue_of_a_missing_entry_is_refused(
     Some(history(0, 1)),
     inner(InnerMessage::History(HistoryMessage::Enqueue(HistoryPick::Missing))),

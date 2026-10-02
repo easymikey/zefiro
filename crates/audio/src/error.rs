@@ -79,7 +79,7 @@ impl From<&Error> for AudioError {
         match error {
             Error::Open { path, source } => AudioError::Decode {
                 path: path.clone(),
-                kind: DecodeError::Unreadable(IoError::from(source.kind())),
+                kind: DecodeError::Unreadable(source.kind().into()),
             },
             Error::Decode { path, source } => AudioError::Decode {
                 path: path.clone(),
@@ -186,7 +186,7 @@ mod tests {
         DecodeError::Unsupported
     )]
     #[case::io_error(
-        rodio::decoder::DecoderError::IoError("broken pipe".to_string()),
+        rodio::decoder::DecoderError::IoError("broken pipe".to_owned()),
         DecodeError::Unreadable(IoError::Other)
     )]
     #[case::decode_error(

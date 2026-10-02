@@ -151,7 +151,7 @@ fn a_tagged_chunk_reaches_the_library_behind_the_playlist() {
 
     assert_eq!(
         model.library.as_ref().map(|ready| ready
-            .all
+            .tracks
             .iter()
             .map(|track| track.display().to_owned())
             .collect::<Vec<_>>()),
@@ -271,7 +271,7 @@ fn only_the_awaited_scan_generation_lands(
     .unwrap();
 
     assert_eq!(
-        model.library.as_ref().map(|ready| ready.all.len()),
+        model.library.as_ref().map(|ready| ready.tracks.len()),
         installed
     );
     assert_eq!(model.scan_status, scan_status);
