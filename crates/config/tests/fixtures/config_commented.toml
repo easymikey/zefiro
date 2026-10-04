@@ -6,5 +6,5 @@ volume = 50
 [audio]
 # gapless by default; bump this for a crossfade
 crossfade = "0s"
-replaygain = false
+replay_gain = false
 sleep_presets = [15, 30, 60]

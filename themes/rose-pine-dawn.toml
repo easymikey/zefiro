@@ -3,9 +3,9 @@
 name = "rose-pine-dawn"
 
 [colors]
-bg = "#faf4ed"
-fg = "#797593"
-bright_fg = "#575279"
+background = "#faf4ed"
+muted_foreground = "#797593"
+foreground = "#575279"
 accent = "#d7827e"
 green = "#286983"
 yellow = "#ea9d34"

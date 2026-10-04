@@ -1,8 +1,9 @@
 use std::{mem, sync::Arc, time::Duration};
 
 use crate::{
-    cmd::{Cmd, PlaybackChange},
+    cmd::Cmd,
     domain::{
+        cue::PlaybackChange,
         player::{PausedBy, Player, Preload},
         playhead::Playhead,
         time::Moment,
@@ -10,7 +11,10 @@ use crate::{
     },
     update::{
         machine::Unhandled,
-        player::{Anchor, Stamp, StartOrigin, seek_effect},
+        player::{
+            effects::seek_effect,
+            stamp::{Anchor, Stamp, StartOrigin},
+        },
     },
 };
 

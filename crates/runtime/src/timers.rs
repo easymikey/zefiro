@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use kernel::{domain::sleep::SleepTimer, message::Timer};
+use kernel::message::Timer;
 
 #[derive(Debug, Clone, Copy)]
 struct Scheduled {
@@ -72,27 +72,13 @@ impl Timers {
         fired.sort_by_key(|scheduled| scheduled.deadline);
         fired.into_iter().map(|scheduled| scheduled.timer).collect()
     }
-
-    #[must_use]
-    pub(crate) fn sleep_deadline(&self, sleep: Option<SleepTimer>) -> Option<Instant> {
-        let deadline = self
-            .scheduled
-            .get(TimerName::Sleep.index())
-            .copied()
-            .flatten()
-            .map(|scheduled| scheduled.deadline);
-        sleep.and(deadline)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
 
-    use kernel::{
-        domain::{index::PresetIndex, revision::Revision, sleep::SleepTimer},
-        message::Timer,
-    };
+    use kernel::{domain::revision::Revision, message::Timer};
     use rstest::rstest;
 
     use crate::timers::Timers;
@@ -215,49 +201,5 @@ mod tests {
         let fired = timers.due(now + Duration::from_secs(10));
 
         assert_eq!(fired, vec![sleep(1), toast(1), lookahead(1)]);
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum Scheduled {
-        Yes,
-        No,
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum Deadline {
-        Expected,
-        Absent,
-    }
-
-    #[derive(Debug)]
-    struct SleepDeadlineRow {
-        model_sleep: Option<SleepTimer>,
-        scheduled: Scheduled,
-        deadline: Deadline,
-    }
-
-    const ARMED: Option<SleepTimer> = Some(SleepTimer {
-        preset_index: PresetIndex::new(0),
-        delay: Duration::from_secs(60),
-    });
-
-    #[rstest]
-    #[case::armed_and_still_pending(SleepDeadlineRow { model_sleep: ARMED, scheduled: Scheduled::Yes, deadline: Deadline::Expected })]
-    #[case::armed_but_never_scheduled(SleepDeadlineRow { model_sleep: ARMED, scheduled: Scheduled::No, deadline: Deadline::Absent })]
-    #[case::scheduled_but_cycled_off(SleepDeadlineRow { model_sleep: None, scheduled: Scheduled::Yes, deadline: Deadline::Absent })]
-    #[case::disarmed_and_never_scheduled(SleepDeadlineRow { model_sleep: None, scheduled: Scheduled::No, deadline: Deadline::Absent })]
-    fn sleep_deadline_is_gated_by_the_model(#[case] row: SleepDeadlineRow) {
-        let mut timers = Timers::default();
-        let now = Instant::now();
-        if row.scheduled == Scheduled::Yes {
-            timers.schedule(now + Duration::from_secs(30), sleep(1));
-        }
-
-        let deadline = match timers.sleep_deadline(row.model_sleep) {
-            Some(_) => Deadline::Expected,
-            None => Deadline::Absent,
-        };
-
-        assert_eq!(deadline, row.deadline);
     }
 }

@@ -13,6 +13,7 @@ use kernel::domain::{
 use widgets::{
     appearance::Appearance,
     geometry::DEFAULT_CELL_ASPECT,
+    key_hints::KeyHintChords,
     scene::{PixelPath, Scene, ScenePresentation},
     spectrum::{SPECTRUM_BANDS, Spectrum},
     theme::{
@@ -31,8 +32,8 @@ pub(crate) fn noir_theme() -> Theme {
     let c = file.colors;
     let palette = ThemeBase {
         background: c.background,
+        muted_foreground: c.muted_foreground,
         foreground: c.foreground,
-        bright_foreground: c.bright_foreground,
         accent: c.accent,
         green: c.green,
         yellow: c.yellow,
@@ -84,16 +85,20 @@ pub(crate) struct Scenery {
     pub(crate) theme: Theme,
     pub(crate) spectrum: Spectrum,
     pub(crate) appearance: Appearance,
+    pub(crate) key_hint_chords: KeyHintChords,
 }
 
 impl Scenery {
     pub(crate) fn new(mut model: Model) -> Self {
         model.music_dir = PathBuf::from("/home/user/Music");
+        let key_hint_chords =
+            KeyHintChords::from_bindings(model.workspace.keymap.bindings());
         Self {
             model,
             theme: noir_theme(),
             spectrum: [0.0; SPECTRUM_BANDS],
             appearance: Appearance::default(),
+            key_hint_chords,
         }
     }
 
@@ -110,7 +115,7 @@ impl Scenery {
                 clock,
                 now: Moment::default(),
                 home: None,
-                sleep_left: None,
+                key_hint_chords: &self.key_hint_chords,
             },
         )
     }

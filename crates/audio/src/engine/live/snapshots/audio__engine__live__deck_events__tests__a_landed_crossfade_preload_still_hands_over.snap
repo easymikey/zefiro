@@ -5,15 +5,18 @@ expression: log
 [
     Cmd {
         effects: [
-            Preload {
-                path: "/b",
-                mode: Crossfade {
-                    gain: None,
+            Preload(
+                Crossfade {
+                    track: CurrentTrack {
+                        total: None,
+                        gain: None,
+                        path: "/b",
+                    },
                     speed: Speed(
                         1.0,
                     ),
                 },
-            },
+            ),
         ],
         messages: [],
     },

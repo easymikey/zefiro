@@ -24,9 +24,7 @@ pub(crate) fn scene<'a>(
                 .map_or(Duration::ZERO, |first| frame.now.elapsed_since(first)),
             now: frame.now,
             home: presentation.home.as_deref(),
-            sleep_left: frame
-                .sleep_deadline
-                .map(|deadline| deadline.elapsed_since(frame.now)),
+            key_hint_chords: &presentation.key_hint_chords,
         },
     )
 }
@@ -58,7 +56,6 @@ mod tests {
             model: &model,
             spectrum: &spectrum,
             latest: &latest,
-            sleep_deadline: None,
             now: Moment::new(Duration::from_secs(5)),
         };
 

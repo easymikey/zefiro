@@ -39,17 +39,6 @@ impl Speed {
     pub(crate) fn step_down(self) -> Self {
         Self::clamped(self.0 - Self::STEP)
     }
-
-    #[must_use]
-    pub fn label(self) -> Option<String> {
-        (self != Self::default()).then(|| self.trimmed_label())
-    }
-
-    fn trimmed_label(self) -> String {
-        let formatted = format!("{:.2}", self.0);
-        let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
-        trimmed.to_string()
-    }
 }
 
 impl Default for Speed {
@@ -60,7 +49,9 @@ impl Default for Speed {
 
 impl fmt::Display for Speed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.trimmed_label())
+        let formatted = format!("{:.2}", self.0);
+        let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
+        write!(f, "{trimmed}")
     }
 }
 
@@ -101,19 +92,6 @@ mod tests {
     }
 
     #[test]
-    fn label_hides_at_default() {
-        assert_eq!(Speed::default().label(), None);
-    }
-
-    #[rstest]
-    #[case::whole_number_trims_to_its_integer(2.0, "2")]
-    #[case::one_trailing_zero_is_trimmed(0.5, "0.5")]
-    #[case::two_significant_decimals_are_kept(1.25, "1.25")]
-    fn label_formats_the_value(#[case] raw: f32, #[case] expected: &str) {
-        assert_eq!(Speed::clamped(raw).label().as_deref(), Some(expected));
-    }
-
-    #[test]
     fn display_reports_the_default_as_one() {
         assert_eq!(Speed::default().to_string(), "1");
     }
@@ -121,7 +99,9 @@ mod tests {
     #[rstest]
     #[case::away_from_default(1.25, "1.25")]
     #[case::at_default(1.0, "1")]
-    fn display_matches_trimmed_label(#[case] raw: f32, #[case] expected: &str) {
+    #[case::whole_number_trims_to_its_integer(2.0, "2")]
+    #[case::one_trailing_zero_is_trimmed(0.5, "0.5")]
+    fn display_trims_trailing_zeros(#[case] raw: f32, #[case] expected: &str) {
         assert_eq!(Speed::clamped(raw).to_string(), expected);
     }
 }

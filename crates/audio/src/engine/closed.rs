@@ -2,24 +2,21 @@ use kernel::{
     cmd::{AudioCmd, Cmd, Playback},
     domain::settings::AudioSettings,
     message::{AudioError, AudioEvent},
-    update::machine::{Machine, Unhandled},
+    update::machine::Unhandled,
 };
 
 use crate::{
-    deck::{DeviceOpened, job::AudioJob},
+    deck::job::AudioJob,
     engine::{
         effect::EngineEffect,
         machine::batched,
-        message::EngineMessage,
+        message::{DeviceOpened, EngineMessage},
         state::{Closed, Live, announce},
     },
 };
 
-impl Machine for Closed {
-    type Message = EngineMessage;
-    type Effect = Cmd<EngineEffect, AudioEvent>;
-
-    fn transition(
+impl Closed {
+    pub(crate) fn transition(
         &mut self,
         message: EngineMessage,
     ) -> Result<Cmd<EngineEffect, AudioEvent>, Unhandled> {
@@ -46,9 +43,7 @@ impl Machine for Closed {
             | EngineMessage::Ramped(_) => Err(Unhandled),
         }
     }
-}
 
-impl Closed {
     fn command(
         &mut self,
         cmd: AudioCmd,
@@ -87,8 +82,8 @@ impl Closed {
                 self.pending = None;
                 Ok(Cmd::none())
             }
-            AudioCmd::Playback(Playback::Paused) => Ok(Cmd::none()),
-            AudioCmd::Playback(Playback::Playing)
+            AudioCmd::SetPlayback(Playback::Paused) => Ok(Cmd::none()),
+            AudioCmd::SetPlayback(Playback::Playing)
             | AudioCmd::Seek(_)
             | AudioCmd::Preload(_) => Err(Unhandled),
         }
@@ -190,34 +185,34 @@ mod tests {
         cmd(AudioCmd::SetDevice(OutputDevice::Named(DeviceName::new("usb".to_string()).unwrap()))),
         EngineRow {
             next: Engine::Closed(Closed { settings: settings_on("usb"), pending: None, speed: Speed::default() }),
-            effect: Cmd::effect(EngineEffect::Open {
+            effect: Ok(Cmd::effect(EngineEffect::Open {
                 device: OutputDevice::Named(DeviceName::new("usb".to_string()).unwrap()),
                 speed: Speed::default(),
-            }),
+            })),
         }
     )]
     #[case::closed_lists_devices(
         closed(),
         cmd(AudioCmd::ListDevices),
-        EngineRow { next: closed(), effect: Cmd::effect(EngineEffect::Run(crate::deck::job::AudioJob::ListDevices))}
+        EngineRow { next: closed(), effect: Ok(Cmd::effect(EngineEffect::Run(crate::deck::job::AudioJob::ListDevices)))}
     )]
     #[case::closed_goes_live_once_opened(
         closed(),
         opened(
             OutputDevice::Named(DeviceName::new("usb".to_string()).unwrap()), Duration::ZERO, Playback::Playing),
-        EngineRow { next: Engine::Live(Live { settings: settings_on("usb"), ..live() }), effect: Cmd::none()}
+        EngineRow { next: Engine::Live(Live { settings: settings_on("usb"), ..live() }), effect: Ok(Cmd::none())}
     )]
     #[case::closed_adopts_the_device_that_actually_opened(
         Engine::Closed(Closed { settings: settings_on("usb"), pending: None, speed: Speed::default() }),
         opened(OutputDevice::SystemDefault, Duration::ZERO, Playback::Playing),
-        EngineRow { next: Engine::Live(live()), effect: Cmd::none()}
+        EngineRow { next: Engine::Live(live()), effect: Ok(Cmd::none())}
     )]
     #[case::closed_tells_the_world_the_device_fell_back(
         Engine::Closed(Closed { settings: settings_on("usb"), pending: None, speed: Speed::default() }),
         fell_back(Duration::ZERO, Playback::Playing),
         EngineRow {
             next: Engine::Live(live()),
-            effect: Cmd::message(AudioEvent::DeviceFellBack(OutputDevice::SystemDefault)),
+            effect: Ok(Cmd::message(AudioEvent::DeviceFellBack(OutputDevice::SystemDefault))),
         }
     )]
     #[case::a_waiting_load_starts_once_the_stream_is_back(
@@ -225,7 +220,7 @@ mod tests {
         opened(OutputDevice::SystemDefault, Duration::ZERO, Playback::Playing),
         EngineRow {
             next: Engine::Live(loaded_at(loading(), first())),
-            effect: Cmd::effect(EngineEffect::StartLoad { path: "/a".into(), speed: Speed::default() }),
+            effect: Ok(Cmd::effect(EngineEffect::StartLoad { path: "/a".into(), speed: Speed::default() })),
         }
     )]
     #[case::a_waiting_load_starts_after_the_fallback_is_announced(
@@ -233,7 +228,7 @@ mod tests {
         fell_back(Duration::ZERO, Playback::Playing),
         EngineRow {
             next: Engine::Live(loaded_at(loading(), first())),
-            effect: Cmd::message(AudioEvent::DeviceFellBack(OutputDevice::SystemDefault)).then(Cmd::effect(EngineEffect::StartLoad { path: "/a".into(), speed: Speed::default() })),
+            effect: Ok(Cmd::message(AudioEvent::DeviceFellBack(OutputDevice::SystemDefault)).then(Cmd::effect(EngineEffect::StartLoad { path: "/a".into(), speed: Speed::default() }))),
         }
     )]
     #[case::a_waiting_load_is_dropped_when_the_stream_stays_dead(
@@ -241,7 +236,7 @@ mod tests {
         EngineMessage::Error(device_error()),
         EngineRow {
             next: Engine::Closed(Closed { settings: settings(), pending: None, speed: Speed::default() }),
-            effect: Cmd::message(AudioEvent::Error(device_error())),
+            effect: Ok(Cmd::message(AudioEvent::Error(device_error()))),
         }
     )]
     #[case::closed_keeps_the_new_error(
@@ -249,7 +244,7 @@ mod tests {
         EngineMessage::Error(device_error()),
         EngineRow {
             next: Engine::Closed(Closed { settings: settings(), pending: None, speed: Speed::default() }),
-            effect: Cmd::message(AudioEvent::Error(device_error())),
+            effect: Ok(Cmd::message(AudioEvent::Error(device_error()))),
         }
     )]
     #[case::closed_remembers_the_speed(
@@ -261,7 +256,7 @@ mod tests {
                 pending: None,
                 speed: Speed::clamped(1.5),
             }),
-            effect: Cmd::none(),
+            effect: Ok(Cmd::none()),
         }
     )]
     #[case::closed_remembers_the_crossfade(
@@ -273,7 +268,7 @@ mod tests {
                 pending: None,
                 speed: Speed::default(),
             }),
-            effect: Cmd::none(),
+            effect: Ok(Cmd::none()),
         }
     )]
     #[case::closed_remembers_the_replay_gain(
@@ -285,7 +280,7 @@ mod tests {
                 pending: None,
                 speed: Speed::default(),
             }),
-            effect: Cmd::none(),
+            effect: Ok(Cmd::none()),
         }
     )]
     #[case::closed_stop_clears_a_pending_load(
@@ -297,7 +292,7 @@ mod tests {
                 pending: None,
                 speed: Speed::default(),
             }),
-            effect: Cmd::none(),
+            effect: Ok(Cmd::none()),
         }
     )]
     fn a_cell_moves_the_engine_and_names_its_io(
@@ -312,7 +307,7 @@ mod tests {
     fn a_pause_leaves_the_closed_engine_alone() {
         let mut state = closed();
         assert_eq!(
-            state.transition(cmd(AudioCmd::Playback(Playback::Paused))),
+            state.transition(cmd(AudioCmd::SetPlayback(Playback::Paused))),
             Ok(Cmd::none())
         );
         assert_eq!(state, closed());
@@ -334,7 +329,7 @@ mod tests {
     #[rstest]
     #[case::closed_refuses_a_resume(
         closed(),
-        cmd(AudioCmd::Playback(Playback::Playing))
+        cmd(AudioCmd::SetPlayback(Playback::Playing))
     )]
     #[case::closed_refuses_seek(closed(), cmd(AudioCmd::Seek(seconds(5))))]
     #[case::closed_refuses_preload(closed(), preload("/b"))]
@@ -361,7 +356,7 @@ mod tests {
         assert_eq!(
             log,
             vec![
-                Cmd::effect(EngineEffect::Mute)
+                Cmd::effect(EngineEffect::Silence)
                     .then(Cmd::message(AudioEvent::Error(expected)))
             ]
         );

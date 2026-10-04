@@ -1,4 +1,4 @@
-use config::{appearance_file::parse_appearance, patch::patch_appearance_text};
+use config::{appearance_file::parse_appearance, patch::patched_appearance_text};
 use kernel::domain::appearance::{AppearancePatch, CoverMode};
 
 const COMMENTED_UI: &str = include_str!("../fixtures/sifr-ui_commented.toml");
@@ -14,7 +14,8 @@ fn a_patch_round_trips_through_the_public_parser() {
     let patch = AppearancePatch::builder()
         .cover_mode(CoverMode::Milkdrop)
         .build();
-    let written = patch_appearance_text(COMMENTED_UI, patch).unwrap();
+    let written = patched_appearance_text(COMMENTED_UI, patch).unwrap();
     let round_tripped = parse_appearance(&written).unwrap();
+    assert_eq!(round_tripped.settings().cover_mode, CoverMode::Milkdrop);
     insta::assert_debug_snapshot!(round_tripped);
 }

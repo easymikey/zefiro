@@ -1,9 +1,3 @@
-use kernel::domain::{
-    favorites::Favorites,
-    index::ViewIndex,
-    playlist::Playlist,
-    track::TrackRef,
-};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -15,47 +9,26 @@ use crate::{
     overlay::modal::metrics::SCROLLBAR_INSET,
     playlist::{
         chrome::{pane_block, pane_title},
-        row::{self, PlaylistRows, WindowFit, cursor_row, visible_rows},
+        row::{
+            self,
+            LibraryLoad,
+            PlaylistRows,
+            PlaylistWidget,
+            WindowFit,
+            cursor_row,
+            visible_rows,
+        },
     },
-    primitive::list_chrome::{
-        ScrollbarTrack,
-        paint_scrollbar,
-        row_band,
-        scrollbar_column,
-    },
-    status_line::StatusLineView,
+    primitive::list_chrome::{Scrollbar, paint_scrollbar, row_band, scrollbar_column},
     theme::{active_theme::ActiveTheme, colors::Role},
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LibraryLoad {
-    Loading,
-    Ready,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct PlaylistView<'a> {
-    pub(crate) playlist: &'a Playlist,
-    pub(crate) queue: &'a [TrackRef],
-    pub(crate) favorites: &'a Favorites,
-    pub(crate) browse_selected: usize,
-    pub(crate) playing: Option<ViewIndex>,
-    pub(crate) library_loading: LibraryLoad,
-    pub(crate) status: StatusLineView<'a>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct PlaylistWidget<'a> {
-    pub(crate) view: PlaylistView<'a>,
-    pub(crate) theme: ActiveTheme<'a>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PlaylistPaneStyle {
     pub(crate) foreground: Color,
     pub(crate) border: Color,
     pub(crate) scrollbar_thumb: Color,
-    pub(crate) scrollbar_track: Color,
+    pub(crate) scrollbar_groove: Color,
 }
 
 impl PlaylistPaneStyle {
@@ -65,7 +38,7 @@ impl PlaylistPaneStyle {
             foreground: theme.role(Role::Text),
             border: theme.role(Role::Frame),
             scrollbar_thumb: theme.role(Role::Frame),
-            scrollbar_track: theme.role(Role::Dim),
+            scrollbar_groove: theme.role(Role::Dim),
         }
     }
 }
@@ -133,11 +106,8 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistWidget<'
         return;
     }
 
-    let playing_index = view.playing.map(ViewIndex::get);
-
     let window = visible_rows(&WindowFit {
         view,
-        playing_index,
         height: inner.height,
     });
 
@@ -146,37 +116,21 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistWidget<'
         PlaylistRows {
             pane,
             rows: areas.rows,
-            playing_index,
             window: &window,
         },
     );
 
     paint_scrollbar(
         areas.scrollbar,
-        ScrollbarTrack {
+        Scrollbar {
             total: window.total,
             offset: usize::from(window.offset),
             viewport: usize::from(areas.scrollbar.height),
             thumb: style.scrollbar_thumb,
-            track: style.scrollbar_track,
+            groove: style.scrollbar_groove,
         },
         buffer,
     );
-}
-
-impl<'a> PlaylistView<'a> {
-    #[must_use]
-    pub(crate) fn from_scene(scene: &crate::scene::Scene<'a>) -> Self {
-        Self {
-            playlist: scene.playlist,
-            queue: scene.queue,
-            favorites: scene.favorites,
-            browse_selected: scene.browse_selected.get(),
-            playing: scene.playing,
-            library_loading: scene.library_loading,
-            status: StatusLineView::from_scene(scene),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -200,7 +154,7 @@ mod tests {
     use ratatui::style::Color;
 
     use crate::{
-        playlist::pane::{LibraryLoad, PlaylistView, PlaylistWidget},
+        playlist::row::{LibraryLoad, PlaylistView, PlaylistWidget},
         primitive::canvas::find_text,
         status_line::{ScanProgress, StatusLineView},
         test_support::{noir, rendered},

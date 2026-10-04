@@ -10,8 +10,12 @@ use kernel::{
 };
 
 use crate::{
-    deck::DeviceChoice,
-    engine::{crossfade::replay_gain_factor, effect::EngineEffect, phase::Phase},
+    engine::{
+        crossfade::replay_gain_factor,
+        effect::EngineEffect,
+        message::DeviceChoice,
+        phase::Phase,
+    },
     gain::Gain,
 };
 
@@ -33,11 +37,11 @@ pub(crate) struct Live {
     pub(crate) phase: Phase,
     pub(crate) speed: Speed,
     pub(crate) settings: AudioSettings,
-    pub(crate) performed: PerformedRevisions,
+    pub(crate) executed: ExecutedRevisions,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct PerformedRevisions {
+pub(crate) struct ExecutedRevisions {
     pub(crate) load: Revision,
     pub(crate) incoming: Revision,
 }
@@ -49,7 +53,7 @@ impl Live {
             phase: Phase::Idle,
             speed,
             settings,
-            performed: PerformedRevisions::default(),
+            executed: ExecutedRevisions::default(),
         }
     }
 

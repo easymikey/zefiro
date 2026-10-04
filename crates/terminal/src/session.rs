@@ -21,16 +21,14 @@ fn leave_the_alternate_screen() -> Result<(), io::Error> {
     raw_mode.and(window_colors).and(screen)
 }
 
-pub fn install_panic_hook(worker_panicked: fn(String)) {
+pub fn install_panic_hook() {
     let original = std::panic::take_hook();
     let painting_thread = std::thread::current().id();
     std::panic::set_hook(Box::new(move |info| {
         if std::thread::current().id() == painting_thread {
             drop(leave_the_alternate_screen());
-            original(info);
-            return;
         }
-        worker_panicked(info.to_string());
+        original(info);
     }));
 }
 
@@ -75,9 +73,9 @@ impl TerminalSession<Stdout> {
                 restoration: Restoration::Pending,
             }),
             Err(error) => {
-                execute!(io::stdout(), LeaveAlternateScreen)
-                    .map_err(Error::Teardown)?;
-                disable_raw_mode().map_err(Error::Teardown)?;
+                let screen = execute!(io::stdout(), LeaveAlternateScreen);
+                let raw_mode = disable_raw_mode();
+                screen.and(raw_mode).map_err(Error::Teardown)?;
                 Err(Error::Setup(error))
             }
         }

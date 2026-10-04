@@ -11,6 +11,7 @@ use crate::overlay::modal::place::{
     ContentSize,
     DIALOG_SCREEN_MARGIN,
     FrameWidth,
+    Hint,
     LIST_SCREEN_MARGIN,
     content_size,
     padded_content,
@@ -61,12 +62,6 @@ pub struct ModalAreas {
 pub(crate) struct PlacedModal<'a> {
     pub(crate) areas: ModalAreas,
     pub(crate) bounds: ModalBounds<'a>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Hint {
-    Present,
-    Absent,
 }
 
 impl<'a> Modal<'a> {
@@ -166,8 +161,8 @@ mod tests {
     use rstest::rstest;
 
     use crate::overlay::modal::{
-        frame::{Hint, Modal, ModalSize},
-        place::list_capacity,
+        frame::{Modal, ModalSize},
+        place::{Hint, list_capacity},
     };
 
     fn area(width: u16, height: u16) -> Rect {

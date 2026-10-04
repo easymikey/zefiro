@@ -21,7 +21,7 @@ impl Driver for AudioDriver {
 
 fn execute(effect: EngineEffect, deck: &mut Deck) -> Option<AudioMessage> {
     match effect {
-        EngineEffect::Mute => quietly(deck, Deck::silence),
+        EngineEffect::Silence => quietly(deck, Deck::silence),
         EngineEffect::Open { device, speed } => Some(
             deck.open(device, speed)
                 .map_or_else(AudioMessage::Error, AudioMessage::Opened),
@@ -60,9 +60,7 @@ fn execute(effect: EngineEffect, deck: &mut Deck) -> Option<AudioMessage> {
             deck.sinks().for_each(|sink| sink.set_speed(speed.get()));
         }),
         EngineEffect::Clear(speed) => quietly(deck, |deck| clear(deck, speed)),
-        EngineEffect::Preload { path, mode } => {
-            quietly(deck, |deck| deck.start_preload(path, mode))
-        }
+        EngineEffect::Preload(mode) => quietly(deck, |deck| deck.start_preload(mode)),
         EngineEffect::RestartGapless(path) => {
             quietly(deck, |deck| restart_gapless(deck, path))
         }
@@ -72,7 +70,7 @@ fn execute(effect: EngineEffect, deck: &mut Deck) -> Option<AudioMessage> {
             deck.resend_lost();
             Some(AudioMessage::Reported(deck.playhead()))
         }
-        EngineEffect::Advance => quietly(deck, Deck::advance),
+        EngineEffect::Advance(gain) => quietly(deck, |deck| advance(deck, gain)),
         EngineEffect::Stage(track) => quietly(deck, |deck| deck.stage(track)),
         EngineEffect::Attach(track) => deck.attach(track),
         EngineEffect::TakeSignals(revision) => {
@@ -89,7 +87,7 @@ fn quietly(deck: &mut Deck, act: impl FnOnce(&mut Deck)) -> Option<AudioMessage>
 
 fn restart_gapless(deck: &mut Deck, path: PathBuf) {
     deck.drop_preload();
-    deck.start_preload(path, PreloadMode::Gapless);
+    deck.start_preload(PreloadMode::Gapless(path));
 }
 
 fn promote(deck: &mut Deck, gain: Gain) {
@@ -120,6 +118,11 @@ fn clear(deck: &mut Deck, speed: Speed) {
         deck.swap_primary(speed);
     }
     deck.clear_staged();
+}
+
+fn advance(deck: &mut Deck, gain: Gain) {
+    deck.advance();
+    gain_primary(deck, gain);
 }
 
 fn gain_primary(deck: &Deck, gain: Gain) {

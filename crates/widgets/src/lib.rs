@@ -9,7 +9,7 @@ pub mod appearance;
 mod braille;
 pub mod card;
 pub mod geometry;
-mod key_hints;
+pub mod key_hints;
 pub mod milkdrop;
 pub mod overlay;
 pub mod pixels;
@@ -25,9 +25,3 @@ pub mod status_line;
 mod test_support;
 pub mod theme;
 pub mod toast;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Playing {
-    Yes,
-    No,
-}

@@ -6,7 +6,6 @@ use crate::domain::{
     index::ViewIndex,
     percent::Percent,
     playlist::PlaylistSource,
-    setting_row::AppearanceSetting,
     settings::AudioSettings,
     theme::{ThemeChoice, ThemeName},
     track::Track,
@@ -31,6 +30,5 @@ pub struct Startup {
     pub theme: ThemeChoice,
     pub volume: Percent,
     pub themes: Vec<ThemeName>,
-    pub appearance_settings: Vec<AppearanceSetting>,
     pub errors: Vec<(ConfigName, ConfigError)>,
 }

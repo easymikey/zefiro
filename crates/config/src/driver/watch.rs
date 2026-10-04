@@ -10,8 +10,11 @@ use kernel::{
 };
 
 use crate::{
-    driver::{ConfigChange, ConfigMessage, ConfigPaths},
-    theme_file::theme_file_name,
+    driver::{
+        message::{ConfigChange, ConfigMessage},
+        paths::ConfigPaths,
+    },
+    file_name::theme_file_name,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,10 +91,10 @@ impl ConfigWatch {
                 paths.appearance.clone(),
                 paths.seen.appearance.as_deref(),
             ),
-            keys: WatchedPath::starting(
-                paths.config.clone(),
-                paths.seen.config.as_deref(),
-            ),
+            keys: WatchedPath {
+                path: paths.config.clone(),
+                seen: Seen::of(paths.seen.config.as_deref()),
+            },
             theme: paths.theme.clone().map(|name| SelectedTheme {
                 name,
                 seen: Seen::Unread,
@@ -107,7 +110,7 @@ impl ConfigWatch {
 }
 
 #[derive(Debug)]
-pub(crate) enum WatchMessage {
+pub(crate) enum ConfigWatchMessage {
     PollAppearance,
     PollConfig,
     PollTheme,
@@ -131,27 +134,29 @@ pub(crate) enum WatchEffect {
 }
 
 impl Machine for ConfigWatch {
-    type Message = WatchMessage;
+    type Message = ConfigWatchMessage;
     type Effect = Cmd<WatchEffect, ConfigMessage>;
 
     fn transition(
         &mut self,
-        message: WatchMessage,
+        message: ConfigWatchMessage,
     ) -> Result<Cmd<WatchEffect, ConfigMessage>, Unhandled> {
         match message {
-            WatchMessage::PollAppearance => {
+            ConfigWatchMessage::PollAppearance => {
                 Ok(read(ConfigName::Appearance, &self.appearance.path))
             }
-            WatchMessage::PollConfig => Ok(read(ConfigName::Config, &self.keys.path)),
-            WatchMessage::Wrote {
+            ConfigWatchMessage::PollConfig => {
+                Ok(read(ConfigName::Config, &self.keys.path))
+            }
+            ConfigWatchMessage::Wrote {
                 file: ConfigName::Theme(_),
                 ..
             } => Err(Unhandled),
-            WatchMessage::PollTheme => self.poll_theme(),
-            WatchMessage::PollThemes => {
+            ConfigWatchMessage::PollTheme => self.poll_theme(),
+            ConfigWatchMessage::PollThemes => {
                 Ok(Cmd::effect(WatchEffect::List(self.themes.clone())))
             }
-            WatchMessage::Observed {
+            ConfigWatchMessage::Observed {
                 file: ConfigName::Appearance,
                 text,
             } => Ok(observed(
@@ -159,24 +164,24 @@ impl Machine for ConfigWatch {
                 text,
                 ConfigChange::Appearance,
             )),
-            WatchMessage::Observed {
+            ConfigWatchMessage::Observed {
                 file: ConfigName::Config,
                 text,
             } => Ok(observed(&mut self.keys.seen, text, ConfigChange::Keymap)),
-            WatchMessage::Observed {
+            ConfigWatchMessage::Observed {
                 file: ConfigName::Theme(_),
                 text,
             } => self.theme_observed(text),
-            WatchMessage::Listed(names) => Ok(self.themes_listed(names)),
-            WatchMessage::SelectTheme(name) => self.select_theme(name),
-            WatchMessage::Wrote {
+            ConfigWatchMessage::Listed(names) => Ok(self.themes_listed(names)),
+            ConfigWatchMessage::SelectTheme(name) => self.select_theme(name),
+            ConfigWatchMessage::Wrote {
                 file: ConfigName::Appearance,
                 text,
             } => {
                 self.appearance.seen = Seen::of(Some(&text));
                 Ok(Cmd::none())
             }
-            WatchMessage::Wrote {
+            ConfigWatchMessage::Wrote {
                 file: ConfigName::Config,
                 text,
             } => {
@@ -271,10 +276,9 @@ mod tests {
     use rstest::rstest;
 
     use crate::driver::{
-        ConfigMessage,
-        ConfigPaths,
-        SeenTexts,
-        watch::{ConfigChange, ConfigWatch, Seen, WatchEffect, WatchMessage},
+        message::{ConfigChange, ConfigMessage},
+        paths::{ConfigPaths, SeenTexts},
+        watch::{ConfigWatch, ConfigWatchMessage, Seen, WatchEffect},
     };
 
     proptest! {
@@ -326,30 +330,34 @@ mod tests {
 
     #[rstest]
     #[case::appearance(
-        WatchMessage::PollAppearance,
+        ConfigWatchMessage::PollAppearance,
         reads(ConfigName::Appearance, "/config/sifr-ui.toml")
     )]
     #[case::config(
-        WatchMessage::PollConfig,
+        ConfigWatchMessage::PollConfig,
         reads(ConfigName::Config, "/config/config.toml")
     )]
-    #[case::theme(WatchMessage::PollTheme, reads(noir(), "/config/themes/noir.toml"))]
+    #[case::theme(
+        ConfigWatchMessage::PollTheme,
+        reads(noir(), "/config/themes/noir.toml")
+    )]
     #[case::themes(
-        WatchMessage::PollThemes,
+        ConfigWatchMessage::PollThemes,
         Cmd::effect(WatchEffect::List(PathBuf::from("/config/themes")))
     )]
-    #[case::seen_at_start(WatchMessage::Observed { file: ConfigName::Appearance, text: Some("seen".to_string()) }, Cmd::none())]
-    #[case::first_sighting(WatchMessage::Observed { file: ConfigName::Config, text: None }, Cmd::message(ConfigMessage::Reloaded(ConfigChange::Keymap(None))))]
-    #[case::own_write(WatchMessage::Wrote { file: ConfigName::Config, text: "x".to_string() }, Cmd::none())]
+    #[case::seen_at_start(ConfigWatchMessage::Observed { file: ConfigName::Appearance, text: Some("seen".to_string()) }, Cmd::none())]
+    #[case::absent_config_at_start(ConfigWatchMessage::Observed { file: ConfigName::Config, text: None }, Cmd::none())]
+    #[case::config_appears(ConfigWatchMessage::Observed { file: ConfigName::Config, text: Some("x".to_string()) }, Cmd::message(ConfigMessage::Reloaded(ConfigChange::Keymap(Some("x".to_string())))))]
+    #[case::own_write(ConfigWatchMessage::Wrote { file: ConfigName::Config, text: "x".to_string() }, Cmd::none())]
     #[case::other_theme(
-        WatchMessage::SelectTheme(ThemeName::from_static("ink")),
+        ConfigWatchMessage::SelectTheme(ThemeName::from_static("ink")),
         reads(
             ConfigName::Theme(ThemeName::from_static("ink")),
             "/config/themes/ink.toml"
         )
     )]
     fn a_selected_watch_answers(
-        #[case] message: WatchMessage,
+        #[case] message: ConfigWatchMessage,
         #[case] expected: Cmd<WatchEffect, ConfigMessage>,
     ) {
         let answer = watch(Some("noir")).transition(message).unwrap();
@@ -358,10 +366,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::poll(WatchMessage::PollTheme)]
-    #[case::observed(WatchMessage::Observed { file: noir(), text: None })]
-    #[case::theme_write(WatchMessage::Wrote { file: noir(), text: String::new() })]
-    fn an_unselected_watch_refuses_the_theme(#[case] message: WatchMessage) {
+    #[case::poll(ConfigWatchMessage::PollTheme)]
+    #[case::observed(ConfigWatchMessage::Observed { file: noir(), text: None })]
+    #[case::theme_write(ConfigWatchMessage::Wrote { file: noir(), text: String::new() })]
+    fn an_unselected_watch_refuses_the_theme(#[case] message: ConfigWatchMessage) {
         let mut unselected = watch(None);
 
         assert_eq!(unselected.transition(message), Err(Unhandled));
@@ -372,8 +380,9 @@ mod tests {
     fn selecting_the_current_theme_is_refused() {
         let mut selected = watch(Some("noir"));
 
-        let answer = selected
-            .transition(WatchMessage::SelectTheme(ThemeName::from_static("noir")));
+        let answer = selected.transition(ConfigWatchMessage::SelectTheme(
+            ThemeName::from_static("noir"),
+        ));
 
         assert_eq!(answer, Err(Unhandled));
     }
@@ -382,13 +391,13 @@ mod tests {
     fn an_own_write_is_not_reported_back() {
         let mut watch = watch(None);
         let text = "[window]\n".to_string();
-        let written = watch.transition(WatchMessage::Wrote {
+        let written = watch.transition(ConfigWatchMessage::Wrote {
             file: ConfigName::Appearance,
             text: text.clone(),
         });
         assert_eq!(written, Ok(Cmd::none()));
 
-        let answer = watch.transition(WatchMessage::Observed {
+        let answer = watch.transition(ConfigWatchMessage::Observed {
             file: ConfigName::Appearance,
             text: Some(text),
         });
@@ -399,7 +408,8 @@ mod tests {
     #[test]
     fn a_theme_listing_is_reported_once() {
         let mut watch = watch(None);
-        let listed = || WatchMessage::Listed(vec![ThemeName::from_static("mine")]);
+        let listed =
+            || ConfigWatchMessage::Listed(vec![ThemeName::from_static("mine")]);
 
         let first = watch.transition(listed()).unwrap();
         let second = watch.transition(listed()).unwrap();

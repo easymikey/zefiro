@@ -6,20 +6,7 @@ use kernel::domain::{
 };
 use serde::de::DeserializeOwned;
 
-use crate::{
-    appearance_file::APPEARANCE_FILE_NAME,
-    config_file::CONFIG_FILE_NAME,
-    theme_file::theme_file_name,
-};
-
-#[must_use]
-pub(crate) fn config_file_name(name: &ConfigName) -> String {
-    match name {
-        ConfigName::Config => CONFIG_FILE_NAME.to_owned(),
-        ConfigName::Appearance => APPEARANCE_FILE_NAME.to_owned(),
-        ConfigName::Theme(theme) => theme_file_name(theme.as_str()),
-    }
-}
+use crate::file_name::config_file_name;
 
 fn first_line(error: &toml::de::Error) -> &str {
     let message = error.message();
@@ -46,7 +33,7 @@ pub enum Error {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum CrossfadeError {
+pub(crate) enum CrossfadeTextError {
     #[error("invalid crossfade: {0}")]
     Number(#[source] ParseIntError),
     #[error("invalid crossfade: expected an integer with an 's' or 'ms' suffix")]
@@ -81,7 +68,10 @@ mod tests {
     use kernel::domain::{config::ConfigName, theme::ThemeName};
     use rstest::rstest;
 
-    use crate::error::{Error, config_file_name, parse_toml};
+    use crate::{
+        error::{Error, parse_toml},
+        file_name::config_file_name,
+    };
 
     fn error_text(source: &str, file: ConfigName) -> String {
         let parsed: Result<toml::Table, Error> = parse_toml(source, file);
@@ -126,16 +116,5 @@ mod tests {
             place.starts_with(&format!("{}:", config_file_name(&file))),
             "whole text was {text:?}"
         );
-    }
-
-    #[rstest]
-    #[case::config(ConfigName::Config, "config.toml")]
-    #[case::appearance(ConfigName::Appearance, "sifr-ui.toml")]
-    #[case::theme(ConfigName::Theme(ThemeName::from_static("noir")), "noir.toml")]
-    fn toml_file_names_the_file_on_disk(
-        #[case] file: ConfigName,
-        #[case] expected: &str,
-    ) {
-        assert_eq!(config_file_name(&file), expected);
     }
 }

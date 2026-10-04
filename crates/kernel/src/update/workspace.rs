@@ -1,13 +1,15 @@
 use crate::{
-    cmd::{Cmd, Cue, Effect},
+    cmd::{Cmd, Effect},
     domain::{
         config::{ConfigError, ConfigName},
-        keymap::{Keymap, KeymapOverrides},
+        cue::Cue,
+        keymap::KeymapOverrides,
         revision::{Revision, Revisions},
         toast::{TOAST_LIFETIME, TOAST_STACK, Toast},
         workspace::Workspace,
     },
     message::{ConfigReload, Timer},
+    update::keymap::bindings::Keymap,
 };
 
 impl Workspace {

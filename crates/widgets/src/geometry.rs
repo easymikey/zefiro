@@ -1,4 +1,7 @@
-use kernel::domain::{appearance::CoverMode, geometry::Cells};
+use kernel::domain::{
+    appearance::{CoverMode, DEFAULT_COVER_HEIGHT, DEFAULT_COVER_WIDTH},
+    geometry::Cells,
+};
 
 use crate::pixels::vinyl::geometry::canvas_aspect_ratio;
 
@@ -15,8 +18,8 @@ pub struct CoverCells {
 impl Default for CoverCells {
     fn default() -> Self {
         Self {
-            width: Cells(20),
-            height: Cells(8),
+            width: DEFAULT_COVER_WIDTH,
+            height: DEFAULT_COVER_HEIGHT,
         }
     }
 }

@@ -1,6 +1,7 @@
 use std::{fmt, time::Duration};
 
 use image::DynamicImage;
+use kernel::domain::geometry::Pixels;
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
 use widgets::{
     card::CardCover,
@@ -34,8 +35,8 @@ impl fmt::Debug for Cover {
 fn cell_pixels(picker: &Picker) -> CellPixels {
     let font_size = picker.font_size();
     CellPixels {
-        width: font_size.width,
-        height: font_size.height,
+        width: Pixels(u32::from(font_size.width)),
+        height: Pixels(u32::from(font_size.height)),
     }
 }
 

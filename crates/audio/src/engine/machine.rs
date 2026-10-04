@@ -11,10 +11,10 @@ use kernel::{
 
 use crate::{
     AudioDriver,
-    deck::{envelope::Signals, event::DeckEvent, source::TrackSource},
+    deck::{event::DeckEvent, source::TrackSource},
     engine::{
-        effect::{EngineEffect, SinkRole},
-        message::{AudioMessage, EngineMessage},
+        effect::EngineEffect,
+        message::{AudioMessage, EngineMessage, Signals, SinkRole},
         state::Engine,
     },
     error::preload_error,
@@ -149,18 +149,6 @@ fn each_handled<T>(
     }
 }
 
-impl Machine for Engine {
-    type Message = EngineMessage;
-    type Effect = Cmd<EngineEffect, AudioEvent>;
-
-    fn transition(
-        &mut self,
-        message: EngineMessage,
-    ) -> Result<Cmd<EngineEffect, AudioEvent>, Unhandled> {
-        self.step(message)
-    }
-}
-
 pub(crate) fn keep_last_idempotent(batch: Vec<AudioCmd>) -> Vec<AudioCmd> {
     let (_seen, kept) = batch.into_iter().rev().fold(
         (HashSet::new(), VecDeque::new()),
@@ -173,7 +161,7 @@ pub(crate) fn keep_last_idempotent(batch: Vec<AudioCmd>) -> Vec<AudioCmd> {
                 AudioCmd::SetSpeed(_) | AudioCmd::Seek(_) => {
                     seen.insert(discriminant(&cmd))
                 }
-                AudioCmd::Playback(_)
+                AudioCmd::SetPlayback(_)
                 | AudioCmd::Preload(_)
                 | AudioCmd::SetCrossfade(_)
                 | AudioCmd::SetReplayGain(_)
@@ -196,8 +184,11 @@ pub(crate) fn batched(
     each_handled(keep_last_idempotent(batch.cmds), run)
 }
 
-impl Engine {
-    fn step(
+impl Machine for Engine {
+    type Message = EngineMessage;
+    type Effect = Cmd<EngineEffect, AudioEvent>;
+
+    fn transition(
         &mut self,
         message: EngineMessage,
     ) -> Result<Cmd<EngineEffect, AudioEvent>, Unhandled> {
@@ -239,7 +230,9 @@ impl Engine {
             (Engine::Live(live), EngineMessage::Ramped(role)) => live.ramped(role),
         }
     }
+}
 
+impl Engine {
     fn failed(
         &mut self,
         error: AudioError,
@@ -268,7 +261,7 @@ impl Engine {
                 | AudioError::Stream { .. }
                 | AudioError::OutputLost(_)),
             ) => {
-                let effect = Cmd::effect(EngineEffect::Mute)
+                let effect = Cmd::effect(EngineEffect::Silence)
                     .then(Cmd::message(AudioEvent::Error(error)));
                 *self = Engine::Closed(live.failed());
                 Ok(effect)
@@ -304,11 +297,12 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        deck::{envelope::Signals, event::DeckEvent},
+        deck::{event::DeckEvent, source::PreloadMode},
         engine::{
-            effect::{EngineEffect, SinkRole},
+            effect::EngineEffect,
             machine::{keep_last_idempotent, signalled},
-            message::{AudioMessage, EngineMessage},
+            message::{AudioMessage, EngineMessage, Signals, SinkRole},
+            phase::CurrentTrack,
             state::{Engine, Live},
             tests::{TOTAL, cmd, live, settings},
         },
@@ -475,7 +469,7 @@ mod tests {
 
         fn run(&mut self, effect: &EngineEffect) {
             match effect {
-                EngineEffect::Clear(_) | EngineEffect::Mute => {
+                EngineEffect::Clear(_) | EngineEffect::Silence => {
                     self.primary = None;
                     self.preload = None;
                     self.outgoing = None;
@@ -489,7 +483,13 @@ mod tests {
                     self.outgoing = self.primary.replace(path.clone());
                     self.preload = None;
                 }
-                EngineEffect::Preload { path, .. } => {
+                EngineEffect::Preload(
+                    PreloadMode::Gapless(path)
+                    | PreloadMode::Crossfade {
+                        track: CurrentTrack { path, .. },
+                        ..
+                    },
+                ) => {
                     self.preload = Some(path.clone());
                 }
                 EngineEffect::Promote(_) => {
@@ -514,7 +514,7 @@ mod tests {
                 | EngineEffect::RestartGapless(_)
                 | EngineEffect::Run(_)
                 | EngineEffect::Report
-                | EngineEffect::Advance
+                | EngineEffect::Advance(_)
                 | EngineEffect::Stage(_)
                 | EngineEffect::Attach(_)
                 | EngineEffect::TakeSignals(_) => {}
@@ -526,7 +526,7 @@ mod tests {
         model: Model,
         engine: Engine,
         sinks: Sinks,
-        log: Vec<Cmd<EngineEffect, AudioEvent>>,
+        log: Vec<Result<Cmd<EngineEffect, AudioEvent>, Unhandled>>,
     }
 
     impl Wiring {
@@ -540,11 +540,10 @@ mod tests {
         }
 
         fn engine_step(&mut self, message: EngineMessage) {
-            let effect = self
-                .engine
-                .transition(message)
-                .unwrap_or_else(|Unhandled| Cmd::none());
-            self.sinks.execute(&effect);
+            let effect = self.engine.transition(message);
+            if let Ok(handled) = effect.as_ref() {
+                self.sinks.execute(handled);
+            }
             self.log.push(effect);
         }
 
@@ -559,7 +558,9 @@ mod tests {
         fn decoded(&mut self) {
             self.engine_step(EngineMessage::Decoded(Some(TOTAL)));
             let started = self.log.last().is_some_and(|logged| {
-                matches!(logged.effects().as_slice(), [EngineEffect::Start(_)])
+                logged.as_ref().is_ok_and(|handled| {
+                    matches!(handled.effects().as_slice(), [EngineEffect::Start(_)])
+                })
             });
             if started {
                 self.press(Message::Audio(AudioEvent::Loaded(Some(TOTAL))));
@@ -651,13 +652,13 @@ mod tests {
     )]
     #[case::others_untouched(
         vec![
-            AudioCmd::Playback(Playback::Playing),
-            AudioCmd::Playback(Playback::Playing),
+            AudioCmd::SetPlayback(Playback::Playing),
+            AudioCmd::SetPlayback(Playback::Playing),
             AudioCmd::ListDevices,
         ],
         vec![
-            AudioCmd::Playback(Playback::Playing),
-            AudioCmd::Playback(Playback::Playing),
+            AudioCmd::SetPlayback(Playback::Playing),
+            AudioCmd::SetPlayback(Playback::Playing),
             AudioCmd::ListDevices,
         ]
     )]

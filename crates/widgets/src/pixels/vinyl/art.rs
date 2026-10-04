@@ -10,9 +10,13 @@ use tiny_skia::{FillRule, IntSize, Mask, Path, Pixmap, PixmapPaint, Transform};
 
 use crate::pixels::{
     numeric::{dimension_f32, floor},
-    vinyl::{
-        geometry::{Disc, RoundedRect, VINYL_LAYOUT, VinylGeometry},
-        layers::{circle_path, rounded_rect_path},
+    vinyl::geometry::{
+        Disc,
+        RoundedRect,
+        VINYL_LAYOUT,
+        VinylGeometry,
+        circle_path,
+        rounded_rect_path,
     },
 };
 
@@ -170,20 +174,16 @@ fn rgba_to_pixmap(image: &RgbaImage) -> Option<Pixmap> {
 
 #[cfg(test)]
 mod tests {
+    use kernel::domain::revision::Revision;
+
     use crate::pixels::{
         numeric::{dimension_f32, floor},
         vinyl::{
+            VinylCache,
+            VinylCacheKey,
             VinylStyle,
-            art::{
-                VinylArt,
-                cover_crop_resize,
-                label_diameter_px,
-                prepare_art,
-                sleeve_inset_side_px,
-            },
-            compose_uncached,
+            art::{label_diameter_px, prepare_art, sleeve_inset_side_px},
             geometry::{VINYL_LAYOUT, shadow_horizontal_reach_fraction},
-            layers::{VinylFrameStyle, VinylParts},
             test_support::synthetic_art,
         },
     };
@@ -210,21 +210,18 @@ mod tests {
 
     #[test]
     fn art_of_the_wrong_size_is_resized_to_fit() {
-        let art = synthetic_art(400);
+        let art = synthetic_art(8);
         let size_px = 96;
-        let mismatched = VinylArt {
-            sleeve: cover_crop_resize(&art, 8, 8),
-            label: cover_crop_resize(&art, 8, 8),
+        let key = VinylCacheKey {
+            config_revision: Revision::default(),
+            theme_revision: Revision::default(),
+            path: None,
+            size_px,
+            colors: VinylStyle::fixture(),
         };
-        let parts = VinylParts {
-            style: VinylFrameStyle {
-                size_px,
-                colors: VinylStyle::fixture(),
-            },
-            art: Some(&mismatched),
-        };
+        let mut cache = VinylCache::default();
 
-        let image = compose_uncached(&parts);
+        let image = cache.compose(key, Some(&art));
         let peek = expected_peek_px(size_px);
         assert_eq!(image.dimensions(), (size_px + peek, size_px));
         let center = (size_px / 2, size_px / 2);

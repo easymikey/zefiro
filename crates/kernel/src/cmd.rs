@@ -4,12 +4,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use strum::{EnumIter, IntoStaticStr};
+use strum::IntoStaticStr;
 
 use crate::{
     domain::{
-        appearance_rows::AppearanceField,
         crossfade::Crossfade,
+        cue::{Cue, PlaybackChange},
         device::OutputDevice,
         driver::DriverName,
         favorites::Favorites,
@@ -18,7 +18,7 @@ use crate::{
         percent::Percent,
         playlist::PlaylistFileName,
         revision::Revision,
-        setting_row::OptionIndex,
+        setting_row::{AppearanceField, OptionIndex},
         settings::ReplayGain,
         sleep_presets::SleepPresets,
         speed::Speed,
@@ -64,7 +64,7 @@ pub enum WindowColorsCmd {
 pub enum ConfigCmd {
     Save(ConfigPatch),
     SelectTheme(ThemeChoice),
-    Setting {
+    SetAppearance {
         field: AppearanceField,
         option: OptionIndex,
     },
@@ -93,7 +93,7 @@ impl TrackLoad {
 #[strum(serialize_all = "snake_case")]
 pub enum AudioCmd {
     Load(TrackLoad),
-    Playback(Playback),
+    SetPlayback(Playback),
     Seek(Duration),
     SetSpeed(Speed),
     Stop,
@@ -151,34 +151,6 @@ pub enum Playback {
     Paused,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
-pub enum PlaybackChange {
-    #[default]
-    Play,
-    Pause,
-    Stop,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr, EnumIter)]
-#[strum(serialize_all = "snake_case")]
-pub enum Cue {
-    OverlayOpened,
-    OverlayClosed,
-    ToastRaised,
-    ToastDismissed,
-    TrackChanged,
-    PlaybackChanged(PlaybackChange),
-    QueueChanged,
-    FavoriteToggled,
-    PlayOrderChanged,
-    VolumeChanged,
-    TrackDeleted,
-    ThemeChanged,
-    LibraryOpened,
-    LayoutChanged,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 #[must_use]
 pub enum Effect {
@@ -198,10 +170,10 @@ impl PlaybackChange {
     pub fn effects(self) -> [Effect; 2] {
         let (audio, playback) = match self {
             PlaybackChange::Play => {
-                (AudioCmd::Playback(Playback::Playing), Playback::Playing)
+                (AudioCmd::SetPlayback(Playback::Playing), Playback::Playing)
             }
             PlaybackChange::Pause => {
-                (AudioCmd::Playback(Playback::Paused), Playback::Paused)
+                (AudioCmd::SetPlayback(Playback::Paused), Playback::Paused)
             }
             PlaybackChange::Stop => (AudioCmd::Stop, Playback::Paused),
         };
@@ -321,13 +293,13 @@ mod tests {
     #[test]
     fn then_appends_effects_in_order() {
         let first: Cmd =
-            Cmd::effect(Effect::Audio(AudioCmd::Playback(Playback::Paused)));
+            Cmd::effect(Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)));
         let second = Cmd::effect(Effect::Audio(AudioCmd::Stop));
         let merged = first.then(second);
         assert_eq!(
             merged,
             Cmd::<Effect>::from_iter([
-                Effect::Audio(AudioCmd::Playback(Playback::Paused)),
+                Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
                 Effect::Audio(AudioCmd::Stop),
             ])
         );
@@ -336,14 +308,14 @@ mod tests {
     #[test]
     fn a_cmd_iterates_its_effects_in_order() {
         let cmd: Cmd = Cmd::from_iter([
-            Effect::Audio(AudioCmd::Playback(Playback::Paused)),
+            Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
             Effect::Audio(AudioCmd::Stop),
         ]);
         let borrowed: Vec<&Effect> = cmd.effects().collect();
         assert!(matches!(
             borrowed.as_slice(),
             [
-                Effect::Audio(AudioCmd::Playback(Playback::Paused)),
+                Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
                 Effect::Audio(AudioCmd::Stop)
             ]
         ));
@@ -351,7 +323,7 @@ mod tests {
         assert!(matches!(
             owned.as_slice(),
             [
-                Effect::Audio(AudioCmd::Playback(Playback::Paused)),
+                Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
                 Effect::Audio(AudioCmd::Stop)
             ]
         ));

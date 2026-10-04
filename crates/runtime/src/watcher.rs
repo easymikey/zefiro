@@ -44,16 +44,6 @@ impl<W: Watcher> Watcher for Option<W> {
     }
 }
 
-fn watch_if_present(
-    watcher: &mut impl Watcher,
-    directory: &Path,
-) -> Result<(), notify::Error> {
-    if !directory.exists() {
-        return Ok(());
-    }
-    watcher.watch(directory)
-}
-
 fn recommended<H: notify::EventHandler>(
     handler: H,
     report: impl FnOnce(&notify::Error),
@@ -105,7 +95,11 @@ impl<M> FileStream<M> {
                 return Some(changed(Err(error)));
             }
         }
-        watch_if_present(&mut self.watcher, path)
+        if !path.exists() {
+            return Some(changed(Err(IoError::Missing)));
+        }
+        self.watcher
+            .watch(path)
             .err()
             .map(|error| changed(Err(io_error(&error))))
     }
@@ -139,28 +133,33 @@ impl<M> FileStream<M> {
 mod tests {
     use std::path::Path;
 
+    use kernel::domain::io_error::IoError;
     use notify::RecommendedWatcher;
 
-    use crate::watcher::{Watcher, watch_if_present};
+    use crate::watcher::{FileStream, Watcher};
+
+    fn as_outcome(changed: Result<(), IoError>) -> Result<(), IoError> {
+        changed
+    }
 
     #[test]
     fn watching_without_a_watcher_reports_an_error() {
         let mut watcher: Option<RecommendedWatcher> = None;
         let directory = std::env::temp_dir();
 
-        let outcome = watch_if_present(&mut watcher, &directory);
+        let outcome = watcher.watch(&directory);
 
         assert!(outcome.is_err());
     }
 
     #[test]
-    fn watching_a_missing_directory_is_not_an_error() {
-        let mut watcher: Option<RecommendedWatcher> = None;
+    fn watching_a_missing_directory_reports_it_missing() {
+        let mut files = FileStream::idle();
         let missing = std::env::temp_dir().join("does-not-exist-config-watcher-test");
 
-        let outcome = watch_if_present(&mut watcher, &missing);
+        let outcome = files.watch(&missing, as_outcome);
 
-        assert!(outcome.is_ok());
+        assert_eq!(outcome, Some(Err(IoError::Missing)));
     }
 
     #[test]

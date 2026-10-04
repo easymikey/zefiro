@@ -1,26 +1,20 @@
 use audio::tap::SpectrumTap;
-use crossbeam_channel::Sender;
+use kernel::cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd};
 #[cfg(test)] use kernel::domain::driver::DriverName;
-use kernel::{
-    cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd},
-    domain::{settings::AudioSettings, theme::ThemeChoice},
-    message::Message,
-};
 
 use crate::{
-    driver::DriverThread,
+    driver_thread::DriverThread,
     error::Error,
-    latest::LatestSenders,
-    runtime::StartupPaths,
     spawn::{
         audio_thread::spawn_audio,
         config_thread::spawn_config,
         library_thread::spawn_library,
     },
+    spawn_setup::SpawnSetup,
 };
 #[cfg(test)]
 use crate::{
-    driver::spawn_idle,
+    driver_thread::spawn_idle,
     registry,
     spawn::{audio_thread::idle_audio, library_thread::idle_library},
 };
@@ -29,17 +23,6 @@ pub(crate) mod audio_thread;
 pub(crate) mod config_thread;
 mod library_thread;
 pub(crate) mod macos_thread;
-
-#[derive(Debug)]
-pub(crate) struct SpawnSetup<'a> {
-    pub(crate) audio: &'a AudioSettings,
-    pub(crate) theme: &'a ThemeChoice,
-    pub(crate) paths: &'a StartupPaths,
-    pub(crate) inbox: &'a Sender<Message>,
-    pub(crate) writers: &'a LatestSenders,
-    #[cfg(target_os = "macos")]
-    pub(crate) macos: &'a macos_thread::MacosChannel,
-}
 
 pub(crate) type Spawn<C> = fn(&SpawnSetup<'_>) -> Result<DriverThread<C>, Error>;
 
@@ -88,28 +71,23 @@ pub(crate) mod tests {
     };
 
     use audio::tap::SpectrumTap;
-    use config::driver::{ConfigPaths, SeenTexts};
-    use crossbeam_channel::Receiver;
+    use config::driver::paths::{ConfigPaths, SeenTexts};
+    use crossbeam_channel::{Receiver, Sender};
     use kernel::{
         cmd::AudioCmd,
         domain::{driver::DriverName, startup::Startup},
-        message::{AudioEvent, Message},
+        message::Message,
     };
     use library::dirs::LibraryDirs;
     use rstest::rstest;
 
     use crate::{
-        driver::{DriverThread, spawn_driver},
+        driver_thread::{Congestion, DriverThread, spawn_driver},
         error::Error,
-        outbox::Outbox,
-        runtime::{Runtime, StartupPaths},
-        spawn::{
-            ConfigCmd,
-            LibraryCmd,
-            SpawnSetup,
-            Spawners,
-            audio_thread::idle_audio,
-        },
+        runtime::Runtime,
+        spawn::{ConfigCmd, LibraryCmd, Spawners, audio_thread::idle_audio},
+        spawn_setup::SpawnSetup,
+        startup_paths::StartupPaths,
     };
 
     pub(crate) fn spawn_audio_loop<R>(
@@ -117,7 +95,7 @@ pub(crate) mod tests {
         setup: &SpawnSetup<'_>,
     ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error>
     where
-        R: FnOnce(&Receiver<AudioCmd>, &Outbox<AudioEvent>) + Send + 'static,
+        R: FnOnce(&Receiver<AudioCmd>, &Sender<Message>, &Congestion) + Send + 'static,
     {
         let thread =
             spawn_driver(crate::registry::row(DriverName::Audio), run, setup.inbox)?;
@@ -213,12 +191,11 @@ pub(crate) mod tests {
         let (writers, _cells, _notified) = crate::latest::latest_channels();
         let setup = SpawnSetup {
             audio: &model.settings.audio,
-            theme: &model.themes.selected,
             paths: &paths,
             inbox: &inbox,
             writers: &writers,
             #[cfg(target_os = "macos")]
-            macos: &crate::spawn::macos_thread::MacosChannel::new(),
+            macos: &crate::macos_channel::MacosChannel::new(),
         };
         let (audio, _tap) = idle_audio(&setup).unwrap();
 
@@ -235,7 +212,7 @@ pub(crate) mod tests {
         RESTART_LIBRARY_CALLS.fetch_add(1, Ordering::SeqCst);
         spawn_driver(
             crate::registry::row(DriverName::Library),
-            |_: &Receiver<LibraryCmd>, _: &Outbox<Message>| boom(),
+            |_: &Receiver<LibraryCmd>, _: &Sender<Message>, _: &Congestion| boom(),
             setup.inbox,
         )
     }
@@ -246,7 +223,7 @@ pub(crate) mod tests {
         RESTART_CONFIG_CALLS.fetch_add(1, Ordering::SeqCst);
         spawn_driver(
             crate::registry::row(DriverName::Config),
-            |_: &Receiver<ConfigCmd>, _: &Outbox<Message>| boom(),
+            |_: &Receiver<ConfigCmd>, _: &Sender<Message>, _: &Congestion| boom(),
             setup.inbox,
         )
     }
@@ -297,8 +274,8 @@ pub(crate) mod tests {
         .unwrap();
 
         for _ in 0..row.deaths {
-            let died = runtime.wiring.receiver.recv_timeout(RECV_TIMEOUT).unwrap();
-            runtime.step(died).unwrap();
+            let died = runtime.wiring.mailbox.recv_timeout(RECV_TIMEOUT).unwrap();
+            runtime.deliver(died).unwrap();
         }
 
         assert_eq!(row.calls.load(Ordering::SeqCst), row.spawns);

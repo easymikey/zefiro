@@ -5,7 +5,7 @@ use kernel::message::Message;
 use crate::{
     error::Error,
     event_loop::EventLoop,
-    repaint::{FRAME_INTERVAL, Repaint, Source},
+    repaint::{FRAME_INTERVAL, Repaint, RepaintCause},
     shell::{FrameDue, Shell},
 };
 
@@ -58,17 +58,13 @@ where
             .map_err(Error::Paint)?;
         self.repaint = Repaint::Settled;
         self.last_paint = Some(now);
-        let workspace = &self.runtime.model.workspace;
-        if painted.visible_rows.is_some() || painted.cover_side != workspace.cover_side
-        {
-            let viewport = Message::Viewport {
-                visible_rows: painted.visible_rows.unwrap_or(workspace.visible_rows),
-                cover_side: painted.cover_side,
-            };
-            self.step_and_repaint(viewport, Source::Event);
-        }
-        for message in painted.toasts {
-            self.step_and_repaint(message, Source::Event);
+        let viewport = Message::Viewport {
+            visible_rows: painted.visible_rows,
+            cover_side: painted.cover_side,
+        };
+        self.step_and_repaint(viewport, RepaintCause::Event);
+        for error in painted.errors {
+            self.step_and_repaint(Message::Paint(error), RepaintCause::Event);
         }
         Ok(())
     }
@@ -80,8 +76,8 @@ mod tests {
 
     use crossbeam_channel::{bounded, unbounded};
     use kernel::{
-        domain::{time::Moment, toast::Toast},
-        message::Message,
+        domain::{config::Diagnostic, time::Moment},
+        message::PaintError,
     };
     use rstest::rstest;
 
@@ -112,17 +108,19 @@ mod tests {
     }
 
     #[test]
-    fn painted_toasts_are_stepped_in_the_batch() {
+    fn painted_errors_are_stepped_in_the_batch() {
         let mut fixture = fixture();
         let (keys, input) = bounded(1);
         let mut shell = Scripted::new(keys, 1);
-        shell.pending_failures = vec![Message::Toast(Toast::error("fail".to_owned()))];
+        shell.pending_failures = vec![PaintError::Query(Diagnostic::from_error(
+            &std::io::Error::other("no answer"),
+        ))];
 
         let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Ok(())));
         let toast = fixture.runtime.model.workspace.toasts.first().unwrap();
-        assert_eq!(toast.title, "fail");
+        assert_eq!(toast.title, "Terminal probe failed");
     }
 
     #[rstest]

@@ -5,10 +5,10 @@ use std::{
     time::Duration,
 };
 
+use kernel::{cmd::Playback, domain::revision::Revision};
 use ratatui::{layout::Rect, text::Line};
 
 use crate::{
-    Playing,
     card::CardCover,
     milkdrop::{MilkdropAdvance, MilkdropField, MilkdropStyle, lines_into},
     scene::Scene,
@@ -19,8 +19,9 @@ type MilkdropResetKey = (u64, usize, usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MilkdropTick {
     reset_key: MilkdropResetKey,
+    theme: Revision,
     clock: Duration,
-    playing: Playing,
+    playing: Playback,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,9 +39,9 @@ fn plan_milkdrop(
     let Some(installed) = installed else {
         return MilkdropPlan::Rebuild;
     };
-    if installed.reset_key != desired.reset_key {
+    if installed.reset_key != desired.reset_key || installed.theme != desired.theme {
         MilkdropPlan::Rebuild
-    } else if installed.clock != desired.clock && desired.playing == Playing::Yes {
+    } else if installed.clock != desired.clock && desired.playing == Playback::Playing {
         MilkdropPlan::Advance
     } else {
         MilkdropPlan::Reuse
@@ -75,12 +76,13 @@ impl MilkdropCover {
         let track = scene.player.current().map(|track| track.path());
         let seed = milkdrop_seed(track);
         let playing = if scene.player.is_playing() {
-            Playing::Yes
+            Playback::Playing
         } else {
-            Playing::No
+            Playback::Paused
         };
         let desired = MilkdropTick {
             reset_key: (seed, width, height),
+            theme: scene.revisions.theme,
             clock: scene.clock,
             playing,
         };
@@ -111,30 +113,42 @@ impl MilkdropCover {
 mod tests {
     use std::{path::PathBuf, time::Duration};
 
+    use kernel::{cmd::Playback, domain::revision::Revision};
+    use ratatui::layout::Rect;
     use rstest::rstest;
 
     use crate::{
-        Playing,
+        card::CardCover,
         pixels::cover::milkdrop::{
+            MilkdropCover,
             MilkdropPlan,
             MilkdropTick,
             milkdrop_seed,
             plan_milkdrop,
         },
+        test_support::{SceneSources, model_with_tracks, theme_of},
     };
 
     fn tick(reset_key: (u64, usize, usize), millis: u64) -> MilkdropTick {
         MilkdropTick {
             reset_key,
+            theme: Revision::default(),
             clock: Duration::from_millis(millis),
-            playing: Playing::Yes,
+            playing: Playback::Playing,
         }
     }
 
     fn paused(reset_key: (u64, usize, usize), millis: u64) -> MilkdropTick {
         MilkdropTick {
-            playing: Playing::No,
+            playing: Playback::Paused,
             ..tick(reset_key, millis)
+        }
+    }
+
+    fn themed(tick: MilkdropTick) -> MilkdropTick {
+        MilkdropTick {
+            theme: Revision::default().next(),
+            ..tick
         }
     }
 
@@ -144,6 +158,7 @@ mod tests {
     #[case::paused_clock_movement_reuses(Some(tick((1, 20, 8), 100)), paused((1, 20, 8), 116), MilkdropPlan::Reuse)]
     #[case::paused_reset_key_change_rebuilds(Some(tick((2, 20, 8), 100)), paused((1, 20, 8), 116), MilkdropPlan::Rebuild)]
     #[case::a_different_reset_key_rebuilds(Some(tick((2, 20, 8), 100)), tick((1, 20, 8), 100), MilkdropPlan::Rebuild)]
+    #[case::a_new_theme_rebuilds_even_when_paused(Some(tick((1, 20, 8), 100)), themed(paused((1, 20, 8), 100)), MilkdropPlan::Rebuild)]
     #[case::nothing_installed_rebuilds(None, tick((1, 20, 8), 100), MilkdropPlan::Rebuild)]
     fn plan_milkdrop_decides_rebuild_advance_or_reuse(
         #[case] installed: Option<MilkdropTick>,
@@ -169,5 +184,25 @@ mod tests {
     #[test]
     fn no_track_still_seeds_deterministically() {
         assert_eq!(milkdrop_seed(None), milkdrop_seed(None));
+    }
+
+    #[test]
+    fn a_theme_change_while_paused_recolours_the_lines() {
+        let mut sources = SceneSources::new(model_with_tracks(1));
+        let area = Some(Rect::new(0, 0, 12, 6));
+        let mut cover = MilkdropCover::default();
+        let before = cover.refresh(&sources.scene(), area);
+        let ember = config::theme_file::parse_theme(
+            include_str!("../../../../../themes/ember.toml"),
+            "ember",
+        )
+        .unwrap();
+        sources.theme = theme_of(ember);
+        sources.model.revisions.theme.advance();
+        let after = cover.refresh(&sources.scene(), area);
+        let (CardCover::Text(before), CardCover::Text(after)) = (before, after) else {
+            panic!("milkdrop paints text lines");
+        };
+        assert_ne!(before, after);
     }
 }

@@ -5,6 +5,14 @@ use kernel::domain::{
         AppearanceSettings,
         CoverBrackets,
         CoverMode,
+        DEFAULT_COMPACT_MIN_HEIGHT,
+        DEFAULT_COMPACT_MIN_WIDTH,
+        DEFAULT_COVER_HEIGHT,
+        DEFAULT_COVER_WIDTH,
+        DEFAULT_FULL_MIN_HEIGHT,
+        DEFAULT_FULL_MIN_WIDTH,
+        DEFAULT_MIN_HEIGHT,
+        DEFAULT_MIN_WIDTH,
         FormatChips,
         KeyHints,
         LayoutMode,
@@ -23,17 +31,21 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct TextCoverCells {
+#[serde(
+    default,
+    deny_unknown_fields,
+    expecting = "a [cover.cover_cells] table"
+)]
+pub struct TomlCoverCells {
     pub width: u16,
     pub height: u16,
 }
 
-impl Default for TextCoverCells {
+impl Default for TomlCoverCells {
     fn default() -> Self {
         Self {
-            width: 20,
-            height: 8,
+            width: DEFAULT_COVER_WIDTH.0,
+            height: DEFAULT_COVER_HEIGHT.0,
         }
     }
 }
@@ -43,7 +55,7 @@ impl Default for TextCoverCells {
 pub struct TomlCover {
     #[serde(deserialize_with = "variant_field")]
     pub(crate) mode: CoverMode,
-    pub text_cells: TextCoverCells,
+    pub cover_cells: TomlCoverCells,
     #[serde(deserialize_with = "crate::appearance::flag")]
     pub(crate) brackets: CoverBrackets,
 }
@@ -52,7 +64,7 @@ impl Default for TomlCover {
     fn default() -> Self {
         Self {
             mode: CoverMode::Vinyl,
-            text_cells: TextCoverCells::default(),
+            cover_cells: TomlCoverCells::default(),
             brackets: CoverBrackets::default(),
         }
     }
@@ -70,8 +82,8 @@ pub struct TomlCard {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields, expecting = "a [progress] table")]
 pub struct TomlProgress {
-    #[serde(deserialize_with = "rounded_pixels")]
-    pub height_px: Pixels,
+    #[serde(rename = "height_px", deserialize_with = "rounded_pixels")]
+    pub height: Pixels,
     #[serde(deserialize_with = "rounded_pixels")]
     pub radius: Option<Pixels>,
     #[serde(deserialize_with = "from_str_option")]
@@ -85,7 +97,7 @@ pub struct TomlProgress {
 impl Default for TomlProgress {
     fn default() -> Self {
         Self {
-            height_px: Pixels(4),
+            height: Pixels(4),
             radius: None,
             fill: None,
             groove: None,
@@ -110,8 +122,8 @@ pub struct TomlLayout {
     pub full_min_height: u16,
     pub compact_min_width: u16,
     pub compact_min_height: u16,
-    pub min_columns: u16,
-    pub min_rows: u16,
+    pub min_width: u16,
+    pub min_height: u16,
     #[serde(deserialize_with = "variant_field")]
     pub(crate) mode: LayoutMode,
 }
@@ -119,12 +131,12 @@ pub struct TomlLayout {
 impl Default for TomlLayout {
     fn default() -> Self {
         Self {
-            full_min_width: 60,
-            full_min_height: 19,
-            compact_min_width: 30,
-            compact_min_height: 13,
-            min_columns: 48,
-            min_rows: 16,
+            full_min_width: DEFAULT_FULL_MIN_WIDTH.0,
+            full_min_height: DEFAULT_FULL_MIN_HEIGHT.0,
+            compact_min_width: DEFAULT_COMPACT_MIN_WIDTH.0,
+            compact_min_height: DEFAULT_COMPACT_MIN_HEIGHT.0,
+            min_width: DEFAULT_MIN_WIDTH.0,
+            min_height: DEFAULT_MIN_HEIGHT.0,
             mode: LayoutMode::default(),
         }
     }
@@ -186,8 +198,6 @@ impl TomlAppearance {
     }
 }
 
-pub const APPEARANCE_FILE_NAME: &str = "sifr-ui.toml";
-
 pub fn parse_appearance(source: &str) -> Result<TomlAppearance, Error> {
     parse_toml(source, ConfigName::Appearance)
 }
@@ -215,8 +225,8 @@ mod tests {
 
     use crate::{
         appearance_file::{
-            TextCoverCells,
             TomlAppearance,
+            TomlCoverCells,
             TomlLayout,
             TomlProgress,
             parse_appearance,
@@ -274,7 +284,7 @@ mod tests {
     fn writing_an_appearance_keeps_the_keys_it_says_nothing_about() {
         let sized = TomlAppearance {
             progress: TomlProgress {
-                height_px: Pixels(9),
+                height: Pixels(9),
                 ..TomlProgress::default()
             },
             ..TomlAppearance::default()
@@ -282,7 +292,7 @@ mod tests {
 
         let noir = sized.with_appearance(preset_appearance(AppearancePreset::Noir));
 
-        assert_eq!(noir.progress.height_px, Pixels(9));
+        assert_eq!(noir.progress.height, Pixels(9));
         assert_eq!(noir.cover.mode, CoverMode::Milkdrop);
     }
 
@@ -330,17 +340,17 @@ mod tests {
         assert_eq!(c.cover.mode, CoverMode::Vinyl);
     })]
     #[case::a_fractional_bar("[progress]\nheight_px = 5.6\nradius = 2.4\n", |c: &TomlAppearance| {
-        assert_eq!(c.progress.height_px, Pixels(6));
+        assert_eq!(c.progress.height, Pixels(6));
         assert_eq!(c.progress.radius, Some(Pixels(2)));
     })]
     #[case::a_whole_bar("[progress]\nheight_px = 7\n", |c: &TomlAppearance| {
-        assert_eq!(c.progress.height_px, Pixels(7));
+        assert_eq!(c.progress.height, Pixels(7));
         assert_eq!(c.progress.radius, None);
     })]
     #[case::a_text_cover_box(
-        "[cover]\n[cover.text_cells]\nwidth = 40\nheight = 20\n",
+        "[cover]\n[cover.cover_cells]\nwidth = 40\nheight = 20\n",
         |c: &TomlAppearance| {
-            assert_eq!(c.cover.text_cells, TextCoverCells { width: 40, height: 20 });
+            assert_eq!(c.cover.cover_cells, TomlCoverCells { width: 40, height: 20 });
             assert_eq!(c.cover.mode, CoverMode::Vinyl);
         }
     )]
@@ -461,7 +471,7 @@ mod tests {
     fn patched_keeps_the_keys_the_patch_says_nothing_about() {
         let sized = TomlAppearance {
             progress: TomlProgress {
-                height_px: Pixels(9),
+                height: Pixels(9),
                 ..TomlProgress::default()
             },
             ..TomlAppearance::default()
@@ -473,7 +483,7 @@ mod tests {
                 .build(),
         );
 
-        assert_eq!(after.progress.height_px, Pixels(9));
+        assert_eq!(after.progress.height, Pixels(9));
         assert_eq!(after.cover.mode, CoverMode::Off);
     }
 }

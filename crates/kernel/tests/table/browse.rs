@@ -4,19 +4,9 @@ use std::{
 };
 
 use kernel::{
-    cmd::{
-        AudioCmd,
-        Cmd,
-        Cue,
-        Effect,
-        LibraryCmd,
-        MacosCmd,
-        Playback,
-        PlaybackChange,
-        ScanMode,
-        TrackLoad,
-    },
+    cmd::{AudioCmd, Cmd, Effect, LibraryCmd, MacosCmd, Playback, ScanMode, TrackLoad},
     domain::{
+        cue::{Cue, PlaybackChange},
         cursor::Cursor,
         direction::Direction,
         favorites::Favorites,
@@ -26,7 +16,7 @@ use kernel::{
         library::{Library, SortKey},
         model::{Model, ScanStatus},
         player::Player,
-        playlist::PlayOrder,
+        playlist::{PlayOrder, PlaylistSource},
         revision::Revision,
         time::Moment,
     },
@@ -38,8 +28,8 @@ use rstest::rstest;
 use crate::support::{
     bare_track,
     model_with_tracks,
-    step::{apply, update},
     titled_track,
+    update::{send, update},
 };
 
 fn browse(model: &mut Model, message: BrowseRequest) -> Cmd {
@@ -317,7 +307,7 @@ fn page_by_uses_the_stored_viewport(
 ) {
     let mut model = browsing(30, 0, &[]);
     model.workspace.visible_rows = visible_rows;
-    apply(
+    send(
         &mut model,
         Message::Browse(BrowseRequest::PageBy(Direction::Next)),
     );
@@ -343,15 +333,15 @@ fn unsorted_library() -> Model {
 fn cycle_sort_walks_the_keys(#[case] from: SortKey, #[case] expected: SortKey) {
     let mut model = Model::default();
     model.workspace.browse.sort = from;
-    apply(&mut model, Message::Browse(BrowseRequest::CycleSort));
+    send(&mut model, Message::Browse(BrowseRequest::CycleSort));
     assert_eq!(model.workspace.browse.sort, expected);
 }
 
 #[test]
 fn cycle_sort_to_artist_reorders_the_view_and_the_playlist_under_it() {
     let mut model = unsorted_library();
-    apply(&mut model, Message::Browse(BrowseRequest::CycleSort));
-    apply(&mut model, Message::Browse(BrowseRequest::CycleSort));
+    send(&mut model, Message::Browse(BrowseRequest::CycleSort));
+    send(&mut model, Message::Browse(BrowseRequest::CycleSort));
 
     assert_eq!(model.workspace.browse.sort, SortKey::Artist);
     let sorted = vec![
@@ -371,12 +361,93 @@ fn cycle_sort_to_artist_reorders_the_view_and_the_playlist_under_it() {
     assert_eq!(all, 3);
 }
 
+fn view_paths(model: &Model) -> Vec<PathBuf> {
+    model
+        .library
+        .iter()
+        .flat_map(Library::view_tracks)
+        .map(|(_, track)| track.path().to_path_buf())
+        .collect()
+}
+
+fn scan_order() -> Vec<PathBuf> {
+    ["c", "a", "b"]
+        .map(|stem| PathBuf::from(format!("/music/{stem}.flac")))
+        .to_vec()
+}
+
+#[test]
+fn cycle_sort_to_added_restores_the_scan_order() {
+    let mut model = unsorted_library();
+    model.workspace.browse.sort = SortKey::Year;
+    model.library.as_mut().unwrap().view = [1, 2, 0].map(TrackIndex::new).to_vec();
+
+    send(&mut model, Message::Browse(BrowseRequest::CycleSort));
+
+    assert_eq!(model.workspace.browse.sort, SortKey::Added);
+    assert_eq!(view_paths(&model), scan_order());
+    assert_eq!(paths(&model.playlist.tracks), scan_order());
+}
+
+#[test]
+fn a_rescan_keeps_the_view_in_the_chosen_sort_order() {
+    let mut model = Model::default();
+    model.workspace.browse.sort = SortKey::Artist;
+
+    send(
+        &mut model,
+        Message::Library(kernel::message::LibraryEvent::Loaded {
+            tracks: vec![
+                titled_track("/music/c.flac", "C", "Charlie"),
+                titled_track("/music/a.flac", "A", "Alpha"),
+                titled_track("/music/b.flac", "B", "Bravo"),
+            ],
+            revision: Revision::default(),
+        }),
+    );
+
+    let sorted = vec![
+        PathBuf::from("/music/a.flac"),
+        PathBuf::from("/music/b.flac"),
+        PathBuf::from("/music/c.flac"),
+    ];
+    assert_eq!(view_paths(&model), sorted);
+    assert_eq!(paths(&model.playlist.tracks), sorted);
+}
+
+fn named_playlist(model: &mut Model) -> Vec<PathBuf> {
+    model.playlist_source = PlaylistSource::Named;
+    model.playlist.tracks = vec![titled_track("/elsewhere/one.flac", "One", "")];
+    paths(&model.playlist.tracks)
+}
+
+#[test]
+fn cycle_sort_leaves_a_named_playlist_alone() {
+    let mut model = unsorted_library();
+    let named = named_playlist(&mut model);
+
+    send(&mut model, Message::Browse(BrowseRequest::CycleSort));
+
+    assert_eq!(paths(&model.playlist.tracks), named);
+}
+
+#[test]
+fn trash_leaves_a_named_playlist_alone() {
+    let mut model = scanned(&["/music/a.flac", "/music/b.flac"]);
+    let source = model.library.as_ref().unwrap().tracks[0].source().clone();
+    let named = named_playlist(&mut model);
+
+    send(&mut model, Message::Browse(BrowseRequest::Trash(source)));
+
+    assert_eq!(paths(&model.playlist.tracks), named);
+}
+
 #[test]
 fn cycle_sort_collapses_a_stale_shuffle_order_to_pending() {
     let mut model = unsorted_library();
     model.playlist.play_order =
         PlayOrder::Shuffle([1, 0, 2].map(ViewIndex::new).to_vec());
-    apply(&mut model, Message::Browse(BrowseRequest::CycleSort));
+    send(&mut model, Message::Browse(BrowseRequest::CycleSort));
     assert_eq!(model.playlist.play_order, PlayOrder::ShufflePending);
 }
 
@@ -433,7 +504,7 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
                 Moment::default(),
             ))),
             Effect::Macos(MacosCmd::NowPlaying(Some(track))),
-            Effect::Audio(AudioCmd::Playback(Playback::Playing)),
+            Effect::Audio(AudioCmd::SetPlayback(Playback::Playing)),
             Effect::Macos(MacosCmd::SetPlayback(Playback::Playing)),
             Effect::Animate(Cue::TrackChanged),
             Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Play)),
@@ -444,8 +515,8 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
 #[test]
 fn play_selected_retires_the_stream_the_media_key_started() {
     let mut model = browsing(3, 2, &[]);
-    apply(&mut model, Message::Playback(PlaybackRequest::Play));
-    apply(&mut model, Message::Audio(AudioEvent::Loaded(None)));
+    send(&mut model, Message::Playback(PlaybackRequest::Play));
+    send(&mut model, Message::Audio(AudioEvent::Loaded(None)));
 
     let picked = browse(&mut model, BrowseRequest::PlaySelected);
     let audio: Vec<&Effect> = picked
@@ -547,7 +618,7 @@ fn trash_remaps_the_queue_and_drops_the_deleted_entry() {
     model.queue = queued_refs(&model, &[2, 0]);
     let source = model.playlist.tracks[0].source().clone();
 
-    apply(&mut model, Message::Browse(BrowseRequest::Trash(source)));
+    send(&mut model, Message::Browse(BrowseRequest::Trash(source)));
 
     assert_eq!(
         paths(&model.playlist.tracks),
@@ -557,6 +628,17 @@ fn trash_remaps_the_queue_and_drops_the_deleted_entry() {
         ]
     );
     assert_eq!(model.queue, queued_refs(&model, &[1]));
+}
+
+#[test]
+fn trash_shrinks_the_browse_cursor_with_the_playlist() {
+    let mut model = scanned(&["/music/a.flac", "/music/b.flac"]);
+    model.workspace.browse.cursor = Cursor::with_len(2).at(1);
+    let source = model.playlist.tracks[0].source().clone();
+
+    send(&mut model, Message::Browse(BrowseRequest::Trash(source)));
+
+    assert_eq!(model.workspace.browse.cursor, Cursor::with_len(1).at(0));
 }
 
 #[rstest]
@@ -590,18 +672,18 @@ fn listed(paths: &[&str]) -> Message {
 #[test]
 fn a_rescan_under_the_confirm_overlay_trashes_the_same_file() {
     let mut model = Model::default();
-    apply(&mut model, listed(&["/music/a.flac", "/music/b.flac"]));
-    apply(
+    send(&mut model, listed(&["/music/a.flac", "/music/b.flac"]));
+    send(
         &mut model,
         Message::Browse(BrowseRequest::CursorTo(ViewIndex::new(1))),
     );
-    apply(
+    send(
         &mut model,
         Message::Overlay(kernel::message::OverlayRequest::Open(
             kernel::domain::overlay::OverlayName::ConfirmDelete,
         )),
     );
-    apply(
+    send(
         &mut model,
         listed(&["/music/0.flac", "/music/a.flac", "/music/b.flac"]),
     );

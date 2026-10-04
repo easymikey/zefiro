@@ -21,7 +21,7 @@ use crate::{
         track::Track,
         workspace::Workspace,
     },
-    message::{OverlayRequest, SearchRequest, TextRequest},
+    message::{HistoryRequest, OverlayRequest, SearchRequest, TextRequest},
     update::{
         machine::{Machine, Unhandled},
         overlay::{
@@ -55,7 +55,7 @@ pub(crate) struct OverlayParts<'a> {
     pub(crate) playlist: &'a Playlist,
     pub(crate) player: &'a Player,
     pub(crate) history: &'a [HistoryEntry],
-    pub(crate) appearance_settings: &'a [AppearanceSetting],
+    pub(crate) appearance_rows: &'a [AppearanceSetting],
     pub(crate) music_dir: &'a Path,
 }
 
@@ -73,7 +73,12 @@ pub(crate) fn update(
             search_request(parts.workspace, &parts.playlist.tracks, request)
         }
         OverlayRequest::Settings(request) => {
-            settings::request(parts.workspace, parts.appearance_settings, request)
+            let message =
+                settings::resolve(parts.workspace, parts.appearance_rows, request)?;
+            update_overlay(
+                parts.workspace,
+                OverlayMessage::Inner(OverlayContentMessage::Settings(message)),
+            )
         }
         OverlayRequest::Text(message) => update_overlay(
             parts.workspace,
@@ -85,7 +90,25 @@ pub(crate) fn update(
                 JumpDigitsMessage::from(message),
             )),
         ),
-        OverlayRequest::History(request) => history::request(&mut parts, request),
+        OverlayRequest::History(request) => {
+            let len = parts.history.len();
+            let message = match request {
+                HistoryRequest::Navigate(direction) => {
+                    HistoryMessage::Navigate { direction, len }
+                }
+                HistoryRequest::Top => HistoryMessage::Top,
+                HistoryRequest::Bottom => HistoryMessage::Bottom(len),
+                HistoryRequest::Enqueue => HistoryMessage::Enqueue(history::pick(
+                    parts.workspace,
+                    parts.history,
+                    parts.playlist,
+                )),
+            };
+            update_overlay(
+                parts.workspace,
+                OverlayMessage::Inner(OverlayContentMessage::History(message)),
+            )
+        }
     }
 }
 
@@ -147,9 +170,9 @@ fn overlay_for(
             error: None,
         }),
         OverlayName::History => Ok(Overlay::History(CursorOver::default())),
-        OverlayName::Settings => Ok(Overlay::Settings(SettingRow::first(
-            parts.appearance_settings,
-        ))),
+        OverlayName::Settings => {
+            Ok(Overlay::Settings(SettingRow::first(parts.appearance_rows)))
+        }
         OverlayName::ConfirmDelete => {
             confirm_delete::candidate(parts.playlist, parts.workspace)
                 .map(Overlay::ConfirmDelete)

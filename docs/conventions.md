@@ -11,7 +11,7 @@ Decisions log: decided 2026-10-02/03 with the user; the change list that brings 
 ```
 shell XRequest ─► Message ─► update(&mut Model, Message, Moment) ─► Cmd { effects: [Effect], messages: [Message] }
 Effect::X(XCmd) ─► runtime ─► DriverLoop ─► XMessage::Cmds(Cmds { cmds, at }) ─► XDriver::transition ─► Cmd<XEffect, XEvent>
-XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► Outbox ─► Message ─► update
+XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► inbox ─► update
 ```
 
 1. Layer map: kernel: nothing; audio, library, macos, config: kernel; runtime: drivers, kernel, config; widgets: kernel; terminal: kernel, widgets; sifr: anything. `guard` (`layering.rs`)
@@ -75,7 +75,7 @@ Why `Driver`: same roles as OS drivers (request in, interrupt-driven events out,
 3. The only impure step is `XDriver::execute(&mut self, effect: XEffect) -> Option<XMessage>`. `None` = fire-and-forget (Crux `Output = ()`); `Some(answer)` = the IO result, which `DriverLoop` feeds to `transition` at once, before the next inbox item (Crux `resolve`). The answer to effect `X` is the message variant named for it in the past tense (`Open` → `Opened`, `Save` → `Saved`, `Read` → `ReadDone`). Words `perform`, `handle`, `process`, `dispatch`, `apply` are banned for it. `guard`
 4. Data a driver needs at start are fields of `XDriver`, not a `*Parts` bundle. `review`
 5a. DECIDED 2026-10-03 (Crux: effects start everything, the shell owns the loop): kernel `pub trait Driver: Machine { type Effect; fn execute(&mut self, effect: Self::Effect) -> Option<Self::Message>; }` is the only driver trait; kernel `enum Driver` (which driver) becomes `DriverName` (as `OverlayName`, `ConfigName`). No per-driver hooks in `DriverLoop`: a deadline or debounce is an effect `After { delay, timer }` (as kernel `Effect::After`, Crux `notify_after`); watching files or any repeated input is an effect that starts a stream (`Watch(PathBuf)`), whose items come back as `XMessage`s; shutdown is an ordinary kernel command sent before `Quit` (`ConfigCmd::Flush`), not a loop hook; `DriverLoop` drains the inbox and delivers all pending commands as one message `XMessage::Cmds(Cmds<XCmd>)`, so coalescing (keep the last volume) is pure machine logic tested by tables; `DriverLoop::spawn(start: impl FnOnce() -> D + Send)` builds the driver on its own thread (rodio output is `!Send`). Rejected: Elm-style `subscriptions()` (a second mechanism beside effects). `review`
-5. A driver opens no thread and no channel. `DriverLoop` (runtime) opens and closes every thread, channel, worker and stream: receive, read the clock, `transition`, `execute` each effect, send each event through `Outbox` (runtime). There is no per-driver loop type. Threads a library opens inside itself (rodio output, `notify` watcher) are excepted. `review`
+5. A driver opens no thread and no channel. `DriverLoop` (runtime) opens and closes every thread, channel, worker and stream: receive, read the clock, `transition`, `execute` each effect, send each event as a `Message` into `inbox`. There is no per-driver loop type. Threads a library opens inside itself (rodio output, `notify` watcher) are excepted. `review`
 5b. DECIDED 2026-10-03: a thread the OS or a library owns (AppKit main thread, CoreAudio listeners, cpal/rodio output) is a callback, never created or joined by us. Runtime opens a channel into the driver's inbox and hands its sender to whoever registers the callback; the callback only parses its input (§4.6) and sends an `XMessage`; every decision is in the driver machine on its own thread. The AppKit main loop `MainLoop` is started by runtime `host` (the name follows AppKit; allowed `Loop` types are in §9). `review`
 6. Input from a callback that must answer synchronously (AppKit remote commands) is parsed at the boundary and decided in the machine: `RemoteInput::parse(trigger, event) -> Result<RemoteInput, RemoteInputError>`; a parse error answers `CommandFailed` at once, a parsed input is sent as `MacosMessage::Remote(input)` and answers `Success`. `review`
 7. An `Effect` is what a machine asks to be done outside; it runs at once (`execute` for a driver, runtime for the kernel). A `Job` is slow work for a worker thread, carried as `Run(XJob)` (not `Queue`: queue is the play queue); its result returns later as an `XMessage`. A job in flight carries a `Revision`; a result whose `Revision` is stale is dropped. `review`
@@ -134,7 +134,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | track identity everywhere (queue, favorites, history, m3u) | `TrackRef` (`enum TrackRef { Local(PathBuf) }`, `Remote { source, id }` with Navidrome; as MPD songid, Subsonic id); `Local` keeps today's path behaviour: no normalisation, same path text on disk, lookup through a `TrackRef` to index map, a dangling ref is skipped on load, field `Track.source: TrackRef` | a path or an index as identity |
 | track position in the library / the shown list (rows and cursor only) | `TrackIndex`, `ViewIndex` | `PlaylistIndex`, `QueueIndex` |
 | audio load order | `TrackLoad` | — |
-| audio's preload variant (gapless or crossfade) | `PreloadKind` (decided 2026-10-04; kernel keeps `Preload`) | `Preload` |
+| audio's preload variant (gapless or crossfade) | `PreloadMode` (decided 2026-10-04) | `PreloadKind`, `Preload` |
 | who paused playback | `PausedBy` | — |
 | modal surface in the core | `Overlay`, `OverlayName`; render frame and geometry `Modal*` | `OverlayKind`, `OverlayScreen`, `Pane*` (only the `playlist::pane` module) |
 | short-lived message | `Toast` | `Notice` |
@@ -165,6 +165,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | linear amplitude factor in audio | `Gain(f32)` (decided 2026-10-04); a replay-gain tag value is `Decibels(f32)` in kernel, converted to `Gain` in audio | bare `f32` volume or gain |
 | terminal geometry unit | kernel `domain::geometry::{Cells(u16), Pixels(u32)}` (columns and rows alike; pixel sizes), imported by widgets, library and sifr (decided 2026-10-04, moved from widgets/library so `Appearance` and `visible_rows` can use them); ratatui `Rect`/`u16` stay at the ratatui boundary only | bare `u16`/`usize`/`u32` sizes |
 | index into the sleep presets | `PresetIndex` (`Index` row) | `preset_index: usize` |
+| row position in a settings or history overlay | `RowIndex` (`Index` row; decided 2026-10-04) | `selected: usize`, `ViewIndex` (shown track list only) |
 | macOS `OSStatus` code | `OsStatus(i32)` | bare `i32` |
 | progress bar's unfilled part | `groove` (as `Role::BarGroove`) | `track` (collides with `Track`) |
 | bad colour text in appearance | `ColorError::Malformed(Diagnostic)` | `input: String` |

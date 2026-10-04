@@ -16,7 +16,6 @@ use crate::{
         text::truncate_line_to_width,
     },
     repaint::{Presence, ceil_minutes, next_sleep_minute},
-    scene::Scene,
     theme::{active_theme::ActiveTheme, colors::Role},
 };
 
@@ -54,27 +53,6 @@ pub(crate) struct StatusLineView<'a> {
     pub(crate) scan: ScanProgress<'a>,
     pub(crate) theme_name: &'a str,
     pub(crate) sleep_left: Option<Duration>,
-}
-
-impl<'a> StatusLineView<'a> {
-    #[must_use]
-    pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
-        let shuffle = if scene.playlist.play_order.is_shuffle() {
-            Shuffle::Enabled
-        } else {
-            Shuffle::Disabled
-        };
-        Self {
-            shuffle,
-            repeat_mode: scene.playlist.repeat,
-            queue_len: scene.queue.len(),
-            position: scene.browse_selected,
-            total: scene.playlist.tracks.len(),
-            scan: ScanProgress::of(scene.scan, scene.theme.scanning_label.as_str()),
-            theme_name: scene.theme.name.as_str(),
-            sleep_left: scene.sleep_left,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -144,18 +122,18 @@ pub(crate) fn status_line<'a>(
         text(pos_total).fg(style.accent),
         text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(style.muted_foreground),
     ];
-    let mut flags: Vec<(&'static str, Cow<'a, str>)> = vec![
+    let flags: [(&'static str, Cow<'a, str>); 4] = [
         (SHUFFLE_LABEL, Cow::Borrowed(shuffle)),
         (REPEAT_LABEL, Cow::Borrowed(repeat)),
         (QUEUE_LABEL, Cow::Owned(status.queue_len.to_string())),
         (THEME_LABEL, Cow::Borrowed(status.theme_name)),
     ];
-    if let Some(sleep_left) = status.sleep_left {
-        flags.push((SLEEP_LABEL, Cow::Owned(sleep_label(sleep_left))));
-    }
+    let sleep = status
+        .sleep_left
+        .map(|sleep_left| (SLEEP_LABEL, Cow::Owned(sleep_label(sleep_left))));
     let pieces =
         head.into_iter()
-            .chain(flags.into_iter().enumerate().flat_map(
+            .chain(flags.into_iter().chain(sleep).enumerate().flat_map(
                 |(index, (label, value))| {
                     (index > 0)
                         .then(flag_separator)

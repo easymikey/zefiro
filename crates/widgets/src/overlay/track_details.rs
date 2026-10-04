@@ -1,4 +1,7 @@
-use kernel::domain::{geometry::Cells, track::Track};
+use kernel::domain::{
+    geometry::Cells,
+    track::{Kbps, Track},
+};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -36,15 +39,19 @@ pub(crate) struct TrackDetailsWidget<'a> {
 impl TrackDetailsWidget<'_> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::Dialog(self.modal().areas(screen, self.avoid))
+        OverlayAreas::Dialog(
+            self.modal(&value_rows(self.track))
+                .areas(screen, self.avoid),
+        )
     }
 
-    fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
+    pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
         let OverlayAreas::Dialog(areas) = areas else {
             return;
         };
         let Canvas { area, buffer } = canvas;
-        self.modal().paint(
+        let rows = value_rows(self.track);
+        self.modal(&rows).paint(
             PlacedModal {
                 areas,
                 bounds: ModalBounds {
@@ -57,15 +64,14 @@ impl TrackDetailsWidget<'_> {
         if areas.body.width == 0 || areas.body.height == 0 {
             return;
         }
-        Paragraph::new(self.lines(usize::from(areas.body.width)))
+        Paragraph::new(self.lines(rows, usize::from(areas.body.width)))
             .render(areas.body, buffer);
     }
 
-    fn modal(&self) -> Modal<'static> {
-        let rows = self.rows();
+    fn modal(&self, rows: &[TrackDetailsRow]) -> Modal<'static> {
         let content_width = rows
             .iter()
-            .filter(|detail_row| detail_row.label != glyphs::track_details::PATH_LABEL)
+            .filter(|detail_row| detail_row.truncation == Truncation::Tail)
             .map(|detail_row| {
                 u16::try_from(detail_row.prefix.width() + detail_row.value.width())
                     .unwrap_or(u16::MAX)
@@ -88,20 +94,15 @@ impl TrackDetailsWidget<'_> {
         }
     }
 
-    fn rows(&self) -> Vec<TrackDetailsRow> {
-        value_rows(self.track)
-    }
-
-    fn lines(&self, width: usize) -> Vec<Line<'static>> {
-        self.rows()
-            .into_iter()
+    fn lines(&self, rows: Vec<TrackDetailsRow>, width: usize) -> Vec<Line<'static>> {
+        rows.into_iter()
             .map(|detail_row| {
                 let budget = width.saturating_sub(detail_row.prefix.width());
-                let value = if detail_row.label == glyphs::track_details::PATH_LABEL {
-                    truncate_from_left(&detail_row.value, budget).into_owned()
-                } else {
-                    truncate(&detail_row.value, budget).into_owned()
-                };
+                let value = match detail_row.truncation {
+                    Truncation::Head => truncate_from_left(&detail_row.value, budget),
+                    Truncation::Tail => truncate(&detail_row.value, budget),
+                }
+                .into_owned();
                 line([
                     text(detail_row.prefix).fg(self.style.muted_foreground),
                     text(value).fg(self.style.foreground),
@@ -117,13 +118,36 @@ impl Widget for &TrackDetailsWidget<'_> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Truncation {
+    Head,
+    Tail,
+}
+
 struct TrackDetailsRow {
-    label: &'static str,
     prefix: String,
     value: String,
+    truncation: Truncation,
 }
 
 fn value_rows(track: &Track) -> Vec<TrackDetailsRow> {
+    let path = TrackDetailsRow {
+        prefix: RowPrefix::Plain.prefix(glyphs::track_details::PATH_LABEL),
+        value: track.path().display().to_string(),
+        truncation: Truncation::Head,
+    };
+    tag_rows(track)
+        .into_iter()
+        .map(|(label, shape, value)| TrackDetailsRow {
+            prefix: shape.prefix(label),
+            value,
+            truncation: Truncation::Tail,
+        })
+        .chain(std::iter::once(path))
+        .collect()
+}
+
+fn tag_rows(track: &Track) -> [(&'static str, RowPrefix, String); 7] {
     let tags = track.tags();
     [
         (
@@ -164,19 +188,7 @@ fn value_rows(track: &Track) -> Vec<TrackDetailsRow> {
             RowPrefix::Plain,
             format_summary(track),
         ),
-        (
-            glyphs::track_details::PATH_LABEL,
-            RowPrefix::Plain,
-            track.path().display().to_string(),
-        ),
     ]
-    .into_iter()
-    .map(|(label, shape, value)| TrackDetailsRow {
-        label,
-        prefix: shape.prefix(label),
-        value,
-    })
-    .collect()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -226,11 +238,11 @@ fn format_summary(track: &Track) -> String {
     if let Some(format) = &audio_format.format {
         parts.push(format.to_uppercase());
     }
-    if let Some(bitrate_kbps) = audio_format.bitrate_kbps {
-        parts.push(format!("{bitrate_kbps} kbps"));
+    if let Some(Kbps(bitrate)) = audio_format.bitrate {
+        parts.push(format!("{bitrate} kbps"));
     }
-    if let Some(sample_rate_hz) = audio_format.sample_rate_hz {
-        parts.push(format!("{:.1} kHz", kilohertz(sample_rate_hz)));
+    if let Some(sample_rate) = audio_format.sample_rate {
+        parts.push(format!("{:.1} kHz", kilohertz(sample_rate)));
     }
     if parts.is_empty() {
         glyphs::track_details::MISSING.to_string()
@@ -247,7 +259,7 @@ fn missing_or_value(tag: Option<String>) -> String {
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::track::{AudioFormat, Tags, Track};
+    use kernel::domain::track::{AudioFormat, Hertz, Kbps, Tags, Track};
 
     use crate::{
         overlay::{modal::metrics::ModalRowStyle, track_details::TrackDetailsWidget},
@@ -270,8 +282,8 @@ mod tests {
             })
             .audio_format(AudioFormat {
                 format: Some("Mp3".to_string()),
-                bitrate_kbps: Some(320),
-                sample_rate_hz: Some(44100),
+                bitrate: Some(Kbps(320)),
+                sample_rate: Some(Hertz(44100)),
                 ..AudioFormat::default()
             })
             .build()

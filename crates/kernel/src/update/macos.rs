@@ -47,9 +47,10 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use crate::{
-        cmd::{Cmd, Cue, Effect},
+        cmd::{Cmd, Effect},
         domain::{
             bounded::Bounded,
+            cue::Cue,
             model::Model,
             percent::Percent,
             player::{Player, Preload},

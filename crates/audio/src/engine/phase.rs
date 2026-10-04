@@ -74,8 +74,14 @@ pub struct CurrentTrack {
 pub(crate) enum Next {
     #[default]
     None,
-    Preloading(PathBuf),
-    Gapless(PathBuf),
+    Preloading {
+        path: PathBuf,
+        gain: Option<kernel::domain::track::Decibels>,
+    },
+    Gapless {
+        path: PathBuf,
+        gain: Option<kernel::domain::track::Decibels>,
+    },
     Crossfading {
         preload: CurrentTrack,
         fade: Fade,

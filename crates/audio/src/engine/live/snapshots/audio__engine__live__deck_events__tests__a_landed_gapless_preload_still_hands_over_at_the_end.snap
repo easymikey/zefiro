@@ -6,10 +6,11 @@ expression: log
 [
     Cmd {
         effects: [
-            Preload {
-                path: "/b",
-                mode: Gapless,
-            },
+            Preload(
+                Gapless(
+                    "/b",
+                ),
+            ),
         ],
         messages: [],
     },
@@ -19,7 +20,11 @@ expression: log
     },
     Cmd {
         effects: [
-            Advance,
+            Advance(
+                Gain(
+                    1.0,
+                ),
+            ),
             Report,
         ],
         messages: [

@@ -19,12 +19,12 @@ use crate::{
     overlay::{
         modal::{
             frame::{Modal, ModalBounds, ModalSize, PlacedModal},
-            metrics::{ModalRowStyle, QUERY_ROWS, SCROLL_PADDING, modal_title},
+            metrics::{ModalRowStyle, QUERY_ROWS, modal_title},
             placement::{
                 ModalBorder,
+                ModalContainer,
                 ModalScrollAreas,
                 OverlayAreas,
-                OverlayContainer,
                 leading_cells,
             },
         },
@@ -45,7 +45,7 @@ pub(crate) struct SearchWidget<'a> {
     pub(crate) tracks: &'a [Arc<Track>],
     pub(crate) search: &'a CursorOver<SearchQuery>,
     pub(crate) bounds: Rect,
-    pub(crate) container: OverlayContainer<'a>,
+    pub(crate) container: ModalContainer<'a>,
 }
 
 struct SearchHeader<'a> {
@@ -58,16 +58,16 @@ impl SearchWidget<'_> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
         match self.container {
-            OverlayContainer::Modal(avoid) => {
+            ModalContainer::Modal(avoid) => {
                 OverlayAreas::Dialog(self.modal().areas(screen, avoid))
             }
-            OverlayContainer::Pane(pane) => {
+            ModalContainer::Playlist(pane) => {
                 OverlayAreas::List(self.border(pane).areas())
             }
         }
     }
 
-    fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
+    pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
         match areas {
             OverlayAreas::List(areas) => self.paint_pane(areas, buffer),
@@ -87,8 +87,8 @@ impl SearchWidget<'_> {
 
     fn avoid(&self) -> &[Rect] {
         match self.container {
-            OverlayContainer::Modal(avoid) => avoid,
-            OverlayContainer::Pane(_) => &[],
+            ModalContainer::Modal(avoid) => avoid,
+            ModalContainer::Playlist(_) => &[],
         }
     }
 
@@ -199,7 +199,6 @@ impl SearchWidget<'_> {
             search: self.search,
             style: self.style(),
             lead,
-            scroll_padding: SCROLL_PADDING,
         }
     }
 }
@@ -256,7 +255,7 @@ fn content_rows(search: &CursorOver<SearchQuery>) -> u16 {
     } else {
         u16::try_from(search.content.matches.len()).unwrap_or(u16::MAX)
     };
-    1 + match_rows
+    1u16.saturating_add(match_rows)
 }
 
 #[cfg(test)]
@@ -275,7 +274,7 @@ mod tests {
 
     use crate::{
         overlay::{
-            modal::{metrics::ModalRowStyle, placement::OverlayContainer},
+            modal::{metrics::ModalRowStyle, placement::ModalContainer},
             search::SearchWidget,
         },
         primitive::canvas::find_text,
@@ -312,8 +311,8 @@ mod tests {
         }
     }
 
-    fn pane_container(pane: Rect) -> OverlayContainer<'static> {
-        OverlayContainer::Pane(pane)
+    fn pane_container(pane: Rect) -> ModalContainer<'static> {
+        ModalContainer::Playlist(pane)
     }
 
     #[test]
@@ -390,7 +389,7 @@ mod tests {
             tracks: &tracks,
             search: &search,
             bounds: Rect::new(0, 0, 80, 28),
-            container: OverlayContainer::Modal(&[]),
+            container: ModalContainer::Modal(&[]),
         };
         insta::with_settings!({ snapshot_suffix => label }, {
             insta::assert_snapshot!(rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area())).to_string());
@@ -414,11 +413,18 @@ mod tests {
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
                 .clone();
-        let selection_bg = ModalRowStyle::from_theme(&active).selected_background;
+        let selection_background =
+            ModalRowStyle::from_theme(&active).selected_background;
         let (alpha_x, alpha_y) = find_text(&buffer, "Alpha").unwrap();
         let (beta_x, beta_y) = find_text(&buffer, "Beta").unwrap();
-        assert_eq!(buffer[(beta_x, beta_y)].style().bg, Some(selection_bg));
-        assert_ne!(buffer[(alpha_x, alpha_y)].style().bg, Some(selection_bg));
+        assert_eq!(
+            buffer[(beta_x, beta_y)].style().bg,
+            Some(selection_background)
+        );
+        assert_ne!(
+            buffer[(alpha_x, alpha_y)].style().bg,
+            Some(selection_background)
+        );
     }
 
     #[test]
@@ -444,13 +450,64 @@ mod tests {
     }
 
     #[rstest]
+    #[case::just_below_the_row_limit(65534)]
+    #[case::at_the_row_limit(65535)]
+    #[case::above_the_row_limit(70000)]
+    fn search_overlay_modal_mode_does_not_panic_on_a_huge_match_count(
+        #[case] count: usize,
+    ) {
+        let theme = noir();
+        let tracks = [titled_track("Alpha")];
+        let search = query("", vec![0; count], count - 1);
+        let overlay = SearchWidget {
+            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            tracks: &tracks,
+            search: &search,
+            bounds: Rect::new(0, 0, 80, 28),
+            container: ModalContainer::Modal(&[]),
+        };
+        let backend =
+            rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()));
+        assert_eq!(backend.to_string().lines().count(), 28);
+    }
+
+    #[rstest]
+    #[case::pane(true)]
+    #[case::modal(false)]
+    fn search_overlay_scrolls_the_selected_match_into_view(#[case] pane: bool) {
+        let theme = noir();
+        let tracks: Vec<Arc<Track>> = (0..100)
+            .map(|index| titled_track(&format!("Song {index:03}")))
+            .collect();
+        let search = query("song", (0..100).collect(), 99);
+        let container = if pane {
+            pane_container(Rect::new(0, 0, 80, 28))
+        } else {
+            ModalContainer::Modal(&[])
+        };
+        let overlay = SearchWidget {
+            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            tracks: &tracks,
+            search: &search,
+            bounds: Rect::new(0, 0, 80, 28),
+            container,
+        };
+        let buffer =
+            rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
+                .buffer()
+                .clone();
+        assert!(find_text(&buffer, "Song 099").is_some());
+        assert!(find_text(&buffer, "Song 000").is_none());
+    }
+
+    #[rstest]
     #[case::modal(None)]
     #[case::pane(Some(Rect::new(0, 0, 4, 3)))]
     fn search_overlay_does_not_panic_on_a_tiny_terminal(#[case] pane: Option<Rect>) {
         let theme = noir();
         let tracks: [Arc<Track>; 0] = [];
         let search = CursorOver::default();
-        let container = pane.map_or(OverlayContainer::Modal(&[]), pane_container);
+        let container = pane.map_or(ModalContainer::Modal(&[]), pane_container);
         let overlay = SearchWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             tracks: &tracks,

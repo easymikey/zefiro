@@ -1,34 +1,21 @@
 #![cfg(target_os = "macos")]
 
 use ::macos::{
-    cover::MacosJob,
-    driver::{MacosDriver, MacosEffect, MacosMessage},
+    driver::MacosDriver,
+    effect::MacosEffect,
+    job::MacosJob,
+    message::MacosMessage,
 };
-use crossbeam_channel::{Receiver, Sender, bounded};
 use kernel::{cmd::MacosCmd, domain::driver::DriverName};
 
 use crate::{
-    driver::{DriverLoop, DriverThread, LoopEffect},
+    driver::DriverLoop,
+    driver_thread::DriverThread,
     error::Error,
-    jobs::Jobs,
+    jobs::{Jobs, LoopEffect},
     registry,
-    spawn::SpawnSetup,
+    spawn_setup::SpawnSetup,
 };
-
-const HEARD: usize = 64;
-
-#[derive(Debug, Clone)]
-pub(crate) struct MacosChannel {
-    pub(crate) sender: Sender<MacosMessage>,
-    pub(crate) receiver: Receiver<MacosMessage>,
-}
-
-impl MacosChannel {
-    pub(crate) fn new() -> Self {
-        let (sender, receiver) = bounded(HEARD);
-        Self { sender, receiver }
-    }
-}
 
 fn macos_split(effect: MacosEffect) -> LoopEffect<MacosEffect, MacosJob, MacosMessage> {
     match effect {
@@ -45,18 +32,19 @@ fn macos_split(effect: MacosEffect) -> LoopEffect<MacosEffect, MacosJob, MacosMe
 
 pub(crate) fn spawn(setup: &SpawnSetup<'_>) -> Result<DriverThread<MacosCmd>, Error> {
     let heard_sender = setup.macos.sender.clone();
-    if let Err(unheard) = heard_sender.try_send(MacosMessage::Started) {
-        drop(unheard.into_inner());
-    }
     let jobs = Jobs {
         split: macos_split,
-        run: |job: MacosJob| job.run(library::tags::embedded_cover),
+        run: |job: MacosJob| {
+            job.run(|path| {
+                library::tags::embedded_cover(path).map_err(std::io::Error::other)
+            })
+        },
     };
     DriverLoop::<MacosDriver, MacosJob> {
         row: registry::row(DriverName::Macos),
         inbox: setup.inbox.clone(),
         heard: setup.macos.receiver.clone(),
-        seed: None,
+        seed: Some(MacosMessage::Started),
         jobs,
     }
     .spawn(move || MacosDriver::new(heard_sender))
@@ -70,23 +58,21 @@ mod tests {
     use kernel::{domain::startup::Startup, message::Message};
 
     use crate::{
-        runtime::StartupPaths,
-        spawn::{
-            SpawnSetup,
-            macos_thread::{MacosChannel, MacosMessage, spawn},
-        },
+        macos_channel::MacosChannel,
+        spawn::macos_thread::{MacosMessage, spawn},
+        spawn_setup::SpawnSetup,
+        startup_paths::StartupPaths,
     };
 
     fn spawn_on(
         channel: &MacosChannel,
         paths: &StartupPaths,
         inbox: &Sender<Message>,
-    ) -> crate::driver::DriverThread<kernel::cmd::MacosCmd> {
+    ) -> crate::driver_thread::DriverThread<kernel::cmd::MacosCmd> {
         let (model, _cmd) = kernel::update::startup::startup(Startup::default());
         let (writers, _cells, _notified) = crate::latest::latest_channels();
         spawn(&SpawnSetup {
             audio: &model.settings.audio,
-            theme: &model.themes.selected,
             paths,
             inbox,
             writers: &writers,

@@ -1,11 +1,11 @@
 use kernel::{
     domain::{
-        appearance_rows::AppearanceField,
         direction::Direction,
         model::Model,
         revision::Revision,
         setting_row::{
             AppearanceControl,
+            AppearanceField,
             AppearanceRow,
             AppearanceSetting,
             Choice,
@@ -25,7 +25,7 @@ use kernel::{
     },
 };
 
-use crate::support::{effects, model_with_tracks, playing_model, step::update};
+use crate::support::{effects, model_with_tracks, playing_model, update::update};
 
 #[test]
 fn toggling_from_stopped_starts_the_track() {
@@ -62,7 +62,7 @@ fn stepping_an_appearance_row_emits_its_effect() {
         cue: None,
         themes: &[],
     }));
-    m.appearance_settings.push(AppearanceSetting {
+    m.appearance_rows.push(AppearanceSetting {
         row,
         choice: Choice::Option(count.index(0).unwrap()),
     });

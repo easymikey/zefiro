@@ -1,94 +1,22 @@
-use std::{
-    panic::{AssertUnwindSafe, catch_unwind},
-    path::PathBuf,
-    thread::{self, JoinHandle},
-    time::{Duration, Instant},
-};
+use std::time::Instant;
 
-use crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded};
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use kernel::{
     cmd::{Cmd, Cmds},
-    domain::driver::DriverError,
-    message::{DriverEvent, Message},
+    message::Message,
     update::machine::{Driver, Machine},
 };
 
 use crate::{
+    driver_thread::{Congestion, DriverThread, SendError, send, spawn_driver},
     driver_wait::{Inboxes, LoopInput},
     error::Error,
-    jobs::{Jobs, spawn_jobs, stash},
-    outbox::{Congestion, Outbox},
+    jobs::{JobThread, Jobs, LoopEffect, spawn_jobs, stash},
     registry::DriverRow,
-    watcher::{Changed, FileStream},
+    watcher::FileStream,
 };
 
-#[derive(Debug)]
-pub(crate) struct DriverThread<C> {
-    pub(crate) commands: Sender<C>,
-    pub(crate) handle: JoinHandle<Result<(), SendError<Message>>>,
-    pub(crate) full: Congestion,
-}
-
-const INBOX: usize = 64;
 const JOB_RESULTS: usize = 8;
-
-#[cfg(test)]
-pub(crate) fn spawn_idle<C: Send + 'static>(
-    row: &DriverRow,
-    inbox: &Sender<Message>,
-) -> Result<DriverThread<C>, Error> {
-    spawn_driver(
-        row,
-        |inbox: &Receiver<C>, _: &Outbox<Message>| while inbox.recv().is_ok() {},
-        inbox,
-    )
-}
-
-pub(crate) fn spawn_driver<C, F, R>(
-    row: &DriverRow,
-    run: R,
-    inbox: &Sender<Message>,
-) -> Result<DriverThread<C>, Error>
-where
-    C: Send + 'static,
-    F: Send + 'static,
-    R: FnOnce(&Receiver<C>, &Outbox<F>) + Send + 'static,
-{
-    let (commands, command_inbox): (Sender<C>, Receiver<C>) = bounded(INBOX);
-    let full = Congestion::default();
-    let outbox = Outbox::new(inbox.clone(), full.clone());
-    let inbox = inbox.clone();
-    let driver = row.driver;
-    let handle = thread::Builder::new()
-        .name(row.thread_name.to_owned())
-        .spawn(move || -> Result<(), SendError<Message>> {
-            let result =
-                catch_unwind(AssertUnwindSafe(|| run(&command_inbox, &outbox)));
-            let report = match result {
-                Ok(()) => DriverEvent::Stopped,
-                Err(_payload) => DriverEvent::Died(DriverError::Panicked),
-            };
-            inbox.send(Message::Driver {
-                driver,
-                event: report,
-            })
-        })
-        .map_err(|source| Error::Spawn { driver, source })?;
-    Ok(DriverThread {
-        commands,
-        handle,
-        full,
-    })
-}
-
-#[derive(Debug)]
-pub(crate) enum LoopEffect<E, J, M> {
-    Execute(E),
-    Run(J),
-    After { delay: Duration, message: M },
-    Watch { path: PathBuf, item: Changed<M> },
-    Unwatch(PathBuf),
-}
 
 #[derive(Debug)]
 pub(crate) struct DriverLoop<D: Driver, J> {
@@ -104,30 +32,45 @@ struct LoopTimer<M> {
     message: M,
 }
 
-type Split<D, J> = fn(
-    <D as Driver>::Effect,
-) -> LoopEffect<<D as Driver>::Effect, J, <D as Machine>::Message>;
-
-struct Outlets<'a, D: Driver, J, O> {
-    outbox: &'a Outbox<O>,
-    jobs: &'a Sender<J>,
-    split: Split<D, J>,
+struct Outlets<'a, D: Driver, J> {
+    inbox: &'a Sender<Message>,
+    full: &'a Congestion,
+    row: &'static DriverRow,
+    jobs: Jobs<<D as Driver>::Effect, J, D::Message>,
+    results: Sender<D::Message>,
+    worker: Option<JobThread<J>>,
     pending: Vec<J>,
     timers: Vec<LoopTimer<D::Message>>,
     files: FileStream<D::Message>,
 }
 
-impl<D: Driver, J, O> Outlets<'_, D, J, O> {
-    fn hand_over(&mut self) -> Result<(), crate::outbox::SendError> {
+impl<D, J> Outlets<'_, D, J>
+where
+    D: Driver,
+    D::Message: Send + 'static,
+    J: Ord + Send + 'static,
+{
+    fn hand_over(&mut self) -> Result<(), SendError> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        if self.worker.is_none() {
+            let started = spawn_jobs(self.row, self.results.clone(), self.jobs.run)
+                .map_err(|_spawn| SendError::Closed)?;
+            self.worker = Some(started);
+        }
+        let Some(worker) = &self.worker else {
+            return Ok(());
+        };
         while !self.pending.is_empty() {
-            match self.jobs.try_send(self.pending.remove(0)) {
+            match worker.jobs.try_send(self.pending.remove(0)) {
                 Ok(()) => {}
                 Err(TrySendError::Full(job)) => {
                     self.pending.insert(0, job);
                     return Ok(());
                 }
                 Err(TrySendError::Disconnected(_job)) => {
-                    return Err(crate::outbox::SendError::Closed);
+                    return Err(SendError::Closed);
                 }
             }
         }
@@ -139,7 +82,7 @@ impl<D: Driver, J, O> Outlets<'_, D, J, O> {
         effect: <D as Driver>::Effect,
         driver: &mut D,
     ) -> Option<D::Message> {
-        match (self.split)(effect) {
+        match (self.jobs.split)(effect) {
             LoopEffect::Execute(effect) => driver.execute(effect),
             LoopEffect::Run(job) => {
                 stash(&mut self.pending, job);
@@ -194,15 +137,18 @@ where
             jobs,
         } = self;
         let (results, finished) = bounded(JOB_RESULTS);
-        let worker = spawn_jobs(row, results, jobs.run)?;
-        let split = jobs.split;
         spawn_driver(
             row,
-            move |commands: &Receiver<C>, outbox: &Outbox<M>| {
+            move |commands: &Receiver<C>,
+                  inbox: &Sender<Message>,
+                  full: &Congestion| {
                 let mut outlets = Outlets {
-                    outbox,
-                    jobs: &worker.jobs,
-                    split,
+                    inbox,
+                    full,
+                    row,
+                    jobs,
+                    results,
+                    worker: None,
                     pending: Vec::new(),
                     timers: Vec::new(),
                     files: FileStream::idle(),
@@ -217,7 +163,9 @@ where
                 if seed.is_none_or(|message| fed(message).is_ok()) {
                     Self::drive(driver, inboxes, &mut outlets);
                 }
-                worker.stop();
+                if let Some(worker) = outlets.worker {
+                    worker.stop();
+                }
             },
             &inbox,
         )
@@ -226,7 +174,7 @@ where
     fn drive<C>(
         mut driver: D,
         mut inboxes: Inboxes<'_, C, D::Message>,
-        outlets: &mut Outlets<'_, D, J, M>,
+        outlets: &mut Outlets<'_, D, J>,
     ) where
         D::Message: From<Cmds<C>>,
     {
@@ -248,8 +196,8 @@ where
 
     fn feed_due(
         driver: &mut D,
-        outlets: &mut Outlets<'_, D, J, M>,
-    ) -> Result<(), crate::outbox::SendError> {
+        outlets: &mut Outlets<'_, D, J>,
+    ) -> Result<(), SendError> {
         for message in outlets.take_due(Instant::now()) {
             Self::feed(driver, message, outlets)?;
         }
@@ -259,8 +207,8 @@ where
     fn feed(
         driver: &mut D,
         message: D::Message,
-        outlets: &mut Outlets<'_, D, J, M>,
-    ) -> Result<(), crate::outbox::SendError> {
+        outlets: &mut Outlets<'_, D, J>,
+    ) -> Result<(), SendError> {
         Self::step(driver, message, outlets)?;
         outlets.hand_over()
     }
@@ -268,14 +216,14 @@ where
     fn step(
         driver: &mut D,
         message: D::Message,
-        outlets: &mut Outlets<'_, D, J, M>,
-    ) -> Result<(), crate::outbox::SendError> {
+        outlets: &mut Outlets<'_, D, J>,
+    ) -> Result<(), SendError> {
         let Ok(cmd) = driver.transition(message) else {
             return Ok(());
         };
         let (effects, messages) = cmd.into_parts();
         for event in messages {
-            outlets.outbox.send(event)?;
+            send(outlets.inbox, outlets.full, event.into())?;
         }
         for effect in effects {
             if let Some(answer) = outlets.place(effect, driver) {
@@ -298,21 +246,18 @@ mod tests {
     use crossbeam_channel::{Receiver, Sender, bounded, never, unbounded};
     use kernel::{
         cmd::{AudioCmd, Cmd, Cmds},
-        domain::{
-            driver::{DriverError, DriverName},
-            io_error::IoError,
-            settings::AudioSettings,
-        },
+        domain::{driver::DriverName, io_error::IoError, settings::AudioSettings},
         message::{AudioEvent, DriverEvent, Message},
         update::machine::{Driver, Machine, Unhandled},
     };
 
     use crate::{
-        driver::{DriverLoop, DriverThread, LoopEffect, spawn_driver, spawn_idle},
+        driver::{DriverLoop, LoopEffect, Outlets},
+        driver_thread::{Congestion, DriverThread, spawn_idle},
         jobs::Jobs,
-        outbox::Outbox,
         registry,
         spawn::audio_thread::audio_split,
+        watcher::FileStream,
     };
 
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
@@ -395,9 +340,10 @@ mod tests {
 
         fn execute(&mut self, effect: ProbeEffect) -> Option<ProbeMessage> {
             match effect {
-                ProbeEffect::Report(note) => match self.notes.send(note) {
-                    Ok(()) | Err(_) => None,
-                },
+                ProbeEffect::Report(note) => {
+                    self.notes.send(note).unwrap();
+                    None
+                }
                 ProbeEffect::After { .. } | ProbeEffect::Watch(_) => None,
             }
         }
@@ -537,6 +483,59 @@ mod tests {
         run.stop();
     }
 
+    #[test]
+    fn a_final_report_into_a_full_inbox_raises_congestion() {
+        let (inbox, reports) = bounded(1);
+        let filler = Message::Driver {
+            driver: DriverName::Library,
+            event: DriverEvent::Stopped,
+        };
+        inbox.send(filler.clone()).unwrap();
+        let thread =
+            spawn_idle::<ProbeCmd>(registry::row(DriverName::Config), &inbox).unwrap();
+
+        drop(thread.commands);
+        let deadline = Instant::now() + RECV_TIMEOUT;
+        let raised = std::iter::repeat_with(|| thread.full.take())
+            .take_while(|_| Instant::now() < deadline)
+            .any(|raised| raised);
+
+        assert!(raised);
+        assert_eq!(reports.recv_timeout(RECV_TIMEOUT), Ok(filler));
+        assert_eq!(
+            reports.recv_timeout(RECV_TIMEOUT),
+            Ok(Message::Driver {
+                driver: DriverName::Config,
+                event: DriverEvent::Stopped
+            })
+        );
+        thread.handle.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn a_driver_without_jobs_starts_no_worker() {
+        let (inbox, _reports) = unbounded();
+        let full = Congestion::default();
+        let (results, _finished) = unbounded();
+        let mut outlets = Outlets::<Probe, NoJob> {
+            inbox: &inbox,
+            full: &full,
+            row: registry::row(DriverName::Config),
+            jobs: Jobs {
+                split: probe_split,
+                run: |job: NoJob| match job {},
+            },
+            results,
+            worker: None,
+            pending: Vec::new(),
+            timers: Vec::new(),
+            files: FileStream::idle(),
+        };
+
+        assert_eq!(outlets.hand_over(), Ok(()));
+        assert!(outlets.worker.is_none());
+    }
+
     fn start_audio_driver() -> (DriverThread<AudioCmd>, Receiver<Message>) {
         let (inbox, sent) = unbounded();
         let (deck_sender, heard) = bounded(64);
@@ -600,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn a_closed_outbox_ends_the_driver_loop() {
+    fn a_closed_mailbox_ends_the_driver_loop() {
         let ProbeRun {
             thread, reports, ..
         } = ProbeRun::start(never());
@@ -617,93 +616,5 @@ mod tests {
         });
         assert_eq!(joined.recv_timeout(Duration::from_secs(5)), Ok(true));
         drop(commands);
-    }
-
-    #[test]
-    fn a_panicking_driver_becomes_died() {
-        let (inbox, reports) = unbounded();
-        let thread = spawn_driver(
-            registry::row(DriverName::Audio),
-            |_inbox: &Receiver<()>, _outbox: &Outbox<Message>| panic!("boom"),
-            &inbox,
-        )
-        .unwrap();
-
-        thread.handle.join().unwrap().unwrap();
-        let message = reports.recv_timeout(RECV_TIMEOUT).unwrap();
-
-        assert_eq!(
-            message,
-            Message::Driver {
-                driver: DriverName::Audio,
-                event: DriverEvent::Died(DriverError::Panicked)
-            }
-        );
-    }
-
-    #[test]
-    fn a_returning_driver_becomes_stopped() {
-        let (inbox, reports) = unbounded();
-        let thread = spawn_driver(
-            registry::row(DriverName::Library),
-            |_inbox: &Receiver<()>, _outbox: &Outbox<Message>| {},
-            &inbox,
-        )
-        .unwrap();
-
-        thread.handle.join().unwrap().unwrap();
-        let message = reports.recv_timeout(RECV_TIMEOUT).unwrap();
-
-        assert_eq!(
-            message,
-            Message::Driver {
-                driver: DriverName::Library,
-                event: DriverEvent::Stopped
-            }
-        );
-    }
-
-    #[test]
-    fn a_closed_inbox_stops_the_driver() {
-        let (inbox, reports) = unbounded();
-        let thread = spawn_driver(
-            registry::row(DriverName::Macos),
-            |inbox: &Receiver<()>, _outbox: &Outbox<Message>| {
-                assert!(inbox.recv().is_err());
-            },
-            &inbox,
-        )
-        .unwrap();
-        drop(thread.commands);
-
-        thread.handle.join().unwrap().unwrap();
-        let message = reports.recv_timeout(RECV_TIMEOUT).unwrap();
-
-        assert_eq!(
-            message,
-            Message::Driver {
-                driver: DriverName::Macos,
-                event: DriverEvent::Stopped
-            }
-        );
-    }
-
-    #[test]
-    fn an_idle_driver_stops_once_its_inbox_closes() {
-        let (inbox, reports) = unbounded();
-        let thread =
-            spawn_idle::<()>(registry::row(DriverName::Audio), &inbox).unwrap();
-        drop(thread.commands);
-
-        thread.handle.join().unwrap().unwrap();
-        let message = reports.recv_timeout(RECV_TIMEOUT).unwrap();
-
-        assert_eq!(
-            message,
-            Message::Driver {
-                driver: DriverName::Audio,
-                event: DriverEvent::Stopped
-            }
-        );
     }
 }

@@ -8,16 +8,16 @@ use serde::{
 use strum::IntoEnumIterator;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct KeyBindingTable {
+#[serde(deny_unknown_fields, expecting = "a table of chord and context")]
+struct TomlKeyBindingTable {
     chord: String,
     context: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct KeyBindingEntry(pub(crate) KeyOverride);
+pub(crate) struct TomlKeyBinding(pub(crate) KeyOverride);
 
-impl fmt::Debug for KeyBindingEntry {
+impl fmt::Debug for TomlKeyBinding {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
     }
@@ -26,42 +26,42 @@ impl fmt::Debug for KeyBindingEntry {
 struct KeyBindingVisitor;
 
 impl<'de> Visitor<'de> for KeyBindingVisitor {
-    type Value = KeyBindingEntry;
+    type Value = TomlKeyBinding;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("a chord string, or a table of `chord` and `context`")
     }
 
     fn visit_str<E: serde::de::Error>(self, spelling: &str) -> Result<Self::Value, E> {
-        Ok(KeyBindingEntry(KeyOverride::from(spelling)))
+        Ok(TomlKeyBinding(KeyOverride::from(spelling)))
     }
 
     fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<Self::Value, M::Error> {
-        let table = KeyBindingTable::deserialize(MapAccessDeserializer::new(map))?;
+        let table = TomlKeyBindingTable::deserialize(MapAccessDeserializer::new(map))?;
         let context = match table.context {
             Some(spelling) => spelling
                 .parse::<KeyContext>()
                 .map_err(serde::de::Error::custom)?,
             None => KeyContext::default(),
         };
-        Ok(KeyBindingEntry(KeyOverride {
+        Ok(TomlKeyBinding(KeyOverride {
             chord: table.chord,
             key_context: context,
         }))
     }
 }
 
-impl<'de> Deserialize<'de> for KeyBindingEntry {
+impl<'de> Deserialize<'de> for TomlKeyBinding {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_any(KeyBindingVisitor)
     }
 }
 
-type KeymapByName = HashMap<String, KeyBindingEntry>;
+type KeymapByName = HashMap<String, TomlKeyBinding>;
 
 #[derive(Clone, Default, PartialEq, Deserialize)]
 #[serde(try_from = "KeymapByName", expecting = "a [keymap] table")]
-pub(crate) struct TomlKeymap(pub(crate) HashMap<Action, KeyBindingEntry>);
+pub(crate) struct TomlKeymap(pub(crate) HashMap<Action, TomlKeyBinding>);
 
 impl TryFrom<KeymapByName> for TomlKeymap {
     type Error = strum::ParseError;
@@ -69,7 +69,7 @@ impl TryFrom<KeymapByName> for TomlKeymap {
     fn try_from(raw: KeymapByName) -> Result<Self, Self::Error> {
         raw.into_iter()
             .map(|(name, binding)| Ok((name.parse::<Action>()?, binding)))
-            .collect::<Result<HashMap<Action, KeyBindingEntry>, Self::Error>>()
+            .collect::<Result<HashMap<Action, TomlKeyBinding>, Self::Error>>()
             .map(Self)
     }
 }

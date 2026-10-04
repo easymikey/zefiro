@@ -42,8 +42,8 @@ fn every_repo_theme_derives_its_own_palette(#[case] name: &str, #[case] source: 
     let c = file.colors;
     let colors = Colors::derive(&ThemeBase {
         background: c.background,
+        muted_foreground: c.muted_foreground,
         foreground: c.foreground,
-        bright_foreground: c.bright_foreground,
         accent: c.accent,
         green: c.green,
         yellow: c.yellow,

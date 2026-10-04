@@ -7,14 +7,13 @@ use kernel::{
             KeyContext,
             KeyOverride,
             KeyValidationError,
-            Keymap,
             KeymapOverrides,
         },
         overlay::Overlay,
         workspace::Workspace,
     },
     message::{Message, PlaybackRequest},
-    update::keymap::lookup::route,
+    update::keymap::{bindings::Keymap, lookup::route},
 };
 use rstest::rstest;
 

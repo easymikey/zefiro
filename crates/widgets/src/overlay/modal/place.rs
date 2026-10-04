@@ -4,14 +4,18 @@ use ratatui::{
     widgets::{Block, Padding},
 };
 
-use crate::overlay::modal::frame::Hint;
-
 const BORDER_CELLS: Cells = Cells(2);
 const PADDING_X: Cells = Cells(1);
 const PADDING_TOP: Cells = Cells(0);
 const HINT_ROWS: Cells = Cells(1);
 pub(crate) const LIST_SCREEN_MARGIN: Cells = Cells(2);
 pub(crate) const DIALOG_SCREEN_MARGIN: Cells = Cells(4);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Hint {
+    Present,
+    Absent,
+}
 
 fn hint_rows_for(hint: Hint) -> Cells {
     match hint {

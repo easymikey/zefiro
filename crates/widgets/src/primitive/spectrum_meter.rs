@@ -16,12 +16,11 @@ fn spectrum_row_fraction(row: u16, total_rows: u16) -> f32 {
 pub(crate) fn lines(
     fill: &braille::MeterFill<'_>,
     color_at: impl Fn(f32) -> Color,
-    buffers: &mut braille::BrailleBuffers,
 ) -> Vec<Line<'static>> {
-    let spectrum_rows = buffers.paint_meter(fill);
+    let spectrum_rows = braille::meter_rows(fill);
     let spectrum_total_rows = u16::try_from(spectrum_rows.len()).unwrap_or(u16::MAX);
     spectrum_rows
-        .iter()
+        .into_iter()
         .enumerate()
         .map(|(row, glyphs)| {
             let t = spectrum_row_fraction(
@@ -29,7 +28,7 @@ pub(crate) fn lines(
                 spectrum_total_rows,
             );
             let color = color_at(t);
-            line([text(glyphs.clone()).fg(color)])
+            line([text(glyphs).fg(color)])
         })
         .collect()
 }

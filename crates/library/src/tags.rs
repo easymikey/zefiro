@@ -1,11 +1,12 @@
 use std::{borrow::Cow, path::Path, sync::Arc};
 
 use kernel::{
-    domain::track::{Decibels, Track},
+    domain::track::{Decibels, Hertz, Kbps, Track},
     message::LibrarySubject,
 };
 use lofty::{
     config::ParseOptions,
+    error::FileParseError,
     file::TaggedFile,
     prelude::{AudioFile, TaggedFileExt},
     probe::Probe,
@@ -44,8 +45,8 @@ pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
     let tag = main_tag(&tagged);
     let audio_format = kernel::domain::track::AudioFormat {
         format: Some(format!("{:?}", tagged.file_type())),
-        sample_rate_hz: properties.sample_rate(),
-        bitrate_kbps: properties.audio_bitrate(),
+        sample_rate: properties.sample_rate().map(Hertz),
+        bitrate: properties.audio_bitrate().map(Kbps),
         bits_per_sample: properties.bit_depth(),
         channels: properties.channels(),
         replay_gain: tag
@@ -95,12 +96,11 @@ fn parse_replay_gain(raw: &str) -> Option<Decibels> {
         .map(Decibels)
 }
 
-#[must_use]
-pub fn embedded_cover(path: &Path) -> Option<Vec<u8>> {
-    let tagged = Probe::open(path).ok()?.read().ok()?;
-    let tag = main_tag(&tagged)?;
-    let picture = tag.pictures().first()?;
-    Some(picture.data().to_vec())
+pub fn embedded_cover(path: &Path) -> Result<Option<Vec<u8>>, FileParseError> {
+    let tagged = Probe::open(path)?.read()?;
+    Ok(main_tag(&tagged)
+        .and_then(|tag| tag.pictures().first())
+        .map(|picture| picture.data().to_vec()))
 }
 
 #[cfg(test)]
@@ -155,9 +155,9 @@ mod tests {
     }
 
     #[test]
-    fn embedded_cover_of_a_nonexistent_file_is_none() {
+    fn embedded_cover_of_a_nonexistent_file_is_an_error() {
         let result = embedded_cover(std::path::Path::new("/nonexistent.mp3"));
-        assert_eq!(result, None);
+        assert!(result.is_err(), "{result:?}");
     }
 
     fn minimal_flac_with_cover(picture_data: &[u8]) -> Vec<u8> {
@@ -208,6 +208,6 @@ mod tests {
 
         let result = embedded_cover(&path);
 
-        assert_eq!(result, Some(b"cover-bytes".to_vec()));
+        assert_eq!(result.unwrap(), Some(b"cover-bytes".to_vec()));
     }
 }

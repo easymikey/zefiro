@@ -1,12 +1,6 @@
 use std::{borrow::Cow, time::Duration};
 
-use kernel::domain::{
-    appearance::Rgb,
-    geometry::{Cells, Pixels},
-    player::Player,
-    time::Moment,
-};
-use num_traits::ToPrimitive;
+use kernel::domain::{geometry::Cells, player::Player, time::Moment};
 use ratatui::{
     style::Color,
     text::{Line, Span},
@@ -14,7 +8,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    pixels::numeric::floor,
+    pixels::numeric::{dimension_f32, floor},
     primitive::{
         chip::{self, ChipStyle},
         glyphs,
@@ -24,25 +18,6 @@ use crate::{
     repaint::{ProgressScale, next_progress_step},
     theme::active_theme::{ActiveTheme, ProgressStyle},
 };
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ProgressBar {
-    pub height: Pixels,
-    pub radius: Option<Pixels>,
-    pub fill: Option<Rgb>,
-    pub groove: Option<Rgb>,
-}
-
-impl Default for ProgressBar {
-    fn default() -> Self {
-        Self {
-            height: Pixels(4),
-            radius: None,
-            fill: None,
-            groove: None,
-        }
-    }
-}
 
 const FULL_RUN: &str = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
 const EMPTY_RUN: &str = "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────";
@@ -98,17 +73,17 @@ fn repeat_glyph(
 }
 
 #[must_use]
-pub(crate) fn fill(spec: &BarFill, fill: Color, track: Color) -> Line<'static> {
-    let width_f32 = spec.width.to_f32().unwrap_or(f32::MAX);
+pub(crate) fn fill(spec: &BarFill, fill: Color, groove: Color) -> Line<'static> {
+    let width_f32 = dimension_f32(spec.width);
     let exact = spec.fraction.clamp(0.0, 1.0) * width_f32;
     let whole = floor::<usize>(exact);
-    let whole_f32 = whole.to_f32().unwrap_or(f32::MAX);
+    let whole_f32 = dimension_f32(whole);
     let rounds_up = exact - whole_f32 >= 0.5 && whole < spec.width;
     let used = whole + usize::from(rounds_up);
     let partial = rounds_up.then_some(spec.partial).flatten();
     let solid = used.saturating_sub(usize::from(partial.is_some()));
     let filled = repeat_glyph(spec.filled_glyph, spec.filled_run, solid);
-    let groove = repeat_glyph(
+    let empty = repeat_glyph(
         spec.groove_glyph,
         spec.groove_run,
         spec.width.saturating_sub(used),
@@ -117,7 +92,7 @@ pub(crate) fn fill(spec: &BarFill, fill: Color, track: Color) -> Line<'static> {
         [
             Some(text(filled).fg(fill)),
             partial.map(|glyph| text(glyph).fg(fill)),
-            Some(text(groove).fg(track)),
+            Some(text(empty).fg(groove)),
         ]
         .into_iter()
         .flatten(),
@@ -178,13 +153,13 @@ pub(crate) fn hud_progress_line(
         return fill(
             &BarFill::progress(input.fraction, input.row_width),
             colors.bar.fill,
-            colors.bar.track,
+            colors.bar.groove,
         );
     }
     let bar = fill(
         &BarFill::progress(input.fraction, bar_width),
         colors.bar.fill,
-        colors.bar.track,
+        colors.bar.groove,
     );
     Line::from_iter(
         bar.spans
@@ -328,7 +303,7 @@ mod tests {
             &HudProgressStyle {
                 bar: ProgressStyle {
                     fill: Color::Red,
-                    track: Color::Black,
+                    groove: Color::Black,
                 },
                 chip: ChipStyle {
                     border: Color::Black,

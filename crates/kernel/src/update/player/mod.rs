@@ -1,26 +1,18 @@
+mod effects;
 pub mod events;
 mod requests;
+pub mod stamp;
 
 use std::{sync::Arc, time::Duration};
 
 use crate::{
-    cmd::{
-        AudioCmd,
-        Cmd,
-        Cue,
-        Effect,
-        LibraryCmd,
-        MacosCmd,
-        PlaybackChange,
-        TrackLoad,
-    },
+    cmd::{AudioCmd, Cmd, Effect, MacosCmd, TrackLoad},
     domain::{
-        history::HistoryEntry,
+        cue::{Cue, PlaybackChange},
         player::{AbLoop, PausedBy, Player},
         playlist::Playlist,
         revision::{Revision, Revisions},
         settings::Settings,
-        speed::Speed,
         time::Moment,
         track::{Track, TrackRef},
         transport::{PRELOAD_LEAD, Transport},
@@ -28,45 +20,15 @@ use crate::{
     },
     message::{AudioError, Timer},
     update::{
-        audio,
         machine::{Machine, Unhandled},
-        player::events::{Lookahead, next_decision},
+        player::{
+            effects::handover_effects,
+            events::{Lookahead, next_decision},
+            stamp::{Anchor, Stamp, StartOrigin},
+        },
+        successor::successor,
     },
 };
-
-#[derive(Debug, Clone, Copy)]
-pub struct Anchor {
-    pub since: Moment,
-    pub speed: Speed,
-}
-
-impl Anchor {
-    pub(crate) fn at(transport: &Transport, now: Moment) -> Self {
-        Anchor {
-            since: now,
-            speed: transport.speed,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Stamp {
-    pub anchor: Anchor,
-    pub revision: Revision,
-}
-
-impl Stamp {
-    pub(crate) fn pending(
-        transport: &Transport,
-        revisions: &Revisions,
-        now: Moment,
-    ) -> Self {
-        Stamp {
-            anchor: Anchor::at(transport, now),
-            revision: revisions.effects.next(),
-        }
-    }
-}
 
 pub(crate) struct PlaybackParts<'a> {
     pub(crate) player: &'a mut Player,
@@ -226,7 +188,7 @@ pub(crate) fn lookahead(playback: &PlaybackParts<'_>, now: Moment) -> Lookahead 
     Lookahead {
         preload_lead: PRELOAD_LEAD,
         ab_loop,
-        next: audio::successor(playback.playlist, playback.queue)
+        next: successor(playback.playlist, playback.queue)
             .track()
             .cloned(),
         duration: duration_of(playback.player),
@@ -266,54 +228,6 @@ pub(crate) fn playing_since(player: &Player) -> Option<Moment> {
 
 pub(crate) fn accumulate(workspace: &mut Workspace, since: Moment, now: Moment) {
     workspace.played_for += now.elapsed_since(since);
-}
-
-#[derive(Clone, Copy)]
-enum StartOrigin {
-    User(Stamp),
-    TrackEnded(Stamp),
-}
-
-impl StartOrigin {
-    fn stamp(self) -> Stamp {
-        match self {
-            StartOrigin::User(stamp) | StartOrigin::TrackEnded(stamp) => stamp,
-        }
-    }
-
-    fn stop(self) -> Option<Effect> {
-        match self {
-            StartOrigin::User(_) => Some(Effect::Audio(AudioCmd::Stop)),
-            StartOrigin::TrackEnded(_) => None,
-        }
-    }
-}
-
-fn seek_effect(target: Duration) -> Cmd {
-    Cmd::from_iter([
-        Effect::Audio(AudioCmd::Seek(target)),
-        Effect::Macos(MacosCmd::SetPosition(target)),
-    ])
-}
-
-fn handover_effects(
-    track: &Arc<Track>,
-    playback: PlaybackChange,
-    now: Moment,
-) -> Vec<Effect> {
-    [
-        Effect::Library(LibraryCmd::AppendHistory(HistoryEntry::from_track(
-            track, now,
-        ))),
-        Effect::Macos(MacosCmd::NowPlaying(Some(Arc::clone(track)))),
-    ]
-    .into_iter()
-    .chain(playback.effects())
-    .chain([
-        Effect::Animate(Cue::TrackChanged),
-        Effect::Animate(Cue::PlaybackChanged(playback)),
-    ])
-    .collect()
 }
 
 pub(crate) fn stopped_effects() -> Cmd {

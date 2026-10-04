@@ -1,5 +1,7 @@
 use kernel::domain::theme::{ThemeChoice, ThemeName};
 
+pub const STOCK_THEME: &str = "noir";
+
 pub const EMBEDDED_THEMES: &[(&str, &str)] = &[
     (
         "terracotta-dark",
@@ -48,7 +50,7 @@ pub fn embedded_theme(name: &str) -> Option<&'static str> {
 pub fn resolve_theme(choice: &ThemeChoice) -> ThemeName {
     match choice {
         ThemeChoice::Named(name) => name.clone(),
-        ThemeChoice::Auto => ThemeName::from_static("noir"),
+        ThemeChoice::Auto => ThemeName::from_static(STOCK_THEME),
     }
 }
 

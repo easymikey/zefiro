@@ -9,6 +9,9 @@ pub struct ViewSpace;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PresetSpace;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RowSpace;
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Index<Space>(usize, PhantomData<Space>);
 
@@ -17,6 +20,8 @@ pub type TrackIndex = Index<TrackSpace>;
 pub type ViewIndex = Index<ViewSpace>;
 
 pub type PresetIndex = Index<PresetSpace>;
+
+pub type RowIndex = Index<RowSpace>;
 
 impl<Space> Index<Space> {
     #[must_use]

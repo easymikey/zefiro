@@ -1,12 +1,13 @@
 use audio::tap::SpectrumTap;
 use kernel::{
-    cmd::{Cue, WindowColorsCmd},
+    cmd::WindowColorsCmd,
     domain::{
+        cue::Cue,
         geometry::{Cells, Pixels},
         model::Model,
         time::Moment,
     },
-    message::Message,
+    message::{Message, PaintError},
 };
 
 use crate::latest::LatestReceivers;
@@ -16,11 +17,7 @@ pub trait Shell {
     type Error: std::error::Error + 'static;
 
     fn input(&mut self, event: Self::Input) -> Reaction;
-    fn effect(
-        &mut self,
-        effect: ShellEffect,
-        animations: kernel::domain::appearance::Animations,
-    );
+    fn effect(&mut self, effect: ShellEffect);
     fn frame_due(&self, frame: &Frame<'_>) -> FrameDue;
     fn paint(&mut self, frame: Frame<'_>) -> Result<Painted, Self::Error>;
 }
@@ -51,13 +48,12 @@ pub struct Frame<'a> {
     pub model: &'a Model,
     pub spectrum: &'a SpectrumTap,
     pub latest: &'a LatestReceivers,
-    pub sleep_deadline: Option<Moment>,
     pub now: Moment,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Painted {
     pub cover_side: Option<Pixels>,
-    pub visible_rows: Option<Cells>,
-    pub toasts: Vec<Message>,
+    pub visible_rows: Cells,
+    pub errors: Vec<PaintError>,
 }

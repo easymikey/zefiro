@@ -1,8 +1,8 @@
 use kernel::domain::{
-    appearance_rows::AppearanceField,
     direction::Direction,
     setting_row::{
         AppearanceControl,
+        AppearanceField,
         AppearanceRow,
         AppearanceSetting,
         Choice,
@@ -57,11 +57,11 @@ fn down_from_last_stays_on_the_last_row() {
 
 #[test]
 fn kept_when_row_still_there() {
-    let appearance_settings = [
+    let appearance_rows = [
         custom(AppearanceField::CoverBrackets),
         custom(AppearanceField::CoverMode),
     ];
-    let rows = SettingRow::all(&appearance_settings);
+    let rows = SettingRow::all(&appearance_rows);
     let cursor = SettingRow::Appearance(AppearanceField::CoverMode);
 
     let kept = cursor.kept(&rows);
@@ -71,8 +71,8 @@ fn kept_when_row_still_there() {
 
 #[test]
 fn falls_back_when_custom_row_gone() {
-    let appearance_settings = [custom(AppearanceField::CoverBrackets)];
-    let rows = SettingRow::all(&appearance_settings);
+    let appearance_rows = [custom(AppearanceField::CoverBrackets)];
+    let rows = SettingRow::all(&appearance_rows);
     let cursor = SettingRow::Appearance(AppearanceField::Animations);
 
     let kept = cursor.kept(&rows);

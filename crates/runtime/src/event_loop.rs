@@ -5,7 +5,7 @@ use kernel::message::Message;
 
 use crate::{
     error::Error,
-    repaint::{Repaint, Source, repaint_after},
+    repaint::{Repaint, RepaintCause, repaint_after},
     runtime::Runtime,
     shell::{Reaction, Shell},
 };
@@ -65,9 +65,8 @@ where
             self.fire_timers(now);
             self.runtime.report_full();
             let effects = self.runtime.take_shell_effects();
-            let animations = self.runtime.animations();
             for effect in effects {
-                self.shell.effect(effect, animations);
+                self.shell.effect(effect);
             }
             if self.runtime.flow().is_break() {
                 return Ok(());
@@ -84,7 +83,7 @@ where
         let wiring = &mut self.runtime.wiring;
         let mut select = Select::new();
         let input_index = select.recv(self.input);
-        let sender_index = select.recv(&wiring.receiver);
+        let sender_index = select.recv(&wiring.mailbox);
         select.recv(&wiring.notified);
         let operation = match deadline {
             Some(deadline) => match select.select_deadline(deadline) {
@@ -101,9 +100,9 @@ where
                 .map_err(|_| Error::InputClosed);
         }
         if index == sender_index {
-            return Ok(operation.recv(&wiring.receiver).map_or_else(
+            return Ok(operation.recv(&wiring.mailbox).map_or_else(
                 |_| {
-                    wiring.receiver = never();
+                    wiring.mailbox = never();
                     None
                 },
                 |message| Some(Arrival::Message(message)),
@@ -122,7 +121,7 @@ where
         let Some(first) = first else {
             return;
         };
-        let queued = self.runtime.wiring.receiver.clone();
+        let queued = self.runtime.wiring.mailbox.clone();
         let notified = self.runtime.wiring.notified.clone();
         let mut inputs = Vec::new();
         let mut messages = Vec::new();
@@ -154,31 +153,31 @@ where
         match arrival {
             Arrival::Input(event) => match self.shell.input(event) {
                 Reaction::Message(message) => {
-                    self.step_and_repaint(message, Source::Input);
+                    self.step_and_repaint(message, RepaintCause::Input);
                 }
                 Reaction::Repaint => {
-                    self.repaint = repaint_after(self.repaint, Source::Input);
+                    self.repaint = repaint_after(self.repaint, RepaintCause::Input);
                 }
                 Reaction::Ignored => {}
             },
             Arrival::Message(message) => {
-                self.step_and_repaint(message, Source::Event);
+                self.step_and_repaint(message, RepaintCause::Event);
             }
             Arrival::Notified => {
-                self.repaint = repaint_after(self.repaint, Source::Event);
+                self.repaint = repaint_after(self.repaint, RepaintCause::Event);
             }
         }
     }
 
-    pub(crate) fn step_and_repaint(&mut self, message: Message, source: Source) {
-        if self.runtime.step(message).is_ok() {
+    pub(crate) fn step_and_repaint(&mut self, message: Message, source: RepaintCause) {
+        if self.runtime.deliver(message).is_ok() {
             self.repaint = repaint_after(self.repaint, source);
         }
     }
 
     fn fire_timers(&mut self, now: Instant) {
         for timer in self.runtime.timers.due(now) {
-            self.step_and_repaint(Message::Elapsed(timer), Source::Event);
+            self.step_and_repaint(Message::Elapsed(timer), RepaintCause::Event);
         }
     }
 }
@@ -199,9 +198,10 @@ pub(crate) mod tests {
     use config::theme_file::{TomlColors, TomlTheme};
     use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
     use kernel::{
-        cmd::{Cue, LibraryCmd, WindowColorsCmd},
+        cmd::{LibraryCmd, WindowColorsCmd},
         domain::{
             appearance::{CoverMode, Rgb},
+            cue::Cue,
             driver::{DriverName, DriverStatus},
             geometry::Pixels,
             player::{Player, Preload},
@@ -217,10 +217,10 @@ pub(crate) mod tests {
     };
 
     use crate::{
+        driver_thread::{Congestion, send},
         error::Error,
         event_loop::EventLoop,
         latest::LatestSenders,
-        outbox::{Congestion, Outbox},
         port::Port,
         runtime::Runtime,
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
@@ -250,7 +250,7 @@ pub(crate) mod tests {
         effects: Vec<ShellEffect>,
         pub(crate) toasts: Vec<Option<String>>,
         order: Vec<Order>,
-        pub(crate) pending_failures: Vec<Message>,
+        pub(crate) pending_failures: Vec<kernel::message::PaintError>,
     }
 
     impl Scripted {
@@ -286,11 +286,7 @@ pub(crate) mod tests {
             }
         }
 
-        fn effect(
-            &mut self,
-            effect: ShellEffect,
-            _animations: kernel::domain::appearance::Animations,
-        ) {
+        fn effect(&mut self, effect: ShellEffect) {
             self.order.push(Order::Effect(effect.clone()));
             self.effects.push(effect);
         }
@@ -315,8 +311,8 @@ pub(crate) mod tests {
                 .expect("the key receiver outlives the shell");
             Ok(Painted {
                 cover_side: self.cover_side,
-                visible_rows: None,
-                toasts: std::mem::take(&mut self.pending_failures),
+                visible_rows: frame.model.workspace.visible_rows,
+                errors: std::mem::take(&mut self.pending_failures),
             })
         }
     }
@@ -333,9 +329,9 @@ pub(crate) mod tests {
 
     pub(crate) fn fixture() -> Fixture {
         let (wiring, library_inbox, writers) = Wiring::idle();
-        let seed = Runtime::seeded(stock_startup());
+        let started = kernel::update::startup::startup(stock_startup());
         Fixture {
-            runtime: Runtime::assemble(seed, wiring, Trace::default()),
+            runtime: Runtime::assemble(started, wiring, Trace::default()).unwrap(),
             library_inbox,
             _writers: writers,
         }
@@ -376,7 +372,9 @@ pub(crate) mod tests {
     fn a_timer_fires_elapsed_with_no_input() {
         let mut fixture = fixture();
         assert_eq!(
-            fixture.runtime.step(Message::Toast(Toast::error("hello"))),
+            fixture
+                .runtime
+                .deliver(Message::Toast(Toast::error("hello"))),
             Ok(())
         );
         let generation = fixture.runtime.model.revisions.toast;
@@ -480,8 +478,8 @@ pub(crate) mod tests {
             name: ThemeName::from_static("test"),
             colors: TomlColors {
                 background: Rgb([0, 0, 0]),
+                muted_foreground: Rgb([255, 255, 255]),
                 foreground: Rgb([255, 255, 255]),
-                bright_foreground: Rgb([255, 255, 255]),
                 accent: Rgb([0, 0, 0]),
                 green: Rgb([0, 0, 0]),
                 yellow: Rgb([0, 0, 0]),
@@ -536,9 +534,10 @@ pub(crate) mod tests {
 
     const CAPACITY: usize = 256;
 
-    fn fill_the_inbox(outbox: &Outbox<LibraryEvent>, full: &Congestion) {
+    fn fill_the_inbox(inbox: &Sender<Message>, full: &Congestion) {
         for _ in 0..CAPACITY {
-            let delivery = outbox.send(LibraryEvent::HistoryLoaded(Vec::new()));
+            let delivery =
+                send(inbox, full, LibraryEvent::HistoryLoaded(Vec::new()).into());
             assert!(matches!(delivery, Ok(())));
         }
         full.raise();
@@ -552,15 +551,8 @@ pub(crate) mod tests {
         event_loop.gather(first);
         event_loop.runtime.report_full();
         let effects = event_loop.runtime.take_shell_effects();
-        let animations = event_loop
-            .runtime
-            .frame(Instant::now())
-            .model
-            .settings
-            .appearance
-            .animations;
         for effect in effects {
-            event_loop.shell.effect(effect, animations);
+            event_loop.shell.effect(effect);
         }
         shell
             .effects
@@ -574,19 +566,18 @@ pub(crate) mod tests {
         let mut fixture = fixture();
         let (inbox, arrivals) = bounded(CAPACITY);
         let full = Congestion::default();
-        let outbox = Outbox::new(inbox.clone(), full.clone());
         let (library_commands, _library_inbox) = unbounded();
-        fixture.runtime.wiring.receiver = arrivals;
-        fixture.runtime.wiring.inbox = inbox;
+        fixture.runtime.wiring.mailbox = arrivals;
+        fixture.runtime.wiring.inbox = inbox.clone();
         fixture.runtime.wiring.ports.library =
             Port::new(DriverName::Library, library_commands, full.clone());
 
-        fill_the_inbox(&outbox, &full);
+        fill_the_inbox(&inbox, &full);
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
 
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
 
-        fill_the_inbox(&outbox, &full);
+        fill_the_inbox(&inbox, &full);
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
         fixture.runtime.drain();
     }

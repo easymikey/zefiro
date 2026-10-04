@@ -22,8 +22,8 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum OverlayContainer<'a> {
-    Pane(Rect),
+pub(crate) enum ModalContainer<'a> {
+    Playlist(Rect),
     Modal(&'a [Rect]),
 }
 
@@ -122,7 +122,7 @@ impl ModalBorder<'_> {
 
 #[derive(Debug)]
 pub(crate) struct ModalPlacement<'a> {
-    pub(crate) container: OverlayContainer<'a>,
+    pub(crate) container: ModalContainer<'a>,
     pub(crate) inset: Inset,
     pub(crate) border_title: Line<'static>,
     pub(crate) modal_title: &'a str,
@@ -159,8 +159,8 @@ impl<'a> ModalPlacement<'a> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> ModalScrollAreas {
         match self.container {
-            OverlayContainer::Pane(pane) => self.border(pane).areas(),
-            OverlayContainer::Modal(avoid) => {
+            ModalContainer::Playlist(pane) => self.border(pane).areas(),
+            ModalContainer::Modal(avoid) => {
                 self.scroll_areas(&self.modal().areas(screen, avoid))
             }
         }
@@ -181,8 +181,8 @@ impl<'a> ModalPlacement<'a> {
     pub(crate) fn paint(&self, areas: ModalScrollAreas, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
         match self.container {
-            OverlayContainer::Pane(pane) => self.border(pane).paint(buffer),
-            OverlayContainer::Modal(avoid) => self.modal().paint(
+            ModalContainer::Playlist(pane) => self.border(pane).paint(buffer),
+            ModalContainer::Modal(avoid) => self.modal().paint(
                 PlacedModal {
                     areas: areas.frame(),
                     bounds: ModalBounds { area, avoid },

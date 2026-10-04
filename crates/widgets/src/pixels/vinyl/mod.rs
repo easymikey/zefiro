@@ -13,8 +13,8 @@ pub(crate) mod layers;
 use art::{VinylArt, prepare_art};
 use geometry::VinylGeometry;
 use layers::{
+    SleeveInput,
     VinylFrameStyle,
-    VinylParts,
     compose_vinyl_frame,
     paint_record_layer,
     paint_sleeve_layer,
@@ -22,6 +22,8 @@ use layers::{
 };
 
 const RECORD_SHADE_FACTOR: f32 = 0.35;
+const GROOVE_COLOR: Rgb = Rgb([0xff, 0xff, 0xff]);
+const SHADOW_COLOR: Rgb = Rgb([0x00, 0x00, 0x00]);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct VinylStyle {
@@ -41,9 +43,9 @@ impl VinylStyle {
             paper: colors.role(Role::Text),
             border: colors.role(Role::Frame),
             record: shade(colors.role(Role::Dim), RECORD_SHADE_FACTOR),
-            groove: Rgb([0xff, 0xff, 0xff]),
+            groove: GROOVE_COLOR,
             accent: colors.role(Role::Accent),
-            shadow: Rgb([0x00, 0x00, 0x00]),
+            shadow: SHADOW_COLOR,
         }
     }
 
@@ -62,8 +64,7 @@ impl VinylStyle {
 
 #[derive(Debug)]
 struct Memo<K, V> {
-    key: Option<K>,
-    remembered: Option<V>,
+    entry: Option<(K, V)>,
 }
 
 impl<K: PartialEq, V> Default for Memo<K, V> {
@@ -75,18 +76,16 @@ impl<K: PartialEq, V> Default for Memo<K, V> {
 impl<K: PartialEq, V> Memo<K, V> {
     #[must_use]
     const fn new() -> Self {
-        Self {
-            key: None,
-            remembered: None,
-        }
+        Self { entry: None }
     }
 
     fn cached_or_drawn(&mut self, key: K, f: impl FnOnce() -> V) -> &V {
-        if self.key.as_ref() != Some(&key) {
-            self.key = Some(key);
-            self.remembered = None;
-        }
-        &*self.remembered.get_or_insert_with(f)
+        let entry = self
+            .entry
+            .take()
+            .filter(|(remembered, _)| *remembered == key)
+            .unwrap_or_else(|| (key, f()));
+        &self.entry.insert(entry).1
     }
 }
 
@@ -138,7 +137,7 @@ impl VinylCache {
                 || paint_record_layer(style),
             )
             .as_ref();
-        let parts = VinylParts { style, art };
+        let parts = SleeveInput { style, art };
         let sleeve = self
             .sleeve
             .cached_or_drawn(
@@ -156,19 +155,6 @@ impl VinylCache {
             _ => solid_fallback(geometry.width_px, geometry.height_px),
         })
     }
-}
-
-#[cfg(test)]
-pub(crate) fn compose_uncached(parts: &VinylParts<'_>) -> RgbaImage {
-    let geometry = VinylGeometry::new(parts.style.size_px);
-
-    let Some(record) = paint_record_layer(parts.style) else {
-        return solid_fallback(geometry.width_px, geometry.height_px);
-    };
-    let Some(sleeve) = paint_sleeve_layer(parts) else {
-        return solid_fallback(geometry.width_px, geometry.height_px);
-    };
-    compose_vinyl_frame(&record, &sleeve, parts)
 }
 
 #[cfg(test)]
@@ -201,25 +187,18 @@ mod tests {
             VinylCache,
             VinylCacheKey,
             VinylStyle,
-            art::{VinylArt, prepare_art},
-            compose_uncached,
             geometry,
             geometry::{VINYL_LAYOUT, canvas_aspect_ratio},
-            layers::{VinylFrameStyle, VinylParts},
             test_support::synthetic_art,
         },
     };
 
     const SIZE_PX: u32 = 96;
 
-    fn parts_for(art: Option<&VinylArt>) -> VinylParts<'_> {
-        VinylParts {
-            style: VinylFrameStyle {
-                size_px: 64,
-                colors: VinylStyle::fixture(),
-            },
-            art,
-        }
+    fn composed(art: Option<&image::RgbaImage>) -> image::RgbaImage {
+        VinylCache::default()
+            .compose(key(None, Revision::default()), art)
+            .clone()
     }
 
     fn expected_peek_px(size_px: u32) -> u32 {
@@ -234,20 +213,14 @@ mod tests {
 
     #[test]
     fn canvas_size_is_size_px_plus_peek_wide_and_size_px_tall() {
-        let art = synthetic_art(32);
-        let prepared = prepare_art(&art, 64);
-        let parts = parts_for(Some(&prepared));
-        let image = compose_uncached(&parts);
-        let peek = expected_peek_px(64);
-        assert_eq!(image.dimensions(), (64 + peek, 64));
+        let image = composed(Some(&synthetic_art(32)));
+        let peek = expected_peek_px(SIZE_PX);
+        assert_eq!(image.dimensions(), (SIZE_PX + peek, SIZE_PX));
     }
 
     #[test]
     fn canvas_aspect_ratio_matches_rendered_size() {
-        let art = synthetic_art(32);
-        let prepared = prepare_art(&art, 64);
-        let parts = parts_for(Some(&prepared));
-        let image = compose_uncached(&parts);
+        let image = composed(Some(&synthetic_art(32)));
         let (width, height) = image.dimensions();
         let rendered_ratio = f64::from(width) / f64::from(height);
         assert!((rendered_ratio - f64::from(canvas_aspect_ratio())).abs() < 0.02);
@@ -256,20 +229,18 @@ mod tests {
     #[test]
     fn same_input_renders_identical_bytes() {
         let art = synthetic_art(32);
-        let prepared = prepare_art(&art, 64);
-        let parts = parts_for(Some(&prepared));
 
         assert_eq!(
-            compose_uncached(&parts).into_raw(),
-            compose_uncached(&parts).into_raw()
+            composed(Some(&art)).into_raw(),
+            composed(Some(&art)).into_raw()
         );
     }
 
     #[test]
     fn no_cover_renders_without_panicking() {
-        let image = compose_uncached(&parts_for(None));
-        let peek = expected_peek_px(64);
-        assert_eq!(image.dimensions(), (64 + peek, 64));
+        let image = composed(None);
+        let peek = expected_peek_px(SIZE_PX);
+        assert_eq!(image.dimensions(), (SIZE_PX + peek, SIZE_PX));
     }
 
     fn key(path: Option<PathBuf>, theme_revision: Revision) -> VinylCacheKey {

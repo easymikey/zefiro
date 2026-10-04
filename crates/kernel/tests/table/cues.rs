@@ -1,9 +1,10 @@
 use std::time::Duration;
 
 use kernel::{
-    cmd::{Cmd, Cue, Effect, PlaybackChange},
+    cmd::{Cmd, Effect},
     domain::{
         bounded::Bounded,
+        cue::{Cue, PlaybackChange},
         direction::Direction,
         index::ViewIndex,
         model::Model,
@@ -33,7 +34,7 @@ use crate::support::{
     model_with_tracks,
     playing_model,
     router::moon_library_scanned,
-    step::update,
+    update::update,
 };
 
 fn cues(model: &mut Model, messages: Vec<Message>) -> Vec<Cue> {

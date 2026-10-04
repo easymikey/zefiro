@@ -7,8 +7,10 @@ use kernel::{
 
 use crate::{dirs::LibraryDirs, error::Error};
 
+const FAVORITES_FILE_NAME: &str = "favorites.json";
+
 pub(crate) fn save(dirs: &LibraryDirs, favorites: &Favorites) -> Result<(), Error> {
-    let path = dirs.data_dir.join("favorites.json");
+    let path = dirs.data_dir.join(FAVORITES_FILE_NAME);
     crate::files::create_parent_dir(&path)
         .map_err(Error::io(LibrarySubject::Favorites, &path))?;
     let list: BTreeSet<&PathBuf> = favorites
@@ -25,7 +27,7 @@ pub(crate) fn save(dirs: &LibraryDirs, favorites: &Favorites) -> Result<(), Erro
 }
 
 pub(crate) fn load(dirs: &LibraryDirs) -> Result<Favorites, Error> {
-    let path = dirs.data_dir.join("favorites.json");
+    let path = dirs.data_dir.join(FAVORITES_FILE_NAME);
     let read = crate::files::read_if_present(&path);
     let Some(content) = read.map_err(Error::io(LibrarySubject::Favorites, &path))?
     else {
@@ -47,7 +49,11 @@ mod tests {
     #[test]
     fn saved_favorites_load_back_and_a_second_save_overwrites_the_first() {
         let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs::under(directory.path());
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
 
         assert_eq!(favorites::load(&dirs).unwrap(), Favorites::default());
 
@@ -59,7 +65,8 @@ mod tests {
         favorites::save(&dirs, &first).unwrap();
         assert_eq!(favorites::load(&dirs).unwrap(), first);
         let raw =
-            std::fs::read_to_string(dirs.data_dir.join("favorites.json")).unwrap();
+            std::fs::read_to_string(dirs.data_dir.join(favorites::FAVORITES_FILE_NAME))
+                .unwrap();
         insta::assert_snapshot!(raw);
 
         let second: Favorites = [TrackRef::Local("/music/c.flac".into())]

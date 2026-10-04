@@ -1,12 +1,11 @@
 use std::fmt;
 
-use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
     domain::{device::ListedDevice, revision::Revision, transport::StreamError},
     message::AudioError,
 };
 
-use crate::{deck::source::TrackDecoder, engine::message::AudioMessage, error::Error};
+use crate::{deck::source::TrackDecoder, error::Error};
 
 pub enum DeckEvent {
     OutputLost(StreamError),
@@ -20,18 +19,6 @@ pub enum DeckEvent {
     },
     DevicesListed(Result<Vec<ListedDevice>, AudioError>),
     Woke(Revision),
-}
-
-impl DeckEvent {
-    pub(crate) fn wake(
-        self,
-        sender: &Sender<AudioMessage>,
-    ) -> Result<(), TrySendError<AudioMessage>> {
-        match sender.try_send(AudioMessage::Deck(self)) {
-            Err(TrySendError::Disconnected(_)) => Ok(()),
-            sent => sent,
-        }
-    }
 }
 
 impl fmt::Debug for DeckEvent {

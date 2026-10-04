@@ -51,13 +51,6 @@ pub enum Error {
         source: trash::Error,
     },
 
-    #[error("{} {path}: {source}", LibrarySubject::Watch)]
-    Watch {
-        path: PathBuf,
-        #[source]
-        source: notify::Error,
-    },
-
     #[error("no such directory")]
     NoUserDirs,
 }
@@ -101,17 +94,6 @@ fn trash_error(source: &trash::Error) -> IoError {
     }
 }
 
-fn io_error(error: &notify::Error) -> IoError {
-    match &error.kind {
-        notify::ErrorKind::Io(source) => source.kind().into(),
-        notify::ErrorKind::PathNotFound => IoError::Missing,
-        notify::ErrorKind::Generic(_)
-        | notify::ErrorKind::WatchNotFound
-        | notify::ErrorKind::InvalidConfig(_)
-        | notify::ErrorKind::MaxFilesWatch => IoError::Other,
-    }
-}
-
 impl From<&Error> for LibraryError {
     fn from(error: &Error) -> Self {
         match error {
@@ -145,11 +127,6 @@ impl From<&Error> for LibraryError {
                 subject: LibrarySubject::Trash,
                 path: path.clone(),
                 kind: trash_error(source),
-            },
-            Error::Watch { path, source } => LibraryError::File {
-                subject: LibrarySubject::Watch,
-                path: path.clone(),
-                kind: io_error(source),
             },
             Error::NoUserDirs => LibraryError::NoUserDirs,
         }
@@ -225,22 +202,6 @@ mod tests {
         },
         "trash /music/gone.flac: Error during a `trash` operation: Unknown { description: \"no trash service\" }",
         file(LibrarySubject::Trash, "/music/gone.flac", IoError::Other)
-    )]
-    #[case::watch_stalled(
-        Error::Watch {
-            path: "/music".into(),
-            source: notify::Error::generic("stream stalled"),
-        },
-        "the watched folder /music: stream stalled",
-        file(LibrarySubject::Watch, "/music", IoError::Other)
-    )]
-    #[case::watch_missing(
-        Error::Watch {
-            path: "/music".into(),
-            source: notify::Error::path_not_found(),
-        },
-        "the watched folder /music: No path was found.",
-        file(LibrarySubject::Watch, "/music", IoError::Missing)
     )]
     fn errors_render_messages_and_structured_errors(
         #[case] error: Error,

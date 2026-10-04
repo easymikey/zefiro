@@ -11,10 +11,10 @@ use crossbeam_channel::{Sender, bounded};
 use error::Error;
 use kernel::{domain::config::Diagnostic, message::PaintError};
 use runtime::{runtime::Runtime, spawn::Spawners};
-use shell::{input::ShellInput, painter::Painter};
+use shell::{painter::Painter, shell_input::ShellInput};
 use startup::Launch;
 use terminal::{
-    capabilities::{Capabilities, ProbeAnswer, TerminalApp, TerminalEnvironment},
+    capabilities::{Capabilities, QueryAnswer, TerminalApp, TerminalEnvironment},
     session::TerminalSession,
 };
 
@@ -29,7 +29,6 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), Error> {
-    terminal::session::install_panic_hook(termination::remember_worker_panic);
     let Launch {
         startup,
         paths,
@@ -48,33 +47,33 @@ fn run_shell(
     theme: config::theme_file::TomlTheme,
     appearance: widgets::appearance::Appearance,
 ) -> Result<(), Error> {
+    terminal::session::install_panic_hook();
     let mut session = TerminalSession::enter()?;
-    let brand = TerminalApp::detect(&TerminalEnvironment::current());
+    let app = TerminalApp::detect(&TerminalEnvironment::current());
     let (input_sender, input_receiver) = bounded(256);
-    let probe_answer = probed(brand, &input_sender)?;
+    let probe_answer = probed(app, &input_sender)?;
     let signal_thread = termination::install(input_sender.clone())?;
     let mut painter =
         Painter::new(session.terminal_mut(), theme, capabilities(probe_answer))
             .with_appearance(appearance);
-    let input_thread = shell::input::spawn_input(input_sender);
+    shell::input::spawn_input(input_sender);
 
-    let outcome = runtime::event_loop::run(runtime, &mut painter, &input_receiver);
+    let run_result = runtime::event_loop::run(runtime, &mut painter, &input_receiver);
     drop(input_receiver);
-    drop(input_thread);
     let teardown = session.restore();
     drop(signal_thread);
-    with_thread_failures(merge_exit_errors(outcome, teardown))
+    with_thread_failures(merge_exit_errors(run_result, teardown))
 }
 
 fn probed(
-    brand: TerminalApp,
+    app: TerminalApp,
     input_sender: &Sender<ShellInput>,
-) -> Result<Option<ProbeAnswer>, Error> {
-    match terminal::capabilities::probe(brand) {
+) -> Result<Option<QueryAnswer>, Error> {
+    match terminal::capabilities::query(app) {
         Ok(answer) => Ok(answer),
         Err(error) => {
             input_sender
-                .send(ShellInput::Error(PaintError::Probe(
+                .send(ShellInput::Error(PaintError::Query(
                     Diagnostic::from_error(&error),
                 )))
                 .map_err(|_closed| runtime::error::Error::InputClosed)?;
@@ -83,7 +82,7 @@ fn probed(
     }
 }
 
-fn capabilities(probe_answer: Option<ProbeAnswer>) -> Capabilities {
+fn capabilities(probe_answer: Option<QueryAnswer>) -> Capabilities {
     let found = Capabilities::from_environment(&TerminalEnvironment::current());
     match probe_answer {
         Some(answer) => Capabilities {
@@ -108,10 +107,10 @@ fn with_thread_failures(result: Result<(), Error>) -> Result<(), Error> {
 }
 
 fn merge_exit_errors(
-    outcome: Result<(), runtime::error::Error>,
+    run_result: Result<(), runtime::error::Error>,
     teardown: Result<(), std::io::Error>,
 ) -> Result<(), Error> {
-    match (outcome, teardown) {
+    match (run_result, teardown) {
         (Ok(()), Ok(())) => Ok(()),
         (Ok(()), Err(teardown_error)) => {
             Err(terminal::error::Error::Teardown(teardown_error).into())

@@ -6,7 +6,7 @@ Tests use `rstest` (fixtures and `#[case]` tables) and `insta` (snapshot asserti
 
 ## One integration binary per crate
 
-Each crate with integration tests has exactly one: `tests/main.rs`, which declares the tiers as top-level modules: `mod support;` (shared fixtures, no tests), `mod unit;`, `mod table;` (`rstest` `#[case]` tables of (state, message) rows) and, in `kernel`, `mod compile_fail;` (see below). A test file is a module under its tier directory (`tests/unit/timers.rs`), so its tests are named by tier and module (`unit::timers::…`) and the tier is the filter:
+Each crate with integration tests has one: `tests/main.rs`. The one exception is `macos`, which also has `tests/main_loop.rs`, declared in its `Cargo.toml` with `harness = false` because it must own the main thread. `tests/main.rs` declares the tiers as top-level modules: `mod support;` (shared fixtures, no tests), `mod unit;`, `mod table;` (`rstest` `#[case]` tables of (state, message) rows) and, in `kernel`, `mod compile_fail;` (see below). A test file is a module under its tier directory (`tests/unit/timers.rs`), so its tests are named by tier and module (`unit::timers::…`) and the tier is the filter:
 
 ```
 cargo test -p kernel --test main unit::timers::    # one module

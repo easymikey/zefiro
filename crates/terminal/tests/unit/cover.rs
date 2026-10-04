@@ -20,14 +20,13 @@ use widgets::{
         CrossfadePermit,
     },
     screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
-    toast::ToastAreas,
 };
 
 use crate::unit::support::{Scenery, playing_model};
 
-fn cover(path: &str, pixel: Rgba<u8>) -> CoverImage {
+fn cover(title: &str, pixel: Rgba<u8>) -> CoverImage {
     CoverImage {
-        path: PathBuf::from(path),
+        path: PathBuf::from(format!("/music/{title}.mp3")),
         image: Arc::new(RgbaImage::from_pixel(4, 4, pixel)),
     }
 }
@@ -90,7 +89,7 @@ fn a_decoded_cover_is_placed_as_an_image() {
     sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
-    pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
 
     let art =
         pixels.refresh(&sources.scene(), parts(layout, CrossfadePermit::Withheld));
@@ -107,7 +106,7 @@ fn an_off_style_never_shows_the_cover() {
     sources.model.settings.appearance.cover_mode = CoverMode::Off;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
-    pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
 
     let art =
         pixels.refresh(&sources.scene(), parts(layout, CrossfadePermit::Withheld));
@@ -135,7 +134,7 @@ fn a_vinyl_style_with_no_cover_rect_is_missing() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
-    pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
 
     let art = pixels.refresh(
         &sources.scene(),
@@ -181,7 +180,7 @@ fn switching_from_plain_to_vinyl_and_back_keeps_showing_the_plain_image() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
-    pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
 
     sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     let first =
@@ -249,7 +248,7 @@ fn reusing_the_same_path_and_rect_stays_an_image_across_frames() {
     sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
-    pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
 
     pixels.refresh(&sources.scene(), parts(layout, CrossfadePermit::Withheld));
     let art =
@@ -259,19 +258,20 @@ fn reusing_the_same_path_and_rect_stays_an_image_across_frames() {
 
 #[test]
 fn an_allowed_track_change_crossfades_over_time() {
-    let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
+    let mut sources = Scenery::new(playing_model("first", 200, 50));
     sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
-    pixels.set_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("first", Rgba([200, 10, 10, 255])));
     pixels.refresh(
         &sources.scene_at(Duration::ZERO),
         parts(layout, CrossfadePermit::Withheld),
     );
 
-    pixels.set_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
+    sources.model.player = playing_model("second", 200, 50).player;
+    pixels.set_cover(cover("second", Rgba([10, 10, 200, 255])));
     let mid = pixels.refresh(
         &sources.scene_at(Duration::from_millis(50)),
         parts(layout, CrossfadePermit::Allowed),
@@ -298,19 +298,20 @@ fn no_cover_reports_a_still_motion() {
 
 #[test]
 fn an_allowed_new_path_reports_crossfading() {
-    let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
+    let mut sources = Scenery::new(playing_model("first", 200, 50));
     sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
-    pixels.set_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("first", Rgba([200, 10, 10, 255])));
     pixels.refresh(
         &sources.scene_at(Duration::ZERO),
         parts(layout, CrossfadePermit::Withheld),
     );
 
-    pixels.set_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
+    sources.model.player = playing_model("second", 200, 50).player;
+    pixels.set_cover(cover("second", Rgba([10, 10, 200, 255])));
     pixels.refresh(
         &sources.scene_at(Duration::from_millis(1)),
         parts(layout, CrossfadePermit::Allowed),
@@ -324,19 +325,20 @@ fn an_allowed_new_path_reports_crossfading() {
 
 #[test]
 fn a_withheld_new_path_stays_still() {
-    let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
+    let mut sources = Scenery::new(playing_model("first", 200, 50));
     sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
-    pixels.set_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("first", Rgba([200, 10, 10, 255])));
     pixels.refresh(
         &sources.scene_at(Duration::ZERO),
         parts(layout, CrossfadePermit::Withheld),
     );
 
-    pixels.set_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
+    sources.model.player = playing_model("second", 200, 50).player;
+    pixels.set_cover(cover("second", Rgba([10, 10, 200, 255])));
     pixels.refresh(
         &sources.scene_at(Duration::from_millis(1)),
         parts(layout, CrossfadePermit::Withheld),
@@ -350,19 +352,20 @@ fn a_withheld_new_path_stays_still() {
 
 #[test]
 fn a_crossfade_reports_crossfading_until_a_paint_settles_it() {
-    let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
+    let mut sources = Scenery::new(playing_model("first", 200, 50));
     sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
-    pixels.set_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("first", Rgba([200, 10, 10, 255])));
     pixels.refresh(
         &sources.scene_at(Duration::ZERO),
         parts(layout, CrossfadePermit::Withheld),
     );
 
-    pixels.set_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
+    sources.model.player = playing_model("second", 200, 50).player;
+    pixels.set_cover(cover("second", Rgba([10, 10, 200, 255])));
     pixels.refresh(
         &sources.scene_at(Duration::from_millis(1)),
         parts(layout, CrossfadePermit::Allowed),
@@ -378,13 +381,45 @@ fn a_crossfade_reports_crossfading_until_a_paint_settles_it() {
     assert_eq!(pixels.cover_motion(elapsed), CoverMotion::Still);
 }
 
+#[rstest]
+#[case::off(CoverMode::Off)]
+#[case::vinyl(CoverMode::Vinyl)]
+#[case::milkdrop(CoverMode::Milkdrop)]
+fn a_mode_switch_mid_crossfade_ends_still(#[case] next: CoverMode) {
+    let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
+    sources.model.settings.appearance.cover_mode = CoverMode::Plain;
+    sources.model.settings.appearance.animations = Animations::On;
+    let mut pixels = CoverPainter::new(Picker::halfblocks());
+    let layout = layout_with_cover(Some(cover_rect()));
+
+    pixels.set_cover(cover("first.mp3", Rgba([200, 10, 10, 255])));
+    pixels.refresh(
+        &sources.scene_at(Duration::ZERO),
+        parts(layout, CrossfadePermit::Withheld),
+    );
+    pixels.set_cover(cover("second.mp3", Rgba([10, 10, 200, 255])));
+    pixels.refresh(
+        &sources.scene_at(Duration::from_millis(1)),
+        parts(layout, CrossfadePermit::Allowed),
+    );
+
+    sources.model.settings.appearance.cover_mode = next;
+    let elapsed = Duration::from_millis(1) + crossfade_duration();
+    pixels.refresh(
+        &sources.scene_at(elapsed),
+        parts(layout, CrossfadePermit::Withheld),
+    );
+
+    assert_eq!(pixels.cover_motion(elapsed), CoverMotion::Still);
+}
+
 #[test]
 fn a_wider_rect_forces_a_rebuild_without_a_crossfade() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
-    pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
+    pixels.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
 
     pixels.refresh(
         &sources.scene(),
@@ -451,16 +486,17 @@ fn a_theme_change_with_no_wash_staged_installs_the_new_image_at_once() {
 
 #[test]
 fn a_vinyl_rebuild_with_permission_on_a_new_path_crossfades_then_settles() {
-    let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
+    let mut sources = Scenery::new(playing_model("first", 200, 50));
     sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
     sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(Rect::new(0, 0, 10, 10)));
     let allowed = parts(layout, CrossfadePermit::Allowed);
 
-    pixels.set_cover(cover("a.jpg", Rgba([200, 100, 50, 255])));
+    pixels.set_cover(cover("first", Rgba([200, 100, 50, 255])));
     pixels.refresh(&sources.scene(), allowed);
-    pixels.set_cover(cover("b.jpg", Rgba([200, 100, 50, 255])));
+    sources.model.player = playing_model("second", 200, 50).player;
+    pixels.set_cover(cover("second", Rgba([200, 100, 50, 255])));
     pixels.refresh(&sources.scene(), allowed);
     assert_eq!(pixels.cover_motion(Duration::ZERO), CoverMotion::Animating);
     assert_eq!(
@@ -477,15 +513,16 @@ fn a_vinyl_rebuild_with_permission_on_a_new_path_crossfades_then_settles() {
 
 #[test]
 fn a_vinyl_rebuild_without_permission_never_crossfades() {
-    let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
+    let mut sources = Scenery::new(playing_model("first", 200, 50));
     sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
     sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(Rect::new(0, 0, 10, 10)));
 
-    pixels.set_cover(cover("a.jpg", Rgba([200, 100, 50, 255])));
+    pixels.set_cover(cover("first", Rgba([200, 100, 50, 255])));
     pixels.refresh(&sources.scene(), parts(layout, CrossfadePermit::Allowed));
-    pixels.set_cover(cover("b.jpg", Rgba([200, 100, 50, 255])));
+    sources.model.player = playing_model("second", 200, 50).player;
+    pixels.set_cover(cover("second", Rgba([200, 100, 50, 255])));
     pixels.refresh(&sources.scene(), parts(layout, CrossfadePermit::Withheld));
     assert_eq!(pixels.cover_motion(Duration::ZERO), CoverMotion::Still);
 }
@@ -496,7 +533,7 @@ fn a_vinyl_rebuild_for_a_new_rect_on_the_same_path_never_crossfades() {
     sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
     sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
-    pixels.set_cover(cover("a.jpg", Rgba([200, 100, 50, 255])));
+    pixels.set_cover(cover("moon-river", Rgba([200, 100, 50, 255])));
 
     let narrow = layout_with_cover(Some(Rect::new(0, 0, 10, 10)));
     pixels.refresh(&sources.scene(), parts(narrow, CrossfadePermit::Allowed));
@@ -517,10 +554,7 @@ fn a_toast_overlapping_the_cover_rect_hides_it(
     sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let mut layout = layout_with_cover(Some(cover_rect()));
-    layout.toast = toast.map(|rect| ToastAreas {
-        outer: rect,
-        painted: rect,
-    });
+    layout.toast = toast;
     pixels.refresh(&sources.scene(), parts(layout, CrossfadePermit::Withheld));
 
     let mut buffer = Buffer::empty(cover_rect());

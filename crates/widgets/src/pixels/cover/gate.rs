@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use kernel::{
-    cmd::{Cmd, Cue},
+    cmd::Cmd,
     update::machine::{Machine, Unhandled},
 };
 
@@ -32,12 +32,7 @@ pub enum CrossfadeGateMessage {
 }
 
 impl CrossfadeGate {
-    pub fn permit(&mut self, cues: &[Cue], track: Option<&Path>) -> CrossfadePermit {
-        if cues.contains(&Cue::TrackChanged) {
-            self.settle(CrossfadeGateMessage::TrackChanged(
-                track.map(Path::to_path_buf),
-            ));
-        }
+    pub fn permit(&mut self) -> CrossfadePermit {
         match self.transition(CrossfadeGateMessage::PermitTaken) {
             Ok(cmd) => cmd
                 .effects()
@@ -55,7 +50,7 @@ impl CrossfadeGate {
         });
     }
 
-    fn settle(&mut self, message: CrossfadeGateMessage) {
+    pub fn settle(&mut self, message: CrossfadeGateMessage) {
         let effects = match self.transition(message) {
             Ok(cmd) => cmd.effects().count(),
             Err(Unhandled) => 0,
@@ -112,7 +107,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use kernel::{
-        cmd::{Cmd, Cue},
+        cmd::Cmd,
         update::machine::{Machine, Unhandled},
     };
     use rstest::rstest;
@@ -227,25 +222,36 @@ mod tests {
         assert_eq!(pending, CrossfadeGate::None);
     }
 
+    fn changed(path: &str) -> CrossfadeGateMessage {
+        CrossfadeGateMessage::TrackChanged(Some(PathBuf::from(path)))
+    }
+
     #[test]
-    fn a_track_change_cue_with_a_ready_cover_withholds_the_permit() {
+    fn a_track_change_with_a_ready_cover_withholds_the_permit() {
         let mut gate = ready("/music/old.jpg");
+        gate.settle(changed("/music/new.jpg"));
 
-        let permit =
-            gate.permit(&[Cue::TrackChanged], Some(Path::new("/music/new.jpg")));
-
-        assert_eq!(permit, CrossfadePermit::Withheld);
+        assert_eq!(gate.permit(), CrossfadePermit::Withheld);
         assert_eq!(gate, awaiting("/music/new.jpg"));
+    }
+
+    #[test]
+    fn a_cover_arriving_in_the_same_frame_as_the_track_change_allows_the_permit() {
+        let mut gate = ready("/music/old.jpg");
+        gate.settle(changed("/music/new.jpg"));
+        gate.cover_arrived(Path::new("/music/new.jpg"), CoverArrival::Decoded);
+
+        assert_eq!(gate.permit(), CrossfadePermit::Allowed);
     }
 
     #[test]
     fn the_cover_of_the_changed_track_arriving_allows_the_next_permit_once() {
         let mut gate = CrossfadeGate::None;
-        let track = Path::new("/music/new.jpg");
-        gate.permit(&[Cue::TrackChanged], Some(track));
-        gate.cover_arrived(track, CoverArrival::Decoded);
+        gate.settle(changed("/music/new.jpg"));
+        gate.permit();
+        gate.cover_arrived(Path::new("/music/new.jpg"), CoverArrival::Decoded);
 
-        assert_eq!(gate.permit(&[], Some(track)), CrossfadePermit::Allowed);
-        assert_eq!(gate.permit(&[], Some(track)), CrossfadePermit::Withheld);
+        assert_eq!(gate.permit(), CrossfadePermit::Allowed);
+        assert_eq!(gate.permit(), CrossfadePermit::Withheld);
     }
 }

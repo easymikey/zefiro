@@ -3,7 +3,7 @@ source: crates/config/src/config_file.rs
 assertion_line: 213
 expression: config
 ---
-TomlConfig {
+TomlSettings {
     music_dir: None,
     theme: Auto,
     volume: Percent(

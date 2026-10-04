@@ -10,15 +10,17 @@ pub(crate) enum Repaint {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Source {
+pub(crate) enum RepaintCause {
     Input,
     Event,
 }
 
-pub(crate) fn repaint_after(current: Repaint, source: Source) -> Repaint {
+pub(crate) fn repaint_after(current: Repaint, source: RepaintCause) -> Repaint {
     match (current, source) {
-        (_, Source::Input) | (Repaint::Now, Source::Event) => Repaint::Now,
-        (Repaint::Settled | Repaint::NextFrame, Source::Event) => Repaint::NextFrame,
+        (_, RepaintCause::Input) | (Repaint::Now, RepaintCause::Event) => Repaint::Now,
+        (Repaint::Settled | Repaint::NextFrame, RepaintCause::Event) => {
+            Repaint::NextFrame
+        }
     }
 }
 
@@ -26,21 +28,25 @@ pub(crate) fn repaint_after(current: Repaint, source: Source) -> Repaint {
 mod tests {
     use rstest::rstest;
 
-    use crate::repaint::{Repaint, Source, repaint_after};
+    use crate::repaint::{Repaint, RepaintCause, repaint_after};
 
     #[rstest]
-    #[case::settled_input_is_now(Repaint::Settled, Source::Input, Repaint::Now)]
-    #[case::settled_fact_waits(Repaint::Settled, Source::Event, Repaint::NextFrame)]
-    #[case::frame_input_is_now(Repaint::NextFrame, Source::Input, Repaint::Now)]
-    #[case::now_fact_stays_now(Repaint::Now, Source::Event, Repaint::Now)]
+    #[case::settled_input_is_now(Repaint::Settled, RepaintCause::Input, Repaint::Now)]
+    #[case::settled_fact_waits(
+        Repaint::Settled,
+        RepaintCause::Event,
+        Repaint::NextFrame
+    )]
+    #[case::frame_input_is_now(Repaint::NextFrame, RepaintCause::Input, Repaint::Now)]
+    #[case::now_fact_stays_now(Repaint::Now, RepaintCause::Event, Repaint::Now)]
     #[case::frame_fact_stays_frame(
         Repaint::NextFrame,
-        Source::Event,
+        RepaintCause::Event,
         Repaint::NextFrame
     )]
     fn repaint_after_escalates_by_source_and_current(
         #[case] current: Repaint,
-        #[case] source: Source,
+        #[case] source: RepaintCause,
         #[case] expected: Repaint,
     ) {
         assert_eq!(repaint_after(current, source), expected);

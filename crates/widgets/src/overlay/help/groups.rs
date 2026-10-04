@@ -1,6 +1,12 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, time::Duration};
 
-use kernel::{domain::keymap::Action, update::keymap::chord::KeyBinding};
+use kernel::{
+    domain::{
+        keymap::Action,
+        transport::{SEEK_LARGE, SEEK_MEDIUM, SEEK_SMALL},
+    },
+    update::keymap::chord::KeyBinding,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HelpRow {
@@ -21,77 +27,94 @@ pub(crate) fn small_count_u16(count: usize) -> u16 {
     u16::try_from(count).unwrap_or(u16::MAX)
 }
 
+#[derive(Clone, Copy)]
+enum HelpLabel {
+    Text(&'static str),
+    Seek(&'static str, Duration),
+}
+
+impl HelpLabel {
+    fn text(self) -> Cow<'static, str> {
+        match self {
+            HelpLabel::Text(text) => Cow::Borrowed(text),
+            HelpLabel::Seek(verb, by) => {
+                Cow::Owned(format!("{verb} {}s", by.as_secs()))
+            }
+        }
+    }
+}
+
 struct HelpGroupEntry {
     title: &'static str,
-    actions: &'static [(Action, &'static str)],
+    actions: &'static [(Action, HelpLabel)],
 }
 
 #[rustfmt::skip]
-const PLAYBACK_ACTIONS: &[(Action, &str)] = &[
-    (Action::PlayPause, "Play / pause"),
-    (Action::Next, "Next track"),
-    (Action::Previous, "Previous track"),
-    (Action::SeekBack, "Seek back 10s"),
-    (Action::SeekForward, "Seek forward 10s"),
-    (Action::SeekBackShort, "Seek back 5s"),
-    (Action::SeekForwardShort, "Seek forward 5s"),
-    (Action::SeekBackLong, "Seek back 30s"),
-    (Action::SeekForwardLong, "Seek forward 30s"),
-    (Action::VolumeUp, "Volume up"),
-    (Action::VolumeDown, "Volume down"),
-    (Action::Shuffle, "Toggle shuffle"),
-    (Action::Repeat, "Cycle repeat"),
-    (Action::SleepTimer, "Sleep timer"),
-    (Action::AbRepeat, "A-B repeat"),
-    (Action::SpeedDown, "Speed down"),
-    (Action::SpeedUp, "Speed up"),
-    (Action::JumpToTime, "Jump to time"),
-    (Action::SeekTenth(0), "Seek to 0×10%"),
-    (Action::SeekTenth(1), "Seek to 1×10%"),
-    (Action::SeekTenth(2), "Seek to 2×10%"),
-    (Action::SeekTenth(3), "Seek to 3×10%"),
-    (Action::SeekTenth(4), "Seek to 4×10%"),
-    (Action::SeekTenth(5), "Seek to 5×10%"),
-    (Action::SeekTenth(6), "Seek to 6×10%"),
-    (Action::SeekTenth(7), "Seek to 7×10%"),
-    (Action::SeekTenth(8), "Seek to 8×10%"),
-    (Action::SeekTenth(9), "Seek to 9×10%"),
+const PLAYBACK_ACTIONS: &[(Action, HelpLabel)] = &[
+    (Action::PlayPause, HelpLabel::Text("Play / pause")),
+    (Action::Next, HelpLabel::Text("Next track")),
+    (Action::Previous, HelpLabel::Text("Previous track")),
+    (Action::SeekBack, HelpLabel::Seek("Seek back", SEEK_MEDIUM)),
+    (Action::SeekForward, HelpLabel::Seek("Seek forward", SEEK_MEDIUM)),
+    (Action::SeekBackShort, HelpLabel::Seek("Seek back", SEEK_SMALL)),
+    (Action::SeekForwardShort, HelpLabel::Seek("Seek forward", SEEK_SMALL)),
+    (Action::SeekBackLong, HelpLabel::Seek("Seek back", SEEK_LARGE)),
+    (Action::SeekForwardLong, HelpLabel::Seek("Seek forward", SEEK_LARGE)),
+    (Action::VolumeUp, HelpLabel::Text("Volume up")),
+    (Action::VolumeDown, HelpLabel::Text("Volume down")),
+    (Action::Shuffle, HelpLabel::Text("Toggle shuffle")),
+    (Action::Repeat, HelpLabel::Text("Cycle repeat")),
+    (Action::SleepTimer, HelpLabel::Text("Sleep timer")),
+    (Action::AbRepeat, HelpLabel::Text("A-B repeat")),
+    (Action::SpeedDown, HelpLabel::Text("Speed down")),
+    (Action::SpeedUp, HelpLabel::Text("Speed up")),
+    (Action::JumpToTime, HelpLabel::Text("Jump to time")),
+    (Action::SeekTenth(0), HelpLabel::Text("Seek to 0×10%")),
+    (Action::SeekTenth(1), HelpLabel::Text("Seek to 1×10%")),
+    (Action::SeekTenth(2), HelpLabel::Text("Seek to 2×10%")),
+    (Action::SeekTenth(3), HelpLabel::Text("Seek to 3×10%")),
+    (Action::SeekTenth(4), HelpLabel::Text("Seek to 4×10%")),
+    (Action::SeekTenth(5), HelpLabel::Text("Seek to 5×10%")),
+    (Action::SeekTenth(6), HelpLabel::Text("Seek to 6×10%")),
+    (Action::SeekTenth(7), HelpLabel::Text("Seek to 7×10%")),
+    (Action::SeekTenth(8), HelpLabel::Text("Seek to 8×10%")),
+    (Action::SeekTenth(9), HelpLabel::Text("Seek to 9×10%")),
 ];
 
 #[rustfmt::skip]
-const NAVIGATION_ACTIONS: &[(Action, &str)] = &[
-    (Action::Down, "Down"),
-    (Action::Up, "Up"),
-    (Action::Top, "Top"),
-    (Action::Bottom, "Bottom"),
-    (Action::PageDown, "Page down"),
-    (Action::PageUp, "Page up"),
-    (Action::PlaySelected, "Play selected"),
+const NAVIGATION_ACTIONS: &[(Action, HelpLabel)] = &[
+    (Action::Down, HelpLabel::Text("Down")),
+    (Action::Up, HelpLabel::Text("Up")),
+    (Action::Top, HelpLabel::Text("Top")),
+    (Action::Bottom, HelpLabel::Text("Bottom")),
+    (Action::PageDown, HelpLabel::Text("Page down")),
+    (Action::PageUp, HelpLabel::Text("Page up")),
+    (Action::PlaySelected, HelpLabel::Text("Play selected")),
 ];
 
 #[rustfmt::skip]
-const PLAYLIST_ACTIONS: &[(Action, &str)] = &[
-    (Action::Enqueue, "Queue"),
-    (Action::PlayNext, "Play next"),
-    (Action::Dequeue, "Remove from queue"),
-    (Action::QueueMoveUp, "Move up in queue"),
-    (Action::QueueMoveDown, "Move down in queue"),
-    (Action::CycleSort, "Cycle sort"),
-    (Action::Favorite, "Favorite"),
-    (Action::Delete, "Delete (asks first)"),
-    (Action::SavePlaylist, "Save playlist"),
-    (Action::FullScan, "Rescan"),
-    (Action::TrackDetails, "Track info"),
+const PLAYLIST_ACTIONS: &[(Action, HelpLabel)] = &[
+    (Action::Enqueue, HelpLabel::Text("Queue")),
+    (Action::PlayNext, HelpLabel::Text("Play next")),
+    (Action::Dequeue, HelpLabel::Text("Remove from queue")),
+    (Action::QueueMoveUp, HelpLabel::Text("Move up in queue")),
+    (Action::QueueMoveDown, HelpLabel::Text("Move down in queue")),
+    (Action::CycleSort, HelpLabel::Text("Cycle sort")),
+    (Action::Favorite, HelpLabel::Text("Favorite")),
+    (Action::Delete, HelpLabel::Text("Delete (asks first)")),
+    (Action::SavePlaylist, HelpLabel::Text("Save playlist")),
+    (Action::FullScan, HelpLabel::Text("Rescan")),
+    (Action::TrackDetails, HelpLabel::Text("Track info")),
 ];
 
 #[rustfmt::skip]
-const GENERAL_ACTIONS: &[(Action, &str)] = &[
-    (Action::Search, "Find"),
-    (Action::History, "History"),
-    (Action::Settings, "Settings"),
-    (Action::MusicDir, "Library folder"),
-    (Action::Help, "Toggle this help"),
-    (Action::Quit, "Quit"),
+const GENERAL_ACTIONS: &[(Action, HelpLabel)] = &[
+    (Action::Search, HelpLabel::Text("Find")),
+    (Action::History, HelpLabel::Text("History")),
+    (Action::Settings, HelpLabel::Text("Settings")),
+    (Action::MusicDir, HelpLabel::Text("Library folder")),
+    (Action::Help, HelpLabel::Text("Toggle this help")),
+    (Action::Quit, HelpLabel::Text("Quit")),
 ];
 
 const HELP_GROUPS: [HelpGroupEntry; 4] = [
@@ -136,7 +159,7 @@ fn continues_digit_run(previous: &str, current: &str) -> bool {
             .is_some_and(|(previous, current)| current == previous.saturating_add(1))
 }
 
-fn collapse_digit_runs(rows: &[(String, &'static str)]) -> Vec<HelpRow> {
+fn collapse_digit_runs(rows: &[(String, Cow<'static, str>)]) -> Vec<HelpRow> {
     rows.chunk_by(|(previous, _), (current, _)| continues_digit_run(previous, current))
         .flat_map(|run| match run {
             [(first_chord, first_help), .., (last_chord, _)] => vec![HelpRow {
@@ -147,7 +170,7 @@ fn collapse_digit_runs(rows: &[(String, &'static str)]) -> Vec<HelpRow> {
                 .iter()
                 .map(|(chord, help)| HelpRow {
                     chord: chord.clone(),
-                    label: Cow::Borrowed(*help),
+                    label: help.clone(),
                 })
                 .collect(),
         })
@@ -164,10 +187,12 @@ pub(crate) struct HelpGroups {
 impl HelpGroups {
     pub(crate) fn new(bindings: &[KeyBinding]) -> Self {
         let make = |spec: &HelpGroupEntry| {
-            let rows: Vec<(String, &'static str)> = spec
+            let rows: Vec<(String, Cow<'static, str>)> = spec
                 .actions
                 .iter()
-                .map(|(action, help)| (chords_for_action(bindings, *action), *help))
+                .map(|(action, help)| {
+                    (chords_for_action(bindings, *action), help.text())
+                })
                 .collect();
             HelpGroup {
                 title: spec.title,
@@ -192,10 +217,10 @@ mod tests {
 
     use crate::overlay::help::groups::{HelpRow, collapse_digit_runs};
 
-    fn rows(pairs: &[(&str, &'static str)]) -> Vec<(String, &'static str)> {
+    fn rows(pairs: &[(&str, &'static str)]) -> Vec<(String, Cow<'static, str>)> {
         pairs
             .iter()
-            .map(|(chord, help)| ((*chord).to_string(), *help))
+            .map(|(chord, help)| ((*chord).to_string(), Cow::Borrowed(*help)))
             .collect()
     }
 

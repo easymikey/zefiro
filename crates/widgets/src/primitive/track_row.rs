@@ -1,4 +1,4 @@
-use kernel::domain::geometry::Cells;
+use kernel::{cmd::Playback, domain::geometry::Cells};
 use ratatui::{
     style::{Color, Style},
     text::Line,
@@ -6,7 +6,6 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    Playing,
     primitive::{
         chip,
         marker::{
@@ -34,11 +33,11 @@ pub(crate) enum Selected {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct TrackRowView<'a> {
+pub(crate) struct TrackRow<'a> {
     pub(crate) title: &'a str,
     pub(crate) selected: Selected,
     pub(crate) favorite: Favorite,
-    pub(crate) playing: Playing,
+    pub(crate) playing: Playback,
     pub(crate) queued: Option<QueuePosition>,
     pub(crate) row_width: Cells,
 }
@@ -66,10 +65,10 @@ impl TrackRowStyle {
 }
 
 #[must_use]
-pub(crate) fn track_row_line(
-    view: &TrackRowView<'_>,
+pub(crate) fn track_row_line<'a>(
+    view: &TrackRow<'a>,
     style: TrackRowStyle,
-) -> Line<'static> {
+) -> Line<'a> {
     let favorite_width = usize::from(FAVORITE_COLUMNS);
     let playing_width = usize::from(PLAYING_COLUMNS);
     let fav = favorite_marker(view.favorite);
@@ -86,7 +85,7 @@ pub(crate) fn track_row_line(
             .saturating_sub(chip.width())
             .saturating_sub(CHIP_GAP)
     };
-    let title = truncate(view.title, title_width).into_owned();
+    let title = truncate(view.title, title_width);
     let gap = if chip.is_empty() || title.is_empty() {
         0
     } else {
@@ -109,14 +108,15 @@ pub(crate) fn track_row_line(
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::geometry::Cells;
+    use std::borrow::Cow;
+
+    use kernel::{cmd::Playback, domain::geometry::Cells};
     use unicode_width::UnicodeWidthStr;
 
     use crate::{
-        Playing,
         primitive::{
             marker::{Favorite, MARKERS_WIDTH, QueuePosition},
-            track_row::{Selected, TrackRowStyle, TrackRowView, track_row_line},
+            track_row::{Selected, TrackRow, TrackRowStyle, track_row_line},
         },
         test_support::noir,
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
@@ -126,12 +126,12 @@ mod tests {
         TrackRowStyle::from_theme(&ActiveTheme::new(&noir(), ColorDepth::TrueColor))
     }
 
-    fn base_props(title: &str, row_width: Cells) -> TrackRowView<'_> {
-        TrackRowView {
+    fn base_props(title: &str, row_width: Cells) -> TrackRow<'_> {
+        TrackRow {
             title,
             selected: Selected::No,
             favorite: Favorite::No,
-            playing: Playing::No,
+            playing: Playback::Paused,
             queued: None,
             row_width,
         }
@@ -151,6 +151,16 @@ mod tests {
         assert_eq!(
             text.get(..fixed_width),
             Some(" ".repeat(fixed_width).as_str())
+        );
+    }
+
+    #[test]
+    fn a_title_that_fits_is_borrowed_not_copied() {
+        let line = track_row_line(&base_props("song", Cells(20)), colors());
+        assert!(
+            line.spans
+                .iter()
+                .any(|span| matches!(&span.content, Cow::Borrowed("song")))
         );
     }
 

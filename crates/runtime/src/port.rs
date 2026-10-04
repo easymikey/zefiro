@@ -1,15 +1,13 @@
 use std::thread::{self, JoinHandle};
 
-use crossbeam_channel::{SendError, Sender, TrySendError};
+use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
     cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd},
     domain::driver::{DriverName, DriverStatus, Drivers},
-    message::Message,
 };
 
 use crate::{
-    driver::DriverThread,
-    outbox::Congestion,
+    driver_thread::{Congestion, DriverThread, SendError},
     trace::{DropReason, TraceEntry},
 };
 
@@ -18,7 +16,7 @@ pub(crate) struct Port<C> {
     driver: DriverName,
     sender: Option<Sender<C>>,
     full: Congestion,
-    handle: Option<JoinHandle<Result<(), SendError<Message>>>>,
+    handle: Option<JoinHandle<Result<(), SendError>>>,
 }
 
 impl<C> Port<C> {
@@ -46,9 +44,7 @@ impl<C> Port<C> {
         self.sender = None;
     }
 
-    pub(crate) fn join(
-        &mut self,
-    ) -> Option<thread::Result<Result<(), SendError<Message>>>> {
+    pub(crate) fn join(&mut self) -> Option<thread::Result<Result<(), SendError>>> {
         self.handle.take().map(JoinHandle::join)
     }
 }
@@ -118,7 +114,7 @@ impl Ports {
     pub(crate) fn join(
         &mut self,
         driver: DriverName,
-    ) -> Option<thread::Result<Result<(), SendError<Message>>>> {
+    ) -> Option<thread::Result<Result<(), SendError>>> {
         match driver {
             DriverName::Audio => self.audio.join(),
             DriverName::Library => self.library.join(),
@@ -138,7 +134,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        outbox::Congestion,
+        driver_thread::Congestion,
         port::Port,
         trace::{DropReason, TraceEntry},
     };

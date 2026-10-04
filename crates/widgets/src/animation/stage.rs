@@ -27,13 +27,6 @@ impl Stage {
         !matches!(self, Stage::Idle)
     }
 
-    fn staged_count(&self) -> usize {
-        match self {
-            Stage::Running(active) => active.len(),
-            Stage::Idle | Stage::Ended => 0,
-        }
-    }
-
     fn push(&mut self, animation: (Animation, Rect)) {
         match self {
             Stage::Running(active) => active.push(animation),
@@ -125,11 +118,6 @@ impl AnimationStage {
     }
 
     #[must_use]
-    pub fn is_running(&self) -> bool {
-        self.stage.is_running()
-    }
-
-    #[must_use]
     pub fn is_animating(&self) -> bool {
         self.stage.is_animating()
     }
@@ -137,11 +125,6 @@ impl AnimationStage {
     #[must_use]
     pub fn timings(&self) -> AnimationTimings {
         self.timings
-    }
-
-    #[must_use]
-    pub fn staged_count(&self) -> usize {
-        self.stage.staged_count()
     }
 
     #[must_use]
@@ -269,7 +252,7 @@ mod tests {
         let stage = Stage::default();
         assert!(!stage.is_running());
         assert!(!stage.is_animating());
-        assert_eq!(stage.staged_count(), 0);
+        assert!(stage.take_active().is_empty());
     }
 
     #[test]
@@ -278,7 +261,7 @@ mod tests {
         stage.push((fade(900), INSIDE));
         assert!(stage.is_running());
         assert!(stage.is_animating());
-        assert_eq!(stage.staged_count(), 1);
+        assert_eq!(stage.take_active().len(), 1);
     }
 
     #[test]
@@ -286,7 +269,7 @@ mod tests {
         let mut stage = Stage::default();
         stage.push((fade(900), INSIDE));
         stage.push((fade(900), INSIDE));
-        assert_eq!(stage.staged_count(), 2);
+        assert_eq!(stage.take_active().len(), 2);
     }
 
     #[test]

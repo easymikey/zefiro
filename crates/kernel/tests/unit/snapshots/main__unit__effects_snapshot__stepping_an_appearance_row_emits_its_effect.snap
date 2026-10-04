@@ -4,7 +4,7 @@ expression: effects(cmd)
 ---
 [
     Config(
-        Setting {
+        SetAppearance {
             field: SpeedChip,
             option: OptionIndex(
                 1,

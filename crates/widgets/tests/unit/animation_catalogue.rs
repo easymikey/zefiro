@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use kernel::cmd::Cue;
+use kernel::domain::cue::Cue;
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -12,13 +12,12 @@ use widgets::animation::{
     catalogue::{
         VolumeShades,
         chip_pulse,
-        delete_burst,
         favorite_pulse,
         modal_in,
         modal_out,
         row_flash,
+        scatter_burst,
         screen_wash,
-        toast_burst,
         toast_slide_in,
         volume_pulse,
         wash_reveal,
@@ -108,22 +107,6 @@ fn toast_slide_in_storyboard() {
     insta::assert_snapshot!(storyboard(&mut stage, slice(|t| t.toast_slide_in, 2)));
 }
 
-#[test]
-fn toast_burst_is_the_same_animation_as_delete_burst() {
-    let timings = AnimationTimings::default();
-    let mut toast_stage = AnimationStage::default();
-    toast_stage.stage(toast_burst(BACKGROUND, CellFilter::All, timings), SCREEN);
-    let mut delete_stage = AnimationStage::default();
-    delete_stage.stage(delete_burst(BACKGROUND, CellFilter::All, timings), SCREEN);
-
-    let mid = slice(|t| t.delete_burst, 2);
-    assert_eq!(
-        step_over(&mut toast_stage, screen_frame, mid),
-        step_over(&mut delete_stage, screen_frame, mid),
-        "toast_burst and delete_burst render identically"
-    );
-}
-
 fn strayed_outside(frame: &Buffer, painted: &Buffer) -> Vec<(u16, u16)> {
     let mut strayed = Vec::new();
     for row in 0..SCREEN.height {
@@ -145,7 +128,7 @@ fn the_arriving_toast_paints_nothing_outside_the_card() {
 
     let painted = screen_frame();
     let mut guard = 0;
-    while stage.is_running() {
+    while stage.is_animating() {
         let frame = step_over(&mut stage, screen_frame, Duration::from_millis(33));
         assert_eq!(
             strayed_outside(&frame, &painted),
@@ -195,12 +178,8 @@ fn every_animation() -> Vec<(String, Animation)> {
         ),
         ("screen_wash".to_string(), screen_wash(BACKGROUND, timings)),
         (
-            "delete_burst".to_string(),
-            delete_burst(BACKGROUND, CellFilter::All, timings),
-        ),
-        (
-            "toast_burst".to_string(),
-            toast_burst(BACKGROUND, CellFilter::All, timings),
+            "scatter_burst".to_string(),
+            scatter_burst(BACKGROUND, CellFilter::All, timings),
         ),
     ]
 }
@@ -210,10 +189,10 @@ fn no_animation_outlives_its_own_timer() {
     for (name, animation) in every_animation() {
         let mut stage = AnimationStage::default();
         stage.stage(animation, SCREEN);
-        for _ in 0..2 {
+        for _ in 0..3 {
             step_over(&mut stage, screen_frame, PAST_THE_END);
         }
-        assert!(!stage.is_running(), "{name} outlived its own timer");
+        assert!(!stage.is_animating(), "{name} outlived its own timer");
     }
 }
 

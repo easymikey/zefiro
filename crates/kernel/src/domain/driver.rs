@@ -1,6 +1,8 @@
+use std::time::Duration;
+
 use strum::{Display, IntoStaticStr};
 
-use crate::domain::supervision::Restarts;
+use crate::domain::time::Moment;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -42,6 +44,26 @@ pub enum DriverStatus {
     Running,
     Dead(DriverError),
     Stopped,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Restarts(Vec<Moment>);
+
+impl Restarts {
+    pub fn record(&mut self, now: Moment) {
+        self.0.push(now);
+        if self.0.len() > usize::from(u8::MAX) {
+            self.0.remove(0);
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn within(&self, window: Duration, now: Moment) -> usize {
+        self.0
+            .iter()
+            .filter(|moment| now.elapsed_since(**moment) < window)
+            .count()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

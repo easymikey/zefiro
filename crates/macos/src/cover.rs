@@ -1,18 +1,12 @@
 #![forbid(unsafe_code)]
 
-use std::{
-    fs,
-    io,
-    iter,
-    path::{Path, PathBuf},
-    ptr::NonNull,
-};
+use std::{iter, path::PathBuf, ptr::NonNull};
 
 use block2::RcBlock;
 use kernel::{
     cmd::Cmd,
     domain::revision::Revision,
-    message::{MacosError, MacosEvent},
+    message::MacosEvent,
     update::machine::{Machine, Unhandled},
 };
 use objc2::{AllocAnyThread, rc::Retained};
@@ -21,65 +15,7 @@ use objc2_core_foundation::CGSize;
 use objc2_foundation::NSData;
 use objc2_media_player::MPMediaItemArtwork;
 
-use crate::{
-    driver::{MacosEffect, MacosMessage},
-    ffi,
-};
-
-pub(crate) type CoverReader = fn(&Path) -> Option<Vec<u8>>;
-
-const COVER_NAMES: [&str; 6] = [
-    "cover.jpg",
-    "cover.png",
-    "folder.jpg",
-    "folder.png",
-    "front.jpg",
-    "front.png",
-];
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CoverBytes {
-    pub(crate) revision: Revision,
-    pub(crate) bytes: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum MacosJob {
-    ReadCover { track: PathBuf, revision: Revision },
-}
-
-impl MacosJob {
-    #[must_use]
-    pub fn run(self, read: CoverReader) -> MacosMessage {
-        match self {
-            MacosJob::ReadCover { track, revision } => {
-                match cover_bytes(&track, read) {
-                    Ok(bytes) => {
-                        MacosMessage::CoverRead(CoverBytes { revision, bytes })
-                    }
-                    Err(error) => {
-                        MacosMessage::Error(MacosError::Cover(error.kind().into()))
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn cover_bytes(track: &Path, read: CoverReader) -> io::Result<Vec<u8>> {
-    read(track).map_or_else(
-        || folder_cover(track).map_or_else(|| Ok(Vec::new()), fs::read),
-        Ok,
-    )
-}
-
-fn folder_cover(track: &Path) -> Option<PathBuf> {
-    let folder = track.parent()?;
-    COVER_NAMES
-        .iter()
-        .map(|name| folder.join(name))
-        .find(|candidate| candidate.is_file())
-}
+use crate::{effect::MacosEffect, ffi, job::MacosJob, message::CoverBytes};
 
 pub(crate) fn artwork(bytes: &[u8]) -> Option<Retained<MPMediaItemArtwork>> {
     if bytes.is_empty() {
@@ -119,25 +55,29 @@ impl Machine for Cover {
                 });
                 Ok(iter::once(MacosEffect::ClearArtwork).chain(read).collect())
             }
-            CoverMessage::Read(CoverBytes { revision, bytes })
-                if revision == self.revision && !bytes.is_empty() =>
+            CoverMessage::Read(CoverBytes { revision, .. })
+                if revision != self.revision =>
             {
-                Ok([MacosEffect::ShowArtwork(bytes), MacosEffect::Publish]
-                    .into_iter()
-                    .collect())
+                Ok(Cmd::none())
             }
-            CoverMessage::Read(_) => Ok(Cmd::none()),
+            CoverMessage::Read(CoverBytes {
+                bytes: Ok(bytes), ..
+            }) if bytes.is_empty() => Ok(Cmd::none()),
+            CoverMessage::Read(CoverBytes {
+                bytes: Ok(bytes), ..
+            }) => Ok([MacosEffect::ShowArtwork(bytes), MacosEffect::Publish]
+                .into_iter()
+                .collect()),
+            CoverMessage::Read(CoverBytes {
+                bytes: Err(error), ..
+            }) => Ok(Cmd::message(MacosEvent::Error(error))),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        os::unix::fs::PermissionsExt,
-        path::{Path, PathBuf},
-    };
+    use std::{io, path::PathBuf};
 
     use kernel::{
         cmd::Cmd,
@@ -148,92 +88,16 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        cover::{
-            Cover,
-            CoverBytes,
-            CoverMessage,
-            MacosJob,
-            artwork,
-            cover_bytes,
-            folder_cover,
-        },
-        driver::{MacosEffect, MacosMessage},
+        cover::{Cover, CoverMessage, artwork},
+        effect::MacosEffect,
+        job::MacosJob,
+        message::CoverBytes,
     };
-
-    fn embedded(_track: &Path) -> Option<Vec<u8>> {
-        Some(b"embedded".to_vec())
-    }
-
-    fn untagged(_track: &Path) -> Option<Vec<u8>> {
-        None
-    }
-
-    #[test]
-    fn the_cover_beside_the_track_is_found() {
-        let folder = tempfile::tempdir().unwrap();
-        fs::write(folder.path().join("folder.png"), b"png").unwrap();
-        assert_eq!(
-            folder_cover(&folder.path().join("track.flac")),
-            Some(folder.path().join("folder.png"))
-        );
-    }
-
-    #[test]
-    fn the_embedded_cover_wins_over_the_folder_cover() {
-        let folder = tempfile::tempdir().unwrap();
-        fs::write(folder.path().join("cover.jpg"), b"jpg").unwrap();
-        let track = folder.path().join("track.flac");
-        assert_eq!(cover_bytes(&track, embedded).unwrap(), b"embedded".to_vec());
-        assert_eq!(cover_bytes(&track, untagged).unwrap(), b"jpg".to_vec());
-    }
-
-    #[test]
-    fn a_track_without_any_cover_gives_no_cover() {
-        let folder = tempfile::tempdir().unwrap();
-        assert_eq!(
-            cover_bytes(&folder.path().join("track.flac"), untagged).unwrap(),
-            Vec::<u8>::new()
-        );
-    }
-
-    #[test]
-    fn an_unreadable_folder_cover_is_reported() {
-        let folder = tempfile::tempdir().unwrap();
-        let cover = folder.path().join("cover.jpg");
-        fs::write(&cover, b"jpg").unwrap();
-        fs::set_permissions(&cover, fs::Permissions::from_mode(0o000)).unwrap();
-        let job = MacosJob::ReadCover {
-            track: folder.path().join("track.flac"),
-            revision: revision(1),
-        };
-        assert!(matches!(
-            job.run(untagged),
-            MacosMessage::Error(MacosError::Cover(_))
-        ));
-    }
 
     #[test]
     fn undecodable_cover_bytes_give_no_artwork() {
         assert!(artwork(b"not an image").is_none());
         assert!(artwork(b"").is_none());
-    }
-
-    #[test]
-    fn the_cover_job_answers_with_its_revision() {
-        let job = MacosJob::ReadCover {
-            track: PathBuf::from("a.flac"),
-            revision: revision(3),
-        };
-        let MacosMessage::CoverRead(read) = job.run(embedded) else {
-            panic!("a cover job answers with CoverRead");
-        };
-        assert_eq!(
-            read,
-            CoverBytes {
-                revision: revision(3),
-                bytes: b"embedded".to_vec(),
-            }
-        );
     }
 
     fn track(name: &str) -> PathBuf {
@@ -261,7 +125,18 @@ mod tests {
     fn bytes_of(count: u8, bytes: &[u8]) -> CoverMessage {
         CoverMessage::Read(CoverBytes {
             revision: revision(count),
-            bytes: bytes.to_vec(),
+            bytes: Ok(bytes.to_vec()),
+        })
+    }
+
+    fn unreadable() -> MacosError {
+        MacosError::Cover(io::ErrorKind::PermissionDenied.into())
+    }
+
+    fn failed(count: u8) -> CoverMessage {
+        CoverMessage::Read(CoverBytes {
+            revision: revision(count),
+            bytes: Err(unreadable()),
         })
     }
 
@@ -302,6 +177,18 @@ mod tests {
     #[case::a_stale_cover_read_is_ignored(Row {
         cover: holding(Some("b.flac"), 2),
         message: bytes_of(1, b"art"),
+        next: holding(Some("b.flac"), 2),
+        cmd: Cmd::none(),
+    })]
+    #[case::a_failed_read_is_reported(Row {
+        cover: holding(Some("a.flac"), 1),
+        message: failed(1),
+        next: holding(Some("a.flac"), 1),
+        cmd: Cmd::message(MacosEvent::Error(unreadable())),
+    })]
+    #[case::a_stale_failed_read_is_ignored(Row {
+        cover: holding(Some("b.flac"), 2),
+        message: failed(1),
         next: holding(Some("b.flac"), 2),
         cmd: Cmd::none(),
     })]

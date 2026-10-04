@@ -56,10 +56,7 @@ pub(crate) fn truncate_from_left(text: &str, width: usize) -> Cow<'_, str> {
         })
         .last()
         .unwrap_or(text.len());
-    let mut out = String::with_capacity(ELLIPSIS.len_utf8() + text.len() - start);
-    out.push(ELLIPSIS);
-    out.push_str(text.get(start..).unwrap_or(""));
-    Cow::Owned(out)
+    Cow::Owned(format!("{ELLIPSIS}{}", text.get(start..).unwrap_or("")))
 }
 
 #[must_use]

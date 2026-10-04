@@ -1,13 +1,19 @@
 use std::num::NonZeroUsize;
 
-use crate::{
-    cmd::Cue,
-    domain::{
-        appearance_rows::AppearanceField,
-        direction::Direction,
-        theme::ThemeName,
-    },
-};
+use crate::domain::{cue::Cue, direction::Direction, theme::ThemeName};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AppearanceField {
+    Preset,
+    CoverMode,
+    CoverBrackets,
+    FormatChips,
+    SpeedChip,
+    ProgressRemaining,
+    KeyHints,
+    Animations,
+    LayoutMode,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettingRow {

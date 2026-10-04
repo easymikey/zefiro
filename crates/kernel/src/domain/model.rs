@@ -42,7 +42,7 @@ pub struct Model {
     pub history: Vec<HistoryEntry>,
     pub favorites: Favorites,
     pub settings: Settings,
-    pub appearance_settings: Vec<AppearanceSetting>,
+    pub appearance_rows: Vec<AppearanceSetting>,
     pub revisions: Revisions,
     pub themes: Themes,
     pub drivers: Drivers,

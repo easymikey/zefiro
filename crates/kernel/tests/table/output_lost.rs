@@ -1,6 +1,7 @@
 use kernel::{
-    cmd::{AudioCmd, Cmd, Cue, Effect, MacosCmd, Playback, PlaybackChange},
+    cmd::{AudioCmd, Cmd, Effect, MacosCmd, Playback},
     domain::{
+        cue::{Cue, PlaybackChange},
         model::Model,
         player::Player,
         time::Moment,
@@ -14,7 +15,7 @@ use crate::support::{
     first_toast_expiry,
     model_with_tracks,
     playing_model,
-    step::update,
+    update::update,
 };
 
 fn output_lost() -> Message {
@@ -35,7 +36,7 @@ fn lost_while_playing(count: usize) -> Model {
     Cmd::from_iter([
         Effect::Animate(Cue::ToastRaised),
         first_toast_expiry(),
-        Effect::Audio(AudioCmd::Playback(Playback::Paused)),
+        Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
         Effect::Macos(MacosCmd::SetPlayback(Playback::Paused)),
         Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Pause)),
     ]),

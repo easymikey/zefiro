@@ -7,13 +7,6 @@ const CONSECUTIVE_BONUS: i32 = 15;
 const BOUNDARY_BONUS: i32 = 8;
 const POSITION_PENALTY_DIVISOR: i32 = 8;
 
-#[cfg(test)]
-#[must_use]
-fn score(query: &str, haystack: &str) -> Option<i32> {
-    let query_chars: Vec<char> = query.to_lowercase().chars().collect();
-    score_chars(&query_chars, haystack)
-}
-
 #[derive(Default)]
 struct Scoring {
     total: i32,
@@ -128,8 +121,13 @@ mod score_tests {
 
     use crate::{
         domain::track::{AudioFormat, Tags, Track},
-        search::{rank_into, score},
+        search::{rank_into, score_chars},
     };
+
+    fn score(query: &str, haystack: &str) -> Option<i32> {
+        let query_chars: Vec<char> = query.to_lowercase().chars().collect();
+        score_chars(&query_chars, haystack)
+    }
 
     fn ascii_lower() -> impl Strategy<Value = String> {
         proptest::collection::vec(

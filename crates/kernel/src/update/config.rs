@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 
 use crate::{
-    cmd::{Cmd, Cue, Effect, LibraryCmd, ScanMode, WindowColorsCmd},
+    cmd::{Cmd, Effect, LibraryCmd, ScanMode, WindowColorsCmd},
     domain::{
+        appearance::AppearanceSettings,
+        appearance_rows::appearance_rows,
+        cue::Cue,
         overlay::Overlay,
         revision::Revisions,
         setting_row::{AppearanceSetting, SettingRow},
@@ -20,7 +23,7 @@ pub(crate) struct ConfigParts<'a> {
     pub(crate) revisions: &'a mut Revisions,
     pub(crate) settings: &'a mut Settings,
     pub(crate) themes: &'a mut Themes,
-    pub(crate) appearance_settings: &'a mut Vec<AppearanceSetting>,
+    pub(crate) appearance_rows: &'a mut Vec<AppearanceSetting>,
     pub(crate) music_dir: &'a mut PathBuf,
 }
 
@@ -33,7 +36,7 @@ pub(crate) fn update(
         revisions,
         settings,
         themes,
-        appearance_settings,
+        appearance_rows,
         music_dir,
     } = config;
     match event {
@@ -48,6 +51,7 @@ pub(crate) fn update(
         ConfigEvent::ThemeReloaded(name) => Ok(theme_reloaded(revisions, name)),
         ConfigEvent::AppearanceReloaded(appearance) => {
             settings.appearance = appearance;
+            rows_reloaded(workspace, appearance_rows, appearance);
             Ok(Cmd::none())
         }
         ConfigEvent::ThemesLoaded(names) => {
@@ -56,10 +60,6 @@ pub(crate) fn update(
         }
         ConfigEvent::MusicDirReloaded(reloaded) => {
             Ok(music_dir_reloaded(music_dir, revisions, reloaded))
-        }
-        ConfigEvent::AppearanceSettingsReloaded(reloaded) => {
-            appearance_settings_reloaded(workspace, appearance_settings, reloaded);
-            Ok(Cmd::none())
         }
         ConfigEvent::Reloaded(reload) => {
             Ok(workspace.config_reloaded(reload, revisions))
@@ -77,16 +77,16 @@ fn theme_reloaded(revisions: &mut Revisions, name: ThemeName) -> Cmd {
         .then(Cue::ThemeChanged.into())
 }
 
-fn appearance_settings_reloaded(
+fn rows_reloaded(
     workspace: &mut Workspace,
-    appearance_settings: &mut Vec<AppearanceSetting>,
-    reloaded: Vec<AppearanceSetting>,
+    rows: &mut Vec<AppearanceSetting>,
+    appearance: AppearanceSettings,
 ) {
-    *appearance_settings = reloaded;
+    *rows = appearance_rows(appearance);
     let Some(Overlay::Settings(selected)) = &mut workspace.overlay else {
         return;
     };
-    *selected = selected.kept(&SettingRow::all(appearance_settings));
+    *selected = selected.kept(&SettingRow::all(rows));
 }
 
 fn music_dir_reloaded(
@@ -118,7 +118,7 @@ mod tests {
             keymap::{Action, KeyOverride, KeymapOverrides},
             model::Model,
             theme::{ThemeName, Themes},
-            toast::ToastKind,
+            toast::ToastLevel,
         },
         message::ConfigEvent,
         update::{config, config_parts, machine::Unhandled},
@@ -186,7 +186,7 @@ mod tests {
         .unwrap();
 
         let toast = model.workspace.toasts.first().unwrap();
-        assert_eq!(toast.kind, ToastKind::Error);
+        assert_eq!(toast.kind, ToastLevel::Error);
         assert_eq!(
             toast.text.as_deref(),
             Some("Config watch failed: an unknown error")

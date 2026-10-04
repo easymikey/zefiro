@@ -36,7 +36,7 @@ expression: "walked(model, messages)"
         ),
         Cursor {
             index: 0,
-            len: 0,
+            len: 3,
         },
         Cursor {
             index: 0,
@@ -90,7 +90,7 @@ expression: "walked(model, messages)"
         ),
         Cursor {
             index: 0,
-            len: 0,
+            len: 3,
         },
         Cursor {
             index: 0,
@@ -144,7 +144,7 @@ expression: "walked(model, messages)"
         ),
         Cursor {
             index: 0,
-            len: 0,
+            len: 3,
         },
         Cursor {
             index: 0,
@@ -197,7 +197,7 @@ expression: "walked(model, messages)"
         ),
         Cursor {
             index: 0,
-            len: 0,
+            len: 3,
         },
         Cursor {
             index: 0,
@@ -250,7 +250,7 @@ expression: "walked(model, messages)"
         ),
         Cursor {
             index: 0,
-            len: 0,
+            len: 3,
         },
         Cursor {
             index: 0,
@@ -301,7 +301,7 @@ expression: "walked(model, messages)"
         ),
         Cursor {
             index: 0,
-            len: 0,
+            len: 3,
         },
         Cursor {
             index: 0,
@@ -353,7 +353,7 @@ expression: "walked(model, messages)"
         ),
         Cursor {
             index: 0,
-            len: 0,
+            len: 3,
         },
         Cursor {
             index: 0,
@@ -405,7 +405,7 @@ expression: "walked(model, messages)"
         ),
         Cursor {
             index: 0,
-            len: 0,
+            len: 3,
         },
         Cursor {
             index: 0,
@@ -457,7 +457,7 @@ expression: "walked(model, messages)"
         ),
         Cursor {
             index: 0,
-            len: 0,
+            len: 3,
         },
         Cursor {
             index: 0,

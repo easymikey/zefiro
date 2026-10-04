@@ -1,18 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use kernel::{
-    cmd::{
-        AudioCmd,
-        Cmd,
-        CoverJob,
-        Cue,
-        Effect,
-        LibraryCmd,
-        MacosCmd,
-        PlaybackChange,
-        TrackLoad,
-    },
+    cmd::{AudioCmd, Cmd, CoverJob, Effect, LibraryCmd, MacosCmd, TrackLoad},
     domain::{
+        cue::{Cue, PlaybackChange},
         geometry::Pixels,
         history::HistoryEntry,
         player::{PausedBy, Player, Preload},
@@ -25,7 +16,11 @@ use kernel::{
     message::{AudioError, DecodeError},
     update::{
         machine::Unhandled,
-        player::{Anchor, PlayerMessage, Stamp, events::Lookahead},
+        player::{
+            PlayerMessage,
+            events::Lookahead,
+            stamp::{Anchor, Stamp},
+        },
     },
 };
 use rstest::rstest;
@@ -338,18 +333,18 @@ fn player_cell(
 }
 
 #[derive(Debug, Clone, Copy)]
-enum RefusingState {
+enum RefusingPlayer {
     Stopped,
     Loading,
     Paused,
 }
 
-impl RefusingState {
+impl RefusingPlayer {
     fn player(self) -> Player {
         match self {
-            RefusingState::Stopped => Player::Stopped,
-            RefusingState::Loading => loading(track_a()),
-            RefusingState::Paused => paused(track_a(), AT),
+            RefusingPlayer::Stopped => Player::Stopped,
+            RefusingPlayer::Loading => loading(track_a()),
+            RefusingPlayer::Paused => paused(track_a(), AT),
         }
     }
 }
@@ -373,8 +368,12 @@ impl RefusingMessage {
 fn message_is_refused_while_stopped_loading_or_paused(
     #[values(RefusingMessage::Position, RefusingMessage::Ended)]
     message: RefusingMessage,
-    #[values(RefusingState::Stopped, RefusingState::Loading, RefusingState::Paused)]
-    state: RefusingState,
+    #[values(
+        RefusingPlayer::Stopped,
+        RefusingPlayer::Loading,
+        RefusingPlayer::Paused
+    )]
+    state: RefusingPlayer,
 ) {
     cell(state.player(), message.build(), Err(Unhandled));
 }
@@ -400,8 +399,12 @@ impl IdleMessage {
 fn message_changes_nothing_while_stopped_loading_or_paused(
     #[values(IdleMessage::Hold, IdleMessage::Release, IdleMessage::SleepFired)]
     message: IdleMessage,
-    #[values(RefusingState::Stopped, RefusingState::Loading, RefusingState::Paused)]
-    state: RefusingState,
+    #[values(
+        RefusingPlayer::Stopped,
+        RefusingPlayer::Loading,
+        RefusingPlayer::Paused
+    )]
+    state: RefusingPlayer,
 ) {
     cell(
         state.player(),

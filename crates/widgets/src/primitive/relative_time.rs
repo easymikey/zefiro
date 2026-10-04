@@ -1,9 +1,8 @@
 use std::time::Duration;
 
-use kernel::domain::time::Moment;
+use kernel::domain::time::{Moment, SECONDS_PER_MINUTE};
 
 const JUST_NOW_SECONDS: u64 = 60;
-const MINUTE_SECONDS: u64 = 60;
 const HOUR_SECONDS: u64 = 3_600;
 const DAY_SECONDS: u64 = 86_400;
 const WEEK_SECONDS: u64 = 604_800;
@@ -13,8 +12,8 @@ pub(crate) fn format_time(duration: Duration) -> String {
     let total_secs = duration.as_secs();
     let (hours, minutes, seconds) = (
         total_secs / HOUR_SECONDS,
-        (total_secs % HOUR_SECONDS) / MINUTE_SECONDS,
-        total_secs % MINUTE_SECONDS,
+        (total_secs % HOUR_SECONDS) / SECONDS_PER_MINUTE,
+        total_secs % SECONDS_PER_MINUTE,
     );
     if hours > 0 {
         format!("{hours}:{minutes:02}:{seconds:02}")
@@ -35,7 +34,7 @@ pub(crate) fn relative_time(now: Moment, then: Moment) -> String {
         return "just now".to_string();
     }
     if elapsed < HOUR_SECONDS {
-        return format!("{}m ago", elapsed / MINUTE_SECONDS);
+        return format!("{}m ago", elapsed / SECONDS_PER_MINUTE);
     }
     if elapsed < DAY_SECONDS {
         return format!("{}h ago", elapsed / HOUR_SECONDS);

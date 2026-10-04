@@ -27,11 +27,15 @@ Some(
                     format: Some(
                         "Wav",
                     ),
-                    bitrate_kbps: Some(
-                        64,
+                    bitrate: Some(
+                        Kbps(
+                            64,
+                        ),
                     ),
-                    sample_rate_hz: Some(
-                        8000,
+                    sample_rate: Some(
+                        Hertz(
+                            8000,
+                        ),
                     ),
                     bits_per_sample: Some(
                         8,
@@ -66,8 +70,8 @@ Some(
                 },
                 audio_format: AudioFormat {
                     format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
+                    bitrate: None,
+                    sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
                     replay_gain: None,

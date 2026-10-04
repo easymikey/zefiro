@@ -1,6 +1,6 @@
-use num_traits::ToPrimitive;
+use kernel::domain::geometry::Cells;
 
-use crate::pixels::numeric::floor;
+use crate::pixels::numeric::{dimension_f32, floor};
 
 const BASE: u32 = 0x2800;
 
@@ -28,7 +28,7 @@ pub(crate) fn dot_coord(columns: u32) -> u16 {
 const HALF_STEP_BIAS: f32 = 0.001;
 
 fn scaled_dots(level: f32, max_dots: u32) -> u32 {
-    let max_dots = max_dots.to_f32().unwrap_or(f32::MAX);
+    let max_dots = dimension_f32(max_dots);
     floor::<u32>(level * max_dots + 0.5 - HALF_STEP_BIAS)
 }
 
@@ -54,37 +54,24 @@ mod rounding_tests {
 
 #[derive(Debug, Default)]
 pub(crate) struct BrailleCanvas {
-    width_cells: u16,
-    height_cells: u16,
+    width: Cells,
+    height: Cells,
     cells: Vec<u8>,
 }
 
 impl BrailleCanvas {
-    #[cfg(test)]
     #[must_use]
-    pub(crate) fn new(width_cells: u16, height_cells: u16) -> Self {
+    pub(crate) fn new(width: Cells, height: Cells) -> Self {
         Self {
-            width_cells,
-            height_cells,
-            cells: vec![0u8; usize::from(width_cells) * usize::from(height_cells)],
-        }
-    }
-
-    fn resize_and_clear(&mut self, width_cells: u16, height_cells: u16) {
-        let length = usize::from(width_cells) * usize::from(height_cells);
-        if self.width_cells == width_cells && self.height_cells == height_cells {
-            self.cells.iter_mut().for_each(|dot| *dot = 0);
-        } else {
-            self.width_cells = width_cells;
-            self.height_cells = height_cells;
-            self.cells.clear();
-            self.cells.resize(length, 0);
+            width,
+            height,
+            cells: vec![0u8; width.count() * height.count()],
         }
     }
 
     pub(crate) fn set(&mut self, x: u16, y: u16) {
-        let dot_width = self.width_cells * 2;
-        let dot_height = self.height_cells * 4;
+        let dot_width = self.width.0 * 2;
+        let dot_height = self.height.0 * 4;
         if x >= dot_width || y >= dot_height {
             return;
         }
@@ -98,20 +85,18 @@ impl BrailleCanvas {
             return;
         };
 
-        let index =
-            usize::from(cell_y) * usize::from(self.width_cells) + usize::from(cell_x);
+        let index = usize::from(cell_y) * self.width.count() + usize::from(cell_x);
         if let Some(slot) = self.cells.get_mut(index) {
             *slot |= 1 << bit;
         }
     }
 
-    #[cfg(test)]
     #[must_use]
     pub(crate) fn rows(&self) -> Vec<String> {
-        (0..usize::from(self.height_cells))
+        (0..self.height.count())
             .map(|row| {
-                let start = row * usize::from(self.width_cells);
-                let end = start + usize::from(self.width_cells);
+                let start = row * self.width.count();
+                let end = start + self.width.count();
                 self.cells
                     .get(start..end)
                     .unwrap_or(&[])
@@ -120,23 +105,6 @@ impl BrailleCanvas {
                     .collect()
             })
             .collect()
-    }
-
-    fn rows_into(&self, out: &mut Vec<String>) {
-        let height = usize::from(self.height_cells);
-        let width = usize::from(self.width_cells);
-        out.truncate(height);
-        while out.len() < height {
-            out.push(String::new());
-        }
-        for (row, out_row) in out.iter_mut().enumerate() {
-            let start = row * width;
-            let end = start + width;
-            out_row.clear();
-            for &mask in self.cells.get(start..end).unwrap_or(&[]) {
-                out_row.push(glyph_for_mask(mask));
-            }
-        }
     }
 }
 
@@ -170,20 +138,12 @@ fn fill_meter(canvas: &mut BrailleCanvas, fill: &MeterFill<'_>) {
     }
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct BrailleBuffers {
-    canvas: BrailleCanvas,
-    rows: Vec<String>,
-}
-
-impl BrailleBuffers {
-    pub(crate) fn paint_meter(&mut self, fill: &MeterFill<'_>) -> &[String] {
-        self.canvas
-            .resize_and_clear(fill.size.width, fill.size.height);
-        fill_meter(&mut self.canvas, fill);
-        self.canvas.rows_into(&mut self.rows);
-        &self.rows
-    }
+#[must_use]
+pub(crate) fn meter_rows(fill: &MeterFill<'_>) -> Vec<String> {
+    let mut canvas =
+        BrailleCanvas::new(Cells(fill.size.width), Cells(fill.size.height));
+    fill_meter(&mut canvas, fill);
+    canvas.rows()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,11 +161,13 @@ pub(crate) struct MeterFill<'a> {
 
 #[cfg(test)]
 mod tests {
+    use kernel::domain::geometry::Cells;
+
     use crate::braille::BrailleCanvas;
 
     #[test]
     fn empty_canvas_is_blank() {
-        let canvas = BrailleCanvas::new(3, 2);
+        let canvas = BrailleCanvas::new(Cells(3), Cells(2));
         let rows = canvas.rows();
         assert_eq!(rows.len(), 2);
         for row in rows {
@@ -218,21 +180,21 @@ mod tests {
 
     #[test]
     fn single_dot_maps_to_correct_cell_bit() {
-        let mut top_left = BrailleCanvas::new(1, 1);
+        let mut top_left = BrailleCanvas::new(Cells(1), Cells(1));
         top_left.set(0, 0);
         assert_eq!(
             top_left.rows().first().map(String::as_str),
             Some("\u{2801}")
         );
 
-        let mut bottom_right_column = BrailleCanvas::new(1, 1);
+        let mut bottom_right_column = BrailleCanvas::new(Cells(1), Cells(1));
         bottom_right_column.set(1, 3);
         assert_eq!(
             bottom_right_column.rows().first().map(String::as_str),
             Some("\u{2880}")
         );
 
-        let mut bottom_left_column = BrailleCanvas::new(1, 1);
+        let mut bottom_left_column = BrailleCanvas::new(Cells(1), Cells(1));
         bottom_left_column.set(0, 3);
         assert_eq!(
             bottom_left_column.rows().first().map(String::as_str),
@@ -248,7 +210,7 @@ mod tests {
 
     #[test]
     fn full_column_is_full_glyph() {
-        let mut canvas = BrailleCanvas::new(1, 1);
+        let mut canvas = BrailleCanvas::new(Cells(1), Cells(1));
         for y in 0..4 {
             canvas.set(0, y);
             canvas.set(1, y);

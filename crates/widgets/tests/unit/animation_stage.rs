@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use kernel::{cmd::Cue, domain::appearance::Animations};
+use kernel::domain::{appearance::Animations, cue::Cue};
 use ratatui::{buffer::Buffer, layout::Rect};
 use strum::IntoEnumIterator;
 use widgets::{
@@ -50,7 +50,7 @@ pub(crate) fn run_out_over(
 ) -> Buffer {
     let mut last = frame();
     for _ in 0..256 {
-        if !stage.is_running() {
+        if !stage.is_animating() {
             return last;
         }
         last = step_over(stage, frame, Duration::from_millis(33));
@@ -69,20 +69,21 @@ pub(crate) fn moved(before: &Buffer, after: &Buffer, rect: Rect) -> bool {
 fn an_opening_overlay_resolves_and_ends_on_the_painted_colours() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::OverlayOpened], &overlay_backdrop(Some(AREA)));
-    assert!(stage.is_running(), "opening an overlay stages the ring");
+    assert!(stage.is_animating(), "opening an overlay stages the ring");
 
     assert_ne!(step(&mut stage, Duration::ZERO), animation_frame());
     assert_ne!(
         step(&mut stage, slice(|t| t.modal_in, 2)),
         animation_frame()
     );
-    assert!(stage.is_running(), "half way through");
+    assert!(stage.is_animating(), "half way through");
 
     assert_eq!(
         step(&mut stage, slice(|t| t.modal_in, 2)),
         animation_frame()
     );
-    assert!(!stage.is_running(), "a finished animation is dropped");
+    step(&mut stage, Duration::ZERO);
+    assert!(!stage.is_animating(), "a finished animation is dropped");
 }
 
 #[test]
@@ -90,14 +91,16 @@ fn a_closing_overlay_resolves_the_rect_it_vacated() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::OverlayOpened], &overlay_backdrop(Some(AREA)));
     step(&mut stage, whole(|t| t.modal_in));
-    assert!(!stage.is_running(), "the open ring finished");
+    step(&mut stage, Duration::ZERO);
+    assert!(!stage.is_animating(), "the open ring finished");
 
     stage.play(vec![Cue::OverlayClosed], &overlay_backdrop(None));
 
-    assert!(stage.is_running(), "closing stages its own");
+    assert!(stage.is_animating(), "closing stages its own");
     assert_ne!(step(&mut stage, Duration::ZERO), animation_frame());
     assert_eq!(step(&mut stage, whole(|t| t.modal_out)), animation_frame());
-    assert!(!stage.is_running(), "and it ends");
+    step(&mut stage, Duration::ZERO);
+    assert!(!stage.is_animating(), "and it ends");
 }
 
 #[test]
@@ -105,7 +108,7 @@ fn a_frame_without_cues_stages_nothing() {
     let mut stage = AnimationStage::default();
     stage.play(Vec::new(), &overlay_backdrop(Some(AREA)));
 
-    assert!(!stage.is_running());
+    assert!(!stage.is_animating());
 }
 
 #[test]
@@ -113,7 +116,10 @@ fn every_cue_with_animations_off_stages_nothing_and_drops_what_was_running() {
     for cue in Cue::iter() {
         let mut stage = AnimationStage::default();
         stage.play(vec![Cue::OverlayOpened], &overlay_backdrop(Some(AREA)));
-        assert!(stage.is_running(), "sanity: {cue:?} follows a running ring");
+        assert!(
+            stage.is_animating(),
+            "sanity: {cue:?} follows a running ring"
+        );
 
         stage.play(
             vec![cue],
@@ -124,7 +130,7 @@ fn every_cue_with_animations_off_stages_nothing_and_drops_what_was_running() {
         );
 
         assert!(
-            !stage.is_running(),
+            !stage.is_animating(),
             "{cue:?} played while animations are off"
         );
     }
@@ -134,7 +140,7 @@ fn every_cue_with_animations_off_stages_nothing_and_drops_what_was_running() {
 fn elapsed_is_the_clock_delta_while_an_animation_is_running() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::OverlayOpened], &overlay_backdrop(Some(AREA)));
-    assert!(stage.is_running(), "sanity: something needs the delta");
+    assert!(stage.is_animating(), "sanity: something needs the delta");
 
     assert_eq!(
         stage.advance_clock(Duration::from_millis(100)),
@@ -157,7 +163,7 @@ fn an_idle_gap_is_not_charged_to_the_animation_the_next_frame_stages() {
     stage.play(Vec::new(), &overlay_backdrop(None));
     let mut buffer = animation_frame();
     stage.advance(&mut buffer, first);
-    assert!(!stage.is_running(), "sanity: an idle, empty stage");
+    assert!(!stage.is_animating(), "sanity: an idle, empty stage");
 
     let gap = stage.advance_clock(Duration::from_secs(4));
     stage.play(vec![Cue::OverlayOpened], &overlay_backdrop(Some(AREA)));
@@ -166,7 +172,7 @@ fn an_idle_gap_is_not_charged_to_the_animation_the_next_frame_stages() {
     let opened = step(&mut stage, gap);
     assert_ne!(opened, animation_frame(), "the ring is on its first frame");
     assert!(
-        stage.is_running(),
+        stage.is_animating(),
         "an idle gap must not run the transition out inside one frame"
     );
 }
@@ -176,7 +182,7 @@ fn a_track_change_stages_nothing_over_the_card() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::TrackChanged], &pane_backdrop());
 
-    assert!(!stage.is_running(), "the card switches without animating");
+    assert!(!stage.is_animating(), "the card switches without animating");
 }
 
 #[test]
@@ -190,9 +196,10 @@ fn the_same_cue_twice_in_one_frame_stages_it_once() {
     let mut single = AnimationStage::default();
     single.play(vec![Cue::FavoriteToggled], &pane_backdrop());
 
+    let mid = Duration::from_millis(60);
     assert_eq!(
-        doubled.staged_count(),
-        single.staged_count(),
+        step(&mut doubled, mid),
+        step(&mut single, mid),
         "one batch of identical cues is one visible change"
     );
 }
@@ -201,13 +208,15 @@ fn the_same_cue_twice_in_one_frame_stages_it_once() {
 fn a_frame_with_no_cues_leaves_a_running_animation_alone() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::FavoriteToggled], &pane_backdrop());
-    let staged = stage.staged_count();
+    let mut untouched = AnimationStage::default();
+    untouched.play(vec![Cue::FavoriteToggled], &pane_backdrop());
 
     stage.play(Vec::new(), &pane_backdrop());
 
+    let mid = Duration::from_millis(60);
     assert_eq!(
-        stage.staged_count(),
-        staged,
+        step(&mut stage, mid),
+        step(&mut untouched, mid),
         "nothing was cued, nothing changes"
     );
 }
@@ -220,7 +229,7 @@ fn a_cue_with_no_painted_rect_stages_nothing() {
         &quiet_backdrop(),
     );
 
-    assert!(!stage.is_running());
+    assert!(!stage.is_animating());
 }
 
 #[test]
@@ -283,23 +292,23 @@ fn only_the_cover_rect_survives_a_whole_screen_animation() {
 fn a_theme_wash_runs_and_ends_on_the_painted_frame() {
     let mut stage = AnimationStage::default();
     stage.play(Vec::new(), &screen_backdrop());
-    assert!(!stage.is_running(), "an empty library assembles nothing");
+    assert!(!stage.is_animating(), "an empty library assembles nothing");
 
     stage.play(vec![Cue::ThemeChanged], &screen_backdrop());
-    assert!(stage.is_running(), "a new theme washes over the screen");
+    assert!(stage.is_animating(), "a new theme washes over the screen");
     assert_ne!(
         step_over(&mut stage, screen_frame, slice(|t| t.screen_wash, 4)),
         screen_frame()
     );
     assert_eq!(run_out_over(&mut stage, screen_frame), screen_frame());
-    assert!(!stage.is_running());
+    assert!(!stage.is_animating());
 }
 
 #[test]
 fn a_cover_arriving_mid_animation_is_still_protected() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::ThemeChanged], &screen_backdrop());
-    assert!(stage.is_running(), "the wash is under way");
+    assert!(stage.is_animating(), "the wash is under way");
     step_over(&mut stage, screen_frame, slice(|t| t.screen_wash, 4));
 
     stage.play(
@@ -331,9 +340,12 @@ fn the_frame_after_the_last_animation_is_asked_for_so_the_row_it_covered_comes_b
     stage.play(vec![Cue::ToastRaised], &toast_card_backdrop());
     run_out_over(&mut stage, screen_frame);
     stage.play(vec![Cue::ToastDismissed], &toast_card_backdrop());
-    assert!(stage.is_running(), "sanity: the toast leaves with a burst");
+    assert!(
+        stage.is_animating(),
+        "sanity: the toast leaves with a burst"
+    );
 
-    let last = run_out_over(&mut stage, screen_frame);
+    let last = step_over(&mut stage, screen_frame, whole(|t| t.delete_burst));
 
     assert_eq!(last, screen_frame(), "the burst ends on the painted frame");
     assert!(
@@ -357,31 +369,32 @@ fn a_toast_slides_in_and_its_row_comes_back_when_it_expires() {
         vec![Cue::ToastRaised],
         &toast_backdrop(ToastPresence::Shown),
     );
-    assert!(stage.is_running(), "a toast arriving stages a slide");
+    assert!(stage.is_animating(), "a toast arriving stages a slide");
     assert_ne!(step(&mut stage, Duration::ZERO), animation_frame());
     assert_eq!(
         step(&mut stage, whole(|t| t.toast_slide_in)),
         animation_frame()
     );
-    assert!(!stage.is_running());
+    step(&mut stage, Duration::ZERO);
+    assert!(!stage.is_animating());
 
     stage.play(
         vec![Cue::ToastDismissed],
         &toast_backdrop(ToastPresence::Hidden),
     );
-    assert!(stage.is_running(), "a toast expiring bursts apart");
+    assert!(stage.is_animating(), "a toast expiring bursts apart");
     assert_ne!(
         step(&mut stage, slice(|t| t.delete_burst, 2)),
         animation_frame(),
         "halfway out the row is still moving"
     );
     step(&mut stage, whole(|t| t.delete_burst));
-    assert!(!stage.is_running());
     assert_eq!(
         step(&mut stage, Duration::ZERO),
         animation_frame(),
         "the row it covered comes back once the burst is over"
     );
+    assert!(!stage.is_animating());
 }
 
 #[test]
@@ -411,14 +424,15 @@ fn a_second_toast_while_one_is_showing_slides_in_again() {
         &toast_backdrop(ToastPresence::Shown),
     );
     step(&mut stage, whole(|t| t.toast_slide_in));
-    assert!(!stage.is_running(), "sanity: the first slide finished");
+    step(&mut stage, Duration::ZERO);
+    assert!(!stage.is_animating(), "sanity: the first slide finished");
 
     stage.play(
         vec![Cue::ToastRaised],
         &toast_backdrop(ToastPresence::Shown),
     );
 
-    assert!(stage.is_running(), "the replacing toast slides in too");
+    assert!(stage.is_animating(), "the replacing toast slides in too");
 }
 
 #[test]
@@ -441,7 +455,7 @@ fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
     let start = stage.advance_clock(scene.clock);
     stage.play(vec![Cue::ThemeChanged], &backdrop);
     assert!(
-        stage.is_running(),
+        stage.is_animating(),
         "a theme change washes the real frame layout"
     );
 
@@ -451,7 +465,7 @@ fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
     let elapsed = stage.advance_clock(mid);
     stage.advance(&mut buffer, elapsed);
     assert!(
-        stage.is_running(),
+        stage.is_animating(),
         "the wash is still under way midway through, driven only by the scene's clock"
     );
 

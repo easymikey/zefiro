@@ -1,4 +1,4 @@
-use kernel::domain::geometry::Cells;
+use kernel::domain::geometry::{Cells, Pixels};
 use ratatui::layout::Rect;
 
 use crate::{animation::catalogue::wash_reveal, pixels::cover::CoverWash};
@@ -14,7 +14,7 @@ pub fn cover_wash(progress: Option<f32>, screen_width: Cells) -> CoverWash {
 #[must_use]
 pub(crate) fn column_reveal(
     rect: Rect,
-    cell_width_px: u16,
+    cell_width: Pixels,
     wash: CoverWash,
 ) -> Option<impl Fn(u32) -> f32> {
     let CoverWash::Running {
@@ -24,9 +24,9 @@ pub(crate) fn column_reveal(
     else {
         return None;
     };
-    let cell_width_px = u32::from(cell_width_px.max(1));
-    Some(move |x_px: u32| {
-        let offset = u16::try_from(x_px / cell_width_px).unwrap_or(u16::MAX);
+    let cell_width = cell_width.0.max(1);
+    Some(move |x: u32| {
+        let offset = u16::try_from(x / cell_width).unwrap_or(u16::MAX);
         wash_reveal(progress, rect.x.saturating_add(offset), screen_width.0)
     })
 }
@@ -34,7 +34,7 @@ pub(crate) fn column_reveal(
 #[cfg(test)]
 mod tests {
     use image::{Rgba, RgbaImage};
-    use kernel::domain::geometry::Cells;
+    use kernel::domain::geometry::{Cells, Pixels};
     use ratatui::layout::Rect;
 
     use crate::pixels::cover::{
@@ -51,8 +51,8 @@ mod tests {
     }
 
     fn wash_frame(width: u32, rect: Rect, wash: CoverWash) -> RgbaImage {
-        let reveal =
-            column_reveal(rect, 1, wash).expect("a running wash reveals columns");
+        let reveal = column_reveal(rect, Pixels(1), wash)
+            .expect("a running wash reveals columns");
         blend_by_column(&filled(width, OLD_PIXEL), &filled(width, NEW_PIXEL), reveal)
     }
 
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn an_idle_wash_reveals_nothing() {
-        assert!(column_reveal(Rect::default(), 1, CoverWash::Idle).is_none());
+        assert!(column_reveal(Rect::default(), Pixels(1), CoverWash::Idle).is_none());
     }
 
     #[test]

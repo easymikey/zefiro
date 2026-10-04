@@ -1,6 +1,7 @@
 use crate::{
-    cmd::{Cmd, ConfigCmd, ConfigPatch, Cue, Effect},
+    cmd::{Cmd, ConfigCmd, ConfigPatch, Effect},
     domain::{
+        cue::Cue,
         cursor_over::CursorOver,
         overlay::{JumpDigits, MusicDirError, Overlay, SearchQuery, TextEntry},
         playlist::{PlaylistFileName, PlaylistNameError},

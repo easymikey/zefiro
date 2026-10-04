@@ -5,7 +5,6 @@ use kernel::{
     domain::{
         favorites::Favorites,
         history::HistoryEntry,
-        io_error::IoError,
         playlist::PlaylistFileName,
         revision::Revision,
         track::Track,
@@ -14,11 +13,14 @@ use kernel::{
     update::machine::{Machine, Unhandled},
 };
 
+mod cover_requests;
+
 use crate::{
-    cover::{CoverCache, CoverDecoded, CoverDecoding, CoverDecodingMessage},
+    cover::{CoverCache, CoverDecoded, decoding::CoverDecoding},
     dirs::LibraryDirs,
     error::Error,
     job::LibraryJob,
+    message::{LibraryMessage, LibraryTimer},
     watch::{LibraryWatch, LibraryWatchMessage, WatchEffect},
 };
 
@@ -43,46 +45,6 @@ impl<P> std::fmt::Debug for LibraryDriver<P> {
             .field("decoding", &self.decoding)
             .finish_non_exhaustive()
     }
-}
-
-#[derive(Debug)]
-pub enum LibraryMessage {
-    Cmds(Cmds<LibraryCmd>),
-    Changed(Result<(), IoError>),
-    Elapsed(LibraryTimer),
-    CoverDecoded {
-        revision: Revision,
-        decoded: CoverDecoded,
-    },
-    Cached {
-        music_dir: PathBuf,
-        revision: Revision,
-        tracks: Result<Vec<Arc<Track>>, Error>,
-    },
-    Scanned {
-        event: LibraryEvent,
-        skipped: Option<Error>,
-    },
-    Tagged {
-        event: LibraryEvent,
-        skipped: Option<Error>,
-    },
-    Executed {
-        event: LibraryEvent,
-        skipped: Option<Error>,
-    },
-    Error(Error),
-}
-
-impl From<Cmds<LibraryCmd>> for LibraryMessage {
-    fn from(cmds: Cmds<LibraryCmd>) -> Self {
-        LibraryMessage::Cmds(cmds)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LibraryTimer {
-    Debounce,
 }
 
 #[derive(Debug)]
@@ -215,73 +177,6 @@ impl<P> LibraryDriver<P> {
             }),
         }
     }
-
-    fn ask(
-        &mut self,
-        job: CoverJob,
-    ) -> Result<Cmd<LibraryEffect, LibraryEvent>, Unhandled> {
-        if self.asked.as_ref() == Some(&job) {
-            return Err(Unhandled);
-        }
-        let cmd = self.cover(job.clone())?;
-        self.asked = Some(job);
-        Ok(cmd)
-    }
-
-    fn prefetch(&mut self, path: PathBuf) -> Cmd<LibraryEffect, LibraryEvent> {
-        let Some(side) = self.asked.as_ref().map(|asked| asked.side) else {
-            return Cmd::none();
-        };
-        self.cover(CoverJob { path, side })
-            .unwrap_or_else(|Unhandled| Cmd::none())
-    }
-
-    fn cover(
-        &mut self,
-        job: CoverJob,
-    ) -> Result<Cmd<LibraryEffect, LibraryEvent>, Unhandled> {
-        if let Some(decoded) = self.covers.answer(&job) {
-            return Ok(Cmd::effect(LibraryEffect::PublishCover(decoded)));
-        }
-        let revision = self.cover_revision.bump();
-        let started = self
-            .decoding
-            .transition(CoverDecodingMessage::Request { job, revision })?;
-        Ok(self.lift_decoding(started))
-    }
-
-    fn decoded(
-        &mut self,
-        revision: Revision,
-        decoded: CoverDecoded,
-    ) -> Result<Cmd<LibraryEffect, LibraryEvent>, Unhandled> {
-        self.covers.remember(&decoded);
-        let settled = self
-            .decoding
-            .transition(CoverDecodingMessage::Decoded(revision))?;
-        Ok(self
-            .lift_decoding(settled)
-            .then(Cmd::effect(LibraryEffect::PublishCover(decoded))))
-    }
-
-    fn lift_decoding(
-        &mut self,
-        decoding: Cmd<(CoverJob, Revision), LibraryMessage>,
-    ) -> Cmd<LibraryEffect, LibraryEvent> {
-        let (jobs, messages) = decoding.into_parts();
-        let started: Cmd<LibraryEffect, LibraryEvent> = jobs
-            .into_iter()
-            .map(|(job, revision)| {
-                LibraryEffect::Run(LibraryJob::Cover { job, revision })
-            })
-            .collect();
-        messages.into_iter().fold(started, |cmd, told| {
-            cmd.then(
-                self.transition(told)
-                    .unwrap_or_else(|Unhandled| Cmd::none()),
-            )
-        })
-    }
 }
 
 fn cached(
@@ -372,17 +267,12 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        cover::{CoverArt, CoverDecoded},
+        cover::{CoverArt, CoverDecoded, CoverError},
         dirs::LibraryDirs,
-        driver::{
-            DiskEffect,
-            LibraryDriver,
-            LibraryEffect,
-            LibraryMessage,
-            LibraryTimer,
-        },
+        driver::{DiskEffect, LibraryDriver, LibraryEffect},
         error::Error,
         job::LibraryJob,
+        message::{LibraryMessage, LibraryTimer},
     };
 
     fn unpublished(decoded: CoverDecoded) {
@@ -392,7 +282,11 @@ mod tests {
 
     fn driver() -> LibraryDriver<fn(CoverDecoded)> {
         LibraryDriver::new(
-            LibraryDirs::under(Path::new("/data")),
+            LibraryDirs {
+                cache_dir: Path::new("/data").join("cache"),
+                data_dir: Path::new("/data").join("data"),
+                playlists_dir: Path::new("/data").join("playlists"),
+            },
             &["flac"],
             unpublished,
         )
@@ -435,12 +329,34 @@ mod tests {
         LibraryMessage::CoverDecoded {
             revision: (0..issued)
                 .fold(Revision::default(), |revision, _| revision.next()),
-            decoded: CoverDecoded {
+            decoded: Ok(CoverDecoded {
                 path: PathBuf::from(path),
                 side: Pixels(64),
                 art: CoverArt::Missing,
-            },
+            }),
         }
+    }
+
+    fn failed(path: &str, issued: usize) -> LibraryMessage {
+        LibraryMessage::CoverDecoded {
+            revision: (0..issued)
+                .fold(Revision::default(), |revision, _| revision.next()),
+            decoded: Err(CoverError {
+                path: PathBuf::from(path),
+                source: image::ImageError::IoError(std::io::Error::other("no tag")),
+            }),
+        }
+    }
+
+    fn cover_state(driver: &LibraryDriver<fn(CoverDecoded)>) -> String {
+        format!(
+            "{:?} {:?} {:?} {:?} {:?}",
+            driver.watch,
+            driver.decoding,
+            driver.covers,
+            driver.asked,
+            driver.cover_revision
+        )
     }
 
     fn loaded() -> LibraryEvent {
@@ -486,7 +402,6 @@ mod tests {
                 let art = match decoded.art {
                     CoverArt::Image(_) => "image",
                     CoverArt::Missing => "missing",
-                    CoverArt::Error(_) => "error",
                 };
                 format!(
                     "publish {} @ {} {art}",
@@ -635,6 +550,21 @@ mod tests {
         message: decoded("/music/one.flac", 1),
         cmd: "publish /music/one.flac @ 64 missing",
     })]
+    #[case::a_failed_cover_is_published_missing_and_told(LibraryRow {
+        setup: vec![cover("/music/one.flac")],
+        message: failed("/music/one.flac", 1),
+        cmd: "publish /music/one.flac @ 64 missing; tell error",
+    })]
+    #[case::a_failed_cover_is_decoded_again_when_asked_again(LibraryRow {
+        setup: vec![
+            cover("/music/one.flac"),
+            failed("/music/one.flac", 1),
+            cover("/music/two.flac"),
+            decoded("/music/two.flac", 2),
+        ],
+        message: cover("/music/one.flac"),
+        cmd: "decode /music/one.flac @ 64",
+    })]
     #[case::a_remembered_cover_is_published_without_a_decode(LibraryRow {
         setup: vec![
             cover("/music/one.flac"),
@@ -650,7 +580,17 @@ mod tests {
         cmd: "nothing",
     })]
     #[case::a_prefetch_uses_the_remembered_side(LibraryRow {
-        setup: vec![cover_sized("/music/one.flac", 96)],
+        setup: vec![
+            cover_sized("/music/one.flac", 96),
+            LibraryMessage::CoverDecoded {
+                revision: Revision::default().next(),
+                decoded: Ok(CoverDecoded {
+                    path: PathBuf::from("/music/one.flac"),
+                    side: Pixels(96),
+                    art: CoverArt::Missing,
+                }),
+            },
+        ],
         message: prefetch("/music/two.flac"),
         cmd: "decode /music/two.flac @ 96",
     })]
@@ -673,6 +613,55 @@ mod tests {
         ],
         message: cover("/music/one.flac"),
         cmd: "nothing",
+    })]
+    #[case::a_cover_at_a_new_side_while_it_decodes_restarts(LibraryRow {
+        setup: vec![cover_sized("/music/one.flac", 64)],
+        message: cover_sized("/music/one.flac", 96),
+        cmd: "decode /music/one.flac @ 96",
+    })]
+    #[case::a_prefetch_while_a_cover_decodes_does_nothing(LibraryRow {
+        setup: vec![cover("/music/one.flac")],
+        message: prefetch("/music/two.flac"),
+        cmd: "nothing",
+    })]
+    #[case::a_decoded_prefetch_is_remembered_not_published(LibraryRow {
+        setup: vec![
+            cover("/music/one.flac"),
+            decoded("/music/one.flac", 1),
+            prefetch("/music/two.flac"),
+        ],
+        message: decoded("/music/two.flac", 2),
+        cmd: "nothing",
+    })]
+    #[case::a_remembered_prefetch_is_not_published(LibraryRow {
+        setup: vec![
+            cover("/music/one.flac"),
+            decoded("/music/one.flac", 1),
+            prefetch("/music/two.flac"),
+            decoded("/music/two.flac", 2),
+        ],
+        message: prefetch("/music/two.flac"),
+        cmd: "nothing",
+    })]
+    #[case::a_cover_asked_while_its_prefetch_decodes_is_published(LibraryRow {
+        setup: vec![
+            cover("/music/one.flac"),
+            decoded("/music/one.flac", 1),
+            prefetch("/music/two.flac"),
+            cover("/music/two.flac"),
+        ],
+        message: decoded("/music/two.flac", 2),
+        cmd: "publish /music/two.flac @ 64 missing",
+    })]
+    #[case::a_prefetched_cover_is_published_from_memory(LibraryRow {
+        setup: vec![
+            cover("/music/one.flac"),
+            decoded("/music/one.flac", 1),
+            prefetch("/music/two.flac"),
+            decoded("/music/two.flac", 2),
+        ],
+        message: cover("/music/two.flac"),
+        cmd: "publish /music/two.flac @ 64 missing",
     })]
     fn a_row_steps_the_driver_and_names_its_cmd(#[case] row: LibraryRow) {
         let mut driver = driver();
@@ -704,6 +693,9 @@ mod tests {
             assert!(driver.transition(step).is_ok());
         }
 
+        let before = cover_state(&driver);
+
         assert!(matches!(driver.transition(message), Err(Unhandled)));
+        assert_eq!(cover_state(&driver), before);
     }
 }

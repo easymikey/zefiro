@@ -33,7 +33,7 @@ use kernel::{
     },
 };
 
-use crate::support::{model_with_titled_tracks, titled_track};
+use crate::support::{listed_model, model_with_titled_tracks, titled_track};
 
 pub(crate) fn cover_side_known() -> Message {
     Message::Viewport {
@@ -112,21 +112,20 @@ pub(crate) fn moon_library_selecting(row: usize) -> Model {
 }
 
 pub(crate) fn logged(log: &[&str], playlist: &[&str]) -> Model {
-    let mut model = Model {
-        history: log
+    let mut model = listed_model(
+        playlist
             .iter()
-            .map(|path| HistoryEntry {
-                track: kernel::domain::track::TrackRef::Local((*path).into()),
-                title: (*path).to_string(),
-                artist: None,
-                at: Moment::default(),
-            })
+            .map(|path| titled_track(path, path, ""))
             .collect(),
-        ..Default::default()
-    };
-    model.playlist.tracks = playlist
+    );
+    model.history = log
         .iter()
-        .map(|path| titled_track(path, path, ""))
+        .map(|path| HistoryEntry {
+            track: kernel::domain::track::TrackRef::Local((*path).into()),
+            title: (*path).to_string(),
+            artist: None,
+            at: Moment::default(),
+        })
         .collect();
     model.workspace.overlay = Some(Overlay::History(CursorOver {
         cursor: Cursor::with_len(log.len()).at(log.len().saturating_sub(1)),

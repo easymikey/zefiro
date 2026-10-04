@@ -11,7 +11,7 @@ pub(crate) struct Inboxes<'a, C, M> {
     pub(crate) finished: Receiver<M>,
 }
 
-pub(crate) enum Source {
+pub(crate) enum WaitSource {
     Heard,
     Finished,
     Files,
@@ -19,7 +19,7 @@ pub(crate) enum Source {
 
 pub(crate) enum LoopInput<M> {
     Heard(M),
-    Lost(Source),
+    Lost(WaitSource),
     Due,
     Closed,
 }
@@ -53,26 +53,26 @@ impl<C, M: From<Cmds<C>>> Inboxes<'_, C, M> {
         if index == heard {
             return operation
                 .recv(&self.heard)
-                .map_or(LoopInput::Lost(Source::Heard), LoopInput::Heard);
+                .map_or(LoopInput::Lost(WaitSource::Heard), LoopInput::Heard);
         }
         if index == finished {
             return operation
                 .recv(&self.finished)
-                .map_or(LoopInput::Lost(Source::Finished), LoopInput::Heard);
+                .map_or(LoopInput::Lost(WaitSource::Finished), LoopInput::Heard);
         }
         if index == changes {
             return files
                 .heard(operation.recv(files.events()))
-                .map_or(LoopInput::Lost(Source::Files), LoopInput::Heard);
+                .map_or(LoopInput::Lost(WaitSource::Files), LoopInput::Heard);
         }
         LoopInput::Closed
     }
 
-    pub(crate) fn lose(&mut self, source: &Source, files: &mut FileStream<M>) {
+    pub(crate) fn lose(&mut self, source: &WaitSource, files: &mut FileStream<M>) {
         match source {
-            Source::Heard => self.heard = never(),
-            Source::Finished => self.finished = never(),
-            Source::Files => files.lose(),
+            WaitSource::Heard => self.heard = never(),
+            WaitSource::Finished => self.finished = never(),
+            WaitSource::Files => files.lose(),
         }
     }
 }

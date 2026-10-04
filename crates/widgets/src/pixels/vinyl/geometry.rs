@@ -1,3 +1,5 @@
+use tiny_skia::{Path, PathBuilder};
+
 use crate::pixels::numeric::{dimension_f32, floor};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -69,7 +71,7 @@ pub(crate) struct RoundedRect {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct StrokeStyle {
+pub(crate) struct Stroke {
     pub(crate) color: tiny_skia::Color,
     pub(crate) width: f32,
 }
@@ -118,6 +120,41 @@ impl VinylGeometry {
             ..self.record()
         }
     }
+}
+
+pub(crate) fn rounded_rect_path(rect: RoundedRect) -> Option<Path> {
+    let RoundedRect {
+        x,
+        y,
+        width,
+        height,
+        radius,
+    } = rect;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let r = radius.max(0.0).min(width / 2.0).min(height / 2.0);
+    let mut path_builder = PathBuilder::new();
+    path_builder.move_to(x + r, y);
+    path_builder.line_to(x + width - r, y);
+    path_builder.quad_to(x + width, y, x + width, y + r);
+    path_builder.line_to(x + width, y + height - r);
+    path_builder.quad_to(x + width, y + height, x + width - r, y + height);
+    path_builder.line_to(x + r, y + height);
+    path_builder.quad_to(x, y + height, x, y + height - r);
+    path_builder.line_to(x, y + r);
+    path_builder.quad_to(x, y, x + r, y);
+    path_builder.close();
+    path_builder.finish()
+}
+
+pub(crate) fn circle_path(disc: Disc) -> Option<Path> {
+    if disc.radius <= 0.0 {
+        return None;
+    }
+    let mut path_builder = PathBuilder::new();
+    path_builder.push_circle(disc.center_x, disc.center_y, disc.radius);
+    path_builder.finish()
 }
 
 #[cfg(test)]

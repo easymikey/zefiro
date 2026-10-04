@@ -8,14 +8,13 @@ use ratatui::{
 };
 
 use crate::{
-    braille::{BrailleBuffers, CanvasSize, MeterFill},
+    braille::{CanvasSize, MeterFill},
     card::{
         CardWidget,
-        chips::{self, ChipBudget, FormatChipContent},
+        chips::{self, ChipBudget, FormatChipsInput},
         headings::CardStyle,
         metrics::{CardMetrics, SPECTRUM_MAX_DOTS},
     },
-    pixels::numeric::unit_fraction,
     primitive::{
         bar::{BarFill, HudProgressRow, HudProgressStyle, fill, hud_progress_line},
         chip::{self, ChipStyle},
@@ -55,10 +54,10 @@ fn paint_time_row(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetr
     ));
     let left_width = elapsed_width + speed_width;
     let fit = chips::format_chip_fit(
-        &FormatChipContent {
+        &FormatChipsInput {
             current,
             visibility: card.appearance.format_chips,
-            colors: ChipStyle::from_theme(&card.theme),
+            style: ChipStyle::from_theme(&card.theme),
         },
         &ChipBudget {
             available_width: row_width,
@@ -101,27 +100,22 @@ fn paint_progress_text(
     let row_width = metrics.row_width;
     let style = HudProgressStyle::from_theme(&card.theme);
 
-    let duration = card.view.duration();
-    let fraction = if duration.is_zero() {
-        0.0
-    } else {
-        card.view.position().as_secs_f64() / duration.as_secs_f64()
-    };
+    let fraction = card.view.progress_fraction();
     let progress_row = metrics.progress_row;
     match card.appearance.progress_time {
         ProgressTime::Remaining => Paragraph::new(hud_progress_line(
             &HudProgressRow {
-                fraction: unit_fraction(fraction),
-                row_width: usize::from(row_width),
+                fraction,
+                row_width: row_width.count(),
                 remaining: card.view.remaining(),
             },
             &style,
         ))
         .render(progress_row, buffer),
         ProgressTime::Elapsed => Paragraph::new(fill(
-            &BarFill::progress(unit_fraction(fraction), usize::from(row_width)),
+            &BarFill::progress(fraction, row_width.count()),
             style.bar.fill,
-            style.bar.track,
+            style.bar.groove,
         ))
         .render(progress_row, buffer),
     }
@@ -133,7 +127,7 @@ fn paint_volume_row(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMe
     Paragraph::new(fill(
         &BarFill::volume(card.view.volume.ratio(), usize::from(bar_area.width)),
         style.fill,
-        style.track,
+        style.groove,
     ))
     .render(bar_area, buffer);
 
@@ -148,7 +142,6 @@ fn paint_volume_row(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMe
             max_dots: SPECTRUM_MAX_DOTS,
         },
         |t| card.theme.spectrum_color_at(t),
-        &mut BrailleBuffers::default(),
     );
     Paragraph::new(spectrum_lines).render(spectrum_area, buffer);
 }

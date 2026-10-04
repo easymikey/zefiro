@@ -1,7 +1,12 @@
-use kernel::domain::{
-    geometry::Cells,
-    index::ViewIndex,
-    track::{Track, TrackRef},
+use kernel::{
+    cmd::Playback,
+    domain::{
+        favorites::Favorites,
+        geometry::Cells,
+        index::ViewIndex,
+        playlist::Playlist,
+        track::{Track, TrackRef},
+    },
 };
 use ratatui::{
     buffer::Buffer,
@@ -11,20 +16,41 @@ use ratatui::{
 };
 
 use crate::{
-    Playing,
     overlay::modal::metrics::SCROLLBAR_INSET,
-    playlist::{
-        chrome::pane_block,
-        pane::{PlaylistView, PlaylistWidget},
-    },
+    playlist::chrome::pane_block,
     primitive::{
         list_chrome::{row_band, scroll_offset, scrollbar_column},
         marker::{FAVORITE_COLUMNS, Favorite, QueuePosition},
-        track_row::{self, Selected, TrackRowStyle, TrackRowView},
+        track_row::{self, Selected, TrackRow, TrackRowStyle},
     },
+    status_line::StatusLineView,
+    theme::active_theme::ActiveTheme,
 };
 
-pub(crate) struct VisibleRows {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryLoad {
+    Loading,
+    Ready,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PlaylistView<'a> {
+    pub(crate) playlist: &'a Playlist,
+    pub(crate) queue: &'a [TrackRef],
+    pub(crate) favorites: &'a Favorites,
+    pub(crate) browse_selected: usize,
+    pub(crate) playing: Option<ViewIndex>,
+    pub(crate) library_loading: LibraryLoad,
+    pub(crate) status: StatusLineView<'a>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PlaylistWidget<'a> {
+    pub(crate) view: PlaylistView<'a>,
+    pub(crate) theme: ActiveTheme<'a>,
+}
+
+pub(crate) struct RowWindow {
     pub(crate) start: usize,
     pub(crate) end: usize,
     pub(crate) offset: u16,
@@ -33,48 +59,47 @@ pub(crate) struct VisibleRows {
 
 pub(crate) struct WindowFit<'a> {
     pub(crate) view: PlaylistView<'a>,
-    pub(crate) playing_index: Option<usize>,
     pub(crate) height: u16,
 }
 
-pub(crate) fn visible_rows(fit: &WindowFit<'_>) -> VisibleRows {
-    let &WindowFit {
-        view,
-        playing_index,
-        height,
-    } = fit;
+pub(crate) fn visible_rows(fit: &WindowFit<'_>) -> RowWindow {
+    let &WindowFit { view, height } = fit;
     let selected_line = if view.playlist.tracks.is_empty() {
         0
     } else {
         view.browse_selected
     };
     let total = view.playlist.tracks.len();
-    let mut offset =
+    let scrolled =
         u16::try_from(scroll_offset(selected_line, total, usize::from(height)))
             .unwrap_or(u16::MAX);
 
     let height = usize::from(height);
-    let window = usize::from(offset)..usize::from(offset) + height;
-    if let Some(playing_line) = playing_index.filter(|_| height > 0)
-        && !window.contains(&playing_line)
-    {
-        let max_offset =
-            u16::try_from(total.saturating_sub(height)).unwrap_or(u16::MAX);
-        let candidate = if playing_line < window.start {
-            u16::try_from(playing_line).unwrap_or(u16::MAX)
-        } else {
-            u16::try_from((playing_line + 1).saturating_sub(height)).unwrap_or(u16::MAX)
-        }
-        .min(max_offset);
-        let candidate_window = usize::from(candidate)..usize::from(candidate) + height;
-        if candidate_window.contains(&selected_line) {
-            offset = candidate;
-        }
-    }
+    let window = usize::from(scrolled)..usize::from(scrolled) + height;
+    let offset = view
+        .playing
+        .map(ViewIndex::get)
+        .filter(|playing_line| height > 0 && !window.contains(playing_line))
+        .map(|playing_line| {
+            let max_offset =
+                u16::try_from(total.saturating_sub(height)).unwrap_or(u16::MAX);
+            if playing_line < window.start {
+                u16::try_from(playing_line).unwrap_or(u16::MAX)
+            } else {
+                u16::try_from((playing_line + 1).saturating_sub(height))
+                    .unwrap_or(u16::MAX)
+            }
+            .min(max_offset)
+        })
+        .filter(|&candidate| {
+            (usize::from(candidate)..usize::from(candidate) + height)
+                .contains(&selected_line)
+        })
+        .unwrap_or(scrolled);
 
     let start = usize::from(offset);
     let end = (start + height).min(total);
-    VisibleRows {
+    RowWindow {
         start,
         end,
         offset,
@@ -93,22 +118,20 @@ fn queue_position(queue: &[TrackRef], source: &TrackRef) -> Option<QueuePosition
 pub(crate) struct PlaylistRows<'a> {
     pub(crate) pane: PlaylistWidget<'a>,
     pub(crate) rows: Rect,
-    pub(crate) playing_index: Option<usize>,
-    pub(crate) window: &'a VisibleRows,
+    pub(crate) window: &'a RowWindow,
 }
 
 struct PlaylistRowParts<'a> {
     view: PlaylistView<'a>,
-    playing_index: Option<usize>,
     row_width: Cells,
     style: TrackRowStyle,
 }
 
-fn build_line(
+fn build_line<'a>(
     context: &PlaylistRowParts<'_>,
     index: usize,
-    track: &Track,
-) -> ratatui::text::Line<'static> {
+    track: &'a Track,
+) -> ratatui::text::Line<'a> {
     let view = context.view;
     let selected = if index == view.browse_selected {
         Selected::Yes
@@ -120,42 +143,37 @@ fn build_line(
     } else {
         Favorite::No
     };
-    let playing = if context.playing_index == Some(index) {
-        Playing::Yes
+    let playing_index = view.playing.map(ViewIndex::get);
+    let playing = if playing_index == Some(index) {
+        Playback::Playing
     } else {
-        Playing::No
+        Playback::Paused
     };
-    let row_view = TrackRowView {
+    let row_view = TrackRow {
         title: track.display(),
         selected,
         favorite,
         playing,
         queued: queue_position(view.queue, track.source())
-            .filter(|_| context.playing_index != Some(index)),
+            .filter(|_| playing_index != Some(index)),
         row_width: context.row_width,
     };
     track_row::track_row_line(&row_view, context.style)
 }
 
 pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
-    let PlaylistRows {
-        pane,
-        rows,
-        playing_index,
-        window,
-    } = playlist_rows;
+    let PlaylistRows { pane, rows, window } = playlist_rows;
     let view = pane.view;
     let style = TrackRowStyle::from_theme(&pane.theme);
     let context = PlaylistRowParts {
         view,
-        playing_index,
         row_width: Cells(rows.width),
         style,
     };
 
     let start = window.start;
     let end = window.end;
-    let lines: Vec<ratatui::text::Line<'static>> = view
+    let lines: Vec<ratatui::text::Line<'_>> = view
         .playlist
         .tracks
         .get(start..end)
@@ -171,7 +189,8 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
         .highlight_spacing(HighlightSpacing::Never)
         .highlight_style(Style::default().fg(style.highlight));
     let mut playing_row = ListState::default().with_selected(
-        playing_index
+        view.playing
+            .map(ViewIndex::get)
             .and_then(|index| index.checked_sub(start))
             .filter(|&relative| relative < end.saturating_sub(start)),
     );
@@ -182,7 +201,7 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
     }
 }
 
-fn cursor_band(band: Rect, window: &VisibleRows, cursor_index: usize) -> Option<Rect> {
+fn cursor_band(band: Rect, window: &RowWindow, cursor_index: usize) -> Option<Rect> {
     if cursor_index < window.start || cursor_index >= window.end {
         return None;
     }
@@ -207,7 +226,6 @@ pub(crate) fn cursor_row(area: Rect, view: PlaylistView<'_>) -> Option<Rect> {
     let band = row_band(area, inner, scrollbar_column(area, inner, SCROLLBAR_INSET));
     let window = visible_rows(&WindowFit {
         view,
-        playing_index: view.playing.map(ViewIndex::get),
         height: inner.height,
     });
     if view.browse_selected >= window.end {
@@ -240,10 +258,7 @@ mod tests {
     use kernel::domain::{favorites::Favorites, playlist::Playlist};
 
     use crate::{
-        playlist::{
-            pane::{LibraryLoad, PlaylistView},
-            row::{WindowFit, visible_rows},
-        },
+        playlist::row::{LibraryLoad, PlaylistView, WindowFit, visible_rows},
         status_line::{ScanProgress, StatusLineView},
     };
 
@@ -291,7 +306,6 @@ mod tests {
         let favorites = Favorites::default();
         let window = visible_rows(&WindowFit {
             view: view(&playlist, &favorites, 2),
-            playing_index: None,
             height: 5,
         });
         assert_eq!((window.start, window.end), (0, 5));
@@ -303,7 +317,6 @@ mod tests {
         let favorites = Favorites::default();
         let window = visible_rows(&WindowFit {
             view: view(&playlist, &favorites, 35),
-            playing_index: None,
             height: 10,
         });
         assert!(window.start > 0, "the window must scroll to reach 35");
@@ -316,8 +329,10 @@ mod tests {
         let playlist = library(40);
         let favorites = Favorites::default();
         let window = visible_rows(&WindowFit {
-            view: view(&playlist, &favorites, 30),
-            playing_index: Some(32),
+            view: PlaylistView {
+                playing: Some(kernel::domain::index::ViewIndex::new(32)),
+                ..view(&playlist, &favorites, 30)
+            },
             height: 10,
         });
         assert!((window.start..window.end).contains(&32));

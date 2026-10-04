@@ -150,7 +150,7 @@ fn load_at(request: TrackLoad, at: Duration, playback: Playback) -> Cmd {
     Cmd::from_iter([
         Effect::Audio(AudioCmd::Load(request)),
         Effect::Audio(AudioCmd::Seek(at)),
-        Effect::Audio(AudioCmd::Playback(playback)),
+        Effect::Audio(AudioCmd::SetPlayback(playback)),
     ])
 }
 
@@ -236,7 +236,7 @@ mod tests {
         next: DriverStatus::Stopped,
         result: Ok(Cmd::none()),
     })]
-    #[case::dead_refuses_congestion(LifeRow {
+    #[case::dead_refuses_full(LifeRow {
         start: dead(),
         message: filled(),
         next: dead(),
@@ -254,7 +254,7 @@ mod tests {
         next: DriverStatus::Stopped,
         result: Err(Unhandled),
     })]
-    #[case::stopped_refuses_congestion(LifeRow {
+    #[case::stopped_refuses_full(LifeRow {
         start: DriverStatus::Stopped,
         message: filled(),
         next: DriverStatus::Stopped,
@@ -284,7 +284,7 @@ mod tests {
                 Revisions::default().issue_effect(),
             ))),
             Effect::Audio(AudioCmd::Seek(at)),
-            Effect::Audio(AudioCmd::Playback(playback)),
+            Effect::Audio(AudioCmd::SetPlayback(playback)),
         ])
     }
 

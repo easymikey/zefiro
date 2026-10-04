@@ -1,8 +1,8 @@
 use kernel::{cmd::Cmd, domain::revision::Revision, message::AudioEvent};
 
 use crate::{
-    deck::{event::DeckEvent, job::AudioJob},
-    engine::effect::EngineEffect,
+    deck::{event::DeckEvent, job::AudioJob, source::PreloadMode},
+    engine::{effect::EngineEffect, phase::CurrentTrack},
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -49,19 +49,26 @@ impl JobRevisions {
     fn job_for(&mut self, effect: &EngineEffect) -> Option<AudioJob> {
         match effect {
             EngineEffect::StartLoad { path, .. }
-            | EngineEffect::StartHandover { path, .. } => {
+            | EngineEffect::StartHandover { path, .. }
+            | EngineEffect::Decode(path) => {
                 self.preload = self.issue();
                 Some(self.decode_job(path))
             }
-            EngineEffect::Decode(path) => Some(self.decode_job(path)),
-            EngineEffect::Preload { path, .. } | EngineEffect::RestartGapless(path) => {
+            EngineEffect::Preload(
+                PreloadMode::Gapless(path)
+                | PreloadMode::Crossfade {
+                    track: CurrentTrack { path, .. },
+                    ..
+                },
+            )
+            | EngineEffect::RestartGapless(path) => {
                 self.preload = self.issue();
                 Some(AudioJob::Preload {
                     path: path.clone(),
                     revision: self.preload,
                 })
             }
-            EngineEffect::Mute | EngineEffect::Clear(_) => {
+            EngineEffect::Silence | EngineEffect::Clear(_) => {
                 self.preload = self.issue();
                 self.decode = self.issue();
                 None
@@ -82,7 +89,7 @@ impl JobRevisions {
             | EngineEffect::Promote(_)
             | EngineEffect::Run(_)
             | EngineEffect::Report
-            | EngineEffect::Advance
+            | EngineEffect::Advance(_)
             | EngineEffect::Stage(_)
             | EngineEffect::Attach(_)
             | EngineEffect::TakeSignals(_) => None,
@@ -130,10 +137,7 @@ mod tests {
     }
 
     fn gapless(path: &str) -> EngineEffect {
-        EngineEffect::Preload {
-            path: path.into(),
-            mode: PreloadMode::Gapless,
-        }
+        EngineEffect::Preload(PreloadMode::Gapless(path.into()))
     }
 
     #[test]
@@ -156,8 +160,9 @@ mod tests {
     #[case::decode_after_clear(vec![load("/a"), EngineEffect::Clear(Speed::default())], DeckEvent::Decoded { revision: revision(2), result: failed() }, false)]
     #[case::current_preload(vec![load("/a"), gapless("/b")], DeckEvent::Preloaded { revision: revision(3), result: failed() }, true)]
     #[case::preload_after_a_load(vec![gapless("/b"), load("/a")], DeckEvent::Preloaded { revision: revision(1), result: failed() }, false)]
-    #[case::woke_event(vec![EngineEffect::Mute], DeckEvent::Woke(revision(9)), true)]
-    fn a_result_is_current_only_for_the_newest_ticket(
+    #[case::preload_after_a_reopen_decode(vec![gapless("/b"), EngineEffect::Decode("/a".into())], DeckEvent::Preloaded { revision: revision(1), result: failed() }, false)]
+    #[case::woke_event(vec![EngineEffect::Silence], DeckEvent::Woke(revision(9)), true)]
+    fn a_result_is_current_only_for_the_newest_revision(
         #[case] effects: Vec<EngineEffect>,
         #[case] event: DeckEvent,
         #[case] current: bool,

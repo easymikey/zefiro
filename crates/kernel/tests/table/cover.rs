@@ -12,7 +12,7 @@ use kernel::{
 };
 use rstest::rstest;
 
-use crate::support::{model_playing_at, step::update};
+use crate::support::{model_playing_at, update::update};
 
 const SIDE: Pixels = Pixels(240);
 const WIDER: Pixels = Pixels(320);

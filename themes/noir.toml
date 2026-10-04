@@ -25,9 +25,9 @@
 name = "noir"
 
 [colors]
-bg = "#0a0c10"
-fg = "#6b7280"
-bright_fg = "#d8dde6"
+background = "#0a0c10"
+muted_foreground = "#6b7280"
+foreground = "#d8dde6"
 accent = "#D97757"
 green = "#6b7280"
 yellow = "#D97757"

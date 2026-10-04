@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-pub(crate) const SECONDS_PER_MINUTE: u64 = 60;
+pub const SECONDS_PER_MINUTE: u64 = 60;
 
 const MINUTES_PER_HOUR: u64 = 60;
 

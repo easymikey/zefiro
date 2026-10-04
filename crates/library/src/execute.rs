@@ -3,10 +3,11 @@ use kernel::{message::LibraryEvent, update::machine::Driver};
 use crate::{
     cover::CoverDecoded,
     dirs::LibraryDirs,
-    driver::{DiskEffect, LibraryDriver, LibraryEffect, LibraryMessage},
+    driver::{DiskEffect, LibraryDriver, LibraryEffect},
     error::Error,
     favorites,
     history,
+    message::LibraryMessage,
     playlists,
     trash,
 };
@@ -83,14 +84,9 @@ mod tests {
     use crate::{
         cover::{CoverArt, CoverDecoded},
         dirs::LibraryDirs,
-        driver::{
-            DiskEffect,
-            LibraryDriver,
-            LibraryEffect,
-            LibraryMessage,
-            LibraryTimer,
-        },
+        driver::{DiskEffect, LibraryDriver, LibraryEffect},
         job::LibraryJob,
+        message::{LibraryMessage, LibraryTimer},
         test_support::{self, temp_dir_filters},
     };
 
@@ -99,7 +95,11 @@ mod tests {
     #[fixture]
     fn dirs() -> (TempDir, LibraryDirs) {
         let directory = tempfile::tempdir().unwrap();
-        let paths = LibraryDirs::under(directory.path());
+        let paths = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
         (directory, paths)
     }
 
@@ -307,8 +307,8 @@ mod tests {
     #[rstest]
     fn a_cover_job_runs_into_a_decoded_cover(dirs: (TempDir, LibraryDirs)) {
         let (directory, _paths) = dirs;
-        let path = directory.path().join("untagged.mp3");
-        std::fs::write(&path, b"not an audio file").unwrap();
+        let path = directory.path().join("untagged.wav");
+        std::fs::write(&path, include_bytes!("../tests/fixtures/tone.wav")).unwrap();
 
         let message = LibraryJob::Cover {
             job: CoverJob {
@@ -322,10 +322,10 @@ mod tests {
         assert!(matches!(
             message,
             LibraryMessage::CoverDecoded {
-                decoded: CoverDecoded {
+                decoded: Ok(CoverDecoded {
                     art: CoverArt::Missing,
                     ..
-                },
+                }),
                 ..
             }
         ));
@@ -333,7 +333,11 @@ mod tests {
 
     #[test]
     fn jobs_order_covers_before_tags_before_scans() {
-        let dirs = Arc::new(LibraryDirs::under(std::path::Path::new("/data")));
+        let dirs = Arc::new(LibraryDirs {
+            cache_dir: std::path::Path::new("/data").join("cache"),
+            data_dir: std::path::Path::new("/data").join("data"),
+            playlists_dir: std::path::Path::new("/data").join("playlists"),
+        });
         let mut jobs = vec![
             LibraryJob::Scan {
                 music_dir: PathBuf::from("/music"),

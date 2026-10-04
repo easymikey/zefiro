@@ -6,7 +6,7 @@ use kernel::{
 };
 use widgets::theme::{Theme, colors::Role};
 
-use crate::error::Error;
+use crate::error::{Error, UnknownThemeError};
 
 const OSC: &str = "\x1b]";
 const BEL: &str = "\x07";
@@ -28,17 +28,21 @@ fn osc_reset(code: u16) -> String {
 }
 
 fn set_sequence(background: Rgb, foreground: Rgb) -> String {
-    let mut sequence = osc_set(OSC_SET_BACKGROUND, background);
-    sequence.push_str(&osc_set(OSC_SET_FOREGROUND, foreground));
-    sequence.push_str(&osc_set(OSC_SET_CURSOR, foreground));
-    sequence
+    [
+        osc_set(OSC_SET_BACKGROUND, background),
+        osc_set(OSC_SET_FOREGROUND, foreground),
+        osc_set(OSC_SET_CURSOR, foreground),
+    ]
+    .concat()
 }
 
 fn reset_sequence() -> String {
-    let mut sequence = osc_reset(OSC_RESET_BACKGROUND);
-    sequence.push_str(&osc_reset(OSC_RESET_FOREGROUND));
-    sequence.push_str(&osc_reset(OSC_RESET_CURSOR));
-    sequence
+    [
+        osc_reset(OSC_RESET_BACKGROUND),
+        osc_reset(OSC_RESET_FOREGROUND),
+        osc_reset(OSC_RESET_CURSOR),
+    ]
+    .concat()
 }
 
 fn write_to_stdout(sequence: &str) -> Result<(), io::Error> {
@@ -49,12 +53,6 @@ fn write_to_stdout(sequence: &str) -> Result<(), io::Error> {
 
 pub(crate) fn reset_on_panic() -> Result<(), io::Error> {
     write_to_stdout(&reset_sequence())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("no such theme: {name}")]
-pub struct UnknownThemeError {
-    pub(crate) name: ThemeName,
 }
 
 fn sequence_for(name: &ThemeName, theme: &Theme) -> Result<String, UnknownThemeError> {
@@ -99,11 +97,9 @@ mod tests {
         colors::{Colors, Role, ThemeBase},
     };
 
-    use crate::window_colors::{
-        UnknownThemeError,
-        reset_sequence,
-        set_sequence,
-        window_colors_sequence,
+    use crate::{
+        error::UnknownThemeError,
+        window_colors::{reset_sequence, set_sequence, window_colors_sequence},
     };
 
     const BACKGROUND: Rgb = Rgb([0x1a, 0x2b, 0x3c]);
@@ -123,8 +119,8 @@ mod tests {
             name: ThemeName::from_static(KNOWN_THEME),
             colors: Colors::derive(&ThemeBase {
                 background: Rgb([0x10, 0x10, 0x10]),
-                foreground: Rgb([0xe0, 0xe0, 0xe0]),
-                bright_foreground: Rgb([0xf0, 0xf0, 0xf0]),
+                muted_foreground: Rgb([0xe0, 0xe0, 0xe0]),
+                foreground: Rgb([0xf0, 0xf0, 0xf0]),
                 accent: Rgb([0x20, 0x60, 0xa0]),
                 green: Rgb([0x00, 0xff, 0x00]),
                 yellow: Rgb([0xff, 0xff, 0x00]),
@@ -150,7 +146,7 @@ mod tests {
         })
     )]
     #[case::reset_ignores_the_theme(WindowColorsCmd::Reset, Ok(reset_sequence()))]
-    fn applying_a_known_theme_sets_its_colors_an_unknown_one_errors_and_reset_ignores_the_theme(
+    fn setting_a_known_theme_sets_its_colors_an_unknown_one_errors_and_reset_ignores_the_theme(
         #[case] command: WindowColorsCmd,
         #[case] expected: Result<String, UnknownThemeError>,
     ) {

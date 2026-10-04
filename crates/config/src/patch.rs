@@ -15,6 +15,7 @@ use kernel::{
         device::OutputDevice,
         settings::ReplayGain,
         theme::ThemeName,
+        time::SECONDS_PER_MINUTE,
     },
 };
 use toml_edit::{Array, DocumentMut, Item, Table, value};
@@ -104,7 +105,7 @@ fn patch_appearance(
     )
 }
 
-pub fn patch_appearance_text(
+pub fn patched_appearance_text(
     text: &str,
     patch: AppearancePatch,
 ) -> Result<String, Error> {
@@ -123,7 +124,7 @@ fn format_crossfade(crossfade: Crossfade) -> String {
 }
 
 fn to_minutes(duration: Duration) -> i64 {
-    i64::try_from(duration.as_secs() / 60).unwrap_or(i64::MAX)
+    i64::try_from(duration.as_secs() / SECONDS_PER_MINUTE).unwrap_or(i64::MAX)
 }
 
 fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> {
@@ -146,7 +147,7 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> 
             ),
             (
                 "audio",
-                "replaygain",
+                "replay_gain",
                 replay_gain.map(|r| value(matches!(r, ReplayGain::On))),
             ),
         ],
@@ -188,7 +189,7 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> 
     )
 }
 
-pub fn patch_config_text(text: &str, patch: ConfigPatch) -> Result<String, Error> {
+pub fn patched_config_text(text: &str, patch: ConfigPatch) -> Result<String, Error> {
     let mut doc: DocumentMut = text.parse()?;
     patch_config(&mut doc, patch)?;
     Ok(doc.to_string())
@@ -214,7 +215,6 @@ mod tests {
             },
             appearance_rows::{
                 ANIMATIONS,
-                AppearanceField,
                 COVER_BRACKETS,
                 COVER_MODES,
                 FORMAT_CHIPS,
@@ -227,7 +227,7 @@ mod tests {
             crossfade::Crossfade,
             device::{DeviceName, OutputDevice},
             percent::Percent,
-            setting_row::OptionCount,
+            setting_row::{AppearanceField, OptionCount},
             settings::ReplayGain,
             sleep_presets::SleepPresets,
             theme::{ThemeChoice, ThemeName},
@@ -249,8 +249,8 @@ mod tests {
         error::Error,
         patch::{
             format_crossfade,
-            patch_appearance_text,
-            patch_config_text,
+            patched_appearance_text,
+            patched_config_text,
             to_minutes,
         },
     };
@@ -319,7 +319,7 @@ mod tests {
         #[case] text: &str,
         #[case] patch: AppearancePatch,
     ) {
-        let out = patch_appearance_text(text, patch).unwrap();
+        let out = patched_appearance_text(text, patch).unwrap();
         insta::with_settings!({ snapshot_suffix => name }, {
             insta::assert_snapshot!(out);
         });
@@ -339,7 +339,7 @@ mod tests {
             .unwrap();
         let patch =
             kernel::domain::appearance_rows::appearance_patch(id, option).unwrap();
-        let written = patch_appearance_text("", patch).unwrap();
+        let written = patched_appearance_text("", patch).unwrap();
 
         insta::with_settings!({ snapshot_suffix => name }, {
             insta::assert_snapshot!(written);
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn an_appearance_patch_reports_a_non_table_document_instead_of_panicking() {
-        let refused = patch_appearance_text(
+        let refused = patched_appearance_text(
             "card = \"x\"\n",
             AppearancePatch::builder()
                 .format_chips(FormatChips::Shown)
@@ -400,7 +400,7 @@ mod tests {
         fn an_untouched_appearance_patch_leaves_the_document_unchanged(
             text in base_appearance_texts(),
         ) {
-            let written = patch_appearance_text(text, AppearancePatch::builder().build()).unwrap();
+            let written = patched_appearance_text(text, AppearancePatch::builder().build()).unwrap();
             prop_assert_eq!(written, text);
         }
 
@@ -410,7 +410,7 @@ mod tests {
             patch in appearance_patch(),
         ) {
             let base = parse_appearance(text).unwrap().settings();
-            let written = patch_appearance_text(text, patch).unwrap();
+            let written = patched_appearance_text(text, patch).unwrap();
             let parsed = parse_appearance(&written).unwrap().settings();
 
             prop_assert_eq!(parsed.cover_mode, patch.cover_mode.unwrap_or(base.cover_mode));
@@ -491,7 +491,7 @@ mod tests {
         #[case] text: &str,
         #[case] patch: ConfigPatch,
     ) {
-        let out = patch_config_text(text, patch).unwrap();
+        let out = patched_config_text(text, patch).unwrap();
         insta::with_settings!({ snapshot_suffix => name }, {
             insta::assert_snapshot!(out);
         });
@@ -517,7 +517,7 @@ mod tests {
 
     #[test]
     fn a_patch_reports_a_non_table_document_instead_of_panicking() {
-        let refused = patch_config_text(
+        let refused = patched_config_text(
             "audio = 1\n",
             ConfigPatch::builder()
                 .crossfade(crossfade_seconds(3))
@@ -596,7 +596,7 @@ mod tests {
                 patch in config_patch(),
             ) {
                 let base = parse_config(text).unwrap();
-                let written = patch_config_text(text, patch.clone()).unwrap();
+                let written = patched_config_text(text, patch.clone()).unwrap();
                 let parsed = parse_config(&written).unwrap();
 
                 prop_assert_eq!(

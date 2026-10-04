@@ -22,11 +22,17 @@ pub struct Tags {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Decibels(pub f32);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Kbps(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hertz(pub u32);
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AudioFormat {
     pub format: Option<String>,
-    pub bitrate_kbps: Option<u32>,
-    pub sample_rate_hz: Option<u32>,
+    pub bitrate: Option<Kbps>,
+    pub sample_rate: Option<Hertz>,
     pub bits_per_sample: Option<u8>,
     pub channels: Option<u8>,
     pub replay_gain: Option<Decibels>,

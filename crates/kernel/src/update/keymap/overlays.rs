@@ -15,9 +15,14 @@ use crate::{
         SettingsRowRequest,
         TextRequest,
     },
-    update::keymap::{
-        chord::{ActionRow, KeyBinding, KeyContextRow, bare, key},
-        table::{digit_char, digits},
+    update::keymap::chord::{
+        ActionRow,
+        KeyBinding,
+        KeyContextRow,
+        bare,
+        digit_char,
+        digits,
+        key,
     },
 };
 

@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, time::SystemTimeError};
 
 use kernel::domain::driver::DriverName;
 
@@ -20,7 +20,13 @@ pub enum Error<E: std::error::Error + 'static = io::Error> {
     Host(#[source] io::Error),
     #[error("the event loop thread panicked")]
     EventLoopPanicked,
+    #[error(transparent)]
+    Clock(#[from] ClockError),
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("reading the system clock: {0}")]
+pub struct ClockError(#[source] pub(crate) SystemTimeError);
 
 #[cfg(test)]
 mod tests {

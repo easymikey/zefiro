@@ -7,7 +7,7 @@ pub const TOAST_LIFETIME: Duration = Duration::from_secs(TOAST_SECONDS);
 pub const TOAST_STACK: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToastKind {
+pub enum ToastLevel {
     Info,
     Success,
     Warning,
@@ -16,14 +16,14 @@ pub enum ToastKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Toast {
-    pub kind: ToastKind,
+    pub kind: ToastLevel,
     pub title: String,
     pub text: Option<String>,
     pub raised_at: Moment,
 }
 
 impl Toast {
-    fn of(kind: ToastKind, title: impl Into<String>) -> Self {
+    fn of(kind: ToastLevel, title: impl Into<String>) -> Self {
         Self {
             kind,
             title: title.into(),
@@ -34,22 +34,22 @@ impl Toast {
 
     #[must_use]
     pub fn info(title: impl Into<String>) -> Self {
-        Self::of(ToastKind::Info, title)
+        Self::of(ToastLevel::Info, title)
     }
 
     #[must_use]
     pub fn success(title: impl Into<String>) -> Self {
-        Self::of(ToastKind::Success, title)
+        Self::of(ToastLevel::Success, title)
     }
 
     #[must_use]
     pub fn warning(title: impl Into<String>) -> Self {
-        Self::of(ToastKind::Warning, title)
+        Self::of(ToastLevel::Warning, title)
     }
 
     #[must_use]
     pub fn error(title: impl Into<String>) -> Self {
-        Self::of(ToastKind::Error, title)
+        Self::of(ToastLevel::Error, title)
     }
 
     #[must_use]

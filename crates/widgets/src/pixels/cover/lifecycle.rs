@@ -1,4 +1,4 @@
-use std::{fmt, path::PathBuf, sync::Arc, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use image::RgbaImage;
 use kernel::domain::appearance::Animations;
@@ -15,45 +15,22 @@ use crate::{
             CrossfadePermit,
             crossfade::{CoverCrossfade, CrossfadeStage, blend_by_column},
             pixmap::{
+                BuiltPixmap,
                 CellPixels,
+                Identity,
                 compose_vinyl,
                 fit_to_rect,
                 plain_pixmap,
                 translucent,
                 vinyl_key,
-                vinyl_size_px,
+                vinyl_size,
             },
             wash::column_reveal,
         },
-        vinyl::{VinylCache, VinylCacheKey},
+        vinyl::VinylCache,
     },
     scene::Scene,
 };
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Identity {
-    Plain(PathBuf),
-    Vinyl(VinylCacheKey),
-}
-
-impl Identity {
-    fn changed_only_by_theme(&self, desired: &Self) -> bool {
-        match (self, desired) {
-            (Self::Vinyl(old), Self::Vinyl(new)) => {
-                old.theme_revision != new.theme_revision
-                    && old.config_revision == new.config_revision
-                    && old.path == new.path
-                    && old.size_px == new.size_px
-            }
-            (Self::Plain(_), _) | (Self::Vinyl(_), Self::Plain(_)) => false,
-        }
-    }
-}
-
-pub(crate) struct BuiltPixmap {
-    pub pixmap: Arc<RgbaImage>,
-    pub identity: Identity,
-}
 
 #[derive(Debug)]
 pub enum PixmapSource {
@@ -108,6 +85,7 @@ struct Tick {
 struct Painted {
     identity: Identity,
     rect: Rect,
+    pixmap: Arc<RgbaImage>,
 }
 
 impl Painted {
@@ -120,8 +98,7 @@ impl Painted {
 }
 
 struct PaintTarget {
-    identity: Identity,
-    rect: Rect,
+    painted: Painted,
     tick: Tick,
 }
 
@@ -151,7 +128,6 @@ pub struct CoverLifecycle {
     cell: CellPixels,
     decoded: Option<CoverImage>,
     painted: Option<Painted>,
-    pixmap: Option<Arc<RgbaImage>>,
     crossfade: CoverCrossfade,
     wash_outgoing: Option<Arc<RgbaImage>>,
 }
@@ -179,7 +155,6 @@ impl CoverLifecycle {
             cell,
             decoded: None,
             painted: None,
-            pixmap: None,
             crossfade: CoverCrossfade::default(),
             wash_outgoing: None,
         }
@@ -196,7 +171,6 @@ impl CoverLifecycle {
 
     fn forget_painted(&mut self) {
         self.painted = None;
-        self.pixmap = None;
         self.wash_outgoing = None;
         self.crossfade = CoverCrossfade::default();
     }
@@ -268,12 +242,16 @@ impl CoverLifecycle {
     }
 
     fn build(&mut self, scene: &Scene<'_>, rect: Rect) -> Option<BuiltPixmap> {
-        let decoded = self.decoded.as_ref();
+        let current = scene.current_track_path();
+        let decoded = self
+            .decoded
+            .as_ref()
+            .filter(|cover| Some(cover.path.as_path()) == current);
         match &mut self.source {
             PixmapSource::Plain => plain_pixmap(decoded),
             PixmapSource::Vinyl(cache) => {
-                let size_px = vinyl_size_px(rect, self.cell);
-                let key = vinyl_key(scene, decoded, size_px);
+                let size = vinyl_size(rect, self.cell);
+                let key = vinyl_key(scene, decoded, size);
                 Some(compose_vinyl(cache, key, decoded))
             }
         }
@@ -287,7 +265,7 @@ impl CoverLifecycle {
             crossfade,
             tick,
         } = parts;
-        let outgoing = self.pixmap.replace(built.pixmap);
+        let outgoing = self.painted.take().map(|painted| painted.pixmap);
         self.wash_outgoing = None;
         let shown = if plan == PaintPlan::ThemeWash {
             if matches!(tick.wash, CoverWash::Running { .. }) {
@@ -306,8 +284,11 @@ impl CoverLifecycle {
             }
         };
         let frame = self.paint(PaintTarget {
-            identity: built.identity,
-            rect,
+            painted: Painted {
+                identity: built.identity,
+                rect,
+                pixmap: built.pixmap,
+            },
             tick: shown,
         });
         self.hold_wash_outgoing(tick.wash);
@@ -317,7 +298,7 @@ impl CoverLifecycle {
     fn hold_wash_outgoing(&mut self, wash: CoverWash) {
         if matches!(wash, CoverWash::Running { .. })
             && self.wash_outgoing.is_none()
-            && let Some(pixmap) = self.pixmap.as_ref()
+            && let Some(pixmap) = self.painted.as_ref().map(|painted| &painted.pixmap)
             && self.source.keeps_outgoing_during_wash(pixmap)
         {
             self.wash_outgoing = Some(Arc::clone(pixmap));
@@ -346,30 +327,28 @@ impl CoverLifecycle {
             return CoverFrame::Keep;
         };
         let target = PaintTarget {
-            identity: painted.identity.clone(),
-            rect: painted.rect,
+            painted: Painted {
+                identity: painted.identity.clone(),
+                rect: painted.rect,
+                pixmap: Arc::clone(&painted.pixmap),
+            },
             tick,
         };
         self.paint(target)
     }
 
     fn paint(&mut self, target: PaintTarget) -> CoverFrame {
-        let Some(pixmap) = self.pixmap.as_ref() else {
-            return CoverFrame::Keep;
-        };
+        let pixmap = &target.painted.pixmap;
         let image = self
             .crossfade
             .crossfade_at(pixmap, target.tick.now)
             .or_else(|| self.wash_frame(pixmap, &target))
             .unwrap_or_else(|| RgbaImage::clone(pixmap));
         let image = match self.source {
-            PixmapSource::Plain => fit_to_rect(image, target.rect, self.cell),
+            PixmapSource::Plain => fit_to_rect(image, target.painted.rect, self.cell),
             PixmapSource::Vinyl(_) => image,
         };
-        self.painted = Some(Painted {
-            identity: target.identity,
-            rect: target.rect,
-        });
+        self.painted = Some(target.painted);
         CoverFrame::Repaint(image)
     }
 
@@ -378,7 +357,8 @@ impl CoverLifecycle {
         pixmap: &RgbaImage,
         target: &PaintTarget,
     ) -> Option<RgbaImage> {
-        let reveal = column_reveal(target.rect, self.cell.width, target.tick.wash)?;
+        let reveal =
+            column_reveal(target.painted.rect, self.cell.width, target.tick.wash)?;
         Some(blend_by_column(
             self.wash_outgoing.as_deref()?,
             pixmap,
@@ -389,14 +369,30 @@ impl CoverLifecycle {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc};
+    use std::{
+        mem,
+        path::{Path, PathBuf},
+        sync::Arc,
+        time::Duration,
+    };
 
     use image::{Rgba, RgbaImage};
-    use kernel::domain::{appearance::Animations, model::Model, revision::Revision};
+    use kernel::domain::{
+        appearance::Animations,
+        geometry::Pixels,
+        model::Model,
+        player::{Player, Preload},
+        playhead::Playhead,
+        revision::Revision,
+        speed::Speed,
+        time::Moment,
+        track::Track,
+    };
     use ratatui::layout::Rect;
     use rstest::rstest;
 
     use crate::{
+        card::CardCover,
         pixels::{
             cover::{
                 CoverImage,
@@ -405,20 +401,19 @@ mod tests {
                 CrossfadePermit,
                 lifecycle::{
                     CoverLifecycle,
-                    Identity,
                     PaintPlan,
                     PixmapSource,
                     Placed,
                     plan_paint,
                 },
-                pixmap::CellPixels,
+                pixmap::{CellPixels, Identity},
             },
             vinyl::{VinylCacheKey, VinylStyle},
         },
         test_support::SceneSources,
     };
 
-    struct PlanCase {
+    struct PlanRow {
         painted: Option<(Identity, Rect)>,
         desired: (Identity, Rect),
     }
@@ -455,53 +450,53 @@ mod tests {
 
     #[rstest]
     #[case::plain_nothing_installed(
-        PlanCase { painted: None, desired: (plain("a.jpg"), rect()) },
+        PlanRow { painted: None, desired: (plain("a.jpg"), rect()) },
         PaintPlan::NewContent
     )]
     #[case::plain_same_path_and_rect(
-        PlanCase {
+        PlanRow {
             painted: Some((plain("a.jpg"), rect())),
             desired: (plain("a.jpg"), rect()),
         },
         PaintPlan::Reuse
     )]
     #[case::plain_a_different_path(
-        PlanCase {
+        PlanRow {
             painted: Some((plain("a.jpg"), rect())),
             desired: (plain("b.jpg"), rect()),
         },
         PaintPlan::NewContent
     )]
     #[case::plain_a_different_rect(
-        PlanCase {
+        PlanRow {
             painted: Some((plain("a.jpg"), rect())),
             desired: (plain("a.jpg"), other_rect()),
         },
         PaintPlan::SameContent
     )]
     #[case::vinyl_same_key_and_rect(
-        PlanCase {
+        PlanRow {
             painted: Some((vinyl("a.flac"), rect())),
             desired: (vinyl("a.flac"), rect()),
         },
         PaintPlan::Reuse
     )]
     #[case::vinyl_a_different_key(
-        PlanCase {
+        PlanRow {
             painted: Some((vinyl("a.flac"), rect())),
             desired: (vinyl("b.flac"), rect()),
         },
         PaintPlan::NewContent
     )]
     #[case::vinyl_a_different_rect(
-        PlanCase {
+        PlanRow {
             painted: Some((vinyl("a.flac"), rect())),
             desired: (vinyl("a.flac"), other_rect()),
         },
         PaintPlan::SameContent
     )]
     #[case::vinyl_only_the_theme_revision_moved(
-        PlanCase {
+        PlanRow {
             painted: Some((vinyl("a.flac"), rect())),
             desired: (
                 vinyl_with_theme("a.flac", Revision::default().next()),
@@ -511,7 +506,7 @@ mod tests {
         PaintPlan::ThemeWash
     )]
     #[case::vinyl_the_theme_moved_and_the_rect_changed(
-        PlanCase {
+        PlanRow {
             painted: Some((vinyl("a.flac"), rect())),
             desired: (
                 vinyl_with_theme("a.flac", Revision::default().next()),
@@ -521,7 +516,7 @@ mod tests {
         PaintPlan::NewContent
     )]
     fn plan_paint_decides_reuse_or_rebuild(
-        #[case] case: PlanCase,
+        #[case] case: PlanRow,
         #[case] expected: PaintPlan,
     ) {
         let painted = case.painted.as_ref().map(|(identity, rect)| Placed {
@@ -547,8 +542,8 @@ mod tests {
 
     fn cell() -> CellPixels {
         CellPixels {
-            width: 8,
-            height: 16,
+            width: Pixels(8),
+            height: Pixels(16),
         }
     }
 
@@ -560,22 +555,86 @@ mod tests {
         }
     }
 
+    fn playing(path: &str) -> Player {
+        Player::Playing {
+            track: Arc::new(Track::listed(Path::new(path))),
+            head: Playhead::anchored(
+                Duration::ZERO,
+                Moment::default(),
+                Speed::default(),
+            ),
+            preload: Preload::None,
+        }
+    }
+
+    fn cover_image(path: &str) -> CoverImage {
+        CoverImage {
+            path: PathBuf::from(path),
+            image: Arc::new(source_pixmap()),
+        }
+    }
+
+    #[rstest]
+    #[case::the_current_tracks_cover_is_shown(
+        "/music/a.flac",
+        Some("/music/a.flac"),
+        CardCover::Image
+    )]
+    #[case::a_cover_decoded_for_another_track_is_not_shown(
+        "/music/b.flac",
+        Some("/music/a.flac"),
+        CardCover::Missing
+    )]
+    #[case::a_cover_with_no_current_track_is_not_shown(
+        "/music/a.flac",
+        None,
+        CardCover::Missing
+    )]
+    fn a_plain_cover_shows_the_decoded_art_only_for_the_current_track(
+        #[case] decoded: &str,
+        #[case] current: Option<&str>,
+        #[case] expected: CardCover,
+    ) {
+        let mut sources = animated_sources();
+        sources.model.player = current.map_or(Player::Stopped, playing);
+        let mut cover = CoverLifecycle::new(PixmapSource::Plain, cell());
+        cover.set_cover(cover_image(decoded));
+
+        let update = cover.refresh(&sources.scene(), parts(CrossfadePermit::Withheld));
+
+        assert_eq!(mem::discriminant(&update.art), mem::discriminant(&expected));
+    }
+
+    #[test]
+    fn a_track_change_without_a_new_cover_clears_the_previous_art() {
+        let mut sources = animated_sources();
+        sources.model.player = playing("/music/a.flac");
+        let mut cover = CoverLifecycle::new(PixmapSource::Plain, cell());
+        cover.set_cover(cover_image("/music/a.flac"));
+        cover.refresh(&sources.scene(), parts(CrossfadePermit::Withheld));
+        sources.model.player = playing("/music/b.flac");
+
+        let update = cover.refresh(&sources.scene(), parts(CrossfadePermit::Withheld));
+
+        assert!(matches!(update.art, CardCover::Missing));
+    }
+
     #[test]
     fn a_crossfade_keeps_the_incoming_image_shared() {
-        let sources = animated_sources();
+        let mut sources = animated_sources();
+        sources.model.player = playing("/music/a.flac");
         let mut cover = CoverLifecycle::new(PixmapSource::Plain, cell());
-        cover.set_cover(CoverImage {
-            path: PathBuf::from("a.jpg"),
-            image: Arc::new(source_pixmap()),
-        });
+        cover.set_cover(cover_image("/music/a.flac"));
         cover.refresh(&sources.scene(), parts(CrossfadePermit::Allowed));
-        let second = CoverImage {
-            path: PathBuf::from("b.jpg"),
-            image: Arc::new(source_pixmap()),
-        };
+        sources.model.player = playing("/music/b.flac");
+        let second = cover_image("/music/b.flac");
         cover.set_cover(second.clone());
         cover.refresh(&sources.scene(), parts(CrossfadePermit::Allowed));
-        let incoming = cover.pixmap.as_ref().expect("a pixmap after install");
+        let incoming = cover
+            .painted
+            .as_ref()
+            .map(|painted| &painted.pixmap)
+            .expect("a pixmap after install");
         assert!(Arc::ptr_eq(incoming, &second.image));
     }
 
@@ -587,14 +646,16 @@ mod tests {
 
         cover.refresh(&sources.scene(), parts(CrossfadePermit::Allowed));
         let first = cover
-            .pixmap
-            .clone()
+            .painted
+            .as_ref()
+            .map(|painted| Arc::clone(&painted.pixmap))
             .expect("a refresh with a cover rect paints a pixmap");
 
         cover.refresh(&sources.scene(), parts(CrossfadePermit::Allowed));
         let second = cover
-            .pixmap
-            .clone()
+            .painted
+            .as_ref()
+            .map(|painted| Arc::clone(&painted.pixmap))
             .expect("a settled second refresh keeps the painted pixmap");
 
         assert!(Arc::ptr_eq(&first, &second));

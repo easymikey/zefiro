@@ -8,6 +8,6 @@ music_dir = "/new/music"
 
 [audio]
 crossfade = "250ms"
-replaygain = true
+replay_gain = true
 device = "Speakers"
 sleep_presets = [10, 20]

@@ -1,10 +1,9 @@
 use crate::{
     cmd::{AudioCmd, Cmd, ConfigCmd, ConfigPatch, Effect},
     domain::{
-        appearance_rows::AppearanceField,
         device::OutputDevice,
         direction::Direction,
-        setting_row::{AppearanceSetting, Choice, SettingRow},
+        setting_row::{AppearanceField, AppearanceSetting, Choice, SettingRow},
         settings::{ReplayGain, Settings},
         sleep_presets::SleepPresets,
         theme::{ThemeChoice, Themes},
@@ -31,13 +30,13 @@ pub(crate) fn step_setting(
     let ConfigParts {
         themes,
         settings,
-        appearance_settings,
+        appearance_rows,
         ..
     } = config;
     let message = match row {
         SettingRow::Theme => return Ok(theme_picked(themes, direction)),
         SettingRow::Appearance(field) => {
-            return Ok(appearance_stepped(appearance_settings, field, direction));
+            return Ok(appearance_stepped(appearance_rows, field, direction));
         }
         SettingRow::Crossfade => SettingsMessage::Crossfade(direction),
         SettingRow::ReplayGain => SettingsMessage::ToggleReplayGain,
@@ -48,11 +47,11 @@ pub(crate) fn step_setting(
 }
 
 fn appearance_stepped(
-    appearance_settings: &mut [AppearanceSetting],
+    appearance_rows: &mut [AppearanceSetting],
     field: AppearanceField,
     direction: Direction,
 ) -> Cmd {
-    let Some(slot) = appearance_settings
+    let Some(slot) = appearance_rows
         .iter_mut()
         .find(|slot| slot.row.field == field)
     else {
@@ -60,7 +59,7 @@ fn appearance_stepped(
     };
     let option = slot.choice.stepped(slot.row.control, direction);
     slot.choice = Choice::Option(option);
-    let setting = Cmd::from(Effect::Config(ConfigCmd::Setting { field, option }));
+    let setting = Cmd::from(Effect::Config(ConfigCmd::SetAppearance { field, option }));
     let theme = slot
         .row
         .themes

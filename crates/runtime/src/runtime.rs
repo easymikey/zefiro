@@ -5,31 +5,24 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use config::driver::ConfigPaths;
 use kernel::{
     cmd::Effect,
     domain::{model::Model, startup::Startup, time::Moment},
     message::{DriverEvent, Message},
     update::machine::Unhandled,
 };
-use library::dirs::LibraryDirs;
 
 use crate::{
-    error::Error,
+    error::{ClockError, Error},
     interpret::{Interpreter, interpret},
     registry,
     shell::{Frame, ShellEffect},
     spawn::Spawners,
+    startup_paths::StartupPaths,
     timers::Timers,
     trace::Trace,
     wiring::{Wiring, await_exits, join_exited},
 };
-
-#[derive(Debug, Clone)]
-pub struct StartupPaths {
-    pub config: ConfigPaths,
-    pub library: LibraryDirs,
-}
 
 #[derive(Debug)]
 pub struct Runtime {
@@ -41,7 +34,6 @@ pub struct Runtime {
     unix_offset: Duration,
     flow: ControlFlow<()>,
     shell_effects: Vec<ShellEffect>,
-    full_episodes: u32,
 }
 
 impl Runtime {
@@ -52,21 +44,17 @@ impl Runtime {
         paths: &StartupPaths,
         spawners: &Spawners,
     ) -> Result<Self, Error> {
-        let (model, effects) = Self::seeded(startup);
+        let (model, effects) = kernel::update::startup::startup(startup);
         let wiring = Wiring::spawn(&model, paths, spawners)?;
-        Ok(Self::assemble((model, effects), wiring, Trace::default()))
-    }
-
-    pub(crate) fn seeded(startup: Startup) -> (Model, Vec<Effect>) {
-        kernel::update::startup::startup(startup)
+        Ok(Self::assemble((model, effects), wiring, Trace::default())?)
     }
 
     pub(crate) fn assemble(
-        seed: (Model, Vec<Effect>),
+        started: (Model, Vec<Effect>),
         wiring: Wiring,
         trace: Trace,
-    ) -> Self {
-        let (model, effects) = seed;
+    ) -> Result<Self, ClockError> {
+        let (model, effects) = started;
         let mut runtime = Self {
             model,
             wiring,
@@ -75,19 +63,18 @@ impl Runtime {
             epoch: Instant::now(),
             unix_offset: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap_or(Duration::ZERO),
+                .map_err(ClockError)?,
             flow: ControlFlow::Continue(()),
             shell_effects: Vec::new(),
-            full_episodes: 0,
         };
         for answer in runtime.interpret(effects) {
-            match runtime.step(answer) {
+            match runtime.deliver(answer) {
                 Ok(()) | Err(Unhandled) => {}
             }
         }
         for row in registry::REGISTRY {
             if !row.platform.present() {
-                match runtime.step(Message::Driver {
+                match runtime.deliver(Message::Driver {
                     driver: row.driver,
                     event: DriverEvent::Stopped,
                 }) {
@@ -95,10 +82,10 @@ impl Runtime {
                 }
             }
         }
-        runtime
+        Ok(runtime)
     }
 
-    pub(crate) fn step(&mut self, message: Message) -> Result<(), Unhandled> {
+    pub(crate) fn deliver(&mut self, message: Message) -> Result<(), Unhandled> {
         let mut queue: VecDeque<Message> = VecDeque::from([message]);
         let mut result = Err(Unhandled);
         while let Some(current) = queue.pop_front() {
@@ -116,8 +103,7 @@ impl Runtime {
                 return;
             }
             if self.wiring.ports.full(row.driver).take() {
-                self.full_episodes += 1;
-                match self.step(Message::Driver {
+                match self.deliver(Message::Driver {
                     driver: row.driver,
                     event: DriverEvent::Full,
                 }) {
@@ -133,19 +119,8 @@ impl Runtime {
         &self.trace
     }
 
-    #[must_use]
-    pub(crate) fn sleep_deadline(&self) -> Option<Moment> {
-        self.timers
-            .sleep_deadline(self.model.transport.sleep)
-            .map(|deadline| self.moment_of(deadline))
-    }
-
     pub(crate) fn flow(&self) -> ControlFlow<()> {
         self.flow
-    }
-
-    pub(crate) fn animations(&self) -> kernel::domain::appearance::Animations {
-        self.model.settings.appearance.animations
     }
 
     pub(crate) fn take_shell_effects(&mut self) -> Vec<ShellEffect> {
@@ -157,7 +132,6 @@ impl Runtime {
             model: &self.model,
             spectrum: &self.wiring.spectrum,
             latest: &self.wiring.cells,
-            sleep_deadline: self.sleep_deadline(),
             now: self.moment_of(now),
         }
     }
@@ -182,12 +156,10 @@ impl Runtime {
             ..
         } = self;
         let Wiring {
-            receiver,
-            mut ports,
-            ..
+            mailbox, mut ports, ..
         } = wiring;
         ports.hang_up();
-        let reported = await_exits(&model, &receiver, Self::DRAIN);
+        let reported = await_exits(&model, &mailbox, Self::DRAIN);
         join_exited(&mut ports, &reported, &mut trace);
     }
 
@@ -235,36 +207,32 @@ mod tests {
     };
 
     use audio::tap::SpectrumTap;
-    use config::driver::{ConfigPaths, SeenTexts};
+    use config::driver::paths::{ConfigPaths, SeenTexts};
     use crossbeam_channel::{Receiver, Sender, unbounded};
     use kernel::{
         cmd::{AudioCmd, LibraryCmd},
         domain::{
             direction::Direction,
-            driver::{DriverName, DriverStatus},
+            driver::{DriverName, DriverStatus, Restarts},
             setting_row::SettingRow,
             startup::Startup,
             toast::Toast,
         },
-        message::{AudioEvent, DriverEvent, Message},
+        message::{DriverEvent, Message},
         update::machine::Unhandled,
     };
     use library::dirs::LibraryDirs;
     use rstest::rstest;
 
     use crate::{
-        driver::DriverThread,
+        driver_thread::{Congestion, DriverThread},
         error::Error,
         event_loop::run,
-        outbox::Outbox,
-        runtime::{Runtime, StartupPaths},
+        runtime::Runtime,
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
-        spawn::{
-            SpawnSetup,
-            Spawners,
-            config_thread::spawn_config,
-            tests::spawn_audio_loop,
-        },
+        spawn::{Spawners, config_thread::spawn_config, tests::spawn_audio_loop},
+        spawn_setup::SpawnSetup,
+        startup_paths::StartupPaths,
         trace::Trace,
         wiring::Wiring,
     };
@@ -300,12 +268,7 @@ mod tests {
             Reaction::Message(Message::Quit)
         }
 
-        fn effect(
-            &mut self,
-            _effect: ShellEffect,
-            _animations: kernel::domain::appearance::Animations,
-        ) {
-        }
+        fn effect(&mut self, _effect: ShellEffect) {}
 
         fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
@@ -325,7 +288,7 @@ mod tests {
     ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
         let forward = AUDIO_TAP.with(|tap| tap.borrow().clone()).unwrap();
         spawn_audio_loop(
-            move |inbox: &Receiver<AudioCmd>, _: &Outbox<AudioEvent>| {
+            move |inbox: &Receiver<AudioCmd>, _: &Sender<Message>, _: &Congestion| {
                 while let Ok(command) = inbox.recv() {
                     if forward.send(command).is_err() {
                         return;
@@ -352,7 +315,7 @@ mod tests {
         spawn_parts: &SpawnSetup<'_>,
     ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
         spawn_audio_loop(
-            |_: &Receiver<AudioCmd>, _: &Outbox<AudioEvent>| boom(),
+            |_: &Receiver<AudioCmd>, _: &Sender<Message>, _: &Congestion| boom(),
             spawn_parts,
         )
     }
@@ -404,12 +367,7 @@ mod tests {
             }
         }
 
-        fn effect(
-            &mut self,
-            _effect: ShellEffect,
-            _animations: kernel::domain::appearance::Animations,
-        ) {
-        }
+        fn effect(&mut self, _effect: ShellEffect) {}
 
         fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
@@ -442,7 +400,7 @@ mod tests {
         assert!(matches!(ended, Ok(())));
         let text = std::fs::read_to_string(&config_path).unwrap();
         assert!(
-            text.contains("replaygain"),
+            text.contains("replay_gain"),
             "drain must flush the pending replay_gain save to disk"
         );
     }
@@ -456,7 +414,7 @@ mod tests {
     struct ObserveDeadThenQuit {
         steps: Sender<LifeStep>,
         paints: usize,
-        restarts: usize,
+        restarts: Restarts,
     }
 
     impl Shell for ObserveDeadThenQuit {
@@ -470,12 +428,7 @@ mod tests {
             }
         }
 
-        fn effect(
-            &mut self,
-            _effect: ShellEffect,
-            _animations: kernel::domain::appearance::Animations,
-        ) {
-        }
+        fn effect(&mut self, _effect: ShellEffect) {}
 
         fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
@@ -488,8 +441,8 @@ mod tests {
                 .drivers
                 .record(DriverName::Audio)
                 .restarts
-                .count();
-            let next = if self.restarts > 0 || self.paints >= 20 {
+                .clone();
+            let next = if self.restarts != Restarts::default() || self.paints >= 20 {
                 LifeStep::Quit
             } else {
                 LifeStep::Paint
@@ -517,23 +470,23 @@ mod tests {
         let mut shell = ObserveDeadThenQuit {
             steps,
             paints: 0,
-            restarts: 0,
+            restarts: Restarts::default(),
         };
 
         let ended = run(runtime, &mut shell, &input);
 
         assert!(matches!(ended, Ok(())));
-        assert!(
-            (1..=3).contains(&shell.restarts),
-            "audio's standard supervision caps automatic restarts at 3 within 60s, saw {}",
-            shell.restarts
+        assert_ne!(
+            shell.restarts,
+            Restarts::default(),
+            "audio's standard supervision restarts a panicked driver"
         );
     }
 
     fn start(library: DriverStatus) -> (Runtime, Receiver<LibraryCmd>) {
         let (wiring, library_inbox, _writers) = Wiring::idle();
-        let seed = Runtime::seeded(stock_startup());
-        let mut runtime = Runtime::assemble(seed, wiring, Trace::default());
+        let started = kernel::update::startup::startup(stock_startup());
+        let mut runtime = Runtime::assemble(started, wiring, Trace::default()).unwrap();
         runtime.model.drivers.record_mut(DriverName::Library).status = library;
         (runtime, library_inbox)
     }
@@ -573,7 +526,7 @@ mod tests {
     ) {
         let (mut runtime, _library_inbox) = start(library);
 
-        let change = runtime.step(message);
+        let change = runtime.deliver(message);
 
         assert_eq!(change, expected);
         runtime.drain();

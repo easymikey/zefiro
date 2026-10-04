@@ -101,12 +101,18 @@ mod tests {
 
     use rstest::rstest;
 
-    use crate::domain::sleep_presets::{SleepPresetError, SleepPresets};
+    use crate::domain::{
+        sleep_presets::{SleepPresetError, SleepPresets},
+        time::SECONDS_PER_MINUTE,
+    };
 
     #[test]
     fn the_default_bundles_are_the_five_documented_ones() {
         let minutes = |bundle: &[Duration]| -> Vec<u64> {
-            bundle.iter().map(|preset| preset.as_secs() / 60).collect()
+            bundle
+                .iter()
+                .map(|preset| preset.as_secs() / SECONDS_PER_MINUTE)
+                .collect()
         };
         assert_eq!(
             SleepPresets::BUNDLES

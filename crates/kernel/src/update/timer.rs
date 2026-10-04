@@ -16,10 +16,10 @@ pub(crate) fn toast_expired(
     workspace: &mut Workspace,
     revision: Revision,
     reply: Freshness,
-) -> Cmd {
+) -> Result<Cmd, Unhandled> {
     match reply {
-        Freshness::Awaited => workspace.expire(revision),
-        Freshness::Stale => Cmd::none(),
+        Freshness::Awaited => Ok(workspace.expire(revision)),
+        Freshness::Stale => Err(Unhandled),
     }
 }
 
@@ -39,7 +39,7 @@ pub(crate) fn sleep_fired(
             Ok(paused)
         }
         (Freshness::Awaited, None) | (Freshness::Stale, Some(_) | None) => {
-            Ok(Cmd::none())
+            Err(Unhandled)
         }
     }
 }

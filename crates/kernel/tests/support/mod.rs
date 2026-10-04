@@ -1,8 +1,8 @@
 pub(crate) mod keymap;
 pub(crate) mod router;
-pub(crate) mod step;
 pub(crate) mod strategies;
 pub(crate) mod table;
+pub(crate) mod update;
 
 use std::{path::Path, sync::Arc, time::Duration};
 
@@ -80,30 +80,31 @@ pub(crate) fn track_with_tags(path: &str, tags: Tags) -> Arc<Track> {
     )
 }
 
-pub(crate) fn model_with_titled_tracks(tracks: &[(&str, &str, &str)]) -> Model {
-    Model {
-        playlist: Playlist::from_tracks(
-            tracks
-                .iter()
-                .map(|(path, title, artist)| titled_track(path, title, artist))
-                .collect(),
-        ),
+pub(crate) fn listed_model(playlist_tracks: Vec<Arc<Track>>) -> Model {
+    let mut model = Model {
+        playlist: Playlist::from_tracks(playlist_tracks),
         ..Default::default()
-    }
+    };
+    let browse = &mut model.workspace.browse;
+    browse.cursor = browse.cursor.resize(model.playlist.tracks.len());
+    model
+}
+
+pub(crate) fn model_with_titled_tracks(tracks: &[(&str, &str, &str)]) -> Model {
+    listed_model(
+        tracks
+            .iter()
+            .map(|(path, title, artist)| titled_track(path, title, artist))
+            .collect(),
+    )
 }
 
 pub(crate) fn model_with_tracks(count: usize) -> Model {
-    Model {
-        playlist: Playlist::from_tracks((0..count).map(bare_track).collect()),
-        ..Default::default()
-    }
+    listed_model((0..count).map(bare_track).collect())
 }
 
 pub(crate) fn model_with_dated_tracks(count: usize) -> Model {
-    Model {
-        playlist: Playlist::from_tracks((0..count).map(dated_track).collect()),
-        ..Default::default()
-    }
+    listed_model((0..count).map(dated_track).collect())
 }
 
 pub(crate) fn model_playing_at(count: usize, k: usize, at: Duration) -> Model {

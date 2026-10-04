@@ -42,6 +42,9 @@ expression: "walked(model, messages)"
                 SleepTimer {
                     preset_index: Index(0),
                     delay: 900s,
+                    deadline: Moment(
+                        900s,
+                    ),
                 },
             ),
             ab_loop: None,
@@ -87,6 +90,9 @@ expression: "walked(model, messages)"
                 SleepTimer {
                     preset_index: Index(1),
                     delay: 1800s,
+                    deadline: Moment(
+                        1800s,
+                    ),
                 },
             ),
             ab_loop: None,
@@ -132,6 +138,9 @@ expression: "walked(model, messages)"
                 SleepTimer {
                     preset_index: Index(2),
                     delay: 3600s,
+                    deadline: Moment(
+                        3600s,
+                    ),
                 },
             ),
             ab_loop: None,

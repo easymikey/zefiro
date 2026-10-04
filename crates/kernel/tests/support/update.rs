@@ -14,10 +14,10 @@ pub(crate) fn update(
         .map(|effects| effects.into_iter().collect::<Cmd>())
 }
 
-pub(crate) fn apply_at(model: &mut Model, message: Message, now: Moment) {
+pub(crate) fn send_at(model: &mut Model, message: Message, now: Moment) {
     drop(update(model, message, now).unwrap());
 }
 
-pub(crate) fn apply(model: &mut Model, message: Message) {
-    apply_at(model, message, Moment::default());
+pub(crate) fn send(model: &mut Model, message: Message) {
+    send_at(model, message, Moment::default());
 }

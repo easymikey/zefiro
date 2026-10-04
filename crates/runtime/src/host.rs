@@ -64,8 +64,8 @@ mod tests {
 
     fn idle_runtime() -> Runtime {
         let (wiring, ..) = Wiring::idle();
-        let seed = Runtime::seeded(Startup::default());
-        Runtime::assemble(seed, wiring, Trace::default())
+        let started = kernel::update::startup::startup(Startup::default());
+        Runtime::assemble(started, wiring, Trace::default()).unwrap()
     }
 
     #[test]

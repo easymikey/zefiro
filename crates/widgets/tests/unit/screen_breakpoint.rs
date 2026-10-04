@@ -29,8 +29,8 @@ fn custom_breakpoints_are_honored_not_just_defaults() {
         full_min_height: Cells(10),
         compact_min_width: Cells(5),
         compact_min_height: Cells(5),
-        min_columns: Cells(5),
-        min_rows: Cells(5),
+        min_width: Cells(5),
+        min_height: Cells(5),
     };
     assert_eq!(
         Breakpoint::new(Size::new(10, 10), &breakpoints, LayoutMode::Auto),
@@ -49,8 +49,8 @@ fn custom_breakpoints_are_honored_not_just_defaults() {
 #[test]
 fn a_compact_override_at_its_own_floor_stays_compact() {
     let breakpoints = Breakpoints {
-        min_columns: Cells(20),
-        min_rows: Cells(3),
+        min_width: Cells(20),
+        min_height: Cells(3),
         ..Breakpoints::default()
     };
     assert_eq!(
@@ -69,8 +69,8 @@ fn a_compact_override_at_its_own_floor_stays_compact() {
 #[test]
 fn a_compact_override_below_its_own_floor_falls_back_to_minimal() {
     let breakpoints = Breakpoints {
-        min_columns: Cells(20),
-        min_rows: Cells(3),
+        min_width: Cells(20),
+        min_height: Cells(3),
         ..Breakpoints::default()
     };
     assert_eq!(

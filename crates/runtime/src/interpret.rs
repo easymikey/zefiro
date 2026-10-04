@@ -119,13 +119,13 @@ mod tests {
             ConfigCmd,
             ConfigPatch,
             CoverJob,
-            Cue,
             Effect,
             LibraryCmd,
             MacosCmd,
             WindowColorsCmd,
         },
         domain::{
+            cue::Cue,
             device::OutputDevice,
             driver::{DriverName, DriverStatus},
             geometry::Pixels,
@@ -138,8 +138,8 @@ mod tests {
     };
 
     use crate::{
+        driver_thread::Congestion,
         interpret::{Interpreted, Interpreter, interpret},
-        outbox::Congestion,
         port::{Port, Ports},
         shell::ShellEffect,
         timers::Timers,
@@ -492,17 +492,17 @@ mod tests {
     fn a_setting_effect_reaches_the_config_inbox_as_a_setting_command() {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
-        let field = kernel::domain::appearance_rows::AppearanceField::CoverBrackets;
+        let field = kernel::domain::setting_row::AppearanceField::CoverBrackets;
         let option = OptionCount::new(2).unwrap().index(0).unwrap();
 
         let interpreted = run(
-            Cmd::effect(Effect::Config(ConfigCmd::Setting { field, option })),
+            Cmd::effect(Effect::Config(ConfigCmd::SetAppearance { field, option })),
             &mut interpreter,
         );
 
         assert_eq!(
             fixture.config_rx.try_recv(),
-            Ok(ConfigCmd::Setting { field, option })
+            Ok(ConfigCmd::SetAppearance { field, option })
         );
         assert!(interpreted.shell_effects.is_empty());
         assert!(fixture.trace.iter().next().is_none());

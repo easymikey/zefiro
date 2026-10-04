@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use kernel::{
     cmd::Cmd,
     domain::{io_error::IoError, revision::Revision},
-    message::{LibraryError, LibraryEvent, LibrarySubject},
+    message::LibrarySubject,
     update::machine::{Machine, Unhandled},
 };
 
-use crate::driver::LibraryMessage;
+use crate::{error::Error, message::LibraryMessage};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct LibraryWatch {
@@ -94,14 +94,11 @@ impl LibraryWatch {
         match &self.registered {
             Registered::Unrooted => Err(Unhandled),
             Registered::On { music_dir, .. } => {
-                Ok(Cmd::message(LibraryMessage::Executed {
-                    event: LibraryEvent::Error(LibraryError::File {
-                        subject: LibrarySubject::Watch,
-                        path: music_dir.clone(),
-                        kind,
-                    }),
-                    skipped: None,
-                }))
+                Ok(Cmd::message(LibraryMessage::Error(Error::Io {
+                    subject: LibrarySubject::Watch,
+                    path: music_dir.clone(),
+                    source: std::io::Error::from(io_kind(kind)),
+                })))
             }
         }
     }
@@ -150,6 +147,16 @@ impl LibraryWatch {
     }
 }
 
+fn io_kind(kind: IoError) -> std::io::ErrorKind {
+    match kind {
+        IoError::Missing => std::io::ErrorKind::NotFound,
+        IoError::Denied => std::io::ErrorKind::PermissionDenied,
+        IoError::Malformed => std::io::ErrorKind::InvalidData,
+        IoError::Full => std::io::ErrorKind::StorageFull,
+        IoError::Other => std::io::ErrorKind::Other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -157,13 +164,13 @@ mod tests {
     use kernel::{
         cmd::Cmd,
         domain::{io_error::IoError, revision::Revision},
-        message::{LibraryError, LibraryEvent, LibrarySubject},
+        message::{LibraryError, LibrarySubject},
         update::machine::{Machine, Unhandled},
     };
     use rstest::rstest;
 
     use crate::{
-        driver::LibraryMessage,
+        message::LibraryMessage,
         watch::{Burst, LibraryWatch, LibraryWatchMessage, Registered, WatchEffect},
     };
 
@@ -316,18 +323,17 @@ mod tests {
             .unwrap();
         let (effects, messages) = cmd.into_parts();
         assert!(effects.is_empty());
-        let [LibraryMessage::Executed { event, skipped }] = messages.as_slice() else {
-            panic!("expected one executed message: {messages:?}");
+        let [LibraryMessage::Error(error)] = messages.as_slice() else {
+            panic!("expected one error message: {messages:?}");
         };
         assert_eq!(
-            *event,
-            LibraryEvent::Error(LibraryError::File {
+            LibraryError::from(error),
+            LibraryError::File {
                 subject: LibrarySubject::Watch,
                 path: music_dir(),
                 kind: IoError::Missing,
-            })
+            }
         );
-        assert!(skipped.is_none());
     }
 
     #[rstest]

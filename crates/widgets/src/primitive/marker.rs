@@ -1,6 +1,7 @@
+use kernel::cmd::Playback;
 use unicode_width::UnicodeWidthStr;
 
-use crate::{Playing, primitive::glyphs};
+use crate::primitive::glyphs;
 
 pub(crate) const FAVORITE_COLUMNS: u16 = 2;
 pub(crate) const PLAYING_COLUMNS: u16 = 2;
@@ -21,10 +22,10 @@ pub(crate) enum Favorite {
 }
 
 #[must_use]
-pub(crate) fn playing_marker(playing: Playing) -> &'static str {
+pub(crate) fn playing_marker(playing: Playback) -> &'static str {
     match playing {
-        Playing::Yes => glyphs::playlist::PLAYING,
-        Playing::No => "",
+        Playback::Playing => glyphs::playlist::PLAYING,
+        Playback::Paused => "",
     }
 }
 

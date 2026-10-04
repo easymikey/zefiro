@@ -26,7 +26,12 @@ use objc2_media_player::{
     MPSeekCommandEventType,
 };
 
-use crate::controls::Trigger;
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Trigger {
+    Press(PlaybackRequest),
+    Hold(PlaybackRequest),
+    Scrub,
+}
 
 pub(crate) fn shared_command_center() -> Retained<MPRemoteCommandCenter> {
     // SAFETY: no arguments; returns the process-wide singleton.
@@ -93,10 +98,10 @@ pub(crate) fn remove_command_target(command: &MPRemoteCommand, target: &AnyObjec
     unsafe { command.removeTarget(Some(target)) };
 }
 
-pub(crate) fn borrow_command_event<Outcome>(
+pub(crate) fn borrow_command_event<T>(
     event: NonNull<MPRemoteCommandEvent>,
-    scope: impl FnOnce(&MPRemoteCommandEvent) -> Outcome,
-) -> Outcome {
+    scope: impl FnOnce(&MPRemoteCommandEvent) -> T,
+) -> T {
     // SAFETY: MediaPlayer keeps the event alive for the duration of this call.
     scope(unsafe { event.as_ref() })
 }

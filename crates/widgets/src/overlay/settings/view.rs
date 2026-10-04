@@ -3,7 +3,6 @@ use std::{path::Path, time::Duration};
 use kernel::domain::{
     appearance::{
         Animations,
-        AppearancePatch,
         AppearancePreset,
         AppearanceSettings,
         CoverBrackets,
@@ -12,18 +11,19 @@ use kernel::domain::{
         ProgressTime,
         preset_of,
     },
-    appearance_rows::{AppearanceField, appearance_patch, appearance_row},
+    appearance_rows::{COVER_MODES, LAYOUT_MODES, SPEED_CHIPS},
     bounded::Bounded,
     crossfade::Crossfade,
     device::ListedDevice,
-    setting_row::{AppearanceSetting, SettingRow},
+    setting_row::{AppearanceField, AppearanceSetting, SettingRow},
     settings::ReplayGain,
     sleep_presets::SleepPresets,
     theme::ThemeName,
+    time::SECONDS_PER_MINUTE,
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::{primitive::glyphs, repaint::SECONDS_PER_MINUTE};
+use crate::primitive::glyphs;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SettingsView<'a> {
@@ -37,7 +37,7 @@ pub(crate) struct SettingsView<'a> {
     pub(crate) output_device: Option<&'a str>,
     pub(crate) output_devices: &'a [ListedDevice],
     pub(crate) appearance: AppearanceSettings,
-    pub(crate) appearance_settings: &'a [AppearanceSetting],
+    pub(crate) appearance_rows: &'a [AppearanceSetting],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,15 +107,11 @@ pub(crate) fn settings_label(row: SettingRow) -> &'static str {
         SettingRow::ReplayGain => "ReplayGain",
         SettingRow::OutputDevice => "Output device",
         SettingRow::SleepPresets => "Sleep presets",
-        SettingRow::Appearance(id) => custom_label(id),
+        SettingRow::Appearance(field) => appearance_label(field),
     }
 }
 
-fn custom_label(id: AppearanceField) -> &'static str {
-    appearance_row(id).map_or("", |row| appearance_field_label(row.field))
-}
-
-fn appearance_field_label(field: AppearanceField) -> &'static str {
+fn appearance_label(field: AppearanceField) -> &'static str {
     match field {
         AppearanceField::Preset => "Preset",
         AppearanceField::CoverMode => "Cover mode",
@@ -129,31 +125,30 @@ fn appearance_field_label(field: AppearanceField) -> &'static str {
     }
 }
 
-pub(crate) fn value_text(row: SettingRow, values: &SettingsView<'_>) -> String {
+pub(crate) fn value_text(row: SettingRow, view: &SettingsView<'_>) -> String {
     match row {
-        SettingRow::Theme => format_pick(values.theme),
-        SettingRow::Crossfade => format_duration_step(values.crossfade.get()),
-        SettingRow::ReplayGain => format_toggle(Toggle::from(values.replay_gain)),
+        SettingRow::Theme => format_pick(view.theme),
+        SettingRow::Crossfade => format_duration_step(view.crossfade.get()),
+        SettingRow::ReplayGain => format_toggle(Toggle::from(view.replay_gain)),
         SettingRow::OutputDevice => {
-            let name = values
+            let name = view
                 .output_device
                 .unwrap_or(glyphs::settings::OUTPUT_DEVICE_DEFAULT);
             format_pick(name)
         }
         SettingRow::SleepPresets => {
-            format_pick(&format_sleep_presets_label(values.sleep_presets))
+            format_pick(&format_sleep_presets_label(view.sleep_presets))
         }
-        SettingRow::Appearance(id) => custom_value_text(id, values),
+        SettingRow::Appearance(field) => appearance_value_text(field, view.appearance),
     }
 }
 
-fn custom_value_text(id: AppearanceField, values: &SettingsView<'_>) -> String {
-    let Some(row) = appearance_row(id) else {
-        return String::new();
-    };
-    let appearance = values.appearance;
-    match row.field {
-        AppearanceField::Preset => format_pick(preset_label(appearance)),
+fn appearance_value_text(
+    field: AppearanceField,
+    appearance: AppearanceSettings,
+) -> String {
+    match field {
+        AppearanceField::Preset => format_pick(preset_label(preset_of(appearance))),
         AppearanceField::CoverMode => format_pick(&appearance.cover_mode.to_string()),
         AppearanceField::CoverBrackets => {
             format_toggle(Toggle::from(appearance.cover_brackets))
@@ -173,24 +168,21 @@ fn custom_value_text(id: AppearanceField, values: &SettingsView<'_>) -> String {
     }
 }
 
-fn preset_label(appearance: AppearanceSettings) -> &'static str {
-    match preset_of(appearance) {
+fn preset_label(preset: Option<AppearancePreset>) -> &'static str {
+    match preset {
         Some(AppearancePreset::Stock) => "default",
         Some(AppearancePreset::Noir) => "noir",
         None => "custom",
     }
 }
 
-pub(crate) fn max_value_width(row: SettingRow, values: &SettingsView<'_>) -> usize {
+pub(crate) fn max_value_width(row: SettingRow, view: &SettingsView<'_>) -> usize {
     match row {
-        SettingRow::Theme => {
-            widest_pick(values.themes.iter().map(ThemeName::to_string))
-        }
+        SettingRow::Theme => widest_pick(view.themes.iter().map(ThemeName::to_string)),
         SettingRow::Crossfade => format_duration_step(Crossfade::MAX).width(),
         SettingRow::ReplayGain => widest_toggle(),
         SettingRow::OutputDevice => widest_pick(
-            values
-                .output_devices
+            view.output_devices
                 .iter()
                 .map(|device| device.name.to_string())
                 .chain(std::iter::once(
@@ -202,7 +194,7 @@ pub(crate) fn max_value_width(row: SettingRow, values: &SettingsView<'_>) -> usi
                 .iter()
                 .map(|bundle| format_sleep_presets_label(bundle)),
         ),
-        SettingRow::Appearance(id) => custom_max_value_width(id, values),
+        SettingRow::Appearance(field) => appearance_value_width(field),
     }
 }
 
@@ -219,28 +211,31 @@ fn widest_pick(labels: impl Iterator<Item = String>) -> usize {
         .unwrap_or(0)
 }
 
-fn custom_max_value_width(id: AppearanceField, values: &SettingsView<'_>) -> usize {
-    let Some(row) = appearance_row(id) else {
-        return 0;
-    };
-    let count = row.control.count();
-    (0..count.get())
-        .filter_map(|position| count.index(position))
-        .filter_map(|option| appearance_patch(id, option))
-        .map(|patch| {
-            custom_value_text(id, &with_patched_appearance(values, patch)).width()
-        })
-        .max()
-        .unwrap_or(0)
-}
-
-fn with_patched_appearance<'a>(
-    values: &SettingsView<'a>,
-    patch: AppearancePatch,
-) -> SettingsView<'a> {
-    SettingsView {
-        appearance: values.appearance.patched(patch),
-        ..*values
+fn appearance_value_width(field: AppearanceField) -> usize {
+    match field {
+        AppearanceField::Preset => widest_pick(
+            [
+                Some(AppearancePreset::Stock),
+                Some(AppearancePreset::Noir),
+                None,
+            ]
+            .into_iter()
+            .map(|preset| preset_label(preset).to_string()),
+        ),
+        AppearanceField::CoverMode => {
+            widest_pick(COVER_MODES.iter().map(ToString::to_string))
+        }
+        AppearanceField::SpeedChip => {
+            widest_pick(SPEED_CHIPS.iter().map(ToString::to_string))
+        }
+        AppearanceField::LayoutMode => {
+            widest_pick(LAYOUT_MODES.iter().map(ToString::to_string))
+        }
+        AppearanceField::CoverBrackets
+        | AppearanceField::FormatChips
+        | AppearanceField::ProgressRemaining
+        | AppearanceField::KeyHints
+        | AppearanceField::Animations => widest_toggle(),
     }
 }
 
@@ -261,11 +256,17 @@ fn format_duration_step(duration: Duration) -> String {
 
 fn format_sleep_presets_label(presets: &[Duration]) -> String {
     if presets.is_empty() {
-        return "off".to_string();
+        return glyphs::settings::SLEEP_OFF.to_string();
     }
     presets
         .iter()
-        .map(|preset| format!("{}m", preset.as_secs() / SECONDS_PER_MINUTE))
+        .map(|preset| {
+            format!(
+                "{}{}",
+                preset.as_secs() / SECONDS_PER_MINUTE,
+                glyphs::settings::MINUTE_UNIT
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -280,55 +281,61 @@ fn format_pick(current: &str) -> String {
 
 impl<'a> SettingsView<'a> {
     #[must_use]
-    pub(crate) fn from_scene(scene: &crate::scene::Scene<'a>) -> Self {
-        let audio = &scene.settings.audio;
-        Self {
-            crossfade: audio.crossfade,
-            replay_gain: audio.replay_gain,
-            theme: crate::scene::theme_label(&scene.themes.selected),
-            themes: &scene.themes.names,
-            sleep_presets: audio.sleep_presets.as_slice(),
-            music_dir: scene.music_dir,
-            home: scene.home,
-            output_device: audio
-                .device
-                .named()
-                .map(kernel::domain::device::DeviceName::as_str),
-            output_devices: &scene.settings.output_devices,
-            appearance: scene.appearance_settings(),
-            appearance_settings: scene.appearance_settings,
-        }
-    }
-
-    #[must_use]
     pub(crate) fn music_dir_label(&self) -> String {
         self.home.map_or_else(
             || self.music_dir.display().to_string(),
-            |home| crate::scene::abbreviate_home(self.music_dir, home),
+            |home| abbreviate_home(self.music_dir, home),
         )
+    }
+}
+
+#[must_use]
+fn abbreviate_home(path: &Path, home: &Path) -> String {
+    match path.strip_prefix(home) {
+        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Ok(rest) => format!("~/{}", rest.display()),
+        Err(_) => path.display().to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{path::Path, time::Duration};
 
     use kernel::domain::{
         appearance::CoverMode,
-        appearance_rows::{APPEARANCE_ROWS, AppearanceField},
-        setting_row::SettingRow,
+        appearance_rows::APPEARANCE_ROWS,
+        setting_row::{AppearanceField, SettingRow},
         settings::ReplayGain,
     };
+    use rstest::rstest;
 
     use crate::overlay::settings::{
-        test_support::{appearance_settings, settings_values},
-        values::{
+        test_support::{appearance_rows, settings_values},
+        view::{
             SettingsView,
+            abbreviate_home,
             format_sleep_presets_label,
             settings_label,
             value_text,
         },
     };
+
+    #[rstest]
+    #[case::under_home(
+        "/Users/test/Desktop/apple-music",
+        "/Users/test",
+        "~/Desktop/apple-music"
+    )]
+    #[case::equal_to_home("/Users/test", "/Users/test", "~")]
+    #[case::outside_home("/mnt/music", "/Users/test", "/mnt/music")]
+    fn a_path_under_home_starts_with_a_tilde(
+        #[case] path: &str,
+        #[case] home: &str,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(abbreviate_home(Path::new(path), Path::new(home)), expected);
+    }
 
     #[test]
     fn sleep_presets_label_renders_minutes_or_off() {
@@ -345,7 +352,7 @@ mod tests {
 
     #[test]
     fn toggle_on_off_render_distinct_glyphs() {
-        let custom = appearance_settings();
+        let custom = appearance_rows();
         let on = settings_values(&custom);
         let off = SettingsView {
             replay_gain: ReplayGain::Off,
@@ -359,15 +366,15 @@ mod tests {
 
     #[test]
     fn pick_row_shows_current_theme() {
-        let custom = appearance_settings();
-        let values = settings_values(&custom);
-        assert!(value_text(SettingRow::Theme, &values).contains("noir"));
+        let custom = appearance_rows();
+        let view = settings_values(&custom);
+        assert!(value_text(SettingRow::Theme, &view).contains("noir"));
     }
 
     #[test]
     fn a_custom_row_renders_its_appearance_fields_label_and_value() {
-        let custom = appearance_settings();
-        let values = settings_values(&custom);
+        let custom = appearance_rows();
+        let view = settings_values(&custom);
         let cover_mode_row = SettingRow::Appearance(
             APPEARANCE_ROWS
                 .into_iter()
@@ -377,7 +384,7 @@ mod tests {
         );
         assert_eq!(settings_label(cover_mode_row), "Cover mode");
         assert!(
-            value_text(cover_mode_row, &values)
+            value_text(cover_mode_row, &view)
                 .contains(&CoverMode::default().to_string())
         );
     }

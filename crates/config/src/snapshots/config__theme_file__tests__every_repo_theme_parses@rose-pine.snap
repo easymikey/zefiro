@@ -15,14 +15,14 @@ TomlTheme {
                 36,
             ],
         ),
-        foreground: Rgb(
+        muted_foreground: Rgb(
             [
                 144,
                 140,
                 170,
             ],
         ),
-        bright_foreground: Rgb(
+        foreground: Rgb(
             [
                 224,
                 222,

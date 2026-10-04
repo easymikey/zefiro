@@ -38,8 +38,8 @@ expression: "walked(model, messages)"
                 },
                 audio_format: AudioFormat {
                     format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
+                    bitrate: None,
+                    sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
                     replay_gain: None,
@@ -63,7 +63,7 @@ expression: "walked(model, messages)"
         None,
         Cursor {
             index: 0,
-            len: 0,
+            len: 4,
         },
         Cursor {
             index: 0,
@@ -132,8 +132,8 @@ expression: "walked(model, messages)"
                 },
                 audio_format: AudioFormat {
                     format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
+                    bitrate: None,
+                    sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
                     replay_gain: None,
@@ -173,8 +173,8 @@ expression: "walked(model, messages)"
                     },
                     audio_format: AudioFormat {
                         format: None,
-                        bitrate_kbps: None,
-                        sample_rate_hz: None,
+                        bitrate: None,
+                        sample_rate: None,
                         bits_per_sample: None,
                         channels: None,
                         replay_gain: None,
@@ -189,7 +189,7 @@ expression: "walked(model, messages)"
         None,
         Cursor {
             index: 0,
-            len: 0,
+            len: 4,
         },
         Cursor {
             index: 0,
@@ -267,8 +267,8 @@ expression: "walked(model, messages)"
                             },
                             audio_format: AudioFormat {
                                 format: None,
-                                bitrate_kbps: None,
-                                sample_rate_hz: None,
+                                bitrate: None,
+                                sample_rate: None,
                                 bits_per_sample: None,
                                 channels: None,
                                 replay_gain: None,
@@ -282,7 +282,7 @@ expression: "walked(model, messages)"
                 ),
             ),
             Audio(
-                Playback(
+                SetPlayback(
                     Playing,
                 ),
             ),
@@ -321,8 +321,8 @@ expression: "walked(model, messages)"
                 },
                 audio_format: AudioFormat {
                     format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
+                    bitrate: None,
+                    sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
                     replay_gain: None,
@@ -415,8 +415,8 @@ expression: "walked(model, messages)"
                             },
                             audio_format: AudioFormat {
                                 format: None,
-                                bitrate_kbps: None,
-                                sample_rate_hz: None,
+                                bitrate: None,
+                                sample_rate: None,
                                 bits_per_sample: None,
                                 channels: None,
                                 replay_gain: None,
@@ -430,7 +430,7 @@ expression: "walked(model, messages)"
                 ),
             ),
             Audio(
-                Playback(
+                SetPlayback(
                     Playing,
                 ),
             ),
@@ -469,8 +469,8 @@ expression: "walked(model, messages)"
                 },
                 audio_format: AudioFormat {
                     format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
+                    bitrate: None,
+                    sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
                     replay_gain: None,
@@ -549,8 +549,8 @@ expression: "walked(model, messages)"
                 },
                 audio_format: AudioFormat {
                     format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
+                    bitrate: None,
+                    sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
                     replay_gain: None,
@@ -638,8 +638,8 @@ expression: "walked(model, messages)"
                             },
                             audio_format: AudioFormat {
                                 format: None,
-                                bitrate_kbps: None,
-                                sample_rate_hz: None,
+                                bitrate: None,
+                                sample_rate: None,
                                 bits_per_sample: None,
                                 channels: None,
                                 replay_gain: None,
@@ -653,7 +653,7 @@ expression: "walked(model, messages)"
                 ),
             ),
             Audio(
-                Playback(
+                SetPlayback(
                     Playing,
                 ),
             ),
@@ -705,8 +705,8 @@ expression: "walked(model, messages)"
                 },
                 audio_format: AudioFormat {
                     format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
+                    bitrate: None,
+                    sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
                     replay_gain: None,

@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use crate::domain::{driver::DriverName, time::Moment};
+use crate::domain::{
+    driver::{DriverName, Restarts},
+    time::Moment,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Supervision {
@@ -22,31 +25,6 @@ pub(crate) enum Announce {
 pub(crate) enum Decision {
     Restart,
     Degrade(Announce),
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Restarts(Vec<Moment>);
-
-impl Restarts {
-    pub fn record(&mut self, now: Moment) {
-        self.0.push(now);
-        if self.0.len() > usize::from(u8::MAX) {
-            self.0.remove(0);
-        }
-    }
-
-    #[must_use]
-    pub fn count(&self) -> usize {
-        self.0.len()
-    }
-
-    #[must_use]
-    pub(crate) fn within(&self, window: Duration, now: Moment) -> usize {
-        self.0
-            .iter()
-            .filter(|moment| now.elapsed_since(**moment) < window)
-            .count()
-    }
 }
 
 impl Supervision {
@@ -96,8 +74,8 @@ mod tests {
     use rstest::rstest;
 
     use crate::domain::{
-        driver::DriverName,
-        supervision::{Announce, Decision, Restarts, Supervision, decide_restart},
+        driver::{DriverName, Restarts},
+        supervision::{Announce, Decision, Supervision, decide_restart},
         time::Moment,
     };
 
@@ -192,7 +170,6 @@ mod tests {
         for secs in 0..300u64 {
             restarts.record(t(secs));
         }
-        assert_eq!(restarts.count(), 255);
         assert_eq!(
             restarts.within(std::time::Duration::from_secs(1000), t(299)),
             255

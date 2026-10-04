@@ -1,27 +1,22 @@
 use std::sync::Arc;
 
-use kernel::domain::{
-    cursor_over::CursorOver,
-    geometry::Cells,
-    overlay::SearchQuery,
-    track::Track,
-};
+use kernel::domain::{cursor_over::CursorOver, overlay::SearchQuery, track::Track};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
     text::Line,
-    widgets::{List, ListItem, ListState, Paragraph, StatefulWidget, Widget},
+    widgets::{Paragraph, Widget},
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    overlay::modal::{metrics::ModalRowStyle, placement::indented},
+    overlay::modal::metrics::ModalRowStyle,
     primitive::{
         glyphs,
         list_chrome::scroll_offset,
         span::{line, text},
-        text::truncate,
+        text::{blanks, truncate},
         track_row::Selected,
     },
 };
@@ -32,17 +27,40 @@ pub(crate) struct SearchMatchList<'a> {
     pub(crate) search: &'a CursorOver<SearchQuery>,
     pub(crate) style: ModalRowStyle,
     pub(crate) lead: u16,
-    pub(crate) scroll_padding: usize,
 }
 
 fn match_count_line(count: usize, dim: Color) -> Option<Line<'static>> {
     (count == 0).then(|| line([text(glyphs::search::NO_MATCHES).fg(dim)]))
 }
 
+fn visible_matches<'a>(
+    list: &SearchMatchList<'a>,
+) -> impl Iterator<Item = (Selected, &'a Track)> {
+    let tracks = list.tracks;
+    let matches = &list.search.content.matches;
+    let selected = usize::from(list.search.selected());
+    let height = usize::from(list.area.height);
+    let offset = scroll_offset(selected, matches.len(), height);
+    matches
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(height)
+        .filter_map(move |(row, &index)| {
+            let selection = if row == selected {
+                Selected::Yes
+            } else {
+                Selected::No
+            };
+            tracks
+                .get(usize::from(index))
+                .map(|track| (selection, track.as_ref()))
+        })
+}
+
 pub(crate) fn paint_match_pane(list: &SearchMatchList<'_>, buffer: &mut Buffer) {
     let SearchMatchList {
         area,
-        tracks,
         search,
         style,
         ..
@@ -54,28 +72,22 @@ pub(crate) fn paint_match_pane(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
         return;
     }
 
-    let items: Vec<ListItem<'static>> = search
-        .content
-        .matches
-        .iter()
-        .filter_map(|&track_index| {
-            tracks.get(usize::from(track_index)).map(|track| {
-                ListItem::new(Line::from(indented(
-                    track.display(),
-                    Cells(list.lead),
-                    Cells(area.width),
-                )))
-            })
+    let budget = usize::from(area.width).saturating_sub(usize::from(list.lead));
+    let lines: Vec<Line<'_>> = visible_matches(list)
+        .map(|(selected, track)| {
+            let row = line([
+                text(blanks(usize::from(list.lead))),
+                text(truncate(track.display(), budget)),
+            ]);
+            match selected {
+                Selected::Yes => row.style(style.highlight()),
+                Selected::No => row,
+            }
         })
         .collect();
-
-    let widget = List::new(items)
-        .scroll_padding(list.scroll_padding)
+    Paragraph::new(lines)
         .style(Style::default().fg(style.foreground))
-        .highlight_style(style.highlight());
-    let mut visible =
-        ListState::default().with_selected(Some(usize::from(search.selected())));
-    StatefulWidget::render(widget, area, buffer, &mut visible);
+        .render(area, buffer);
 }
 
 struct MatchRow<'a> {
@@ -87,7 +99,6 @@ struct MatchRow<'a> {
 pub(crate) fn paint_match_rows(list: &SearchMatchList<'_>, buffer: &mut Buffer) {
     let SearchMatchList {
         area,
-        tracks,
         search,
         style,
         ..
@@ -103,34 +114,17 @@ pub(crate) fn paint_match_rows(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
     }
 
     let row_width = usize::from(area.width);
-    let lines: Vec<Line<'_>> = search
-        .content
-        .matches
-        .iter()
-        .enumerate()
-        .filter_map(|(row, &index)| {
-            tracks.get(usize::from(index)).map(|track| {
-                let selected = if row == usize::from(search.selected()) {
-                    Selected::Yes
-                } else {
-                    Selected::No
-                };
-                let row_props = MatchRow {
-                    title: track.display(),
-                    selected,
-                    row_width,
-                };
-                match_line(&row_props, style)
-            })
+    let lines: Vec<Line<'_>> = visible_matches(list)
+        .map(|(selected, track)| {
+            let row_props = MatchRow {
+                title: track.display(),
+                selected,
+                row_width,
+            };
+            match_line(&row_props, style)
         })
         .collect();
-
-    let height = usize::from(area.height);
-    let offset = scroll_offset(usize::from(search.selected()), lines.len(), height);
-    let offset = u16::try_from(offset).unwrap_or(u16::MAX);
-    Paragraph::new(lines)
-        .scroll((offset, 0))
-        .render(area, buffer);
+    Paragraph::new(lines).render(area, buffer);
 }
 
 fn match_line<'a>(hit: &MatchRow<'a>, style: ModalRowStyle) -> Line<'a> {

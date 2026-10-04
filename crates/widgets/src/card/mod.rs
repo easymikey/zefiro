@@ -4,7 +4,7 @@ pub(crate) mod headings;
 mod meters;
 pub mod metrics;
 
-use std::{sync::Arc, time::Duration};
+use std::{borrow::Cow, sync::Arc, time::Duration};
 
 use headings::CardStyle;
 use kernel::domain::{
@@ -28,6 +28,7 @@ use ratatui::{
 
 use crate::{
     geometry::CoverSizing,
+    pixels::numeric::unit_fraction,
     primitive::{
         canvas::Canvas,
         corner_brackets,
@@ -69,7 +70,41 @@ pub(crate) struct CardWidget<'a> {
     pub(crate) cover_art: &'a CardCover,
 }
 
-impl CardView<'_> {
+const NO_TRACK_TITLE: &str = "No track";
+const CARD_TITLE: &str = " Sifr ";
+
+pub(crate) fn card_frame(color: Color) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(color))
+        .title(CARD_TITLE)
+        .title_style(Style::default().fg(color))
+}
+
+impl<'a> CardView<'a> {
+    pub(crate) fn title(&self) -> Cow<'static, str> {
+        self.displayed_track
+            .map_or(Cow::Borrowed(NO_TRACK_TITLE), |track| {
+                track.song_title().into()
+            })
+    }
+
+    pub(crate) fn artist(&self) -> &'a str {
+        self.displayed_track
+            .and_then(|track| track.tags().artist.as_deref())
+            .unwrap_or("")
+    }
+
+    pub(crate) fn progress_fraction(&self) -> f32 {
+        let duration = self.duration();
+        if duration.is_zero() {
+            0.0
+        } else {
+            unit_fraction(self.position().as_secs_f64() / duration.as_secs_f64())
+        }
+    }
+
     pub(crate) fn duration(&self) -> Duration {
         self.displayed_track
             .and_then(|track| track.duration())
@@ -91,14 +126,9 @@ impl CardWidget<'_> {
         let style = CardStyle::from_theme(&self.theme);
         let frame_color: Color = style.border;
 
-        let block = Block::default()
-            .borders(Borders::ALL)
+        card_frame(frame_color)
             .padding(Inset::card().padding())
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(frame_color))
-            .title(" Sifr ")
-            .title_style(Style::default().fg(frame_color));
-        block.render(area, buffer);
+            .render(area, buffer);
 
         if !metrics.cover_square.is_empty() {
             self.paint_cover(buffer, (metrics.cover_square, style));
@@ -127,8 +157,10 @@ impl CardWidget<'_> {
             CardCover::Image => {}
             CardCover::Text(lines) => {
                 let rows = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-                Paragraph::new(lines.to_vec())
-                    .render(area.centered_vertically(Constraint::Length(rows)), buffer);
+                let block = area.centered_vertically(Constraint::Length(rows));
+                for (line, row) in lines.iter().zip(block.rows()) {
+                    line.render(row, buffer);
+                }
             }
         }
         if let Some(color) = self.bracket_color(style) {
@@ -142,23 +174,6 @@ impl Widget for &CardWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let metrics = card_metrics(area, self.cell_aspect, self.cover_sizing);
         self.paint(&metrics, Canvas { area, buffer });
-    }
-}
-
-impl<'a> CardView<'a> {
-    #[must_use]
-    pub(crate) fn from_scene(scene: &crate::scene::Scene<'a>) -> Self {
-        Self {
-            player: scene.player,
-            speed: scene.transport.speed,
-            volume: scene.transport.volume,
-            spectrum: scene.spectrum,
-            repeat: scene.playlist.repeat,
-            play_order: &scene.playlist.play_order,
-            displayed_track: scene.displayed_track,
-            output: &scene.transport.output,
-            now: scene.now,
-        }
     }
 }
 
@@ -187,7 +202,7 @@ mod tests {
         playlist::PlayOrder,
         speed::Speed,
         time::Moment,
-        track::{AudioFormat, Tags, Track},
+        track::{AudioFormat, Hertz, Kbps, Tags, Track},
         transport::{Output, StreamError},
     };
 
@@ -219,8 +234,8 @@ mod tests {
                 })
                 .audio_format(AudioFormat {
                     format: Some("mp3".to_string()),
-                    bitrate_kbps: Some(320),
-                    sample_rate_hz: Some(44_100),
+                    bitrate: Some(Kbps(320)),
+                    sample_rate: Some(Hertz(44_100)),
                     ..AudioFormat::default()
                 })
                 .build(),

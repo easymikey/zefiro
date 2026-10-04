@@ -3,9 +3,9 @@
 name = "winamp"
 
 [colors]
-bg = "#000000"
-fg = "#969696"
-bright_fg = "#FFFFFF"
+background = "#000000"
+muted_foreground = "#969696"
+foreground = "#FFFFFF"
 accent = "#00FF00"
 green = "#29CE10"
 yellow = "#D6B521"

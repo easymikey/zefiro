@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use crate::{
-    cmd::{Cmd, Cue},
+    cmd::Cmd,
     domain::{
+        cue::Cue,
         direction::Direction,
         player::Player,
         time::Moment,
@@ -13,7 +14,11 @@ use crate::{
         audio,
         machine::{Machine, Unhandled},
         player,
-        player::{Anchor, PlaybackParts, PlayerMessage, Stamp},
+        player::{
+            PlaybackParts,
+            PlayerMessage,
+            stamp::{Anchor, Stamp},
+        },
         playlist::PlaylistMessage,
         transport::TransportMessage,
     },
@@ -50,10 +55,10 @@ pub(crate) fn update(
         }
         PlaybackRequest::StepVolume(direction) => step_volume(playback, direction),
         PlaybackRequest::StepSpeed(direction) => step_speed(playback, direction, now),
-        PlaybackRequest::CycleSleep => cycle_sleep(playback),
+        PlaybackRequest::CycleSleep => cycle_sleep(playback, now),
         PlaybackRequest::AbMark => mark_ab(playback, now),
         PlaybackRequest::SeekTo(target) => seek_to(playback, target, now),
-        PlaybackRequest::SeekTenths(tenths) => seek_fraction(playback, tenths, now),
+        PlaybackRequest::SeekTenths(tenths) => seek_tenths(playback, tenths, now),
     }
 }
 
@@ -62,7 +67,7 @@ fn resume_playback(
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
     if playback.player.is_playing() {
-        Ok(Cmd::none())
+        Err(Unhandled)
     } else {
         play_pause(playback, now)
     }
@@ -75,7 +80,7 @@ fn pause_playback(
     if playback.player.is_playing() {
         play_pause(playback, now)
     } else {
-        Ok(Cmd::none())
+        Err(Unhandled)
     }
 }
 
@@ -118,13 +123,17 @@ fn step_speed(
     Ok(cmd.then(player::arm(playback, now)))
 }
 
-fn cycle_sleep(playback: &mut PlaybackParts<'_>) -> Result<Cmd, Unhandled> {
+fn cycle_sleep(
+    playback: &mut PlaybackParts<'_>,
+    now: Moment,
+) -> Result<Cmd, Unhandled> {
     let candidate = playback.revisions.effects.next();
     let cmd = playback
         .transport
         .transition(TransportMessage::CycleSleep {
             presets: playback.settings.audio.sleep_presets.clone(),
             revision: candidate,
+            now,
         })?;
     if playback.transport.sleep.is_some() {
         playback.revisions.commit_sleep(candidate);
@@ -151,12 +160,12 @@ fn seek_to(
         .map_or_else(|| Ok(Cmd::none()), |target| seek(playback, target, now))
 }
 
-fn seek_fraction(
+fn seek_tenths(
     playback: &mut PlaybackParts<'_>,
     tenths: SeekTenths,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    fraction_target(playback.player, tenths)
+    tenths_target(playback.player, tenths)
         .map_or_else(|| Ok(Cmd::none()), |target| seek(playback, target, now))
 }
 
@@ -207,7 +216,7 @@ fn clamped(player: &Player, target: Duration) -> Option<Duration> {
     (!duration.is_zero()).then(|| target.min(duration))
 }
 
-fn fraction_target(player: &Player, tenths: SeekTenths) -> Option<Duration> {
+fn tenths_target(player: &Player, tenths: SeekTenths) -> Option<Duration> {
     let duration = player::duration_of(player);
     if duration.is_zero() {
         return None;
@@ -225,7 +234,7 @@ fn relative_target(
         Direction::Previous => at.saturating_sub(by),
         Direction::Next => at + by,
     };
-    moved.min(player::duration_of(player))
+    clamped(player, moved).unwrap_or(moved)
 }
 
 #[cfg(test)]
@@ -238,14 +247,15 @@ mod tests {
         cmd::{AudioCmd, Cmd, Effect},
         domain::{
             model::Model,
-            player::{Player, Preload},
+            player::{PausedBy, Player, Preload},
             playhead::Playhead,
             speed::Speed,
             time::Moment,
             track::{AudioFormat, Tags, Track},
+            transport::SEEK_MEDIUM,
         },
         message::{PlaybackRequest, SeekTenths},
-        update::{playback::update, playback_parts},
+        update::{machine::Unhandled, playback::update, playback_parts},
     };
 
     fn playing_track_at(duration: Option<Duration>, at: Duration) -> Model {
@@ -270,7 +280,7 @@ mod tests {
         }
     }
 
-    struct SeekFractionCase {
+    struct SeekTenthsRow {
         duration: Option<Duration>,
         at: Duration,
         tenths: u8,
@@ -278,25 +288,25 @@ mod tests {
     }
 
     #[rstest]
-    #[case::digit_five_seeks_to_fifty_percent(SeekFractionCase {
+    #[case::digit_five_seeks_to_fifty_percent(SeekTenthsRow {
         duration: Some(Duration::from_secs(200)),
         at: Duration::ZERO,
         tenths: 5,
         expected: Some(Duration::from_secs(100)),
     })]
-    #[case::digit_zero_seeks_to_the_start(SeekFractionCase {
+    #[case::digit_zero_seeks_to_the_start(SeekTenthsRow {
         duration: Some(Duration::from_secs(200)),
         at: Duration::from_secs(150),
         tenths: 0,
         expected: Some(Duration::ZERO),
     })]
-    #[case::unknown_duration_is_a_no_op(SeekFractionCase {
+    #[case::unknown_duration_is_a_no_op(SeekTenthsRow {
         duration: None,
         at: Duration::ZERO,
         tenths: 7,
         expected: None,
     })]
-    fn seek_fraction_seeks_by_tenths(#[case] case: SeekFractionCase) {
+    fn seek_tenths_seeks_by_tenths(#[case] case: SeekTenthsRow) {
         let mut model = playing_track_at(case.duration, case.at);
         let tenths = SeekTenths::try_from(case.tenths).unwrap();
         let cmd = update(
@@ -315,6 +325,48 @@ mod tests {
                 assert_eq!(model.player.position_at(Moment::default()), target);
             },
         );
+    }
+
+    #[test]
+    fn seeking_forward_with_an_unknown_duration_moves_past_the_position() {
+        let at = Duration::from_secs(30);
+        let mut model = playing_track_at(None, at);
+
+        let cmd = update(
+            &mut playback_parts(&mut model),
+            PlaybackRequest::SeekForward,
+            Moment::default(),
+        )
+        .unwrap();
+
+        assert!(seeks_to(&cmd, at + SEEK_MEDIUM));
+    }
+
+    #[rstest]
+    #[case::play_while_playing(
+        playing_track_at(None, Duration::ZERO),
+        PlaybackRequest::Play
+    )]
+    #[case::pause_while_paused(paused(), PlaybackRequest::Pause)]
+    fn a_request_for_the_current_state_is_refused(
+        #[case] mut model: Model,
+        #[case] request: PlaybackRequest,
+    ) {
+        let refused =
+            update(&mut playback_parts(&mut model), request, Moment::default());
+
+        assert_eq!(refused, Err(Unhandled));
+    }
+
+    fn paused() -> Model {
+        Model {
+            player: Player::Paused {
+                track: Arc::new(Track::listed(Path::new("/t.flac"))),
+                at: Duration::ZERO,
+                by: PausedBy::Listener,
+            },
+            ..Model::default()
+        }
     }
 
     fn seeks_to(cmd: &Cmd, target: Duration) -> bool {

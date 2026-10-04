@@ -1,6 +1,6 @@
 use std::io;
 
-use crate::window_colors::UnknownThemeError;
+use kernel::domain::theme::ThemeName;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -13,7 +13,13 @@ pub enum Error {
     #[error("window colors: {0}")]
     WindowColors(#[source] io::Error),
     #[error("terminal probe: {0}")]
-    Probe(#[source] ratatui_image::errors::Errors),
+    Query(#[source] ratatui_image::errors::Errors),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("no such theme: {name}")]
+pub struct UnknownThemeError {
+    pub(crate) name: ThemeName,
 }
 
 #[cfg(test)]
@@ -23,7 +29,7 @@ mod tests {
     use kernel::domain::theme::ThemeName;
     use rstest::rstest;
 
-    use crate::{error::Error, window_colors::UnknownThemeError};
+    use crate::error::{Error, UnknownThemeError};
 
     #[rstest]
     #[case::setup(
@@ -43,7 +49,7 @@ mod tests {
         "window colors: closed"
     )]
     #[case::probe(
-        Error::Probe(ratatui_image::errors::Errors::NoFontSize),
+        Error::Query(ratatui_image::errors::Errors::NoFontSize),
         "terminal probe: Could not detect font size"
     )]
     fn every_terminal_error_names_what_went_wrong(

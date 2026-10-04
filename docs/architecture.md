@@ -15,7 +15,7 @@ Message ──► kernel update(&mut Model, Message, Moment) ──► effects
    │          ├── Effect::After { delay, timer } ──► timers
    │          └── shell effects (window colours, animation cues) ──► Shell
    │                                                        │
-   └──────── XEvent ──► Outbox ──► mailbox ◄────────────────┘
+   └──────── XEvent ──► DriverLoop ──► inbox ◄────────────────┘
                                           Shell::paint: Scene ─► FrameLayout ─► the `screen` module
 ```
 
@@ -36,7 +36,7 @@ The layer map is conventions §1.1; edges only point down the table.
 | 1 | `library` | scan, tags, embedded covers, playlists, history, favorites; `LibraryDriver` |
 | 1 | `audio` | playback engine on rodio, spectrum tap; `AudioDriver` |
 | 1 | `macos` | media keys, Now Playing, system volume and output device (CoreAudio listeners); `MacosDriver`, `MainLoop` |
-| 2 | `runtime` | event loop, interpreter, timers, trace, cells, registry, ports, `Outbox`, `DriverLoop`, start, drain, `host` |
+| 2 | `runtime` | event loop, interpreter, timers, trace, cells, registry, ports, `DriverLoop`, start, drain, `host` |
 | 2 | `widgets` | pure terminal view: `Scene`, `FrameLayout`, the `screen` module, card, playlist, overlays, toast, animations, milkdrop, spectrum smoothing, pixel images |
 | 3 | `terminal` | terminal IO: session, input, key conversion, capability probe, window colours, image protocols |
 | 4 | `sifr` | binary: command line, startup, signals, the `Shell` implementation (view, presentation, motion clock, painter) |
@@ -49,7 +49,7 @@ The layer map is conventions §1.1; edges only point down the table.
 |---|---|---|
 | main (macOS only) | the AppKit run loop (`MainLoop`), which `runtime::host` runs while the event loop lives on a thread of its own | remote commands into the macOS driver's inbox |
 | event loop | one `select` over input, mailbox and the cell doorbell; deadline = earliest of kernel timers, frame clock, pending repaint | commands to drivers; shell effects and paints to the shell |
-| one per driver (audio, library, config, macOS) | its `DriverLoop`: the command inbox and the driver's own sources (job results, stream items, callback input) | `XEvent`s through `Outbox`; stream values into cells |
+| one per driver (audio, library, config, macOS) | its `DriverLoop`: the command inbox and the driver's own sources (job results, stream items, callback input) | `XEvent`s into `inbox`; stream values into cells |
 | job workers | one job at a time (track decode, cover decode) | the job result back to the driver's inbox |
 | callbacks (CoreAudio, cpal/rodio output, `notify`) | threads the OS or a library owns (§4.5b) | one message or flag into the driver's inbox |
 | terminal input | crossterm `read` | terminal events to the event loop |
@@ -63,13 +63,13 @@ Hardware drivers are injected: the binary passes the real spawners to `Runtime::
 
 **Key press.** crossterm event → input thread → event loop → `Shell::input` → `Message::Key(KeyPress)` → `update` routes it through the key context stack (§3.8) → effects → interpreter → driver commands, timers, shell effects → paint.
 
-**Playback.** `update` returns `Effect::Audio(AudioCmd::Load(..))` → audio port → `DriverLoop` delivers `AudioMessage::Cmds { cmds, at }` → `AudioDriver::transition` → `execute` opens the file → `AudioEvent`s through `Outbox` → `update`.
+**Playback.** `update` returns `Effect::Audio(AudioCmd::Load(..))` → audio port → `DriverLoop` delivers `AudioMessage::Cmds { cmds, at }` → `AudioDriver::transition` → `execute` opens the file → `AudioEvent`s → `DriverLoop` → `inbox` → `update`.
 
 **Volume.** `update` returns `MacosCmd::Volume` → macOS driver → CoreAudio write; the driver machine swallows the listener echo of its own write. A change made outside sifr arrives as `MacosEvent::Volume`.
 
-**In-app setting.** a `Step` key → `update` → `Effect::Config(ConfigCmd::Setting { .. })` → the config driver patches its appearance, schedules the save (coalesced, format-preserving) and publishes the appearance into its cell → the next paint installs it. The driver marks its own write as seen, so it never comes back as a reload.
+**In-app setting.** a `Step` key → `update` → `Effect::Config(ConfigCmd::SetAppearance { .. })` → the config driver patches its appearance, schedules the save (coalesced, format-preserving) and publishes the appearance into its cell → the next paint installs it. The driver marks its own write as seen, so it never comes back as a reload.
 
-**Hand edit of `sifr-ui.toml`.** a `notify` stream item → the config driver re-reads the file → the appearance into the cell and `ConfigEvent::AppearanceSettingsReloaded` to the kernel, so the settings rows show the file's values. A theme file works the same way with `ConfigEvent::ThemeReloaded`.
+**Hand edit of `sifr-ui.toml`.** a `notify` stream item → the config driver re-reads the file → the appearance into the cell and `ConfigEvent::AppearanceReloaded` to the kernel, which derives the settings rows from it, so they show the file's values. A theme file works the same way with `ConfigEvent::ThemeReloaded`.
 
 **Cover.** the kernel asks for a cover with `Effect::Library(LibraryCmd::DecodeCover)` when track, side or mode changes → the library driver answers once per distinct request → a cached decode is published at once, otherwise a `CoverJob` runs on a worker → the decoded cover goes into the cover cell and rings the doorbell → the next paint takes it → the terminal encodes it once per (path, rect) and places it after the text in the same draw.
 
@@ -85,7 +85,7 @@ Three classes, one path each (§12.1):
 
 | class | what | path | reaches the kernel |
 |---|---|---|---|
-| fact | key press, media key, track finished or changed, loaded, device or route changed, system volume changed, failure, scan result, driver died or full | driver → `Outbox` → bounded mailbox → `update` | yes, as `Message` |
+| fact | key press, media key, track finished or changed, loaded, device or route changed, system volume changed, failure, scan result, driver died or full | driver → `DriverLoop` → `inbox` → `update` | yes, as `Message` |
 | driver internal | buffer refills, decode progress, retries, debounce, save coalescing, raw callbacks | stays on the driver thread; only the resulting fact leaves | no |
 | stream | spectrum samples, the decoded cover, the reloaded theme and appearance | latest-value cell, overwritten, read by the shell at paint | no |
 
@@ -109,7 +109,7 @@ The displayed playhead is not a cell: the kernel holds the anchor `Playhead { of
 
 One `select` over input, the mailbox and the cell doorbell, with one deadline: the earliest of the kernel timers, the frame clock and the pending repaint. After a wake the loop gathers input first, then the mailbox, then the doorbell; the ready items form one batch, and a batch paints once. Timers fire after the batch, then congestion is settled and shell effects are handed over.
 
-The pending repaint is `Repaint { Settled, Now, Frame }`: input raises it to `Now` (paint at once), a fact or a doorbell to `Frame` (wait for the 33 ms grid since the last paint), `Settled` paints only when the shell's own `frame_due` has passed. The frame sources (animation, spectrum, progress bar, clock, sleep countdown) each live in its component's widgets module (`frame_due` fns); when nothing moves the loop blocks with no deadline.
+The pending repaint is `Repaint { Settled, Now, NextFrame }`: input raises it to `Now` (paint at once), a fact or a doorbell to `NextFrame` (wait for the 33 ms grid since the last paint), `Settled` paints only when the shell's own `frame_due` has passed. The frame sources (animation, spectrum, progress bar, clock, sleep countdown) each live in its component's widgets module (`frame_due` fns); when nothing moves the loop blocks with no deadline.
 
 Every channel that carries traffic is bounded. The loop only `try_send`s to drivers; a full port records a `Dropped` trace entry and raises the port's congestion flag; a driver that finds the mailbox full raises its flag before it blocks. After each batch a raised flag with no open episode becomes one `DriverEvent::Full` and one toast. No cycle can deadlock: the loop only `try_send`s, drivers only `send`.
 

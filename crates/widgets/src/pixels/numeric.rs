@@ -42,8 +42,8 @@ pub(crate) fn channel_byte(raw: f32) -> u8 {
 
 #[inline]
 #[must_use]
-pub(crate) fn dimension_f32(pixels: u32) -> f32 {
-    pixels.to_f32().unwrap_or(f32::MAX)
+pub(crate) fn dimension_f32<T: ToPrimitive + Copy>(count: T) -> f32 {
+    count.to_f32().unwrap_or(f32::MAX)
 }
 
 #[cfg(test)]

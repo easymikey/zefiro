@@ -7,23 +7,23 @@ use kernel::{
     update::machine::Unhandled,
 };
 
-use crate::driver::ConfigEffect;
+use crate::driver::effect::ConfigEffect;
 
 pub(crate) const SAVE_DEBOUNCE: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Default, PartialEq)]
-pub(crate) struct SaveQueue {
+pub(crate) struct PendingSaves {
     config: Option<ConfigPatch>,
     appearance: Option<AppearancePatch>,
     revision: Revision,
 }
 
-impl SaveQueue {
+impl PendingSaves {
     pub(crate) fn revision(&self) -> Revision {
         self.revision
     }
 
-    pub(crate) fn queue_config(&mut self, patch: ConfigPatch) {
+    pub(crate) fn hold_config(&mut self, patch: ConfigPatch) {
         let merged = match self.config.take() {
             Some(base) => merge_config_patch(base, patch),
             None => patch,
@@ -32,7 +32,7 @@ impl SaveQueue {
         self.revision.advance();
     }
 
-    pub(crate) fn queue_appearance(&mut self, patch: AppearancePatch) {
+    pub(crate) fn hold_appearance(&mut self, patch: AppearancePatch) {
         let merged = self.appearance.map_or(patch, |earlier| earlier.then(patch));
         self.appearance = Some(merged);
         self.revision.advance();

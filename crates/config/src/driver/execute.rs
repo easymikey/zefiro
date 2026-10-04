@@ -16,11 +16,11 @@ use crate::{
     appearance_file::TomlAppearance,
     driver::{
         ConfigDriver,
-        ConfigEffect,
-        ConfigMessage,
+        effect::ConfigEffect,
         files::{read_if_present, store},
+        message::ConfigMessage,
     },
-    patch::{patch_appearance_text, patch_config_text},
+    patch::{patched_appearance_text, patched_config_text},
     theme_file::TomlTheme,
 };
 
@@ -34,21 +34,21 @@ impl<P: Fn(TomlTheme), A: Fn(TomlAppearance)> Driver for ConfigDriver<P, A> {
             ConfigEffect::Read { file, path } => Some(read(file, &path)),
             ConfigEffect::List(dir) => Some(list(&dir)),
             ConfigEffect::SaveConfig(patch) => {
-                Some(save(ConfigName::Config, &self.paths.config, |existing| {
-                    patch_config_text(existing, patch)
+                Some(save(ConfigName::Config, &self.config, |existing| {
+                    patched_config_text(existing, patch)
                 }))
             }
-            ConfigEffect::SaveAppearance(patch) => Some(save(
-                ConfigName::Appearance,
-                &self.paths.appearance,
-                |existing| patch_appearance_text(existing, patch),
-            )),
+            ConfigEffect::SaveAppearance(patch) => {
+                Some(save(ConfigName::Appearance, &self.appearance, |existing| {
+                    patched_appearance_text(existing, patch)
+                }))
+            }
             ConfigEffect::PublishTheme(theme) => {
-                self.publish_theme(theme);
+                (self.publish_theme)(theme);
                 None
             }
             ConfigEffect::PublishAppearance(appearance) => {
-                self.publish_appearance(appearance);
+                (self.publish_appearance)(appearance);
                 None
             }
             ConfigEffect::Watch(_) | ConfigEffect::After { .. } => None,
@@ -134,12 +134,12 @@ mod tests {
         cmd::ConfigPatch,
         domain::{
             appearance::{AppearancePatch, CoverBrackets},
-            appearance_rows::{AppearanceField, appearance_patch, appearance_row},
+            appearance_rows::{appearance_patch, appearance_row},
             bounded::Bounded,
             config::{ConfigError, ConfigName},
             crossfade::Crossfade,
             io_error::IoError,
-            setting_row::OptionIndex,
+            setting_row::{AppearanceField, OptionIndex},
             theme::ThemeName,
         },
         update::machine::Driver,
@@ -148,7 +148,12 @@ mod tests {
 
     use crate::{
         appearance_file::TomlAppearance,
-        driver::{ConfigDriver, ConfigEffect, ConfigMessage, ConfigPaths, SeenTexts},
+        driver::{
+            ConfigDriver,
+            effect::ConfigEffect,
+            message::ConfigMessage,
+            paths::{ConfigPaths, SeenTexts},
+        },
         theme_file::TomlTheme,
     };
 

@@ -1,9 +1,12 @@
 use std::{num::NonZeroU32, time::Duration};
 
-use kernel::domain::{geometry::Cells, playhead::Playhead, time::Moment};
+use kernel::domain::{
+    geometry::Cells,
+    playhead::Playhead,
+    time::{Moment, SECONDS_PER_MINUTE},
+};
 
 const STEP_CORRECTION: Duration = Duration::from_millis(1);
-pub(crate) const SECONDS_PER_MINUTE: u64 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Presence {

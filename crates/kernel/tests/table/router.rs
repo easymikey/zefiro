@@ -1,9 +1,10 @@
 use std::time::Duration;
 
 use kernel::{
-    cmd::{Cue, Effect},
+    cmd::Effect,
     domain::{
         bounded::Bounded,
+        cue::Cue,
         cursor::Cursor,
         direction::Direction,
         index::ViewIndex,
@@ -293,13 +294,13 @@ fn resolved(message: Message, model: &Model) -> Message {
         Message::Playback(PlaybackRequest::CycleRepeat),
     ]
 )]
-#[case::the_remotes_play_starts_a_stopped_player_and_leaves_a_playing_one(
+#[case::the_remotes_play_starts_a_stopped_player(
     model_with_tracks(3),
-    vec![media(PlaybackRequest::Play), acknowledged(), media(PlaybackRequest::Play)]
+    vec![media(PlaybackRequest::Play), acknowledged()]
 )]
-#[case::the_remotes_pause_pauses_once(
+#[case::the_remotes_pause_pauses(
     model_playing_at(3, 0, Duration::ZERO),
-    vec![media(PlaybackRequest::Pause), media(PlaybackRequest::Pause)]
+    vec![media(PlaybackRequest::Pause)]
 )]
 #[case::the_remotes_play_pause_flips(
     model_with_tracks(3),
@@ -395,6 +396,16 @@ fn router_trace(
 #[case::the_remotes_seek_while_stopped_is_refused(
     Model::default(),
     media(PlaybackRequest::SeekForward),
+    Unhandled
+)]
+#[case::the_remotes_play_while_playing_is_refused(
+    model_playing_at(3, 0, Duration::ZERO),
+    media(PlaybackRequest::Play),
+    Unhandled
+)]
+#[case::the_remotes_pause_while_stopped_is_refused(
+    model_with_tracks(3),
+    media(PlaybackRequest::Pause),
     Unhandled
 )]
 #[case::a_refused_key_keeps_the_toast_up(

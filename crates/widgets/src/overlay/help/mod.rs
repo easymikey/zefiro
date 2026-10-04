@@ -15,13 +15,13 @@ use crate::{
             columns::{HelpColumn, HelpStyle, select_help_columns},
             groups::{CHORD_GAP, COLUMN_GAP, HelpGroups, small_count_u16},
         },
-        modal::placement::{ModalPlacement, OverlayAreas, OverlayContainer},
+        modal::placement::{ModalContainer, ModalPlacement, OverlayAreas},
     },
     primitive::{canvas::Canvas, inset::Inset},
     theme::active_theme::ActiveTheme,
 };
 
-fn paint_help_columns(body: Rect, content: &HelpContent, buffer: &mut Buffer) {
+fn paint_help_columns(body: Rect, content: &HelpColumns, buffer: &mut Buffer) {
     let widths: Vec<Constraint> = content
         .columns
         .iter()
@@ -50,7 +50,7 @@ pub(crate) struct HelpWidget<'a> {
     pub(crate) avoid: &'a [Rect],
 }
 
-struct HelpContent {
+struct HelpColumns {
     columns: Vec<HelpColumn>,
     column_gap: Cells,
 }
@@ -61,7 +61,7 @@ impl<'a> HelpWidget<'a> {
         OverlayAreas::List(self.placement(&self.content(screen)).areas(screen))
     }
 
-    fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
+    pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
         let OverlayAreas::List(areas) = areas else {
             return;
         };
@@ -80,7 +80,7 @@ impl<'a> HelpWidget<'a> {
         paint_help_columns(areas.content, &content, buffer);
     }
 
-    fn content(&self, screen: Rect) -> HelpContent {
+    fn content(&self, screen: Rect) -> HelpColumns {
         let groups = HelpGroups::new(self.bindings);
         let columns =
             select_help_columns(&groups, HelpStyle::from_theme(&self.theme), screen);
@@ -89,7 +89,7 @@ impl<'a> HelpWidget<'a> {
         } else {
             Cells(0)
         };
-        HelpContent {
+        HelpColumns {
             columns,
             column_gap,
         }
@@ -97,7 +97,7 @@ impl<'a> HelpWidget<'a> {
 
     fn placement<'content>(
         &self,
-        content: &'content HelpContent,
+        content: &'content HelpColumns,
     ) -> ModalPlacement<'content>
     where
         Self: 'content,
@@ -106,7 +106,7 @@ impl<'a> HelpWidget<'a> {
         let gaps = small_count_u16(columns.len().saturating_sub(1));
         ModalPlacement {
             inset: Inset::overlay(),
-            container: OverlayContainer::Modal(self.avoid),
+            container: ModalContainer::Modal(self.avoid),
             border_title: Line::default(),
             modal_title: TITLE,
             content_width: Cells(

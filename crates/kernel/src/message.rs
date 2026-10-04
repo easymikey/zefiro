@@ -20,7 +20,7 @@ use crate::domain::{
     percent::Percent,
     playlist::PlaylistFileName,
     revision::Revision,
-    setting_row::{AppearanceSetting, SettingRow},
+    setting_row::SettingRow,
     theme::ThemeName,
     toast::Toast,
     track::{Track, TrackRef},
@@ -45,7 +45,7 @@ pub enum Message {
     Config(ConfigEvent),
     Audio(AudioEvent),
     Macos(MacosEvent),
-    Paint(PaintEvent),
+    Paint(PaintError),
     Elapsed(Timer),
     Driver {
         driver: DriverName,
@@ -71,9 +71,9 @@ impl From<MacosEvent> for Message {
     }
 }
 
-impl From<PaintEvent> for Message {
-    fn from(event: PaintEvent) -> Self {
-        Message::Paint(event)
+impl From<PaintError> for Message {
+    fn from(error: PaintError) -> Self {
+        Message::Paint(error)
     }
 }
 
@@ -163,7 +163,6 @@ pub enum ConfigEvent {
     AppearanceReloaded(AppearanceSettings),
     ThemesLoaded(Vec<ThemeName>),
     MusicDirReloaded(PathBuf),
-    AppearanceSettingsReloaded(Vec<AppearanceSetting>),
     Reloaded(ConfigReload),
     Error(ConfigError),
 }
@@ -317,6 +316,11 @@ pub enum LibraryError {
         path: PathBuf,
         kind: IoError,
     },
+    #[error("Could not read the cover of {}: {diagnostic}", path.display())]
+    Cover {
+        path: PathBuf,
+        diagnostic: Diagnostic,
+    },
     #[error("no library directory")]
     NoUserDirs,
 }
@@ -342,29 +346,19 @@ pub enum MacosEvent {
     MediaKey(PlaybackRequest),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
-pub enum PaintEvent {
-    Error(PaintError),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PaintError {
     #[error("Window colors failed")]
     WindowColors(Diagnostic),
-    #[error("Cover art failed")]
-    Cover(Diagnostic),
     #[error("Terminal probe failed")]
-    Probe(Diagnostic),
+    Query(Diagnostic),
 }
 
 impl PaintError {
     #[must_use]
     pub(crate) fn diagnostic(&self) -> &Diagnostic {
         match self {
-            Self::WindowColors(diagnostic)
-            | Self::Cover(diagnostic)
-            | Self::Probe(diagnostic) => diagnostic,
+            Self::WindowColors(diagnostic) | Self::Query(diagnostic) => diagnostic,
         }
     }
 }

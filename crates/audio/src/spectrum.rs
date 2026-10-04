@@ -3,13 +3,13 @@ use std::sync::Arc;
 use num_traits::ToPrimitive;
 use realfft::{FftError, RealFftPlanner, RealToComplex, num_complex::Complex};
 
-use crate::tap::SpectrumTap;
+use crate::tap::{SpectrumTap, WINDOW};
 
 pub struct SpectrumAnalyzer {
     transform: Arc<dyn RealToComplex<f32>>,
-    window: Box<[f32; SpectrumAnalyzer::WINDOW]>,
+    window: Box<[f32; WINDOW]>,
     window_gain: f32,
-    input: Box<[f32; SpectrumAnalyzer::WINDOW]>,
+    input: Box<[f32; WINDOW]>,
     spectrum: Vec<Complex<f32>>,
     scratch: Vec<Complex<f32>>,
 }
@@ -21,20 +21,18 @@ impl std::fmt::Debug for SpectrumAnalyzer {
 }
 
 impl SpectrumAnalyzer {
-    pub(crate) const WINDOW: usize = 2048;
-
     #[must_use]
     pub fn new() -> Self {
-        let transform = RealFftPlanner::<f32>::new().plan_fft_forward(Self::WINDOW);
+        let transform = RealFftPlanner::<f32>::new().plan_fft_forward(WINDOW);
         let spectrum = transform.make_output_vec();
         let scratch = transform.make_scratch_vec();
         let window = hann_window();
-        let window_gain = window.iter().sum::<f32>() / float_count(Self::WINDOW);
+        let window_gain = window.iter().sum::<f32>() / float_count(WINDOW);
         Self {
             transform,
             window: Box::new(window),
             window_gain,
-            input: Box::new([0.0; Self::WINDOW]),
+            input: Box::new([0.0; WINDOW]),
             spectrum,
             scratch,
         }
@@ -51,15 +49,15 @@ impl SpectrumAnalyzer {
             &mut self.spectrum,
             &mut self.scratch,
         ) {
-            Ok(())
-            | Err(
+            Ok(()) => {}
+            Err(
                 FftError::InputBuffer(..)
                 | FftError::OutputBuffer(..)
                 | FftError::ScratchBuffer(..)
                 | FftError::InputValues(..),
-            ) => {}
+            ) => self.spectrum.fill(Complex::default()),
         }
-        let usable = Self::WINDOW / 2;
+        let usable = WINDOW / 2;
         let scale = float_count(usable) * self.window_gain;
         std::array::from_fn(|band| {
             let start = log_bin_edge(band, BANDS, usable);
@@ -77,8 +75,8 @@ impl Default for SpectrumAnalyzer {
     }
 }
 
-fn hann_window() -> [f32; SpectrumAnalyzer::WINDOW] {
-    let denominator = float_count(SpectrumAnalyzer::WINDOW - 1);
+fn hann_window() -> [f32; WINDOW] {
+    let denominator = float_count(WINDOW - 1);
     std::array::from_fn(|index| {
         let phase = 2.0 * std::f32::consts::PI * float_count(index) / denominator;
         0.5 - 0.5 * phase.cos()
@@ -113,7 +111,7 @@ mod tests {
 
     use crate::{
         spectrum::SpectrumAnalyzer,
-        tap::{Tap, new_tap},
+        tap::{Tap, WINDOW, new_tap},
     };
 
     struct Tone {
@@ -143,13 +141,13 @@ mod tests {
     }
 
     fn tone(cycles: f32) -> Vec<f32> {
-        (0..SpectrumAnalyzer::WINDOW)
+        (0..WINDOW)
             .map(|index| {
                 let phase = 2.0
                     * std::f32::consts::PI
                     * cycles
                     * crate::spectrum::float_count(index)
-                    / crate::spectrum::float_count(SpectrumAnalyzer::WINDOW);
+                    / crate::spectrum::float_count(WINDOW);
                 phase.sin()
             })
             .collect()
@@ -161,6 +159,25 @@ mod tests {
         let mut analyzer = SpectrumAnalyzer::new();
         let bands: [f32; 8] = analyzer.bands(&tap);
         assert!(bands.iter().all(|&band| band == 0.0));
+    }
+
+    #[test]
+    fn a_failed_transform_gives_zero_bands_instead_of_the_last_spectrum() {
+        let (spectrum, tap) = new_tap();
+        Tap::new(
+            Tone {
+                samples: tone(64.0).into_iter(),
+            },
+            &spectrum,
+        )
+        .for_each(drop);
+        let mut analyzer = SpectrumAnalyzer::new();
+        let loud: [f32; 8] = analyzer.bands(&tap);
+        assert!(loud.iter().any(|&band| band > 0.0));
+
+        analyzer.spectrum.truncate(WINDOW / 4);
+        let failed: [f32; 8] = analyzer.bands(&tap);
+        assert!(failed.iter().all(|&band| band == 0.0), "{failed:?}");
     }
 
     #[rstest]

@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget},
+    widgets::{self, ScrollbarOrientation, ScrollbarState, StatefulWidget},
 };
 
 use crate::primitive::{glyphs, span::text};
@@ -46,20 +46,20 @@ pub(crate) fn scrollbar_column(outer: Rect, content: Rect, inset: u16) -> Rect {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ScrollbarTrack {
+pub(crate) struct Scrollbar {
     pub(crate) total: usize,
     pub(crate) offset: usize,
     pub(crate) viewport: usize,
     pub(crate) thumb: Color,
-    pub(crate) track: Color,
+    pub(crate) groove: Color,
 }
 
-pub(crate) fn paint_scrollbar(column: Rect, bar: ScrollbarTrack, buffer: &mut Buffer) {
+pub(crate) fn paint_scrollbar(column: Rect, bar: Scrollbar, buffer: &mut Buffer) {
     if bar.total <= bar.viewport {
         return;
     }
     let thumb = Style::default().fg(bar.thumb);
-    let widget = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+    let widget = widgets::Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(Some(glyphs::scrollbar::UP))
         .end_symbol(Some(glyphs::scrollbar::DOWN))
         .track_symbol(Some(glyphs::scrollbar::TRACK))
@@ -67,7 +67,7 @@ pub(crate) fn paint_scrollbar(column: Rect, bar: ScrollbarTrack, buffer: &mut Bu
         .begin_style(thumb)
         .end_style(thumb)
         .thumb_style(thumb)
-        .track_style(Style::default().fg(bar.track));
+        .track_style(Style::default().fg(bar.groove));
     let mut position = ScrollbarState::new(bar.total)
         .position(bar.offset)
         .viewport_content_length(bar.viewport);

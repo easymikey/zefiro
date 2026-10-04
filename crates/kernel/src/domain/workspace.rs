@@ -1,16 +1,18 @@
 use std::time::Duration;
 
-use crate::domain::{
-    chord::ChordPrefix,
-    config::ConfigErrors,
-    cursor::Cursor,
-    geometry::{Cells, Pixels},
-    index::ViewIndex,
-    keymap::Keymap,
-    library::SortKey,
-    overlay::Overlay,
-    time::Moment,
-    toast::Toast,
+use crate::{
+    domain::{
+        chord::ChordPrefix,
+        config::ConfigErrors,
+        cursor::Cursor,
+        geometry::{Cells, Pixels},
+        index::ViewIndex,
+        library::SortKey,
+        overlay::Overlay,
+        time::Moment,
+        toast::Toast,
+    },
+    update::keymap::bindings::Keymap,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -38,16 +40,4 @@ impl Browse {
     pub fn selected(&self) -> ViewIndex {
         ViewIndex::new(self.cursor.index())
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SavePhase {
-    Prompt,
-    Failed,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SaveLine {
-    pub text: String,
-    pub phase: SavePhase,
 }

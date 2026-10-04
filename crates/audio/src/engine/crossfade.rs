@@ -17,10 +17,10 @@ pub(crate) fn gain_out(fraction: f32) -> f32 {
 #[must_use]
 pub(crate) fn replay_gain_factor(
     replay_gain: ReplayGain,
-    gain_db: Option<kernel::domain::track::Decibels>,
+    gain: Option<kernel::domain::track::Decibels>,
 ) -> Gain {
     if matches!(replay_gain, ReplayGain::On) {
-        gain_db.map_or(Gain::UNITY, Gain::from_decibels)
+        gain.map_or(Gain::UNITY, Gain::from_decibels)
     } else {
         Gain::UNITY
     }

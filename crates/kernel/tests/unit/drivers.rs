@@ -1,15 +1,16 @@
 use std::time::Duration;
 
 use kernel::{
-    cmd::{AudioCmd, Cmd, Cue, Effect, LibraryCmd, Playback, TrackLoad},
+    cmd::{AudioCmd, Cmd, Effect, LibraryCmd, Playback, TrackLoad},
     domain::{
+        cue::Cue,
         driver::{DriverError, DriverName, DriverStatus},
         model::Model,
         player::{PausedBy, Player, Preload},
         playhead::Playhead,
         speed::Speed,
         time::Moment,
-        toast::ToastKind,
+        toast::ToastLevel,
     },
     message::{DriverEvent, Message},
 };
@@ -19,7 +20,7 @@ use crate::support::{
     dated_track,
     first_toast_expiry,
     playing_model,
-    step::update,
+    update::update,
 };
 
 fn died(driver: DriverName) -> Message {
@@ -51,7 +52,7 @@ fn a_driver_death_is_recorded_and_told_as_an_error() {
             toast.text.as_deref()
         )),
         Some((
-            ToastKind::Error,
+            ToastLevel::Error,
             "The config driver stopped",
             Some("panicked")
         ))
@@ -105,7 +106,7 @@ fn restarts_and_rescans_library(cmd: &Cmd) {
 }
 
 #[rstest::rstest]
-#[case::restart_emits_restart_and_boot(StrategyRow {
+#[case::restart_emits_restart_and_startup(StrategyRow {
     driver: DriverName::Audio,
     prior_restarts: 0,
     expected_status: || DriverStatus::Running,
@@ -170,7 +171,7 @@ fn congestion_raises_one_toast_naming_the_driver() {
             .toasts
             .first()
             .map(|toast| (toast.kind, toast.title.as_str())),
-        Some((ToastKind::Info, "The library driver is falling behind"))
+        Some((ToastLevel::Info, "The library driver is falling behind"))
     );
     assert_eq!(
         model.drivers.status(DriverName::Library),
@@ -235,7 +236,7 @@ fn an_audio_restart_resumes_from_the_same_place(#[case] row: ResumeRow) {
     )));
     assert!(effects.iter().any(|effect| matches!(
         effect,
-        Effect::Audio(AudioCmd::Playback(playback)) if *playback == row.playback
+        Effect::Audio(AudioCmd::SetPlayback(playback)) if *playback == row.playback
     )));
     assert_eq!(
         model.drivers.status(DriverName::Audio),

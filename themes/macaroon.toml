@@ -3,9 +3,9 @@
 name = "macaroon"
 
 [colors]
-bg = "#d8d0c8"
-fg = "#7a7a7a"
-bright_fg = "#1a1a1a"
+background = "#d8d0c8"
+muted_foreground = "#7a7a7a"
+foreground = "#1a1a1a"
 accent = "#2aa8a0"
 green = "#2aa8a0"
 yellow = "#e8c46a"

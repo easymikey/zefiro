@@ -10,20 +10,21 @@ use kernel::{
     message::{DriverEvent, Message},
 };
 
-#[cfg(target_os = "macos")] use crate::spawn::macos_thread::MacosChannel;
+#[cfg(target_os = "macos")] use crate::macos_channel::MacosChannel;
 use crate::{
     error::Error,
     latest::{LatestReceivers, LatestSenders, latest_channels},
     port::{Port, Ports},
     registry,
-    runtime::StartupPaths,
-    spawn::{SpawnSetup, Spawners},
+    spawn::Spawners,
+    spawn_setup::SpawnSetup,
+    startup_paths::StartupPaths,
     trace::{Trace, TraceEntry, TraceError},
 };
 
 #[derive(Debug)]
 pub(crate) struct Wiring {
-    pub(crate) receiver: Receiver<Message>,
+    pub(crate) mailbox: Receiver<Message>,
     pub(crate) inbox: Sender<Message>,
     pub(crate) ports: Ports,
     pub(crate) spectrum: SpectrumTap,
@@ -48,7 +49,6 @@ impl Wiring {
         let macos_channel = MacosChannel::new();
         let setup = SpawnSetup {
             audio: &model.settings.audio,
-            theme: &model.themes.selected,
             paths,
             inbox: &inbox,
             writers: &writers,
@@ -69,7 +69,7 @@ impl Wiring {
         };
 
         Ok(Self {
-            receiver: arrivals,
+            mailbox: arrivals,
             inbox,
             ports,
             spectrum,
@@ -97,7 +97,6 @@ impl Wiring {
         let macos = self.macos.clone();
         let setup = SpawnSetup {
             audio: &model.settings.audio,
-            theme: &model.themes.selected,
             paths: &paths,
             inbox: &inbox,
             writers: &writers,
@@ -198,13 +197,12 @@ pub(crate) mod tests {
     use library::dirs::LibraryDirs;
 
     use crate::{
-        driver::DriverThread,
+        driver_thread::{Congestion, DriverThread, send},
         latest::{LatestSenders, latest_channels},
-        outbox::Congestion,
         port::{Port, Ports},
         registry,
-        runtime::StartupPaths,
         spawn::Spawners,
+        startup_paths::StartupPaths,
         wiring::Wiring,
     };
 
@@ -212,17 +210,17 @@ pub(crate) mod tests {
         driver: DriverName,
         inbox: &Sender<Message>,
     ) -> DriverThread<C> {
-        crate::driver::spawn_idle(registry::row(driver), inbox).unwrap()
+        crate::driver_thread::spawn_idle(registry::row(driver), inbox).unwrap()
     }
 
     pub(crate) fn stub_paths() -> StartupPaths {
         StartupPaths {
-            config: config::driver::ConfigPaths {
+            config: config::driver::paths::ConfigPaths {
                 config: std::path::PathBuf::new(),
                 appearance: std::path::PathBuf::new(),
                 themes: std::path::PathBuf::new(),
                 theme: None,
-                seen: config::driver::SeenTexts::default(),
+                seen: config::driver::paths::SeenTexts::default(),
             },
             library: LibraryDirs::under(std::path::Path::new("")),
         }
@@ -240,10 +238,14 @@ pub(crate) mod tests {
                     break;
                 }
             }
-            inbox.send(Message::Driver {
-                driver: DriverName::Library,
-                event: DriverEvent::Stopped,
-            })
+            send(
+                &inbox,
+                &Congestion::default(),
+                Message::Driver {
+                    driver: DriverName::Library,
+                    event: DriverEvent::Stopped,
+                },
+            )
         });
         DriverThread {
             commands,
@@ -280,7 +282,7 @@ pub(crate) mod tests {
             let paths = stub_paths();
 
             let wiring = Self {
-                receiver: arrivals,
+                mailbox: arrivals,
                 inbox,
                 ports,
                 spectrum: SpectrumTap::silent(),
@@ -290,7 +292,7 @@ pub(crate) mod tests {
                 paths,
                 writers: writers.clone(),
                 #[cfg(target_os = "macos")]
-                macos: crate::spawn::macos_thread::MacosChannel::new(),
+                macos: crate::macos_channel::MacosChannel::new(),
             };
             (wiring, library_inbox, writers)
         }

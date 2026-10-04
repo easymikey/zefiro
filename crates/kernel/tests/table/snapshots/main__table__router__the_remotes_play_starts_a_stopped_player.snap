@@ -60,8 +60,8 @@ expression: "walked(model, messages)"
                             },
                             audio_format: AudioFormat {
                                 format: None,
-                                bitrate_kbps: None,
-                                sample_rate_hz: None,
+                                bitrate: None,
+                                sample_rate: None,
                                 bits_per_sample: None,
                                 channels: None,
                                 replay_gain: None,
@@ -75,7 +75,7 @@ expression: "walked(model, messages)"
                 ),
             ),
             Audio(
-                Playback(
+                SetPlayback(
                     Playing,
                 ),
             ),
@@ -114,8 +114,8 @@ expression: "walked(model, messages)"
                 },
                 audio_format: AudioFormat {
                     format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
+                    bitrate: None,
+                    sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
                     replay_gain: None,
@@ -130,7 +130,7 @@ expression: "walked(model, messages)"
         None,
         Cursor {
             index: 0,
-            len: 0,
+            len: 3,
         },
         Cursor {
             index: 0,
@@ -186,8 +186,8 @@ expression: "walked(model, messages)"
                 },
                 audio_format: AudioFormat {
                     format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
+                    bitrate: None,
+                    sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
                     replay_gain: None,
@@ -209,82 +209,9 @@ expression: "walked(model, messages)"
             preload: None,
         },
         None,
-        Cursor {
-            index: 0,
-            len: 0,
-        },
         Cursor {
             index: 0,
             len: 3,
-        },
-        [],
-        Off,
-        Linear,
-        Transport {
-            volume: Percent(
-                50,
-            ),
-            speed: Speed(
-                1.0,
-            ),
-            sleep: None,
-            ab_loop: None,
-            output: Ready,
-        },
-        [],
-    ),
-    (
-        Playback(
-            Play,
-        ),
-        [],
-        Playing {
-            track: Track {
-                source: Local(
-                    "/tmp/track0.flac",
-                ),
-                tags: Tags {
-                    title: None,
-                    artist: None,
-                    album: None,
-                    album_artist: None,
-                    date: None,
-                    genre: None,
-                    track: None,
-                    track_total: None,
-                    disc: None,
-                    composer: None,
-                    comment: None,
-                    lyrics: None,
-                },
-                audio_format: AudioFormat {
-                    format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
-                    bits_per_sample: None,
-                    channels: None,
-                    replay_gain: None,
-                },
-                display: "track0",
-                tagging: Listed(
-                    None,
-                ),
-            },
-            head: Playhead {
-                offset: 0ns,
-                since: Moment(
-                    0ns,
-                ),
-                speed: Speed(
-                    1.0,
-                ),
-            },
-            preload: None,
-        },
-        None,
-        Cursor {
-            index: 0,
-            len: 0,
         },
         Cursor {
             index: 0,

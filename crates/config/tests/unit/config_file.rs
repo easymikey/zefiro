@@ -1,6 +1,6 @@
 use config::{
     config_file::{parse_config, parse_config_reload},
-    patch::patch_config_text,
+    patch::patched_config_text,
 };
 use kernel::{
     cmd::ConfigPatch,
@@ -8,7 +8,8 @@ use kernel::{
         bounded::Bounded,
         device::{DeviceName, OutputDevice},
         percent::Percent,
-        theme::ThemeName,
+        settings::AudioSettings,
+        theme::{ThemeChoice, ThemeName},
     },
 };
 
@@ -29,8 +30,17 @@ fn a_patch_round_trips_through_the_public_parser() {
             DeviceName::new("Speakers".to_string()).unwrap(),
         ))
         .build();
-    let written = patch_config_text(COMMENTED_CONFIG, patch).unwrap();
+    let written = patched_config_text(COMMENTED_CONFIG, patch).unwrap();
     let round_tripped = parse_config(&written).unwrap();
+    assert_eq!(
+        round_tripped.theme,
+        ThemeChoice::Named(ThemeName::from_static("noir"))
+    );
+    assert_eq!(round_tripped.volume, Percent::clamped(42));
+    assert_eq!(
+        AudioSettings::from(round_tripped.audio.clone()).device,
+        OutputDevice::Named(DeviceName::new("Speakers".to_string()).unwrap())
+    );
     insta::assert_debug_snapshot!(round_tripped);
 }
 

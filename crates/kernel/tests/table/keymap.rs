@@ -27,7 +27,7 @@ use kernel::{
         SettingsRowRequest,
         TextRequest,
     },
-    update::{keymap::lookup::route, update},
+    update::{keymap::lookup::route, machine::Unhandled, update},
 };
 use rstest::rstest;
 
@@ -259,22 +259,22 @@ fn confirm() -> Option<Message> {
     plain(KeyCode::Up),
     settings_row(SettingsRowRequest::Navigate(Direction::Previous))
 )]
-#[case::settings_l_adjusts_up(
+#[case::settings_l_steps_up(
     settings_on(SettingRow::Theme),
     character('l'),
     settings_row(SettingsRowRequest::Step(Direction::Next))
 )]
-#[case::settings_right_adjusts_up(
+#[case::settings_right_steps_up(
     settings_on(SettingRow::Theme),
     plain(KeyCode::Right),
     settings_row(SettingsRowRequest::Step(Direction::Next))
 )]
-#[case::settings_h_adjusts_down(
+#[case::settings_h_steps_down(
     settings_on(SettingRow::Theme),
     character('h'),
     settings_row(SettingsRowRequest::Step(Direction::Previous))
 )]
-#[case::settings_left_adjusts_down(
+#[case::settings_left_steps_down(
     settings_on(SettingRow::Theme),
     plain(KeyCode::Left),
     settings_row(SettingsRowRequest::Step(Direction::Previous))
@@ -299,22 +299,22 @@ fn confirm() -> Option<Message> {
     character(' '),
     settings_row(SettingsRowRequest::Activate)
 )]
-#[case::settings_h_on_a_toggle_row_adjusts_never_seeks(
+#[case::settings_h_on_a_toggle_row_steps_never_seeks(
     settings_on(SettingRow::ReplayGain),
     character('h'),
     settings_row(SettingsRowRequest::Step(Direction::Previous))
 )]
-#[case::settings_left_on_a_toggle_row_adjusts_never_seeks(
+#[case::settings_left_on_a_toggle_row_steps_never_seeks(
     settings_on(SettingRow::ReplayGain),
     plain(KeyCode::Left),
     settings_row(SettingsRowRequest::Step(Direction::Previous))
 )]
-#[case::settings_l_on_a_toggle_row_adjusts_never_seeks(
+#[case::settings_l_on_a_toggle_row_steps_never_seeks(
     settings_on(SettingRow::ReplayGain),
     character('l'),
     settings_row(SettingsRowRequest::Step(Direction::Next))
 )]
-#[case::settings_right_on_a_toggle_row_adjusts_never_seeks(
+#[case::settings_right_on_a_toggle_row_steps_never_seeks(
     settings_on(SettingRow::ReplayGain),
     plain(KeyCode::Right),
     settings_row(SettingsRowRequest::Step(Direction::Next))
@@ -451,6 +451,7 @@ fn a_key_press_routes_through_update(
     model.workspace.toasts = vec![Toast::info("hello")];
 
     let press = KeyPress { key, typed };
+    let before = format!("{model:?}");
     let routed = update(&mut model, Message::Key(press), Moment::default());
     assert_eq!(routed.is_err(), typed.code == KeyCode::Char('w'));
 
@@ -468,7 +469,8 @@ fn a_key_press_routes_through_update(
             assert_eq!(model.workspace.chord_prefix, Some(ChordPrefix::G));
         }
         KeyCode::Char('w') => {
-            assert!(!model.workspace.toasts.is_empty());
+            assert!(matches!(routed, Err(Unhandled)));
+            assert_eq!(format!("{model:?}"), before);
         }
         KeyCode::Char(_)
         | KeyCode::Enter
@@ -486,6 +488,28 @@ fn a_key_press_routes_through_update(
             assert!(model.workspace.toasts.is_empty());
         }
     }
+}
+
+#[rstest]
+#[case::an_unbound_key(crate::support::model_with_tracks(3), 'w')]
+#[case::a_refused_key(kernel::domain::model::Model::default(), 'j')]
+fn a_refused_key_after_g_disarms_the_chord(
+    #[case] mut model: kernel::domain::model::Model,
+    #[case] letter: char,
+) {
+    let before = format!("{model:?}");
+    model.workspace.chord_prefix = Some(ChordPrefix::G);
+    let key = character(letter);
+
+    let routed = update(
+        &mut model,
+        Message::Key(KeyPress { key, typed: key }),
+        Moment::default(),
+    );
+
+    assert!(matches!(routed, Err(Unhandled)));
+    assert_eq!(model.workspace.chord_prefix, None);
+    assert_eq!(format!("{model:?}"), before);
 }
 
 #[rstest]

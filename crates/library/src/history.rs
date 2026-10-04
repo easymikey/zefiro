@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{dirs::LibraryDirs, error::Error};
 
+const HISTORY_FILE_NAME: &str = "history.jsonl";
+
 #[derive(Serialize, Deserialize)]
 struct HistoryRecord {
     path: PathBuf,
@@ -31,7 +33,7 @@ impl From<HistoryRecord> for HistoryEntry {
 }
 
 pub(crate) fn append(dirs: &LibraryDirs, played: &HistoryEntry) -> Result<(), Error> {
-    let path = dirs.data_dir.join("history.jsonl");
+    let path = dirs.data_dir.join(HISTORY_FILE_NAME);
     crate::files::create_parent_dir(&path)
         .map_err(Error::io(LibrarySubject::History, &path))?;
     let record = HistoryRecord {
@@ -54,7 +56,7 @@ pub(crate) fn append(dirs: &LibraryDirs, played: &HistoryEntry) -> Result<(), Er
 }
 
 pub(crate) fn load(dirs: &LibraryDirs, limit: usize) -> Result<HistoryRead, Error> {
-    let path = dirs.data_dir.join("history.jsonl");
+    let path = dirs.data_dir.join(HISTORY_FILE_NAME);
     let read = crate::files::read_if_present(&path);
     let contents = read.map_err(Error::io(LibrarySubject::History, &path))?;
     let (entries, skipped) =
@@ -114,7 +116,11 @@ mod tests {
     #[test]
     fn append_writes_one_json_line() {
         let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs::under(directory.path());
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
 
         let sample = HistoryEntry {
             at: Moment::new(std::time::Duration::from_secs(1_700_000_000)),
@@ -123,14 +129,19 @@ mod tests {
         history::append(&dirs, &sample).unwrap();
 
         let contents =
-            std::fs::read_to_string(dirs.data_dir.join("history.jsonl")).unwrap();
+            std::fs::read_to_string(dirs.data_dir.join(history::HISTORY_FILE_NAME))
+                .unwrap();
         insta::assert_snapshot!(contents);
     }
 
     #[test]
     fn load_returns_appended_entries_newest_first() {
         let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs::under(directory.path());
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
 
         let first = HistoryEntry {
             at: Moment::new(std::time::Duration::from_secs(1_000)),
@@ -150,7 +161,11 @@ mod tests {
     #[test]
     fn a_missing_history_file_loads_empty() {
         let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs::under(directory.path());
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
 
         let entries = history::load(&dirs, 10).unwrap().entries;
 

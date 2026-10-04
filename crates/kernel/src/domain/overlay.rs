@@ -9,7 +9,6 @@ use crate::domain::{
     setting_row::SettingRow,
     time::TimecodeError,
     track::{Track, TrackRef},
-    workspace::{SaveLine, SavePhase},
 };
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr, EnumDiscriminants)]
@@ -50,31 +49,6 @@ impl Overlay {
             | Overlay::ConfirmDelete(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_) => false,
-        }
-    }
-
-    #[must_use]
-    pub fn save_line(&self) -> Option<SaveLine> {
-        match self {
-            Overlay::SavePlaylist { typed, error: None } => Some(SaveLine {
-                text: format!("Save playlist: {}", typed.input),
-                phase: SavePhase::Prompt,
-            }),
-            Overlay::SavePlaylist {
-                error: Some(reason),
-                ..
-            } => Some(SaveLine {
-                text: reason.to_string(),
-                phase: SavePhase::Failed,
-            }),
-            Overlay::Help
-            | Overlay::Search(_)
-            | Overlay::History(_)
-            | Overlay::Settings(..)
-            | Overlay::ConfirmDelete(_)
-            | Overlay::JumpToTime(_)
-            | Overlay::TrackDetails(_)
-            | Overlay::MusicDir { .. } => None,
         }
     }
 }

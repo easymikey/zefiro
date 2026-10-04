@@ -4,7 +4,7 @@ pub mod job;
 pub(crate) mod output;
 pub(crate) mod source;
 
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
 use crossbeam_channel::Sender;
 use kernel::{
@@ -15,30 +15,19 @@ use kernel::{
 
 use crate::{
     deck::{
-        envelope::{EnvelopeControl, Ramp, envelope},
+        envelope::{EnvelopeControl, Envelopes, Ramp, envelope},
         output::{Output, open_output_stream},
-        source::{PreloadMode, TrackDecoding, TrackSource},
+        source::{PreloadMode, TrackSource},
     },
     device::OutputLoss,
-    engine::{effect::PreloadKind, message::AudioMessage, phase::CurrentTrack},
+    engine::{
+        message::{AudioMessage, DeviceOpened},
+        phase::CurrentTrack,
+    },
     error::device_error,
     gain::Gain,
     tap::Handoff,
 };
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct DeviceOpened {
-    pub(crate) device: OutputDevice,
-    pub(crate) position: Duration,
-    pub(crate) playback: Playback,
-    pub(crate) opened: DeviceChoice,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DeviceChoice {
-    FellBack,
-    Requested,
-}
 
 pub(crate) struct Deck {
     pub(crate) output: Option<Output>,
@@ -69,21 +58,27 @@ impl Deck {
     }
 
     pub(crate) fn attach(&mut self, track: TrackSource) -> Option<AudioMessage> {
-        let (path, mode) = self.source.take_preloading()?;
+        let mode = self.source.take_preloading()?;
         let output = self.output.as_mut()?;
         let total = track.total();
         let (wrapped, control) =
             envelope(track.source, track.revision, self.sender.clone());
         let preload = match mode {
-            PreloadMode::Gapless => {
+            PreloadMode::Gapless(path) => {
                 output.append(wrapped);
                 self.source.envelopes.queued = Some(control);
-                PreloadKind::Gapless(path)
+                PreloadMode::Gapless(path)
             }
-            PreloadMode::Crossfade { gain, speed } => {
+            PreloadMode::Crossfade {
+                track: incoming,
+                speed,
+            } => {
                 output.stage(wrapped, speed);
                 self.source.envelopes.incoming = Some(control);
-                PreloadKind::Crossfade(CurrentTrack { total, gain, path })
+                PreloadMode::Crossfade {
+                    track: CurrentTrack { total, ..incoming },
+                    speed,
+                }
             }
         };
         Some(AudioMessage::Preloaded(preload))
@@ -119,6 +114,7 @@ impl Deck {
     ) -> Result<DeviceOpened, AudioError> {
         let opened = open_output_stream(device, &self.sender, &self.lost)
             .map_err(device_error)?;
+        self.drop_preload();
         let (position, playback) = self
             .output
             .as_ref()
@@ -139,8 +135,8 @@ impl Deck {
         self.source.start_decode();
     }
 
-    pub(crate) fn start_preload(&mut self, path: PathBuf, mode: PreloadMode) {
-        self.source.start_preload(path, mode);
+    pub(crate) fn start_preload(&mut self, mode: PreloadMode) {
+        self.source.start_preload(mode);
     }
 
     pub(crate) fn drop_preload(&mut self) {
@@ -265,6 +261,57 @@ fn fade(
     }
 }
 
+pub(crate) struct TrackDecoding {
+    preloading: Option<PreloadMode>,
+    staged: Option<TrackSource>,
+    sender: Sender<AudioMessage>,
+    pub(crate) envelopes: Envelopes,
+}
+
+impl TrackDecoding {
+    pub(crate) fn new(sender: Sender<AudioMessage>) -> Self {
+        Self {
+            preloading: None,
+            staged: None,
+            sender,
+            envelopes: Envelopes::default(),
+        }
+    }
+
+    pub(crate) fn start_decode(&mut self) {
+        self.staged = None;
+    }
+
+    pub(crate) fn start_preload(&mut self, mode: PreloadMode) {
+        self.preloading = Some(mode);
+    }
+
+    pub(crate) fn drop_preload(&mut self) {
+        self.preloading = None;
+    }
+
+    pub(crate) fn clear_staged(&mut self) {
+        self.staged = None;
+    }
+
+    pub(crate) fn stage(&mut self, track: TrackSource) {
+        self.staged = Some(track);
+    }
+
+    pub(crate) fn take_preloading(&mut self) -> Option<PreloadMode> {
+        self.preloading.take()
+    }
+
+    pub(crate) fn append_staged(&mut self, output: &Output) {
+        let Some(TrackSource { revision, source }) = self.staged.take() else {
+            return;
+        };
+        let (wrapped, control) = envelope(source, revision, self.sender.clone());
+        output.append(wrapped);
+        self.envelopes.primary = Some(control);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -275,9 +322,9 @@ mod tests {
     use crate::{
         deck::{
             Deck,
-            envelope::{Ramp, Signals, envelope},
+            envelope::{Ramp, envelope},
         },
-        engine::{effect::SinkRole, message::AudioMessage},
+        engine::message::{AudioMessage, Signals, SinkRole},
         tap,
     };
 

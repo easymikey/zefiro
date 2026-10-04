@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use kernel::{
-    cmd::{Cmd, ConfigCmd, ConfigPatch, Cue, Effect},
+    cmd::{Cmd, ConfigCmd, ConfigPatch, Effect},
     domain::{
+        cue::Cue,
         cursor::Cursor,
         cursor_over::CursorOver,
         direction::Direction,

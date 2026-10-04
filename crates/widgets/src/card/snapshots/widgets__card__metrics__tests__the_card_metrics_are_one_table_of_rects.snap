@@ -16,7 +16,9 @@ CardMetrics {
         width: 55,
         height: 8,
     },
-    row_width: 55,
+    row_width: Cells(
+        55,
+    ),
     status_row: Rect {
         x: 65,
         y: 2,

@@ -1,8 +1,7 @@
 use kernel::domain::appearance::Rgb;
-use num_traits::ToPrimitive;
 use ratatui::style::Color;
 
-use crate::pixels::numeric::{channel_byte, floor};
+use crate::pixels::numeric::{channel_byte, dimension_f32, floor};
 
 pub(crate) fn scale_channel(channel: u8, factor: f32) -> u8 {
     channel_byte(f32::from(channel) * factor)
@@ -36,10 +35,10 @@ pub(crate) fn gradient_at(stops: &[Rgb], t: f32) -> Option<Rgb> {
         1 => stops.first().copied(),
         count => {
             let t = t.clamp(0.0, 1.0);
-            let segments = (count - 1).to_f32().unwrap_or(f32::MAX);
+            let segments = dimension_f32(count - 1);
             let scaled = t * segments;
             let index = floor::<usize>(scaled).min(count - 2);
-            let local_t = scaled - index.to_f32().unwrap_or(f32::MAX);
+            let local_t = scaled - dimension_f32(index);
             stops
                 .get(index)
                 .zip(stops.get(index + 1))

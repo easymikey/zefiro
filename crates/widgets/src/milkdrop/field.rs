@@ -1,10 +1,4 @@
-use num_traits::ToPrimitive;
-
-use crate::spectrum::Spectrum;
-
-pub(crate) fn usize_to_f32(count: usize) -> f32 {
-    count.to_f32().unwrap_or(f32::MAX)
-}
+use crate::{pixels::numeric::dimension_f32, spectrum::Spectrum};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BandRange {
@@ -28,7 +22,7 @@ pub(crate) fn band_mean(bands: &Spectrum, range: BandRange) -> f32 {
     if slice.is_empty() {
         return 0.0;
     }
-    slice.iter().sum::<f32>() / usize_to_f32(slice.len())
+    slice.iter().sum::<f32>() / dimension_f32(slice.len())
 }
 
 pub(crate) fn band_levels(bands: &Spectrum) -> BandLevels {
@@ -121,8 +115,8 @@ pub(crate) struct FieldCenter {
 
 pub(crate) fn field_center(size: FieldSize) -> FieldCenter {
     FieldCenter {
-        column: usize_to_f32(size.width.saturating_sub(1)) / 2.0,
-        row: usize_to_f32(size.height.saturating_sub(1)) / 2.0,
+        column: dimension_f32(size.width.saturating_sub(1)) / 2.0,
+        row: dimension_f32(size.height.saturating_sub(1)) / 2.0,
     }
 }
 
@@ -138,8 +132,8 @@ pub(crate) fn physical_offset(
     aspect_x: f32,
 ) -> PlaneOffset {
     PlaneOffset {
-        column: (usize_to_f32(position.column) - center.column) * aspect_x,
-        row: usize_to_f32(position.row) - center.row,
+        column: (dimension_f32(position.column) - center.column) * aspect_x,
+        row: dimension_f32(position.row) - center.row,
     }
 }
 
@@ -174,8 +168,8 @@ pub(crate) fn bilinear_sample(
     size: FieldSize,
     source: PlaneOffset,
 ) -> f32 {
-    let last_column = usize_to_f32(size.width.saturating_sub(1));
-    let last_row = usize_to_f32(size.height.saturating_sub(1));
+    let last_column = dimension_f32(size.width.saturating_sub(1));
+    let last_row = dimension_f32(size.height.saturating_sub(1));
     let out_of_bounds = source.column < 0.0
         || source.row < 0.0
         || source.column > last_column
@@ -188,8 +182,8 @@ pub(crate) fn bilinear_sample(
     let row_low = crate::pixels::numeric::floor::<usize>(source.row);
     let column_high = (column_low + 1).min(size.width.saturating_sub(1));
     let row_high = (row_low + 1).min(size.height.saturating_sub(1));
-    let column_fraction = source.column - usize_to_f32(column_low);
-    let row_fraction = source.row - usize_to_f32(row_low);
+    let column_fraction = source.column - dimension_f32(column_low);
+    let row_fraction = source.row - dimension_f32(row_low);
 
     let at = |row: usize, column: usize| {
         cells.get(row * size.width + column).copied().unwrap_or(0.0)
@@ -223,11 +217,9 @@ pub(crate) struct Injection {
 }
 
 pub(crate) fn xorshift64(state: u64) -> u64 {
-    let mut value = state;
-    value ^= value << 13;
-    value ^= value >> 7;
-    value ^= value << 17;
-    value
+    let shifted_left = state ^ (state << 13);
+    let shifted_right = shifted_left ^ (shifted_left >> 7);
+    shifted_right ^ (shifted_right << 17)
 }
 
 pub(crate) fn inject(cells: &mut [f32], size: FieldSize, injection: &Injection) {

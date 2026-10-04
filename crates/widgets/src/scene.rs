@@ -2,9 +2,9 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use kernel::{
     domain::{
-        appearance::{AppearanceSettings, CoverMode, ProgressTime},
+        appearance::{AppearanceSettings, CoverMode},
+        device::DeviceName,
         favorites::Favorites,
-        geometry::Cells,
         history::HistoryEntry,
         index::ViewIndex,
         model::{Model, ScanStatus},
@@ -14,6 +14,7 @@ use kernel::{
         revision::Revisions,
         setting_row::AppearanceSetting,
         settings::Settings,
+        startup::Shuffle,
         theme::{ThemeChoice, Themes},
         time::Moment,
         toast::Toast,
@@ -25,23 +26,15 @@ use kernel::{
 
 use crate::{
     appearance::Appearance,
-    card::{
-        CardView,
-        compact::progress_bar_width as compact_progress_bar_width,
-        metrics::CardMetrics,
-    },
+    card::CardView,
     geometry::{CoverSizing, cover_sizing},
-    key_hints::KeyHintsView,
-    playlist::pane::LibraryLoad,
-    primitive::bar::hud_progress_bar_width,
-    repaint::{OnScreen, Presence},
-    screen::{
-        breakpoint::Breakpoint,
-        frame_layout::FrameLayout,
-        minimal::progress_bar_width as minimal_progress_bar_width,
-    },
+    key_hints::{KeyHintChords, KeyHintsView},
+    overlay::{layer::OverlayView, settings::view::SettingsView},
+    playlist::row::{LibraryLoad, PlaylistView},
     spectrum::Spectrum,
+    status_line::{ScanProgress, StatusLineView},
     theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
+    toast::{ToastStyle, ToastWidget},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,7 +54,7 @@ pub struct ScenePresentation<'a> {
     pub clock: Duration,
     pub now: Moment,
     pub home: Option<&'a Path>,
-    pub sleep_left: Option<Duration>,
+    pub key_hint_chords: &'a KeyHintChords,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -73,7 +66,7 @@ pub struct Scene<'a> {
     pub favorites: &'a Favorites,
     pub themes: &'a Themes,
     pub appearance: &'a Appearance,
-    pub appearance_settings: &'a [AppearanceSetting],
+    pub appearance_rows: &'a [AppearanceSetting],
     pub settings: &'a Settings,
     pub revisions: &'a Revisions,
     pub overlay: Option<&'a Overlay>,
@@ -87,6 +80,7 @@ pub struct Scene<'a> {
     pub theme: &'a Theme,
     pub color_depth: ColorDepth,
     pub bindings: &'a [KeyBinding],
+    pub key_hint_chords: &'a KeyHintChords,
     pub spectrum: &'a Spectrum,
     pub pixel_path: PixelPath,
     pub cell_aspect: f32,
@@ -94,7 +88,6 @@ pub struct Scene<'a> {
     pub now: Moment,
     pub music_dir: &'a Path,
     pub home: Option<&'a Path>,
-    pub sleep_left: Option<Duration>,
 }
 
 impl<'a> Scene<'a> {
@@ -108,7 +101,7 @@ impl<'a> Scene<'a> {
             favorites: &model.favorites,
             themes: &model.themes,
             appearance: presentation.appearance,
-            appearance_settings: &model.appearance_settings,
+            appearance_rows: &model.appearance_rows,
             settings: &model.settings,
             revisions: &model.revisions,
             overlay: model.workspace.overlay.as_ref(),
@@ -126,6 +119,7 @@ impl<'a> Scene<'a> {
             theme: presentation.theme,
             color_depth: presentation.color_depth,
             bindings: model.workspace.keymap.bindings(),
+            key_hint_chords: presentation.key_hint_chords,
             spectrum: presentation.spectrum,
             pixel_path: presentation.pixel_path,
             cell_aspect: presentation.cell_aspect,
@@ -133,7 +127,6 @@ impl<'a> Scene<'a> {
             now: presentation.now,
             music_dir: &model.music_dir,
             home: presentation.home,
-            sleep_left: presentation.sleep_left,
         }
     }
 
@@ -145,12 +138,7 @@ impl<'a> Scene<'a> {
     #[must_use]
     pub(crate) fn active_theme(&self) -> ActiveTheme<'a> {
         ActiveTheme::new(self.theme, self.color_depth)
-            .with_progress(self.appearance().progress)
-    }
-
-    #[must_use]
-    pub fn appearance(&self) -> &Appearance {
-        self.appearance
+            .with_progress(self.appearance.progress)
     }
 
     pub fn appearance_settings(&self) -> AppearanceSettings {
@@ -158,9 +146,25 @@ impl<'a> Scene<'a> {
     }
 
     #[must_use]
-    pub(crate) fn key_hints(&self) -> KeyHintsView<'a> {
-        match self.overlay {
-            Some(Overlay::Settings(..)) => KeyHintsView::settings(self.bindings),
+    pub fn cover_mode(&self) -> CoverMode {
+        painted_cover_mode(self.appearance_settings().cover_mode, self.pixel_path)
+    }
+
+    #[must_use]
+    pub(crate) fn cover_sizing(&self) -> CoverSizing {
+        cover_sizing(self.cover_mode(), self.appearance.cover_cells)
+    }
+}
+
+impl<'a> KeyHintsView<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
+        let chords = scene.key_hint_chords;
+        match scene.overlay {
+            Some(Overlay::Settings(..)) => Self {
+                full: &chords.settings,
+                compact: &chords.settings,
+            },
             None
             | Some(
                 Overlay::Help
@@ -171,90 +175,116 @@ impl<'a> Scene<'a> {
                 | Overlay::JumpToTime(_)
                 | Overlay::TrackDetails(_)
                 | Overlay::MusicDir { .. },
-            ) => KeyHintsView::keys(self.bindings),
-        }
-    }
-
-    #[must_use]
-    pub fn cover_mode(&self) -> CoverMode {
-        painted_cover_mode(self.appearance_settings().cover_mode, self.pixel_path)
-    }
-
-    #[must_use]
-    pub(crate) fn cover_sizing(&self) -> CoverSizing {
-        cover_sizing(self.cover_mode(), self.appearance().cover_cells)
-    }
-
-    #[must_use]
-    pub fn on_screen(&self, layout: &FrameLayout) -> OnScreen {
-        OnScreen {
-            progress_bar: self.progress_bar_width(layout).map(Cells),
-            clock: if self.card_shown(layout) {
-                Presence::Shown
-            } else {
-                Presence::Hidden
+            ) => Self {
+                full: &chords.keys,
+                compact: &chords.compact,
             },
-            sleep_label: if layout.playlist.is_some() && self.sleep_left.is_some() {
-                Presence::Shown
-            } else {
-                Presence::Hidden
-            },
-            spectrum: if self.spectrum_shown(layout) {
-                Presence::Shown
-            } else {
-                Presence::Hidden
-            },
-        }
-    }
-
-    fn card_shown(&self, layout: &FrameLayout) -> bool {
-        match layout.breakpoint {
-            Breakpoint::Full => layout.card.is_some(),
-            Breakpoint::Compact | Breakpoint::Minimal => true,
-            Breakpoint::TooSmall => false,
-        }
-    }
-
-    fn spectrum_shown(&self, layout: &FrameLayout) -> bool {
-        let card_spectrum = layout
-            .card
-            .is_some_and(|metrics| !metrics.spectrum_row.is_empty());
-        let milkdrop_spectrum =
-            self.cover_mode() == CoverMode::Milkdrop && layout.cover.is_some();
-        card_spectrum || milkdrop_spectrum
-    }
-
-    fn progress_bar_width(&self, layout: &FrameLayout) -> Option<u16> {
-        match layout.breakpoint {
-            Breakpoint::Full => layout
-                .card
-                .map(|metrics| self.full_progress_bar_width(&metrics)),
-            Breakpoint::Compact => Some(compact_progress_bar_width(layout.header)),
-            Breakpoint::Minimal => Some(
-                minimal_progress_bar_width(
-                    CardView::from_scene(self),
-                    self.appearance_settings().speed_chip,
-                    Cells(layout.screen.width),
-                )
-                .0,
-            ),
-            Breakpoint::TooSmall => None,
-        }
-    }
-
-    fn full_progress_bar_width(&self, metrics: &CardMetrics) -> u16 {
-        let row_width = metrics.progress_row.width;
-        match self.appearance_settings().progress_time {
-            ProgressTime::Remaining => hud_progress_bar_width(
-                row_width,
-                CardView::from_scene(self).remaining(),
-            ),
-            ProgressTime::Elapsed => row_width,
         }
     }
 }
 
-pub(crate) fn theme_label(choice: &ThemeChoice) -> &str {
+impl<'a> CardView<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
+        Self {
+            player: scene.player,
+            speed: scene.transport.speed,
+            volume: scene.transport.volume,
+            spectrum: scene.spectrum,
+            repeat: scene.playlist.repeat,
+            play_order: &scene.playlist.play_order,
+            displayed_track: scene.displayed_track,
+            output: &scene.transport.output,
+            now: scene.now,
+        }
+    }
+}
+
+impl<'a> StatusLineView<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
+        let shuffle = if scene.playlist.play_order.is_shuffle() {
+            Shuffle::Enabled
+        } else {
+            Shuffle::Disabled
+        };
+        Self {
+            shuffle,
+            repeat_mode: scene.playlist.repeat,
+            queue_len: scene.queue.len(),
+            position: scene.browse_selected,
+            total: scene.playlist.tracks.len(),
+            scan: ScanProgress::of(scene.scan, scene.theme.scanning_label.as_str()),
+            theme_name: scene.theme.name.as_str(),
+            sleep_left: scene
+                .transport
+                .sleep
+                .map(|timer| timer.deadline.elapsed_since(scene.now)),
+        }
+    }
+}
+
+impl<'a> PlaylistView<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
+        Self {
+            playlist: scene.playlist,
+            queue: scene.queue,
+            favorites: scene.favorites,
+            browse_selected: scene.browse_selected.get(),
+            playing: scene.playing,
+            library_loading: scene.library_loading,
+            status: StatusLineView::from_scene(scene),
+        }
+    }
+}
+
+impl<'a> SettingsView<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
+        let audio = &scene.settings.audio;
+        Self {
+            crossfade: audio.crossfade,
+            replay_gain: audio.replay_gain,
+            theme: theme_label(&scene.themes.selected),
+            themes: &scene.themes.names,
+            sleep_presets: audio.sleep_presets.as_slice(),
+            music_dir: scene.music_dir,
+            home: scene.home,
+            output_device: audio.device.named().map(DeviceName::as_str),
+            output_devices: &scene.settings.output_devices,
+            appearance: scene.appearance_settings(),
+            appearance_rows: scene.appearance_rows,
+        }
+    }
+}
+
+impl<'a> OverlayView<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
+        Self {
+            overlay: scene.overlay,
+            tracks: &scene.playlist.tracks,
+            history: scene.history,
+            theme: scene.active_theme(),
+            settings_view: SettingsView::from_scene(scene),
+            bindings: scene.bindings,
+            now: scene.now,
+        }
+    }
+}
+
+impl<'a> ToastWidget<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &Scene<'a>) -> Option<Self> {
+        (!scene.toasts.is_empty()).then(|| Self {
+            toasts: scene.toasts,
+            style: ToastStyle::from_theme(&scene.active_theme()),
+        })
+    }
+}
+
+fn theme_label(choice: &ThemeChoice) -> &str {
     match choice {
         ThemeChoice::Auto => "auto",
         ThemeChoice::Named(name) => name.as_str(),
@@ -272,34 +302,12 @@ fn painted_cover_mode(style: CoverMode, detected: PixelPath) -> CoverMode {
     }
 }
 
-#[must_use]
-pub(crate) fn abbreviate_home(path: &Path, home: &Path) -> String {
-    match path.strip_prefix(home) {
-        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Ok(rest) => format!("~/{}", rest.display()),
-        Err(_) => path.display().to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
-    use kernel::domain::{
-        appearance::{CoverMode, ProgressTime},
-        geometry::Cells,
-    };
-    use ratatui::layout::{Rect, Size};
+    use kernel::domain::appearance::CoverMode;
     use rstest::rstest;
 
-    use crate::{
-        card::{CardView, compact::progress_bar_width as compact_progress_bar_width},
-        primitive::bar::hud_progress_bar_width,
-        repaint::Presence,
-        scene::{PixelPath, abbreviate_home, painted_cover_mode},
-        screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
-        test_support::{SceneSources, model_with_tracks},
-    };
+    use crate::scene::{PixelPath, painted_cover_mode};
 
     #[rstest]
     #[case::vinyl_with_graphics(
@@ -340,84 +348,5 @@ mod tests {
         #[case] expected: CoverMode,
     ) {
         assert_eq!(painted_cover_mode(style, detected), expected);
-    }
-
-    #[rstest]
-    #[case::under_home(
-        "/Users/test/Desktop/apple-music",
-        "/Users/test",
-        "~/Desktop/apple-music"
-    )]
-    #[case::equal_to_home("/Users/test", "/Users/test", "~")]
-    #[case::outside_home("/mnt/music", "/Users/test", "/mnt/music")]
-    fn a_path_under_home_starts_with_a_tilde(
-        #[case] path: &str,
-        #[case] home: &str,
-        #[case] expected: &str,
-    ) {
-        assert_eq!(abbreviate_home(Path::new(path), Path::new(home)), expected);
-    }
-
-    #[rstest]
-    #[case::full_with_chip(
-        Size::new(80, 24),
-        (48, 16),
-        Some(ProgressTime::Remaining)
-    )]
-    #[case::full_without_chip(
-        Size::new(80, 24),
-        (48, 16),
-        Some(ProgressTime::Elapsed)
-    )]
-    #[case::compact(Size::new(80, 18), (48, 16), None)]
-    #[case::minimal(Size::new(20, 5), (10, 3), None)]
-    #[case::overlay_only(Size::new(40, 10), (48, 16), None)]
-    fn the_breakpoint_picks_the_screen_for_the_size_and_minimums(
-        #[case] size: Size,
-        #[case] minimums: (u16, u16),
-        #[case] style: Option<ProgressTime>,
-    ) {
-        let (min_columns, min_rows) = minimums;
-        let mut sources = SceneSources::new(model_with_tracks(1));
-        sources.appearance_mut().breakpoints.min_columns = Cells(min_columns);
-        sources.appearance_mut().breakpoints.min_rows = Cells(min_rows);
-        if let Some(style) = style {
-            sources.model.settings.appearance.progress_time = style;
-        }
-        let scene = sources.scene();
-        let layout =
-            FrameLayout::from_scene(&scene, Rect::new(0, 0, size.width, size.height));
-        let on_screen = scene.on_screen(&layout);
-
-        match layout.breakpoint {
-            Breakpoint::Full => {
-                let metrics = layout.card.unwrap();
-                let row_width = metrics.progress_row.width;
-                let expected = match style.unwrap() {
-                    ProgressTime::Remaining => hud_progress_bar_width(
-                        row_width,
-                        CardView::from_scene(&scene).remaining(),
-                    ),
-                    ProgressTime::Elapsed => row_width,
-                };
-                assert_eq!(on_screen.progress_bar, Some(Cells(expected)));
-                assert_eq!(on_screen.clock, Presence::Shown);
-            }
-            Breakpoint::Compact => {
-                assert_eq!(
-                    on_screen.progress_bar,
-                    Some(Cells(compact_progress_bar_width(layout.header)))
-                );
-                assert_eq!(on_screen.clock, Presence::Shown);
-            }
-            Breakpoint::Minimal => {
-                assert!(on_screen.progress_bar.is_some());
-                assert_eq!(on_screen.clock, Presence::Shown);
-            }
-            Breakpoint::TooSmall => {
-                assert_eq!(on_screen.progress_bar, None);
-                assert_eq!(on_screen.clock, Presence::Hidden);
-            }
-        }
     }
 }

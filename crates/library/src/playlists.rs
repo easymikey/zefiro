@@ -1,4 +1,7 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use kernel::{
     domain::{
@@ -18,7 +21,7 @@ pub fn load(dirs: &LibraryDirs, name: &PlaylistFileName) -> Result<Playlist, Err
     let path = playlist_path(dirs, name);
     let content = std::fs::read_to_string(&path)
         .map_err(Error::io(LibrarySubject::Playlist, &path))?;
-    let track_paths = parse(&content);
+    let track_paths = parse(&content, &dirs.playlists_dir);
     let tracks: Vec<Arc<Track>> = track_paths
         .iter()
         .map(|track_path| crate::tags::read_or_list(track_path))
@@ -34,7 +37,7 @@ pub(crate) fn save(
     let path = playlist_path(dirs, name);
     crate::files::create_parent_dir(&path)
         .map_err(Error::io(LibrarySubject::Playlist, &dirs.playlists_dir))?;
-    std::fs::write(&path, to_m3u(tracks))
+    crate::files::write_atomic(&path, to_m3u(tracks).as_bytes())
         .map_err(Error::io(LibrarySubject::Playlist, &path))?;
     Ok(())
 }
@@ -55,17 +58,23 @@ fn entry_line(track: &Track) -> String {
 }
 
 #[must_use]
-fn parse(text: &str) -> Vec<PathBuf> {
-    text.lines()
-        .filter(|line| !line.trim().is_empty())
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .map(|line| PathBuf::from(line.trim()))
+fn parse(text: &str, base: &Path) -> Vec<PathBuf> {
+    text.trim_start_matches('\u{FEFF}')
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| base.join(line))
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+        time::Duration,
+    };
 
     use kernel::domain::{
         playlist::PlaylistFileName,
@@ -104,7 +113,7 @@ mod tests {
         ];
         let text = to_m3u(&tracks);
         insta::assert_snapshot!(text);
-        insta::assert_debug_snapshot!(parse(&text));
+        insta::assert_debug_snapshot!(parse(&text, Path::new("/music")));
     }
 
     #[rstest]
@@ -120,7 +129,39 @@ mod tests {
         #[case] name: &str,
         #[case] text: &str,
     ) {
-        insta::assert_debug_snapshot!(name, parse(text));
+        insta::assert_debug_snapshot!(name, parse(text, Path::new("/music")));
+    }
+
+    #[rstest]
+    #[case::byte_order_mark("\u{FEFF}#EXTM3U\n/a.flac\n", "/a.flac")]
+    #[case::relative_entry("#EXTM3U\nsub/b.flac\n", "/lists/sub/b.flac")]
+    #[case::absolute_entry("#EXTM3U\n/c.flac\n", "/c.flac")]
+    fn an_entry_resolves_onto_the_playlist_folder(
+        #[case] text: &str,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(
+            parse(text, Path::new("/lists")),
+            vec![PathBuf::from(expected)]
+        );
+    }
+
+    #[test]
+    fn saving_replaces_a_read_only_playlist_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
+        let track = Arc::new(Track::listed(&directory.path().join("song.mp3")));
+        playlists::save(&dirs, &name("Locked"), std::slice::from_ref(&track)).unwrap();
+        let saved = dirs.playlists_dir.join("Locked.m3u8");
+        let mut permissions = std::fs::metadata(&saved).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&saved, permissions).unwrap();
+
+        playlists::save(&dirs, &name("Locked"), &[track]).unwrap();
     }
 
     #[test]
@@ -136,7 +177,11 @@ mod tests {
     #[test]
     fn named_playlist_load_computes_track_display() {
         let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs::under(directory.path());
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
         std::fs::create_dir_all(&dirs.playlists_dir).unwrap();
         let media_path = directory.path().join("loaded-from-m3u.mp3");
         std::fs::write(
@@ -157,7 +202,11 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_under_the_validated_name() {
         let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs::under(directory.path());
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
         let media_path = directory.path().join("roundtrip.mp3");
         let track = Track::listed(&media_path);
 

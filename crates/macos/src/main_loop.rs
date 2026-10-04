@@ -3,7 +3,7 @@ use dispatch2::DispatchQueue;
 use objc2::MainThreadMarker;
 use objc2_core_foundation::CFRunLoop;
 
-use crate::{controls::Controls, driver::MacosMessage};
+use crate::{controls::Controls, message::MacosMessage};
 
 #[derive(Debug)]
 pub struct MainLoop {

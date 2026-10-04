@@ -37,7 +37,9 @@ FrameLayout {
                 width: 71,
                 height: 8,
             },
-            row_width: 71,
+            row_width: Cells(
+                71,
+            ),
             status_row: Rect {
                 x: 64,
                 y: 3,

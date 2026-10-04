@@ -7,7 +7,7 @@ TomlLayout {
     full_min_height: 19,
     compact_min_width: 30,
     compact_min_height: 13,
-    min_columns: 48,
-    min_rows: 16,
+    min_width: 48,
+    min_height: 16,
     mode: Auto,
 }

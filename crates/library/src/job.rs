@@ -17,8 +17,8 @@ use crate::{
     cache,
     cover::decode,
     dirs::LibraryDirs,
-    driver::LibraryMessage,
     error::Error,
+    message::LibraryMessage,
     scan,
 };
 
@@ -65,15 +65,16 @@ impl LibraryJob {
                 tracks,
                 revision,
                 dirs,
-            } => tagged(&dirs, &music_dir, &local_paths(tracks)).map(
-                |scan::TagsRead {
-                     tracks,
-                     first_error,
-                 }| LibraryMessage::Tagged {
+            } => {
+                let scan::TagsRead {
+                    tracks,
+                    first_error,
+                } = tagged(&dirs, &music_dir, &local_paths(tracks));
+                Ok(LibraryMessage::Tagged {
                     event: LibraryEvent::Tagged { tracks, revision },
                     skipped: first_error,
-                },
-            ),
+                })
+            }
             LibraryJob::Scan {
                 music_dir,
                 revision,
@@ -85,7 +86,7 @@ impl LibraryJob {
                 let scan::TagsRead {
                     tracks,
                     first_error,
-                } = tagged(&dirs, &music_dir, &listing.paths)?;
+                } = tagged(&dirs, &music_dir, &listing.paths);
                 Ok(LibraryMessage::Scanned {
                     event: LibraryEvent::Loaded { tracks, revision },
                     skipped: listing.first_error.or(first_error),
@@ -208,7 +209,22 @@ impl Ord for LibraryJob {
                 LibraryJob::Scan { .. } | LibraryJob::List { .. },
                 LibraryJob::Scan { .. } | LibraryJob::List { .. },
             ) => self.scan_key().cmp(&other.scan_key()),
-            _ => self.priority().cmp(&other.priority()),
+            (
+                LibraryJob::Cover { .. },
+                LibraryJob::Tag { .. }
+                | LibraryJob::Scan { .. }
+                | LibraryJob::List { .. },
+            )
+            | (
+                LibraryJob::Tag { .. },
+                LibraryJob::Cover { .. }
+                | LibraryJob::Scan { .. }
+                | LibraryJob::List { .. },
+            )
+            | (
+                LibraryJob::Scan { .. } | LibraryJob::List { .. },
+                LibraryJob::Cover { .. } | LibraryJob::Tag { .. },
+            ) => self.priority().cmp(&other.priority()),
         }
     }
 }
@@ -234,14 +250,15 @@ fn local_paths(tracks: Vec<TrackRef>) -> Vec<PathBuf> {
         .collect()
 }
 
-fn tagged(
-    dirs: &LibraryDirs,
-    music_dir: &Path,
-    paths: &[PathBuf],
-) -> Result<scan::TagsRead, Error> {
+fn tagged(dirs: &LibraryDirs, music_dir: &Path, paths: &[PathBuf]) -> scan::TagsRead {
     let read = scan::read_tags(paths);
-    cache::save(dirs, music_dir, &read.tracks)?;
-    Ok(read)
+    match cache::save(dirs, music_dir, &read.tracks) {
+        Ok(()) => read,
+        Err(error) => scan::TagsRead {
+            first_error: read.first_error.or(Some(error)),
+            tracks: read.tracks,
+        },
+    }
 }
 
 fn listing(music_dir: &Path, decodable: &[&str]) -> Result<scan::Listing, Error> {
@@ -251,5 +268,64 @@ fn listing(music_dir: &Path, decodable: &[&str]) -> Result<scan::Listing, Error>
             first_error: Some(error),
         } if paths.is_empty() => Err(error),
         listing => Ok(listing),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, sync::Arc};
+
+    use kernel::{
+        domain::{
+            revision::Revision,
+            track::{Tagging, TrackRef},
+        },
+        message::LibraryEvent,
+    };
+    use tempfile::TempDir;
+
+    use crate::{dirs::LibraryDirs, job::LibraryJob, message::LibraryMessage};
+
+    const TONE: &[u8] = include_bytes!("../tests/fixtures/tone.wav");
+
+    fn unwritable_cache() -> (TempDir, PathBuf, LibraryDirs) {
+        let directory = tempfile::tempdir().unwrap();
+        let music_dir = directory.path().join("music");
+        std::fs::create_dir(&music_dir).unwrap();
+        std::fs::write(music_dir.join("tone.wav"), TONE).unwrap();
+        let blocker = directory.path().join("blocker");
+        std::fs::write(&blocker, b"a file, not a directory").unwrap();
+        let dirs = LibraryDirs {
+            cache_dir: blocker.join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
+        (directory, music_dir, dirs)
+    }
+
+    #[test]
+    fn a_failed_cache_save_keeps_the_tagged_tracks_and_reports_the_error() {
+        let (_directory, music_dir, dirs) = unwritable_cache();
+        let message = LibraryJob::Tag {
+            tracks: vec![TrackRef::Local(music_dir.join("tone.wav"))],
+            music_dir,
+            revision: Revision::default(),
+            dirs: Arc::new(dirs),
+        }
+        .run();
+        let LibraryMessage::Tagged {
+            event: LibraryEvent::Tagged { tracks, .. },
+            skipped,
+        } = message
+        else {
+            panic!("expected tagged tracks, got {message:?}");
+        };
+        assert!(
+            tracks
+                .iter()
+                .all(|track| matches!(track.tagging(), Tagging::Read(_))),
+            "{tracks:?}"
+        );
+        assert!(skipped.is_some(), "the save error is reported");
     }
 }

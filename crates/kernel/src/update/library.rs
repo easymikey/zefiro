@@ -1,12 +1,13 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 use crate::{
-    cmd::{Cmd, Cue, Effect, LibraryCmd},
+    cmd::{Cmd, Effect, LibraryCmd},
     domain::{
+        cue::Cue,
         favorites::Favorites,
         history::HistoryEntry,
         index::TrackIndex,
-        library::Library,
+        library::{Library, sort_indices},
         model::ScanStatus,
         player::Player,
         playlist::{Playlist, PlaylistSource},
@@ -41,7 +42,7 @@ pub(crate) fn update(
     | LibraryEvent::Tagged { revision, .. } = &event
         && let Freshness::Stale = revision.freshness(parts.revisions.scan)
     {
-        return Ok(Cmd::none());
+        return Err(Unhandled);
     }
     match event {
         LibraryEvent::FavoritesLoaded(favorites) => {
@@ -68,7 +69,7 @@ fn library_failed(parts: &mut LibraryParts<'_>, failure: &LibraryError) -> Cmd {
             subject: LibrarySubject::Scan,
             ..
         } => *parts.scan_status = ScanStatus::Idle,
-        LibraryError::File { .. } => {}
+        LibraryError::File { .. } | LibraryError::Cover { .. } => {}
     }
     parts.workspace.show(
         Toast::error("Library error").with_text(failure.to_string()),
@@ -127,22 +128,17 @@ fn tagged_tracks(parts: &mut LibraryParts<'_>, tagged: Vec<Arc<Track>>) -> Cmd {
 }
 
 fn library_loaded(parts: &mut LibraryParts<'_>, tracks: Vec<Arc<Track>>) {
-    install_library(parts.library, tracks);
-    match parts.playlist_source {
-        PlaylistSource::Named => {}
-        PlaylistSource::Library => {
-            if let Some(ready) = parts.library {
-                crate::update::browse::resync_playlist(
-                    crate::update::browse::ResyncParts {
-                        library: ready,
-                        player: parts.player,
-                        playlist: parts.playlist,
-                    },
-                );
-            }
-            let browse = &mut parts.workspace.browse;
-            browse.cursor = browse.cursor.resize(parts.playlist.tracks.len());
-        }
+    install_library(parts, tracks);
+    if let Some(ready) = parts.library {
+        crate::update::browse::resync_playlist(
+            *parts.playlist_source,
+            crate::update::browse::ResyncParts {
+                library: ready,
+                browse: &mut parts.workspace.browse,
+                player: parts.player,
+                playlist: parts.playlist,
+            },
+        );
     }
 }
 
@@ -178,9 +174,13 @@ fn tagging_progress(scan_status: &mut ScanStatus, read: usize) -> Cmd {
     Cmd::none()
 }
 
-fn install_library(library: &mut Option<Library>, tracks: Vec<Arc<Track>>) {
-    let view = (0..tracks.len()).map(TrackIndex::new).collect();
-    *library = Some(Library { tracks, view });
+fn install_library(parts: &mut LibraryParts<'_>, tracks: Vec<Arc<Track>>) {
+    let sort = parts.workspace.browse.sort;
+    let view = sort_indices(&tracks, sort, parts.favorites)
+        .into_iter()
+        .map(|row| TrackIndex::new(row.get()))
+        .collect();
+    *parts.library = Some(Library { tracks, view });
 }
 
 #[cfg(test)]
@@ -190,8 +190,10 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        cmd::{Cmd, Cue, Effect},
+        cmd::{Cmd, Effect},
         domain::{
+            config::Diagnostic,
+            cue::Cue,
             history::HistoryEntry,
             index::TrackIndex,
             io_error::IoError,
@@ -200,11 +202,11 @@ mod tests {
             playlist::PlaylistSource,
             revision::Revision,
             time::Moment,
-            toast::{TOAST_LIFETIME, ToastKind},
+            toast::{TOAST_LIFETIME, ToastLevel},
             track::{Track, TrackRef},
         },
         message::{LibraryError, LibraryEvent, LibrarySubject, Timer},
-        update::library::update,
+        update::{library::update, machine::Unhandled},
     };
 
     fn track(path: &str) -> Arc<Track> {
@@ -251,6 +253,24 @@ mod tests {
     }
 
     #[test]
+    fn a_stale_scan_is_unhandled_and_keeps_the_library() {
+        let mut model = Model::default();
+        model.revisions.scan = Revision::default().next();
+
+        let cmd = update(
+            crate::update::library_parts(&mut model),
+            LibraryEvent::Loaded {
+                tracks: vec![track("/music/a.flac")],
+                revision: Revision::default(),
+            },
+        );
+
+        assert_eq!(cmd, Err(Unhandled));
+        assert!(model.library.is_none());
+        assert!(model.playlist.tracks.is_empty());
+    }
+
+    #[test]
     fn a_named_playlist_survives_a_full_scan() {
         let named = vec![track("/elsewhere/one.flac")];
         let mut model = Model {
@@ -287,7 +307,7 @@ mod tests {
         .unwrap();
 
         let toast = model.workspace.toasts.first().unwrap();
-        assert_eq!(toast.kind, ToastKind::Error);
+        assert_eq!(toast.kind, ToastLevel::Error);
         assert_eq!(
             toast.text.as_deref(),
             Some(LibraryError::NoUserDirs.to_string().as_str())
@@ -320,6 +340,13 @@ mod tests {
     )]
     #[case::a_history_failure_keeps_scanning(
         unreadable(LibrarySubject::History),
+        ScanStatus::Scanning
+    )]
+    #[case::a_cover_failure_keeps_scanning(
+        LibraryError::Cover {
+            path: "/music/one.flac".into(),
+            diagnostic: Diagnostic::from_error(&std::io::Error::other("no tag")),
+        },
         ScanStatus::Scanning
     )]
     fn a_library_error_settles_the_scan(

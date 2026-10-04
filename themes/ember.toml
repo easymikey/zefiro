@@ -3,10 +3,10 @@
 name = "ember"
 
 [colors]
-bg = "#121212"
+background = "#121212"
 accent = "#e07040"
-bright_fg = "#e8d0b8"
-fg = "#907868"
+foreground = "#e8d0b8"
+muted_foreground = "#907868"
 green = "#9aaa68"
 yellow = "#d8a050"
 red = "#d15a5a"

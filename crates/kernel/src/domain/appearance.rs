@@ -2,7 +2,16 @@ use std::{fmt, str::FromStr};
 
 use strum::{EnumIter, EnumString, IntoEnumIterator, VariantNames};
 
-use crate::domain::theme::ThemeName;
+use crate::domain::{geometry::Cells, theme::ThemeName};
+
+pub const DEFAULT_COVER_WIDTH: Cells = Cells(20);
+pub const DEFAULT_COVER_HEIGHT: Cells = Cells(8);
+pub const DEFAULT_FULL_MIN_WIDTH: Cells = Cells(60);
+pub const DEFAULT_FULL_MIN_HEIGHT: Cells = Cells(19);
+pub const DEFAULT_COMPACT_MIN_WIDTH: Cells = Cells(30);
+pub const DEFAULT_COMPACT_MIN_HEIGHT: Cells = Cells(13);
+pub const DEFAULT_MIN_WIDTH: Cells = Cells(48);
+pub const DEFAULT_MIN_HEIGHT: Cells = Cells(16);
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, strum::Display, EnumString, VariantNames,

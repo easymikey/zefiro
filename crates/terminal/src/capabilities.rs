@@ -77,8 +77,8 @@ pub(crate) enum PixelProtocol {
 }
 
 #[must_use]
-pub(crate) fn protocols(brand: TerminalApp) -> &'static [PixelProtocol] {
-    match brand {
+pub(crate) fn protocols(app: TerminalApp) -> &'static [PixelProtocol] {
+    match app {
         TerminalApp::Kitty | TerminalApp::Ghostty => &[PixelProtocol::Kitty],
         TerminalApp::Iterm2 | TerminalApp::WezTerm => {
             &[PixelProtocol::Iterm2, PixelProtocol::Sixel]
@@ -135,17 +135,17 @@ impl Capabilities {
 }
 
 #[derive(Debug)]
-pub struct ProbeAnswer {
+pub struct QueryAnswer {
     pub picker: Picker,
 }
 
-pub fn probe(brand: TerminalApp) -> Result<Option<ProbeAnswer>, Error> {
-    if protocols(brand).is_empty() {
+pub fn query(app: TerminalApp) -> Result<Option<QueryAnswer>, Error> {
+    if protocols(app).is_empty() {
         return Ok(None);
     }
-    let mut picker = Picker::from_query_stdio().map_err(Error::Probe)?;
+    let mut picker = Picker::from_query_stdio().map_err(Error::Query)?;
     let confirmed = select_protocol_type(
-        protocols(brand),
+        protocols(app),
         picker.protocol_type(),
         picker.capabilities(),
     )
@@ -154,7 +154,7 @@ pub fn probe(brand: TerminalApp) -> Result<Option<ProbeAnswer>, Error> {
         return Ok(None);
     }
     picker.set_protocol_type(confirmed);
-    Ok(Some(ProbeAnswer { picker }))
+    Ok(Some(QueryAnswer { picker }))
 }
 
 #[must_use]
@@ -185,8 +185,8 @@ mod tests {
         TerminalApp,
         TerminalEnvironment,
         cell_aspect,
-        probe,
         protocols,
+        query,
         select_protocol_type,
     };
 
@@ -251,95 +251,95 @@ mod tests {
     #[case::apple(TerminalApp::Apple, &[])]
     #[case::unknown(TerminalApp::Unknown, &[PixelProtocol::Query])]
     fn each_brand_names_its_protocols(
-        #[case] brand: TerminalApp,
+        #[case] app: TerminalApp,
         #[case] expected: &[PixelProtocol],
     ) {
-        assert_eq!(protocols(brand), expected);
+        assert_eq!(protocols(app), expected);
     }
 
-    struct ProtocolPick {
-        brand: TerminalApp,
+    struct ProtocolRow {
+        app: TerminalApp,
         best_guess: ProtocolType,
         sixel: &'static [Capability],
         expected: Option<ProtocolType>,
     }
 
     #[rstest]
-    #[case::kitty_confirmed(ProtocolPick {
-        brand: TerminalApp::Kitty,
+    #[case::kitty_confirmed(ProtocolRow {
+        app: TerminalApp::Kitty,
         best_guess: ProtocolType::Kitty,
         sixel: &[],
         expected: Some(ProtocolType::Kitty),
     })]
-    #[case::ghostty_confirmed(ProtocolPick {
-        brand: TerminalApp::Ghostty,
+    #[case::ghostty_confirmed(ProtocolRow {
+        app: TerminalApp::Ghostty,
         best_guess: ProtocolType::Kitty,
         sixel: &[],
         expected: Some(ProtocolType::Kitty),
     })]
-    #[case::iterm2_confirmed(ProtocolPick {
-        brand: TerminalApp::Iterm2,
+    #[case::iterm2_confirmed(ProtocolRow {
+        app: TerminalApp::Iterm2,
         best_guess: ProtocolType::Iterm2,
         sixel: &[],
         expected: Some(ProtocolType::Iterm2),
     })]
-    #[case::iterm2_falls_back_to_sixel(ProtocolPick {
-        brand: TerminalApp::Iterm2,
+    #[case::iterm2_falls_back_to_sixel(ProtocolRow {
+        app: TerminalApp::Iterm2,
         best_guess: ProtocolType::Halfblocks,
         sixel: &[Capability::Sixel],
         expected: Some(ProtocolType::Sixel),
     })]
-    #[case::sixel_outranks_the_best_guess(ProtocolPick {
-        brand: TerminalApp::WezTerm,
+    #[case::sixel_outranks_the_best_guess(ProtocolRow {
+        app: TerminalApp::WezTerm,
         best_guess: ProtocolType::Kitty,
         sixel: &[Capability::Sixel],
         expected: Some(ProtocolType::Sixel),
     })]
-    #[case::iterm2_unconfirmed(ProtocolPick {
-        brand: TerminalApp::Iterm2,
+    #[case::iterm2_unconfirmed(ProtocolRow {
+        app: TerminalApp::Iterm2,
         best_guess: ProtocolType::Halfblocks,
         sixel: &[],
         expected: None,
     })]
-    #[case::kitty_unconfirmed(ProtocolPick {
-        brand: TerminalApp::Kitty,
+    #[case::kitty_unconfirmed(ProtocolRow {
+        app: TerminalApp::Kitty,
         best_guess: ProtocolType::Halfblocks,
         sixel: &[],
         expected: None,
     })]
-    #[case::probe_takes_what_it_got(ProtocolPick {
-        brand: TerminalApp::Unknown,
+    #[case::probe_takes_what_it_got(ProtocolRow {
+        app: TerminalApp::Unknown,
         best_guess: ProtocolType::Kitty,
         sixel: &[],
         expected: Some(ProtocolType::Kitty),
     })]
-    #[case::probe_takes_sixel(ProtocolPick {
-        brand: TerminalApp::Unknown,
+    #[case::probe_takes_sixel(ProtocolRow {
+        app: TerminalApp::Unknown,
         best_guess: ProtocolType::Sixel,
         sixel: &[Capability::Sixel],
         expected: Some(ProtocolType::Sixel),
     })]
-    #[case::probe_confirmed_nothing(ProtocolPick {
-        brand: TerminalApp::Unknown,
+    #[case::probe_confirmed_nothing(ProtocolRow {
+        app: TerminalApp::Unknown,
         best_guess: ProtocolType::Halfblocks,
         sixel: &[],
         expected: None,
     })]
-    #[case::apple_never_gets_one(ProtocolPick {
-        brand: TerminalApp::Apple,
+    #[case::apple_never_gets_one(ProtocolRow {
+        app: TerminalApp::Apple,
         best_guess: ProtocolType::Kitty,
         sixel: &[Capability::Sixel],
         expected: None,
     })]
-    fn select_protocol_type_picks_only_what_was_confirmed(#[case] row: ProtocolPick) {
+    fn select_protocol_type_picks_only_what_was_confirmed(#[case] row: ProtocolRow) {
         assert_eq!(
-            select_protocol_type(protocols(row.brand), row.best_guess, row.sixel),
+            select_protocol_type(protocols(row.app), row.best_guess, row.sixel),
             row.expected
         );
     }
 
     #[test]
-    fn before_probe_is_always_halfblocks_regardless_of_brand() {
+    fn from_environment_is_always_halfblocks_for_every_app() {
         let environment = kitty_term();
         let capabilities = Capabilities::from_environment(&environment);
         assert_eq!(
@@ -354,8 +354,8 @@ mod tests {
     }
 
     #[test]
-    fn probe_is_none_for_apple_terminal() {
-        assert!(matches!(probe(TerminalApp::Apple), Ok(None)));
+    fn query_is_none_for_apple_terminal() {
+        assert!(matches!(query(TerminalApp::Apple), Ok(None)));
     }
 
     #[test]

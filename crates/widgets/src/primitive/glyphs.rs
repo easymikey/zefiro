@@ -49,6 +49,7 @@ pub(crate) mod chip {
 
 pub(crate) mod key_hints {
     pub(crate) const SEPARATOR: &str = " ";
+    pub(crate) const LABEL_GAP: &str = " ";
 }
 
 pub(crate) mod help {
@@ -74,6 +75,8 @@ pub(crate) mod history {
     pub(crate) const TITLE_WORD: &str = "HISTORY";
     pub(crate) const EMPTY_PLACEHOLDER: &str = "History is empty";
     pub(crate) const LABEL_SEPARATOR: &str = " — ";
+    pub(crate) const TRACK_SINGULAR: &str = "track";
+    pub(crate) const TRACK_PLURAL: &str = "tracks";
 }
 
 pub(crate) mod track_details {
@@ -116,6 +119,8 @@ pub(crate) mod settings {
     pub(crate) const PICK_LEFT: &str = "\u{2039} ";
     pub(crate) const PICK_RIGHT: &str = " \u{203a}";
     pub(crate) const DURATION_UNIT: &str = " s";
+    pub(crate) const SLEEP_OFF: &str = "off";
+    pub(crate) const MINUTE_UNIT: &str = "m";
     pub(crate) const TITLE_WORD: &str = "SETTINGS";
     pub(crate) const OUTPUT_DEVICE_DEFAULT: &str = "System default";
 }

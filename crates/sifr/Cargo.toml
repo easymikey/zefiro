@@ -26,7 +26,6 @@ widgets = { workspace = true }
 signal-hook = { workspace = true, features = ["iterator"] }
 
 [dev-dependencies]
-image = { workspace = true }
 insta = { workspace = true }
 rstest = { workspace = true }
 tempfile = { workspace = true }

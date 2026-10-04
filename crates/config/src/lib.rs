@@ -8,6 +8,7 @@ pub mod config_file;
 pub mod driver;
 pub mod embedded_theme;
 pub mod error;
+pub mod file_name;
 pub(crate) mod keymap;
 pub mod patch;
 pub mod theme_file;

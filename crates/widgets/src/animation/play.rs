@@ -1,6 +1,6 @@
-use kernel::{
-    cmd::{Cue, PlaybackChange},
-    domain::appearance::Animations,
+use kernel::domain::{
+    appearance::Animations,
+    cue::{Cue, PlaybackChange},
 };
 use ratatui::style::Color;
 
@@ -9,13 +9,12 @@ use crate::{
         catalogue::{
             VolumeShades,
             chip_pulse,
-            delete_burst,
             favorite_pulse,
             modal_in,
             modal_out,
             row_flash,
+            scatter_burst,
             screen_wash,
-            toast_burst,
             toast_slide_in,
             volume_pulse,
         },
@@ -40,7 +39,7 @@ impl AnimationStage {
         let layout = backdrop.layout;
         self.vacated = VacatedAreas {
             overlay: layout.overlay.map(OverlayAreas::outer),
-            toast: layout.toast.map(|toast| toast.painted),
+            toast: layout.toast,
             selected_row: layout.playlist.and_then(|playlist| playlist.selected),
         };
     }
@@ -60,12 +59,12 @@ impl AnimationStage {
             Cue::ToastRaised => {
                 self.stage_at(
                     toast_slide_in(backdrop.background, timings),
-                    layout.toast.map(|toast| toast.painted),
+                    layout.toast,
                 );
             }
             Cue::ToastDismissed => {
                 self.stage_at(
-                    toast_burst(backdrop.background, self.cell_filter(), timings),
+                    scatter_burst(backdrop.background, self.cell_filter(), timings),
                     vacated.toast,
                 );
             }
@@ -78,7 +77,7 @@ impl AnimationStage {
             Cue::FavoriteToggled => self.stage_favorite_toggled(backdrop),
             Cue::VolumeChanged => self.stage_volume_changed(backdrop),
             Cue::TrackDeleted => self.stage_at(
-                delete_burst(backdrop.background, self.cell_filter(), timings),
+                scatter_burst(backdrop.background, self.cell_filter(), timings),
                 vacated.selected_row,
             ),
             Cue::ThemeChanged | Cue::LayoutChanged => {
@@ -138,9 +137,9 @@ fn pulsed(change: PlaybackChange, backdrop: &Backdrop) -> Color {
 
 #[cfg(test)]
 mod tests {
-    use kernel::{
-        cmd::{Cue, PlaybackChange},
-        domain::appearance::Animations,
+    use kernel::domain::{
+        appearance::Animations,
+        cue::{Cue, PlaybackChange},
     };
     use ratatui::{layout::Rect, style::Color};
 
@@ -216,6 +215,6 @@ mod tests {
 
         stage.play(vec![Cue::LayoutChanged], &backdrop);
 
-        assert_eq!(stage.staged_count(), 1);
+        assert_eq!(stage.take_running().len(), 1);
     }
 }

@@ -8,7 +8,7 @@ use kernel::{
 };
 use rstest::rstest;
 
-use crate::support::step::update;
+use crate::support::update::update;
 
 fn reloaded(appearance: AppearanceSettings) -> Model {
     let mut model = Model::default();

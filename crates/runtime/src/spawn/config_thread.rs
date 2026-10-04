@@ -1,17 +1,15 @@
 use std::convert::Infallible;
 
-use config::driver::{ConfigDriver, ConfigEffect, ConfigMessage, ConfigPaths};
-use kernel::{
-    cmd::ConfigCmd,
-    domain::{driver::DriverName, theme::ThemeChoice},
-};
+use config::driver::{ConfigDriver, effect::ConfigEffect, message::ConfigMessage};
+use kernel::{cmd::ConfigCmd, domain::driver::DriverName};
 
 use crate::{
-    driver::{DriverLoop, DriverThread, LoopEffect},
+    driver::DriverLoop,
+    driver_thread::DriverThread,
     error::Error,
-    jobs::Jobs,
+    jobs::{Jobs, LoopEffect},
     registry,
-    spawn::SpawnSetup,
+    spawn_setup::SpawnSetup,
 };
 
 fn config_split(
@@ -38,13 +36,7 @@ fn config_split(
 pub(crate) fn spawn_config(
     setup: &SpawnSetup<'_>,
 ) -> Result<DriverThread<ConfigCmd>, Error> {
-    let paths = ConfigPaths {
-        theme: match setup.theme {
-            ThemeChoice::Named(name) => Some(name.clone()),
-            ThemeChoice::Auto => None,
-        },
-        ..setup.paths.config.clone()
-    };
+    let paths = setup.paths.config.clone();
     let theme_writer = setup.writers.theme.clone();
     let appearance_writer = setup.writers.appearance.clone();
     let jobs = Jobs {
@@ -71,12 +63,12 @@ pub(crate) fn spawn_config(
 mod tests {
     use std::{path::Path, time::Duration};
 
+    use config::driver::paths::ConfigPaths;
     use crossbeam_channel::{Receiver, unbounded};
     use kernel::{
         cmd::{ConfigCmd, ConfigPatch},
         domain::{
-            appearance_rows::AppearanceField,
-            setting_row::OptionIndex,
+            setting_row::{AppearanceField, OptionIndex},
             startup::Startup,
             theme::ThemeName,
         },
@@ -84,12 +76,13 @@ mod tests {
     };
 
     use crate::{
-        driver::DriverThread,
+        driver_thread::DriverThread,
         spawn::{
-            SpawnSetup,
             config_thread::spawn_config,
             tests::{RECV_TIMEOUT, stub_paths},
         },
+        spawn_setup::SpawnSetup,
+        startup_paths::StartupPaths,
     };
 
     const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
@@ -103,18 +96,20 @@ mod tests {
 
     impl ConfigRun {
         fn start(directory: &Path) -> Self {
-            let paths = stub_paths(directory);
+            Self::start_with(&stub_paths(directory))
+        }
+
+        fn start_with(paths: &StartupPaths) -> Self {
             let (inbox, messages) = unbounded();
             let (model, _cmd) = kernel::update::startup::startup(Startup::default());
             let (writers, _cells, doorbell) = crate::latest::latest_channels();
             let thread = spawn_config(&SpawnSetup {
                 audio: &model.settings.audio,
-                theme: &model.themes.selected,
-                paths: &paths,
+                paths,
                 inbox: &inbox,
                 writers: &writers,
                 #[cfg(target_os = "macos")]
-                macos: &crate::spawn::macos_thread::MacosChannel::new(),
+                macos: &crate::macos_channel::MacosChannel::new(),
             })
             .unwrap();
             Self {
@@ -190,6 +185,40 @@ mod tests {
         run.stop();
     }
 
+    #[test]
+    fn a_hand_edit_of_the_startup_theme_reaches_the_shell() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(directory.path().join("themes")).unwrap();
+        let stub = stub_paths(directory.path());
+        let paths = StartupPaths {
+            config: ConfigPaths {
+                theme: Some(ThemeName::from_static("noir")),
+                ..stub.config
+            },
+            ..stub
+        };
+        let run = ConfigRun::start_with(&paths);
+        drain(&run.messages);
+
+        std::fs::write(
+            directory.path().join("themes/noir.toml"),
+            "name = \"noir\"\n[colors]\nbackground = \"#010101\"\nmuted_foreground = \"#020202\"\nforeground = \"#030303\"\naccent = \"#040404\"\ngreen = \"#050505\"\nyellow = \"#060606\"\nred = \"#070707\"\n",
+        )
+        .unwrap();
+
+        let reloaded =
+            std::iter::from_fn(|| run.messages.recv_timeout(DISK_TIMEOUT).ok()).any(
+                |message| {
+                    matches!(message, Message::Config(ConfigEvent::ThemeReloaded(_)))
+                },
+            );
+        assert!(
+            reloaded,
+            "a hand edit of the watched theme must reach the shell"
+        );
+        run.stop();
+    }
+
     fn themes_loaded(message: Message) -> Option<Vec<ThemeName>> {
         let Message::Config(ConfigEvent::ThemesLoaded(themes)) = message else {
             return None;
@@ -221,7 +250,7 @@ mod tests {
         drain(&run.messages);
         run.doorbell.try_iter().for_each(drop);
 
-        run.send(ConfigCmd::Setting {
+        run.send(ConfigCmd::SetAppearance {
             field: AppearanceField::Preset,
             option: option_at(AppearanceField::Preset, 1),
         });
@@ -255,7 +284,7 @@ mod tests {
                 .theme(ThemeName::from_static("noir"))
                 .build(),
         ));
-        run.send(ConfigCmd::Setting {
+        run.send(ConfigCmd::SetAppearance {
             field: AppearanceField::FormatChips,
             option: option_at(AppearanceField::FormatChips, 1),
         });
@@ -280,7 +309,7 @@ mod tests {
         let run = ConfigRun::start(directory.path());
         drain(&run.messages);
 
-        run.send(ConfigCmd::Setting {
+        run.send(ConfigCmd::SetAppearance {
             field: AppearanceField::KeyHints,
             option: option_at(AppearanceField::KeyHints, 1),
         });

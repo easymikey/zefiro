@@ -3,7 +3,7 @@ use std::time::Duration;
 use kernel::{
     cmd::{AudioCmd, Cmd, ConfigCmd, Effect},
     domain::{
-        appearance_rows::AppearanceField,
+        appearance::AppearanceSettings,
         crossfade::Crossfade,
         device::{DeviceDefault, ListedDevice, OutputDevice},
         direction::Direction,
@@ -11,6 +11,7 @@ use kernel::{
         overlay::{Overlay, OverlayName},
         setting_row::{
             AppearanceControl,
+            AppearanceField,
             AppearanceRow,
             AppearanceSetting,
             Choice,
@@ -34,7 +35,7 @@ use rstest::rstest;
 
 use crate::support::{
     device,
-    step::{apply, update},
+    update::{send, update},
 };
 
 fn all_rows() -> Vec<SettingRow> {
@@ -54,7 +55,7 @@ fn navigate(model: &mut Model, direction: Direction) -> Cmd {
 
 fn opened_settings() -> Model {
     let mut model = Model::default();
-    apply(
+    send(
         &mut model,
         Message::Overlay(OverlayRequest::Open(OverlayName::Settings)),
     );
@@ -95,12 +96,9 @@ fn navigate_down_clamps_at_the_last_row() {
 }
 
 #[rstest]
-#[case::adjust_hands_the_router_the_selected_row(
-    SettingRow::ReplayGain,
-    Direction::Next
-)]
-#[case::adjust_keeps_the_direction(SettingRow::Crossfade, Direction::Previous)]
-fn adjust_resolves_the_row_under_the_cursor(
+#[case::step_hands_the_router_the_selected_row(SettingRow::ReplayGain, Direction::Next)]
+#[case::step_keeps_the_direction(SettingRow::Crossfade, Direction::Previous)]
+fn step_resolves_the_row_under_the_cursor(
     #[case] row: SettingRow,
     #[case] direction: Direction,
 ) {
@@ -145,7 +143,7 @@ fn seeded() -> Model {
 }
 
 #[test]
-fn adjust_row_theme_never_touches_window_colors() {
+fn step_row_theme_never_touches_window_colors() {
     let mut model = seeded();
 
     let cmd = step(&mut model, SettingRow::Theme, Direction::Next);
@@ -157,7 +155,7 @@ fn adjust_row_theme_never_touches_window_colors() {
 }
 
 fn press(model: &mut Model, row: SettingRow, direction: Direction) {
-    apply(model, Message::Step { row, direction });
+    send(model, Message::Step { row, direction });
 }
 
 fn step(model: &mut Model, row: SettingRow, direction: Direction) -> Cmd {
@@ -165,7 +163,7 @@ fn step(model: &mut Model, row: SettingRow, direction: Direction) -> Cmd {
 }
 
 #[test]
-fn adjust_row_toggles_a_config_row() {
+fn step_row_toggles_a_config_row() {
     fn saved(cmd: &Cmd) -> bool {
         cmd.effects()
             .any(|effect| matches!(effect, Effect::Config(ConfigCmd::Save(_))))
@@ -204,7 +202,7 @@ fn adjust_row_toggles_a_config_row() {
 }
 
 #[test]
-fn adjust_row_crossfade_steps_by_500ms_and_clamps_both_ends() {
+fn step_row_crossfade_steps_by_500ms_and_clamps_both_ends() {
     fn crossfade_patch(cmd: &Cmd) -> Option<Crossfade> {
         cmd.effects().find_map(|effect| {
             let Effect::Config(ConfigCmd::Save(patch)) = effect else {
@@ -237,7 +235,7 @@ fn adjust_row_crossfade_steps_by_500ms_and_clamps_both_ends() {
 }
 
 #[test]
-fn adjust_row_theme_selects_the_theme_and_raises_no_wash_cue() {
+fn step_row_theme_selects_the_theme_and_raises_no_wash_cue() {
     let mut model = seeded();
 
     let cmd = step(&mut model, SettingRow::Theme, Direction::Next);
@@ -256,7 +254,7 @@ fn adjust_row_theme_selects_the_theme_and_raises_no_wash_cue() {
 #[rstest]
 #[case::forward_one(Direction::Next, &["solar", "mono", "noir"])]
 #[case::backward_one(Direction::Previous, &["mono", "solar", "noir"])]
-fn adjust_row_theme_cycles_model_themes_and_wraps(
+fn step_row_theme_cycles_model_themes_and_wraps(
     #[case] direction: Direction,
     #[case] walk: &[&str],
 ) {
@@ -284,7 +282,7 @@ fn adjust_row_theme_cycles_model_themes_and_wraps(
     .audio
     .device
     == OutputDevice::SystemDefault)]
-fn adjust_row_does_nothing_until_the_shell_delivers_a_list(
+fn step_row_does_nothing_until_the_shell_delivers_a_list(
     #[case] row: SettingRow,
     #[case] unchanged: fn(&Model) -> bool,
 ) {
@@ -297,7 +295,7 @@ fn adjust_row_does_nothing_until_the_shell_delivers_a_list(
 }
 
 #[test]
-fn adjust_row_output_device_cycles_system_default_and_devices_and_wraps() {
+fn step_row_output_device_cycles_system_default_and_devices_and_wraps() {
     fn device_patch(cmd: &Cmd) -> Option<OutputDevice> {
         cmd.effects().find_map(|effect| {
             let Effect::Config(ConfigCmd::Save(patch)) = effect else {
@@ -341,7 +339,7 @@ fn adjust_row_output_device_cycles_system_default_and_devices_and_wraps() {
 }
 
 #[test]
-fn adjust_row_sleep_presets_cycles_and_wraps_and_persists() {
+fn step_row_sleep_presets_cycles_and_wraps_and_persists() {
     fn sleep_presets_patch(cmd: &Cmd) -> Option<SleepPresets> {
         cmd.effects().find_map(|effect| {
             let Effect::Config(ConfigCmd::Save(patch)) = effect else {
@@ -371,7 +369,7 @@ fn adjust_row_sleep_presets_cycles_and_wraps_and_persists() {
 }
 
 #[test]
-fn adjust_row_sleep_presets_snaps_a_custom_value_to_the_nearest_bundle() {
+fn step_row_sleep_presets_snaps_a_custom_value_to_the_nearest_bundle() {
     let mut model = seeded();
     model.settings.audio.sleep_presets = SleepPresets::from_minutes(&[100]).unwrap();
 
@@ -384,23 +382,24 @@ fn adjust_row_sleep_presets_snaps_a_custom_value_to_the_nearest_bundle() {
 }
 
 #[test]
-fn adjust_row_sleep_presets_leaves_the_clamp_to_the_next_cycle() {
+fn step_row_sleep_presets_leaves_the_clamp_to_the_next_cycle() {
     let mut model = seeded();
     model.transport.sleep = Some(kernel::domain::sleep::SleepTimer {
         preset_index: kernel::domain::index::PresetIndex::new(2),
         delay: Duration::from_secs(60),
+        deadline: Moment::new(Duration::from_secs(60)),
     });
 
     press(&mut model, SettingRow::SleepPresets, Direction::Previous);
     let armed = model.transport.sleep.map(|timer| timer.preset_index.get());
-    apply(&mut model, Message::Playback(PlaybackRequest::CycleSleep));
+    send(&mut model, Message::Playback(PlaybackRequest::CycleSleep));
 
     assert_eq!(armed, Some(2));
     assert!(model.transport.sleep.is_none());
 }
 
 #[test]
-fn adjust_row_keeps_the_two_config_files_apart() {
+fn step_row_keeps_the_two_config_files_apart() {
     let mut model = seeded();
 
     let audio = step(&mut model, SettingRow::ReplayGain, Direction::Next);
@@ -415,7 +414,7 @@ fn adjust_row_keeps_the_two_config_files_apart() {
 
     let custom_id = AppearanceField::LayoutMode;
     model
-        .appearance_settings
+        .appearance_rows
         .push(appearance_row(custom_id, AppearanceControl::Toggle));
     let custom = step(
         &mut model,
@@ -432,11 +431,10 @@ fn adjust_row_keeps_the_two_config_files_apart() {
             .effects()
             .any(|effect| matches!(effect, Effect::Audio(_) | Effect::Library(_)))
     );
-    assert!(
-        custom
-            .effects()
-            .any(|effect| matches!(effect, Effect::Config(ConfigCmd::Setting { .. })))
-    );
+    assert!(custom.effects().any(|effect| matches!(
+        effect,
+        Effect::Config(ConfigCmd::SetAppearance { .. })
+    )));
 }
 
 fn appearance_row(
@@ -457,7 +455,7 @@ fn appearance_row(
 
 fn model_with_appearance_rows() -> Model {
     Model {
-        appearance_settings: vec![
+        appearance_rows: vec![
             appearance_row(AppearanceField::CoverBrackets, AppearanceControl::Toggle),
             appearance_row(
                 AppearanceField::CoverMode,
@@ -485,7 +483,7 @@ fn the_highlighted_row_is_the_row_that_changes_across_steps() {
     let mut model = model_with_appearance_rows();
     let cover_mode = AppearanceField::CoverMode;
 
-    apply(
+    send(
         &mut model,
         Message::Overlay(OverlayRequest::Open(OverlayName::Settings)),
     );
@@ -506,7 +504,7 @@ fn the_highlighted_row_is_the_row_that_changes_across_steps() {
         )
         .unwrap();
         let emitted_id = cmd.effects().find_map(|effect| {
-            let Effect::Config(ConfigCmd::Setting { field, .. }) = effect else {
+            let Effect::Config(ConfigCmd::SetAppearance { field, .. }) = effect else {
                 return None;
             };
             Some(*field)
@@ -520,11 +518,11 @@ fn the_highlighted_row_is_the_row_that_changes_across_steps() {
 }
 
 #[test]
-fn a_custom_rows_reload_while_open_keeps_the_selection_on_the_same_row() {
+fn an_appearance_reload_while_open_keeps_the_selection_on_the_same_row() {
     let mut model = model_with_appearance_rows();
     let cover_mode = AppearanceField::CoverMode;
 
-    apply(
+    send(
         &mut model,
         Message::Overlay(OverlayRequest::Open(OverlayName::Settings)),
     );
@@ -535,18 +533,11 @@ fn a_custom_rows_reload_while_open_keeps_the_selection_on_the_same_row() {
         Some(SettingRow::Appearance(cover_mode))
     );
 
-    let reloaded = vec![
-        appearance_row(AppearanceField::KeyHints, AppearanceControl::Toggle),
-        appearance_row(AppearanceField::CoverBrackets, AppearanceControl::Toggle),
-        appearance_row(
-            cover_mode,
-            AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
-        ),
-        appearance_row(AppearanceField::SpeedChip, AppearanceControl::Toggle),
-    ];
-    apply(
+    send(
         &mut model,
-        Message::Config(ConfigEvent::AppearanceSettingsReloaded(reloaded)),
+        Message::Config(ConfigEvent::AppearanceReloaded(
+            AppearanceSettings::default(),
+        )),
     );
 
     assert_eq!(

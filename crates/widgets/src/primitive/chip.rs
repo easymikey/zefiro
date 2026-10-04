@@ -62,7 +62,7 @@ pub(crate) fn width(label: &str) -> u16 {
 fn speed_chip_text(speed: Speed, mode: SpeedChip) -> Option<String> {
     let label = match mode {
         SpeedChip::Never => None,
-        SpeedChip::Changed => speed.label(),
+        SpeedChip::Changed => (speed != Speed::default()).then(|| speed.to_string()),
         SpeedChip::Always => Some(speed.to_string()),
     };
     label.map(|label| format!("{label}{}", glyphs::speed_chip::MULTIPLY))

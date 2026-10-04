@@ -1,18 +1,9 @@
 use crate::{
-    cmd::{
-        AudioCmd,
-        Cmd,
-        ConfigCmd,
-        Cue,
-        Effect,
-        LibraryCmd,
-        MacosCmd,
-        Playback,
-        PlaybackChange,
-        ScanMode,
-    },
+    cmd::{AudioCmd, Cmd, ConfigCmd, Effect, LibraryCmd, MacosCmd, Playback, ScanMode},
     domain::{
+        appearance_rows::appearance_rows,
         config::{ConfigError, ConfigName},
+        cue::{Cue, PlaybackChange},
         driver::DriverName,
         model::Model,
         playlist::Playlist,
@@ -32,15 +23,15 @@ use crate::{
 #[must_use]
 pub fn startup(startup: Startup) -> (Model, Vec<Effect>) {
     let mut model = Model::default();
-    let (mut effects, messages) = seed_model(&mut model, startup).into_parts();
+    let (mut effects, messages) = startup_model(&mut model, startup).into_parts();
     for queued in messages {
-        effects.extend(follow_up(&mut model, queued, 0));
+        effects.extend(follow_up(&mut model, queued, 1));
     }
     effects.extend(roll_pending(&model.playlist));
     (model, effects)
 }
 
-pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
+pub(crate) fn startup_model(model: &mut Model, startup: Startup) -> Cmd {
     let errors = startup.errors;
     model.settings = Settings {
         audio: startup.audio,
@@ -48,7 +39,7 @@ pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
         appearance: startup.appearance,
     };
     model.transport.volume = startup.volume;
-    model.appearance_settings = startup.appearance_settings;
+    model.appearance_rows = appearance_rows(startup.appearance);
 
     model.library = None;
     model.music_dir = startup.music_dir;
@@ -60,6 +51,8 @@ pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
     model
         .playlist
         .relist(startup.playlist_tracks, startup.playlist_index);
+    let browse = &mut model.workspace.browse;
+    browse.cursor = browse.cursor.resize(model.playlist.tracks.len());
     let cmd = shuffled(&mut model.playlist, startup.shuffle);
 
     let stopped: Cmd = PlaybackChange::Stop
@@ -67,12 +60,12 @@ pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
         .into_iter()
         .chain([Effect::Macos(MacosCmd::NowPlaying(None))])
         .collect();
-    let notices = toast_notices(model, errors);
+    let toasts = startup_toasts(model, errors);
     cmd.then(stopped)
         .then(startup_cmd(model, DriverName::Audio))
         .then(startup_cmd(model, DriverName::Library))
         .then(startup_cmd(model, DriverName::Config))
-        .then(notices)
+        .then(toasts)
 }
 
 pub(crate) fn startup_cmd(model: &mut Model, driver: DriverName) -> Cmd {
@@ -102,7 +95,7 @@ pub(crate) fn startup_cmd(model: &mut Model, driver: DriverName) -> Cmd {
     }
 }
 
-fn toast_notices(model: &mut Model, errors: Vec<(ConfigName, ConfigError)>) -> Cmd {
+fn startup_toasts(model: &mut Model, errors: Vec<(ConfigName, ConfigError)>) -> Cmd {
     let mut errors = errors.into_iter();
     let Some((name, error)) = errors.next() else {
         return Cmd::none();
@@ -157,7 +150,7 @@ mod tests {
             theme::{ThemeChoice, ThemeName},
             track::{Track, TrackRef},
         },
-        update::startup::seed_model,
+        update::startup::startup_model,
     };
 
     fn stock_startup() -> Startup {
@@ -187,7 +180,6 @@ mod tests {
                 ThemeName::from_static("noir"),
                 ThemeName::from_static("solar"),
             ],
-            appearance_settings: Vec::new(),
             errors: Vec::new(),
         }
     }
@@ -220,7 +212,7 @@ mod tests {
             ..stock_startup()
         };
 
-        drop(seed_model(&mut model, startup));
+        drop(startup_model(&mut model, startup));
 
         let texts: Vec<_> = model
             .workspace
@@ -231,7 +223,7 @@ mod tests {
         assert_eq!(
             texts,
             [(
-                crate::domain::toast::ToastKind::Error,
+                crate::domain::toast::ToastLevel::Error,
                 Some(broken.to_string())
             )]
         );
@@ -248,20 +240,20 @@ mod tests {
     #[test]
     fn startup_without_notices_raises_no_toast() {
         let mut model = Model::default();
-        drop(seed_model(&mut model, stock_startup()));
+        drop(startup_model(&mut model, stock_startup()));
 
         assert!(model.workspace.toasts.is_empty());
     }
 
-    fn startup_model() -> Model {
+    fn started_model() -> Model {
         let mut model = Model::default();
-        drop(seed_model(&mut model, stock_startup()));
+        drop(startup_model(&mut model, stock_startup()));
         model
     }
 
     #[test]
     fn startup_seeds_settings_transport_and_themes() {
-        let model = startup_model();
+        let model = started_model();
 
         insta::assert_debug_snapshot!((
             model.settings,
@@ -272,7 +264,7 @@ mod tests {
 
     #[test]
     fn startup_leaves_library_loading_and_seeds_the_playlist() {
-        let model = startup_model();
+        let model = started_model();
 
         assert!(model.library.is_none());
         assert_eq!(model.playlist.tracks.len(), 2);
@@ -282,7 +274,7 @@ mod tests {
     #[test]
     fn startup_seeds_music_dir_and_requests_a_library_scan() {
         let mut model = Model::default();
-        let cmd = seed_model(&mut model, stock_startup());
+        let cmd = startup_model(&mut model, stock_startup());
 
         assert_eq!(model.music_dir, PathBuf::from("/music"));
         let (effects, _messages) = cmd.into_parts();
@@ -294,7 +286,7 @@ mod tests {
 
     #[test]
     fn startup_seeds_shuffle_favorites_and_themes() {
-        let model = startup_model();
+        let model = started_model();
 
         assert!(model.settings.output_devices.is_empty());
         assert_eq!(model.playlist.play_order, PlayOrder::ShufflePending);
@@ -316,7 +308,7 @@ mod tests {
     fn startup_returns_effects_including_devices_favorites_stop_and_cleared_now_playing()
      {
         let mut model = Model::default();
-        let cmd = seed_model(&mut model, stock_startup());
+        let cmd = startup_model(&mut model, stock_startup());
 
         let (effects, _messages) = cmd.into_parts();
         insta::assert_debug_snapshot!(effects);
@@ -337,11 +329,11 @@ mod tests {
     #[test]
     fn startup_is_idempotent_for_the_same_startup() {
         let mut first = Model::default();
-        drop(seed_model(&mut first, stock_startup()));
+        drop(startup_model(&mut first, stock_startup()));
 
         let mut second = Model::default();
-        drop(seed_model(&mut second, stock_startup()));
-        drop(seed_model(&mut second, stock_startup()));
+        drop(startup_model(&mut second, stock_startup()));
+        drop(startup_model(&mut second, stock_startup()));
 
         let projected = idempotence_fields(&second);
         assert_eq!(idempotence_fields(&first), projected);

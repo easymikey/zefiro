@@ -4,9 +4,7 @@ use crossbeam_channel::{Receiver, Sender, TrySendError};
 use rodio::Source;
 use triple_buffer::{Input, Output, triple_buffer};
 
-use crate::spectrum::SpectrumAnalyzer;
-
-const WINDOW: usize = SpectrumAnalyzer::WINDOW;
+pub(crate) const WINDOW: usize = 2048;
 const HOP: usize = WINDOW / 4;
 
 struct Writer {

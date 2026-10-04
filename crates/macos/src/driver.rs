@@ -13,12 +13,10 @@ use kernel::{
     update::machine::{Driver, Machine, Unhandled},
 };
 use objc2::rc::{Retained, autoreleasepool};
-use objc2_core_audio::AudioObjectID;
 use objc2_media_player::MPMediaItemArtwork;
 
 use crate::{
     clock::NowPlayingClock,
-    controls::RemoteInput,
     core_audio::{
         self,
         HardwareWatch,
@@ -26,42 +24,13 @@ use crate::{
         read_volume,
         write_volume,
     },
-    cover::{Cover, CoverBytes, CoverMessage, MacosJob, artwork},
-    hardware::{Hardware, HardwareMessage, HardwarePoll},
+    cover::{Cover, CoverMessage, artwork},
+    effect::MacosEffect,
+    hardware::{Hardware, HardwareMessage},
+    message::{HardwarePoll, MacosMessage},
     now_playing::{NowPlaying, publish},
+    remote_input::RemoteInput,
 };
-
-#[derive(Debug)]
-pub enum MacosMessage {
-    Started,
-    Cmds(Cmds<MacosCmd>),
-    HardwareChanged,
-    Watched,
-    Polled(HardwarePoll),
-    Rebound(AudioObjectID),
-    VolumeSet(Percent),
-    Error(MacosError),
-    CoverRead(CoverBytes),
-    Remote(RemoteInput),
-}
-
-impl From<Cmds<MacosCmd>> for MacosMessage {
-    fn from(cmds: Cmds<MacosCmd>) -> Self {
-        MacosMessage::Cmds(cmds)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MacosEffect {
-    Watch,
-    Poll,
-    Rebind(AudioObjectID),
-    SetVolume(Percent),
-    Publish,
-    ClearArtwork,
-    ShowArtwork(Vec<u8>),
-    Run(MacosJob),
-}
 
 #[derive(Debug)]
 pub struct MacosDriver {
@@ -227,6 +196,9 @@ impl Driver for MacosDriver {
     type Effect = MacosEffect;
 
     fn execute(&mut self, effect: MacosEffect) -> Option<MacosMessage> {
+        if let Some(watch) = &self.watch {
+            watch.resend();
+        }
         autoreleasepool(|_| self.act(effect))
     }
 }
@@ -270,8 +242,10 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        controls::RemoteInput,
-        driver::{MacosDriver, MacosEffect, MacosMessage},
+        driver::MacosDriver,
+        effect::MacosEffect,
+        message::MacosMessage,
+        remote_input::RemoteInput,
     };
 
     fn volume(level: u8) -> MacosCmd {

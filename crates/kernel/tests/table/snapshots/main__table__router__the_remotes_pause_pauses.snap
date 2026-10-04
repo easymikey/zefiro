@@ -10,7 +10,7 @@ expression: "walked(model, messages)"
         ),
         [
             Audio(
-                Playback(
+                SetPlayback(
                     Paused,
                 ),
             ),
@@ -46,8 +46,8 @@ expression: "walked(model, messages)"
                 },
                 audio_format: AudioFormat {
                     format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
+                    bitrate: None,
+                    sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
                     replay_gain: None,
@@ -61,74 +61,9 @@ expression: "walked(model, messages)"
             by: Listener,
         },
         None,
-        Cursor {
-            index: 0,
-            len: 0,
-        },
         Cursor {
             index: 0,
             len: 3,
-        },
-        [],
-        Off,
-        Linear,
-        Transport {
-            volume: Percent(
-                50,
-            ),
-            speed: Speed(
-                1.0,
-            ),
-            sleep: None,
-            ab_loop: None,
-            output: Ready,
-        },
-        [],
-    ),
-    (
-        Playback(
-            Pause,
-        ),
-        [],
-        Paused {
-            track: Track {
-                source: Local(
-                    "/tmp/track0.flac",
-                ),
-                tags: Tags {
-                    title: None,
-                    artist: None,
-                    album: None,
-                    album_artist: None,
-                    date: None,
-                    genre: None,
-                    track: None,
-                    track_total: None,
-                    disc: None,
-                    composer: None,
-                    comment: None,
-                    lyrics: None,
-                },
-                audio_format: AudioFormat {
-                    format: None,
-                    bitrate_kbps: None,
-                    sample_rate_hz: None,
-                    bits_per_sample: None,
-                    channels: None,
-                    replay_gain: None,
-                },
-                display: "track0.flac",
-                tagging: Read(
-                    100s,
-                ),
-            },
-            at: 0ns,
-            by: Listener,
-        },
-        None,
-        Cursor {
-            index: 0,
-            len: 0,
         },
         Cursor {
             index: 0,

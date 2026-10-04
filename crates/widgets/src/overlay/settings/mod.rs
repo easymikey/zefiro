@@ -1,7 +1,7 @@
 mod rows;
-pub(crate) mod values;
+pub(crate) mod view;
 
-use kernel::domain::{geometry::Cells, setting_row::SettingRow};
+use kernel::domain::{geometry::Cells, index::RowIndex, setting_row::SettingRow};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -9,24 +9,24 @@ use ratatui::{
     widgets::{StatefulWidget, Table, TableState, Widget},
 };
 use unicode_width::UnicodeWidthStr;
-use values::SettingsView;
+use view::SettingsView;
 
 use crate::{
     overlay::{
         modal::{
             metrics::ModalRowStyle,
             placement::{
+                ModalContainer,
                 ModalPlacement,
                 ModalScrollAreas,
                 OverlayAreas,
-                OverlayContainer,
                 column_width,
                 leading_cells,
             },
         },
         settings::{
             rows::{SettingsColumns, SettingsTableRow, settings_row},
-            values::{max_value_width, settings_label},
+            view::{max_value_width, settings_label},
         },
     },
     primitive::{
@@ -39,28 +39,35 @@ use crate::{
     theme::active_theme::ActiveTheme,
 };
 
-const LABEL_GAP: usize = 2;
+const LABEL_GAP: Cells = Cells(2);
 
 #[derive(Debug)]
 pub(crate) struct SettingsWidget<'a> {
     pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) values: SettingsView<'a>,
-    pub(crate) selected: usize,
+    pub(crate) view: SettingsView<'a>,
+    pub(crate) current: SettingRow,
     pub(crate) avoid: &'a [Rect],
 }
 
-impl<'a> SettingsWidget<'a> {
+struct SettingsContent {
+    rows: Vec<SettingRow>,
+    title: String,
+    width: Cells,
+}
+
+impl SettingsWidget<'_> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::List(self.placement(&self.modal_title()).areas(screen))
+        OverlayAreas::List(self.placement(&self.content()).areas(screen))
     }
 
-    fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
+    pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
         let OverlayAreas::List(areas) = areas else {
             return;
         };
         let Canvas { area, buffer } = canvas;
-        self.placement(&self.modal_title()).paint(
+        let content = self.content();
+        self.placement(&content).paint(
             areas,
             Canvas {
                 area,
@@ -70,55 +77,65 @@ impl<'a> SettingsWidget<'a> {
         if areas.content.width == 0 || areas.content.height == 0 {
             return;
         }
-        self.paint_rows(&areas, buffer);
+        let (table, mut table_rows) = self.rows_table(&areas, &content.rows);
+        StatefulWidget::render(table, areas.rows, buffer, &mut table_rows);
     }
 
-    fn rows(&self) -> Vec<SettingRow> {
-        SettingRow::all(self.values.appearance_settings)
+    fn content(&self) -> SettingsContent {
+        let rows = SettingRow::all(self.view.appearance_rows);
+        let width = settings_content_width(&rows, &self.view);
+        SettingsContent {
+            title: modal_title_text(&self.view.music_dir_label(), width),
+            rows,
+            width,
+        }
     }
 
-    fn modal_title(&self) -> String {
-        modal_title_text(&self.values.music_dir_label(), self.content_width())
-    }
-
-    fn content_width(&self) -> u16 {
-        settings_content_width(&self.rows(), &self.values)
-    }
-
-    fn placement<'title>(&self, modal_title: &'title str) -> ModalPlacement<'title>
+    fn placement<'content>(
+        &self,
+        content: &'content SettingsContent,
+    ) -> ModalPlacement<'content>
     where
-        'a: 'title,
+        Self: 'content,
     {
         ModalPlacement {
             inset: Inset::overlay(),
-            container: OverlayContainer::Modal(self.avoid),
+            container: ModalContainer::Modal(self.avoid),
             border_title: Line::default(),
-            modal_title,
-            content_width: Cells(self.content_width()),
-            content_rows: Cells(u16::try_from(self.rows().len()).unwrap_or(u16::MAX)),
+            modal_title: &content.title,
+            content_width: content.width,
+            content_rows: Cells(u16::try_from(content.rows.len()).unwrap_or(u16::MAX)),
             hint: None,
             theme: self.theme,
         }
     }
 
-    fn paint_rows(&self, areas: &ModalScrollAreas, buffer: &mut Buffer) {
+    fn rows_table(
+        &self,
+        areas: &ModalScrollAreas,
+        rows: &[SettingRow],
+    ) -> (Table<'_>, TableState) {
         let inner = areas.rows;
         let style = ModalRowStyle::from_theme(&self.theme);
-        let rows = self.rows();
-        let label_width = label_column_width(&rows);
+        let label_width = label_column_width(rows);
+        let selected = rows
+            .iter()
+            .position(|row| *row == self.current)
+            .map(RowIndex::new);
         let columns = SettingsColumns::for_width(
-            column_width(areas).0,
-            leading_cells(areas).0,
+            column_width(areas),
+            leading_cells(areas),
             label_width,
         );
-        let offset =
-            scroll_offset(self.selected, rows.len(), usize::from(inner.height));
+        let offset = selected.map_or(0, |at| {
+            scroll_offset(at.get(), rows.len(), usize::from(inner.height))
+        });
         let table = Table::new(
             rows.iter().map(|&row| {
                 settings_row(
                     &SettingsTableRow {
                         row,
-                        values: &self.values,
+                        view: &self.view,
                         columns,
                     },
                     style,
@@ -128,10 +145,10 @@ impl<'a> SettingsWidget<'a> {
         )
         .column_spacing(0)
         .row_highlight_style(style.highlight());
-        let mut table_rows = TableState::new()
+        let table_rows = TableState::new()
             .with_offset(offset)
-            .with_selected(Some(self.selected));
-        StatefulWidget::render(table, inner, buffer, &mut table_rows);
+            .with_selected(selected.map(RowIndex::get));
+        (table, table_rows)
     }
 }
 
@@ -141,37 +158,40 @@ impl Widget for &SettingsWidget<'_> {
     }
 }
 
-fn modal_title_text(music_dir: &str, content_width: u16) -> String {
+fn modal_title_text(music_dir: &str, content_width: Cells) -> String {
     let fixed_width = glyphs::settings::TITLE_WORD.width() + TITLE_SEPARATOR.width();
-    let path_budget = usize::from(content_width).saturating_sub(fixed_width);
+    let path_budget = content_width.count().saturating_sub(fixed_width);
     let path = truncate_from_left(music_dir, path_budget);
     format!("{}{TITLE_SEPARATOR}{path}", glyphs::settings::TITLE_WORD)
 }
 
-fn label_column_width(rows: &[SettingRow]) -> usize {
+fn label_column_width(rows: &[SettingRow]) -> Cells {
     let widest = rows
         .iter()
         .map(|&row| settings_label(row).width())
         .max()
         .unwrap_or(0);
-    widest + LABEL_GAP
+    cells(widest.saturating_add(LABEL_GAP.count()))
 }
 
-fn settings_content_width(rows: &[SettingRow], values: &SettingsView<'_>) -> u16 {
+fn settings_content_width(rows: &[SettingRow], view: &SettingsView<'_>) -> Cells {
     let label_width = label_column_width(rows);
     let widest_value = rows
         .iter()
-        .map(|&row| max_value_width(row, values))
+        .map(|&row| max_value_width(row, view))
         .max()
         .unwrap_or(0);
-    u16::try_from(label_width + widest_value).unwrap_or(u16::MAX)
+    cells(label_width.count().saturating_add(widest_value))
+}
+
+fn cells(width: usize) -> Cells {
+    Cells(u16::try_from(width).unwrap_or(u16::MAX))
 }
 
 #[cfg(test)]
 pub(crate) mod test_support {
     use std::path::Path;
 
-    use config::appearance_file::TomlAppearance;
     use kernel::domain::{
         appearance::AppearanceSettings,
         crossfade::Crossfade,
@@ -179,16 +199,14 @@ pub(crate) mod test_support {
         settings::ReplayGain,
     };
 
-    use crate::overlay::settings::values::SettingsView;
+    use crate::overlay::settings::view::SettingsView;
 
-    pub(crate) fn appearance_settings() -> Vec<AppearanceSetting> {
-        kernel::domain::appearance_rows::appearance_settings(
-            TomlAppearance::default().settings(),
-        )
+    pub(crate) fn appearance_rows() -> Vec<AppearanceSetting> {
+        kernel::domain::appearance_rows::appearance_rows(AppearanceSettings::default())
     }
 
     pub(crate) fn settings_values(
-        appearance_settings: &[AppearanceSetting],
+        appearance_rows: &[AppearanceSetting],
     ) -> SettingsView<'_> {
         SettingsView {
             crossfade: Crossfade::default(),
@@ -201,7 +219,7 @@ pub(crate) mod test_support {
             output_device: None,
             output_devices: &[],
             appearance: AppearanceSettings::default(),
-            appearance_settings,
+            appearance_rows,
         }
     }
 }
@@ -210,7 +228,11 @@ pub(crate) mod test_support {
 mod tests {
     use std::path::Path;
 
-    use kernel::domain::{appearance::CoverMode, theme::ThemeName};
+    use kernel::domain::{
+        appearance::CoverMode,
+        setting_row::SettingRow,
+        theme::ThemeName,
+    };
     use ratatui::layout::Rect;
 
     use crate::{
@@ -218,7 +240,7 @@ mod tests {
             modal::{metrics::ModalRowStyle, placement::OverlayAreas},
             settings::{
                 SettingsWidget,
-                test_support::{appearance_settings, settings_values},
+                test_support::{appearance_rows, settings_values},
             },
         },
         primitive::canvas::find_text,
@@ -236,11 +258,11 @@ mod tests {
     #[test]
     fn settings_overlay_lists_every_row_with_its_label_and_value() {
         let theme = noir();
-        let custom = appearance_settings();
+        let custom = appearance_rows();
         let overlay = SettingsWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            values: settings_values(&custom),
-            selected: 0,
+            view: settings_values(&custom),
+            current: SettingRow::first(&custom),
             avoid: &[],
         };
         insta::assert_snapshot!(
@@ -252,36 +274,40 @@ mod tests {
     #[test]
     fn settings_overlay_highlights_the_selected_row() {
         let theme = noir();
-        let custom = appearance_settings();
+        let custom = appearance_rows();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let overlay = SettingsWidget {
             theme: active,
-            values: settings_values(&custom),
-            selected: 1 + custom.len(),
+            view: settings_values(&custom),
+            current: SettingRow::Crossfade,
             avoid: &[],
         };
         let buffer =
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
                 .clone();
-        let selection_bg = ModalRowStyle::from_theme(&active).selected_background;
+        let selection_background =
+            ModalRowStyle::from_theme(&active).selected_background;
         let (theme_x, theme_y) = find_text(&buffer, "Theme").unwrap();
         let (crossfade_x, crossfade_y) = find_text(&buffer, "Crossfade").unwrap();
         assert_eq!(
             buffer[(crossfade_x, crossfade_y)].style().bg,
-            Some(selection_bg)
+            Some(selection_background)
         );
-        assert_ne!(buffer[(theme_x, theme_y)].style().bg, Some(selection_bg));
+        assert_ne!(
+            buffer[(theme_x, theme_y)].style().bg,
+            Some(selection_background)
+        );
     }
 
     #[test]
     fn settings_overlay_shows_the_current_theme_and_a_custom_appearance_row() {
         let theme = noir();
-        let custom = appearance_settings();
+        let custom = appearance_rows();
         let overlay = SettingsWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            values: settings_values(&custom),
-            selected: 0,
+            view: settings_values(&custom),
+            current: SettingRow::first(&custom),
             avoid: &[],
         };
         let buffer =
@@ -295,14 +321,14 @@ mod tests {
     #[test]
     fn settings_title_keeps_the_path_tail_visible_at_a_narrow_width() {
         let theme = noir();
-        let custom = appearance_settings();
+        let custom = appearance_rows();
         let mut with_long_path = settings_values(&custom);
         with_long_path.music_dir =
             Path::new("/Users/testuser/Music/Library/Deeply/Nested/Folder/apple-music");
         let overlay = SettingsWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            values: with_long_path,
-            selected: 0,
+            view: with_long_path,
+            current: SettingRow::first(&custom),
             avoid: &[],
         };
         let buffer =
@@ -315,7 +341,7 @@ mod tests {
     #[test]
     fn the_modal_outer_rect_stays_put_across_a_theme_and_an_appearance_change() {
         let theme = noir();
-        let custom = appearance_settings();
+        let custom = appearance_rows();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let themes = [
             ThemeName::from_static("noir"),
@@ -328,8 +354,8 @@ mod tests {
         with_noir.theme = "noir";
         let overlay_noir = SettingsWidget {
             theme: active,
-            values: with_noir,
-            selected: 0,
+            view: with_noir,
+            current: SettingRow::first(&custom),
             avoid: &[],
         };
 
@@ -339,8 +365,8 @@ mod tests {
         with_gruvbox.appearance.cover_mode = CoverMode::Off;
         let overlay_gruvbox = SettingsWidget {
             theme: active,
-            values: with_gruvbox,
-            selected: 0,
+            view: with_gruvbox,
+            current: SettingRow::first(&custom),
             avoid: &[],
         };
 
@@ -353,11 +379,11 @@ mod tests {
     #[test]
     fn settings_overlay_does_not_panic_on_a_tiny_terminal() {
         let theme = noir();
-        let custom = appearance_settings();
+        let custom = appearance_rows();
         let overlay = SettingsWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            values: settings_values(&custom),
-            selected: 0,
+            view: settings_values(&custom),
+            current: SettingRow::first(&custom),
             avoid: &[],
         };
         let frame = rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()))

@@ -12,14 +12,16 @@ pub mod player;
 mod playlist;
 mod settings;
 pub mod startup;
+mod successor;
 mod timer;
 mod transport;
 mod workspace;
 
 use crate::{
-    cmd::{AudioCmd, Cmd, CoverJob, Cue, Effect, LibraryCmd, WindowColorsCmd},
+    cmd::{AudioCmd, Cmd, CoverJob, Effect, LibraryCmd, WindowColorsCmd},
     domain::{
         appearance::CoverMode,
+        cue::Cue,
         driver::DriverName,
         geometry::Pixels,
         model::Model,
@@ -35,7 +37,6 @@ use crate::{
         MacosEvent,
         Message,
         PaintError,
-        PaintEvent,
         PlaylistRequest,
         Timer,
     },
@@ -72,15 +73,19 @@ fn route(
         cover_side,
     } = message
     {
-        model.workspace.visible_rows = visible_rows;
-        model.workspace.cover_side = cover_side;
+        let workspace = &mut model.workspace;
+        if (workspace.visible_rows, workspace.cover_side) == (visible_rows, cover_side)
+        {
+            return Err(Unhandled);
+        }
+        workspace.visible_rows = visible_rows;
+        workspace.cover_side = cover_side;
         return Ok(Vec::new());
     }
     let message = if let Message::Key(press) = message {
-        match keymap::lookup::route(&model.workspace, press) {
-            Some(routed) => routed,
-            None => return Err(Unhandled),
-        }
+        let routed = keymap::lookup::route(&model.workspace, press);
+        model.workspace.chord_prefix = None;
+        routed.ok_or(Unhandled)?
     } else {
         message
     };
@@ -208,6 +213,7 @@ fn update_model(
         Ok(effects) => effects,
         Err(refusal) => {
             restore(&mut model.workspace, dismissed);
+            released(&mut model.workspace, input);
             return Err(refusal);
         }
     };
@@ -242,7 +248,7 @@ fn config_parts(model: &mut Model) -> config::ConfigParts<'_> {
         revisions,
         settings,
         themes,
-        appearance_settings,
+        appearance_rows,
         music_dir,
         ..
     } = model;
@@ -251,7 +257,7 @@ fn config_parts(model: &mut Model) -> config::ConfigParts<'_> {
         revisions,
         settings,
         themes,
-        appearance_settings,
+        appearance_rows,
         music_dir,
     }
 }
@@ -291,6 +297,7 @@ fn browse_parts(model: &mut Model) -> browse::BrowseParts<'_> {
         favorites,
         scan_status,
         music_dir,
+        playlist_source,
         ..
     } = model;
     browse::BrowseParts {
@@ -307,6 +314,7 @@ fn browse_parts(model: &mut Model) -> browse::BrowseParts<'_> {
         favorites,
         scan_status,
         music_dir,
+        playlist_source,
     }
 }
 
@@ -340,11 +348,11 @@ pub(crate) fn library_parts(model: &mut Model) -> library::LibraryParts<'_> {
 
 fn elapsed(model: &mut Model, timer: Timer, now: Moment) -> Result<Cmd, Unhandled> {
     match timer {
-        Timer::Toast(revision) => Ok(timer::toast_expired(
+        Timer::Toast(revision) => timer::toast_expired(
             &mut model.workspace,
             revision,
             revision.freshness(model.revisions.toast),
-        )),
+        ),
         Timer::Sleep(revision) => {
             timer::sleep_fired(&mut playback_parts(model), revision, now)
         }
@@ -387,7 +395,7 @@ fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhan
                 playlist: &model.playlist,
                 player: &model.player,
                 history: &model.history,
-                appearance_settings: &model.appearance_settings,
+                appearance_rows: &model.appearance_rows,
                 music_dir: &model.music_dir,
             },
             request,
@@ -422,7 +430,7 @@ fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhan
             audio::update(&mut playback_parts(model), audio_event, now)
         }
         Message::Macos(event) => macos::update(&mut playback_parts(model), event, now),
-        Message::Paint(PaintEvent::Error(error)) => Ok(model
+        Message::Paint(error) => Ok(model
             .workspace
             .show(paint_toast(&error), &mut model.revisions)),
         Message::Elapsed(timer) => elapsed(model, timer, now),
@@ -449,14 +457,15 @@ mod tests {
         cmd::Effect,
         domain::{
             config::Diagnostic,
+            geometry::{Cells, Pixels},
             model::Model,
             startup::{Shuffle, Startup},
             time::Moment,
             toast::Toast,
             track::Track,
         },
-        message::{Message, PaintError, PaintEvent},
-        update::{startup::startup, update},
+        message::{Message, PaintError},
+        update::{machine::Unhandled, startup::startup, update},
     };
 
     fn startup_with(shuffle: Shuffle) -> Startup {
@@ -497,16 +506,11 @@ mod tests {
         PaintError::WindowColors(diagnostic()),
         "Window colors failed"
     )]
-    #[case::cover(PaintError::Cover(diagnostic()), "Cover art failed")]
-    #[case::probe(PaintError::Probe(diagnostic()), "Terminal probe failed")]
+    #[case::probe(PaintError::Query(diagnostic()), "Terminal probe failed")]
     fn a_paint_failure_shows_its_toast(#[case] error: PaintError, #[case] title: &str) {
         let mut model = Model::default();
 
-        let effects = update(
-            &mut model,
-            Message::from(PaintEvent::Error(error)),
-            Moment::default(),
-        );
+        let effects = update(&mut model, Message::from(error), Moment::default());
 
         assert!(effects.is_ok());
         assert_eq!(
@@ -517,5 +521,27 @@ mod tests {
 
     fn diagnostic() -> Diagnostic {
         Diagnostic::from_error(&std::io::Error::other("broken pipe"))
+    }
+
+    #[rstest]
+    #[case::unchanged(Cells(0), None, Err(Unhandled))]
+    #[case::new_rows(Cells(12), None, Ok(Vec::new()))]
+    #[case::new_cover_side(Cells(0), Some(Pixels(240)), Ok(Vec::new()))]
+    fn a_viewport_is_handled_only_when_it_changes(
+        #[case] visible_rows: Cells,
+        #[case] cover_side: Option<Pixels>,
+        #[case] expected: Result<Vec<Effect>, Unhandled>,
+    ) {
+        let mut model = Model::default();
+        let viewport = Message::Viewport {
+            visible_rows,
+            cover_side,
+        };
+
+        let effects = update(&mut model, viewport, Moment::default());
+
+        assert_eq!(effects, expected);
+        assert_eq!(model.workspace.visible_rows, visible_rows);
+        assert_eq!(model.workspace.cover_side, cover_side);
     }
 }

@@ -6,7 +6,7 @@ use std::{
 
 use bincode::config::Config;
 use kernel::{
-    domain::track::{AudioFormat, Decibels, Tagging, Tags, Track},
+    domain::track::{AudioFormat, Decibels, Hertz, Kbps, Tagging, Tags, Track},
     message::LibrarySubject,
 };
 use serde::{Deserialize, Serialize};
@@ -37,8 +37,10 @@ struct TagsRecord {
 #[serde(remote = "AudioFormat")]
 struct AudioFormatRecord {
     format: Option<String>,
-    bitrate_kbps: Option<u32>,
-    sample_rate_hz: Option<u32>,
+    #[serde(with = "kbps_record")]
+    bitrate: Option<Kbps>,
+    #[serde(with = "hertz_record")]
+    sample_rate: Option<Hertz>,
     bits_per_sample: Option<u8>,
     channels: Option<u8>,
     #[serde(with = "decibels_record")]
@@ -62,6 +64,46 @@ mod decibels_record {
         deserializer: D,
     ) -> Result<Option<Decibels>, D::Error> {
         Option::<f32>::deserialize(deserializer).map(|gain| gain.map(Decibels))
+    }
+}
+
+mod kbps_record {
+    use kernel::domain::track::Kbps;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(crate) fn serialize<G: std::borrow::Borrow<Option<Kbps>>, S: Serializer>(
+        bitrate: &G,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        bitrate.borrow().map(|kbps| kbps.0).serialize(serializer)
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Kbps>, D::Error> {
+        Option::<u32>::deserialize(deserializer).map(|bitrate| bitrate.map(Kbps))
+    }
+}
+
+mod hertz_record {
+    use kernel::domain::track::Hertz;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(crate) fn serialize<G: std::borrow::Borrow<Option<Hertz>>, S: Serializer>(
+        sample_rate: &G,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        sample_rate
+            .borrow()
+            .map(|hertz| hertz.0)
+            .serialize(serializer)
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Hertz>, D::Error> {
+        Option::<u32>::deserialize(deserializer)
+            .map(|sample_rate| sample_rate.map(Hertz))
     }
 }
 
@@ -202,7 +244,11 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_for_the_same_music_dir() {
         let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs::under(directory.path());
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
         let music_dir = directory.path().join("music");
         let tracks = vec![
             test_support::titled("/music/one.flac", "Moon River"),
@@ -218,7 +264,11 @@ mod tests {
     #[test]
     fn save_skips_tracks_that_were_only_listed_not_read() {
         let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs::under(directory.path());
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
         let music_dir = directory.path().join("music");
         let listed = vec![Arc::new(Track::listed(Path::new("/music/unreadable.flac")))];
 
@@ -251,7 +301,11 @@ mod tests {
     })]
     fn a_cache_that_cannot_be_used_loads_empty(#[case] setup: fn(&LibraryDirs)) {
         let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs::under(directory.path());
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
         setup(&dirs);
 
         let loaded = cache::load(&dirs, Path::new("/music")).unwrap();
@@ -262,7 +316,11 @@ mod tests {
     #[test]
     fn a_cache_of_garbage_bytes_answers_a_decode_error() {
         let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs::under(directory.path());
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
         save_then_rewrite(&dirs, |bytes| {
             *bytes = vec![cache::CACHE_VERSION, 0xDE, 0xAD, 0xBE, 0xEF];
         });

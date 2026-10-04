@@ -1,6 +1,7 @@
 use kernel::{
-    cmd::{Cmd, Cue, Effect},
+    cmd::{Cmd, Effect},
     domain::{
+        cue::Cue,
         device::{DeviceDefault, ListedDevice, OutputDevice},
         model::Model,
         time::Moment,
@@ -8,7 +9,7 @@ use kernel::{
     message::Message,
 };
 
-use crate::support::{device, first_toast_expiry, step::update};
+use crate::support::{device, first_toast_expiry, update::update};
 
 #[test]
 fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {

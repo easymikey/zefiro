@@ -13,8 +13,8 @@ use crate::theme::{
     rgb::{gradient_at, lerp_rgb},
 };
 
-const WINDOW_BG_MIX: f32 = 0.06;
-const SELECTION_BG_MIX: f32 = 0.18;
+const WINDOW_BACKGROUND_MIX: f32 = 0.06;
+const SELECTION_BACKGROUND_MIX: f32 = 0.18;
 const BAR_GROOVE_MIX: f32 = 0.28;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
@@ -35,8 +35,8 @@ pub enum Role {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThemeBase {
     pub background: Rgb,
+    pub muted_foreground: Rgb,
     pub foreground: Rgb,
-    pub bright_foreground: Rgb,
     pub accent: Rgb,
     pub green: Rgb,
     pub yellow: Rgb,
@@ -92,33 +92,41 @@ impl Colors {
     }
 
     #[must_use]
-    pub fn derive(file: &ThemeBase) -> Colors {
-        let window_bg = file.window_background.unwrap_or_else(|| {
-            lerp_rgb(file.background, file.foreground, WINDOW_BG_MIX)
+    pub fn derive(base: &ThemeBase) -> Colors {
+        let window_background = base.window_background.unwrap_or_else(|| {
+            lerp_rgb(
+                base.background,
+                base.muted_foreground,
+                WINDOW_BACKGROUND_MIX,
+            )
         });
-        let selection_bg =
-            visible_band(window_bg, file.bright_foreground, SELECTION_BG_MIX);
+        let selection_background =
+            visible_band(window_background, base.foreground, SELECTION_BACKGROUND_MIX);
         Colors {
-            background: file.background,
-            window_background: window_bg,
-            text: file.bright_foreground,
-            accent: file.accent,
-            accent2: file.yellow,
+            background: base.background,
+            window_background,
+            text: base.foreground,
+            accent: base.accent,
+            accent2: base.yellow,
             selection_foreground: raise_contrast(
-                file.bright_foreground,
-                &[selection_bg],
+                base.foreground,
+                &[selection_background],
                 MIN_SELECTION_TEXT_CONTRAST,
             ),
-            selection_background: selection_bg,
+            selection_background,
             highlight: raise_contrast(
-                file.accent,
-                &[window_bg, selection_bg],
+                base.accent,
+                &[window_background, selection_background],
                 MIN_MARKER_CONTRAST,
             ),
-            frame: file.foreground,
-            dim: file.foreground,
-            bar_groove: visible_band(window_bg, file.bright_foreground, BAR_GROOVE_MIX),
-            spectrum: [file.green, file.yellow, file.red],
+            frame: base.muted_foreground,
+            dim: base.muted_foreground,
+            bar_groove: visible_band(
+                window_background,
+                base.foreground,
+                BAR_GROOVE_MIX,
+            ),
+            spectrum: [base.green, base.yellow, base.red],
         }
     }
 }
@@ -137,11 +145,11 @@ mod tests {
         },
     };
 
-    fn test_colors_file() -> ThemeBase {
+    fn test_base() -> ThemeBase {
         ThemeBase {
             background: Rgb([0x10, 0x20, 0x30]),
-            foreground: Rgb([0x40, 0x50, 0x60]),
-            bright_foreground: Rgb([0x70, 0x80, 0x90]),
+            muted_foreground: Rgb([0x40, 0x50, 0x60]),
+            foreground: Rgb([0x70, 0x80, 0x90]),
             accent: Rgb([0xa0, 0xb0, 0xc0]),
             green: Rgb([0, 0xff, 0]),
             yellow: Rgb([0xff, 0xff, 0]),
@@ -152,12 +160,12 @@ mod tests {
 
     #[test]
     fn the_derivation_table_maps_every_role() {
-        insta::assert_debug_snapshot!(Colors::derive(&test_colors_file()));
+        insta::assert_debug_snapshot!(Colors::derive(&test_base()));
     }
 
     #[test]
     fn every_role_reads_back_the_hex_the_derivation_table_wrote() {
-        let colors = Colors::derive(&test_colors_file());
+        let colors = Colors::derive(&test_base());
         assert_eq!(colors.role(Role::Background), Rgb([0x10, 0x20, 0x30]));
         assert_eq!(colors.role(Role::Accent2), Rgb([0xff, 0xff, 0]));
     }
@@ -165,26 +173,31 @@ mod tests {
     #[test]
     fn a_theme_whose_accent_is_its_text_still_derives_a_visible_band() {
         let cream = Rgb([0xf3, 0xe9, 0xd2]);
-        let file = ThemeBase {
+        let base = ThemeBase {
             background: Rgb([0x0b, 0x0b, 0x0b]),
-            foreground: Rgb([0x8f, 0x8a, 0x80]),
-            bright_foreground: cream,
+            muted_foreground: Rgb([0x8f, 0x8a, 0x80]),
+            foreground: cream,
             accent: cream,
-            ..test_colors_file()
+            ..test_base()
         };
-        let colors = Colors::derive(&file);
-        let window_bg = colors.role(Role::WindowBackground);
-        let selection_bg = colors.role(Role::SelectionBackground);
-        assert!(contrast_ratio(selection_bg, window_bg) >= MIN_BAND_CONTRAST);
+        let colors = Colors::derive(&base);
+        let window_background = colors.role(Role::WindowBackground);
+        let selection_background = colors.role(Role::SelectionBackground);
         assert!(
-            contrast_ratio(colors.role(Role::SelectionForeground), selection_bg)
-                >= MIN_SELECTION_TEXT_CONTRAST
+            contrast_ratio(selection_background, window_background)
+                >= MIN_BAND_CONTRAST
+        );
+        assert!(
+            contrast_ratio(
+                colors.role(Role::SelectionForeground),
+                selection_background
+            ) >= MIN_SELECTION_TEXT_CONTRAST
         );
         let highlight = colors.role(Role::Highlight);
-        assert!(contrast_ratio(highlight, window_bg) >= MIN_MARKER_CONTRAST);
-        assert!(contrast_ratio(highlight, selection_bg) >= MIN_MARKER_CONTRAST);
+        assert!(contrast_ratio(highlight, window_background) >= MIN_MARKER_CONTRAST);
+        assert!(contrast_ratio(highlight, selection_background) >= MIN_MARKER_CONTRAST);
         assert!(
-            contrast_ratio(colors.role(Role::BarGroove), window_bg)
+            contrast_ratio(colors.role(Role::BarGroove), window_background)
                 >= MIN_BAND_CONTRAST,
             "a bar's unfilled track has to be visible on the card it is painted on"
         );
@@ -195,13 +208,13 @@ mod tests {
     }
 
     #[test]
-    fn window_bg_lightens_toward_fg_on_a_dark_theme() {
-        let file = ThemeBase {
+    fn window_background_lightens_toward_muted_foreground_on_a_dark_theme() {
+        let base = ThemeBase {
             background: Rgb([0x10, 0x10, 0x10]),
-            foreground: Rgb([0xe0, 0xe0, 0xe0]),
-            ..test_colors_file()
+            muted_foreground: Rgb([0xe0, 0xe0, 0xe0]),
+            ..test_base()
         };
-        let colors = Colors::derive(&file);
+        let colors = Colors::derive(&base);
         assert!(
             luma(colors.role(Role::WindowBackground))
                 > luma(colors.role(Role::Background))
@@ -209,13 +222,13 @@ mod tests {
     }
 
     #[test]
-    fn window_bg_darkens_toward_fg_on_a_light_theme() {
-        let file = ThemeBase {
+    fn window_background_darkens_toward_muted_foreground_on_a_light_theme() {
+        let base = ThemeBase {
             background: Rgb([0xe0, 0xe0, 0xe0]),
-            foreground: Rgb([0x10, 0x10, 0x10]),
-            ..test_colors_file()
+            muted_foreground: Rgb([0x10, 0x10, 0x10]),
+            ..test_base()
         };
-        let colors = Colors::derive(&file);
+        let colors = Colors::derive(&base);
         assert!(
             luma(colors.role(Role::WindowBackground))
                 < luma(colors.role(Role::Background))

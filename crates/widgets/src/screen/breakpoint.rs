@@ -1,4 +1,15 @@
-use kernel::domain::{appearance::LayoutMode, geometry::Cells};
+use kernel::domain::{
+    appearance::{
+        DEFAULT_COMPACT_MIN_HEIGHT,
+        DEFAULT_COMPACT_MIN_WIDTH,
+        DEFAULT_FULL_MIN_HEIGHT,
+        DEFAULT_FULL_MIN_WIDTH,
+        DEFAULT_MIN_HEIGHT,
+        DEFAULT_MIN_WIDTH,
+        LayoutMode,
+    },
+    geometry::Cells,
+};
 use ratatui::layout::Size;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7,19 +18,19 @@ pub struct Breakpoints {
     pub full_min_height: Cells,
     pub compact_min_width: Cells,
     pub compact_min_height: Cells,
-    pub min_columns: Cells,
-    pub min_rows: Cells,
+    pub min_width: Cells,
+    pub min_height: Cells,
 }
 
 impl Default for Breakpoints {
     fn default() -> Self {
         Self {
-            full_min_width: Cells(60),
-            full_min_height: Cells(19),
-            compact_min_width: Cells(30),
-            compact_min_height: Cells(13),
-            min_columns: Cells(48),
-            min_rows: Cells(16),
+            full_min_width: DEFAULT_FULL_MIN_WIDTH,
+            full_min_height: DEFAULT_FULL_MIN_HEIGHT,
+            compact_min_width: DEFAULT_COMPACT_MIN_WIDTH,
+            compact_min_height: DEFAULT_COMPACT_MIN_HEIGHT,
+            min_width: DEFAULT_MIN_WIDTH,
+            min_height: DEFAULT_MIN_HEIGHT,
         }
     }
 }
@@ -49,7 +60,7 @@ fn fit(size: Size, width: u16, height: u16) -> Fit {
 impl Breakpoint {
     #[must_use]
     pub fn new(size: Size, layout: &Breakpoints, mode: LayoutMode) -> Self {
-        if fit(size, layout.min_columns.0, layout.min_rows.0) == Fit::Short {
+        if fit(size, layout.min_width.0, layout.min_height.0) == Fit::Short {
             return Self::TooSmall;
         }
         let full = fit(size, layout.full_min_width.0, layout.full_min_height.0);
@@ -116,8 +127,8 @@ mod tests {
     #[test]
     fn a_lowered_minimum_lets_the_minimal_breakpoint_through() {
         let layout = Breakpoints {
-            min_columns: Cells(10),
-            min_rows: Cells(3),
+            min_width: Cells(10),
+            min_height: Cells(3),
             ..Breakpoints::default()
         };
         assert_eq!(

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use kernel::domain::{
     appearance::Rgb,
+    geometry::Cells,
     model::Model,
     player::{Player, Preload},
     playhead::Playhead,
@@ -162,7 +163,7 @@ pub(crate) fn card_metrics(
     CardMetrics {
         cover_square: Rect::default(),
         content_column: Rect::default(),
-        row_width: 0,
+        row_width: Cells(0),
         status_row,
         title_row,
         artist_row: Rect::default(),
@@ -259,10 +260,7 @@ pub(crate) enum ToastPresence {
 
 pub(crate) fn toast_backdrop(presence: ToastPresence) -> Backdrop {
     let toast = match presence {
-        ToastPresence::Shown => Some(widgets::toast::ToastAreas {
-            outer: AREA,
-            painted: AREA,
-        }),
+        ToastPresence::Shown => Some(AREA),
         ToastPresence::Hidden => None,
     };
     Backdrop {
@@ -277,10 +275,7 @@ pub(crate) fn toast_backdrop(presence: ToastPresence) -> Backdrop {
 pub(crate) fn toast_card_backdrop() -> Backdrop {
     Backdrop {
         layout: FrameLayout {
-            toast: Some(widgets::toast::ToastAreas {
-                outer: TOAST_CARD,
-                painted: TOAST_CARD,
-            }),
+            toast: Some(TOAST_CARD),
             ..empty_layout(Rect::default())
         },
         ..quiet_backdrop()

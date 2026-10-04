@@ -3,9 +3,9 @@
 name = "terracotta-dark"
 
 [colors]
-bg = "#1f1e1d"
-fg = "#b8b5ad"
-bright_fg = "#f0eee6"
+background = "#1f1e1d"
+muted_foreground = "#b8b5ad"
+foreground = "#f0eee6"
 accent = "#D97757"
 green = "#6a9f6a"
 yellow = "#d9a441"

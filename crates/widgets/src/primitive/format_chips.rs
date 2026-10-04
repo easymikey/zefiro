@@ -1,25 +1,27 @@
-use kernel::domain::track::AudioFormat;
-use num_traits::ToPrimitive;
+use kernel::domain::track::{AudioFormat, Hertz, Kbps};
 use ratatui::text::{Line, Span};
 
-use crate::primitive::chip::{self, ChipStyle};
+use crate::{
+    pixels::numeric::dimension_f32,
+    primitive::chip::{self, ChipStyle},
+};
 
 const HZ_PER_KHZ: f32 = 1000.0;
 
 #[must_use]
-pub(crate) fn kilohertz(sample_rate_hz: u32) -> f32 {
-    sample_rate_hz.to_f32().unwrap_or(f32::MAX) / HZ_PER_KHZ
+pub(crate) fn kilohertz(Hertz(sample_rate): Hertz) -> f32 {
+    dimension_f32(sample_rate) / HZ_PER_KHZ
 }
 
 fn format_chip_values(audio_format: &AudioFormat) -> Vec<String> {
     [
         audio_format.format.clone(),
         audio_format
-            .bitrate_kbps
-            .map(|bitrate_kbps| format!("{bitrate_kbps} kbps")),
+            .bitrate
+            .map(|Kbps(bitrate)| format!("{bitrate} kbps")),
         audio_format
-            .sample_rate_hz
-            .map(|sample_rate_hz| format!("{:.1} khz", kilohertz(sample_rate_hz))),
+            .sample_rate
+            .map(|sample_rate| format!("{:.1} khz", kilohertz(sample_rate))),
     ]
     .into_iter()
     .flatten()
@@ -54,7 +56,7 @@ pub(crate) fn fit_format_chips(
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::track::AudioFormat;
+    use kernel::domain::track::{AudioFormat, Hertz, Kbps};
     use ratatui::style::Color;
     use rstest::rstest;
 
@@ -72,15 +74,15 @@ mod tests {
     fn full_audio_format() -> AudioFormat {
         AudioFormat {
             format: Some("mp3".to_string()),
-            bitrate_kbps: Some(320),
-            sample_rate_hz: Some(44100),
+            bitrate: Some(Kbps(320)),
+            sample_rate: Some(Hertz(44100)),
             ..Default::default()
         }
     }
 
     fn bitrate_only() -> AudioFormat {
         AudioFormat {
-            bitrate_kbps: Some(128),
+            bitrate: Some(Kbps(128)),
             ..Default::default()
         }
     }

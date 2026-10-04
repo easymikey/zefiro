@@ -6,18 +6,10 @@ use std::{
     time::Duration,
 };
 
-use crossbeam_channel::Sender;
 use kernel::domain::{revision::Revision, speed::Speed};
 use rodio::Source;
 
-use crate::{
-    deck::{
-        envelope::{Envelopes, envelope},
-        output::Output,
-    },
-    engine::message::AudioMessage,
-    error::Error,
-};
+use crate::{engine::phase::CurrentTrack, error::Error};
 
 pub(crate) type TrackDecoder = rodio::Decoder<BufReader<File>>;
 
@@ -50,11 +42,8 @@ const READ_CAPACITY: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PreloadMode {
-    Gapless,
-    Crossfade {
-        gain: Option<kernel::domain::track::Decibels>,
-        speed: Speed,
-    },
+    Gapless(PathBuf),
+    Crossfade { track: CurrentTrack, speed: Speed },
 }
 
 pub(crate) fn decode(path: &Path) -> Result<TrackDecoder, Error> {
@@ -77,55 +66,4 @@ pub(crate) fn decode(path: &Path) -> Result<TrackDecoder, Error> {
         path: path.to_path_buf(),
         source,
     })
-}
-
-pub(crate) struct TrackDecoding {
-    preloading: Option<(PathBuf, PreloadMode)>,
-    staged: Option<TrackSource>,
-    sender: Sender<AudioMessage>,
-    pub(crate) envelopes: Envelopes,
-}
-
-impl TrackDecoding {
-    pub(crate) fn new(sender: Sender<AudioMessage>) -> Self {
-        Self {
-            preloading: None,
-            staged: None,
-            sender,
-            envelopes: Envelopes::default(),
-        }
-    }
-
-    pub(crate) fn start_decode(&mut self) {
-        self.staged = None;
-    }
-
-    pub(crate) fn start_preload(&mut self, path: PathBuf, mode: PreloadMode) {
-        self.preloading = Some((path, mode));
-    }
-
-    pub(crate) fn drop_preload(&mut self) {
-        self.preloading = None;
-    }
-
-    pub(crate) fn clear_staged(&mut self) {
-        self.staged = None;
-    }
-
-    pub(crate) fn stage(&mut self, track: TrackSource) {
-        self.staged = Some(track);
-    }
-
-    pub(crate) fn take_preloading(&mut self) -> Option<(PathBuf, PreloadMode)> {
-        self.preloading.take()
-    }
-
-    pub(crate) fn append_staged(&mut self, output: &Output) {
-        let Some(TrackSource { revision, source }) = self.staged.take() else {
-            return;
-        };
-        let (wrapped, control) = envelope(source, revision, self.sender.clone());
-        output.append(wrapped);
-        self.envelopes.primary = Some(control);
-    }
 }

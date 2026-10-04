@@ -118,29 +118,37 @@ pub(crate) fn read_tags(paths: &[PathBuf]) -> TagsRead {
             .collect();
         handles
             .into_iter()
-            .map(|(chunk, handle)| {
-                handle.join().unwrap_or_else(|_panicked| TagsRead {
-                    tracks: chunk
-                        .iter()
-                        .map(|path| Arc::new(Track::listed(path)))
-                        .collect(),
-                    first_error: None,
-                })
-            })
+            .map(|(chunk, handle)| chunk_read(chunk, handle.join()))
             .fold(TagsRead::default(), TagsRead::joined)
+    })
+}
+
+fn chunk_read(chunk: &[PathBuf], joined: std::thread::Result<TagsRead>) -> TagsRead {
+    joined.unwrap_or_else(|_panicked| TagsRead {
+        tracks: chunk
+            .iter()
+            .map(|path| Arc::new(Track::listed(path)))
+            .collect(),
+        first_error: Some(Error::io(
+            LibrarySubject::Scan,
+            chunk.first().map_or(Path::new(""), PathBuf::as_path),
+        )(std::io::Error::other("tag reader panicked"))),
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc};
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
 
     use kernel::domain::track::{Tagging, Track};
     use rstest::{fixture, rstest};
 
     use crate::{
         error::Error,
-        scan::{is_decodable, list_dir, read_tags},
+        scan::{chunk_read, is_decodable, list_dir, read_tags},
         test_support::temp_dir_filters,
     };
 
@@ -187,6 +195,19 @@ mod tests {
 
     fn scanned(dir: &Path) -> Vec<Arc<Track>> {
         read_tags(&list_dir(dir, DECODABLE).paths).tracks
+    }
+
+    #[test]
+    fn a_panicked_tag_thread_lists_its_chunk_and_reports_an_error() {
+        let chunk = [
+            PathBuf::from("/music/a.flac"),
+            PathBuf::from("/music/b.mp3"),
+        ];
+
+        let read = chunk_read(&chunk, Err(Box::new("tag reader panicked")));
+
+        assert_eq!(read.tracks.len(), 2);
+        assert!(read.first_error.is_some(), "the panic is reported");
     }
 
     #[fixture]

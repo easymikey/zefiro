@@ -1,9 +1,10 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use kernel::{
-    cmd::{AudioCmd, Cmd, Cue, Effect, MacosCmd, TrackLoad, WindowColorsCmd},
+    cmd::{AudioCmd, Cmd, Effect, MacosCmd, TrackLoad, WindowColorsCmd},
     domain::{
         bounded::Bounded,
+        cue::Cue,
         cursor::Cursor,
         direction::Direction,
         index::ViewIndex,
@@ -17,7 +18,7 @@ use kernel::{
         speed::Speed,
         theme::ThemeName,
         time::Moment,
-        toast::ToastKind,
+        toast::ToastLevel,
         track::{AudioFormat, Tags, Track},
         transport::Transport,
     },
@@ -37,8 +38,8 @@ use crate::support::{
     effects,
     model_playing_at,
     model_with_tracks,
-    step::{apply, update},
     track_at as arc_track,
+    update::{send, update},
 };
 
 fn driver_effects(cmd: Cmd) -> Vec<Effect> {
@@ -127,7 +128,7 @@ fn volume_clamped_0_100() {
         },
         ..Default::default()
     };
-    apply(
+    send(
         &mut hi,
         Message::Playback(PlaybackRequest::StepVolume(Direction::Next)),
     );
@@ -296,7 +297,7 @@ fn library_loaded_relists_the_playlist_without_effects() {
 fn an_explicit_skip_snaps_the_browse_cursor() {
     let mut m = model_playing_at(3, 0, Duration::ZERO);
     m.workspace.browse.cursor = Cursor::with_len(3).at(2);
-    apply(&mut m, Message::Playback(PlaybackRequest::Next));
+    send(&mut m, Message::Playback(PlaybackRequest::Next));
     assert_eq!(m.workspace.browse.selected(), ViewIndex::new(1));
 }
 
@@ -309,7 +310,7 @@ fn a_natural_track_change_follows_only_a_cursor_that_was_on_the_playing_row(
 ) {
     let mut m = model_playing_at(3, 0, Duration::ZERO);
     m.workspace.browse.cursor = Cursor::with_len(3).at(cursor);
-    apply(&mut m, Message::Audio(kernel::message::AudioEvent::Ended));
+    send(&mut m, Message::Audio(kernel::message::AudioEvent::Ended));
     assert_eq!(m.workspace.browse.selected(), ViewIndex::new(expected));
 }
 
@@ -362,7 +363,7 @@ fn preload_peeks_queue_head_when_queue_nonempty() {
     };
     m.queue.push(m.playlist.tracks[2].source().clone());
 
-    apply(
+    send(
         &mut m,
         Message::Audio(kernel::message::AudioEvent::Playhead(Duration::from_secs(
             95,
@@ -447,12 +448,12 @@ fn an_audio_failure_raises_an_error_toast(
         player,
         ..Default::default()
     };
-    apply(
+    send(
         &mut m,
         Message::Audio(kernel::message::AudioEvent::Error(error)),
     );
     let toast = m.workspace.toasts.first().unwrap();
-    assert_eq!(toast.kind, ToastKind::Error);
+    assert_eq!(toast.kind, ToastLevel::Error);
     let text = toast.text.as_deref().map_or("", str::trim);
     assert!(text.contains(excerpt), "got {text:?}");
 }

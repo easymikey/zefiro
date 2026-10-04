@@ -1,8 +1,9 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use kernel::{
-    cmd::{Cmd, Cue, Effect, LibraryCmd},
+    cmd::{Cmd, Effect, LibraryCmd},
     domain::{
+        cue::Cue,
         model::{Model, ScanStatus},
         player::{Player, Preload},
         playhead::Playhead,
@@ -12,13 +13,14 @@ use kernel::{
         track::{Tagging, Tags, Track},
     },
     message::{BrowseRequest, LibraryEvent, Message},
+    update::machine::Unhandled,
 };
 use rstest::rstest;
 
 use crate::support::{
     effects,
-    step::{apply, update},
     track_at,
+    update::{send, update},
 };
 
 fn tagged(path: &str, title: &str, seconds: u64) -> Arc<Track> {
@@ -138,7 +140,7 @@ fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
 fn a_tagged_chunk_reaches_the_library_behind_the_playlist() {
     let (mut model, _) = listed_library(&["/music/a.flac", "/music/b.flac"]);
 
-    apply(
+    send(
         &mut model,
         Message::Library(LibraryEvent::Tagged {
             tracks: vec![tagged("/music/b.flac", "Beta", 30)],
@@ -264,15 +266,14 @@ fn only_the_awaited_scan_generation_lands(
             revision: revision(bumps),
         }),
         Moment::default(),
-    )
-    .unwrap();
+    );
 
     assert_eq!(
         model.library.as_ref().map(|ready| ready.tracks.len()),
         installed
     );
     assert_eq!(model.scan_status, scan_status);
-    assert_eq!(openings(cmd), usize::from(installed.is_some()));
+    assert_eq!(cmd.map(openings), installed.map(|_| 1).ok_or(Unhandled));
 }
 
 #[test]
@@ -306,9 +307,8 @@ fn a_listing_from_a_superseded_scan_asks_for_no_tags() {
             revision: Revision::default(),
         }),
         Moment::default(),
-    )
-    .unwrap();
+    );
 
-    assert!(effects(cmd).is_empty());
+    assert_eq!(cmd, Err(Unhandled));
     assert_eq!(model.scan_status, ScanStatus::Scanning);
 }

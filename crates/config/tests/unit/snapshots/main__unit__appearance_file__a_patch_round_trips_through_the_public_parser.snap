@@ -8,7 +8,7 @@ TomlAppearance {
         speed_chip: Always,
     },
     progress: TomlProgress {
-        height_px: Pixels(
+        height: Pixels(
             4,
         ),
         radius: None,
@@ -18,7 +18,7 @@ TomlAppearance {
     },
     cover: TomlCover {
         mode: Milkdrop,
-        text_cells: TextCoverCells {
+        cover_cells: TomlCoverCells {
             width: 20,
             height: 8,
         },
@@ -29,8 +29,8 @@ TomlAppearance {
         full_min_height: 19,
         compact_min_width: 30,
         compact_min_height: 13,
-        min_columns: 48,
-        min_rows: 16,
+        min_width: 48,
+        min_height: 16,
         mode: Auto,
     },
     window: TomlWindow {

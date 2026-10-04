@@ -1,8 +1,8 @@
-use kernel::domain::appearance::SpeedChip;
+use kernel::domain::{appearance::SpeedChip, geometry::Cells};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::Color,
     text::Line,
     widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
@@ -10,9 +10,9 @@ use ratatui::{
 use crate::{
     card::{
         CardView,
+        card_frame,
         headings::{CardStyle, card_status, status_label},
     },
-    pixels::numeric::unit_fraction,
     primitive::{
         bar::{BarFill, fill},
         chip::{ChipStyle, speed_chip_spans, speed_chip_width},
@@ -52,18 +52,18 @@ struct CompactParts<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StatusRowGeometry {
-    row_y: u16,
-    status_width: u16,
-    volume_width: u16,
+    row: Cells,
+    status_width: Cells,
+    volume_width: Cells,
 }
 
 fn status_row_geometry(inner: Rect) -> StatusRowGeometry {
     let row_width = inner.width;
     let volume_width = VOLUME_BAR_WIDTH.min(row_width / 2);
     StatusRowGeometry {
-        row_y: inner.y + TITLE_ROWS + PROGRESS_ROWS,
-        status_width: row_width.saturating_sub(volume_width + 1),
-        volume_width,
+        row: Cells(inner.y + TITLE_ROWS + PROGRESS_ROWS),
+        status_width: Cells(row_width.saturating_sub(volume_width + 1)),
+        volume_width: Cells(volume_width),
     }
 }
 
@@ -90,14 +90,8 @@ impl Widget for &CompactCardWidget<'_> {
         let theme = self.theme;
         let frame_color: Color = CardStyle::from_theme(&theme).border;
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(frame_color))
-            .title(" Sifr ")
-            .title_style(Style::default().fg(frame_color));
         let inner = content_area(area);
-        block.render(area, buffer);
+        card_frame(frame_color).render(area, buffer);
 
         let context = CompactParts {
             view: self.view,
@@ -119,12 +113,8 @@ fn paint_header_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let row_width = inner.width;
     let style = CardStyle::from_theme(&context.theme);
 
-    let current = context.view.displayed_track;
-    let title =
-        current.map_or_else(|| "No track".to_string(), |track| track.song_title());
-    let artist = current
-        .and_then(|track| track.tags().artist.as_deref())
-        .map_or_else(String::new, str::to_owned);
+    let title = context.view.title();
+    let artist = context.view.artist();
 
     let title_row = clamp(Rect {
         x: inner.x,
@@ -144,7 +134,7 @@ fn paint_header_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         height: 1,
     });
     Paragraph::new(line([
-        text(truncate(&artist, usize::from(row_width))).fg(style.muted_foreground)
+        text(truncate(artist, usize::from(row_width))).fg(style.muted_foreground)
     ]))
     .render(artist_row, buffer);
 }
@@ -155,13 +145,6 @@ fn paint_progress_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let row_width = inner.width;
     let style = CardStyle::from_theme(&context.theme);
 
-    let duration = context.view.duration();
-    let fraction = if duration.is_zero() {
-        0.0
-    } else {
-        context.view.position().as_secs_f64() / duration.as_secs_f64()
-    };
-
     let progress_y = inner.y + TITLE_ROWS;
     let progress_row = clamp(Rect {
         x: inner.x,
@@ -170,7 +153,7 @@ fn paint_progress_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         height: 1,
     });
     Paragraph::new(fill(
-        &BarFill::progress(unit_fraction(fraction), usize::from(row_width)),
+        &BarFill::progress(context.view.progress_fraction(), usize::from(row_width)),
         style.accent,
         style.muted_foreground,
     ))
@@ -181,9 +164,7 @@ fn paint_status_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let inner = context.inner;
     let clamp = |rect: Rect| rect.intersection(inner);
     let StatusRowGeometry {
-        row_y,
-        status_width,
-        ..
+        row, status_width, ..
     } = context.status_row;
     let view = context.view;
     let style = CardStyle::from_theme(&context.theme);
@@ -197,15 +178,10 @@ fn paint_status_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let status_text = format!("{status_base}  {elapsed_total}");
     let status_row = clamp(Rect {
         x: inner.x,
-        y: row_y,
-        width: status_width,
+        y: row.0,
+        width: status_width.0,
         height: 1,
     });
-    let mut status_spans = vec![
-        text(truncate(&status_text, usize::from(status_width)))
-            .fg(status_color)
-            .into(),
-    ];
     let indicator_spans = speed_chip_spans(
         view.speed,
         context.speed_chip,
@@ -215,9 +191,14 @@ fn paint_status_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         },
     );
     let indicator_width = usize::from(speed_chip_width(view.speed, context.speed_chip));
-    if status_text.chars().count() + indicator_width <= usize::from(status_width) {
-        status_spans.extend(indicator_spans);
-    }
+    let fits = status_text.chars().count() + indicator_width <= status_width.count();
+    let status_spans: Vec<_> = std::iter::once(
+        text(truncate(&status_text, status_width.count()))
+            .fg(status_color)
+            .into(),
+    )
+    .chain(indicator_spans.into_iter().filter(|_| fits))
+    .collect();
     Paragraph::new(Line::from(status_spans)).render(status_row, buffer);
 }
 
@@ -226,22 +207,20 @@ fn paint_meter_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let clamp = |rect: Rect| rect.intersection(inner);
     let row_width = inner.width;
     let StatusRowGeometry {
-        row_y,
-        volume_width,
-        ..
+        row, volume_width, ..
     } = context.status_row;
 
     let bar_area = clamp(Rect {
-        x: inner.x + row_width.saturating_sub(volume_width),
-        y: row_y,
-        width: volume_width,
+        x: inner.x + row_width.saturating_sub(volume_width.0),
+        y: row.0,
+        width: volume_width.0,
         height: 1,
     });
     let style = VolumeStyle::from_theme(&context.theme);
     Paragraph::new(fill(
         &BarFill::volume(context.view.volume.ratio(), usize::from(bar_area.width)),
         style.fill,
-        style.track,
+        style.groove,
     ))
     .render(bar_area, buffer);
 }

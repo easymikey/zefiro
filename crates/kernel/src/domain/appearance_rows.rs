@@ -1,45 +1,31 @@
-use crate::{
-    cmd::Cue,
-    domain::{
-        appearance::{
-            Animations,
-            AppearancePatch,
-            AppearancePreset,
-            AppearanceSettings,
-            CoverBrackets,
-            CoverMode,
-            FormatChips,
-            KeyHints,
-            LayoutMode,
-            ProgressTime,
-            SpeedChip,
-            preset_appearance,
-            preset_of,
-        },
-        setting_row::{
-            AppearanceControl,
-            AppearanceRow,
-            AppearanceSetting,
-            Choice,
-            OptionCount,
-            OptionIndex,
-        },
-        theme::ThemeName,
+use crate::domain::{
+    appearance::{
+        Animations,
+        AppearancePatch,
+        AppearancePreset,
+        AppearanceSettings,
+        CoverBrackets,
+        CoverMode,
+        FormatChips,
+        KeyHints,
+        LayoutMode,
+        ProgressTime,
+        SpeedChip,
+        preset_appearance,
+        preset_of,
     },
+    cue::Cue,
+    setting_row::{
+        AppearanceControl,
+        AppearanceField,
+        AppearanceRow,
+        AppearanceSetting,
+        Choice,
+        OptionCount,
+        OptionIndex,
+    },
+    theme::ThemeName,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AppearanceField {
-    Preset,
-    CoverMode,
-    CoverBrackets,
-    FormatChips,
-    SpeedChip,
-    ProgressRemaining,
-    KeyHints,
-    Animations,
-    LayoutMode,
-}
 
 const fn option_count(count: usize) -> OptionCount {
     match OptionCount::new(count) {
@@ -144,7 +130,7 @@ pub fn appearance_row(id: AppearanceField) -> Option<&'static AppearanceRow> {
 }
 
 #[must_use]
-pub fn appearance_settings(appearance: AppearanceSettings) -> Vec<AppearanceSetting> {
+pub fn appearance_rows(appearance: AppearanceSettings) -> Vec<AppearanceSetting> {
     APPEARANCE_ROWS
         .iter()
         .map(|row| AppearanceSetting {
@@ -244,26 +230,23 @@ mod tests {
 
     use rstest::rstest;
 
-    use crate::{
-        cmd::Cue,
-        domain::{
-            appearance::{
-                AppearancePatch,
-                AppearancePreset,
-                AppearanceSettings,
-                FormatChips,
-                preset_appearance,
-            },
-            appearance_rows::{
-                APPEARANCE_ROWS,
-                AppearanceField,
-                appearance_patch,
-                appearance_row,
-                appearance_settings,
-            },
-            setting_row::{Choice, OptionCount, OptionIndex},
-            theme::ThemeName,
+    use crate::domain::{
+        appearance::{
+            AppearancePatch,
+            AppearancePreset,
+            AppearanceSettings,
+            FormatChips,
+            preset_appearance,
         },
+        appearance_rows::{
+            APPEARANCE_ROWS,
+            appearance_patch,
+            appearance_row,
+            appearance_rows,
+        },
+        cue::Cue,
+        setting_row::{AppearanceField, Choice, OptionCount, OptionIndex},
+        theme::ThemeName,
     };
 
     fn option_at_row(id: AppearanceField, position: usize) -> OptionIndex {
@@ -289,8 +272,8 @@ mod tests {
     }
 
     #[test]
-    fn appearance_settings_copies_the_cue_from_its_appearance_row() {
-        let rows = appearance_settings(AppearanceSettings::default());
+    fn appearance_rows_copies_the_cue_from_its_appearance_row() {
+        let rows = appearance_rows(AppearanceSettings::default());
         let layout_row = APPEARANCE_ROWS
             .into_iter()
             .find(|row| row.field == AppearanceField::LayoutMode)
@@ -333,8 +316,8 @@ mod tests {
     }
 
     #[test]
-    fn appearance_settings_reads_the_stock_appearance_as_position_zero_for_every_row() {
-        let rows = appearance_settings(AppearanceSettings::default());
+    fn appearance_rows_reads_the_stock_appearance_as_position_zero_for_every_row() {
+        let rows = appearance_rows(AppearanceSettings::default());
         let zero = OptionCount::new(1).unwrap().index(0).unwrap();
         assert!(
             rows.iter().all(|slot| slot.choice == Choice::Option(zero)),
@@ -352,7 +335,7 @@ mod tests {
     #[case::key_hints(AppearanceField::KeyHints, 1)]
     #[case::animations(AppearanceField::Animations, 1)]
     #[case::layout_mode(AppearanceField::LayoutMode, 2)]
-    fn appearance_settings_is_the_inverse_of_field_patch(
+    fn appearance_rows_is_the_inverse_of_field_patch(
         #[case] field: AppearanceField,
         #[case] position: usize,
     ) {
@@ -364,7 +347,7 @@ mod tests {
         let patch = appearance_patch(row.field, option).unwrap();
         let appearance = AppearanceSettings::default().patched(patch);
 
-        let rows = appearance_settings(appearance);
+        let rows = appearance_rows(appearance);
         let slot = rows
             .into_iter()
             .find(|slot| slot.row.field == row.field)
@@ -399,7 +382,7 @@ mod tests {
         let patch = appearance_patch(AppearanceField::Preset, option).unwrap();
         let appearance = AppearanceSettings::default().patched(patch);
 
-        let rows = appearance_settings(appearance);
+        let rows = appearance_rows(appearance);
         let slot = rows
             .into_iter()
             .find(|slot| slot.row.field == AppearanceField::Preset)
@@ -415,7 +398,7 @@ mod tests {
             .build();
         let appearance = AppearanceSettings::default().patched(patch);
 
-        let rows = appearance_settings(appearance);
+        let rows = appearance_rows(appearance);
         let slot = rows
             .into_iter()
             .find(|slot| slot.row.field == AppearanceField::Preset)

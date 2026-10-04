@@ -18,7 +18,7 @@ use crate::{
             MINIMUM_DESCRIPTION,
             small_count_u16,
         },
-        modal::{frame::Hint, place::list_capacity},
+        modal::place::{Hint, list_capacity},
     },
     primitive::{
         glyphs,
@@ -73,27 +73,37 @@ fn full_width_row(line: Line<'static>) -> Row<'static> {
 
 fn column_lines(groups: &[&HelpGroup], colors: HelpStyle) -> HelpColumn {
     let chord_width = widest_chord(groups);
-    let mut rows: Vec<Row<'static>> = Vec::new();
-    let mut max_width = 0usize;
-    for (group_index, group) in groups.iter().enumerate() {
-        if group_index > 0 {
-            rows.push(Row::default());
-        }
-        max_width = max_width.max(group.title.width());
-        rows.push(full_width_row(line([text(group.title)
-            .fg(colors.border)
-            .bold()])));
-        for HelpRow { chord, label } in &group.bindings {
-            max_width =
-                max_width.max(chord_width + usize::from(CHORD_GAP) + label.width());
-            rows.push(Row::new(vec![
-                Cell::from(
-                    line([text(chord.clone()).fg(colors.muted_accent)]).right_aligned(),
-                ),
-                Cell::from(line([text(label.clone()).fg(colors.foreground)])),
-            ]));
-        }
-    }
+    let max_width =
+        groups
+            .iter()
+            .flat_map(|group| {
+                std::iter::once(group.title.width()).chain(group.bindings.iter().map(
+                    |row| chord_width + usize::from(CHORD_GAP) + row.label.width(),
+                ))
+            })
+            .max()
+            .unwrap_or(0);
+    let rows: Vec<Row<'static>> = groups
+        .iter()
+        .enumerate()
+        .flat_map(|(group_index, group)| {
+            (group_index > 0)
+                .then(Row::default)
+                .into_iter()
+                .chain(std::iter::once(full_width_row(line([text(group.title)
+                    .fg(colors.border)
+                    .bold()]))))
+                .chain(group.bindings.iter().map(|HelpRow { chord, label }| {
+                    Row::new(vec![
+                        Cell::from(
+                            line([text(chord.clone()).fg(colors.muted_accent)])
+                                .right_aligned(),
+                        ),
+                        Cell::from(line([text(label.clone()).fg(colors.foreground)])),
+                    ])
+                }))
+        })
+        .collect();
     let height = Cells(small_count_u16(rows.len()));
     HelpColumn {
         rows,
@@ -145,12 +155,14 @@ fn fit_column(
         return column;
     }
     let keep = usize::from(available_height.0.saturating_sub(1));
-    let mut rows = column.rows;
-    rows.truncate(keep);
     let hint_width = Cells(small_count_u16(Span::from(hint.clone()).width()));
-    rows.push(full_width_row(line([hint])));
     HelpColumn {
-        rows,
+        rows: column
+            .rows
+            .into_iter()
+            .take(keep)
+            .chain(std::iter::once(full_width_row(line([hint]))))
+            .collect(),
         chord_width: column.chord_width,
         width: column.width.max(hint_width),
         height: available_height,
@@ -201,14 +213,10 @@ fn columns_that_fit(candidates: Vec<Vec<HelpColumn>>, inner: Cells) -> Vec<HelpC
         Some(index) if index < last => Some(index),
         Some(_) | None => squeezed.or(natural),
     };
-    let mut fallback = Vec::new();
-    for (index, candidate) in candidates.into_iter().enumerate() {
-        if picked == Some(index) {
-            return candidate;
-        }
-        fallback = candidate;
-    }
-    fallback
+    candidates
+        .into_iter()
+        .nth(picked.unwrap_or(last))
+        .unwrap_or_else(Vec::new)
 }
 
 pub(crate) fn select_help_columns(

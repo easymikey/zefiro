@@ -1,4 +1,7 @@
-use kernel::{domain::keymap::Action, update::keymap::chord::KeyBinding};
+use kernel::{
+    domain::{keymap::Action, revision::Revision},
+    update::keymap::chord::KeyBinding,
+};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -44,7 +47,20 @@ fn chord_for_action(bindings: &[KeyBinding], action: Action) -> String {
         .join("/")
 }
 
-type ChipPair = (String, &'static str);
+#[derive(Debug, Clone)]
+pub(crate) struct Chip {
+    key: String,
+    label: &'static str,
+}
+
+impl Chip {
+    fn new(chord: &str, label: &'static str) -> Self {
+        Self {
+            key: format!(" {chord} "),
+            label,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct SettingsHint {
@@ -62,12 +78,12 @@ const SETTINGS_HINTS: [SettingsHint; 4] = [
     SettingsHint {
         primary: Action::SettingsStepDown,
         secondary: Some(Action::SettingsStepUp),
-        label: "adjust",
+        label: "step",
     },
     SettingsHint {
         primary: Action::SettingsActivate,
         secondary: None,
-        label: "apply",
+        label: "select",
     },
     SettingsHint {
         primary: Action::SettingsClose,
@@ -76,28 +92,49 @@ const SETTINGS_HINTS: [SettingsHint; 4] = [
     },
 ];
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum KeyHintsView<'a> {
-    Keys(&'a [KeyBinding]),
-    SettingsHints(&'a [KeyBinding]),
+#[derive(Debug, Clone, Default)]
+pub struct KeyHintChords {
+    revision: Option<Revision>,
+    pub(crate) keys: Vec<Chip>,
+    pub(crate) compact: Vec<Chip>,
+    pub(crate) settings: Vec<Chip>,
 }
 
-impl<'a> KeyHintsView<'a> {
+impl KeyHintChords {
     #[must_use]
-    pub(crate) fn keys(bindings: &'a [KeyBinding]) -> Self {
-        Self::Keys(bindings)
+    pub fn from_bindings(bindings: &[KeyBinding]) -> Self {
+        Self {
+            revision: None,
+            keys: key_chips(bindings, |_| true),
+            compact: key_chips(bindings, |action| KEY_HINTS_COMPACT.contains(&action)),
+            settings: SETTINGS_HINTS
+                .iter()
+                .filter_map(|hint| settings_chip(bindings, *hint))
+                .collect(),
+        }
     }
 
-    #[must_use]
-    pub(crate) fn settings(bindings: &'a [KeyBinding]) -> Self {
-        Self::SettingsHints(bindings)
+    pub fn follow(&mut self, bindings: &[KeyBinding], revision: Revision) {
+        if self.revision == Some(revision) {
+            return;
+        }
+        *self = Self {
+            revision: Some(revision),
+            ..Self::from_bindings(bindings)
+        };
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct KeyHintsView<'a> {
+    pub(crate) full: &'a [Chip],
+    pub(crate) compact: &'a [Chip],
 }
 
 #[derive(Debug)]
 pub(crate) struct KeyHintsWidget<'a> {
     pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) content: KeyHintsView<'a>,
+    pub(crate) view: KeyHintsView<'a>,
 }
 
 impl Widget for &KeyHintsWidget<'_> {
@@ -106,7 +143,7 @@ impl Widget for &KeyHintsWidget<'_> {
             return;
         }
         let style = KeyHintsStyle::from_theme(&self.theme);
-        let line = key_hints_line(&style, self.content, area.width);
+        let line = key_hints_line(style, self.view, area.width);
         Paragraph::new(line).render(Rect { height: 1, ..area }, buffer);
     }
 }
@@ -131,110 +168,115 @@ impl KeyHintsStyle {
     }
 }
 
-fn settings_chip(bindings: &[KeyBinding], hint: SettingsHint) -> ChipPair {
-    let primary_chord = chord_for_action(bindings, hint.primary);
-    let key = match hint.secondary {
-        Some(secondary) => {
-            format!("{primary_chord}/{}", chord_for_action(bindings, secondary))
-        }
-        None => primary_chord,
-    };
-    (key, hint.label)
+fn settings_chip(bindings: &[KeyBinding], hint: SettingsHint) -> Option<Chip> {
+    let key = [Some(hint.primary), hint.secondary]
+        .into_iter()
+        .flatten()
+        .map(|action| chord_for_action(bindings, action))
+        .filter(|chord| !chord.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
+    (!key.is_empty()).then(|| Chip::new(&key, hint.label))
 }
 
-fn pairs_for(content: KeyHintsView<'_>) -> Vec<ChipPair> {
-    match content {
-        KeyHintsView::Keys(bindings) => KEY_HINTS
-            .iter()
-            .map(|(action, label)| (chord_for_action(bindings, *action), *label))
-            .collect(),
-        KeyHintsView::SettingsHints(bindings) => SETTINGS_HINTS
-            .iter()
-            .map(|hint| settings_chip(bindings, *hint))
-            .collect(),
-    }
+fn key_chips(bindings: &[KeyBinding], keep: impl Fn(Action) -> bool) -> Vec<Chip> {
+    KEY_HINTS
+        .iter()
+        .filter(|(action, _)| keep(*action))
+        .map(|(action, label)| (chord_for_action(bindings, *action), *label))
+        .filter(|(chord, _)| !chord.is_empty())
+        .map(|(chord, label)| Chip::new(&chord, label))
+        .collect()
+}
+
+fn chips_line(style: KeyHintsStyle, chips: &[Chip]) -> Line<'_> {
+    line(chips.iter().enumerate().flat_map(move |(position, chip)| {
+        let separator = (position > 0)
+            .then(|| text(glyphs::key_hints::SEPARATOR).fg(style.separator));
+        separator.into_iter().chain([
+            text(chip.key.as_str())
+                .fg(style.chip_text)
+                .bg(style.chip_background),
+            text(glyphs::key_hints::LABEL_GAP).fg(style.label),
+            text(chip.label).fg(style.label),
+        ])
+    }))
 }
 
 fn key_hints_line(
-    style: &KeyHintsStyle,
-    content: KeyHintsView<'_>,
+    style: KeyHintsStyle,
+    view: KeyHintsView<'_>,
     width: u16,
-) -> Line<'static> {
-    let KeyHintsStyle {
-        chip_text,
-        chip_background,
-        label,
-        separator: separator_color,
-    } = *style;
-
-    let pairs = pairs_for(content);
-    let compact: Vec<ChipPair> = match content {
-        KeyHintsView::Keys(_) => KEY_HINTS
-            .iter()
-            .zip(pairs.iter())
-            .filter(|((action, _), _)| KEY_HINTS_COMPACT.contains(action))
-            .map(|(_, pair)| pair.clone())
-            .collect(),
-        KeyHintsView::SettingsHints(_) => pairs.clone(),
-    };
-
-    let render = |chips: &[ChipPair]| -> Line<'static> {
-        line(
-            chips
-                .iter()
-                .enumerate()
-                .flat_map(|(position, (key, name))| {
-                    let separator_piece = (position > 0).then(|| {
-                        text(glyphs::key_hints::SEPARATOR).fg(separator_color)
-                    });
-                    separator_piece.into_iter().chain([
-                        text(format!(" {key} ")).fg(chip_text).bg(chip_background),
-                        text(format!(" {name}")).fg(label),
-                    ])
-                }),
-        )
-    };
-
-    let full = render(&pairs);
+) -> Line<'_> {
+    let full = chips_line(style, view.full);
     let line = if full.width() <= usize::from(width) {
         full
     } else {
-        render(&compact)
+        chips_line(style, view.compact)
     };
-
     truncate_line_to_width(line, usize::from(width))
 }
 
 #[cfg(test)]
 mod tests {
     use kernel::{
-        domain::keymap::{Action, KeymapOverrides},
+        domain::{
+            keymap::{Action, KeymapOverrides},
+            revision::Revision,
+        },
         update::keymap::{bindings::Bindings, chord::KeyBinding},
     };
     use rstest::rstest;
 
     use crate::{
-        key_hints::{KeyHintsView, KeyHintsWidget, chord_for_action},
+        key_hints::{KeyHintChords, KeyHintsView, KeyHintsWidget, chord_for_action},
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
+
+    fn stock_chords() -> KeyHintChords {
+        KeyHintChords::from_bindings(
+            Bindings::new(&KeymapOverrides::default()).as_slice(),
+        )
+    }
+
+    fn keys_view(chords: &KeyHintChords) -> KeyHintsView<'_> {
+        KeyHintsView {
+            full: &chords.keys,
+            compact: &chords.compact,
+        }
+    }
+
+    fn settings_view(chords: &KeyHintChords) -> KeyHintsView<'_> {
+        KeyHintsView {
+            full: &chords.settings,
+            compact: &chords.settings,
+        }
+    }
+
+    fn hints_text_at(view: KeyHintsView<'_>, width: u16) -> String {
+        let theme = noir();
+        let widget = KeyHintsWidget {
+            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            view,
+        };
+        rendered(width, 1, |frame| frame.render_widget(&widget, frame.area()))
+            .to_string()
+    }
+
+    fn hints_text(view: KeyHintsView<'_>) -> String {
+        hints_text_at(view, 80)
+    }
 
     #[rstest]
     #[case(80)]
     #[case(60)]
     #[case(40)]
     fn key_hints_chip_row_by_width(#[case] width: u16) {
-        let theme = noir();
-        let keymap = Bindings::new(&KeymapOverrides::default());
-        let bindings = keymap.as_slice();
-        let widget = KeyHintsWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            content: KeyHintsView::Keys(bindings),
-        };
+        let chords = stock_chords();
         insta::assert_snapshot!(
             format!("key_hints_drop_chips_as_the_width_shrinks_{width}"),
-            rendered(width, 1, |frame| frame.render_widget(&widget, frame.area()))
-                .to_string()
+            hints_text_at(keys_view(&chords), width)
         );
     }
 
@@ -259,16 +301,53 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_apply_hint_shows_both_bound_chords() {
-        let theme = noir();
-        let keymap = Bindings::new(&KeymapOverrides::default());
-        let bindings = keymap.as_slice();
-        let widget = KeyHintsWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            content: KeyHintsView::SettingsHints(bindings),
-        };
-        let text = rendered(80, 1, |frame| frame.render_widget(&widget, frame.area()))
-            .to_string();
+    fn the_settings_select_hint_shows_both_bound_chords() {
+        let chords = stock_chords();
+        let text = hints_text(settings_view(&chords));
         assert!(text.contains("Enter/Space"), "got {text:?}");
+    }
+
+    #[test]
+    fn chords_rebuild_only_when_the_config_revision_moves() {
+        let stock = Bindings::new(&KeymapOverrides::default());
+        let mut chords = KeyHintChords::default();
+        chords.follow(stock.as_slice(), Revision::default());
+        chords.follow(&without(Action::Search), Revision::default());
+        assert!(hints_text(keys_view(&chords)).contains("Find"));
+        chords.follow(&without(Action::Search), Revision::default().next());
+        assert!(!hints_text(keys_view(&chords)).contains("Find"));
+    }
+
+    fn without(action: Action) -> Vec<KeyBinding> {
+        Bindings::new(&KeymapOverrides::default())
+            .as_slice()
+            .iter()
+            .filter(|binding| binding.action != Some(action))
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn an_unbound_action_shows_no_hint() {
+        let chords = KeyHintChords::from_bindings(&without(Action::Search));
+        let text = hints_text(keys_view(&chords));
+        assert!(!text.contains("Find"), "got {text:?}");
+        assert!(text.contains("Help"), "got {text:?}");
+    }
+
+    #[test]
+    fn a_half_bound_settings_pair_shows_only_its_bound_chord() {
+        let bindings = without(Action::SettingsNavigateUp);
+        let down = chord_for_action(&bindings, Action::SettingsNavigateDown);
+        let chords = KeyHintChords::from_bindings(&bindings);
+        let text = hints_text(settings_view(&chords));
+        assert!(text.contains(&format!(" {down}  move")), "got {text:?}");
+    }
+
+    #[test]
+    fn a_fully_unbound_settings_pair_shows_no_hint() {
+        let chords = KeyHintChords::from_bindings(&without(Action::SettingsClose));
+        let text = hints_text(settings_view(&chords));
+        assert!(!text.contains("close"), "got {text:?}");
     }
 }

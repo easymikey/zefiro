@@ -1,11 +1,12 @@
 use kernel::{
-    cmd::{Cmd, ConfigCmd, Cue, Effect},
+    cmd::{Cmd, ConfigCmd, Effect},
     domain::{
-        appearance_rows::AppearanceField,
+        cue::Cue,
         direction::Direction,
         model::Model,
         setting_row::{
             AppearanceControl,
+            AppearanceField,
             AppearanceRow,
             AppearanceSetting,
             Choice,
@@ -19,7 +20,7 @@ use kernel::{
 };
 use rstest::rstest;
 
-use crate::support::step::update;
+use crate::support::update::update;
 
 fn step(model: &mut Model, row: SettingRow, direction: Direction) -> Cmd {
     update(model, Message::Step { row, direction }, Moment::default()).unwrap()
@@ -27,7 +28,7 @@ fn step(model: &mut Model, row: SettingRow, direction: Direction) -> Cmd {
 
 fn setting_option(cmd: &Cmd, id: AppearanceField) -> Option<usize> {
     cmd.effects().find_map(|effect| {
-        let Effect::Config(ConfigCmd::Setting {
+        let Effect::Config(ConfigCmd::SetAppearance {
             field: emitted,
             option,
         }) = effect
@@ -60,7 +61,7 @@ fn custom_setting(
 fn model_with_custom_row(control: AppearanceControl) -> (Model, AppearanceField) {
     let id = AppearanceField::KeyHints;
     let mut model = Model::default();
-    model.appearance_settings.push(custom_setting(id, control));
+    model.appearance_rows.push(custom_setting(id, control));
     (model, id)
 }
 
@@ -169,14 +170,14 @@ fn stepping_every_option_of_a_custom_row_never_reorders_settings_row_all(
 ) {
     let mut model = Model::default();
     model
-        .appearance_settings
+        .appearance_rows
         .push(custom_setting(AppearanceField::ProgressRemaining, control));
-    model.appearance_settings.push(custom_setting(
+    model.appearance_rows.push(custom_setting(
         AppearanceField::FormatChips,
         AppearanceControl::Toggle,
     ));
 
-    let before = SettingRow::all(&model.appearance_settings);
+    let before = SettingRow::all(&model.appearance_rows);
 
     for _ in 0..option_count {
         drop(step(
@@ -184,7 +185,7 @@ fn stepping_every_option_of_a_custom_row_never_reorders_settings_row_all(
             SettingRow::Appearance(AppearanceField::ProgressRemaining),
             Direction::Next,
         ));
-        assert_eq!(SettingRow::all(&model.appearance_settings), before);
+        assert_eq!(SettingRow::all(&model.appearance_rows), before);
     }
 }
 
@@ -193,7 +194,7 @@ fn stepping_a_custom_row_with_a_cue_emits_the_setting_then_the_cue() {
     let id = AppearanceField::LayoutMode;
     let count = OptionCount::new(3).unwrap();
     let mut model = Model::default();
-    model.appearance_settings.push(AppearanceSetting {
+    model.appearance_rows.push(AppearanceSetting {
         row: leaked(AppearanceRow {
             field: id,
             control: AppearanceControl::Cycle(count),
@@ -209,7 +210,7 @@ fn stepping_a_custom_row_with_a_cue_emits_the_setting_then_the_cue() {
     assert_eq!(
         effects,
         vec![
-            &Effect::Config(ConfigCmd::Setting {
+            &Effect::Config(ConfigCmd::SetAppearance {
                 field: id,
                 option: count.index(1).unwrap(),
             }),
@@ -227,7 +228,7 @@ fn stepping_a_custom_row_without_a_cue_emits_only_the_setting() {
     let effects: Vec<&Effect> = cmd.effects().collect();
     assert_eq!(
         effects,
-        vec![&Effect::Config(ConfigCmd::Setting {
+        vec![&Effect::Config(ConfigCmd::SetAppearance {
             field: id,
             option: AppearanceControl::Toggle.count().index(1).unwrap(),
         })]
@@ -270,7 +271,7 @@ fn stepping_the_preset_row_selects_its_options_theme(
     let id = AppearanceField::Preset;
     let count = OptionCount::new(2).unwrap();
     let mut model = Model::default();
-    model.appearance_settings.push(AppearanceSetting {
+    model.appearance_rows.push(AppearanceSetting {
         row: leaked(AppearanceRow {
             field: id,
             control: AppearanceControl::Cycle(count),

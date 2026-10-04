@@ -8,10 +8,11 @@ use kernel::{
 use rodio::{Source, mixer::MixerSource, source::Zero};
 
 use crate::{
-    deck::{DeviceChoice, envelope::Envelope},
+    deck::envelope::Envelope,
     device::{OutputLoss, open_stream},
-    engine::message::AudioMessage,
+    engine::message::{AudioMessage, DeviceChoice},
     error::DeviceError,
+    gain::Gain,
     tap::{Handoff, Tap},
 };
 
@@ -121,7 +122,7 @@ impl Output {
         S: Source + Send + 'static,
     {
         let next = fresh_sink(&self.mix, speed);
-        next.set_volume(0.0);
+        next.set_volume(Gain::SILENCE.amplitude());
         next.append(source);
         self.incoming = Some(next);
     }

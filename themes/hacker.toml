@@ -3,9 +3,9 @@
 name = "hacker"
 
 [colors]
-bg = "#0b0c16"
-fg = "#8e95b8"
-bright_fg = "#ddf7ff"
+background = "#0b0c16"
+muted_foreground = "#8e95b8"
+foreground = "#ddf7ff"
 accent = "#82FB9C"
 green = "#2ec27e"
 yellow = "#f7df50"

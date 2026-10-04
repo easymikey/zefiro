@@ -1,20 +1,21 @@
 use std::{path::Path, sync::Arc};
 
 use crate::{
-    cmd::{Cmd, Cue, Effect, LibraryCmd, ScanMode},
+    cmd::{Cmd, Effect, LibraryCmd, ScanMode},
     domain::{
+        cue::Cue,
         cursor::Cursor,
         cursor_over::cycled,
         direction::Direction,
         favorites::Favorites,
         geometry::Cells,
         index::{TrackIndex, ViewIndex},
-        library::Library,
+        library::{Library, sort_indices},
         model::ScanStatus,
         player::Player,
-        playlist::{PlayOrder, Playlist, index_of_path},
+        playlist::{PlayOrder, Playlist, PlaylistSource, index_of_path},
         time::Moment,
-        track::{Track, TrackRef},
+        track::TrackRef,
         workspace::{Browse, Workspace},
     },
     message::{BrowseRequest, QueueRequest},
@@ -64,6 +65,7 @@ pub(crate) struct BrowseParts<'a> {
     pub(crate) favorites: &'a mut Favorites,
     pub(crate) scan_status: &'a mut ScanStatus,
     pub(crate) music_dir: &'a Path,
+    pub(crate) playlist_source: &'a PlaylistSource,
 }
 
 pub(crate) fn update(
@@ -79,7 +81,6 @@ pub(crate) fn update(
     if refused(&message, len, workspace.visible_rows) {
         return Err(Unhandled);
     }
-    workspace.browse.cursor = workspace.browse.cursor.resize(len);
     match message {
         BrowseRequest::ChordPrefix(prefix) => {
             workspace.chord_prefix = Some(prefix);
@@ -147,9 +148,8 @@ pub(crate) fn queue(
         browse,
         queue,
     } = parts;
-    let cursor = browse.cursor.resize(playlist.tracks.len());
-    let selected = source_at(playlist, ViewIndex::new(cursor.index()));
-    let changed = match (message, selected) {
+    let selected = source_at(playlist, ViewIndex::new(browse.cursor.index()));
+    match (message, selected) {
         (QueueRequest::EnqueueTrack(index), _) => source_at(playlist, index)
             .map(|source| toggle_queued(queue, source))
             .ok_or(Unhandled),
@@ -160,8 +160,7 @@ pub(crate) fn queue(
         (QueueRequest::MoveInQueue(direction), Some(selected)) => {
             move_in_queue(queue, &selected, direction)
         }
-    };
-    changed.inspect(|_| browse.cursor = cursor)
+    }
 }
 
 fn source_at(playlist: &Playlist, index: ViewIndex) -> Option<TrackRef> {
@@ -250,31 +249,29 @@ fn move_in_queue(
 fn cycle_sort(parts: &mut BrowseParts<'_>) -> Cmd {
     let browse = &mut parts.playback.workspace.browse;
     browse.sort = cycled(browse.sort, Direction::Next);
-    let current: Vec<&Track> = parts
-        .library
-        .iter()
-        .flat_map(Library::view_tracks)
-        .map(|(_, track)| track.as_ref())
-        .collect();
-    let order =
-        crate::domain::library::sort_indices(&current, browse.sort, parts.favorites);
+    let sort = browse.sort;
     let Some(library) = parts.library.as_mut() else {
         return Cmd::none();
     };
-    library.view = order
+    library.view = sort_indices(&library.tracks, sort, parts.favorites)
         .into_iter()
-        .filter_map(|position| library.view.get(position.get()).copied())
+        .map(|row| TrackIndex::new(row.get()))
         .collect();
-    resync_playlist(ResyncParts {
-        library,
-        player: parts.playback.player,
-        playlist: parts.playback.playlist,
-    });
+    resync_playlist(
+        *parts.playlist_source,
+        ResyncParts {
+            library,
+            browse: &mut parts.playback.workspace.browse,
+            player: parts.playback.player,
+            playlist: parts.playback.playlist,
+        },
+    );
     Cmd::none()
 }
 
 pub(crate) struct ResyncParts<'a> {
     pub(crate) library: &'a mut Library,
+    pub(crate) browse: &'a mut Browse,
     pub(crate) player: &'a Player,
     pub(crate) playlist: &'a mut Playlist,
 }
@@ -304,20 +301,28 @@ fn trash_track(
         })
         .collect();
     playback.queue.retain(|queued| queued != source);
-    resync_playlist(ResyncParts {
-        library,
-        player: playback.player,
-        playlist: playback.playlist,
-    });
+    resync_playlist(
+        *parts.playlist_source,
+        ResyncParts {
+            library,
+            browse: &mut playback.workspace.browse,
+            player: playback.player,
+            playlist: playback.playlist,
+        },
+    );
     Ok(Cmd::from_iter([
         Effect::Library(LibraryCmd::Trash(track.path().to_path_buf())),
         Effect::Animate(Cue::TrackDeleted),
     ]))
 }
 
-pub(crate) fn resync_playlist(parts: ResyncParts<'_>) {
+pub(crate) fn resync_playlist(source: PlaylistSource, parts: ResyncParts<'_>) {
+    if source == PlaylistSource::Named {
+        return;
+    }
     let ResyncParts {
         library,
+        browse,
         player,
         playlist,
     } = parts;
@@ -331,4 +336,5 @@ pub(crate) fn resync_playlist(parts: ResyncParts<'_>) {
     playlist.relist(tracks, anchor);
     playlist.play_order =
         std::mem::replace(&mut playlist.play_order, PlayOrder::Linear).without_order();
+    browse.cursor = browse.cursor.resize(playlist.tracks.len());
 }

@@ -10,26 +10,12 @@ use crate::{
         job::AudioJob,
         source::{PreloadMode, TrackSource},
     },
-    engine::phase::CurrentTrack,
     gain::Gain,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SinkRole {
-    Primary,
-    Outgoing,
-    Incoming,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum PreloadKind {
-    Gapless(PathBuf),
-    Crossfade(CurrentTrack),
-}
-
 #[derive(Debug, PartialEq)]
 pub enum EngineEffect {
-    Mute,
+    Silence,
     Open {
         device: OutputDevice,
         speed: Speed,
@@ -66,15 +52,12 @@ pub enum EngineEffect {
     DropOutgoing,
     SetSpeed(Speed),
     Clear(Speed),
-    Preload {
-        path: PathBuf,
-        mode: PreloadMode,
-    },
+    Preload(PreloadMode),
     RestartGapless(PathBuf),
     Promote(Gain),
     Run(AudioJob),
     Report,
-    Advance,
+    Advance(Gain),
     Stage(TrackSource),
     Attach(TrackSource),
     TakeSignals(Revision),

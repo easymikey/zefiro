@@ -4,6 +4,7 @@ pub mod bounded;
 pub mod chord;
 pub mod config;
 pub mod crossfade;
+pub mod cue;
 pub mod cursor;
 pub mod cursor_over;
 pub mod device;

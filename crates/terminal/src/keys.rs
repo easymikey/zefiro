@@ -21,17 +21,23 @@ const JCUKEN_LAYOUT: &str =
 const QWERTY_LAYOUT: &str =
     "qwertyuiop[]asdfghjkl;'zxcvbnm,./QWERTYUIOP{}ASDFGHJKL:\"ZXCVBNM<>?";
 
-fn normalized(mut event: KeyEvent) -> KeyEvent {
+fn normalized(event: KeyEvent) -> KeyEvent {
     if let CrosstermCode::Char(character) = event.code {
-        event.code = CrosstermCode::Char(
-            JCUKEN_LAYOUT
-                .chars()
-                .position(|cyrillic| cyrillic == character)
-                .and_then(|index| QWERTY_LAYOUT.chars().nth(index))
-                .unwrap_or(character),
-        );
+        KeyEvent {
+            code: CrosstermCode::Char(qwerty_char(character)),
+            ..event
+        }
+    } else {
+        event
     }
-    event
+}
+
+fn qwerty_char(character: char) -> char {
+    Some(character)
+        .filter(|typed| !typed.is_ascii())
+        .and_then(|typed| JCUKEN_LAYOUT.chars().position(|cyrillic| cyrillic == typed))
+        .and_then(|index| QWERTY_LAYOUT.chars().nth(index))
+        .unwrap_or(character)
 }
 
 fn to_key(event: KeyEvent) -> Option<Key> {
@@ -99,7 +105,7 @@ mod tests {
         NotReported,
     }
 
-    struct ShiftCase {
+    struct ShiftRow {
         code: CrosstermCode,
         modifiers: KeyModifiers,
         expected_code: KeyCode,
@@ -107,28 +113,28 @@ mod tests {
     }
 
     #[rstest]
-    #[case::shifted_uppercase_char_reports_shift_false(ShiftCase {
+    #[case::shifted_uppercase_char_reports_shift_false(ShiftRow {
         code: CrosstermCode::Char('H'),
         modifiers: KeyModifiers::SHIFT,
         expected_code: KeyCode::Char('H'),
         expected_shift: Shift::NotReported,
     })]
-    #[case::shifted_arrow_reports_shift_true(ShiftCase {
+    #[case::shifted_arrow_reports_shift_true(ShiftRow {
         code: CrosstermCode::Up,
         modifiers: KeyModifiers::SHIFT,
         expected_code: KeyCode::Up,
         expected_shift: Shift::Reported,
     })]
-    #[case::unshifted_lowercase_char_unchanged(ShiftCase {
+    #[case::unshifted_lowercase_char_unchanged(ShiftRow {
         code: CrosstermCode::Char('h'),
         modifiers: KeyModifiers::NONE,
         expected_code: KeyCode::Char('h'),
         expected_shift: Shift::NotReported,
     })]
     fn shift_is_reported_only_when_the_code_carries_no_built_in_case(
-        #[case] row: ShiftCase,
+        #[case] row: ShiftRow,
     ) {
-        let ShiftCase {
+        let ShiftRow {
             code,
             modifiers,
             expected_code,
@@ -164,13 +170,13 @@ mod tests {
     #[case('э', '\'')]
     #[case('б', ',')]
     #[case('ю', '.')]
-    #[case('.', '/')]
+    #[case('.', '.')]
     #[case('Х', '{')]
     #[case('Ж', ':')]
     #[case('Э', '"')]
     #[case('Б', '<')]
     #[case('Ю', '>')]
-    #[case(',', '?')]
+    #[case(',', ',')]
     fn layout_translation_covers_the_punctuation_keys(
         #[case] ru: char,
         #[case] en: char,

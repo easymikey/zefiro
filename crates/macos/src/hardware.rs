@@ -8,14 +8,7 @@ use kernel::{
 };
 use objc2_core_audio::AudioObjectID;
 
-use crate::driver::MacosEffect;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HardwarePoll {
-    pub(crate) tracked_device: AudioObjectID,
-    pub(crate) current_device: AudioObjectID,
-    pub(crate) volume: Option<Percent>,
-}
+use crate::{effect::MacosEffect, message::HardwarePoll};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HardwareMessage {
@@ -32,7 +25,10 @@ pub(crate) struct Hardware {
 
 impl Hardware {
     fn heard_volume(&mut self, polled: Percent) -> Option<MacosEvent> {
-        if self.pending == Some(polled) {
+        let echo = self
+            .pending
+            .is_some_and(|pending| pending.get().abs_diff(polled.get()) <= 1);
+        if echo {
             self.pending = None;
             self.last_reported = Some(polled);
             return None;
@@ -40,6 +36,7 @@ impl Hardware {
         if self.last_reported == Some(polled) {
             return None;
         }
+        self.pending = None;
         self.last_reported = Some(polled);
         Some(MacosEvent::Volume(polled))
     }
@@ -91,8 +88,9 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        driver::MacosEffect,
-        hardware::{Hardware, HardwareMessage, HardwarePoll},
+        effect::MacosEffect,
+        hardware::{Hardware, HardwareMessage},
+        message::HardwarePoll,
     };
 
     fn percent(level: u8) -> Percent {
@@ -135,6 +133,16 @@ mod tests {
         vec![Cmd::none()]
     )]
     #[case::the_echo(after_our_write(), vec![poll((1, 1), Some(40))], vec![Cmd::none()])]
+    #[case::a_quantised_echo(
+        after_our_write(),
+        vec![poll((1, 1), Some(39)), poll((1, 1), Some(39))],
+        vec![Cmd::none(), Cmd::none()]
+    )]
+    #[case::a_change_by_someone_else_drops_the_held_write(
+        after_our_write(),
+        vec![poll((1, 1), Some(55)), poll((1, 1), Some(40))],
+        vec![reported(55), reported(40)]
+    )]
     #[case::the_same_value_again_afterwards(
         after_our_write(),
         vec![poll((1, 1), Some(40)), poll((1, 1), Some(40))],

@@ -11,11 +11,8 @@ use crate::{
         track::TrackRef,
         workspace::Workspace,
     },
-    message::{HistoryRequest, Message, QueueRequest},
-    update::{
-        machine::{Machine, Unhandled},
-        overlay::{OverlayContentMessage, OverlayMessage, OverlayParts},
-    },
+    message::{Message, QueueRequest},
+    update::machine::{Machine, Unhandled},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,29 +61,7 @@ impl Machine for CursorOver<()> {
     }
 }
 
-pub(crate) fn request(
-    parts: &mut OverlayParts<'_>,
-    request: HistoryRequest,
-) -> Result<Cmd, Unhandled> {
-    let len = parts.history.len();
-    let message = match request {
-        HistoryRequest::Navigate(direction) => {
-            HistoryMessage::Navigate { direction, len }
-        }
-        HistoryRequest::Top => HistoryMessage::Top,
-        HistoryRequest::Bottom => HistoryMessage::Bottom(len),
-        HistoryRequest::Enqueue => HistoryMessage::Enqueue(pick(
-            parts.workspace,
-            parts.history,
-            parts.playlist,
-        )),
-    };
-    parts.workspace.overlay.transition(OverlayMessage::Inner(
-        OverlayContentMessage::History(message),
-    ))
-}
-
-fn pick(
+pub(crate) fn pick(
     workspace: &Workspace,
     history: &[HistoryEntry],
     playlist: &Playlist,

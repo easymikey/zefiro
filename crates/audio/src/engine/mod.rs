@@ -30,10 +30,10 @@ pub(crate) mod tests {
     use proptest::test_runner::TestCaseError;
 
     use crate::{
-        deck::{DeviceChoice, DeviceOpened, source::PreloadMode},
+        deck::source::PreloadMode,
         engine::{
-            effect::{EngineEffect, PreloadKind},
-            message::EngineMessage,
+            effect::EngineEffect,
+            message::{DeviceChoice, DeviceOpened, EngineMessage},
             phase::{
                 CurrentTrack,
                 Fade,
@@ -45,7 +45,7 @@ pub(crate) mod tests {
                 Playing,
                 Resume,
             },
-            state::{Closed, Engine, Live, PerformedRevisions},
+            state::{Closed, Engine, ExecutedRevisions, Live},
         },
     };
 
@@ -326,9 +326,9 @@ pub(crate) mod tests {
 
     pub(crate) fn loaded_at(live: Live, revision: Revision) -> Live {
         Live {
-            performed: PerformedRevisions {
+            executed: ExecutedRevisions {
                 load: revision,
-                ..live.performed
+                ..live.executed
             },
             ..live
         }
@@ -343,7 +343,10 @@ pub(crate) mod tests {
         };
         Live {
             phase: Phase::Playing(Playing {
-                next: Next::Preloading(path.into()),
+                next: Next::Preloading {
+                    path: path.into(),
+                    gain: None,
+                },
                 ..playing
             }),
             ..live
@@ -351,31 +354,32 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn installed(preload: CurrentTrack) -> EngineMessage {
-        EngineMessage::Preloaded(PreloadKind::Crossfade(preload))
+        EngineMessage::Preloaded(PreloadMode::Crossfade {
+            track: preload,
+            speed: Speed::default(),
+        })
     }
 
     pub(crate) fn gapless_preload(path: &str) -> Cmd<EngineEffect, AudioEvent> {
-        Cmd::effect(EngineEffect::Preload {
-            path: path.into(),
-            mode: PreloadMode::Gapless,
-        })
+        Cmd::effect(EngineEffect::Preload(PreloadMode::Gapless(path.into())))
     }
 
     pub(crate) fn crossfade_preload(path: &str) -> Cmd<EngineEffect, AudioEvent> {
-        Cmd::effect(EngineEffect::Preload {
-            path: path.into(),
-            mode: PreloadMode::Crossfade {
+        Cmd::effect(EngineEffect::Preload(PreloadMode::Crossfade {
+            track: CurrentTrack {
+                total: None,
                 gain: None,
-                speed: Speed::default(),
+                path: path.into(),
             },
-        })
+            speed: Speed::default(),
+        }))
     }
 
     pub(crate) fn preloaded_at(live: Live, revision: Revision) -> Live {
         Live {
-            performed: PerformedRevisions {
+            executed: ExecutedRevisions {
                 incoming: revision,
-                ..live.performed
+                ..live.executed
             },
             ..live
         }
@@ -409,14 +413,12 @@ pub(crate) mod tests {
 
     pub(crate) struct EngineRow {
         pub(crate) next: Engine,
-        pub(crate) effect: Cmd<EngineEffect, AudioEvent>,
+        pub(crate) effect: Result<Cmd<EngineEffect, AudioEvent>, Unhandled>,
     }
 
     pub(crate) fn assert_cell(start: Engine, message: EngineMessage, moved: EngineRow) {
         let mut state = start;
-        let effect = state
-            .transition(message)
-            .unwrap_or_else(|Unhandled| Cmd::none());
+        let effect = state.transition(message);
         let EngineRow {
             next,
             effect: expected,

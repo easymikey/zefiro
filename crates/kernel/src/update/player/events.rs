@@ -1,8 +1,9 @@
 use std::{mem, sync::Arc, time::Duration};
 
 use crate::{
-    cmd::{AudioCmd, Cmd, CoverJob, Effect, LibraryCmd, PlaybackChange, TrackLoad},
+    cmd::{AudioCmd, Cmd, CoverJob, Effect, LibraryCmd, TrackLoad},
     domain::{
+        cue::PlaybackChange,
         geometry::Pixels,
         player::{PausedBy, Player, Preload},
         playhead::Playhead,
@@ -13,7 +14,10 @@ use crate::{
     message::AudioError,
     update::{
         machine::Unhandled,
-        player::{Anchor, Stamp, StartOrigin, handover_effects, seek_effect},
+        player::{
+            effects::{handover_effects, seek_effect},
+            stamp::{Anchor, Stamp, StartOrigin},
+        },
     },
 };
 

@@ -7,9 +7,9 @@ use ratatui::{
 
 use crate::{
     card::CardCover,
-    key_hints::KeyHintsWidget,
+    key_hints::{KeyHintsView, KeyHintsWidget},
     overlay::layer::{OverlayView, OverlayWidget},
-    playlist::pane::PlaylistWidget,
+    playlist::row::PlaylistWidget,
     primitive::canvas::Canvas,
     scene::Scene,
     screen::{
@@ -57,12 +57,12 @@ impl Widget for &ScreenWidget<'_> {
         let layout = self.layout;
         match layout.breakpoint {
             Breakpoint::TooSmall => {
-                let breakpoints = self.scene.appearance().breakpoints;
+                let breakpoints = self.scene.appearance.breakpoints;
                 (&TooSmallWidget {
                     theme,
                     minimum: Size::new(
-                        breakpoints.min_columns.0,
-                        breakpoints.min_rows.0,
+                        breakpoints.min_width.0,
+                        breakpoints.min_height.0,
                     ),
                 })
                     .render(layout.screen, buffer);
@@ -97,7 +97,7 @@ impl ScreenWidget<'_> {
         let theme = scene.active_theme();
         if let Some(areas) = self.layout.playlist {
             PlaylistWidget {
-                view: crate::playlist::pane::PlaylistView::from_scene(&scene),
+                view: crate::playlist::row::PlaylistView::from_scene(&scene),
                 theme,
             }
             .paint(&areas, buffer);
@@ -105,7 +105,7 @@ impl ScreenWidget<'_> {
         if let Some(hints) = self.layout.key_hints {
             (&KeyHintsWidget {
                 theme,
-                content: scene.key_hints(),
+                view: KeyHintsView::from_scene(&scene),
             })
                 .render(hints, buffer);
         }
@@ -113,15 +113,18 @@ impl ScreenWidget<'_> {
 
     fn paint_layers(&self, buffer: &mut Buffer) {
         let screen = self.layout.screen;
-        if self.layout.overlay.is_some() {
-            Widget::render(
-                &OverlayWidget::placed(
-                    OverlayView::from_scene(&self.scene),
-                    self.layout,
-                    self.scene.cover_mode(),
-                ),
-                screen,
-                buffer,
+        if let Some(areas) = self.layout.overlay {
+            OverlayWidget::placed(
+                OverlayView::from_scene(&self.scene),
+                self.layout,
+                self.scene.cover_mode(),
+            )
+            .paint(
+                areas,
+                Canvas {
+                    area: screen,
+                    buffer: &mut *buffer,
+                },
             );
         }
         if let Some((toast, areas)) =

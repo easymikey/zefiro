@@ -1,4 +1,4 @@
-use kernel::domain::{geometry::Cells, time::Moment};
+use kernel::domain::time::Moment;
 use ratatui::{layout::Rect, style::Color};
 use runtime::repaint::FRAME_INTERVAL;
 use widgets::{
@@ -13,7 +13,6 @@ pub(crate) struct Motion {
     pub(in crate::shell) area: Rect,
     pub(in crate::shell) spectrum_smoothing: SpectrumSmoothing,
     pub(in crate::shell) spectrum_advanced_at: Moment,
-    pub(in crate::shell) playlist_body_height: Cells,
     pub(in crate::shell) crossfade_gate: CrossfadeGate,
     pub(in crate::shell) on_screen: OnScreen,
     pub(in crate::shell) screen_clear: ScreenClear,
@@ -34,7 +33,6 @@ impl Default for Motion {
             area: Rect::default(),
             spectrum_smoothing: SpectrumSmoothing::default(),
             spectrum_advanced_at: Moment::default(),
-            playlist_body_height: Cells(0),
             crossfade_gate: CrossfadeGate::default(),
             on_screen: OnScreen {
                 progress_bar: None,

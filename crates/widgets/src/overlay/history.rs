@@ -1,7 +1,7 @@
 use kernel::domain::{
     geometry::Cells,
     history::HistoryEntry,
-    index::ViewIndex,
+    index::RowIndex,
     time::Moment,
 };
 use ratatui::{
@@ -17,10 +17,10 @@ use crate::{
     overlay::modal::{
         metrics::{COLUMN_SPACING, ModalRowStyle, modal_title},
         placement::{
+            ModalContainer,
             ModalPlacement,
             ModalScrollAreas,
             OverlayAreas,
-            OverlayContainer,
             column_width,
             indented,
             leading_cells,
@@ -30,7 +30,7 @@ use crate::{
         canvas::Canvas,
         glyphs,
         inset::Inset,
-        list_chrome::{ScrollbarTrack, paint_scrollbar, scroll_offset},
+        list_chrome::{Scrollbar, paint_scrollbar, scroll_offset},
         relative_time::relative_time,
         span::{line, text},
         text::truncate,
@@ -43,22 +43,23 @@ pub(crate) struct HistoryWidget<'a> {
     pub(crate) theme: ActiveTheme<'a>,
     pub(crate) entries: &'a [HistoryEntry],
     pub(crate) now: Moment,
-    pub(crate) selected: ViewIndex,
-    pub(crate) container: OverlayContainer<'a>,
+    pub(crate) selected: RowIndex,
+    pub(crate) container: ModalContainer<'a>,
 }
 
 impl HistoryWidget<'_> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::List(self.placement().areas(screen))
+        OverlayAreas::List(self.placement(&self.labels()).areas(screen))
     }
 
-    fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
+    pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
         let OverlayAreas::List(areas) = areas else {
             return;
         };
         let Canvas { area, buffer } = canvas;
-        self.placement().paint(
+        let labels = self.labels();
+        self.placement(&labels).paint(
             areas,
             Canvas {
                 area,
@@ -75,18 +76,28 @@ impl HistoryWidget<'_> {
                 .render(areas.content, buffer);
             return;
         }
-        self.paint_rows(areas, buffer);
+        self.paint_rows(
+            LabeledRows {
+                areas,
+                labels: &labels,
+            },
+            buffer,
+        );
     }
 
-    fn placement(&self) -> ModalPlacement<'_> {
+    fn labels(&self) -> Vec<String> {
+        self.entries.iter().map(played_label).collect()
+    }
+
+    fn placement(&self, labels: &[String]) -> ModalPlacement<'_> {
         let theme = self.theme;
-        let measures = HistoryMeasures::of(self.entries);
+        let measures = HistoryMeasures::of(labels);
         ModalPlacement {
             inset: Inset::overlay(),
             container: self.container,
             border_title: modal_title(
                 glyphs::history::TITLE_WORD,
-                format!("{} tracks", self.entries.len()),
+                track_count_text(self.entries.len()),
                 ModalRowStyle::from_theme(&theme),
             ),
             modal_title: glyphs::history::TITLE_WORD,
@@ -97,7 +108,8 @@ impl HistoryWidget<'_> {
         }
     }
 
-    fn paint_rows(&self, areas: ModalScrollAreas, buffer: &mut Buffer) {
+    fn paint_rows(&self, rows: LabeledRows<'_>, buffer: &mut Buffer) {
+        let LabeledRows { areas, labels } = rows;
         let style = ModalRowStyle::from_theme(&self.theme);
         let table_area = areas.rows;
         let lead = leading_cells(&areas).0;
@@ -106,10 +118,11 @@ impl HistoryWidget<'_> {
         let columns = HistoryColumns::for_width(column_width(&areas), COLUMN_SPACING);
         let offset = scroll_offset(self.selected.get(), total, height);
         let table = Table::new(
-            self.entries.iter().map(|played| {
+            self.entries.iter().zip(labels).map(|(played, label)| {
                 entry_row(
                     &EntryRow {
                         played,
+                        label,
                         columns,
                         lead,
                     },
@@ -128,12 +141,12 @@ impl HistoryWidget<'_> {
 
         paint_scrollbar(
             areas.scrollbar,
-            ScrollbarTrack {
+            Scrollbar {
                 total,
                 offset,
                 viewport: height,
                 thumb: style.border,
-                track: style.muted_foreground,
+                groove: style.muted_foreground,
             },
             buffer,
         );
@@ -144,6 +157,15 @@ impl Widget for &HistoryWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         self.paint(self.areas(area), Canvas { area, buffer });
     }
+}
+
+fn track_count_text(tracks: usize) -> String {
+    let noun = if tracks == 1 {
+        glyphs::history::TRACK_SINGULAR
+    } else {
+        glyphs::history::TRACK_PLURAL
+    };
+    format!("{tracks} {noun}")
 }
 
 fn played_label(played: &HistoryEntry) -> String {
@@ -171,12 +193,8 @@ struct HistoryMeasures {
 }
 
 impl HistoryMeasures {
-    fn of(view: &[HistoryEntry]) -> Self {
-        let widest = view
-            .iter()
-            .map(|played| played_label(played).width())
-            .max()
-            .unwrap_or(0);
+    fn of(labels: &[String]) -> Self {
+        let widest = labels.iter().map(|label| label.width()).max().unwrap_or(0);
         Self {
             label: Cells(u16::try_from(widest).unwrap_or(u16::MAX)),
         }
@@ -230,8 +248,15 @@ impl HistoryColumns {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct LabeledRows<'a> {
+    areas: ModalScrollAreas,
+    labels: &'a [String],
+}
+
 struct EntryRow<'a> {
     played: &'a HistoryEntry,
+    label: &'a str,
     columns: HistoryColumns,
     lead: u16,
 }
@@ -254,7 +279,7 @@ fn entry_cells(row: &EntryRow<'_>, now: Moment) -> [String; 2] {
     let columns = row.columns;
     let cell = |value: &str, width: Cells| truncate(value, width.count()).into_owned();
     [
-        indented(&played_label(row.played), Cells(row.lead), columns.label),
+        indented(row.label, Cells(row.lead), columns.label),
         cell(&when_label(row.played, now), columns.when),
     ]
 }
@@ -263,13 +288,13 @@ fn entry_cells(row: &EntryRow<'_>, now: Moment) -> [String; 2] {
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::{history::HistoryEntry, index::ViewIndex, time::Moment};
+    use kernel::domain::{history::HistoryEntry, index::RowIndex, time::Moment};
     use ratatui::layout::Rect;
 
     use crate::{
         overlay::{
             history::HistoryWidget,
-            modal::{metrics::ModalRowStyle, placement::OverlayContainer},
+            modal::{metrics::ModalRowStyle, placement::ModalContainer},
         },
         primitive::canvas::find_text,
         test_support::{noir, rendered},
@@ -312,8 +337,8 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
-            selected: ViewIndex::new(1),
-            container: OverlayContainer::Modal(&[]),
+            selected: RowIndex::new(1),
+            container: ModalContainer::Modal(&[]),
         };
         insta::assert_snapshot!(
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
@@ -333,18 +358,25 @@ mod tests {
             theme: active,
             entries: &entries,
             now: now(),
-            selected: ViewIndex::new(1),
-            container: OverlayContainer::Modal(&[]),
+            selected: RowIndex::new(1),
+            container: ModalContainer::Modal(&[]),
         };
         let buffer =
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
                 .clone();
-        let selection_bg = ModalRowStyle::from_theme(&active).selected_background;
+        let selection_background =
+            ModalRowStyle::from_theme(&active).selected_background;
         let (alpha_x, alpha_y) = find_text(&buffer, "Artist A — Alpha").unwrap();
         let (beta_x, beta_y) = find_text(&buffer, "Beta").unwrap();
-        assert_eq!(buffer[(beta_x, beta_y)].style().bg, Some(selection_bg));
-        assert_ne!(buffer[(alpha_x, alpha_y)].style().bg, Some(selection_bg));
+        assert_eq!(
+            buffer[(beta_x, beta_y)].style().bg,
+            Some(selection_background)
+        );
+        assert_ne!(
+            buffer[(alpha_x, alpha_y)].style().bg,
+            Some(selection_background)
+        );
         assert_eq!(alpha_x, beta_x);
     }
 
@@ -356,8 +388,8 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
-            selected: ViewIndex::new(0),
-            container: OverlayContainer::Pane(Rect::new(0, 0, 120, 40)),
+            selected: RowIndex::new(0),
+            container: ModalContainer::Playlist(Rect::new(0, 0, 120, 40)),
         };
         insta::assert_snapshot!(
             rendered(120, 40, |frame| frame.render_widget(&overlay, frame.area()))
@@ -373,8 +405,8 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
-            selected: ViewIndex::new(0),
-            container: OverlayContainer::Pane(Rect::new(0, 0, 120, 40)),
+            selected: RowIndex::new(0),
+            container: ModalContainer::Playlist(Rect::new(0, 0, 120, 40)),
         };
         let buffer =
             rendered(120, 40, |frame| frame.render_widget(&overlay, frame.area()))
@@ -395,8 +427,8 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
-            selected: ViewIndex::new(0),
-            container: OverlayContainer::Modal(&[]),
+            selected: RowIndex::new(0),
+            container: ModalContainer::Modal(&[]),
         };
         insta::assert_snapshot!(
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
@@ -412,8 +444,8 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
-            selected: ViewIndex::new(0),
-            container: OverlayContainer::Modal(&[]),
+            selected: RowIndex::new(0),
+            container: ModalContainer::Modal(&[]),
         };
         assert_eq!(
             rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()))

@@ -20,7 +20,12 @@ use crate::{
     update::{
         machine::{Machine, Unhandled},
         player,
-        player::{Anchor, PlaybackParts, PlayerMessage, Stamp},
+        player::{
+            PlaybackParts,
+            PlayerMessage,
+            stamp::{Anchor, Stamp},
+        },
+        successor::{Successor, first_queued, successor},
     },
 };
 
@@ -138,17 +143,6 @@ fn cursor_to(playlist: &mut Playlist, dequeued: ViewIndex) {
     playlist.cursor = Cursor::with_len(playlist.tracks.len()).at(dequeued.get());
 }
 
-fn first_queued<'a>(
-    playlist: &'a Playlist,
-    queue: &[TrackRef],
-) -> Option<(usize, ViewIndex, &'a Arc<Track>)> {
-    queue.iter().enumerate().find_map(|(position, source)| {
-        let index = playlist.index_of(source)?;
-        let track = playlist.tracks.get(index.get())?;
-        Some((position, index, track))
-    })
-}
-
 fn pop_queued_track(
     playlist: &mut Playlist,
     queue: &mut Vec<TrackRef>,
@@ -206,7 +200,7 @@ pub(crate) fn lookahead_fired(
         Freshness::Stale
     ) || !playback.player.is_playing()
     {
-        return Ok(Cmd::none());
+        return Err(Unhandled);
     }
     let offset = playback.player.position_at(now);
     let lookahead = player::lookahead(playback, now);
@@ -265,50 +259,6 @@ fn follow_playback(workspace: &mut Workspace, playlist: &Playlist) {
         workspace.browse.cursor =
             Cursor::with_len(playlist.tracks.len()).at(anchor.get());
     }
-}
-
-pub(crate) enum Successor {
-    Preloaded(Arc<Track>),
-    Repeating(Arc<Track>),
-    Queued {
-        position: usize,
-        index: ViewIndex,
-        track: Arc<Track>,
-    },
-    Following(Arc<Track>),
-    Nothing,
-}
-
-impl Successor {
-    pub(crate) fn track(&self) -> Option<&Arc<Track>> {
-        match self {
-            Successor::Preloaded(track)
-            | Successor::Repeating(track)
-            | Successor::Queued { track, .. }
-            | Successor::Following(track) => Some(track),
-            Successor::Nothing => None,
-        }
-    }
-}
-
-pub(crate) fn successor(playlist: &Playlist, queue: &[TrackRef]) -> Successor {
-    if matches!(playlist.repeat, RepeatMode::One) {
-        return playlist
-            .current()
-            .cloned()
-            .map_or(Successor::Nothing, Successor::Repeating);
-    }
-    if let Some((position, index, track)) = first_queued(playlist, queue) {
-        return Successor::Queued {
-            position,
-            index,
-            track: Arc::clone(track),
-        };
-    }
-    playlist
-        .upcoming()
-        .cloned()
-        .map_or(Successor::Nothing, Successor::Following)
 }
 
 fn move_onto(playlist: &mut Playlist, queue: &mut Vec<TrackRef>, pick: Successor) {

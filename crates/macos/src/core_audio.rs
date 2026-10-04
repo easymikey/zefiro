@@ -1,6 +1,13 @@
-use std::{ffi::c_void, mem, mem::MaybeUninit, ptr, ptr::NonNull};
+use std::{
+    ffi::c_void,
+    mem,
+    mem::MaybeUninit,
+    ptr,
+    ptr::NonNull,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
     domain::{bounded::Bounded, percent::Percent},
     message::OsStatus,
@@ -21,7 +28,7 @@ use objc2_core_audio::{
     kAudioObjectSystemObject,
 };
 
-use crate::driver::MacosMessage;
+use crate::message::MacosMessage;
 
 const SIZE_OVERFLOW_STATUS: OsStatus = OsStatus(-1);
 
@@ -45,14 +52,14 @@ enum Muted {
 
 #[derive(Debug)]
 pub(crate) struct HardwareWatch {
-    notify: *mut Sender<MacosMessage>,
+    notify: *mut (Sender<MacosMessage>, AtomicBool),
     device: AudioObjectID,
     stale: Vec<AudioObjectID>,
 }
 
 impl HardwareWatch {
     pub(crate) fn new(heard: Sender<MacosMessage>) -> Result<Self, Error> {
-        let notify = Box::into_raw(Box::new(heard));
+        let notify = Box::into_raw(Box::new((heard, AtomicBool::new(false))));
         let device = default_output_device();
         match add_listeners(notify.cast(), device) {
             Ok(()) => Ok(Self {
@@ -66,6 +73,11 @@ impl HardwareWatch {
                 Err(error)
             }
         }
+    }
+
+    pub(crate) fn resend(&self) {
+        // SAFETY: `notify` stays boxed until `drop`.
+        resend(unsafe { &*self.notify });
     }
 
     pub(crate) fn tracked_device(&self) -> AudioObjectID {
@@ -285,26 +297,61 @@ extern "C-unwind" fn on_property_changed(
     _addresses: NonNull<AudioObjectPropertyAddress>,
     client_data: *mut c_void,
 ) -> i32 {
-    // SAFETY: `client_data` is the `Sender<MacosMessage>` boxed by `new`.
-    let heard = unsafe { &*client_data.cast::<Sender<MacosMessage>>() };
-    match heard.try_send(MacosMessage::HardwareChanged) {
-        Ok(()) | Err(_) => {}
-    }
+    // SAFETY: `client_data` is the sender and latch boxed by `new`.
+    hear(unsafe { &*client_data.cast::<(Sender<MacosMessage>, AtomicBool)>() });
     0
+}
+
+fn hear(notify: &(Sender<MacosMessage>, AtomicBool)) {
+    let (heard, missed) = notify;
+    match heard.try_send(MacosMessage::HardwareChanged) {
+        Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+        Err(TrySendError::Full(_)) => missed.store(true, Ordering::Release),
+    }
+}
+
+fn resend(notify: &(Sender<MacosMessage>, AtomicBool)) {
+    if notify.1.swap(false, Ordering::AcqRel) {
+        hear(notify);
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicBool;
+
     use kernel::domain::{bounded::Bounded, percent::Percent};
     use rstest::rstest;
 
-    use crate::core_audio::{
-        Muted,
-        default_output_device,
-        mute_change,
-        read_volume,
-        write_volume,
+    use crate::{
+        core_audio::{
+            Muted,
+            default_output_device,
+            hear,
+            mute_change,
+            read_volume,
+            resend,
+            write_volume,
+        },
+        message::MacosMessage,
     };
+
+    #[test]
+    fn a_change_heard_while_the_channel_is_full_is_sent_again() {
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        let notify = (sender, AtomicBool::new(false));
+        notify.0.send(MacosMessage::Watched).unwrap();
+        hear(&notify);
+        assert!(matches!(receiver.try_recv(), Ok(MacosMessage::Watched)));
+        assert!(receiver.is_empty());
+        resend(&notify);
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(MacosMessage::HardwareChanged)
+        ));
+        resend(&notify);
+        assert!(receiver.is_empty());
+    }
 
     #[rstest]
     #[case::silence_mutes_an_audible_device(0, Muted::No, Some(1))]

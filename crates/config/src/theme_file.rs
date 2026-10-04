@@ -9,12 +9,12 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, expecting = "a [colors] table of hex colours")]
 pub struct TomlColors {
-    #[serde(rename = "bg", deserialize_with = "from_str_field")]
+    #[serde(deserialize_with = "from_str_field")]
     pub background: Rgb,
-    #[serde(rename = "fg", deserialize_with = "from_str_field")]
+    #[serde(deserialize_with = "from_str_field")]
+    pub muted_foreground: Rgb,
+    #[serde(deserialize_with = "from_str_field")]
     pub foreground: Rgb,
-    #[serde(rename = "bright_fg", deserialize_with = "from_str_field")]
-    pub bright_foreground: Rgb,
     #[serde(deserialize_with = "from_str_field")]
     pub accent: Rgb,
     #[serde(deserialize_with = "from_str_field")]
@@ -23,11 +23,11 @@ pub struct TomlColors {
     pub yellow: Rgb,
     #[serde(deserialize_with = "from_str_field")]
     pub red: Rgb,
-    #[serde(default, rename = "window_bg", deserialize_with = "from_str_option")]
+    #[serde(default, deserialize_with = "from_str_option")]
     pub window_background: Option<Rgb>,
 }
 
-const DEFAULT_SCANNING_LABEL: &str = "scanning…";
+pub const DEFAULT_SCANNING_LABEL: &str = "scanning…";
 
 fn theme_name<'de, D>(deserializer: D) -> Result<ThemeName, D::Error>
 where
@@ -52,11 +52,6 @@ pub struct TomlTheme {
     pub colors: TomlColors,
     #[serde(default = "default_scanning_label")]
     pub scanning_label: String,
-}
-
-#[must_use]
-pub fn theme_file_name(name: &str) -> String {
-    format!("{name}.toml")
 }
 
 pub fn parse_theme(source: &str, name: &str) -> Result<TomlTheme, Error> {
@@ -88,19 +83,19 @@ mod tests {
     #[case::an_unknown_top_level_key(
         "unknown_top_level_key",
         "name = \"x\"\nbogus = 1\n[colors]\n\
-         bg = \"#000000\"\nfg = \"#000000\"\nbright_fg = \"#000000\"\naccent = \"#000000\"\n\
+         background = \"#000000\"\nmuted_foreground = \"#000000\"\nforeground = \"#000000\"\naccent = \"#000000\"\n\
          green = \"#000000\"\nyellow = \"#000000\"\nred = \"#000000\"\n"
     )]
     #[case::an_unknown_color_key(
         "unknown_color_key",
         "name = \"x\"\n[colors]\n\
-         bg = \"#000000\"\nfg = \"#000000\"\nbright_fg = \"#000000\"\naccent = \"#000000\"\n\
-         green = \"#000000\"\nyellow = \"#000000\"\nred = \"#000000\"\nselection_bg = \"#ffd23f\"\n"
+         background = \"#000000\"\nmuted_foreground = \"#000000\"\nforeground = \"#000000\"\naccent = \"#000000\"\n\
+         green = \"#000000\"\nyellow = \"#000000\"\nred = \"#000000\"\nselection_background = \"#ffd23f\"\n"
     )]
     #[case::an_invalid_hex_value(
         "invalid_hex_value",
         "name = \"x\"\n[colors]\n\
-         bg = \"#zzzzzz\"\nfg = \"#000000\"\nbright_fg = \"#000000\"\naccent = \"#000000\"\n\
+         background = \"#zzzzzz\"\nmuted_foreground = \"#000000\"\nforeground = \"#000000\"\naccent = \"#000000\"\n\
          green = \"#000000\"\nyellow = \"#000000\"\nred = \"#000000\"\n"
     )]
     fn a_strict_parse_rejects_what_it_does_not_recognise(
@@ -117,7 +112,8 @@ mod tests {
     #[test]
     fn a_broken_theme_names_its_own_file_and_line() {
         let error =
-            parse_theme("[colors]\nbg = \"#000000\"\n[colors]\n", "noir").unwrap_err();
+            parse_theme("[colors]\nbackground = \"#000000\"\n[colors]\n", "noir")
+                .unwrap_err();
         let text = error.to_string();
 
         assert_eq!(text.lines().nth(1), Some("noir.toml:3"));
@@ -132,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn an_explicit_window_bg_key_is_carried_through_as_data() {
+    fn an_explicit_window_background_key_is_carried_through_as_data() {
         let theme =
             parse_theme(include_str!("../../../themes/gruvbox.toml"), "gruvbox")
                 .unwrap();

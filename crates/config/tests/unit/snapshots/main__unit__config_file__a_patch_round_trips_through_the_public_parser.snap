@@ -3,7 +3,7 @@ source: crates/config/tests/unit/config_file.rs
 assertion_line: 28
 expression: round_tripped
 ---
-TomlConfig {
+TomlSettings {
     music_dir: Some(
         "/music",
     ),

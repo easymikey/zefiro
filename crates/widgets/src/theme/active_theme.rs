@@ -4,7 +4,7 @@ use kernel::domain::appearance::Rgb;
 use ratatui::style::Color;
 
 use crate::{
-    primitive::bar::ProgressBar,
+    appearance::ProgressBar,
     theme::{
         Theme,
         colors::Role,
@@ -16,7 +16,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProgressStyle {
     pub(crate) fill: Color,
-    pub(crate) track: Color,
+    pub(crate) groove: Color,
 }
 
 impl ProgressStyle {
@@ -24,8 +24,8 @@ impl ProgressStyle {
     pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         Self {
             fill: theme.color(theme.fill.unwrap_or(theme.colors.role(Role::Accent))),
-            track: theme
-                .color(theme.track.unwrap_or(theme.colors.role(Role::BarGroove))),
+            groove: theme
+                .color(theme.groove.unwrap_or(theme.colors.role(Role::BarGroove))),
         }
     }
 }
@@ -33,7 +33,7 @@ impl ProgressStyle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct VolumeStyle {
     pub(crate) fill: Color,
-    pub(crate) track: Color,
+    pub(crate) groove: Color,
 }
 
 impl VolumeStyle {
@@ -41,7 +41,7 @@ impl VolumeStyle {
     pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         Self {
             fill: theme.role(Role::Accent),
-            track: theme.role(Role::BarGroove),
+            groove: theme.role(Role::BarGroove),
         }
     }
 }
@@ -51,7 +51,7 @@ pub struct ActiveTheme<'a> {
     pub(crate) theme: &'a Theme,
     pub(crate) color_depth: ColorDepth,
     fill: Option<Rgb>,
-    track: Option<Rgb>,
+    groove: Option<Rgb>,
     pub volume_pulse_mix: f32,
 }
 
@@ -62,7 +62,7 @@ impl<'a> ActiveTheme<'a> {
             theme,
             color_depth,
             fill: None,
-            track: None,
+            groove: None,
             volume_pulse_mix: 0.0,
         }
     }
@@ -71,7 +71,7 @@ impl<'a> ActiveTheme<'a> {
     pub(crate) fn with_progress(self, progress: ProgressBar) -> Self {
         Self {
             fill: progress.fill,
-            track: progress.groove,
+            groove: progress.groove,
             ..self
         }
     }
@@ -142,7 +142,7 @@ mod tests {
     use ratatui::style::Color;
 
     use crate::{
-        primitive::bar::ProgressBar,
+        appearance::ProgressBar,
         test_support::noir,
         theme::{
             Theme,
@@ -181,7 +181,10 @@ mod tests {
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let progress = ProgressStyle::from_theme(&active);
         let volume = VolumeStyle::from_theme(&active);
-        assert_eq!((progress.fill, progress.track), (volume.fill, volume.track));
+        assert_eq!(
+            (progress.fill, progress.groove),
+            (volume.fill, volume.groove)
+        );
         assert_eq!(progress.fill, active.role(Role::Accent));
     }
 
@@ -197,7 +200,10 @@ mod tests {
         let progress = ProgressStyle::from_theme(&active);
         let volume = VolumeStyle::from_theme(&active);
         assert_eq!(progress.fill, Color::Rgb(255, 0, 0));
-        assert_eq!(progress.track, Color::Rgb(0, 255, 0));
-        assert_ne!((progress.fill, progress.track), (volume.fill, volume.track));
+        assert_eq!(progress.groove, Color::Rgb(0, 255, 0));
+        assert_ne!(
+            (progress.fill, progress.groove),
+            (volume.fill, volume.groove)
+        );
     }
 }

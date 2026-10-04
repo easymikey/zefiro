@@ -6,9 +6,9 @@ use config::{
 };
 use kernel::domain::geometry::Cells;
 use widgets::{
-    appearance::Appearance,
+    appearance::{Appearance, ProgressBar},
     geometry::CoverCells,
-    primitive::bar::ProgressBar,
+    key_hints::KeyHintChords,
     scene::PixelPath,
     screen::breakpoint::Breakpoints,
     spectrum::Spectrum,
@@ -27,13 +27,14 @@ pub(crate) struct ShellPresentation {
     pub(in crate::shell) cell_aspect: f32,
     pub(in crate::shell) home: Option<PathBuf>,
     pub(in crate::shell) spectrum: Spectrum,
+    pub(in crate::shell) key_hint_chords: KeyHintChords,
 }
 
 pub(in crate::shell) fn theme(raw: TomlTheme) -> Theme {
     let TomlColors {
         background,
+        muted_foreground,
         foreground,
-        bright_foreground,
         accent,
         green,
         yellow,
@@ -42,8 +43,8 @@ pub(in crate::shell) fn theme(raw: TomlTheme) -> Theme {
     } = raw.colors;
     let seed = ThemeBase {
         background,
+        muted_foreground,
         foreground,
-        bright_foreground,
         accent,
         green,
         yellow,
@@ -60,19 +61,19 @@ pub(in crate::shell) fn theme(raw: TomlTheme) -> Theme {
 pub(crate) fn appearance(raw: &TomlAppearance) -> Appearance {
     Appearance {
         cover_cells: CoverCells {
-            width: Cells(raw.cover.text_cells.width),
-            height: Cells(raw.cover.text_cells.height),
+            width: Cells(raw.cover.cover_cells.width),
+            height: Cells(raw.cover.cover_cells.height),
         },
         breakpoints: Breakpoints {
             full_min_width: Cells(raw.layout.full_min_width),
             full_min_height: Cells(raw.layout.full_min_height),
             compact_min_width: Cells(raw.layout.compact_min_width),
             compact_min_height: Cells(raw.layout.compact_min_height),
-            min_columns: Cells(raw.layout.min_columns),
-            min_rows: Cells(raw.layout.min_rows),
+            min_width: Cells(raw.layout.min_width),
+            min_height: Cells(raw.layout.min_height),
         },
         progress: ProgressBar {
-            height: raw.progress.height_px,
+            height: raw.progress.height,
             radius: raw.progress.radius,
             fill: raw.progress.fill,
             groove: raw.progress.groove,
@@ -90,5 +91,6 @@ pub(in crate::shell) fn test_presentation() -> ShellPresentation {
         cell_aspect: widgets::geometry::DEFAULT_CELL_ASPECT,
         home: None,
         spectrum: [0.0; widgets::spectrum::SPECTRUM_BANDS],
+        key_hint_chords: KeyHintChords::default(),
     }
 }

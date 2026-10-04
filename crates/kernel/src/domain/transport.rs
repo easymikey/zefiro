@@ -46,6 +46,6 @@ impl Default for Transport {
     }
 }
 
-pub(crate) const SEEK_SMALL: Duration = Duration::from_secs(5);
-pub(crate) const SEEK_MEDIUM: Duration = Duration::from_secs(10);
-pub(crate) const SEEK_LARGE: Duration = Duration::from_secs(30);
+pub const SEEK_SMALL: Duration = Duration::from_secs(5);
+pub const SEEK_MEDIUM: Duration = Duration::from_secs(10);
+pub const SEEK_LARGE: Duration = Duration::from_secs(30);

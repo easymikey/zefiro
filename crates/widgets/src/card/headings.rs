@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use kernel::domain::{player::Player, transport::Output};
 use ratatui::{
     buffer::Buffer,
@@ -98,12 +96,8 @@ pub(crate) fn status_label(status: CardStatus) -> StatusLabel {
 pub(crate) fn paint(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetrics) {
     let style = CardStyle::from_theme(&card.theme);
 
-    let current = card.view.displayed_track;
-    let title: Cow<'_, str> =
-        current.map_or_else(|| "No track".into(), |track| track.song_title().into());
-    let artist = current
-        .and_then(|track| track.tags().artist.as_deref())
-        .unwrap_or("");
+    let title = card.view.title();
+    let artist = card.view.artist();
 
     let status = card_status(card.view.output, card.view.player);
     let status_color = style.status_color(status);
@@ -122,7 +116,7 @@ pub(crate) fn paint(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMe
             .into();
     Paragraph::new(title_span).render(metrics.title_row, buffer);
 
-    let artist_span: Span<'_> = text(truncate(artist, usize::from(metrics.row_width)))
+    let artist_span: Span<'_> = text(truncate(artist, metrics.row_width.count()))
         .fg(style.muted_foreground)
         .into();
     Paragraph::new(artist_span).render(metrics.artist_row, buffer);

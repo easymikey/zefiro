@@ -1,17 +1,19 @@
 use audio::DECODABLE_EXTENSIONS;
 use kernel::{cmd::LibraryCmd, domain::driver::DriverName};
 use library::{
-    driver::{LibraryDriver, LibraryEffect, LibraryMessage},
+    driver::{LibraryDriver, LibraryEffect},
     job::LibraryJob,
+    message::LibraryMessage,
 };
 
-#[cfg(test)] use crate::driver::spawn_idle;
+#[cfg(test)] use crate::driver_thread::spawn_idle;
 use crate::{
-    driver::{DriverLoop, DriverThread, LoopEffect},
+    driver::DriverLoop,
+    driver_thread::DriverThread,
     error::Error,
-    jobs::Jobs,
+    jobs::{Jobs, LoopEffect},
     registry,
-    spawn::SpawnSetup,
+    spawn_setup::SpawnSetup,
 };
 
 #[cfg(test)]
@@ -82,13 +84,13 @@ mod tests {
     use library::cover::{CoverArt, CoverDecoded};
 
     use crate::{
-        driver::DriverThread,
+        driver_thread::DriverThread,
         latest::LatestReceivers,
         spawn::{
-            SpawnSetup,
             library_thread::spawn_library,
             tests::{RECV_TIMEOUT, stub_paths},
         },
+        spawn_setup::SpawnSetup,
     };
 
     const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
@@ -108,12 +110,11 @@ mod tests {
             let (writers, cells, doorbell) = crate::latest::latest_channels();
             let thread = spawn_library(&SpawnSetup {
                 audio: &model.settings.audio,
-                theme: &model.themes.selected,
                 paths: &paths,
                 inbox: &inbox,
                 writers: &writers,
                 #[cfg(target_os = "macos")]
-                macos: &crate::spawn::macos_thread::MacosChannel::new(),
+                macos: &crate::macos_channel::MacosChannel::new(),
             })
             .unwrap();
             Self {

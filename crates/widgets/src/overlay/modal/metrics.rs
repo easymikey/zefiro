@@ -13,7 +13,6 @@ use crate::{
 
 pub(crate) const COLUMN_SPACING: u16 = 1;
 pub(crate) const QUERY_ROWS: u16 = 2;
-pub(crate) const SCROLL_PADDING: usize = 1;
 pub(crate) const SCROLLBAR_INSET: u16 = 2;
 
 #[must_use]

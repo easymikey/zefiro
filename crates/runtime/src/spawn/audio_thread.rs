@@ -1,13 +1,14 @@
 use audio::tap::SpectrumTap;
 use kernel::{cmd::AudioCmd, domain::driver::DriverName, update::machine::Machine};
 
-#[cfg(test)] use crate::driver::spawn_idle;
+#[cfg(test)] use crate::driver_thread::spawn_idle;
 use crate::{
-    driver::{DriverLoop, DriverThread, LoopEffect},
+    driver::DriverLoop,
+    driver_thread::DriverThread,
     error::Error,
-    jobs::Jobs,
+    jobs::{Jobs, LoopEffect},
     registry,
-    spawn::SpawnSetup,
+    spawn_setup::SpawnSetup,
 };
 
 #[cfg(test)]
@@ -27,7 +28,7 @@ pub(crate) fn audio_split(
 > {
     match effect {
         audio::engine::effect::EngineEffect::Run(job) => LoopEffect::Run(job),
-        effect @ (audio::engine::effect::EngineEffect::Mute
+        effect @ (audio::engine::effect::EngineEffect::Silence
         | audio::engine::effect::EngineEffect::Open { .. }
         | audio::engine::effect::EngineEffect::StartLoad { .. }
         | audio::engine::effect::EngineEffect::StartHandover { .. }
@@ -49,7 +50,7 @@ pub(crate) fn audio_split(
         | audio::engine::effect::EngineEffect::RestartGapless(_)
         | audio::engine::effect::EngineEffect::Promote(_)
         | audio::engine::effect::EngineEffect::Report
-        | audio::engine::effect::EngineEffect::Advance
+        | audio::engine::effect::EngineEffect::Advance(_)
         | audio::engine::effect::EngineEffect::Stage(_)
         | audio::engine::effect::EngineEffect::Attach(_)
         | audio::engine::effect::EngineEffect::TakeSignals(_)) => {
@@ -106,28 +107,27 @@ mod tests {
             setting_row::SettingRow,
             startup::Startup,
         },
-        message::{AudioEvent, Message},
+        message::Message,
     };
 
     use crate::{
-        driver::DriverThread,
+        driver_thread::{Congestion, DriverThread},
         error::Error,
-        outbox::Outbox,
         runtime::Runtime,
         spawn::{
-            SpawnSetup,
             Spawners,
             tests::{RECV_TIMEOUT, boom, spawn_audio_loop, stub_paths},
         },
+        spawn_setup::SpawnSetup,
     };
 
     fn died_from_replay_gain_step(runtime: &mut Runtime) -> Message {
-        let stepped = runtime.step(Message::Step {
+        let stepped = runtime.deliver(Message::Step {
             row: SettingRow::ReplayGain,
             direction: Direction::Next,
         });
         assert_eq!(stepped, Ok(()));
-        runtime.wiring.receiver.recv_timeout(RECV_TIMEOUT).unwrap()
+        runtime.wiring.mailbox.recv_timeout(RECV_TIMEOUT).unwrap()
     }
 
     static AUDIO_RESTART_SPAWNS: AtomicUsize = AtomicUsize::new(0);
@@ -144,7 +144,7 @@ mod tests {
             .with(|slot| slot.borrow().clone())
             .unwrap();
         spawn_audio_loop(
-            move |inbox: &Receiver<AudioCmd>, _: &Outbox<AudioEvent>| {
+            move |inbox: &Receiver<AudioCmd>, _: &Sender<Message>, _: &Congestion| {
                 if AUDIO_RESTART_SPAWNS.fetch_add(1, Ordering::SeqCst) == 0 {
                     inbox
                         .recv()
@@ -178,7 +178,7 @@ mod tests {
         .unwrap();
 
         let died = died_from_replay_gain_step(&mut runtime);
-        runtime.step(died).unwrap();
+        runtime.deliver(died).unwrap();
 
         let received: Vec<AudioCmd> = (0..4)
             .map(|_| commands.recv_timeout(RECV_TIMEOUT).unwrap())
@@ -216,7 +216,7 @@ mod tests {
             SECOND_SPAWN_ORDER.store(order, Ordering::SeqCst);
         }
         spawn_audio_loop(
-            |inbox: &Receiver<AudioCmd>, _: &Outbox<AudioEvent>| {
+            |inbox: &Receiver<AudioCmd>, _: &Sender<Message>, _: &Congestion| {
                 let _sequenced = SequencedAudio;
                 inbox
                     .recv()
@@ -245,7 +245,7 @@ mod tests {
         .unwrap();
 
         let died = died_from_replay_gain_step(&mut runtime);
-        runtime.step(died).unwrap();
+        runtime.deliver(died).unwrap();
 
         assert!(
             FIRST_DROP_ORDER.load(Ordering::SeqCst)

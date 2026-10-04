@@ -33,7 +33,7 @@ expression: "walked(model, messages)"
         },
         Cursor {
             index: 0,
-            len: 0,
+            len: 2,
         },
         [
             Local(

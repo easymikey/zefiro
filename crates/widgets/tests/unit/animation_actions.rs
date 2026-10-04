@@ -1,4 +1,4 @@
-use kernel::cmd::Cue;
+use kernel::domain::cue::Cue;
 use ratatui::layout::Rect;
 use rstest::rstest;
 use widgets::animation::stage::{AnimationStage, Backdrop};
@@ -25,7 +25,7 @@ fn animated(cues: &[Cue], backdrop: &Backdrop, watched: &[Rect]) -> (bool, Vec<R
     run_out_over(&mut stage, volume_bar_frame);
 
     stage.play(cues.to_vec(), backdrop);
-    let staged = stage.is_running();
+    let staged = stage.is_animating();
     let painted = volume_bar_frame();
     let opened = step_over(&mut stage, volume_bar_frame, slice(|t| t.screen_wash, 4));
     let moved_rects = watched
@@ -43,7 +43,7 @@ fn animated(cues: &[Cue], backdrop: &Backdrop, watched: &[Rect]) -> (bool, Vec<R
     (staged, moved_rects)
 }
 
-struct AnimatedAction<'a> {
+struct AnimationRow<'a> {
     cues: &'a [Cue],
     backdrop: Backdrop,
     expected: &'a [Rect],
@@ -51,62 +51,62 @@ struct AnimatedAction<'a> {
 }
 
 #[rstest]
-#[case::a_queue_add(AnimatedAction {
+#[case::a_queue_add(AnimationRow {
     cues: &[Cue::QueueChanged],
     backdrop: pane_backdrop(),
     expected: &[],
     still: &[PANE_STATUS, PANE_ROW],
 })]
-#[case::a_track_change(AnimatedAction {
+#[case::a_track_change(AnimationRow {
     cues: &[Cue::TrackChanged],
     backdrop: pane_backdrop(),
     expected: &[],
     still: &[CARD_TITLE, PANE_STATUS],
 })]
-#[case::a_favorite_toggle(AnimatedAction {
+#[case::a_favorite_toggle(AnimationRow {
     cues: &[Cue::FavoriteToggled],
     backdrop: pane_backdrop(),
     expected: &[pane_star()],
     still: &[],
 })]
-#[case::a_cursor_move_onto_another_row(AnimatedAction {
+#[case::a_cursor_move_onto_another_row(AnimationRow {
     cues: &[],
     backdrop: pane_backdrop(),
     expected: &[],
     still: &[pane_star(), PANE_ROW],
 })]
-#[case::shuffle(AnimatedAction {
+#[case::shuffle(AnimationRow {
     cues: &[Cue::PlayOrderChanged],
     backdrop: pane_backdrop(),
     expected: &[],
     still: &[PANE_STATUS, PANE_ROW],
 })]
-#[case::a_library_opening(AnimatedAction {
+#[case::a_library_opening(AnimationRow {
     cues: &[Cue::LibraryOpened],
     backdrop: screen_backdrop(),
     expected: &[],
     still: &[SCREEN],
 })]
-#[case::a_volume_change(AnimatedAction {
+#[case::a_volume_change(AnimationRow {
     cues: &[Cue::VolumeChanged],
     backdrop: pane_backdrop(),
     expected: &[VOLUME_LABEL],
     still: &[PANE_STATUS],
 })]
-#[case::a_deleted_row(AnimatedAction {
+#[case::a_deleted_row(AnimationRow {
     cues: &[Cue::TrackDeleted],
     backdrop: pane_backdrop(),
     expected: &[PANE_ROW],
     still: &[],
 })]
-#[case::a_theme_change(AnimatedAction {
+#[case::a_theme_change(AnimationRow {
     cues: &[Cue::ThemeChanged],
     backdrop: screen_backdrop(),
     expected: &[SCREEN],
     still: &[],
 })]
-fn an_action_animates_its_own_rect(#[case] row: AnimatedAction<'_>) {
-    let AnimatedAction {
+fn an_action_animates_its_own_rect(#[case] row: AnimationRow<'_>) {
+    let AnimationRow {
         cues,
         backdrop,
         expected,
@@ -146,5 +146,5 @@ fn a_frame_that_cues_nothing_stages_no_user_action_animations() {
     let mut stage = AnimationStage::default();
     stage.play(Vec::new(), &pane_backdrop());
 
-    assert!(!stage.is_running(), "launching is not a change");
+    assert!(!stage.is_animating(), "launching is not a change");
 }

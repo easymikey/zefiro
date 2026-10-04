@@ -1,3 +1,4 @@
+use kernel::domain::geometry::Cells;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     widgets::{Block, Borders},
@@ -84,7 +85,7 @@ pub(crate) fn text_width(area: Rect, cell_aspect: f32, sizing: CoverSizing) -> u
 pub struct CardMetrics {
     pub cover_square: Rect,
     pub content_column: Rect,
-    pub row_width: u16,
+    pub row_width: Cells,
     pub status_row: Rect,
     pub title_row: Rect,
     pub artist_row: Rect,
@@ -159,7 +160,7 @@ pub(crate) fn card_metrics(
     CardMetrics {
         cover_square,
         content_column,
-        row_width,
+        row_width: Cells(row_width),
         status_row,
         title_row,
         artist_row,
@@ -176,7 +177,7 @@ pub(crate) fn content_rect(metrics: &CardMetrics) -> Rect {
     Rect {
         x: metrics.content_column.x,
         y: top,
-        width: metrics.row_width,
+        width: metrics.row_width.0,
         height: bottom.saturating_sub(top),
     }
 }
@@ -338,7 +339,7 @@ mod tests {
         let rect = text_rect(area, cell_aspect, sizing);
         assert_eq!(rect.x, column.x);
         assert_eq!(rect.y, card_metrics.title_row.y, "starts at the title row");
-        assert_eq!(rect.width, card_metrics.row_width);
+        assert_eq!(rect.width, card_metrics.row_width.0);
         assert_eq!(
             rect.y + rect.height,
             card_metrics.spectrum_row.y + card_metrics.spectrum_row.height,

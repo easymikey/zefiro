@@ -38,8 +38,8 @@ fn frame(scene: Scene<'_>, size: (u16, u16)) -> String {
 
 fn tiny_breakpoints() -> Breakpoints {
     Breakpoints {
-        min_columns: Cells(20),
-        min_rows: Cells(3),
+        min_width: Cells(20),
+        min_height: Cells(3),
         ..Breakpoints::default()
     }
 }

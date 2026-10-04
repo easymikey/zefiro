@@ -50,15 +50,17 @@ pub(crate) fn raise_contrast(color: Rgb, against: &[Rgb], minimum: f32) -> Rgb {
         .unwrap_or(target)
 }
 
-pub(crate) fn visible_band(window_bg: Rgb, text: Rgb, mix: f32) -> Rgb {
-    let band = lerp_rgb(window_bg, text, mix);
-    if contrast_ratio(band, window_bg) >= MIN_BAND_CONTRAST {
+pub(crate) fn visible_band(window_background: Rgb, text: Rgb, mix: f32) -> Rgb {
+    let band = lerp_rgb(window_background, text, mix);
+    if contrast_ratio(band, window_background) >= MIN_BAND_CONTRAST {
         return band;
     }
     NUDGE_LADDER
         .iter()
-        .map(|&step| lerp_rgb(window_bg, text, mix + (1.0 - mix) * step))
-        .find(|&candidate| contrast_ratio(candidate, window_bg) >= MIN_BAND_CONTRAST)
+        .map(|&step| lerp_rgb(window_background, text, mix + (1.0 - mix) * step))
+        .find(|&candidate| {
+            contrast_ratio(candidate, window_background) >= MIN_BAND_CONTRAST
+        })
         .unwrap_or(text)
 }
 
@@ -124,10 +126,10 @@ mod tests {
 
     #[test]
     fn a_band_clears_the_band_ratio_even_when_the_mix_alone_would_not() {
-        let window_bg = Rgb([0x0b, 0x0b, 0x0b]);
+        let window_background = Rgb([0x0b, 0x0b, 0x0b]);
         let text = Rgb([0xf5, 0xf1, 0xe8]);
-        let band = visible_band(window_bg, text, 0.0);
-        assert!(contrast_ratio(band, window_bg) >= MIN_BAND_CONTRAST);
+        let band = visible_band(window_background, text, 0.0);
+        assert!(contrast_ratio(band, window_background) >= MIN_BAND_CONTRAST);
     }
 
     #[test]

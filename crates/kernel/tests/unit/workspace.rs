@@ -1,7 +1,8 @@
 use kernel::{
-    cmd::{Cmd, Cue, Effect},
+    cmd::{Cmd, Effect},
     domain::{
         config::{ConfigError, ConfigName, Diagnostic},
+        cue::Cue,
         io_error::IoError,
         keymap::{Action, KeyOverride, KeymapOverrides},
         model::Model,
@@ -14,7 +15,7 @@ use kernel::{
 };
 use rstest::rstest;
 
-use crate::support::{first_toast_expiry, step::update};
+use crate::support::{first_toast_expiry, update::update};
 
 fn reduce(model: &mut Model, message: Message) -> Cmd {
     update(model, message, Moment::default()).unwrap()

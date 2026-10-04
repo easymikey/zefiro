@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use crate::{
-    cmd::{AudioCmd, Cmd, Cue, Effect, MacosCmd},
+    cmd::{AudioCmd, Cmd, Effect, MacosCmd},
     domain::{
+        cue::Cue,
         direction::Direction,
         index::PresetIndex,
         percent::Percent,
@@ -10,6 +11,7 @@ use crate::{
         revision::Revision,
         sleep::SleepTimer,
         sleep_presets::SleepPresets,
+        time::Moment,
         transport::Transport,
     },
     message::Timer,
@@ -24,6 +26,7 @@ pub enum TransportMessage {
     CycleSleep {
         presets: SleepPresets,
         revision: Revision,
+        now: Moment,
     },
     AbMark(Option<Duration>),
 }
@@ -51,8 +54,12 @@ impl Machine for Transport {
                 self.speed = self.speed.step_down();
                 Effect::Audio(AudioCmd::SetSpeed(self.speed)).into()
             }
-            TransportMessage::CycleSleep { presets, revision } => {
-                self.sleep = next_sleep(self.sleep, presets.as_slice());
+            TransportMessage::CycleSleep {
+                presets,
+                revision,
+                now,
+            } => {
+                self.sleep = next_sleep(self.sleep, presets.as_slice(), now);
                 self.sleep.map_or(Cmd::none(), |timer| {
                     Effect::After {
                         delay: timer.delay,
@@ -73,10 +80,12 @@ impl Machine for Transport {
 fn next_sleep(
     current: Option<SleepTimer>,
     sleep_presets: &[Duration],
+    now: Moment,
 ) -> Option<SleepTimer> {
     let position = current.map_or(0, |timer| timer.preset_index.get() + 1);
     sleep_presets.get(position).map(|&delay| SleepTimer {
         preset_index: PresetIndex::new(position),
         delay,
+        deadline: Moment::new(now.since_epoch() + delay),
     })
 }

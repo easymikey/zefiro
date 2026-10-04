@@ -15,29 +15,27 @@ use serde::{Deserialize, Deserializer};
 
 use crate::{
     appearance::{Flag, flag},
-    error::{CrossfadeError, Error, parse_toml},
+    error::{CrossfadeTextError, Error, parse_toml},
     keymap::TomlKeymap,
 };
 
-pub const CONFIG_FILE_NAME: &str = "config.toml";
-
-fn parse_crossfade(raw: &str) -> Result<Crossfade, CrossfadeError> {
+fn parse_crossfade(raw: &str) -> Result<Crossfade, CrossfadeTextError> {
     let trimmed = raw.trim();
     let duration = if let Some(milliseconds) = trimmed.strip_suffix("ms") {
         milliseconds
             .trim()
             .parse::<u64>()
             .map(Duration::from_millis)
-            .map_err(CrossfadeError::Number)?
+            .map_err(CrossfadeTextError::Number)?
     } else {
         let Some(seconds) = trimmed.strip_suffix('s') else {
-            return Err(CrossfadeError::MissingSuffix);
+            return Err(CrossfadeTextError::MissingSuffix);
         };
         seconds
             .trim()
             .parse::<u64>()
             .map(Duration::from_secs)
-            .map_err(CrossfadeError::Number)?
+            .map_err(CrossfadeTextError::Number)?
     };
     Ok(Crossfade::try_from(duration)?)
 }
@@ -100,7 +98,6 @@ pub struct TomlAudio {
     #[serde(deserialize_with = "crossfade")]
     pub(crate) crossfade: Crossfade,
     #[serde(deserialize_with = "flag")]
-    #[serde(rename = "replaygain")]
     pub(crate) replay_gain: ReplayGain,
     #[serde(deserialize_with = "device")]
     pub(crate) device: OutputDevice,
@@ -121,8 +118,8 @@ impl From<TomlAudio> for AudioSettings {
 
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct TomlConfig {
+#[serde(default, deny_unknown_fields, expecting = "the config.toml file")]
+pub struct TomlSettings {
     pub music_dir: Option<PathBuf>,
     #[serde(deserialize_with = "theme")]
     pub theme: ThemeChoice,
@@ -132,7 +129,7 @@ pub struct TomlConfig {
     pub(crate) keymap: TomlKeymap,
 }
 
-impl Default for TomlConfig {
+impl Default for TomlSettings {
     fn default() -> Self {
         Self {
             music_dir: None,
@@ -144,7 +141,7 @@ impl Default for TomlConfig {
     }
 }
 
-pub fn parse_config(text: &str) -> Result<TomlConfig, Error> {
+pub fn parse_config(text: &str) -> Result<TomlSettings, Error> {
     parse_toml(text, ConfigName::Config)
 }
 

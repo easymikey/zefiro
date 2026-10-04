@@ -12,7 +12,7 @@ use std::{
 
 use crossbeam_channel::{Sender, TrySendError};
 
-use crate::{error::Error, shell::input::ShellInput};
+use crate::{error::Error, shell::shell_input::ShellInput};
 
 static TERMINATE_SENDER: OnceLock<Sender<ShellInput>> = OnceLock::new();
 
@@ -30,6 +30,7 @@ const TERMINATING_SIGNALS: [std::ffi::c_int; 3] = [
 pub(crate) enum ThreadStop {
     #[cfg(unix)]
     Signals(signal_hook::iterator::Handle),
+    #[cfg(not(unix))]
     Flag(Arc<AtomicBool>),
 }
 
@@ -38,6 +39,7 @@ impl ThreadStop {
         match self {
             #[cfg(unix)]
             Self::Signals(handle) => handle.close(),
+            #[cfg(not(unix))]
             Self::Flag(flag) => flag.store(true, Ordering::Release),
         }
     }
@@ -133,7 +135,7 @@ pub(crate) fn take_input_error() -> Option<io::Error> {
         .take()
 }
 
-pub(crate) fn remember_worker_panic(_report: String) {
+pub(crate) fn remember_worker_panic() {
     WORKER_PANICKED.store(true, Ordering::Release);
     terminate_if_listening();
 }
@@ -144,13 +146,18 @@ pub(crate) fn take_worker_panic() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
+    use std::{
+        io,
+        panic,
+        sync::{Mutex, PoisonError},
+        thread,
+    };
 
     use crossbeam_channel::bounded;
 
     use crate::{
         error::Error,
-        shell::input::ShellInput,
+        shell::shell_input::ShellInput,
         termination::{
             forward,
             install_with,
@@ -168,8 +175,8 @@ mod tests {
 
     #[test]
     fn a_worker_panic_is_reported_once() {
-        remember_worker_panic("the input thread fell over".to_owned());
-        remember_worker_panic("a later thread fell over too".to_owned());
+        remember_worker_panic();
+        remember_worker_panic();
 
         assert!(take_worker_panic());
         assert!(!take_worker_panic());
@@ -204,5 +211,42 @@ mod tests {
             Err(Error::SignalHandlerInstalled)
         ));
         drop(watch);
+    }
+
+    static ORIGINAL_HOOK_THREADS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    fn record_thread(_info: &panic::PanicHookInfo<'_>) {
+        let name = thread::current().name().map(str::to_owned);
+        ORIGINAL_HOOK_THREADS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(name);
+    }
+
+    #[test]
+    fn with_the_hook_installed_a_driver_or_paint_panic_chains_the_original_hook() {
+        let painting = thread::current().name().map(str::to_owned);
+        panic::set_hook(Box::new(record_thread));
+        terminal::session::install_panic_hook();
+
+        let driver = thread::Builder::new()
+            .name("supervised-driver".to_owned())
+            .spawn(|| panic::catch_unwind(|| panic!("driver fell over")).is_err())
+            .unwrap();
+        let driver_caught = driver.join().unwrap();
+        let paint_caught = panic::catch_unwind(|| panic!("paint fell over")).is_err();
+        drop(panic::take_hook());
+
+        assert!(driver_caught && paint_caught);
+        let expected: Vec<String> = ["supervised-driver".to_owned()]
+            .into_iter()
+            .chain(painting)
+            .collect();
+        assert_eq!(
+            *ORIGINAL_HOOK_THREADS
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+            expected
+        );
     }
 }

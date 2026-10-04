@@ -1,39 +1,27 @@
 use std::{
     io,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    panic::{self, AssertUnwindSafe},
     thread,
-    time::Duration,
 };
 
 use crossbeam_channel::Sender;
 use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use kernel::{
     domain::key::{Key, KeyPress},
-    message::{Message, PaintError, PaintEvent},
+    message::Message,
 };
 use runtime::shell::Reaction;
 use terminal::keys::{LayoutTranslation, from_event};
 
-use crate::termination::{JoinOnDrop, ThreadStop, remember_input_error};
-
-const INPUT_POLL: Duration = Duration::from_millis(50);
-
-#[derive(Debug, Clone)]
-pub(crate) enum ShellInput {
-    Terminal(Event),
-    Terminate,
-    Error(PaintError),
-}
+use crate::{
+    shell::shell_input::ShellInput,
+    termination::{remember_input_error, remember_worker_panic},
+};
 
 pub(crate) fn reaction_for(input: ShellInput) -> Reaction {
     match input {
         ShellInput::Terminate => Reaction::Message(Message::Quit),
-        ShellInput::Error(error) => {
-            Reaction::Message(Message::from(PaintEvent::Error(error)))
-        }
+        ShellInput::Error(error) => Reaction::Message(Message::from(error)),
         ShellInput::Terminal(event) => terminal_reaction(&event),
     }
 }
@@ -65,29 +53,23 @@ fn key_press(key: Option<Key>, typed: Option<Key>) -> Option<KeyPress> {
     })
 }
 
-pub(crate) fn spawn_input(sender: Sender<ShellInput>) -> JoinOnDrop {
-    let stop = Arc::new(AtomicBool::new(false));
-    let stopped = Arc::clone(&stop);
-    let thread = thread::spawn(move || {
-        if let Err(error) = read_input(&sender, &stopped) {
-            remember_input_error(error);
+pub(crate) fn spawn_input(sender: Sender<ShellInput>) {
+    drop(thread::spawn(move || {
+        match panic::catch_unwind(AssertUnwindSafe(|| read_input(&sender))) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => remember_input_error(error),
+            Err(_panic) => remember_worker_panic(),
         }
-    });
-    JoinOnDrop {
-        stop: ThreadStop::Flag(stop),
-        thread: Some(thread),
-    }
+    }));
 }
 
-fn read_input(sender: &Sender<ShellInput>, stop: &AtomicBool) -> Result<(), io::Error> {
-    while !stop.load(Ordering::Acquire) {
-        if event::poll(INPUT_POLL)?
-            && sender.send(ShellInput::Terminal(event::read()?)).is_err()
-        {
+fn read_input(sender: &Sender<ShellInput>) -> Result<(), io::Error> {
+    loop {
+        let event = event::read()?;
+        if sender.send(ShellInput::Terminal(event)).is_err() {
             return Ok(());
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -98,12 +80,12 @@ mod tests {
             config::Diagnostic,
             key::{Key, KeyCode, KeyPress},
         },
-        message::{Message, PaintError, PaintEvent},
+        message::{Message, PaintError},
     };
     use rstest::rstest;
     use runtime::shell::Reaction;
 
-    use crate::shell::input::{ShellInput, reaction_for};
+    use crate::shell::{input::reaction_for, shell_input::ShellInput};
 
     fn key_input(character: char) -> ShellInput {
         ShellInput::Terminal(Event::Key(KeyEvent::new(
@@ -132,16 +114,13 @@ mod tests {
 
     #[test]
     fn a_probe_failure_becomes_a_paint_error_message() {
-        let error = PaintError::Probe(Diagnostic::from_error(&std::io::Error::other(
+        let error = PaintError::Query(Diagnostic::from_error(&std::io::Error::other(
             "no answer",
         )));
 
         let reaction = reaction_for(ShellInput::Error(error.clone()));
 
-        assert_eq!(
-            reaction,
-            Reaction::Message(Message::from(PaintEvent::Error(error)))
-        );
+        assert_eq!(reaction, Reaction::Message(Message::from(error)));
     }
 
     #[rstest]

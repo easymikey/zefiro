@@ -3,9 +3,9 @@
 name = "rose-pine"
 
 [colors]
-bg = "#191724"
-fg = "#908caa"
-bright_fg = "#e0def4"
+background = "#191724"
+muted_foreground = "#908caa"
+foreground = "#e0def4"
 accent = "#ebbcba"
 green = "#9ccfd8"
 yellow = "#f6c177"

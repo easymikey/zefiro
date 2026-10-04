@@ -4,98 +4,113 @@ assertion_line: 647
 expression: wiring.log
 ---
 [
-    Cmd {
-        effects: [
-            Clear(
-                Speed(
-                    1.0,
+    Ok(
+        Cmd {
+            effects: [
+                Clear(
+                    Speed(
+                        1.0,
+                    ),
                 ),
-            ),
-        ],
-        messages: [],
-    },
-    Cmd {
-        effects: [
-            StartLoad {
-                path: "/tmp/track0.flac",
-                speed: Speed(
-                    1.0,
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                StartLoad {
+                    path: "/tmp/track0.flac",
+                    speed: Speed(
+                        1.0,
+                    ),
+                },
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Play,
+                Report,
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Start(
+                    Gain(
+                        1.0,
+                    ),
                 ),
-            },
-        ],
-        messages: [],
-    },
-    Cmd {
-        effects: [
-            Play,
-            Report,
-        ],
-        messages: [],
-    },
-    Cmd {
-        effects: [
-            Start(
-                Gain(
-                    1.0,
+                Report,
+            ],
+            messages: [
+                Loaded(
+                    Some(
+                        100s,
+                    ),
                 ),
-            ),
-            Report,
-        ],
-        messages: [
-            Loaded(
-                Some(
-                    100s,
+            ],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Clear(
+                    Speed(
+                        1.0,
+                    ),
                 ),
-            ),
-        ],
-    },
-    Cmd {
-        effects: [
-            Clear(
-                Speed(
-                    1.0,
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                StartLoad {
+                    path: "/tmp/track2.flac",
+                    speed: Speed(
+                        1.0,
+                    ),
+                },
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Play,
+                Report,
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Start(
+                    Gain(
+                        1.0,
+                    ),
                 ),
-            ),
-        ],
-        messages: [],
-    },
-    Cmd {
-        effects: [
-            StartLoad {
-                path: "/tmp/track2.flac",
-                speed: Speed(
-                    1.0,
+                Report,
+            ],
+            messages: [
+                Loaded(
+                    Some(
+                        100s,
+                    ),
                 ),
-            },
-        ],
-        messages: [],
-    },
-    Cmd {
-        effects: [
-            Play,
-            Report,
-        ],
-        messages: [],
-    },
-    Cmd {
-        effects: [
-            Start(
-                Gain(
-                    1.0,
-                ),
-            ),
-            Report,
-        ],
-        messages: [
-            Loaded(
-                Some(
-                    100s,
-                ),
-            ),
-        ],
-    },
-    Cmd {
-        effects: [],
-        messages: [],
-    },
+            ],
+        },
+    ),
+    Err(
+        Unhandled,
+    ),
 ]

@@ -71,21 +71,20 @@ fn slide_inside_the_card(
         return;
     }
     let allowed = context.filter().map(FilterProcessor::validator);
-    let mut vacated = Cell::EMPTY;
-    vacated.set_bg(background);
+    let vacated = Cell::default().set_bg(background).clone();
     for row in card.y..card.bottom() {
         for step in 0..card.width {
             let landing = Position {
                 x: card.right().saturating_sub(step).saturating_sub(1),
                 y: row,
             };
-            let mut arriving = vacated.clone();
-            if let Some(lifted) =
-                landing.x.checked_sub(shift).filter(|from| *from >= card.x)
-                && let Some(cell) = buffer.cell((lifted, row))
-            {
-                arriving = cell.clone();
-            }
+            let arriving = landing
+                .x
+                .checked_sub(shift)
+                .filter(|from| *from >= card.x)
+                .and_then(|lifted| buffer.cell((lifted, row)))
+                .unwrap_or(&vacated)
+                .clone();
             if let Some(cell) = buffer.cell_mut(landing)
                 && allowed
                     .as_ref()
@@ -169,24 +168,7 @@ fn wash_buffer(from: Color, context: &ShaderFnContext<'_>, buffer: &mut Buffer) 
 }
 
 #[must_use]
-pub fn delete_burst(
-    background: Color,
-    guard: CellFilter,
-    timings: AnimationTimings,
-) -> Animation {
-    scatter_burst(background, guard, timings)
-}
-
-#[must_use]
-pub fn toast_burst(
-    background: Color,
-    guard: CellFilter,
-    timings: AnimationTimings,
-) -> Animation {
-    scatter_burst(background, guard, timings)
-}
-
-fn scatter_burst(
+pub fn scatter_burst(
     background: Color,
     guard: CellFilter,
     timings: AnimationTimings,

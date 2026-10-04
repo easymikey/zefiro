@@ -1,9 +1,9 @@
 mod field;
 
+use kernel::cmd::Playback;
 use ratatui::{style::Color, text::Line};
 
 use crate::{
-    Playing,
     milkdrop::field::{
         ASPECT_X,
         COLOR_BAND_HIGH,
@@ -28,7 +28,6 @@ use crate::{
         kaleidoscope_quadrants_into,
         mirror_horizontal_into,
         preset_for_seed,
-        usize_to_f32,
         warp_source,
     },
     primitive::span::text,
@@ -54,7 +53,6 @@ pub(crate) struct MilkdropField {
     scratch: Vec<f32>,
     width: usize,
     height: usize,
-    phase: f32,
 }
 
 impl MilkdropField {
@@ -67,7 +65,6 @@ impl MilkdropField {
             scratch: vec![0.0; width * height],
             width,
             height,
-            phase: 0.0,
         }
     }
 
@@ -82,7 +79,7 @@ impl MilkdropField {
 #[derive(Debug)]
 pub(crate) struct MilkdropAdvance<'a> {
     pub(crate) bands: &'a Spectrum,
-    pub(crate) playing: Playing,
+    pub(crate) playing: Playback,
     pub(crate) seed: u64,
     pub(crate) tick: u64,
 }
@@ -115,7 +112,7 @@ impl MilkdropField {
             }
         }
 
-        if input.playing == Playing::Yes {
+        if input.playing == Playback::Playing {
             inject(
                 &mut self.scratch,
                 size,
@@ -132,8 +129,6 @@ impl MilkdropField {
         }
 
         resolve_mirror(self, size, preset.mirror);
-        self.phase = (self.phase + rotation).rem_euclid(std::f32::consts::TAU)
-            - std::f32::consts::PI;
     }
 }
 
@@ -168,8 +163,9 @@ impl MilkdropStyle {
 fn ramp_glyph(intensity: f32) -> &'static str {
     let last_index = RAMP.len() - 1;
     let clamped = intensity.clamp(0.0, 1.0);
-    let index =
-        crate::pixels::numeric::round::<usize>(clamped * usize_to_f32(last_index));
+    let index = crate::pixels::numeric::round::<usize>(
+        clamped * crate::pixels::numeric::dimension_f32(last_index),
+    );
     RAMP.get(index.min(last_index))
         .copied()
         .unwrap_or(RAMP_FALLBACK)
@@ -197,10 +193,10 @@ pub(crate) fn lines_into(
 
 #[cfg(test)]
 mod tests {
+    use kernel::cmd::Playback;
     use ratatui::style::Color;
 
     use crate::{
-        Playing,
         milkdrop::{
             CellPosition,
             MilkdropAdvance,
@@ -215,7 +211,7 @@ mod tests {
 
     fn input(
         bands: &Spectrum,
-        playing: Playing,
+        playing: Playback,
         beat: (u64, u64),
     ) -> MilkdropAdvance<'_> {
         MilkdropAdvance {
@@ -282,8 +278,8 @@ mod tests {
     fn step_is_deterministic_for_the_same_seed_and_tick() {
         let mut a = MilkdropField::new(9, 9);
         let mut b = a.clone();
-        a.advance(&input(&SILENT_BANDS, Playing::Yes, (7, 3)));
-        b.advance(&input(&SILENT_BANDS, Playing::Yes, (7, 3)));
+        a.advance(&input(&SILENT_BANDS, Playback::Playing, (7, 3)));
+        b.advance(&input(&SILENT_BANDS, Playback::Playing, (7, 3)));
         assert_eq!(a, b);
     }
 
@@ -292,8 +288,8 @@ mod tests {
         let loud_treble = [1.0; 16];
         let mut a = MilkdropField::new(9, 9);
         let mut b = a.clone();
-        a.advance(&input(&loud_treble, Playing::Yes, (0, 5)));
-        b.advance(&input(&loud_treble, Playing::Yes, (1, 5)));
+        a.advance(&input(&loud_treble, Playback::Playing, (0, 5)));
+        b.advance(&input(&loud_treble, Playback::Playing, (1, 5)));
         assert_ne!(a, b);
     }
 
@@ -302,8 +298,8 @@ mod tests {
         let loud_treble = [1.0; 16];
         let mut field_a = MilkdropField::new(9, 9);
         let mut field_b = MilkdropField::new(9, 9);
-        field_a.advance(&input(&loud_treble, Playing::Yes, (42, 11)));
-        field_b.advance(&input(&loud_treble, Playing::Yes, (42, 11)));
+        field_a.advance(&input(&loud_treble, Playback::Playing, (42, 11)));
+        field_b.advance(&input(&loud_treble, Playback::Playing, (42, 11)));
         assert_eq!(field_a, field_b);
     }
 
@@ -312,7 +308,7 @@ mod tests {
         let mut field = MilkdropField::new(9, 9);
         field.cells = vec![1.0; field.cells.len()];
         for tick in 0..80 {
-            field.advance(&input(&SILENT_BANDS, Playing::No, (3, tick)));
+            field.advance(&input(&SILENT_BANDS, Playback::Paused, (3, tick)));
         }
         assert!(
             field.cells.iter().all(|&level| level < 0.001),
@@ -330,12 +326,12 @@ mod tests {
             row: height / 2,
         };
 
-        field.advance(&input(&SILENT_BANDS, Playing::Yes, (0, 0)));
+        field.advance(&input(&SILENT_BANDS, Playback::Playing, (0, 0)));
         let initial = field.cell(probe);
         assert_eq!(initial, 0.0, "probe must start outside the injected core");
 
         for tick in 1..3 {
-            field.advance(&input(&SILENT_BANDS, Playing::Yes, (0, tick)));
+            field.advance(&input(&SILENT_BANDS, Playback::Playing, (0, tick)));
         }
         let spread = field.cell(probe);
         assert!(
@@ -348,7 +344,7 @@ mod tests {
     fn kaleido_preset_output_is_four_way_symmetric() {
         let loud = [1.0; 16];
         let mut stepped = MilkdropField::new(10, 8);
-        stepped.advance(&input(&loud, Playing::Yes, (2, 9)));
+        stepped.advance(&input(&loud, Playback::Playing, (2, 9)));
 
         for row in 0..stepped.height {
             for column in 0..stepped.width {

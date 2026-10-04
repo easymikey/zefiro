@@ -3,9 +3,9 @@
 name = "ristretto"
 
 [colors]
-bg = "#121212"
-fg = "#907868"
-bright_fg = "#e8d0b8"
+background = "#121212"
+muted_foreground = "#907868"
+foreground = "#e8d0b8"
 accent = "#e07040"
 green = "#9aaa68"
 yellow = "#d8a050"

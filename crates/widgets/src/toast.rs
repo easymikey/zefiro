@@ -1,7 +1,4 @@
-use kernel::domain::{
-    time::Moment,
-    toast::{TOAST_LIFETIME, Toast, ToastKind},
-};
+use kernel::domain::toast::{Toast, ToastLevel};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -12,7 +9,6 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     primitive::{canvas::Canvas, inset::Inset, text::truncate},
-    scene::Scene,
     screen::breakpoint::Breakpoint,
     theme::{active_theme::ActiveTheme, colors::Role},
 };
@@ -57,36 +53,29 @@ impl ToastStyle {
     }
 
     #[must_use]
-    pub(crate) fn accent(&self, kind: ToastKind) -> Color {
+    pub(crate) fn accent(&self, kind: ToastLevel) -> Color {
         match kind {
-            ToastKind::Info => self.info,
-            ToastKind::Success => self.success,
-            ToastKind::Warning => self.warning,
-            ToastKind::Error => self.error,
+            ToastLevel::Info => self.info,
+            ToastLevel::Success => self.success,
+            ToastLevel::Warning => self.warning,
+            ToastLevel::Error => self.error,
         }
     }
 }
 
-fn icon(kind: ToastKind) -> &'static str {
+fn icon(kind: ToastLevel) -> &'static str {
     match kind {
-        ToastKind::Info => "i",
-        ToastKind::Success => "\u{2713}",
-        ToastKind::Warning => "!",
-        ToastKind::Error => "\u{2717}",
+        ToastLevel::Info => "i",
+        ToastLevel::Success => "\u{2713}",
+        ToastLevel::Warning => "!",
+        ToastLevel::Error => "\u{2717}",
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ToastWidget<'a> {
     pub(crate) toasts: &'a [Toast],
-    pub(crate) now: Moment,
     pub style: ToastStyle,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ToastAreas {
-    pub outer: Rect,
-    pub painted: Rect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,8 +92,8 @@ impl Form {
         }
     }
 
-    fn painted(areas: ToastAreas) -> Self {
-        if areas.outer.height == 1 {
+    fn painted(area: Rect) -> Self {
+        if area.height == 1 {
             Form::Line
         } else {
             Form::Stack
@@ -119,23 +108,17 @@ struct Placed<'a> {
 }
 
 fn wrapped_paragraph(text: &str, width: usize) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        if line.is_empty() {
-            line.push_str(word);
-        } else if line.width() + 1 + word.width() <= width {
-            line.push(' ');
-            line.push_str(word);
-        } else {
-            lines.push(std::mem::take(&mut line));
-            line.push_str(word);
-        }
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
+    text.split_whitespace()
+        .fold(Vec::new(), |mut lines: Vec<String>, word| {
+            match lines.last_mut() {
+                Some(line) if line.width() + 1 + word.width() <= width => {
+                    line.push(' ');
+                    line.push_str(word);
+                }
+                Some(_) | None => lines.push(word.to_owned()),
+            }
+            lines
+        })
 }
 
 fn wrapped(text: &str, width: usize) -> Vec<String> {
@@ -154,9 +137,12 @@ fn fitted(text: &str, width: usize, rows: usize) -> Vec<String> {
     let tail = lines
         .get(head..)
         .map_or_else(String::new, |rest| rest.join(" "));
-    let mut shown: Vec<String> = lines.iter().take(head).map(clipped).collect();
-    shown.push(truncate(&tail, width).into_owned());
-    shown
+    lines
+        .iter()
+        .take(head)
+        .map(clipped)
+        .chain(std::iter::once(truncate(&tail, width).into_owned()))
+        .collect()
 }
 
 fn title_line(toast: &Toast, room: usize) -> String {
@@ -165,22 +151,6 @@ fn title_line(toast: &Toast, room: usize) -> String {
 }
 
 impl<'a> ToastWidget<'a> {
-    #[must_use]
-    pub(crate) fn from_scene(scene: &Scene<'a>) -> Option<Self> {
-        (!scene.toasts.is_empty()).then(|| Self {
-            toasts: scene.toasts,
-            now: scene.now,
-            style: ToastStyle::from_theme(&scene.active_theme()),
-        })
-    }
-
-    fn live(&self) -> impl Iterator<Item = &'a Toast> + use<'a> {
-        let now = self.now;
-        self.toasts
-            .iter()
-            .filter(move |toast| now.elapsed_since(toast.raised_at) < TOAST_LIFETIME)
-    }
-
     fn placed(&self, screen: Rect, form: Form) -> Vec<Placed<'a>> {
         match form {
             Form::Stack => self.stacked(screen),
@@ -189,8 +159,8 @@ impl<'a> ToastWidget<'a> {
     }
 
     fn line(&self, screen: Rect) -> Vec<Placed<'a>> {
-        self.live()
-            .next()
+        self.toasts
+            .first()
             .map(|toast| {
                 let title = title_line(toast, usize::from(screen.width));
                 let width = u16::try_from(title.width()).unwrap_or(screen.width);
@@ -216,51 +186,42 @@ impl<'a> ToastWidget<'a> {
             return Vec::new();
         };
         let x = screen.right().saturating_sub(INSET_CELLS + width);
-        let mut top = screen.y.saturating_add(INSET_CELLS);
-        let mut placed = Vec::new();
-        for toast in self.live() {
-            let text = fitted(
-                toast.text.as_deref().map_or("", str::trim),
-                usize::from(room),
-                MAX_TEXT_ROWS,
-            );
-            let rows = u16::try_from(text.len()).unwrap_or(0);
-            let height = BORDER_ROWS + TITLE_ROWS + rows;
-            if top.saturating_add(height) > screen.bottom() {
-                break;
-            }
-            let mut lines = vec![title_line(toast, usize::from(room))];
-            lines.extend(text);
-            placed.push(Placed {
-                toast,
-                rect: Rect::new(x, top, width, height),
-                lines,
-            });
-            top = top.saturating_add(height + GAP);
-        }
-        placed
+        self.toasts
+            .iter()
+            .scan(screen.y.saturating_add(INSET_CELLS), |top, toast| {
+                let text = fitted(
+                    toast.text.as_deref().map_or("", str::trim),
+                    usize::from(room),
+                    MAX_TEXT_ROWS,
+                );
+                let rows = u16::try_from(text.len()).unwrap_or(0);
+                let height = BORDER_ROWS + TITLE_ROWS + rows;
+                (top.saturating_add(height) <= screen.bottom()).then(|| {
+                    let rect = Rect::new(x, *top, width, height);
+                    *top = top.saturating_add(height + GAP);
+                    Placed {
+                        toast,
+                        rect,
+                        lines: std::iter::once(title_line(toast, usize::from(room)))
+                            .chain(text)
+                            .collect(),
+                    }
+                })
+            })
+            .collect()
     }
 
     #[must_use]
-    pub(crate) fn areas(
-        self,
-        screen: Rect,
-        breakpoint: Breakpoint,
-    ) -> Option<ToastAreas> {
-        let outer = self
-            .placed(screen, Form::of(breakpoint))
+    pub(crate) fn area(self, screen: Rect, breakpoint: Breakpoint) -> Option<Rect> {
+        self.placed(screen, Form::of(breakpoint))
             .iter()
             .map(|placed| placed.rect)
-            .reduce(Rect::union)?;
-        Some(ToastAreas {
-            outer,
-            painted: outer,
-        })
+            .reduce(Rect::union)
     }
 
-    pub(crate) fn paint(self, areas: ToastAreas, canvas: Canvas<'_>) {
+    pub(crate) fn paint(self, toast_area: Rect, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
-        for placed in self.placed(area, Form::painted(areas)) {
+        for placed in self.placed(area, Form::painted(toast_area)) {
             self.paint_toast(&placed, buffer);
         }
     }
@@ -276,8 +237,11 @@ impl<'a> ToastWidget<'a> {
                     .fg(self.style.text),
             )
             .render(rect, buffer);
-        let mut lines = placed.lines.iter();
-        let title = Paragraph::new(lines.next().map_or("", String::as_str))
+        let (title_text, body_lines) = placed
+            .lines
+            .split_first()
+            .map_or(("", &[][..]), |(title, rest)| (title.as_str(), rest));
+        let title = Paragraph::new(title_text)
             .style(Style::default().fg(accent).add_modifier(Modifier::BOLD));
         if rect.height == 1 {
             title.render(rect, buffer);
@@ -291,7 +255,7 @@ impl<'a> ToastWidget<'a> {
         let inner = block.inner(rect);
         block.render(rect, buffer);
         title.render(Rect { height: 1, ..inner }, buffer);
-        let body = lines.cloned().collect::<Vec<_>>().join("\n");
+        let body = body_lines.join("\n");
         let below = Rect {
             y: inner.y.saturating_add(1),
             height: inner.height.saturating_sub(1),
@@ -305,20 +269,15 @@ impl<'a> ToastWidget<'a> {
 
 impl Widget for ToastWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        if let Some(areas) = self.areas(area, Breakpoint::Full) {
-            self.paint(areas, Canvas { area, buffer });
+        if let Some(toast_area) = self.area(area, Breakpoint::Full) {
+            self.paint(toast_area, Canvas { area, buffer });
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
-    use kernel::domain::{
-        time::Moment,
-        toast::{Toast, ToastKind},
-    };
+    use kernel::domain::toast::{Toast, ToastLevel};
     use ratatui::layout::Rect;
 
     use crate::{
@@ -336,7 +295,6 @@ mod tests {
     fn toaster(toasts: &[Toast]) -> ToastWidget<'_> {
         ToastWidget {
             toasts,
-            now: Moment::default(),
             style: style(),
         }
     }
@@ -370,10 +328,10 @@ mod tests {
     fn each_kind_has_its_own_accent_and_icon() {
         let style = style();
         let kinds = [
-            ToastKind::Info,
-            ToastKind::Success,
-            ToastKind::Warning,
-            ToastKind::Error,
+            ToastLevel::Info,
+            ToastLevel::Success,
+            ToastLevel::Warning,
+            ToastLevel::Error,
         ];
         for (index, kind) in kinds.iter().enumerate() {
             for other in kinds.iter().skip(index + 1) {
@@ -386,20 +344,10 @@ mod tests {
     #[test]
     fn a_minimal_screen_gets_one_plain_line_for_the_newest() {
         let toasts = [Toast::info("new"), Toast::info("old")];
-        let areas = toaster(&toasts)
-            .areas(Rect::new(0, 0, 30, 6), Breakpoint::Minimal)
+        let area = toaster(&toasts)
+            .area(Rect::new(0, 0, 30, 6), Breakpoint::Minimal)
             .unwrap();
-        assert_eq!((areas.outer.y, areas.outer.height), (0, 1));
-        assert_eq!(areas.outer.right(), 30);
-    }
-
-    #[test]
-    fn an_expired_toast_is_not_painted() {
-        let toasts = [Toast::info("old")];
-        let later = ToastWidget {
-            now: Moment::new(Duration::from_secs(9)),
-            ..toaster(&toasts)
-        };
-        assert_eq!(later.areas(Rect::new(0, 0, 60, 20), Breakpoint::Full), None);
+        assert_eq!((area.y, area.height), (0, 1));
+        assert_eq!(area.right(), 30);
     }
 }

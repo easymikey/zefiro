@@ -1,14 +1,21 @@
 use std::time::Duration;
 
 use kernel::{
-    cmd::{Cmd, Cue, Effect, PlaybackChange},
-    domain::{model::Model, player::Player, time::Moment, toast::Toast},
+    cmd::{Cmd, Effect},
+    domain::{
+        cue::{Cue, PlaybackChange},
+        model::Model,
+        player::Player,
+        time::Moment,
+        toast::Toast,
+    },
     message::{AudioEvent, Message, PlaybackRequest, Timer},
+    update::machine::Unhandled,
 };
 
 use crate::support::{
     playing_model,
-    step::{apply_at, update},
+    update::{send_at, update},
 };
 
 fn sent(model: &mut Model, message: Message) -> Cmd {
@@ -128,10 +135,10 @@ fn a_stale_toast_timer_changes_nothing() {
     model.workspace.toasts.clear();
     let second = toast_shown(&mut model, "second");
 
-    let stale = sent_at(&mut model, Message::Elapsed(first), moment(9000));
+    let stale = update(&mut model, Message::Elapsed(first), moment(9000));
 
     assert_ne!(first, second);
-    assert_eq!(stale, Cmd::none());
+    assert_eq!(stale, Err(Unhandled));
     assert_eq!(model.workspace.toasts.len(), 1);
 }
 
@@ -157,12 +164,12 @@ fn an_elapsed_sleep_timer_pauses_in_place_and_disarms() {
     let timer = scheduled(&sleep_cycled(&mut model))[0];
 
     let cmd = sent(&mut model, Message::Elapsed(timer));
-    let again = sent(&mut model, Message::Elapsed(timer));
+    let again = update(&mut model, Message::Elapsed(timer), Moment::default());
 
     assert_eq!(cmd, PlaybackChange::Pause.cued());
     assert!(matches!(model.player, Player::Paused { .. }));
     assert_eq!(model.transport.sleep, None);
-    assert_eq!(again, Cmd::none());
+    assert_eq!(again, Err(Unhandled));
 }
 
 #[test]
@@ -171,9 +178,9 @@ fn a_rearmed_sleep_timer_ignores_the_first_one() {
     let first = scheduled(&sleep_cycled(&mut model))[0];
     let _second = sleep_cycled(&mut model);
 
-    let cmd = sent(&mut model, Message::Elapsed(first));
+    let cmd = update(&mut model, Message::Elapsed(first), Moment::default());
 
-    assert_eq!(cmd, Cmd::none());
+    assert_eq!(cmd, Err(Unhandled));
     assert!(model.player.is_playing());
     assert_eq!(
         model.transport.sleep.map(|timer| timer.preset_index.get()),
@@ -191,10 +198,10 @@ fn a_cancelled_sleep_timer_changes_nothing() {
     let cancelled = sleep_cycled(&mut model);
 
     let last = armed.last().copied().unwrap();
-    let cmd = sent(&mut model, Message::Elapsed(last));
+    let cmd = update(&mut model, Message::Elapsed(last), Moment::default());
 
     assert_eq!(cancelled, Cmd::none());
-    assert_eq!(cmd, Cmd::none());
+    assert_eq!(cmd, Err(Unhandled));
     assert!(model.player.is_playing());
     assert_eq!(model.transport.sleep, None);
 }
@@ -206,41 +213,41 @@ fn a_stale_mark_is_ignored() {
     let stale = scheduled(&armed)[0];
     drop(sent(&mut model, position(secs(60))));
 
-    let cmd = sent(&mut model, Message::Elapsed(stale));
+    let cmd = update(&mut model, Message::Elapsed(stale), Moment::default());
 
-    assert_eq!(cmd, Cmd::none());
+    assert_eq!(cmd, Err(Unhandled));
 }
 
 #[test]
 fn played_for_accumulates_wall_time_across_playhead_reports() {
     let mut model = playing_model(3);
-    apply_at(&mut model, position(millis(100)), moment(100));
-    apply_at(&mut model, position(millis(200)), moment(250));
+    send_at(&mut model, position(millis(100)), moment(100));
+    send_at(&mut model, position(millis(200)), moment(250));
     assert_eq!(model.workspace.played_for, millis(250));
 }
 
 #[test]
 fn played_for_keeps_accumulating_across_a_seek() {
     let mut model = playing_model(3);
-    apply_at(&mut model, position(millis(100)), moment(100));
-    apply_at(
+    send_at(&mut model, position(millis(100)), moment(100));
+    send_at(
         &mut model,
         Message::Playback(PlaybackRequest::SeekTo(secs(60))),
         moment(150),
     );
-    apply_at(&mut model, position(secs(60) + millis(50)), moment(400));
+    send_at(&mut model, position(secs(60) + millis(50)), moment(400));
     assert_eq!(model.workspace.played_for, millis(400));
 }
 
 #[test]
 fn played_for_keeps_the_wall_time_across_a_track_change() {
     let mut model = playing_model(3);
-    apply_at(&mut model, position(millis(100)), moment(100));
-    apply_at(
+    send_at(&mut model, position(millis(100)), moment(100));
+    send_at(
         &mut model,
         Message::Audio(AudioEvent::TrackChanged),
         moment(150),
     );
-    apply_at(&mut model, position(millis(50)), moment(300));
+    send_at(&mut model, position(millis(50)), moment(300));
     assert_eq!(model.workspace.played_for, millis(300));
 }

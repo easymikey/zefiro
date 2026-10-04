@@ -18,8 +18,7 @@ use crate::{
     deck::event::DeckEvent,
     engine::{
         crossfade::{gain_in, gain_out},
-        effect::SinkRole,
-        message::AudioMessage,
+        message::{AudioMessage, Signals, SinkRole},
     },
     gain::Gain,
 };
@@ -74,20 +73,6 @@ pub(crate) struct Order {
     pub(crate) cue: Option<Duration>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Signals(u8);
-
-impl Signals {
-    pub(crate) const FINISHED: Self = Self(1);
-    pub(crate) const CUED: Self = Self(2);
-    pub(crate) const RAMPED: Self = Self(4);
-
-    #[must_use]
-    pub(crate) fn contains(self, flag: Self) -> bool {
-        self.0 & flag.0 == flag.0
-    }
-}
-
 struct Published {
     gain: AtomicU32,
     flags: AtomicU8,
@@ -97,7 +82,7 @@ struct Published {
 impl Published {
     fn fresh() -> Self {
         Self {
-            gain: AtomicU32::new(1.0f32.to_bits()),
+            gain: AtomicU32::new(Gain::UNITY.amplitude().to_bits()),
             flags: AtomicU8::new(0),
             position: AtomicU64::new(0),
         }
@@ -242,7 +227,7 @@ pub(crate) struct Envelope<S> {
     channel: u16,
     gain: Gain,
     running: Option<Running>,
-    cue: Option<Frames>,
+    cue: Option<Duration>,
     previous: Order,
     wake: Wake,
     ending: Ending,
@@ -327,7 +312,7 @@ impl<S: Source> Envelope<S> {
         let Some(target) = self.cue else {
             return;
         };
-        if self.frames >= target {
+        if self.base + self.frames.duration(self.rate) >= target {
             self.raise(Signals::CUED);
             self.cue = None;
         }
@@ -407,7 +392,7 @@ impl<S: Source> Machine for Envelope<S> {
             });
         }
         if order.cue != self.previous.cue {
-            self.cue = order.cue.map(|at| Frames::of(at, self.rate));
+            self.cue = order.cue;
         }
         self.previous = order;
         Ok(())
@@ -475,9 +460,10 @@ mod tests {
 
     use crate::{
         deck::{
-            envelope::{Curve, Frames, Ramp, Signals, envelope},
+            envelope::{Curve, Frames, Ramp, envelope},
             event::DeckEvent,
         },
+        engine::message::Signals,
         gain::Gain,
     };
 
@@ -560,6 +546,19 @@ mod tests {
         source.next();
         let position = control.position().as_secs_f32();
         assert!((position - 0.150).abs() < 1e-3, "got {position}");
+    }
+
+    #[rstest]
+    fn a_cue_after_a_seek_fires_at_the_track_position() {
+        let (wake, _heard) = crossbeam_channel::bounded(4);
+        let (mut source, mut control) = envelope(tone(1000), Revision::default(), wake);
+        control.cue(Some(Duration::from_millis(500)));
+        source.next();
+        source.try_seek(Duration::from_millis(400)).unwrap();
+        while control.position() < Duration::from_millis(550) {
+            source.next();
+        }
+        assert!(control.take_signals().contains(Signals::CUED));
     }
 
     #[rstest]

@@ -6,13 +6,11 @@ use kernel::{
     update::machine::Unhandled,
 };
 
-use crate::{
-    deck::DeviceOpened,
-    engine::{
-        effect::EngineEffect,
-        phase::{CurrentTrack, Handover, Incoming, Loading, Phase, Playing, Resume},
-        state::{Closed, Live, announce, then_report},
-    },
+use crate::engine::{
+    effect::EngineEffect,
+    message::DeviceOpened,
+    phase::{CurrentTrack, Handover, Incoming, Loading, Phase, Playing, Resume},
+    state::{Closed, Live, announce, then_report},
 };
 
 impl Live {
@@ -196,14 +194,14 @@ mod tests {
     #[case::live_adopts_the_device_that_actually_opened(
         Engine::Live(Live { settings: settings_on("usb"), ..live() }),
         opened(settings().device, Duration::ZERO, Playback::Playing),
-        EngineRow { next: Engine::Live(live()), effect: Cmd::effect(EngineEffect::SetGain(crate::gain::Gain::UNITY))}
+        EngineRow { next: Engine::Live(live()), effect: Ok(Cmd::effect(EngineEffect::SetGain(crate::gain::Gain::UNITY)))}
     )]
     #[case::a_live_engine_tells_the_world_the_device_fell_back(
         Engine::Live(Live { settings: settings_on("usb"), ..live() }),
         fell_back(Duration::ZERO, Playback::Playing),
         EngineRow {
             next: Engine::Live(live()),
-            effect: Cmd::message(AudioEvent::DeviceFellBack(kernel::domain::device::OutputDevice::SystemDefault)).then(Cmd::effect(EngineEffect::SetGain(crate::gain::Gain::UNITY))),
+            effect: Ok(Cmd::message(AudioEvent::DeviceFellBack(kernel::domain::device::OutputDevice::SystemDefault)).then(Cmd::effect(EngineEffect::SetGain(crate::gain::Gain::UNITY)))),
         }
     )]
     #[case::open_failure_mutes_the_engine(
@@ -215,34 +213,34 @@ mod tests {
                 pending: None,
                 speed: Speed::default(),
             }),
-            effect: Cmd::effect(EngineEffect::Mute)
-                .then(Cmd::message(AudioEvent::Error(error()))),
+            effect: Ok(Cmd::effect(EngineEffect::Silence)
+                .then(Cmd::message(AudioEvent::Error(error())))),
         }
     )]
     #[case::reopened_resumes_the_current_track(
         Engine::Live(playing()),
         opened(settings_on("usb").device, seconds(5), Playback::Paused),
-        EngineRow { next: Engine::Live(resuming()), effect: Cmd::effect(EngineEffect::Decode("/a".into()))}
+        EngineRow { next: Engine::Live(resuming()), effect: Ok(Cmd::effect(EngineEffect::Decode("/a".into())))}
     )]
     #[case::reopened_keeps_a_pending_load(
         Engine::Live(loading()),
         opened(settings_on("usb").device, Duration::ZERO, Playback::Playing),
         EngineRow {
             next: Engine::Live(Live { settings: settings_on("usb"), ..loading() }),
-            effect: Cmd::effect(EngineEffect::SetGain(crate::gain::Gain::UNITY)),
+            effect: Ok(Cmd::effect(EngineEffect::SetGain(crate::gain::Gain::UNITY))),
         }
     )]
     #[case::reopened_with_nothing_loaded(
         Engine::Live(live()),
         opened(settings().device, Duration::ZERO, Playback::Playing),
-        EngineRow { next: Engine::Live(live()), effect: Cmd::effect(EngineEffect::SetGain(crate::gain::Gain::UNITY))}
+        EngineRow { next: Engine::Live(live()), effect: Ok(Cmd::effect(EngineEffect::SetGain(crate::gain::Gain::UNITY)))}
     )]
     #[case::decoded_starts_the_track(
         Engine::Live(loading()),
         EngineMessage::Decoded(Some(TOTAL)),
         EngineRow {
             next: Engine::Live(Live { phase: Phase::Playing(Playing::new(track_a())), ..playing() }),
-            effect: then_report(Cmd::effect(EngineEffect::Start(crate::gain::Gain::UNITY)).then(Cmd::message(AudioEvent::Loaded(Some(TOTAL))))),
+            effect: Ok(then_report(Cmd::effect(EngineEffect::Start(crate::gain::Gain::UNITY)).then(Cmd::message(AudioEvent::Loaded(Some(TOTAL)))))),
         }
     )]
     #[case::decoded_resumes_where_the_old_device_was(
@@ -254,7 +252,7 @@ mod tests {
                 settings: settings_on("usb"),
                 ..live()
             }),
-            effect: then_report(Cmd::effect(EngineEffect::Resume { gain: crate::gain::Gain::UNITY, position: seconds(5), playback: Playback::Paused },)),
+            effect: Ok(then_report(Cmd::effect(EngineEffect::Resume { gain: crate::gain::Gain::UNITY, position: seconds(5), playback: Playback::Paused },))),
         }
     )]
     #[case::decode_failure_is_reported(
@@ -262,7 +260,7 @@ mod tests {
         EngineMessage::Error(decode_error()),
         EngineRow {
             next: Engine::Live(live()),
-            effect: Cmd::message(AudioEvent::Error(decode_error())),
+            effect: Ok(Cmd::message(AudioEvent::Error(decode_error()))),
         }
     )]
     #[case::reopened_mid_skip_resumes_the_incoming_track(
@@ -282,7 +280,7 @@ mod tests {
                 settings: AudioSettings { crossfade: crossfade(10), ..settings_on("usb") },
                 ..live()
             }),
-            effect: Cmd::effect(EngineEffect::Decode("/b".into())),
+            effect: Ok(Cmd::effect(EngineEffect::Decode("/b".into()))),
         }
     )]
     #[case::reopened_mid_skip_keeps_the_decoding_track(
@@ -294,7 +292,7 @@ mod tests {
                 settings: AudioSettings { crossfade: crossfade(10), ..settings() },
                 ..live()
             }),
-            effect: Cmd::effect(EngineEffect::SetGain(crate::gain::Gain::UNITY)),
+            effect: Ok(Cmd::effect(EngineEffect::SetGain(crate::gain::Gain::UNITY))),
         }
     )]
     #[case::a_decoded_skip_starts_and_ramps_over_the_outgoing_stream(
@@ -302,7 +300,7 @@ mod tests {
         EngineMessage::Decoded(Some(PRELOAD_TOTAL)),
         EngineRow {
             next: Engine::Live(handed_over_to_b()),
-            effect: Cmd::effect(EngineEffect::Start(crate::gain::Gain::UNITY)).then(Cmd::message(AudioEvent::Loaded(Some(PRELOAD_TOTAL)))).then(Cmd::effect(EngineEffect::Ramp { length: seconds(10), playing: crate::gain::Gain::UNITY })).then(Cmd::effect(EngineEffect::Report)),
+            effect: Ok(Cmd::effect(EngineEffect::Start(crate::gain::Gain::UNITY)).then(Cmd::message(AudioEvent::Loaded(Some(PRELOAD_TOTAL)))).then(Cmd::effect(EngineEffect::Ramp { length: seconds(10), playing: crate::gain::Gain::UNITY })).then(Cmd::effect(EngineEffect::Report))),
         }
     )]
     #[case::a_failed_skip_drops_the_outgoing_stream_too(
@@ -310,7 +308,7 @@ mod tests {
         EngineMessage::Error(decode_error()),
         EngineRow {
             next: Engine::Live(live_with_crossfade(CROSSFADE_SECONDS)),
-            effect: Cmd::effect(EngineEffect::Clear(Speed::default())).then(Cmd::message(AudioEvent::Error(decode_error()))),
+            effect: Ok(Cmd::effect(EngineEffect::Clear(Speed::default())).then(Cmd::message(AudioEvent::Error(decode_error())))),
         }
     )]
     fn a_cell_moves_the_engine_and_names_its_io(
