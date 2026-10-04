@@ -7,70 +7,53 @@ use std::{
 };
 
 use crossbeam_channel::{Sender, TrySendError};
+use kernel::Message;
 use thiserror::Error;
 
-use crate::{
-    domain::DriverName,
-    message::{DriverEvent, Message},
-};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-pub enum SendError {
-    #[error("the mailbox was full")]
-    Full,
-    #[error("the mailbox is closed")]
+pub(crate) enum SendError {
+    #[error("the inbox is closed")]
     Closed,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Congestion(Arc<AtomicBool>);
+pub(crate) struct Congestion(Arc<AtomicBool>);
 
 impl Congestion {
-    pub fn raise(&self) {
+    pub(crate) fn raise(&self) {
         self.0.store(true, Ordering::Release);
     }
 
     #[must_use]
-    pub fn take(&self) -> bool {
+    pub(crate) fn take(&self) -> bool {
         self.0.swap(false, Ordering::AcqRel)
     }
 }
 
 #[derive(Debug)]
-pub struct Outbox<F> {
-    sender: Sender<Message>,
-    full_edge: Congestion,
+pub(crate) struct Outbox<F> {
+    inbox: Sender<Message>,
+    full: Congestion,
     event: PhantomData<fn(F)>,
 }
 
 impl<F> Outbox<F> {
     #[must_use]
-    pub fn new(sender: Sender<Message>, full_edge: Congestion) -> Self {
+    pub(crate) fn new(inbox: Sender<Message>, full: Congestion) -> Self {
         Self {
-            sender,
-            full_edge,
+            inbox,
+            full,
             event: PhantomData,
         }
     }
 
-    pub fn report(
-        &self,
-        driver: DriverName,
-        message: DriverEvent,
-    ) -> Result<(), SendError> {
-        self.send_message(Message::Driver {
-            driver,
-            event: message,
-        })
-    }
-
     fn send_message(&self, message: Message) -> Result<(), SendError> {
-        match self.sender.try_send(message) {
+        match self.inbox.try_send(message) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(message)) => {
-                self.full_edge.raise();
-                match self.sender.send(message) {
-                    Ok(()) => Err(SendError::Full),
+                self.full.raise();
+                match self.inbox.send(message) {
+                    Ok(()) => Ok(()),
                     Err(_) => Err(SendError::Closed),
                 }
             }
@@ -80,7 +63,7 @@ impl<F> Outbox<F> {
 }
 
 impl<F: Into<Message>> Outbox<F> {
-    pub fn send(&self, event: F) -> Result<(), SendError> {
+    pub(crate) fn send(&self, event: F) -> Result<(), SendError> {
         self.send_message(event.into())
     }
 }
@@ -90,12 +73,10 @@ mod tests {
     use std::{thread, time::Duration};
 
     use crossbeam_channel::bounded;
+    use kernel::AudioEvent;
     use rstest::rstest;
 
-    use crate::{
-        message::AudioEvent,
-        outbox::{Congestion, Outbox, SendError},
-    };
+    use crate::outbox::{Congestion, Outbox, SendError};
 
     #[derive(Clone, Copy)]
     enum Scenario {
@@ -107,14 +88,14 @@ mod tests {
     #[rstest]
     #[case::room(Scenario::Room, Ok(()))]
     #[case::receiver_dropped(Scenario::ReceiverDropped, Err(SendError::Closed))]
-    #[case::full(Scenario::Full, Err(SendError::Full))]
+    #[case::full(Scenario::Full, Ok(()))]
     fn a_sender_reports_the_outcome_of_a_send(
         #[case] scenario: Scenario,
         #[case] expected: Result<(), SendError>,
     ) {
-        let (sender, receiver) = bounded(1);
-        let full_edge = Congestion::default();
-        let sender_under_test = Outbox::new(sender, full_edge.clone());
+        let (inbox, receiver) = bounded(1);
+        let full = Congestion::default();
+        let sender_under_test = Outbox::new(inbox, full.clone());
         let drainer = match scenario {
             Scenario::Room => None,
             Scenario::ReceiverDropped => {
@@ -134,7 +115,7 @@ mod tests {
         let delivery = sender_under_test.send(AudioEvent::TrackChanged);
 
         assert_eq!(delivery, expected);
-        assert_eq!(full_edge.take(), matches!(scenario, Scenario::Full));
+        assert_eq!(full.take(), matches!(scenario, Scenario::Full));
         if let Some(drainer) = drainer {
             drainer.join().unwrap();
         }

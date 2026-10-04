@@ -22,6 +22,7 @@ use crate::{
         ThemeChoice,
         ThemeName,
         Track,
+        TrackRef,
         appearance_rows::AppearanceField,
         playlist::PlaylistFileName,
     },
@@ -74,7 +75,7 @@ pub enum ConfigCmd {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackLoad {
     pub path: PathBuf,
-    pub gain: Option<f32>,
+    pub gain: Option<crate::domain::Decibels>,
     pub revision: Revision,
 }
 
@@ -123,7 +124,7 @@ pub enum LibraryCmd {
     },
     TagTracks {
         music_dir: PathBuf,
-        paths: Vec<PathBuf>,
+        tracks: Vec<TrackRef>,
         revision: Revision,
     },
     PrefetchCover(PathBuf),
@@ -267,6 +268,29 @@ impl<E, M> Cmd<E, M> {
         self.messages.extend(other.messages);
         self
     }
+
+    pub fn map_effect<F>(self, lift: impl FnMut(E) -> F) -> Cmd<F, M> {
+        Cmd {
+            effects: self.effects.into_iter().map(lift).collect(),
+            messages: self.messages,
+        }
+    }
+
+    pub fn map_message<N>(self, lift: impl FnMut(M) -> N) -> Cmd<E, N> {
+        Cmd {
+            effects: self.effects,
+            messages: self.messages.into_iter().map(lift).collect(),
+        }
+    }
+}
+
+impl<E, M> IntoIterator for Cmd<E, M> {
+    type Item = E;
+    type IntoIter = std::vec::IntoIter<E>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.effects.into_iter()
+    }
 }
 
 impl From<Effect> for Cmd {
@@ -323,13 +347,28 @@ mod tests {
             Effect::Audio(AudioCmd::Playback(Playback::Paused)),
             Effect::Audio(AudioCmd::Stop),
         ]);
-        let (effects, _messages) = cmd.into_parts();
+        let borrowed: Vec<&Effect> = cmd.effects().collect();
         assert!(matches!(
-            effects.as_slice(),
+            borrowed.as_slice(),
             [
                 Effect::Audio(AudioCmd::Playback(Playback::Paused)),
                 Effect::Audio(AudioCmd::Stop)
             ]
         ));
+        let owned: Vec<Effect> = cmd.into_iter().collect();
+        assert!(matches!(
+            owned.as_slice(),
+            [
+                Effect::Audio(AudioCmd::Playback(Playback::Paused)),
+                Effect::Audio(AudioCmd::Stop)
+            ]
+        ));
+    }
+
+    #[test]
+    fn map_effect_and_map_message_lift_each_part() {
+        let cmd: Cmd<u8, u8> = Cmd::effect(1).then(Cmd::message(2));
+        let lifted = cmd.map_effect(u16::from).map_message(u32::from);
+        assert_eq!(lifted.into_parts(), (vec![1_u16], vec![2_u32]));
     }
 }

@@ -7,12 +7,11 @@ use std::{
 };
 
 use crossbeam_channel::Sender;
-use kernel::domain::Speed;
+use kernel::domain::{Revision, Speed};
 use rodio::Source;
 
 use crate::{
     deck::{
-        Revision,
         envelope::{Envelopes, envelope},
         output::Output,
     },
@@ -52,15 +51,19 @@ const READ_CAPACITY: usize = 1 << 20;
 #[derive(Debug, Clone, PartialEq)]
 pub enum PreloadMode {
     Gapless,
-    Crossfade { gain: Option<f32>, speed: Speed },
+    Crossfade {
+        gain: Option<kernel::domain::Decibels>,
+        speed: Speed,
+    },
 }
 
 pub(crate) fn decode(path: &Path) -> Result<TrackDecoder, Error> {
-    let file = File::open(path).map_err(|source| Error::Open {
+    let opened = |source| Error::Open {
         path: path.to_path_buf(),
         source,
-    })?;
-    let length = file.metadata().map_or(0, |metadata| metadata.len());
+    };
+    let file = File::open(path).map_err(opened)?;
+    let length = file.metadata().map_err(opened)?.len();
     let reader = BufReader::with_capacity(READ_CAPACITY, file);
     let builder = rodio::Decoder::builder()
         .with_data(reader)

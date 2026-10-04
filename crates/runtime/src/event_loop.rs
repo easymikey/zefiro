@@ -58,21 +58,14 @@ where
     pub(crate) fn drive(mut self) -> Result<(), Error<S::Error>> {
         let mut frame_due = self.shell.frame_due(&self.runtime.frame(Instant::now()));
         loop {
-            let now = Instant::now();
-            let deadline = self.deadline(now, frame_due);
+            let deadline = self.deadline(Instant::now(), frame_due);
             let first = self.wait(deadline)?;
             self.gather(first);
+            let now = Instant::now();
             self.fire_timers(now);
             self.runtime.report_full();
             let effects = self.runtime.take_shell_effects();
-            let animations = self
-                .runtime
-                .frame(now)
-                .model
-                .settings
-                .appearance
-                .settings
-                .animations;
+            let animations = self.runtime.animations();
             for effect in effects {
                 self.shell.effect(effect, animations);
             }
@@ -131,20 +124,24 @@ where
         };
         let queued = self.runtime.wiring.receiver.clone();
         let notified = self.runtime.wiring.notified.clone();
-        let (first_input, first_message, first_rang) = match first {
-            Arrival::Input(event) => (Some(event), None, false),
-            Arrival::Message(message) => (None, Some(message), false),
-            Arrival::Notified => (None, None, true),
-        };
-        let inputs: Vec<_> = first_input.into_iter().chain(ready(self.input)).collect();
-        let messages: Vec<_> =
-            first_message.into_iter().chain(ready(&queued)).collect();
-        let rang = first_rang || ready(&notified).count() > 0;
+        let mut inputs = Vec::new();
+        let mut messages = Vec::new();
+        let mut notices = Vec::new();
+        match first {
+            Arrival::Input(event) => inputs.push(event),
+            Arrival::Message(message) => messages.push(message),
+            Arrival::Notified => notices.push(Arrival::Notified),
+        }
+        inputs.extend(ready(self.input));
+        messages.extend(ready(&queued));
+        if notices.is_empty() && ready(&notified).count() > 0 {
+            notices.push(Arrival::Notified);
+        }
         let arrivals = inputs
             .into_iter()
             .map(Arrival::Input)
             .chain(messages.into_iter().map(Arrival::Message))
-            .chain(rang.then_some(Arrival::Notified));
+            .chain(notices);
         for arrival in arrivals {
             if self.runtime.flow().is_break() {
                 return;
@@ -174,7 +171,7 @@ where
     }
 
     pub(crate) fn step_and_repaint(&mut self, message: Message, source: Source) {
-        if self.runtime.step(message) {
+        if self.runtime.step(message).is_ok() {
             self.repaint = repaint_after(self.repaint, source);
         }
     }
@@ -194,26 +191,32 @@ fn ready<T>(receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
 pub(crate) mod tests {
     use std::{convert::Infallible, path::PathBuf, time::Instant};
 
-    use config::{Rgb, ThemeColors, ThemeFile};
+    use config::{TomlColors, TomlTheme};
     use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
     use kernel::{
         ConfigEvent,
-        Congestion,
         Cue,
         DriverEvent,
         LibraryEvent,
         Message,
-        Outbox,
         Timer,
         WindowColorsCmd,
-        domain::{DriverName, DriverStatus, Startup, ThemeName, Toast},
+        domain::{
+            DriverName,
+            DriverStatus,
+            Startup,
+            ThemeName,
+            Toast,
+            appearance::Rgb,
+        },
     };
+    use library::{CoverJob, LibraryMessage};
 
     use crate::{
         error::Error,
         event_loop::EventLoop,
         latest::LatestSenders,
-        library::{cover::CoverRequest, machine::LibraryMessage},
+        outbox::{Congestion, Outbox},
         port::{LibraryPort, Port},
         runtime::Runtime,
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
@@ -239,7 +242,7 @@ pub(crate) mod tests {
         keys: Sender<Key>,
         quit_after: usize,
         continue_with: Key,
-        cover: Option<CoverRequest>,
+        cover: Option<CoverJob>,
         effects: Vec<ShellEffect>,
         pub(crate) toasts: Vec<Option<String>>,
         order: Vec<Order>,
@@ -279,7 +282,11 @@ pub(crate) mod tests {
             }
         }
 
-        fn effect(&mut self, effect: ShellEffect, _animations: config::Animations) {
+        fn effect(
+            &mut self,
+            effect: ShellEffect,
+            _animations: kernel::domain::appearance::Animations,
+        ) {
             self.order.push(Order::Effect(effect.clone()));
             self.effects.push(effect);
         }
@@ -299,7 +306,9 @@ pub(crate) mod tests {
             } else {
                 self.continue_with
             };
-            let _ = self.keys.send(next);
+            self.keys
+                .send(next)
+                .expect("the key receiver outlives the shell");
             Ok(Painted {
                 cover: self.cover.clone(),
                 visible_rows: None,
@@ -362,7 +371,10 @@ pub(crate) mod tests {
     #[test]
     fn a_timer_fires_elapsed_with_no_input() {
         let mut fixture = fixture();
-        fixture.runtime.step(Message::Toast(Toast::error("hello")));
+        assert_eq!(
+            fixture.runtime.step(Message::Toast(Toast::error("hello"))),
+            Ok(())
+        );
         let generation = fixture.runtime.model.revisions.toast;
         fixture
             .runtime
@@ -413,16 +425,16 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_cover_the_frame_keeps_asking_for_is_requested_once() {
+    fn a_cover_the_frame_keeps_asking_for_is_forwarded_on_every_paint() {
         let mut fixture = fixture();
         let (keys, input) = unbounded();
         keys.send(Key::Ping).unwrap();
         let mut shell = Scripted::new(keys, 2);
         shell.continue_with = Key::Ping;
-        shell.cover = Some(CoverRequest {
-            path: PathBuf::from("/music/cover.mp3"),
-            size_px: 64,
-        });
+        shell.cover = Some(CoverJob::new(
+            PathBuf::from("/music/cover.mp3"),
+            kernel::domain::geometry::Pixels(64),
+        ));
 
         let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
@@ -434,7 +446,7 @@ pub(crate) mod tests {
             .iter()
             .filter(|command| matches!(command, LibraryMessage::Cover(_)))
             .count();
-        assert_eq!(covers, 1);
+        assert_eq!(covers, 2);
     }
 
     #[test]
@@ -452,10 +464,10 @@ pub(crate) mod tests {
         fixture.runtime.drain();
     }
 
-    fn stub_theme() -> ThemeFile {
-        ThemeFile {
+    fn stub_theme() -> TomlTheme {
+        TomlTheme {
             name: ThemeName::from_static("test"),
-            colors: ThemeColors {
+            colors: TomlColors {
                 background: Rgb([0, 0, 0]),
                 foreground: Rgb([255, 255, 255]),
                 bright_foreground: Rgb([255, 255, 255]),
@@ -477,7 +489,9 @@ pub(crate) mod tests {
         let event = ConfigEvent::ThemeReloaded(ThemeName::from_static("test"));
         fixture
             .runtime
-            .sender()
+            .wiring
+            .inbox
+            .clone()
             .send(Message::Config(event))
             .unwrap();
         let (keys, input) = unbounded();
@@ -511,12 +525,12 @@ pub(crate) mod tests {
 
     const CAPACITY: usize = 256;
 
-    fn fill_the_sender(outbox: &Outbox<LibraryEvent>, full_edge: &Congestion) {
+    fn fill_the_inbox(outbox: &Outbox<LibraryEvent>, full: &Congestion) {
         for _ in 0..CAPACITY {
             let delivery = outbox.send(LibraryEvent::HistoryLoaded(Vec::new()));
             assert!(matches!(delivery, Ok(())));
         }
-        full_edge.raise();
+        full.raise();
     }
 
     fn toasts_in_one_iteration(runtime: &mut Runtime) -> usize {
@@ -546,26 +560,25 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_full_sender_raises_a_toast_per_full_edge() {
+    fn a_full_inbox_raises_a_toast_per_full_episode() {
         let mut fixture = fixture();
-        let (sender, arrivals) = bounded(CAPACITY);
-        let full_edge = Congestion::default();
-        let outbox = Outbox::new(sender.clone(), full_edge.clone());
+        let (inbox, arrivals) = bounded(CAPACITY);
+        let full = Congestion::default();
+        let outbox = Outbox::new(inbox.clone(), full.clone());
         let (library_commands, _library_inbox) = unbounded();
         fixture.runtime.wiring.receiver = arrivals;
-        fixture.runtime.wiring.sender = sender;
-        fixture.runtime.wiring.ports.library = LibraryPort::new(Port::new(
-            DriverName::Library,
-            library_commands,
-            full_edge.clone(),
-        ));
+        fixture.runtime.wiring.inbox = inbox;
+        fixture.runtime.wiring.ports.library = LibraryPort::new(
+            Port::new(DriverName::Library, library_commands, full.clone()),
+            unbounded().0,
+        );
 
-        fill_the_sender(&outbox, &full_edge);
+        fill_the_inbox(&outbox, &full);
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
 
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
 
-        fill_the_sender(&outbox, &full_edge);
+        fill_the_inbox(&outbox, &full);
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
         fixture.runtime.drain();
     }
@@ -577,7 +590,7 @@ pub(crate) mod tests {
             fixture
                 .runtime
                 .wiring
-                .sender
+                .inbox
                 .send(Message::Toast(Toast::error("event".to_owned())))
                 .unwrap();
         }

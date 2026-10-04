@@ -59,6 +59,15 @@ impl OutputDevice {
     }
 }
 
+impl fmt::Display for OutputDevice {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SystemDefault => formatter.write_str("default"),
+            Self::Named(name) => name.fmt(formatter),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedDevice {
     pub name: DeviceName,

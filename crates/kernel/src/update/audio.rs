@@ -110,6 +110,7 @@ fn error(
         ),
         AudioError::Decode { .. }
         | AudioError::Device { .. }
+        | AudioError::ListDevices { .. }
         | AudioError::Stream { .. }
         | AudioError::Preload { .. }
         | AudioError::Seek { .. } => (error.to_string(), None),

@@ -1,85 +1,70 @@
-use std::{
-    io::{self, Stdout},
-    mem,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{mem, path::Path, sync::Arc, time::Duration};
 
-use audio::SpectrumAnalyzer;
-use config::Animations;
+use audio::spectrum::SpectrumAnalyzer;
 use crossterm::event::Event;
-use kernel::{Cue, Message, Moment, Toast, WindowColorsCmd};
-use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
-use runtime::{
-    CoverDecoded,
-    CoverOutcome,
-    CoverRequest,
-    Frame,
-    FrameDue,
-    LatestReceivers,
-    Painted,
-    Reaction,
-    ShellEffect,
+use kernel::{
+    Cue,
+    Diagnostic,
+    Message,
+    Moment,
+    PaintError,
+    PaintEvent,
+    WindowColorsCmd,
+    domain::{ThemeName, appearance::Animations, geometry::Cells},
+    update::{Machine, Unhandled},
 };
-use terminal::{
-    Capabilities,
-    CoverMotion,
-    CoverRefreshParts,
-    CoverRenderer,
-    DecodedCover,
-    ProbeAnswer,
-    TerminalEnvironment,
-    write_window_colors,
-};
+use library::{CoverDecoded, CoverJob};
+use ratatui::{Terminal, backend::Backend, layout::Rect};
+use runtime::{Frame, FrameDue, LatestReceivers, Painted, Reaction, ShellEffect};
+use terminal::{Capabilities, CoverPainter, write_window_colors};
 use widgets::{
     ActiveTheme,
     AnimationStage,
     Backdrop,
-    CoverArt,
+    BackdropStyle,
+    CardCover,
+    CoverImage,
+    CoverMotion,
+    CoverRefresh,
+    CrossfadePermit,
     FrameLayout,
-    PixelPath,
     Presence,
-    Role,
     SPECTRUM_BANDS,
-    Screen,
-    abbreviate_home,
+    Scene,
+    ScreenWidget,
 };
 
-use crate::{
-    shell::{
-        cover_crossfade::{
-            CoverArrival,
-            after_cover_arrival,
-            after_track_change,
-            cover_wash,
-            take_crossfade_permit,
-            wanted_cover,
-        },
-        frame_due::{
-            animation_frame_due,
-            clock_frame_due,
-            progress_frame_due,
-            sleep_frame_due,
-            spectrum_frame_due,
-        },
-        input::{self, ShellEvent},
-        motion::{Advance, Motion, ScreenClear, SpectrumFeed},
-        view::{self, LaidOutScene, Presentation},
+use crate::shell::{
+    cover_crossfade::{
+        CoverArrival,
+        CoverWant,
+        CrossfadeGate,
+        CrossfadeGateMessage,
+        cover_wash,
+        wanted_cover,
     },
-    startup::{Look, theme_from_file},
+    frame_due::{
+        animation_frame_due,
+        clock_frame_due,
+        progress_frame_due,
+        sleep_frame_due,
+        spectrum_frame_due,
+    },
+    input::{self, ShellInput},
+    motion::{FrameAdvance, Motion, ScreenClear, SpectrumFeed},
+    view::{self, LaidOutScene, ShellPresentation},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum WindowColorsWrite {
     Done,
-    Staged,
+    Staged(ThemeName),
 }
 
-pub(crate) struct Painter<'terminal> {
-    terminal: &'terminal mut Terminal<CrosstermBackend<Stdout>>,
-    presentation: Presentation,
-    cover_renderer: CoverRenderer,
+pub(crate) struct Painter<'terminal, B: Backend> {
+    terminal: &'terminal mut Terminal<B>,
+    presentation: ShellPresentation,
+    cover_renderer: CoverPainter,
     spectrum_analyzer: SpectrumAnalyzer,
     motion: Motion,
     pending_cues: Vec<Cue>,
@@ -88,41 +73,36 @@ pub(crate) struct Painter<'terminal> {
     toasts: Vec<Message>,
 }
 
-impl std::fmt::Debug for Painter<'_> {
+impl<B: Backend> std::fmt::Debug for Painter<'_, B> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.debug_struct("Painter").finish_non_exhaustive()
     }
 }
 
-impl<'terminal> Painter<'terminal> {
+impl<'terminal, B: Backend> Painter<'terminal, B> {
     pub(crate) fn new(
-        terminal: &'terminal mut Terminal<CrosstermBackend<Stdout>>,
-        look: Look,
-        probe_answer: Option<ProbeAnswer>,
+        terminal: &'terminal mut Terminal<B>,
+        theme: config::TomlTheme,
+        capabilities: Capabilities,
     ) -> Self {
         let area = terminal.get_frame().area();
         let Capabilities {
             picker,
             pixel_path,
             color_depth,
-        } = Capabilities::before_probe(&TerminalEnvironment::current());
-        let (picker, pixel_path) = probe_answer
-            .map_or((picker, pixel_path), |answer| {
-                (answer.picker, PixelPath::Protocol)
-            });
+        } = capabilities;
         let cell_aspect = terminal::cell_aspect(picker.font_size());
         Self {
             terminal,
-            presentation: Presentation {
-                theme: theme_from_file(look.theme),
+            presentation: ShellPresentation {
+                theme: crate::startup::theme(theme),
                 pixel_path,
                 color_depth,
                 cell_aspect,
                 home: dirs::home_dir(),
-                music_dir: PathBuf::new(),
-                music_dir_label: String::new(),
+                spectrum: [0.0; SPECTRUM_BANDS],
             },
-            cover_renderer: CoverRenderer::new(picker),
+            cover_renderer: CoverPainter::new(picker),
             spectrum_analyzer: SpectrumAnalyzer::new(),
             motion: Motion {
                 area,
@@ -137,22 +117,19 @@ impl<'terminal> Painter<'terminal> {
 
     fn take_latest(&mut self, latest: &LatestReceivers) {
         if let Some(theme) = latest.theme.take() {
-            self.motion.outgoing_theme_background = Some(
-                ActiveTheme::new(
-                    &self.presentation.theme,
-                    self.presentation.color_depth,
-                )
-                .role(Role::WindowBackground),
+            let outgoing = ActiveTheme::new(
+                &self.presentation.theme,
+                self.presentation.color_depth,
             );
-            self.presentation.theme = theme_from_file(Arc::unwrap_or_clone(theme));
+            self.motion.outgoing_theme_background =
+                Some(BackdropStyle::from_theme(&outgoing).background);
+            self.presentation.theme =
+                crate::startup::theme(Arc::unwrap_or_clone(theme));
         }
         let Some(cover) = latest.cover.take() else {
             return;
         };
-        let Ok(decoded) = Arc::try_unwrap(cover) else {
-            return;
-        };
-        if let Some(toast) = self.accept_cover(decoded) {
+        if let Some(toast) = self.accept_cover(&cover) {
             self.toasts.push(toast);
         }
     }
@@ -162,128 +139,106 @@ impl<'terminal> Painter<'terminal> {
             return;
         }
         self.motion.outgoing_theme_background = None;
-        if self.window_colors_write == WindowColorsWrite::Staged {
-            self.window_colors_write = WindowColorsWrite::Done;
-            self.set_window_colors(&WindowColorsCmd::Set(
-                self.presentation.theme.name.clone(),
-            ));
-        }
+        self.write_staged_window_colors();
+    }
+
+    fn write_staged_window_colors(&mut self) {
+        let cmd = match &self.window_colors_write {
+            WindowColorsWrite::Staged(name)
+                if *name == self.presentation.theme.name =>
+            {
+                WindowColorsCmd::Set(name.clone())
+            }
+            WindowColorsWrite::Staged(_) | WindowColorsWrite::Done => return,
+        };
+        self.window_colors_write = WindowColorsWrite::Done;
+        self.set_window_colors(&cmd);
     }
 
     fn set_window_colors(&mut self, cmd: &WindowColorsCmd) {
         if let Err(error) = write_window_colors(cmd, &self.presentation.theme) {
-            self.toasts.push(Message::Toast(
-                Toast::error("Window colors failed").with_text(error.to_string()),
-            ));
+            self.toasts.push(paint_error(PaintError::WindowColors(
+                Diagnostic::from_error(&error),
+            )));
         }
     }
 
-    fn accept_cover(&mut self, decoded: CoverDecoded) -> Option<Message> {
-        let CoverDecoded { path, outcome, .. } = decoded;
-        let (arrival, toast) = match outcome {
-            CoverOutcome::Art(image) => {
-                self.cover_renderer.set_cover(DecodedCover {
+    fn accept_cover(&mut self, decoded: &CoverDecoded) -> Option<Message> {
+        let CoverDecoded { path, art, .. } = decoded;
+        let (arrival, toast) = match art {
+            library::CoverArt::Image(image) => {
+                self.cover_renderer.set_cover(CoverImage {
                     path: path.clone(),
-                    image: Arc::new(image),
+                    image: Arc::clone(image),
                 });
                 (CoverArrival::Decoded, None)
             }
-            CoverOutcome::NoArt => (CoverArrival::Missing, None),
-            CoverOutcome::Failed(error) => (
+            library::CoverArt::Missing => (CoverArrival::Missing, None),
+            library::CoverArt::Error(error) => (
                 CoverArrival::Missing,
-                Some(Message::Toast(
-                    Toast::error("Cover art failed").with_text(error.to_string()),
-                )),
+                Some(paint_error(PaintError::Cover(Diagnostic::from_error(
+                    error,
+                )))),
             ),
         };
-        self.record_cover_arrival(&path, arrival);
+        self.record_cover_arrival(path, arrival);
         toast
     }
 
-    fn backdrop(&self, laid_out: &LaidOutScene<'_>, cover_art: &CoverArt) -> Backdrop {
+    fn backdrop(&self, laid_out: &LaidOutScene<'_>, cover_art: &CardCover) -> Backdrop {
         let theme =
-            ActiveTheme::new(&self.presentation.theme, self.presentation.color_depth);
-        let fill = theme.colors.role(Role::Accent);
-        let background = theme.role(Role::WindowBackground);
-        let mix = self.animation_stage.timings().volume_pulse_mix;
+            ActiveTheme::new(&self.presentation.theme, self.presentation.color_depth)
+                .with_volume_pulse(self.animation_stage.timings().volume_pulse_mix);
+        let style = BackdropStyle::from_theme(&theme);
         Backdrop {
             animations: laid_out.scene.appearance().settings.animations,
             layout: protected_layout(laid_out.layout, cover_art),
-            background,
-            accent: theme.role(Role::Accent),
-            volume_fill: theme.role(Role::Accent),
-            volume_lifted: theme.lifted(fill, mix),
-            wash_from: self.motion.outgoing_theme_background.unwrap_or(background),
+            background: style.background,
+            accent: style.accent,
+            volume_fill: style.volume_fill,
+            volume_lifted: style.volume_lifted,
+            wash_from: self
+                .motion
+                .outgoing_theme_background
+                .unwrap_or(style.background),
         }
     }
 
-    fn advance(&mut self, frame: &Frame<'_>, raw_bands: &widgets::Spectrum) -> Advance {
+    fn advance_spectrum(&mut self, frame: &Frame<'_>) {
+        let feed = SpectrumFeed::of(
+            view::scene(frame, &self.presentation, &self.motion).player,
+        );
+        let raw_bands = self.raw_bands(frame, feed);
         self.motion.record_first_paint(frame.now);
         self.motion.last_paint = frame.now;
-        self.motion
-            .advance_spectrum(SpectrumFeed::of(&frame.model.player), raw_bands);
-        let current_track = frame.model.player.current().map(|track| track.path());
-        let pending = mem::take(&mut self.motion.pending_crossfade);
-        let pending = after_track_change(pending, &self.pending_cues, current_track);
-        let (pending, crossfade) = take_crossfade_permit(pending);
-        self.motion.pending_crossfade = pending;
-        let laid_out = view::view(frame, &self.presentation, &self.motion);
-        let cover_mode = laid_out.scene.cover_mode();
-        let on_screen = laid_out.scene.on_screen(&laid_out.layout);
-        let body_height = laid_out
-            .layout
-            .playlist
-            .map_or(0, |areas| areas.body.height);
-        let size_px = laid_out.scene.appearance().cover_size_px;
-        let cover =
-            wanted_cover(&mut self.motion.wanted_cover, current_track, cover_mode)
-                .map(|path| CoverRequest { path, size_px });
-        self.motion.on_screen = on_screen;
-        let visible_rows = (body_height != self.motion.playlist_body_height)
-            .then_some(usize::from(body_height));
-        self.motion.playlist_body_height = body_height;
-        Advance {
-            cover,
-            visible_rows,
-            crossfade,
-            screen_clear: mem::replace(
-                &mut self.motion.screen_clear,
-                ScreenClear::NotDue,
-            ),
-        }
+        self.presentation.spectrum = self.motion.advance_spectrum(feed, &raw_bands);
     }
 
     fn record_cover_arrival(&mut self, path: &Path, arrival: CoverArrival) {
-        let current = mem::take(&mut self.motion.pending_crossfade);
-        self.motion.pending_crossfade = after_cover_arrival(current, path, arrival);
+        let arrived = CrossfadeGateMessage::CoverArrived {
+            path: path.to_path_buf(),
+            arrival,
+        };
+        settle_crossfade_gate(&mut self.motion.crossfade_gate, arrived);
     }
 
     fn cover_motion(&self, now: Moment) -> CoverMotion {
-        let elapsed = if self.motion.first_paint == Moment::default() {
-            Duration::ZERO
-        } else {
-            now.elapsed_since(self.motion.first_paint)
-        };
+        let elapsed = self
+            .motion
+            .first_paint
+            .map_or(Duration::ZERO, |first| now.elapsed_since(first));
         self.cover_renderer.cover_motion(elapsed)
     }
 
-    fn refresh_music_dir(&mut self, music_dir: &Path) {
-        if music_dir == self.presentation.music_dir {
-            return;
-        }
-        self.presentation.music_dir = music_dir.to_path_buf();
-        self.presentation.music_dir_label =
-            self.presentation.home.as_deref().map_or_else(
-                || music_dir.display().to_string(),
-                |home| abbreviate_home(music_dir, home),
-            );
-    }
-
-    fn raw_bands(&mut self, frame: &Frame<'_>) -> widgets::Spectrum {
+    fn raw_bands(
+        &mut self,
+        frame: &Frame<'_>,
+        feed: SpectrumFeed,
+    ) -> widgets::Spectrum {
         if self.motion.on_screen.spectrum == Presence::Hidden {
             return [0.0; SPECTRUM_BANDS];
         }
-        match SpectrumFeed::of(&frame.model.player) {
+        match feed {
             SpectrumFeed::Live => self
                 .spectrum_analyzer
                 .bands::<SPECTRUM_BANDS>(frame.spectrum),
@@ -292,12 +247,16 @@ impl<'terminal> Painter<'terminal> {
     }
 }
 
-impl runtime::Shell for Painter<'_> {
-    type Input = ShellEvent;
-    type Error = io::Error;
+impl<B> runtime::Shell for Painter<'_, B>
+where
+    B: Backend,
+    B::Error: 'static,
+{
+    type Input = ShellInput;
+    type Error = B::Error;
 
     fn input(&mut self, event: Self::Input) -> Reaction {
-        if let ShellEvent::Terminal(Event::Resize(width, height)) = &event {
+        if let ShellInput::Terminal(Event::Resize(width, height)) = &event {
             self.motion.area = Rect::new(0, 0, *width, *height);
             self.motion.screen_clear = ScreenClear::Due;
         }
@@ -305,45 +264,42 @@ impl runtime::Shell for Painter<'_> {
     }
 
     fn effect(&mut self, effect: ShellEffect, animations: Animations) {
-        match &effect {
-            ShellEffect::WindowColors(WindowColorsCmd::Set(_)) => match animations {
-                Animations::Off => self.set_window_colors(&WindowColorsCmd::Set(
-                    self.presentation.theme.name.clone(),
-                )),
-                Animations::On => {
-                    self.window_colors_write = WindowColorsWrite::Staged;
+        match effect {
+            ShellEffect::WindowColors(WindowColorsCmd::Set(name)) => {
+                self.window_colors_write = WindowColorsWrite::Staged(name);
+                match animations {
+                    Animations::Off => self.write_staged_window_colors(),
+                    Animations::On => {}
                 }
-            },
-            ShellEffect::WindowColors(cmd @ WindowColorsCmd::Reset) => {
-                self.set_window_colors(cmd);
             }
-            ShellEffect::Animate(cue) => self.pending_cues.push(*cue),
+            ShellEffect::WindowColors(cmd @ WindowColorsCmd::Reset) => {
+                self.window_colors_write = WindowColorsWrite::Done;
+                self.set_window_colors(&cmd);
+            }
+            ShellEffect::Animate(cue) => self.pending_cues.push(cue),
         }
     }
 
     fn frame_due(&self, frame: &Frame<'_>) -> FrameDue {
+        let scene = view::scene(frame, &self.presentation, &self.motion);
         let animation = animation_frame_due(
             &self.animation_stage,
             self.cover_motion(frame.now),
             self.motion.last_paint,
         );
         let progress = progress_frame_due(
-            &frame.model.player,
+            scene.player,
             self.motion.on_screen.progress_bar,
             frame.now,
         );
-        let clock = clock_frame_due(
-            &frame.model.player,
-            self.motion.on_screen.clock,
-            frame.now,
-        );
+        let clock =
+            clock_frame_due(scene.player, self.motion.on_screen.clock, frame.now);
         let sleep = sleep_frame_due(
             frame.sleep_deadline,
             self.motion.on_screen.sleep_label,
             frame.now,
         );
-        let spectrum =
-            spectrum_frame_due(&self.motion, SpectrumFeed::of(&frame.model.player));
+        let spectrum = spectrum_frame_due(&self.motion, SpectrumFeed::of(scene.player));
         [animation, progress, clock, sleep, spectrum]
             .into_iter()
             .flatten()
@@ -353,16 +309,17 @@ impl runtime::Shell for Painter<'_> {
 
     fn paint(&mut self, frame: Frame<'_>) -> Result<Painted, Self::Error> {
         self.take_latest(frame.latest);
-        self.refresh_music_dir(frame.model.music_dir.as_path());
-        let raw_bands = self.raw_bands(&frame);
-        let advance = self.advance(&frame, &raw_bands);
+        self.advance_spectrum(&frame);
         let laid_out = view::view(&frame, &self.presentation, &self.motion);
+        let advance = advance(&mut self.motion, &self.pending_cues, &laid_out);
         let (scene, layout) = (laid_out.scene, laid_out.layout);
-        let wash =
-            cover_wash(self.animation_stage.wash_progress(), self.motion.area.width);
+        let wash = cover_wash(
+            self.animation_stage.wash_progress(),
+            Cells(self.motion.area.width),
+        );
         let cover_art = self.cover_renderer.refresh(
             &scene,
-            CoverRefreshParts {
+            CoverRefresh {
                 layout,
                 crossfade: advance.crossfade,
                 wash,
@@ -378,97 +335,156 @@ impl runtime::Shell for Painter<'_> {
         let cues = mem::take(&mut self.pending_cues);
         self.terminal.draw(|screen| {
             screen.render_widget(
-                &Screen {
+                &ScreenWidget {
                     scene,
                     layout: &layout,
                     cover_art: &cover_art,
                 },
                 screen.area(),
             );
-            pixels.place(screen.buffer_mut(), &layout);
+            pixels.paint(screen.buffer_mut(), &layout);
             animation_stage.play(cues, &backdrop);
             animation_stage.advance(screen.buffer_mut(), elapsed);
         })?;
         self.flush_staged_window_colors();
         Ok(Painted {
             cover: advance.cover,
-            visible_rows: advance.visible_rows,
+            visible_rows: advance.visible_rows.map(Cells::count),
             toasts: mem::take(&mut self.toasts),
         })
     }
 }
 
-fn protected_layout(mut layout: FrameLayout, cover_art: &CoverArt) -> FrameLayout {
-    if !matches!(cover_art, CoverArt::Image) {
-        layout.cover = None;
+fn advance(
+    motion: &mut Motion,
+    cues: &[Cue],
+    laid_out: &LaidOutScene<'_>,
+) -> FrameAdvance {
+    let LaidOutScene { scene, layout } = laid_out;
+    let current_track = scene.current_track_path();
+    if cues.contains(&Cue::TrackChanged) {
+        let changed =
+            CrossfadeGateMessage::TrackChanged(current_track.map(Path::to_path_buf));
+        settle_crossfade_gate(&mut motion.crossfade_gate, changed);
     }
-    layout
+    let crossfade = match motion
+        .crossfade_gate
+        .transition(CrossfadeGateMessage::PermitTaken)
+    {
+        Ok(cmd) => cmd
+            .effects()
+            .copied()
+            .last()
+            .unwrap_or(CrossfadePermit::Withheld),
+        Err(Unhandled) => CrossfadePermit::Withheld,
+    };
+    let cover = cover_job(motion, scene);
+    motion.on_screen = scene.on_screen(layout);
+    let body_height = layout
+        .playlist
+        .map_or(Cells(0), |areas| Cells(areas.body.height));
+    let visible_rows =
+        (body_height != motion.playlist_body_height).then_some(body_height);
+    motion.playlist_body_height = body_height;
+    FrameAdvance {
+        cover,
+        visible_rows,
+        crossfade,
+        screen_clear: mem::replace(&mut motion.screen_clear, ScreenClear::NotDue),
+    }
+}
+
+fn settle_crossfade_gate(gate: &mut CrossfadeGate, message: CrossfadeGateMessage) {
+    let effects = match gate.transition(message) {
+        Ok(cmd) => cmd.effects().count(),
+        Err(Unhandled) => 0,
+    };
+    debug_assert_eq!(effects, 0);
+}
+
+fn cover_job(motion: &mut Motion, scene: &Scene<'_>) -> Option<CoverJob> {
+    let want = wanted_cover(
+        motion.wanted_cover.as_deref(),
+        scene.current_track_path(),
+        scene.cover_mode(),
+    );
+    match want {
+        CoverWant::None => {
+            motion.wanted_cover = None;
+            None
+        }
+        CoverWant::Same => None,
+        CoverWant::New(path) => {
+            motion.wanted_cover = Some(path.clone());
+            Some(CoverJob::new(path, scene.appearance().cover_size_px))
+        }
+    }
+}
+
+fn paint_error(error: PaintError) -> Message {
+    Message::from(PaintEvent::Error(error))
+}
+
+fn protected_layout(layout: FrameLayout, cover_art: &CardCover) -> FrameLayout {
+    if matches!(cover_art, CardCover::Image) {
+        layout
+    } else {
+        FrameLayout {
+            cover: None,
+            ..layout
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{io, path::PathBuf, sync::Arc, time::Duration};
+    use std::{path::PathBuf, sync::Arc, time::Duration};
 
-    use audio::SpectrumTap;
+    use audio::tap::SpectrumTap;
     use crossterm::event::Event;
     use image::RgbaImage;
-    use kernel::{Cue, Message, Moment, Toast, domain::Model};
-    use ratatui::{
-        Terminal,
-        TerminalOptions,
-        Viewport,
-        backend::CrosstermBackend,
-        buffer::Buffer,
-        layout::Rect,
-        style::Color,
+    use kernel::{
+        Diagnostic,
+        Message,
+        Moment,
+        PaintError,
+        PaintEvent,
+        WindowColorsCmd,
+        domain::{Model, ThemeName, appearance::Animations, geometry::Pixels},
     };
+    use library::{CoverDecoded, CoverError};
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
     use rstest::rstest;
-    use runtime::{
-        CoverDecoded,
-        CoverError,
-        CoverOutcome,
-        Frame,
-        Reaction,
-        Shell as _,
-    };
-    use widgets::{
-        AnimationStage,
-        Backdrop,
-        Breakpoint,
-        CoverArt,
-        FrameLayout,
-        ToastAreas,
-    };
+    use runtime::{Frame, Reaction, Shell as _, ShellEffect};
+    use terminal::{Capabilities, TerminalEnvironment};
+    use widgets::{Backdrop, Breakpoint, CardCover, FrameLayout, ToastAreas};
 
     use crate::{
         shell::{
-            ShellEvent,
+            ShellInput,
             motion::ScreenClear,
-            painter::Painter,
+            painter::{Painter, WindowColorsWrite},
             view::{self, LaidOutScene, test_presentation},
         },
-        startup::{Look, fallback_theme_file},
+        startup::fallback_theme,
     };
 
-    fn test_terminal() -> Terminal<CrosstermBackend<io::Stdout>> {
-        Terminal::with_options(
-            CrosstermBackend::new(io::stdout()),
-            TerminalOptions {
-                viewport: Viewport::Fixed(Rect::new(0, 0, 80, 24)),
-            },
-        )
-        .unwrap()
+    fn test_terminal() -> Terminal<TestBackend> {
+        Terminal::new(TestBackend::new(80, 24)).unwrap()
     }
 
-    fn test_look() -> Look {
-        Look {
-            theme: fallback_theme_file(),
-        }
+    fn test_capabilities() -> Capabilities {
+        Capabilities::from_environment(&TerminalEnvironment::default())
     }
 
-    fn test_backdrop(cover_art: &CoverArt, outgoing: Option<Color>) -> Backdrop {
+    fn test_theme() -> config::TomlTheme {
+        fallback_theme()
+    }
+
+    fn test_backdrop(cover_art: &CardCover, outgoing: Option<Color>) -> Backdrop {
         let mut terminal = test_terminal();
-        let mut painter = Painter::new(&mut terminal, test_look(), None);
+        let mut painter =
+            Painter::new(&mut terminal, test_theme(), test_capabilities());
         painter.presentation = test_presentation();
         painter.motion.outgoing_theme_background = outgoing;
         let layout = FrameLayout {
@@ -503,11 +519,11 @@ mod tests {
         painter.backdrop(&laid_out, cover_art)
     }
 
-    fn decoded(outcome: CoverOutcome) -> CoverDecoded {
+    fn decoded(art: library::CoverArt) -> CoverDecoded {
         CoverDecoded {
             path: PathBuf::from("/music/track.jpg"),
-            side: 64,
-            outcome,
+            side: Pixels(64),
+            art,
         }
     }
 
@@ -518,26 +534,28 @@ mod tests {
     }
 
     #[rstest]
-    #[case::decoded_art(CoverOutcome::Art(RgbaImage::new(2, 2)), None)]
-    #[case::no_art(CoverOutcome::NoArt, None)]
+    #[case::decoded_art(library::CoverArt::Image(Arc::new(RgbaImage::new(2, 2))), None)]
+    #[case::no_art(library::CoverArt::Missing, None)]
     #[case::a_failed_decode(
-        CoverOutcome::Failed(broken_cover_error()),
-        Some(Message::Toast(Toast::error("Cover art failed")
-            .with_text(broken_cover_error().to_string())))
+        library::CoverArt::Error(broken_cover_error()),
+        Some(Message::from(PaintEvent::Error(PaintError::Cover(
+            Diagnostic::from_error(&broken_cover_error())
+        ))))
     )]
     fn an_arriving_cover_raises_a_toast_only_when_the_decode_failed(
-        #[case] outcome: CoverOutcome,
+        #[case] art: library::CoverArt,
         #[case] expected: Option<Message>,
     ) {
         let mut terminal = test_terminal();
-        let mut painter = Painter::new(&mut terminal, test_look(), None);
+        let mut painter =
+            Painter::new(&mut terminal, test_theme(), test_capabilities());
 
-        assert_eq!(painter.accept_cover(decoded(outcome)), expected);
+        assert_eq!(painter.accept_cover(&decoded(art)), expected);
     }
 
     #[test]
     fn with_no_wash_staged_the_wash_starts_from_the_current_background() {
-        let backdrop = test_backdrop(&CoverArt::Missing, None);
+        let backdrop = test_backdrop(&CardCover::Missing, None);
 
         assert_eq!(backdrop.wash_from, backdrop.background);
     }
@@ -546,7 +564,7 @@ mod tests {
     fn a_staged_outgoing_background_is_where_the_wash_starts() {
         let outgoing = Color::Rgb(0x11, 0x22, 0x33);
 
-        let backdrop = test_backdrop(&CoverArt::Missing, Some(outgoing));
+        let backdrop = test_backdrop(&CardCover::Missing, Some(outgoing));
 
         assert_eq!(backdrop.wash_from, outgoing);
         assert_ne!(backdrop.wash_from, backdrop.background);
@@ -554,54 +572,35 @@ mod tests {
 
     #[test]
     fn a_pixel_image_cover_stays_protected_from_effects() {
-        let backdrop = test_backdrop(&CoverArt::Image, None);
+        let backdrop = test_backdrop(&CardCover::Image, None);
 
         assert_eq!(backdrop.layout.cover, Some(Rect::new(0, 0, 4, 4)));
     }
 
     #[test]
     fn a_text_cover_takes_part_in_effects() {
-        let backdrop = test_backdrop(&CoverArt::Text(Arc::default()), None);
+        let backdrop = test_backdrop(&CardCover::Text(Arc::default()), None);
 
         assert_eq!(backdrop.layout.cover, None);
     }
 
     #[test]
     fn a_missing_cover_takes_part_in_effects() {
-        let backdrop = test_backdrop(&CoverArt::Missing, None);
+        let backdrop = test_backdrop(&CardCover::Missing, None);
 
         assert_eq!(backdrop.layout.cover, None);
     }
 
     #[test]
-    fn an_ended_effect_settles_to_no_deadline_after_the_next_paint() {
-        let backdrop = test_backdrop(&CoverArt::Missing, None);
-        let mut stage = AnimationStage::default();
-        stage.play(vec![Cue::ToastRaised], &backdrop);
-        assert!(stage.is_animating(), "sanity: the toast is animating");
-        let mut buffer = Buffer::empty(backdrop.layout.screen);
-
-        stage.advance(&mut buffer, Duration::from_secs(10));
-        assert!(
-            stage.is_animating(),
-            "sanity: the settling frame is still owed once the effect ends"
-        );
-
-        stage.play(Vec::new(), &backdrop);
-        stage.advance(&mut buffer, Duration::ZERO);
-
-        assert!(!stage.is_animating());
-    }
-
-    #[test]
     fn a_resize_reaches_the_painter_and_the_next_frame_uses_the_new_area() {
         let mut terminal = test_terminal();
-        let mut painter = Painter::new(&mut terminal, test_look(), None);
+        let mut painter =
+            Painter::new(&mut terminal, test_theme(), test_capabilities());
         let model = Model::default();
         let (_senders, latest, _doorbell) = runtime::latest_channels();
         let spectrum = SpectrumTap::silent();
 
-        let reaction = painter.input(ShellEvent::Terminal(Event::Resize(120, 40)));
+        let reaction = painter.input(ShellInput::Terminal(Event::Resize(120, 40)));
 
         let frame = Frame {
             model: &model,
@@ -615,5 +614,27 @@ mod tests {
         assert_eq!(reaction, Reaction::Repaint);
         assert_eq!(layout.screen, Rect::new(0, 0, 120, 40));
         assert_eq!(painter.motion.screen_clear, ScreenClear::Due);
+    }
+
+    #[rstest]
+    #[case::animations_off(Animations::Off)]
+    #[case::animations_on(Animations::On)]
+    fn commanded_window_colors_wait_for_their_own_theme(
+        #[case] animations: Animations,
+    ) {
+        let mut terminal = test_terminal();
+        let mut painter =
+            Painter::new(&mut terminal, test_theme(), test_capabilities());
+        let commanded = ThemeName::from_static("ghost");
+
+        painter.effect(
+            ShellEffect::WindowColors(WindowColorsCmd::Set(commanded.clone())),
+            animations,
+        );
+
+        assert_eq!(
+            painter.window_colors_write,
+            WindowColorsWrite::Staged(commanded)
+        );
     }
 }

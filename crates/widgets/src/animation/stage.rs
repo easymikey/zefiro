@@ -172,7 +172,7 @@ impl AnimationStage {
     pub(crate) fn remember_protected(&mut self, layout: FrameLayout) {
         self.protected.clear();
         self.protected.extend(layout.cover);
-        self.live.cover.set(layout.cover.unwrap_or_default());
+        self.live.cover.set(layout.cover.unwrap_or(Rect::ZERO));
     }
 
     pub fn stage(&mut self, animation: Animation, area: Rect) {

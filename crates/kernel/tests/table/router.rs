@@ -4,6 +4,7 @@ use kernel::{
     AbLoop,
     AudioEvent,
     Bounded,
+    Cue,
     Direction,
     Effect,
     Message,
@@ -12,7 +13,15 @@ use kernel::{
     OverlayName,
     PlaybackRequest,
     Timer,
-    domain::{Cursor, Overlay, Player, Revision, Transport},
+    domain::{
+        Cursor,
+        DeleteCandidate,
+        Overlay,
+        Player,
+        Revision,
+        Transport,
+        ViewIndex,
+    },
     playlist::{PlayOrder, RepeatMode},
     update::{Unhandled, update},
 };
@@ -260,7 +269,7 @@ fn resolved(message: Message, model: &Model) -> Message {
 #[case::shuffle_wraps_at_the_end_of_its_order_with_repeat_off(
     {
         let mut model = model_playing_at(4, 1, Duration::ZERO);
-        model.playlist.play_order = PlayOrder::Shuffle([2, 0, 3, 1].map(kernel::domain::ViewIndex::new).to_vec());
+        model.playlist.play_order = PlayOrder::Shuffle([2, 0, 3, 1].map(ViewIndex::new).to_vec());
         model
     },
     vec![skip()]
@@ -268,7 +277,7 @@ fn resolved(message: Message, model: &Model) -> Message {
 #[case::toggling_shuffle_leaves_a_pin_the_engine_already_committed_to(
     {
         let mut model = model_playing_at(4, 0, Duration::ZERO);
-        model.playlist.play_order = PlayOrder::Shuffle([0, 2, 1, 3].map(kernel::domain::ViewIndex::new).to_vec());
+        model.playlist.play_order = PlayOrder::Shuffle([0, 2, 1, 3].map(ViewIndex::new).to_vec());
         model
     },
     vec![near_the_end(), mark_fires(), shuffle(), handed_off()]
@@ -401,4 +410,19 @@ fn a_refused_message_leaves_the_model_alone(
         Some(rejection)
     );
     assert_eq!(format!("{model:?}"), before);
+}
+
+#[test]
+fn a_refused_follow_up_keeps_the_parents_effects() {
+    let mut model = Model::default();
+    model.workspace.overlay = Some(Overlay::ConfirmDelete(DeleteCandidate {
+        source: kernel::TrackRef::Local("/music/gone.flac".into()),
+        title: "Gone".to_string(),
+        artist: String::new(),
+    }));
+
+    let effects = update(&mut model, confirm(), Moment::default());
+
+    assert_eq!(effects, Ok(vec![Effect::Animate(Cue::OverlayClosed)]));
+    assert_eq!(model.workspace.overlay, None);
 }

@@ -1,9 +1,9 @@
+mod closed;
 pub(crate) mod crossfade;
-pub(crate) mod effect;
+pub mod effect;
 mod execute;
 mod live;
 mod machine;
-mod muted;
 pub(crate) mod phase;
 pub(crate) mod revisions;
 pub(crate) mod state;
@@ -39,7 +39,7 @@ pub(crate) mod tests {
     use crate::{
         deck::{DeviceChoice, DeviceOpened, source::PreloadMode},
         engine::{
-            effect::{AudioMessage, EngineEffect, Preload},
+            effect::{EngineEffect, EngineMessage, PreloadKind},
             phase::{
                 CurrentTrack,
                 Fade,
@@ -51,7 +51,7 @@ pub(crate) mod tests {
                 Playing,
                 Resume,
             },
-            state::{Engine, Live, Muted, PerformedRevisions},
+            state::{Closed, Engine, Live, PerformedRevisions},
         },
     };
 
@@ -61,18 +61,14 @@ pub(crate) mod tests {
 
     pub(crate) fn trace(
         state: Engine,
-        messages: Vec<AudioMessage>,
-    ) -> (Engine, Vec<Cmd<EngineEffect, AudioEvent>>) {
+        messages: Vec<EngineMessage>,
+    ) -> Result<(Engine, Vec<Cmd<EngineEffect, AudioEvent>>), Unhandled> {
         let mut current = state;
         let log = messages
             .into_iter()
-            .map(|message| {
-                current
-                    .transition(message)
-                    .unwrap_or_else(|Unhandled| Cmd::none())
-            })
-            .collect();
-        (current, log)
+            .map(|message| current.transition(message))
+            .collect::<Result<Vec<_>, Unhandled>>()?;
+        Ok((current, log))
     }
 
     pub(crate) fn unhandled(reason: impl std::fmt::Debug) -> TestCaseError {
@@ -89,7 +85,7 @@ pub(crate) mod tests {
         Crossfade::clamped(seconds(count))
     }
 
-    pub(crate) fn config() -> AudioSettings {
+    pub(crate) fn settings() -> AudioSettings {
         AudioSettings {
             crossfade: crossfade(0),
             replay_gain: ReplayGain::Off,
@@ -98,16 +94,18 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn config_on(device: &str) -> AudioSettings {
+    pub(crate) fn settings_on(device: &str) -> AudioSettings {
         AudioSettings {
             device: OutputDevice::Named(DeviceName::new(device.to_string()).unwrap()),
-            ..config()
+            ..settings()
         }
     }
 
     pub(crate) fn error() -> AudioError {
         AudioError::Stream {
-            reason: "no output device available".to_string(),
+            reason: kernel::domain::Diagnostic::from_error(&std::io::Error::other(
+                "no output device available",
+            )),
         }
     }
 
@@ -118,36 +116,49 @@ pub(crate) mod tests {
         }
     }
 
+    pub(crate) fn preload_error() -> AudioError {
+        AudioError::Preload {
+            path: "/b".into(),
+            kind: DecodeError::Unsupported,
+        }
+    }
+
+    pub(crate) fn device_error() -> AudioError {
+        AudioError::Device {
+            requested: OutputDevice::SystemDefault,
+        }
+    }
+
     pub(crate) fn output_lost() -> AudioError {
         AudioError::OutputLost(StreamError::DeviceGone)
     }
 
-    pub(crate) fn failed() -> AudioMessage {
-        AudioMessage::Error(output_lost())
+    pub(crate) fn failed() -> EngineMessage {
+        EngineMessage::Error(output_lost())
     }
 
-    pub(crate) fn muted() -> Engine {
-        Engine::Muted(Muted {
-            settings: config(),
+    pub(crate) fn closed() -> Engine {
+        Engine::Closed(Closed {
+            settings: settings(),
             pending: None,
             speed: Speed::default(),
         })
     }
 
     pub(crate) fn waiting_for(path: &str) -> Engine {
-        Engine::Muted(Muted {
+        Engine::Closed(Closed {
             pending: Some(TrackLoad {
                 path: path.into(),
                 gain: None,
                 revision: first(),
             }),
-            settings: config(),
+            settings: settings(),
             speed: Speed::default(),
         })
     }
 
     pub(crate) fn live() -> Live {
-        Live::new(config(), Speed::default())
+        Live::new(settings(), Speed::default())
     }
 
     pub(crate) fn track_a() -> CurrentTrack {
@@ -203,7 +214,7 @@ pub(crate) mod tests {
                     total: Some(TOTAL),
                 }),
             }),
-            settings: config_on("usb"),
+            settings: settings_on("usb"),
             ..live()
         }
     }
@@ -212,7 +223,7 @@ pub(crate) mod tests {
         Live {
             settings: AudioSettings {
                 crossfade: crossfade(seconds),
-                ..config()
+                ..settings()
             },
             ..live()
         }
@@ -222,7 +233,7 @@ pub(crate) mod tests {
         Live {
             settings: AudioSettings {
                 crossfade: crossfade(CROSSFADE_SECONDS),
-                ..config()
+                ..settings()
             },
             ..playing()
         }
@@ -250,7 +261,7 @@ pub(crate) mod tests {
             }),
             settings: AudioSettings {
                 crossfade: crossfade(CROSSFADE_SECONDS),
-                ..config()
+                ..settings()
             },
             ..live()
         }
@@ -274,14 +285,14 @@ pub(crate) mod tests {
             phase: playing_track(track_b()),
             settings: AudioSettings {
                 crossfade,
-                ..config()
+                ..settings()
             },
             ..live()
         }
     }
 
-    pub(crate) fn cmd(cmd: AudioCmd) -> AudioMessage {
-        AudioMessage::Cmds(Cmds {
+    pub(crate) fn cmd(cmd: AudioCmd) -> EngineMessage {
+        EngineMessage::Cmds(Cmds {
             cmds: vec![cmd],
             at: Instant::now(),
         })
@@ -295,7 +306,7 @@ pub(crate) mod tests {
         first().next()
     }
 
-    pub(crate) fn load_at(path: &str, revision: Revision) -> AudioMessage {
+    pub(crate) fn load_at(path: &str, revision: Revision) -> EngineMessage {
         cmd(AudioCmd::Load(TrackLoad {
             path: path.into(),
             gain: None,
@@ -303,11 +314,11 @@ pub(crate) mod tests {
         }))
     }
 
-    pub(crate) fn load(path: &str) -> AudioMessage {
+    pub(crate) fn load(path: &str) -> EngineMessage {
         load_at(path, first())
     }
 
-    pub(crate) fn preload_at(path: &str, revision: Revision) -> AudioMessage {
+    pub(crate) fn preload_at(path: &str, revision: Revision) -> EngineMessage {
         cmd(AudioCmd::Preload(TrackLoad {
             path: path.into(),
             gain: None,
@@ -315,7 +326,7 @@ pub(crate) mod tests {
         }))
     }
 
-    pub(crate) fn preload(path: &str) -> AudioMessage {
+    pub(crate) fn preload(path: &str) -> EngineMessage {
         preload_at(path, first())
     }
 
@@ -338,15 +349,15 @@ pub(crate) mod tests {
         };
         Live {
             phase: Phase::Playing(Playing {
-                preloading: Some(path.into()),
+                next: Next::Preloading(path.into()),
                 ..playing
             }),
             ..live
         }
     }
 
-    pub(crate) fn installed(preload: CurrentTrack) -> AudioMessage {
-        AudioMessage::Preloaded(Ok(Preload::Crossfade(preload)))
+    pub(crate) fn installed(preload: CurrentTrack) -> EngineMessage {
+        EngineMessage::Preloaded(PreloadKind::Crossfade(preload))
     }
 
     pub(crate) fn gapless_preload(path: &str) -> Cmd<EngineEffect, AudioEvent> {
@@ -376,7 +387,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn set_crossfade(seconds: u64) -> AudioMessage {
+    pub(crate) fn set_crossfade(seconds: u64) -> EngineMessage {
         cmd(AudioCmd::SetCrossfade(crossfade(seconds)))
     }
 
@@ -384,22 +395,22 @@ pub(crate) mod tests {
         device: OutputDevice,
         position: Duration,
         playback: Playback,
-    ) -> AudioMessage {
-        AudioMessage::Opened(Ok(DeviceOpened {
+    ) -> EngineMessage {
+        EngineMessage::Opened(DeviceOpened {
             device,
             position,
             playback,
             opened: DeviceChoice::Requested,
-        }))
+        })
     }
 
-    pub(crate) fn fell_back(position: Duration, playback: Playback) -> AudioMessage {
-        AudioMessage::Opened(Ok(DeviceOpened {
+    pub(crate) fn fell_back(position: Duration, playback: Playback) -> EngineMessage {
+        EngineMessage::Opened(DeviceOpened {
             device: OutputDevice::SystemDefault,
             position,
             playback,
             opened: DeviceChoice::FellBack,
-        }))
+        })
     }
 
     pub(crate) struct EngineRow {
@@ -407,7 +418,7 @@ pub(crate) mod tests {
         pub(crate) effect: Cmd<EngineEffect, AudioEvent>,
     }
 
-    pub(crate) fn assert_cell(start: Engine, message: AudioMessage, moved: EngineRow) {
+    pub(crate) fn assert_cell(start: Engine, message: EngineMessage, moved: EngineRow) {
         let mut state = start;
         let effect = state
             .transition(message)

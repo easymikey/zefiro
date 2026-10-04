@@ -1,12 +1,25 @@
 use std::{
+    cmp::Ordering,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use kernel::{LibraryCmd, LibraryEvent, Track, cmd::ScanMode};
+use kernel::{
+    LibraryEvent,
+    Track,
+    TrackRef,
+    cmd::ScanMode,
+    domain::Revision,
+    update::Driver,
+};
 
 use crate::{
+    DiskEffect,
+    LibraryDriver,
+    LibraryEffect,
+    LibraryMessage,
     cache,
+    cover::{CoverDecoded, CoverJob, decode},
     dirs::LibraryDirs,
     error::Error,
     favorites,
@@ -16,95 +29,299 @@ use crate::{
     trash,
 };
 
-pub fn execute(
-    command: LibraryCmd,
-    dirs: &LibraryDirs,
-    decodable: &[&str],
-) -> Result<Option<LibraryEvent>, Error> {
-    match command {
-        LibraryCmd::AppendHistory(entry) => {
-            history::append(dirs, &entry).map(|()| None)
-        }
-        LibraryCmd::SaveFavorites(favorites) => {
-            favorites::save(dirs, &favorites).map(|()| None)
-        }
-        LibraryCmd::LoadFavorites => favorites::load(dirs)
-            .map(|loaded| Some(LibraryEvent::FavoritesLoaded(loaded))),
-        LibraryCmd::Trash(path) => trash::move_to_trash(&path).map(|()| None),
-        LibraryCmd::LoadHistory(limit) => history::load(dirs, limit)
-            .map(|entries| Some(LibraryEvent::HistoryLoaded(entries))),
-        LibraryCmd::Scan {
-            music_dir,
-            revision,
-            mode: ScanMode::Full,
-        } => {
-            let paths = list_paths(&music_dir, decodable)?;
-            let tracks = scan::read_tags(&paths);
-            cache::save(dirs, &music_dir, &tracks)?;
-            Ok(Some(LibraryEvent::Loaded { tracks, revision }))
-        }
-        LibraryCmd::Scan {
-            music_dir,
-            revision,
-            mode: ScanMode::Cached,
-        } => {
-            let cached = cache::load(dirs, &music_dir);
-            if !cached.is_empty() {
-                return Ok(Some(LibraryEvent::Loaded {
-                    tracks: cached,
-                    revision,
-                }));
+#[derive(Debug, PartialEq, Eq)]
+pub enum LibraryJob {
+    Cover(CoverJob),
+    Tag {
+        music_dir: PathBuf,
+        tracks: Vec<TrackRef>,
+        revision: Revision,
+        dirs: Arc<LibraryDirs>,
+    },
+    Scan {
+        music_dir: PathBuf,
+        revision: Revision,
+        mode: ScanMode,
+        dirs: Arc<LibraryDirs>,
+        decodable: &'static [&'static str],
+    },
+    List {
+        music_dir: PathBuf,
+        revision: Revision,
+        decodable: &'static [&'static str],
+    },
+}
+
+impl LibraryJob {
+    #[must_use]
+    pub fn run(self) -> LibraryMessage {
+        self.read().unwrap_or_else(LibraryMessage::Error)
+    }
+
+    fn read(self) -> Result<LibraryMessage, Error> {
+        match self {
+            LibraryJob::Cover(job) => Ok(LibraryMessage::CoverDecoded {
+                revision: job.revision,
+                decoded: decode(job),
+            }),
+            LibraryJob::Tag {
+                music_dir,
+                tracks,
+                revision,
+                dirs,
+            } => tagged(&dirs, &music_dir, &local_paths(tracks)).map(
+                |scan::TagsRead {
+                     tracks,
+                     first_error,
+                 }| LibraryMessage::Tagged {
+                    event: LibraryEvent::Tagged { tracks, revision },
+                    skipped: first_error,
+                },
+            ),
+            LibraryJob::Scan {
+                music_dir,
+                revision,
+                mode: ScanMode::Full,
+                dirs,
+                decodable,
+            } => {
+                let listing = listing(&music_dir, decodable)?;
+                let scan::TagsRead {
+                    tracks,
+                    first_error,
+                } = tagged(&dirs, &music_dir, &listing.paths)?;
+                Ok(LibraryMessage::Scanned {
+                    event: LibraryEvent::Loaded { tracks, revision },
+                    skipped: listing.first_error.or(first_error),
+                })
             }
-            let tracks = list_paths(&music_dir, decodable)?
-                .iter()
-                .map(|path| Arc::new(Track::listed(path)))
-                .collect();
-            Ok(Some(LibraryEvent::Listed { tracks, revision }))
+            LibraryJob::Scan {
+                music_dir,
+                revision,
+                mode: ScanMode::Cached,
+                dirs,
+                ..
+            } => Ok(LibraryMessage::Cached {
+                tracks: cache::load(&dirs, &music_dir),
+                music_dir,
+                revision,
+            }),
+            LibraryJob::List {
+                music_dir,
+                revision,
+                decodable,
+            } => {
+                listing(&music_dir, decodable).map(|listing| listed(listing, revision))
+            }
         }
-        LibraryCmd::SavePlaylist { name, tracks } => {
-            playlists::save(dirs, &name, &tracks).map(|()| None)
+    }
+
+    fn priority(&self) -> JobPriority {
+        match self {
+            LibraryJob::Cover(_) => JobPriority::COVER,
+            LibraryJob::Tag { .. } => JobPriority::TAG,
+            LibraryJob::Scan {
+                mode: ScanMode::Full,
+                ..
+            } => JobPriority::FULL_SCAN,
+            LibraryJob::Scan {
+                mode: ScanMode::Cached,
+                ..
+            }
+            | LibraryJob::List { .. } => JobPriority::CACHED_SCAN,
         }
-        LibraryCmd::PrefetchCover(_) => Ok(None),
-        LibraryCmd::TagTracks {
-            music_dir,
-            paths,
-            revision,
-        } => {
-            let tracks = scan::read_tags(&paths);
-            cache::save(dirs, &music_dir, &tracks)?;
-            Ok(Some(LibraryEvent::Tagged { tracks, revision }))
+    }
+
+    fn scan_key(&self) -> Option<ScanKey<'_>> {
+        match self {
+            LibraryJob::Cover(_) | LibraryJob::Tag { .. } => None,
+            LibraryJob::Scan {
+                music_dir,
+                revision,
+                dirs,
+                decodable,
+                ..
+            } => Some((music_dir, revision, self.priority(), Some(dirs), decodable)),
+            LibraryJob::List {
+                music_dir,
+                revision,
+                decodable,
+            } => Some((music_dir, revision, self.priority(), None, decodable)),
         }
     }
 }
 
-fn list_paths(music_dir: &Path, decodable: &[&str]) -> Result<Vec<PathBuf>, Error> {
-    let scan::Listing { paths, first_error } = scan::list_dir(music_dir, decodable);
-    match first_error {
-        Some(error) if paths.is_empty() => Err(error),
-        _ => Ok(paths),
+type ScanKey<'job> = (
+    &'job PathBuf,
+    &'job Revision,
+    JobPriority,
+    Option<&'job Arc<LibraryDirs>>,
+    &'job &'static [&'static str],
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct JobPriority(u8);
+
+impl JobPriority {
+    const COVER: Self = Self(0);
+    const TAG: Self = Self(1);
+    const FULL_SCAN: Self = Self(2);
+    const CACHED_SCAN: Self = Self(3);
+}
+
+impl PartialOrd for LibraryJob {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LibraryJob {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (LibraryJob::Cover(left), LibraryJob::Cover(right)) => left.cmp(right),
+            (
+                LibraryJob::Tag {
+                    music_dir,
+                    tracks,
+                    revision,
+                    dirs,
+                },
+                LibraryJob::Tag {
+                    music_dir: other_dir,
+                    tracks: other_tracks,
+                    revision: other_revision,
+                    dirs: other_dirs,
+                },
+            ) => (music_dir, tracks, revision, dirs).cmp(&(
+                other_dir,
+                other_tracks,
+                other_revision,
+                other_dirs,
+            )),
+            (
+                LibraryJob::Scan { .. } | LibraryJob::List { .. },
+                LibraryJob::Scan { .. } | LibraryJob::List { .. },
+            ) => self.scan_key().cmp(&other.scan_key()),
+            _ => self.priority().cmp(&other.priority()),
+        }
+    }
+}
+
+impl<P: FnMut(CoverDecoded)> Driver for LibraryDriver<P> {
+    type Effect = LibraryEffect;
+
+    fn execute(&mut self, effect: LibraryEffect) -> Option<LibraryMessage> {
+        match effect {
+            LibraryEffect::Run(job) => Some(job.run()),
+            LibraryEffect::After { .. }
+            | LibraryEffect::Watch(_)
+            | LibraryEffect::Unwatch(_) => None,
+            LibraryEffect::Publish(decoded) => {
+                (self.publish)(decoded);
+                None
+            }
+            LibraryEffect::Execute(disk) => on_disk(disk, &self.dirs)
+                .unwrap_or_else(|error| Some(LibraryMessage::Error(error))),
+        }
+    }
+}
+
+fn on_disk(
+    disk: DiskEffect,
+    dirs: &LibraryDirs,
+) -> Result<Option<LibraryMessage>, Error> {
+    match disk {
+        DiskEffect::AppendHistory(entry) => {
+            history::append(dirs, &entry).map(|()| None)
+        }
+        DiskEffect::SaveFavorites(favorites) => {
+            favorites::save(dirs, &favorites).map(|()| None)
+        }
+        DiskEffect::LoadFavorites => favorites::load(dirs)
+            .map(|loaded| executed(LibraryEvent::FavoritesLoaded(loaded), None)),
+        DiskEffect::Trash(path) => trash::move_to_trash(&path).map(|()| None),
+        DiskEffect::LoadHistory(limit) => history::load(dirs, limit).map(
+            |history::HistoryRead { entries, skipped }| {
+                executed(LibraryEvent::HistoryLoaded(entries), skipped)
+            },
+        ),
+        DiskEffect::SavePlaylist { name, tracks } => {
+            playlists::save(dirs, &name, &tracks).map(|()| None)
+        }
+    }
+}
+
+fn executed(event: LibraryEvent, skipped: Option<Error>) -> Option<LibraryMessage> {
+    Some(LibraryMessage::Executed { event, skipped })
+}
+
+fn listed(listing: scan::Listing, revision: Revision) -> LibraryMessage {
+    let scan::Listing { paths, first_error } = listing;
+    LibraryMessage::Scanned {
+        event: LibraryEvent::Listed {
+            tracks: paths
+                .iter()
+                .map(|path| Arc::new(Track::listed(path)))
+                .collect(),
+            revision,
+        },
+        skipped: first_error,
+    }
+}
+
+fn local_paths(tracks: Vec<TrackRef>) -> Vec<PathBuf> {
+    tracks
+        .into_iter()
+        .map(|TrackRef::Local(path)| path)
+        .collect()
+}
+
+fn tagged(
+    dirs: &LibraryDirs,
+    music_dir: &Path,
+    paths: &[PathBuf],
+) -> Result<scan::TagsRead, Error> {
+    let read = scan::read_tags(paths);
+    cache::save(dirs, music_dir, &read.tracks)?;
+    Ok(read)
+}
+
+fn listing(music_dir: &Path, decodable: &[&str]) -> Result<scan::Listing, Error> {
+    match scan::list_dir(music_dir, decodable) {
+        scan::Listing {
+            paths,
+            first_error: Some(error),
+        } if paths.is_empty() => Err(error),
+        listing => Ok(listing),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc, time::Duration};
 
     use kernel::{
         Favorites,
         HistoryEntry,
-        LibraryCmd,
         LibraryEvent,
         TrackRef,
         cmd::ScanMode,
-        domain::{Moment, Revision},
+        domain::{Moment, Revision, geometry::Pixels},
         playlist::PlaylistFileName,
+        update::{Driver, Machine},
     };
     use rstest::{fixture, rstest};
     use tempfile::TempDir;
 
     use crate::{
+        DiskEffect,
+        LibraryDriver,
+        LibraryEffect,
+        LibraryMessage,
+        LibraryTimer,
+        cover::{CoverArt, CoverDecoded, CoverJob},
         dirs::LibraryDirs,
-        execute::execute,
+        execute::LibraryJob,
         test_support::{self, temp_dir_filters},
     };
 
@@ -117,6 +334,68 @@ mod tests {
         (directory, paths)
     }
 
+    fn unpublished(decoded: CoverDecoded) {
+        let CoverDecoded { path, .. } = decoded;
+        panic!("nothing is published here: {path:?}");
+    }
+
+    fn told(message: Option<LibraryMessage>) -> Option<LibraryEvent> {
+        match message {
+            None => None,
+            Some(
+                LibraryMessage::Executed { event, .. }
+                | LibraryMessage::Scanned { event, .. }
+                | LibraryMessage::Tagged { event, .. },
+            ) => Some(event),
+            Some(other) => panic!("expected an event, got {other:?}"),
+        }
+    }
+
+    fn execute(disk: DiskEffect, paths: &LibraryDirs) -> Option<LibraryEvent> {
+        let mut driver: LibraryDriver<fn(CoverDecoded)> =
+            LibraryDriver::new(paths.clone(), DECODABLE, unpublished);
+        told(driver.execute(LibraryEffect::Execute(disk)))
+    }
+
+    fn scanned(
+        music_dir: PathBuf,
+        (revision, mode): (Revision, ScanMode),
+        paths: &LibraryDirs,
+    ) -> Vec<LibraryEvent> {
+        let mut driver: LibraryDriver<fn(CoverDecoded)> =
+            LibraryDriver::new(paths.clone(), DECODABLE, unpublished);
+        let message = LibraryJob::Scan {
+            music_dir,
+            revision,
+            mode,
+            dirs: Arc::new(paths.clone()),
+            decodable: DECODABLE,
+        }
+        .run();
+        let (effects, events) = driver.transition(message).unwrap().into_parts();
+        let listed: Vec<LibraryEvent> = effects
+            .into_iter()
+            .flat_map(|effect| {
+                let LibraryEffect::Run(job) = effect else {
+                    panic!("expected a job, got {effect:?}");
+                };
+                driver.transition(job.run()).unwrap().into_parts().1
+            })
+            .collect();
+        events.into_iter().chain(listed).collect()
+    }
+
+    fn scan(
+        music_dir: PathBuf,
+        scanning: (Revision, ScanMode),
+        paths: &LibraryDirs,
+    ) -> Option<LibraryEvent> {
+        match <[LibraryEvent; 1]>::try_from(scanned(music_dir, scanning, paths)) {
+            Ok([event]) => Some(event),
+            Err(events) => panic!("expected one event, got {events:?}"),
+        }
+    }
+
     #[rstest]
     fn append_history_writes_an_entry_and_replies_with_nothing(
         dirs: (TempDir, LibraryDirs),
@@ -124,14 +403,12 @@ mod tests {
         let (_directory, paths) = dirs;
 
         let event = execute(
-            LibraryCmd::AppendHistory(HistoryEntry::from_track(
+            DiskEffect::AppendHistory(HistoryEntry::from_track(
                 &test_support::titled("/music/song.flac", "Song"),
                 Moment::default(),
             )),
             &paths,
-            DECODABLE,
-        )
-        .unwrap();
+        );
 
         assert_eq!(event, None);
         assert!(paths.data_dir.join("history.jsonl").is_file());
@@ -146,8 +423,7 @@ mod tests {
             .into_iter()
             .collect();
 
-        let event =
-            execute(LibraryCmd::SaveFavorites(saved), &paths, DECODABLE).unwrap();
+        let event = execute(DiskEffect::SaveFavorites(saved), &paths);
 
         assert_eq!(event, None);
         assert!(paths.data_dir.join("favorites.json").is_file());
@@ -159,9 +435,9 @@ mod tests {
         let saved: Favorites = [TrackRef::Local("/music/a.flac".into())]
             .into_iter()
             .collect();
-        execute(LibraryCmd::SaveFavorites(saved), &paths, DECODABLE).unwrap();
+        assert_eq!(execute(DiskEffect::SaveFavorites(saved), &paths), None);
 
-        let event = execute(LibraryCmd::LoadFavorites, &paths, DECODABLE).unwrap();
+        let event = execute(DiskEffect::LoadFavorites, &paths);
 
         insta::assert_debug_snapshot!(event);
     }
@@ -171,7 +447,7 @@ mod tests {
         let (directory, paths) = dirs;
         let missing = directory.path().join("never-existed.flac");
 
-        let event = execute(LibraryCmd::Trash(missing), &paths, DECODABLE).unwrap();
+        let event = execute(DiskEffect::Trash(missing), &paths);
 
         assert_eq!(event, None);
     }
@@ -179,17 +455,16 @@ mod tests {
     #[rstest]
     fn load_history_replies_with_the_appended_entry(dirs: (TempDir, LibraryDirs)) {
         let (_directory, paths) = dirs;
-        execute(
-            LibraryCmd::AppendHistory(HistoryEntry::from_track(
+        let appended = execute(
+            DiskEffect::AppendHistory(HistoryEntry::from_track(
                 &test_support::titled("/music/song.flac", "Song"),
                 Moment::default(),
             )),
             &paths,
-            DECODABLE,
-        )
-        .unwrap();
+        );
+        assert_eq!(appended, None);
 
-        let event = execute(LibraryCmd::LoadHistory(10), &paths, DECODABLE).unwrap();
+        let event = execute(DiskEffect::LoadHistory(10), &paths);
 
         match event {
             Some(LibraryEvent::HistoryLoaded(entries)) => {
@@ -208,17 +483,111 @@ mod tests {
         let (_directory, paths) = dirs;
 
         let event = execute(
-            LibraryCmd::SavePlaylist {
+            DiskEffect::SavePlaylist {
                 name: PlaylistFileName::new("My Mix").unwrap(),
                 tracks: vec![test_support::titled("/music/song.flac", "Song")],
             },
             &paths,
-            DECODABLE,
-        )
-        .unwrap();
+        );
 
         assert_eq!(event, None);
         assert!(paths.playlists_dir.join("My Mix.m3u8").is_file());
+    }
+
+    #[rstest]
+    fn a_stream_or_timer_effect_answers_nothing(dirs: (TempDir, LibraryDirs)) {
+        let (_directory, paths) = dirs;
+        let mut driver: LibraryDriver<fn(CoverDecoded)> =
+            LibraryDriver::new(paths, DECODABLE, unpublished);
+
+        for effect in [
+            LibraryEffect::Watch(PathBuf::from("/music")),
+            LibraryEffect::Unwatch(PathBuf::from("/music")),
+            LibraryEffect::After {
+                delay: Duration::from_millis(500),
+                timer: LibraryTimer::Debounce,
+            },
+        ] {
+            assert!(driver.execute(effect).is_none());
+        }
+    }
+
+    #[rstest]
+    fn a_published_cover_reaches_the_sink(dirs: (TempDir, LibraryDirs)) {
+        let (_directory, paths) = dirs;
+        let mut published = Vec::new();
+        {
+            let mut driver =
+                LibraryDriver::new(paths, DECODABLE, |decoded: CoverDecoded| {
+                    published.push((decoded.path, decoded.side));
+                });
+            let answer = driver.execute(LibraryEffect::Publish(CoverDecoded {
+                path: PathBuf::from("/music/one.flac"),
+                side: Pixels(64),
+                art: CoverArt::Missing,
+            }));
+            assert!(answer.is_none());
+        }
+
+        assert_eq!(
+            published,
+            vec![(PathBuf::from("/music/one.flac"), Pixels(64))]
+        );
+    }
+
+    #[rstest]
+    fn a_cover_job_runs_into_a_decoded_cover(dirs: (TempDir, LibraryDirs)) {
+        let (directory, _paths) = dirs;
+        let path = directory.path().join("untagged.mp3");
+        std::fs::write(&path, b"not an audio file").unwrap();
+
+        let message = LibraryJob::Cover(CoverJob::new(path, Pixels(64))).run();
+
+        assert!(matches!(
+            message,
+            LibraryMessage::CoverDecoded {
+                decoded: CoverDecoded {
+                    art: CoverArt::Missing,
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn jobs_order_covers_before_tags_before_scans() {
+        let dirs = Arc::new(LibraryDirs::under(std::path::Path::new("/data")));
+        let mut jobs = vec![
+            LibraryJob::Scan {
+                music_dir: PathBuf::from("/music"),
+                revision: Revision::default(),
+                mode: ScanMode::Full,
+                dirs: Arc::clone(&dirs),
+                decodable: DECODABLE,
+            },
+            LibraryJob::Tag {
+                music_dir: PathBuf::from("/music"),
+                tracks: Vec::new(),
+                revision: Revision::default(),
+                dirs,
+            },
+            LibraryJob::Cover(CoverJob::new(
+                PathBuf::from("/music/one.flac"),
+                Pixels(64),
+            )),
+        ];
+
+        jobs.sort();
+
+        assert!(matches!(
+            jobs.as_slice(),
+            [
+                LibraryJob::Cover(_),
+                LibraryJob::Tag { .. },
+                LibraryJob::Scan { .. }
+            ]
+        ));
     }
 
     const TONE: &[u8] = include_bytes!("../tests/fixtures/tone.wav");
@@ -237,16 +606,11 @@ mod tests {
         let (directory, paths) = dirs;
         let music_dir = scanned_music_dir(&directory);
 
-        let event = execute(
-            LibraryCmd::Scan {
-                music_dir,
-                revision: Revision::default().next(),
-                mode: ScanMode::Full,
-            },
+        let event = scan(
+            music_dir,
+            (Revision::default().next(), ScanMode::Full),
             &paths,
-            DECODABLE,
-        )
-        .unwrap();
+        );
 
         insta::with_settings!({ filters => temp_dir_filters() }, {
             insta::assert_debug_snapshot!(event);
@@ -260,16 +624,11 @@ mod tests {
         let (directory, paths) = dirs;
         let music_dir = scanned_music_dir(&directory);
 
-        let event = execute(
-            LibraryCmd::Scan {
-                music_dir,
-                revision: Revision::default().next().next(),
-                mode: ScanMode::Cached,
-            },
+        let event = scan(
+            music_dir,
+            (Revision::default().next().next(), ScanMode::Cached),
             &paths,
-            DECODABLE,
-        )
-        .unwrap();
+        );
 
         insta::with_settings!({ filters => temp_dir_filters() }, {
             insta::assert_debug_snapshot!(event);
@@ -283,20 +642,19 @@ mod tests {
         let (directory, paths) = dirs;
         let music_dir = scanned_music_dir(&directory);
         let listed = vec![
-            music_dir.join("a.wav"),
-            music_dir.join("never-existed.flac"),
+            TrackRef::Local(music_dir.join("a.wav")),
+            TrackRef::Local(music_dir.join("never-existed.flac")),
         ];
 
-        let event = execute(
-            LibraryCmd::TagTracks {
+        let event = told(Some(
+            LibraryJob::Tag {
                 music_dir,
-                paths: listed,
+                tracks: listed,
                 revision: Revision::default().next(),
-            },
-            &paths,
-            DECODABLE,
-        )
-        .unwrap();
+                dirs: Arc::new(paths),
+            }
+            .run(),
+        ));
 
         insta::with_settings!({ filters => temp_dir_filters() }, {
             insta::assert_debug_snapshot!(event);
@@ -309,27 +667,18 @@ mod tests {
     ) {
         let (directory, paths) = dirs;
         let music_dir = scanned_music_dir(&directory);
-        execute(
-            LibraryCmd::Scan {
-                music_dir: music_dir.clone(),
-                revision: Revision::default().next(),
-                mode: ScanMode::Full,
-            },
+        let first = scan(
+            music_dir.clone(),
+            (Revision::default().next(), ScanMode::Full),
             &paths,
-            DECODABLE,
-        )
-        .unwrap();
+        );
+        assert!(matches!(first, Some(LibraryEvent::Loaded { .. })));
 
-        let event = execute(
-            LibraryCmd::Scan {
-                music_dir,
-                revision: Revision::default().next().next(),
-                mode: ScanMode::Cached,
-            },
+        let event = scan(
+            music_dir,
+            (Revision::default().next().next(), ScanMode::Cached),
             &paths,
-            DECODABLE,
-        )
-        .unwrap();
+        );
 
         insta::with_settings!({ filters => temp_dir_filters() }, {
             insta::assert_debug_snapshot!(event);
@@ -350,21 +699,35 @@ mod tests {
         .unwrap();
         std::fs::write(
             paths.cache_dir.join("library.bin"),
-            [5u8, 0xDE, 0xAD, 0xBE, 0xEF],
+            [6u8, 0xDE, 0xAD, 0xBE, 0xEF],
         )
         .unwrap();
 
-        let event = execute(
-            LibraryCmd::Scan {
-                music_dir,
-                revision: Revision::default().next(),
-                mode: ScanMode::Cached,
-            },
+        let events = scanned(
+            music_dir,
+            (Revision::default().next(), ScanMode::Cached),
             &paths,
-            DECODABLE,
-        )
-        .unwrap();
+        );
 
-        assert!(matches!(event, Some(LibraryEvent::Listed { .. })));
+        assert!(matches!(
+            events.as_slice(),
+            [LibraryEvent::Error(_), LibraryEvent::Listed { .. }]
+        ));
+    }
+
+    #[rstest]
+    fn a_scan_of_a_missing_folder_answers_an_error(dirs: (TempDir, LibraryDirs)) {
+        let (directory, paths) = dirs;
+
+        let message = LibraryJob::Scan {
+            music_dir: directory.path().join("absent"),
+            revision: Revision::default(),
+            mode: ScanMode::Full,
+            dirs: Arc::new(paths),
+            decodable: DECODABLE,
+        }
+        .run();
+
+        assert!(matches!(message, LibraryMessage::Error(_)));
     }
 }

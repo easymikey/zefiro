@@ -14,23 +14,25 @@ use kernel::{
     ConfigEvent,
     ConfigPatch,
     ConfigReload,
+    IoError,
     domain::{
         ConfigError,
         ConfigName,
+        Diagnostic,
         OptionIndex,
         Revision,
+        ThemeChoice,
         ThemeName,
+        appearance::AppearancePatch,
         appearance_rows::{AppearanceField, appearance_patch, appearance_settings},
     },
     update::{Machine, Unhandled},
 };
 use strum::IntoStaticStr;
-pub use watch::ConfigChange;
 
 use crate::{
-    AppearanceFile,
-    AppearancePatch,
-    ThemeFile,
+    TomlAppearance,
+    TomlTheme,
     driver::{
         saves::SaveQueue,
         watch::{ConfigWatch, WatchEffect, WatchMessage},
@@ -43,14 +45,13 @@ pub struct ConfigPaths {
     pub config: PathBuf,
     pub appearance: PathBuf,
     pub themes: PathBuf,
-    pub theme: Option<String>,
+    pub theme: Option<ThemeName>,
     pub seen: SeenTexts,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SeenTexts {
     pub appearance: Option<String>,
-    pub theme: Option<String>,
     pub config: Option<String>,
 }
 
@@ -61,13 +62,13 @@ enum Sighting {
     Repeat,
 }
 
-pub struct ConfigDriver<P: Fn(ThemeFile)> {
-    directory: PathBuf,
+pub struct ConfigDriver<P: Fn(TomlTheme)> {
+    directory: Option<PathBuf>,
     paths: ConfigPaths,
     watch: ConfigWatch,
     config: Sighting,
     appearance: Sighting,
-    appearance_file: AppearanceFile,
+    appearance_file: TomlAppearance,
     saves: SaveQueue,
     publish: P,
 }
@@ -81,7 +82,7 @@ pub enum ConfigMessage {
         file: ConfigName,
         text: Option<String>,
     },
-    Listed(Vec<String>),
+    Listed(Vec<ThemeName>),
     Elapsed(Revision),
     Saved {
         file: ConfigName,
@@ -89,6 +90,17 @@ pub enum ConfigMessage {
     },
     Changed(ConfigChange),
     Error(ConfigError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigChange {
+    Appearance(Option<String>),
+    Keymap(Option<String>),
+    Theme {
+        name: ThemeName,
+        text: Option<String>,
+    },
+    Themes(Vec<ThemeName>),
 }
 
 impl From<Cmds<ConfigCmd>> for ConfigMessage {
@@ -105,10 +117,10 @@ pub enum ConfigEffect {
     After { delay: Duration, revision: Revision },
     SaveConfig(ConfigPatch),
     SaveAppearance(AppearancePatch),
-    Publish(ThemeFile),
+    Publish(TomlTheme),
 }
 
-impl<P: Fn(ThemeFile)> std::fmt::Debug for ConfigDriver<P> {
+impl<P: Fn(TomlTheme)> std::fmt::Debug for ConfigDriver<P> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ConfigDriver")
@@ -119,7 +131,7 @@ impl<P: Fn(ThemeFile)> std::fmt::Debug for ConfigDriver<P> {
     }
 }
 
-impl<P: Fn(ThemeFile)> ConfigDriver<P> {
+impl<P: Fn(TomlTheme)> ConfigDriver<P> {
     pub fn new(paths: &ConfigPaths, publish: P) -> Self {
         Self {
             directory: config_directory(&paths.appearance),
@@ -133,18 +145,18 @@ impl<P: Fn(ThemeFile)> ConfigDriver<P> {
             watch: ConfigWatch::new(paths),
             config: Sighting::First,
             appearance: Sighting::First,
-            appearance_file: AppearanceFile::default(),
+            appearance_file: TomlAppearance::default(),
             saves: SaveQueue::default(),
             publish,
         }
     }
 
-    pub fn publish(&self, theme: ThemeFile) {
+    pub fn publish(&self, theme: TomlTheme) {
         (self.publish)(theme);
     }
 }
 
-impl<P: Fn(ThemeFile)> Machine for ConfigDriver<P> {
+impl<P: Fn(TomlTheme)> Machine for ConfigDriver<P> {
     type Message = ConfigMessage;
     type Effect = Cmd<ConfigEffect, ConfigEvent>;
 
@@ -155,17 +167,26 @@ impl<P: Fn(ThemeFile)> Machine for ConfigDriver<P> {
         match message {
             ConfigMessage::Cmds(Cmds { cmds, .. }) => self.commanded(cmds),
             ConfigMessage::Started => {
-                let watch = ConfigEffect::Watch(self.directory.clone());
-                Ok(Cmd::effect(watch).then(self.poll_everything()))
+                let watch = self.directory.clone().map_or_else(
+                    || {
+                        Cmd::message(ConfigEvent::Error(ConfigError::Watch(
+                            IoError::Missing,
+                        )))
+                    },
+                    |directory| Cmd::effect(ConfigEffect::Watch(directory)),
+                );
+                Ok(watch.then(self.poll_everything()))
             }
             ConfigMessage::FilesChanged => Ok(self.poll_everything()),
             ConfigMessage::ReadDone { file, text } => {
-                self.drive(WatchMessage::Observed { file, text })
+                self.drive_watch(WatchMessage::Observed { file, text })
             }
-            ConfigMessage::Listed(names) => self.drive(WatchMessage::Listed(names)),
+            ConfigMessage::Listed(names) => {
+                self.drive_watch(WatchMessage::Listed(names))
+            }
             ConfigMessage::Elapsed(revision) => self.saves.elapsed(revision),
             ConfigMessage::Saved { file, text } => {
-                self.drive(WatchMessage::Wrote { file, text })
+                self.drive_watch(WatchMessage::Wrote { file, text })
             }
             ConfigMessage::Changed(change) => Ok(self.changed(change)),
             ConfigMessage::Error(error) => Ok(Cmd::message(ConfigEvent::Error(error))),
@@ -173,7 +194,7 @@ impl<P: Fn(ThemeFile)> Machine for ConfigDriver<P> {
     }
 }
 
-impl<P: Fn(ThemeFile)> ConfigDriver<P> {
+impl<P: Fn(TomlTheme)> ConfigDriver<P> {
     fn commanded(
         &mut self,
         cmds: Vec<ConfigCmd>,
@@ -200,9 +221,10 @@ impl<P: Fn(ThemeFile)> ConfigDriver<P> {
                 self.saves.queue_config(patch);
                 Ok(Cmd::none())
             }
-            ConfigCmd::SelectTheme(choice) => {
-                self.drive(WatchMessage::SelectTheme(choice.to_string()))
+            ConfigCmd::SelectTheme(ThemeChoice::Named(name)) => {
+                self.drive_watch(WatchMessage::SelectTheme(name))
             }
+            ConfigCmd::SelectTheme(ThemeChoice::Auto) => Err(Unhandled),
             ConfigCmd::Setting { field, option } => self.setting(field, option),
             ConfigCmd::Flush => Ok(self.saves.flush()),
         }
@@ -223,7 +245,7 @@ impl<P: Fn(ThemeFile)> ConfigDriver<P> {
         Ok(Cmd::message(ConfigEvent::AppearanceReloaded(appearance)))
     }
 
-    fn drive(
+    fn drive_watch(
         &mut self,
         message: WatchMessage,
     ) -> Result<Cmd<ConfigEffect, ConfigEvent>, Unhandled> {
@@ -238,13 +260,13 @@ impl<P: Fn(ThemeFile)> ConfigDriver<P> {
 
     fn poll_everything(&mut self) -> Cmd<ConfigEffect, ConfigEvent> {
         [
-            WatchMessage::Poll(ConfigName::Appearance),
-            WatchMessage::Poll(ConfigName::Config),
+            WatchMessage::PollAppearance,
+            WatchMessage::PollConfig,
             WatchMessage::PollTheme,
             WatchMessage::PollThemes,
         ]
         .into_iter()
-        .filter_map(|message| self.drive(message).ok())
+        .filter_map(|message| self.drive_watch(message).ok())
         .fold(Cmd::none(), Cmd::then)
     }
 
@@ -264,7 +286,7 @@ impl<P: Fn(ThemeFile)> ConfigDriver<P> {
         text: Option<&str>,
     ) -> Cmd<ConfigEffect, ConfigEvent> {
         let parsed =
-            text.map_or_else(|| Ok(AppearanceFile::default()), crate::parse_appearance);
+            text.map_or_else(|| Ok(TomlAppearance::default()), crate::parse_appearance);
         match parsed {
             Ok(file) => {
                 let rows = appearance_settings(file.settings());
@@ -291,7 +313,10 @@ impl<P: Fn(ThemeFile)> ConfigDriver<P> {
                     return Cmd::none();
                 }
                 let keymap = ConfigEvent::KeymapReloaded(Box::new(parsed.keymap));
-                let music_dir = parsed.music_dir.map(ConfigEvent::MusicDirReloaded);
+                let music_dir = parsed
+                    .music_dir
+                    .or_else(dirs::audio_dir)
+                    .map(ConfigEvent::MusicDirReloaded);
                 reports(std::iter::once(keymap).chain(music_dir))
             }
             Err(error) => {
@@ -324,19 +349,15 @@ fn theme_changed(
 fn theme_parsed(
     name: &ThemeName,
     text: Option<&str>,
-) -> Result<ThemeFile, ConfigError> {
+) -> Result<TomlTheme, ConfigError> {
     let source = text
         .or_else(|| crate::embedded_theme(name.as_str()))
-        .ok_or_else(|| ConfigError::Invalid {
-            detail: format!("no theme named `{}`", name.as_str()),
-        })?;
+        .ok_or_else(|| invalid(&crate::Error::UnknownTheme(name.clone())))?;
     crate::parse_theme(source, name.as_str()).map_err(|error| invalid(&error))
 }
 
 fn invalid(error: &crate::Error) -> ConfigError {
-    ConfigError::Invalid {
-        detail: error.to_string(),
-    }
+    ConfigError::Invalid(Diagnostic::from_error(error))
 }
 
 fn reloaded(name: ConfigName, result: Result<(), ConfigError>) -> ConfigEvent {
@@ -352,12 +373,11 @@ fn reports(
         .fold(Cmd::none(), Cmd::then)
 }
 
-fn embedded_and_user(user: Vec<String>) -> Vec<ThemeName> {
+fn embedded_and_user(user: Vec<ThemeName>) -> Vec<ThemeName> {
     crate::EMBEDDED_THEMES
         .iter()
-        .map(|&(name, _)| name.to_string())
+        .map(|&(name, _)| ThemeName::from_static(name))
         .chain(user)
-        .filter_map(|name| ThemeName::new(name).ok())
         .fold(Vec::new(), |mut names, name| {
             if !names.contains(&name) {
                 names.push(name);
@@ -366,11 +386,11 @@ fn embedded_and_user(user: Vec<String>) -> Vec<ThemeName> {
         })
 }
 
-fn config_directory(appearance: &Path) -> PathBuf {
+fn config_directory(appearance: &Path) -> Option<PathBuf> {
     appearance
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-        .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+        .map(Path::to_path_buf)
 }
 
 #[cfg(test)]
@@ -401,7 +421,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        ThemeFile,
+        TomlTheme,
         driver::{
             ConfigDriver,
             ConfigEffect,
@@ -415,17 +435,17 @@ mod tests {
 
     const NOIR_THEME: &str = "name = \"mine\"\n[colors]\nbg = \"#000000\"\nfg = \"#000000\"\nbright_fg = \"#000000\"\naccent = \"#000000\"\ngreen = \"#000000\"\nyellow = \"#000000\"\nred = \"#000000\"\n";
 
-    type Driver = ConfigDriver<fn(ThemeFile)>;
+    type Driver = ConfigDriver<fn(TomlTheme)>;
 
-    fn driver(theme: Option<&str>) -> Driver {
+    fn driver(theme: Option<&'static str>) -> Driver {
         let paths = ConfigPaths {
             config: PathBuf::from("/config/config.toml"),
             appearance: PathBuf::from("/config/sifr-ui.toml"),
             themes: PathBuf::from("/config/themes"),
-            theme: theme.map(str::to_string),
+            theme: theme.map(ThemeName::from_static),
             seen: SeenTexts::default(),
         };
-        ConfigDriver::new(&paths, drop::<ThemeFile>)
+        ConfigDriver::new(&paths, drop::<TomlTheme>)
     }
 
     fn noir() -> ConfigName {
@@ -545,9 +565,19 @@ mod tests {
         .into_parts();
 
         assert!(effects.is_empty());
+        let default_dir = dirs::audio_dir().map(ConfigEvent::MusicDirReloaded);
+        assert!(matches!(
+            events.first(),
+            Some(ConfigEvent::KeymapReloaded(_))
+        ));
+        assert_eq!(
+            events.get(1..),
+            Some(Vec::from_iter(default_dir).as_slice()),
+            "a removed music_dir falls back to the default"
+        );
         assert!(matches!(
             events.as_slice(),
-            [ConfigEvent::KeymapReloaded(_)]
+            [ConfigEvent::KeymapReloaded(_), ..]
         ));
     }
 
@@ -572,6 +602,19 @@ mod tests {
     }
 
     #[test]
+    fn started_publishes_the_current_theme() {
+        let mut state = driver(Some("noir"));
+        let started = step(&mut state, ConfigMessage::Started);
+        let (started_effects, _) = started.into_parts();
+        assert!(started_effects.contains(&reading(noir(), "/config/themes/noir.toml")));
+
+        let (effects, _) =
+            step(&mut state, read_done(noir(), Some(NOIR_THEME))).into_parts();
+
+        assert!(matches!(effects.as_slice(), [ConfigEffect::Publish(_)]));
+    }
+
+    #[test]
     fn an_unparsable_appearance_tells_config_failed() {
         let mut state = driver(None);
 
@@ -586,7 +629,7 @@ mod tests {
             events.as_slice(),
             [ConfigEvent::Reloaded(ConfigReload {
                 name: ConfigName::Appearance,
-                result: Err(ConfigError::Invalid { .. }),
+                result: Err(ConfigError::Invalid(_)),
             })]
         ));
     }

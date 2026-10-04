@@ -1,18 +1,25 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use runtime::Frame;
-use widgets::{ColorDepth, FrameLayout, PixelPath, Scene, ScenePresentation, Theme};
+use widgets::{
+    ColorDepth,
+    FrameLayout,
+    PixelPath,
+    Scene,
+    ScenePresentation,
+    Spectrum,
+    Theme,
+};
 
 use crate::shell::motion::Motion;
 
-pub(crate) struct Presentation {
+pub(crate) struct ShellPresentation {
     pub(in crate::shell) theme: Theme,
     pub(in crate::shell) pixel_path: PixelPath,
     pub(in crate::shell) color_depth: ColorDepth,
     pub(in crate::shell) cell_aspect: f32,
     pub(in crate::shell) home: Option<PathBuf>,
-    pub(in crate::shell) music_dir: PathBuf,
-    pub(in crate::shell) music_dir_label: String,
+    pub(in crate::shell) spectrum: Spectrum,
 }
 
 pub(crate) struct LaidOutScene<'a> {
@@ -22,40 +29,48 @@ pub(crate) struct LaidOutScene<'a> {
 
 pub(crate) fn view<'a>(
     frame: &Frame<'a>,
-    presentation: &'a Presentation,
-    motion: &'a Motion,
+    presentation: &'a ShellPresentation,
+    motion: &Motion,
 ) -> LaidOutScene<'a> {
-    let scene = Scene::from_model(
+    let scene = scene(frame, presentation, motion);
+    let layout = FrameLayout::from_scene(&scene, motion.area);
+    LaidOutScene { scene, layout }
+}
+
+pub(crate) fn scene<'a>(
+    frame: &Frame<'a>,
+    presentation: &'a ShellPresentation,
+    motion: &Motion,
+) -> Scene<'a> {
+    Scene::from_model(
         frame.model,
         ScenePresentation {
             theme: &presentation.theme,
             color_depth: presentation.color_depth,
-            bindings: frame.model.workspace.keymap.bindings(),
-            spectrum: motion.spectrum_smoothing.bands(),
+            spectrum: &presentation.spectrum,
             pixel_path: presentation.pixel_path,
             cell_aspect: presentation.cell_aspect,
-            clock: frame.now.elapsed_since(motion.first_paint),
+            clock: motion
+                .first_paint
+                .map_or(Duration::ZERO, |first| frame.now.elapsed_since(first)),
             now: frame.now,
-            music_dir: &presentation.music_dir_label,
+            home: presentation.home.as_deref(),
             sleep_left: frame
                 .sleep_deadline
                 .map(|deadline| deadline.elapsed_since(frame.now)),
         },
-    );
-    let layout = FrameLayout::new(&scene.layout_parts(), motion.area);
-    LaidOutScene { scene, layout }
+    )
 }
 
 #[cfg(test)]
-pub(in crate::shell) fn test_presentation() -> Presentation {
-    Presentation {
-        theme: crate::startup::theme_from_file(crate::startup::fallback_theme_file()),
+pub(in crate::shell) fn test_presentation() -> ShellPresentation {
+    ShellPresentation {
+        theme: crate::startup::theme(crate::startup::fallback_theme()),
         pixel_path: PixelPath::Halfblocks,
         color_depth: ColorDepth::TrueColor,
         cell_aspect: widgets::DEFAULT_CELL_ASPECT,
         home: None,
-        music_dir: PathBuf::new(),
-        music_dir_label: String::new(),
+        spectrum: [0.0; widgets::SPECTRUM_BANDS],
     }
 }
 
@@ -63,7 +78,7 @@ pub(in crate::shell) fn test_presentation() -> Presentation {
 mod tests {
     use std::time::Duration;
 
-    use audio::SpectrumTap;
+    use audio::tap::SpectrumTap;
     use kernel::{Moment, domain::Model};
     use ratatui::layout::Rect;
     use runtime::Frame;

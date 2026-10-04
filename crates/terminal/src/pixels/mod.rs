@@ -6,32 +6,28 @@ use kernel::domain::appearance::CoverMode;
 use ratatui::{buffer::Buffer, layout::Rect, widgets::StatefulWidget};
 use ratatui_image::{StatefulImage, picker::Picker};
 use widgets::{
-    CoverArt,
+    CardCover,
+    CoverImage,
+    CoverMotion,
+    CoverRefresh,
     FrameLayout,
     MilkdropCover,
     OverlayAreas,
     PixmapSource,
     Scene,
 };
-pub use widgets::{
-    CoverMotion,
-    CoverRefreshParts,
-    CoverWash,
-    CrossfadePermit,
-    DecodedCover,
-};
 
 use crate::pixels::cover::Cover;
 
 #[derive(Debug)]
-pub struct CoverRenderer {
+pub struct CoverPainter {
     active: Option<CoverMode>,
     plain: Cover,
     vinyl: Cover,
     milkdrop: MilkdropCover,
 }
 
-impl CoverRenderer {
+impl CoverPainter {
     #[must_use]
     pub fn new(picker: Picker) -> Self {
         Self {
@@ -47,19 +43,19 @@ impl CoverRenderer {
         self.vinyl.set_picker(picker);
     }
 
-    pub fn set_cover(&mut self, cover: DecodedCover) {
+    pub fn set_cover(&mut self, cover: CoverImage) {
         self.plain.set_cover(cover.clone());
         self.vinyl.set_cover(cover);
     }
 
-    pub fn refresh(&mut self, scene: &Scene<'_>, parts: CoverRefreshParts) -> CoverArt {
-        let style = scene.cover_mode();
-        self.active = Some(style);
-        match style {
-            CoverMode::Off => CoverArt::Missing,
-            CoverMode::Plain => self.plain.refresh(scene, parts),
-            CoverMode::Vinyl => self.vinyl.refresh(scene, parts),
-            CoverMode::Milkdrop => self.milkdrop.refresh(scene, parts.layout.cover),
+    pub fn refresh(&mut self, scene: &Scene<'_>, refresh: CoverRefresh) -> CardCover {
+        let mode = scene.cover_mode();
+        self.active = Some(mode);
+        match mode {
+            CoverMode::Off => CardCover::Missing,
+            CoverMode::Plain => self.plain.refresh(scene, refresh),
+            CoverMode::Vinyl => self.vinyl.refresh(scene, refresh),
+            CoverMode::Milkdrop => self.milkdrop.refresh(scene, refresh.layout.cover),
         }
     }
 
@@ -73,7 +69,7 @@ impl CoverRenderer {
         }
     }
 
-    pub fn place(&mut self, buffer: &mut Buffer, layout: &FrameLayout) {
+    pub fn paint(&mut self, buffer: &mut Buffer, layout: &FrameLayout) {
         let Some(rect) = layout.cover else {
             return;
         };

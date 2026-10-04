@@ -3,11 +3,11 @@ source: crates/config/src/theme_file.rs
 assertion_line: 93
 expression: "parse_theme(source, name).unwrap()"
 ---
-ThemeFile {
+TomlTheme {
     name: ThemeName(
         "gruvbox-light",
     ),
-    colors: ThemeColors {
+    colors: TomlColors {
         background: Rgb(
             [
                 251,

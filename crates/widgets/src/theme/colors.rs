@@ -1,5 +1,7 @@
+use std::fmt;
+
 use kernel::domain::appearance::Rgb;
-use strum::{EnumCount, EnumIter};
+use strum::{EnumIter, IntoEnumIterator};
 
 use crate::theme::{
     contrast::{
@@ -15,7 +17,7 @@ const WINDOW_BG_MIX: f32 = 0.06;
 const SELECTION_BG_MIX: f32 = 0.18;
 const BAR_GROOVE_MIX: f32 = 0.28;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumCount, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
 pub enum Role {
     Background,
     WindowBackground,
@@ -31,7 +33,7 @@ pub enum Role {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ThemeSeed {
+pub struct ThemeBase {
     pub background: Rgb,
     pub foreground: Rgb,
     pub bright_foreground: Rgb,
@@ -42,15 +44,47 @@ pub struct ThemeSeed {
     pub window_background: Option<Rgb>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Clone, PartialEq, Default)]
 pub struct Colors {
-    roles: [Rgb; Role::COUNT],
+    background: Rgb,
+    window_background: Rgb,
+    text: Rgb,
+    accent: Rgb,
+    accent2: Rgb,
+    selection_foreground: Rgb,
+    selection_background: Rgb,
+    highlight: Rgb,
+    frame: Rgb,
+    dim: Rgb,
+    bar_groove: Rgb,
     pub spectrum: [Rgb; 3],
+}
+
+impl fmt::Debug for Colors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let roles: Vec<Rgb> = Role::iter().map(|role| self.role(role)).collect();
+        f.debug_struct("Colors")
+            .field("roles", &roles)
+            .field("spectrum", &self.spectrum)
+            .finish()
+    }
 }
 
 impl Colors {
     pub fn role(&self, role: Role) -> Rgb {
-        self.roles.get(role as usize).copied().unwrap_or_default()
+        match role {
+            Role::Background => self.background,
+            Role::WindowBackground => self.window_background,
+            Role::Text => self.text,
+            Role::Accent => self.accent,
+            Role::Accent2 => self.accent2,
+            Role::SelectionForeground => self.selection_foreground,
+            Role::SelectionBackground => self.selection_background,
+            Role::Highlight => self.highlight,
+            Role::Frame => self.frame,
+            Role::Dim => self.dim,
+            Role::BarGroove => self.bar_groove,
+        }
     }
 
     pub fn spectrum_color_at(&self, t: f32) -> Rgb {
@@ -58,50 +92,32 @@ impl Colors {
     }
 
     #[must_use]
-    pub fn derive(file: &ThemeSeed) -> Colors {
+    pub fn derive(file: &ThemeBase) -> Colors {
         let window_bg = file.window_background.unwrap_or_else(|| {
             lerp_rgb(file.background, file.foreground, WINDOW_BG_MIX)
         });
         let selection_bg =
             visible_band(window_bg, file.bright_foreground, SELECTION_BG_MIX);
-        let table = [
-            (Role::Background, file.background),
-            (Role::WindowBackground, window_bg),
-            (Role::Text, file.bright_foreground),
-            (Role::Accent, file.accent),
-            (Role::Accent2, file.yellow),
-            (
-                Role::SelectionForeground,
-                raise_contrast(
-                    file.bright_foreground,
-                    &[selection_bg],
-                    MIN_SELECTION_TEXT_CONTRAST,
-                ),
-            ),
-            (Role::SelectionBackground, selection_bg),
-            (
-                Role::Highlight,
-                raise_contrast(
-                    file.accent,
-                    &[window_bg, selection_bg],
-                    MIN_MARKER_CONTRAST,
-                ),
-            ),
-            (Role::Frame, file.foreground),
-            (Role::Dim, file.foreground),
-            (
-                Role::BarGroove,
-                visible_band(window_bg, file.bright_foreground, BAR_GROOVE_MIX),
-            ),
-        ];
-        let mut roles = [Rgb::default(); Role::COUNT];
-        for (role, rgb) in table {
-            if let Some(slot) = roles.get_mut(role as usize) {
-                *slot = rgb;
-            }
-        }
         Colors {
-            roles,
+            background: file.background,
+            window_background: window_bg,
+            text: file.bright_foreground,
+            accent: file.accent,
+            accent2: file.yellow,
+            selection_foreground: raise_contrast(
+                file.bright_foreground,
+                &[selection_bg],
+                MIN_SELECTION_TEXT_CONTRAST,
+            ),
+            selection_background: selection_bg,
+            highlight: raise_contrast(
+                file.accent,
+                &[window_bg, selection_bg],
+                MIN_MARKER_CONTRAST,
+            ),
+            frame: file.foreground,
+            dim: file.foreground,
+            bar_groove: visible_band(window_bg, file.bright_foreground, BAR_GROOVE_MIX),
             spectrum: [file.green, file.yellow, file.red],
         }
     }
@@ -110,10 +126,9 @@ impl Colors {
 #[cfg(test)]
 mod tests {
     use kernel::domain::appearance::Rgb;
-    use strum::IntoEnumIterator;
 
     use crate::theme::{
-        colors::{Colors, Role, ThemeSeed},
+        colors::{Colors, Role, ThemeBase},
         contrast::{
             MIN_BAND_CONTRAST,
             MIN_MARKER_CONTRAST,
@@ -122,8 +137,8 @@ mod tests {
         },
     };
 
-    fn test_colors_file() -> ThemeSeed {
-        ThemeSeed {
+    fn test_colors_file() -> ThemeBase {
+        ThemeBase {
             background: Rgb([0x10, 0x20, 0x30]),
             foreground: Rgb([0x40, 0x50, 0x60]),
             bright_foreground: Rgb([0x70, 0x80, 0x90]),
@@ -145,13 +160,12 @@ mod tests {
         let colors = Colors::derive(&test_colors_file());
         assert_eq!(colors.role(Role::Background), Rgb([0x10, 0x20, 0x30]));
         assert_eq!(colors.role(Role::Accent2), Rgb([0xff, 0xff, 0]));
-        assert_eq!(Role::iter().count(), Colors::default().roles.len());
     }
 
     #[test]
     fn a_theme_whose_accent_is_its_text_still_derives_a_visible_band() {
         let cream = Rgb([0xf3, 0xe9, 0xd2]);
-        let file = ThemeSeed {
+        let file = ThemeBase {
             background: Rgb([0x0b, 0x0b, 0x0b]),
             foreground: Rgb([0x8f, 0x8a, 0x80]),
             bright_foreground: cream,
@@ -182,7 +196,7 @@ mod tests {
 
     #[test]
     fn window_bg_lightens_toward_fg_on_a_dark_theme() {
-        let file = ThemeSeed {
+        let file = ThemeBase {
             background: Rgb([0x10, 0x10, 0x10]),
             foreground: Rgb([0xe0, 0xe0, 0xe0]),
             ..test_colors_file()
@@ -196,7 +210,7 @@ mod tests {
 
     #[test]
     fn window_bg_darkens_toward_fg_on_a_light_theme() {
-        let file = ThemeSeed {
+        let file = ThemeBase {
             background: Rgb([0xe0, 0xe0, 0xe0]),
             foreground: Rgb([0x10, 0x10, 0x10]),
             ..test_colors_file()

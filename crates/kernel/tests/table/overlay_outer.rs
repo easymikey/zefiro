@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use kernel::{
     BrowseRequest,
@@ -26,7 +26,6 @@ use kernel::{
         TextEntry,
         TimecodeError,
         Toast,
-        Track,
         ViewIndex,
         playlist::{PlaylistFileName, PlaylistNameError},
     },
@@ -35,8 +34,8 @@ use kernel::{
         overlay::{
             HistoryMessage,
             HistoryPick,
-            InnerMessage,
             JumpDigitsMessage,
+            OverlayContentMessage,
             OverlayMessage,
             SearchQueryMessage,
             SettingRowMessage,
@@ -45,7 +44,7 @@ use kernel::{
 };
 use rstest::rstest;
 
-use crate::support::{table::cell, titled_track, track_at};
+use crate::support::{table::cell, track_at};
 
 fn help() -> Overlay {
     Overlay::Help
@@ -59,14 +58,6 @@ fn search(input: &str, matches: Vec<usize>, selected: usize) -> Overlay {
             matches: matches.into_iter().map(ViewIndex::new).collect(),
         },
     })
-}
-
-fn titled(titles: &[&str]) -> Vec<Arc<Track>> {
-    titles
-        .iter()
-        .enumerate()
-        .map(|(index, title)| titled_track(&format!("/tmp/{index}.flac"), title, ""))
-        .collect()
 }
 
 fn entry(input: &str) -> TextEntry {
@@ -104,7 +95,7 @@ fn fresh_settings() -> Overlay {
 
 fn candidate() -> DeleteCandidate {
     DeleteCandidate {
-        index: ViewIndex::new(1),
+        source: kernel::TrackRef::Local("/music/sun.flac".into()),
         title: "Sun Song".to_string(),
         artist: "Someone".to_string(),
     }
@@ -136,12 +127,12 @@ fn open(overlay: Overlay) -> OverlayMessage {
     OverlayMessage::Open(overlay)
 }
 
-fn inner(message: InnerMessage) -> OverlayMessage {
+fn inner(message: OverlayContentMessage) -> OverlayMessage {
     OverlayMessage::Inner(message)
 }
 
 fn text(message: TextRequest) -> OverlayMessage {
-    inner(InnerMessage::Text(message))
+    inner(OverlayContentMessage::Text(message))
 }
 
 fn opened(follow_up: Cmd) -> Cmd {
@@ -170,8 +161,6 @@ fn holds() -> Cmd {
 fn releases() -> Cmd {
     Cmd::message(Message::Playback(PlaybackRequest::Release))
 }
-
-type Cell = crate::support::table::Cell<Option<Overlay>>;
 
 #[rstest]
 #[case::closed_opens_help(None, open(help()), Ok((Some(help()), opened(Cmd::none()))))]
@@ -220,7 +209,7 @@ type Cell = crate::support::table::Cell<Option<Overlay>>;
 #[case::search_confirm_without_a_match_is_refused(Some(search("zzz", vec![], 0)), OverlayMessage::Confirm, Err(Unhandled))]
 #[case::save_confirm_saves_under_the_name(Some(save("mix", None)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::SavePlaylist(saved_name("mix"))))))))]
 #[case::save_confirm_with_an_empty_name_stays_open_with_the_error(Some(save("", None)), OverlayMessage::Confirm, Ok((Some(save("", Some(PlaylistNameError::Empty))), Cmd::none())))]
-#[case::confirm_delete_confirm_trashes_the_candidate(Some(confirm_delete()), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::Trash(ViewIndex::new(1))))))))]
+#[case::confirm_delete_confirm_trashes_the_candidate(Some(confirm_delete()), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::Trash(candidate().source)))))))]
 #[case::jump_confirm_seeks_to_the_parsed_time(Some(jump("1:40", None)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Playback(PlaybackRequest::SeekTo(Duration::from_secs(100))))))))]
 #[case::jump_confirm_malformed_stays_open_with_the_error(Some(jump("5:", None)), OverlayMessage::Confirm, Ok((Some(jump("5:", Some(TimecodeError::Malformed))), Cmd::none())))]
 #[case::source_dir_confirm_saves_the_folder(Some(source_dir("/music", None)), OverlayMessage::Confirm, Ok((None, saved_music_dir("/music"))))]
@@ -230,33 +219,28 @@ type Cell = crate::support::table::Cell<Option<Overlay>>;
 #[case::save_types_a_char_and_clears_the_error(Some(save("", Some(PlaylistNameError::Empty))), text(TextRequest::Char('m')), Ok((Some(save("m", None)), Cmd::none())))]
 #[case::source_dir_types_a_char_and_clears_the_error(Some(source_dir("", Some(MusicDirError::Empty))), text(TextRequest::Char('/')), Ok((Some(source_dir("/", None)), Cmd::none())))]
 #[case::source_dir_backspace_clears_the_error(Some(source_dir("/x", Some(MusicDirError::Empty))), text(TextRequest::Backspace), Ok((Some(source_dir("/", None)), Cmd::none())))]
-#[case::jump_types_a_digit_and_clears_the_error(Some(jump("5:", Some(TimecodeError::Malformed))), inner(InnerMessage::Jump(JumpDigitsMessage::Char('3'))), Ok((Some(jump("5:3", None)), Cmd::none())))]
+#[case::jump_types_a_digit_and_clears_the_error(Some(jump("5:", Some(TimecodeError::Malformed))), inner(OverlayContentMessage::Jump(JumpDigitsMessage::Char('3'))), Ok((Some(jump("5:3", None)), Cmd::none())))]
 #[case::jump_refuses_a_letter(
     Some(jump("5", None)),
-    inner(InnerMessage::Jump(JumpDigitsMessage::Char('a'))),
+    inner(OverlayContentMessage::Jump(JumpDigitsMessage::Char('a'))),
     Err(Unhandled)
 )]
 #[case::search_types_a_char(
     Some(search("mo", vec![0], 0)),
-    inner(InnerMessage::Search(SearchQueryMessage::Edit(SearchEdit::Char('o'), titled(&["moo", "zzz"])))),
+    inner(OverlayContentMessage::Search(SearchQueryMessage::Edit(SearchEdit::Char('o')))),
     Ok((Some(search("moo", vec![0], 0)), Cmd::none()))
 )]
-#[case::search_editing_installs_fresh_matches(
-    Some(search("m", vec![], 0)),
-    inner(InnerMessage::Search(SearchQueryMessage::Edit(SearchEdit::Char('o'), titled(&["mo", "zzz", "moon"])))),
-    Ok((Some(search("mo", vec![0, 2], 0)), Cmd::none()))
-)]
-#[case::search_enqueues_the_selected_match(Some(search("mo", vec![0, 2], 1)), inner(InnerMessage::Search(SearchQueryMessage::Enqueue)), Ok((Some(search("mo", vec![0, 2], 1)), Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(2)))))))]
+#[case::search_enqueues_the_selected_match(Some(search("mo", vec![0, 2], 1)), inner(OverlayContentMessage::Search(SearchQueryMessage::Enqueue)), Ok((Some(search("mo", vec![0, 2], 1)), Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(2)))))))]
 #[case::search_enqueue_without_a_match_is_refused(
     Some(search("zzz", vec![], 0)),
-    inner(InnerMessage::Search(SearchQueryMessage::Enqueue)),
+    inner(OverlayContentMessage::Search(SearchQueryMessage::Enqueue)),
     Err(Unhandled)
 )]
-#[case::history_navigates(Some(history(0, 3)), inner(InnerMessage::History(HistoryMessage::Navigate { direction: Direction::Next, len: 3 })), Ok((Some(history(1, 3)), Cmd::none())))]
-#[case::history_enqueues_the_resolved_entry(Some(history(1, 2)), inner(InnerMessage::History(HistoryMessage::Enqueue(HistoryPick::Queued(ViewIndex::new(3))))), Ok((Some(history(1, 2)), Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(3)))))))]
+#[case::history_navigates(Some(history(0, 3)), inner(OverlayContentMessage::History(HistoryMessage::Navigate { direction: Direction::Next, len: 3 })), Ok((Some(history(1, 3)), Cmd::none())))]
+#[case::history_enqueues_the_resolved_entry(Some(history(1, 2)), inner(OverlayContentMessage::History(HistoryMessage::Enqueue(HistoryPick::Queued(ViewIndex::new(3))))), Ok((Some(history(1, 2)), Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(3)))))))]
 #[case::history_enqueue_of_a_missing_entry_toasts(
     Some(history(0, 1)),
-    inner(InnerMessage::History(HistoryMessage::Enqueue(HistoryPick::Missing))),
+    inner(OverlayContentMessage::History(HistoryMessage::Enqueue(HistoryPick::Missing))),
     Ok((
         Some(history(0, 1)),
         Cmd::message(Message::Toast(Toast::info("Not in library".to_string())))
@@ -264,15 +248,17 @@ type Cell = crate::support::table::Cell<Option<Overlay>>;
 )]
 #[case::closed_inner_is_refused(None, text(TextRequest::Char('a')), Err(Unhandled))]
 #[case::help_refuses_text(Some(help()), text(TextRequest::Char('a')), Err(Unhandled))]
-#[case::search_refuses_history(Some(search("mo", vec![0], 0)), inner(InnerMessage::History(HistoryMessage::Top)), Err(Unhandled))]
+#[case::search_refuses_history(Some(search("mo", vec![0], 0)), inner(OverlayContentMessage::History(HistoryMessage::Top)), Err(Unhandled))]
 #[case::save_refuses_jump(
     Some(save("mix", None)),
-    inner(InnerMessage::Jump(JumpDigitsMessage::Char('1'))),
+    inner(OverlayContentMessage::Jump(JumpDigitsMessage::Char('1'))),
     Err(Unhandled)
 )]
 #[case::history_refuses_search(
     Some(history(1, 3)),
-    inner(InnerMessage::Search(SearchQueryMessage::Edit(SearchEdit::Char('a'), vec![]))),
+    inner(OverlayContentMessage::Search(SearchQueryMessage::Edit(
+        SearchEdit::Char('a')
+    ))),
     Err(Unhandled)
 )]
 #[case::settings_refuses_text(
@@ -282,12 +268,14 @@ type Cell = crate::support::table::Cell<Option<Overlay>>;
 )]
 #[case::confirm_delete_refuses_settings(
     Some(confirm_delete()),
-    inner(InnerMessage::Settings(SettingRowMessage::Navigate(SettingRow::Theme))),
+    inner(OverlayContentMessage::Settings(SettingRowMessage::Navigate(
+        SettingRow::Theme
+    ))),
     Err(Unhandled)
 )]
 #[case::track_details_refuses_jump(
     Some(track_details()),
-    inner(InnerMessage::Jump(JumpDigitsMessage::Backspace)),
+    inner(OverlayContentMessage::Jump(JumpDigitsMessage::Backspace)),
     Err(Unhandled)
 )]
 #[case::jump_refuses_text(
@@ -297,13 +285,19 @@ type Cell = crate::support::table::Cell<Option<Overlay>>;
 )]
 #[case::source_dir_refuses_search(
     Some(source_dir("/x", None)),
-    inner(InnerMessage::Search(SearchQueryMessage::Enqueue)),
+    inner(OverlayContentMessage::Search(SearchQueryMessage::Enqueue)),
     Err(Unhandled)
 )]
 fn overlay_cell(
     #[case] start: Option<Overlay>,
     #[case] message: OverlayMessage,
-    #[case] expected: Cell,
+    #[case] expected: Result<
+        (
+            Option<Overlay>,
+            <Option<Overlay> as kernel::update::Machine>::Effect,
+        ),
+        Unhandled,
+    >,
 ) {
     cell(start, message, expected);
 }

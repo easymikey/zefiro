@@ -60,10 +60,10 @@ impl<'de> Deserialize<'de> for KeyBindingEntry {
 type KeymapByName = HashMap<String, KeyBindingEntry>;
 
 #[derive(Clone, Default, PartialEq, Deserialize)]
-#[serde(try_from = "KeymapByName")]
-pub struct KeymapFile(pub(crate) HashMap<Action, KeyBindingEntry>);
+#[serde(try_from = "KeymapByName", expecting = "a [keymap] table")]
+pub struct TomlKeymap(pub(crate) HashMap<Action, KeyBindingEntry>);
 
-impl TryFrom<KeymapByName> for KeymapFile {
+impl TryFrom<KeymapByName> for TomlKeymap {
     type Error = strum::ParseError;
 
     fn try_from(raw: KeymapByName) -> Result<Self, Self::Error> {
@@ -74,7 +74,7 @@ impl TryFrom<KeymapByName> for KeymapFile {
     }
 }
 
-impl fmt::Debug for KeymapFile {
+impl fmt::Debug for TomlKeymap {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_map()

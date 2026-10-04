@@ -1,6 +1,6 @@
 // GUARD: the `defaults:window` doc block parses into the window default.
 
-use config::{AppearanceFile, parse_appearance};
+use config::{TomlAppearance, parse_appearance};
 
 use crate::guards::{fault::TestFault, support};
 
@@ -50,7 +50,7 @@ fn window_defaults_block_matches_window_config_default() -> Result<(), TestFault
 
     assert_eq!(
         parsed,
-        AppearanceFile::default(),
+        TomlAppearance::default(),
         "docs/config.md's `sifr-ui.toml` defaults block has drifted from \
          AppearanceConfig::default() — update the TOML between the <!-- defaults:window --> \
          / <!-- /defaults:window --> markers in docs/config.md to match the new \

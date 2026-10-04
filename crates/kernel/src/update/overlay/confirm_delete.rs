@@ -6,7 +6,7 @@ pub(crate) fn candidate(
 ) -> Option<DeleteCandidate> {
     let track = playlist.tracks.get(workspace.browse.selected().get())?;
     Some(DeleteCandidate {
-        index: workspace.browse.selected(),
+        source: track.source().clone(),
         title: track.song_title(),
         artist: track.tags().artist.clone().unwrap_or_else(String::new),
     })

@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
-assertion_line: 368
+assertion_line: 372
 expression: "walked(model, messages)"
 ---
 [
@@ -19,7 +19,9 @@ expression: "walked(model, messages)"
         Some(
             ConfirmDelete(
                 DeleteCandidate {
-                    index: Index(0),
+                    source: Local(
+                        "/m/0.flac",
+                    ),
                     title: "Moon River",
                     artist: "Audrey Hepburn",
                 },

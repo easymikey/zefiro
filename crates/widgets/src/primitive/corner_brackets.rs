@@ -13,11 +13,11 @@ pub(crate) fn expand(area: Rect, margin: u16) -> Rect {
 }
 
 #[derive(Debug)]
-pub(crate) struct CornerBrackets {
+pub(crate) struct CornerBracketsWidget {
     pub(crate) color: Color,
 }
 
-impl Widget for &CornerBrackets {
+impl Widget for &CornerBracketsWidget {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         for (x, y, glyph) in corner_positions(area) {
             if let Some(cell) = buffer.cell_mut((x, y)) {
@@ -45,7 +45,7 @@ mod tests {
 
     use crate::{
         primitive::{
-            corner_brackets::{CornerBrackets, corner_positions, expand},
+            corner_brackets::{CornerBracketsWidget, corner_positions, expand},
             glyphs,
         },
         test_support::rendered,
@@ -64,7 +64,7 @@ mod tests {
     fn corner_brackets_paints_only_the_four_corners() {
         let area = Rect::new(0, 0, 5, 3);
         let mut buffer = Buffer::empty(area);
-        CornerBrackets {
+        CornerBracketsWidget {
             color: Color::White,
         }
         .render(area, &mut buffer);
@@ -81,7 +81,7 @@ mod tests {
     fn corner_brackets_off_buffer_drops_the_corners_that_fall_outside() {
         let buffer_area = Rect::new(0, 0, 4, 2);
         let mut buffer = Buffer::empty(buffer_area);
-        CornerBrackets {
+        CornerBracketsWidget {
             color: Color::White,
         }
         .render(Rect::new(2, 1, 5, 4), &mut buffer);
@@ -93,7 +93,7 @@ mod tests {
     fn corner_brackets_widget_snapshot() {
         let rendered = rendered(8, 4, |frame| {
             frame.render_widget(
-                &CornerBrackets {
+                &CornerBracketsWidget {
                     color: Color::White,
                 },
                 frame.area(),

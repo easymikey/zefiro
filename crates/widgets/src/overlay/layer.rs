@@ -9,6 +9,7 @@ use kernel::{
         SavePhase,
         SettingRow,
         Track,
+        ViewIndex,
         appearance::CoverMode,
     },
     update::keymap::KeyBinding,
@@ -33,12 +34,13 @@ use crate::{
         track_details::TrackDetailsWidget,
     },
     primitive::canvas::Canvas,
+    scene::Scene,
     screen::FrameLayout,
     theme::{ActiveTheme, Role},
 };
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct OverlayContent<'a> {
+pub(crate) struct OverlayView<'a> {
     pub(crate) overlay: Option<&'a Overlay>,
     pub(crate) tracks: &'a [Arc<Track>],
     pub(crate) history: &'a [HistoryEntry],
@@ -48,9 +50,24 @@ pub(crate) struct OverlayContent<'a> {
     pub(crate) now: Moment,
 }
 
+impl<'a> OverlayView<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
+        Self {
+            overlay: scene.overlay,
+            tracks: &scene.playlist.tracks,
+            history: scene.history,
+            theme: scene.active_theme(),
+            settings_view: SettingsView::from_scene(scene),
+            bindings: scene.bindings,
+            now: scene.now,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct OverlayWidget<'a> {
-    content: OverlayContent<'a>,
+    content: OverlayView<'a>,
     layout: &'a FrameLayout,
     avoid: Option<Rect>,
 }
@@ -101,17 +118,33 @@ fn banner_area(screen: Rect) -> Option<Rect> {
     Some(Rect::new(0, screen.height - 1, screen.width, 1))
 }
 
-fn banner_color(phase: SavePhase, theme: ActiveTheme<'_>) -> ratatui::style::Color {
-    match phase {
-        SavePhase::Prompt => theme.role(Role::Accent),
-        SavePhase::Failed => theme.role(Role::Accent2),
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SaveBannerStyle {
+    accent: ratatui::style::Color,
+    alert: ratatui::style::Color,
+}
+
+impl SaveBannerStyle {
+    #[must_use]
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            accent: theme.role(Role::Accent),
+            alert: theme.role(Role::Accent2),
+        }
+    }
+
+    fn color(self, phase: SavePhase) -> ratatui::style::Color {
+        match phase {
+            SavePhase::Prompt => self.accent,
+            SavePhase::Failed => self.alert,
+        }
     }
 }
 
 impl<'a> OverlayWidget<'a> {
     #[must_use]
     pub(crate) fn placed(
-        content: OverlayContent<'a>,
+        content: OverlayView<'a>,
         layout: &'a FrameLayout,
         cover_mode: CoverMode,
     ) -> Self {
@@ -149,7 +182,7 @@ impl<'a> OverlayWidget<'a> {
                 theme: self.content.theme,
                 entries: self.content.history,
                 now: self.content.now,
-                selected: usize::from(cursor.selected()),
+                selected: ViewIndex::new(usize::from(cursor.selected())),
                 container: self.container(avoid),
             })),
             Overlay::Settings(current) => {
@@ -221,7 +254,8 @@ impl<'a> OverlayWidget<'a> {
             Paragraph::new(save_line.text)
                 .style(
                     Style::default()
-                        .fg(banner_color(save_line.phase, self.content.theme)),
+                        .fg(SaveBannerStyle::from_theme(&self.content.theme)
+                            .color(save_line.phase)),
                 )
                 .render(banner, buffer);
         }
@@ -251,14 +285,13 @@ mod tests {
         SearchQuery,
         SettingRow,
         TextEntry,
-        ViewIndex,
     };
     use ratatui::layout::Rect;
     use rstest::rstest;
 
     use crate::{
         overlay::{
-            layer::{OverlayContent, OverlayWidget},
+            layer::{OverlayView, OverlayWidget},
             modal::OverlayAreas,
             settings::test_support::{appearance_settings, settings_values},
         },
@@ -296,7 +329,7 @@ mod tests {
         layout: &'a FrameLayout,
     ) -> OverlayWidget<'a> {
         OverlayWidget {
-            content: OverlayContent {
+            content: OverlayView {
                 overlay: model.workspace.overlay.as_ref(),
                 tracks: &model.playlist.tracks,
                 history: &model.history,
@@ -377,7 +410,7 @@ mod tests {
     fn confirm_delete_overlay_shows_the_prompt() {
         let theme = noir();
         let model = model_with(Overlay::ConfirmDelete(DeleteCandidate {
-            index: ViewIndex::new(0),
+            source: kernel::TrackRef::Local("/music/moon.flac".into()),
             title: "Moon River".to_string(),
             artist: "Audrey Hepburn".to_string(),
         }));

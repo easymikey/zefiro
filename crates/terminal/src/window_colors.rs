@@ -6,6 +6,8 @@ use kernel::{
 };
 use widgets::{Role, Theme};
 
+use crate::error::Error;
+
 const OSC: &str = "\x1b]";
 const BEL: &str = "\x07";
 
@@ -39,32 +41,30 @@ fn reset_sequence() -> String {
     sequence
 }
 
-pub(crate) fn write_to_stdout(sequence: &str) {
+fn write_to_stdout(sequence: &str) -> Result<(), io::Error> {
     let mut stdout = io::stdout();
-    let _ = stdout.write_all(sequence.as_bytes());
-    let _ = stdout.flush();
+    stdout.write_all(sequence.as_bytes())?;
+    stdout.flush()
 }
 
-pub(crate) fn reset_on_panic() {
-    write_to_stdout(&reset_sequence());
+pub(crate) fn reset_on_panic() -> Result<(), io::Error> {
+    write_to_stdout(&reset_sequence())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("no such theme: {name}")]
 pub struct UnknownThemeError {
-    pub name: String,
+    pub name: ThemeName,
 }
 
 fn sequence_for(name: &ThemeName, theme: &Theme) -> Result<String, UnknownThemeError> {
-    if name.as_str() == theme.name {
+    if *name == theme.name {
         Ok(set_sequence(
             theme.colors.role(Role::WindowBackground),
             theme.colors.role(Role::Text),
         ))
     } else {
-        Err(UnknownThemeError {
-            name: name.as_str().to_string(),
-        })
+        Err(UnknownThemeError { name: name.clone() })
     }
 }
 
@@ -81,9 +81,10 @@ pub(crate) fn window_colors_sequence(
 pub fn write_window_colors(
     command: &WindowColorsCmd,
     theme: &Theme,
-) -> Result<(), UnknownThemeError> {
-    write_to_stdout(&window_colors_sequence(command, theme)?);
-    Ok(())
+) -> Result<(), Error> {
+    let sequence =
+        window_colors_sequence(command, theme).map_err(Error::UnknownTheme)?;
+    write_to_stdout(&sequence).map_err(Error::WindowColors)
 }
 
 #[cfg(test)]
@@ -93,7 +94,7 @@ mod tests {
         domain::{ThemeName, appearance::Rgb},
     };
     use rstest::rstest;
-    use widgets::{Colors, Role, Theme, ThemeSeed};
+    use widgets::{Colors, Role, Theme, ThemeBase};
 
     use crate::window_colors::{
         UnknownThemeError,
@@ -117,7 +118,7 @@ mod tests {
     fn theme() -> Theme {
         Theme {
             name: ThemeName::from_static(KNOWN_THEME),
-            colors: Colors::derive(&ThemeSeed {
+            colors: Colors::derive(&ThemeBase {
                 background: Rgb([0x10, 0x10, 0x10]),
                 foreground: Rgb([0xe0, 0xe0, 0xe0]),
                 bright_foreground: Rgb([0xf0, 0xf0, 0xf0]),
@@ -142,7 +143,7 @@ mod tests {
     #[case::set_to_another_name(
         WindowColorsCmd::Set(ThemeName::from_static("no-such-theme")),
         Err(UnknownThemeError {
-            name: "no-such-theme".to_string(),
+            name: ThemeName::from_static("no-such-theme"),
         })
     )]
     #[case::reset_ignores_the_theme(WindowColorsCmd::Reset, Ok(reset_sequence()))]

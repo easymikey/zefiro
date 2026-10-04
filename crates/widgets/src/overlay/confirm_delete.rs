@@ -1,4 +1,4 @@
-use kernel::domain::DeleteCandidate;
+use kernel::domain::{DeleteCandidate, geometry::Cells};
 
 use crate::{
     overlay::modal::{PromptBody, PromptStyle, PromptWidget},
@@ -6,7 +6,7 @@ use crate::{
     theme::ActiveTheme,
 };
 
-const MIN_WIDTH: u16 = 24;
+const MIN_WIDTH: Cells = Cells(24);
 
 #[must_use]
 fn sentence(candidate: &DeleteCandidate) -> String {
@@ -37,7 +37,7 @@ pub(crate) fn prompt<'a>(
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{DeleteCandidate, ViewIndex};
+    use kernel::domain::DeleteCandidate;
 
     use crate::{
         overlay::confirm_delete::{prompt, sentence},
@@ -47,7 +47,7 @@ mod tests {
 
     fn candidate() -> DeleteCandidate {
         DeleteCandidate {
-            index: ViewIndex::new(0),
+            source: kernel::TrackRef::Local("/music/moon.flac".into()),
             title: "Moon River".to_string(),
             artist: "Audrey Hepburn".to_string(),
         }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kernel::domain::{CursorOver, SearchQuery, Track};
+use kernel::domain::{CursorOver, SearchQuery, Track, geometry::Cells};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -57,8 +57,8 @@ pub(crate) fn paint_match_pane(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
             tracks.get(usize::from(track_index)).map(|track| {
                 ListItem::new(Line::from(indented(
                     track.display(),
-                    list.lead,
-                    area.width,
+                    Cells(list.lead),
+                    Cells(area.width),
                 )))
             })
         })

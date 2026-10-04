@@ -2,7 +2,7 @@ mod matches;
 
 use std::sync::Arc;
 
-use kernel::domain::{CursorOver, SearchQuery, Track};
+use kernel::domain::{CursorOver, SearchQuery, Track, geometry::Cells};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
@@ -119,7 +119,7 @@ impl SearchWidget<'_> {
             title: glyphs::search::TITLE_WORD,
             size: ModalSize::FrameWidth {
                 bounds: self.bounds,
-                content_rows: content_rows(self.search),
+                content_rows: Cells(content_rows(self.search)),
             },
             hint: None,
             border: style.border,
@@ -150,7 +150,7 @@ impl SearchWidget<'_> {
             return;
         }
         paint_match_pane(
-            &self.match_list(matches_rect, leading_cells(&areas)),
+            &self.match_list(matches_rect, leading_cells(&areas).0),
             buffer,
         );
     }

@@ -19,6 +19,9 @@ pub struct Tags {
     pub lyrics: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Decibels(pub f32);
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AudioFormat {
     pub format: Option<String>,
@@ -26,7 +29,7 @@ pub struct AudioFormat {
     pub sample_rate_hz: Option<u32>,
     pub bits_per_sample: Option<u8>,
     pub channels: Option<u8>,
-    pub replay_gain: Option<f32>,
+    pub replay_gain: Option<Decibels>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

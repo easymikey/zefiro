@@ -1,7 +1,7 @@
 mod rows;
 mod values;
 
-use kernel::domain::SettingRow;
+use kernel::domain::{SettingRow, geometry::Cells};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -76,7 +76,7 @@ impl<'a> SettingsWidget<'a> {
     }
 
     fn modal_title(&self) -> String {
-        modal_title_text(self.values.music_dir, self.content_width())
+        modal_title_text(&self.values.music_dir_label(), self.content_width())
     }
 
     fn content_width(&self) -> u16 {
@@ -92,8 +92,8 @@ impl<'a> SettingsWidget<'a> {
             container: OverlayContainer::Modal(self.avoid),
             border_title: Line::default(),
             modal_title,
-            content_width: self.content_width(),
-            content_rows: u16::try_from(self.rows().len()).unwrap_or(u16::MAX),
+            content_width: Cells(self.content_width()),
+            content_rows: Cells(u16::try_from(self.rows().len()).unwrap_or(u16::MAX)),
             hint: None,
             theme: self.theme,
         }
@@ -105,8 +105,8 @@ impl<'a> SettingsWidget<'a> {
         let rows = self.rows();
         let label_width = label_column_width(&rows);
         let columns = SettingsColumns::for_width(
-            column_width(areas),
-            leading_cells(areas),
+            column_width(areas).0,
+            leading_cells(areas).0,
             label_width,
         );
         let offset =
@@ -167,14 +167,21 @@ fn settings_content_width(rows: &[SettingRow], values: &SettingsView<'_>) -> u16
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use config::{AppearanceFile, AppearanceSettings};
-    use kernel::domain::{AppearanceSetting, Crossfade, ReplayGain};
+    use std::path::Path;
+
+    use config::TomlAppearance;
+    use kernel::domain::{
+        AppearanceSetting,
+        Crossfade,
+        ReplayGain,
+        appearance::AppearanceSettings,
+    };
 
     use crate::overlay::settings::SettingsView;
 
     pub(crate) fn appearance_settings() -> Vec<AppearanceSetting> {
         kernel::domain::appearance_rows::appearance_settings(
-            AppearanceFile::default().settings(),
+            TomlAppearance::default().settings(),
         )
     }
 
@@ -187,7 +194,8 @@ pub(crate) mod test_support {
             theme: "noir",
             themes: &[],
             sleep_presets: &[],
-            music_dir: "/home/user/Music",
+            music_dir: Path::new("/home/user/Music"),
+            home: None,
             output_device: None,
             output_devices: &[],
             appearance: AppearanceSettings::default(),
@@ -198,12 +206,14 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use kernel::domain::{ThemeName, appearance::CoverMode};
     use ratatui::layout::Rect;
 
     use crate::{
         overlay::{
-            modal::OverlayAreas,
+            modal::{ModalRowStyle, OverlayAreas},
             settings::{
                 SettingsWidget,
                 test_support::{appearance_settings, settings_values},
@@ -211,7 +221,7 @@ mod tests {
         },
         primitive::canvas::find_text,
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth, Role},
+        theme::{ActiveTheme, ColorDepth},
     };
 
     fn outer_rect(overlay: &SettingsWidget<'_>, screen: Rect) -> Option<Rect> {
@@ -252,7 +262,7 @@ mod tests {
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
                 .clone();
-        let selection_bg = active.role(Role::SelectionBackground);
+        let selection_bg = ModalRowStyle::from_theme(&active).selected_background;
         let (theme_x, theme_y) = find_text(&buffer, "Theme").unwrap();
         let (crossfade_x, crossfade_y) = find_text(&buffer, "Crossfade").unwrap();
         assert_eq!(
@@ -286,7 +296,7 @@ mod tests {
         let custom = appearance_settings();
         let mut with_long_path = settings_values(&custom);
         with_long_path.music_dir =
-            "/Users/testuser/Music/Library/Deeply/Nested/Folder/apple-music";
+            Path::new("/Users/testuser/Music/Library/Deeply/Nested/Folder/apple-music");
         let overlay = SettingsWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             values: with_long_path,

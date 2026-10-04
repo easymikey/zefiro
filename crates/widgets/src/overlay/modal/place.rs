@@ -1,3 +1,4 @@
+use kernel::domain::geometry::Cells;
 use ratatui::{
     layout::{Constraint, Rect},
     widgets::{Block, Padding},
@@ -5,63 +6,65 @@ use ratatui::{
 
 use crate::overlay::modal::frame::Hint;
 
-const BORDER_CELLS: u16 = 2;
-const PADDING_X: u16 = 1;
-const PADDING_TOP: u16 = 0;
-const HINT_ROWS: u16 = 1;
-pub(crate) const LIST_SCREEN_MARGIN: u16 = 2;
-pub(crate) const DIALOG_SCREEN_MARGIN: u16 = 4;
+const BORDER_CELLS: Cells = Cells(2);
+const PADDING_X: Cells = Cells(1);
+const PADDING_TOP: Cells = Cells(0);
+const HINT_ROWS: Cells = Cells(1);
+pub(crate) const LIST_SCREEN_MARGIN: Cells = Cells(2);
+pub(crate) const DIALOG_SCREEN_MARGIN: Cells = Cells(4);
 
-fn hint_rows_for(hint: Hint) -> u16 {
+fn hint_rows_for(hint: Hint) -> Cells {
     match hint {
         Hint::Present => HINT_ROWS,
-        Hint::Absent => 0,
+        Hint::Absent => Cells(0),
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ContentSize {
-    pub(crate) min_width: u16,
-    pub(crate) content_width: u16,
-    pub(crate) content_rows: u16,
+    pub(crate) min_width: Cells,
+    pub(crate) content_width: Cells,
+    pub(crate) content_rows: Cells,
     pub(crate) hint: Hint,
-    pub(crate) screen_margin: u16,
+    pub(crate) screen_margin: Cells,
 }
 
-pub(crate) fn content_size(area: Rect, size: ContentSize) -> (u16, u16) {
-    let hint_rows = hint_rows_for(size.hint);
-    let height = size
-        .content_rows
-        .saturating_add(PADDING_TOP)
-        .saturating_add(hint_rows)
-        .saturating_add(BORDER_CELLS);
+pub(crate) fn content_size(area: Rect, size: ContentSize) -> PlacedSize {
+    let height = framed_rows(size.content_rows, size.hint);
     let width = size
         .content_width
         .max(size.min_width)
-        .saturating_add(PADDING_X * 2)
-        .saturating_add(BORDER_CELLS);
+        .0
+        .saturating_add(PADDING_X.0 * 2)
+        .saturating_add(BORDER_CELLS.0);
 
-    let max_width = area.width.saturating_sub(size.screen_margin);
-    let max_height = area.height.saturating_sub(size.screen_margin);
-    (
-        width.min(max_width).min(area.width),
-        height.min(max_height).min(area.height),
+    let max_width = area.width.saturating_sub(size.screen_margin.0);
+    let max_height = area.height.saturating_sub(size.screen_margin.0);
+    PlacedSize {
+        width: Cells(width.min(max_width).min(area.width)),
+        height: Cells(height.0.min(max_height).min(area.height)),
+    }
+}
+
+fn framed_rows(content_rows: Cells, hint: Hint) -> Cells {
+    Cells(
+        content_rows
+            .0
+            .saturating_add(PADDING_TOP.0)
+            .saturating_add(hint_rows_for(hint).0)
+            .saturating_add(BORDER_CELLS.0),
     )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FrameWidth {
     pub(crate) bounds: Rect,
-    pub(crate) content_rows: u16,
+    pub(crate) content_rows: Cells,
 }
 
 pub(crate) fn width(hint: Hint, spec: FrameWidth) -> Rect {
-    let hint_rows = hint_rows_for(hint);
-    let height = spec
-        .content_rows
-        .saturating_add(PADDING_TOP)
-        .saturating_add(hint_rows)
-        .saturating_add(BORDER_CELLS)
+    let height = framed_rows(spec.content_rows, hint)
+        .0
         .min(spec.bounds.height);
     Rect {
         x: spec.bounds.x,
@@ -72,30 +75,32 @@ pub(crate) fn width(hint: Hint, spec: FrameWidth) -> Rect {
 }
 
 #[must_use]
-pub(crate) fn list_capacity(area: Rect, hint: Hint) -> (u16, u16) {
-    let hint_rows = hint_rows_for(hint);
-    let max_width = area.width.saturating_sub(LIST_SCREEN_MARGIN);
-    let max_height = area.height.saturating_sub(LIST_SCREEN_MARGIN);
+pub(crate) fn list_capacity(area: Rect, hint: Hint) -> PlacedSize {
+    let max_width = area.width.saturating_sub(LIST_SCREEN_MARGIN.0);
+    let max_height = area.height.saturating_sub(LIST_SCREEN_MARGIN.0);
     let content_width = max_width
-        .saturating_sub(PADDING_X * 2)
-        .saturating_sub(BORDER_CELLS);
+        .saturating_sub(PADDING_X.0 * 2)
+        .saturating_sub(BORDER_CELLS.0);
     let content_rows = max_height
-        .saturating_sub(PADDING_TOP)
-        .saturating_sub(hint_rows)
-        .saturating_sub(BORDER_CELLS);
-    (content_width, content_rows)
+        .saturating_sub(PADDING_TOP.0)
+        .saturating_sub(hint_rows_for(hint).0)
+        .saturating_sub(BORDER_CELLS.0);
+    PlacedSize {
+        width: Cells(content_width),
+        height: Cells(content_rows),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PlacedSize {
-    pub(crate) width: u16,
-    pub(crate) height: u16,
+    pub(crate) width: Cells,
+    pub(crate) height: Cells,
 }
 
 fn centered(area: Rect, size: PlacedSize) -> Rect {
     area.centered(
-        Constraint::Length(size.width),
-        Constraint::Length(size.height),
+        Constraint::Length(size.width.0),
+        Constraint::Length(size.height.0),
     )
 }
 
@@ -119,12 +124,12 @@ pub(crate) fn place(area: Rect, size: PlacedSize, avoid: &[Rect]) -> Rect {
     let below = colliding()
         .map(Rect::bottom)
         .max()
-        .filter(|y| y.saturating_add(size.height) <= area.bottom())
+        .filter(|y| y.saturating_add(size.height.0) <= area.bottom())
         .map(|y| Rect { y, ..candidate });
     let right = colliding()
         .map(Rect::right)
         .max()
-        .filter(|x| x.saturating_add(size.width) <= area.right())
+        .filter(|x| x.saturating_add(size.width.0) <= area.right())
         .map(|x| Rect { x, ..candidate });
 
     [below, right]
@@ -135,12 +140,12 @@ pub(crate) fn place(area: Rect, size: PlacedSize, avoid: &[Rect]) -> Rect {
 }
 
 pub(crate) fn padded_content(outer: Rect) -> Rect {
-    let border = BORDER_CELLS / 2;
+    let border = BORDER_CELLS.0 / 2;
     Block::default()
         .padding(Padding::new(
-            border + PADDING_X,
-            border + PADDING_X,
-            border + PADDING_TOP,
+            border + PADDING_X.0,
+            border + PADDING_X.0,
+            border + PADDING_TOP.0,
             border,
         ))
         .inner(outer)

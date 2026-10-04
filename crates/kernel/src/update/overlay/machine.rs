@@ -13,7 +13,7 @@ use crate::{
     message::{BrowseRequest, Message, PlaybackRequest, PlaylistRequest},
     update::{
         machine::{Machine, Unhandled},
-        overlay::{InnerMessage, OverlayMessage, text},
+        overlay::{OverlayContentMessage, OverlayMessage, text},
     },
 };
 
@@ -101,7 +101,7 @@ fn confirmed(open: &mut Overlay) -> Result<Cmd, Unhandled> {
             Ok(confirm_save_playlist(typed, error))
         }
         Overlay::ConfirmDelete(candidate) => Ok(Cmd::message(Message::Browse(
-            BrowseRequest::Trash(candidate.index),
+            BrowseRequest::Trash(candidate.source.clone()),
         ))),
         Overlay::JumpToTime(digits) => Ok(confirm_jump(digits)),
         Overlay::MusicDir { typed, error } => Ok(confirm_music_dir(typed, error)),
@@ -168,39 +168,42 @@ fn confirm_music_dir(typed: &TextEntry, error: &mut Option<MusicDirError>) -> Cm
 
 fn inner_transition(
     state: &mut Option<Overlay>,
-    inner: InnerMessage,
+    inner: OverlayContentMessage,
 ) -> Result<Cmd, Unhandled> {
     let open = state.as_mut().ok_or(Unhandled)?;
     match (open, inner) {
-        (Overlay::Search(search), InnerMessage::Search(message)) => {
+        (Overlay::Search(search), OverlayContentMessage::Search(message)) => {
             search.transition(message)
         }
-        (Overlay::Settings(selected), InnerMessage::Settings(message)) => {
+        (Overlay::Settings(selected), OverlayContentMessage::Settings(message)) => {
             selected.transition(message)
         }
-        (Overlay::SavePlaylist { typed, error }, InnerMessage::Text(message)) => {
+        (
+            Overlay::SavePlaylist { typed, error },
+            OverlayContentMessage::Text(message),
+        ) => {
             text::retype(typed, message);
             *error = None;
             Ok(Cmd::none())
         }
-        (Overlay::MusicDir { typed, error }, InnerMessage::Text(message)) => {
+        (Overlay::MusicDir { typed, error }, OverlayContentMessage::Text(message)) => {
             text::retype(typed, message);
             *error = None;
             Ok(Cmd::none())
         }
-        (Overlay::JumpToTime(digits), InnerMessage::Jump(message)) => {
+        (Overlay::JumpToTime(digits), OverlayContentMessage::Jump(message)) => {
             digits.transition(message)
         }
-        (Overlay::History(cursor), InnerMessage::History(message)) => {
+        (Overlay::History(cursor), OverlayContentMessage::History(message)) => {
             cursor.transition(message)
         }
         (
             _,
-            InnerMessage::Search(_)
-            | InnerMessage::Settings(_)
-            | InnerMessage::Text(_)
-            | InnerMessage::Jump(_)
-            | InnerMessage::History(_),
+            OverlayContentMessage::Search(_)
+            | OverlayContentMessage::Settings(_)
+            | OverlayContentMessage::Text(_)
+            | OverlayContentMessage::Jump(_)
+            | OverlayContentMessage::History(_),
         ) => Err(Unhandled),
     }
 }

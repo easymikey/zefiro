@@ -27,8 +27,8 @@ impl Workspace {
         self.keymap = Keymap::new(keys);
         let result = self
             .keymap
-            .error_text()
-            .map_or(Ok(()), |detail| Err(ConfigError::Invalid { detail }));
+            .diagnostic()
+            .map_or(Ok(()), |diagnostic| Err(ConfigError::Invalid(diagnostic)));
         self.config_reloaded(
             ConfigReload {
                 name: ConfigName::Config,

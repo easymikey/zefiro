@@ -38,7 +38,7 @@ fn cover_width_for_height(height: u16, cell_aspect: f32, cover_aspect: f32) -> u
 pub(crate) fn cover_cell_height(area: Rect, sizing: CoverSizing) -> u16 {
     let available = inner(area).height;
     match sizing {
-        CoverSizing::Fixed { height, .. } => height.min(available),
+        CoverSizing::Fixed { height, .. } => height.0.min(available),
         CoverSizing::Auto(_) => available,
         CoverSizing::Off => 0,
     }
@@ -51,7 +51,7 @@ pub(crate) fn cover_cell_width(
     sizing: CoverSizing,
 ) -> u16 {
     match sizing {
-        CoverSizing::Fixed { width, .. } => width,
+        CoverSizing::Fixed { width, .. } => width.0,
         CoverSizing::Off => 0,
         CoverSizing::Auto(cover_aspect) => cover_width_for_height(
             cover_cell_height(area, sizing),

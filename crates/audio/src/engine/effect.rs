@@ -5,19 +5,19 @@ use kernel::{
     AudioError,
     Cmds,
     Playback,
-    domain::{ListedDevice, OutputDevice, Speed},
+    domain::{ListedDevice, OutputDevice, Revision, Speed},
 };
 
 use crate::{
     deck::{
-        AudioJob,
-        DeckEvent,
         DeviceOpened,
-        Revision,
         envelope::Signals,
+        event::DeckEvent,
+        job::AudioJob,
         source::{PreloadMode, TrackSource},
     },
     engine::phase::CurrentTrack,
+    gain::Gain,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,7 +28,7 @@ pub enum SinkRole {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Preload {
+pub enum PreloadKind {
     Gapless(PathBuf),
     Crossfade(CurrentTrack),
 }
@@ -39,14 +39,28 @@ pub enum AudioMessage {
     Cmds(Cmds<AudioCmd>),
     Reported(Option<Duration>),
     Error(AudioError),
-    Opened(Result<DeviceOpened, AudioError>),
-    Decoded(Result<Option<Duration>, AudioError>),
-    Preloaded(Result<Preload, AudioError>),
+    Opened(DeviceOpened),
+    Decoded(Option<Duration>),
+    Preloaded(PreloadKind),
     Finished(SinkRole),
     Cued,
     Ramped(SinkRole),
-    DevicesListed(Result<Vec<ListedDevice>, AudioError>),
+    DevicesListed(Vec<ListedDevice>),
     SignalsTaken { role: SinkRole, signals: Signals },
+}
+
+#[derive(Debug)]
+pub(crate) enum EngineMessage {
+    Cmds(Cmds<AudioCmd>),
+    Reported(Option<Duration>),
+    Error(AudioError),
+    Opened(DeviceOpened),
+    Decoded(Option<Duration>),
+    Preloaded(PreloadKind),
+    Finished(SinkRole),
+    Cued,
+    Ramped(SinkRole),
+    DevicesListed(Vec<ListedDevice>),
 }
 
 impl From<Cmds<AudioCmd>> for AudioMessage {
@@ -71,49 +85,39 @@ pub enum EngineEffect {
         speed: Speed,
     },
     Decode(PathBuf),
-    Start(f32),
+    Start(Gain),
     Resume {
-        volume: f32,
+        gain: Gain,
         position: Duration,
         playback: Playback,
     },
     Play,
     Pause,
     Seek(Duration),
-    SetVolume(f32),
+    SetGain(Gain),
     Arm(Option<Duration>),
     Crossfade {
         length: Duration,
-        incoming: f32,
+        incoming: Gain,
     },
     CancelCrossfade,
     Ramp {
         length: Duration,
-        playing: f32,
+        playing: Gain,
     },
     DropOutgoing,
     SetSpeed(Speed),
-    Clear,
+    Clear(Speed),
     Preload {
         path: PathBuf,
         mode: PreloadMode,
     },
     RestartGapless(PathBuf),
-    Promote(f32),
+    Promote(Gain),
     Run(AudioJob),
     Report,
     Advance,
     Stage(TrackSource),
     Attach(TrackSource),
     TakeSignals(Revision),
-}
-
-impl EngineEffect {
-    pub fn into_job(self) -> Result<AudioJob, Self> {
-        if let EngineEffect::Run(job) = self {
-            Ok(job)
-        } else {
-            Err(self)
-        }
-    }
 }

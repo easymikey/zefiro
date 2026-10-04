@@ -2,6 +2,8 @@ use std::{f32::consts::FRAC_PI_2, time::Duration};
 
 use kernel::domain::ReplayGain;
 
+use crate::gain::Gain;
+
 #[must_use]
 pub(crate) fn gain_in(fraction: f32) -> f32 {
     (fraction.clamp(0.0, 1.0) * FRAC_PI_2).sin()
@@ -13,11 +15,14 @@ pub(crate) fn gain_out(fraction: f32) -> f32 {
 }
 
 #[must_use]
-pub(crate) fn replaygain_factor(replay_gain: ReplayGain, gain_db: Option<f32>) -> f32 {
+pub(crate) fn replay_gain_factor(
+    replay_gain: ReplayGain,
+    gain_db: Option<kernel::domain::Decibels>,
+) -> Gain {
     if matches!(replay_gain, ReplayGain::On) {
-        gain_db.map_or(1.0, |g| 10f32.powf(g / 20.0))
+        gain_db.map_or(Gain::UNITY, Gain::from_decibels)
     } else {
-        1.0
+        Gain::UNITY
     }
 }
 
@@ -37,32 +42,34 @@ mod tests {
     use proptest::prelude::{prop_assert, proptest};
     use rstest::rstest;
 
-    use crate::engine::crossfade::{arm_cue, gain_in, gain_out, replaygain_factor};
+    use crate::engine::crossfade::{arm_cue, gain_in, gain_out, replay_gain_factor};
 
-    struct VolumeRow {
+    struct ReplayGainRow {
         replay_gain: ReplayGain,
-        gain: Option<f32>,
+        gain: Option<kernel::domain::Decibels>,
         expected: f32,
     }
 
     #[rstest]
-    #[case::no_cached_gain(VolumeRow {
+    #[case::no_cached_gain(ReplayGainRow {
         replay_gain: ReplayGain::On,
         gain: None,
         expected: 1.0,
     })]
-    #[case::replaygain_disabled_ignores_the_gain(VolumeRow {
+    #[case::replay_gain_disabled_ignores_the_gain(ReplayGainRow {
         replay_gain: ReplayGain::Off,
-        gain: Some(-6.0),
+        gain: Some(kernel::domain::Decibels(-6.0)),
         expected: 1.0,
     })]
-    #[case::replaygain_applies_decibels_as_a_linear_factor(VolumeRow {
+    #[case::replay_gain_applies_decibels_as_a_linear_factor(ReplayGainRow {
         replay_gain: ReplayGain::On,
-        gain: Some(-6.0),
+        gain: Some(kernel::domain::Decibels(-6.0)),
         expected: 0.501_187,
     })]
-    fn replaygain_factor_turns_decibels_into_a_linear_factor(#[case] row: VolumeRow) {
-        let factor = replaygain_factor(row.replay_gain, row.gain);
+    fn replay_gain_factor_turns_decibels_into_a_linear_factor(
+        #[case] row: ReplayGainRow,
+    ) {
+        let factor = replay_gain_factor(row.replay_gain, row.gain).amplitude();
         let expected = row.expected;
         assert!(
             (factor - expected).abs() < 1e-4,

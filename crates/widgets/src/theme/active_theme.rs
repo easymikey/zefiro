@@ -12,23 +12,31 @@ use crate::theme::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BarStyle {
+pub(crate) struct ProgressStyle {
     pub(crate) fill: Color,
     pub(crate) track: Color,
 }
 
-impl BarStyle {
+impl ProgressStyle {
     #[must_use]
-    pub(crate) fn progress(theme: &ActiveTheme<'_>) -> Self {
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         Self {
             fill: theme.color(theme.fill.unwrap_or(theme.colors.role(Role::Accent))),
             track: theme
                 .color(theme.track.unwrap_or(theme.colors.role(Role::BarGroove))),
         }
     }
+}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct VolumeStyle {
+    pub(crate) fill: Color,
+    pub(crate) track: Color,
+}
+
+impl VolumeStyle {
     #[must_use]
-    pub(crate) fn volume(theme: &ActiveTheme<'_>) -> Self {
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         Self {
             fill: theme.role(Role::Accent),
             track: theme.role(Role::BarGroove),
@@ -42,6 +50,7 @@ pub struct ActiveTheme<'a> {
     pub color_depth: ColorDepth,
     fill: Option<Rgb>,
     track: Option<Rgb>,
+    pub(crate) volume_pulse_mix: f32,
 }
 
 impl<'a> ActiveTheme<'a> {
@@ -52,6 +61,7 @@ impl<'a> ActiveTheme<'a> {
             color_depth,
             fill: None,
             track: None,
+            volume_pulse_mix: 0.0,
         }
     }
 
@@ -59,7 +69,15 @@ impl<'a> ActiveTheme<'a> {
     pub fn with_progress(self, progress: ProgressBar) -> Self {
         Self {
             fill: progress.fill,
-            track: progress.track,
+            track: progress.groove,
+            ..self
+        }
+    }
+
+    #[must_use]
+    pub fn with_volume_pulse(self, volume_pulse_mix: f32) -> Self {
+        Self {
+            volume_pulse_mix,
             ..self
         }
     }
@@ -127,7 +145,7 @@ mod tests {
             ColorDepth,
             Role,
             Theme,
-            active_theme::{ActiveTheme, BarStyle},
+            active_theme::{ActiveTheme, ProgressStyle, VolumeStyle},
             color_at_depth,
         },
     };
@@ -159,22 +177,25 @@ mod tests {
     fn an_unset_progress_config_is_the_themes_accent_and_groove() {
         let theme = noir();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        assert_eq!(BarStyle::progress(&active), BarStyle::volume(&active));
-        assert_eq!(BarStyle::progress(&active).fill, active.role(Role::Accent));
+        let progress = ProgressStyle::from_theme(&active);
+        let volume = VolumeStyle::from_theme(&active);
+        assert_eq!((progress.fill, progress.track), (volume.fill, volume.track));
+        assert_eq!(progress.fill, active.role(Role::Accent));
     }
 
     #[test]
     fn a_set_progress_config_wins_over_the_theme() {
         let theme = noir();
-        let progress = ProgressBar {
+        let bar = ProgressBar {
             fill: Some(Rgb([255, 0, 0])),
-            track: Some(Rgb([0, 255, 0])),
+            groove: Some(Rgb([0, 255, 0])),
             ..ProgressBar::default()
         };
-        let active =
-            ActiveTheme::new(&theme, ColorDepth::TrueColor).with_progress(progress);
-        assert_eq!(BarStyle::progress(&active).fill, Color::Rgb(255, 0, 0));
-        assert_eq!(BarStyle::progress(&active).track, Color::Rgb(0, 255, 0));
-        assert_ne!(BarStyle::progress(&active), BarStyle::volume(&active));
+        let active = ActiveTheme::new(&theme, ColorDepth::TrueColor).with_progress(bar);
+        let progress = ProgressStyle::from_theme(&active);
+        let volume = VolumeStyle::from_theme(&active);
+        assert_eq!(progress.fill, Color::Rgb(255, 0, 0));
+        assert_eq!(progress.track, Color::Rgb(0, 255, 0));
+        assert_ne!((progress.fill, progress.track), (volume.fill, volume.track));
     }
 }

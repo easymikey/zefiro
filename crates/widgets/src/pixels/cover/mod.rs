@@ -7,6 +7,7 @@ mod wash;
 use std::{path::PathBuf, sync::Arc};
 
 use image::RgbaImage;
+use kernel::domain::geometry::Cells;
 
 use crate::FrameLayout;
 pub use crate::pixels::cover::{
@@ -18,7 +19,7 @@ pub use crate::pixels::cover::{
 };
 
 #[derive(Debug, Clone)]
-pub struct DecodedCover {
+pub struct CoverImage {
     pub path: PathBuf,
     pub image: Arc<RgbaImage>,
 }
@@ -37,12 +38,12 @@ pub enum CrossfadePermit {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CoverWash {
-    Running { progress: f32, screen_width: u16 },
+    Running { progress: f32, screen_width: Cells },
     Idle,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct CoverRefreshParts {
+pub struct CoverRefresh {
     pub layout: FrameLayout,
     pub crossfade: CrossfadePermit,
     pub wash: CoverWash,

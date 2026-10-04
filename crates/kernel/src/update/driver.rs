@@ -37,9 +37,9 @@ impl Machine for DriverStatus {
 
     fn transition(&mut self, message: DriverStatusMessage) -> Result<Cmd, Unhandled> {
         match (&*self, message) {
-            (DriverStatus::Running, DriverStatusMessage::Died { driver, failure }) => {
+            (DriverStatus::Running, DriverStatusMessage::Died { failure, .. }) => {
                 *self = DriverStatus::Dead(failure);
-                Ok(Cmd::message(Message::DriverDied(driver)))
+                Ok(Cmd::none())
             }
             (
                 DriverStatus::Running | DriverStatus::Dead(_),
@@ -126,23 +126,24 @@ pub(crate) fn decided(
     }
 }
 
-pub(crate) fn resumed(
-    player: &Player,
-    revisions: &mut Revisions,
-    restart: (DriverName, Moment),
-) -> Cmd {
-    let (driver, now) = restart;
+pub(crate) struct ResumeParts<'a> {
+    pub(crate) player: &'a Player,
+    pub(crate) revisions: &'a mut Revisions,
+}
+
+pub(crate) fn resumed(parts: ResumeParts<'_>, driver: DriverName, now: Moment) -> Cmd {
     match driver {
-        DriverName::Audio => resume(player, revisions, now),
+        DriverName::Audio => resume(parts, now),
         DriverName::Library | DriverName::Config | DriverName::Macos => Cmd::none(),
     }
 }
 
-fn resume(player: &Player, revisions: &mut Revisions, now: Moment) -> Cmd {
+fn resume(parts: ResumeParts<'_>, now: Moment) -> Cmd {
+    let ResumeParts { player, revisions } = parts;
     let playback = match player {
-        Player::Playing { .. } => Playback::Playing,
+        Player::Playing { .. } | Player::Loading { .. } => Playback::Playing,
         Player::Paused { .. } => Playback::Paused,
-        Player::Stopped | Player::Loading { .. } => return Cmd::none(),
+        Player::Stopped => return Cmd::none(),
     };
     let Some(track) = player.current() else {
         return Cmd::none();
@@ -161,14 +162,26 @@ fn load_at(request: TrackLoad, at: Duration, playback: Playback) -> Cmd {
 
 #[cfg(test)]
 mod tests {
+    use std::{path::Path, sync::Arc, time::Duration};
+
     use rstest::rstest;
 
     use crate::{
-        cmd::Cmd,
-        domain::{DriverError, DriverName, DriverStatus, Toast},
+        cmd::{AudioCmd, Cmd, Effect, Playback, TrackLoad},
+        domain::{
+            DriverError,
+            DriverName,
+            DriverStatus,
+            Moment,
+            PausedBy,
+            Player,
+            Revisions,
+            Toast,
+            Track,
+        },
         message::Message,
         update::{
-            driver::DriverStatusMessage,
+            driver::{DriverStatusMessage, ResumeParts, resumed},
             machine::{Machine, Unhandled},
         },
     };
@@ -186,10 +199,6 @@ mod tests {
 
     fn filled() -> DriverStatusMessage {
         DriverStatusMessage::Full(DriverName::Audio)
-    }
-
-    fn decide_restart() -> Result<Cmd, Unhandled> {
-        Ok(Cmd::message(Message::DriverDied(DriverName::Audio)))
     }
 
     fn full() -> Result<Cmd, Unhandled> {
@@ -210,7 +219,7 @@ mod tests {
         start: DriverStatus::Running,
         message: died(),
         next: dead(),
-        result: decide_restart(),
+        result: Ok(Cmd::none()),
     })]
     #[case::running_stops(LifeRow {
         start: DriverStatus::Running,
@@ -265,5 +274,64 @@ mod tests {
         let result = status.transition(row.message);
         assert_eq!(status, row.next);
         assert_eq!(result, row.result);
+    }
+
+    struct ResumeRow {
+        player: Player,
+        driver: DriverName,
+        effects: Cmd,
+    }
+
+    fn track() -> Arc<Track> {
+        Arc::new(Track::listed(Path::new("/music/a.flac")))
+    }
+
+    fn reloaded(at: Duration, playback: Playback) -> Cmd {
+        Cmd::from_iter([
+            Effect::Audio(AudioCmd::Load(TrackLoad::for_track(
+                &track(),
+                Revisions::default().issue_effect(),
+            ))),
+            Effect::Audio(AudioCmd::Seek(at)),
+            Effect::Audio(AudioCmd::Playback(playback)),
+        ])
+    }
+
+    #[rstest]
+    #[case::a_loading_track_resumes_playing(ResumeRow {
+        player: Player::Loading { track: track(), at: Duration::from_secs(3) },
+        driver: DriverName::Audio,
+        effects: reloaded(Duration::from_secs(3), Playback::Playing),
+    })]
+    #[case::a_paused_track_resumes_paused(ResumeRow {
+        player: Player::Paused {
+            track: track(),
+            at: Duration::from_secs(3),
+            by: PausedBy::Listener,
+        },
+        driver: DriverName::Audio,
+        effects: reloaded(Duration::from_secs(3), Playback::Paused),
+    })]
+    #[case::a_stopped_player_resumes_nothing(ResumeRow {
+        player: Player::Stopped,
+        driver: DriverName::Audio,
+        effects: Cmd::none(),
+    })]
+    #[case::a_library_restart_resumes_nothing(ResumeRow {
+        player: Player::Loading { track: track(), at: Duration::from_secs(3) },
+        driver: DriverName::Library,
+        effects: Cmd::none(),
+    })]
+    fn an_audio_restart_resumes_the_player(#[case] row: ResumeRow) {
+        let mut revisions = Revisions::default();
+        let effects = resumed(
+            ResumeParts {
+                player: &row.player,
+                revisions: &mut revisions,
+            },
+            row.driver,
+            Moment::default(),
+        );
+        assert_eq!(effects, row.effects);
     }
 }

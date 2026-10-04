@@ -1,88 +1,237 @@
-use std::sync::{Arc, OnceLock};
+use std::{
+    io,
+    sync::{
+        Arc,
+        Mutex,
+        OnceLock,
+        PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread::{self, JoinHandle},
+    time::Duration,
+};
 
-use arc_swap::ArcSwapOption;
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Sender, TrySendError};
+use crossterm::event;
 
-use crate::{error::Error, shell::ShellEvent};
+use crate::{error::Error, shell::ShellInput};
 
-static TERMINATE_SENDER: OnceLock<Sender<ShellEvent>> = OnceLock::new();
+static TERMINATE_SENDER: OnceLock<Sender<ShellInput>> = OnceLock::new();
 
-static WORKER_PANIC: ArcSwapOption<String> = ArcSwapOption::const_empty();
+static WORKER_PANICKED: AtomicBool = AtomicBool::new(false);
 
-pub(crate) fn install(sender: Sender<ShellEvent>) -> Result<(), Error> {
+static INPUT_ERROR: Mutex<Option<io::Error>> = Mutex::new(None);
+
+const INPUT_POLL: Duration = Duration::from_millis(50);
+
+#[cfg(unix)]
+const TERMINATING_SIGNALS: [std::ffi::c_int; 3] = [
+    signal_hook::consts::SIGTERM,
+    signal_hook::consts::SIGHUP,
+    signal_hook::consts::SIGINT,
+];
+
+enum ThreadStop {
+    #[cfg(unix)]
+    Signals(signal_hook::iterator::Handle),
+    Flag(Arc<AtomicBool>),
+}
+
+impl ThreadStop {
+    fn raise(&self) {
+        match self {
+            #[cfg(unix)]
+            Self::Signals(handle) => handle.close(),
+            Self::Flag(flag) => flag.store(true, Ordering::Release),
+        }
+    }
+}
+
+pub(crate) struct JoinOnDrop {
+    stop: ThreadStop,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Drop for JoinOnDrop {
+    fn drop(&mut self) {
+        self.stop.raise();
+        if let Some(Err(_panic)) = self.thread.take().map(JoinHandle::join) {
+            WORKER_PANICKED.store(true, Ordering::Release);
+        }
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn install(sender: Sender<ShellInput>) -> Result<JoinOnDrop, Error> {
+    install_with(sender, terminating_signals()?)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn install(sender: Sender<ShellInput>) -> Result<JoinOnDrop, Error> {
     TERMINATE_SENDER
         .set(sender)
-        .map_err(|_| Error::SignalHandlerInstalled)?;
-    spawn_signal_thread();
+        .map_err(|_refused| Error::SignalHandlerInstalled)?;
+    Ok(JoinOnDrop {
+        stop: ThreadStop::Flag(Arc::default()),
+        thread: None,
+    })
+}
+
+pub(crate) fn spawn_input(sender: Sender<ShellInput>) -> JoinOnDrop {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopped = Arc::clone(&stop);
+    let thread = thread::spawn(move || {
+        if let Err(error) = read_input(&sender, &stopped) {
+            remember_input_error(error);
+        }
+    });
+    JoinOnDrop {
+        stop: ThreadStop::Flag(stop),
+        thread: Some(thread),
+    }
+}
+
+fn read_input(sender: &Sender<ShellInput>, stop: &AtomicBool) -> Result<(), io::Error> {
+    while !stop.load(Ordering::Acquire) {
+        if event::poll(INPUT_POLL)?
+            && sender.send(ShellInput::Terminal(event::read()?)).is_err()
+        {
+            return Ok(());
+        }
+    }
     Ok(())
 }
 
 #[cfg(unix)]
-fn spawn_signal_thread() {
-    use std::thread;
+fn terminating_signals() -> Result<signal_hook::iterator::Signals, Error> {
+    use signal_hook::flag;
 
-    use signal_hook::{
-        consts::{SIGHUP, SIGINT, SIGTERM},
-        iterator::Signals,
-    };
-
-    if let Ok(mut signals) = Signals::new([SIGTERM, SIGHUP, SIGINT]) {
-        thread::spawn(move || {
-            if signals.forever().next().is_some() {
-                terminate_if_listening();
-            }
-        });
+    let signalled = Arc::new(AtomicBool::new(false));
+    for signal in TERMINATING_SIGNALS {
+        flag::register_conditional_default(signal, Arc::clone(&signalled))
+            .map_err(Error::SignalHandlers)?;
+        flag::register(signal, Arc::clone(&signalled))
+            .map_err(Error::SignalHandlers)?;
     }
+    signal_hook::iterator::Signals::new(TERMINATING_SIGNALS)
+        .map_err(Error::SignalHandlers)
 }
 
-#[cfg(not(unix))]
-fn spawn_signal_thread() {}
+#[cfg(unix)]
+fn install_with(
+    sender: Sender<ShellInput>,
+    mut signals: signal_hook::iterator::Signals,
+) -> Result<JoinOnDrop, Error> {
+    TERMINATE_SENDER
+        .set(sender)
+        .map_err(|_refused| Error::SignalHandlerInstalled)?;
+    let handle = signals.handle();
+    let thread = thread::spawn(move || forward(signals.forever()));
+    Ok(JoinOnDrop {
+        stop: ThreadStop::Signals(handle),
+        thread: Some(thread),
+    })
+}
+
+#[cfg(unix)]
+fn forward(signals: impl IntoIterator<Item = std::ffi::c_int>) {
+    if signals.into_iter().next().is_some() {
+        terminate_if_listening();
+    }
+}
 
 fn terminate_if_listening() {
     if let Some(sender) = TERMINATE_SENDER.get() {
-        sender.send(ShellEvent::Terminate).ok();
+        match sender.try_send(ShellInput::Terminate) {
+            Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
+        }
     }
 }
 
-pub(crate) fn remember_worker_panic(report: String) {
-    WORKER_PANIC.compare_and_swap(&None::<Arc<String>>, Some(Arc::new(report)));
+fn remember_input_error(error: io::Error) {
+    let mut stored = INPUT_ERROR.lock().unwrap_or_else(PoisonError::into_inner);
+    *stored = stored.take().or(Some(error));
+    drop(stored);
     terminate_if_listening();
 }
 
-pub(crate) fn take_worker_panic() -> Option<String> {
-    WORKER_PANIC.swap(None).map(Arc::unwrap_or_clone)
+pub(crate) fn take_input_error() -> Option<io::Error> {
+    INPUT_ERROR
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take()
+}
+
+pub(crate) fn remember_worker_panic(_report: String) {
+    WORKER_PANICKED.store(true, Ordering::Release);
+    terminate_if_listening();
+}
+
+pub(crate) fn take_worker_panic() -> bool {
+    WORKER_PANICKED.swap(false, Ordering::AcqRel)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+
     use crossbeam_channel::bounded;
 
     use crate::{
         error::Error,
-        termination::{install, remember_worker_panic, take_worker_panic},
+        shell::ShellInput,
+        termination::{
+            forward,
+            install_with,
+            remember_input_error,
+            remember_worker_panic,
+            take_input_error,
+            take_worker_panic,
+        },
     };
 
-    #[test]
-    fn the_first_worker_panic_is_the_one_reported_and_it_is_taken_once() {
-        remember_worker_panic("the input thread fell over".to_owned());
-        remember_worker_panic("a later thread fell over too".to_owned());
-
-        assert_eq!(
-            take_worker_panic().as_deref(),
-            Some("the input thread fell over")
-        );
-        assert_eq!(take_worker_panic(), None);
+    fn no_signals() -> signal_hook::iterator::Signals {
+        signal_hook::iterator::Signals::new(std::iter::empty::<std::ffi::c_int>())
+            .unwrap()
     }
 
     #[test]
-    fn a_second_install_is_refused() {
-        let (first, _first_receiver) = bounded(1);
+    fn a_worker_panic_is_reported_once() {
+        remember_worker_panic("the input thread fell over".to_owned());
+        remember_worker_panic("a later thread fell over too".to_owned());
+
+        assert!(take_worker_panic());
+        assert!(!take_worker_panic());
+    }
+
+    #[test]
+    fn the_first_input_error_is_reported_once() {
+        remember_input_error(io::Error::other("first"));
+        remember_input_error(io::Error::other("second"));
+
+        assert_eq!(
+            take_input_error().map(|error| error.to_string()),
+            Some("first".to_owned())
+        );
+        assert!(take_input_error().is_none());
+    }
+
+    #[test]
+    fn a_signal_terminates_and_a_second_install_is_refused() {
+        let (first, first_receiver) = bounded(1);
         let (second, _second_receiver) = bounded(1);
 
-        assert!(install(first).is_ok());
+        let watch = install_with(first, no_signals()).unwrap();
+        forward([signal_hook::consts::SIGINT]);
+
         assert!(matches!(
-            install(second),
+            first_receiver.try_recv(),
+            Ok(ShellInput::Terminate)
+        ));
+        assert!(matches!(
+            install_with(second, no_signals()),
             Err(Error::SignalHandlerInstalled)
         ));
+        drop(watch);
     }
 }

@@ -12,6 +12,7 @@ use kernel::{
         Action,
         ConfigError,
         ConfigName,
+        Diagnostic,
         KeyOverride,
         KeymapOverrides,
         Model,
@@ -36,9 +37,9 @@ fn theme() -> ConfigName {
 fn fail(source: ConfigName, text: &str) -> ConfigEvent {
     ConfigEvent::Reloaded(ConfigReload {
         name: source,
-        result: Err(ConfigError::Invalid {
-            detail: text.to_string(),
-        }),
+        result: Err(ConfigError::Invalid(Diagnostic::from_error(
+            &std::io::Error::other(text.to_string()),
+        ))),
     })
 }
 

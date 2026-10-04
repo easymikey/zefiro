@@ -16,7 +16,7 @@ Message ──► kernel update(&mut Model, Message, Moment) ──► effects
    │          └── shell effects (window colours, animation cues) ──► Shell
    │                                                        │
    └──────── XEvent ──► Outbox ──► mailbox ◄────────────────┘
-                                          Shell::paint: Scene ─► FrameLayout ─► Screen
+                                          Shell::paint: Scene ─► FrameLayout ─► the `screen` module
 ```
 
 - The kernel is the only place that decides, and it is pure. `update` drains follow-up messages itself and returns the collected effects, or `Unhandled` when the message has no transition in the current state (§3.2, §3.4).
@@ -32,12 +32,12 @@ The layer map is conventions §1.1; edges only point down the table.
 | layer | crate | role |
 |---|---|---|
 | 0 | `kernel` | `Model`, `Message`, `Cmd`/`Effect`, `update`, key routing, the `Machine` and `Driver` traits, supervision, domain types |
-| 1 | `config` | file formats: `config.toml`, `sifr-ui.toml` (appearance), themes, keymap; parse and format-preserving patch; settings rows |
-| 1 | `library` | scan, tags, embedded covers, playlists, history, favorites |
+| 1 | `config` | file formats: `config.toml`, `sifr-ui.toml` (appearance), themes, keymap; parse and format-preserving patch; settings rows; `ConfigDriver` |
+| 1 | `library` | scan, tags, embedded covers, playlists, history, favorites; `LibraryDriver` |
 | 1 | `audio` | playback engine on rodio, spectrum tap; `AudioDriver` |
 | 1 | `macos` | media keys, Now Playing, system volume and output device (CoreAudio listeners); `MacosDriver`, `MainLoop` |
-| 2 | `runtime` | event loop, interpreter, timers, trace, cells, registry, ports, `Outbox`, `DriverLoop`, the library and config drivers, start, drain, `host` |
-| 2 | `widgets` | pure terminal view: `Scene`, `FrameLayout`, `Screen`, card, playlist, overlays, toast, animations, milkdrop, spectrum smoothing, pixel images |
+| 2 | `runtime` | event loop, interpreter, timers, trace, cells, registry, ports, `Outbox`, `DriverLoop`, start, drain, `host` |
+| 2 | `widgets` | pure terminal view: `Scene`, `FrameLayout`, the `screen` module, card, playlist, overlays, toast, animations, milkdrop, spectrum smoothing, pixel images |
 | 3 | `terminal` | terminal IO: session, input, key conversion, capability probe, window colours, image protocols |
 | 4 | `sifr` | binary: command line, startup, signals, the `Shell` implementation (view, motion, painter, frame clock) |
 
@@ -75,7 +75,7 @@ Hardware drivers are injected: the binary passes the real spawners to `Runtime::
 
 **Timer.** `Effect::After { delay, timer }` → one slot per `Timer` kind (`Toast`, `Sleep`, `Lookahead`; a new one replaces the old) → the loop's deadline is the earliest slot → each due timer becomes `Message::Elapsed(timer)` → `update`; a timer whose `Revision` is stale returns `Err(Unhandled)` and causes no repaint.
 
-**One frame.** the shell builds `Scene::from_model(&Model, ScenePresentation)` → `FrameLayout` computes every rect once → one terminal draw: `Screen` paints text cells, then image protocols are placed last, skipping rects covered by overlays or toasts.
+**One frame.** the shell builds `Scene::from_model(&Model, ScenePresentation)` → `FrameLayout` computes every rect once → one terminal draw: the `screen` module paints text cells, then image protocols are placed last, skipping rects covered by overlays or toasts.
 
 **Stop.** `q`, a signal or a fatal driver decision → the kernel sends the stop commands (audio stop, window colours reset, `ConfigCmd::Flush`) and `Quit` → drain: drop the ports, wait for `Stopped | Died` from each driver up to two seconds in total, join those that reported; on macOS `host` then stops the main run loop.
 

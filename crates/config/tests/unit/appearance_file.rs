@@ -1,4 +1,5 @@
-use config::{AppearancePatch, CoverMode, parse_appearance, patch_appearance_text};
+use config::{parse_appearance, patch_appearance_text};
+use kernel::domain::appearance::{AppearancePatch, CoverMode};
 
 const COMMENTED_UI: &str = include_str!("../fixtures/sifr-ui_commented.toml");
 

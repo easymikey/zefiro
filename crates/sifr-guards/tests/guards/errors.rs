@@ -4,12 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::guards::support::{self, Allow};
 
-const ALLOWLIST: &[Allow] = &[Allow::new(
-    "terminal/src/window_colors.rs",
-    "let _ = stdout.write_all(",
-    "emit()'s own doc: raw terminal escape-sequence writes are best-effort, \
-         same as the teardown calls.",
-)];
+const ALLOWLIST: &[Allow] = &[];
 
 fn allowed(path: &str, line: &str) -> bool {
     ALLOWLIST

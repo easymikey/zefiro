@@ -222,12 +222,90 @@ fn discard_hits() -> Vec<(String, usize, String)> {
         .collect()
 }
 
-fn item_hits(
-    files: &[File],
-    find: fn(&File, &Item) -> Hits,
-) -> Vec<(String, usize, String)> {
+fn bracket(text: &str) -> i32 {
+    match text {
+        "(" | "[" | "{" => 1,
+        ")" | "]" | "}" => -1,
+        _ => 0,
+    }
+}
+
+fn statement_start(file: &File, dot: usize) -> usize {
+    let mut depth = 0_i32;
+    let start = (0..dot).rev().find(|at| {
+        let text = file.tx(*at);
+        depth -= bracket(text);
+        depth < 0 || (depth == 0 && text == ";")
+    });
+    start.map_or(0, |at| at + 1)
+}
+
+fn assignment(file: &File, at: usize) -> bool {
+    file.tx(at) == "="
+        && !matches!(file.tx(at.wrapping_sub(1)), "=" | "!" | "<" | ">")
+        && !matches!(file.tx(at + 1), "=" | ">")
+}
+
+fn binds(file: &File, from: usize, to: usize) -> bool {
+    let mut depth = 0_i32;
+    (from..to).any(|at| {
+        depth += bracket(file.tx(at));
+        let keyword = matches!(file.tx(at), "let" | "return" | "break");
+        depth == 0 && (keyword || assignment(file, at))
+    })
+}
+
+fn exempt_spans(file: &File) -> Vec<(usize, usize)> {
+    let drops = file
+        .items
+        .iter()
+        .filter(|site| site.kind == "impl" && site.via == "Drop")
+        .map(|site| site.at);
+    let hooks = (0..file.tokens.len()).filter(|at| file.tx(*at) == "set_hook");
+    let span = |at: usize| {
+        let open =
+            (at..file.tokens.len()).find(|x| matches!(file.tx(*x), "{" | "("))?;
+        Some((open, file.matching_close(open)))
+    };
+    drops.chain(hooks).filter_map(span).collect()
+}
+
+fn ok_discards(file: &File) -> Vec<usize> {
+    let exempt = exempt_spans(file);
+    let shape = [".", "ok", "(", ")", ";"];
+    let at_shape = |at: &usize| {
+        let mut texts = shape.iter().enumerate();
+        texts.all(|(offset, text)| file.tx(at + offset) == *text)
+    };
+    (0..file.tokens.len())
+        .filter(at_shape)
+        .filter(|at| !binds(file, statement_start(file, *at), *at))
+        .filter(|at| !exempt.iter().any(|(open, close)| open < at && at < close))
+        .map(|at| file.tokens[at].line)
+        .collect()
+}
+
+fn ok_hits(files: &[File]) -> Vec<(String, usize, String)> {
+    let hits = |file: &File| {
+        let lines = ok_discards(file).into_iter();
+        lines
+            .map(|line| (file.path.clone(), line, ".ok();".to_owned()))
+            .collect::<Vec<_>>()
+    };
+    files.iter().flat_map(hits).collect()
+}
+
+fn in_src(file: &File) -> bool {
+    file.path.split('/').nth(1) == Some("src")
+}
+
+const IN_TESTS_TOO: &[&str] = &["result_alias"];
+
+fn item_hits(files: &[File], rule: &Rule) -> Vec<(String, usize, String)> {
+    let (name, _, find) = rule;
     let sites = files
         .iter()
+        .filter(|file| in_src(file) || IN_TESTS_TOO.contains(name))
         .flat_map(|file| file.items.iter().map(move |site| (file, site)));
     sites
         .flat_map(|(file, site)| {
@@ -237,21 +315,29 @@ fn item_hits(
         .collect()
 }
 
-#[test]
-fn conventions_hold() {
-    let files: Vec<File> = support::source_files(&["src"])
+type Check = (&'static str, &'static str, Vec<(String, usize, String)>);
+
+fn checks(files: &[File]) -> Vec<Check> {
+    let mut checks: Vec<Check> = RULES
         .iter()
-        .map(|(relative, path)| File::parse(relative, &support::read(path)))
-        .collect();
-    let (mut violations, mut stale) = (Vec::new(), Vec::new());
-    let mut checks: Vec<_> = RULES
-        .iter()
-        .map(|(rule, message, find)| (*rule, *message, item_hits(&files, *find)))
+        .map(|rule| (rule.0, rule.1, item_hits(files, rule)))
         .collect();
     let discard =
         "write `.unwrap()` in tests, handle the value elsewhere, never `let _` (§6.3)";
     checks.push(("let_underscore", discard, discard_hits()));
-    for (rule, message, hits) in checks {
+    let ok = "handle the `Result`, never drop it with `.ok();` (§6.3)";
+    checks.push(("ok_discard", ok, ok_hits(files)));
+    checks
+}
+
+#[test]
+fn conventions_hold() {
+    let files: Vec<File> = support::source_files(&["src", "tests"])
+        .iter()
+        .map(|(relative, path)| File::parse(relative, &support::read(path)))
+        .collect();
+    let (mut violations, mut stale) = (Vec::new(), Vec::new());
+    for (rule, message, hits) in checks(&files) {
         let (allow, mut seen) = (allow_rows(rule), Vec::new());
         for (path, line, key) in hits {
             let row = allow
@@ -281,6 +367,23 @@ fn discard_is_only_a_let_underscore_binding() {
         "let __ = x;",
     ];
     assert_eq!(hits.map(discards), [true, true, false, false]);
+}
+
+const OK_SAMPLE: &str = r"fn f() {
+    a.ok();
+    let b = c.ok();
+    d = e.ok();
+    if x == y { g.ok(); }
+    return h.ok();
+}
+impl Drop for S { fn drop(&mut self) { i.ok(); } }
+fn hook() { std::panic::set_hook(Box::new(|_| { j.ok(); })); }
+";
+
+#[test]
+fn ok_discard_is_a_dropped_statement_outside_drop_and_the_hook() {
+    let file = File::parse("kernel/src/sample.rs", OK_SAMPLE);
+    assert_eq!(ok_discards(&file), [2, 5]);
 }
 
 const SAMPLE: &str = r##"

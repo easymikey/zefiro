@@ -167,7 +167,7 @@ fn token_of(body: &str) -> String {
     body.trim_start_matches('/')
         .split_whitespace()
         .next()
-        .unwrap_or_default()
+        .unwrap_or("")
         .to_owned()
 }
 
@@ -182,10 +182,10 @@ fn comments(content: &str) -> Vec<Comment> {
         match state {
             State::Code => {
                 if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
-                    let rest = content.get(index..).unwrap_or_default();
+                    let rest = content.get(index..).unwrap_or("");
                     let end = rest.find('\n').unwrap_or(rest.len());
-                    let body = rest.get(..end).unwrap_or_default();
-                    let prefix = content.get(line_start..index).unwrap_or_default();
+                    let body = rest.get(..end).unwrap_or("");
+                    let prefix = content.get(line_start..index).unwrap_or("");
                     out.push(Comment {
                         line,
                         leading: prefix.trim().is_empty(),

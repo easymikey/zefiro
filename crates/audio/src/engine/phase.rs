@@ -31,7 +31,6 @@ impl Phase {
 pub(crate) struct Playing {
     pub(crate) current: CurrentTrack,
     pub(crate) next: Next,
-    pub(crate) preloading: Option<PathBuf>,
 }
 
 impl Playing {
@@ -40,7 +39,6 @@ impl Playing {
         Self {
             current,
             next: Next::None,
-            preloading: None,
         }
     }
 
@@ -68,7 +66,7 @@ pub(crate) enum Incoming {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CurrentTrack {
     pub(crate) total: Option<Duration>,
-    pub(crate) gain: Option<f32>,
+    pub(crate) gain: Option<kernel::domain::Decibels>,
     pub(crate) path: PathBuf,
 }
 
@@ -76,6 +74,7 @@ pub struct CurrentTrack {
 pub(crate) enum Next {
     #[default]
     None,
+    Preloading(PathBuf),
     Gapless(PathBuf),
     Crossfading {
         preload: CurrentTrack,
@@ -92,7 +91,7 @@ pub(crate) enum Fade {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Loading {
     pub(crate) path: PathBuf,
-    pub(crate) gain: Option<f32>,
+    pub(crate) gain: Option<kernel::domain::Decibels>,
     pub(crate) after_load: Option<Resume>,
 }
 

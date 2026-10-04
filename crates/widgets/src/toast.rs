@@ -9,6 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     primitive::{canvas::Canvas, inset::Inset, text::truncate},
+    scene::Scene,
     screen::Breakpoint,
     theme::{ActiveTheme, Role},
 };
@@ -73,7 +74,7 @@ fn icon(kind: ToastKind) -> &'static str {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Toaster<'a> {
+pub(crate) struct ToastWidget<'a> {
     pub(crate) toasts: &'a [Toast],
     pub(crate) now: Moment,
     pub(crate) style: ToastStyle,
@@ -149,8 +150,7 @@ fn fitted(text: &str, width: usize, rows: usize) -> Vec<String> {
     let head = rows.saturating_sub(1);
     let tail = lines
         .get(head..)
-        .map(|rest| rest.join(" "))
-        .unwrap_or_default();
+        .map_or_else(String::new, |rest| rest.join(" "));
     let mut shown: Vec<String> = lines.iter().take(head).map(clipped).collect();
     shown.push(truncate(&tail, width).into_owned());
     shown
@@ -161,7 +161,16 @@ fn title_line(toast: &Toast, room: usize) -> String {
     truncate(&line, room).into_owned()
 }
 
-impl<'a> Toaster<'a> {
+impl<'a> ToastWidget<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &Scene<'a>) -> Option<Self> {
+        (!scene.toasts.is_empty()).then(|| Self {
+            toasts: scene.toasts,
+            now: scene.now,
+            style: ToastStyle::from_theme(&scene.active_theme()),
+        })
+    }
+
     fn live(&self) -> impl Iterator<Item = &'a Toast> + use<'a> {
         let now = self.now;
         self.toasts
@@ -291,7 +300,7 @@ impl<'a> Toaster<'a> {
     }
 }
 
-impl Widget for Toaster<'_> {
+impl Widget for ToastWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         if let Some(areas) = self.areas(area, Breakpoint::Full) {
             self.paint(areas, Canvas { area, buffer });
@@ -310,7 +319,7 @@ mod tests {
         screen::Breakpoint,
         test_support::{noir, rendered},
         theme::{ActiveTheme, ColorDepth},
-        toast::{ToastStyle, Toaster, icon},
+        toast::{ToastStyle, ToastWidget, icon},
     };
 
     fn style() -> ToastStyle {
@@ -318,8 +327,8 @@ mod tests {
         ToastStyle::from_theme(&ActiveTheme::new(&theme, ColorDepth::TrueColor))
     }
 
-    fn toaster(toasts: &[Toast]) -> Toaster<'_> {
-        Toaster {
+    fn toaster(toasts: &[Toast]) -> ToastWidget<'_> {
+        ToastWidget {
             toasts,
             now: Moment::default(),
             style: style(),
@@ -381,7 +390,7 @@ mod tests {
     #[test]
     fn an_expired_toast_is_not_painted() {
         let toasts = [Toast::info("old")];
-        let later = Toaster {
+        let later = ToastWidget {
             now: Moment::new(Duration::from_secs(9)),
             ..toaster(&toasts)
         };

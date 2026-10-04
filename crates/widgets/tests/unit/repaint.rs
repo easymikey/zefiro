@@ -1,6 +1,6 @@
 use std::{num::NonZeroU32, time::Duration};
 
-use kernel::{Bounded, Moment, Playhead, Speed};
+use kernel::{Bounded, Moment, Playhead, Speed, domain::geometry::Cells};
 use rstest::rstest;
 use widgets::{ProgressScale, next_clock_second, next_progress_step};
 
@@ -84,6 +84,6 @@ fn a_text_bar_has_two_steps_per_column_unless_empty(
     #[case] length_secs: u64,
     #[case] expected_steps: Option<u32>,
 ) {
-    let scale = ProgressScale::text_bar(width, Duration::from_secs(length_secs));
+    let scale = ProgressScale::text_bar(Cells(width), Duration::from_secs(length_secs));
     assert_eq!(scale.map(|scale| scale.steps.get()), expected_steps);
 }

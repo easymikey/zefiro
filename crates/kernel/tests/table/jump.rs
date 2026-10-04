@@ -14,8 +14,6 @@ fn digits(input: &str, error: Option<TimecodeError>) -> JumpDigits {
     }
 }
 
-type Cell = crate::support::table::Cell<JumpDigits>;
-
 #[rstest]
 #[case::empty_digit_starts_the_time(
     digits("", None),
@@ -65,7 +63,10 @@ type Cell = crate::support::table::Cell<JumpDigits>;
 fn jump_cell(
     #[case] start: JumpDigits,
     #[case] message: JumpDigitsMessage,
-    #[case] expected: Cell,
+    #[case] expected: Result<
+        (JumpDigits, <JumpDigits as kernel::update::Machine>::Effect),
+        Unhandled,
+    >,
 ) {
     cell(start, message, expected);
 }

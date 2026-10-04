@@ -40,7 +40,7 @@ expression: "walked(model, messages)"
             ),
             sleep: Some(
                 SleepTimer {
-                    preset_index: 0,
+                    preset_index: Index(0),
                     delay: 900s,
                 },
             ),
@@ -85,7 +85,7 @@ expression: "walked(model, messages)"
             ),
             sleep: Some(
                 SleepTimer {
-                    preset_index: 1,
+                    preset_index: Index(1),
                     delay: 1800s,
                 },
             ),
@@ -130,7 +130,7 @@ expression: "walked(model, messages)"
             ),
             sleep: Some(
                 SleepTimer {
-                    preset_index: 2,
+                    preset_index: Index(2),
                     delay: 3600s,
                 },
             ),

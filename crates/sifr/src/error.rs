@@ -7,35 +7,27 @@ pub(crate) enum Error {
     #[error(transparent)]
     Terminal(#[from] terminal::Error),
     #[error(transparent)]
-    Io(#[from] io::Error),
-    #[error(transparent)]
     Library(#[from] library::Error),
-    #[error("reading {path}: {source}")]
-    ConfigRead {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("{path}: {source}")]
-    ConfigParse {
-        path: PathBuf,
-        #[source]
-        source: config::Error,
-    },
+    #[error("no config directory available")]
+    ConfigDirUnset,
     #[error("no music directory configured and no default audio directory available")]
     MusicDirUnset,
     #[error("music directory not found: {path}")]
     MusicDirMissing { path: PathBuf },
-    #[error("--playlist {name:?}: {source}")]
-    PlaylistName {
-        name: String,
-        #[source]
-        source: kernel::playlist::PlaylistNameError,
-    },
+    #[error("--playlist: {0}")]
+    PlaylistName(#[source] kernel::playlist::PlaylistNameError),
+    #[error("--theme: {0}")]
+    ThemeName(#[source] kernel::domain::ThemeNameError),
+    #[error("the embedded stock theme: {0}")]
+    StockTheme(#[source] config::Error),
+    #[error("installing signal handlers: {0}")]
+    SignalHandlers(#[source] io::Error),
     #[error("the signal handler is already installed")]
     SignalHandlerInstalled,
-    #[error("a background thread panicked: {report}")]
-    WorkerPanic { report: String },
+    #[error("reading terminal input: {0}")]
+    Input(#[source] io::Error),
+    #[error("a background thread panicked")]
+    WorkerPanicked,
     #[error("{run} (teardown after also failed: {teardown})")]
     RunAndTeardown {
         #[source]
@@ -46,7 +38,7 @@ pub(crate) enum Error {
 
 #[cfg(test)]
 mod tests {
-    use std::{io, path::PathBuf};
+    use std::io;
 
     use crate::error::Error;
 
@@ -58,16 +50,6 @@ mod tests {
             error.to_string(),
             "no music directory configured and no default audio directory available"
         );
-    }
-
-    #[test]
-    fn config_read_message_includes_path_and_source() {
-        let error = Error::ConfigRead {
-            path: PathBuf::from("config.toml"),
-            source: io::Error::other("permission denied"),
-        };
-
-        assert_eq!(error.to_string(), "reading config.toml: permission denied");
     }
 
     #[test]

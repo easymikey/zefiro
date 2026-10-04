@@ -185,7 +185,7 @@ fn a_rearmed_sleep_timer_ignores_the_first_one() {
     assert_eq!(cmd, Cmd::none());
     assert!(model.player.is_playing());
     assert_eq!(
-        model.transport.sleep.map(|timer| timer.preset_index),
+        model.transport.sleep.map(|timer| timer.preset_index.get()),
         Some(1)
     );
 }

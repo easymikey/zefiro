@@ -4,7 +4,7 @@ use crate::{
     message::{Message, SettingsRowRequest},
     update::{
         machine::{Machine, Unhandled},
-        overlay::{InnerMessage, OverlayMessage},
+        overlay::{OverlayContentMessage, OverlayMessage},
     },
 };
 
@@ -38,9 +38,9 @@ pub(crate) fn request(
     request: SettingsRowRequest,
 ) -> Result<Cmd, Unhandled> {
     let message = resolve(workspace, appearance_settings, request)?;
-    workspace
-        .overlay
-        .transition(OverlayMessage::Inner(InnerMessage::Settings(message)))
+    workspace.overlay.transition(OverlayMessage::Inner(
+        OverlayContentMessage::Settings(message),
+    ))
 }
 
 fn resolve(

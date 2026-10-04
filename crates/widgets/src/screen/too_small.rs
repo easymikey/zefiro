@@ -1,7 +1,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect, Size},
-    style::Style,
+    style::{Color, Style},
     widgets::{Paragraph, Widget},
 };
 
@@ -20,15 +20,32 @@ const CURRENT_OPEN: &str = "(now ";
 const CURRENT_CLOSE: &str = ")";
 
 #[derive(Debug, Clone, Copy)]
-pub struct TooSmallNotice<'a> {
+pub(crate) struct TooSmallStyle {
+    pub(crate) foreground: Color,
+    pub(crate) muted_foreground: Color,
+}
+
+impl TooSmallStyle {
+    #[must_use]
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            foreground: theme.role(Role::Text),
+            muted_foreground: theme.role(Role::Dim),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TooSmallWidget<'a> {
     pub theme: ActiveTheme<'a>,
     pub minimum: Size,
 }
 
-impl Widget for &TooSmallNotice<'_> {
+impl Widget for &TooSmallWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        let text_style = Style::default().fg(self.theme.role(Role::Text));
-        let dim_style = Style::default().fg(self.theme.role(Role::Dim));
+        let style = TooSmallStyle::from_theme(&self.theme);
+        let text_style = Style::default().fg(style.foreground);
+        let dim_style = Style::default().fg(style.muted_foreground);
         let width = usize::from(area.width);
         let fit = |line: String| truncate(&line, width).into_owned();
         let resize_line = fit(format!(

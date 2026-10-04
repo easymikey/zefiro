@@ -19,6 +19,8 @@ check '^\+\s*//(?! SAFETY:)|^\+.*\S\s+//(?! SAFETY:)' 'comment'
 check 'super::|pub\(super\)' 'super'
 check 'unwrap_or_default' 'unwrap_or_default'
 check '#!?\[(allow|expect)\(' 'allow'
+check '\blet _\b' 'let _'
+check '\.ok\(\);' 'ok'
 
 for file in $(git diff "$base" --name-only --diff-filter=AM -- "$paths"); do
     lines=$(wc -l < "$file")

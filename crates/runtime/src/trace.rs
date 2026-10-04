@@ -18,15 +18,14 @@ pub(crate) enum TraceEntry {
         reason: DropReason,
     },
     ControlsUnattached,
-    JoinFailed {
-        driver: DriverName,
-    },
-    RestartFailed {
-        driver: DriverName,
-    },
-    TimerOverflow {
-        timer: &'static str,
-    },
+    Error(TraceError),
+    TimerOverflow(&'static str),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum TraceError {
+    Join(DriverName),
+    Restart(DriverName),
 }
 
 #[derive(Debug, Default)]
@@ -45,8 +44,9 @@ impl Trace {
     }
 
     pub(crate) fn record(&mut self, result: Result<(), TraceEntry>) {
-        if let Err(entry) = result {
-            self.push(entry);
+        match result {
+            Err(entry) if self.entries.back() != Some(&entry) => self.push(entry),
+            Ok(()) | Err(_) => {}
         }
     }
 

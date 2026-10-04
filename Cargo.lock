@@ -336,6 +336,7 @@ name = "config"
 version = "0.1.0"
 dependencies = [
  "bon",
+ "dirs",
  "insta",
  "kernel",
  "proptest",
@@ -972,7 +973,6 @@ name = "kernel"
 version = "0.1.0"
 dependencies = [
  "bon",
- "crossbeam-channel",
  "insta",
  "proptest",
  "rstest",
@@ -1025,9 +1025,12 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "dirs",
+ "fast_image_resize",
+ "image",
  "insta",
  "kernel",
  "lofty",
+ "notify",
  "rstest",
  "serde",
  "serde_json",
@@ -2219,7 +2222,6 @@ dependencies = [
 name = "sifr"
 version = "0.1.0"
 dependencies = [
- "arc-swap",
  "audio",
  "clap",
  "config",
@@ -2611,7 +2613,6 @@ name = "terminal"
 version = "0.1.0"
 dependencies = [
  "config",
- "crossbeam-channel",
  "crossterm",
  "image",
  "insta",

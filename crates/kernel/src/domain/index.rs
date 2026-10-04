@@ -6,12 +6,17 @@ pub struct TrackSpace;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ViewSpace;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PresetSpace;
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Index<Space>(usize, PhantomData<Space>);
 
 pub type TrackIndex = Index<TrackSpace>;
 
 pub type ViewIndex = Index<ViewSpace>;
+
+pub type PresetIndex = Index<PresetSpace>;
 
 impl<Space> Index<Space> {
     pub const fn new(position: usize) -> Self {

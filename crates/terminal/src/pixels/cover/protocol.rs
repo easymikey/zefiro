@@ -46,7 +46,7 @@ mod tests {
         DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([9, 8, 7, 255])))
     }
 
-    fn rendered_fg(protocol: &mut StatefulProtocol) -> Color {
+    fn rendered_foreground(protocol: &mut StatefulProtocol) -> Color {
         let rect = Rect::new(0, 0, 1, 1);
         let mut buffer = Buffer::empty(rect);
         StatefulWidget::render(StatefulImage::default(), rect, &mut buffer, protocol);
@@ -69,6 +69,9 @@ mod tests {
         picker.set_protocol_type(ProtocolType::Kitty);
         let mut first = cover_protocol(&picker, image());
         let mut second = cover_protocol(&picker, other_image());
-        assert_eq!(rendered_fg(&mut first), rendered_fg(&mut second));
+        assert_eq!(
+            rendered_foreground(&mut first),
+            rendered_foreground(&mut second)
+        );
     }
 }

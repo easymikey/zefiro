@@ -1,6 +1,6 @@
 use std::{num::NonZeroU32, time::Duration};
 
-use kernel::{Moment, Playhead};
+use kernel::{Moment, Playhead, domain::geometry::Cells};
 
 const STEP_CORRECTION: Duration = Duration::from_millis(1);
 const SECONDS_PER_MINUTE: u64 = 60;
@@ -13,7 +13,7 @@ pub enum Presence {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OnScreen {
-    pub progress_bar: Option<u16>,
+    pub progress_bar: Option<Cells>,
     pub clock: Presence,
     pub sleep_label: Presence,
     pub spectrum: Presence,
@@ -27,11 +27,11 @@ pub struct ProgressScale {
 
 impl ProgressScale {
     #[must_use]
-    pub fn text_bar(width: u16, length: Duration) -> Option<Self> {
-        if width == 0 || length.is_zero() {
+    pub fn text_bar(width: Cells, length: Duration) -> Option<Self> {
+        if width == Cells(0) || length.is_zero() {
             return None;
         }
-        let steps = NonZeroU32::new(2 * u32::from(width))?;
+        let steps = NonZeroU32::new(2 * u32::from(width.0))?;
         Some(Self { steps, length })
     }
 }

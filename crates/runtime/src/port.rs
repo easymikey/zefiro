@@ -1,21 +1,19 @@
-use std::{
-    cell::Cell,
-    thread::{self, JoinHandle},
-};
+use std::thread::{self, JoinHandle};
 
-use crossbeam_channel::{Sender, TrySendError};
+use crossbeam_channel::{SendError, Sender, TrySendError};
 use kernel::{
     AudioCmd,
     ConfigCmd,
-    Congestion,
     LibraryCmd,
     MacosCmd,
+    Message,
     domain::{DriverName, DriverStatus, Drivers},
 };
+use library::{CoverJob, LibraryMessage};
 
 use crate::{
-    driver::{DriverThread, Exit},
-    library::{cover::CoverRequest, machine::LibraryMessage},
+    driver::DriverThread,
+    outbox::Congestion,
     trace::{DropReason, TraceEntry},
 };
 
@@ -23,20 +21,16 @@ use crate::{
 pub(crate) struct Port<C> {
     driver: DriverName,
     sender: Option<Sender<C>>,
-    full_edge: Congestion,
-    handle: Option<JoinHandle<Exit>>,
+    full: Congestion,
+    handle: Option<JoinHandle<Result<(), SendError<Message>>>>,
 }
 
 impl<C> Port<C> {
-    pub(crate) fn new(
-        driver: DriverName,
-        sender: Sender<C>,
-        full_edge: Congestion,
-    ) -> Self {
+    pub(crate) fn new(driver: DriverName, sender: Sender<C>, full: Congestion) -> Self {
         Self {
             driver,
             sender: Some(sender),
-            full_edge,
+            full,
             handle: None,
         }
     }
@@ -44,19 +38,21 @@ impl<C> Port<C> {
     pub(crate) fn spawned(driver: DriverName, thread: DriverThread<C>) -> Self {
         Self {
             handle: Some(thread.handle),
-            ..Self::new(driver, thread.commands, thread.full_edge)
+            ..Self::new(driver, thread.commands, thread.full)
         }
     }
 
-    pub(crate) fn full_edge(&self) -> &Congestion {
-        &self.full_edge
+    pub(crate) fn full(&self) -> &Congestion {
+        &self.full
     }
 
     pub(crate) fn hang_up(&mut self) {
         self.sender = None;
     }
 
-    pub(crate) fn join(&mut self) -> Option<thread::Result<Exit>> {
+    pub(crate) fn join(
+        &mut self,
+    ) -> Option<thread::Result<Result<(), SendError<Message>>>> {
         self.handle.take().map(JoinHandle::join)
     }
 }
@@ -72,34 +68,47 @@ where
             command: command_label,
             reason,
         };
+        let sender = self.open(drivers).map_err(dropped)?;
+        sender
+            .try_send(command)
+            .map_err(|error| dropped(self.refused(&error)))
+    }
+}
+
+impl<C> Port<C> {
+    fn open(&self, drivers: &Drivers) -> Result<&Sender<C>, DropReason> {
         if !matches!(drivers.status(self.driver), DriverStatus::Running) {
-            return Err(dropped(DropReason::NotRunning));
+            return Err(DropReason::NotRunning);
         }
-        let Some(sender) = &self.sender else {
-            return Err(dropped(DropReason::Closed));
-        };
-        sender.try_send(command).map_err(|error| match error {
+        self.sender.as_ref().ok_or(DropReason::Closed)
+    }
+
+    fn refused<T>(&self, error: &TrySendError<T>) -> DropReason {
+        match error {
             TrySendError::Full(_) => {
-                self.full_edge.raise();
-                dropped(DropReason::Full)
+                self.full.raise();
+                DropReason::Full
             }
-            TrySendError::Disconnected(_) => dropped(DropReason::Closed),
-        })
+            TrySendError::Disconnected(_) => DropReason::Closed,
+        }
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct LibraryPort {
-    port: Port<LibraryMessage>,
-    side: Cell<Option<u32>>,
+    port: Port<LibraryCmd>,
+    covers: Sender<LibraryMessage>,
 }
 
 impl LibraryPort {
-    pub(crate) fn new(port: Port<LibraryMessage>) -> Self {
-        Self {
-            port,
-            side: Cell::new(None),
-        }
+    pub(crate) fn new(port: Port<LibraryCmd>, covers: Sender<LibraryMessage>) -> Self {
+        Self { port, covers }
+    }
+
+    pub(crate) fn spawned(
+        (thread, covers): (DriverThread<LibraryCmd>, Sender<LibraryMessage>),
+    ) -> Self {
+        Self::new(Port::spawned(DriverName::Library, thread), covers)
     }
 
     pub(crate) fn send_command(
@@ -107,36 +116,23 @@ impl LibraryPort {
         drivers: &Drivers,
         command: LibraryCmd,
     ) -> Result<(), TraceEntry> {
-        match command {
-            LibraryCmd::PrefetchCover(path) => self.side.get().map_or(Ok(()), |side| {
-                self.port.send(
-                    drivers,
-                    LibraryMessage::Cover(CoverRequest {
-                        path,
-                        size_px: side,
-                    }),
-                )
-            }),
-            other @ (LibraryCmd::AppendHistory { .. }
-            | LibraryCmd::SaveFavorites(_)
-            | LibraryCmd::LoadFavorites
-            | LibraryCmd::Trash(_)
-            | LibraryCmd::LoadHistory(..)
-            | LibraryCmd::Scan { .. }
-            | LibraryCmd::SavePlaylist { .. }
-            | LibraryCmd::TagTracks { .. }) => {
-                self.port.send(drivers, LibraryMessage::Cmd(other))
-            }
-        }
+        self.port.send(drivers, command)
     }
 
     pub(crate) fn send_cover(
         &self,
         drivers: &Drivers,
-        request: CoverRequest,
+        job: CoverJob,
     ) -> Result<(), TraceEntry> {
-        self.side.set(Some(request.size_px));
-        self.port.send(drivers, LibraryMessage::Cover(request))
+        let dropped = |reason| TraceEntry::Dropped {
+            driver: self.port.driver,
+            command: "cover",
+            reason,
+        };
+        self.port.open(drivers).map_err(dropped)?;
+        self.covers
+            .try_send(LibraryMessage::Cover(job))
+            .map_err(|error| dropped(self.port.refused(&error)))
     }
 }
 
@@ -149,12 +145,12 @@ pub(crate) struct Ports {
 }
 
 impl Ports {
-    pub(crate) fn full_edge(&self, driver: DriverName) -> &Congestion {
+    pub(crate) fn full(&self, driver: DriverName) -> &Congestion {
         match driver {
-            DriverName::Audio => self.audio.full_edge(),
-            DriverName::Library => self.library.port.full_edge(),
-            DriverName::Config => self.config.full_edge(),
-            DriverName::Macos => self.macos.full_edge(),
+            DriverName::Audio => self.audio.full(),
+            DriverName::Library => self.library.port.full(),
+            DriverName::Config => self.config.full(),
+            DriverName::Macos => self.macos.full(),
         }
     }
 
@@ -165,7 +161,10 @@ impl Ports {
         self.config.hang_up();
     }
 
-    pub(crate) fn join(&mut self, driver: DriverName) -> Option<thread::Result<Exit>> {
+    pub(crate) fn join(
+        &mut self,
+        driver: DriverName,
+    ) -> Option<thread::Result<Result<(), SendError<Message>>>> {
         match driver {
             DriverName::Audio => self.audio.join(),
             DriverName::Library => self.library.port.join(),
@@ -180,12 +179,12 @@ mod tests {
     use crossbeam_channel::{bounded, unbounded};
     use kernel::{
         AudioCmd,
-        Congestion,
         domain::{DriverName, DriverStatus, Drivers},
     };
     use rstest::rstest;
 
     use crate::{
+        outbox::Congestion,
         port::Port,
         trace::{DropReason, TraceEntry},
     };
@@ -244,13 +243,13 @@ mod tests {
         let (sender, _receiver) = bounded(1);
         let mut drivers = Drivers::default();
         drivers.record_mut(DriverName::Audio).status = DriverStatus::Running;
-        let full_edge = Congestion::default();
-        let port = Port::new(DriverName::Audio, sender, full_edge.clone());
+        let full = Congestion::default();
+        let port = Port::new(DriverName::Audio, sender, full.clone());
 
         port.send(&drivers, AudioCmd::Stop).unwrap();
         let second = port.send(&drivers, AudioCmd::Stop);
 
         assert_eq!(second, Err(dropped(DropReason::Full)));
-        assert!(full_edge.take());
+        assert!(full.take());
     }
 }

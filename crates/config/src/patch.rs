@@ -2,34 +2,35 @@ use std::time::Duration;
 
 use kernel::{
     ConfigPatch,
-    domain::{Crossfade, OutputDevice, ReplayGain, ThemeName},
+    domain::{
+        Crossfade,
+        OutputDevice,
+        ReplayGain,
+        ThemeName,
+        appearance::{
+            Animations,
+            AppearancePatch,
+            CoverBrackets,
+            FormatChips,
+            KeyHints,
+            ProgressTime,
+        },
+    },
 };
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
-use crate::{
-    appearance::{
-        Animations,
-        AppearancePatch,
-        CoverBrackets,
-        FormatChips,
-        KeyHints,
-        ProgressTime,
-    },
-    error::Error,
-};
+use crate::error::Error;
 
 type TomlEdit = (&'static str, &'static str, Option<Item>);
 
 fn ensure_table<'doc>(
     doc: &'doc mut DocumentMut,
-    key: &str,
+    key: &'static str,
 ) -> Result<&'doc mut Table, Error> {
     doc.entry(key)
         .or_insert_with(|| Item::Table(Table::new()))
         .as_table_mut()
-        .ok_or_else(|| Error::NotATable {
-            key: key.to_string(),
-        })
+        .ok_or(Error::NotATable(key))
 }
 
 fn write_edits<const N: usize>(
@@ -210,6 +211,17 @@ mod tests {
             SleepPresets,
             ThemeChoice,
             ThemeName,
+            appearance::{
+                Animations,
+                AppearancePatch,
+                CoverBrackets,
+                CoverMode,
+                FormatChips,
+                KeyHints,
+                LayoutMode,
+                ProgressTime,
+                SpeedChip,
+            },
             appearance_rows::{
                 ANIMATIONS,
                 AppearanceField,
@@ -234,17 +246,6 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        appearance::{
-            Animations,
-            AppearancePatch,
-            CoverBrackets,
-            CoverMode,
-            FormatChips,
-            KeyHints,
-            LayoutMode,
-            ProgressTime,
-            SpeedChip,
-        },
         appearance_file::parse_appearance,
         config_file::parse_config,
         error::Error,
@@ -355,7 +356,7 @@ mod tests {
                 .format_chips(FormatChips::Shown)
                 .build(),
         );
-        assert!(matches!(refused, Err(Error::NotATable { ref key }) if key == "card"));
+        assert!(matches!(refused, Err(Error::NotATable("card"))));
     }
 
     fn base_appearance_texts() -> impl Strategy<Value = &'static str> {
@@ -524,7 +525,7 @@ mod tests {
                 .crossfade(crossfade_seconds(3))
                 .build(),
         );
-        assert!(matches!(refused, Err(Error::NotATable { ref key }) if key == "audio"));
+        assert!(matches!(refused, Err(Error::NotATable("audio"))));
     }
 
     fn base_config_texts() -> impl Strategy<Value = &'static str> {

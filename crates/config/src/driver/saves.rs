@@ -1,8 +1,14 @@
 use std::time::Duration;
 
-use kernel::{Cmd, ConfigEvent, ConfigPatch, domain::Revision, update::Unhandled};
+use kernel::{
+    Cmd,
+    ConfigEvent,
+    ConfigPatch,
+    domain::{Revision, appearance::AppearancePatch},
+    update::Unhandled,
+};
 
-use crate::{AppearancePatch, driver::ConfigEffect};
+use crate::driver::ConfigEffect;
 
 pub(crate) const SAVE_DEBOUNCE: Duration = Duration::from_millis(200);
 

@@ -1,16 +1,16 @@
 use std::{
     io::{self, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use kernel::{
     IoError,
-    domain::{ConfigError, ConfigName},
+    domain::{ConfigError, ConfigName, Diagnostic, ThemeName},
     update::Driver,
 };
 
 use crate::{
-    ThemeFile,
+    TomlTheme,
     driver::{ConfigDriver, ConfigEffect, ConfigMessage},
     patch_appearance_text,
     patch_config_text,
@@ -18,7 +18,7 @@ use crate::{
 
 const THEME_EXTENSION: &str = "toml";
 
-impl<P: Fn(ThemeFile)> Driver for ConfigDriver<P> {
+impl<P: Fn(TomlTheme)> Driver for ConfigDriver<P> {
     type Effect = ConfigEffect;
 
     fn execute(&mut self, effect: ConfigEffect) -> Option<ConfigMessage> {
@@ -56,17 +56,17 @@ fn read(file: ConfigName, path: &Path) -> ConfigMessage {
 
 fn list(dir: &Path) -> ConfigMessage {
     match std::fs::read_dir(dir) {
-        Ok(entries) => ConfigMessage::Listed(
-            entries
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|path| {
+        Ok(entries) => entries
+            .map(|entry| entry.map(|entry| entry.path()))
+            .filter(|path| {
+                path.as_ref().map_or(true, |path| {
                     path.extension().and_then(|extension| extension.to_str())
                         == Some(THEME_EXTENSION)
                 })
-                .filter_map(|path| Some(path.file_stem()?.to_str()?.to_owned()))
-                .collect(),
-        ),
+            })
+            .map(theme_name)
+            .collect::<Result<Vec<_>, _>>()
+            .map_or_else(ConfigMessage::Error, ConfigMessage::Listed),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             ConfigMessage::Listed(Vec::new())
         }
@@ -76,28 +76,51 @@ fn list(dir: &Path) -> ConfigMessage {
     }
 }
 
+fn theme_name(path: io::Result<PathBuf>) -> Result<ThemeName, ConfigError> {
+    let path =
+        path.map_err(|error| ConfigError::Invalid(Diagnostic::from_error(&error)))?;
+    let stem = path.file_stem().map_or(
+        std::borrow::Cow::Borrowed(""),
+        std::ffi::OsStr::to_string_lossy,
+    );
+    ThemeName::new(stem.into_owned())
+        .map_err(|error| ConfigError::Invalid(Diagnostic::from_error(&error)))
+}
+
 fn save(
     file: ConfigName,
     path: &Path,
     produce: impl FnOnce(&str) -> Result<String, crate::Error>,
 ) -> ConfigMessage {
-    match write_text(path, produce) {
-        Ok(text) => ConfigMessage::Saved { file, text },
-        Err(kind) => ConfigMessage::Error(ConfigError::Save { file, kind }),
+    let existing = match read_if_present(path) {
+        Ok(existing) => existing,
+        Err(error) => return save_failed(file, IoError::from(error.kind())),
+    };
+    let text = match produce(existing.as_deref().unwrap_or("")) {
+        Ok(text) => text,
+        Err(error) => {
+            return ConfigMessage::Error(ConfigError::Invalid(Diagnostic::from_error(
+                &error,
+            )));
+        }
+    };
+    match store(path, text.as_bytes()) {
+        Ok(()) => ConfigMessage::Saved { file, text },
+        Err(kind) => save_failed(file, kind),
     }
 }
 
-fn write_text(
-    path: &Path,
-    produce: impl FnOnce(&str) -> Result<String, crate::Error>,
-) -> Result<String, IoError> {
-    let existing =
-        read_if_present(path).map_err(|error| IoError::from(error.kind()))?;
-    let text = produce(existing.as_deref().unwrap_or(""))
-        .map_err(|_unpatchable| IoError::Other)?;
-    create_parent_dir(path).map_err(|error| IoError::from(error.kind()))?;
-    write_atomic(path, text.as_bytes()).map_err(|error| IoError::from(error.kind()))?;
-    Ok(text)
+fn save_failed(file: ConfigName, kind: IoError) -> ConfigMessage {
+    ConfigMessage::Error(ConfigError::Save { file, kind })
+}
+
+fn store(path: &Path, contents: &[u8]) -> Result<(), IoError> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or(IoError::Missing)?;
+    std::fs::create_dir_all(parent).map_err(|error| IoError::from(error.kind()))?;
+    write_atomic(parent, path, contents).map_err(|error| IoError::from(error.kind()))
 }
 
 fn read_if_present(path: &Path) -> io::Result<Option<String>> {
@@ -108,17 +131,7 @@ fn read_if_present(path: &Path) -> io::Result<Option<String>> {
     }
 }
 
-fn create_parent_dir(path: &Path) -> io::Result<()> {
-    path.parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map_or(Ok(()), std::fs::create_dir_all)
-}
-
-fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
+fn write_atomic(parent: &Path, path: &Path, contents: &[u8]) -> io::Result<()> {
     let mut staging = tempfile::NamedTempFile::new_in(parent)?;
     staging.write_all(contents)?;
     staging.as_file().sync_all()?;
@@ -140,6 +153,7 @@ mod tests {
             Crossfade,
             OptionIndex,
             ThemeName,
+            appearance::{AppearancePatch, CoverBrackets},
             appearance_rows::{AppearanceField, appearance_patch, appearance_row},
         },
         update::Driver,
@@ -147,13 +161,11 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use crate::{
-        AppearancePatch,
-        CoverBrackets,
-        ThemeFile,
+        TomlTheme,
         driver::{ConfigDriver, ConfigEffect, ConfigMessage, ConfigPaths, SeenTexts},
     };
 
-    type Sink = fn(ThemeFile);
+    type Sink = fn(TomlTheme);
 
     struct Disk {
         directory: tempfile::TempDir,
@@ -210,7 +222,7 @@ mod tests {
 
         assert_eq!(
             listed,
-            Some(ConfigMessage::Listed(vec!["noir".to_string()]))
+            Some(ConfigMessage::Listed(vec![ThemeName::from_static("noir")]))
         );
     }
 
@@ -326,22 +338,60 @@ mod tests {
     }
 
     #[rstest]
-    fn a_failed_save_reports_not_a_table_and_leaves_the_file_unchanged(mut disk: Disk) {
-        std::fs::write(&disk.paths.config, "audio = 1\n").unwrap();
+    #[case::not_a_table("audio = 1\n")]
+    #[case::malformed("audio = [\n")]
+    fn a_refused_patch_reports_invalid_and_leaves_the_file_unchanged(
+        #[case] existing: &str,
+        mut disk: Disk,
+    ) {
+        std::fs::write(&disk.paths.config, existing).unwrap();
 
         let refused = disk.driver.execute(save_crossfade());
+
+        assert!(
+            matches!(refused, Some(ConfigMessage::Error(ConfigError::Invalid(_)))),
+            "{refused:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&disk.paths.config).unwrap(),
+            existing,
+            "a failed save must leave the file untouched"
+        );
+    }
+
+    #[rstest]
+    fn an_invalid_theme_name_is_reported(mut disk: Disk) {
+        let themes = disk.paths.themes.clone();
+        std::fs::create_dir_all(&themes).unwrap();
+        std::fs::write(themes.join("auto.toml"), "").unwrap();
+
+        let listed = disk.driver.execute(ConfigEffect::List(themes));
+
+        assert!(
+            matches!(listed, Some(ConfigMessage::Error(ConfigError::Invalid(_)))),
+            "{listed:?}"
+        );
+    }
+
+    #[test]
+    fn a_save_to_a_path_without_a_parent_reports_missing() {
+        let paths = ConfigPaths {
+            config: "config.toml".into(),
+            appearance: "sifr-ui.toml".into(),
+            themes: "themes".into(),
+            theme: None,
+            seen: SeenTexts::default(),
+        };
+        let mut driver: ConfigDriver<Sink> = ConfigDriver::new(&paths, drop);
+
+        let refused = driver.execute(save_crossfade());
 
         assert_eq!(
             refused,
             Some(ConfigMessage::Error(ConfigError::Save {
                 file: ConfigName::Config,
-                kind: IoError::Other,
+                kind: IoError::Missing,
             }))
-        );
-        assert_eq!(
-            std::fs::read_to_string(&disk.paths.config).unwrap(),
-            "audio = 1\n",
-            "a failed save must leave the file untouched"
         );
     }
 

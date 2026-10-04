@@ -1,7 +1,6 @@
 use std::time::Duration;
 
-use config::Animations;
-use kernel::Cue;
+use kernel::{Cue, domain::appearance::Animations};
 use ratatui::{buffer::Buffer, layout::Rect};
 use strum::IntoEnumIterator;
 use widgets::{AnimationStage, Backdrop, FrameLayout};
@@ -424,7 +423,7 @@ fn a_second_toast_while_one_is_showing_slides_in_again() {
 fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
     let sources = SceneSources::new(model_with_tracks(3));
     let scene = sources.scene();
-    let layout = FrameLayout::new(&scene.layout_parts(), crate::unit::support::SCREEN);
+    let layout = FrameLayout::from_scene(&scene, crate::unit::support::SCREEN);
 
     let backdrop = Backdrop {
         animations: Animations::On,
@@ -460,4 +459,24 @@ fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
         Duration::ZERO,
         "reading the same clock value again charges nothing"
     );
+}
+
+#[test]
+fn an_ended_effect_settles_to_no_deadline_after_the_next_paint() {
+    let backdrop = toast_backdrop(ToastPresence::Shown);
+    let mut stage = AnimationStage::default();
+    stage.play(vec![Cue::ToastRaised], &backdrop);
+    assert!(stage.is_animating(), "sanity: the toast is animating");
+    let mut buffer = Buffer::empty(backdrop.layout.screen);
+
+    stage.advance(&mut buffer, Duration::from_secs(10));
+    assert!(
+        stage.is_animating(),
+        "sanity: the settling frame is still owed once the effect ends"
+    );
+
+    stage.play(Vec::new(), &backdrop);
+    stage.advance(&mut buffer, Duration::ZERO);
+
+    assert!(!stage.is_animating());
 }

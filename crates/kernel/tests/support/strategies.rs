@@ -203,7 +203,11 @@ fn browse() -> impl Strategy<Value = BrowseRequest> {
             BrowseRequest::ToggleFavorite,
             BrowseRequest::SavePlaylist(PlaylistFileName::new("mix").unwrap()),
         ]),
-        playlist_index().prop_map(BrowseRequest::Trash),
+        (0usize..4).prop_map(|row| {
+            BrowseRequest::Trash(kernel::TrackRef::Local(
+                format!("/tmp/track{row}.flac").into(),
+            ))
+        }),
         playlist_index().prop_map(BrowseRequest::CursorTo),
         (-4isize..4).prop_map(|rows| BrowseRequest::CursorBy { rows }),
         direction().prop_map(BrowseRequest::PageBy),

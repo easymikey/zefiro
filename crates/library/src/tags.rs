@@ -1,6 +1,6 @@
 use std::{borrow::Cow, path::Path, sync::Arc};
 
-use kernel::Track;
+use kernel::{LibrarySubject, Track, domain::Decibels};
 use lofty::{
     config::ParseOptions,
     file::TaggedFile,
@@ -9,28 +9,33 @@ use lofty::{
     tag::{Accessor, ItemKey, Tag},
 };
 
+use crate::error::Error;
+
 fn tag_text(tag: Option<Cow<'_, str>>) -> Option<String> {
     tag.map(Cow::into_owned)
 }
 
 pub(crate) fn read_or_list(path: &Path) -> Arc<Track> {
-    Arc::new(read_track(path))
+    Arc::new(read_track(path).unwrap_or_else(|_unread| Track::listed(path)))
 }
 
-fn read_track(path: &Path) -> Track {
+fn probe(path: &Path) -> Result<TaggedFile, Error> {
     let options = ParseOptions::new().read_cover_art(false);
-    let Some(tagged) = std::fs::File::open(path)
-        .ok()
-        .and_then(|file| {
-            Probe::new(std::io::BufReader::new(file))
-                .options(options)
-                .guess_file_type()
-                .ok()
+    let file =
+        std::fs::File::open(path).map_err(Error::io(LibrarySubject::Scan, path))?;
+    Probe::new(std::io::BufReader::new(file))
+        .options(options)
+        .guess_file_type()
+        .map_err(Error::io(LibrarySubject::Scan, path))?
+        .read()
+        .map_err(|source| Error::Tags {
+            path: path.to_path_buf(),
+            source,
         })
-        .and_then(|probe| probe.read().ok())
-    else {
-        return Track::listed(path);
-    };
+}
+
+pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
+    let tagged = probe(path)?;
     let properties = tagged.properties();
     let duration = properties.duration();
     let tag = main_tag(&tagged);
@@ -45,12 +50,12 @@ fn read_track(path: &Path) -> Track {
             .and_then(parse_replay_gain),
     };
     let tags = tag.map_or_else(kernel::Tags::default, tags_from);
-    Track::builder()
+    Ok(Track::builder()
         .path(path)
         .duration(duration)
         .tags(tags)
         .audio_format(audio_format)
-        .build()
+        .build())
 }
 
 fn tags_from(tag: &Tag) -> kernel::Tags {
@@ -78,12 +83,13 @@ fn main_tag(tagged: &TaggedFile) -> Option<&Tag> {
     tagged.primary_tag().or_else(|| tagged.first_tag())
 }
 
-fn parse_replay_gain(raw: &str) -> Option<f32> {
+fn parse_replay_gain(raw: &str) -> Option<Decibels> {
     raw.trim()
         .trim_end_matches(|ch: char| ch.is_ascii_alphabetic())
         .trim()
         .parse()
         .ok()
+        .map(Decibels)
 }
 
 #[must_use]
@@ -96,6 +102,7 @@ pub fn embedded_cover(path: &Path) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    use kernel::domain::Decibels;
     use rstest::{fixture, rstest};
 
     use crate::{
@@ -141,7 +148,7 @@ mod tests {
         #[case] raw: &str,
         #[case] expected: Option<f32>,
     ) {
-        assert_eq!(parse_replay_gain(raw), expected);
+        assert_eq!(parse_replay_gain(raw), expected.map(Decibels));
     }
 
     #[test]

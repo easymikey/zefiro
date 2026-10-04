@@ -391,12 +391,12 @@ fn adjust_row_sleep_presets_snaps_a_custom_value_to_the_nearest_bundle() {
 fn adjust_row_sleep_presets_leaves_the_clamp_to_the_next_cycle() {
     let mut model = seeded();
     model.transport.sleep = Some(kernel::domain::SleepTimer {
-        preset_index: 2,
+        preset_index: kernel::domain::PresetIndex::new(2),
         delay: Duration::from_secs(60),
     });
 
     press(&mut model, SettingRow::SleepPresets, Direction::Previous);
-    let armed = model.transport.sleep.map(|timer| timer.preset_index);
+    let armed = model.transport.sleep.map(|timer| timer.preset_index.get());
     apply(&mut model, Message::Playback(PlaybackRequest::CycleSleep));
 
     assert_eq!(armed, Some(2));

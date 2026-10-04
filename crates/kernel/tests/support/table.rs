@@ -2,10 +2,11 @@ use std::fmt::Debug;
 
 use kernel::update::{Machine, Unhandled};
 
-pub(crate) type Cell<S> = Result<(S, <S as Machine>::Effect), Unhandled>;
-
-pub(crate) fn cell<S>(start: S, message: S::Message, expected: Cell<S>)
-where
+pub(crate) fn cell<S>(
+    start: S,
+    message: S::Message,
+    expected: Result<(S, S::Effect), Unhandled>,
+) where
     S: Machine + Clone + Debug + PartialEq,
     S::Effect: Debug + PartialEq,
 {

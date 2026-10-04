@@ -1,17 +1,14 @@
 use std::{collections::HashMap, time::Duration};
 
-use crate::{
-    domain::{
-        ChordPrefix,
-        Cursor,
-        Keymap,
-        Moment,
-        Overlay,
-        ThemeName,
-        ViewIndex,
-        library::SortKey,
-    },
-    message::IoError,
+use crate::domain::{
+    ChordPrefix,
+    Cursor,
+    Keymap,
+    Moment,
+    Overlay,
+    ThemeName,
+    ViewIndex,
+    library::SortKey,
 };
 
 pub const TOAST_SECONDS: u64 = 5;
@@ -43,9 +40,38 @@ impl std::fmt::Display for ConfigName {
         let name = match self {
             ConfigName::Appearance => "the appearance file",
             ConfigName::Config => "the config file",
-            ConfigName::Theme(_) => "the theme file",
+            ConfigName::Theme(name) => return write!(formatter, "the theme {name}"),
         };
         formatter.write_str(name)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum IoError {
+    #[error("not found")]
+    Missing,
+    #[error("permission denied")]
+    Denied,
+    #[error("corrupt data")]
+    Malformed,
+    #[error("disk full")]
+    Full,
+    #[error("an unknown error")]
+    Other,
+}
+
+impl From<std::io::ErrorKind> for IoError {
+    fn from(kind: std::io::ErrorKind) -> Self {
+        [
+            (std::io::ErrorKind::NotFound, IoError::Missing),
+            (std::io::ErrorKind::PermissionDenied, IoError::Denied),
+            (std::io::ErrorKind::StorageFull, IoError::Full),
+            (std::io::ErrorKind::InvalidData, IoError::Malformed),
+            (std::io::ErrorKind::UnexpectedEof, IoError::Malformed),
+        ]
+        .into_iter()
+        .find(|(known, _)| *known == kind)
+        .map_or(IoError::Other, |(_, error)| error)
     }
 }
 
@@ -59,8 +85,29 @@ pub enum ConfigError {
     Save { file: ConfigName, kind: IoError },
     #[error("Config watch failed: {0}")]
     Watch(IoError),
-    #[error("{detail}")]
-    Invalid { detail: String },
+    #[error("{0}")]
+    Invalid(Diagnostic),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Diagnostic(String);
+
+impl Diagnostic {
+    #[must_use]
+    pub fn from_error(error: &impl std::error::Error) -> Self {
+        Self(error.to_string())
+    }
+
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

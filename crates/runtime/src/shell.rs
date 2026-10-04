@@ -1,14 +1,19 @@
-use audio::SpectrumTap;
+use audio::tap::SpectrumTap;
 use kernel::{Cue, Message, Moment, WindowColorsCmd, domain::Model};
+use library::CoverJob;
 
-use crate::{latest::LatestReceivers, library::cover::CoverRequest};
+use crate::latest::LatestReceivers;
 
 pub trait Shell {
     type Input;
     type Error: std::error::Error + 'static;
 
     fn input(&mut self, event: Self::Input) -> Reaction;
-    fn effect(&mut self, effect: ShellEffect, animations: config::Animations);
+    fn effect(
+        &mut self,
+        effect: ShellEffect,
+        animations: kernel::domain::appearance::Animations,
+    );
     fn frame_due(&self, frame: &Frame<'_>) -> FrameDue;
     fn paint(&mut self, frame: Frame<'_>) -> Result<Painted, Self::Error>;
 }
@@ -45,7 +50,7 @@ pub struct Frame<'a> {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Painted {
-    pub cover: Option<CoverRequest>,
+    pub cover: Option<CoverJob>,
     pub visible_rows: Option<usize>,
     pub toasts: Vec<Message>,
 }

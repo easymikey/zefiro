@@ -6,7 +6,7 @@ use std::{
 
 use kernel::{LibrarySubject, Track};
 
-use crate::{error::Error, tags::read_or_list};
+use crate::{error::Error, tags::read_track};
 
 #[must_use]
 fn is_decodable(path: &Path, decodable: &[&str]) -> bool {
@@ -73,11 +73,38 @@ pub(crate) fn list_dir(music_dir: &Path, decodable: &[&str]) -> Listing {
         })
 }
 
-fn read_chunk(chunk: &[PathBuf]) -> Vec<Arc<Track>> {
-    chunk.iter().map(|path| read_or_list(path)).collect()
+#[derive(Debug, Default)]
+pub(crate) struct TagsRead {
+    pub tracks: Vec<Arc<Track>>,
+    pub first_error: Option<Error>,
 }
 
-pub(crate) fn read_tags(paths: &[PathBuf]) -> Vec<Arc<Track>> {
+impl TagsRead {
+    fn adding(mut self, path: &Path) -> Self {
+        match read_track(path) {
+            Ok(track) => self.tracks.push(Arc::new(track)),
+            Err(error) => {
+                self.tracks.push(Arc::new(Track::listed(path)));
+                self.first_error = self.first_error.or(Some(error));
+            }
+        }
+        self
+    }
+
+    fn joined(mut self, other: TagsRead) -> Self {
+        self.tracks.extend(other.tracks);
+        self.first_error = self.first_error.or(other.first_error);
+        self
+    }
+}
+
+fn read_chunk(chunk: &[PathBuf]) -> TagsRead {
+    chunk
+        .iter()
+        .fold(TagsRead::default(), |read, path| read.adding(path))
+}
+
+pub(crate) fn read_tags(paths: &[PathBuf]) -> TagsRead {
     let workers =
         std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     if workers <= 1 || paths.len() <= 1 {
@@ -91,15 +118,16 @@ pub(crate) fn read_tags(paths: &[PathBuf]) -> Vec<Arc<Track>> {
             .collect();
         handles
             .into_iter()
-            .flat_map(|(chunk, handle)| {
-                handle.join().unwrap_or_else(|_| {
-                    chunk
+            .map(|(chunk, handle)| {
+                handle.join().unwrap_or_else(|_panicked| TagsRead {
+                    tracks: chunk
                         .iter()
                         .map(|path| Arc::new(Track::listed(path)))
-                        .collect()
+                        .collect(),
+                    first_error: None,
                 })
             })
-            .collect()
+            .fold(TagsRead::default(), TagsRead::joined)
     })
 }
 
@@ -158,7 +186,7 @@ mod tests {
     }
 
     fn scanned(dir: &Path) -> Vec<Arc<Track>> {
-        read_tags(&list_dir(dir, DECODABLE).paths)
+        read_tags(&list_dir(dir, DECODABLE).paths).tracks
     }
 
     #[fixture]
@@ -203,7 +231,7 @@ mod tests {
         let listing = list_dir(temp_dir.path(), DECODABLE);
         let chunk = &listing.paths[..2];
 
-        let tracks = read_tags(chunk);
+        let tracks = read_tags(chunk).tracks;
 
         assert_eq!(tracks.len(), 2);
         assert!(
@@ -222,7 +250,7 @@ mod tests {
 
     #[test]
     fn tagging_no_paths_reads_nothing() {
-        assert!(read_tags(&[]).is_empty());
+        assert!(read_tags(&[]).tracks.is_empty());
     }
 
     #[rstest]

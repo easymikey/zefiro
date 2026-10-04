@@ -1,10 +1,9 @@
 use crossbeam_channel::Sender;
 use dispatch2::DispatchQueue;
-use kernel::Message;
 use objc2::MainThreadMarker;
 use objc2_core_foundation::CFRunLoop;
 
-use crate::controls::Controls;
+use crate::{controls::Controls, driver::MacosMessage};
 
 #[derive(Debug)]
 pub struct MainLoop {
@@ -13,16 +12,16 @@ pub struct MainLoop {
 
 impl MainLoop {
     #[must_use]
-    pub fn attach(sender: &Sender<Message>) -> Option<Self> {
+    pub fn attach(heard: &Sender<MacosMessage>) -> Option<Self> {
         let main_thread = MainThreadMarker::new()?;
         Some(Self {
-            _controls: Controls::attach(main_thread, sender),
+            _controls: Controls::attach(main_thread, heard),
         })
     }
 
     #[must_use]
-    pub fn stopper(&self) -> LoopStopper {
-        LoopStopper
+    pub fn stopper(&self) -> MainLoopStop {
+        MainLoopStop
     }
 
     pub fn run(self) {
@@ -31,9 +30,9 @@ impl MainLoop {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct LoopStopper;
+pub struct MainLoopStop;
 
-impl LoopStopper {
+impl MainLoopStop {
     pub fn stop(self) {
         DispatchQueue::main().exec_async(|| {
             if let Some(current) = CFRunLoop::current() {

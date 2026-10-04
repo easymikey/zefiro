@@ -1,3 +1,4 @@
+use kernel::domain::geometry::Cells;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -9,7 +10,7 @@ use ratatui::{
 use crate::{
     overlay::modal::{
         frame::{Modal, ModalAreas, ModalBounds, ModalSize, PlacedModal},
-        metrics::SCROLLBAR_INSET,
+        metrics::{ModalRowStyle, SCROLLBAR_INSET},
     },
     primitive::{
         canvas::Canvas,
@@ -17,7 +18,7 @@ use crate::{
         list_chrome::{row_band, scrollbar_column, spaced_title},
         text::truncate,
     },
-    theme::{ActiveTheme, Role},
+    theme::ActiveTheme,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -86,7 +87,9 @@ impl ModalBorder<'_> {
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Thick)
-            .border_style(Style::default().fg(self.theme.role(Role::Frame)))
+            .border_style(
+                Style::default().fg(ModalRowStyle::from_theme(&self.theme).border),
+            )
             .padding(self.inset.padding())
             .title(spaced_title(self.title.clone()))
     }
@@ -109,12 +112,9 @@ impl ModalBorder<'_> {
 
     pub(crate) fn paint(&self, buffer: &mut Buffer) {
         Clear.render(self.area, buffer);
+        let style = ModalRowStyle::from_theme(&self.theme);
         Block::new()
-            .style(
-                Style::default()
-                    .bg(self.theme.role(Role::WindowBackground))
-                    .fg(self.theme.role(Role::Text)),
-            )
+            .style(Style::default().bg(style.background).fg(style.foreground))
             .render(self.area, buffer);
         self.block().render(self.area, buffer);
     }
@@ -126,8 +126,8 @@ pub(crate) struct ModalPlacement<'a> {
     pub(crate) inset: Inset,
     pub(crate) border_title: Line<'static>,
     pub(crate) modal_title: &'a str,
-    pub(crate) content_width: u16,
-    pub(crate) content_rows: u16,
+    pub(crate) content_width: Cells,
+    pub(crate) content_rows: Cells,
     pub(crate) hint: Option<Line<'static>>,
     pub(crate) theme: ActiveTheme<'a>,
 }
@@ -143,15 +143,16 @@ impl<'a> ModalPlacement<'a> {
     }
 
     fn modal(&self) -> Modal<'_> {
+        let style = ModalRowStyle::from_theme(&self.theme);
         Modal {
             title: self.modal_title,
             size: ModalSize::List {
                 content_width: self.content_width,
-                content_rows: self.content_rows.max(1),
+                content_rows: self.content_rows.max(Cells(1)),
             },
             hint: self.hint.clone(),
-            border: self.theme.role(Role::Frame),
-            window_background: self.theme.role(Role::WindowBackground),
+            border: style.border,
+            window_background: style.background,
         }
     }
 
@@ -193,8 +194,8 @@ impl<'a> ModalPlacement<'a> {
 }
 
 #[must_use]
-pub(crate) fn leading_cells(areas: &ModalScrollAreas) -> u16 {
-    areas.content.x.saturating_sub(areas.rows.x)
+pub(crate) fn leading_cells(areas: &ModalScrollAreas) -> Cells {
+    Cells(areas.content.x.saturating_sub(areas.rows.x))
 }
 
 #[must_use]
@@ -203,14 +204,14 @@ fn trailing_cells(areas: &ModalScrollAreas) -> u16 {
 }
 
 #[must_use]
-pub(crate) fn column_width(areas: &ModalScrollAreas) -> u16 {
-    areas.rows.width.saturating_sub(trailing_cells(areas))
+pub(crate) fn column_width(areas: &ModalScrollAreas) -> Cells {
+    Cells(areas.rows.width.saturating_sub(trailing_cells(areas)))
 }
 
 #[must_use]
-pub(crate) fn indented(text: &str, lead: u16, width: u16) -> String {
-    let lead = usize::from(lead);
-    let budget = usize::from(width).saturating_sub(lead);
+pub(crate) fn indented(text: &str, lead: Cells, width: Cells) -> String {
+    let lead = lead.count();
+    let budget = width.count().saturating_sub(lead);
     let fitted = truncate(text, budget);
     format!("{:lead$}{fitted}", "")
 }

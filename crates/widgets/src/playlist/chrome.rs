@@ -1,4 +1,4 @@
-use kernel::domain::Shuffle;
+use kernel::domain::geometry::Cells;
 use ratatui::{
     layout::Rect,
     style::{Color, Style},
@@ -7,9 +7,8 @@ use ratatui::{
 };
 
 use crate::{
-    playlist::pane::PlaylistView,
     primitive::{inset::Inset, list_chrome::spaced_title},
-    status_line::{self, ScanProgress, StatusLineStyle, StatusLineView},
+    status_line::{self, StatusLineStyle, StatusLineView},
     theme::ActiveTheme,
 };
 
@@ -28,8 +27,8 @@ pub(crate) fn pane_block<'a>(title: Option<Line<'a>>, border: Color) -> Block<'a
     }
 }
 
-fn title_budget(area: Rect) -> usize {
-    usize::from(
+fn title_budget(area: Rect) -> Cells {
+    Cells(
         area.width
             .saturating_sub(BORDER_COLUMNS)
             .saturating_sub(TITLE_CELLS),
@@ -38,27 +37,12 @@ fn title_budget(area: Rect) -> usize {
 
 pub(crate) fn pane_title<'a>(
     area: Rect,
-    view: PlaylistView<'a>,
-    theme: ActiveTheme<'a>,
+    status: StatusLineView<'a>,
+    theme: &ActiveTheme<'_>,
 ) -> Line<'a> {
-    let shuffle = if view.playlist.play_order.is_shuffle() {
-        Shuffle::Enabled
-    } else {
-        Shuffle::Disabled
-    };
-    let status = StatusLineView {
-        shuffle,
-        repeat_mode: view.playlist.repeat,
-        queue_len: view.queue.len(),
-        position: view.browse_selected,
-        total: view.playlist.tracks.len(),
-        scan: ScanProgress::of(view.scan, theme.theme.scanning_label.as_str()),
-        theme_name: theme.theme.name.as_str(),
-        sleep_left: view.sleep_left,
-    };
     status_line::status_line(
         status,
-        StatusLineStyle::from_theme(&theme),
+        StatusLineStyle::from_theme(theme),
         title_budget(area),
     )
 }
@@ -66,67 +50,51 @@ pub(crate) fn pane_title<'a>(
 #[cfg(test)]
 mod tests {
     use kernel::{
-        domain::{Favorites, ScanStatus},
-        playlist::{PlayOrder, Playlist, RepeatMode},
+        domain::{Shuffle, ViewIndex},
+        playlist::RepeatMode,
     };
     use ratatui::layout::Rect;
 
     use crate::{
-        playlist::{
-            chrome::pane_title,
-            pane::{LibraryLoad, PlaylistView},
-        },
+        playlist::chrome::pane_title,
+        status_line::{ScanProgress, StatusLineView},
         test_support::noir,
         theme::{ActiveTheme, ColorDepth},
     };
 
-    fn view<'a>(playlist: &'a Playlist, favorites: &'a Favorites) -> PlaylistView<'a> {
-        PlaylistView {
-            playlist,
-            queue: &[],
-            favorites,
-            browse_selected: 0,
-            playing: None,
-            library_loading: LibraryLoad::Ready,
-            scan: ScanStatus::Idle,
+    fn status() -> StatusLineView<'static> {
+        StatusLineView {
+            shuffle: Shuffle::Enabled,
+            repeat_mode: RepeatMode::All,
+            queue_len: 0,
+            position: ViewIndex::new(0),
+            total: 0,
+            scan: ScanProgress::Done,
+            theme_name: "noir",
             sleep_left: None,
         }
     }
 
-    #[test]
-    fn the_title_names_the_pane_its_position_and_its_flags() {
-        let playlist = Playlist {
-            play_order: PlayOrder::ShufflePending,
-            repeat: RepeatMode::All,
-            ..Playlist::default()
-        };
-        let favorites = Favorites::default();
+    fn title_text(width: u16) -> String {
         let theme = noir();
         let theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        let line =
-            pane_title(Rect::new(0, 0, 80, 1), view(&playlist, &favorites), theme);
-        let text: String = line
+        pane_title(Rect::new(0, 0, width, 1), status(), &theme)
             .spans
             .iter()
             .map(|span| span.content.as_ref())
-            .collect();
+            .collect()
+    }
+
+    #[test]
+    fn the_title_names_the_pane_its_position_and_its_flags() {
+        let text = title_text(80);
         assert!(text.contains("shuffle on"), "got {text:?}");
         assert!(text.contains("repeat all"), "got {text:?}");
     }
 
     #[test]
     fn a_narrow_border_truncates_the_title_with_an_ellipsis() {
-        let playlist = Playlist::default();
-        let favorites = Favorites::default();
-        let theme = noir();
-        let theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        let line =
-            pane_title(Rect::new(0, 0, 24, 1), view(&playlist, &favorites), theme);
-        let text: String = line
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect();
+        let text = title_text(24);
         assert!(text.ends_with('…'), "got {text:?}");
     }
 }

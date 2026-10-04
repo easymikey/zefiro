@@ -7,11 +7,11 @@ mod metrics;
 use std::{sync::Arc, time::Duration};
 
 pub(crate) use compact::{
-    CompactCard,
+    CompactCardWidget,
     compact_height,
     progress_bar_width as compact_progress_bar_width,
 };
-pub(crate) use headings::{CardStatus, card_status, status_label};
+pub(crate) use headings::{CardStyle, card_status, status_label};
 use kernel::{
     Moment,
     domain::{
@@ -45,11 +45,11 @@ use crate::{
     primitive::{
         canvas::Canvas,
         corner_brackets,
-        corner_brackets::CornerBrackets,
+        corner_brackets::CornerBracketsWidget,
         inset::Inset,
     },
     spectrum::Spectrum,
-    theme::{ActiveTheme, Role},
+    theme::ActiveTheme,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -67,27 +67,27 @@ pub struct CardView<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum CoverArt {
+pub enum CardCover {
     Missing,
     Image,
     Text(Arc<[Line<'static>]>),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Card<'a> {
+pub struct CardWidget<'a> {
     pub view: CardView<'a>,
     pub theme: ActiveTheme<'a>,
     pub cell_aspect: f32,
     pub cover_sizing: CoverSizing,
     pub appearance: AppearanceSettings,
-    pub cover_art: &'a CoverArt,
+    pub cover_art: &'a CardCover,
 }
 
 impl CardView<'_> {
     pub(crate) fn duration(&self) -> Duration {
         self.displayed_track
             .and_then(|track| track.duration())
-            .unwrap_or_default()
+            .unwrap_or(Duration::ZERO)
     }
 
     pub(crate) fn position(&self) -> Duration {
@@ -99,10 +99,11 @@ impl CardView<'_> {
     }
 }
 
-impl Card<'_> {
+impl CardWidget<'_> {
     pub(crate) fn paint(&self, metrics: &CardMetrics, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
-        let frame_color: Color = self.theme.role(Role::Frame);
+        let style = CardStyle::from_theme(&self.theme);
+        let frame_color: Color = style.border;
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -114,47 +115,65 @@ impl Card<'_> {
         block.render(area, buffer);
 
         if !metrics.cover_square.is_empty() {
-            self.paint_cover(buffer, metrics.cover_square);
+            self.paint_cover(buffer, (metrics.cover_square, style));
         }
         headings::paint(buffer, self, metrics);
         meters::paint(buffer, self, metrics);
-        if let Some(color) = self.bracket_color() {
-            (&CornerBrackets { color }).render(
+        if let Some(color) = self.bracket_color(style) {
+            (&CornerBracketsWidget { color }).render(
                 corner_brackets::expand(content_rect(metrics), BRACKET_MARGIN),
                 buffer,
             );
         }
     }
 
-    fn bracket_color(&self) -> Option<Color> {
+    fn bracket_color(&self, style: CardStyle) -> Option<Color> {
         matches!(self.appearance.cover_brackets, CoverBrackets::Shown)
-            .then(|| self.theme.role(Role::Accent))
+            .then_some(style.accent)
     }
 
-    fn paint_cover(&self, buffer: &mut Buffer, area: Rect) {
+    fn paint_cover(&self, buffer: &mut Buffer, (area, style): (Rect, CardStyle)) {
         match self.cover_art {
-            CoverArt::Missing => Paragraph::new("No cover")
-                .style(Style::default().fg(self.theme.role(Role::Dim)))
+            CardCover::Missing => Paragraph::new("No cover")
+                .style(Style::default().fg(style.muted_foreground))
                 .alignment(Alignment::Center)
                 .render(area, buffer),
-            CoverArt::Image => {}
-            CoverArt::Text(lines) => {
+            CardCover::Image => {}
+            CardCover::Text(lines) => {
                 let rows = u16::try_from(lines.len()).unwrap_or(u16::MAX);
                 Paragraph::new(lines.to_vec())
                     .render(area.centered_vertically(Constraint::Length(rows)), buffer);
             }
         }
-        if let Some(color) = self.bracket_color() {
-            (&CornerBrackets { color })
+        if let Some(color) = self.bracket_color(style) {
+            (&CornerBracketsWidget { color })
                 .render(corner_brackets::expand(area, BRACKET_MARGIN), buffer);
         }
     }
 }
 
-impl Widget for &Card<'_> {
+impl Widget for &CardWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let metrics = card_metrics(area, self.cell_aspect, self.cover_sizing);
         self.paint(&metrics, Canvas { area, buffer });
+    }
+}
+
+impl<'a> CardView<'a> {
+    #[must_use]
+    pub fn from_scene(scene: &crate::scene::Scene<'a>) -> Self {
+        Self {
+            player: scene.player,
+            speed: scene.transport.speed,
+            volume: scene.transport.volume,
+            spectrum: scene.spectrum,
+            repeat: scene.playlist.repeat,
+            play_order: &scene.playlist.play_order,
+            queue_length: scene.queue.len(),
+            displayed_track: scene.displayed_track,
+            output: &scene.transport.output,
+            now: scene.now,
+        }
     }
 }
 
@@ -183,7 +202,7 @@ mod tests {
     };
 
     use crate::{
-        card::{Card, CardView, CoverArt, card_height},
+        card::{CardCover, CardView, CardWidget, card_height},
         geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
         spectrum::{SPECTRUM_BANDS, Spectrum},
         test_support::{noir, rendered, track},
@@ -277,14 +296,14 @@ mod tests {
         view: CardView<'a>,
         theme: &'a Theme,
         appearance: AppearanceSettings,
-    ) -> Card<'a> {
-        Card {
+    ) -> CardWidget<'a> {
+        CardWidget {
             view,
             theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
             cell_aspect: DEFAULT_CELL_ASPECT,
             cover_sizing: CoverSizing::default(),
             appearance,
-            cover_art: &CoverArt::Missing,
+            cover_art: &CardCover::Missing,
         }
     }
 

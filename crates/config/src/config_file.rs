@@ -18,34 +18,28 @@ use serde::{Deserialize, Deserializer};
 use crate::{
     appearance::{Flag, flag},
     error::{CrossfadeError, Error, parse_toml},
-    keymap::KeymapFile,
+    keymap::TomlKeymap,
 };
 
 pub const CONFIG_FILE_NAME: &str = "config.toml";
 
 fn parse_crossfade(raw: &str) -> Result<Crossfade, CrossfadeError> {
     let trimmed = raw.trim();
-    let number = |source| CrossfadeError::Number {
-        value: raw.to_string(),
-        source,
-    };
     let duration = if let Some(milliseconds) = trimmed.strip_suffix("ms") {
         milliseconds
             .trim()
             .parse::<u64>()
             .map(Duration::from_millis)
-            .map_err(number)?
+            .map_err(CrossfadeError::Number)?
     } else {
         let Some(seconds) = trimmed.strip_suffix('s') else {
-            return Err(CrossfadeError::MissingSuffix {
-                value: raw.to_string(),
-            });
+            return Err(CrossfadeError::MissingSuffix);
         };
         seconds
             .trim()
             .parse::<u64>()
             .map(Duration::from_secs)
-            .map_err(number)?
+            .map_err(CrossfadeError::Number)?
     };
     Ok(Crossfade::try_from(duration)?)
 }
@@ -103,8 +97,8 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct AudioConfig {
+#[serde(default, deny_unknown_fields, expecting = "an [audio] table")]
+pub struct TomlAudio {
     #[serde(deserialize_with = "crossfade")]
     pub crossfade: Crossfade,
     #[serde(deserialize_with = "flag")]
@@ -116,8 +110,8 @@ pub struct AudioConfig {
     pub sleep_presets: SleepPresets,
 }
 
-impl From<AudioConfig> for AudioSettings {
-    fn from(config: AudioConfig) -> Self {
+impl From<TomlAudio> for AudioSettings {
+    fn from(config: TomlAudio) -> Self {
         Self {
             crossfade: config.crossfade,
             replay_gain: config.replay_gain,
@@ -136,8 +130,8 @@ pub struct ConfigToml {
     pub theme: ThemeChoice,
     #[serde(deserialize_with = "volume")]
     pub volume: Percent,
-    pub audio: AudioConfig,
-    pub keymap: KeymapFile,
+    pub audio: TomlAudio,
+    pub keymap: TomlKeymap,
 }
 
 impl Default for ConfigToml {
@@ -146,8 +140,8 @@ impl Default for ConfigToml {
             music_dir: None,
             theme: ThemeChoice::default(),
             volume: Transport::default().volume,
-            audio: AudioConfig::default(),
-            keymap: KeymapFile::default(),
+            audio: TomlAudio::default(),
+            keymap: TomlKeymap::default(),
         }
     }
 }

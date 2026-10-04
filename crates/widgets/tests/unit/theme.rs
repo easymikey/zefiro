@@ -1,6 +1,6 @@
 use config::parse_theme;
 use rstest::rstest;
-use widgets::{Colors, ThemeSeed};
+use widgets::{Colors, ThemeBase};
 
 #[rstest]
 #[case::terracotta_dark(
@@ -40,7 +40,7 @@ use widgets::{Colors, ThemeSeed};
 fn every_repo_theme_derives_its_own_palette(#[case] name: &str, #[case] source: &str) {
     let file = parse_theme(source, name).unwrap();
     let c = file.colors;
-    let colors = Colors::derive(&ThemeSeed {
+    let colors = Colors::derive(&ThemeBase {
         background: c.background,
         foreground: c.foreground,
         bright_foreground: c.bright_foreground,

@@ -1,4 +1,4 @@
-use kernel::domain::{Track, format_time};
+use kernel::domain::{Track, format_time, geometry::Cells};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -78,9 +78,9 @@ impl TrackDetailsWidget<'_> {
         Modal {
             title: glyphs::track_details::TITLE_WORD,
             size: ModalSize::Dialog {
-                min_width: MIN_WIDTH,
-                content_width,
-                content_lines: u16::try_from(rows.len()).unwrap_or(u16::MAX),
+                min_width: Cells(MIN_WIDTH),
+                content_width: Cells(content_width),
+                content_lines: Cells(u16::try_from(rows.len()).unwrap_or(u16::MAX)),
             },
             hint: Some(line([
                 text(glyphs::track_details::HINT).fg(self.style.muted_foreground)

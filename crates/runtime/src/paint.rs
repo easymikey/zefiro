@@ -58,8 +58,8 @@ where
             .map_err(Error::Paint)?;
         self.repaint = Repaint::Settled;
         self.last_paint = Some(now);
-        if let Some(request) = painted.cover {
-            self.runtime.request_cover(request);
+        if let Some(job) = painted.cover {
+            self.runtime.send_cover(job);
         }
         if let Some(visible_rows) = painted.visible_rows {
             self.step_and_repaint(Message::Viewport { visible_rows }, Source::Event);

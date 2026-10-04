@@ -1,4 +1,4 @@
-use std::{fmt, sync::Mutex, time::Duration};
+use std::{cell::RefCell, fmt, time::Duration};
 
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 use rodio::Source;
@@ -42,7 +42,7 @@ impl Handoff {
 }
 
 pub struct SpectrumTap {
-    output: Mutex<Output<[f32; WINDOW]>>,
+    output: RefCell<Output<[f32; WINDOW]>>,
 }
 
 impl fmt::Debug for SpectrumTap {
@@ -58,9 +58,7 @@ impl SpectrumTap {
     }
 
     pub fn latest(&self, out: &mut [f32; WINDOW]) {
-        if let Ok(mut output) = self.output.lock() {
-            *out = *output.read();
-        }
+        *out = *self.output.borrow_mut().read();
     }
 }
 
@@ -73,7 +71,7 @@ pub(crate) fn new_tap() -> (Handoff, SpectrumTap) {
     (
         Handoff { sender, receiver },
         SpectrumTap {
-            output: Mutex::new(output),
+            output: RefCell::new(output),
         },
     )
 }

@@ -3,13 +3,16 @@ use kernel::{
     Message,
     Model,
     Moment,
-    domain::appearance::{
-        Appearance,
-        AppearanceSettings,
-        Breakpoints,
-        CoverMode,
-        ProgressBar,
-        Rgb,
+    domain::{
+        appearance::{
+            Appearance,
+            AppearanceSettings,
+            Breakpoints,
+            CoverMode,
+            ProgressBar,
+            Rgb,
+        },
+        geometry::{Cells, Pixels},
     },
 };
 use rstest::rstest;
@@ -32,11 +35,11 @@ fn reloaded(appearance: Appearance) -> Model {
 #[case::stock(Appearance::default())]
 #[case::another_cover(Appearance {
     settings: AppearanceSettings { cover_mode: CoverMode::Off, ..AppearanceSettings::default() },
-    cover_size_px: 320,
+    cover_size_px: Pixels(320),
     ..Appearance::default()
 })]
 #[case::another_rules(Appearance {
-    breakpoints: Breakpoints { min_columns: 10, ..Breakpoints::default() },
+    breakpoints: Breakpoints { min_columns: Cells(10), ..Breakpoints::default() },
     progress: ProgressBar { fill: Some(Rgb([1, 2, 3])), ..ProgressBar::default() },
     ..Appearance::default()
 })]

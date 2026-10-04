@@ -6,6 +6,7 @@ use crate::{
         AbLoop,
         Direction,
         Percent,
+        PresetIndex,
         Revision,
         SleepPresets,
         SleepTimer,
@@ -73,9 +74,9 @@ fn next_sleep(
     current: Option<SleepTimer>,
     sleep_presets: &[Duration],
 ) -> Option<SleepTimer> {
-    let preset_index = current.map_or(0, |timer| timer.preset_index + 1);
-    sleep_presets.get(preset_index).map(|&delay| SleepTimer {
-        preset_index,
+    let position = current.map_or(0, |timer| timer.preset_index.get() + 1);
+    sleep_presets.get(position).map(|&delay| SleepTimer {
+        preset_index: PresetIndex::new(position),
         delay,
     })
 }

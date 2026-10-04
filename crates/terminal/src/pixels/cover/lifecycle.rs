@@ -3,13 +3,13 @@ use std::{fmt, time::Duration};
 use image::DynamicImage;
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
 use widgets::{
+    CardCover,
     CellPixels,
-    CoverArt,
     CoverFrame,
+    CoverImage,
     CoverLifecycle,
     CoverMotion,
-    CoverRefreshParts,
-    DecodedCover,
+    CoverRefresh,
     PixmapSource,
     Scene,
 };
@@ -54,16 +54,16 @@ impl Cover {
         self.protocol = None;
     }
 
-    pub(crate) fn set_cover(&mut self, decoded: DecodedCover) {
+    pub(crate) fn set_cover(&mut self, decoded: CoverImage) {
         self.lifecycle.set_cover(decoded);
     }
 
     pub(crate) fn refresh(
         &mut self,
         scene: &Scene<'_>,
-        parts: CoverRefreshParts,
-    ) -> CoverArt {
-        let update = self.lifecycle.refresh(scene, parts);
+        refresh: CoverRefresh,
+    ) -> CardCover {
+        let update = self.lifecycle.refresh(scene, refresh);
         match update.frame {
             CoverFrame::Keep => {}
             CoverFrame::Forget => self.protocol = None,

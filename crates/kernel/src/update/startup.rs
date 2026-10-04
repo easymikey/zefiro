@@ -189,9 +189,9 @@ mod tests {
     #[test]
     fn startup_errors_raise_one_toast_with_the_first_error() {
         let mut model = Model::default();
-        let broken = crate::domain::ConfigError::Invalid {
-            detail: "broken".to_string(),
-        };
+        let broken = crate::domain::ConfigError::Invalid(
+            crate::domain::Diagnostic::from_error(&std::io::Error::other("broken")),
+        );
         let unreadable = crate::domain::ConfigError::Unreadable {
             file: crate::domain::ConfigName::Appearance,
             kind: crate::IoError::Other,

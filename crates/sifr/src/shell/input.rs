@@ -1,18 +1,22 @@
 use crossterm::event::{Event, KeyEvent, KeyEventKind};
-use kernel::{Key, KeyPress, Message};
+use kernel::{Key, KeyPress, Message, PaintError, PaintEvent};
 use runtime::Reaction;
 use terminal::{LayoutTranslation, from_event};
 
 #[derive(Debug, Clone)]
-pub(crate) enum ShellEvent {
+pub(crate) enum ShellInput {
     Terminal(Event),
     Terminate,
+    Error(PaintError),
 }
 
-pub(crate) fn reaction_for(input: ShellEvent) -> Reaction {
+pub(crate) fn reaction_for(input: ShellInput) -> Reaction {
     match input {
-        ShellEvent::Terminate => Reaction::Message(Message::Quit),
-        ShellEvent::Terminal(event) => terminal_reaction(&event),
+        ShellInput::Terminate => Reaction::Message(Message::Quit),
+        ShellInput::Error(error) => {
+            Reaction::Message(Message::from(PaintEvent::Error(error)))
+        }
+        ShellInput::Terminal(event) => terminal_reaction(&event),
     }
 }
 
@@ -46,14 +50,14 @@ fn key_press(key: Option<Key>, typed: Option<Key>) -> Option<KeyPress> {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{Event, KeyCode as CrosstermCode, KeyEvent, KeyModifiers};
-    use kernel::{Key, KeyCode, KeyPress, Message};
+    use kernel::{Diagnostic, Key, KeyCode, KeyPress, Message, PaintError, PaintEvent};
     use rstest::rstest;
     use runtime::Reaction;
 
-    use crate::shell::input::{ShellEvent, reaction_for};
+    use crate::shell::input::{ShellInput, reaction_for};
 
-    fn key_input(character: char) -> ShellEvent {
-        ShellEvent::Terminal(Event::Key(KeyEvent::new(
+    fn key_input(character: char) -> ShellInput {
+        ShellInput::Terminal(Event::Key(KeyEvent::new(
             CrosstermCode::Char(character),
             KeyModifiers::NONE,
         )))
@@ -72,15 +76,29 @@ mod tests {
 
     #[test]
     fn terminate_quits_without_touching_the_model() {
-        let reaction = reaction_for(ShellEvent::Terminate);
+        let reaction = reaction_for(ShellInput::Terminate);
 
         assert_eq!(reaction, Reaction::Message(Message::Quit));
     }
 
+    #[test]
+    fn a_probe_failure_becomes_a_paint_error_message() {
+        let error = PaintError::Probe(Diagnostic::from_error(&std::io::Error::other(
+            "no answer",
+        )));
+
+        let reaction = reaction_for(ShellInput::Error(error.clone()));
+
+        assert_eq!(
+            reaction,
+            Reaction::Message(Message::from(PaintEvent::Error(error)))
+        );
+    }
+
     #[rstest]
-    #[case::a_resize(ShellEvent::Terminal(Event::Resize(80, 24)))]
-    #[case::focus_gained(ShellEvent::Terminal(Event::FocusGained))]
-    fn resize_and_focus_gained_ask_for_a_repaint(#[case] input: ShellEvent) {
+    #[case::a_resize(ShellInput::Terminal(Event::Resize(80, 24)))]
+    #[case::focus_gained(ShellInput::Terminal(Event::FocusGained))]
+    fn resize_and_focus_gained_ask_for_a_repaint(#[case] input: ShellInput) {
         let reaction = reaction_for(input);
 
         assert_eq!(reaction, Reaction::Repaint);

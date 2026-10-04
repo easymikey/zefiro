@@ -50,24 +50,39 @@ pub(crate) fn append(dirs: &LibraryDirs, played: &HistoryEntry) -> Result<(), Er
     writeln!(file, "{json}").map_err(Error::io(LibrarySubject::History, &path))
 }
 
-pub(crate) fn load(
-    dirs: &LibraryDirs,
-    limit: usize,
-) -> Result<Vec<HistoryEntry>, Error> {
+pub(crate) fn load(dirs: &LibraryDirs, limit: usize) -> Result<HistoryRead, Error> {
     let path = dirs.data_dir.join("history.jsonl");
     let read = crate::files::read_if_present(&path);
     let contents = read.map_err(Error::io(LibrarySubject::History, &path))?;
-    Ok(contents.map_or_else(Vec::new, |text| parse_history(&text, limit)))
+    let (entries, skipped) =
+        contents.map_or_else(|| (Vec::new(), None), |text| parse_history(&text, limit));
+    Ok(HistoryRead {
+        entries,
+        skipped: skipped.map(Error::json(LibrarySubject::History, &path)),
+    })
 }
 
-fn parse_history(contents: &str, limit: usize) -> Vec<HistoryEntry> {
-    contents
+pub(crate) struct HistoryRead {
+    pub entries: Vec<HistoryEntry>,
+    pub skipped: Option<Error>,
+}
+
+fn parse_history(
+    contents: &str,
+    limit: usize,
+) -> (Vec<HistoryEntry>, Option<serde_json::Error>) {
+    let (parsed, broken): (Vec<_>, Vec<_>) = contents
         .lines()
         .rev()
-        .filter_map(|line| serde_json::from_str::<HistoryRecord>(line).ok())
+        .map(serde_json::from_str::<HistoryRecord>)
+        .partition(Result::is_ok);
+    let entries = parsed
+        .into_iter()
+        .flatten()
         .map(HistoryEntry::from)
         .take(limit)
-        .collect()
+        .collect();
+    (entries, broken.into_iter().find_map(Result::err))
 }
 
 #[cfg(test)]
@@ -125,7 +140,7 @@ mod tests {
         history::append(&dirs, &first).unwrap();
         history::append(&dirs, &second).unwrap();
 
-        let entries = history::load(&dirs, 10).unwrap();
+        let entries = history::load(&dirs, 10).unwrap().entries;
         insta::assert_debug_snapshot!(entries);
     }
 
@@ -134,7 +149,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let dirs = LibraryDirs::under(directory.path());
 
-        let entries = history::load(&dirs, 10).unwrap();
+        let entries = history::load(&dirs, 10).unwrap().entries;
 
         assert!(entries.is_empty());
     }
@@ -163,7 +178,9 @@ mod tests {
 
     #[test]
     fn parse_history_skips_a_corrupt_line_and_reverses_the_rest() {
-        insta::assert_debug_snapshot!(parse_history(HISTORY_LOG, 10));
+        let (entries, skipped) = parse_history(HISTORY_LOG, 10);
+        assert!(skipped.is_some());
+        insta::assert_debug_snapshot!(entries);
     }
 
     #[rstest]
@@ -172,6 +189,7 @@ mod tests {
     #[case::more_than_there_are(9, &["/music/third.flac", "/music/also-good.flac", "/music/good.flac"])]
     fn parse_history_caps_at_limit(#[case] limit: usize, #[case] expected: &[&str]) {
         let dirs: Vec<TrackRef> = parse_history(HISTORY_LOG, limit)
+            .0
             .into_iter()
             .map(|entry| entry.track)
             .collect();

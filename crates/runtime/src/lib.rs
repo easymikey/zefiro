@@ -1,15 +1,15 @@
 #![forbid(unsafe_code)]
 
-mod config;
 mod driver;
+mod driver_wait;
 mod error;
 mod event_loop;
 mod host;
 mod interpret;
 mod jobs;
 mod latest;
-mod library;
 mod macos;
+mod outbox;
 mod paint;
 mod port;
 mod registry;
@@ -22,12 +22,10 @@ mod trace;
 mod watcher;
 mod wiring;
 
-pub use config::{ConfigPaths, SeenTexts};
 pub use error::Error;
 pub use event_loop::run;
 pub use host::run_on_main_thread;
 pub use latest::{LatestReceiver, LatestReceivers, LatestSenders, latest_channels};
-pub use library::cover::{CoverDecoded, CoverError, CoverOutcome, CoverRequest};
 pub use repaint::FRAME_INTERVAL;
 pub use runtime::{Runtime, StartupPaths};
 pub use shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect};

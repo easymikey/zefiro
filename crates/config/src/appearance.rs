@@ -1,19 +1,11 @@
 use std::{fmt::Display, str::FromStr};
 
-pub use kernel::domain::appearance::{
+use kernel::domain::appearance::{
     Animations,
-    AppearancePatch,
-    AppearancePreset,
-    AppearanceSettings,
     CoverBrackets,
-    CoverMode,
     FormatChips,
     KeyHints,
-    LayoutMode,
     ProgressTime,
-    Rgb,
-    SpeedChip,
-    preset_of,
 };
 use serde::{Deserialize, Deserializer, de::Error as _};
 use strum::VariantNames;

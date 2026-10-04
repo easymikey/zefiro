@@ -5,5 +5,5 @@ mod motion;
 mod painter;
 mod view;
 
-pub(crate) use input::ShellEvent;
+pub(crate) use input::ShellInput;
 pub(crate) use painter::Painter;

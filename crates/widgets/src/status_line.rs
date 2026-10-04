@@ -1,7 +1,7 @@
 use std::{borrow::Cow, time::Duration};
 
 use kernel::{
-    domain::{ScanStatus, Shuffle},
+    domain::{ScanStatus, Shuffle, ViewIndex, geometry::Cells},
     playlist::RepeatMode,
 };
 use ratatui::{style::Color, text::Line};
@@ -12,6 +12,7 @@ use crate::{
         text::truncate_line_to_width,
     },
     repaint::ceil_minutes,
+    scene::Scene,
     theme::{ActiveTheme, Role},
 };
 
@@ -44,11 +45,32 @@ pub(crate) struct StatusLineView<'a> {
     pub(crate) shuffle: Shuffle,
     pub(crate) repeat_mode: RepeatMode,
     pub(crate) queue_len: usize,
-    pub(crate) position: usize,
+    pub(crate) position: ViewIndex,
     pub(crate) total: usize,
     pub(crate) scan: ScanProgress<'a>,
     pub(crate) theme_name: &'a str,
     pub(crate) sleep_left: Option<Duration>,
+}
+
+impl<'a> StatusLineView<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
+        let shuffle = if scene.playlist.play_order.is_shuffle() {
+            Shuffle::Enabled
+        } else {
+            Shuffle::Disabled
+        };
+        Self {
+            shuffle,
+            repeat_mode: scene.playlist.repeat,
+            queue_len: scene.queue.len(),
+            position: scene.browse_selected,
+            total: scene.playlist.tracks.len(),
+            scan: ScanProgress::of(scene.scan, scene.theme.scanning_label.as_str()),
+            theme_name: scene.theme.name.as_str(),
+            sleep_left: scene.sleep_left,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -76,7 +98,7 @@ fn counts(status: StatusLineView<'_>) -> String {
     match status.scan {
         ScanProgress::Done => format!(
             "{}/{}",
-            (status.position + 1).min(status.total),
+            (status.position.get() + 1).min(status.total),
             status.total
         ),
         ScanProgress::Scanning(label) => label.to_string(),
@@ -94,7 +116,7 @@ fn sleep_label(left: Duration) -> String {
 pub(crate) fn status_line<'a>(
     status: StatusLineView<'a>,
     style: StatusLineStyle,
-    row_width: usize,
+    row_width: Cells,
 ) -> Line<'a> {
     let pos_total = counts(status);
 
@@ -138,14 +160,17 @@ pub(crate) fn status_line<'a>(
                 },
             ));
 
-    truncate_line_to_width(line(pieces), row_width)
+    truncate_line_to_width(line(pieces), row_width.count())
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use kernel::{domain::Shuffle, playlist::RepeatMode};
+    use kernel::{
+        domain::{Shuffle, ViewIndex, geometry::Cells},
+        playlist::RepeatMode,
+    };
     use ratatui::style::Color;
     use rstest::rstest;
     use unicode_width::UnicodeWidthStr;
@@ -171,7 +196,7 @@ mod tests {
             shuffle: Shuffle::Enabled,
             repeat_mode: RepeatMode::All,
             queue_len: 7,
-            position: 2,
+            position: ViewIndex::new(2),
             total: 12,
             scan: ScanProgress::Done,
             theme_name: "rose-pine",
@@ -188,7 +213,7 @@ mod tests {
             },
             ..view()
         };
-        insta::assert_snapshot!(status_line(status, colors(), 80).to_string());
+        insta::assert_snapshot!(status_line(status, colors(), Cells(80)).to_string());
     }
 
     #[test]
@@ -197,7 +222,7 @@ mod tests {
             scan: ScanProgress::Scanning("Scanning…"),
             ..view()
         };
-        insta::assert_snapshot!(status_line(status, colors(), 80).to_string());
+        insta::assert_snapshot!(status_line(status, colors(), Cells(80)).to_string());
     }
 
     #[test]
@@ -207,13 +232,13 @@ mod tests {
             muted_foreground: Color::Gray,
             accent: Color::Cyan,
         };
-        let line = status_line(view(), style, 80);
+        let line = status_line(view(), style, Cells(80));
         insta::assert_debug_snapshot!(line);
     }
 
     #[test]
     fn the_title_names_the_pane_its_position_and_its_flags() {
-        let text: String = status_line(view(), colors(), 80)
+        let text: String = status_line(view(), colors(), Cells(80))
             .spans
             .iter()
             .map(|span| span.content.as_ref())
@@ -230,7 +255,7 @@ mod tests {
             sleep_left: Some(Duration::from_secs(14 * 60 + 59)),
             ..view()
         };
-        let text: String = status_line(status, colors(), 100)
+        let text: String = status_line(status, colors(), Cells(100))
             .spans
             .iter()
             .map(|span| span.content.as_ref())
@@ -253,13 +278,13 @@ mod tests {
 
     #[test]
     fn a_narrow_border_truncates_the_title_with_an_ellipsis() {
-        let budget = 24;
+        let budget = Cells(24);
         let text: String = status_line(view(), colors(), budget)
             .spans
             .iter()
             .map(|span| span.content.as_ref())
             .collect();
-        assert!(text.width() <= budget, "got {text:?}");
+        assert!(text.width() <= budget.count(), "got {text:?}");
         assert!(text.ends_with('…'), "got {text:?}");
         assert!(text.starts_with("Playlist"), "got {text:?}");
     }

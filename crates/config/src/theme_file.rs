@@ -1,14 +1,14 @@
-use kernel::domain::{ConfigName, ThemeName};
+use kernel::domain::{ConfigName, ThemeName, appearance::Rgb};
 use serde::{Deserialize, Deserializer};
 
 use crate::{
-    appearance::{Rgb, from_str_field, from_str_option},
+    appearance::{from_str_field, from_str_option},
     error::{Error, parse_toml},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ThemeColors {
+#[serde(deny_unknown_fields, expecting = "a [colors] table of hex colours")]
+pub struct TomlColors {
     #[serde(rename = "bg", deserialize_with = "from_str_field")]
     pub background: Rgb,
     #[serde(rename = "fg", deserialize_with = "from_str_field")]
@@ -42,11 +42,14 @@ fn default_scanning_label() -> String {
 
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ThemeFile {
+#[serde(
+    deny_unknown_fields,
+    expecting = "a theme file with a name and a [colors] table"
+)]
+pub struct TomlTheme {
     #[serde(deserialize_with = "theme_name")]
     pub name: ThemeName,
-    pub colors: ThemeColors,
+    pub colors: TomlColors,
     #[serde(default = "default_scanning_label")]
     pub scanning_label: String,
 }
@@ -56,17 +59,17 @@ pub fn theme_file_name(name: &str) -> String {
     format!("{name}.toml")
 }
 
-pub fn parse_theme(source: &str, name: &str) -> Result<ThemeFile, Error> {
+pub fn parse_theme(source: &str, name: &str) -> Result<TomlTheme, Error> {
     let theme = ThemeName::new(name.to_owned())?;
     parse_toml(source, ConfigName::Theme(theme))
 }
 
 #[cfg(test)]
 mod tests {
+    use kernel::domain::appearance::Rgb;
     use rstest::rstest;
 
     use crate::{
-        appearance::Rgb,
         embedded_theme::EMBEDDED_THEMES,
         error::Error,
         theme_file::parse_theme,

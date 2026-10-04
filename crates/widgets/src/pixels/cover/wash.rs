@@ -18,13 +18,14 @@ pub fn column_reveal(
     let cell_width_px = u32::from(cell_width_px.max(1));
     Some(move |x_px: u32| {
         let offset = u16::try_from(x_px / cell_width_px).unwrap_or(u16::MAX);
-        wash_reveal(progress, rect.x.saturating_add(offset), screen_width)
+        wash_reveal(progress, rect.x.saturating_add(offset), screen_width.0)
     })
 }
 
 #[cfg(test)]
 mod tests {
     use image::{Rgba, RgbaImage};
+    use kernel::domain::geometry::Cells;
     use ratatui::layout::Rect;
 
     use crate::pixels::cover::{
@@ -53,7 +54,7 @@ mod tests {
             Rect::new(80, 0, 40, 4),
             CoverWash::Running {
                 progress: 0.5,
-                screen_width: 200,
+                screen_width: Cells(200),
             },
         );
 
@@ -73,7 +74,7 @@ mod tests {
             Rect::new(0, 0, 20, 2),
             CoverWash::Running {
                 progress: 1.0,
-                screen_width: 20,
+                screen_width: Cells(20),
             },
         );
 

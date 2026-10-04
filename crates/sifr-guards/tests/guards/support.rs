@@ -90,7 +90,7 @@ pub(crate) fn files_in(crate_names: &[&str], area: &str) -> Vec<(String, PathBuf
 }
 
 pub(crate) fn read(path: &Path) -> String {
-    fs::read_to_string(path).unwrap_or_default()
+    fs::read_to_string(path).unwrap_or_else(|_| String::new())
 }
 
 pub(crate) fn manifests() -> Vec<(String, toml::Value)> {

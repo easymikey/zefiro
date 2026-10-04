@@ -21,4 +21,7 @@ mod length;
 mod lexer;
 mod macros;
 mod naming;
+mod public_types;
 mod purity;
+mod test_files;
+mod wildcard_arms;

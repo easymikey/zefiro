@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
-use config::ThemeFile;
-use crossbeam_channel::{Receiver, Sender, bounded};
-
-use crate::library::cover::CoverDecoded;
+use config::TomlTheme;
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
+use library::CoverDecoded;
 
 #[derive(Debug)]
 pub struct LatestSender<T> {
@@ -15,7 +14,9 @@ pub struct LatestSender<T> {
 impl<T> LatestSender<T> {
     pub(crate) fn publish(&self, latest: T) {
         self.value.store(Some(Arc::new(latest)));
-        let _ = self.notify.try_send(());
+        match self.notify.try_send(()) {
+            Ok(()) | Err(TrySendError::Full(()) | TrySendError::Disconnected(())) => {}
+        }
     }
 }
 
@@ -42,13 +43,13 @@ impl<T> LatestReceiver<T> {
 
 #[derive(Debug)]
 pub struct LatestReceivers {
-    pub theme: LatestReceiver<ThemeFile>,
+    pub theme: LatestReceiver<TomlTheme>,
     pub cover: LatestReceiver<CoverDecoded>,
 }
 
 #[derive(Debug, Clone)]
 pub struct LatestSenders {
-    pub theme: LatestSender<ThemeFile>,
+    pub theme: LatestSender<TomlTheme>,
     pub cover: LatestSender<CoverDecoded>,
 }
 
@@ -77,11 +78,9 @@ pub fn latest_channels() -> (LatestSenders, LatestReceivers, Receiver<()>) {
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::bounded;
+    use library::{CoverArt, CoverDecoded};
 
-    use crate::{
-        latest::{LatestReceiver, LatestSender},
-        library::cover::{CoverDecoded, CoverOutcome},
-    };
+    use crate::latest::{LatestReceiver, LatestSender};
 
     fn pair<T>() -> (
         LatestSender<T>,
@@ -113,8 +112,8 @@ mod tests {
     fn stub_decoded(path: &str) -> CoverDecoded {
         CoverDecoded {
             path: std::path::PathBuf::from(path),
-            side: 64,
-            outcome: CoverOutcome::NoArt,
+            side: kernel::domain::geometry::Pixels(64),
+            art: CoverArt::Missing,
         }
     }
 

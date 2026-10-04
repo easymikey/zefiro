@@ -6,9 +6,13 @@ expression: effects(cmd)
     Library(
         TagTracks {
             music_dir: "/music",
-            paths: [
-                "/music/a.flac",
-                "/music/b.flac",
+            tracks: [
+                Local(
+                    "/music/a.flac",
+                ),
+                Local(
+                    "/music/b.flac",
+                ),
             ],
             revision: Revision(
                 0,

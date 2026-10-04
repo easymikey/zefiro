@@ -5,5 +5,5 @@ expression: "(unreadable.to_string(), save.to_string())"
 ---
 (
     "the themes folder is unreadable: an unknown error",
-    "the theme file could not be saved: disk full",
+    "the theme noir could not be saved: disk full",
 )

@@ -29,17 +29,28 @@ use crate::{
         Workspace,
         playlist::{PlayOrder, Playlist},
     },
-    message::{BrowseRequest, MacosEvent, Message, Timer},
+    message::{
+        BrowseRequest,
+        DriverEvent,
+        MacosEvent,
+        Message,
+        PaintError,
+        PaintEvent,
+        PlaylistRequest,
+        Timer,
+    },
 };
+
+fn paint_toast(error: &PaintError) -> Toast {
+    Toast::error(error.to_string()).with_text(error.diagnostic().text())
+}
 
 #[must_use]
 pub fn startup(startup: Startup) -> (Model, Vec<Effect>) {
     let mut model = Model::default();
     let (mut effects, messages) = startup::seed_model(&mut model, startup).into_parts();
     for queued in messages {
-        if let Ok(drained) = drain(&mut model, (queued, 0), Moment::default()) {
-            effects.extend(drained);
-        }
+        effects.extend(follow_up(&mut model, queued, 0));
     }
     effects.extend(roll_pending(&model.playlist));
     (model, effects)
@@ -74,21 +85,33 @@ pub fn update(
 
 fn drain(
     model: &mut Model,
-    (message, depth): (Message, usize),
+    message: Message,
     now: Moment,
 ) -> Result<Vec<Effect>, Unhandled> {
     let (mut effects, messages) = branch(model, message, now)?.into_parts();
+    for queued in messages {
+        effects.extend(follow_up(model, queued, 1));
+    }
+    Ok(effects)
+}
+
+fn follow_up(model: &mut Model, message: Message, depth: usize) -> Vec<Effect> {
+    let now = model.workspace.clock;
+    let Ok(cmd) = branch(model, message, now) else {
+        return Vec::new();
+    };
+    let (mut effects, messages) = cmd.into_parts();
     if depth >= DRAIN_DEPTH {
         debug_assert!(
             messages.is_empty(),
             "message chain deeper than {DRAIN_DEPTH}"
         );
-        return Ok(effects);
+        return effects;
     }
     for queued in messages {
-        effects.extend(drain(model, (queued, depth + 1), now)?);
+        effects.extend(follow_up(model, queued, depth + 1));
     }
-    Ok(effects)
+    effects
 }
 
 pub(crate) fn quit() -> Cmd {
@@ -123,6 +146,7 @@ impl Input {
                 | MacosEvent::Error(_),
             )
             | Message::Toast(_)
+            | Message::Paint(_)
             | Message::Playlist(_)
             | Message::ShuffleRolled(_)
             | Message::Library(_)
@@ -130,7 +154,6 @@ impl Input {
             | Message::Audio(_)
             | Message::Elapsed(_)
             | Message::Driver { .. }
-            | Message::DriverDied(_)
             | Message::Key(_)
             | Message::Viewport { .. }
             | Message::Quit => Input::Event,
@@ -153,7 +176,7 @@ fn update_model(
     let input = Input::of(&message);
     model.workspace.clock = now;
     let dismissed = dismissal(&mut model.workspace, input);
-    let effects = match drain(model, (message, 0), now) {
+    let effects = match drain(model, message, now) {
         Ok(effects) => effects,
         Err(refusal) => {
             restore(&mut model.workspace, dismissed);
@@ -313,8 +336,14 @@ fn driver_died(model: &mut Model, driver: DriverName, now: Moment) -> Cmd {
         driver::Restart::Declined(cmd) => cmd,
         driver::Restart::Granted => {
             let startup = startup::startup_cmd(model, driver);
-            let resumed =
-                driver::resumed(&model.player, &mut model.revisions, (driver, now));
+            let resumed = driver::resumed(
+                driver::ResumeParts {
+                    player: &model.player,
+                    revisions: &mut model.revisions,
+                },
+                driver,
+                now,
+            );
             Cmd::from(Effect::Restart(driver))
                 .then(startup)
                 .then(resumed)
@@ -353,23 +382,30 @@ fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhan
             },
             queue_request,
         ),
-        Message::Playlist(loaded_request) => {
-            library::update(playback_parts(model), loaded_request, now)
+        Message::Playlist(PlaylistRequest::JumpTo(index)) => {
+            audio::jump_to(&mut playback_parts(model), index, now)
         }
         Message::ShuffleRolled(order) => model
             .playlist
             .transition(playlist::PlaylistMessage::ShuffleRolled(order)),
-        Message::Library(event) => library::library(library_parts(model), event),
+        Message::Library(event) => library::update(library_parts(model), event),
         Message::Config(event) => config::update(config_parts(model), event),
         Message::Audio(audio_event) => {
             audio::update(&mut playback_parts(model), audio_event, now)
         }
         Message::Macos(event) => macos::update(&mut playback_parts(model), event, now),
+        Message::Paint(PaintEvent::Error(error)) => Ok(model
+            .workspace
+            .show(paint_toast(&error), &mut model.revisions)),
         Message::Elapsed(timer) => elapsed(model, timer, now),
         Message::Driver { driver, event } => {
-            driver::update(&mut model.drivers, driver, event)
+            let died = matches!(event, DriverEvent::Died(_));
+            let cmd = driver::update(&mut model.drivers, driver, event)?;
+            Ok(match died {
+                true => cmd.then(driver_died(model, driver, now)),
+                false => cmd,
+            })
         }
-        Message::DriverDied(driver) => Ok(driver_died(model, driver, now)),
         Message::Key(_) | Message::Viewport { .. } => Ok(Cmd::none()),
         Message::Quit => Ok(quit()),
     }
@@ -383,8 +419,9 @@ mod tests {
 
     use crate::{
         cmd::Effect,
-        domain::{Shuffle, Startup, Track},
-        update::startup,
+        domain::{Diagnostic, Model, Moment, Shuffle, Startup, Toast, Track},
+        message::{Message, PaintError, PaintEvent},
+        update::{startup, update},
     };
 
     fn startup_with(shuffle: Shuffle) -> Startup {
@@ -418,5 +455,32 @@ mod tests {
         let (_, cmd) = startup(startup_with(shuffle));
 
         assert_eq!(rolled_len(cmd), expected);
+    }
+
+    #[rstest]
+    #[case::window_colors(
+        PaintError::WindowColors(diagnostic()),
+        "Window colors failed"
+    )]
+    #[case::cover(PaintError::Cover(diagnostic()), "Cover art failed")]
+    #[case::probe(PaintError::Probe(diagnostic()), "Terminal probe failed")]
+    fn a_paint_failure_shows_its_toast(#[case] error: PaintError, #[case] title: &str) {
+        let mut model = Model::default();
+
+        let effects = update(
+            &mut model,
+            Message::from(PaintEvent::Error(error)),
+            Moment::default(),
+        );
+
+        assert!(effects.is_ok());
+        assert_eq!(
+            model.workspace.toasts.last(),
+            Some(&Toast::error(title).with_text("broken pipe"))
+        );
+    }
+
+    fn diagnostic() -> Diagnostic {
+        Diagnostic::from_error(&std::io::Error::other("broken pipe"))
     }
 }

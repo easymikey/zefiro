@@ -1,3 +1,4 @@
+use kernel::domain::geometry::Cells;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -11,7 +12,6 @@ use crate::overlay::modal::place::{
     DIALOG_SCREEN_MARGIN,
     FrameWidth,
     LIST_SCREEN_MARGIN,
-    PlacedSize,
     content_size,
     padded_content,
     place,
@@ -21,17 +21,17 @@ use crate::overlay::modal::place::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModalSize {
     List {
-        content_width: u16,
-        content_rows: u16,
+        content_width: Cells,
+        content_rows: Cells,
     },
     Dialog {
-        min_width: u16,
-        content_width: u16,
-        content_lines: u16,
+        min_width: Cells,
+        content_width: Cells,
+        content_lines: Cells,
     },
     FrameWidth {
         bounds: Rect,
-        content_rows: u16,
+        content_rows: Cells,
     },
 }
 
@@ -93,24 +93,24 @@ impl<'a> Modal<'a> {
                 content_width,
                 content_rows,
             } => {
-                let (width, height) = content_size(
+                let size = content_size(
                     bounds.area,
                     ContentSize {
-                        min_width: 0,
+                        min_width: Cells(0),
                         content_width,
                         content_rows,
                         hint,
                         screen_margin: LIST_SCREEN_MARGIN,
                     },
                 );
-                place(bounds.area, PlacedSize { width, height }, bounds.avoid)
+                place(bounds.area, size, bounds.avoid)
             }
             ModalSize::Dialog {
                 min_width,
                 content_width,
                 content_lines,
             } => {
-                let (width, height) = content_size(
+                let size = content_size(
                     bounds.area,
                     ContentSize {
                         min_width,
@@ -120,7 +120,7 @@ impl<'a> Modal<'a> {
                         screen_margin: DIALOG_SCREEN_MARGIN,
                     },
                 );
-                place(bounds.area, PlacedSize { width, height }, bounds.avoid)
+                place(bounds.area, size, bounds.avoid)
             }
             ModalSize::FrameWidth {
                 bounds: frame_bounds,
@@ -161,6 +161,7 @@ impl<'a> Modal<'a> {
 
 #[cfg(test)]
 mod tests {
+    use kernel::domain::geometry::Cells;
     use ratatui::{layout::Rect, style::Color, text::Line};
     use rstest::rstest;
 
@@ -175,8 +176,8 @@ mod tests {
 
     fn list(content_width: u16, content_rows: u16) -> ModalSize {
         ModalSize::List {
-            content_width,
-            content_rows,
+            content_width: Cells(content_width),
+            content_rows: Cells(content_rows),
         }
     }
 
@@ -207,19 +208,19 @@ mod tests {
     #[case::a_list_on_a_tiny_screen(ModalRow { name: "list_tiny", size: list(200, 200), hint: Hint::Absent, screen: area(30, 10) })]
     #[case::a_dialog(ModalRow {
         name: "dialog",
-        size: ModalSize::Dialog { min_width: 24, content_width: 20, content_lines: 3 },
+        size: ModalSize::Dialog { min_width: Cells(24), content_width: Cells(20), content_lines: Cells(3) },
         hint: Hint::Present,
         screen: area(80, 24),
     })]
     #[case::a_dialog_narrower_than_its_minimum(ModalRow {
         name: "dialog_min_width",
-        size: ModalSize::Dialog { min_width: 40, content_width: 5, content_lines: 1 },
+        size: ModalSize::Dialog { min_width: Cells(40), content_width: Cells(5), content_lines: Cells(1) },
         hint: Hint::Absent,
         screen: area(80, 24),
     })]
     #[case::a_dialog_larger_than_the_screen(ModalRow {
         name: "dialog_clamped",
-        size: ModalSize::Dialog { min_width: 200, content_width: 200, content_lines: 3 },
+        size: ModalSize::Dialog { min_width: Cells(200), content_width: Cells(200), content_lines: Cells(3) },
         hint: Hint::Present,
         screen: area(80, 24),
     })]
@@ -250,11 +251,11 @@ mod tests {
     #[test]
     fn list_capacity_matches_what_frame_clamps_a_huge_list_to() {
         let screen = area(80, 24);
-        let (capacity_width, capacity_rows) = list_capacity(screen, Hint::Present);
+        let capacity = list_capacity(screen, Hint::Present);
         let frame = modal(list(200, 200), Hint::Present).areas(screen, &[]);
         assert_eq!(
             (frame.body.width, frame.body.height),
-            (capacity_width, capacity_rows)
+            (capacity.width.0, capacity.height.0)
         );
     }
 
@@ -263,8 +264,8 @@ mod tests {
         let modal = Modal {
             title: "T",
             size: ModalSize::List {
-                content_width: 20,
-                content_rows: 5,
+                content_width: Cells(20),
+                content_rows: Cells(5),
             },
             hint: None,
             border: Color::Reset,
@@ -307,8 +308,8 @@ mod tests {
         let modal = Modal {
             title: "T",
             size: ModalSize::List {
-                content_width: 20,
-                content_rows: 5,
+                content_width: Cells(20),
+                content_rows: Cells(5),
             },
             hint: None,
             border: Color::Reset,

@@ -28,25 +28,24 @@ XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► Outbox 
 | kind | crate | required shape | name | check |
 |---|---|---|---|---|
 | Model | kernel | the only app state; owned slices (`player`, `transport`, `playlist`, `workspace`, `queue`, …); `startup(Startup) -> (Model, Vec<Effect>)` (drains its messages like `update`); `update(&mut Model, Message, Moment) -> Result<Vec<Effect>, Unhandled>` (drains `Cmd` messages itself, §3.4) | `Model`; first call `startup` | review |
-| Machine | kernel (trait), implementors anywhere | `trait Machine { type Message; type Effect; fn transition(&mut self, message: Self::Message) -> Result<Self::Effect, Unhandled>; }`; `Effect` is a `Cmd` type (kernel `Cmd`, driver part `Cmd<XEffect, XEvent>`) | see §3 | review |
+| Machine | kernel (trait), implementors anywhere | `trait Machine { type Message; type Effect; fn transition(&mut self, message: Self::Message) -> Result<Self::Effect, Unhandled>; }`; `Effect` is a `Cmd` type (kernel `Cmd`, driver part `Cmd<XEffect, XEvent>`); the contract (`Machine`, `Driver`, `Unhandled`) lives in `kernel::update::machine`, effects in `kernel::cmd` | see §3 | review |
 | Parts | kernel | `struct XParts<'a>` whose fields are only `&`/`&mut` borrows of `Model` fields, built by the router | `XParts` | review |
-| Cmd | kernel | `struct Cmd<E = Effect, M = Message> { effects: Vec<E>, messages: Vec<M> }`; build with `Cmd::none()`, `Cmd::effect(e)`, `Cmd::message(m)`, `From<Effect>`, `From<Cue>`; join with `then` (appends, in order); read with `effects()` / `IntoIterator`, split with `into_parts()` (runtime reads a driver Cmd); nested machines lift with `map_effect` / `map_message`. No other combinator (`merge`, `chain`, `batch`, `and`) | `Cmd` = what a machine returned | guard |
+| Cmd | kernel | `struct Cmd<E = Effect, M = Message> { effects: Vec<E>, messages: Vec<M> }`; build with `Cmd::none()`, `Cmd::effect(e)`, `Cmd::message(m)`, `From<Effect>`, `From<Cue>`, `FromIterator<E>`; join with `then` (appends, in order); read with `effects()` / `IntoIterator`, split with `into_parts()` (runtime reads a driver Cmd); nested machines lift with `map_effect` / `map_message`. No other combinator (`merge`, `chain`, `batch`, `and`) | `Cmd` = what a machine returned | guard |
 | Effect | kernel | one variant per target: `Audio(AudioCmd)`, `Library(LibraryCmd)`, `Macos(MacosCmd)`, `Config(ConfigCmd)`, `WindowColors(WindowColorsCmd)`, `Animate(Cue)`, `RollShuffle(usize)`, `After { delay, timer }`, `Restart(DriverName)`, `Quit` | `Effect` | review |
 | XCmd | kernel | the order to one driver, carried inside `Effect` | `AudioCmd`, `LibraryCmd`, `MacosCmd`, `ConfigCmd` | guard |
-| XJob | driver | background work a driver machine hands to the runtime worker as `XEffect::Run(XJob)`; the answer comes back as an `XMessage` | `AudioJob` (`Decode`, `Preload`, `ListDevices`) | review |
 | Event | kernel (types) | what a driver reports; `From<XEvent> for Message`; driver lifecycle is `DriverEvent { Died, Stopped, Full }` | `XEvent` | guard |
 | Answer | kernel | runtime's reply to a kernel effect it ran: a `Message` variant named for the effect in the past tense (`Effect::RollShuffle` → `Message::ShuffleRolled`) | past tense of the effect | review |
 | Request | kernel | what the shell asks the core; always a branch of `Message` | `XRequest` | guard |
 | Message | kernel | the only input of `update`: `X(XRequest)`, `X(XEvent)`, answers, `Elapsed(Timer)`, `Driver { driver, event }`, `Key(KeyPress)`, … | `Message` | review |
-| Driver | audio, macos, library, config (each driver machine lives in its own crate; runtime holds no driver machine) | the top machine of one external source (§4) | `AudioDriver`, `MacosDriver`, `LibraryDriver`, `ConfigDriver` | guard |
-| DriverLoop | runtime | one generic loop, one thread per driver (§4); a driver effect reaches it through `LoopEffect { Execute, Run, After, Watch }` (decided 2026-10-04); runtime seeds `XMessage::Started` into the inbox at spawn; a value the driver publishes goes out through a closure sink `P: Fn(T)` the runtime passes in (until S15) | `DriverLoop` | guard |
-| Stream | runtime | a repeated input started by a driver effect (`Watch(PathBuf)`, as Crux `stream_from_shell`); runtime owns it and feeds its items back as `XMessage`s. The word `Subscription` is not used | one runtime type for the two `Watch<W>`, name fixed in the runtime step | guard |
-| Job | driver crate (type), runtime (thread) | one unit of slow blocking work for a worker thread, carried by the effect variant `Run(XJob)` (§4.7) | `XJob` (`DecodeJob`, `CoverJob`) | review |
+| Driver | audio, macos, library, config | the top machine of one external source (§4) | `AudioDriver`, `MacosDriver`, `LibraryDriver`, `ConfigDriver` | guard |
+| DriverLoop | runtime | one generic loop, one thread per driver (§4); a driver effect reaches it through `LoopEffect { Execute, Run, After, Watch, Unwatch }` (decided 2026-10-04); runtime seeds `XMessage::Started` into the inbox at spawn through the `DriverLoop` field `seed: Option<D::Message>`; the loop's private next-input enum is `LoopInput` (not `Wake`, reserved for the realtime wake-up); the inputs `Spawners` hands each driver thread are `SpawnSetup`, the per-driver start closures `SpawnAudio`/`SpawnLibrary`; an audio driver that stops before handing over its tap is `Error::TapLost { driver }`; a value the driver publishes goes out through a closure sink `P: Fn(T)` the runtime passes in | `DriverLoop` | guard |
+| Stream | runtime | a repeated input started by a driver effect (`Watch(PathBuf)`, as Crux `stream_from_shell`); runtime owns it and feeds its items back as `XMessage`s. The word `Subscription` is not used | `FileStream` | guard |
+| Job | driver crate (type), runtime (thread) | slow blocking work a driver hands to the runtime worker as `XEffect::Run(XJob)`; the result returns as an `XMessage`; stale by `Revision` (§4.7) | `AudioJob`, `LibraryJob`, `MacosJob` | review |
 | Error | every crate that can fail | §6 | `Error`, `<Type>Error` | guard |
 | Scene | widgets | `Scene::from_model(&Model, ScenePresentation)`; the only widget code that sees `&Model`; no `*_view()` or `layout_parts()` getters | `Scene` | guard |
 | View | widgets | read-model holding fields from two or more `Model` slices; borrowed fields, no state, no `&Model`; built only by `XView::from_scene(&Scene)` | `XView<'a>` | review |
 | Widget | widgets | every type with `impl Widget`, overlays included; every widget type ends in `Widget` (`ToastWidget`, `CardWidget`, `TooSmallWidget`); built by `XWidget::new(input)` + builder methods (`style(XStyle)`, …); `input` is `&` one Model slice or one `XView` | `XWidget`, never `*Overlay` | guard |
-| Style | widgets | a component's look; built only by `XStyle::from_theme(&ActiveTheme)`; fields are semantic colours (`foreground`, `muted_foreground`, `background`, `border`, `accent`, …) | `XStyle` | review |
+| Style | widgets | a component's look; built only by `XStyle::from_theme(&ActiveTheme)`; an input beyond the theme rides on `ActiveTheme` through a builder (`with_progress`, `with_volume_pulse`); fields are semantic colours (`foreground`, `muted_foreground`, `background`, `border`, `accent`, …) | `XStyle` | review |
 | Colors | widgets | only the theme palette | `Colors` | guard |
 | raw TOML | config | every serde shape of a file or a section; each carries `#[serde(expecting = "…")]` in user words (`"a [cover] table"`), so a Rust name never reaches a toast | `Toml*` (`TomlTheme`, `TomlAppearance`, `TomlKeymap`, `TomlCard`, `TomlColors`, `TomlAudio`) | guard |
 | parsed value | kernel, widgets | what inner code uses; parsed once at the boundary, never re-checked | bare noun (`Theme`, `Keymap`, `Appearance`) | review |
@@ -62,10 +61,10 @@ XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► Outbox 
 3. The input is an enum `XMessage` where X is the machine's type name (for an impl on `Option<T>` or `CursorOver<T>`, the noun of `T`; for a top driver machine, the subsystem: `AudioMessage`, `MacosMessage`, `LibraryMessage`, `ConfigMessage`), even with one variant, so a new input source is one new variant. The parameter is always `message`. `guard`
 4. A message to self or parent is `Cmd::message(m)`; no follow-up or out-message types. DECIDED 2026-10-03 (as Crux `process_event`): kernel `update` drains every `Cmd` message itself, depth-first, in order, inside the same call, and returns only the collected effects, so a step and its follow-ups are atomic, no frame sees a half-applied model, and kernel tests see the final state through the production `update`. Depth over 8 is a programmer error: `debug_assert!`, and release stops the chain. `review`
 5. The match is exhaustive, no `_ =>`. A variant move uses one `mem::replace`; `mem::take` on machine state is banned. `guard` (`_ =>`), `review` (`mem::take`)
-9. A machine on a realtime thread (cpal callback: `Envelope`) has `Effect = ()`: `transition(&mut self, message) -> Result<(), Unhandled>`, so it allocates nothing. `guard`
 6. A machine reads no clock. Kernel time arrives as `Moment`; driver commands arrive as `XMessage::Cmds(Cmds { cmds, at: Instant })` (kernel `pub struct Cmds<C> { cmds: Vec<C>, at: Instant }`; `DriverLoop` needs `D::Message: From<Cmds<C>>`) (`DriverLoop` reads the clock; time as data, as `crux_time`). `review`
 7. A part is a plain noun naming what it works on, with no `State` suffix: `Engine`, `Hardware`, `Cover`, `LibraryWatch`, `ConfigWatch`, `TrackDecoding`, `CoverDecoding`. No two public types in the workspace share a name, except each crate's boundary `Error` (two `Decoding` types became `TrackDecoding` and `CoverDecoding`). `guard`
 8. Keys bubble along the key context stack: every binding names its `KeyContext`, the router walks the stack innermost first (open overlay, then playlist, then global) and takes the first match; `Esc`/`q` in an overlay are ordinary `Close` bindings, not router special cases. `review`
+9. A machine on a realtime thread (cpal callback: `Envelope`) has `Effect = ()`: `transition(&mut self, message) -> Result<(), Unhandled>`, so it allocates nothing. `guard`
 
 ## 4. Drivers
 
@@ -80,7 +79,7 @@ Why `Driver`: same roles as OS drivers (request in, interrupt-driven events out,
 5b. DECIDED 2026-10-03: a thread the OS or a library owns (AppKit main thread, CoreAudio listeners, cpal/rodio output) is a callback, never created or joined by us. Runtime opens a channel into the driver's inbox and hands its sender to whoever registers the callback; the callback only parses its input (§4.6) and sends an `XMessage`; every decision is in the driver machine on its own thread. The AppKit main loop `MainLoop` is started by runtime `host` (the name follows AppKit; allowed `Loop` types are in §9). `review`
 6. Input from a callback that must answer synchronously (AppKit remote commands) is parsed at the boundary and decided in the machine: `RemoteInput::parse(trigger, event) -> Result<RemoteInput, RemoteInputError>`; a parse error answers `CommandFailed` at once, a parsed input is sent as `MacosMessage::Remote(input)` and answers `Success`. `review`
 7. An `Effect` is what a machine asks to be done outside; it runs at once (`execute` for a driver, runtime for the kernel). A `Job` is slow work for a worker thread, carried as `Run(XJob)` (not `Queue`: queue is the play queue); its result returns later as an `XMessage`. A job in flight carries a `Revision`; a result whose `Revision` is stale is dropped. `review`
-8. Nothing shared crosses a driver boundary: values cross as owned messages or through latest-value cells; no `Mutex`/`RwLock` handed out. `review`
+8. Nothing shared crosses a driver boundary: values cross as owned messages or through latest-value cells; no `Mutex`/`RwLock` handed out. A plain fn the composition root hands a driver (`library::embedded_cover` for macos covers) is code, not shared state. `review`
 9. Platform code lives in its own crate (`macos`), a `[target.'cfg(target_os = "…")'.dependencies]` entry, never a plain dependency; with one backend per target the choice is compile-time, no trait object. `review`
 10. Adding a driver is this checklist, nothing else: a `DriverName` variant; its `runtime::registry` `DriverRow` (thread name, hosting, platform) and its `Supervision::standard` arm; its port in `Ports`; `XCmd` and the variant `Effect::X(XCmd)` with its interpreter arm; `XEvent` and `From<XEvent> for Message`; `XMessage` with `Cmds(Cmds<XCmd>)`; `impl Machine` and `impl Driver for XDriver`; `DriverLoop::spawn(start)` in wiring; a table test of `transition`. Wiring outside these places is a defect. `review`
 
@@ -96,7 +95,7 @@ Why `Driver`: same roles as OS drivers (request in, interrupt-driven events out,
 
 1. Every crate that can fail has one boundary `Error`. Machines and `update` return `Unhandled` (§3.2), not an error type. `guard`
 2. An error of parsing or validating one value is `<Type>Error` (`ThemeNameError`, `TimecodeError`, `RemoteInputError`); its out-of-range case is the variant `OutOfRange { value, max }` (plus `min` when the floor is not zero). A panic payload is not carried: `DriverError::Panicked` is a unit variant; the payload text is dropped until runtime devtools exist (§6.4). `guard`
-3. `thiserror` enum, `#[error]` user text on every variant, `#[source]` chains, context fields, no `String` payloads (kernel `ConfigReload { name: ConfigName, result: Result<(), ConfigError> }`, `ConfigError: PartialEq` so a toast shows only for a new error; user text comes from `Display` when the toast is built), no `Box<dyn Error>`, no `anyhow`, `From` only along a real crate edge. No `let _ =` anywhere, tests included (a value is handled, propagated, asserted or turned into an event), no `unwrap_or_default` hiding an error. `guard` (`errors.rs`)
+3. `thiserror` enum, `#[error]` user text on every variant, `#[source]` chains, context fields, no `String` payloads (config reload: §8; `ConfigError: PartialEq` so a toast shows only for a new error; user text comes from `Display` when the toast is built), no `Box<dyn Error>`, no `anyhow`, `From` only along a real crate edge. No `let _ =` anywhere, tests included (a value is handled, propagated, asserted or turned into an event), no `unwrap_or_default` hiding an error. `guard` (`errors.rs`)
 4. IO failures travel as data inside an `XEvent` into the Model and a toast, never as a panic. A message or event enum carries an error in one `Error(XError)` variant (`AudioMessage::Error(AudioError)`, `LibraryEvent::Error`); no per-operation `*Failed` variants — the machine branches on the error variant (decided 2026-10-04). Debugging is later devtools in runtime recording `Message` → `Cmd` and the model before/after (Elm debugger style). `review`
 
 ## 7. Suffixes and prefixes
@@ -111,8 +110,8 @@ The meaning of each affix is `review`; the bans are in §9.
 | `Request` | shell → core only, a `Message` branch | `PlaybackRequest`, `OverlayRequest` |
 | `Message` | a machine's input | `PlayerMessage`, `LibraryMessage` |
 | `Driver` | top machine of one driver | `AudioDriver` |
-| stream (concept, no suffix) | repeated input started by a driver effect | the runtime file-watch type (name in the runtime step) |
-| `Job` | slow work for a worker thread | `DecodeJob`, `CoverJob` |
+| stream (concept, no suffix) | repeated input started by a driver effect | `FileStream` |
+| `Job` | slow work for a worker thread | `AudioJob`, `LibraryJob` |
 | `Watch` | a driver part that watches files | `LibraryWatch`, `ConfigWatch` |
 | `Error` | error enum | `Error`, `TimecodeError` |
 | `Parts` | `Model` borrows only | `PlaybackParts`, `ResyncParts` |
@@ -122,7 +121,7 @@ The meaning of each affix is `review`; the bans are in §9.
 | `Settings` | values the user edits | `AudioSettings`, `AppearanceSettings` |
 | `Toml` (prefix) | raw serde shape | `TomlTheme`, `TomlCard` |
 | `Name` | which one of a closed set | `OverlayName`, `ConfigName`, `ThemeName`, `DriverName` |
-| `Row` | settings / registry / test-table row | `SettingRow`, `DriverRow`, `InstallRow` |
+| `Row` | settings / registry / test-table row | `SettingRow`, `DriverRow` |
 | `Patch` | partial change to a stored value | `ConfigPatch`, `AppearancePatch` |
 | `Index` | position newtype in one index space | `TrackIndex`, `ViewIndex` |
 
@@ -132,16 +131,17 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 
 | concept | the word | not |
 |---|---|---|
-| track identity everywhere (queue, favorites, history, m3u) | `TrackRef` (`enum TrackRef { Local(PathBuf) }`, `Remote { source, id }` with Navidrome; as MPD songid, Subsonic id) | a path or an index as identity |
+| track identity everywhere (queue, favorites, history, m3u) | `TrackRef` (`enum TrackRef { Local(PathBuf) }`, `Remote { source, id }` with Navidrome; as MPD songid, Subsonic id); `Local` keeps today's path behaviour: no normalisation, same path text on disk, lookup through a `TrackRef` to index map, a dangling ref is skipped on load, field `Track.source: TrackRef` | a path or an index as identity |
 | track position in the library / the shown list (rows and cursor only) | `TrackIndex`, `ViewIndex` | `PlaylistIndex`, `QueueIndex` |
 | audio load order | `TrackLoad` | — |
+| audio's preload variant (gapless or crossfade) | `PreloadKind` (decided 2026-10-04; kernel keeps `Preload`) | `Preload` |
 | who paused playback | `PausedBy` | — |
-| modal surface in the core | `Overlay`, `OverlayName`; render frame and geometry `Modal*` | `OverlayKind`, `OverlayScreen`, `Pane*` (only `PlaylistPane`) |
+| modal surface in the core | `Overlay`, `OverlayName`; render frame and geometry `Modal*` | `OverlayKind`, `OverlayScreen`, `Pane*` (only the `playlist::pane` module) |
 | short-lived message | `Toast` | `Notice` |
 | bottom key line | `KeyHints` (`key_hints`) | `Footer` |
 | small label | chip (`format_chips`, `speed_chip`) | badge, `tech_chips` |
 | preload-due / A-B-end timer | `Lookahead` (`Timer::Lookahead`) | `Mark` |
-| A-B point | `Mark` (`AbLoop::mark`, `AbMark`) | — |
+| A-B point | `Mark` (`AbLoop::mark`) | — |
 | compiled whole of `sifr-ui.toml` | `Appearance` | `Look`, `Custom*`, `UiOptions`, `[ui]` |
 | choices the settings overlay edits | `AppearanceSettings` (field `settings`) | — |
 | how the cover is shown | `CoverMode` (key `cover_mode`) | `CoverStyle` |
@@ -159,13 +159,47 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | values `Scene` takes beside the `Model` (theme, colour depth, bindings, …) | `ScenePresentation` | — |
 | time passed into the kernel | `Moment` | — |
 | first model | `startup`, `Startup` | init, `boot`, `Boot` |
+| everything the binary reads before the runtime starts (first model, paths, theme) | `Launch { startup, paths, theme }`, `launch()` (decided 2026-10-04) | `Boot`, `Look` |
+| terminal input for one cover refresh (layout, crossfade, wash) | `CoverRefresh` (decided 2026-10-04) | `CoverRefreshParts` |
+| a parser's message shown to the user (TOML error text crossing into the pure kernel) | `Diagnostic(String)`, built only by `Diagnostic::from_error(&impl Error)` in the crate that owns the parser; kernel `ConfigError::Invalid(Diagnostic)` (decided 2026-10-04) | `detail: String` |
+| linear amplitude factor in audio | `Gain(f32)` (decided 2026-10-04); a replay-gain tag value is `Decibels(f32)` in kernel, converted to `Gain` in audio | bare `f32` volume or gain |
+| terminal geometry unit | kernel `domain::geometry::{Cells(u16), Pixels(u32)}` (columns and rows alike; pixel sizes), imported by widgets, library and sifr (decided 2026-10-04, moved from widgets/library so `Appearance` and `visible_rows` can use them); ratatui `Rect`/`u16` stay at the ratatui boundary only | bare `u16`/`usize`/`u32` sizes |
+| index into the sleep presets | `PresetIndex` (`Index` row) | `preset_index: usize` |
+| macOS `OSStatus` code | `OsStatus(i32)` | bare `i32` |
+| progress bar's unfilled part | `groove` (as `Role::BarGroove`) | `track` (collides with `Track`) |
+| bad colour text in appearance | `ColorError::Malformed(Diagnostic)` | `input: String` |
+| overlay content messages inside `OverlayMessage` | `OverlayContentMessage` | `InnerMessage` |
+| default key bindings | Rust tables in kernel `update/keymap` (data in code by decision 2026-10-04) | embedded TOML |
+| a child module's message handler | `update` (Elm), beside the root `update` | `step`, `handle` |
+| audio engine with no device open | `Engine::Closed` | `Muted` (reads as volume mute) |
+| deck's realtime wake-up signal | `DeckEvent::Woke(Revision)`, fn `wake` | `Track(Revision)`, `notify` |
+| macOS main-loop parts | `MainLoopStop`, `NowPlaying`, `NowPlayingClock`; `HardwarePoll`, `CoverReader` keep their names | `LoopStopper`, `Panel`, `PanelClock` |
+| terminal app identity, pixel protocol | `TerminalApp`; `PixelProtocol { Kitty, Iterm2, Sixel, Query }`; `Capabilities::from_environment`; `CoverPainter` | `Brand`, `Protocol { Kgp, Iip, Probe }`, `before_probe`, `CoverRenderer` |
+| the kernel mailbox sender, everywhere | `inbox` | `sender`, `report_sender`, `receiver` |
+| config watch sub-machine step inside `ConfigDriver` | `drive_watch`; never-read file state `Seen::Unread` | `drive`, `Seen::Never` |
+| job coalescing in `DriverLoop` (keep the newest job per kind, run in `Ord` order) | allowed `DriverLoop` duty (scheduling, not a decision about the result; staleness stays `Revision` in the machine) (decided 2026-10-04) | — |
+| discarding an `io::Result` | allowed only inside `Drop` and the panic hook, as `drop(result)` (nowhere to report) | anywhere else; `.ok();` |
+| card cover state in widgets; decoded cover pixels in widgets | `CardCover`; `CoverImage` | `CoverArt` (library's), `DecodedCover` |
+| library disk orders inside `LibraryEffect::Execute` | `DiskEffect` (as `WatchEffect`) | `LibraryCmd` reused |
+| input the shell feeds runtime (keys, resize, paint failures) | `ShellInput` | `ShellEvent` (Event = driver fact) |
+| named `Rect`s of one `FrameLayout` part | suffix `Areas` (`ModalAreas`, `PlaylistAreas`, `ToastAreas`) | `Rects`, `Regions` |
+| read-models `KeyHintsContent`, `OverlayContent` | `KeyHintsView`, `OverlayView` (View row) | `Content` suffix |
+| theme input colours before derivation | `ThemeBase` | `ThemeSeed` (`Seed` = DriverLoop seed) |
+| sifr's values beside the Model for `ScenePresentation` | `ShellPresentation` | `Presentation` |
+| the shell's cover-crossfade state machine | `CrossfadeGate`, `CrossfadeGateMessage`; `CoverArrival`; per-frame step `FrameAdvance`; `Motion`, `LaidOutScene`, library `JobPriority` keep their names | `PendingCrossfade`, `Advance` |
+| CPU-parallel work inside one job (tag reading) | allowed: `thread::scope` inside a job body, joined before the job returns (decided 2026-10-04) | detached threads in jobs |
+| turning the raw `TomlTheme` into the widgets `Theme` | the shell (sifr) does it: `Theme` is a widgets type and config sits below widgets; config publishes `TomlTheme` (decided 2026-10-04) | config depending on widgets |
+| which cover to decode and at what size | the kernel decides: the shell reports the laid-out cover side through `Message::Viewport` (`Pixels`), kernel emits `Effect::Library(LibraryCmd::DecodeCover(CoverJob))` on track or side change; no shell→driver side channel (decided 2026-10-04) | paint path sending `LibraryMessage::Cover` |
+| trace record of a failed thread operation | `TraceEntry::Error(TraceError)`, `TraceError { Join, Restart }` (decided 2026-10-04, §6.4) | `JoinFailed`, `RestartFailed` |
 | config reloaded | kernel `ConfigReload { name: ConfigName, result: Result<(), ConfigError> }` (§6.3), `config_reloaded`; the per-file errors held by the workspace are `ConfigErrors`, field `config_errors`; startup shows one toast with the first error and records the rest; the live values parsed from `config.toml` are `ConfigSettings { keymap, music_dir }` | `SourceOutcome`, `source_result` |
-| applying a patch | `patched` (`TomlAppearance::patched`, kernel `Appearance::patched(patch)`) | `apply` |
+| applying a patch | `patched` (`TomlAppearance::patched`, kernel `AppearanceSettings::patched(patch)`) | `apply` |
 | verbs, one meaning each | `transition` = machine step (message → `Cmd`); `execute` = driver runs an effect (IO); `Set*` = absolute command variant (`WindowColorsCmd::Set(ThemeName)`); `set_*` = method replacing one held value (`Painter::set_window_colors`); `patched` = value + patch → new value; `paint` = drawing into a buffer. Today's `apply_*` machines become `transition` (`ConfigDriver::apply_save_result` → `ConfigMessage::Saved`) | `apply` |
 | spectrum | `spectrum_*` | `eq_*` |
 | animation | `Animation`, `Cue`, `AnimationStage` | `Effect*` for animation |
 | the subsystem only | `Config` (crate, `ConfigCmd`, `ConfigDriver`, `config.toml`) | `Config` / `File` as suffix of a raw or parsed shape |
-
+| kernel scope | kernel holds domain state, messages, decisions and the `Machine`/`Driver` contract; formatting helpers used only by the view live in widgets; toast text and error text stay kernel data | view formatting in kernel |
+| value a driver publishes to a cell | effect variant `Publish<Value>` (`PublishTheme`, `PublishAppearance`, `PublishCover`), sink field `publish_<value>` (decided 2026-10-04) | — |
+| latest-value cell | `LatestSender`, `LatestReceiver`, built by `latest_channels` (frozen 2026-10-04) | — |
 ## 9. Banned words and patterns
 
 | banned | source | check |
@@ -208,9 +242,9 @@ A name or shape this file does not cover (a new suffix, a new domain word, a sec
 5. A parameter struct only for a real value bundle, otherwise a method on the receiver; `bon` for four or more optional fields, never `.maybe_x(None)`. `review`
 6. Data over code: themes, keymaps, presets are data files, not match arms. `review`
 7. Resources are RAII: raw mode, alternate screen and threads are restored by a guard's `Drop`. `review`
-8. Own traits are `Machine`, `Driver` and one narrow trait per kind of hardware IO; methods take and return data, static dispatch, never `dyn`; fakes plug in over the same real channels. `review`
+8. Own traits are `Machine`, `Driver`, `Shell` (runtime↔binary seam), one narrow trait per hardware or OS source (`Watcher`), and a trait shared by three or more value types (`Bounded`, `Flag`); methods take and return data, static dispatch, never `dyn`; fakes plug in over the same real channels. `review`
 9. Public API is minimal: `pub(crate)` unless a downstream crate needs it; no re-exports or shims for compatibility; delete, never deprecate. No extra abstraction, dependency or crate feature. `review`
-10. Modules: no cycles inside a crate; leaves never import roots (`components` never imports `screen`) `guard` (`layering.rs`); a module's fan-in/fan-out stays within 3 × the crate median or the review names why. `review`
+10. Modules: no cycles inside a crate; leaves never import roots (no widgets module outside `screen` imports `crate::screen`) `guard` (`layering.rs`); a module's fan-in/fan-out stays within 3 × the crate median or the review names why. One responsibility per module; a second responsibility moves to its own module named for its noun. `review`
 
 ## 12. Events, frames and performance
 
@@ -241,14 +275,15 @@ A review cites rules as `§section.rule` and outputs one file of rows ranked H/M
 
 ## 15. Open (decide with the user)
 
+Frozen as today (2026-10-04), not reopened on this route:
+
 - S4: `PlaybackRequest` carried inside driver data (`RemoteInput`, `MacosEvent::MediaKey`).
-- S7 (partly decided 2026-10-04): `TrackRef::Local(PathBuf)` keeps today's path behaviour: no normalisation, same path text on disk, lookup through a `TrackRef` to index map, a dangling ref is skipped on load, field `Track.source: TrackRef`. Remote refs wait for Navidrome.
-- S8: `XView` for one Model slice plus presentation values.
-- S9: `XStyle` inputs beyond the theme (appearance, colour depth).
 - S13: owner of volume (macOS vs app) and which effects stay relative.
-- S15: name and shape of latest-value cells.
+
+Navidrome (not in this route):
+
 - G1: network IO shape (request/response, retries, auth, pagination; effect or job).
+- G2: where credentials and the server URL live.
 - G3: streaming a remote track, and who resolves `TrackRef::Remote` to a source.
+- G5: a library of several sources, `Revision` per source.
 - G7: where widget constants live and where widget snapshots go.
-- G2 (Navidrome only): where credentials and the server URL live.
-- G5 (Navidrome only): a library of several sources, `Revision` per source.

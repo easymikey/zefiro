@@ -14,10 +14,11 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::{error::Error, window_colors};
 
-fn leave_the_alternate_screen() {
-    let _ = disable_raw_mode();
-    window_colors::reset_on_panic();
-    let _ = execute!(io::stdout(), LeaveAlternateScreen, Show);
+fn leave_the_alternate_screen() -> Result<(), io::Error> {
+    let raw_mode = disable_raw_mode();
+    let window_colors = window_colors::reset_on_panic();
+    let screen = execute!(io::stdout(), LeaveAlternateScreen, Show);
+    raw_mode.and(window_colors).and(screen)
 }
 
 pub fn install_panic_hook(worker_panicked: fn(String)) {
@@ -25,7 +26,7 @@ pub fn install_panic_hook(worker_panicked: fn(String)) {
     let painting_thread = std::thread::current().id();
     std::panic::set_hook(Box::new(move |info| {
         if std::thread::current().id() == painting_thread {
-            leave_the_alternate_screen();
+            drop(leave_the_alternate_screen());
             original(info);
             return;
         }
@@ -65,26 +66,21 @@ impl TerminalSession<Stdout> {
     pub fn enter() -> Result<Self, Error> {
         enable_raw_mode().map_err(Error::Setup)?;
 
-        let mut stdout = io::stdout();
-        if let Err(error) = execute!(stdout, EnterAlternateScreen) {
-            let _ = disable_raw_mode();
-            return Err(Error::Setup(error));
-        }
-
-        let terminal = match Terminal::new(CrosstermBackend::new(stdout)) {
-            Ok(terminal) => terminal,
+        match execute!(io::stdout(), EnterAlternateScreen)
+            .and_then(|()| Terminal::new(CrosstermBackend::new(io::stdout())))
+        {
+            Ok(terminal) => Ok(Self {
+                terminal,
+                raw_mode: RawMode::Active,
+                restoration: Restoration::Pending,
+            }),
             Err(error) => {
-                let _ = execute!(io::stdout(), LeaveAlternateScreen);
-                let _ = disable_raw_mode();
-                return Err(Error::Setup(error));
+                execute!(io::stdout(), LeaveAlternateScreen)
+                    .map_err(Error::Teardown)?;
+                disable_raw_mode().map_err(Error::Teardown)?;
+                Err(Error::Setup(error))
             }
-        };
-
-        Ok(Self {
-            terminal,
-            raw_mode: RawMode::Active,
-            restoration: Restoration::Pending,
-        })
+        }
     }
 }
 
@@ -110,7 +106,7 @@ impl<W: Write> TerminalSession<W> {
 
 impl<W: Write> Drop for TerminalSession<W> {
     fn drop(&mut self) {
-        let _ = self.restore();
+        drop(self.restore());
     }
 }
 

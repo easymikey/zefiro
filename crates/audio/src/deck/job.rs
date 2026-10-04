@@ -3,15 +3,16 @@ use std::{
     path::PathBuf,
 };
 
+use kernel::domain::Revision;
+
 use crate::{
     deck::{
-        DeckEvent,
-        Revision,
+        event::DeckEvent,
         source::{TrackDecoder, decode},
     },
     device::list_output_devices,
     engine::effect::AudioMessage,
-    error::{Error, device_error},
+    error::{Error, list_devices_error},
 };
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -34,7 +35,7 @@ impl AudioJob {
                 AudioMessage::Deck(DeckEvent::Preloaded { revision, result })
             }
             AudioJob::ListDevices => AudioMessage::Deck(DeckEvent::DevicesListed(
-                list_output_devices().map_err(device_error),
+                list_output_devices().map_err(|error| list_devices_error(&error)),
             )),
         }
     }

@@ -1,12 +1,11 @@
 #![cfg(test)]
 
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use kernel::{
     Moment,
     domain::{
         AudioFormat,
-        KeymapOverrides,
         Model,
         Player,
         Playhead,
@@ -16,7 +15,6 @@ use kernel::{
         Track,
         appearance::Appearance,
     },
-    update::keymap::{Bindings, KeyBinding},
 };
 use widgets::{
     ColorDepth,
@@ -28,7 +26,7 @@ use widgets::{
     ScenePresentation,
     Spectrum,
     Theme,
-    ThemeSeed,
+    ThemeBase,
 };
 
 pub(crate) fn noir_theme() -> Theme {
@@ -36,7 +34,7 @@ pub(crate) fn noir_theme() -> Theme {
         config::parse_theme(include_str!("../../../../themes/noir.toml"), "noir")
             .unwrap();
     let c = file.colors;
-    let palette = ThemeSeed {
+    let palette = ThemeBase {
         background: c.background,
         foreground: c.foreground,
         bright_foreground: c.bright_foreground,
@@ -51,12 +49,6 @@ pub(crate) fn noir_theme() -> Theme {
         colors: Colors::derive(&palette),
         scanning_label: file.scanning_label,
     }
-}
-
-pub(crate) fn bindings() -> Vec<KeyBinding> {
-    Bindings::new(&KeymapOverrides::default())
-        .as_slice()
-        .to_vec()
 }
 
 pub(crate) fn track(title: &str, duration_secs: u64) -> Arc<Track> {
@@ -95,16 +87,15 @@ pub(crate) fn playing_model(
 pub(crate) struct Scenery {
     pub(crate) model: Model,
     pub(crate) theme: Theme,
-    pub(crate) bindings: Vec<KeyBinding>,
     pub(crate) spectrum: Spectrum,
 }
 
 impl Scenery {
-    pub(crate) fn new(model: Model) -> Self {
+    pub(crate) fn new(mut model: Model) -> Self {
+        model.music_dir = PathBuf::from("/home/user/Music");
         Self {
             model,
             theme: noir_theme(),
-            bindings: bindings(),
             spectrum: [0.0; SPECTRUM_BANDS],
         }
     }
@@ -119,13 +110,12 @@ impl Scenery {
             ScenePresentation {
                 theme: &self.theme,
                 color_depth: ColorDepth::TrueColor,
-                bindings: &self.bindings,
                 spectrum: &self.spectrum,
                 pixel_path: PixelPath::Protocol,
                 cell_aspect: DEFAULT_CELL_ASPECT,
                 clock,
                 now: Moment::default(),
-                music_dir: "/home/user/Music",
+                home: None,
                 sleep_left: None,
             },
         )

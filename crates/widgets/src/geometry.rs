@@ -1,4 +1,7 @@
-use kernel::domain::appearance::{CoverCells, CoverMode};
+use kernel::domain::{
+    appearance::{CoverCells, CoverMode},
+    geometry::Cells,
+};
 
 use crate::pixels::canvas_aspect_ratio;
 
@@ -9,7 +12,7 @@ const SQUARE_COVER_ASPECT: f32 = 1.0;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CoverSizing {
     Auto(f32),
-    Fixed { width: u16, height: u16 },
+    Fixed { width: Cells, height: Cells },
     Off,
 }
 
@@ -34,7 +37,10 @@ pub(crate) fn cover_sizing(style: CoverMode, cells: CoverCells) -> CoverSizing {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::appearance::{CoverCells, CoverMode};
+    use kernel::domain::{
+        appearance::{CoverCells, CoverMode},
+        geometry::Cells,
+    };
     use rstest::rstest;
 
     use crate::geometry::{CoverSizing, canvas_aspect_ratio, cover_sizing};
@@ -42,8 +48,8 @@ mod tests {
     #[test]
     fn a_plain_cover_is_square() {
         let cells = CoverCells {
-            width: 20,
-            height: 8,
+            width: Cells(20),
+            height: Cells(8),
         };
         assert_eq!(
             cover_sizing(CoverMode::Plain, cells),
@@ -54,8 +60,8 @@ mod tests {
     #[test]
     fn a_vinyl_cover_uses_the_vinyl_canvas_aspect_ratio() {
         let cells = CoverCells {
-            width: 20,
-            height: 8,
+            width: Cells(20),
+            height: Cells(8),
         };
         assert_eq!(
             cover_sizing(CoverMode::Vinyl, cells),
@@ -66,8 +72,8 @@ mod tests {
     #[test]
     fn off_stays_off() {
         let cells = CoverCells {
-            width: 20,
-            height: 8,
+            width: Cells(20),
+            height: Cells(8),
         };
         assert_eq!(cover_sizing(CoverMode::Off, cells), CoverSizing::Off);
     }
@@ -75,15 +81,15 @@ mod tests {
     #[test]
     fn milkdrop_takes_a_fixed_text_grid() {
         let cells = CoverCells {
-            width: 24,
-            height: 9,
+            width: Cells(24),
+            height: Cells(9),
         };
         let sizing = cover_sizing(CoverMode::Milkdrop, cells);
         assert_eq!(
             sizing,
             CoverSizing::Fixed {
-                width: 24,
-                height: 9
+                width: Cells(24),
+                height: Cells(9)
             }
         );
     }
@@ -95,8 +101,8 @@ mod tests {
         #[case] style: CoverMode,
     ) {
         let cells = CoverCells {
-            width: 20,
-            height: 8,
+            width: Cells(20),
+            height: Cells(8),
         };
         let sizing = cover_sizing(style, cells);
         assert!(matches!(sizing, CoverSizing::Auto(_)));

@@ -1,6 +1,6 @@
 ---
-source: crates/audio/src/engine/muted.rs
-assertion_line: 450
+source: crates/audio/src/engine/closed.rs
+assertion_line: 370
 expression: log
 ---
 [
@@ -29,7 +29,9 @@ expression: log
     Cmd {
         effects: [
             Start(
-                1.0,
+                Gain(
+                    1.0,
+                ),
             ),
             Report,
         ],

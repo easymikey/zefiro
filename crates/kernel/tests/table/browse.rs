@@ -27,6 +27,7 @@ use kernel::{
     domain::{Cursor, Direction, Revision, ScanStatus, TrackIndex, ViewIndex},
     library::{Library, SortKey},
     playlist::PlayOrder,
+    update::Unhandled,
 };
 use rstest::rstest;
 
@@ -41,8 +42,8 @@ fn browse(model: &mut Model, message: BrowseRequest) -> Cmd {
     update(model, Message::Browse(message), Moment::default()).unwrap()
 }
 
-fn queue(model: &mut Model, message: QueueRequest) -> Cmd {
-    update(model, Message::Queue(message), Moment::default()).unwrap()
+fn queue(model: &mut Model, message: QueueRequest) -> Result<Cmd, Unhandled> {
+    update(model, Message::Queue(message), Moment::default())
 }
 
 fn queued_refs(model: &Model, queue: &[usize]) -> Vec<kernel::TrackRef> {
@@ -70,11 +71,11 @@ struct QueueRow {
     model: Model,
     message: QueueRequest,
     queued: &'static [usize],
-    effects: Cmd,
+    effects: Result<Cmd, Unhandled>,
 }
 
-fn queue_changed() -> Cmd {
-    Cmd::effect(Effect::Animate(Cue::QueueChanged))
+fn queue_changed() -> Result<Cmd, Unhandled> {
+    Ok(Cmd::effect(Effect::Animate(Cue::QueueChanged)))
 }
 
 fn favorites_saved(paths: &[&str]) -> Cmd {
@@ -99,7 +100,7 @@ fn favorites_saved(paths: &[&str]) -> Cmd {
     model: Model::default(),
     message: QueueRequest::Enqueue,
     queued: &[],
-    effects: Cmd::none(),
+    effects: Err(Unhandled),
 })]
 #[case::enqueue_of_an_already_queued_track_takes_it_back_out(QueueRow {
     model: browsing(2, 1, &[1, 0]),
@@ -111,73 +112,79 @@ fn favorites_saved(paths: &[&str]) -> Cmd {
     model: browsing(2, 1, &[0]),
     message: QueueRequest::PlayNext,
     queued: &[1, 0],
-    effects: Cmd::none(),
+    effects: queue_changed(),
 })]
 #[case::play_next_moves_an_already_queued_track_to_the_front(QueueRow {
     model: browsing(3, 2, &[0, 2, 1]),
     message: QueueRequest::PlayNext,
     queued: &[2, 0, 1],
-    effects: Cmd::none(),
+    effects: queue_changed(),
+})]
+#[case::play_next_of_the_front_track_is_refused(QueueRow {
+    model: browsing(2, 1, &[1, 0]),
+    message: QueueRequest::PlayNext,
+    queued: &[1, 0],
+    effects: Err(Unhandled),
 })]
 #[case::play_next_on_an_empty_playlist_queues_nothing(QueueRow {
     model: Model::default(),
     message: QueueRequest::PlayNext,
     queued: &[],
-    effects: Cmd::none(),
+    effects: Err(Unhandled),
 })]
 #[case::dequeue_removes_the_single_occurrence(QueueRow {
     model: browsing(2, 1, &[1, 0]),
     message: QueueRequest::Dequeue,
     queued: &[0],
-    effects: Cmd::none(),
+    effects: queue_changed(),
 })]
 #[case::dequeue_of_an_unqueued_selection_changes_nothing(QueueRow {
     model: browsing(2, 1, &[0]),
     message: QueueRequest::Dequeue,
     queued: &[0],
-    effects: Cmd::none(),
+    effects: Err(Unhandled),
 })]
 #[case::dequeue_on_an_empty_playlist_changes_nothing(QueueRow {
     model: browsing(0, 0, &[]),
     message: QueueRequest::Dequeue,
     queued: &[],
-    effects: Cmd::none(),
+    effects: Err(Unhandled),
 })]
 #[case::move_up_swaps_with_the_predecessor(QueueRow {
     model: browsing(3, 1, &[0, 1, 2]),
     message: QueueRequest::MoveInQueue(Direction::Previous),
     queued: &[1, 0, 2],
-    effects: Cmd::none(),
+    effects: queue_changed(),
 })]
 #[case::move_down_swaps_with_the_successor(QueueRow {
     model: browsing(3, 0, &[0, 1, 2]),
     message: QueueRequest::MoveInQueue(Direction::Next),
     queued: &[1, 0, 2],
-    effects: Cmd::none(),
+    effects: queue_changed(),
 })]
 #[case::move_up_at_the_front_changes_nothing(QueueRow {
     model: browsing(2, 0, &[0, 1]),
     message: QueueRequest::MoveInQueue(Direction::Previous),
     queued: &[0, 1],
-    effects: Cmd::none(),
+    effects: Err(Unhandled),
 })]
 #[case::move_down_at_the_back_changes_nothing(QueueRow {
     model: browsing(2, 1, &[0, 1]),
     message: QueueRequest::MoveInQueue(Direction::Next),
     queued: &[0, 1],
-    effects: Cmd::none(),
+    effects: Err(Unhandled),
 })]
 #[case::move_of_an_unqueued_selection_changes_nothing(QueueRow {
     model: browsing(2, 1, &[0]),
     message: QueueRequest::MoveInQueue(Direction::Previous),
     queued: &[0],
-    effects: Cmd::none(),
+    effects: Err(Unhandled),
 })]
 #[case::move_on_an_empty_playlist_changes_nothing(QueueRow {
     model: browsing(0, 0, &[]),
     message: QueueRequest::MoveInQueue(Direction::Previous),
     queued: &[],
-    effects: Cmd::none(),
+    effects: Err(Unhandled),
 })]
 fn queue_row(#[case] row: QueueRow) {
     let QueueRow {
@@ -197,6 +204,7 @@ struct CursorRow {
     visible_rows: usize,
     message: BrowseRequest,
     expected: usize,
+    effects: Result<Cmd, Unhandled>,
 }
 
 #[rstest]
@@ -206,6 +214,7 @@ struct CursorRow {
     visible_rows: 0,
     message: BrowseRequest::CursorTo(ViewIndex::new(1)),
     expected: 1,
+    effects: Ok(Cmd::none()),
 })]
 #[case::cursor_to_past_the_end_clamps(CursorRow {
     tracks: 2,
@@ -213,13 +222,15 @@ struct CursorRow {
     visible_rows: 0,
     message: BrowseRequest::CursorTo(ViewIndex::new(99)),
     expected: 1,
+    effects: Ok(Cmd::none()),
 })]
-#[case::cursor_to_on_an_empty_playlist_stays_at_zero(CursorRow {
+#[case::cursor_to_on_an_empty_playlist_is_refused(CursorRow {
     tracks: 0,
     from: 0,
     visible_rows: 0,
     message: BrowseRequest::CursorTo(ViewIndex::new(0)),
     expected: 0,
+    effects: Err(Unhandled),
 })]
 #[case::page_down_moves_by_the_reported_rows(CursorRow {
     tracks: 20,
@@ -227,6 +238,7 @@ struct CursorRow {
     visible_rows: 5,
     message: BrowseRequest::PageBy(Direction::Next),
     expected: 5,
+    effects: Ok(Cmd::none()),
 })]
 #[case::page_down_clamps_at_the_last_track(CursorRow {
     tracks: 8,
@@ -234,6 +246,7 @@ struct CursorRow {
     visible_rows: 5,
     message: BrowseRequest::PageBy(Direction::Next),
     expected: 7,
+    effects: Ok(Cmd::none()),
 })]
 #[case::page_up_moves_by_the_reported_rows(CursorRow {
     tracks: 20,
@@ -241,6 +254,7 @@ struct CursorRow {
     visible_rows: 5,
     message: BrowseRequest::PageBy(Direction::Previous),
     expected: 3,
+    effects: Ok(Cmd::none()),
 })]
 #[case::page_up_clamps_at_the_first_track(CursorRow {
     tracks: 20,
@@ -248,38 +262,49 @@ struct CursorRow {
     visible_rows: 5,
     message: BrowseRequest::PageBy(Direction::Previous),
     expected: 0,
+    effects: Ok(Cmd::none()),
 })]
-#[case::page_down_with_no_rows_reported_stays_put(CursorRow {
+#[case::page_down_with_no_rows_reported_is_refused(CursorRow {
     tracks: 20,
     from: 0,
     visible_rows: 0,
     message: BrowseRequest::PageBy(Direction::Next),
     expected: 0,
+    effects: Err(Unhandled),
 })]
-#[case::page_down_on_an_empty_playlist_stays_at_zero(CursorRow {
+#[case::page_down_on_an_empty_playlist_is_refused(CursorRow {
     tracks: 0,
     from: 0,
     visible_rows: 5,
     message: BrowseRequest::PageBy(Direction::Next),
     expected: 0,
+    effects: Err(Unhandled),
 })]
-#[case::page_up_on_an_empty_playlist_stays_at_zero(CursorRow {
+#[case::page_up_on_an_empty_playlist_is_refused(CursorRow {
     tracks: 0,
     from: 0,
     visible_rows: 5,
     message: BrowseRequest::PageBy(Direction::Previous),
     expected: 0,
+    effects: Err(Unhandled),
+})]
+#[case::cursor_by_on_an_empty_playlist_is_refused(CursorRow {
+    tracks: 0,
+    from: 0,
+    visible_rows: 5,
+    message: BrowseRequest::CursorBy { rows: 1 },
+    expected: 0,
+    effects: Err(Unhandled),
 })]
 fn cursor_row(#[case] row: CursorRow) {
     let mut model = browsing(row.tracks, row.from, &[]);
     model.workspace.visible_rows = row.visible_rows;
-    let effects = browse(&mut model, row.message);
+    let effects = update(&mut model, Message::Browse(row.message), Moment::default());
     assert_eq!(model.workspace.browse.selected().get(), row.expected);
-    assert_eq!(effects, Cmd::none());
+    assert_eq!(effects, row.effects);
 }
 
 #[rstest]
-#[case::no_rows_reported(0, 0)]
 #[case::a_single_row(1, 1)]
 #[case::a_full_page(20, 20)]
 fn page_by_uses_the_stored_viewport(
@@ -368,11 +393,15 @@ fn toggle_favorite_adds_then_removes_the_selected_track() {
 }
 
 #[test]
-fn toggle_favorite_on_an_empty_playlist_writes_nothing() {
+fn toggle_favorite_on_an_empty_playlist_is_refused() {
     let mut model = Model::default();
-    let effects = browse(&mut model, BrowseRequest::ToggleFavorite);
+    let effects = update(
+        &mut model,
+        Message::Browse(BrowseRequest::ToggleFavorite),
+        Moment::default(),
+    );
     assert!(model.favorites.is_empty());
-    assert_eq!(effects, Cmd::none());
+    assert_eq!(effects, Err(Unhandled));
 }
 
 #[test]
@@ -485,7 +514,8 @@ fn scanned(paths: &[&str]) -> Model {
 #[test]
 fn trash_removes_the_track_everywhere_and_asks_for_the_file_to_go() {
     let mut model = scanned(&["/music/a.flac", "/music/b.flac"]);
-    let effects = browse(&mut model, BrowseRequest::Trash(ViewIndex::new(0)));
+    let source = model.playlist.tracks[0].source().clone();
+    let effects = browse(&mut model, BrowseRequest::Trash(source));
 
     let left = vec![PathBuf::from("/music/b.flac")];
     let all = paths(&model.library.as_ref().unwrap().tracks);
@@ -511,11 +541,9 @@ fn trash_removes_the_track_everywhere_and_asks_for_the_file_to_go() {
 fn trash_remaps_the_queue_and_drops_the_deleted_entry() {
     let mut model = scanned(&["/music/a.flac", "/music/b.flac", "/music/c.flac"]);
     model.queue = queued_refs(&model, &[2, 0]);
+    let source = model.playlist.tracks[0].source().clone();
 
-    apply(
-        &mut model,
-        Message::Browse(BrowseRequest::Trash(ViewIndex::new(0))),
-    );
+    apply(&mut model, Message::Browse(BrowseRequest::Trash(source)));
 
     assert_eq!(
         paths(&model.playlist.tracks),
@@ -527,10 +555,66 @@ fn trash_remaps_the_queue_and_drops_the_deleted_entry() {
     assert_eq!(model.queue, queued_refs(&model, &[1]));
 }
 
+#[rstest]
+#[case::missing_from_the_library(scanned(&["/music/a.flac"]))]
+#[case::without_a_library(Model::default())]
+fn trash_of_an_unknown_track_is_refused(#[case] mut model: Model) {
+    let before = format!("{model:?}");
+    let gone = kernel::TrackRef::Local(PathBuf::from("/music/gone.flac"));
+
+    let refused = update(
+        &mut model,
+        Message::Browse(BrowseRequest::Trash(gone)),
+        Moment::default(),
+    );
+
+    assert_eq!(refused.err(), Some(Unhandled));
+    assert_eq!(format!("{model:?}"), before);
+}
+
+fn listed(paths: &[&str]) -> Message {
+    Message::Library(kernel::LibraryEvent::Listed {
+        tracks: paths
+            .iter()
+            .map(|path| Arc::new(kernel::Track::listed(Path::new(path))))
+            .collect(),
+        revision: Revision::default(),
+    })
+}
+
 #[test]
-fn trash_on_an_empty_library_removes_nothing() {
-    let mut model = scanned(&[]);
-    let effects = browse(&mut model, BrowseRequest::Trash(ViewIndex::new(0)));
-    assert!(model.library.as_ref().unwrap().tracks.is_empty());
-    assert_eq!(effects, Cmd::none());
+fn a_rescan_under_the_confirm_overlay_trashes_the_same_file() {
+    let mut model = Model::default();
+    apply(&mut model, listed(&["/music/a.flac", "/music/b.flac"]));
+    apply(
+        &mut model,
+        Message::Browse(BrowseRequest::CursorTo(ViewIndex::new(1))),
+    );
+    apply(
+        &mut model,
+        Message::Overlay(kernel::OverlayRequest::Open(
+            kernel::OverlayName::ConfirmDelete,
+        )),
+    );
+    apply(
+        &mut model,
+        listed(&["/music/0.flac", "/music/a.flac", "/music/b.flac"]),
+    );
+
+    let confirmed = update(
+        &mut model,
+        Message::Overlay(kernel::OverlayRequest::Confirm),
+        Moment::default(),
+    )
+    .unwrap();
+
+    assert!(confirmed.effects().any(|effect| *effect
+        == Effect::Library(LibraryCmd::Trash(PathBuf::from("/music/b.flac")))));
+    assert_eq!(
+        paths(&model.playlist.tracks),
+        [
+            PathBuf::from("/music/0.flac"),
+            PathBuf::from("/music/a.flac")
+        ]
+    );
 }

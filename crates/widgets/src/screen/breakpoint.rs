@@ -26,11 +26,15 @@ fn fit(size: Size, width: u16, height: u16) -> Fit {
 impl Breakpoint {
     #[must_use]
     pub fn new(size: Size, layout: &Breakpoints, mode: LayoutMode) -> Self {
-        if fit(size, layout.min_columns, layout.min_rows) == Fit::Short {
+        if fit(size, layout.min_columns.0, layout.min_rows.0) == Fit::Short {
             return Self::TooSmall;
         }
-        let full = fit(size, layout.full_min_width, layout.full_min_height);
-        let compact = fit(size, layout.compact_min_width, layout.compact_min_height);
+        let full = fit(size, layout.full_min_width.0, layout.full_min_height.0);
+        let compact = fit(
+            size,
+            layout.compact_min_width.0,
+            layout.compact_min_height.0,
+        );
         match (mode, full, compact) {
             (LayoutMode::Compact, _, Fit::Fits) => Self::Compact,
             (
@@ -52,7 +56,10 @@ impl Breakpoint {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::appearance::{Breakpoints, LayoutMode};
+    use kernel::domain::{
+        appearance::{Breakpoints, LayoutMode},
+        geometry::Cells,
+    };
     use ratatui::layout::Size;
     use rstest::rstest;
 
@@ -89,8 +96,8 @@ mod tests {
     #[test]
     fn a_lowered_minimum_lets_the_minimal_breakpoint_through() {
         let layout = Breakpoints {
-            min_columns: 10,
-            min_rows: 3,
+            min_columns: Cells(10),
+            min_rows: Cells(3),
             ..Breakpoints::default()
         };
         assert_eq!(

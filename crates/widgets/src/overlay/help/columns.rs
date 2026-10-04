@@ -1,3 +1,4 @@
+use kernel::domain::geometry::Cells;
 use ratatui::{
     layout::{Constraint, Rect},
     style::Color,
@@ -46,14 +47,14 @@ impl HelpStyle {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct HelpColumn {
     pub(crate) rows: Vec<Row<'static>>,
-    chord_width: u16,
-    pub(crate) width: u16,
-    pub(crate) height: u16,
+    chord_width: Cells,
+    pub(crate) width: Cells,
+    pub(crate) height: Cells,
 }
 
 impl HelpColumn {
     pub(crate) fn constraints(&self) -> [Constraint; 2] {
-        [Constraint::Length(self.chord_width), Constraint::Min(0)]
+        [Constraint::Length(self.chord_width.0), Constraint::Min(0)]
     }
 }
 
@@ -93,17 +94,17 @@ fn column_lines(groups: &[&HelpGroup], colors: HelpStyle) -> HelpColumn {
             ]));
         }
     }
-    let height = small_count_u16(rows.len());
+    let height = Cells(small_count_u16(rows.len()));
     HelpColumn {
         rows,
-        chord_width: small_count_u16(chord_width),
-        width: small_count_u16(max_width),
+        chord_width: Cells(small_count_u16(chord_width)),
+        width: Cells(small_count_u16(max_width)),
         height,
     }
 }
 
-fn height_spread(first: u16, second: u16, third: u16) -> u16 {
-    first.max(second).max(third) - first.min(second).min(third)
+fn height_spread(first: Cells, second: Cells, third: Cells) -> Cells {
+    Cells(first.max(second).max(third).0 - first.min(second).min(third).0)
 }
 
 fn three_columns(
@@ -137,16 +138,16 @@ fn three_columns(
 
 fn fit_column(
     column: HelpColumn,
-    available_height: u16,
+    available_height: Cells,
     hint: StyledText<'static>,
 ) -> HelpColumn {
-    if available_height == 0 || column.height <= available_height {
+    if available_height == Cells(0) || column.height <= available_height {
         return column;
     }
-    let keep = usize::from(available_height.saturating_sub(1));
+    let keep = usize::from(available_height.0.saturating_sub(1));
     let mut rows = column.rows;
     rows.truncate(keep);
-    let hint_width = small_count_u16(Span::from(hint.clone()).width());
+    let hint_width = Cells(small_count_u16(Span::from(hint.clone()).width()));
     rows.push(full_width_row(line([hint])));
     HelpColumn {
         rows,
@@ -156,38 +157,43 @@ fn fit_column(
     }
 }
 
-fn available_width(full: Rect) -> u16 {
-    list_capacity(full, Hint::Absent).0
+fn available_width(full: Rect) -> Cells {
+    list_capacity(full, Hint::Absent).width
 }
 
-fn columns_width(columns: &[HelpColumn], column_gap: u16) -> u16 {
+fn columns_width(columns: &[HelpColumn], column_gap: Cells) -> Cells {
     let content = columns
         .iter()
-        .fold(0u16, |total, column| total.saturating_add(column.width));
-    content.saturating_add(
-        column_gap.saturating_mul(small_count_u16(columns.len().saturating_sub(1))),
+        .fold(0u16, |total, column| total.saturating_add(column.width.0));
+    Cells(
+        content.saturating_add(
+            column_gap
+                .0
+                .saturating_mul(small_count_u16(columns.len().saturating_sub(1))),
+        ),
     )
 }
 
-fn squeezed_width(columns: &[HelpColumn]) -> u16 {
+fn squeezed_width(columns: &[HelpColumn]) -> Cells {
     let content = columns.iter().fold(0u16, |total, column| {
         total.saturating_add(
             column
                 .chord_width
+                .0
                 .saturating_add(CHORD_GAP)
                 .saturating_add(MINIMUM_DESCRIPTION),
         )
     });
-    content.saturating_add(
+    Cells(content.saturating_add(
         COLUMN_GAP.saturating_mul(small_count_u16(columns.len().saturating_sub(1))),
-    )
+    ))
 }
 
-fn columns_that_fit(candidates: Vec<Vec<HelpColumn>>, inner: u16) -> Vec<HelpColumn> {
+fn columns_that_fit(candidates: Vec<Vec<HelpColumn>>, inner: Cells) -> Vec<HelpColumn> {
     let last = candidates.len().saturating_sub(1);
     let natural = candidates
         .iter()
-        .position(|candidate| columns_width(candidate, COLUMN_GAP) <= inner);
+        .position(|candidate| columns_width(candidate, Cells(COLUMN_GAP)) <= inner);
     let squeezed = candidates
         .iter()
         .position(|candidate| squeezed_width(candidate) <= inner);
@@ -217,7 +223,7 @@ pub(crate) fn select_help_columns(
         general,
     } = groups;
 
-    let (_, available_height) = list_capacity(full, Hint::Absent);
+    let available_height = list_capacity(full, Hint::Absent).height;
 
     let single = column_lines(&[playback, navigation, playlist, general], colors);
     let columns: Vec<HelpColumn> = if single.height <= available_height {
@@ -254,6 +260,7 @@ pub(crate) fn select_help_columns(
 mod tests {
     use std::borrow::Cow;
 
+    use kernel::domain::geometry::Cells;
     use ratatui::layout::Rect;
     use rstest::rstest;
 
@@ -293,12 +300,12 @@ mod tests {
 
     struct Balance {
         group_rows: [usize; 4],
-        heights: (u16, u16, u16),
+        heights: (Cells, Cells, Cells),
     }
 
     #[rstest]
-    #[case::navigation_joins_the_middle(Balance { group_rows: [18, 8, 2, 16], heights: (19, 13, 17) })]
-    #[case::navigation_joins_the_last(Balance { group_rows: [19, 14, 7, 2], heights: (20, 15, 12) })]
+    #[case::navigation_joins_the_middle(Balance { group_rows: [18, 8, 2, 16], heights: (Cells(19), Cells(13), Cells(17)) })]
+    #[case::navigation_joins_the_last(Balance { group_rows: [19, 14, 7, 2], heights: (Cells(20), Cells(15), Cells(12)) })]
     fn three_columns_moves_navigation_to_the_column_that_balances_better(
         #[case] row: Balance,
     ) {
@@ -322,19 +329,19 @@ mod tests {
         let left = column_lines(&[&left_first, &left_second], colors());
         let right = column_lines(&[&right_first, &right_second], colors());
         assert!(
-            left.height.abs_diff(right.height) <= 3,
+            left.height.0.abs_diff(right.height.0) <= 3,
             "columns should stay balanced: left={} right={}",
-            left.height,
-            right.height
+            left.height.0,
+            right.height.0
         );
     }
 
     fn column(width: u16) -> HelpColumn {
         HelpColumn {
             rows: Vec::new(),
-            chord_width: 0,
-            width,
-            height: 0,
+            chord_width: Cells(0),
+            width: Cells(width),
+            height: Cells(0),
         }
     }
 
@@ -357,13 +364,13 @@ mod tests {
     ) {
         let available = match width {
             Width::ThreeColumns => {
-                columns_width(&candidates().swap_remove(0), COLUMN_GAP)
+                columns_width(&candidates().swap_remove(0), Cells(COLUMN_GAP))
             }
-            Width::OneCellShortOfThree => {
-                columns_width(&candidates().swap_remove(0), COLUMN_GAP) - 1
-            }
+            Width::OneCellShortOfThree => Cells(
+                columns_width(&candidates().swap_remove(0), Cells(COLUMN_GAP)).0 - 1,
+            ),
             Width::TwoSqueezed => squeezed_width(&candidates().swap_remove(1)),
-            Width::Nothing => 1,
+            Width::Nothing => Cells(1),
         };
         assert_eq!(
             columns_that_fit(candidates(), available),
@@ -382,7 +389,7 @@ mod tests {
     #[test]
     fn the_squeeze_is_narrower_than_the_natural_width() {
         let two = candidates().swap_remove(1);
-        assert!(squeezed_width(&two) < columns_width(&two, COLUMN_GAP));
+        assert!(squeezed_width(&two) < columns_width(&two, Cells(COLUMN_GAP)));
     }
 
     #[test]
@@ -393,6 +400,6 @@ mod tests {
             width: 120,
             height: 40,
         };
-        assert_eq!(available_width(full), 114);
+        assert_eq!(available_width(full), Cells(114));
     }
 }

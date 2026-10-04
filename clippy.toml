@@ -18,3 +18,8 @@ allow-dbg-in-tests = true
 # api
 avoid-breaking-exported-api = false
 check-private-items = true
+
+disallowed-methods = [
+    { path = "core::option::Option::unwrap_or_default", reason = "spell the default with map_or or unwrap_or" },
+    { path = "core::result::Result::unwrap_or_default", reason = "handle the error" },
+]

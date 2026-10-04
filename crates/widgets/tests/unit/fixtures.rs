@@ -1,17 +1,9 @@
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use kernel::{
     Moment,
-    domain::{
-        AudioFormat,
-        KeymapOverrides,
-        Model,
-        Tags,
-        Track,
-        appearance::Appearance,
-    },
+    domain::{AudioFormat, Model, Tags, Track, appearance::Appearance},
     playlist::Playlist,
-    update::keymap::{Bindings, KeyBinding},
 };
 use ratatui::{Frame, Terminal, backend::TestBackend};
 use widgets::{
@@ -24,18 +16,19 @@ use widgets::{
     ScenePresentation,
     Spectrum,
     Theme,
-    ThemeSeed,
+    ThemeBase,
 };
 
 pub(crate) fn noir() -> Theme {
     let file =
-        config::parse_theme(include_str!("../../../themes/noir.toml"), "noir").unwrap();
+        config::parse_theme(include_str!("../../../../themes/noir.toml"), "noir")
+            .unwrap();
     theme_of(file)
 }
 
-pub(crate) fn theme_of(file: config::ThemeFile) -> Theme {
+pub(crate) fn theme_of(file: config::TomlTheme) -> Theme {
     let c = file.colors;
-    let palette = ThemeSeed {
+    let palette = ThemeBase {
         background: c.background,
         foreground: c.foreground,
         bright_foreground: c.bright_foreground,
@@ -50,12 +43,6 @@ pub(crate) fn theme_of(file: config::ThemeFile) -> Theme {
         colors: Colors::derive(&palette),
         scanning_label: file.scanning_label,
     }
-}
-
-pub(crate) fn bindings() -> Vec<KeyBinding> {
-    Bindings::new(&KeymapOverrides::default())
-        .as_slice()
-        .to_vec()
 }
 
 pub(crate) fn track(title: &str) -> Arc<Track> {
@@ -89,16 +76,15 @@ pub(crate) fn model_with_tracks(count: usize) -> Model {
 pub(crate) struct SceneSources {
     pub(crate) model: Model,
     pub(crate) theme: Theme,
-    pub(crate) bindings: Vec<KeyBinding>,
     pub(crate) spectrum: Spectrum,
 }
 
 impl SceneSources {
-    pub(crate) fn new(model: Model) -> Self {
+    pub(crate) fn new(mut model: Model) -> Self {
+        model.music_dir = PathBuf::from("/home/user/Music");
         Self {
             model,
             theme: noir(),
-            bindings: bindings(),
             spectrum: [0.0; SPECTRUM_BANDS],
         }
     }
@@ -113,13 +99,12 @@ impl SceneSources {
             ScenePresentation {
                 theme: &self.theme,
                 color_depth: ColorDepth::TrueColor,
-                bindings: &self.bindings,
                 spectrum: &self.spectrum,
                 pixel_path: PixelPath::Halfblocks,
                 cell_aspect: DEFAULT_CELL_ASPECT,
                 clock: Duration::ZERO,
                 now: Moment::default(),
-                music_dir: "/home/user/Music",
+                home: None,
                 sleep_left: None,
             },
         )

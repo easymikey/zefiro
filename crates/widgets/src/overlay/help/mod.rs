@@ -1,7 +1,7 @@
 mod columns;
 mod groups;
 
-use kernel::update::keymap::KeyBinding;
+use kernel::{domain::geometry::Cells, update::keymap::KeyBinding};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Flex, Layout, Rect},
@@ -25,10 +25,10 @@ fn paint_help_columns(body: Rect, content: &HelpContent, buffer: &mut Buffer) {
     let widths: Vec<Constraint> = content
         .columns
         .iter()
-        .map(|column| Constraint::Length(column.width.min(body.width)))
+        .map(|column| Constraint::Length(column.width.0.min(body.width)))
         .collect();
     let rects = Layout::horizontal(widths)
-        .spacing(content.column_gap)
+        .spacing(content.column_gap.0)
         .flex(Flex::Center)
         .split(body);
     let chord_gap = CHORD_GAP;
@@ -52,7 +52,7 @@ pub(crate) struct HelpWidget<'a> {
 
 struct HelpContent {
     columns: Vec<HelpColumn>,
-    column_gap: u16,
+    column_gap: Cells,
 }
 
 impl<'a> HelpWidget<'a> {
@@ -84,7 +84,11 @@ impl<'a> HelpWidget<'a> {
         let groups = HelpGroups::new(self.bindings);
         let columns =
             select_help_columns(&groups, HelpStyle::from_theme(&self.theme), screen);
-        let column_gap = if columns.len() > 1 { COLUMN_GAP } else { 0 };
+        let column_gap = if columns.len() > 1 {
+            Cells(COLUMN_GAP)
+        } else {
+            Cells(0)
+        };
         HelpContent {
             columns,
             column_gap,
@@ -105,12 +109,14 @@ impl<'a> HelpWidget<'a> {
             container: OverlayContainer::Modal(self.avoid),
             border_title: Line::default(),
             modal_title: TITLE,
-            content_width: columns.iter().map(|column| column.width).sum::<u16>()
-                + content.column_gap * gaps,
+            content_width: Cells(
+                columns.iter().map(|column| column.width.0).sum::<u16>()
+                    + content.column_gap.0 * gaps,
+            ),
             content_rows: columns
                 .iter()
                 .map(|column| column.height)
-                .fold(0u16, u16::max),
+                .fold(Cells(0), Cells::max),
             hint: None,
             theme: self.theme,
         }
@@ -125,20 +131,22 @@ impl Widget for &HelpWidget<'_> {
 
 #[cfg(test)]
 mod tests {
+    use kernel::{domain::KeymapOverrides, update::keymap::Bindings};
     use rstest::rstest;
 
     use crate::{
         overlay::help::HelpWidget,
-        test_support::{bindings, noir, rendered},
+        test_support::{noir, rendered},
         theme::{ActiveTheme, ColorDepth},
     };
 
     fn help_frame(width: u16, height: u16) -> String {
         let theme = noir();
-        let bindings = bindings();
+        let keymap = Bindings::new(&KeymapOverrides::default());
+        let bindings = keymap.as_slice();
         let overlay = HelpWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            bindings: &bindings,
+            bindings,
             avoid: &[],
         };
         rendered(width, height, |frame| {

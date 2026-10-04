@@ -31,7 +31,6 @@ use kernel::{
         SettingRow,
         TextEntry,
         Track,
-        ViewIndex,
         Workspace,
     },
     update::{keymap::route, update},
@@ -76,7 +75,7 @@ fn settings_on(row: SettingRow) -> Workspace {
 
 fn confirming_delete() -> Workspace {
     with_overlay(Overlay::ConfirmDelete(DeleteCandidate {
-        index: ViewIndex::new(0),
+        source: kernel::TrackRef::Local("/music/moon.flac".into()),
         title: "Moon River".to_string(),
         artist: "Audrey Hepburn".to_string(),
     }))

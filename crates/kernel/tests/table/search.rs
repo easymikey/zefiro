@@ -1,19 +1,14 @@
-use std::sync::Arc;
-
 use kernel::{
     Cmd,
     Message,
     QueueRequest,
     SearchEdit,
-    domain::{Cursor, CursorOver, Direction, SearchQuery, Track, ViewIndex},
+    domain::{Cursor, CursorOver, Direction, SearchQuery, ViewIndex},
     update::{Unhandled, overlay::SearchQueryMessage},
 };
 use rstest::rstest;
 
-use crate::support::{
-    table::{Cell, cell},
-    titled_track,
-};
+use crate::support::table::cell;
 
 fn query(input: &str, matches: Vec<usize>, selected: usize) -> CursorOver<SearchQuery> {
     let len = matches.len();
@@ -26,37 +21,19 @@ fn query(input: &str, matches: Vec<usize>, selected: usize) -> CursorOver<Search
     }
 }
 
-fn edit(edit: SearchEdit, tracks: Vec<Arc<Track>>) -> SearchQueryMessage {
-    SearchQueryMessage::Edit(edit, tracks)
-}
-
-fn titled(titles: &[&str]) -> Vec<Arc<Track>> {
-    titles
-        .iter()
-        .enumerate()
-        .map(|(index, title)| titled_track(&format!("/tmp/{index}.flac"), title, ""))
-        .collect()
+fn edit(edit: SearchEdit) -> SearchQueryMessage {
+    SearchQueryMessage::Edit(edit)
 }
 
 #[rstest]
-#[case::char_appends(query("m", vec![], 0), edit(SearchEdit::Char('o'), titled(&["mo", "zzz"])), Ok((query("mo", vec![0], 0), Cmd::none())))]
-#[case::char_on_an_empty_query_starts_it(query("", vec![0, 1], 0), edit(SearchEdit::Char('m'), titled(&["mo", "mars"])), Ok((query("m", vec![0, 1], 0), Cmd::none())))]
-#[case::backspace_erases(query("moo", vec![0], 0), edit(SearchEdit::Backspace, titled(&["mo", "zzz"])), Ok((query("mo", vec![0], 0), Cmd::none())))]
-#[case::backspace_on_an_empty_query_stays_empty(query("", vec![], 0), edit(SearchEdit::Backspace, vec![]), Ok((query("", vec![], 0), Cmd::none())))]
-#[case::delete_word_erases_the_trailing_word(query("foo bar", vec![], 0), edit(SearchEdit::DeleteWord, vec![]), Ok((query("foo ", vec![], 0), Cmd::none())))]
-#[case::delete_word_eats_the_trailing_space_with_the_word(query("foo bar ", vec![], 0), edit(SearchEdit::DeleteWord, vec![]), Ok((query("foo ", vec![], 0), Cmd::none())))]
-#[case::delete_word_on_one_word_empties_the_query(query("foo", vec![], 0), edit(SearchEdit::DeleteWord, vec![]), Ok((query("", vec![], 0), Cmd::none())))]
-#[case::clear_empties_the_query(query("foo bar", vec![], 0), edit(SearchEdit::Clear, vec![]), Ok((query("", vec![], 0), Cmd::none())))]
-#[case::editing_installs_fresh_matches_and_resets_the_cursor_to_the_top(
-    query("m", vec![9, 9], 1),
-    edit(SearchEdit::Char('o'), titled(&["mo", "zzz", "moon"])),
-    Ok((query("mo", vec![0, 2], 0), Cmd::none()))
-)]
-#[case::editing_to_nothing_leaves_nothing_selected(
-    query("zz", vec![0, 1], 1),
-    edit(SearchEdit::Char('z'), titled(&["mo", "moon"])),
-    Ok((query("zzz", vec![], 0), Cmd::none()))
-)]
+#[case::char_appends(query("m", vec![], 0), edit(SearchEdit::Char('o')), Ok((query("mo", vec![], 0), Cmd::none())))]
+#[case::char_on_an_empty_query_starts_it(query("", vec![0, 1], 0), edit(SearchEdit::Char('m')), Ok((query("m", vec![0, 1], 0), Cmd::none())))]
+#[case::backspace_erases(query("moo", vec![0], 0), edit(SearchEdit::Backspace), Ok((query("mo", vec![0], 0), Cmd::none())))]
+#[case::backspace_on_an_empty_query_stays_empty(query("", vec![], 0), edit(SearchEdit::Backspace), Ok((query("", vec![], 0), Cmd::none())))]
+#[case::delete_word_erases_the_trailing_word(query("foo bar", vec![], 0), edit(SearchEdit::DeleteWord), Ok((query("foo ", vec![], 0), Cmd::none())))]
+#[case::delete_word_eats_the_trailing_space_with_the_word(query("foo bar ", vec![], 0), edit(SearchEdit::DeleteWord), Ok((query("foo ", vec![], 0), Cmd::none())))]
+#[case::delete_word_on_one_word_empties_the_query(query("foo", vec![], 0), edit(SearchEdit::DeleteWord), Ok((query("", vec![], 0), Cmd::none())))]
+#[case::clear_empties_the_query(query("foo bar", vec![], 0), edit(SearchEdit::Clear), Ok((query("", vec![], 0), Cmd::none())))]
 #[case::nav_down_steps(query("mo", vec![0, 2], 0), SearchQueryMessage::Navigate(Direction::Next), Ok((query("mo", vec![0, 2], 1), Cmd::none())))]
 #[case::nav_up_clamps_at_the_top(query("mo", vec![0, 2], 0), SearchQueryMessage::Navigate(Direction::Previous), Ok((query("mo", vec![0, 2], 0), Cmd::none())))]
 #[case::nav_down_clamps_at_the_bottom(query("mo", vec![0, 2], 1), SearchQueryMessage::Navigate(Direction::Next), Ok((query("mo", vec![0, 2], 1), Cmd::none())))]
@@ -76,7 +53,13 @@ fn titled(titles: &[&str]) -> Vec<Arc<Track>> {
 fn search_cell(
     #[case] start: CursorOver<SearchQuery>,
     #[case] message: SearchQueryMessage,
-    #[case] expected: Cell<CursorOver<SearchQuery>>,
+    #[case] expected: Result<
+        (
+            CursorOver<SearchQuery>,
+            <CursorOver<SearchQuery> as kernel::update::Machine>::Effect,
+        ),
+        Unhandled,
+    >,
 ) {
     cell(start, message, expected);
 }

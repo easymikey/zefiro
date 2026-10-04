@@ -24,7 +24,7 @@ pub(crate) struct BandLevels {
 }
 
 pub(crate) fn band_mean(bands: &Spectrum, range: BandRange) -> f32 {
-    let slice = bands.get(range.start..range.end).unwrap_or_default();
+    let slice = bands.get(range.start..range.end).unwrap_or(&[]);
     if slice.is_empty() {
         return 0.0;
     }
@@ -82,8 +82,9 @@ const PRESETS: [Preset; 3] = [
 ];
 
 pub(crate) fn preset_for_seed(seed: u64) -> Preset {
-    let index = usize::try_from(seed % PRESETS.len() as u64).unwrap_or(0);
-    PRESETS.get(index).copied().unwrap_or_default()
+    let index = u64::try_from(PRESETS.len()).map_or(0, |len| seed % len);
+    let index = usize::try_from(index).unwrap_or(0);
+    PRESETS.get(index).copied().unwrap_or_else(Preset::default)
 }
 
 pub(crate) const DECAY: f32 = 0.85;
@@ -243,8 +244,8 @@ pub(crate) fn inject(cells: &mut [f32], size: FieldSize, injection: &Injection) 
         }
     }
 
-    let width = size.width.max(1) as u64;
-    let height = size.height.max(1) as u64;
+    let width = u64::try_from(size.width.max(1)).unwrap_or(1);
+    let height = u64::try_from(size.height.max(1)).unwrap_or(1);
     let mut state = (injection.seed ^ injection.tick) | 1;
     for _ in 0..injection.spark_count {
         state = xorshift64(state);
@@ -313,7 +314,7 @@ pub(crate) fn kaleidoscope_quadrants_into(
     for (row, dest_row) in row_chunks_mut(dest, size).enumerate() {
         let source_row = row_chunks(source, size)
             .nth(mirrored(row, size.height))
-            .unwrap_or_default();
+            .unwrap_or(&[]);
         write_mirrored_row(dest_row, source_row, size.width);
     }
 }

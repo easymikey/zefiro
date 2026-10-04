@@ -1,25 +1,22 @@
 #![forbid(unsafe_code)]
 
-mod deck;
+pub mod deck;
 mod device;
-mod engine;
+pub mod engine;
 mod error;
-mod spectrum;
-mod tap;
+pub mod gain;
+pub mod spectrum;
+pub mod tap;
 
 use crossbeam_channel::Sender;
-pub use deck::AudioJob;
-pub use engine::effect::EngineEffect;
 use kernel::domain::{AudioSettings, Speed};
-pub use spectrum::SpectrumAnalyzer;
-pub use tap::SpectrumTap;
 
 use crate::{
     deck::Deck,
     engine::{
         effect::AudioMessage,
         revisions::Revisions,
-        state::{Engine, Muted},
+        state::{Closed, Engine},
     },
 };
 
@@ -44,13 +41,13 @@ impl std::fmt::Debug for AudioDriver {
 impl AudioDriver {
     #[must_use]
     pub fn new(
-        config: AudioSettings,
+        settings: AudioSettings,
         sender: Sender<AudioMessage>,
-    ) -> (Self, SpectrumTap) {
+    ) -> (Self, tap::SpectrumTap) {
         let (spectrum, tap) = tap::new_tap();
         let driver = Self {
-            engine: Engine::Muted(Muted {
-                settings: config,
+            engine: Engine::Closed(Closed {
+                settings,
                 pending: None,
                 speed: Speed::default(),
             }),

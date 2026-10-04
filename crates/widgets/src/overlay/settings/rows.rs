@@ -1,4 +1,4 @@
-use kernel::domain::SettingRow;
+use kernel::domain::{SettingRow, geometry::Cells};
 use ratatui::{layout::Constraint, style::Style, text::Line, widgets::Row};
 
 use crate::{
@@ -60,7 +60,11 @@ fn settings_cells(view: &SettingsTableRow<'_>) -> [String; 2] {
     let cell =
         |value: &str, width: u16| truncate(value, usize::from(width)).into_owned();
     [
-        indented(settings_label(view.row), columns.lead, columns.label),
+        indented(
+            settings_label(view.row),
+            Cells(columns.lead),
+            Cells(columns.label),
+        ),
         cell(&value_text(view.row, view.values), columns.value),
     ]
 }

@@ -1,4 +1,4 @@
-use kernel::domain::{HistoryEntry, Moment};
+use kernel::domain::{HistoryEntry, Moment, ViewIndex, geometry::Cells};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
@@ -38,7 +38,7 @@ pub(crate) struct HistoryWidget<'a> {
     pub(crate) theme: ActiveTheme<'a>,
     pub(crate) entries: &'a [HistoryEntry],
     pub(crate) now: Moment,
-    pub(crate) selected: usize,
+    pub(crate) selected: ViewIndex,
     pub(crate) container: OverlayContainer<'a>,
 }
 
@@ -86,7 +86,7 @@ impl HistoryWidget<'_> {
             ),
             modal_title: glyphs::history::TITLE_WORD,
             content_width: measures.natural_width(COLUMN_SPACING),
-            content_rows: u16::try_from(self.entries.len()).unwrap_or(u16::MAX),
+            content_rows: Cells(u16::try_from(self.entries.len()).unwrap_or(u16::MAX)),
             hint: None,
             theme,
         }
@@ -95,11 +95,11 @@ impl HistoryWidget<'_> {
     fn paint_rows(&self, areas: ModalScrollAreas, buffer: &mut Buffer) {
         let style = ModalRowStyle::from_theme(&self.theme);
         let table_area = areas.rows;
-        let lead = leading_cells(&areas);
+        let lead = leading_cells(&areas).0;
         let total = self.entries.len();
         let height = usize::from(table_area.height);
         let columns = HistoryColumns::for_width(column_width(&areas), COLUMN_SPACING);
-        let offset = scroll_offset(self.selected, total, height);
+        let offset = scroll_offset(self.selected.get(), total, height);
         let table = Table::new(
             self.entries.iter().map(|played| {
                 entry_row(
@@ -118,7 +118,7 @@ impl HistoryWidget<'_> {
         .row_highlight_style(style.highlight());
         let mut table_rows = TableState::new()
             .with_offset(offset)
-            .with_selected(Some(self.selected));
+            .with_selected(Some(self.selected.get()));
         StatefulWidget::render(table, table_area, buffer, &mut table_rows);
 
         paint_scrollbar(
@@ -158,11 +158,11 @@ fn played_label(played: &HistoryEntry) -> String {
         )
 }
 
-const WHEN_COLUMN_CELLS: u16 = 8;
+const WHEN_COLUMN_CELLS: Cells = Cells(8);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct HistoryMeasures {
-    label: u16,
+    label: Cells,
 }
 
 impl HistoryMeasures {
@@ -173,14 +173,14 @@ impl HistoryMeasures {
             .max()
             .unwrap_or(0);
         Self {
-            label: u16::try_from(widest).unwrap_or(u16::MAX),
+            label: Cells(u16::try_from(widest).unwrap_or(u16::MAX)),
         }
     }
 
-    fn natural_width(self, spacing: u16) -> u16 {
-        if self.label == 0 {
+    fn natural_width(self, spacing: u16) -> Cells {
+        if self.label == Cells(0) {
             let placeholder = glyphs::history::EMPTY_PLACEHOLDER.width();
-            return u16::try_from(placeholder).unwrap_or(u16::MAX);
+            return Cells(u16::try_from(placeholder).unwrap_or(u16::MAX));
         }
         HistoryColumns {
             label: self.label,
@@ -193,31 +193,34 @@ impl HistoryMeasures {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct HistoryColumns {
-    label: u16,
-    when: u16,
+    label: Cells,
+    when: Cells,
     spacing: u16,
 }
 
 impl HistoryColumns {
-    fn for_width(width: u16, spacing: u16) -> Self {
+    fn for_width(width: Cells, spacing: u16) -> Self {
         let when = WHEN_COLUMN_CELLS;
         Self {
-            label: width.saturating_sub(when.saturating_add(spacing)),
+            label: Cells(width.0.saturating_sub(when.0.saturating_add(spacing))),
             when,
             spacing,
         }
     }
 
-    fn total(self) -> u16 {
-        self.label
-            .saturating_add(self.when)
-            .saturating_add(self.spacing)
+    fn total(self) -> Cells {
+        Cells(
+            self.label
+                .0
+                .saturating_add(self.when.0)
+                .saturating_add(self.spacing),
+        )
     }
 
     fn constraints(self) -> [Constraint; 2] {
         [
-            Constraint::Length(self.label),
-            Constraint::Length(self.when),
+            Constraint::Length(self.label.0),
+            Constraint::Length(self.when.0),
         ]
     }
 }
@@ -244,10 +247,9 @@ fn entry_row(row: &EntryRow<'_>, style: ModalRowStyle, now: Moment) -> Row<'stat
 
 fn entry_cells(row: &EntryRow<'_>, now: Moment) -> [String; 2] {
     let columns = row.columns;
-    let cell =
-        |value: &str, width: u16| truncate(value, usize::from(width)).into_owned();
+    let cell = |value: &str, width: Cells| truncate(value, width.count()).into_owned();
     [
-        indented(&played_label(row.played), row.lead, columns.label),
+        indented(&played_label(row.played), Cells(row.lead), columns.label),
         cell(&when_label(row.played, now), columns.when),
     ]
 }
@@ -256,14 +258,17 @@ fn entry_cells(row: &EntryRow<'_>, now: Moment) -> [String; 2] {
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::{HistoryEntry, Moment};
+    use kernel::domain::{HistoryEntry, Moment, ViewIndex};
     use ratatui::layout::Rect;
 
     use crate::{
-        overlay::{history::HistoryWidget, modal::OverlayContainer},
+        overlay::{
+            history::HistoryWidget,
+            modal::{ModalRowStyle, OverlayContainer},
+        },
         primitive::canvas::find_text,
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth, Role},
+        theme::{ActiveTheme, ColorDepth},
     };
 
     fn now() -> Moment {
@@ -302,7 +307,7 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
-            selected: 1,
+            selected: ViewIndex::new(1),
             container: OverlayContainer::Modal(&[]),
         };
         insta::assert_snapshot!(
@@ -323,14 +328,14 @@ mod tests {
             theme: active,
             entries: &entries,
             now: now(),
-            selected: 1,
+            selected: ViewIndex::new(1),
             container: OverlayContainer::Modal(&[]),
         };
         let buffer =
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
                 .clone();
-        let selection_bg = active.role(Role::SelectionBackground);
+        let selection_bg = ModalRowStyle::from_theme(&active).selected_background;
         let (alpha_x, alpha_y) = find_text(&buffer, "Artist A — Alpha").unwrap();
         let (beta_x, beta_y) = find_text(&buffer, "Beta").unwrap();
         assert_eq!(buffer[(beta_x, beta_y)].style().bg, Some(selection_bg));
@@ -346,7 +351,7 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
-            selected: 0,
+            selected: ViewIndex::new(0),
             container: OverlayContainer::Pane(Rect::new(0, 0, 120, 40)),
         };
         insta::assert_snapshot!(
@@ -363,7 +368,7 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
-            selected: 0,
+            selected: ViewIndex::new(0),
             container: OverlayContainer::Pane(Rect::new(0, 0, 120, 40)),
         };
         let buffer =
@@ -385,7 +390,7 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
-            selected: 0,
+            selected: ViewIndex::new(0),
             container: OverlayContainer::Modal(&[]),
         };
         insta::assert_snapshot!(
@@ -402,7 +407,7 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
-            selected: 0,
+            selected: ViewIndex::new(0),
             container: OverlayContainer::Modal(&[]),
         };
         assert_eq!(

@@ -4,14 +4,17 @@ mod clock;
 mod controls;
 mod core_audio;
 mod cover;
+mod driver;
 mod ffi;
-mod hardware_state;
-mod macos_loop;
+mod hardware;
 mod main_loop;
 mod now_playing;
 
 pub use crate::{
-    cover::CoverReader,
-    macos_loop::MacosLoop,
-    main_loop::{LoopStopper, MainLoop},
+    controls::{RemoteInput, RemoteInputError},
+    core_audio::Error,
+    cover::{CoverBytes, CoverReader, MacosJob},
+    driver::{MacosDriver, MacosEffect, MacosMessage},
+    hardware::HardwarePoll,
+    main_loop::{MainLoop, MainLoopStop},
 };

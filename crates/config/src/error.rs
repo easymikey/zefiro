@@ -1,6 +1,6 @@
 use std::num::ParseIntError;
 
-use kernel::domain::{ConfigName, ThemeNameError};
+use kernel::domain::{ConfigName, ThemeName, ThemeNameError};
 use serde::de::DeserializeOwned;
 
 use crate::{
@@ -34,24 +34,20 @@ pub enum Error {
     },
     #[error(transparent)]
     ThemeName(#[from] ThemeNameError),
-    #[error("`{key}` is not a table")]
-    NotATable { key: String },
+    #[error("`{0}` is not a table")]
+    NotATable(&'static str),
     #[error("{}", .0.message())]
     Document(#[from] toml_edit::TomlError),
+    #[error("no theme named `{0}`")]
+    UnknownTheme(ThemeName),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum CrossfadeError {
-    #[error("invalid crossfade {value:?}: {source}")]
-    Number {
-        value: String,
-        #[source]
-        source: ParseIntError,
-    },
-    #[error(
-        "invalid crossfade {value:?}: expected an integer with an 's' or 'ms' suffix"
-    )]
-    MissingSuffix { value: String },
+    #[error("invalid crossfade: {0}")]
+    Number(#[source] ParseIntError),
+    #[error("invalid crossfade: expected an integer with an 's' or 'ms' suffix")]
+    MissingSuffix,
     #[error(transparent)]
     OutOfRange(#[from] kernel::domain::CrossfadeError),
 }

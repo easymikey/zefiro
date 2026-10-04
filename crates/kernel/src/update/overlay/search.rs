@@ -9,7 +9,7 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchQueryMessage {
-    Edit(SearchEdit, Vec<Arc<Track>>),
+    Edit(SearchEdit),
     Navigate(Direction),
     Enqueue,
 }
@@ -20,14 +20,8 @@ impl Machine for CursorOver<SearchQuery> {
 
     fn transition(&mut self, message: SearchQueryMessage) -> Result<Cmd, Unhandled> {
         match message {
-            SearchQueryMessage::Edit(edit, tracks) => {
+            SearchQueryMessage::Edit(edit) => {
                 edit_query(&mut self.content.input, edit);
-                crate::search::rank_into(
-                    &tracks,
-                    &self.content.input,
-                    &mut self.content.matches,
-                );
-                self.cursor = Cursor::new(self.content.matches.len());
                 Ok(Cmd::none())
             }
             SearchQueryMessage::Navigate(direction) => {
@@ -37,6 +31,15 @@ impl Machine for CursorOver<SearchQuery> {
             SearchQueryMessage::Enqueue => enqueue(self),
         }
     }
+}
+
+pub(crate) fn rank(search: &mut CursorOver<SearchQuery>, tracks: &[Arc<Track>]) {
+    crate::search::rank_into(
+        tracks,
+        &search.content.input,
+        &mut search.content.matches,
+    );
+    search.cursor = Cursor::new(search.content.matches.len());
 }
 
 fn edit_query(input: &mut String, edit: SearchEdit) {

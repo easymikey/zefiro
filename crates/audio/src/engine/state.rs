@@ -7,17 +7,18 @@ use kernel::{
 
 use crate::{
     deck::DeviceChoice,
-    engine::{crossfade::replaygain_factor, effect::EngineEffect, phase::Phase},
+    engine::{crossfade::replay_gain_factor, effect::EngineEffect, phase::Phase},
+    gain::Gain,
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Engine {
-    Muted(Muted),
+    Closed(Closed),
     Live(Live),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Muted {
+pub(crate) struct Closed {
     pub(crate) settings: AudioSettings,
     pub(crate) pending: Option<TrackLoad>,
     pub(crate) speed: Speed,
@@ -48,9 +49,9 @@ impl Live {
         }
     }
 
-    pub(crate) fn volume(&self) -> f32 {
+    pub(crate) fn gain(&self) -> Gain {
         let gain = self.phase.current().and_then(|current| current.gain);
-        replaygain_factor(self.settings.replay_gain, gain)
+        replay_gain_factor(self.settings.replay_gain, gain)
     }
 }
 

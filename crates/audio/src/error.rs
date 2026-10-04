@@ -4,7 +4,7 @@ use kernel::{
     AudioError,
     DecodeError,
     IoError,
-    domain::{DeviceName, OutputDevice, StreamError},
+    domain::{DeviceName, Diagnostic, OutputDevice, StreamError},
 };
 use rodio::cpal;
 
@@ -19,24 +19,7 @@ pub(crate) enum DeviceError {
         source: rodio::StreamError,
     },
     #[error("cannot list output devices: {0}")]
-    Unlisted(#[source] cpal::DevicesError),
-}
-
-impl DeviceError {
-    fn requested(self) -> String {
-        match self {
-            DeviceError::NotFound(name)
-            | DeviceError::NoDevice {
-                name: OutputDevice::Named(name),
-                ..
-            } => name.to_string(),
-            DeviceError::NoDevice {
-                name: OutputDevice::SystemDefault,
-                ..
-            }
-            | DeviceError::Unlisted(_) => "default".to_owned(),
-        }
-    }
+    ListDevices(#[source] cpal::DevicesError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -90,22 +73,31 @@ impl From<&Error> for AudioError {
 }
 
 pub(crate) fn device_error(error: DeviceError) -> AudioError {
-    AudioError::Device {
-        requested: error.requested(),
+    match error {
+        DeviceError::NotFound(name) => AudioError::Device {
+            requested: OutputDevice::Named(name),
+        },
+        DeviceError::NoDevice { name, .. } => AudioError::Device { requested: name },
+        DeviceError::ListDevices(source) => list_devices_error(&source),
     }
 }
 
-pub(crate) fn output_lost(error: &cpal::StreamError) -> AudioError {
-    let kind = match error {
+pub(crate) fn list_devices_error(error: &cpal::DevicesError) -> AudioError {
+    AudioError::ListDevices {
+        reason: Diagnostic::from_error(error),
+    }
+}
+
+pub(crate) fn stream_error(error: &cpal::StreamError) -> StreamError {
+    match error {
         cpal::StreamError::DeviceNotAvailable => StreamError::DeviceGone,
         cpal::StreamError::BackendSpecific { .. } => StreamError::Backend,
-    };
-    AudioError::OutputLost(kind)
+    }
 }
 
 pub(crate) fn seek_error(error: &rodio::source::SeekError) -> AudioError {
     AudioError::Seek {
-        reason: error.to_string(),
+        reason: Diagnostic::from_error(error),
     }
 }
 
@@ -113,6 +105,7 @@ pub(crate) fn preload_error(error: &Error) -> AudioError {
     match AudioError::from(error) {
         AudioError::Decode { path, kind } => AudioError::Preload { path, kind },
         other @ (AudioError::Device { .. }
+        | AudioError::ListDevices { .. }
         | AudioError::Stream { .. }
         | AudioError::OutputLost(..)
         | AudioError::Preload { .. }
@@ -132,7 +125,7 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::error::{DeviceError, Error, device_error, output_lost};
+    use crate::error::{DeviceError, Error, device_error, stream_error};
 
     fn device_name(name: &str) -> DeviceName {
         DeviceName::new(name.to_string()).unwrap()
@@ -232,7 +225,7 @@ mod tests {
         assert_eq!(
             device_error(error),
             AudioError::Device {
-                requested: "usb".to_string()
+                requested: kernel::domain::OutputDevice::Named(device_name("usb"))
             }
         );
     }
@@ -250,10 +243,10 @@ mod tests {
         },
         StreamError::Backend
     )]
-    fn a_stream_error_maps_to_its_output_lost_error(
+    fn a_stream_error_maps_to_its_kind(
         #[case] error: rodio::cpal::StreamError,
         #[case] expected: StreamError,
     ) {
-        assert_eq!(output_lost(&error), AudioError::OutputLost(expected));
+        assert_eq!(stream_error(&error), expected);
     }
 }

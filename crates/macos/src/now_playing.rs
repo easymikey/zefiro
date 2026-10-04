@@ -7,16 +7,16 @@ use objc2::{rc::Retained, runtime::AnyObject};
 use objc2_foundation::{NSDictionary, NSNumber, NSString};
 use objc2_media_player::{MPMediaItemArtwork, MPNowPlayingPlaybackState};
 
-use crate::{clock::PanelClock, ffi};
+use crate::{clock::NowPlayingClock, ffi};
 
 const PLACEHOLDER_TITLE: &str = "sifr";
 const PLAYING_RATE: f64 = 1.0;
 const PAUSED_RATE: f64 = 0.0;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Panel<'a> {
+pub(crate) struct NowPlaying<'a> {
     pub(crate) track: Option<&'a Track>,
-    pub(crate) clock: PanelClock,
+    pub(crate) clock: NowPlayingClock,
     pub(crate) artwork: Option<&'a MPMediaItemArtwork>,
 }
 
@@ -28,10 +28,10 @@ fn rate(playback: Playback) -> f64 {
 }
 
 pub(crate) fn now_playing_info(
-    panel: Panel<'_>,
+    shown: NowPlaying<'_>,
     now: Instant,
 ) -> Retained<NSDictionary<NSString, AnyObject>> {
-    let (title, artist, album, duration) = panel.track.map_or_else(
+    let (title, artist, album, duration) = shown.track.map_or_else(
         || (PLACEHOLDER_TITLE.to_owned(), None, None, Duration::ZERO),
         |track| {
             (
@@ -46,8 +46,8 @@ pub(crate) fn now_playing_info(
     let artist = artist.map(NSString::from_str);
     let album = album.map(NSString::from_str);
     let duration = NSNumber::new_f64(duration.as_secs_f64());
-    let elapsed = NSNumber::new_f64(panel.clock.elapsed(now).as_secs_f64());
-    let rate = NSNumber::new_f64(rate(panel.clock.playback()));
+    let elapsed = NSNumber::new_f64(shown.clock.elapsed(now).as_secs_f64());
+    let rate = NSNumber::new_f64(rate(shown.clock.playback()));
     let keys = [
         ffi::title_key(),
         ffi::duration_key(),
@@ -64,7 +64,7 @@ pub(crate) fn now_playing_info(
         Some(&rate),
         artist.as_deref().map(AsRef::as_ref),
         album.as_deref().map(AsRef::as_ref),
-        panel.artwork.map(AsRef::as_ref),
+        shown.artwork.map(AsRef::as_ref),
     ];
     let (names, objects): (Vec<&NSString>, Vec<&AnyObject>) = keys
         .into_iter()
@@ -74,9 +74,9 @@ pub(crate) fn now_playing_info(
     NSDictionary::from_slices(&names, &objects)
 }
 
-pub(crate) fn publish(panel: Panel<'_>, now: Instant) {
-    let info = now_playing_info(panel, now);
-    let state = match panel.clock.playback() {
+pub(crate) fn publish(shown: NowPlaying<'_>, now: Instant) {
+    let info = now_playing_info(shown, now);
+    let state = match shown.clock.playback() {
         Playback::Playing => MPNowPlayingPlaybackState::Playing,
         Playback::Paused => MPNowPlayingPlaybackState::Paused,
     };
@@ -94,9 +94,9 @@ mod tests {
     use objc2_foundation::{NSDictionary, NSNumber, NSString};
 
     use crate::{
-        clock::PanelClock,
+        clock::NowPlayingClock,
         ffi,
-        now_playing::{PLACEHOLDER_TITLE, PLAYING_RATE, Panel, now_playing_info},
+        now_playing::{NowPlaying, PLACEHOLDER_TITLE, PLAYING_RATE, now_playing_info},
     };
 
     fn text(
@@ -116,14 +116,14 @@ mod tests {
     }
 
     #[test]
-    fn a_cleared_panel_still_carries_a_title() {
+    fn a_cleared_now_playing_still_carries_a_title() {
         let start = Instant::now();
-        let panel = Panel {
+        let shown = NowPlaying {
             track: None,
-            clock: PanelClock::new(start),
+            clock: NowPlayingClock::default(),
             artwork: None,
         };
-        let info = now_playing_info(panel, start);
+        let info = now_playing_info(shown, start);
         let title = ffi::title_key();
         assert_eq!(text(&info, title).as_deref(), Some(PLACEHOLDER_TITLE));
     }
@@ -141,14 +141,14 @@ mod tests {
             .audio_format(AudioFormat::default())
             .build();
         let start = Instant::now();
-        let panel = Panel {
+        let shown = NowPlaying {
             track: Some(&track),
-            clock: PanelClock::new(start)
+            clock: NowPlayingClock::default()
                 .seek(Duration::from_secs(7), start)
                 .change_playback(Playback::Playing, start),
             artwork: None,
         };
-        let info = now_playing_info(panel, start + Duration::from_secs(3));
+        let info = now_playing_info(shown, start + Duration::from_secs(3));
         let (title, artist, album, elapsed, rate) = (
             ffi::title_key(),
             ffi::artist_key(),

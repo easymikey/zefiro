@@ -5,14 +5,14 @@ use kernel::domain::appearance::Animations;
 use ratatui::layout::Rect;
 
 use crate::{
-    CoverArt,
+    CardCover,
     CoverCrossfade,
+    CoverImage,
     CoverMotion,
-    CoverRefreshParts,
+    CoverRefresh,
     CoverWash,
     CrossfadePermit,
     CrossfadeStage,
-    DecodedCover,
     Scene,
     VinylCache,
     VinylCacheKey,
@@ -141,14 +141,14 @@ pub enum CoverFrame {
 
 #[derive(Debug)]
 pub struct CoverUpdate {
-    pub art: CoverArt,
+    pub art: CardCover,
     pub frame: CoverFrame,
 }
 
 pub struct CoverLifecycle {
     source: PixmapSource,
     cell: CellPixels,
-    decoded: Option<DecodedCover>,
+    decoded: Option<CoverImage>,
     painted: Option<Painted>,
     pixmap: Option<Arc<RgbaImage>>,
     crossfade: CoverCrossfade,
@@ -189,7 +189,7 @@ impl CoverLifecycle {
         self.forget_painted();
     }
 
-    pub fn set_cover(&mut self, decoded: DecodedCover) {
+    pub fn set_cover(&mut self, decoded: CoverImage) {
         self.decoded = Some(decoded);
     }
 
@@ -200,12 +200,8 @@ impl CoverLifecycle {
         self.crossfade = CoverCrossfade::default();
     }
 
-    pub fn refresh(
-        &mut self,
-        scene: &Scene<'_>,
-        parts: CoverRefreshParts,
-    ) -> CoverUpdate {
-        let CoverRefreshParts {
+    pub fn refresh(&mut self, scene: &Scene<'_>, parts: CoverRefresh) -> CoverUpdate {
+        let CoverRefresh {
             layout,
             crossfade,
             wash,
@@ -227,7 +223,7 @@ impl CoverLifecycle {
         let plan = plan_paint(self.painted.as_ref().map(Painted::placed), desired);
         if plan == PaintPlan::Reuse {
             return CoverUpdate {
-                art: CoverArt::Image,
+                art: CardCover::Image,
                 frame: self.advance(tick),
             };
         }
@@ -246,7 +242,7 @@ impl CoverLifecycle {
             tick,
         });
         CoverUpdate {
-            art: CoverArt::Image,
+            art: CardCover::Image,
             frame,
         }
     }
@@ -265,7 +261,7 @@ impl CoverLifecycle {
     fn forget(&mut self) -> CoverUpdate {
         self.forget_painted();
         CoverUpdate {
-            art: CoverArt::Missing,
+            art: CardCover::Missing,
             frame: CoverFrame::Forget,
         }
     }
@@ -401,10 +397,10 @@ mod tests {
 
     use crate::{
         Breakpoint,
-        CoverRefreshParts,
+        CoverImage,
+        CoverRefresh,
         CoverWash,
         CrossfadePermit,
-        DecodedCover,
         FrameLayout,
         VinylCacheKey,
         VinylStyle,
@@ -573,8 +569,8 @@ mod tests {
         }
     }
 
-    fn parts(crossfade: CrossfadePermit) -> CoverRefreshParts {
-        CoverRefreshParts {
+    fn parts(crossfade: CrossfadePermit) -> CoverRefresh {
+        CoverRefresh {
             layout: layout_with_cover(rect()),
             crossfade,
             wash: CoverWash::Idle,
@@ -585,12 +581,12 @@ mod tests {
     fn a_crossfade_keeps_the_incoming_image_shared() {
         let sources = animated_sources();
         let mut cover = CoverLifecycle::new(PixmapSource::Plain, cell());
-        cover.set_cover(DecodedCover {
+        cover.set_cover(CoverImage {
             path: PathBuf::from("a.jpg"),
             image: Arc::new(source_pixmap()),
         });
         cover.refresh(&sources.scene(), parts(CrossfadePermit::Allowed));
-        let second = DecodedCover {
+        let second = CoverImage {
             path: PathBuf::from("b.jpg"),
             image: Arc::new(source_pixmap()),
         };

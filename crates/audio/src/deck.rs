@@ -1,18 +1,16 @@
 pub(crate) mod envelope;
-mod event;
-mod job;
+pub(crate) mod event;
+pub mod job;
 pub(crate) mod output;
 pub(crate) mod source;
 
 use std::{path::PathBuf, time::Duration};
 
 use crossbeam_channel::Sender;
-pub(crate) use event::{DeckEvent, Revision};
-pub use job::AudioJob;
 use kernel::{
     AudioError,
     Playback,
-    domain::{OutputDevice, Speed},
+    domain::{OutputDevice, Revision, Speed},
 };
 
 use crate::{
@@ -21,11 +19,13 @@ use crate::{
         output::{Output, open_output_stream},
         source::{PreloadMode, TrackDecoding, TrackSource},
     },
+    device::OutputLoss,
     engine::{
-        effect::{AudioMessage, Preload},
+        effect::{AudioMessage, PreloadKind},
         phase::CurrentTrack,
     },
     error::device_error,
+    gain::Gain,
     tap::Handoff,
 };
 
@@ -48,6 +48,7 @@ pub(crate) struct Deck {
     source: TrackDecoding,
     sender: Sender<AudioMessage>,
     spectrum: Handoff,
+    lost: OutputLoss,
 }
 
 impl Deck {
@@ -58,7 +59,12 @@ impl Deck {
             source,
             sender,
             spectrum,
+            lost: OutputLoss::default(),
         }
+    }
+
+    pub(crate) fn resend_lost(&self) {
+        self.lost.resend(&self.sender);
     }
 
     pub(crate) fn stage(&mut self, track: TrackSource) {
@@ -75,15 +81,15 @@ impl Deck {
             PreloadMode::Gapless => {
                 output.append(wrapped);
                 self.source.envelopes.queued = Some(control);
-                Preload::Gapless(path)
+                PreloadKind::Gapless(path)
             }
             PreloadMode::Crossfade { gain, speed } => {
                 output.stage(wrapped, speed);
                 self.source.envelopes.incoming = Some(control);
-                Preload::Crossfade(CurrentTrack { total, gain, path })
+                PreloadKind::Crossfade(CurrentTrack { total, gain, path })
             }
         };
-        Some(AudioMessage::Preloaded(Ok(preload)))
+        Some(AudioMessage::Preloaded(preload))
     }
 
     pub(crate) fn take_signals(&self, revision: Revision) -> Option<AudioMessage> {
@@ -114,7 +120,8 @@ impl Deck {
         device: OutputDevice,
         speed: Speed,
     ) -> Result<DeviceOpened, AudioError> {
-        let opened = open_output_stream(device, &self.sender).map_err(device_error)?;
+        let opened = open_output_stream(device, &self.sender, &self.lost)
+            .map_err(device_error)?;
         let (position, playback) = self
             .output
             .as_ref()
@@ -185,7 +192,7 @@ impl Deck {
         }
     }
 
-    pub(crate) fn crossfade(&mut self, length: Duration, incoming: f32) {
+    pub(crate) fn crossfade(&mut self, length: Duration, incoming: Gain) {
         let envelopes = &mut self.source.envelopes;
         fade(
             envelopes.primary.as_mut(),
@@ -198,16 +205,16 @@ impl Deck {
         let Some(preload) = output.incoming.as_ref() else {
             return;
         };
-        preload.set_volume(incoming);
+        preload.set_volume(incoming.amplitude());
         preload.play();
     }
 
     pub(crate) fn cancel_crossfade(&mut self) {
         if let Some(control) = self.source.envelopes.primary.as_mut() {
-            control.ramp(Ramp::hold(1.0));
+            control.ramp(Ramp::hold(Gain::UNITY));
         }
         if let Some(control) = self.source.envelopes.incoming.as_mut() {
-            control.ramp(Ramp::hold(0.0));
+            control.ramp(Ramp::hold(Gain::SILENCE));
         }
         if let Some(preload) = self
             .output
@@ -225,7 +232,7 @@ impl Deck {
         self.source.envelopes.outgoing = None;
     }
 
-    pub(crate) fn ramp_handover(&mut self, length: Duration, playing: f32) {
+    pub(crate) fn ramp_handover(&mut self, length: Duration, playing: Gain) {
         let envelopes = &mut self.source.envelopes;
         fade(
             envelopes.outgoing.as_mut(),
@@ -233,7 +240,7 @@ impl Deck {
             length,
         );
         if let Some(sink) = self.primary() {
-            sink.set_volume(playing);
+            sink.set_volume(playing.amplitude());
         }
     }
 
@@ -265,12 +272,12 @@ fn fade(
 mod tests {
     use std::time::Duration;
 
+    use kernel::domain::Revision;
     use rodio::{Source, source::SineWave};
 
     use crate::{
         deck::{
             Deck,
-            Revision,
             envelope::{Ramp, Signals, envelope},
         },
         engine::effect::{AudioMessage, SinkRole},
@@ -321,7 +328,7 @@ mod tests {
         let preloaded = decoded.next();
         let (wake, _heard) = crossbeam_channel::bounded(8);
         let (source, mut outgoing) = envelope(tone(100), preloaded, wake.clone());
-        outgoing.ramp(Ramp::fade_out(441));
+        outgoing.ramp(Ramp::fade_out(outgoing.frames(Duration::from_millis(10))));
         for _ in source {}
         let revision = outgoing.revision();
         let (_source, primary) = envelope(tone(100), decoded, wake);

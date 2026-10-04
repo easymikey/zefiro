@@ -1,4 +1,4 @@
-use kernel::domain::JumpDigits;
+use kernel::domain::{JumpDigits, geometry::Cells};
 
 use crate::{
     overlay::modal::{PromptBody, PromptStyle, PromptWidget},
@@ -6,7 +6,7 @@ use crate::{
     theme::ActiveTheme,
 };
 
-const MIN_WIDTH: u16 = 61;
+const MIN_WIDTH: Cells = Cells(61);
 
 pub(crate) fn prompt<'a>(
     digits: &'a JumpDigits,

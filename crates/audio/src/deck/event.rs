@@ -1,13 +1,15 @@
 use std::fmt;
 
 use crossbeam_channel::{Sender, TrySendError};
-pub(crate) use kernel::domain::Revision;
-use kernel::{AudioError, domain::ListedDevice};
+use kernel::{
+    AudioError,
+    domain::{ListedDevice, Revision, StreamError},
+};
 
 use crate::{deck::source::TrackDecoder, engine::effect::AudioMessage, error::Error};
 
 pub enum DeckEvent {
-    OutputLost(rodio::cpal::StreamError),
+    OutputLost(StreamError),
     Decoded {
         revision: Revision,
         result: Result<TrackDecoder, Error>,
@@ -17,11 +19,11 @@ pub enum DeckEvent {
         result: Result<TrackDecoder, Error>,
     },
     DevicesListed(Result<Vec<ListedDevice>, AudioError>),
-    Track(Revision),
+    Woke(Revision),
 }
 
 impl DeckEvent {
-    pub(crate) fn notify(
+    pub(crate) fn wake(
         self,
         sender: &Sender<AudioMessage>,
     ) -> Result<(), TrySendError<AudioMessage>> {
@@ -49,9 +51,7 @@ impl fmt::Debug for DeckEvent {
             DeckEvent::DevicesListed(listed) => {
                 f.debug_tuple("DevicesListed").field(listed).finish()
             }
-            DeckEvent::Track(revision) => {
-                f.debug_tuple("Track").field(revision).finish()
-            }
+            DeckEvent::Woke(revision) => f.debug_tuple("Woke").field(revision).finish(),
         }
     }
 }

@@ -14,7 +14,7 @@ use crate::{
     message::{HistoryRequest, Message, QueueRequest},
     update::{
         machine::{Machine, Unhandled},
-        overlay::{InnerMessage, OverlayMessage, OverlayParts},
+        overlay::{OverlayContentMessage, OverlayMessage, OverlayParts},
     },
 };
 
@@ -81,10 +81,9 @@ pub(crate) fn request(
             parts.playlist,
         )),
     };
-    parts
-        .workspace
-        .overlay
-        .transition(OverlayMessage::Inner(InnerMessage::History(message)))
+    parts.workspace.overlay.transition(OverlayMessage::Inner(
+        OverlayContentMessage::History(message),
+    ))
 }
 
 fn pick(

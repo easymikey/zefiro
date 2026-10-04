@@ -1,6 +1,6 @@
 [package]
 name = "widgets"
-description = "Terminal rendering: pure view logic and terminal I/O for the ratatui frontend"
+description = "pure terminal view"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

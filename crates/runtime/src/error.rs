@@ -1,28 +1,6 @@
-use std::{io, path::PathBuf};
+use std::io;
 
 use kernel::domain::DriverName;
-
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum SaveError {
-    #[error("reading {path}: {source}")]
-    Read {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("{path}: {source}")]
-    Parse {
-        path: PathBuf,
-        #[source]
-        source: config::Error,
-    },
-    #[error("writing {path}: {source}")]
-    Write {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error<E: std::error::Error + 'static = io::Error> {
@@ -32,6 +10,8 @@ pub enum Error<E: std::error::Error + 'static = io::Error> {
         #[source]
         source: io::Error,
     },
+    #[error("the {driver} driver stopped before handing over its tap")]
+    TapLost { driver: DriverName },
     #[error("input closed")]
     InputClosed,
     #[error("painting a frame: {0}")]
@@ -44,31 +24,11 @@ pub enum Error<E: std::error::Error + 'static = io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use std::{io, path::PathBuf};
+    use std::io;
 
     use kernel::domain::DriverName;
 
-    use crate::error::{Error, SaveError};
-
-    #[test]
-    fn read_message_includes_path_and_source() {
-        let error = SaveError::Read {
-            path: PathBuf::from("config.toml"),
-            source: io::Error::other("permission denied"),
-        };
-
-        assert_eq!(error.to_string(), "reading config.toml: permission denied");
-    }
-
-    #[test]
-    fn write_message_includes_path_and_source() {
-        let error = SaveError::Write {
-            path: PathBuf::from("config.toml"),
-            source: io::Error::other("disk full"),
-        };
-
-        assert_eq!(error.to_string(), "writing config.toml: disk full");
-    }
+    use crate::error::Error;
 
     #[test]
     fn spawn_message_includes_the_driver_and_the_source() {

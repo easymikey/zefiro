@@ -1,7 +1,7 @@
-use std::{ffi::c_void, mem::MaybeUninit, ptr, ptr::NonNull};
+use std::{ffi::c_void, mem, mem::MaybeUninit, ptr, ptr::NonNull};
 
 use crossbeam_channel::Sender;
-use kernel::{Bounded, Percent};
+use kernel::{Bounded, Percent, message::OsStatus};
 use objc2_core_audio::{
     AudioObjectAddPropertyListener,
     AudioObjectGetPropertyData,
@@ -18,33 +18,47 @@ use objc2_core_audio::{
     kAudioObjectSystemObject,
 };
 
+use crate::driver::MacosMessage;
+
+const SIZE_OVERFLOW_STATUS: OsStatus = OsStatus(-1);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("CoreAudio refused the request (status {status})")]
-pub(crate) struct CoreAudioError {
-    status: i32,
+pub struct Error {
+    status: OsStatus,
 }
 
-impl CoreAudioError {
-    pub(crate) const fn status(self) -> i32 {
+impl Error {
+    pub(crate) const fn status(self) -> OsStatus {
         self.status
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Muted {
+    Yes,
+    No,
+}
+
 #[derive(Debug)]
 pub(crate) struct HardwareWatch {
-    notify: *mut Sender<()>,
+    notify: *mut Sender<MacosMessage>,
     device: AudioObjectID,
+    stale: Vec<AudioObjectID>,
 }
 
 impl HardwareWatch {
-    pub(crate) fn new(notify: Sender<()>) -> Result<Self, CoreAudioError> {
-        let notify = Box::into_raw(Box::new(notify));
+    pub(crate) fn new(heard: Sender<MacosMessage>) -> Result<Self, Error> {
+        let notify = Box::into_raw(Box::new(heard));
         let device = default_output_device();
         match add_listeners(notify.cast(), device) {
-            Ok(()) => Ok(Self { notify, device }),
+            Ok(()) => Ok(Self {
+                notify,
+                device,
+                stale: Vec::new(),
+            }),
             Err(error) => {
-                remove_listeners(notify.cast(), device);
-                // SAFETY: every listener that saw `notify` was just removed.
+                // SAFETY: `add_listeners` removed every listener it had added.
                 drop(unsafe { Box::from_raw(notify) });
                 Err(error)
             }
@@ -55,77 +69,84 @@ impl HardwareWatch {
         self.device
     }
 
-    pub(crate) fn rebind_to(
-        &mut self,
-        device: AudioObjectID,
-    ) -> Result<(), CoreAudioError> {
+    pub(crate) fn rebind_to(&mut self, device: AudioObjectID) -> Result<(), Error> {
         let notify = self.notify.cast::<c_void>();
-        remove_listener(self.device, &volume_address(), notify);
-        remove_listener(self.device, &mute_address(), notify);
-        add_listener(device, &volume_address(), notify)?;
-        add_listener(device, &mute_address(), notify)
-            .inspect_err(|_| remove_listener(device, &volume_address(), notify))
-            .map(|()| self.device = device)
+        add_device_listeners(device, notify)?;
+        let previous = mem::replace(&mut self.device, device);
+        remove_device_listeners(previous, notify)
+            .inspect_err(|_| self.stale.push(previous))
     }
 }
 
-fn add_listeners(
-    notify: *mut c_void,
-    device: AudioObjectID,
-) -> Result<(), CoreAudioError> {
-    add_listener(system_object(), &default_output_address(), notify)
-        .and_then(|()| add_listener(device, &volume_address(), notify))
-        .and_then(|()| add_listener(device, &mute_address(), notify))
+fn add_listeners(notify: *mut c_void, device: AudioObjectID) -> Result<(), Error> {
+    add_listener(system_object(), &default_output_address(), notify)?;
+    add_device_listeners(device, notify).or_else(|error| {
+        remove_listener(system_object(), &default_output_address(), notify)
+            .and(Err(error))
+    })
 }
 
-fn remove_listeners(notify: *mut c_void, device: AudioObjectID) {
-    remove_listener(system_object(), &default_output_address(), notify);
-    remove_listener(device, &volume_address(), notify);
-    remove_listener(device, &mute_address(), notify);
+fn add_device_listeners(
+    device: AudioObjectID,
+    notify: *mut c_void,
+) -> Result<(), Error> {
+    add_listener(device, &volume_address(), notify)?;
+    add_listener(device, &mute_address(), notify).or_else(|error| {
+        remove_listener(device, &volume_address(), notify).and(Err(error))
+    })
+}
+
+fn remove_device_listeners(
+    device: AudioObjectID,
+    notify: *mut c_void,
+) -> Result<(), Error> {
+    let volume = remove_listener(device, &volume_address(), notify);
+    let mute = remove_listener(device, &mute_address(), notify);
+    volume.and(mute)
 }
 
 pub(crate) fn read_volume(device: AudioObjectID) -> Option<Percent> {
     let scalar = read_property::<f32>(device, &volume_address())?;
-    let muted = read_property::<u32>(device, &mute_address()).is_some_and(|m| m != 0);
-    Some(if muted {
-        Percent::clamped(0)
-    } else {
-        percent_from_scalar(scalar)
+    Some(match read_mute(device) {
+        Some(Muted::Yes) => Percent::clamped(0),
+        Some(Muted::No) | None => Percent::from_ratio(scalar),
+    })
+}
+
+fn read_mute(device: AudioObjectID) -> Option<Muted> {
+    read_property::<u32>(device, &mute_address()).map(|flag| match flag {
+        0 => Muted::No,
+        _ => Muted::Yes,
     })
 }
 
 pub(crate) fn write_volume(
     device: AudioObjectID,
     volume: Percent,
-) -> Result<(), CoreAudioError> {
+) -> Result<(), Error> {
     write_property(device, &volume_address(), volume.ratio())?;
-    let audible = volume.get() > 0;
-    let muted = read_property::<u32>(device, &mute_address()).map(|m| m != 0);
-    if muted == Some(audible) {
-        let cleared = write_property(device, &mute_address(), u32::from(!audible));
-        if audible {
-            cleared?;
-        }
-    }
-    Ok(())
+    read_mute(device)
+        .and_then(|muted| mute_change(volume, muted))
+        .map_or(Ok(()), |flag| write_property(device, &mute_address(), flag))
 }
 
-fn percent_from_scalar(scalar: f32) -> Percent {
-    let scalar = if scalar.is_nan() { 0.0 } else { scalar };
-    let scaled = scalar.clamp(0.0, 1.0) * 100.0;
-    let step = (0..=100u8)
-        .find(|step| f32::from(*step) + 0.5 > scaled)
-        .unwrap_or(100);
-    Percent::clamped(step)
+fn mute_change(volume: Percent, muted: Muted) -> Option<u32> {
+    match (volume.get(), muted) {
+        (0, Muted::No) => Some(1),
+        (1.., Muted::Yes) => Some(0),
+        (0, Muted::Yes) | (1.., Muted::No) => None,
+    }
 }
 
 fn write_property<Value: Copy>(
     object: AudioObjectID,
     address: &AudioObjectPropertyAddress,
     mut property_value: Value,
-) -> Result<(), CoreAudioError> {
+) -> Result<(), Error> {
     let Ok(size) = u32::try_from(size_of::<Value>()) else {
-        return Err(CoreAudioError { status: -1 });
+        return Err(Error {
+            status: SIZE_OVERFLOW_STATUS,
+        });
     };
     let address = NonNull::from(address);
     let data_ptr = NonNull::from(&mut property_value).cast::<c_void>();
@@ -136,20 +157,27 @@ fn write_property<Value: Copy>(
     if status == 0 {
         Ok(())
     } else {
-        Err(CoreAudioError { status })
+        Err(Error {
+            status: OsStatus(status),
+        })
     }
 }
 
 impl Drop for HardwareWatch {
     fn drop(&mut self) {
-        remove_listeners(self.notify.cast(), self.device);
-        // SAFETY: from `Box::into_raw` in `new`; listeners are removed.
-        drop(unsafe { Box::from_raw(self.notify) });
+        let notify = self.notify.cast::<c_void>();
+        let system =
+            remove_listener(system_object(), &default_output_address(), notify);
+        let device = remove_device_listeners(self.device, notify);
+        if system.and(device).is_ok() && self.stale.is_empty() {
+            // SAFETY: from `Box::into_raw` in `new`; every listener is removed.
+            drop(unsafe { Box::from_raw(self.notify) });
+        }
     }
 }
 
 fn system_object() -> AudioObjectID {
-    kAudioObjectSystemObject as AudioObjectID
+    kAudioObjectSystemObject.unsigned_abs()
 }
 
 fn default_output_address() -> AudioObjectPropertyAddress {
@@ -204,7 +232,7 @@ fn add_listener(
     object: AudioObjectID,
     address: &AudioObjectPropertyAddress,
     notify: *mut c_void,
-) -> Result<(), CoreAudioError> {
+) -> Result<(), Error> {
     let address = NonNull::from(address);
     // SAFETY: `notify` stays valid until the matching `remove_listener` call.
     let status = unsafe {
@@ -218,7 +246,9 @@ fn add_listener(
     if status == 0 {
         Ok(())
     } else {
-        Err(CoreAudioError { status })
+        Err(Error {
+            status: OsStatus(status),
+        })
     }
 }
 
@@ -226,10 +256,10 @@ fn remove_listener(
     object: AudioObjectID,
     address: &AudioObjectPropertyAddress,
     notify: *mut c_void,
-) {
+) -> Result<(), Error> {
     let address = NonNull::from(address);
     // SAFETY: same object, address and callback as the matching `add_listener`.
-    let _ = unsafe {
+    let status = unsafe {
         AudioObjectRemovePropertyListener(
             object,
             address,
@@ -237,6 +267,13 @@ fn remove_listener(
             notify,
         )
     };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(Error {
+            status: OsStatus(status),
+        })
+    }
 }
 
 extern "C-unwind" fn on_property_changed(
@@ -245,9 +282,9 @@ extern "C-unwind" fn on_property_changed(
     _addresses: NonNull<AudioObjectPropertyAddress>,
     client_data: *mut c_void,
 ) -> i32 {
-    // SAFETY: `client_data` is the `Sender<()>` boxed by `new`.
-    let notify = unsafe { &*client_data.cast::<Sender<()>>() };
-    match notify.try_send(()) {
+    // SAFETY: `client_data` is the `Sender<MacosMessage>` boxed by `new`.
+    let heard = unsafe { &*client_data.cast::<Sender<MacosMessage>>() };
+    match heard.try_send(MacosMessage::HardwareChanged) {
         Ok(()) | Err(_) => {}
     }
     0
@@ -259,33 +296,24 @@ mod tests {
     use rstest::rstest;
 
     use crate::core_audio::{
+        Muted,
         default_output_device,
-        percent_from_scalar,
+        mute_change,
         read_volume,
         write_volume,
     };
 
     #[rstest]
-    #[case::floor(0.0, 0)]
-    #[case::rounds_down(0.404, 40)]
-    #[case::rounds_up(0.406, 41)]
-    #[case::ceiling(1.0, 100)]
-    #[case::clamps_above_one(1.7, 100)]
-    #[case::clamps_below_zero(-0.2, 0)]
-    #[case::not_a_number_is_zero(f32::NAN, 0)]
-    fn percent_from_scalar_rounds_and_clamps(#[case] scalar: f32, #[case] percent: u8) {
-        assert_eq!(percent_from_scalar(scalar), Percent::clamped(percent));
-    }
-
-    #[rstest]
-    #[case::silence(0)]
-    #[case::a_sliver(1)]
-    #[case::two_fifths(40)]
-    #[case::almost_full(99)]
-    #[case::full(100)]
-    fn scalar_round_trips_every_percent(#[case] percent: u8) {
-        let volume = Percent::clamped(percent);
-        assert_eq!(percent_from_scalar(volume.ratio()), volume);
+    #[case::silence_mutes_an_audible_device(0, Muted::No, Some(1))]
+    #[case::silence_keeps_a_muted_device(0, Muted::Yes, None)]
+    #[case::sound_unmutes_a_muted_device(40, Muted::Yes, Some(0))]
+    #[case::sound_keeps_an_audible_device(40, Muted::No, None)]
+    fn mute_follows_the_written_volume(
+        #[case] percent: u8,
+        #[case] muted: Muted,
+        #[case] change: Option<u32>,
+    ) {
+        assert_eq!(mute_change(Percent::clamped(percent), muted), change);
     }
 
     #[test]

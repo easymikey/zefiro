@@ -10,7 +10,7 @@ use ratatui::{
 use crate::{
     card::{
         CardView,
-        headings::{CardStatus, card_status, status_label},
+        headings::{CardStyle, card_status, status_label},
     },
     pixels::unit_fraction,
     primitive::{
@@ -20,7 +20,7 @@ use crate::{
         span::{line, text},
         text::truncate,
     },
-    theme::{ActiveTheme, BarStyle, Role},
+    theme::{ActiveTheme, VolumeStyle},
 };
 
 const PADDING: u16 = 1;
@@ -36,7 +36,7 @@ pub(crate) fn compact_height() -> u16 {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct CompactCard<'a> {
+pub(crate) struct CompactCardWidget<'a> {
     pub(crate) view: CardView<'a>,
     pub(crate) theme: ActiveTheme<'a>,
     pub(crate) speed_chip: SpeedChip,
@@ -85,10 +85,10 @@ pub(crate) fn progress_bar_width(area: Rect) -> u16 {
     content_area(area).width
 }
 
-impl Widget for &CompactCard<'_> {
+impl Widget for &CompactCardWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let theme = self.theme;
-        let frame_color: Color = theme.role(Role::Frame);
+        let frame_color: Color = CardStyle::from_theme(&theme).border;
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -117,15 +117,14 @@ fn paint_header_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let inner = context.inner;
     let clamp = |rect: Rect| rect.intersection(inner);
     let row_width = inner.width;
-    let text_color: Color = context.theme.role(Role::Text);
-    let dim_color: Color = context.theme.role(Role::Dim);
+    let style = CardStyle::from_theme(&context.theme);
 
     let current = context.view.displayed_track;
     let title =
         current.map_or_else(|| "No track".to_string(), |track| track.song_title());
     let artist = current
-        .and_then(|track| track.tags().artist.clone())
-        .unwrap_or_default();
+        .and_then(|track| track.tags().artist.as_deref())
+        .map_or_else(String::new, str::to_owned);
 
     let title_row = clamp(Rect {
         x: inner.x,
@@ -134,7 +133,7 @@ fn paint_header_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         height: 1,
     });
     Paragraph::new(line([text(truncate(&title, usize::from(row_width)))
-        .fg(text_color)
+        .fg(style.foreground)
         .bold()]))
     .render(title_row, buffer);
 
@@ -145,7 +144,7 @@ fn paint_header_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         height: 1,
     });
     Paragraph::new(line([
-        text(truncate(&artist, usize::from(row_width))).fg(dim_color)
+        text(truncate(&artist, usize::from(row_width))).fg(style.muted_foreground)
     ]))
     .render(artist_row, buffer);
 }
@@ -154,8 +153,7 @@ fn paint_progress_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let inner = context.inner;
     let clamp = |rect: Rect| rect.intersection(inner);
     let row_width = inner.width;
-    let accent_color: Color = context.theme.role(Role::Accent);
-    let dim_color: Color = context.theme.role(Role::Dim);
+    let style = CardStyle::from_theme(&context.theme);
 
     let duration = context.view.duration();
     let fraction = if duration.is_zero() {
@@ -173,10 +171,8 @@ fn paint_progress_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     });
     Paragraph::new(fill(
         &BarFill::progress(unit_fraction(fraction), usize::from(row_width)),
-        BarStyle {
-            fill: accent_color,
-            track: dim_color,
-        },
+        style.accent,
+        style.muted_foreground,
     ))
     .render(progress_row, buffer);
 }
@@ -190,17 +186,10 @@ fn paint_status_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         ..
     } = context.status_row;
     let view = context.view;
-    let text_color: Color = context.theme.role(Role::Text);
-    let dim_color: Color = context.theme.role(Role::Dim);
-    let accent_color: Color = context.theme.role(Role::Accent);
+    let style = CardStyle::from_theme(&context.theme);
 
     let status = card_status(view.output, view.player);
-    let status_color = match status {
-        CardStatus::OutputLost => context.theme.role(Role::Accent2),
-        CardStatus::Playing => accent_color,
-        CardStatus::Paused => text_color,
-        CardStatus::Stopped => dim_color,
-    };
+    let status_color = style.status_color(status);
     let label = status_label(status);
 
     let status_base = format!("{} {}", label.glyph, label.word);
@@ -221,15 +210,13 @@ fn paint_status_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         view.speed,
         context.speed_chip,
         ChipStyle {
-            foreground: accent_color,
+            foreground: style.accent,
             ..ChipStyle::from_theme(&context.theme)
         },
     );
     let indicator_width = usize::from(speed_chip_width(view.speed, context.speed_chip));
-    if let Some(spans) = indicator_spans.filter(|_| {
-        status_text.chars().count() + indicator_width <= usize::from(status_width)
-    }) {
-        status_spans.extend(spans);
+    if status_text.chars().count() + indicator_width <= usize::from(status_width) {
+        status_spans.extend(indicator_spans);
     }
     Paragraph::new(Line::from(status_spans)).render(status_row, buffer);
 }
@@ -250,9 +237,11 @@ fn paint_meter_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         width: volume_width,
         height: 1,
     });
+    let style = VolumeStyle::from_theme(&context.theme);
     Paragraph::new(fill(
         &BarFill::volume(context.view.volume.ratio(), usize::from(bar_area.width)),
-        BarStyle::volume(&context.theme),
+        style.fill,
+        style.track,
     ))
     .render(bar_area, buffer);
 }
@@ -277,7 +266,7 @@ mod tests {
     };
 
     use crate::{
-        card::{CardView, CompactCard, compact_height},
+        card::{CardView, CompactCardWidget, compact_height},
         spectrum::{SPECTRUM_BANDS, Spectrum},
         test_support::{noir, rendered, track},
         theme::{ActiveTheme, ColorDepth},
@@ -311,7 +300,7 @@ mod tests {
             output: &output,
             now: Moment::default(),
         };
-        let widget = CompactCard {
+        let widget = CompactCardWidget {
             view,
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             speed_chip: SpeedChip::Always,
@@ -343,7 +332,7 @@ mod tests {
             output: &output,
             now: Moment::default(),
         };
-        let widget = CompactCard {
+        let widget = CompactCardWidget {
             view,
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             speed_chip: SpeedChip::Always,

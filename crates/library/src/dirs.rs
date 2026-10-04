@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::error::Error;
 
 #[must_use]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LibraryDirs {
     pub cache_dir: PathBuf,
     pub data_dir: PathBuf,

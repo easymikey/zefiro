@@ -4,6 +4,8 @@ use ratatui_image::{
 };
 use widgets::{ColorDepth, DEFAULT_CELL_ASPECT, PixelPath};
 
+use crate::error::Error;
+
 #[derive(Debug, Default)]
 pub struct TerminalEnvironment {
     term_program: Option<String>,
@@ -26,41 +28,10 @@ impl TerminalEnvironment {
             term: std::env::var("TERM").ok(),
         }
     }
-
-    #[cfg(test)]
-    fn with_term_program(mut self, term_program: &str) -> Self {
-        self.term_program = Some(term_program.into());
-        self
-    }
-    #[cfg(test)]
-    fn with_kitty_window_id(mut self, kitty_window_id: &str) -> Self {
-        self.kitty_window_id = Some(kitty_window_id.into());
-        self
-    }
-    #[cfg(test)]
-    fn with_ghostty_resources_dir(mut self, ghostty_resources_dir: &str) -> Self {
-        self.ghostty_resources_dir = Some(ghostty_resources_dir.into());
-        self
-    }
-    #[cfg(test)]
-    fn with_wezterm_executable(mut self, wezterm_executable: &str) -> Self {
-        self.wezterm_executable = Some(wezterm_executable.into());
-        self
-    }
-    #[cfg(test)]
-    fn with_iterm_session_id(mut self, iterm_session_id: &str) -> Self {
-        self.iterm_session_id = Some(iterm_session_id.into());
-        self
-    }
-    #[cfg(test)]
-    fn with_term(mut self, term: &str) -> Self {
-        self.term = Some(term.into());
-        self
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Brand {
+pub enum TerminalApp {
     Kitty,
     Ghostty,
     Iterm2,
@@ -69,45 +40,47 @@ pub enum Brand {
     Unknown,
 }
 
-impl Brand {
+impl TerminalApp {
     #[must_use]
     pub fn detect(environment: &TerminalEnvironment) -> Self {
-        let program = environment.term_program.as_deref().unwrap_or_default();
-        let term = environment.term.as_deref().unwrap_or_default();
+        let program = environment.term_program.as_deref().unwrap_or("");
+        let term = environment.term.as_deref().unwrap_or("");
         if environment.kitty_window_id.is_some() || term.contains("kitty") {
-            Brand::Kitty
+            TerminalApp::Kitty
         } else if environment.ghostty_resources_dir.is_some()
             || program.eq_ignore_ascii_case("ghostty")
             || term.contains("ghostty")
         {
-            Brand::Ghostty
+            TerminalApp::Ghostty
         } else if environment.iterm_session_id.is_some() || program == "iTerm.app" {
-            Brand::Iterm2
+            TerminalApp::Iterm2
         } else if environment.wezterm_executable.is_some() || program == "WezTerm" {
-            Brand::WezTerm
+            TerminalApp::WezTerm
         } else if program == "Apple_Terminal" {
-            Brand::Apple
+            TerminalApp::Apple
         } else {
-            Brand::Unknown
+            TerminalApp::Unknown
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Protocol {
-    Kgp,
-    Iip,
+pub(crate) enum PixelProtocol {
+    Kitty,
+    Iterm2,
     Sixel,
-    Probe,
+    Query,
 }
 
 #[must_use]
-pub(crate) fn protocols(brand: Brand) -> &'static [Protocol] {
+pub(crate) fn protocols(brand: TerminalApp) -> &'static [PixelProtocol] {
     match brand {
-        Brand::Kitty | Brand::Ghostty => &[Protocol::Kgp],
-        Brand::Iterm2 | Brand::WezTerm => &[Protocol::Iip, Protocol::Sixel],
-        Brand::Apple => &[],
-        Brand::Unknown => &[Protocol::Probe],
+        TerminalApp::Kitty | TerminalApp::Ghostty => &[PixelProtocol::Kitty],
+        TerminalApp::Iterm2 | TerminalApp::WezTerm => {
+            &[PixelProtocol::Iterm2, PixelProtocol::Sixel]
+        }
+        TerminalApp::Apple => &[],
+        TerminalApp::Unknown => &[PixelProtocol::Query],
     }
 }
 
@@ -119,33 +92,36 @@ pub struct Capabilities {
 }
 
 fn select_protocol_type(
-    choices: &[Protocol],
+    choices: &[PixelProtocol],
     protocol_type: ProtocolType,
     capabilities: &[Capability],
 ) -> Option<ProtocolType> {
     choices.iter().find_map(|protocol| match protocol {
-        Protocol::Kgp if protocol_type == ProtocolType::Kitty => {
+        PixelProtocol::Kitty if protocol_type == ProtocolType::Kitty => {
             Some(ProtocolType::Kitty)
         }
-        Protocol::Iip if protocol_type == ProtocolType::Iterm2 => {
+        PixelProtocol::Iterm2 if protocol_type == ProtocolType::Iterm2 => {
             Some(ProtocolType::Iterm2)
         }
-        Protocol::Sixel
+        PixelProtocol::Sixel
             if capabilities.contains(&Capability::Sixel)
                 || protocol_type == ProtocolType::Sixel =>
         {
             Some(ProtocolType::Sixel)
         }
-        Protocol::Probe if protocol_type != ProtocolType::Halfblocks => {
+        PixelProtocol::Query if protocol_type != ProtocolType::Halfblocks => {
             Some(protocol_type)
         }
-        Protocol::Kgp | Protocol::Iip | Protocol::Sixel | Protocol::Probe => None,
+        PixelProtocol::Kitty
+        | PixelProtocol::Iterm2
+        | PixelProtocol::Sixel
+        | PixelProtocol::Query => None,
     })
 }
 
 impl Capabilities {
     #[must_use]
-    pub fn before_probe(environment: &TerminalEnvironment) -> Self {
+    pub fn from_environment(environment: &TerminalEnvironment) -> Self {
         Capabilities {
             picker: Picker::halfblocks(),
             pixel_path: PixelPath::Halfblocks,
@@ -159,12 +135,11 @@ pub struct ProbeAnswer {
     pub picker: Picker,
 }
 
-#[must_use]
-pub fn probe(brand: Brand) -> Option<ProbeAnswer> {
+pub fn probe(brand: TerminalApp) -> Result<Option<ProbeAnswer>, Error> {
     if protocols(brand).is_empty() {
-        return None;
+        return Ok(None);
     }
-    let mut picker = Picker::from_query_stdio().ok()?;
+    let mut picker = Picker::from_query_stdio().map_err(Error::Probe)?;
     let confirmed = select_protocol_type(
         protocols(brand),
         picker.protocol_type(),
@@ -172,10 +147,10 @@ pub fn probe(brand: Brand) -> Option<ProbeAnswer> {
     )
     .unwrap_or(ProtocolType::Halfblocks);
     if confirmed == ProtocolType::Halfblocks {
-        return None;
+        return Ok(None);
     }
     picker.set_protocol_type(confirmed);
-    Some(ProbeAnswer { picker })
+    Ok(Some(ProbeAnswer { picker }))
 }
 
 #[must_use]
@@ -197,9 +172,9 @@ mod tests {
     use widgets::{ColorDepth, DEFAULT_CELL_ASPECT, PixelPath};
 
     use crate::capabilities::{
-        Brand,
         Capabilities,
-        Protocol,
+        PixelProtocol,
+        TerminalApp,
         TerminalEnvironment,
         cell_aspect,
         probe,
@@ -207,49 +182,75 @@ mod tests {
         select_protocol_type,
     };
 
-    #[rstest]
-    #[case::kitty_by_term(TerminalEnvironment::default().with_term("xterm-kitty"), Brand::Kitty)]
-    #[case::kitty_by_window_id(TerminalEnvironment::default().with_kitty_window_id("1"), Brand::Kitty)]
-    #[case::ghostty_by_program(TerminalEnvironment::default().with_term_program("ghostty"), Brand::Ghostty)]
-    #[case::ghostty_by_resources_dir(
-        TerminalEnvironment::default().with_ghostty_resources_dir("/tmp"),
-        Brand::Ghostty
-    )]
-    #[case::iterm2_by_program(TerminalEnvironment::default().with_term_program("iTerm.app"), Brand::Iterm2)]
-    #[case::iterm2_by_session_id(TerminalEnvironment::default().with_iterm_session_id("id"), Brand::Iterm2)]
-    #[case::wezterm_by_program(TerminalEnvironment::default().with_term_program("WezTerm"), Brand::WezTerm)]
-    #[case::wezterm_by_executable(
-        TerminalEnvironment::default().with_wezterm_executable("wezterm"),
-        Brand::WezTerm
-    )]
-    #[case::apple_by_program(
-        TerminalEnvironment::default().with_term_program("Apple_Terminal"),
-        Brand::Apple
-    )]
-    #[case::nothing_named(TerminalEnvironment::default(), Brand::Unknown)]
-    fn detect_names_the_terminal(
-        #[case] environment: TerminalEnvironment,
-        #[case] expected: Brand,
-    ) {
-        assert_eq!(Brand::detect(&environment), expected);
+    fn named(program: &str) -> Option<String> {
+        Some(program.to_string())
+    }
+
+    fn kitty_term() -> TerminalEnvironment {
+        TerminalEnvironment {
+            term: named("xterm-kitty"),
+            ..TerminalEnvironment::default()
+        }
     }
 
     #[rstest]
-    #[case::kitty(Brand::Kitty, &[Protocol::Kgp])]
-    #[case::ghostty(Brand::Ghostty, &[Protocol::Kgp])]
-    #[case::iterm2(Brand::Iterm2, &[Protocol::Iip, Protocol::Sixel])]
-    #[case::wezterm(Brand::WezTerm, &[Protocol::Iip, Protocol::Sixel])]
-    #[case::apple(Brand::Apple, &[])]
-    #[case::unknown(Brand::Unknown, &[Protocol::Probe])]
+    #[case::kitty_by_term(kitty_term(), TerminalApp::Kitty)]
+    #[case::kitty_by_window_id(
+        TerminalEnvironment { kitty_window_id: named("1"), ..TerminalEnvironment::default() },
+        TerminalApp::Kitty
+    )]
+    #[case::ghostty_by_program(
+        TerminalEnvironment { term_program: named("ghostty"), ..TerminalEnvironment::default() },
+        TerminalApp::Ghostty
+    )]
+    #[case::ghostty_by_resources_dir(
+        TerminalEnvironment { ghostty_resources_dir: named("/tmp"), ..TerminalEnvironment::default() },
+        TerminalApp::Ghostty
+    )]
+    #[case::iterm2_by_program(
+        TerminalEnvironment { term_program: named("iTerm.app"), ..TerminalEnvironment::default() },
+        TerminalApp::Iterm2
+    )]
+    #[case::iterm2_by_session_id(
+        TerminalEnvironment { iterm_session_id: named("id"), ..TerminalEnvironment::default() },
+        TerminalApp::Iterm2
+    )]
+    #[case::wezterm_by_program(
+        TerminalEnvironment { term_program: named("WezTerm"), ..TerminalEnvironment::default() },
+        TerminalApp::WezTerm
+    )]
+    #[case::wezterm_by_executable(
+        TerminalEnvironment { wezterm_executable: named("wezterm"), ..TerminalEnvironment::default() },
+        TerminalApp::WezTerm
+    )]
+    #[case::apple_by_program(
+        TerminalEnvironment { term_program: named("Apple_Terminal"), ..TerminalEnvironment::default() },
+        TerminalApp::Apple
+    )]
+    #[case::nothing_named(TerminalEnvironment::default(), TerminalApp::Unknown)]
+    fn detect_names_the_terminal(
+        #[case] environment: TerminalEnvironment,
+        #[case] expected: TerminalApp,
+    ) {
+        assert_eq!(TerminalApp::detect(&environment), expected);
+    }
+
+    #[rstest]
+    #[case::kitty(TerminalApp::Kitty, &[PixelProtocol::Kitty])]
+    #[case::ghostty(TerminalApp::Ghostty, &[PixelProtocol::Kitty])]
+    #[case::iterm2(TerminalApp::Iterm2, &[PixelProtocol::Iterm2, PixelProtocol::Sixel])]
+    #[case::wezterm(TerminalApp::WezTerm, &[PixelProtocol::Iterm2, PixelProtocol::Sixel])]
+    #[case::apple(TerminalApp::Apple, &[])]
+    #[case::unknown(TerminalApp::Unknown, &[PixelProtocol::Query])]
     fn each_brand_names_its_protocols(
-        #[case] brand: Brand,
-        #[case] expected: &[Protocol],
+        #[case] brand: TerminalApp,
+        #[case] expected: &[PixelProtocol],
     ) {
         assert_eq!(protocols(brand), expected);
     }
 
     struct ProtocolPick {
-        brand: Brand,
+        brand: TerminalApp,
         best_guess: ProtocolType,
         sixel: &'static [Capability],
         expected: Option<ProtocolType>,
@@ -257,67 +258,67 @@ mod tests {
 
     #[rstest]
     #[case::kitty_confirmed(ProtocolPick {
-        brand: Brand::Kitty,
+        brand: TerminalApp::Kitty,
         best_guess: ProtocolType::Kitty,
         sixel: &[],
         expected: Some(ProtocolType::Kitty),
     })]
     #[case::ghostty_confirmed(ProtocolPick {
-        brand: Brand::Ghostty,
+        brand: TerminalApp::Ghostty,
         best_guess: ProtocolType::Kitty,
         sixel: &[],
         expected: Some(ProtocolType::Kitty),
     })]
     #[case::iterm2_confirmed(ProtocolPick {
-        brand: Brand::Iterm2,
+        brand: TerminalApp::Iterm2,
         best_guess: ProtocolType::Iterm2,
         sixel: &[],
         expected: Some(ProtocolType::Iterm2),
     })]
     #[case::iterm2_falls_back_to_sixel(ProtocolPick {
-        brand: Brand::Iterm2,
+        brand: TerminalApp::Iterm2,
         best_guess: ProtocolType::Halfblocks,
         sixel: &[Capability::Sixel],
         expected: Some(ProtocolType::Sixel),
     })]
     #[case::sixel_outranks_the_best_guess(ProtocolPick {
-        brand: Brand::WezTerm,
+        brand: TerminalApp::WezTerm,
         best_guess: ProtocolType::Kitty,
         sixel: &[Capability::Sixel],
         expected: Some(ProtocolType::Sixel),
     })]
     #[case::iterm2_unconfirmed(ProtocolPick {
-        brand: Brand::Iterm2,
+        brand: TerminalApp::Iterm2,
         best_guess: ProtocolType::Halfblocks,
         sixel: &[],
         expected: None,
     })]
     #[case::kitty_unconfirmed(ProtocolPick {
-        brand: Brand::Kitty,
+        brand: TerminalApp::Kitty,
         best_guess: ProtocolType::Halfblocks,
         sixel: &[],
         expected: None,
     })]
     #[case::probe_takes_what_it_got(ProtocolPick {
-        brand: Brand::Unknown,
+        brand: TerminalApp::Unknown,
         best_guess: ProtocolType::Kitty,
         sixel: &[],
         expected: Some(ProtocolType::Kitty),
     })]
     #[case::probe_takes_sixel(ProtocolPick {
-        brand: Brand::Unknown,
+        brand: TerminalApp::Unknown,
         best_guess: ProtocolType::Sixel,
         sixel: &[Capability::Sixel],
         expected: Some(ProtocolType::Sixel),
     })]
     #[case::probe_confirmed_nothing(ProtocolPick {
-        brand: Brand::Unknown,
+        brand: TerminalApp::Unknown,
         best_guess: ProtocolType::Halfblocks,
         sixel: &[],
         expected: None,
     })]
     #[case::apple_never_gets_one(ProtocolPick {
-        brand: Brand::Apple,
+        brand: TerminalApp::Apple,
         best_guess: ProtocolType::Kitty,
         sixel: &[Capability::Sixel],
         expected: None,
@@ -331,8 +332,8 @@ mod tests {
 
     #[test]
     fn before_probe_is_always_halfblocks_regardless_of_brand() {
-        let environment = TerminalEnvironment::default().with_term("xterm-kitty");
-        let capabilities = Capabilities::before_probe(&environment);
+        let environment = kitty_term();
+        let capabilities = Capabilities::from_environment(&environment);
         assert_eq!(
             capabilities.picker.protocol_type(),
             ProtocolType::Halfblocks
@@ -346,7 +347,7 @@ mod tests {
 
     #[test]
     fn probe_is_none_for_apple_terminal() {
-        assert!(probe(Brand::Apple).is_none());
+        assert!(matches!(probe(TerminalApp::Apple), Ok(None)));
     }
 
     #[test]

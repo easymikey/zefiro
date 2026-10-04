@@ -10,7 +10,7 @@ use kernel::{
 };
 use rstest::rstest;
 
-use crate::support::table::{Cell, cell};
+use crate::support::table::cell;
 
 fn cursor(selected: usize, len: usize) -> CursorOver<()> {
     CursorOver {
@@ -59,7 +59,13 @@ fn nav(direction: Direction, len: usize) -> HistoryMessage {
 fn history_cell(
     #[case] start: CursorOver<()>,
     #[case] message: HistoryMessage,
-    #[case] expected: Cell<CursorOver<()>>,
+    #[case] expected: Result<
+        (
+            CursorOver<()>,
+            <CursorOver<()> as kernel::update::Machine>::Effect,
+        ),
+        Unhandled,
+    >,
 ) {
     cell(start, message, expected);
 }

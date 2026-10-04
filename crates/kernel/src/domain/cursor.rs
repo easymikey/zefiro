@@ -72,7 +72,7 @@ impl Cursor {
 }
 
 fn clamped_step(index: usize, len: usize, delta: isize) -> usize {
-    let moved = index.checked_add_signed(delta).unwrap_or(0);
+    let moved = index.saturating_add_signed(delta);
     moved.min(len - 1)
 }
 

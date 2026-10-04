@@ -1,7 +1,5 @@
-use std::time::Duration;
-
 use kernel::{
-    domain::{Favorites, ScanStatus, TrackRef, ViewIndex},
+    domain::{Favorites, TrackRef, ViewIndex},
     playlist::Playlist,
 };
 use ratatui::{
@@ -23,6 +21,7 @@ use crate::{
         row_band,
         scrollbar_column,
     },
+    status_line::StatusLineView,
     theme::{ActiveTheme, Role},
 };
 
@@ -40,14 +39,33 @@ pub(crate) struct PlaylistView<'a> {
     pub(crate) browse_selected: usize,
     pub(crate) playing: Option<ViewIndex>,
     pub(crate) library_loading: LibraryLoad,
-    pub(crate) scan: ScanStatus,
-    pub(crate) sleep_left: Option<Duration>,
+    pub(crate) status: StatusLineView<'a>,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct PlaylistPane<'a> {
+pub(crate) struct PlaylistWidget<'a> {
     pub(crate) view: PlaylistView<'a>,
     pub(crate) theme: ActiveTheme<'a>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PlaylistPaneStyle {
+    pub(crate) foreground: Color,
+    pub(crate) border: Color,
+    pub(crate) scrollbar_thumb: Color,
+    pub(crate) scrollbar_track: Color,
+}
+
+impl PlaylistPaneStyle {
+    #[must_use]
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            foreground: theme.role(Role::Text),
+            border: theme.role(Role::Frame),
+            scrollbar_thumb: theme.role(Role::Frame),
+            scrollbar_track: theme.role(Role::Dim),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,7 +77,7 @@ pub struct PlaylistAreas {
     pub selected: Option<Rect>,
 }
 
-impl PlaylistPane<'_> {
+impl PlaylistWidget<'_> {
     #[must_use]
     pub(crate) fn areas(&self, pane: Rect) -> PlaylistAreas {
         let body = pane_block(None, Color::Reset).inner(pane);
@@ -79,8 +97,8 @@ impl PlaylistPane<'_> {
             return;
         }
         pane_block(
-            Some(pane_title(pane, self.view, self.theme)),
-            self.theme.role(Role::Frame),
+            Some(pane_title(pane, self.view.status, &self.theme)),
+            PlaylistPaneStyle::from_theme(&self.theme).border,
         )
         .render(pane, buffer);
         if areas.body.width == 0 || areas.body.height == 0 {
@@ -90,17 +108,17 @@ impl PlaylistPane<'_> {
     }
 }
 
-impl Widget for &PlaylistPane<'_> {
+impl Widget for &PlaylistWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         self.paint(&self.areas(area), buffer);
     }
 }
 
-fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistPane<'_>) {
+fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistWidget<'_>) {
     let inner = areas.body;
     let view = pane.view;
     let theme = pane.theme;
-    let text_color: Color = theme.role(Role::Text);
+    let style = PlaylistPaneStyle::from_theme(&theme);
 
     if view.playlist.tracks.is_empty() {
         let text: &str = match view.library_loading {
@@ -108,7 +126,7 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistPane<'_>
             LibraryLoad::Ready => "Empty playlist",
         };
         Paragraph::new(text)
-            .style(Style::default().fg(text_color))
+            .style(Style::default().fg(style.foreground))
             .render(inner, buffer);
         return;
     }
@@ -137,11 +155,26 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistPane<'_>
             total: window.total,
             offset: usize::from(window.offset),
             viewport: usize::from(areas.scrollbar.height),
-            thumb: theme.role(Role::Frame),
-            track: theme.role(Role::Dim),
+            thumb: style.scrollbar_thumb,
+            track: style.scrollbar_track,
         },
         buffer,
     );
+}
+
+impl<'a> PlaylistView<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &crate::scene::Scene<'a>) -> Self {
+        Self {
+            playlist: scene.playlist,
+            queue: scene.queue,
+            favorites: scene.favorites,
+            browse_selected: scene.browse_selected.get(),
+            playing: scene.playing,
+            library_loading: scene.library_loading,
+            status: StatusLineView::from_scene(scene),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -152,17 +185,27 @@ mod tests {
         Message,
         Moment,
         PlaybackRequest,
-        domain::{Cursor, Favorites, Model, ScanStatus, Track, TrackIndex, ViewIndex},
+        domain::{
+            Cursor,
+            Favorites,
+            Model,
+            ScanStatus,
+            Shuffle,
+            Track,
+            TrackIndex,
+            ViewIndex,
+        },
         playlist::Playlist,
         update::update,
     };
     use ratatui::style::Color;
 
     use crate::{
-        playlist::pane::{LibraryLoad, PlaylistPane, PlaylistView},
+        playlist::pane::{LibraryLoad, PlaylistView, PlaylistWidget},
         primitive::canvas::find_text,
+        status_line::{ScanProgress, StatusLineView},
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth, Role},
+        theme::{ActiveTheme, ColorDepth, Role, Theme},
     };
 
     fn titled_track(title: &str) -> Arc<Track> {
@@ -188,7 +231,28 @@ mod tests {
         }
     }
 
-    fn view(playlist: &Playlist) -> PlaylistView<'_> {
+    fn status<'a>(
+        playlist: &'a Playlist,
+        queue: &[kernel::TrackRef],
+        theme: &'a Theme,
+    ) -> StatusLineView<'a> {
+        StatusLineView {
+            shuffle: if playlist.play_order.is_shuffle() {
+                Shuffle::Enabled
+            } else {
+                Shuffle::Disabled
+            },
+            repeat_mode: playlist.repeat,
+            queue_len: queue.len(),
+            position: ViewIndex::new(0),
+            total: playlist.tracks.len(),
+            scan: ScanProgress::of(ScanStatus::Idle, theme.scanning_label.as_str()),
+            theme_name: theme.name.as_str(),
+            sleep_left: None,
+        }
+    }
+
+    fn view<'a>(playlist: &'a Playlist, theme: &'a Theme) -> PlaylistView<'a> {
         PlaylistView {
             playlist,
             queue: &[],
@@ -196,8 +260,7 @@ mod tests {
             browse_selected: 0,
             playing: None,
             library_loading: LibraryLoad::Ready,
-            scan: ScanStatus::Idle,
-            sleep_left: None,
+            status: status(playlist, &[], theme),
         }
     }
 
@@ -210,12 +273,9 @@ mod tests {
     static EMPTY_FAVORITES: std::sync::LazyLock<Favorites> =
         std::sync::LazyLock::new(Favorites::default);
 
-    fn pane<'a>(
-        playlist: &'a Playlist,
-        theme: &'a crate::theme::Theme,
-    ) -> PlaylistPane<'a> {
-        PlaylistPane {
-            view: view(playlist),
+    fn pane<'a>(playlist: &'a Playlist, theme: &'a Theme) -> PlaylistWidget<'a> {
+        PlaylistWidget {
+            view: view(playlist, theme),
             theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
         }
     }
@@ -241,7 +301,7 @@ mod tests {
         if let Some(first) = playlist.tracks.first() {
             favorites.toggle(first.source().clone());
         }
-        let widget = PlaylistPane {
+        let widget = PlaylistWidget {
             view: PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
@@ -249,8 +309,7 @@ mod tests {
                 browse_selected: 0,
                 playing: Some(ViewIndex::new(1)),
                 library_loading: LibraryLoad::Ready,
-                scan: ScanStatus::Idle,
-                sleep_left: None,
+                status: status(&playlist, &queue, &theme),
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
@@ -265,7 +324,7 @@ mod tests {
         let playlist = library(14);
         let theme = noir();
         let queue = queued(&playlist, &(1..13).collect::<Vec<_>>());
-        let widget = PlaylistPane {
+        let widget = PlaylistWidget {
             view: PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
@@ -273,8 +332,7 @@ mod tests {
                 browse_selected: 0,
                 playing: Some(ViewIndex::new(0)),
                 library_loading: LibraryLoad::Ready,
-                scan: ScanStatus::Idle,
-                sleep_left: None,
+                status: status(&playlist, &queue, &theme),
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
@@ -289,7 +347,7 @@ mod tests {
         let playlist = library(3);
         let theme = noir();
         let queue = queued(&playlist, &[1, 2]);
-        let widget = PlaylistPane {
+        let widget = PlaylistWidget {
             view: PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
@@ -297,8 +355,7 @@ mod tests {
                 browse_selected: 0,
                 playing: Some(ViewIndex::new(0)),
                 library_loading: LibraryLoad::Ready,
-                scan: ScanStatus::Idle,
-                sleep_left: None,
+                status: status(&playlist, &queue, &theme),
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
@@ -313,7 +370,7 @@ mod tests {
         let playlist = library(3);
         let theme = noir();
         let queue = queued(&playlist, &[1, 2]);
-        let widget = PlaylistPane {
+        let widget = PlaylistWidget {
             view: PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
@@ -321,8 +378,7 @@ mod tests {
                 browse_selected: 0,
                 playing: Some(ViewIndex::new(0)),
                 library_loading: LibraryLoad::Ready,
-                scan: ScanStatus::Idle,
-                sleep_left: None,
+                status: status(&playlist, &queue, &theme),
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
@@ -343,7 +399,7 @@ mod tests {
         };
         let theme = noir();
         let queue = queued(&playlist, &[0]);
-        let widget = PlaylistPane {
+        let widget = PlaylistWidget {
             view: PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
@@ -351,8 +407,7 @@ mod tests {
                 browse_selected: 0,
                 playing: None,
                 library_loading: LibraryLoad::Ready,
-                scan: ScanStatus::Idle,
-                sleep_left: None,
+                status: status(&playlist, &queue, &theme),
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
@@ -372,7 +427,7 @@ mod tests {
             ..Playlist::default()
         };
         let theme = noir();
-        let widget = PlaylistPane {
+        let widget = PlaylistWidget {
             view: PlaylistView {
                 playlist: &playlist,
                 queue: &[],
@@ -380,8 +435,10 @@ mod tests {
                 browse_selected: 0,
                 playing: None,
                 library_loading: LibraryLoad::Ready,
-                scan: ScanStatus::Tagging { done: 1, total: 3 },
-                sleep_left: None,
+                status: StatusLineView {
+                    scan: ScanProgress::Tagging { done: 1, total: 3 },
+                    ..status(&playlist, &[], &theme)
+                },
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
@@ -440,7 +497,7 @@ mod tests {
         let selection_text = active.role(Role::SelectionForeground);
         let selection_background = active.role(Role::SelectionBackground);
 
-        let widget = PlaylistPane {
+        let widget = PlaylistWidget {
             view: PlaylistView {
                 playlist: &playlist,
                 queue: &[],
@@ -448,8 +505,10 @@ mod tests {
                 browse_selected: 2,
                 playing: Some(ViewIndex::new(1)),
                 library_loading: LibraryLoad::Ready,
-                scan: ScanStatus::Idle,
-                sleep_left: None,
+                status: StatusLineView {
+                    position: ViewIndex::new(2),
+                    ..status(&playlist, &[], &theme)
+                },
             },
             theme: active,
         };
@@ -483,7 +542,7 @@ mod tests {
             ActiveTheme::new(&theme, ColorDepth::TrueColor)
                 .role(Role::SelectionBackground);
 
-        let widget = PlaylistPane {
+        let widget = PlaylistWidget {
             view: PlaylistView {
                 playlist: &playlist,
                 queue: &[],
@@ -491,8 +550,10 @@ mod tests {
                 browse_selected: 2,
                 playing: Some(ViewIndex::new(0)),
                 library_loading: LibraryLoad::Ready,
-                scan: ScanStatus::Idle,
-                sleep_left: None,
+                status: StatusLineView {
+                    position: ViewIndex::new(2),
+                    ..status(&playlist, &[], &theme)
+                },
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
@@ -531,7 +592,7 @@ mod tests {
             ..Playlist::default()
         };
         let theme = noir();
-        let widget = PlaylistPane {
+        let widget = PlaylistWidget {
             view: PlaylistView {
                 playlist: &playlist,
                 queue: &[],
@@ -539,8 +600,10 @@ mod tests {
                 browse_selected: 9_999,
                 playing: None,
                 library_loading: LibraryLoad::Ready,
-                scan: ScanStatus::Idle,
-                sleep_left: None,
+                status: StatusLineView {
+                    position: ViewIndex::new(9_999),
+                    ..status(&playlist, &[], &theme)
+                },
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };
@@ -600,7 +663,7 @@ mod tests {
             Cursor::with_len(model.playlist.tracks.len()).at(playing.get());
 
         let theme = noir();
-        let widget = PlaylistPane {
+        let widget = PlaylistWidget {
             view: PlaylistView {
                 playlist: &model.playlist,
                 queue: &model.queue,
@@ -608,8 +671,10 @@ mod tests {
                 browse_selected: model.workspace.browse.selected().get(),
                 playing: model.playing_index(),
                 library_loading: LibraryLoad::Ready,
-                scan: ScanStatus::Idle,
-                sleep_left: None,
+                status: StatusLineView {
+                    position: ViewIndex::new(model.workspace.browse.selected().get()),
+                    ..status(&model.playlist, &model.queue, &theme)
+                },
             },
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
         };

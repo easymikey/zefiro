@@ -41,11 +41,11 @@ pub enum OverlayMessage {
     Open(Overlay),
     Close,
     Confirm,
-    Inner(InnerMessage),
+    Inner(OverlayContentMessage),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum InnerMessage {
+pub enum OverlayContentMessage {
     Search(SearchQueryMessage),
     Settings(SettingRowMessage),
     Text(TextRequest),
@@ -80,11 +80,13 @@ pub(crate) fn update(
         }
         OverlayRequest::Text(message) => update_overlay(
             parts.workspace,
-            OverlayMessage::Inner(InnerMessage::Text(message)),
+            OverlayMessage::Inner(OverlayContentMessage::Text(message)),
         ),
         OverlayRequest::Jump(message) => update_overlay(
             parts.workspace,
-            OverlayMessage::Inner(InnerMessage::Jump(JumpDigitsMessage::from(message))),
+            OverlayMessage::Inner(OverlayContentMessage::Jump(
+                JumpDigitsMessage::from(message),
+            )),
         ),
         OverlayRequest::History(request) => history::request(&mut parts, request),
     }
@@ -112,15 +114,20 @@ fn search_request(
     request: SearchRequest,
 ) -> Result<Cmd, Unhandled> {
     let message = match request {
-        SearchRequest::Edit(edit) => SearchQueryMessage::Edit(edit, tracks.to_vec()),
+        SearchRequest::Edit(edit) => SearchQueryMessage::Edit(edit),
         SearchRequest::Navigate(direction) => SearchQueryMessage::Navigate(direction),
         SearchRequest::Enqueue => SearchQueryMessage::Enqueue,
     };
-    update_overlay(workspace, inner_search(message))
+    let edited = matches!(message, SearchQueryMessage::Edit(_));
+    let cmd = update_overlay(workspace, inner_search(message))?;
+    if edited && let Some(Overlay::Search(search)) = workspace.overlay.as_mut() {
+        search::rank(search, tracks);
+    }
+    Ok(cmd)
 }
 
 fn inner_search(message: SearchQueryMessage) -> OverlayMessage {
-    OverlayMessage::Inner(InnerMessage::Search(message))
+    OverlayMessage::Inner(OverlayContentMessage::Search(message))
 }
 
 fn overlay_for(

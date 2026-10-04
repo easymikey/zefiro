@@ -6,7 +6,7 @@ use std::{
 use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 
 use crate::{
-    domain::{Chord, ChordParseError},
+    domain::{Chord, ChordParseError, Diagnostic},
     update::keymap::{Bindings, KeyBinding},
 };
 
@@ -358,11 +358,23 @@ impl Keymap {
         self.bindings.as_slice()
     }
 
-    pub(crate) fn error_text(&self) -> Option<String> {
-        let texts: Vec<String> = self.errors.iter().map(ToString::to_string).collect();
-        (!texts.is_empty()).then(|| texts.join("; "))
+    pub(crate) fn diagnostic(&self) -> Option<Diagnostic> {
+        (!self.errors.is_empty())
+            .then(|| Diagnostic::from_error(&KeyValidationErrors(&self.errors)))
     }
 }
+
+#[derive(Debug)]
+struct KeyValidationErrors<'a>(&'a [KeyValidationError]);
+
+impl fmt::Display for KeyValidationErrors<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let texts: Vec<String> = self.0.iter().map(ToString::to_string).collect();
+        formatter.write_str(&texts.join("; "))
+    }
+}
+
+impl std::error::Error for KeyValidationErrors<'_> {}
 
 #[cfg(test)]
 mod validation_error_tests {
@@ -372,6 +384,7 @@ mod validation_error_tests {
         Action,
         Chord,
         ChordParseError,
+        Diagnostic,
         Key,
         KeyCode,
         Modifiers,
@@ -408,7 +421,7 @@ mod validation_error_tests {
 
     #[test]
     fn a_keymap_without_errors_has_no_error_text() {
-        assert_eq!(Keymap::default().error_text(), None);
+        assert_eq!(Keymap::default().diagnostic(), None);
     }
 
     #[test]
@@ -426,7 +439,7 @@ mod validation_error_tests {
             ..Keymap::default()
         };
         assert_eq!(
-            keymap.error_text().as_deref(),
+            keymap.diagnostic().as_ref().map(Diagnostic::text),
             Some("invalid key chord `bad`; key collision on `p`")
         );
     }

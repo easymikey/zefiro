@@ -40,6 +40,16 @@ impl Percent {
         f32::from(self.0) / f32::from(MAX)
     }
 
+    pub fn from_ratio(ratio: f32) -> Self {
+        let ratio = if ratio.is_nan() { 0.0 } else { ratio };
+        let scaled = ratio.clamp(0.0, 1.0) * f32::from(MAX);
+        Self(
+            (0..=MAX)
+                .find(|step| f32::from(*step) + 0.5 > scaled)
+                .unwrap_or(MAX),
+        )
+    }
+
     pub fn step(self, delta: i8) -> Self {
         Self::clamped(self.0.saturating_add_signed(delta))
     }
@@ -77,6 +87,29 @@ mod tests {
     #[case::ceiling(100, 1.0)]
     fn ratio_scales_to_the_unit_range(#[case] raw: u8, #[case] expected: f32) {
         assert_eq!(Percent::clamped(raw).ratio(), expected);
+    }
+
+    #[rstest]
+    #[case::floor(0.0, 0)]
+    #[case::rounds_down(0.404, 40)]
+    #[case::rounds_up(0.406, 41)]
+    #[case::ceiling(1.0, 100)]
+    #[case::clamps_above_one(1.7, 100)]
+    #[case::clamps_below_zero(-0.2, 0)]
+    #[case::not_a_number_is_zero(f32::NAN, 0)]
+    fn from_ratio_rounds_and_clamps(#[case] ratio: f32, #[case] percent: u8) {
+        assert_eq!(Percent::from_ratio(ratio), Percent::clamped(percent));
+    }
+
+    #[rstest]
+    #[case::silence(0)]
+    #[case::a_sliver(1)]
+    #[case::two_fifths(40)]
+    #[case::almost_full(99)]
+    #[case::full(100)]
+    fn ratio_round_trips_every_percent(#[case] percent: u8) {
+        let volume = Percent::clamped(percent);
+        assert_eq!(Percent::from_ratio(volume.ratio()), volume);
     }
 
     #[rstest]

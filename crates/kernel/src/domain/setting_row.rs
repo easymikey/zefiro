@@ -201,7 +201,7 @@ impl SettingRow {
         let current = rows.iter().position(|row| *row == self).unwrap_or(0);
         let delta = direction.sign();
         let last = rows.len().saturating_sub(1);
-        let next = current.checked_add_signed(delta).unwrap_or(0).min(last);
+        let next = current.saturating_add_signed(delta).min(last);
         rows.get(next).copied().unwrap_or(self)
     }
 

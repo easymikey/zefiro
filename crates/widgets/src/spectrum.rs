@@ -121,7 +121,6 @@ mod tests {
         let mut smoothing = SpectrumSmoothing::default();
         let bands = smoothing.smooth(&[0.4; SPECTRUM_BANDS], FRAME);
         assert_eq!(bands, *smoothing.bands());
-        assert_eq!(smoothing.bands(), smoothing.bands());
     }
 
     #[test]

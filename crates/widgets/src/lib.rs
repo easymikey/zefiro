@@ -19,7 +19,9 @@ mod scene;
 mod screen;
 mod spectrum;
 mod status_line;
-#[cfg(test)] mod test_support;
+#[cfg(test)]
+#[path = "../tests/unit/fixtures.rs"]
+mod test_support;
 mod theme;
 mod toast;
 
@@ -46,7 +48,7 @@ pub use animation::{
     volume_pulse,
     wash_reveal,
 };
-pub use card::{CardMetrics, CoverArt};
+pub use card::{CardCover, CardMetrics};
 pub use geometry::DEFAULT_CELL_ASPECT;
 pub use milkdrop::{MilkdropAdvance, MilkdropField, MilkdropStyle, lines_into};
 pub use overlay::modal::{ModalAreas, ModalScrollAreas, OverlayAreas};
@@ -54,14 +56,14 @@ pub use pixels::{
     CellPixels,
     CoverCrossfade,
     CoverFrame,
+    CoverImage,
     CoverLifecycle,
     CoverMotion,
-    CoverRefreshParts,
+    CoverRefresh,
     CoverUpdate,
     CoverWash,
     CrossfadePermit,
     CrossfadeStage,
-    DecodedCover,
     MilkdropCover,
     PixmapSource,
     VinylCache,
@@ -80,16 +82,17 @@ pub use repaint::{
     next_progress_step,
     next_sleep_minute,
 };
-pub use scene::{PixelPath, Scene, ScenePresentation, abbreviate_home};
-pub use screen::{Breakpoint, FrameLayout, FrameLayoutParts, Screen};
+pub use scene::{PixelPath, Scene, ScenePresentation};
+pub use screen::{Breakpoint, FrameLayout, ScreenWidget};
 pub use spectrum::{SPECTRUM_BANDS, Spectrum, SpectrumMotion, SpectrumSmoothing};
 pub use theme::{
     ActiveTheme,
+    BackdropStyle,
     ColorDepth,
     Colors,
     Role,
     Theme,
-    ThemeSeed,
+    ThemeBase,
     color_at_depth,
     lerp_rgb,
     shade,

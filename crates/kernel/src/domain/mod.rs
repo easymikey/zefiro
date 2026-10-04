@@ -8,6 +8,7 @@ mod cursor_over;
 mod direction;
 mod driver;
 mod favorites;
+pub mod geometry;
 mod history;
 mod index;
 mod key;
@@ -42,7 +43,7 @@ pub use direction::Direction;
 pub use driver::{DriverError, DriverName, DriverRecord, DriverStatus, Drivers};
 pub use favorites::Favorites;
 pub use history::{HISTORY_LIMIT, HistoryEntry};
-pub use index::{TrackIndex, ViewIndex};
+pub use index::{PresetIndex, TrackIndex, ViewIndex};
 pub use key::{Key, KeyCode, KeyPress, Modifiers};
 pub use keymap::{
     Action,
@@ -93,13 +94,15 @@ pub use supervision::{Announce, Decision, Restarts, Supervision, decide_restart}
 pub use theme::{ThemeChoice, ThemeName, ThemeNameError, Themes};
 pub(crate) use time::parse_timecode;
 pub use time::{Freshness, Moment, Revision, Revisions, TimecodeError, format_time};
-pub use track::{AudioFormat, Tagging, Tags, Track, TrackRef};
+pub use track::{AudioFormat, Decibels, Tagging, Tags, Track, TrackRef};
 pub use transport::{Output, PRELOAD_LEAD, StreamError, Transport};
 pub(crate) use transport::{SEEK_LARGE, SEEK_MEDIUM, SEEK_SMALL};
 pub use workspace::{
     Browse,
     ConfigError,
     ConfigName,
+    Diagnostic,
+    IoError,
     SaveLine,
     SavePhase,
     TOAST_LIFETIME,

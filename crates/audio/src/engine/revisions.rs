@@ -1,7 +1,7 @@
-use kernel::{AudioEvent, Cmd};
+use kernel::{AudioEvent, Cmd, domain::Revision};
 
 use crate::{
-    deck::{AudioJob, DeckEvent, Revision},
+    deck::{event::DeckEvent, job::AudioJob},
     engine::effect::EngineEffect,
 };
 
@@ -19,7 +19,7 @@ impl Revisions {
             DeckEvent::Preloaded { revision, .. } => *revision == self.preload,
             DeckEvent::OutputLost(_)
             | DeckEvent::DevicesListed(_)
-            | DeckEvent::Track(_) => true,
+            | DeckEvent::Woke(_) => true,
         }
     }
 
@@ -61,7 +61,7 @@ impl Revisions {
                     revision: self.preload,
                 })
             }
-            EngineEffect::Mute | EngineEffect::Clear => {
+            EngineEffect::Mute | EngineEffect::Clear(_) => {
                 self.preload = self.issue();
                 self.decode = self.issue();
                 None
@@ -72,7 +72,7 @@ impl Revisions {
             | EngineEffect::Play
             | EngineEffect::Pause
             | EngineEffect::Seek(_)
-            | EngineEffect::SetVolume(_)
+            | EngineEffect::SetGain(_)
             | EngineEffect::Arm(_)
             | EngineEffect::Crossfade { .. }
             | EngineEffect::CancelCrossfade
@@ -102,11 +102,14 @@ impl Revisions {
 mod tests {
     use std::path::PathBuf;
 
-    use kernel::{Cmd, domain::Speed};
+    use kernel::{
+        Cmd,
+        domain::{Revision, Speed},
+    };
     use rstest::rstest;
 
     use crate::{
-        deck::{AudioJob, DeckEvent, Revision, source::PreloadMode},
+        deck::{event::DeckEvent, job::AudioJob, source::PreloadMode},
         engine::{effect::EngineEffect, revisions::Revisions},
         error::Error,
     };
@@ -150,10 +153,10 @@ mod tests {
     #[rstest]
     #[case::current_decode(vec![load("/a")], DeckEvent::Decoded { revision: revision(2), result: failed() }, true)]
     #[case::decode_after_a_second_load(vec![load("/a"), load("/b")], DeckEvent::Decoded { revision: revision(2), result: failed() }, false)]
-    #[case::decode_after_clear(vec![load("/a"), EngineEffect::Clear], DeckEvent::Decoded { revision: revision(2), result: failed() }, false)]
+    #[case::decode_after_clear(vec![load("/a"), EngineEffect::Clear(Speed::default())], DeckEvent::Decoded { revision: revision(2), result: failed() }, false)]
     #[case::current_preload(vec![load("/a"), gapless("/b")], DeckEvent::Preloaded { revision: revision(3), result: failed() }, true)]
     #[case::preload_after_a_load(vec![gapless("/b"), load("/a")], DeckEvent::Preloaded { revision: revision(1), result: failed() }, false)]
-    #[case::track_event(vec![EngineEffect::Mute], DeckEvent::Track(revision(9)), true)]
+    #[case::woke_event(vec![EngineEffect::Mute], DeckEvent::Woke(revision(9)), true)]
     fn a_result_is_current_only_for_the_newest_ticket(
         #[case] effects: Vec<EngineEffect>,
         #[case] event: DeckEvent,

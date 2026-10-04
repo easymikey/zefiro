@@ -1,4 +1,4 @@
-use kernel::domain::{Track, TrackRef, ViewIndex};
+use kernel::domain::{Track, TrackRef, ViewIndex, geometry::Cells};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -11,7 +11,7 @@ use crate::{
     overlay::modal::SCROLLBAR_INSET,
     playlist::{
         chrome::pane_block,
-        pane::{PlaylistPane, PlaylistView},
+        pane::{PlaylistView, PlaylistWidget},
     },
     primitive::{
         list_chrome::{row_band, scroll_offset, scrollbar_column},
@@ -87,7 +87,7 @@ fn queue_position(queue: &[TrackRef], source: &TrackRef) -> Option<QueuePosition
 
 #[derive(Clone, Copy)]
 pub(crate) struct PlaylistRows<'a> {
-    pub(crate) pane: PlaylistPane<'a>,
+    pub(crate) pane: PlaylistWidget<'a>,
     pub(crate) rows: Rect,
     pub(crate) playing_index: Option<usize>,
     pub(crate) window: &'a VisibleRows,
@@ -96,7 +96,7 @@ pub(crate) struct PlaylistRows<'a> {
 struct PlaylistRowParts<'a> {
     view: PlaylistView<'a>,
     playing_index: Option<usize>,
-    row_width: usize,
+    row_width: Cells,
     style: TrackRowStyle,
 }
 
@@ -145,7 +145,7 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
     let context = PlaylistRowParts {
         view,
         playing_index,
-        row_width: usize::from(rows.width),
+        row_width: Cells(rows.width),
         style,
     };
 
@@ -235,9 +235,12 @@ mod tests {
 
     use kernel::{domain::Favorites, playlist::Playlist};
 
-    use crate::playlist::{
-        pane::{LibraryLoad, PlaylistView},
-        row::{WindowFit, visible_rows},
+    use crate::{
+        playlist::{
+            pane::{LibraryLoad, PlaylistView},
+            row::{WindowFit, visible_rows},
+        },
+        status_line::{ScanProgress, StatusLineView},
     };
 
     fn library(count: usize) -> Playlist {
@@ -265,8 +268,16 @@ mod tests {
             browse_selected,
             playing: None,
             library_loading: LibraryLoad::Ready,
-            scan: kernel::domain::ScanStatus::Idle,
-            sleep_left: None,
+            status: StatusLineView {
+                shuffle: kernel::domain::Shuffle::Disabled,
+                repeat_mode: kernel::playlist::RepeatMode::Off,
+                queue_len: 0,
+                position: kernel::domain::ViewIndex::new(browse_selected),
+                total: playlist.tracks.len(),
+                scan: ScanProgress::Done,
+                theme_name: "noir",
+                sleep_left: None,
+            },
         }
     }
 

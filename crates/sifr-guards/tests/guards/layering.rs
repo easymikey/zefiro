@@ -61,10 +61,13 @@ fn crate_dependencies_only_point_left() {
 }
 
 #[test]
-fn components_never_import_screen() {
+fn only_screen_imports_screen() {
     let mut violations = Vec::new();
 
-    for (rel, path) in support::files_in(&["widgets"], "src/components") {
+    for (rel, path) in support::files_in(&["widgets"], "src") {
+        if rel.starts_with("widgets/src/screen/") {
+            continue;
+        }
         let content = support::read(&path);
         for (index, line) in content.lines().enumerate() {
             let trimmed = line.trim_start();
@@ -75,8 +78,8 @@ fn components_never_import_screen() {
     }
 
     support::report(
-        "layering guard: components sit below screen — nothing under \
-         widgets/src/components may import crate::screen. There is no allowlist.",
+        "layering guard: no widgets module outside src/screen/ imports \
+         crate::screen. There is no allowlist.",
         &violations,
         &[],
     );

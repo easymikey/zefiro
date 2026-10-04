@@ -1,8 +1,8 @@
-use kernel::{Moment, Player};
+use kernel::{Moment, Player, domain::geometry::Cells};
 use runtime::FRAME_INTERVAL;
-use terminal::CoverMotion;
 use widgets::{
     AnimationStage,
+    CoverMotion,
     Presence,
     ProgressScale,
     SpectrumMotion,
@@ -28,7 +28,7 @@ fn next_frame(last_paint: Moment) -> Moment {
 
 pub(crate) fn progress_frame_due(
     player: &Player,
-    bar_width: Option<u16>,
+    bar_width: Option<Cells>,
     now: Moment,
 ) -> Option<Moment> {
     let Player::Playing { head, track, .. } = player else {
@@ -64,7 +64,7 @@ pub(crate) fn spectrum_frame_due(
     motion: &Motion,
     feed: SpectrumFeed,
 ) -> Option<Moment> {
-    let wants_frame = matches!(
+    let is_due = matches!(
         (motion.on_screen.spectrum, feed, motion.spectrum_motion),
         (Presence::Shown, SpectrumFeed::Live, _)
             | (
@@ -73,7 +73,7 @@ pub(crate) fn spectrum_frame_due(
                 SpectrumMotion::Moving
             )
     );
-    wants_frame.then(|| next_frame(motion.last_paint))
+    is_due.then(|| next_frame(motion.last_paint))
 }
 
 #[cfg(test)]
@@ -91,11 +91,12 @@ mod tests {
         Speed,
         Tags,
         Track,
+        domain::geometry::Cells,
     };
     use rstest::rstest;
-    use terminal::CoverMotion;
     use widgets::{
         AnimationStage,
+        CoverMotion,
         OnScreen,
         Presence,
         ProgressScale,
@@ -180,7 +181,7 @@ mod tests {
         },
         Some(50),
         next_progress_step(
-            ProgressScale::text_bar(50, Duration::from_secs(100)).unwrap(),
+            ProgressScale::text_bar(Cells(50), Duration::from_secs(100)).unwrap(),
             Playhead::anchored(
                 Duration::from_millis(10_200),
                 Moment::new(Duration::from_secs(100)),
@@ -196,7 +197,10 @@ mod tests {
     ) {
         let now = Moment::new(Duration::from_secs(100));
 
-        assert_eq!(progress_frame_due(&player, bar_width, now), expected);
+        assert_eq!(
+            progress_frame_due(&player, bar_width.map(Cells), now),
+            expected
+        );
     }
 
     #[test]
@@ -327,9 +331,9 @@ mod tests {
     fn a_spectrum_frame_is_due_only_while_bands_can_move(
         #[case] feed: SpectrumFeed,
         #[case] motion: Motion,
-        #[case] wants_frame: bool,
+        #[case] is_due: bool,
     ) {
-        let expected = wants_frame.then(|| {
+        let expected = is_due.then(|| {
             Moment::new(motion.last_paint.since_epoch() + runtime::FRAME_INTERVAL)
         });
 
@@ -339,10 +343,12 @@ mod tests {
     #[test]
     fn a_paused_spectrum_decays_to_settled() {
         let mut smoothing = SpectrumSmoothing::default();
-        let _ = smoothing.smooth(&[1.0; SPECTRUM_BANDS], Duration::from_secs(10));
+        let lifted = smoothing.smooth(&[1.0; SPECTRUM_BANDS], Duration::from_secs(10));
+        assert!(lifted.iter().all(|&band| band > 0.0));
         let mut frames = 0;
         while smoothing.motion() == SpectrumMotion::Moving && frames < 300 {
-            let _ = smoothing.fade(Duration::from_millis(33));
+            let faded = smoothing.fade(Duration::from_millis(33));
+            assert!(faded.iter().all(|&band| band < 1.0));
             frames += 1;
         }
 

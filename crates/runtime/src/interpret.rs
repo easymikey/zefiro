@@ -94,7 +94,7 @@ pub(crate) fn interpret(
                     interpreter.timers.schedule(deadline, message);
                 } else {
                     let timer: &'static str = (&message).into();
-                    interpreter.trace.push(TraceEntry::TimerOverflow { timer });
+                    interpreter.trace.push(TraceEntry::TimerOverflow(timer));
                 }
             }
             Effect::Restart(driver) => {
@@ -117,7 +117,6 @@ mod tests {
         Cmd,
         ConfigCmd,
         ConfigPatch,
-        Congestion,
         Cue,
         Effect,
         LibraryCmd,
@@ -138,7 +137,7 @@ mod tests {
 
     use crate::{
         interpret::{Interpreted, Interpreter, interpret},
-        library::machine::LibraryMessage,
+        outbox::Congestion,
         port::{LibraryPort, Port, Ports},
         shell::ShellEffect,
         timers::Timers,
@@ -149,7 +148,7 @@ mod tests {
         model: Model,
         ports: Ports,
         audio_rx: Receiver<AudioCmd>,
-        library_rx: Receiver<LibraryMessage>,
+        library_rx: Receiver<LibraryCmd>,
         config_rx: Receiver<ConfigCmd>,
         macos_rx: Receiver<MacosCmd>,
         timers: Timers,
@@ -172,11 +171,14 @@ mod tests {
                         audio_tx,
                         Congestion::default(),
                     ),
-                    library: LibraryPort::new(Port::new(
-                        DriverName::Library,
-                        library_tx,
-                        Congestion::default(),
-                    )),
+                    library: LibraryPort::new(
+                        Port::new(
+                            DriverName::Library,
+                            library_tx,
+                            Congestion::default(),
+                        ),
+                        unbounded().0,
+                    ),
                     config: Port::new(
                         DriverName::Config,
                         config_tx,
@@ -340,7 +342,7 @@ mod tests {
 
         assert!(matches!(
             fixture.library_rx.try_recv(),
-            Ok(LibraryMessage::Cmd(LibraryCmd::LoadFavorites))
+            Ok(LibraryCmd::LoadFavorites)
         ));
     }
 
@@ -488,7 +490,7 @@ mod tests {
         assert!(fixture.timers.next_deadline().is_none());
         assert!(matches!(
             fixture.trace.iter().next(),
-            Some(&TraceEntry::TimerOverflow { timer: "toast" })
+            Some(&TraceEntry::TimerOverflow("toast"))
         ));
     }
 }

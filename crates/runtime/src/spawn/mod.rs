@@ -1,0 +1,312 @@
+use audio::tap::SpectrumTap;
+use crossbeam_channel::Sender;
+use kernel::{
+    AudioCmd,
+    ConfigCmd,
+    LibraryCmd,
+    MacosCmd,
+    Message,
+    domain::{AudioSettings, DriverName, ThemeChoice},
+};
+use library::LibraryMessage;
+
+use crate::{
+    driver::{DriverThread, spawn_idle},
+    error::Error,
+    latest::LatestSenders,
+    registry,
+    runtime::StartupPaths,
+    spawn::{
+        audio_thread::{idle_audio, spawn_audio},
+        config_thread::spawn_config,
+        library_thread::{idle_library, spawn_library},
+    },
+};
+
+pub(crate) mod audio_thread;
+pub(crate) mod config_thread;
+mod library_thread;
+
+#[derive(Debug)]
+pub(crate) struct SpawnSetup<'a> {
+    pub(crate) audio: &'a AudioSettings,
+    pub(crate) theme: &'a ThemeChoice,
+    pub(crate) paths: &'a StartupPaths,
+    pub(crate) inbox: &'a Sender<Message>,
+    pub(crate) writers: &'a LatestSenders,
+    #[cfg(target_os = "macos")]
+    pub(crate) macos: &'a crate::macos::MacosChannel,
+}
+
+pub(crate) type Spawn<C> = fn(&SpawnSetup<'_>) -> Result<DriverThread<C>, Error>;
+
+pub(crate) type SpawnAudio =
+    fn(&SpawnSetup<'_>) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error>;
+
+pub(crate) type SpawnLibrary =
+    fn(
+        &SpawnSetup<'_>,
+    ) -> Result<(DriverThread<LibraryCmd>, Sender<LibraryMessage>), Error>;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Spawners {
+    pub(crate) audio: SpawnAudio,
+    pub(crate) library: SpawnLibrary,
+    pub(crate) config: Spawn<ConfigCmd>,
+    pub(crate) macos: Spawn<MacosCmd>,
+}
+
+impl Spawners {
+    #[must_use]
+    pub fn idle() -> Self {
+        Self {
+            audio: idle_audio,
+            library: idle_library,
+            config: |setup| spawn_idle(registry::row(DriverName::Config), setup.inbox),
+            macos: |setup| spawn_idle(registry::row(DriverName::Macos), setup.inbox),
+        }
+    }
+
+    #[must_use]
+    pub fn hardware() -> Self {
+        Self {
+            audio: spawn_audio,
+            library: spawn_library,
+            config: spawn_config,
+            #[cfg(target_os = "macos")]
+            macos: crate::macos::spawn,
+            #[cfg(not(target_os = "macos"))]
+            macos: Self::idle().macos,
+        }
+    }
+}
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::{
+        path::Path,
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
+    };
+
+    use audio::tap::SpectrumTap;
+    use config::{ConfigPaths, SeenTexts};
+    use crossbeam_channel::{Receiver, Sender, unbounded};
+    use kernel::{
+        AudioCmd,
+        AudioEvent,
+        Message,
+        domain::{DriverName, Startup},
+    };
+    use library::LibraryDirs;
+    use rstest::rstest;
+
+    use crate::{
+        driver::{DriverThread, spawn_driver},
+        error::Error,
+        outbox::Outbox,
+        runtime::{Runtime, StartupPaths},
+        spawn::{
+            ConfigCmd,
+            LibraryCmd,
+            LibraryMessage,
+            SpawnSetup,
+            Spawners,
+            audio_thread::idle_audio,
+        },
+    };
+
+    pub(crate) fn spawn_audio_loop<R>(
+        run: R,
+        setup: &SpawnSetup<'_>,
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error>
+    where
+        R: FnOnce(&Receiver<AudioCmd>, &Outbox<AudioEvent>) + Send + 'static,
+    {
+        let thread =
+            spawn_driver(crate::registry::row(DriverName::Audio), run, setup.inbox)?;
+        Ok((thread, SpectrumTap::silent()))
+    }
+
+    pub(crate) fn boom() -> ! {
+        panic!("boom")
+    }
+
+    pub(crate) const RECV_TIMEOUT: Duration = Duration::from_secs(1);
+
+    pub(crate) fn stub_paths(directory: &Path) -> StartupPaths {
+        StartupPaths {
+            config: ConfigPaths {
+                config: directory.join("config.toml"),
+                appearance: directory.join("sifr-ui.toml"),
+                themes: directory.join("themes"),
+                theme: None,
+                seen: SeenTexts::default(),
+            },
+            library: LibraryDirs::under(directory),
+        }
+    }
+
+    static AUDIO_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static LIBRARY_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static CONFIG_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static MACOS_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn counting_audio(
+        setup: &SpawnSetup<'_>,
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
+        AUDIO_CALLS.fetch_add(1, Ordering::SeqCst);
+        idle_audio(setup)
+    }
+
+    fn counting_library(
+        setup: &SpawnSetup<'_>,
+    ) -> Result<(DriverThread<LibraryCmd>, Sender<LibraryMessage>), Error> {
+        LIBRARY_CALLS.fetch_add(1, Ordering::SeqCst);
+        (Spawners::idle().library)(setup)
+    }
+
+    fn counting_config(
+        setup: &SpawnSetup<'_>,
+    ) -> Result<DriverThread<ConfigCmd>, Error> {
+        CONFIG_CALLS.fetch_add(1, Ordering::SeqCst);
+        (Spawners::idle().config)(setup)
+    }
+
+    fn counting_macos(
+        setup: &SpawnSetup<'_>,
+    ) -> Result<DriverThread<kernel::MacosCmd>, Error> {
+        MACOS_CALLS.fetch_add(1, Ordering::SeqCst);
+        (Spawners::idle().macos)(setup)
+    }
+
+    #[test]
+    fn every_driver_starts_through_its_spawner() {
+        AUDIO_CALLS.store(0, Ordering::SeqCst);
+        LIBRARY_CALLS.store(0, Ordering::SeqCst);
+        CONFIG_CALLS.store(0, Ordering::SeqCst);
+        MACOS_CALLS.store(0, Ordering::SeqCst);
+        let directory = tempfile::tempdir().unwrap();
+        let spawners = Spawners {
+            audio: counting_audio,
+            library: counting_library,
+            config: counting_config,
+            macos: counting_macos,
+        };
+
+        let runtime = Runtime::start(
+            Startup::default(),
+            &stub_paths(directory.path()),
+            &spawners,
+        )
+        .unwrap();
+        runtime.drain();
+
+        assert_eq!(AUDIO_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(LIBRARY_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(CONFIG_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(MACOS_CALLS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn an_idle_spawner_never_opens_hardware() {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = stub_paths(directory.path());
+        let (inbox, _arrivals) = crossbeam_channel::bounded(4);
+        let (model, _cmd) = kernel::startup(Startup::default());
+        let (writers, _cells, _notified) = crate::latest::latest_channels();
+        let setup = SpawnSetup {
+            audio: &model.settings.audio,
+            theme: &model.themes.selected,
+            paths: &paths,
+            inbox: &inbox,
+            writers: &writers,
+            #[cfg(target_os = "macos")]
+            macos: &crate::macos::MacosChannel::new(),
+        };
+        let (audio, _tap) = idle_audio(&setup).unwrap();
+
+        drop(audio.commands);
+        audio.handle.join().unwrap().unwrap();
+    }
+
+    static RESTART_LIBRARY_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static RESTART_CONFIG_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn panicking_library(
+        setup: &SpawnSetup<'_>,
+    ) -> Result<(DriverThread<LibraryCmd>, Sender<LibraryMessage>), Error> {
+        RESTART_LIBRARY_CALLS.fetch_add(1, Ordering::SeqCst);
+        let thread = spawn_driver(
+            crate::registry::row(DriverName::Library),
+            |_: &Receiver<LibraryCmd>, _: &Outbox<Message>| boom(),
+            setup.inbox,
+        )?;
+        Ok((thread, unbounded().0))
+    }
+
+    fn panicking_config(
+        setup: &SpawnSetup<'_>,
+    ) -> Result<DriverThread<ConfigCmd>, Error> {
+        RESTART_CONFIG_CALLS.fetch_add(1, Ordering::SeqCst);
+        spawn_driver(
+            crate::registry::row(DriverName::Config),
+            |_: &Receiver<ConfigCmd>, _: &Outbox<Message>| boom(),
+            setup.inbox,
+        )
+    }
+
+    struct RestartRow {
+        driver: DriverName,
+        deaths: usize,
+        spawns: usize,
+        calls: &'static AtomicUsize,
+    }
+
+    fn spawners_for(driver: DriverName) -> Spawners {
+        if driver == DriverName::Library {
+            Spawners {
+                library: panicking_library,
+                ..Spawners::idle()
+            }
+        } else {
+            Spawners {
+                config: panicking_config,
+                ..Spawners::idle()
+            }
+        }
+    }
+
+    #[rstest]
+    #[case::config_degrades_without_a_restart(RestartRow {
+        driver: DriverName::Config,
+        deaths: 1,
+        spawns: 1,
+        calls: &RESTART_CONFIG_CALLS,
+    })]
+    #[case::library_restarts_once_then_degrades(RestartRow {
+        driver: DriverName::Library,
+        deaths: 2,
+        spawns: 2,
+        calls: &RESTART_LIBRARY_CALLS,
+    })]
+    fn restart_follows_the_row(#[case] row: RestartRow) {
+        row.calls.store(0, Ordering::SeqCst);
+        let directory = tempfile::tempdir().unwrap();
+        let spawners = spawners_for(row.driver);
+        let mut runtime = Runtime::start(
+            Startup::default(),
+            &stub_paths(directory.path()),
+            &spawners,
+        )
+        .unwrap();
+
+        for _ in 0..row.deaths {
+            let died = runtime.wiring.receiver.recv_timeout(RECV_TIMEOUT).unwrap();
+            runtime.step(died).unwrap();
+        }
+
+        assert_eq!(row.calls.load(Ordering::SeqCst), row.spawns);
+        assert!(!runtime.model.workspace.toasts.is_empty());
+        runtime.drain();
+    }
+}

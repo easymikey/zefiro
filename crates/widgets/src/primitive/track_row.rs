@@ -1,3 +1,4 @@
+use kernel::domain::geometry::Cells;
 use ratatui::{
     style::{Color, Style},
     text::Line,
@@ -39,7 +40,7 @@ pub(crate) struct TrackRowView<'a> {
     pub(crate) favorite: Favorite,
     pub(crate) playing: Playing,
     pub(crate) queued: Option<QueuePosition>,
-    pub(crate) row_width: usize,
+    pub(crate) row_width: Cells,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -74,11 +75,10 @@ pub(crate) fn track_row_line(
     let fav = favorite_marker(view.favorite);
     let playing = playing_marker(view.playing);
     let markers_width = usize::from(MARKERS_WIDTH);
-    let body_width = view.row_width.saturating_sub(markers_width);
+    let body_width = view.row_width.count().saturating_sub(markers_width);
     let chip = view
         .queued
-        .map(|position| chip::compact(&position.label()))
-        .unwrap_or_default();
+        .map_or_else(String::new, |position| chip::compact(&position.label()));
     let title_width = if chip.is_empty() {
         body_width
     } else {
@@ -109,6 +109,7 @@ pub(crate) fn track_row_line(
 
 #[cfg(test)]
 mod tests {
+    use kernel::domain::geometry::Cells;
     use unicode_width::UnicodeWidthStr;
 
     use crate::{
@@ -125,7 +126,7 @@ mod tests {
         TrackRowStyle::from_theme(&ActiveTheme::new(&noir(), ColorDepth::TrueColor))
     }
 
-    fn base_props(title: &str, row_width: usize) -> TrackRowView<'_> {
+    fn base_props(title: &str, row_width: Cells) -> TrackRowView<'_> {
         TrackRowView {
             title,
             selected: Selected::No,
@@ -138,13 +139,13 @@ mod tests {
 
     #[test]
     fn long_ascii_title_truncates_to_row_width_with_ellipsis() {
-        let row_width = 20;
+        let row_width = Cells(20);
         let text = track_row_line(
             &base_props("a very long track title that will not fit", row_width),
             colors(),
         )
         .to_string();
-        assert_eq!(text.width(), row_width);
+        assert_eq!(text.width(), row_width.count());
         assert!(text.ends_with('…'));
         let fixed_width = usize::from(MARKERS_WIDTH);
         assert_eq!(
@@ -155,7 +156,7 @@ mod tests {
 
     #[test]
     fn the_chip_follows_the_title_with_one_space_and_carries_the_position() {
-        let mut view = base_props("song", 20);
+        let mut view = base_props("song", Cells(20));
         view.queued = Some(QueuePosition::new(12));
         let text = track_row_line(&view, colors()).to_string();
         assert!(text.ends_with("song [q12]"));
@@ -163,22 +164,22 @@ mod tests {
 
     #[test]
     fn a_title_too_long_for_the_row_truncates_so_the_chip_still_follows_it() {
-        let row_width = 20;
+        let row_width = Cells(20);
         let mut view = base_props("a very long track title", row_width);
         view.queued = Some(QueuePosition::new(1));
         let text = track_row_line(&view, colors()).to_string();
-        assert_eq!(text.width(), row_width);
+        assert_eq!(text.width(), row_width.count());
         assert!(text.ends_with("… [q1]"));
     }
 
     #[test]
     fn cjk_title_truncates_on_a_cell_boundary() {
-        let row_width = 12;
+        let row_width = Cells(12);
         let fixed_width = usize::from(MARKERS_WIDTH);
-        let title_width = row_width - fixed_width;
+        let title_width = row_width.count() - fixed_width;
         let text = track_row_line(&base_props("界界界界界界界界", row_width), colors())
             .to_string();
-        let title_part = text.get(fixed_width..).unwrap_or_default().trim_end();
+        let title_part = text.get(fixed_width..).unwrap_or("").trim_end();
         assert!(title_part.width() <= title_width);
         assert!(title_part.ends_with('…'));
     }

@@ -7,16 +7,20 @@ use std::{
 };
 
 use crossbeam_channel::Sender;
-use kernel::update::{Machine, Unhandled};
+use kernel::{
+    domain::Revision,
+    update::{Machine, Unhandled},
+};
 use rodio::Source;
 use triple_buffer::{Input, Output, triple_buffer};
 
 use crate::{
-    deck::{DeckEvent, Revision},
+    deck::event::DeckEvent,
     engine::{
         crossfade::{gain_in, gain_out},
         effect::{AudioMessage, SinkRole},
     },
+    gain::Gain,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,37 +31,37 @@ pub(crate) enum Curve {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Ramp {
-    pub(crate) from: f32,
-    pub(crate) to: f32,
+    pub(crate) from: Gain,
+    pub(crate) to: Gain,
     pub(crate) curve: Curve,
-    pub(crate) frames: u64,
+    pub(crate) length: Frames,
 }
 
 impl Ramp {
-    pub(crate) fn fade_in(frames: u64) -> Self {
+    pub(crate) fn fade_in(length: Frames) -> Self {
         Self {
-            from: 0.0,
-            to: 1.0,
+            from: Gain::SILENCE,
+            to: Gain::UNITY,
             curve: Curve::EqualPowerIn,
-            frames,
+            length,
         }
     }
 
-    pub(crate) fn fade_out(frames: u64) -> Self {
+    pub(crate) fn fade_out(length: Frames) -> Self {
         Self {
-            from: 1.0,
-            to: 0.0,
+            from: Gain::UNITY,
+            to: Gain::SILENCE,
             curve: Curve::EqualPowerOut,
-            frames,
+            length,
         }
     }
 
-    pub(crate) fn hold(level: f32) -> Self {
+    pub(crate) fn hold(level: Gain) -> Self {
         Self {
             from: level,
             to: level,
             curve: Curve::EqualPowerIn,
-            frames: 0,
+            length: Frames::ZERO,
         }
     }
 }
@@ -99,10 +103,16 @@ impl Published {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Frames(u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Frames(u64);
 
 impl Frames {
+    const ZERO: Self = Self(0);
+
+    fn advance(&mut self) {
+        self.0 += 1;
+    }
+
     fn duration(self, rate: u32) -> Duration {
         if rate == 0 {
             return Duration::ZERO;
@@ -160,8 +170,8 @@ pub(crate) struct EnvelopeControl {
 
 impl EnvelopeControl {
     #[must_use]
-    pub(crate) fn frames(&self, duration: Duration) -> u64 {
-        Frames::of(duration, self.rate).0
+    pub(crate) fn frames(&self, duration: Duration) -> Frames {
+        Frames::of(duration, self.rate)
     }
 
     fn order(&mut self, edit: impl FnOnce(&mut Order)) {
@@ -185,8 +195,10 @@ impl EnvelopeControl {
 
     #[cfg(test)]
     #[must_use]
-    pub(crate) fn gain(&self) -> f32 {
-        f32::from_bits(self.published.gain.load(Ordering::Relaxed))
+    pub(crate) fn gain(&self) -> Gain {
+        Gain::from_amplitude(f32::from_bits(
+            self.published.gain.load(Ordering::Relaxed),
+        ))
     }
 
     #[must_use]
@@ -202,7 +214,7 @@ impl EnvelopeControl {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Running {
     ramp: Ramp,
-    elapsed: u64,
+    elapsed: Frames,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,13 +235,13 @@ pub(crate) struct Envelope<S> {
     published: Arc<Published>,
     sender: Sender<AudioMessage>,
     revision: Revision,
-    frames: u64,
+    frames: Frames,
     rate: u32,
     base: Duration,
     channel: u16,
-    gain: f32,
+    gain: Gain,
     running: Option<Running>,
-    cue: Option<u64>,
+    cue: Option<Frames>,
     previous: Order,
     wake: Wake,
     ending: Ending,
@@ -249,11 +261,11 @@ pub(crate) fn envelope<S: Source>(
         published: Arc::clone(&published),
         sender,
         revision,
-        frames: 0,
+        frames: Frames::ZERO,
         rate,
         base: Duration::ZERO,
         channel: 0,
-        gain: 1.0,
+        gain: Gain::UNITY,
         running: None,
         cue: None,
         previous: Order::default(),
@@ -270,11 +282,12 @@ pub(crate) fn envelope<S: Source>(
     (envelope, control)
 }
 
-fn curved_gain(ramp: Ramp, fraction: f32) -> f32 {
-    match ramp.curve {
-        Curve::EqualPowerIn => ramp.from + (ramp.to - ramp.from) * gain_in(fraction),
-        Curve::EqualPowerOut => ramp.to + (ramp.from - ramp.to) * gain_out(fraction),
-    }
+fn curved_gain(ramp: Ramp, fraction: f32) -> Gain {
+    let (from, to) = (ramp.from.amplitude(), ramp.to.amplitude());
+    Gain::from_amplitude(match ramp.curve {
+        Curve::EqualPowerIn => from + (to - from) * gain_in(fraction),
+        Curve::EqualPowerOut => to + (from - to) * gain_out(fraction),
+    })
 }
 
 impl<S: Source> Envelope<S> {
@@ -286,7 +299,7 @@ impl<S: Source> Envelope<S> {
     }
 
     fn wake(&mut self) {
-        self.wake = match DeckEvent::Track(self.revision).notify(&self.sender) {
+        self.wake = match DeckEvent::Woke(self.revision).wake(&self.sender) {
             Ok(()) => Wake::Sent,
             Err(_) => Wake::Pending,
         };
@@ -303,8 +316,8 @@ impl<S: Source> Envelope<S> {
     fn reconcile_rate(&mut self) {
         let rate = self.inner.sample_rate();
         if rate != self.rate {
-            self.base += Frames(self.frames).duration(self.rate);
-            self.frames = 0;
+            self.base += self.frames.duration(self.rate);
+            self.frames = Frames::ZERO;
             self.rate = rate;
         }
     }
@@ -323,15 +336,15 @@ impl<S: Source> Envelope<S> {
         let Some(mut running) = self.running else {
             return;
         };
-        running.elapsed += 1;
-        if running.elapsed >= running.ramp.frames {
+        running.elapsed.advance();
+        if running.elapsed >= running.ramp.length {
             self.gain = running.ramp.to;
             self.running = None;
             self.raise(Signals::RAMPED);
             return;
         }
-        let elapsed = Frames(running.elapsed).duration(self.rate);
-        let total = Frames(running.ramp.frames).duration(self.rate);
+        let elapsed = running.elapsed.duration(self.rate);
+        let total = running.ramp.length.duration(self.rate);
         let fraction = if total.is_zero() {
             1.0
         } else {
@@ -344,14 +357,14 @@ impl<S: Source> Envelope<S> {
     fn publish(&self) {
         self.published
             .gain
-            .store(self.gain.to_bits(), Ordering::Relaxed);
-        let position = self.base + Frames(self.frames).duration(self.rate);
+            .store(self.gain.amplitude().to_bits(), Ordering::Relaxed);
+        let position = self.base + self.frames.duration(self.rate);
         let nanos = u64::try_from(position.as_nanos()).unwrap_or(u64::MAX);
         self.published.position.store(nanos, Ordering::Relaxed);
     }
 
     fn advance_frame(&mut self) {
-        self.frames += 1;
+        self.frames.advance();
         self.reconcile_rate();
         if self.orders.update() {
             let order = *self.orders.output_buffer();
@@ -389,11 +402,11 @@ impl<S: Source> Machine for Envelope<S> {
             };
             self.running = Some(Running {
                 ramp: Ramp { from, ..ramp },
-                elapsed: 0,
+                elapsed: Frames::ZERO,
             });
         }
         if order.cue != self.previous.cue {
-            self.cue = order.cue.map(|at| Frames::of(at, self.rate).0);
+            self.cue = order.cue.map(|at| Frames::of(at, self.rate));
         }
         self.previous = order;
         Ok(())
@@ -416,7 +429,7 @@ impl<S: Source> Iterator for Envelope<S> {
             self.channel = 0;
             self.advance_frame();
         }
-        Some(sample * self.gain)
+        Some(sample * self.gain.amplitude())
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -444,7 +457,7 @@ impl<S: Source> Source for Envelope<S> {
     fn try_seek(&mut self, position: Duration) -> Result<(), rodio::source::SeekError> {
         self.inner.try_seek(position)?;
         self.base = position;
-        self.frames = 0;
+        self.frames = Frames::ZERO;
         self.rate = self.inner.sample_rate();
         self.ending = Ending::Playing;
         Ok(())
@@ -455,13 +468,16 @@ impl<S: Source> Source for Envelope<S> {
 mod tests {
     use std::time::Duration;
 
+    use kernel::domain::Revision;
     use rodio::{Source, source::SineWave};
     use rstest::rstest;
 
-    use crate::deck::{
-        DeckEvent,
-        Revision,
-        envelope::{Curve, Ramp, Signals, envelope},
+    use crate::{
+        deck::{
+            envelope::{Curve, Frames, Ramp, Signals, envelope},
+            event::DeckEvent,
+        },
+        gain::Gain,
     };
 
     fn tone(millis: u64) -> impl Source {
@@ -500,12 +516,12 @@ mod tests {
     fn an_envelope_raises_ramped_and_ends_at_the_target_gain() {
         let (wake, _heard) = crossbeam_channel::bounded(4);
         let (source, mut control) = envelope(tone(100), Revision::default(), wake);
-        control.ramp(Ramp::fade_out(441));
+        control.ramp(Ramp::fade_out(Frames(441)));
         drain(source);
         let flags = control.take_signals();
         assert!(flags.contains(Signals::RAMPED));
         assert!(flags.contains(Signals::FINISHED));
-        assert!((control.gain() - 0.0).abs() < 1e-4);
+        assert!((control.gain().amplitude() - 0.0).abs() < 1e-4);
     }
 
     #[rstest]
@@ -514,13 +530,13 @@ mod tests {
         let (source, control) = envelope(tone(100), Revision::default(), wake);
         drain(source);
         assert_eq!(control.take_signals(), Signals::FINISHED);
-        assert!((control.gain() - 1.0).abs() < 1e-6);
+        assert!((control.gain().amplitude() - 1.0).abs() < 1e-6);
     }
 
     #[rstest]
     fn a_wake_up_that_does_not_fit_is_delivered_on_the_next_callback() {
         let (wake, heard) = crossbeam_channel::bounded(1);
-        assert!(DeckEvent::Track(Revision::default()).notify(&wake).is_ok());
+        assert!(DeckEvent::Woke(Revision::default()).wake(&wake).is_ok());
         let (mut source, control) = envelope(tone(10), Revision::default(), wake);
         assert_eq!(source.by_ref().take(4096).count(), 4096);
         assert!(control.take_signals().contains(Signals::FINISHED));
@@ -549,24 +565,24 @@ mod tests {
     fn a_newer_order_retargets_the_ramp() {
         let (wake, _heard) = crossbeam_channel::bounded(4);
         let (mut source, mut control) = envelope(tone(100), Revision::default(), wake);
-        control.ramp(Ramp::fade_out(4410));
+        control.ramp(Ramp::fade_out(Frames(4410)));
         for _ in 0..441 {
             source.next();
         }
-        let mid_gain = control.gain();
+        let mid_gain = control.gain().amplitude();
         assert!(mid_gain < 1.0 && mid_gain > 0.0);
         control.ramp(Ramp {
-            from: 1.0,
-            to: 1.0,
+            from: Gain::UNITY,
+            to: Gain::UNITY,
             curve: Curve::EqualPowerIn,
-            frames: 441,
+            length: Frames(441),
         });
         for _ in 0..441 {
             source.next();
         }
-        let after_retarget = control.gain();
+        let after_retarget = control.gain().amplitude();
         assert!(after_retarget >= mid_gain);
         drain(source);
-        assert!((control.gain() - 1.0).abs() < 1e-4);
+        assert!((control.gain().amplitude() - 1.0).abs() < 1e-4);
     }
 }

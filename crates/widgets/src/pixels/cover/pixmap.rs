@@ -4,7 +4,7 @@ use image::{RgbaImage, imageops::FilterType};
 use ratatui::layout::Rect;
 
 use crate::{
-    DecodedCover,
+    CoverImage,
     Scene,
     VinylCache,
     VinylCacheKey,
@@ -19,7 +19,7 @@ pub struct CellPixels {
 }
 
 #[must_use]
-pub(crate) fn plain_pixmap(decoded: Option<&DecodedCover>) -> Option<BuiltPixmap> {
+pub(crate) fn plain_pixmap(decoded: Option<&CoverImage>) -> Option<BuiltPixmap> {
     let decoded = decoded?;
     Some(BuiltPixmap {
         pixmap: Arc::clone(&decoded.image),
@@ -54,7 +54,7 @@ pub(crate) fn vinyl_size_px(rect: Rect, cell: CellPixels) -> u32 {
 #[must_use]
 pub(crate) fn vinyl_key(
     scene: &Scene<'_>,
-    decoded: Option<&DecodedCover>,
+    decoded: Option<&CoverImage>,
     size_px: u32,
 ) -> VinylCacheKey {
     VinylCacheKey {
@@ -70,7 +70,7 @@ pub(crate) fn vinyl_key(
 pub(crate) fn compose_vinyl(
     cache: &mut VinylCache,
     key: VinylCacheKey,
-    decoded: Option<&DecodedCover>,
+    decoded: Option<&CoverImage>,
 ) -> BuiltPixmap {
     let art = decoded.map(|cover| cover.image.as_ref());
     let pixmap = Arc::new(cache.compose(key.clone(), art).clone());

@@ -2,7 +2,10 @@ use std::{borrow::Cow, time::Duration};
 
 use kernel::domain::format_time;
 use num_traits::ToPrimitive;
-use ratatui::text::{Line, Span};
+use ratatui::{
+    style::Color,
+    text::{Line, Span},
+};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
@@ -12,7 +15,7 @@ use crate::{
         glyphs,
         span::{line, text},
     },
-    theme::{ActiveTheme, BarStyle},
+    theme::{ActiveTheme, ProgressStyle},
 };
 
 const FULL_RUN: &str = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
@@ -69,7 +72,7 @@ fn repeat_glyph(
 }
 
 #[must_use]
-pub(crate) fn fill(spec: &BarFill, style: BarStyle) -> Line<'static> {
+pub(crate) fn fill(spec: &BarFill, fill: Color, track: Color) -> Line<'static> {
     let width_f32 = spec.width.to_f32().unwrap_or(f32::MAX);
     let exact = spec.fraction.clamp(0.0, 1.0) * width_f32;
     let whole = floor::<usize>(exact);
@@ -86,9 +89,9 @@ pub(crate) fn fill(spec: &BarFill, style: BarStyle) -> Line<'static> {
     );
     line(
         [
-            Some(text(filled).fg(style.fill)),
-            partial.map(|glyph| text(glyph).fg(style.fill)),
-            Some(text(groove).fg(style.track)),
+            Some(text(filled).fg(fill)),
+            partial.map(|glyph| text(glyph).fg(fill)),
+            Some(text(groove).fg(track)),
         ]
         .into_iter()
         .flatten(),
@@ -112,7 +115,7 @@ pub(crate) struct HudProgressRow {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HudProgressStyle {
-    pub bar: BarStyle,
+    pub bar: ProgressStyle,
     pub chip: ChipStyle,
 }
 
@@ -120,7 +123,7 @@ impl HudProgressStyle {
     #[must_use]
     pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         Self {
-            bar: BarStyle::progress(theme),
+            bar: ProgressStyle::from_theme(theme),
             chip: ChipStyle::from_theme(theme),
         }
     }
@@ -148,10 +151,15 @@ pub(crate) fn hud_progress_line(
     if bar_width == input.row_width {
         return fill(
             &BarFill::progress(input.fraction, input.row_width),
-            colors.bar,
+            colors.bar.fill,
+            colors.bar.track,
         );
     }
-    let bar = fill(&BarFill::progress(input.fraction, bar_width), colors.bar);
+    let bar = fill(
+        &BarFill::progress(input.fraction, bar_width),
+        colors.bar.fill,
+        colors.bar.track,
+    );
     Line::from_iter(
         bar.spans
             .into_iter()
@@ -173,17 +181,11 @@ mod tests {
             chip::ChipStyle,
             glyphs,
         },
-        theme::BarStyle,
+        theme::ProgressStyle,
     };
 
     fn painted(spec: &BarFill) -> Line<'static> {
-        fill(
-            spec,
-            BarStyle {
-                fill: Color::Green,
-                track: Color::Black,
-            },
-        )
+        fill(spec, Color::Green, Color::Black)
     }
 
     fn progress_text(fraction: f32, width: usize) -> String {
@@ -241,7 +243,7 @@ mod tests {
                 remaining,
             },
             &HudProgressStyle {
-                bar: BarStyle {
+                bar: ProgressStyle {
                     fill: Color::Red,
                     track: Color::Black,
                 },

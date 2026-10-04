@@ -1,18 +1,18 @@
 use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
-use crate::{card::CompactCard, scene::Scene, screen::FrameLayout};
+use crate::{card::CompactCardWidget, scene::Scene, screen::FrameLayout};
 
 #[derive(Debug, Clone, Copy)]
-pub struct CompactScreen<'a> {
+pub struct CompactScreenWidget<'a> {
     pub scene: Scene<'a>,
     pub layout: &'a FrameLayout,
 }
 
-impl Widget for &CompactScreen<'_> {
+impl Widget for &CompactScreenWidget<'_> {
     fn render(self, _area: Rect, buffer: &mut Buffer) {
         let scene = self.scene;
-        (&CompactCard {
-            view: scene.card_view(),
+        (&CompactCardWidget {
+            view: crate::card::CardView::from_scene(&scene),
             theme: scene.active_theme(),
             speed_chip: scene.appearance().settings.speed_chip,
         })

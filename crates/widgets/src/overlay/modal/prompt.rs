@@ -1,3 +1,4 @@
+use kernel::domain::geometry::Cells;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -74,7 +75,7 @@ impl PromptStyle {
 pub(crate) struct PromptWidget<'a> {
     pub(crate) title: &'static str,
     pub(crate) hint: &'static str,
-    pub(crate) min_width: u16,
+    pub(crate) min_width: Cells,
     pub(crate) body: PromptBody<'a>,
     pub(crate) error: Option<String>,
     pub(crate) avoid: &'a [Rect],
@@ -96,8 +97,8 @@ impl PromptWidget<'_> {
                 min_width: self.min_width,
                 content_width: self
                     .min_width
-                    .max(u16::try_from(widest).unwrap_or(self.min_width)),
-                content_lines: 1 + u16::from(self.error.is_some()),
+                    .max(u16::try_from(widest).map_or(self.min_width, Cells)),
+                content_lines: Cells(1 + u16::from(self.error.is_some())),
             },
             hint: Some(line([text(self.hint).fg(self.style.muted_foreground)])),
             border: self.style.border,

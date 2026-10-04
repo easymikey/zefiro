@@ -84,16 +84,18 @@ pub(crate) fn speed_chip_spans(
     speed: Speed,
     mode: SpeedChip,
     colors: ChipStyle,
-) -> Option<Vec<Span<'static>>> {
-    let label = speed_chip_text(speed, mode)?;
-    Some(vec![
+) -> Vec<Span<'static>> {
+    let Some(label) = speed_chip_text(speed, mode) else {
+        return Vec::new();
+    };
+    vec![
         text(glyphs::speed_chip::GAP).into(),
         text(glyphs::speed_chip::MARKER)
             .fg(colors.border)
             .dim()
             .into(),
         text(label).fg(colors.foreground).dim().into(),
-    ])
+    ]
 }
 
 #[cfg(test)]
@@ -140,7 +142,7 @@ mod tests {
         #[case] expected: Option<&str>,
     ) {
         let spans = speed_chip_spans(speed, mode, colors());
-        let text = spans.as_ref().map(|spans| {
+        let text = (!spans.is_empty()).then(|| {
             spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -148,11 +150,7 @@ mod tests {
         });
         assert_eq!(text.as_deref(), expected);
 
-        let rendered: usize = spans
-            .iter()
-            .flatten()
-            .map(|span| span.content.width())
-            .sum();
+        let rendered: usize = spans.iter().map(|span| span.content.width()).sum();
         assert_eq!(
             usize::from(speed_chip_width(speed, mode)),
             rendered,
@@ -163,8 +161,7 @@ mod tests {
     #[test]
     fn the_marker_and_the_value_carry_the_dim_face_and_their_own_colours() {
         let spans =
-            speed_chip_spans(Speed::clamped(1.25), SpeedChip::Changed, colors())
-                .unwrap_or_default();
+            speed_chip_spans(Speed::clamped(1.25), SpeedChip::Changed, colors());
         let faces: Vec<(Option<Color>, bool)> = spans
             .iter()
             .skip(1)

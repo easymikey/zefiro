@@ -84,7 +84,9 @@ fn error() -> PlayerMessage {
 fn seek_error() -> PlayerMessage {
     PlayerMessage::Error {
         error: AudioError::Seek {
-            reason: "the source cannot seek".to_string(),
+            reason: kernel::domain::Diagnostic::from_error(&std::io::Error::other(
+                "the source cannot seek",
+            )),
         },
         now: now(),
     }
@@ -246,8 +248,6 @@ fn loaded(total: Option<Duration>) -> PlayerMessage {
     }
 }
 
-type Cell = crate::support::table::Cell<Player>;
-
 #[rstest]
 #[case::stopped_toggle_starts_the_cursor_track(Player::Stopped, toggle(Some(track_a())), Ok((loading(track_a()), cut_in(&track_a()))))]
 #[case::stopped_toggle_without_a_track_is_refused(
@@ -320,7 +320,10 @@ type Cell = crate::support::table::Cell<Player>;
 fn player_cell(
     #[case] start: Player,
     #[case] message: PlayerMessage,
-    #[case] expected: Cell,
+    #[case] expected: Result<
+        (Player, <Player as kernel::update::Machine>::Effect),
+        Unhandled,
+    >,
 ) {
     cell(start, message, expected);
 }

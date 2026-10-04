@@ -87,6 +87,7 @@ impl Player {
             AudioError::OutputLost(..) => self.output_lost(now),
             AudioError::Decode { .. }
             | AudioError::Device { .. }
+            | AudioError::ListDevices { .. }
             | AudioError::Stream { .. }
             | AudioError::Preload { .. } => self.load_failed(),
             AudioError::Seek { .. } => Cmd::none(),

@@ -20,8 +20,4 @@ expression: log
         ],
         messages: [],
     },
-    Cmd {
-        effects: [],
-        messages: [],
-    },
 ]

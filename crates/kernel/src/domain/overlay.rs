@@ -9,6 +9,7 @@ use crate::domain::{
     SettingRow,
     TimecodeError,
     Track,
+    TrackRef,
     ViewIndex,
     playlist::PlaylistNameError,
 };
@@ -99,7 +100,7 @@ pub struct SearchQuery {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteCandidate {
-    pub index: ViewIndex,
+    pub source: TrackRef,
     pub title: String,
     pub artist: String,
 }

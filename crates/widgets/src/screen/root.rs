@@ -1,69 +1,86 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Rect, Size},
-    style::Style,
+    style::{Color, Style},
     widgets::{Block, Widget},
 };
 
 use crate::{
-    card::CoverArt,
-    key_hints::KeyHintsLine,
-    overlay::layer::OverlayWidget,
-    playlist::PlaylistPane,
+    card::CardCover,
+    key_hints::KeyHintsWidget,
+    overlay::layer::{OverlayView, OverlayWidget},
+    playlist::PlaylistWidget,
     primitive::canvas::Canvas,
     scene::Scene,
     screen::{
         Breakpoint,
-        CompactScreen,
+        CompactScreenWidget,
         FrameLayout,
-        FullScreen,
-        MinimalScreen,
-        TooSmallNotice,
+        FullScreenWidget,
+        MinimalScreenWidget,
+        TooSmallWidget,
     },
-    theme::Role,
+    theme::{ActiveTheme, Role},
+    toast::ToastWidget,
 };
 
 #[derive(Debug, Clone, Copy)]
-pub struct Screen<'a> {
-    pub scene: Scene<'a>,
-    pub layout: &'a FrameLayout,
-    pub cover_art: &'a CoverArt,
+pub(crate) struct ScreenStyle {
+    pub(crate) foreground: Color,
+    pub(crate) background: Color,
 }
 
-impl Widget for &Screen<'_> {
+impl ScreenStyle {
+    #[must_use]
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            foreground: theme.role(Role::Text),
+            background: theme.role(Role::WindowBackground),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ScreenWidget<'a> {
+    pub scene: Scene<'a>,
+    pub layout: &'a FrameLayout,
+    pub cover_art: &'a CardCover,
+}
+
+impl Widget for &ScreenWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let theme = self.scene.active_theme();
+        let style = ScreenStyle::from_theme(&theme);
         Block::new()
-            .style(
-                Style::default()
-                    .bg(theme.role(Role::WindowBackground))
-                    .fg(theme.role(Role::Text)),
-            )
+            .style(Style::default().bg(style.background).fg(style.foreground))
             .render(area, buffer);
         let layout = self.layout;
         match layout.breakpoint {
             Breakpoint::TooSmall => {
                 let breakpoints = self.scene.appearance().breakpoints;
-                (&TooSmallNotice {
+                (&TooSmallWidget {
                     theme,
-                    minimum: Size::new(breakpoints.min_columns, breakpoints.min_rows),
+                    minimum: Size::new(
+                        breakpoints.min_columns.0,
+                        breakpoints.min_rows.0,
+                    ),
                 })
                     .render(layout.screen, buffer);
                 return;
             }
-            Breakpoint::Minimal => (&MinimalScreen {
-                view: self.scene.card_view(),
+            Breakpoint::Minimal => (&MinimalScreenWidget {
+                view: crate::card::CardView::from_scene(&self.scene),
                 theme,
                 speed_chip: self.scene.appearance().settings.speed_chip,
             })
                 .render(layout.screen, buffer),
-            Breakpoint::Full => (&FullScreen {
+            Breakpoint::Full => (&FullScreenWidget {
                 scene: self.scene,
                 layout: self.layout,
                 cover_art: self.cover_art,
             })
                 .render(layout.screen, buffer),
-            Breakpoint::Compact => (&CompactScreen {
+            Breakpoint::Compact => (&CompactScreenWidget {
                 scene: self.scene,
                 layout: self.layout,
             })
@@ -74,19 +91,19 @@ impl Widget for &Screen<'_> {
     }
 }
 
-impl Screen<'_> {
+impl ScreenWidget<'_> {
     fn paint_lists(&self, buffer: &mut Buffer) {
         let scene = self.scene;
         let theme = scene.active_theme();
         if let Some(areas) = self.layout.playlist {
-            PlaylistPane {
-                view: scene.playlist_view(),
+            PlaylistWidget {
+                view: crate::playlist::PlaylistView::from_scene(&scene),
                 theme,
             }
             .paint(&areas, buffer);
         }
         if let Some(hints) = self.layout.key_hints {
-            (&KeyHintsLine {
+            (&KeyHintsWidget {
                 theme,
                 content: scene.key_hints(),
             })
@@ -99,7 +116,7 @@ impl Screen<'_> {
         if self.layout.overlay.is_some() {
             Widget::render(
                 &OverlayWidget::placed(
-                    self.scene.overlay_content(),
+                    OverlayView::from_scene(&self.scene),
                     self.layout,
                     self.scene.cover_mode(),
                 ),
@@ -107,7 +124,9 @@ impl Screen<'_> {
                 buffer,
             );
         }
-        if let Some((toast, areas)) = self.scene.toaster().zip(self.layout.toast) {
+        if let Some((toast, areas)) =
+            ToastWidget::from_scene(&self.scene).zip(self.layout.toast)
+        {
             toast.paint(
                 areas,
                 Canvas {
@@ -125,19 +144,18 @@ mod tests {
     use ratatui::layout::Rect;
 
     use crate::{
-        card::CoverArt,
+        card::CardCover,
         scene::{PixelPath, Scene},
-        screen::{FrameLayout, Screen},
+        screen::{FrameLayout, ScreenWidget},
         test_support::{SceneSources, model_with_tracks, rendered},
     };
 
-    fn frame(scene: Scene<'_>, cover_art: &CoverArt, size: (u16, u16)) -> String {
+    fn frame(scene: Scene<'_>, cover_art: &CardCover, size: (u16, u16)) -> String {
         let (width, height) = size;
-        let layout =
-            FrameLayout::new(&scene.layout_parts(), Rect::new(0, 0, width, height));
+        let layout = FrameLayout::from_scene(&scene, Rect::new(0, 0, width, height));
         rendered(width, height, |frame| {
             frame.render_widget(
-                &Screen {
+                &ScreenWidget {
                     scene,
                     layout: &layout,
                     cover_art,
@@ -151,7 +169,7 @@ mod tests {
     #[test]
     fn a_full_frame_paints_the_card_the_playlist_and_the_key_hints() {
         let sources = SceneSources::new(model_with_tracks(3));
-        insta::assert_snapshot!(frame(sources.scene(), &CoverArt::Missing, (80, 24)));
+        insta::assert_snapshot!(frame(sources.scene(), &CardCover::Missing, (80, 24)));
     }
 
     #[test]
@@ -161,8 +179,8 @@ mod tests {
             pixel_path: PixelPath::Protocol,
             ..sources.scene()
         };
-        let missing = frame(scene, &CoverArt::Missing, (80, 24));
-        let image = frame(scene, &CoverArt::Image, (80, 24));
+        let missing = frame(scene, &CardCover::Missing, (80, 24));
+        let image = frame(scene, &CardCover::Image, (80, 24));
         assert!(missing.contains("No cover"), "got {missing}");
         assert!(!image.contains("No cover"), "got {image}");
     }
@@ -170,7 +188,7 @@ mod tests {
     #[test]
     fn a_short_terminal_paints_the_compact_card() {
         let sources = SceneSources::new(model_with_tracks(3));
-        let text = frame(sources.scene(), &CoverArt::Missing, (80, 16));
+        let text = frame(sources.scene(), &CardCover::Missing, (80, 16));
         assert!(text.contains("No track"), "got {text}");
         assert!(text.contains("song00"), "got {text}");
     }
@@ -178,7 +196,7 @@ mod tests {
     #[test]
     fn a_terminal_below_the_minimum_shows_only_the_notice() {
         let sources = SceneSources::new(model_with_tracks(3));
-        let text = frame(sources.scene(), &CoverArt::Missing, (40, 10));
+        let text = frame(sources.scene(), &CardCover::Missing, (40, 10));
         assert!(text.contains("Terminal too small."), "got {text}");
         assert!(!text.contains("song00"), "got {text}");
     }
@@ -188,7 +206,7 @@ mod tests {
         let mut model = model_with_tracks(3);
         model.workspace.toasts = vec![Toast::info("Saved")];
         let sources = SceneSources::new(model);
-        let text = frame(sources.scene(), &CoverArt::Missing, (80, 24));
+        let text = frame(sources.scene(), &CardCover::Missing, (80, 24));
         assert!(text.contains("Saved"), "got {text}");
     }
 }

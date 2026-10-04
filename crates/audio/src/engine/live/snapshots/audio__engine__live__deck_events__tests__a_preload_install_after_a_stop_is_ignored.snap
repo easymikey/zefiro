@@ -19,12 +19,12 @@ expression: log
     },
     Cmd {
         effects: [
-            Clear,
+            Clear(
+                Speed(
+                    1.0,
+                ),
+            ),
         ],
-        messages: [],
-    },
-    Cmd {
-        effects: [],
         messages: [],
     },
 ]

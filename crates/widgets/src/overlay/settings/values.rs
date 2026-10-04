@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use kernel::{
     Bounded,
@@ -36,7 +36,8 @@ pub(crate) struct SettingsView<'a> {
     pub theme: &'a str,
     pub themes: &'a [ThemeName],
     pub sleep_presets: &'a [Duration],
-    pub music_dir: &'a str,
+    pub music_dir: &'a Path,
+    pub home: Option<&'a Path>,
     pub output_device: Option<&'a str>,
     pub output_devices: &'a [ListedDevice],
     pub appearance: AppearanceSettings,
@@ -268,6 +269,34 @@ fn format_pick(current: &str) -> String {
         glyphs::settings::PICK_LEFT,
         glyphs::settings::PICK_RIGHT
     )
+}
+
+impl<'a> SettingsView<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &crate::scene::Scene<'a>) -> Self {
+        let audio = &scene.settings.audio;
+        Self {
+            crossfade: audio.crossfade,
+            replay_gain: audio.replay_gain,
+            theme: crate::scene::theme_label(&scene.themes.selected),
+            themes: &scene.themes.names,
+            sleep_presets: audio.sleep_presets.as_slice(),
+            music_dir: scene.music_dir,
+            home: scene.home,
+            output_device: audio.device.named().map(kernel::domain::DeviceName::as_str),
+            output_devices: &scene.settings.output_devices,
+            appearance: scene.appearance().settings,
+            appearance_settings: scene.appearance_settings,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn music_dir_label(&self) -> String {
+        self.home.map_or_else(
+            || self.music_dir.display().to_string(),
+            |home| crate::scene::abbreviate_home(self.music_dir, home),
+        )
+    }
 }
 
 #[cfg(test)]

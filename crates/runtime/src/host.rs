@@ -12,7 +12,7 @@ where
         crate::registry::row(kernel::domain::DriverName::Macos).hosting,
         crate::registry::Hosting::WorkerWithMainLoop
     ));
-    let Some(main) = ::macos::MainLoop::attach(&runtime.sender()) else {
+    let Some(main) = ::macos::MainLoop::attach(&runtime.wiring.macos.sender) else {
         let mut runtime = runtime;
         runtime
             .trace
@@ -41,7 +41,7 @@ where
 }
 
 #[cfg(target_os = "macos")]
-struct StopOnDrop(::macos::LoopStopper);
+struct StopOnDrop(::macos::MainLoopStop);
 
 #[cfg(target_os = "macos")]
 impl Drop for StopOnDrop {

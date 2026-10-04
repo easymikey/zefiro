@@ -7,10 +7,10 @@ use std::{
 
 use crossbeam_channel::{Receiver, Sender};
 
-use crate::{error::Error, registry::DriverRow};
+use crate::{driver::LoopEffect, error::Error, registry::DriverRow};
 
 pub(crate) struct Jobs<E, J, M> {
-    pub(crate) pick: fn(E) -> Result<J, E>,
+    pub(crate) split: fn(E) -> LoopEffect<E, J, M>,
     pub(crate) run: fn(J) -> M,
 }
 

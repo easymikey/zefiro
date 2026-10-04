@@ -8,7 +8,7 @@ use std::{
 use ratatui::{layout::Rect, text::Line};
 
 use crate::{
-    CoverArt,
+    CardCover,
     MilkdropAdvance,
     MilkdropField,
     MilkdropStyle,
@@ -67,11 +67,11 @@ pub struct MilkdropCover {
 }
 
 impl MilkdropCover {
-    pub fn refresh(&mut self, scene: &Scene<'_>, cover: Option<Rect>) -> CoverArt {
+    pub fn refresh(&mut self, scene: &Scene<'_>, cover: Option<Rect>) -> CardCover {
         let Some(rect) = cover else {
             self.installed = None;
             self.lines = Arc::default();
-            return CoverArt::Missing;
+            return CardCover::Missing;
         };
         let width = usize::from(rect.width);
         let height = usize::from(rect.height);
@@ -106,7 +106,7 @@ impl MilkdropCover {
             lines_into(field, &style, &mut self.rows);
             self.lines = Arc::from(self.rows.as_slice());
         }
-        CoverArt::Text(Arc::clone(&self.lines))
+        CardCover::Text(Arc::clone(&self.lines))
     }
 }
 

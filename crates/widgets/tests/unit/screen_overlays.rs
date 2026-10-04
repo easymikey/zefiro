@@ -6,10 +6,9 @@ use kernel::domain::{
     SearchQuery,
     SettingRow,
     TextEntry,
-    ViewIndex,
 };
 use ratatui::layout::Rect;
-use widgets::{CoverArt, FrameLayout, Screen};
+use widgets::{CardCover, FrameLayout, ScreenWidget};
 
 use crate::unit::support::{SceneSources, model_with_tracks, rendered, track};
 
@@ -18,17 +17,17 @@ fn frame_with_overlay(overlay: Overlay) -> String {
     sources.model.workspace.overlay = Some(overlay);
     let scene = sources.scene();
     let area = Rect::new(0, 0, 80, 24);
-    let layout = FrameLayout::new(&scene.layout_parts(), area);
+    let layout = FrameLayout::from_scene(&scene, area);
     assert!(
         layout.overlay.is_some(),
         "an active overlay must claim a rect in the full frame's layout"
     );
     rendered(80, 24, |frame| {
         frame.render_widget(
-            &Screen {
+            &ScreenWidget {
                 scene,
                 layout: &layout,
-                cover_art: &CoverArt::Missing,
+                cover_art: &CardCover::Missing,
             },
             frame.area(),
         );
@@ -64,7 +63,7 @@ fn the_settings_overlay_is_painted_over_the_full_frame() {
 #[test]
 fn the_confirm_delete_overlay_is_painted_over_the_full_frame() {
     let text = frame_with_overlay(Overlay::ConfirmDelete(DeleteCandidate {
-        index: ViewIndex::new(0),
+        source: kernel::TrackRef::Local("/music/moon.flac".into()),
         title: "Moon River".to_string(),
         artist: "Audrey Hepburn".to_string(),
     }));
@@ -103,13 +102,13 @@ fn the_save_playlist_banner_is_painted_over_the_full_frame() {
     });
     let scene = sources.scene();
     let area = Rect::new(0, 0, 80, 24);
-    let layout = FrameLayout::new(&scene.layout_parts(), area);
+    let layout = FrameLayout::from_scene(&scene, area);
     let text = rendered(80, 24, |frame| {
         frame.render_widget(
-            &Screen {
+            &ScreenWidget {
                 scene,
                 layout: &layout,
-                cover_art: &CoverArt::Missing,
+                cover_art: &CardCover::Missing,
             },
             frame.area(),
         );

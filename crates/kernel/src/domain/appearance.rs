@@ -2,7 +2,10 @@ use std::{fmt, str::FromStr};
 
 use strum::{EnumIter, EnumString, IntoEnumIterator, VariantNames};
 
-use crate::domain::ThemeName;
+use crate::domain::{
+    ThemeName,
+    geometry::{Cells, Pixels},
+};
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, strum::Display, EnumString, VariantNames,
@@ -192,9 +195,13 @@ impl AppearancePatch {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("invalid color `{input}`: expected 6 hex digits as #rrggbb")]
-pub struct ColorError {
-    pub input: String,
+#[error("invalid color `{0}`: expected 6 hex digits as #rrggbb")]
+struct MalformedHex(String);
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ColorError {
+    #[error("{0}")]
+    Malformed(crate::domain::Diagnostic),
 }
 
 #[must_use]
@@ -227,8 +234,10 @@ impl FromStr for Rgb {
                     hex_byte(b1, b0)?,
                 ]))
             })
-            .ok_or_else(|| ColorError {
-                input: spelling.to_string(),
+            .ok_or_else(|| {
+                ColorError::Malformed(crate::domain::Diagnostic::from_error(
+                    &MalformedHex(spelling.to_string()),
+                ))
             })
     }
 }
@@ -242,38 +251,38 @@ impl fmt::Display for Rgb {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CoverCells {
-    pub width: u16,
-    pub height: u16,
+    pub width: Cells,
+    pub height: Cells,
 }
 
 impl Default for CoverCells {
     fn default() -> Self {
         Self {
-            width: 20,
-            height: 8,
+            width: Cells(20),
+            height: Cells(8),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Breakpoints {
-    pub full_min_width: u16,
-    pub full_min_height: u16,
-    pub compact_min_width: u16,
-    pub compact_min_height: u16,
-    pub min_columns: u16,
-    pub min_rows: u16,
+    pub full_min_width: Cells,
+    pub full_min_height: Cells,
+    pub compact_min_width: Cells,
+    pub compact_min_height: Cells,
+    pub min_columns: Cells,
+    pub min_rows: Cells,
 }
 
 impl Default for Breakpoints {
     fn default() -> Self {
         Self {
-            full_min_width: 60,
-            full_min_height: 19,
-            compact_min_width: 30,
-            compact_min_height: 13,
-            min_columns: 48,
-            min_rows: 16,
+            full_min_width: Cells(60),
+            full_min_height: Cells(19),
+            compact_min_width: Cells(30),
+            compact_min_height: Cells(13),
+            min_columns: Cells(48),
+            min_rows: Cells(16),
         }
     }
 }
@@ -283,7 +292,7 @@ pub struct ProgressBar {
     pub height_px: f32,
     pub radius: Option<f32>,
     pub fill: Option<Rgb>,
-    pub track: Option<Rgb>,
+    pub groove: Option<Rgb>,
 }
 
 impl Default for ProgressBar {
@@ -292,7 +301,7 @@ impl Default for ProgressBar {
             height_px: 4.0,
             radius: None,
             fill: None,
-            track: None,
+            groove: None,
         }
     }
 }
@@ -301,7 +310,7 @@ impl Default for ProgressBar {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Appearance {
     pub settings: AppearanceSettings,
-    pub cover_size_px: u32,
+    pub cover_size_px: Pixels,
     pub cover_cells: CoverCells,
     pub breakpoints: Breakpoints,
     pub progress: ProgressBar,
@@ -311,7 +320,7 @@ impl Default for Appearance {
     fn default() -> Self {
         Self {
             settings: AppearanceSettings::default(),
-            cover_size_px: 160,
+            cover_size_px: Pixels(160),
             cover_cells: CoverCells::default(),
             breakpoints: Breakpoints::default(),
             progress: ProgressBar::default(),

@@ -77,12 +77,12 @@ const SETTINGS_HINTS: [SettingsHint; 4] = [
 ];
 
 #[derive(Debug, Clone, Copy)]
-pub enum KeyHintsContent<'a> {
+pub enum KeyHintsView<'a> {
     Keys(&'a [KeyBinding]),
     SettingsHints(&'a [KeyBinding]),
 }
 
-impl<'a> KeyHintsContent<'a> {
+impl<'a> KeyHintsView<'a> {
     #[must_use]
     pub fn keys(bindings: &'a [KeyBinding]) -> Self {
         Self::Keys(bindings)
@@ -95,18 +95,39 @@ impl<'a> KeyHintsContent<'a> {
 }
 
 #[derive(Debug)]
-pub struct KeyHintsLine<'a> {
+pub struct KeyHintsWidget<'a> {
     pub theme: ActiveTheme<'a>,
-    pub content: KeyHintsContent<'a>,
+    pub content: KeyHintsView<'a>,
 }
 
-impl Widget for &KeyHintsLine<'_> {
+impl Widget for &KeyHintsWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let line = key_hints_line(self.theme, self.content, area.width);
+        let style = KeyHintsStyle::from_theme(&self.theme);
+        let line = key_hints_line(&style, self.content, area.width);
         Paragraph::new(line).render(Rect { height: 1, ..area }, buffer);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct KeyHintsStyle {
+    chip_text: Color,
+    chip_background: Color,
+    label: Color,
+    separator: Color,
+}
+
+impl KeyHintsStyle {
+    #[must_use]
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            chip_text: theme.role(Role::WindowBackground),
+            chip_background: theme.muted_accent(),
+            label: theme.role(Role::Text),
+            separator: theme.role(Role::Dim),
+        }
     }
 }
 
@@ -121,13 +142,13 @@ fn settings_chip(bindings: &[KeyBinding], hint: SettingsHint) -> ChipPair {
     (key, hint.label)
 }
 
-fn pairs_for(content: KeyHintsContent<'_>) -> Vec<ChipPair> {
+fn pairs_for(content: KeyHintsView<'_>) -> Vec<ChipPair> {
     match content {
-        KeyHintsContent::Keys(bindings) => KEY_HINTS
+        KeyHintsView::Keys(bindings) => KEY_HINTS
             .iter()
             .map(|(action, label)| (chord_for_action(bindings, *action), *label))
             .collect(),
-        KeyHintsContent::SettingsHints(bindings) => SETTINGS_HINTS
+        KeyHintsView::SettingsHints(bindings) => SETTINGS_HINTS
             .iter()
             .map(|hint| settings_chip(bindings, *hint))
             .collect(),
@@ -135,24 +156,26 @@ fn pairs_for(content: KeyHintsContent<'_>) -> Vec<ChipPair> {
 }
 
 fn key_hints_line(
-    theme: ActiveTheme<'_>,
-    content: KeyHintsContent<'_>,
+    style: &KeyHintsStyle,
+    content: KeyHintsView<'_>,
     width: u16,
 ) -> Line<'static> {
-    let chip_text: Color = theme.role(Role::WindowBackground);
-    let chip_background: Color = theme.muted_accent();
-    let label: Color = theme.role(Role::Text);
-    let separator_color: Color = theme.role(Role::Dim);
+    let KeyHintsStyle {
+        chip_text,
+        chip_background,
+        label,
+        separator: separator_color,
+    } = *style;
 
     let pairs = pairs_for(content);
     let compact: Vec<ChipPair> = match content {
-        KeyHintsContent::Keys(_) => KEY_HINTS
+        KeyHintsView::Keys(_) => KEY_HINTS
             .iter()
             .zip(pairs.iter())
             .filter(|((action, _), _)| KEY_HINTS_COMPACT.contains(action))
             .map(|(_, pair)| pair.clone())
             .collect(),
-        KeyHintsContent::SettingsHints(_) => pairs.clone(),
+        KeyHintsView::SettingsHints(_) => pairs.clone(),
     };
 
     let render = |chips: &[ChipPair]| -> Line<'static> {
@@ -184,12 +207,15 @@ fn key_hints_line(
 
 #[cfg(test)]
 mod tests {
-    use kernel::{domain::Action, update::keymap::KeyBinding};
+    use kernel::{
+        domain::{Action, KeymapOverrides},
+        update::keymap::{Bindings, KeyBinding},
+    };
     use rstest::rstest;
 
     use crate::{
-        key_hints::{KeyHintsContent, KeyHintsLine, chord_for_action},
-        test_support::{bindings, noir, rendered},
+        key_hints::{KeyHintsView, KeyHintsWidget, chord_for_action},
+        test_support::{noir, rendered},
         theme::{ActiveTheme, ColorDepth},
     };
 
@@ -199,10 +225,11 @@ mod tests {
     #[case(40)]
     fn key_hints_chip_row_by_width(#[case] width: u16) {
         let theme = noir();
-        let bindings = bindings();
-        let widget = KeyHintsLine {
+        let keymap = Bindings::new(&KeymapOverrides::default());
+        let bindings = keymap.as_slice();
+        let widget = KeyHintsWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            content: KeyHintsContent::Keys(&bindings),
+            content: KeyHintsView::Keys(bindings),
         };
         insta::assert_snapshot!(
             format!("key_hints_drop_chips_as_the_width_shrinks_{width}"),
@@ -213,14 +240,16 @@ mod tests {
 
     #[test]
     fn an_action_bound_to_two_chords_joins_them_with_a_slash() {
-        let bindings = bindings();
-        assert_eq!(chord_for_action(&bindings, Action::Help), "?/Ctrl+K");
+        let keymap = Bindings::new(&KeymapOverrides::default());
+        let bindings = keymap.as_slice();
+        assert_eq!(chord_for_action(bindings, Action::Help), "?/Ctrl+K");
     }
 
     #[test]
     fn an_action_bound_to_one_chord_shows_it_bare() {
-        let bindings = bindings();
-        assert_eq!(chord_for_action(&bindings, Action::Quit), "q");
+        let keymap = Bindings::new(&KeymapOverrides::default());
+        let bindings = keymap.as_slice();
+        assert_eq!(chord_for_action(bindings, Action::Quit), "q");
     }
 
     #[test]
@@ -232,10 +261,11 @@ mod tests {
     #[test]
     fn the_settings_apply_hint_shows_both_bound_chords() {
         let theme = noir();
-        let bindings = bindings();
-        let widget = KeyHintsLine {
+        let keymap = Bindings::new(&KeymapOverrides::default());
+        let bindings = keymap.as_slice();
+        let widget = KeyHintsWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            content: KeyHintsContent::SettingsHints(&bindings),
+            content: KeyHintsView::SettingsHints(bindings),
         };
         let text = rendered(80, 1, |frame| frame.render_widget(&widget, frame.area()))
             .to_string();

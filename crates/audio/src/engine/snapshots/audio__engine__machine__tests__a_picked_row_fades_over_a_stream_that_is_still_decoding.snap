@@ -1,12 +1,16 @@
 ---
 source: crates/audio/src/engine/machine.rs
-assertion_line: 302
+assertion_line: 663
 expression: wiring.log
 ---
 [
     Cmd {
         effects: [
-            Clear,
+            Clear(
+                Speed(
+                    1.0,
+                ),
+            ),
         ],
         messages: [],
     },
@@ -30,7 +34,11 @@ expression: wiring.log
     },
     Cmd {
         effects: [
-            Clear,
+            Clear(
+                Speed(
+                    1.0,
+                ),
+            ),
         ],
         messages: [],
     },
@@ -55,7 +63,9 @@ expression: wiring.log
     Cmd {
         effects: [
             Start(
-                1.0,
+                Gain(
+                    1.0,
+                ),
             ),
             Report,
         ],

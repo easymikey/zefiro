@@ -433,7 +433,7 @@ fn track_ended_repeat_one_without_current_stops() {
         head: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
         preload: Preload::Queued(arc_track("/tmp/track1.flac")),
     },
-    kernel::AudioError::Stream { reason: "cannot preload /tmp/track1.flac: no such file".into() },
+    kernel::AudioError::Stream { reason: kernel::domain::Diagnostic::from_error(&std::io::Error::other("cannot preload /tmp/track1.flac: no such file")) },
     "cannot preload"
 )]
 #[case::a_seek_the_source_refuses(
@@ -442,7 +442,7 @@ fn track_ended_repeat_one_without_current_stops() {
         head: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
         preload: Preload::None,
     },
-    kernel::AudioError::Seek { reason: "the source cannot seek".into() },
+    kernel::AudioError::Seek { reason: kernel::domain::Diagnostic::from_error(&std::io::Error::other("the source cannot seek")) },
     "cannot seek"
 )]
 fn an_audio_failure_raises_an_error_toast(

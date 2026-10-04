@@ -5,7 +5,6 @@
 pub mod cmd;
 pub mod domain;
 pub mod message;
-pub mod outbox;
 pub mod search;
 pub mod update;
 
@@ -29,9 +28,11 @@ pub use domain::{
     AudioFormat,
     Bounded,
     CursorOver,
+    Diagnostic,
     Direction,
     Favorites,
     HistoryEntry,
+    IoError,
     Key,
     KeyCode,
     KeyPress,
@@ -71,7 +72,6 @@ pub use message::{
     DecodeError,
     DriverEvent,
     HistoryRequest,
-    IoError,
     LibraryError,
     LibraryEvent,
     LibrarySubject,
@@ -79,6 +79,8 @@ pub use message::{
     MacosEvent,
     Message,
     OverlayRequest,
+    PaintError,
+    PaintEvent,
     PlaybackRequest,
     PlaylistRequest,
     QueueRequest,
@@ -88,6 +90,5 @@ pub use message::{
     TextRequest,
     Timer,
 };
-pub use outbox::{Congestion, Outbox, SendError};
 pub use playlist::Playlist;
 pub use update::{keymap::route, startup};

@@ -7,11 +7,13 @@ use crate::domain::{
     ChordPrefix,
     ConfigError,
     ConfigName,
+    Diagnostic,
     Direction,
     DriverError,
     DriverName,
     Favorites,
     HistoryEntry,
+    IoError,
     KeyPress,
     KeymapOverrides,
     ListedDevice,
@@ -25,6 +27,7 @@ use crate::domain::{
     Toast,
     Track,
     TrackIndex,
+    TrackRef,
     ViewIndex,
     appearance::Appearance,
     playlist::PlaylistFileName,
@@ -48,12 +51,12 @@ pub enum Message {
     Config(ConfigEvent),
     Audio(AudioEvent),
     Macos(MacosEvent),
+    Paint(PaintEvent),
     Elapsed(Timer),
     Driver {
         driver: DriverName,
         event: DriverEvent,
     },
-    DriverDied(DriverName),
     Key(KeyPress),
     Viewport {
         visible_rows: usize,
@@ -70,6 +73,12 @@ impl From<AudioEvent> for Message {
 impl From<MacosEvent> for Message {
     fn from(event: MacosEvent) -> Self {
         Message::Macos(event)
+    }
+}
+
+impl From<PaintEvent> for Message {
+    fn from(event: PaintEvent) -> Self {
+        Message::Paint(event)
     }
 }
 
@@ -197,6 +206,8 @@ pub enum PlaybackRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SeekTenths(u8);
 
+pub const SEEK_TENTHS_MAX: u8 = 9;
+
 impl SeekTenths {
     #[must_use]
     pub fn get(self) -> u8 {
@@ -206,7 +217,7 @@ impl SeekTenths {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SeekTenthsError {
-    #[error("seek fraction {value} is above {max}")]
+    #[error("seek tenths {value} is above {max}")]
     OutOfRange { value: u8, max: u8 },
 }
 
@@ -214,12 +225,12 @@ impl TryFrom<u8> for SeekTenths {
     type Error = SeekTenthsError;
 
     fn try_from(tenths: u8) -> Result<Self, Self::Error> {
-        if tenths <= 9 {
+        if tenths <= SEEK_TENTHS_MAX {
             Ok(Self(tenths))
         } else {
             Err(SeekTenthsError::OutOfRange {
                 value: tenths,
-                max: 9,
+                max: SEEK_TENTHS_MAX,
             })
         }
     }
@@ -227,7 +238,7 @@ impl TryFrom<u8> for SeekTenths {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowseRequest {
-    Trash(ViewIndex),
+    Trash(TrackRef),
     SavePlaylist(PlaylistFileName),
     ChordPrefix(ChordPrefix),
     CursorBy { rows: isize },
@@ -303,34 +314,6 @@ impl std::fmt::Display for LibrarySubject {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum IoError {
-    #[error("not found")]
-    Missing,
-    #[error("permission denied")]
-    Denied,
-    #[error("corrupt data")]
-    Malformed,
-    #[error("disk full")]
-    Full,
-    #[error("an unknown error")]
-    Other,
-}
-
-impl From<std::io::ErrorKind> for IoError {
-    fn from(kind: std::io::ErrorKind) -> Self {
-        if kind == std::io::ErrorKind::NotFound {
-            IoError::Missing
-        } else if kind == std::io::ErrorKind::PermissionDenied {
-            IoError::Denied
-        } else if kind == std::io::ErrorKind::StorageFull {
-            IoError::Full
-        } else {
-            IoError::Other
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LibraryError {
     #[error("Could not read {subject} ({}): {kind}", path.display())]
@@ -364,6 +347,33 @@ pub enum MacosEvent {
     MediaKey(PlaybackRequest),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum PaintEvent {
+    Error(PaintError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PaintError {
+    #[error("Window colors failed")]
+    WindowColors(Diagnostic),
+    #[error("Cover art failed")]
+    Cover(Diagnostic),
+    #[error("Terminal probe failed")]
+    Probe(Diagnostic),
+}
+
+impl PaintError {
+    #[must_use]
+    pub fn diagnostic(&self) -> &Diagnostic {
+        match self {
+            Self::WindowColors(diagnostic)
+            | Self::Cover(diagnostic)
+            | Self::Probe(diagnostic) => diagnostic,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DecodeError {
     #[error("unsupported format")]
@@ -379,7 +389,22 @@ pub enum DecodeError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum MacosError {
     #[error("Audio device watch failed (CoreAudio status {0})")]
-    HardwareWatch(i32),
+    HardwareWatch(OsStatus),
+    #[error("Cannot follow the new audio device (CoreAudio status {0})")]
+    Rebind(OsStatus),
+    #[error("Cannot set the system volume (CoreAudio status {0})")]
+    Volume(OsStatus),
+    #[error("Cannot read the cover file: {0}")]
+    Cover(std::io::ErrorKind),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OsStatus(pub i32);
+
+impl std::fmt::Display for OsStatus {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -387,15 +412,17 @@ pub enum AudioError {
     #[error("Cannot decode {}: {kind}", path.display())]
     Decode { path: PathBuf, kind: DecodeError },
     #[error("output device unavailable: {requested}")]
-    Device { requested: String },
+    Device { requested: OutputDevice },
+    #[error("cannot list output devices: {reason}")]
+    ListDevices { reason: Diagnostic },
     #[error("audio output stream: {reason}")]
-    Stream { reason: String },
+    Stream { reason: Diagnostic },
     #[error("Audio output lost: {0}")]
     OutputLost(StreamError),
     #[error("Cannot preload {}: {kind}", path.display())]
     Preload { path: PathBuf, kind: DecodeError },
     #[error("cannot seek: {reason}")]
-    Seek { reason: String },
+    Seek { reason: Diagnostic },
 }
 
 #[cfg(test)]
@@ -403,13 +430,12 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        domain::{StreamError, ThemeName},
+        domain::{IoError, StreamError, ThemeName},
         message::{
             AudioError,
             AudioEvent,
             ConfigEvent,
             DecodeError,
-            IoError,
             LibraryError,
             LibraryEvent,
             LibrarySubject,

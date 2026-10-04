@@ -9,7 +9,7 @@ use rodio::{Source, mixer::MixerSource, source::Zero};
 
 use crate::{
     deck::{DeviceChoice, envelope::Envelope},
-    device::open_stream,
+    device::{OutputLoss, open_stream},
     engine::effect::AudioMessage,
     error::DeviceError,
     tap::{Handoff, Tap},
@@ -33,15 +33,16 @@ pub(crate) struct OpenedOutput {
 pub(crate) fn open_output_stream(
     device: OutputDevice,
     sender: &Sender<AudioMessage>,
+    lost: &OutputLoss,
 ) -> Result<OpenedOutput, DeviceError> {
-    match open_stream(&device, sender) {
+    match open_stream(&device, sender, lost) {
         Ok(stream) => Ok(OpenedOutput {
             stream,
             device,
             opened: DeviceChoice::Requested,
         }),
         Err(DeviceError::NotFound(_)) => {
-            open_stream(&OutputDevice::SystemDefault, sender).map(|stream| {
+            open_stream(&OutputDevice::SystemDefault, sender, lost).map(|stream| {
                 OpenedOutput {
                     stream,
                     device: OutputDevice::SystemDefault,

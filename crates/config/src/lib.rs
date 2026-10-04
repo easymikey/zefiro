@@ -12,28 +12,13 @@ mod keymap;
 mod patch;
 pub(crate) mod theme_file;
 
-pub use appearance::{
-    Animations,
-    AppearancePatch,
-    AppearancePreset,
-    AppearanceSettings,
-    CoverBrackets,
-    CoverMode,
-    FormatChips,
-    KeyHints,
-    LayoutMode,
-    ProgressTime,
-    Rgb,
-    SpeedChip,
-    preset_of,
-};
 pub use appearance_file::{
     APPEARANCE_FILE_NAME,
-    AppearanceFile,
-    LayoutConfig,
-    ProgressConfig,
     TextCoverCells,
-    WindowConfig,
+    TomlAppearance,
+    TomlLayout,
+    TomlProgress,
+    TomlWindow,
     parse_appearance,
 };
 pub use config_file::{
@@ -53,6 +38,6 @@ pub use driver::{
 };
 pub use embedded_theme::{EMBEDDED_THEMES, embedded_theme, resolve_theme};
 pub use error::Error;
-pub use keymap::KeymapFile;
+pub use keymap::TomlKeymap;
 pub use patch::{patch_appearance_text, patch_config_text};
-pub use theme_file::{ThemeColors, ThemeFile, parse_theme, theme_file_name};
+pub use theme_file::{TomlColors, TomlTheme, parse_theme, theme_file_name};

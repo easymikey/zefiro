@@ -1,4 +1,4 @@
-use kernel::domain::{MusicDirError, TextEntry};
+use kernel::domain::{MusicDirError, TextEntry, geometry::Cells};
 
 use crate::{
     overlay::modal::{PromptBody, PromptStyle, PromptWidget},
@@ -6,7 +6,7 @@ use crate::{
     theme::ActiveTheme,
 };
 
-const MIN_WIDTH: u16 = 40;
+const MIN_WIDTH: Cells = Cells(40);
 
 pub(crate) fn prompt<'a>(
     typed: &'a TextEntry,

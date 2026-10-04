@@ -7,12 +7,12 @@ mod root;
 mod too_small;
 
 pub use breakpoint::Breakpoint;
-pub(crate) use compact::CompactScreen;
-pub use frame_layout::{FrameLayout, FrameLayoutParts};
-pub(crate) use full::FullScreen;
+pub(crate) use compact::CompactScreenWidget;
+pub use frame_layout::FrameLayout;
+pub(crate) use full::FullScreenWidget;
 pub(crate) use minimal::{
-    MinimalScreen,
+    MinimalScreenWidget,
     progress_bar_width as minimal_progress_bar_width,
 };
-pub use root::Screen;
-pub(crate) use too_small::TooSmallNotice;
+pub use root::ScreenWidget;
+pub(crate) use too_small::TooSmallWidget;

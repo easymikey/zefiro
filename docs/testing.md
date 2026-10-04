@@ -22,6 +22,7 @@ Every guard that reads source text lives in `crates/sifr-guards/tests/guards/`, 
 | guard | holds (rule in conventions) |
 |---|---|
 | `comments.rs` | only the listed `SAFETY:` / `PROTOCOL:` / `GUARD:` one-liners (§9) |
+| `conventions.rs` | banned words and loop names from the conventions vocabulary (§9) |
 | `config_doc_cli.rs`, `config_doc_render.rs` | `docs/config.md`'s default blocks still parse into the config defaults |
 | `demeter.rs` | kernel `update` handlers take slices, not a whole `Model` (§1.3) |
 | `demeter_views.rs` | widgets below `screen` never hold a whole `Model` (§1.3) |
@@ -30,13 +31,17 @@ Every guard that reads source text lives in `crates/sifr-guards/tests/guards/`, 
 | `forbidden_names.rs` | verb module files, `get_`, `should_`/`wants_`/`needs_`, mechanism constructors (§9) |
 | `hardware.rs` | every test that touches hardware is `#[ignore]` (§13.4) |
 | `imports.rs` | every `use` is absolute, no glob (§9) |
-| `layering.rs` | the layer map; `components` never import `screen` (§1.1, §11.10) |
+| `layering.rs` | the layer map; no widgets module outside `src/screen/` imports `crate::screen` (§1.1, §11.10) |
 | `length.rs` | ≤800 lines per file, tests included (§9) |
 | `macros.rs` | no `macro_rules!`, no proc-macro crate of our own (§9) |
 | `naming.rs` | full words, mechanism names, retired names, parameter names (§9) |
-| `purity.rs` | `kernel`, `config` and `widgets` touch no IO, clock, thread or environment (§1.2) |
+| `conventions_allow.rs` | each allow row in conventions still matches source |
+| `public_types.rs` | one public type name lives in one crate (`Error` exempt) |
+| `test_files.rs` | no source file exists only for `#[cfg(test)]` (§13) |
+| `purity.rs` | `kernel` and `widgets` touch no IO, clock, thread or environment (§1.2) |
+| `wildcard_arms.rs` | no wildcard arm over an enum of another crate (helper `lexer.rs`) |
 
-`fault.rs` holds the error type the `config_doc` guards fail through. A guard that would repeat a denied clippy lint (wildcard arms, `bool` parameters, panics, indexing) does not exist: the lint is the guard.
+`fault.rs` holds the error type the `config_doc` guards fail through. A guard that would repeat a denied clippy lint (`bool` parameters, panics, indexing) does not exist: the lint is the guard; wildcard arms get a guard only where clippy cannot see the enum's crate.
 
 Allowlists are shrink-only and the shrinking is enforced: a row whose `(path, pattern)` no longer matches anything turns its guard red and prints the row's `reason`, so a paid-off debt cannot be re-spent elsewhere. `length.rs` rows carry the current length of an over-long file as its ceiling.
 

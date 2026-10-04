@@ -5,21 +5,20 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use crossbeam_channel::Sender;
+use config::ConfigPaths;
 use kernel::{
     DriverEvent,
     Effect,
     Message,
     Moment,
     domain::{Model, Startup},
+    update::Unhandled,
 };
-use library::LibraryDirs;
+use library::{CoverJob, LibraryDirs};
 
 use crate::{
-    config::ConfigPaths,
     error::Error,
     interpret::{Interpreter, interpret},
-    library::cover::CoverRequest,
     registry,
     shell::{Frame, ShellEffect},
     spawn::Spawners,
@@ -44,13 +43,7 @@ pub struct Runtime {
     unix_offset: Duration,
     flow: ControlFlow<()>,
     shell_effects: Vec<ShellEffect>,
-    cover: Option<CoverRequest>,
     full_episodes: u32,
-}
-
-pub(crate) struct Seed {
-    model: Model,
-    effects: Vec<Effect>,
 }
 
 impl Runtime {
@@ -61,18 +54,21 @@ impl Runtime {
         paths: &StartupPaths,
         spawners: &Spawners,
     ) -> Result<Self, Error> {
-        let seed = Self::seeded(startup);
-        let wiring = Wiring::spawn(&seed.model, paths, spawners)?;
-        Ok(Self::assemble(seed, wiring, Trace::default()))
+        let (model, effects) = Self::seeded(startup);
+        let wiring = Wiring::spawn(&model, paths, spawners)?;
+        Ok(Self::assemble((model, effects), wiring, Trace::default()))
     }
 
-    pub(crate) fn seeded(startup: Startup) -> Seed {
-        let (model, effects) = kernel::startup(startup);
-        Seed { model, effects }
+    pub(crate) fn seeded(startup: Startup) -> (Model, Vec<Effect>) {
+        kernel::startup(startup)
     }
 
-    pub(crate) fn assemble(seed: Seed, wiring: Wiring, trace: Trace) -> Self {
-        let Seed { model, effects } = seed;
+    pub(crate) fn assemble(
+        seed: (Model, Vec<Effect>),
+        wiring: Wiring,
+        trace: Trace,
+    ) -> Self {
+        let (model, effects) = seed;
         let mut runtime = Self {
             model,
             wiring,
@@ -84,33 +80,36 @@ impl Runtime {
                 .unwrap_or(Duration::ZERO),
             flow: ControlFlow::Continue(()),
             shell_effects: Vec::new(),
-            cover: None,
             full_episodes: 0,
         };
         for answer in runtime.interpret(effects) {
-            runtime.step(answer);
+            match runtime.step(answer) {
+                Ok(()) | Err(Unhandled) => {}
+            }
         }
         for row in registry::REGISTRY {
             if !row.platform.present() {
-                runtime.step(Message::Driver {
+                match runtime.step(Message::Driver {
                     driver: row.driver,
                     event: DriverEvent::Stopped,
-                });
+                }) {
+                    Ok(()) | Err(Unhandled) => {}
+                }
             }
         }
         runtime
     }
 
-    pub(crate) fn step(&mut self, message: Message) -> bool {
+    pub(crate) fn step(&mut self, message: Message) -> Result<(), Unhandled> {
         let mut queue: VecDeque<Message> = VecDeque::from([message]);
-        let mut applied = false;
+        let mut result = Err(Unhandled);
         while let Some(current) = queue.pop_front() {
-            if let Some(following) = self.update(current) {
-                applied = true;
+            if let Ok(following) = self.update(current) {
+                result = Ok(());
                 queue.extend(following);
             }
         }
-        applied
+        result
     }
 
     pub(crate) fn report_full(&mut self) {
@@ -118,12 +117,14 @@ impl Runtime {
             if self.flow.is_break() {
                 return;
             }
-            if self.wiring.ports.full_edge(row.driver).take() {
+            if self.wiring.ports.full(row.driver).take() {
                 self.full_episodes += 1;
-                self.step(Message::Driver {
+                match self.step(Message::Driver {
                     driver: row.driver,
                     event: DriverEvent::Full,
-                });
+                }) {
+                    Ok(()) | Err(Unhandled) => {}
+                }
             }
         }
     }
@@ -143,6 +144,10 @@ impl Runtime {
 
     pub(crate) fn flow(&self) -> ControlFlow<()> {
         self.flow
+    }
+
+    pub(crate) fn animations(&self) -> kernel::domain::appearance::Animations {
+        self.model.settings.appearance.settings.animations
     }
 
     pub(crate) fn take_shell_effects(&mut self) -> Vec<ShellEffect> {
@@ -171,22 +176,13 @@ impl Runtime {
         self.epoch + moment.since_epoch().saturating_sub(self.unix_offset)
     }
 
-    pub(crate) fn request_cover(&mut self, request: CoverRequest) {
-        if self.cover.as_ref() == Some(&request) {
-            return;
-        }
+    pub(crate) fn send_cover(&mut self, job: CoverJob) {
         let sent = self
             .wiring
             .ports
             .library
-            .send_cover(&self.model.drivers, request.clone());
-        self.cover = Some(request);
+            .send_cover(&self.model.drivers, job);
         self.trace.record(sent);
-    }
-
-    #[must_use]
-    pub(crate) fn sender(&self) -> Sender<Message> {
-        self.wiring.sender.clone()
     }
 
     pub(crate) fn drain(self) {
@@ -206,10 +202,10 @@ impl Runtime {
         join_exited(&mut ports, &reported, &mut trace);
     }
 
-    fn update(&mut self, message: Message) -> Option<Vec<Message>> {
+    fn update(&mut self, message: Message) -> Result<Vec<Message>, Unhandled> {
         let now = self.now();
-        let effects = kernel::update::update(&mut self.model, message, now).ok()?;
-        Some(self.interpret(effects))
+        let effects = kernel::update::update(&mut self.model, message, now)?;
+        Ok(self.interpret(effects))
     }
 
     fn interpret(&mut self, effects: Vec<Effect>) -> Vec<Message> {
@@ -249,7 +245,8 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
-    use audio::SpectrumTap;
+    use audio::tap::SpectrumTap;
+    use config::{ConfigPaths, SeenTexts};
     use crossbeam_channel::{Receiver, Sender, unbounded};
     use kernel::{
         AudioCmd,
@@ -257,22 +254,26 @@ mod tests {
         Direction,
         DriverEvent,
         Message,
-        Outbox,
         Toast,
         domain::{DriverName, DriverStatus, SettingRow, Startup},
+        update::Unhandled,
     };
-    use library::LibraryDirs;
+    use library::{CoverJob, LibraryDirs, LibraryMessage};
     use rstest::rstest;
 
     use crate::{
-        config::{ConfigPaths, SeenTexts},
         driver::DriverThread,
         error::Error,
         event_loop::run,
-        library::{cover::CoverRequest, machine::LibraryMessage},
+        outbox::Outbox,
         runtime::{Runtime, StartupPaths},
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
-        spawn::{SpawnParts, Spawners, spawn_config, tests::spawn_audio_loop},
+        spawn::{
+            SpawnSetup,
+            Spawners,
+            config_thread::spawn_config,
+            tests::spawn_audio_loop,
+        },
         trace::{DropReason, Trace, TraceEntry},
         wiring::Wiring,
     };
@@ -308,7 +309,12 @@ mod tests {
             Reaction::Message(Message::Quit)
         }
 
-        fn effect(&mut self, _effect: ShellEffect, _animations: config::Animations) {}
+        fn effect(
+            &mut self,
+            _effect: ShellEffect,
+            _animations: kernel::domain::appearance::Animations,
+        ) {
+        }
 
         fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
@@ -324,7 +330,7 @@ mod tests {
     }
 
     fn recording_audio(
-        spawn_parts: &SpawnParts<'_>,
+        spawn_parts: &SpawnSetup<'_>,
     ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
         let forward = AUDIO_TAP.with(|tap| tap.borrow().clone()).unwrap();
         spawn_audio_loop(
@@ -352,7 +358,7 @@ mod tests {
     }
 
     fn panicking_audio(
-        spawn_parts: &SpawnParts<'_>,
+        spawn_parts: &SpawnSetup<'_>,
     ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
         spawn_audio_loop(
             |_: &Receiver<AudioCmd>, _: &Outbox<AudioEvent>| boom(),
@@ -407,7 +413,12 @@ mod tests {
             }
         }
 
-        fn effect(&mut self, _effect: ShellEffect, _animations: config::Animations) {}
+        fn effect(
+            &mut self,
+            _effect: ShellEffect,
+            _animations: kernel::domain::appearance::Animations,
+        ) {
+        }
 
         fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
@@ -468,7 +479,12 @@ mod tests {
             }
         }
 
-        fn effect(&mut self, _effect: ShellEffect, _animations: config::Animations) {}
+        fn effect(
+            &mut self,
+            _effect: ShellEffect,
+            _animations: kernel::domain::appearance::Animations,
+        ) {
+        }
 
         fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
             FrameDue::Settled
@@ -487,7 +503,9 @@ mod tests {
             } else {
                 LifeStep::Paint
             };
-            let _ = self.steps.send(next);
+            self.steps
+                .send(next)
+                .expect("the step receiver outlives the shell");
             Ok(Painted::default())
         }
     }
@@ -547,45 +565,39 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_cover_request_is_traced_once_not_on_every_paint() {
+    fn a_refused_cover_job_is_traced_once_not_on_every_paint() {
         let (mut runtime, _cover_inbox) = start(DriverStatus::Stopped);
-        let request = CoverRequest {
-            path: PathBuf::from("/music/cover.jpg"),
-            size_px: 64,
-        };
+        let job = CoverJob::new(
+            PathBuf::from("/music/cover.jpg"),
+            kernel::domain::geometry::Pixels(64),
+        );
 
-        runtime.request_cover(request.clone());
-        runtime.request_cover(request.clone());
-        runtime.request_cover(request);
+        runtime.send_cover(job.clone());
+        runtime.send_cover(job.clone());
+        runtime.send_cover(job);
 
-        let dropped = runtime
-            .trace
-            .iter()
-            .filter(|entry| {
-                matches!(
-                    entry,
-                    TraceEntry::Dropped {
-                        driver: DriverName::Library,
-                        command: "cover",
-                        reason: DropReason::NotRunning,
-                    }
-                )
-            })
-            .count();
-        assert_eq!(dropped, 1);
+        let dropped: Vec<&TraceEntry> = runtime.trace.iter().collect();
+        assert_eq!(
+            dropped,
+            [&TraceEntry::Dropped {
+                driver: DriverName::Library,
+                command: "cover",
+                reason: DropReason::NotRunning,
+            }]
+        );
         runtime.drain();
     }
 
     #[test]
-    fn a_repeated_accepted_cover_request_is_sent_once() {
+    fn every_cover_job_is_forwarded_to_the_library() {
         let (mut runtime, cover_inbox) = start(DriverStatus::Running);
-        let request = CoverRequest {
-            path: PathBuf::from("/music/cover.jpg"),
-            size_px: 64,
-        };
+        let job = CoverJob::new(
+            PathBuf::from("/music/cover.jpg"),
+            kernel::domain::geometry::Pixels(64),
+        );
 
-        runtime.request_cover(request.clone());
-        runtime.request_cover(request);
+        runtime.send_cover(job.clone());
+        runtime.send_cover(job);
 
         assert!(runtime.trace.is_empty());
         runtime.drain();
@@ -593,24 +605,24 @@ mod tests {
             .iter()
             .filter(|command| matches!(command, LibraryMessage::Cover(_)))
             .count();
-        assert_eq!(covers, 1);
+        assert_eq!(covers, 2);
     }
 
     #[rstest]
     #[case::an_accepted_message_applies(
         DriverStatus::Running,
         Message::Toast(Toast::error("hello".to_owned())),
-        true
+        Ok(())
     )]
     #[case::a_rejected_message_is_refused(
         DriverStatus::Stopped,
         Message::Driver { driver: DriverName::Library, event: DriverEvent::Stopped },
-        false
+        Err(Unhandled)
     )]
     fn step_reports_whether_the_message_changed_the_model(
         #[case] library: DriverStatus,
         #[case] message: Message,
-        #[case] expected: bool,
+        #[case] expected: Result<(), Unhandled>,
     ) {
         let (mut runtime, _cover_inbox) = start(library);
 

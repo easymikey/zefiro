@@ -1,34 +1,34 @@
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
+    path::PathBuf,
     thread::{self, JoinHandle},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
-use crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded, select};
+use crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded};
 use kernel::{
     Cmd,
     Cmds,
-    Congestion,
     DriverEvent,
     Message,
-    Outbox,
     domain::DriverError,
     update::{Driver, Machine},
 };
 
 use crate::{
+    driver_wait::{Inboxes, LoopInput},
     error::Error,
     jobs::{Jobs, spawn_jobs, stash},
+    outbox::{Congestion, Outbox},
     registry::DriverRow,
+    watcher::{Changed, FileStream},
 };
-
-pub(crate) type Exit = Result<(), SendError<Message>>;
 
 #[derive(Debug)]
 pub(crate) struct DriverThread<C> {
     pub(crate) commands: Sender<C>,
-    pub(crate) handle: JoinHandle<Exit>,
-    pub(crate) full_edge: Congestion,
+    pub(crate) handle: JoinHandle<Result<(), SendError<Message>>>,
+    pub(crate) full: Congestion,
 }
 
 const INBOX: usize = 64;
@@ -56,20 +56,20 @@ where
     R: FnOnce(&Receiver<C>, &Outbox<F>) + Send + 'static,
 {
     let (commands, command_inbox): (Sender<C>, Receiver<C>) = bounded(INBOX);
-    let full_edge = Congestion::default();
-    let outbox = Outbox::new(inbox.clone(), full_edge.clone());
-    let report_sender = inbox.clone();
+    let full = Congestion::default();
+    let outbox = Outbox::new(inbox.clone(), full.clone());
+    let inbox = inbox.clone();
     let driver = row.driver;
     let handle = thread::Builder::new()
         .name(row.thread_name.to_owned())
-        .spawn(move || -> Exit {
+        .spawn(move || -> Result<(), SendError<Message>> {
             let result =
                 catch_unwind(AssertUnwindSafe(|| run(&command_inbox, &outbox)));
             let report = match result {
                 Ok(()) => DriverEvent::Stopped,
                 Err(_payload) => DriverEvent::Died(DriverError::Panicked),
             };
-            report_sender.send(Message::Driver {
+            inbox.send(Message::Driver {
                 driver,
                 event: report,
             })
@@ -78,8 +78,17 @@ where
     Ok(DriverThread {
         commands,
         handle,
-        full_edge,
+        full,
     })
+}
+
+#[derive(Debug)]
+pub(crate) enum LoopEffect<E, J, M> {
+    Execute(E),
+    Run(J),
+    After { delay: Duration, message: M },
+    Watch { path: PathBuf, item: Changed<M> },
+    Unwatch(PathBuf),
 }
 
 #[derive(Debug)]
@@ -87,18 +96,30 @@ pub(crate) struct DriverLoop<D: Driver, J> {
     pub(crate) row: &'static DriverRow,
     pub(crate) inbox: Sender<Message>,
     pub(crate) heard: Receiver<D::Message>,
+    pub(crate) seed: Option<D::Message>,
     pub(crate) jobs: Jobs<<D as Driver>::Effect, J, D::Message>,
 }
 
-struct Outlets<'a, E, J, M> {
-    outbox: &'a Outbox<M>,
-    jobs: &'a Sender<J>,
-    pick: fn(E) -> Result<J, E>,
-    pending: Vec<J>,
+struct LoopTimer<M> {
+    deadline: Instant,
+    message: M,
 }
 
-impl<E, J, M> Outlets<'_, E, J, M> {
-    fn hand_over(&mut self) -> Result<(), kernel::SendError> {
+type Split<D, J> = fn(
+    <D as Driver>::Effect,
+) -> LoopEffect<<D as Driver>::Effect, J, <D as Machine>::Message>;
+
+struct Outlets<'a, D: Driver, J, O> {
+    outbox: &'a Outbox<O>,
+    jobs: &'a Sender<J>,
+    split: Split<D, J>,
+    pending: Vec<J>,
+    timers: Vec<LoopTimer<D::Message>>,
+    files: FileStream<D::Message>,
+}
+
+impl<D: Driver, J, O> Outlets<'_, D, J, O> {
+    fn hand_over(&mut self) -> Result<(), crate::outbox::SendError> {
         while !self.pending.is_empty() {
             match self.jobs.try_send(self.pending.remove(0)) {
                 Ok(()) => {}
@@ -107,11 +128,46 @@ impl<E, J, M> Outlets<'_, E, J, M> {
                     return Ok(());
                 }
                 Err(TrySendError::Disconnected(_job)) => {
-                    return Err(kernel::SendError::Closed);
+                    return Err(crate::outbox::SendError::Closed);
                 }
             }
         }
         Ok(())
+    }
+
+    fn place(
+        &mut self,
+        effect: <D as Driver>::Effect,
+        driver: &mut D,
+    ) -> Option<D::Message> {
+        match (self.split)(effect) {
+            LoopEffect::Execute(effect) => driver.execute(effect),
+            LoopEffect::Run(job) => {
+                stash(&mut self.pending, job);
+                None
+            }
+            LoopEffect::After { delay, message } => {
+                if let Some(deadline) = Instant::now().checked_add(delay) {
+                    self.timers.push(LoopTimer { deadline, message });
+                }
+                None
+            }
+            LoopEffect::Watch { path, item } => self.files.watch(&path, item),
+            LoopEffect::Unwatch(path) => self.files.unwatch(&path),
+        }
+    }
+
+    fn next_deadline(&self) -> Option<Instant> {
+        self.timers.iter().map(|timer| timer.deadline).min()
+    }
+
+    fn take_due(&mut self, now: Instant) -> Vec<D::Message> {
+        self.timers.sort_by_key(|timer| timer.deadline);
+        let due = self.timers.partition_point(|timer| timer.deadline <= now);
+        self.timers
+            .drain(..due)
+            .map(|timer| timer.message)
+            .collect()
     }
 }
 
@@ -135,21 +191,33 @@ where
             row,
             inbox,
             heard,
+            seed,
             jobs,
         } = self;
         let (results, finished) = bounded(JOB_RESULTS);
         let worker = spawn_jobs(row, results, jobs.run)?;
-        let pick = jobs.pick;
+        let split = jobs.split;
         spawn_driver(
             row,
             move |commands: &Receiver<C>, outbox: &Outbox<M>| {
                 let mut outlets = Outlets {
                     outbox,
                     jobs: &worker.jobs,
-                    pick,
+                    split,
                     pending: Vec::new(),
+                    timers: Vec::new(),
+                    files: FileStream::idle(),
                 };
-                Self::drive(start(), (commands, &heard, &finished), &mut outlets);
+                let inboxes = Inboxes {
+                    commands,
+                    heard,
+                    finished,
+                };
+                let mut driver = start();
+                let mut fed = |message| Self::feed(&mut driver, message, &mut outlets);
+                if seed.is_none_or(|message| fed(message).is_ok()) {
+                    Self::drive(driver, inboxes, &mut outlets);
+                }
                 worker.stop();
             },
             &inbox,
@@ -158,99 +226,318 @@ where
 
     fn drive<C>(
         mut driver: D,
-        inboxes: (&Receiver<C>, &Receiver<D::Message>, &Receiver<D::Message>),
-        outlets: &mut Outlets<'_, <D as Driver>::Effect, J, M>,
+        mut inboxes: Inboxes<'_, C, D::Message>,
+        outlets: &mut Outlets<'_, D, J, M>,
     ) where
         D::Message: From<Cmds<C>>,
     {
-        let (commands, heard, finished) = inboxes;
         loop {
-            let message = select! {
-                recv(commands) -> received => match received {
-                    Ok(first) => D::Message::from(gather(first, commands)),
-                    Err(_) => return,
-                },
-                recv(heard) -> received => match received {
-                    Ok(message) => message,
-                    Err(_) => return,
-                },
-                recv(finished) -> received => match received {
-                    Ok(message) => message,
-                    Err(_) => return,
-                },
+            let fed = match inboxes.wait(&outlets.files, outlets.next_deadline()) {
+                LoopInput::Heard(message) => Self::feed(&mut driver, message, outlets),
+                LoopInput::Due => Self::feed_due(&mut driver, outlets),
+                LoopInput::Lost(source) => {
+                    inboxes.lose(&source, &mut outlets.files);
+                    Ok(())
+                }
+                LoopInput::Closed => return,
             };
-            let stepped = Self::step(&mut driver, message, outlets)
-                .and_then(|()| outlets.hand_over());
-            if stepped.is_err() {
+            if fed.is_err() {
                 return;
             }
         }
     }
 
+    fn feed_due(
+        driver: &mut D,
+        outlets: &mut Outlets<'_, D, J, M>,
+    ) -> Result<(), crate::outbox::SendError> {
+        for message in outlets.take_due(Instant::now()) {
+            Self::feed(driver, message, outlets)?;
+        }
+        Ok(())
+    }
+
+    fn feed(
+        driver: &mut D,
+        message: D::Message,
+        outlets: &mut Outlets<'_, D, J, M>,
+    ) -> Result<(), crate::outbox::SendError> {
+        Self::step(driver, message, outlets)?;
+        outlets.hand_over()
+    }
+
     fn step(
         driver: &mut D,
         message: D::Message,
-        outlets: &mut Outlets<'_, <D as Driver>::Effect, J, M>,
-    ) -> Result<(), kernel::SendError> {
+        outlets: &mut Outlets<'_, D, J, M>,
+    ) -> Result<(), crate::outbox::SendError> {
         let Ok(cmd) = driver.transition(message) else {
             return Ok(());
         };
         let (effects, messages) = cmd.into_parts();
         for event in messages {
-            ignore_full(outlets.outbox.send(event))?;
+            outlets.outbox.send(event)?;
         }
         for effect in effects {
-            match (outlets.pick)(effect) {
-                Ok(job) => stash(&mut outlets.pending, job),
-                Err(effect) => {
-                    if let Some(answer) = driver.execute(effect) {
-                        Self::step(driver, answer, outlets)?;
-                    }
-                }
+            if let Some(answer) = outlets.place(effect, driver) {
+                Self::step(driver, answer, outlets)?;
             }
         }
         Ok(())
     }
 }
 
-fn gather<C>(first: C, commands: &Receiver<C>) -> Cmds<C> {
-    let mut cmds = vec![first];
-    cmds.extend(commands.try_iter());
-    Cmds {
-        cmds,
-        at: Instant::now(),
-    }
-}
-
-fn ignore_full(sent: Result<(), kernel::SendError>) -> Result<(), kernel::SendError> {
-    match sent {
-        Err(kernel::SendError::Closed) => Err(kernel::SendError::Closed),
-        Ok(()) | Err(kernel::SendError::Full) => Ok(()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::{thread, time::Duration};
+    use std::{
+        path::PathBuf,
+        thread,
+        time::{Duration, Instant},
+    };
 
     use audio::AudioDriver;
-    use crossbeam_channel::{Receiver, bounded, unbounded};
+    use crossbeam_channel::{Receiver, Sender, bounded, never, unbounded};
     use kernel::{
         AudioCmd,
         AudioEvent,
+        Cmd,
+        Cmds,
         DriverEvent,
+        IoError,
         Message,
-        Outbox,
         domain::{AudioSettings, DriverError, DriverName},
+        update::{Driver, Machine, Unhandled},
     };
 
     use crate::{
-        driver::{DriverLoop, DriverThread, spawn_driver, spawn_idle},
+        driver::{DriverLoop, DriverThread, LoopEffect, spawn_driver, spawn_idle},
         jobs::Jobs,
+        outbox::Outbox,
         registry,
+        spawn::audio_thread::audio_split,
     };
 
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
+    const SHORT: Duration = Duration::from_millis(30);
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum ProbeCmd {
+        After { delay: Duration, tag: u8 },
+        Watch(PathBuf),
+        Announce,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum ProbeMessage {
+        Cmds(Cmds<ProbeCmd>),
+        Fired(u8),
+        Changed(Result<(), IoError>),
+    }
+
+    impl From<Cmds<ProbeCmd>> for ProbeMessage {
+        fn from(cmds: Cmds<ProbeCmd>) -> Self {
+            Self::Cmds(cmds)
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum Note {
+        Fired(u8),
+        Changed(Result<(), IoError>),
+    }
+
+    enum ProbeEffect {
+        After { delay: Duration, tag: u8 },
+        Watch(PathBuf),
+        Report(Note),
+    }
+
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    enum NoJob {}
+
+    struct Probe {
+        notes: Sender<Note>,
+    }
+
+    impl Machine for Probe {
+        type Message = ProbeMessage;
+        type Effect = Cmd<ProbeEffect, Message>;
+
+        fn transition(
+            &mut self,
+            message: ProbeMessage,
+        ) -> Result<Cmd<ProbeEffect, Message>, Unhandled> {
+            Ok(match message {
+                ProbeMessage::Cmds(cmds) => cmds
+                    .cmds
+                    .into_iter()
+                    .map(|cmd| match cmd {
+                        ProbeCmd::After { delay, tag } => {
+                            Cmd::effect(ProbeEffect::After { delay, tag })
+                        }
+                        ProbeCmd::Watch(path) => Cmd::effect(ProbeEffect::Watch(path)),
+                        ProbeCmd::Announce => Cmd::message(Message::Driver {
+                            driver: DriverName::Config,
+                            event: DriverEvent::Full,
+                        }),
+                    })
+                    .fold(Cmd::none(), Cmd::then),
+                ProbeMessage::Fired(tag) => {
+                    Cmd::effect(ProbeEffect::Report(Note::Fired(tag)))
+                }
+                ProbeMessage::Changed(result) => {
+                    Cmd::effect(ProbeEffect::Report(Note::Changed(result)))
+                }
+            })
+        }
+    }
+
+    impl Driver for Probe {
+        type Effect = ProbeEffect;
+
+        fn execute(&mut self, effect: ProbeEffect) -> Option<ProbeMessage> {
+            match effect {
+                ProbeEffect::Report(note) => match self.notes.send(note) {
+                    Ok(()) | Err(_) => None,
+                },
+                ProbeEffect::After { .. } | ProbeEffect::Watch(_) => None,
+            }
+        }
+    }
+
+    fn probe_split(
+        effect: ProbeEffect,
+    ) -> LoopEffect<ProbeEffect, NoJob, ProbeMessage> {
+        match effect {
+            ProbeEffect::After { delay, tag } => LoopEffect::After {
+                delay,
+                message: ProbeMessage::Fired(tag),
+            },
+            ProbeEffect::Watch(path) => LoopEffect::Watch {
+                path,
+                item: |_path, changed| ProbeMessage::Changed(changed),
+            },
+            report @ ProbeEffect::Report(_) => LoopEffect::Execute(report),
+        }
+    }
+
+    struct ProbeRun {
+        thread: DriverThread<ProbeCmd>,
+        notes: Receiver<Note>,
+        reports: Receiver<Message>,
+    }
+
+    impl ProbeRun {
+        fn start(heard: Receiver<ProbeMessage>) -> Self {
+            let (inbox, reports) = unbounded();
+            let (notes_sender, notes) = unbounded();
+            let thread = DriverLoop::<Probe, NoJob> {
+                row: registry::row(DriverName::Config),
+                inbox,
+                heard,
+                seed: None,
+                jobs: Jobs {
+                    split: probe_split,
+                    run: |job: NoJob| match job {},
+                },
+            }
+            .spawn(move || Probe {
+                notes: notes_sender,
+            })
+            .unwrap();
+            Self {
+                thread,
+                notes,
+                reports,
+            }
+        }
+
+        fn send(&self, cmd: ProbeCmd) {
+            self.thread.commands.send(cmd).unwrap();
+        }
+
+        fn stop(self) {
+            drop(self.thread.commands);
+            self.thread.handle.join().unwrap().unwrap();
+            assert_eq!(
+                self.reports.recv_timeout(RECV_TIMEOUT),
+                Ok(Message::Driver {
+                    driver: DriverName::Config,
+                    event: DriverEvent::Stopped
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn an_after_arrives_once_its_delay_has_passed() {
+        let run = ProbeRun::start(never());
+        let sent_at = Instant::now();
+
+        run.send(ProbeCmd::After {
+            delay: SHORT,
+            tag: 1,
+        });
+
+        assert_eq!(run.notes.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(1)));
+        assert!(sent_at.elapsed() >= SHORT);
+        run.stop();
+    }
+
+    #[test]
+    fn two_afters_arrive_in_deadline_order() {
+        let run = ProbeRun::start(never());
+
+        run.send(ProbeCmd::After {
+            delay: SHORT * 4,
+            tag: 2,
+        });
+        run.send(ProbeCmd::After {
+            delay: SHORT,
+            tag: 1,
+        });
+
+        let notes: Vec<_> = (0..2)
+            .map(|_round| run.notes.recv_timeout(RECV_TIMEOUT))
+            .collect();
+        assert_eq!(notes, vec![Ok(Note::Fired(1)), Ok(Note::Fired(2))]);
+        run.stop();
+    }
+
+    #[test]
+    fn a_write_under_a_watched_directory_arrives_as_a_change() {
+        let directory = tempfile::tempdir().unwrap();
+        let run = ProbeRun::start(never());
+        run.send(ProbeCmd::Watch(directory.path().to_path_buf()));
+        run.send(ProbeCmd::After {
+            delay: Duration::ZERO,
+            tag: 0,
+        });
+        assert_eq!(run.notes.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(0)));
+
+        std::fs::write(directory.path().join("probe.txt"), "changed").unwrap();
+
+        assert_eq!(
+            run.notes.recv_timeout(Duration::from_secs(5)),
+            Ok(Note::Changed(Ok(())))
+        );
+        run.stop();
+    }
+
+    #[test]
+    fn a_dropped_heard_sender_does_not_end_the_loop() {
+        let (heard_sender, heard) = bounded(1);
+        drop(heard_sender);
+        let run = ProbeRun::start(heard);
+
+        run.send(ProbeCmd::After {
+            delay: Duration::ZERO,
+            tag: 3,
+        });
+
+        assert_eq!(run.notes.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(3)));
+        run.stop();
+    }
 
     fn start_audio_driver() -> (DriverThread<AudioCmd>, Receiver<Message>) {
         let (inbox, sent) = unbounded();
@@ -258,13 +545,14 @@ mod tests {
         let settings = AudioSettings::default();
         let row = registry::row(DriverName::Audio);
         let jobs = Jobs {
-            pick: audio::EngineEffect::into_job,
-            run: audio::AudioJob::run,
+            split: audio_split,
+            run: audio::deck::job::AudioJob::run,
         };
         let thread = DriverLoop::<AudioDriver, _> {
             row,
             inbox,
             heard,
+            seed: None,
             jobs,
         }
         .spawn(move || AudioDriver::new(settings, deck_sender).0)
@@ -314,12 +602,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "hardware: opens the output device"]
-    fn a_closed_outbox_ends_the_audio_loop() {
-        let (thread, sent) = start_audio_driver();
-        drop(sent);
+    fn a_closed_outbox_ends_the_driver_loop() {
+        let ProbeRun {
+            thread, reports, ..
+        } = ProbeRun::start(never());
+        drop(reports);
 
-        thread.commands.send(AudioCmd::ListDevices).unwrap();
+        thread.commands.send(ProbeCmd::Announce).unwrap();
 
         let (finished, joined) = bounded(1);
         let DriverThread {
@@ -382,7 +671,7 @@ mod tests {
         let thread = spawn_driver(
             registry::row(DriverName::Macos),
             |inbox: &Receiver<()>, _outbox: &Outbox<Message>| {
-                let _ = inbox.recv();
+                assert!(inbox.recv().is_err());
             },
             &inbox,
         )

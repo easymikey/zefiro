@@ -9,7 +9,7 @@ ConfigToml {
     volume: Percent(
         50,
     ),
-    audio: AudioConfig {
+    audio: TomlAudio {
         crossfade: Crossfade(
             0ns,
         ),

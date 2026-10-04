@@ -2,10 +2,9 @@
 
 use std::time::Duration;
 
-use config::Rgb;
 use kernel::{
     Moment,
-    domain::{Model, Player, Playhead, Preload, Speed},
+    domain::{Model, Player, Playhead, Preload, Speed, appearance::Rgb},
 };
 use ratatui::{
     buffer::Buffer,
@@ -24,7 +23,7 @@ use widgets::{
     lerp_rgb,
 };
 
-#[path = "../../src/test_support.rs"] mod test_support;
+#[path = "fixtures.rs"] mod test_support;
 
 pub(crate) use test_support::{SceneSources, model_with_tracks, rendered, track};
 
@@ -203,7 +202,7 @@ pub(crate) fn empty_layout(screen: Rect) -> FrameLayout {
 
 pub(crate) fn quiet_backdrop() -> Backdrop {
     Backdrop {
-        animations: config::Animations::On,
+        animations: kernel::domain::appearance::Animations::On,
         layout: empty_layout(Rect::default()),
         background: BACKGROUND,
         accent: ACCENT,

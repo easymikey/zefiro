@@ -1,11 +1,14 @@
 use std::path::{Path, PathBuf};
 
-use config::CoverMode;
-use kernel::Cue;
-use terminal::{CoverWash, CrossfadePermit};
+use kernel::{
+    Cmd,
+    domain::{appearance::CoverMode, geometry::Cells},
+    update::{Machine, Unhandled},
+};
+use widgets::{CoverWash, CrossfadePermit};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) enum PendingCrossfade {
+pub(crate) enum CrossfadeGate {
     #[default]
     None,
     AwaitingCover(PathBuf),
@@ -18,286 +21,284 @@ pub(crate) enum CoverArrival {
     Missing,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CrossfadeGateMessage {
+    TrackChanged(Option<PathBuf>),
+    CoverArrived {
+        path: PathBuf,
+        arrival: CoverArrival,
+    },
+    PermitTaken,
+}
+
+impl Machine for CrossfadeGate {
+    type Message = CrossfadeGateMessage;
+    type Effect = Cmd<CrossfadePermit, CrossfadeGateMessage>;
+
+    fn transition(
+        &mut self,
+        message: CrossfadeGateMessage,
+    ) -> Result<Self::Effect, Unhandled> {
+        match (&*self, message) {
+            (
+                CrossfadeGate::None
+                | CrossfadeGate::AwaitingCover(_)
+                | CrossfadeGate::CoverReady(_),
+                CrossfadeGateMessage::TrackChanged(track),
+            ) => {
+                *self = track.map_or(CrossfadeGate::None, CrossfadeGate::AwaitingCover);
+                Ok(Cmd::none())
+            }
+            (
+                CrossfadeGate::AwaitingCover(awaited),
+                CrossfadeGateMessage::CoverArrived { path, arrival },
+            ) if *awaited == path => {
+                *self = match arrival {
+                    CoverArrival::Decoded => CrossfadeGate::CoverReady(path),
+                    CoverArrival::Missing => CrossfadeGate::None,
+                };
+                Ok(Cmd::none())
+            }
+            (CrossfadeGate::CoverReady(_), CrossfadeGateMessage::PermitTaken) => {
+                *self = CrossfadeGate::None;
+                Ok(Cmd::effect(CrossfadePermit::Allowed))
+            }
+            (
+                CrossfadeGate::None
+                | CrossfadeGate::AwaitingCover(_)
+                | CrossfadeGate::CoverReady(_),
+                CrossfadeGateMessage::CoverArrived { .. }
+                | CrossfadeGateMessage::PermitTaken,
+            ) => Err(Unhandled),
+        }
+    }
+}
+
 #[must_use]
-pub(crate) fn cover_wash(progress: Option<f32>, screen_width: u16) -> CoverWash {
+pub(crate) fn cover_wash(progress: Option<f32>, screen_width: Cells) -> CoverWash {
     progress.map_or(CoverWash::Idle, |progress| CoverWash::Running {
         progress,
         screen_width,
     })
 }
 
-pub(crate) fn after_track_change(
-    current: PendingCrossfade,
-    cues: &[Cue],
-    current_track: Option<&Path>,
-) -> PendingCrossfade {
-    if !cues.contains(&Cue::TrackChanged) {
-        return current;
-    }
-    current_track.map_or(PendingCrossfade::None, |path| {
-        PendingCrossfade::AwaitingCover(path.to_path_buf())
-    })
-}
-
-pub(crate) fn after_cover_arrival(
-    current: PendingCrossfade,
-    path: &Path,
-    arrival: CoverArrival,
-) -> PendingCrossfade {
-    let PendingCrossfade::AwaitingCover(awaited) = &current else {
-        return current;
-    };
-    if awaited != path {
-        return current;
-    }
-    match arrival {
-        CoverArrival::Decoded => PendingCrossfade::CoverReady(path.to_path_buf()),
-        CoverArrival::Missing => PendingCrossfade::None,
-    }
-}
-
-pub(crate) fn take_crossfade_permit(
-    current: PendingCrossfade,
-) -> (PendingCrossfade, CrossfadePermit) {
-    match current {
-        PendingCrossfade::CoverReady(_) => {
-            (PendingCrossfade::None, CrossfadePermit::Allowed)
-        }
-        other @ (PendingCrossfade::None | PendingCrossfade::AwaitingCover(_)) => {
-            (other, CrossfadePermit::Withheld)
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CoverWant {
+    None,
+    Same,
+    New(PathBuf),
 }
 
 pub(crate) fn wanted_cover(
-    wanted: &mut Option<PathBuf>,
+    wanted: Option<&Path>,
     current_track: Option<&Path>,
-    style: CoverMode,
-) -> Option<PathBuf> {
+    mode: CoverMode,
+) -> CoverWant {
     let current_track =
-        current_track.filter(|_| matches!(style, CoverMode::Plain | CoverMode::Vinyl));
-    let Some(path) = current_track else {
-        *wanted = None;
-        return None;
-    };
-    if wanted.as_deref() == Some(path) {
-        return None;
+        current_track.filter(|_| matches!(mode, CoverMode::Plain | CoverMode::Vinyl));
+    match current_track {
+        None => CoverWant::None,
+        Some(path) if wanted == Some(path) => CoverWant::Same,
+        Some(path) => CoverWant::New(path.to_path_buf()),
     }
-    *wanted = Some(path.to_path_buf());
-    Some(path.to_path_buf())
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use config::CoverMode;
-    use kernel::Cue;
-    use terminal::{CoverWash, CrossfadePermit};
+    use kernel::{
+        Cmd,
+        domain::{appearance::CoverMode, geometry::Cells},
+        update::{Machine, Unhandled},
+    };
+    use rstest::rstest;
+    use widgets::{CoverWash, CrossfadePermit};
 
     use crate::shell::cover_crossfade::{
         CoverArrival,
-        PendingCrossfade,
-        after_cover_arrival,
-        after_track_change,
+        CoverWant,
+        CrossfadeGate,
+        CrossfadeGateMessage,
         cover_wash,
-        take_crossfade_permit,
         wanted_cover,
     };
 
-    fn want(
-        wanted: &mut Option<PathBuf>,
-        current: Option<&str>,
-        style: CoverMode,
-    ) -> Option<PathBuf> {
-        wanted_cover(wanted, current.map(Path::new), style)
+    fn awaiting(path: &str) -> CrossfadeGate {
+        CrossfadeGate::AwaitingCover(PathBuf::from(path))
     }
 
-    #[test]
-    fn an_off_style_wants_no_cover_and_forgets_it() {
-        let mut wanted = Some(PathBuf::from("/music/old.jpg"));
-
-        let request = want(&mut wanted, Some("/music/old.jpg"), CoverMode::Off);
-
-        assert_eq!(request, None);
-        assert_eq!(wanted, None);
+    fn ready(path: &str) -> CrossfadeGate {
+        CrossfadeGate::CoverReady(PathBuf::from(path))
     }
 
-    #[test]
-    fn a_milkdrop_style_wants_no_decoded_cover() {
-        let mut wanted = None;
-
-        let request = want(&mut wanted, Some("/music/track.jpg"), CoverMode::Milkdrop);
-
-        assert_eq!(request, None);
+    fn arrived(path: &str, arrival: CoverArrival) -> CrossfadeGateMessage {
+        CrossfadeGateMessage::CoverArrived {
+            path: PathBuf::from(path),
+            arrival,
+        }
     }
 
-    #[test]
-    fn playback_stopping_forgets_the_wanted_cover() {
-        let mut wanted = Some(PathBuf::from("/music/old.jpg"));
+    #[rstest]
+    #[case::an_off_style_wants_no_cover(CoverMode::Off, CoverWant::None)]
+    #[case::a_milkdrop_style_wants_no_decoded_cover(
+        CoverMode::Milkdrop,
+        CoverWant::None
+    )]
+    #[case::a_plain_style_wants_the_track_cover(
+        CoverMode::Plain,
+        CoverWant::New(PathBuf::from("/music/track.jpg"))
+    )]
+    #[case::a_vinyl_style_wants_the_track_cover(
+        CoverMode::Vinyl,
+        CoverWant::New(PathBuf::from("/music/track.jpg"))
+    )]
+    fn the_cover_style_decides_whether_a_cover_is_wanted(
+        #[case] mode: CoverMode,
+        #[case] expected: CoverWant,
+    ) {
+        let want = wanted_cover(None, Some(Path::new("/music/track.jpg")), mode);
 
-        let request = want(&mut wanted, None, CoverMode::Plain);
-
-        assert_eq!(request, None);
-        assert_eq!(wanted, None);
+        assert_eq!(want, expected);
     }
 
-    #[test]
-    fn a_new_track_path_is_requested() {
-        let mut wanted = None;
-
-        let request = want(&mut wanted, Some("/music/track.jpg"), CoverMode::Vinyl);
-
-        assert_eq!(request, Some(PathBuf::from("/music/track.jpg")));
-        assert_eq!(wanted, Some(PathBuf::from("/music/track.jpg")));
-    }
-
-    #[test]
-    fn the_same_track_path_is_not_requested_again() {
-        let mut wanted = Some(PathBuf::from("/music/track.jpg"));
-
-        let request = want(&mut wanted, Some("/music/track.jpg"), CoverMode::Plain);
-
-        assert_eq!(request, None);
-    }
-
-    #[test]
-    fn a_changed_track_path_is_requested_again() {
-        let mut wanted = Some(PathBuf::from("/music/old.jpg"));
-
-        let request = want(&mut wanted, Some("/music/new.jpg"), CoverMode::Plain);
-
-        assert_eq!(request, Some(PathBuf::from("/music/new.jpg")));
-        assert_eq!(wanted, Some(PathBuf::from("/music/new.jpg")));
-    }
-
-    #[test]
-    fn a_track_change_with_a_current_track_awaits_its_cover() {
-        let pending = after_track_change(
-            PendingCrossfade::None,
-            &[Cue::TrackChanged],
-            Some(Path::new("/music/new.jpg")),
+    #[rstest]
+    #[case::playback_stopping_wants_no_cover(
+        Some("/music/old.jpg"),
+        None,
+        CoverWant::None
+    )]
+    #[case::a_new_track_path_is_wanted(
+        None,
+        Some("/music/track.jpg"),
+        CoverWant::New(PathBuf::from("/music/track.jpg"))
+    )]
+    #[case::the_same_track_path_is_wanted_already(
+        Some("/music/track.jpg"),
+        Some("/music/track.jpg"),
+        CoverWant::Same
+    )]
+    #[case::a_changed_track_path_is_wanted_anew(
+        Some("/music/old.jpg"),
+        Some("/music/new.jpg"),
+        CoverWant::New(PathBuf::from("/music/new.jpg"))
+    )]
+    fn the_wanted_cover_follows_the_current_track(
+        #[case] wanted: Option<&str>,
+        #[case] current: Option<&str>,
+        #[case] expected: CoverWant,
+    ) {
+        let want = wanted_cover(
+            wanted.map(Path::new),
+            current.map(Path::new),
+            CoverMode::Plain,
         );
 
-        assert_eq!(
-            pending,
-            PendingCrossfade::AwaitingCover(PathBuf::from("/music/new.jpg"))
-        );
+        assert_eq!(want, expected);
     }
 
-    #[test]
-    fn a_resize_with_no_track_change_leaves_the_pending_crossfade_untouched() {
-        let pending = after_track_change(
-            PendingCrossfade::None,
-            &[],
-            Some(Path::new("/music/old.jpg")),
-        );
+    #[rstest]
+    #[case::a_current_track_awaits_its_cover(
+        CrossfadeGate::None,
+        Some("/music/new.jpg"),
+        awaiting("/music/new.jpg")
+    )]
+    #[case::a_ready_cover_of_the_old_track_is_dropped(
+        ready("/music/old.jpg"),
+        Some("/music/new.jpg"),
+        awaiting("/music/new.jpg")
+    )]
+    #[case::no_current_track_awaits_nothing(
+        awaiting("/music/old.jpg"),
+        None,
+        CrossfadeGate::None
+    )]
+    fn a_track_change_awaits_the_cover_of_the_current_track(
+        #[case] before: CrossfadeGate,
+        #[case] track: Option<&str>,
+        #[case] after: CrossfadeGate,
+    ) {
+        let mut pending = before;
 
-        assert_eq!(pending, PendingCrossfade::None);
-        assert_eq!(take_crossfade_permit(pending).1, CrossfadePermit::Withheld);
+        let message = CrossfadeGateMessage::TrackChanged(track.map(PathBuf::from));
+
+        assert_eq!(pending.transition(message), Ok(Cmd::none()));
+        assert_eq!(pending, after);
     }
 
-    #[test]
-    fn a_decoded_cover_for_the_awaited_track_becomes_ready() {
-        let pending = after_cover_arrival(
-            PendingCrossfade::AwaitingCover(PathBuf::from("/music/new.jpg")),
-            Path::new("/music/new.jpg"),
-            CoverArrival::Decoded,
-        );
+    #[rstest]
+    #[case::a_decoded_cover_becomes_ready(
+        arrived("/music/new.jpg", CoverArrival::Decoded),
+        ready("/music/new.jpg")
+    )]
+    #[case::a_missing_cover_cancels_the_crossfade(
+        arrived("/music/new.jpg", CoverArrival::Missing),
+        CrossfadeGate::None
+    )]
+    fn the_awaited_cover_arriving_settles_the_crossfade(
+        #[case] message: CrossfadeGateMessage,
+        #[case] after: CrossfadeGate,
+    ) {
+        let mut pending = awaiting("/music/new.jpg");
 
-        assert_eq!(
-            pending,
-            PendingCrossfade::CoverReady(PathBuf::from("/music/new.jpg"))
-        );
+        assert_eq!(pending.transition(message), Ok(Cmd::none()));
+        assert_eq!(pending, after);
     }
 
-    #[test]
-    fn a_decoded_cover_for_a_different_track_is_ignored() {
-        let pending = after_cover_arrival(
-            PendingCrossfade::AwaitingCover(PathBuf::from("/music/new.jpg")),
-            Path::new("/music/other.jpg"),
-            CoverArrival::Decoded,
-        );
+    #[rstest]
+    #[case::a_cover_for_a_different_track(
+        awaiting("/music/new.jpg"),
+        arrived("/music/other.jpg", CoverArrival::Decoded)
+    )]
+    #[case::a_cover_with_nothing_awaited(
+        CrossfadeGate::None,
+        arrived("/music/new.jpg", CoverArrival::Decoded)
+    )]
+    #[case::a_cover_already_ready(
+        ready("/music/new.jpg"),
+        arrived("/music/new.jpg", CoverArrival::Missing)
+    )]
+    #[case::a_permit_while_nothing_is_pending(
+        CrossfadeGate::None,
+        CrossfadeGateMessage::PermitTaken
+    )]
+    #[case::a_permit_while_the_cover_is_awaited(
+        awaiting("/music/new.jpg"),
+        CrossfadeGateMessage::PermitTaken
+    )]
+    fn an_unexpected_message_is_unhandled_and_keeps_the_state(
+        #[case] before: CrossfadeGate,
+        #[case] message: CrossfadeGateMessage,
+    ) {
+        let mut pending = before.clone();
 
-        assert_eq!(
-            pending,
-            PendingCrossfade::AwaitingCover(PathBuf::from("/music/new.jpg"))
-        );
-    }
-
-    #[test]
-    fn a_missing_cover_for_the_awaited_track_cancels_the_pending_crossfade() {
-        let pending = after_cover_arrival(
-            PendingCrossfade::AwaitingCover(PathBuf::from("/music/new.jpg")),
-            Path::new("/music/new.jpg"),
-            CoverArrival::Missing,
-        );
-
-        assert_eq!(pending, PendingCrossfade::None);
+        assert_eq!(pending.transition(message), Err(Unhandled));
+        assert_eq!(pending, before);
     }
 
     #[test]
     fn a_ready_cover_allows_one_crossfade() {
-        let (next, permit) = take_crossfade_permit(PendingCrossfade::CoverReady(
-            PathBuf::from("/music/new.jpg"),
-        ));
+        let mut pending = ready("/music/new.jpg");
 
-        assert_eq!(permit, CrossfadePermit::Allowed);
-        assert_eq!(next, PendingCrossfade::None);
-    }
-
-    #[test]
-    fn an_awaited_cover_withholds_the_crossfade_and_keeps_waiting() {
-        let (next, permit) = take_crossfade_permit(PendingCrossfade::AwaitingCover(
-            PathBuf::from("/music/new.jpg"),
-        ));
-
-        assert_eq!(permit, CrossfadePermit::Withheld);
         assert_eq!(
-            next,
-            PendingCrossfade::AwaitingCover(PathBuf::from("/music/new.jpg"))
+            pending.transition(CrossfadeGateMessage::PermitTaken),
+            Ok(Cmd::effect(CrossfadePermit::Allowed))
         );
-    }
-
-    #[test]
-    fn a_track_changes_then_its_cover_arrives_two_paints_later() {
-        let pending = after_track_change(
-            PendingCrossfade::None,
-            &[Cue::TrackChanged],
-            Some(Path::new("/music/new.jpg")),
-        );
-        let (pending, first_paint) = take_crossfade_permit(pending);
-        assert_eq!(first_paint, CrossfadePermit::Withheld);
-
-        let pending =
-            after_track_change(pending, &[], Some(Path::new("/music/new.jpg")));
-        let (pending, second_paint) = take_crossfade_permit(pending);
-        assert_eq!(second_paint, CrossfadePermit::Withheld);
-
-        let pending = after_cover_arrival(
-            pending,
-            Path::new("/music/new.jpg"),
-            CoverArrival::Decoded,
-        );
-        let (pending, third_paint) = take_crossfade_permit(pending);
-        assert_eq!(third_paint, CrossfadePermit::Allowed);
-
-        let (_, fourth_paint) = take_crossfade_permit(pending);
-        assert_eq!(fourth_paint, CrossfadePermit::Withheld);
+        assert_eq!(pending, CrossfadeGate::None);
     }
 
     #[test]
     fn no_wash_progress_is_an_idle_wash() {
-        assert_eq!(cover_wash(None, 80), CoverWash::Idle);
+        assert_eq!(cover_wash(None, Cells(80)), CoverWash::Idle);
     }
 
     #[test]
     fn a_wash_progress_carries_the_screen_width_along() {
         assert_eq!(
-            cover_wash(Some(0.4), 80),
+            cover_wash(Some(0.4), Cells(80)),
             CoverWash::Running {
                 progress: 0.4,
-                screen_width: 80,
+                screen_width: Cells(80),
             }
         );
     }

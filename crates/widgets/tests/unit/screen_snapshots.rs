@@ -1,21 +1,22 @@
-use config::{CoverMode, KeyHints, LayoutMode};
-use kernel::domain::appearance::Breakpoints;
+use kernel::domain::{
+    appearance::{Breakpoints, CoverMode, KeyHints, LayoutMode},
+    geometry::Cells,
+};
 use ratatui::layout::Rect;
 use rstest::rstest;
-use widgets::{CoverArt, FrameLayout, PixelPath, Scene, Screen};
+use widgets::{CardCover, FrameLayout, PixelPath, Scene, ScreenWidget};
 
 use crate::unit::support::{SceneSources, model_with_tracks, playing_track, rendered};
 
 fn painted_frame(scene: Scene<'_>, size: (u16, u16)) -> (FrameLayout, String) {
     let (width, height) = size;
-    let layout =
-        FrameLayout::new(&scene.layout_parts(), Rect::new(0, 0, width, height));
+    let layout = FrameLayout::from_scene(&scene, Rect::new(0, 0, width, height));
     let text = rendered(width, height, |frame| {
         frame.render_widget(
-            &Screen {
+            &ScreenWidget {
                 scene,
                 layout: &layout,
-                cover_art: &CoverArt::Missing,
+                cover_art: &CardCover::Missing,
             },
             frame.area(),
         );
@@ -30,8 +31,8 @@ fn frame(scene: Scene<'_>, size: (u16, u16)) -> String {
 
 fn tiny_breakpoints() -> Breakpoints {
     Breakpoints {
-        min_columns: 20,
-        min_rows: 3,
+        min_columns: Cells(20),
+        min_rows: Cells(3),
         ..Breakpoints::default()
     }
 }
@@ -55,7 +56,7 @@ fn compact_layout_at_a_small_terminal_hides_the_cover_and_shows_the_playlist() {
     let bp = sources.appearance_mut().breakpoints;
     let text = frame(
         sources.scene(),
-        (bp.compact_min_width, bp.compact_min_height),
+        (bp.compact_min_width.0, bp.compact_min_height.0),
     );
     assert!(!text.contains("No cover"), "got {text:?}");
     assert!(text.contains("Test Song"), "got {text:?}");
@@ -86,8 +87,8 @@ fn narrowing_one_column_below_full_switches_from_the_card_to_the_compact_arrange
         ..sources.scene()
     };
     let bp = Breakpoints::default();
-    let wide = frame(scene, (bp.full_min_width, bp.full_min_height));
-    let narrow = frame(scene, (bp.full_min_width - 1, bp.full_min_height));
+    let wide = frame(scene, (bp.full_min_width.0, bp.full_min_height.0));
+    let narrow = frame(scene, (bp.full_min_width.0 - 1, bp.full_min_height.0));
     assert!(wide.contains("No cover"), "got {wide:?}");
     assert!(!narrow.contains("No cover"), "got {narrow:?}");
 }
@@ -100,13 +101,13 @@ fn narrowing_one_column_below_compact_drops_the_playlist_pane_entirely() {
 
     let (at_floor, at_floor_text) = painted_frame(
         sources.scene(),
-        (bp.compact_min_width, bp.compact_min_height),
+        (bp.compact_min_width.0, bp.compact_min_height.0),
     );
     assert!(at_floor.playlist.is_some(), "got {at_floor_text:?}");
 
     let (narrow, narrow_text) = painted_frame(
         sources.scene(),
-        (bp.compact_min_width - 1, bp.compact_min_height),
+        (bp.compact_min_width.0 - 1, bp.compact_min_height.0),
     );
     assert!(narrow.playlist.is_none(), "got {narrow_text:?}");
     assert!(
@@ -124,7 +125,7 @@ fn a_vinyl_cover_at_the_full_floor_still_leaves_the_title_visible() {
         ..sources.scene()
     };
     let bp = Breakpoints::default();
-    let text = frame(scene, (bp.full_min_width, bp.full_min_height));
+    let text = frame(scene, (bp.full_min_width.0, bp.full_min_height.0));
     assert!(text.contains("Vinyl Floor Song"), "got {text:?}");
 }
 

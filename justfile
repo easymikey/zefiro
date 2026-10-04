@@ -82,14 +82,13 @@ pre-commit:
     fix_rs=$(whole $rs)
     fix_toml=$(whole $toml)
     [ -z "$fix_rs" ] || { rustfmt --edition 2024 $fix_rs; git add $fix_rs; }
-    for manifest in $fix_toml; do
-        case "$manifest" in */Cargo.toml|Cargo.toml) cargo sort --grouped --no-format "$(dirname "$manifest")" >/dev/null ;; esac
-    done
     [ -z "$fix_toml" ] || { taplo fmt $fix_toml 2>/dev/null; git add $fix_toml; }
     [ -z "$rs" ] || rustfmt --check --edition 2024 $rs
-    [ -z "$toml" ] || { cargo sort --workspace --grouped --no-format --check; taplo fmt --check $toml; }
+    [ -z "$toml" ] || taplo fmt --check $toml
     [ -z "$text" ] || typos $text
-    [ -z "$rs$toml" ] || cargo clippy --workspace --all-targets -- -D warnings
+    [ -z "$rs" ] || sh scripts/rules.sh main
+    crates=$(git diff --cached --name-only -- "crates/*" | sed -E "s|crates/([^/]+)/.*|-p \1|" | sort -u)
+    [ -z "$rs$toml" ] || cargo clippy $crates --all-targets -q -- -D warnings
 
 # pre-push hook: the ci test profile over the workspace
 pre-push:

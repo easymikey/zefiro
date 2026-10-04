@@ -10,8 +10,9 @@ use ratatui::{
 use crate::{
     braille::{BrailleBuffers, CanvasSize, MeterFill},
     card::{
-        Card,
         CardMetrics,
+        CardStyle,
+        CardWidget,
         SPECTRUM_MAX_DOTS,
         chips::{self, ChipBudget, FormatChipContent},
     },
@@ -23,19 +24,19 @@ use crate::{
         spectrum_meter,
         text::truncate,
     },
-    theme::{BarStyle, Role},
+    theme::VolumeStyle,
 };
 
-pub(crate) fn paint(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
+pub(crate) fn paint(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetrics) {
     paint_time_row(buffer, card, metrics);
     paint_progress_text(buffer, card, metrics);
     paint_volume_row(buffer, card, metrics);
 }
 
-fn paint_time_row(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
+fn paint_time_row(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetrics) {
     let row_width = metrics.row_width;
-    let dim_color: Color = card.theme.role(Role::Dim);
-    let accent_color: Color = card.theme.role(Role::Accent);
+    let dim_color: Color = CardStyle::from_theme(&card.theme).muted_foreground;
+    let accent_color: Color = CardStyle::from_theme(&card.theme).accent;
 
     let current = card.view.displayed_track;
     let elapsed_total = elapsed_of(card.view.position(), card.view.duration());
@@ -70,9 +71,8 @@ fn paint_time_row(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
     let time_line = Line::from_iter(
         std::iter::once(elapsed_span).chain(
             speed_spans
-                .filter(|_| left_width <= fit.elapsed_budget)
                 .into_iter()
-                .flatten(),
+                .filter(|_| left_width <= fit.elapsed_budget),
         ),
     );
     Paragraph::new(time_line).render(time_row, buffer);
@@ -94,7 +94,11 @@ fn paint_format_chips_row(buffer: &mut Buffer, time_row: Rect, line: Line<'stati
         .render(time_row, buffer);
 }
 
-fn paint_progress_text(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
+fn paint_progress_text(
+    buffer: &mut Buffer,
+    card: &CardWidget<'_>,
+    metrics: &CardMetrics,
+) {
     let row_width = metrics.row_width;
     let style = HudProgressStyle::from_theme(&card.theme);
 
@@ -117,17 +121,20 @@ fn paint_progress_text(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetri
         .render(progress_row, buffer),
         ProgressTime::Elapsed => Paragraph::new(fill(
             &BarFill::progress(unit_fraction(fraction), usize::from(row_width)),
-            style.bar,
+            style.bar.fill,
+            style.bar.track,
         ))
         .render(progress_row, buffer),
     }
 }
 
-fn paint_volume_row(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
+fn paint_volume_row(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetrics) {
     let bar_area = metrics.volume_row;
+    let style = VolumeStyle::from_theme(&card.theme);
     Paragraph::new(fill(
         &BarFill::volume(card.view.volume.ratio(), usize::from(bar_area.width)),
-        BarStyle::volume(&card.theme),
+        style.fill,
+        style.track,
     ))
     .render(bar_area, buffer);
 
@@ -171,7 +178,7 @@ mod tests {
     use ratatui::{buffer::Buffer, layout::Rect};
 
     use crate::{
-        card::{Card, CardView, CoverArt, card_metrics, meters::paint_time_row},
+        card::{CardCover, CardView, CardWidget, card_metrics, meters::paint_time_row},
         geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
         primitive::canvas::find_text,
         spectrum::{SPECTRUM_BANDS, Spectrum},
@@ -217,13 +224,13 @@ mod tests {
         let area = Rect::new(0, 0, 60, 12);
         let card_metrics =
             card_metrics(area, DEFAULT_CELL_ASPECT, CoverSizing::default());
-        let card = Card {
+        let card = CardWidget {
             view,
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             cell_aspect: DEFAULT_CELL_ASPECT,
             cover_sizing: CoverSizing::default(),
             appearance: AppearanceSettings::default(),
-            cover_art: &CoverArt::Missing,
+            cover_art: &CardCover::Missing,
         };
         let mut buffer = Buffer::empty(area);
         paint_time_row(&mut buffer, &card, &card_metrics);
