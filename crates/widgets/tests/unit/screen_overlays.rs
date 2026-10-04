@@ -57,9 +57,7 @@ fn the_history_overlay_is_painted_over_the_full_frame() {
 
 #[test]
 fn the_settings_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::Settings {
-        selected: SettingRow::Theme,
-    });
+    let text = frame_with_overlay(Overlay::Settings(SettingRow::Theme));
     assert!(text.contains("SETTINGS"), "got {text:?}");
 }
 

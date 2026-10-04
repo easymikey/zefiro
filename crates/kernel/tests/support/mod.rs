@@ -1,5 +1,6 @@
 pub(crate) mod keymap;
 pub(crate) mod router;
+pub(crate) mod step;
 pub(crate) mod strategies;
 pub(crate) mod table;
 
@@ -125,7 +126,7 @@ pub(crate) fn playing_model(count: usize) -> Model {
 }
 
 pub(crate) fn effects(cmd: Cmd) -> Vec<Effect> {
-    cmd.into_iter().collect()
+    cmd.into_parts().0
 }
 
 pub(crate) fn first_toast_expiry() -> Effect {

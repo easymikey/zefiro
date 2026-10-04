@@ -23,13 +23,24 @@ use crate::{
         glyphs,
         span::{StyledText, line, text},
     },
+    theme::{ActiveTheme, Role},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct HelpColors {
-    pub(crate) title: Color,
-    pub(crate) key: Color,
-    pub(crate) description: Color,
+pub(crate) struct HelpStyle {
+    pub(crate) border: Color,
+    pub(crate) muted_accent: Color,
+    pub(crate) foreground: Color,
+}
+
+impl HelpStyle {
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            border: theme.role(Role::Frame),
+            muted_accent: theme.muted_accent(),
+            foreground: theme.role(Role::Text),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,7 +70,7 @@ fn full_width_row(line: Line<'static>) -> Row<'static> {
     Row::new(vec![Cell::from(line).column_span(2)])
 }
 
-fn column_lines(groups: &[&HelpGroup], colors: HelpColors) -> HelpColumn {
+fn column_lines(groups: &[&HelpGroup], colors: HelpStyle) -> HelpColumn {
     let chord_width = widest_chord(groups);
     let mut rows: Vec<Row<'static>> = Vec::new();
     let mut max_width = 0usize;
@@ -69,14 +80,16 @@ fn column_lines(groups: &[&HelpGroup], colors: HelpColors) -> HelpColumn {
         }
         max_width = max_width.max(group.title.width());
         rows.push(full_width_row(line([text(group.title)
-            .fg(colors.title)
+            .fg(colors.border)
             .bold()])));
         for HelpRow { chord, label } in &group.bindings {
             max_width =
                 max_width.max(chord_width + usize::from(CHORD_GAP) + label.width());
             rows.push(Row::new(vec![
-                Cell::from(line([text(chord.clone()).fg(colors.key)]).right_aligned()),
-                Cell::from(line([text(label.clone()).fg(colors.description)])),
+                Cell::from(
+                    line([text(chord.clone()).fg(colors.muted_accent)]).right_aligned(),
+                ),
+                Cell::from(line([text(label.clone()).fg(colors.foreground)])),
             ]));
         }
     }
@@ -95,7 +108,7 @@ fn height_spread(first: u16, second: u16, third: u16) -> u16 {
 
 fn three_columns(
     groups: [&HelpGroup; 4],
-    colors: HelpColors,
+    colors: HelpStyle,
 ) -> (HelpColumn, HelpColumn, HelpColumn) {
     let [playback, general, navigation, playlist] = groups;
     let playback_column = column_lines(&[playback], colors);
@@ -194,7 +207,7 @@ fn columns_that_fit(candidates: Vec<Vec<HelpColumn>>, inner: u16) -> Vec<HelpCol
 
 pub(crate) fn select_help_columns(
     groups: &HelpGroups,
-    colors: HelpColors,
+    colors: HelpStyle,
     full: Rect,
 ) -> Vec<HelpColumn> {
     let HelpGroups {
@@ -231,7 +244,7 @@ pub(crate) fn select_help_columns(
             fit_column(
                 column,
                 available_height,
-                text(glyphs::help::OVERFLOW_HINT).fg(colors.key),
+                text(glyphs::help::OVERFLOW_HINT).fg(colors.muted_accent),
             )
         })
         .collect()
@@ -241,29 +254,29 @@ pub(crate) fn select_help_columns(
 mod tests {
     use std::borrow::Cow;
 
-    use ratatui::{layout::Rect, style::Color};
+    use ratatui::layout::Rect;
     use rstest::rstest;
 
-    use crate::overlay::help::{
-        columns::{
-            HelpColors,
-            HelpColumn,
-            available_width,
-            column_lines,
-            columns_that_fit,
-            columns_width,
-            squeezed_width,
-            three_columns,
+    use crate::{
+        overlay::help::{
+            columns::{
+                HelpColumn,
+                HelpStyle,
+                available_width,
+                column_lines,
+                columns_that_fit,
+                columns_width,
+                squeezed_width,
+                three_columns,
+            },
+            groups::{COLUMN_GAP, HelpGroup, HelpRow},
         },
-        groups::{COLUMN_GAP, HelpGroup, HelpRow},
+        test_support::noir,
+        theme::{ActiveTheme, ColorDepth},
     };
 
-    fn colors() -> HelpColors {
-        HelpColors {
-            title: Color::White,
-            key: Color::White,
-            description: Color::White,
-        }
+    fn colors() -> HelpStyle {
+        HelpStyle::from_theme(&ActiveTheme::new(&noir(), ColorDepth::TrueColor))
     }
 
     fn synthetic_group(title: &'static str, row_count: usize) -> HelpGroup {

@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use kernel::{domain::Driver, update::UpdateError};
+use kernel::domain::DriverName;
 use strum::IntoStaticStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
@@ -12,21 +12,17 @@ pub(crate) enum DropReason {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum TraceEntry {
-    Rejected {
-        message: &'static str,
-        error: UpdateError,
-    },
     Dropped {
-        driver: Driver,
+        driver: DriverName,
         command: &'static str,
         reason: DropReason,
     },
     ControlsUnattached,
     JoinFailed {
-        driver: Driver,
+        driver: DriverName,
     },
     RestartFailed {
-        driver: Driver,
+        driver: DriverName,
     },
     TimerOverflow {
         timer: &'static str,
@@ -74,14 +70,11 @@ impl Trace {
 
 #[cfg(test)]
 mod tests {
-    use kernel::{
-        domain::Driver,
-        update::{DriverStatusError, UpdateError},
-    };
+    use kernel::domain::DriverName;
 
     use crate::trace::{DropReason, Trace, TraceEntry};
 
-    fn dropped(driver: Driver) -> TraceEntry {
+    fn dropped(driver: DriverName) -> TraceEntry {
         TraceEntry::Dropped {
             driver,
             command: "save",
@@ -101,13 +94,13 @@ mod tests {
     fn a_pushed_entry_is_kept_in_order() {
         let mut trace = Trace::default();
 
-        trace.push(dropped(Driver::Audio));
-        trace.push(dropped(Driver::Config));
+        trace.push(dropped(DriverName::Audio));
+        trace.push(dropped(DriverName::Config));
 
         let entries: Vec<_> = trace.iter().collect();
         assert_eq!(
             entries,
-            vec![&dropped(Driver::Audio), &dropped(Driver::Config)]
+            vec![&dropped(DriverName::Audio), &dropped(DriverName::Config)]
         );
     }
 
@@ -116,13 +109,13 @@ mod tests {
         let mut trace = Trace::default();
 
         for _ in 0..Trace::CAPACITY {
-            trace.push(dropped(Driver::Audio));
+            trace.push(dropped(DriverName::Audio));
         }
-        trace.push(dropped(Driver::Macos));
+        trace.push(dropped(DriverName::Macos));
 
         assert_eq!(trace.len(), Trace::CAPACITY);
-        assert_eq!(trace.iter().next(), Some(&dropped(Driver::Audio)));
-        assert_eq!(trace.iter().last(), Some(&dropped(Driver::Macos)));
+        assert_eq!(trace.iter().next(), Some(&dropped(DriverName::Audio)));
+        assert_eq!(trace.iter().last(), Some(&dropped(DriverName::Macos)));
     }
 
     #[test]
@@ -130,31 +123,12 @@ mod tests {
         let mut trace = Trace::default();
 
         trace.push(TraceEntry::ControlsUnattached);
-        trace.push(dropped(Driver::Macos));
+        trace.push(dropped(DriverName::Macos));
 
         let entries: Vec<_> = trace.iter().collect();
         assert_eq!(
             entries,
-            vec![&TraceEntry::ControlsUnattached, &dropped(Driver::Macos)]
-        );
-    }
-
-    #[test]
-    fn a_rejected_entry_carries_the_message_label_and_the_rejection() {
-        let mut trace = Trace::default();
-        let error = UpdateError::Driver(Driver::Library, DriverStatusError::Dead);
-
-        trace.push(TraceEntry::Rejected {
-            message: "elapsed",
-            error: error.clone(),
-        });
-
-        assert_eq!(
-            trace.iter().next(),
-            Some(&TraceEntry::Rejected {
-                message: "elapsed",
-                error,
-            })
+            vec![&TraceEntry::ControlsUnattached, &dropped(DriverName::Macos)]
         );
     }
 }

@@ -2,11 +2,11 @@ use std::{fmt::Display, str::FromStr};
 
 pub use kernel::domain::appearance::{
     Animations,
-    Appearance,
     AppearancePatch,
     AppearancePreset,
+    AppearanceSettings,
     CoverBrackets,
-    CoverStyle,
+    CoverMode,
     FormatChips,
     KeyHints,
     LayoutMode,

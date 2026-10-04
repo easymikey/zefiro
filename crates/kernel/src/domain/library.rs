@@ -42,16 +42,17 @@ pub fn sort_indices<T: Borrow<Track>>(
     tracks: &[T],
     key: SortKey,
     favorites: &Favorites,
-) -> Vec<usize> {
+) -> Vec<ViewIndex> {
     match key {
-        SortKey::Added => (0..tracks.len()).collect(),
+        SortKey::Added => (0..tracks.len()).map(ViewIndex::new).collect(),
         SortKey::Favorites => {
-            let mut indices: Vec<usize> = (0..tracks.len()).collect();
+            let mut indices: Vec<ViewIndex> =
+                (0..tracks.len()).map(ViewIndex::new).collect();
             indices.sort_by_key(|&index| {
                 !tracks
-                    .get(index)
+                    .get(index.get())
                     .map(Borrow::borrow)
-                    .is_some_and(|found| favorites.is_favorite(found.path()))
+                    .is_some_and(|found| favorites.is_favorite(found.source()))
             });
             indices
         }
@@ -64,18 +65,18 @@ pub fn sort_indices<T: Borrow<Track>>(
 fn sort_by_key<T: Borrow<Track>>(
     tracks: &[T],
     field: impl Fn(&Track) -> &Option<String>,
-) -> Vec<usize> {
-    let mut keyed: Vec<(String, usize)> = tracks
+) -> Vec<ViewIndex> {
+    let mut keyed: Vec<(String, ViewIndex)> = tracks
         .iter()
         .enumerate()
-        .map(|(index, item)| (lower(field(item.borrow())), index))
+        .map(|(index, item)| (lower(field(item.borrow())), ViewIndex::new(index)))
         .collect();
     keyed.sort();
     keyed.into_iter().map(|(_, index)| index).collect()
 }
 
-fn sort_by_artist<T: Borrow<Track>>(tracks: &[T]) -> Vec<usize> {
-    let mut keyed: Vec<(String, String, usize)> = tracks
+fn sort_by_artist<T: Borrow<Track>>(tracks: &[T]) -> Vec<ViewIndex> {
+    let mut keyed: Vec<(String, String, ViewIndex)> = tracks
         .iter()
         .enumerate()
         .map(|(index, item)| {
@@ -83,7 +84,7 @@ fn sort_by_artist<T: Borrow<Track>>(tracks: &[T]) -> Vec<usize> {
             (
                 lower(&found.tags().artist),
                 lower(&found.tags().album),
-                index,
+                ViewIndex::new(index),
             )
         })
         .collect();

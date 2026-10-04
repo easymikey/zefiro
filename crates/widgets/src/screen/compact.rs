@@ -14,7 +14,7 @@ impl Widget for &CompactScreen<'_> {
         (&CompactCard {
             view: scene.card_view(),
             theme: scene.active_theme(),
-            speed_chip: scene.look().appearance.speed_chip,
+            speed_chip: scene.appearance().settings.speed_chip,
         })
             .render(self.layout.header, buffer);
     }

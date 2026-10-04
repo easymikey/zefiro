@@ -67,5 +67,11 @@ fn rank_orders_and_filters_tracks(
     #[case] query: &str,
     #[case] expected: Vec<usize>,
 ) {
-    assert_eq!(search::rank(&tracks, query), expected);
+    assert_eq!(
+        search::rank(&tracks, query)
+            .into_iter()
+            .map(usize::from)
+            .collect::<Vec<_>>(),
+        expected
+    );
 }

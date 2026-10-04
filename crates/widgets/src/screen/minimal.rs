@@ -12,7 +12,7 @@ use crate::{
     pixels::unit_fraction,
     primitive::{
         bar::{BarFill, fill},
-        chip::{ChipColors, speed_chip_spans, speed_chip_width},
+        chip::{ChipStyle, speed_chip_spans, speed_chip_width},
         relative_time::elapsed_of,
         span::{line, text},
         text::truncate,
@@ -115,9 +115,9 @@ impl MinimalScreen<'_> {
         let chip = speed_chip_spans(
             self.view.speed,
             self.speed_chip,
-            ChipColors {
-                border: dim,
-                value: accent,
+            ChipStyle {
+                foreground: accent,
+                ..ChipStyle::from_theme(&self.theme)
             },
         );
         if let Some(chip) = chip.filter(|_| chip_width > 0) {

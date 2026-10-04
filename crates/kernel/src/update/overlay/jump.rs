@@ -1,45 +1,49 @@
 use crate::{
+    Cmd,
     domain::JumpDigits,
     message::TextRequest,
-    update::{machine::Machine, overlay::OverlayOutcome},
+    update::machine::{Machine, Unhandled},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum JumpError {
-    #[error("not a timecode character")]
-    NotTimecodeChar,
-    #[error("timecode is full")]
-    Full,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JumpDigitsMessage {
+    Char(char),
+    Backspace,
+}
+
+impl From<TextRequest> for JumpDigitsMessage {
+    fn from(request: TextRequest) -> Self {
+        match request {
+            TextRequest::Char(character) => JumpDigitsMessage::Char(character),
+            TextRequest::Backspace => JumpDigitsMessage::Backspace,
+        }
+    }
 }
 
 impl Machine for JumpDigits {
-    type Message = TextRequest;
-    type Error = JumpError;
-    type Effect = OverlayOutcome;
+    type Message = JumpDigitsMessage;
+    type Effect = Cmd;
 
-    fn transition(
-        &mut self,
-        message: TextRequest,
-    ) -> Result<OverlayOutcome, JumpError> {
+    fn transition(&mut self, message: JumpDigitsMessage) -> Result<Cmd, Unhandled> {
         match message {
-            TextRequest::Char(character)
+            JumpDigitsMessage::Char(character)
                 if !(character.is_ascii_digit()
                     || character == JumpDigits::SEPARATOR) =>
             {
-                Err(JumpError::NotTimecodeChar)
+                Err(Unhandled)
             }
-            TextRequest::Char(_) if self.input.len() >= JumpDigits::MAX_LEN => {
-                Err(JumpError::Full)
+            JumpDigitsMessage::Char(_) if self.input.len() >= JumpDigits::MAX_LEN => {
+                Err(Unhandled)
             }
-            TextRequest::Char(character) => {
+            JumpDigitsMessage::Char(character) => {
                 self.input.push(character);
                 self.error = None;
-                Ok(OverlayOutcome::default())
+                Ok(Cmd::none())
             }
-            TextRequest::Backspace => {
+            JumpDigitsMessage::Backspace => {
                 self.input.pop();
                 self.error = None;
-                Ok(OverlayOutcome::default())
+                Ok(Cmd::none())
             }
         }
     }

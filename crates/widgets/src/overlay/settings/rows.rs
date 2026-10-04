@@ -3,7 +3,7 @@ use ratatui::{layout::Constraint, style::Style, text::Line, widgets::Row};
 
 use crate::{
     overlay::{
-        modal::{ModalRowColors, indented},
+        modal::{ModalRowStyle, indented},
         settings::values::{SettingsView, settings_label, value_text},
     },
     primitive::text::truncate,
@@ -38,24 +38,24 @@ fn small_width(width: usize) -> u16 {
     u16::try_from(width).unwrap_or(u16::MAX)
 }
 
-pub(crate) struct SettingsRowView<'a> {
+pub(crate) struct SettingsTableRow<'a> {
     pub(crate) row: SettingRow,
     pub(crate) values: &'a SettingsView<'a>,
     pub(crate) columns: SettingsColumns,
 }
 
 pub(crate) fn settings_row(
-    view: &SettingsRowView<'_>,
-    colors: ModalRowColors,
+    view: &SettingsTableRow<'_>,
+    style: ModalRowStyle,
 ) -> Row<'static> {
     let [label, value] = settings_cells(view);
     Row::new(vec![
-        Line::from(label).style(Style::default().fg(colors.text)),
-        Line::from(value).style(Style::default().fg(colors.text)),
+        Line::from(label).style(Style::default().fg(style.foreground)),
+        Line::from(value).style(Style::default().fg(style.foreground)),
     ])
 }
 
-fn settings_cells(view: &SettingsRowView<'_>) -> [String; 2] {
+fn settings_cells(view: &SettingsTableRow<'_>) -> [String; 2] {
     let columns = view.columns;
     let cell =
         |value: &str, width: u16| truncate(value, usize::from(width)).into_owned();
@@ -71,7 +71,7 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     use crate::overlay::settings::{
-        rows::{SettingsColumns, SettingsRowView, settings_cells},
+        rows::{SettingsColumns, SettingsTableRow, settings_cells},
         test_support::{appearance_settings, settings_values},
     };
 
@@ -85,7 +85,7 @@ mod tests {
         let values = settings_values(&custom);
         let columns = SettingsColumns::for_width(60, 0, 20);
         for row in all_rows(&custom) {
-            let [label, value] = settings_cells(&SettingsRowView {
+            let [label, value] = settings_cells(&SettingsTableRow {
                 row,
                 values: &values,
                 columns,

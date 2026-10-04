@@ -17,13 +17,13 @@ use crate::{
     },
     pixels::unit_fraction,
     primitive::{
-        bar::{BarFill, HudProgressColors, HudProgressRow, fill, hud_progress_line},
-        chip::{self, ChipColors},
+        bar::{BarFill, HudProgressRow, HudProgressStyle, fill, hud_progress_line},
+        chip::{self, ChipStyle},
         relative_time::elapsed_of,
         spectrum_meter,
         text::truncate,
     },
-    theme::{ActiveTheme, BarStyle, Role},
+    theme::{BarStyle, Role},
 };
 
 pub(crate) fn paint(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
@@ -36,7 +36,6 @@ fn paint_time_row(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
     let row_width = metrics.row_width;
     let dim_color: Color = card.theme.role(Role::Dim);
     let accent_color: Color = card.theme.role(Role::Accent);
-    let text_color: Color = card.theme.role(Role::Text);
 
     let current = card.view.displayed_track;
     let elapsed_total = elapsed_of(card.view.position(), card.view.duration());
@@ -45,9 +44,9 @@ fn paint_time_row(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
     let speed_spans = chip::speed_chip_spans(
         card.view.speed,
         card.appearance.speed_chip,
-        ChipColors {
-            border: dim_color,
-            value: accent_color,
+        ChipStyle {
+            foreground: accent_color,
+            ..ChipStyle::from_theme(&card.theme)
         },
     );
     let speed_width = usize::from(chip::speed_chip_width(
@@ -59,10 +58,7 @@ fn paint_time_row(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
         &FormatChipContent {
             current,
             visibility: card.appearance.format_chips,
-            colors: ChipColors {
-                border: dim_color,
-                value: text_color,
-            },
+            colors: ChipStyle::from_theme(&card.theme),
         },
         &ChipBudget {
             available_width: row_width,
@@ -98,16 +94,9 @@ fn paint_format_chips_row(buffer: &mut Buffer, time_row: Rect, line: Line<'stati
         .render(time_row, buffer);
 }
 
-fn chip_colors(theme: ActiveTheme<'_>) -> ChipColors {
-    ChipColors {
-        border: theme.role(Role::Dim),
-        value: theme.role(Role::Text),
-    }
-}
-
 fn paint_progress_text(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetrics) {
     let row_width = metrics.row_width;
-    let bar_colors = BarStyle::progress(&card.theme);
+    let style = HudProgressStyle::from_theme(&card.theme);
 
     let duration = card.view.duration();
     let fraction = if duration.is_zero() {
@@ -123,15 +112,12 @@ fn paint_progress_text(buffer: &mut Buffer, card: &Card<'_>, metrics: &CardMetri
                 row_width: usize::from(row_width),
                 remaining: card.view.remaining(),
             },
-            &HudProgressColors {
-                bar: bar_colors,
-                chip: chip_colors(card.theme),
-            },
+            &style,
         ))
         .render(progress_row, buffer),
         ProgressTime::Elapsed => Paragraph::new(fill(
             &BarFill::progress(unit_fraction(fraction), usize::from(row_width)),
-            bar_colors,
+            style.bar,
         ))
         .render(progress_row, buffer),
     }
@@ -178,7 +164,7 @@ mod tests {
             Speed,
             Tags,
             Track,
-            appearance::Appearance,
+            appearance::AppearanceSettings,
         },
         playlist::PlayOrder,
     };
@@ -236,7 +222,7 @@ mod tests {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             cell_aspect: DEFAULT_CELL_ASPECT,
             cover_sizing: CoverSizing::default(),
-            appearance: Appearance::default(),
+            appearance: AppearanceSettings::default(),
             cover_art: &CoverArt::Missing,
         };
         let mut buffer = Buffer::empty(area);

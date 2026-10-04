@@ -70,8 +70,8 @@ where
                 .frame(now)
                 .model
                 .settings
-                .look
                 .appearance
+                .settings
                 .animations;
             for effect in effects {
                 self.shell.effect(effect, animations);
@@ -206,8 +206,7 @@ pub(crate) mod tests {
         Outbox,
         Timer,
         WindowColorsCmd,
-        domain::{Driver, DriverStatus, Startup, ThemeName, Toast},
-        update::{DriverStatusError, UpdateError},
+        domain::{DriverName, DriverStatus, Startup, ThemeName, Toast},
     };
 
     use crate::{
@@ -218,7 +217,7 @@ pub(crate) mod tests {
         port::{LibraryPort, Port},
         runtime::Runtime,
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
-        trace::{Trace, TraceEntry},
+        trace::Trace,
         wiring::Wiring,
     };
 
@@ -270,7 +269,7 @@ pub(crate) mod tests {
             match event {
                 Key::Quit => Reaction::Message(Message::Quit),
                 Key::Stray => Reaction::Message(Message::Driver {
-                    driver: Driver::Audio,
+                    driver: DriverName::Audio,
                     event: DriverEvent::Stopped,
                 }),
                 Key::Ping => {
@@ -386,13 +385,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_rejection_lands_in_the_trace_only() {
+    fn a_rejection_repaints_nothing() {
         let mut fixture = fixture();
         fixture
             .runtime
             .model
             .drivers
-            .record_mut(Driver::Audio)
+            .record_mut(DriverName::Audio)
             .status = DriverStatus::Stopped;
         let (keys, input) = unbounded();
         keys.send(Key::Stray).unwrap();
@@ -401,26 +400,13 @@ pub(crate) mod tests {
         let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Ok(())));
-        let rejected: Vec<&TraceEntry> = fixture
-            .runtime
-            .trace
-            .iter()
-            .filter(|entry| matches!(entry, TraceEntry::Rejected { .. }))
-            .collect();
-        assert_eq!(
-            rejected,
-            vec![&TraceEntry::Rejected {
-                message: "driver",
-                error: UpdateError::Driver(Driver::Audio, DriverStatusError::Stopped),
-            }]
-        );
         assert_eq!(shell.toasts, vec![None]);
         assert_eq!(
             shell.effects,
             vec![ShellEffect::WindowColors(WindowColorsCmd::Reset)]
         );
         assert_eq!(
-            fixture.runtime.model.drivers.status(Driver::Audio),
+            fixture.runtime.model.drivers.status(DriverName::Audio),
             &DriverStatus::Stopped
         );
         fixture.runtime.drain();
@@ -546,8 +532,8 @@ pub(crate) mod tests {
             .frame(Instant::now())
             .model
             .settings
-            .look
             .appearance
+            .settings
             .animations;
         for effect in effects {
             event_loop.shell.effect(effect, animations);
@@ -569,7 +555,7 @@ pub(crate) mod tests {
         fixture.runtime.wiring.receiver = arrivals;
         fixture.runtime.wiring.sender = sender;
         fixture.runtime.wiring.ports.library = LibraryPort::new(Port::new(
-            Driver::Library,
+            DriverName::Library,
             library_commands,
             full_edge.clone(),
         ));

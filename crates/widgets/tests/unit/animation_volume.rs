@@ -149,7 +149,7 @@ fn an_enabled_animation_wants_frames_and_advances_over_ticks() {
 
     let mut guard = 0;
     while stage.is_running() {
-        let _ = step_over(&mut stage, volume_bar_frame, pulse_tick);
+        step_over(&mut stage, volume_bar_frame, pulse_tick);
         guard += 1;
         assert!(guard < 64, "the animation must end");
     }

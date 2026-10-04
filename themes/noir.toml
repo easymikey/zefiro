@@ -10,7 +10,7 @@
 # theme — or to reproduce it by hand in `sifr-ui.toml`:
 #
 #   [cover]
-#   style = "milkdrop"   # or "off" for a card with no cover column at all
+#   mode = "milkdrop"   # or "off" for a card with no cover column at all
 #   brackets = true
 #   renderer = "text"    # text-art everywhere, even on a graphics-capable terminal
 #   [card]

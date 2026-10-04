@@ -3,49 +3,61 @@ use std::{path::PathBuf, time::Duration};
 use kernel::{
     AudioCmd,
     AudioError,
-    AudioEvent,
+    Cmds,
     Playback,
     domain::{ListedDevice, OutputDevice, Speed},
 };
 
 use crate::{
-    deck::{DeviceOpened, source::PreloadRequest},
+    deck::{
+        AudioJob,
+        DeckEvent,
+        DeviceOpened,
+        Revision,
+        envelope::Signals,
+        source::{PreloadMode, TrackSource},
+    },
     engine::phase::CurrentTrack,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SinkRole {
+pub enum SinkRole {
     Primary,
     Outgoing,
     Incoming,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Preload {
+pub enum Preload {
     Gapless(PathBuf),
     Crossfade(CurrentTrack),
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum EngineMessage {
-    Cmd(AudioCmd),
+#[derive(Debug)]
+pub enum AudioMessage {
+    Deck(DeckEvent),
+    Cmds(Cmds<AudioCmd>),
+    Reported(Option<Duration>),
+    Error(AudioError),
     Opened(Result<DeviceOpened, AudioError>),
     Decoded(Result<Option<Duration>, AudioError>),
     Preloaded(Result<Preload, AudioError>),
-    Failed(AudioError),
     Finished(SinkRole),
     Cued,
     Ramped(SinkRole),
-    DevicesListed(Vec<ListedDevice>),
+    DevicesListed(Result<Vec<ListedDevice>, AudioError>),
+    SignalsTaken { role: SinkRole, signals: Signals },
 }
 
-#[derive(Debug, Default, PartialEq)]
-pub(crate) enum EngineEffect {
-    #[default]
-    Nothing,
-    Batch(Vec<EngineEffect>),
-    Send(AudioEvent),
-    Mute(AudioError),
+impl From<Cmds<AudioCmd>> for AudioMessage {
+    fn from(cmds: Cmds<AudioCmd>) -> Self {
+        AudioMessage::Cmds(cmds)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum EngineEffect {
+    Mute,
     Open {
         device: OutputDevice,
         speed: Speed,
@@ -59,10 +71,7 @@ pub(crate) enum EngineEffect {
         speed: Speed,
     },
     Decode(PathBuf),
-    Start {
-        volume: f32,
-        total: Option<Duration>,
-    },
+    Start(f32),
     Resume {
         volume: f32,
         position: Duration,
@@ -72,9 +81,7 @@ pub(crate) enum EngineEffect {
     Pause,
     Seek(Duration),
     SetVolume(f32),
-    Arm {
-        cue: Option<Duration>,
-    },
+    Arm(Option<Duration>),
     Crossfade {
         length: Duration,
         incoming: f32,
@@ -87,12 +94,26 @@ pub(crate) enum EngineEffect {
     DropOutgoing,
     SetSpeed(Speed),
     Clear,
-    Preload(PreloadRequest),
-    RestartGapless(PathBuf),
-    Promote {
-        volume: f32,
+    Preload {
+        path: PathBuf,
+        mode: PreloadMode,
     },
-    ListDevices,
+    RestartGapless(PathBuf),
+    Promote(f32),
+    Run(AudioJob),
     Report,
     Advance,
+    Stage(TrackSource),
+    Attach(TrackSource),
+    TakeSignals(Revision),
+}
+
+impl EngineEffect {
+    pub fn into_job(self) -> Result<AudioJob, Self> {
+        if let EngineEffect::Run(job) = self {
+            Ok(job)
+        } else {
+            Err(self)
+        }
+    }
 }

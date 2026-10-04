@@ -13,6 +13,7 @@ use crate::{
         Revision,
         Toast,
         Track,
+        TrackRef,
         Transport,
         ViewIndex,
         Workspace,
@@ -20,8 +21,7 @@ use crate::{
     },
     message::{AudioError, AudioEvent},
     update::{
-        error::UpdateError,
-        machine::Machine,
+        machine::{Machine, Unhandled},
         player::{self, Anchor, PlaybackParts, PlayerMessage, Stamp},
     },
 };
@@ -30,7 +30,7 @@ pub(crate) fn update(
     playback: &mut PlaybackParts<'_>,
     event: AudioEvent,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     match event {
         AudioEvent::Playhead(offset) => {
             let cmd = player::update_player(
@@ -50,7 +50,7 @@ pub(crate) fn update(
             }
             Ok(cmd)
         }
-        AudioEvent::Loaded { total } => {
+        AudioEvent::Loaded(total) => {
             let anchor = Anchor::at(playback.transport, now);
             let cmd = player::update_player(
                 playback,
@@ -63,7 +63,7 @@ pub(crate) fn update(
         AudioEvent::Error(failure) => error(playback, failure, now),
         AudioEvent::DevicesListed(devices) => {
             playback.settings.output_devices = devices;
-            Ok(Cmd::None)
+            Ok(Cmd::none())
         }
         AudioEvent::DeviceFellBack(opened) => fell_back(playback, &opened),
     }
@@ -72,14 +72,14 @@ pub(crate) fn update(
 fn fell_back(
     playback: &mut PlaybackParts<'_>,
     opened: &OutputDevice,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     let requested =
         std::mem::replace(&mut playback.settings.audio.device, opened.clone());
     let OutputDevice::Named(requested) = requested else {
-        return Ok(Cmd::None);
+        return Ok(Cmd::none());
     };
     if opened.named() == Some(&requested) {
-        return Ok(Cmd::None);
+        return Ok(Cmd::none());
     }
     let opened = opened.named().map_or_else(
         || "the system default".to_string(),
@@ -93,7 +93,7 @@ fn fell_back(
 }
 
 fn output_recovered(transport: &mut Transport) {
-    if matches!(transport.output, Output::Lost { .. }) {
+    if matches!(transport.output, Output::Lost(..)) {
         transport.output = Output::Ready;
     }
 }
@@ -102,11 +102,11 @@ fn error(
     playback: &mut PlaybackParts<'_>,
     error: AudioError,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     let (told, lost) = match &error {
-        AudioError::OutputLost { kind } => (
+        AudioError::OutputLost(kind) => (
             output_lost_text(playback.player, &error),
-            Some(Output::Lost { kind: *kind }),
+            Some(Output::Lost(*kind)),
         ),
         AudioError::Decode { .. }
         | AudioError::Device { .. }
@@ -139,13 +139,24 @@ fn cursor_to(playlist: &mut Playlist, dequeued: ViewIndex) {
     playlist.cursor = Cursor::with_len(playlist.tracks.len()).at(dequeued.get());
 }
 
+fn first_queued<'a>(
+    playlist: &'a Playlist,
+    queue: &[TrackRef],
+) -> Option<(usize, ViewIndex, &'a Arc<Track>)> {
+    queue.iter().enumerate().find_map(|(position, source)| {
+        let index = playlist.index_of(source)?;
+        let track = playlist.tracks.get(index.get())?;
+        Some((position, index, track))
+    })
+}
+
 fn pop_queued_track(
     playlist: &mut Playlist,
-    queue: &mut Vec<ViewIndex>,
+    queue: &mut Vec<TrackRef>,
 ) -> Option<Arc<Track>> {
-    let index = *queue.first()?;
-    queue.remove(0);
-    let track = playlist.tracks.get(index.get()).cloned()?;
+    let (position, index, track) = first_queued(playlist, queue)
+        .map(|(position, index, track)| (position, index, Arc::clone(track)))?;
+    queue.drain(..=position);
     cursor_to(playlist, index);
     Some(track)
 }
@@ -153,10 +164,10 @@ fn pop_queued_track(
 pub(crate) fn next(
     playback: &mut PlaybackParts<'_>,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     let cmd = pop_queued_track(playback.playlist, playback.queue)
         .or_else(|| playback.playlist.skip(Direction::Next).cloned())
-        .map_or(Ok(Cmd::None), |track| start(playback, track, now))?;
+        .map_or(Ok(Cmd::none()), |track| start(playback, track, now))?;
     follow_playback(playback.workspace, playback.playlist);
     Ok(cmd)
 }
@@ -165,38 +176,38 @@ pub(crate) fn jump_to(
     playback: &mut PlaybackParts<'_>,
     index: ViewIndex,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     playback
         .playlist
         .jump(index)
         .cloned()
-        .map_or(Ok(Cmd::None), |track| start(playback, track, now))
+        .map_or(Ok(Cmd::none()), |track| start(playback, track, now))
 }
 
 pub(crate) fn previous(
     playback: &mut PlaybackParts<'_>,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     let cmd = playback
         .playlist
         .skip(Direction::Previous)
         .cloned()
-        .map_or(Ok(Cmd::None), |track| start(playback, track, now))?;
+        .map_or(Ok(Cmd::none()), |track| start(playback, track, now))?;
     follow_playback(playback.workspace, playback.playlist);
     Ok(cmd)
 }
 
-pub(crate) fn mark_fired(
+pub(crate) fn lookahead_fired(
     playback: &mut PlaybackParts<'_>,
     revision: Revision,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     if matches!(
-        revision.reply(playback.revisions.lookahead),
+        revision.freshness(playback.revisions.lookahead),
         Freshness::Stale
     ) || !playback.player.is_playing()
     {
-        return Ok(Cmd::None);
+        return Ok(Cmd::none());
     }
     let offset = playback.player.position_at(now);
     let lookahead = player::lookahead(playback, now);
@@ -207,7 +218,7 @@ pub(crate) fn mark_fired(
     )
 }
 
-fn ended(playback: &mut PlaybackParts<'_>, now: Moment) -> Result<Cmd, UpdateError> {
+fn ended(playback: &mut PlaybackParts<'_>, now: Moment) -> Result<Cmd, Unhandled> {
     let pick = successor(playback.playlist, playback.queue);
     let message = PlayerMessage::Ended {
         next: pick.track().cloned(),
@@ -224,7 +235,7 @@ fn ended(playback: &mut PlaybackParts<'_>, now: Moment) -> Result<Cmd, UpdateErr
 fn track_changed(
     playback: &mut PlaybackParts<'_>,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     let following = was_following(playback.workspace, playback.playlist);
     let pick = match playback.player.preloaded() {
         Some(committed) => Successor::Preloaded(Arc::clone(committed)),
@@ -260,7 +271,11 @@ fn follow_playback(workspace: &mut Workspace, playlist: &Playlist) {
 pub(crate) enum Successor {
     Preloaded(Arc<Track>),
     Repeating(Arc<Track>),
-    Queued { index: ViewIndex, track: Arc<Track> },
+    Queued {
+        position: usize,
+        index: ViewIndex,
+        track: Arc<Track>,
+    },
     Following(Arc<Track>),
     Nothing,
 }
@@ -277,17 +292,16 @@ impl Successor {
     }
 }
 
-pub(crate) fn successor(playlist: &Playlist, queue: &[ViewIndex]) -> Successor {
+pub(crate) fn successor(playlist: &Playlist, queue: &[TrackRef]) -> Successor {
     if matches!(playlist.repeat, RepeatMode::One) {
         return playlist
             .current()
             .cloned()
             .map_or(Successor::Nothing, Successor::Repeating);
     }
-    if let Some(&index) = queue.first()
-        && let Some(track) = playlist.tracks.get(index.get())
-    {
+    if let Some((position, index, track)) = first_queued(playlist, queue) {
         return Successor::Queued {
+            position,
             index,
             track: Arc::clone(track),
         };
@@ -298,13 +312,15 @@ pub(crate) fn successor(playlist: &Playlist, queue: &[ViewIndex]) -> Successor {
         .map_or(Successor::Nothing, Successor::Following)
 }
 
-fn move_onto(playlist: &mut Playlist, queue: &mut Vec<ViewIndex>, pick: Successor) {
+fn move_onto(playlist: &mut Playlist, queue: &mut Vec<TrackRef>, pick: Successor) {
     match pick {
         Successor::Preloaded(committed) => {
             move_onto_preloaded(playlist, queue, &committed);
         }
-        Successor::Queued { index, .. } => {
-            queue.remove(0);
+        Successor::Queued {
+            position, index, ..
+        } => {
+            queue.drain(..=position);
             cursor_to(playlist, index);
         }
         Successor::Following(_) => {
@@ -316,7 +332,7 @@ fn move_onto(playlist: &mut Playlist, queue: &mut Vec<ViewIndex>, pick: Successo
 
 fn move_onto_preloaded(
     playlist: &mut Playlist,
-    queue: &mut Vec<ViewIndex>,
+    queue: &mut Vec<TrackRef>,
     committed: &Arc<Track>,
 ) {
     let committed_index = playlist
@@ -330,7 +346,7 @@ fn move_onto_preloaded(
     let Some(committed_index) = committed_index else {
         return;
     };
-    queue.retain(|&queued| queued != committed_index);
+    queue.retain(|queued| queued != committed.source());
     cursor_to(playlist, committed_index);
 }
 
@@ -338,7 +354,7 @@ pub(crate) fn start(
     playback: &mut PlaybackParts<'_>,
     track: Arc<Track>,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     let stamp = Stamp::pending(playback.transport, playback.revisions, now);
     let cmd = playback
         .player

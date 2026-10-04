@@ -39,7 +39,7 @@ pub(crate) fn cover_cell_height(area: Rect, sizing: CoverSizing) -> u16 {
     let available = inner(area).height;
     match sizing {
         CoverSizing::Fixed { height, .. } => height.min(available),
-        CoverSizing::Auto { .. } => available,
+        CoverSizing::Auto(_) => available,
         CoverSizing::Off => 0,
     }
 }
@@ -53,7 +53,7 @@ pub(crate) fn cover_cell_width(
     match sizing {
         CoverSizing::Fixed { width, .. } => width,
         CoverSizing::Off => 0,
-        CoverSizing::Auto { cover_aspect } => cover_width_for_height(
+        CoverSizing::Auto(cover_aspect) => cover_width_for_height(
             cover_cell_height(area, sizing),
             cell_aspect,
             cover_aspect,
@@ -64,7 +64,7 @@ pub(crate) fn cover_cell_width(
 fn cover_column_span(area: Rect, cell_aspect: f32, sizing: CoverSizing) -> u16 {
     match sizing {
         CoverSizing::Off => 0,
-        CoverSizing::Fixed { .. } | CoverSizing::Auto { .. } => {
+        CoverSizing::Fixed { .. } | CoverSizing::Auto(_) => {
             cover_cell_width(area, cell_aspect, sizing) + COLUMN_GAP
         }
     }
@@ -218,7 +218,7 @@ mod tests {
             width: 80,
             height: 12,
         };
-        let sizing = CoverSizing::Auto { cover_aspect };
+        let sizing = CoverSizing::Auto(cover_aspect);
         assert_eq!(cover_cell_height(area, sizing), 8);
         let width = cover_cell_width(area, cell_aspect, sizing);
         assert!(
@@ -237,10 +237,8 @@ mod tests {
             height: 12,
         };
         let cell_aspect = DEFAULT_CELL_ASPECT;
-        let vinyl = CoverSizing::Auto {
-            cover_aspect: canvas_aspect_ratio(),
-        };
-        let plain = CoverSizing::Auto { cover_aspect: 1.0 };
+        let vinyl = CoverSizing::Auto(canvas_aspect_ratio());
+        let plain = CoverSizing::Auto(1.0);
 
         assert!(
             card_metrics(area, cell_aspect, plain).content_column.x

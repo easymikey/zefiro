@@ -1,77 +1,58 @@
 use crate::{
     Cmd,
-    domain::{
-        AppearanceSetting,
-        Direction,
-        Model,
-        Moment,
-        Overlay,
-        SettingRow,
-        Workspace,
-    },
-    message::SettingsRowRequest,
+    domain::{AppearanceSetting, Direction, Overlay, SettingRow, Workspace},
+    message::{Message, SettingsRowRequest},
     update::{
-        error::UpdateError,
-        machine::Machine,
-        overlay::{FollowUp, InnerMessage, OverlayMessage, OverlayOutcome, follow},
+        machine::{Machine, Unhandled},
+        overlay::{InnerMessage, OverlayMessage},
     },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingsCursorMessage {
+pub enum SettingRowMessage {
     Navigate(SettingRow),
-    Adjust(Direction),
-    Noop,
+    Step(Direction),
 }
 
-pub(crate) fn transition(
-    selected: &mut SettingRow,
-    message: SettingsCursorMessage,
-) -> OverlayOutcome {
-    match message {
-        SettingsCursorMessage::Navigate(row) => {
-            *selected = row;
-            OverlayOutcome::default()
-        }
-        SettingsCursorMessage::Adjust(direction) => {
-            OverlayOutcome::from(FollowUp::Adjust {
-                row: *selected,
+impl Machine for SettingRow {
+    type Message = SettingRowMessage;
+    type Effect = Cmd;
+
+    fn transition(&mut self, message: SettingRowMessage) -> Result<Cmd, Unhandled> {
+        match message {
+            SettingRowMessage::Navigate(row) => {
+                *self = row;
+                Ok(Cmd::none())
+            }
+            SettingRowMessage::Step(direction) => Ok(Cmd::message(Message::Step {
+                row: *self,
                 direction,
-            })
+            })),
         }
-        SettingsCursorMessage::Noop => OverlayOutcome::default(),
     }
 }
 
 pub(crate) fn request(
-    model: &mut Model,
+    workspace: &mut Workspace,
+    appearance_settings: &[AppearanceSetting],
     request: SettingsRowRequest,
-    now: Moment,
-) -> Result<Cmd, UpdateError> {
-    let Model {
-        workspace,
-        appearance_settings,
-        ..
-    } = &mut *model;
-    let message = resolve(workspace, appearance_settings, request);
-    let effect = workspace
+) -> Result<Cmd, Unhandled> {
+    let message = resolve(workspace, appearance_settings, request)?;
+    workspace
         .overlay
-        .transition(OverlayMessage::Inner(InnerMessage::Settings(message)))?;
-    follow(model, effect, now)
+        .transition(OverlayMessage::Inner(InnerMessage::Settings(message)))
 }
 
 fn resolve(
     workspace: &Workspace,
     appearance_settings: &[AppearanceSetting],
     request: SettingsRowRequest,
-) -> SettingsCursorMessage {
+) -> Result<SettingRowMessage, Unhandled> {
     match request {
         SettingsRowRequest::Navigate(direction) => {
             navigate_target(workspace, appearance_settings, direction)
         }
-        SettingsRowRequest::Adjust(direction) => {
-            SettingsCursorMessage::Adjust(direction)
-        }
+        SettingsRowRequest::Step(direction) => Ok(SettingRowMessage::Step(direction)),
         SettingsRowRequest::Activate => activate(workspace, appearance_settings),
     }
 }
@@ -80,24 +61,26 @@ fn navigate_target(
     workspace: &Workspace,
     appearance_settings: &[AppearanceSetting],
     direction: Direction,
-) -> SettingsCursorMessage {
-    let Some(Overlay::Settings { selected }) = &workspace.overlay else {
-        return SettingsCursorMessage::Noop;
+) -> Result<SettingRowMessage, Unhandled> {
+    let Some(Overlay::Settings(selected)) = &workspace.overlay else {
+        return Err(Unhandled);
     };
     let rows = SettingRow::all(appearance_settings);
-    SettingsCursorMessage::Navigate(selected.moved(&rows, direction))
+    Ok(SettingRowMessage::Navigate(
+        selected.moved(&rows, direction),
+    ))
 }
 
 fn activate(
     workspace: &Workspace,
     appearance_settings: &[AppearanceSetting],
-) -> SettingsCursorMessage {
-    let Some(Overlay::Settings { selected }) = &workspace.overlay else {
-        return SettingsCursorMessage::Noop;
+) -> Result<SettingRowMessage, Unhandled> {
+    let Some(Overlay::Settings(selected)) = &workspace.overlay else {
+        return Err(Unhandled);
     };
     if selected.activates(appearance_settings) {
-        SettingsCursorMessage::Adjust(Direction::Next)
+        Ok(SettingRowMessage::Step(Direction::Next))
     } else {
-        SettingsCursorMessage::Noop
+        Err(Unhandled)
     }
 }

@@ -1,9 +1,9 @@
 ---
 source: crates/kernel/src/domain/appearance.rs
-expression: "Appearance::default()"
+expression: "AppearanceSettings::default()"
 ---
-Appearance {
-    cover_style: Vinyl,
+AppearanceSettings {
+    cover_mode: Vinyl,
     cover_brackets: Hidden,
     format_chips: Hidden,
     speed_chip: Always,

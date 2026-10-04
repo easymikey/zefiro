@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use kernel::{
-    domain::{Favorites, ScanStatus, ViewIndex},
+    domain::{Favorites, ScanStatus, TrackRef, ViewIndex},
     playlist::Playlist,
 };
 use ratatui::{
@@ -19,7 +19,7 @@ use crate::{
     },
     primitive::list_chrome::{
         ScrollbarTrack,
-        render_scrollbar,
+        paint_scrollbar,
         row_band,
         scrollbar_column,
     },
@@ -35,7 +35,7 @@ pub enum LibraryLoad {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PlaylistView<'a> {
     pub(crate) playlist: &'a Playlist,
-    pub(crate) queue: &'a [ViewIndex],
+    pub(crate) queue: &'a [TrackRef],
     pub(crate) favorites: &'a Favorites,
     pub(crate) browse_selected: usize,
     pub(crate) playing: Option<ViewIndex>,
@@ -73,7 +73,7 @@ impl PlaylistPane<'_> {
         }
     }
 
-    pub(crate) fn render_in(&self, areas: &PlaylistAreas, buffer: &mut Buffer) {
+    pub(crate) fn paint(&self, areas: &PlaylistAreas, buffer: &mut Buffer) {
         let pane = areas.pane;
         if pane.width == 0 || pane.height == 0 {
             return;
@@ -92,7 +92,7 @@ impl PlaylistPane<'_> {
 
 impl Widget for &PlaylistPane<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        self.render_in(&self.areas(area), buffer);
+        self.paint(&self.areas(area), buffer);
     }
 }
 
@@ -131,7 +131,7 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistPane<'_>
         },
     );
 
-    render_scrollbar(
+    paint_scrollbar(
         areas.scrollbar,
         ScrollbarTrack {
             total: window.total,
@@ -201,6 +201,12 @@ mod tests {
         }
     }
 
+    fn queued(playlist: &Playlist, rows: &[usize]) -> Vec<kernel::TrackRef> {
+        rows.iter()
+            .map(|&row| playlist.tracks[row].source().clone())
+            .collect()
+    }
+
     static EMPTY_FAVORITES: std::sync::LazyLock<Favorites> =
         std::sync::LazyLock::new(Favorites::default);
 
@@ -230,10 +236,10 @@ mod tests {
         let mut playlist = library(3);
         playlist.cursor = Cursor::with_len(3).at(1);
         let theme = noir();
-        let queue = [ViewIndex::new(2)];
+        let queue = queued(&playlist, &[2]);
         let mut favorites = Favorites::default();
         if let Some(first) = playlist.tracks.first() {
-            favorites.toggle(first.path().to_path_buf());
+            favorites.toggle(first.source().clone());
         }
         let widget = PlaylistPane {
             view: PlaylistView {
@@ -258,7 +264,7 @@ mod tests {
     fn every_queued_row_ends_with_its_position_chip() {
         let playlist = library(14);
         let theme = noir();
-        let queue: Vec<ViewIndex> = (1..13).map(ViewIndex::new).collect();
+        let queue = queued(&playlist, &(1..13).collect::<Vec<_>>());
         let widget = PlaylistPane {
             view: PlaylistView {
                 playlist: &playlist,
@@ -282,7 +288,7 @@ mod tests {
     fn a_narrow_pane_truncates_the_title_and_keeps_the_chip_room_for_the_title() {
         let playlist = library(3);
         let theme = noir();
-        let queue = [ViewIndex::new(1), ViewIndex::new(2)];
+        let queue = queued(&playlist, &[1, 2]);
         let widget = PlaylistPane {
             view: PlaylistView {
                 playlist: &playlist,
@@ -306,7 +312,7 @@ mod tests {
     fn a_narrow_pane_truncates_the_title_and_keeps_the_chip_room_for_the_chip_alone() {
         let playlist = library(3);
         let theme = noir();
-        let queue = [ViewIndex::new(1), ViewIndex::new(2)];
+        let queue = queued(&playlist, &[1, 2]);
         let widget = PlaylistPane {
             view: PlaylistView {
                 playlist: &playlist,
@@ -336,7 +342,7 @@ mod tests {
             ..Playlist::default()
         };
         let theme = noir();
-        let queue = [ViewIndex::new(0)];
+        let queue = queued(&playlist, &[0]);
         let widget = PlaylistPane {
             view: PlaylistView {
                 playlist: &playlist,
@@ -565,19 +571,21 @@ mod tests {
             playlist: Playlist::from_tracks(tracks),
             ..Model::default()
         };
-        let _ = update(
+        update(
             &mut model,
             Message::Playback(PlaybackRequest::ToggleShuffle),
             Moment::default(),
-        );
+        )
+        .unwrap();
         let mut order: Vec<TrackIndex> = vec![TrackIndex::new(0), TrackIndex::new(39)];
         order.extend((1..39).map(TrackIndex::new));
-        let _ = update(&mut model, Message::ShuffleRolled(order), Moment::default());
-        let _ = update(
+        update(&mut model, Message::ShuffleRolled(order), Moment::default()).unwrap();
+        update(
             &mut model,
             Message::Playback(PlaybackRequest::Next),
             Moment::default(),
-        );
+        )
+        .unwrap();
 
         let playing = model
             .playlist

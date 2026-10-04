@@ -29,8 +29,7 @@ impl SpectrumAnalyzer {
         let spectrum = transform.make_output_vec();
         let scratch = transform.make_scratch_vec();
         let window = hann_window();
-        let window_gain =
-            window.iter().sum::<f32>() / usize_to_f32(Self::WINDOW.max(1));
+        let window_gain = window.iter().sum::<f32>() / scalar(Self::WINDOW);
         Self {
             transform,
             window: Box::new(window),
@@ -42,12 +41,11 @@ impl SpectrumAnalyzer {
     }
 
     pub fn bands<const BANDS: usize>(&mut self, tap: &SpectrumTap) -> [f32; BANDS] {
-        let mut samples = [0.0f32; Self::WINDOW];
-        tap.latest(&mut samples);
+        tap.latest(&mut self.input);
         self.input
             .iter_mut()
-            .zip(samples.iter().zip(self.window.iter()))
-            .for_each(|(slot, (sample, window))| *slot = sample * window);
+            .zip(self.window.iter())
+            .for_each(|(slot, window)| *slot *= window);
         let transformed = self.transform.process_with_scratch(
             &mut self.input[..],
             &mut self.spectrum,
@@ -57,7 +55,7 @@ impl SpectrumAnalyzer {
             return [0.0; BANDS];
         }
         let usable = Self::WINDOW / 2;
-        let scale = usize_to_f32(usable.max(1)) * self.window_gain;
+        let scale = scalar(usable) * self.window_gain;
         std::array::from_fn(|band| {
             let start = log_bin_edge(band, BANDS, usable);
             let end = log_bin_edge(band + 1, BANDS, usable)
@@ -75,17 +73,17 @@ impl Default for SpectrumAnalyzer {
 }
 
 fn hann_window() -> [f32; SpectrumAnalyzer::WINDOW] {
-    let denominator = usize_to_f32(SpectrumAnalyzer::WINDOW.max(2) - 1);
+    let denominator = scalar(SpectrumAnalyzer::WINDOW - 1);
     std::array::from_fn(|index| {
-        let phase = 2.0 * std::f32::consts::PI * usize_to_f32(index) / denominator;
+        let phase = 2.0 * std::f32::consts::PI * scalar(index) / denominator;
         0.5 - 0.5 * phase.cos()
     })
 }
 
 fn log_bin_edge(band: usize, bands: usize, usable_bins: usize) -> usize {
-    let fraction = usize_to_f32(band) / usize_to_f32(bands.max(1));
-    let edge = usize_to_f32(usable_bins).powf(fraction).floor();
-    floor_to_usize(edge).min(usable_bins)
+    let fraction = scalar(band) / scalar(bands.max(1));
+    let edge = scalar(usable_bins).powf(fraction).floor();
+    bin_index(edge).min(usable_bins)
 }
 
 fn band_magnitude(bins: &[Complex<f32>], scale: f32) -> f32 {
@@ -93,11 +91,11 @@ fn band_magnitude(bins: &[Complex<f32>], scale: f32) -> f32 {
     (peak / scale).sqrt().clamp(0.0, 1.0)
 }
 
-fn usize_to_f32(count: usize) -> f32 {
+fn scalar(count: usize) -> f32 {
     f32::from(u16::try_from(count).unwrap_or(u16::MAX))
 }
 
-fn floor_to_usize(position: f32) -> usize {
+fn bin_index(position: f32) -> usize {
     position.to_usize().unwrap_or(0)
 }
 
@@ -145,8 +143,8 @@ mod tests {
                 let phase = 2.0
                     * std::f32::consts::PI
                     * cycles
-                    * crate::spectrum::usize_to_f32(index)
-                    / crate::spectrum::usize_to_f32(SpectrumAnalyzer::WINDOW);
+                    * crate::spectrum::scalar(index)
+                    / crate::spectrum::scalar(SpectrumAnalyzer::WINDOW);
                 phase.sin()
             })
             .collect()

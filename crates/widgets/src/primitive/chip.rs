@@ -2,21 +2,34 @@ use kernel::domain::{Speed, appearance::SpeedChip};
 use ratatui::{style::Color, text::Span};
 use unicode_width::UnicodeWidthStr;
 
-use crate::primitive::{glyphs, span::text};
+use crate::{
+    primitive::{glyphs, span::text},
+    theme::{ActiveTheme, Role},
+};
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ChipColors {
+pub(crate) struct ChipStyle {
     pub border: Color,
-    pub value: Color,
+    pub foreground: Color,
+}
+
+impl ChipStyle {
+    #[must_use]
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            border: theme.role(Role::Dim),
+            foreground: theme.role(Role::Text),
+        }
+    }
 }
 
 #[must_use]
-pub(crate) fn spans(label: &str, colors: ChipColors) -> Vec<Span<'static>> {
+pub(crate) fn spans(label: &str, colors: ChipStyle) -> Vec<Span<'static>> {
     vec![
         text(format!("{}{}", glyphs::chip::OPEN, glyphs::chip::PAD))
             .fg(colors.border)
             .into(),
-        text(label.to_uppercase()).fg(colors.value).into(),
+        text(label.to_uppercase()).fg(colors.foreground).into(),
         text(format!("{}{}", glyphs::chip::PAD, glyphs::chip::CLOSE))
             .fg(colors.border)
             .into(),
@@ -70,7 +83,7 @@ pub(crate) fn speed_chip_width(speed: Speed, mode: SpeedChip) -> u16 {
 pub(crate) fn speed_chip_spans(
     speed: Speed,
     mode: SpeedChip,
-    colors: ChipColors,
+    colors: ChipStyle,
 ) -> Option<Vec<Span<'static>>> {
     let label = speed_chip_text(speed, mode)?;
     Some(vec![
@@ -79,7 +92,7 @@ pub(crate) fn speed_chip_spans(
             .fg(colors.border)
             .dim()
             .into(),
-        text(label).fg(colors.value).dim().into(),
+        text(label).fg(colors.foreground).dim().into(),
     ])
 }
 
@@ -94,16 +107,16 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     use crate::primitive::chip::{
-        ChipColors,
+        ChipStyle,
         spans,
         speed_chip_spans,
         speed_chip_width,
     };
 
-    fn colors() -> ChipColors {
-        ChipColors {
+    fn colors() -> ChipStyle {
+        ChipStyle {
             border: Color::DarkGray,
-            value: Color::Cyan,
+            foreground: Color::Cyan,
         }
     }
 
@@ -170,9 +183,9 @@ mod tests {
     }
 
     fn joined_generic(text: &str) -> String {
-        let colors = ChipColors {
+        let colors = ChipStyle {
             border: Color::White,
-            value: Color::Red,
+            foreground: Color::Red,
         };
         spans(text, colors)
             .iter()

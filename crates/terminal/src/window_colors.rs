@@ -73,7 +73,7 @@ pub(crate) fn window_colors_sequence(
     theme: &Theme,
 ) -> Result<String, UnknownThemeError> {
     match command {
-        WindowColorsCmd::Apply(name) => sequence_for(name, theme),
+        WindowColorsCmd::Set(name) => sequence_for(name, theme),
         WindowColorsCmd::Reset => Ok(reset_sequence()),
     }
 }
@@ -132,15 +132,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case::apply_to_the_same_theme(
-        WindowColorsCmd::Apply(ThemeName::from_static(KNOWN_THEME)),
+    #[case::set_to_the_same_theme(
+        WindowColorsCmd::Set(ThemeName::from_static(KNOWN_THEME)),
         Ok(set_sequence(
             theme().colors.role(Role::WindowBackground),
             theme().colors.role(Role::Text),
         ))
     )]
-    #[case::apply_to_another_name(
-        WindowColorsCmd::Apply(ThemeName::from_static("no-such-theme")),
+    #[case::set_to_another_name(
+        WindowColorsCmd::Set(ThemeName::from_static("no-such-theme")),
         Err(UnknownThemeError {
             name: "no-such-theme".to_string(),
         })

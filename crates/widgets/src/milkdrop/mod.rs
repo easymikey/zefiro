@@ -148,29 +148,29 @@ impl MilkdropField {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MilkdropColors {
-    dim: Color,
+pub struct MilkdropStyle {
+    muted_foreground: Color,
     accent: Color,
-    bright: Color,
+    foreground: Color,
 }
 
-impl MilkdropColors {
+impl MilkdropStyle {
     #[must_use]
     pub fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         Self {
-            dim: theme.role(Role::Dim),
+            muted_foreground: theme.role(Role::Dim),
             accent: theme.role(Role::Accent),
-            bright: theme.role(Role::Text),
+            foreground: theme.role(Role::Text),
         }
     }
 
     fn color_for(&self, intensity: f32) -> Color {
         if intensity < COLOR_BAND_MID {
-            self.dim
+            self.muted_foreground
         } else if intensity < COLOR_BAND_HIGH {
             self.accent
         } else {
-            self.bright
+            self.foreground
         }
     }
 }
@@ -186,7 +186,7 @@ fn ramp_glyph(intensity: f32) -> &'static str {
 
 pub fn lines_into(
     field: &MilkdropField,
-    colors: &MilkdropColors,
+    style: &MilkdropStyle,
     output: &mut Vec<Line<'static>>,
 ) {
     if output.len() != field.height {
@@ -199,7 +199,7 @@ pub fn lines_into(
             let intensity = field.cell(CellPosition { column, row });
             let glyph = ramp_glyph(intensity);
             line.spans
-                .push(text(glyph).fg(colors.color_for(intensity)).into());
+                .push(text(glyph).fg(style.color_for(intensity)).into());
         }
     }
 }
@@ -213,8 +213,8 @@ mod tests {
         milkdrop::{
             CellPosition,
             MilkdropAdvance,
-            MilkdropColors,
             MilkdropField,
+            MilkdropStyle,
             lines_into,
         },
         spectrum::Spectrum,
@@ -238,13 +238,13 @@ mod tests {
     #[test]
     fn lines_renders_exactly_height_rows_of_exactly_width_cells() {
         let field = MilkdropField::new(20, 8);
-        let colors = MilkdropColors {
-            dim: Color::Black,
+        let style = MilkdropStyle {
+            muted_foreground: Color::Black,
             accent: Color::Red,
-            bright: Color::White,
+            foreground: Color::White,
         };
         let mut rendered = Vec::new();
-        lines_into(&field, &colors, &mut rendered);
+        lines_into(&field, &style, &mut rendered);
         assert_eq!(rendered.len(), 8);
         for line in &rendered {
             assert_eq!(line.spans.len(), 20);
@@ -254,27 +254,27 @@ mod tests {
     #[test]
     fn lines_matches_the_seven_row_variant_too() {
         let field = MilkdropField::new(20, 7);
-        let colors = MilkdropColors {
-            dim: Color::Black,
+        let style = MilkdropStyle {
+            muted_foreground: Color::Black,
             accent: Color::Red,
-            bright: Color::White,
+            foreground: Color::White,
         };
         let mut rendered = Vec::new();
-        lines_into(&field, &colors, &mut rendered);
+        lines_into(&field, &style, &mut rendered);
         assert_eq!(rendered.len(), 7);
     }
 
     #[test]
     fn lines_into_reuses_an_undersized_buffer_across_a_resize() {
-        let colors = MilkdropColors {
-            dim: Color::Black,
+        let style = MilkdropStyle {
+            muted_foreground: Color::Black,
             accent: Color::Red,
-            bright: Color::White,
+            foreground: Color::White,
         };
         let mut rendered = Vec::new();
-        lines_into(&MilkdropField::new(5, 3), &colors, &mut rendered);
+        lines_into(&MilkdropField::new(5, 3), &style, &mut rendered);
         assert_eq!(rendered.len(), 3);
-        lines_into(&MilkdropField::new(20, 8), &colors, &mut rendered);
+        lines_into(&MilkdropField::new(20, 8), &style, &mut rendered);
         assert_eq!(rendered.len(), 8);
         for line in &rendered {
             assert_eq!(line.spans.len(), 20);

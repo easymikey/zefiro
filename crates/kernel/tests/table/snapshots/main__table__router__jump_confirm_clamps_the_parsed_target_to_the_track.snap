@@ -10,16 +10,15 @@ expression: "walked(model, messages)"
                 JumpToTime,
             ),
         ),
-        One(
+        [
             Animate(
                 OverlayOpened,
             ),
-        ),
+        ],
         Playing {
             track: Track {
-                path: "/m/0.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/m/0.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -44,7 +43,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "0.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 0ns,
@@ -97,12 +98,11 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Playing {
             track: Track {
-                path: "/m/0.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/m/0.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -127,7 +127,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "0.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 0ns,
@@ -180,12 +182,11 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Playing {
             track: Track {
-                path: "/m/0.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/m/0.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -210,7 +211,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "0.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 0ns,
@@ -263,12 +266,11 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Playing {
             track: Track {
-                path: "/m/0.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/m/0.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -293,7 +295,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "0.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 0ns,
@@ -346,12 +350,11 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Playing {
             track: Track {
-                path: "/m/0.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/m/0.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -376,7 +379,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "0.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 0ns,
@@ -429,12 +434,11 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Playing {
             track: Track {
-                path: "/m/0.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/m/0.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -459,7 +463,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "0.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 0ns,
@@ -508,28 +514,25 @@ expression: "walked(model, messages)"
         Overlay(
             Confirm,
         ),
-        Batch(
-            [
-                Animate(
-                    OverlayClosed,
+        [
+            Animate(
+                OverlayClosed,
+            ),
+            Audio(
+                Seek(
+                    100s,
                 ),
-                Audio(
-                    Seek(
-                        100s,
-                    ),
+            ),
+            Macos(
+                SetPosition(
+                    100s,
                 ),
-                Macos(
-                    PlaybackPosition(
-                        100s,
-                    ),
-                ),
-            ],
-        ),
+            ),
+        ],
         Playing {
             track: Track {
-                path: "/m/0.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/m/0.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -554,7 +557,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "0.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 100s,

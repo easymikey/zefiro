@@ -33,13 +33,13 @@ mod transport;
 mod workspace;
 
 pub use bounded::Bounded;
-pub use chord::{CharSink, Chord, ChordParseError, ChordPrefix, KeyPattern};
-pub use crossfade::{Crossfade, CrossfadeOutOfRange};
+pub use chord::{Chord, ChordParseError, ChordPrefix, KeyPattern};
+pub use crossfade::{Crossfade, CrossfadeError};
 pub use cursor::Cursor;
 pub use cursor_over::CursorOver;
 pub(crate) use cursor_over::cycled;
 pub use direction::Direction;
-pub use driver::{Driver, DriverError, DriverRecord, DriverStatus, Drivers};
+pub use driver::{DriverError, DriverName, DriverRecord, DriverStatus, Drivers};
 pub use favorites::Favorites;
 pub use history::{HISTORY_LIMIT, HistoryEntry};
 pub use index::{TrackIndex, ViewIndex};
@@ -89,17 +89,17 @@ pub use sleep::SleepTimer;
 pub use sleep_presets::{SleepPresetError, SleepPresets};
 pub use speed::Speed;
 pub use startup::{Shuffle, Startup};
-pub use supervision::{Announce, Decision, Restarts, Supervision, supervise};
+pub use supervision::{Announce, Decision, Restarts, Supervision, decide_restart};
 pub use theme::{ThemeChoice, ThemeName, ThemeNameError, Themes};
 pub(crate) use time::parse_timecode;
 pub use time::{Freshness, Moment, Revision, Revisions, TimecodeError, format_time};
-pub use track::{AudioFormat, Tagging, Tags, Track};
+pub use track::{AudioFormat, Tagging, Tags, Track, TrackRef};
 pub use transport::{Output, PRELOAD_LEAD, StreamError, Transport};
 pub(crate) use transport::{SEEK_LARGE, SEEK_MEDIUM, SEEK_SMALL};
 pub use workspace::{
     Browse,
     ConfigError,
-    ConfigFile,
+    ConfigName,
     SaveLine,
     SavePhase,
     TOAST_LIFETIME,

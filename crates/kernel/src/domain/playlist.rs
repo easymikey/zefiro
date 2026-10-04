@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use strum::{EnumIter, IntoStaticStr};
 
-use crate::domain::{Cursor, Direction, Track, ViewIndex};
+use crate::domain::{Cursor, Direction, Track, TrackRef, ViewIndex};
 
 const ILLEGAL_NAME_CHARS: [char; 9] = ['/', '\\', '?', '<', '>', ':', '*', '|', '"'];
 
@@ -71,7 +71,7 @@ pub enum PlayOrder {
     #[default]
     Linear,
     ShufflePending,
-    Shuffle(Vec<usize>),
+    Shuffle(Vec<ViewIndex>),
 }
 
 impl PlayOrder {
@@ -83,7 +83,7 @@ impl PlayOrder {
         }
     }
 
-    fn order(&self) -> Option<&[usize]> {
+    fn order(&self) -> Option<&[ViewIndex]> {
         match self {
             PlayOrder::Linear | PlayOrder::ShufflePending => None,
             PlayOrder::Shuffle(order) if order.is_empty() => None,
@@ -174,9 +174,11 @@ impl Playlist {
         let current = self.cursor.index();
         let position = order
             .iter()
-            .position(|&track_index| track_index == current)
+            .position(|track_index| track_index.get() == current)
             .unwrap_or(0);
-        order.get(direction.wrapped(position, order.len())).copied()
+        order
+            .get(direction.wrapped(position, order.len()))
+            .map(|index| index.get())
     }
 
     #[must_use]
@@ -186,6 +188,13 @@ impl Playlist {
             None => self.skip_linear(Direction::Next)?,
         };
         self.tracks.get(next_index)
+    }
+
+    pub fn index_of(&self, source: &TrackRef) -> Option<ViewIndex> {
+        self.tracks
+            .iter()
+            .position(|track| track.source() == source)
+            .map(ViewIndex::new)
     }
 
     pub fn jump(&mut self, index: ViewIndex) -> Option<&Arc<Track>> {

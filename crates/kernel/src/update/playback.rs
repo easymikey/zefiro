@@ -2,11 +2,11 @@ use std::time::Duration;
 
 use crate::{
     cmd::{Cmd, Cue},
-    domain::{Moment, Output, Player, SEEK_MEDIUM},
+    domain::{Direction, Moment, Output, Player, SEEK_MEDIUM},
     message::{PlaybackRequest, SeekTenths},
     update::{
         audio,
-        error::UpdateError,
+        machine::{Machine, Unhandled},
         player::{self, Anchor, PlaybackParts, PlayerMessage, Stamp},
         playlist::PlaylistMessage,
         transport::TransportMessage,
@@ -17,13 +17,17 @@ pub(crate) fn update(
     playback: &mut PlaybackParts<'_>,
     message: PlaybackRequest,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     match message {
         PlaybackRequest::Toggle => play_pause(playback, now),
         PlaybackRequest::Play => resume_playback(playback, now),
         PlaybackRequest::Pause => pause_playback(playback, now),
-        PlaybackRequest::SeekForward => seek_by(playback, SEEK_MEDIUM, now),
-        PlaybackRequest::SeekBack => seek_by(playback, -SEEK_MEDIUM, now),
+        PlaybackRequest::SeekForward => {
+            seek_by(playback, (Direction::Next, SEEK_MEDIUM), now)
+        }
+        PlaybackRequest::SeekBack => {
+            seek_by(playback, (Direction::Previous, SEEK_MEDIUM), now)
+        }
         PlaybackRequest::HoldForOverlay => {
             player::update_player(playback, PlayerMessage::Hold(now), now)
         }
@@ -35,9 +39,11 @@ pub(crate) fn update(
         PlaybackRequest::Previous => audio::previous(playback, now),
         PlaybackRequest::ToggleShuffle => toggle_shuffle(playback),
         PlaybackRequest::CycleRepeat => cycle_repeat(playback),
-        PlaybackRequest::SeekBy { seconds } => seek_by(playback, seconds, now),
-        PlaybackRequest::StepVolume { steps } => step_volume(playback, steps),
-        PlaybackRequest::StepSpeed { steps } => step_speed(playback, steps, now),
+        PlaybackRequest::SeekBy { direction, by } => {
+            seek_by(playback, (direction, by), now)
+        }
+        PlaybackRequest::StepVolume(direction) => step_volume(playback, direction),
+        PlaybackRequest::StepSpeed(direction) => step_speed(playback, direction, now),
         PlaybackRequest::CycleSleep => cycle_sleep(playback),
         PlaybackRequest::AbMark => mark_ab(playback, now),
         PlaybackRequest::SeekTo(target) => seek_to(playback, target, now),
@@ -48,9 +54,9 @@ pub(crate) fn update(
 fn resume_playback(
     playback: &mut PlaybackParts<'_>,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     if playback.player.is_playing() {
-        Ok(Cmd::None)
+        Ok(Cmd::none())
     } else {
         play_pause(playback, now)
     }
@@ -59,105 +65,109 @@ fn resume_playback(
 fn pause_playback(
     playback: &mut PlaybackParts<'_>,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     if playback.player.is_playing() {
         play_pause(playback, now)
     } else {
-        Ok(Cmd::None)
+        Ok(Cmd::none())
     }
 }
 
-fn toggle_shuffle(playback: &mut PlaybackParts<'_>) -> Result<Cmd, UpdateError> {
-    let cmd = playback.playlist.apply(PlaylistMessage::ToggleShuffle);
+fn toggle_shuffle(playback: &mut PlaybackParts<'_>) -> Result<Cmd, Unhandled> {
+    let cmd = playback
+        .playlist
+        .transition(PlaylistMessage::ToggleShuffle)?;
     Ok(cmd.then(Cue::PlayOrderChanged.into()))
 }
 
-fn cycle_repeat(playback: &mut PlaybackParts<'_>) -> Result<Cmd, UpdateError> {
-    let cmd = playback.playlist.apply(PlaylistMessage::CycleRepeat);
+fn cycle_repeat(playback: &mut PlaybackParts<'_>) -> Result<Cmd, Unhandled> {
+    let cmd = playback.playlist.transition(PlaylistMessage::CycleRepeat)?;
     Ok(cmd.then(Cue::PlayOrderChanged.into()))
 }
 
 fn step_volume(
     playback: &mut PlaybackParts<'_>,
-    steps: i8,
-) -> Result<Cmd, UpdateError> {
+    direction: Direction,
+) -> Result<Cmd, Unhandled> {
     let cmd = playback
         .transport
-        .apply(TransportMessage::StepVolume { steps });
+        .transition(TransportMessage::StepVolume(direction))?;
     Ok(cmd.then(Cue::VolumeChanged.into()))
 }
 
 fn step_speed(
     playback: &mut PlaybackParts<'_>,
-    steps: i8,
+    direction: Direction,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     let cmd = playback
         .transport
-        .apply(TransportMessage::StepSpeed { steps });
+        .transition(TransportMessage::StepSpeed(direction))?;
     let since = player::playing_since(playback.player);
-    *playback.player =
-        std::mem::take(playback.player).reanchored(now, playback.transport.speed);
+    *playback.player = std::mem::replace(playback.player, Player::Stopped)
+        .reanchored(now, playback.transport.speed);
     if let Some(since) = since {
         player::accumulate(playback.workspace, since, now);
     }
     Ok(cmd.then(player::arm(playback, now)))
 }
 
-fn cycle_sleep(playback: &mut PlaybackParts<'_>) -> Result<Cmd, UpdateError> {
+fn cycle_sleep(playback: &mut PlaybackParts<'_>) -> Result<Cmd, Unhandled> {
     let candidate = playback.revisions.effects.next();
-    let cmd = playback.transport.apply(TransportMessage::CycleSleep {
-        presets: playback.settings.audio.sleep_presets.clone(),
-        revision: candidate,
-    });
+    let cmd = playback
+        .transport
+        .transition(TransportMessage::CycleSleep {
+            presets: playback.settings.audio.sleep_presets.clone(),
+            revision: candidate,
+        })?;
     if playback.transport.sleep.is_some() {
         playback.revisions.commit_sleep(candidate);
     }
     Ok(cmd)
 }
 
-fn mark_ab(playback: &mut PlaybackParts<'_>, now: Moment) -> Result<Cmd, UpdateError> {
+fn mark_ab(playback: &mut PlaybackParts<'_>, now: Moment) -> Result<Cmd, Unhandled> {
     let position = playback
         .player
         .current()
         .map(|_| playback.player.position_at(now));
-    Ok(playback
+    playback
         .transport
-        .apply(TransportMessage::AbMark { position }))
+        .transition(TransportMessage::AbMark(position))
 }
 
 fn seek_to(
     playback: &mut PlaybackParts<'_>,
     target: Duration,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     clamped(playback.player, target)
-        .map_or_else(|| Ok(Cmd::None), |target| seek(playback, target, now))
+        .map_or_else(|| Ok(Cmd::none()), |target| seek(playback, target, now))
 }
 
 fn seek_fraction(
     playback: &mut PlaybackParts<'_>,
     tenths: SeekTenths,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     fraction_target(playback.player, tenths)
-        .map_or_else(|| Ok(Cmd::None), |target| seek(playback, target, now))
+        .map_or_else(|| Ok(Cmd::none()), |target| seek(playback, target, now))
 }
 
 fn seek_by(
     playback: &mut PlaybackParts<'_>,
-    seconds: i64,
+    step: (Direction, Duration),
     now: Moment,
-) -> Result<Cmd, UpdateError> {
-    let target = relative_target(playback.player, seconds, now);
+) -> Result<Cmd, Unhandled> {
+    let target = relative_target(playback.player, step, now);
     seek(playback, target, now)
 }
 
 pub(crate) fn play_pause(
     playback: &mut PlaybackParts<'_>,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
-    if matches!(playback.transport.output, Output::Lost { .. })
+) -> Result<Cmd, Unhandled> {
+    if matches!(playback.transport.output, Output::Lost(..))
         && !playback.player.is_playing()
     {
         let again = playback
@@ -165,14 +175,15 @@ pub(crate) fn play_pause(
             .current()
             .cloned()
             .or_else(|| playback.playlist.current().cloned());
-        return again.map_or(Ok(Cmd::None), |track| audio::start(playback, track, now));
+        return again
+            .map_or(Ok(Cmd::none()), |track| audio::start(playback, track, now));
     }
     let current = playback.playlist.current().cloned();
     let stamp = Stamp::pending(playback.transport, playback.revisions, now);
     player::update_player(playback, PlayerMessage::Toggle { current, stamp }, now)
 }
 
-fn release(playback: &mut PlaybackParts<'_>, now: Moment) -> Result<Cmd, UpdateError> {
+fn release(playback: &mut PlaybackParts<'_>, now: Moment) -> Result<Cmd, Unhandled> {
     let anchor = Anchor::at(playback.transport, now);
     player::update_player(playback, PlayerMessage::Release(anchor), now)
 }
@@ -181,7 +192,7 @@ fn seek(
     playback: &mut PlaybackParts<'_>,
     target: Duration,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     player::update_player(playback, PlayerMessage::Seek { target, now }, now)
 }
 
@@ -198,12 +209,15 @@ fn fraction_target(player: &Player, tenths: SeekTenths) -> Option<Duration> {
     clamped(player, duration * u32::from(tenths.get()) / 10)
 }
 
-fn relative_target(player: &Player, seconds: i64, now: Moment) -> Duration {
+fn relative_target(
+    player: &Player,
+    (direction, by): (Direction, Duration),
+    now: Moment,
+) -> Duration {
     let at = player.position_at(now);
-    let moved = if seconds < 0 {
-        at.saturating_sub(Duration::from_secs(seconds.unsigned_abs()))
-    } else {
-        at + Duration::from_secs(u64::try_from(seconds).unwrap_or(0))
+    let moved = match direction {
+        Direction::Previous => at.saturating_sub(by),
+        Direction::Next => at + by,
     };
     moved.min(player::duration_of(player))
 }
@@ -290,7 +304,7 @@ mod tests {
         .unwrap();
         case.expected.map_or_else(
             || {
-                assert!(matches!(cmd, Cmd::None));
+                assert!(cmd == Cmd::none());
                 assert_eq!(model.player.position_at(Moment::default()), case.at);
             },
             |target| {
@@ -302,9 +316,8 @@ mod tests {
 
     fn seeks_to(cmd: &Cmd, target: Duration) -> bool {
         matches!(
-            cmd,
-            Cmd::Batch(effects)
-                if matches!(effects.first(), Some(Effect::Audio(AudioCmd::Seek(at))) if *at == target)
+            cmd.effects().as_slice(),
+            [Effect::Audio(AudioCmd::Seek(at)), ..] if *at == target
         )
     }
 }

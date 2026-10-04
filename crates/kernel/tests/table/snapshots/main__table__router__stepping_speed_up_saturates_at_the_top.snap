@@ -6,11 +6,11 @@ expression: "walked(model, messages)"
 [
     (
         Playback(
-            StepSpeed {
-                steps: 1,
-            },
+            StepSpeed(
+                Next,
+            ),
         ),
-        One(
+        [
             Audio(
                 SetSpeed(
                     Speed(
@@ -18,7 +18,7 @@ expression: "walked(model, messages)"
                     ),
                 ),
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {
@@ -47,11 +47,11 @@ expression: "walked(model, messages)"
     ),
     (
         Playback(
-            StepSpeed {
-                steps: 1,
-            },
+            StepSpeed(
+                Next,
+            ),
         ),
-        One(
+        [
             Audio(
                 SetSpeed(
                     Speed(
@@ -59,7 +59,7 @@ expression: "walked(model, messages)"
                     ),
                 ),
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {
@@ -88,11 +88,11 @@ expression: "walked(model, messages)"
     ),
     (
         Playback(
-            StepSpeed {
-                steps: 1,
-            },
+            StepSpeed(
+                Next,
+            ),
         ),
-        One(
+        [
             Audio(
                 SetSpeed(
                     Speed(
@@ -100,7 +100,7 @@ expression: "walked(model, messages)"
                     ),
                 ),
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {
@@ -129,11 +129,11 @@ expression: "walked(model, messages)"
     ),
     (
         Playback(
-            StepSpeed {
-                steps: 1,
-            },
+            StepSpeed(
+                Next,
+            ),
         ),
-        One(
+        [
             Audio(
                 SetSpeed(
                     Speed(
@@ -141,7 +141,7 @@ expression: "walked(model, messages)"
                     ),
                 ),
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {
@@ -170,11 +170,11 @@ expression: "walked(model, messages)"
     ),
     (
         Playback(
-            StepSpeed {
-                steps: 1,
-            },
+            StepSpeed(
+                Next,
+            ),
         ),
-        One(
+        [
             Audio(
                 SetSpeed(
                     Speed(
@@ -182,7 +182,7 @@ expression: "walked(model, messages)"
                     ),
                 ),
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {

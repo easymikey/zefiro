@@ -4,9 +4,8 @@ expression: loaded
 ---
 [
     Track {
-        path: "/music/one.flac",
-        duration: Some(
-            180s,
+        source: Local(
+            "/music/one.flac",
         ),
         tags: Tags {
             title: Some(
@@ -33,12 +32,13 @@ expression: loaded
             replay_gain: None,
         },
         display: "Moon River",
-        tagging: Read,
+        tagging: Read(
+            180s,
+        ),
     },
     Track {
-        path: "/music/two.flac",
-        duration: Some(
-            180s,
+        source: Local(
+            "/music/two.flac",
         ),
         tags: Tags {
             title: Some(
@@ -65,6 +65,8 @@ expression: loaded
             replay_gain: None,
         },
         display: "Clair de Lune",
-        tagging: Read,
+        tagging: Read(
+            180s,
+        ),
     },
 ]

@@ -1,3 +1,4 @@
+mod appearance;
 mod browse;
 mod cues;
 mod history;
@@ -5,12 +6,11 @@ mod jump;
 mod keymap;
 mod keymap_overrides;
 mod library;
-mod look;
 mod output_lost;
 mod overlay_outer;
 mod player;
 mod router;
 mod search;
 mod settings;
-mod settings_custom;
+mod settings_appearance;
 mod toasts;

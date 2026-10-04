@@ -4,19 +4,26 @@ assertion_line: 207
 expression: log
 ---
 [
-    Preload(
-        Gapless(
-            "/b",
-        ),
-    ),
-    Nothing,
-    Batch(
-        [
+    Cmd {
+        effects: [
+            Preload {
+                path: "/b",
+                mode: Gapless,
+            },
+        ],
+        messages: [],
+    },
+    Cmd {
+        effects: [],
+        messages: [],
+    },
+    Cmd {
+        effects: [
             Advance,
-            Send(
-                TrackChanged,
-            ),
             Report,
         ],
-    ),
+        messages: [
+            TrackChanged,
+        ],
+    },
 ]

@@ -14,9 +14,7 @@ pub enum StreamError {
 pub enum Output {
     #[default]
     Ready,
-    Lost {
-        kind: StreamError,
-    },
+    Lost(StreamError),
 }
 
 pub const PRELOAD_LEAD: Duration = Duration::from_secs(10);
@@ -42,6 +40,6 @@ impl Default for Transport {
     }
 }
 
-pub(crate) const SEEK_SMALL: i64 = 5;
-pub(crate) const SEEK_MEDIUM: i64 = 10;
-pub(crate) const SEEK_LARGE: i64 = 30;
+pub(crate) const SEEK_SMALL: Duration = Duration::from_secs(5);
+pub(crate) const SEEK_MEDIUM: Duration = Duration::from_secs(10);
+pub(crate) const SEEK_LARGE: Duration = Duration::from_secs(30);

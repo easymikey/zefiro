@@ -8,7 +8,7 @@ use std::{
 };
 
 use crossbeam_channel::{Receiver, Select, bounded, never};
-use kernel::{MacosCmd, MacosEvent, Outbox, SendError, Track};
+use kernel::{MacosCmd, MacosError, MacosEvent, Outbox, SendError, Track};
 use objc2::rc::{Retained, autoreleasepool};
 use objc2_media_player::MPMediaItemArtwork;
 
@@ -117,15 +117,15 @@ impl MacosLoop {
     fn perform(&mut self, command: MacosCmd, now: Instant) {
         match command {
             MacosCmd::NowPlaying(now_playing) => self.show(now_playing, now),
-            MacosCmd::PlaybackState(playback) => {
+            MacosCmd::SetPlayback(playback) => {
                 self.clock = self.clock.change_playback(playback, now);
                 self.publish(now);
             }
-            MacosCmd::PlaybackPosition(at) => {
+            MacosCmd::SetPosition(at) => {
                 self.clock = self.clock.seek(at, now);
                 self.publish(now);
             }
-            MacosCmd::Volume(volume) => {
+            MacosCmd::SetVolume(volume) => {
                 if write_volume(default_output_device(), volume).is_ok() {
                     self.hardware.echo.apply(VolumeMessage::Written(volume));
                 }
@@ -187,8 +187,9 @@ impl MacosLoop {
         if let Some(device) = effect.rebind
             && let Err(error) = watch.rebind_to(device)
         {
-            let detail = error.to_string();
-            effect.events.push(MacosEvent::HardwareWatchError(detail));
+            effect
+                .events
+                .push(MacosEvent::Error(MacosError::HardwareWatch(error.status())));
         }
         send_events(effect.events, outbox)
     }
@@ -209,15 +210,15 @@ fn send_events(
 
 fn keep_last_volume(commands: Vec<MacosCmd>) -> Vec<MacosCmd> {
     let last_volume = commands.iter().rev().find_map(|command| match command {
-        MacosCmd::Volume(volume) => Some(*volume),
+        MacosCmd::SetVolume(volume) => Some(*volume),
         MacosCmd::NowPlaying(_)
-        | MacosCmd::PlaybackState(_)
-        | MacosCmd::PlaybackPosition(_) => None,
+        | MacosCmd::SetPlayback(_)
+        | MacosCmd::SetPosition(_) => None,
     });
     commands
         .into_iter()
-        .filter(|command| !matches!(command, MacosCmd::Volume(_)))
-        .chain(last_volume.map(MacosCmd::Volume))
+        .filter(|command| !matches!(command, MacosCmd::SetVolume(_)))
+        .chain(last_volume.map(MacosCmd::SetVolume))
         .collect()
 }
 
@@ -240,7 +241,7 @@ mod tests {
     use crate::macos_loop::{keep_last_volume, send_events};
 
     fn volume(level: u8) -> MacosCmd {
-        MacosCmd::Volume(Percent::clamped(level))
+        MacosCmd::SetVolume(Percent::clamped(level))
     }
 
     #[rstest]
@@ -250,20 +251,20 @@ mod tests {
     )]
     #[case::volumes_among_other_commands(
         vec![
-            MacosCmd::PlaybackState(Playback::Playing),
+            MacosCmd::SetPlayback(Playback::Playing),
             volume(10),
-            MacosCmd::PlaybackState(Playback::Paused),
+            MacosCmd::SetPlayback(Playback::Paused),
             volume(20),
         ],
         vec![
-            MacosCmd::PlaybackState(Playback::Playing),
-            MacosCmd::PlaybackState(Playback::Paused),
+            MacosCmd::SetPlayback(Playback::Playing),
+            MacosCmd::SetPlayback(Playback::Paused),
             volume(20),
         ]
     )]
     #[case::no_volume_at_all(
-        vec![MacosCmd::PlaybackState(Playback::Playing)],
-        vec![MacosCmd::PlaybackState(Playback::Playing)]
+        vec![MacosCmd::SetPlayback(Playback::Playing)],
+        vec![MacosCmd::SetPlayback(Playback::Playing)]
     )]
     fn keep_last_volume_puts_the_last_volume_last_and_the_rest_in_order(
         #[case] commands: Vec<MacosCmd>,

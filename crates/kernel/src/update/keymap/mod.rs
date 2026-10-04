@@ -6,5 +6,5 @@ mod overlays;
 pub(crate) mod table;
 
 pub use bindings::Bindings;
-pub use chord::{KeyBinding, KeyOutcome};
+pub use chord::KeyBinding;
 pub use lookup::route;

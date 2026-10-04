@@ -43,6 +43,15 @@ impl Playing {
             preloading: None,
         }
     }
+
+    pub(crate) fn promote(&mut self) -> bool {
+        let Next::Crossfading { preload, .. } = &mut self.next else {
+            return false;
+        };
+        std::mem::swap(&mut self.current, preload);
+        self.next = Next::None;
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -57,7 +66,7 @@ pub(crate) enum Incoming {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct CurrentTrack {
+pub struct CurrentTrack {
     pub(crate) total: Option<Duration>,
     pub(crate) gain: Option<f32>,
     pub(crate) path: PathBuf,
@@ -70,8 +79,14 @@ pub(crate) enum Next {
     Gapless(PathBuf),
     Crossfading {
         preload: CurrentTrack,
-        fading: bool,
+        fade: Fade,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Fade {
+    Armed,
+    Running,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -209,7 +209,7 @@ mod tests {
         assert!(
             tracks
                 .iter()
-                .all(|track| track.tagging() == Tagging::Listed)
+                .all(|track| matches!(track.tagging(), Tagging::Listed(_)))
         );
         assert_eq!(
             tracks
@@ -298,7 +298,7 @@ mod tests {
         assert!(
             tracks
                 .iter()
-                .all(|track| track.tagging() == Tagging::Listed)
+                .all(|track| matches!(track.tagging(), Tagging::Listed(_)))
         );
     }
 

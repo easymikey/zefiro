@@ -72,8 +72,8 @@ pub enum Action {
     Settings,
     SettingsNavigateDown,
     SettingsNavigateUp,
-    SettingsAdjustDown,
-    SettingsAdjustUp,
+    SettingsStepDown,
+    SettingsStepUp,
     SettingsActivate,
     SettingsClose,
     MusicDir,
@@ -151,10 +151,10 @@ impl fmt::Debug for KeymapOverrides {
 pub enum KeyValidationError {
     #[error(transparent)]
     InvalidChord(#[from] ChordParseError),
-    #[error("key collision on `{chord}`")]
-    ChordCollision { chord: Chord },
-    #[error("key collision left `{action}` unbound")]
-    ActionUnbound { action: Action },
+    #[error("key collision on `{0}`")]
+    ChordCollision(Chord),
+    #[error("key collision left `{0}` unbound")]
+    ActionUnbound(Action),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,8 +257,7 @@ fn configured_placement(
                     placement.won.insert(action, slot);
                 }
                 Entry::Occupied(_) => {
-                    errors
-                        .push(KeyValidationError::ChordCollision { chord: slot.chord });
+                    errors.push(KeyValidationError::ChordCollision(slot.chord));
                 }
             }
             placement
@@ -296,9 +295,7 @@ fn default_chords(
                 })
                 .collect();
             if placed.is_empty() {
-                errors.push(KeyValidationError::ActionUnbound {
-                    action: candidate.action,
-                });
+                errors.push(KeyValidationError::ActionUnbound(candidate.action));
             } else {
                 final_chords.insert(candidate.action, placed);
             }
@@ -390,19 +387,15 @@ mod validation_error_tests {
         "invalid key chord `not-a-key`"
     )]
     #[case::a_chord_collision_names_the_chord(
-        KeyValidationError::ChordCollision {
-            chord: Chord::Key(Key {
-                code: KeyCode::Char('x'),
-                modifiers: Modifiers::NONE,
-            }),
-        }
+        KeyValidationError::ChordCollision(Chord::Key(Key {
+            code: KeyCode::Char('x'),
+            modifiers: Modifiers::NONE,
+        }))
         .to_string(),
         "key collision on `x`"
     )]
     #[case::an_unbound_action_names_the_action(
-        KeyValidationError::ActionUnbound {
-            action: Action::Previous,
-        }
+        KeyValidationError::ActionUnbound(Action::Previous)
         .to_string(),
         "key collision left `Previous` unbound"
     )]
@@ -425,12 +418,10 @@ mod validation_error_tests {
                 KeyValidationError::InvalidChord(ChordParseError {
                     spelling: "bad".into(),
                 }),
-                KeyValidationError::ChordCollision {
-                    chord: Chord::Key(Key {
-                        code: KeyCode::Char('p'),
-                        modifiers: Modifiers::NONE,
-                    }),
-                },
+                KeyValidationError::ChordCollision(Chord::Key(Key {
+                    code: KeyCode::Char('p'),
+                    modifiers: Modifiers::NONE,
+                })),
             ],
             ..Keymap::default()
         };

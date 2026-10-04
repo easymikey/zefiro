@@ -6,10 +6,9 @@ use kernel::{
     Model,
     Moment,
     domain::{DeviceDefault, ListedDevice, OutputDevice},
-    update::update,
 };
 
-use crate::support::{device, first_toast_expiry};
+use crate::support::{device, first_toast_expiry, step::update};
 
 #[test]
 fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
@@ -28,10 +27,7 @@ fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
     assert_eq!(m.settings.audio.device, OutputDevice::SystemDefault);
     assert_eq!(
         cmd,
-        Cmd::Batch(vec![
-            Effect::Animate(Cue::ToastRaised),
-            first_toast_expiry()
-        ])
+        Cmd::from_iter([Effect::Animate(Cue::ToastRaised), first_toast_expiry()])
     );
     let toast = m
         .workspace
@@ -62,7 +58,7 @@ fn a_device_that_opened_as_asked_leaves_the_toast_alone() {
         m.settings.audio.device,
         OutputDevice::Named(device("usb-dac"))
     );
-    assert_eq!(cmd, Cmd::None);
+    assert_eq!(cmd, Cmd::none());
     assert!(m.workspace.toasts.is_empty());
 }
 
@@ -89,5 +85,5 @@ fn devices_loaded_replaces_output_devices_and_emits_nothing() {
     .unwrap();
 
     assert_eq!(m.settings.output_devices, devices);
-    assert_eq!(cmd, Cmd::None);
+    assert_eq!(cmd, Cmd::none());
 }

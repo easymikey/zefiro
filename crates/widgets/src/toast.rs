@@ -246,14 +246,14 @@ impl<'a> Toaster<'a> {
         })
     }
 
-    pub(crate) fn render_in(self, areas: ToastAreas, canvas: Canvas<'_>) {
+    pub(crate) fn paint(self, areas: ToastAreas, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
         for placed in self.placed(area, Form::painted(areas)) {
-            self.paint(&placed, buffer);
+            self.paint_toast(&placed, buffer);
         }
     }
 
-    fn paint(&self, placed: &Placed<'_>, buffer: &mut Buffer) {
+    fn paint_toast(&self, placed: &Placed<'_>, buffer: &mut Buffer) {
         let accent = self.style.accent(placed.toast.kind);
         let rect = placed.rect;
         Clear.render(rect, buffer);
@@ -294,7 +294,7 @@ impl<'a> Toaster<'a> {
 impl Widget for Toaster<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         if let Some(areas) = self.areas(area, Breakpoint::Full) {
-            self.render_in(areas, Canvas { area, buffer });
+            self.paint(areas, Canvas { area, buffer });
         }
     }
 }

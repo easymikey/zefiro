@@ -1,22 +1,20 @@
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{collections::HashSet, sync::Arc};
+
+use crate::domain::TrackRef;
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Favorites(Arc<HashSet<PathBuf>>);
+pub struct Favorites(Arc<HashSet<TrackRef>>);
 
 impl Favorites {
     #[must_use]
-    pub fn is_favorite(&self, path: &Path) -> bool {
-        self.0.contains(path)
+    pub fn is_favorite(&self, track: &TrackRef) -> bool {
+        self.0.contains(track)
     }
 
-    pub fn toggle(&mut self, path: PathBuf) {
+    pub fn toggle(&mut self, track: TrackRef) {
         let set = Arc::make_mut(&mut self.0);
-        if !set.remove(&path) {
-            set.insert(path);
+        if !set.remove(&track) {
+            set.insert(track);
         }
     }
 
@@ -25,25 +23,23 @@ impl Favorites {
         self.0.is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &PathBuf> {
+    pub fn iter(&self) -> impl Iterator<Item = &TrackRef> {
         self.0.iter()
     }
 }
 
-impl FromIterator<PathBuf> for Favorites {
-    fn from_iter<I: IntoIterator<Item = PathBuf>>(paths: I) -> Self {
-        Self(Arc::new(paths.into_iter().collect()))
+impl FromIterator<TrackRef> for Favorites {
+    fn from_iter<I: IntoIterator<Item = TrackRef>>(tracks: I) -> Self {
+        Self(Arc::new(tracks.into_iter().collect()))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use crate::domain::{TrackRef, favorites::Favorites};
 
-    use crate::domain::favorites::Favorites;
-
-    fn path(text: &str) -> PathBuf {
-        PathBuf::from(text)
+    fn path(text: &str) -> TrackRef {
+        TrackRef::Local(text.into())
     }
 
     #[test]

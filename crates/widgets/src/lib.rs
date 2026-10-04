@@ -48,7 +48,7 @@ pub use animation::{
 };
 pub use card::{CardMetrics, CoverArt};
 pub use geometry::DEFAULT_CELL_ASPECT;
-pub use milkdrop::{MilkdropAdvance, MilkdropColors, MilkdropField, lines_into};
+pub use milkdrop::{MilkdropAdvance, MilkdropField, MilkdropStyle, lines_into};
 pub use overlay::modal::{ModalAreas, ModalScrollAreas, OverlayAreas};
 pub use pixels::{
     CellPixels,

@@ -8,21 +8,18 @@ expression: "walked(model, messages)"
         Playback(
             ToggleShuffle,
         ),
-        Batch(
-            [
-                Animate(
-                    PlayOrderChanged,
-                ),
-                RollShuffle {
-                    len: 4,
-                },
-            ],
-        ),
+        [
+            Animate(
+                PlayOrderChanged,
+            ),
+            RollShuffle(
+                4,
+            ),
+        ],
         Playing {
             track: Track {
-                path: "/tmp/track0.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/tmp/track0.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -47,7 +44,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "track0.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 0ns,
@@ -94,12 +93,11 @@ expression: "walked(model, messages)"
                 Index(1),
             ],
         ),
-        None,
+        [],
         Playing {
             track: Track {
-                path: "/tmp/track0.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/tmp/track0.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -124,7 +122,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "track0.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 0ns,
@@ -150,10 +150,10 @@ expression: "walked(model, messages)"
         Off,
         Shuffle(
             [
-                2,
-                0,
-                3,
-                1,
+                Index(2),
+                Index(0),
+                Index(3),
+                Index(1),
             ],
         ),
         Transport {
@@ -173,92 +173,92 @@ expression: "walked(model, messages)"
         Audio(
             Ended,
         ),
-        Batch(
-            [
-                Audio(
-                    Load(
-                        TrackLoad {
-                            path: "/tmp/track3.flac",
-                            gain: None,
-                            revision: Revision(
-                                1,
-                            ),
-                        },
-                    ),
-                ),
-                Library(
-                    AppendHistory(
-                        HistoryEntry {
-                            path: "/tmp/track3.flac",
-                            title: "track3",
-                            artist: None,
-                            at: Moment(
-                                0ns,
-                            ),
-                        },
-                    ),
-                ),
-                Macos(
-                    NowPlaying(
-                        Some(
-                            Track {
-                                path: "/tmp/track3.flac",
-                                duration: Some(
-                                    100s,
-                                ),
-                                tags: Tags {
-                                    title: None,
-                                    artist: None,
-                                    album: None,
-                                    album_artist: None,
-                                    date: None,
-                                    genre: None,
-                                    track: None,
-                                    track_total: None,
-                                    disc: None,
-                                    composer: None,
-                                    comment: None,
-                                    lyrics: None,
-                                },
-                                audio_format: AudioFormat {
-                                    format: None,
-                                    bitrate_kbps: None,
-                                    sample_rate_hz: None,
-                                    bits_per_sample: None,
-                                    channels: None,
-                                    replay_gain: None,
-                                },
-                                display: "track3.flac",
-                                tagging: Read,
-                            },
+        [
+            Audio(
+                Load(
+                    TrackLoad {
+                        path: "/tmp/track3.flac",
+                        gain: None,
+                        revision: Revision(
+                            1,
                         ),
+                    },
+                ),
+            ),
+            Library(
+                AppendHistory(
+                    HistoryEntry {
+                        track: Local(
+                            "/tmp/track3.flac",
+                        ),
+                        title: "track3",
+                        artist: None,
+                        at: Moment(
+                            0ns,
+                        ),
+                    },
+                ),
+            ),
+            Macos(
+                NowPlaying(
+                    Some(
+                        Track {
+                            source: Local(
+                                "/tmp/track3.flac",
+                            ),
+                            tags: Tags {
+                                title: None,
+                                artist: None,
+                                album: None,
+                                album_artist: None,
+                                date: None,
+                                genre: None,
+                                track: None,
+                                track_total: None,
+                                disc: None,
+                                composer: None,
+                                comment: None,
+                                lyrics: None,
+                            },
+                            audio_format: AudioFormat {
+                                format: None,
+                                bitrate_kbps: None,
+                                sample_rate_hz: None,
+                                bits_per_sample: None,
+                                channels: None,
+                                replay_gain: None,
+                            },
+                            display: "track3.flac",
+                            tagging: Read(
+                                100s,
+                            ),
+                        },
                     ),
                 ),
-                Audio(
-                    Playback(
-                        Playing,
-                    ),
+            ),
+            Audio(
+                Playback(
+                    Playing,
                 ),
-                Macos(
-                    PlaybackState(
-                        Playing,
-                    ),
+            ),
+            Macos(
+                SetPlayback(
+                    Playing,
                 ),
-                Animate(
-                    TrackChanged,
+            ),
+            Animate(
+                TrackChanged,
+            ),
+            Animate(
+                PlaybackChanged(
+                    Play,
                 ),
-                Animate(
-                    PlaybackChanged(
-                        Play,
-                    ),
-                ),
-            ],
-        ),
+            ),
+        ],
         Loading {
             track: Track {
-                path: "/tmp/track3.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/tmp/track3.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -283,7 +283,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "track3.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             at: 0ns,
         },
@@ -300,10 +302,10 @@ expression: "walked(model, messages)"
         Off,
         Shuffle(
             [
-                2,
-                0,
-                3,
-                1,
+                Index(2),
+                Index(0),
+                Index(3),
+                Index(1),
             ],
         ),
         Transport {
@@ -321,32 +323,29 @@ expression: "walked(model, messages)"
     ),
     (
         Audio(
-            Loaded {
-                total: None,
-            },
+            Loaded(
+                None,
+            ),
         ),
-        Batch(
-            [
-                Macos(
-                    PlaybackPosition(
-                        0ns,
+        [
+            Macos(
+                SetPosition(
+                    0ns,
+                ),
+            ),
+            After {
+                delay: 90s,
+                timer: Lookahead(
+                    Revision(
+                        2,
                     ),
                 ),
-                After {
-                    delay: 90s,
-                    timer: Lookahead(
-                        Revision(
-                            2,
-                        ),
-                    ),
-                },
-            ],
-        ),
+            },
+        ],
         Playing {
             track: Track {
-                path: "/tmp/track3.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/tmp/track3.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -371,7 +370,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "track3.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 0ns,
@@ -397,10 +398,10 @@ expression: "walked(model, messages)"
         Off,
         Shuffle(
             [
-                2,
-                0,
-                3,
-                1,
+                Index(2),
+                Index(0),
+                Index(3),
+                Index(1),
             ],
         ),
         Transport {
@@ -420,92 +421,92 @@ expression: "walked(model, messages)"
         Audio(
             Ended,
         ),
-        Batch(
-            [
-                Audio(
-                    Load(
-                        TrackLoad {
-                            path: "/tmp/track1.flac",
-                            gain: None,
-                            revision: Revision(
-                                3,
-                            ),
-                        },
-                    ),
-                ),
-                Library(
-                    AppendHistory(
-                        HistoryEntry {
-                            path: "/tmp/track1.flac",
-                            title: "track1",
-                            artist: None,
-                            at: Moment(
-                                0ns,
-                            ),
-                        },
-                    ),
-                ),
-                Macos(
-                    NowPlaying(
-                        Some(
-                            Track {
-                                path: "/tmp/track1.flac",
-                                duration: Some(
-                                    100s,
-                                ),
-                                tags: Tags {
-                                    title: None,
-                                    artist: None,
-                                    album: None,
-                                    album_artist: None,
-                                    date: None,
-                                    genre: None,
-                                    track: None,
-                                    track_total: None,
-                                    disc: None,
-                                    composer: None,
-                                    comment: None,
-                                    lyrics: None,
-                                },
-                                audio_format: AudioFormat {
-                                    format: None,
-                                    bitrate_kbps: None,
-                                    sample_rate_hz: None,
-                                    bits_per_sample: None,
-                                    channels: None,
-                                    replay_gain: None,
-                                },
-                                display: "track1.flac",
-                                tagging: Read,
-                            },
+        [
+            Audio(
+                Load(
+                    TrackLoad {
+                        path: "/tmp/track1.flac",
+                        gain: None,
+                        revision: Revision(
+                            3,
                         ),
+                    },
+                ),
+            ),
+            Library(
+                AppendHistory(
+                    HistoryEntry {
+                        track: Local(
+                            "/tmp/track1.flac",
+                        ),
+                        title: "track1",
+                        artist: None,
+                        at: Moment(
+                            0ns,
+                        ),
+                    },
+                ),
+            ),
+            Macos(
+                NowPlaying(
+                    Some(
+                        Track {
+                            source: Local(
+                                "/tmp/track1.flac",
+                            ),
+                            tags: Tags {
+                                title: None,
+                                artist: None,
+                                album: None,
+                                album_artist: None,
+                                date: None,
+                                genre: None,
+                                track: None,
+                                track_total: None,
+                                disc: None,
+                                composer: None,
+                                comment: None,
+                                lyrics: None,
+                            },
+                            audio_format: AudioFormat {
+                                format: None,
+                                bitrate_kbps: None,
+                                sample_rate_hz: None,
+                                bits_per_sample: None,
+                                channels: None,
+                                replay_gain: None,
+                            },
+                            display: "track1.flac",
+                            tagging: Read(
+                                100s,
+                            ),
+                        },
                     ),
                 ),
-                Audio(
-                    Playback(
-                        Playing,
-                    ),
+            ),
+            Audio(
+                Playback(
+                    Playing,
                 ),
-                Macos(
-                    PlaybackState(
-                        Playing,
-                    ),
+            ),
+            Macos(
+                SetPlayback(
+                    Playing,
                 ),
-                Animate(
-                    TrackChanged,
+            ),
+            Animate(
+                TrackChanged,
+            ),
+            Animate(
+                PlaybackChanged(
+                    Play,
                 ),
-                Animate(
-                    PlaybackChanged(
-                        Play,
-                    ),
-                ),
-            ],
-        ),
+            ),
+        ],
         Loading {
             track: Track {
-                path: "/tmp/track1.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/tmp/track1.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -530,7 +531,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "track1.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             at: 0ns,
         },
@@ -547,10 +550,10 @@ expression: "walked(model, messages)"
         Off,
         Shuffle(
             [
-                2,
-                0,
-                3,
-                1,
+                Index(2),
+                Index(0),
+                Index(3),
+                Index(1),
             ],
         ),
         Transport {

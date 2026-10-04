@@ -1,38 +1,26 @@
 use std::sync::Arc;
 
 use crate::{
-    domain::{Cursor, CursorOver, Direction, SearchQuery, Track, ViewIndex},
-    message::{QueueRequest, SearchEdit},
-    update::{
-        machine::Machine,
-        overlay::{FollowUp, OverlayOutcome},
-    },
+    Cmd,
+    domain::{Cursor, CursorOver, Direction, SearchQuery, Track},
+    message::{Message, QueueRequest, SearchEdit},
+    update::machine::{Machine, Unhandled},
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum SearchMessage {
+pub enum SearchQueryMessage {
     Edit(SearchEdit, Vec<Arc<Track>>),
     Navigate(Direction),
     Enqueue,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum SearchError {
-    #[error("no search result selected")]
-    NothingSelected,
-}
-
 impl Machine for CursorOver<SearchQuery> {
-    type Message = SearchMessage;
-    type Error = SearchError;
-    type Effect = OverlayOutcome;
+    type Message = SearchQueryMessage;
+    type Effect = Cmd;
 
-    fn transition(
-        &mut self,
-        message: SearchMessage,
-    ) -> Result<OverlayOutcome, SearchError> {
+    fn transition(&mut self, message: SearchQueryMessage) -> Result<Cmd, Unhandled> {
         match message {
-            SearchMessage::Edit(edit, tracks) => {
+            SearchQueryMessage::Edit(edit, tracks) => {
                 edit_query(&mut self.content.input, edit);
                 crate::search::rank_into(
                     &tracks,
@@ -40,13 +28,13 @@ impl Machine for CursorOver<SearchQuery> {
                     &mut self.content.matches,
                 );
                 self.cursor = Cursor::new(self.content.matches.len());
-                Ok(OverlayOutcome::default())
+                Ok(Cmd::none())
             }
-            SearchMessage::Navigate(direction) => {
+            SearchQueryMessage::Navigate(direction) => {
                 self.navigate(direction);
-                Ok(OverlayOutcome::default())
+                Ok(Cmd::none())
             }
-            SearchMessage::Enqueue => enqueue(self),
+            SearchQueryMessage::Enqueue => enqueue(self),
         }
     }
 }
@@ -62,15 +50,16 @@ fn edit_query(input: &mut String, edit: SearchEdit) {
     }
 }
 
-fn enqueue(search: &CursorOver<SearchQuery>) -> Result<OverlayOutcome, SearchError> {
+fn enqueue(search: &CursorOver<SearchQuery>) -> Result<Cmd, Unhandled> {
     let index = search
         .content
         .matches
-        .get(search.selected())
+        .get(search.selected().get())
         .copied()
-        .ok_or(SearchError::NothingSelected)?;
-    let queued = FollowUp::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(index)));
-    Ok(OverlayOutcome::from(queued))
+        .ok_or(Unhandled)?;
+    Ok(Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(
+        index,
+    ))))
 }
 
 fn delete_trailing_word(input: &mut String) {

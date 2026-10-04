@@ -48,21 +48,21 @@ impl fmt::Display for Crossfade {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "crossfade {length:?} is out of range (must be <= {:?})",
-    Crossfade::MAX
-)]
-pub struct CrossfadeOutOfRange {
-    pub length: Duration,
+pub enum CrossfadeError {
+    #[error("crossfade {value:?} is above {max:?}")]
+    OutOfRange { value: Duration, max: Duration },
 }
 
 impl TryFrom<Duration> for Crossfade {
-    type Error = CrossfadeOutOfRange;
+    type Error = CrossfadeError;
 
     fn try_from(length: Duration) -> Result<Self, Self::Error> {
-        (length <= Self::MAX)
-            .then_some(Self(length))
-            .ok_or(CrossfadeOutOfRange { length })
+        (length <= Self::MAX).then_some(Self(length)).ok_or(
+            CrossfadeError::OutOfRange {
+                value: length,
+                max: Self::MAX,
+            },
+        )
     }
 }
 

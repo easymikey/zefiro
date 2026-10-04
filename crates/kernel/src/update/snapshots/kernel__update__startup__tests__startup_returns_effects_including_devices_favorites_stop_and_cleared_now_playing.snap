@@ -11,7 +11,7 @@ expression: effects
         Stop,
     ),
     Macos(
-        PlaybackState(
+        SetPlayback(
             Paused,
         ),
     ),

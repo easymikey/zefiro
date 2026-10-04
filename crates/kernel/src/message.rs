@@ -6,10 +6,10 @@ use crate::domain::{
     AppearanceSetting,
     ChordPrefix,
     ConfigError,
-    ConfigFile,
+    ConfigName,
     Direction,
-    Driver,
     DriverError,
+    DriverName,
     Favorites,
     HistoryEntry,
     KeyPress,
@@ -26,7 +26,7 @@ use crate::domain::{
     Track,
     TrackIndex,
     ViewIndex,
-    appearance::Look,
+    appearance::Appearance,
     playlist::PlaylistFileName,
 };
 
@@ -34,7 +34,7 @@ use crate::domain::{
 #[strum(serialize_all = "snake_case")]
 pub enum Message {
     Overlay(OverlayRequest),
-    Adjust {
+    Step {
         row: SettingRow,
         direction: Direction,
     },
@@ -50,9 +50,10 @@ pub enum Message {
     Macos(MacosEvent),
     Elapsed(Timer),
     Driver {
-        driver: Driver,
+        driver: DriverName,
         event: DriverEvent,
     },
+    DriverDied(DriverName),
     Key(KeyPress),
     Viewport {
         visible_rows: usize,
@@ -98,7 +99,6 @@ pub enum DriverEvent {
     Died(DriverError),
     Stopped,
     Full,
-    Rejected { input: &'static str },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
@@ -133,7 +133,7 @@ pub enum SearchEdit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRowRequest {
     Navigate(Direction),
-    Adjust(Direction),
+    Step(Direction),
     Activate,
 }
 
@@ -156,13 +156,18 @@ pub enum HistoryRequest {
 pub enum ConfigEvent {
     KeymapReloaded(Box<KeymapOverrides>),
     ThemeReloaded(ThemeName),
-    AppearanceReloaded(Look),
+    AppearanceReloaded(Appearance),
     ThemesLoaded(Vec<ThemeName>),
     MusicDirReloaded(PathBuf),
     AppearanceSettingsReloaded(Vec<AppearanceSetting>),
-    SourceFailed { source: ConfigFile, text: String },
-    SourceRecovered(ConfigFile),
+    Reloaded(ConfigReload),
     Error(ConfigError),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConfigReload {
+    pub name: ConfigName,
+    pub result: Result<(), ConfigError>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, IntoStaticStr)]
@@ -178,13 +183,13 @@ pub enum PlaybackRequest {
     Stop,
     Next,
     Previous,
-    SeekBy { seconds: i64 },
-    StepVolume { steps: i8 },
+    SeekBy { direction: Direction, by: Duration },
+    StepVolume(Direction),
     ToggleShuffle,
     CycleRepeat,
     CycleSleep,
     AbMark,
-    StepSpeed { steps: i8 },
+    StepSpeed(Direction),
     SeekTo(Duration),
     SeekTenths(SeekTenths),
 }
@@ -200,19 +205,22 @@ impl SeekTenths {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("seek fraction {tenths} is out of range (must be 0..=9)")]
-pub struct SeekTenthsOutOfRange {
-    pub tenths: u8,
+pub enum SeekTenthsError {
+    #[error("seek fraction {value} is above {max}")]
+    OutOfRange { value: u8, max: u8 },
 }
 
 impl TryFrom<u8> for SeekTenths {
-    type Error = SeekTenthsOutOfRange;
+    type Error = SeekTenthsError;
 
     fn try_from(tenths: u8) -> Result<Self, Self::Error> {
         if tenths <= 9 {
             Ok(Self(tenths))
         } else {
-            Err(SeekTenthsOutOfRange { tenths })
+            Err(SeekTenthsError::OutOfRange {
+                value: tenths,
+                max: 9,
+            })
         }
     }
 }
@@ -341,18 +349,18 @@ pub enum AudioEvent {
     Playhead(Duration),
     TrackChanged,
     Ended,
-    Loaded { total: Option<Duration> },
+    Loaded(Option<Duration>),
     Error(AudioError),
     DevicesListed(Vec<ListedDevice>),
     DeviceFellBack(OutputDevice),
 }
 
-#[derive(Debug, Clone, PartialEq, IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum MacosEvent {
     Volume(Percent),
     OutputRouteChanged,
-    HardwareWatchError(String),
+    Error(MacosError),
     MediaKey(PlaybackRequest),
 }
 
@@ -368,6 +376,12 @@ pub enum DecodeError {
     Panicked,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum MacosError {
+    #[error("Audio device watch failed (CoreAudio status {0})")]
+    HardwareWatch(i32),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AudioError {
     #[error("Cannot decode {}: {kind}", path.display())]
@@ -376,8 +390,8 @@ pub enum AudioError {
     Device { requested: String },
     #[error("audio output stream: {reason}")]
     Stream { reason: String },
-    #[error("Audio output lost: {kind}")]
-    OutputLost { kind: StreamError },
+    #[error("Audio output lost: {0}")]
+    OutputLost(StreamError),
     #[error("Cannot preload {}: {kind}", path.display())]
     Preload { path: PathBuf, kind: DecodeError },
     #[error("cannot seek: {reason}")]
@@ -474,7 +488,7 @@ mod tests {
         "Cannot preload song.flac: the decoder panicked"
     )]
     #[case::output_device_gone(
-        AudioError::OutputLost { kind: StreamError::DeviceGone },
+        AudioError::OutputLost(StreamError::DeviceGone),
         "Audio output lost: the device is gone"
     )]
     fn an_audio_failure_renders_its_cause(

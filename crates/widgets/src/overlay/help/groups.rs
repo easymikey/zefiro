@@ -161,24 +161,26 @@ pub(crate) struct HelpGroups {
     pub(crate) general: HelpGroup,
 }
 
-pub(crate) fn build_help_groups(bindings: &[KeyBinding]) -> HelpGroups {
-    let make = |spec: &HelpGroupEntry| {
-        let rows: Vec<(String, &'static str)> = spec
-            .actions
-            .iter()
-            .map(|(action, help)| (chords_for_action(bindings, *action), *help))
-            .collect();
-        HelpGroup {
-            title: spec.title,
-            bindings: collapse_digit_runs(&rows),
+impl HelpGroups {
+    pub(crate) fn new(bindings: &[KeyBinding]) -> Self {
+        let make = |spec: &HelpGroupEntry| {
+            let rows: Vec<(String, &'static str)> = spec
+                .actions
+                .iter()
+                .map(|(action, help)| (chords_for_action(bindings, *action), *help))
+                .collect();
+            HelpGroup {
+                title: spec.title,
+                bindings: collapse_digit_runs(&rows),
+            }
+        };
+        let [playback, navigation, playlist, general] = &HELP_GROUPS;
+        Self {
+            playback: make(playback),
+            navigation: make(navigation),
+            playlist: make(playlist),
+            general: make(general),
         }
-    };
-    let [playback, navigation, playlist, general] = &HELP_GROUPS;
-    HelpGroups {
-        playback: make(playback),
-        navigation: make(navigation),
-        playlist: make(playlist),
-        general: make(general),
     }
 }
 

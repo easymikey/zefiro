@@ -14,7 +14,7 @@ use crate::{
         Workspace,
     },
     message::ConfigEvent,
-    update::{error::UpdateError, workspace::SourceOutcome},
+    update::machine::Unhandled,
 };
 
 pub(crate) struct ConfigParts<'a> {
@@ -29,7 +29,7 @@ pub(crate) struct ConfigParts<'a> {
 pub(crate) fn update(
     config: ConfigParts<'_>,
     event: ConfigEvent,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     let ConfigParts {
         workspace,
         revisions,
@@ -43,34 +43,29 @@ pub(crate) fn update(
             let changed = workspace.keymap.overrides() != &*keys;
             let cmd = workspace.keymap_reloaded(*keys, revisions);
             if changed {
-                let _ = revisions.config.bump();
+                revisions.config.advance();
             }
             Ok(cmd)
         }
         ConfigEvent::ThemeReloaded(name) => Ok(theme_reloaded(revisions, name)),
-        ConfigEvent::AppearanceReloaded(look) => {
-            settings.look = look;
-            Ok(Cmd::None)
+        ConfigEvent::AppearanceReloaded(appearance) => {
+            settings.appearance = appearance;
+            Ok(Cmd::none())
         }
         ConfigEvent::ThemesLoaded(names) => {
             themes.names = names;
-            Ok(Cmd::None)
+            Ok(Cmd::none())
         }
         ConfigEvent::MusicDirReloaded(reloaded) => {
             Ok(music_dir_reloaded(music_dir, revisions, reloaded))
         }
         ConfigEvent::AppearanceSettingsReloaded(reloaded) => {
-            custom_settings_reloaded(workspace, appearance_settings, reloaded);
-            Ok(Cmd::None)
+            appearance_settings_reloaded(workspace, appearance_settings, reloaded);
+            Ok(Cmd::none())
         }
-        ConfigEvent::SourceFailed { source, text } => Ok(workspace.source_result(
-            SourceOutcome {
-                source,
-                text: Some(text),
-            },
-            revisions,
-        )),
-        ConfigEvent::SourceRecovered(source) => Ok(workspace.source_recovered(source)),
+        ConfigEvent::Reloaded(reload) => {
+            Ok(workspace.config_reloaded(reload, revisions))
+        }
         ConfigEvent::Error(failure) => Ok(workspace.show(
             Toast::error("Config error").with_text(failure.to_string()),
             revisions,
@@ -79,18 +74,18 @@ pub(crate) fn update(
 }
 
 fn theme_reloaded(revisions: &mut Revisions, name: ThemeName) -> Cmd {
-    let _ = revisions.theme.bump();
-    Cmd::from(Effect::WindowColors(WindowColorsCmd::Apply(name)))
+    revisions.theme.advance();
+    Cmd::from(Effect::WindowColors(WindowColorsCmd::Set(name)))
         .then(Cue::ThemeChanged.into())
 }
 
-fn custom_settings_reloaded(
+fn appearance_settings_reloaded(
     workspace: &mut Workspace,
     appearance_settings: &mut Vec<AppearanceSetting>,
     reloaded: Vec<AppearanceSetting>,
 ) {
     *appearance_settings = reloaded;
-    let Some(Overlay::Settings { selected }) = &mut workspace.overlay else {
+    let Some(Overlay::Settings(selected)) = &mut workspace.overlay else {
         return;
     };
     *selected = selected.kept(&SettingRow::all(appearance_settings));
@@ -102,7 +97,7 @@ fn music_dir_reloaded(
     reloaded: PathBuf,
 ) -> Cmd {
     if reloaded == *music_dir {
-        Cmd::None
+        Cmd::none()
     } else {
         *music_dir = reloaded.clone();
         Effect::Library(LibraryCmd::Scan {
@@ -131,11 +126,15 @@ mod tests {
             ToastKind,
         },
         message::ConfigEvent,
-        update::{UpdateError, config, config_parts},
+        update::{Unhandled, config, config_parts},
     };
 
-    fn update(model: &mut Model, event: ConfigEvent) -> Result<Cmd, UpdateError> {
-        config::update(config_parts(model), event)
+    fn update(model: &mut Model, event: ConfigEvent) -> Result<(), Unhandled> {
+        config::update(config_parts(model), event).map(drop)
+    }
+
+    fn emitted(model: &mut Model, event: ConfigEvent) -> Cmd {
+        config::update(config_parts(model), event).unwrap()
     }
 
     #[test]
@@ -144,8 +143,7 @@ mod tests {
         let before = model.revisions.config;
 
         let keys = KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]);
-        let _ =
-            update(&mut model, ConfigEvent::KeymapReloaded(Box::new(keys))).unwrap();
+        update(&mut model, ConfigEvent::KeymapReloaded(Box::new(keys))).unwrap();
 
         assert_ne!(model.revisions.config, before);
     }
@@ -154,15 +152,14 @@ mod tests {
     fn unchanged_keymap_keeps_the_revision() {
         let mut model = Model::default();
         let keys = model.workspace.keymap.overrides().clone();
-        let _ = update(
+        update(
             &mut model,
             ConfigEvent::KeymapReloaded(Box::new(keys.clone())),
         )
         .unwrap();
         let before = model.revisions.config;
 
-        let _ =
-            update(&mut model, ConfigEvent::KeymapReloaded(Box::new(keys))).unwrap();
+        update(&mut model, ConfigEvent::KeymapReloaded(Box::new(keys))).unwrap();
 
         assert_eq!(model.revisions.config, before);
     }
@@ -172,39 +169,39 @@ mod tests {
         let mut model = Model::default();
         let before = model.revisions.theme;
 
-        let cmd = update(
+        let cmd = emitted(
             &mut model,
             ConfigEvent::ThemeReloaded(ThemeName::from_static("noir")),
-        )
-        .unwrap();
+        );
 
         assert_ne!(model.revisions.theme, before);
-        assert!(matches!(cmd, Cmd::Batch(_)));
+        assert_ne!(cmd, Cmd::none());
     }
 
     #[test]
     fn a_watch_error_raises_the_error_toast() {
         let mut model = Model::default();
 
-        let _ = update(
+        update(
             &mut model,
-            ConfigEvent::Error(ConfigError::Watch {
-                detail: "x".to_string(),
-            }),
+            ConfigEvent::Error(ConfigError::Watch(crate::IoError::Other)),
         )
         .unwrap();
 
         let toast = model.workspace.toasts.first().unwrap();
         assert_eq!(toast.kind, ToastKind::Error);
-        assert_eq!(toast.text.as_deref(), Some("Config watch failed: x"));
+        assert_eq!(
+            toast.text.as_deref(),
+            Some("Config watch failed: an unknown error")
+        );
     }
 
     fn rescanned_music_dir(cmd: &Cmd) -> Option<PathBuf> {
-        match cmd {
-            Cmd::One(Effect::Library(LibraryCmd::Scan { music_dir, .. })) => {
+        match cmd.effects().as_slice() {
+            [Effect::Library(LibraryCmd::Scan { music_dir, .. })] => {
                 Some(music_dir.clone())
             }
-            Cmd::None | Cmd::One(_) | Cmd::Batch(_) => None,
+            _ => None,
         }
     }
 
@@ -220,8 +217,7 @@ mod tests {
             ..Model::default()
         };
 
-        let cmd = update(&mut model, ConfigEvent::MusicDirReloaded(reloaded.clone()))
-            .unwrap();
+        let cmd = emitted(&mut model, ConfigEvent::MusicDirReloaded(reloaded.clone()));
 
         assert_eq!(rescanned_music_dir(&cmd), expected);
         assert_eq!(model.music_dir, reloaded);
@@ -237,13 +233,12 @@ mod tests {
             ..Model::default()
         };
 
-        let cmd = update(
+        let cmd = emitted(
             &mut model,
             ConfigEvent::ThemesLoaded(vec![ThemeName::from_static("wafer")]),
-        )
-        .unwrap();
+        );
 
         assert_eq!(model.themes.names, [ThemeName::from_static("wafer")]);
-        assert!(matches!(cmd, Cmd::None));
+        assert!(cmd == Cmd::none());
     }
 }

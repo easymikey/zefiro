@@ -1,10 +1,10 @@
-// GUARD: `kernel`, `widgets`, `config` are pure: no IO, clock or threads.
+// GUARD: `kernel`, `widgets` are pure: no IO, clock or threads.
 
 use crate::guards::support::{self, Allow};
 
 const ALLOWLIST: &[Allow] = &[];
 
-const PURE_CRATES: &[&str] = &["kernel", "widgets", "config"];
+const PURE_CRATES: &[&str] = &["kernel", "widgets"];
 
 const DENYLIST: &[&str] = &[
     "std::fs",
@@ -24,11 +24,14 @@ const DENYLIST: &[&str] = &[
     "dbg!",
 ];
 
+const PERMITTED: &str = "std::io::ErrorKind";
+
 fn denylist_hit(line: &str) -> Option<&'static str> {
+    let scanned = line.replace(PERMITTED, "");
     DENYLIST
         .iter()
         .copied()
-        .find(|pattern| line.contains(pattern))
+        .find(|pattern| scanned.contains(pattern))
 }
 
 #[test]

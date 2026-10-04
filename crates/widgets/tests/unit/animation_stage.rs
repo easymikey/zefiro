@@ -88,7 +88,7 @@ fn an_opening_overlay_resolves_and_ends_on_the_painted_colours() {
 fn a_closing_overlay_resolves_the_rect_it_vacated() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::OverlayOpened], &overlay_backdrop(Some(AREA)));
-    let _ = step(&mut stage, whole(|t| t.modal_in));
+    step(&mut stage, whole(|t| t.modal_in));
     assert!(!stage.is_running(), "the open ring finished");
 
     stage.play(vec![Cue::OverlayClosed], &overlay_backdrop(None));
@@ -299,7 +299,7 @@ fn a_cover_arriving_mid_animation_is_still_protected() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::ThemeChanged], &screen_backdrop());
     assert!(stage.is_running(), "the wash is under way");
-    let _ = step_over(&mut stage, screen_frame, slice(|t| t.screen_wash, 4));
+    step_over(&mut stage, screen_frame, slice(|t| t.screen_wash, 4));
 
     stage.play(
         Vec::new(),
@@ -328,7 +328,7 @@ fn a_cover_arriving_mid_animation_is_still_protected() {
 fn the_frame_after_the_last_animation_is_asked_for_so_the_row_it_covered_comes_back() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::ToastRaised], &toast_card_backdrop());
-    let _ = run_out_over(&mut stage, screen_frame);
+    run_out_over(&mut stage, screen_frame);
     stage.play(vec![Cue::ToastDismissed], &toast_card_backdrop());
     assert!(stage.is_running(), "sanity: the toast leaves with a burst");
 
@@ -374,7 +374,7 @@ fn a_toast_slides_in_and_its_row_comes_back_when_it_expires() {
         animation_frame(),
         "halfway out the row is still moving"
     );
-    let _ = step(&mut stage, whole(|t| t.delete_burst));
+    step(&mut stage, whole(|t| t.delete_burst));
     assert!(!stage.is_running());
     assert_eq!(
         step(&mut stage, Duration::ZERO),
@@ -391,7 +391,7 @@ fn the_toast_burst_is_the_same_every_time() {
             vec![Cue::ToastRaised],
             &toast_backdrop(ToastPresence::Shown),
         );
-        let _ = step(&mut stage, whole(|t| t.toast_slide_in));
+        step(&mut stage, whole(|t| t.toast_slide_in));
         stage.play(
             vec![Cue::ToastDismissed],
             &toast_backdrop(ToastPresence::Hidden),
@@ -409,7 +409,7 @@ fn a_second_toast_while_one_is_showing_slides_in_again() {
         vec![Cue::ToastRaised],
         &toast_backdrop(ToastPresence::Shown),
     );
-    let _ = step(&mut stage, whole(|t| t.toast_slide_in));
+    step(&mut stage, whole(|t| t.toast_slide_in));
     assert!(!stage.is_running(), "sanity: the first slide finished");
 
     stage.play(

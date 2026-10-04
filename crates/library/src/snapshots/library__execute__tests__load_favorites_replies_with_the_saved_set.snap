@@ -6,7 +6,9 @@ Some(
     FavoritesLoaded(
         Favorites(
             {
-                "/music/a.flac",
+                Local(
+                    "/music/a.flac",
+                ),
             },
         ),
     ),

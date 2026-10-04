@@ -2,7 +2,7 @@ mod cover;
 
 use std::time::Duration;
 
-use kernel::domain::appearance::CoverStyle;
+use kernel::domain::appearance::CoverMode;
 use ratatui::{buffer::Buffer, layout::Rect, widgets::StatefulWidget};
 use ratatui_image::{StatefulImage, picker::Picker};
 use widgets::{
@@ -25,7 +25,7 @@ use crate::pixels::cover::Cover;
 
 #[derive(Debug)]
 pub struct CoverRenderer {
-    active: Option<CoverStyle>,
+    active: Option<CoverMode>,
     plain: Cover,
     vinyl: Cover,
     milkdrop: MilkdropCover,
@@ -53,13 +53,13 @@ impl CoverRenderer {
     }
 
     pub fn refresh(&mut self, scene: &Scene<'_>, parts: CoverRefreshParts) -> CoverArt {
-        let style = scene.cover_style();
+        let style = scene.cover_mode();
         self.active = Some(style);
         match style {
-            CoverStyle::Off => CoverArt::Missing,
-            CoverStyle::Plain => self.plain.refresh(scene, parts),
-            CoverStyle::Vinyl => self.vinyl.refresh(scene, parts),
-            CoverStyle::Milkdrop => self.milkdrop.refresh(scene, parts.layout.cover),
+            CoverMode::Off => CoverArt::Missing,
+            CoverMode::Plain => self.plain.refresh(scene, parts),
+            CoverMode::Vinyl => self.vinyl.refresh(scene, parts),
+            CoverMode::Milkdrop => self.milkdrop.refresh(scene, parts.layout.cover),
         }
     }
 
@@ -81,9 +81,9 @@ impl CoverRenderer {
             return;
         }
         let protocol = match self.active {
-            Some(CoverStyle::Plain) => self.plain.protocol_mut(),
-            Some(CoverStyle::Vinyl) => self.vinyl.protocol_mut(),
-            Some(CoverStyle::Milkdrop | CoverStyle::Off) | None => None,
+            Some(CoverMode::Plain) => self.plain.protocol_mut(),
+            Some(CoverMode::Vinyl) => self.vinyl.protocol_mut(),
+            Some(CoverMode::Milkdrop | CoverMode::Off) | None => None,
         };
         let Some(protocol) = protocol else {
             return;

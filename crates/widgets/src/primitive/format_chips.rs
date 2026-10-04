@@ -2,7 +2,7 @@ use kernel::domain::AudioFormat;
 use num_traits::ToPrimitive;
 use ratatui::text::{Line, Span};
 
-use crate::primitive::chip::{self, ChipColors};
+use crate::primitive::chip::{self, ChipStyle};
 
 const HZ_PER_KHZ: f32 = 1000.0;
 
@@ -29,7 +29,7 @@ fn format_chip_values(audio_format: &AudioFormat) -> Vec<String> {
 #[must_use]
 pub(crate) fn fit_format_chips(
     audio_format: &AudioFormat,
-    colors: ChipColors,
+    colors: ChipStyle,
     max_width: usize,
 ) -> Option<Line<'static>> {
     let values = format_chip_values(audio_format);
@@ -58,12 +58,12 @@ mod tests {
     use ratatui::style::Color;
     use rstest::rstest;
 
-    use crate::primitive::{chip::ChipColors, format_chips::fit_format_chips};
+    use crate::primitive::{chip::ChipStyle, format_chips::fit_format_chips};
 
-    fn colors() -> ChipColors {
-        ChipColors {
+    fn colors() -> ChipStyle {
+        ChipStyle {
             border: Color::Gray,
-            value: Color::White,
+            foreground: Color::White,
         }
     }
 

@@ -1,13 +1,16 @@
-use kernel::domain::appearance::{Breakpoints, CoverCells, Look, ProgressBar};
+use kernel::domain::{
+    ConfigName,
+    appearance::{Appearance, Breakpoints, CoverCells, ProgressBar},
+};
 use serde::Deserialize;
 
 use crate::{
     appearance::{
         Animations,
-        Appearance,
         AppearancePatch,
+        AppearanceSettings,
         CoverBrackets,
-        CoverStyle,
+        CoverMode,
         FormatChips,
         KeyHints,
         LayoutMode,
@@ -17,7 +20,7 @@ use crate::{
         from_str_option,
         variant_field,
     },
-    error::{Error, TomlFile, parse_toml},
+    error::{Error, parse_toml},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -41,7 +44,7 @@ impl Default for TextCoverCells {
 pub struct CoverConfig {
     pub size_px: u32,
     #[serde(deserialize_with = "variant_field")]
-    pub style: CoverStyle,
+    pub mode: CoverMode,
     pub text_cells: TextCoverCells,
     #[serde(deserialize_with = "crate::appearance::flag")]
     pub brackets: CoverBrackets,
@@ -51,7 +54,7 @@ impl Default for CoverConfig {
     fn default() -> Self {
         Self {
             size_px: 160,
-            style: CoverStyle::Vinyl,
+            mode: CoverMode::Vinyl,
             text_cells: TextCoverCells::default(),
             brackets: CoverBrackets::default(),
         }
@@ -140,9 +143,9 @@ pub struct AppearanceFile {
 }
 
 impl AppearanceFile {
-    pub fn appearance(&self) -> Appearance {
-        Appearance {
-            cover_style: self.cover.style,
+    pub fn settings(&self) -> AppearanceSettings {
+        AppearanceSettings {
+            cover_mode: self.cover.mode,
             cover_brackets: self.cover.brackets,
             format_chips: self.card.format_chips,
             speed_chip: self.card.speed_chip,
@@ -153,9 +156,9 @@ impl AppearanceFile {
         }
     }
 
-    pub fn look(&self) -> Look {
-        Look {
-            appearance: self.appearance(),
+    pub fn appearance(&self) -> Appearance {
+        Appearance {
+            settings: self.settings(),
             cover_size_px: self.cover.size_px,
             cover_cells: CoverCells {
                 width: self.cover.text_cells.width,
@@ -178,7 +181,7 @@ impl AppearanceFile {
         }
     }
 
-    pub fn with_appearance(self, appearance: Appearance) -> Self {
+    pub fn with_appearance(self, appearance: AppearanceSettings) -> Self {
         Self {
             card: CardConfig {
                 format_chips: appearance.format_chips,
@@ -189,7 +192,7 @@ impl AppearanceFile {
                 ..self.progress
             },
             cover: CoverConfig {
-                style: appearance.cover_style,
+                mode: appearance.cover_mode,
                 brackets: appearance.cover_brackets,
                 ..self.cover
             },
@@ -205,29 +208,29 @@ impl AppearanceFile {
     }
 
     pub fn patched(&self, patch: AppearancePatch) -> AppearanceFile {
-        self.clone().with_appearance(patch.apply(self.appearance()))
+        self.clone().with_appearance(self.settings().patched(patch))
     }
 }
 
 pub const APPEARANCE_FILE_NAME: &str = "sifr-ui.toml";
 
 pub fn parse_appearance(source: &str) -> Result<AppearanceFile, Error> {
-    parse_toml(source, TomlFile::Appearance)
+    parse_toml(source, ConfigName::Appearance)
 }
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::appearance::{Look, preset_appearance};
+    use kernel::domain::appearance::{Appearance, preset_appearance};
     use rstest::rstest;
 
     use crate::{
         appearance::{
             Animations,
-            Appearance,
             AppearancePatch,
             AppearancePreset,
+            AppearanceSettings,
             CoverBrackets,
-            CoverStyle,
+            CoverMode,
             FormatChips,
             KeyHints,
             LayoutMode,
@@ -257,20 +260,23 @@ mod tests {
     #[test]
     fn the_stock_file_offers_the_stock_appearance() {
         assert_eq!(
+            AppearanceFile::default().settings(),
+            AppearanceSettings::default()
+        );
+    }
+
+    #[test]
+    fn the_stock_file_reads_as_the_stock_appearance() {
+        assert_eq!(
             AppearanceFile::default().appearance(),
             Appearance::default()
         );
     }
 
     #[test]
-    fn the_stock_file_looks_like_the_stock_look() {
-        assert_eq!(AppearanceFile::default().look(), Look::default());
-    }
-
-    #[test]
     fn an_unknown_variant_lists_the_ones_that_exist() {
-        let error = parse_appearance("[cover]\nstyle = \"bogus\"\n")
-            .expect_err("an unknown style must not parse")
+        let error = parse_appearance("[cover]\nmode = \"bogus\"\n")
+            .expect_err("an unknown mode must not parse")
             .to_string();
 
         assert!(
@@ -282,15 +288,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case::stock(Appearance::default())]
+    #[case::stock(AppearanceSettings::default())]
     #[case::noir(preset_appearance(AppearancePreset::Noir))]
     fn a_file_written_with_an_appearance_offers_it_back(
-        #[case] appearance: Appearance,
+        #[case] appearance: AppearanceSettings,
     ) {
         assert_eq!(
             AppearanceFile::default()
                 .with_appearance(appearance)
-                .appearance(),
+                .settings(),
             appearance
         );
     }
@@ -308,7 +314,7 @@ mod tests {
         let noir = sized.with_appearance(preset_appearance(AppearancePreset::Noir));
 
         assert_eq!(noir.cover.size_px, 320);
-        assert_eq!(noir.cover.style, CoverStyle::Milkdrop);
+        assert_eq!(noir.cover.mode, CoverMode::Milkdrop);
     }
 
     #[test]
@@ -336,7 +342,7 @@ mod tests {
 
     #[test]
     fn a_duplicate_table_names_the_ui_file_and_its_line() {
-        let source = "[cover]\nstyle = \"plain\"\n[card]\n[card]\n";
+        let source = "[cover]\nmode = \"plain\"\n[card]\n[card]\n";
 
         let broken = parse_appearance(source)
             .expect_err("a duplicate table must not parse")
@@ -348,31 +354,31 @@ mod tests {
     type Parsed = fn(&AppearanceFile);
 
     #[rstest]
-    #[case::a_plain_cover("[cover]\nstyle = \"plain\"\n", |c: &AppearanceFile| {
-        assert_eq!(c.cover.style, CoverStyle::Plain);
+    #[case::a_plain_cover("[cover]\nmode = \"plain\"\n", |c: &AppearanceFile| {
+        assert_eq!(c.cover.mode, CoverMode::Plain);
     })]
-    #[case::a_vinyl_cover("[cover]\nstyle = \"vinyl\"\n", |c: &AppearanceFile| {
-        assert_eq!(c.cover.style, CoverStyle::Vinyl);
+    #[case::a_vinyl_cover("[cover]\nmode = \"vinyl\"\n", |c: &AppearanceFile| {
+        assert_eq!(c.cover.mode, CoverMode::Vinyl);
         assert_eq!(c.cover.size_px, CoverConfig::default().size_px);
     })]
     #[case::a_cover_size("[cover]\nsize_px = 99\n", |c: &AppearanceFile| {
         assert_eq!(c.cover.size_px, 99);
-        assert_eq!(c.cover.style, CoverStyle::Vinyl);
+        assert_eq!(c.cover.mode, CoverMode::Vinyl);
     })]
     #[case::a_text_cover_box(
         "[cover]\n[cover.text_cells]\nwidth = 40\nheight = 20\n",
         |c: &AppearanceFile| {
             assert_eq!(c.cover.text_cells, TextCoverCells { width: 40, height: 20 });
-            assert_eq!(c.cover.style, CoverStyle::Vinyl);
+            assert_eq!(c.cover.mode, CoverMode::Vinyl);
             assert_eq!(c.cover.size_px, CoverConfig::default().size_px);
         }
     )]
     #[case::every_widget_key(
-        "[cover]\nstyle = \"off\"\nbrackets = true\n\
+        "[cover]\nmode = \"off\"\nbrackets = true\n\
          [card]\nformat_chips = true\nspeed_chip = \"changed\"\n\
          [progress]\nremaining = true\n",
         |c: &AppearanceFile| {
-            assert_eq!(c.cover.style, CoverStyle::Off);
+            assert_eq!(c.cover.mode, CoverMode::Off);
             assert_eq!(c.cover.brackets, CoverBrackets::Shown);
             assert_eq!(c.card.format_chips, FormatChips::Shown);
             assert_eq!(c.card.speed_chip, SpeedChip::Changed);
@@ -406,7 +412,7 @@ mod tests {
     #[case::a_removed_cover_mode("[cover]\nmode = \"text\"\n")]
     #[case::a_removed_progress_mode("[progress]\nmode = \"pixel\"\n")]
     #[case::a_removed_volume_table("[volume]\nmode = \"text\"\n")]
-    #[case::a_removed_notice_table("[notice]\nstyle = \"banner\"\n")]
+    #[case::a_removed_notice_table("[notice]\nmode = \"banner\"\n")]
     #[case::a_removed_theme_key("theme = \"oreo\"\n")]
     #[case::a_removed_keymap_table("[keymap]\nnext = \"x\"\n")]
     #[case::a_misspelt_key("[cover]\nbrakcets = true\n")]
@@ -415,8 +421,8 @@ mod tests {
     }
 
     #[rstest]
-    #[case::cover_style(
-        AppearancePatch::builder().cover_style(CoverStyle::Milkdrop).build()
+    #[case::cover_mode(
+        AppearancePatch::builder().cover_mode(CoverMode::Milkdrop).build()
     )]
     #[case::cover_brackets(
         AppearancePatch::builder().cover_brackets(CoverBrackets::Shown).build()
@@ -441,26 +447,32 @@ mod tests {
     )]
     fn patched_applies_exactly_the_row_the_patch_names(#[case] patch: AppearancePatch) {
         let base = AppearanceFile::default();
-        let after = base.patched(patch).appearance();
-        let expected = Appearance {
-            cover_style: patch
-                .cover_style
-                .unwrap_or(Appearance::default().cover_style),
+        let after = base.patched(patch).settings();
+        let expected = AppearanceSettings {
+            cover_mode: patch
+                .cover_mode
+                .unwrap_or(AppearanceSettings::default().cover_mode),
             cover_brackets: patch
                 .cover_brackets
-                .unwrap_or(Appearance::default().cover_brackets),
+                .unwrap_or(AppearanceSettings::default().cover_brackets),
             format_chips: patch
                 .format_chips
-                .unwrap_or(Appearance::default().format_chips),
-            speed_chip: patch.speed_chip.unwrap_or(Appearance::default().speed_chip),
+                .unwrap_or(AppearanceSettings::default().format_chips),
+            speed_chip: patch
+                .speed_chip
+                .unwrap_or(AppearanceSettings::default().speed_chip),
             progress_time: patch
                 .progress_time
-                .unwrap_or(Appearance::default().progress_time),
-            key_hints: patch.key_hints.unwrap_or(Appearance::default().key_hints),
-            animations: patch.animations.unwrap_or(Appearance::default().animations),
+                .unwrap_or(AppearanceSettings::default().progress_time),
+            key_hints: patch
+                .key_hints
+                .unwrap_or(AppearanceSettings::default().key_hints),
+            animations: patch
+                .animations
+                .unwrap_or(AppearanceSettings::default().animations),
             layout_mode: patch
                 .layout_mode
-                .unwrap_or(Appearance::default().layout_mode),
+                .unwrap_or(AppearanceSettings::default().layout_mode),
         };
         assert_eq!(after, expected);
     }
@@ -485,11 +497,11 @@ mod tests {
 
         let after = sized.patched(
             AppearancePatch::builder()
-                .cover_style(CoverStyle::Off)
+                .cover_mode(CoverMode::Off)
                 .build(),
         );
 
         assert_eq!(after.cover.size_px, 320);
-        assert_eq!(after.cover.style, CoverStyle::Off);
+        assert_eq!(after.cover.mode, CoverMode::Off);
     }
 }

@@ -5,7 +5,7 @@ use std::{
 
 use arc_swap::ArcSwapOption;
 use crossbeam_channel::{Receiver, Sender, TrySendError};
-use kernel::domain::Driver;
+use kernel::domain::DriverName;
 
 use crate::{
     error::Error,
@@ -57,7 +57,7 @@ impl CoverWorker {
                 .run();
             })
             .map_err(|source| Error::Spawn {
-                driver: Driver::Library,
+                driver: DriverName::Library,
                 source,
             })?;
         Ok((

@@ -12,6 +12,7 @@ use crate::{
         text::truncate_line_to_width,
     },
     repaint::ceil_minutes,
+    theme::{ActiveTheme, Role},
 };
 
 const SHUFFLE_LABEL: &str = "shuffle ";
@@ -51,10 +52,21 @@ pub(crate) struct StatusLineView<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct StatusLineColors {
-    pub(crate) frame: Color,
-    pub(crate) dim: Color,
+pub(crate) struct StatusLineStyle {
+    pub(crate) border: Color,
+    pub(crate) muted_foreground: Color,
     pub(crate) accent: Color,
+}
+
+impl StatusLineStyle {
+    #[must_use]
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            border: theme.role(Role::Frame),
+            muted_foreground: theme.role(Role::Dim),
+            accent: theme.role(Role::Accent),
+        }
+    }
 }
 
 const NAME: &str = "Playlist";
@@ -81,7 +93,7 @@ fn sleep_label(left: Duration) -> String {
 #[must_use]
 pub(crate) fn status_line<'a>(
     status: StatusLineView<'a>,
-    colors: StatusLineColors,
+    style: StatusLineStyle,
     row_width: usize,
 ) -> Line<'a> {
     let pos_total = counts(status);
@@ -93,15 +105,18 @@ pub(crate) fn status_line<'a>(
     let repeat: &'static str = <&'static str>::from(status.repeat_mode);
 
     let flag = |label: &'static str, value: Cow<'a, str>| -> Vec<StyledText<'a>> {
-        vec![text(label).fg(colors.dim), text(value).fg(colors.accent)]
+        vec![
+            text(label).fg(style.muted_foreground),
+            text(value).fg(style.accent),
+        ]
     };
-    let flag_separator = || text(FLAG_SEPARATOR).fg(colors.dim);
+    let flag_separator = || text(FLAG_SEPARATOR).fg(style.muted_foreground);
 
     let head = [
-        text(NAME).fg(colors.frame),
-        text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(colors.dim),
-        text(pos_total).fg(colors.accent),
-        text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(colors.dim),
+        text(NAME).fg(style.border),
+        text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(style.muted_foreground),
+        text(pos_total).fg(style.accent),
+        text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(style.muted_foreground),
     ];
     let mut flags: Vec<(&'static str, Cow<'a, str>)> = vec![
         (SHUFFLE_LABEL, Cow::Borrowed(shuffle)),
@@ -135,20 +150,20 @@ mod tests {
     use rstest::rstest;
     use unicode_width::UnicodeWidthStr;
 
-    use crate::status_line::{
-        ScanProgress,
-        StatusLineColors,
-        StatusLineView,
-        sleep_label,
-        status_line,
+    use crate::{
+        status_line::{
+            ScanProgress,
+            StatusLineStyle,
+            StatusLineView,
+            sleep_label,
+            status_line,
+        },
+        test_support::noir,
+        theme::{ActiveTheme, ColorDepth},
     };
 
-    fn colors() -> StatusLineColors {
-        StatusLineColors {
-            frame: Color::Blue,
-            dim: Color::Gray,
-            accent: Color::Cyan,
-        }
+    fn colors() -> StatusLineStyle {
+        StatusLineStyle::from_theme(&ActiveTheme::new(&noir(), ColorDepth::TrueColor))
     }
 
     fn view() -> StatusLineView<'static> {
@@ -187,7 +202,12 @@ mod tests {
 
     #[test]
     fn the_status_line_shows_every_label() {
-        let line = status_line(view(), colors(), 80);
+        let style = StatusLineStyle {
+            border: Color::Blue,
+            muted_foreground: Color::Gray,
+            accent: Color::Cyan,
+        };
+        let line = status_line(view(), style, 80);
         insta::assert_debug_snapshot!(line);
     }
 

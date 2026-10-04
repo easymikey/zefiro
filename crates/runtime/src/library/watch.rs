@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use kernel::{domain::Revision, update::Machine};
+use kernel::{
+    domain::Revision,
+    update::{Machine, Unhandled},
+};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct LibraryWatch {
@@ -34,12 +37,6 @@ pub(crate) enum WatchMessage {
     DebounceElapsed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WatchError {
-    Unwatched,
-    Settled,
-}
-
 #[derive(Debug)]
 pub(crate) enum WatchEffect {
     Rename {
@@ -61,10 +58,9 @@ pub(crate) enum WatchEffect {
 
 impl Machine for LibraryWatch {
     type Message = WatchMessage;
-    type Error = WatchError;
     type Effect = WatchEffect;
 
-    fn transition(&mut self, message: WatchMessage) -> Result<WatchEffect, WatchError> {
+    fn transition(&mut self, message: WatchMessage) -> Result<WatchEffect, Unhandled> {
         match message {
             WatchMessage::Rescan {
                 music_dir,
@@ -80,9 +76,9 @@ impl LibraryWatch {
     fn filesystem_change(
         &mut self,
         event: Result<(), notify::Error>,
-    ) -> Result<WatchEffect, WatchError> {
+    ) -> Result<WatchEffect, Unhandled> {
         match (&mut self.registered, event) {
-            (Registered::Unrooted, Ok(()) | Err(_)) => Err(WatchError::Unwatched),
+            (Registered::Unrooted, Ok(()) | Err(_)) => Err(Unhandled),
             (Registered::On { burst, .. }, Ok(())) => {
                 *burst = Burst::Armed;
                 Ok(WatchEffect::ArmDebounce)
@@ -91,13 +87,13 @@ impl LibraryWatch {
         }
     }
 
-    fn debounce_elapsed(&mut self) -> Result<WatchEffect, WatchError> {
+    fn debounce_elapsed(&mut self) -> Result<WatchEffect, Unhandled> {
         match &mut self.registered {
-            Registered::Unrooted => Err(WatchError::Unwatched),
-            Registered::On {
+            Registered::Unrooted
+            | Registered::On {
                 burst: Burst::Quiet,
                 ..
-            } => Err(WatchError::Settled),
+            } => Err(Unhandled),
             Registered::On { music_dir, burst } => {
                 *burst = Burst::Quiet;
                 Ok(WatchEffect::Rescan {
@@ -139,7 +135,10 @@ impl LibraryWatch {
 mod tests {
     use std::path::PathBuf;
 
-    use kernel::{domain::Revision, update::Machine};
+    use kernel::{
+        domain::Revision,
+        update::{Machine, Unhandled},
+    };
     use rstest::rstest;
 
     use crate::library::watch::{
@@ -147,7 +146,6 @@ mod tests {
         LibraryWatch,
         Registered,
         WatchEffect,
-        WatchError,
         WatchMessage,
     };
 
@@ -324,27 +322,18 @@ mod tests {
     }
 
     #[rstest]
-    #[case::unrooted_refuses_a_change(unrooted(), change(), WatchError::Unwatched)]
-    #[case::unrooted_refuses_a_deadline(
-        unrooted(),
-        WatchMessage::DebounceElapsed,
-        WatchError::Unwatched
-    )]
-    #[case::quiet_refuses_a_deadline(
-        quiet(),
-        WatchMessage::DebounceElapsed,
-        WatchError::Settled
-    )]
+    #[case::unrooted_refuses_a_change(unrooted(), change())]
+    #[case::unrooted_refuses_a_deadline(unrooted(), WatchMessage::DebounceElapsed)]
+    #[case::quiet_refuses_a_deadline(quiet(), WatchMessage::DebounceElapsed)]
     fn a_refused_cell_hands_the_state_back(
         #[case] start: LibraryWatch,
         #[case] message: WatchMessage,
-        #[case] reason: WatchError,
     ) {
         let expected = start.clone();
         let mut state = start;
         let refused = state.transition(message).err().unwrap();
         assert_eq!(state, expected);
-        assert_eq!(refused, reason);
+        assert_eq!(refused, Unhandled);
     }
 
     #[test]

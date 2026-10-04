@@ -1,8 +1,20 @@
 use std::path::{Path, PathBuf};
 
+use kernel::IoError;
 use notify::{RecommendedWatcher, RecursiveMode};
 
 use crate::config::ConfigPaths;
+
+pub(crate) fn io_error(error: &notify::Error) -> IoError {
+    match &error.kind {
+        notify::ErrorKind::Io(source) => source.kind().into(),
+        notify::ErrorKind::PathNotFound => IoError::Missing,
+        notify::ErrorKind::Generic(_)
+        | notify::ErrorKind::WatchNotFound
+        | notify::ErrorKind::InvalidConfig(_)
+        | notify::ErrorKind::MaxFilesWatch => IoError::Other,
+    }
+}
 
 pub(crate) fn config_directory(paths: &ConfigPaths) -> PathBuf {
     match paths.appearance.parent() {

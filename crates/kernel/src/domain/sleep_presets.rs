@@ -41,17 +41,19 @@ impl SleepPresets {
 
     pub fn from_minutes(minutes: &[u64]) -> Result<Self, SleepPresetError> {
         if minutes.len() > MAX_PRESETS {
-            return Err(SleepPresetError::TooMany {
-                count: minutes.len(),
-            });
+            return Err(SleepPresetError::TooMany(minutes.len()));
         }
         let mut previous = 0;
         for &value in minutes {
             if value == 0 || value > MAX_MINUTES {
-                return Err(SleepPresetError::OutOfRange { minutes: value });
+                return Err(SleepPresetError::OutOfRange {
+                    value: Duration::from_mins(value),
+                    min: Duration::from_mins(1),
+                    max: Duration::from_mins(MAX_MINUTES),
+                });
             }
             if value <= previous {
-                return Err(SleepPresetError::NotAscending { minutes: value });
+                return Err(SleepPresetError::NotAscending(Duration::from_mins(value)));
             }
             previous = value;
         }
@@ -81,12 +83,16 @@ impl Default for SleepPresets {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SleepPresetError {
-    #[error("sleep preset of {minutes} minutes is out of range (must be 1..=720)")]
-    OutOfRange { minutes: u64 },
-    #[error("sleep preset of {minutes} minutes is not above the one before")]
-    NotAscending { minutes: u64 },
-    #[error("at most 5 sleep presets are allowed, found {count}")]
-    TooMany { count: usize },
+    #[error("sleep preset of {} minutes is out of range (must be {}..={})", value.as_secs() / SECONDS_PER_MINUTE, min.as_secs() / SECONDS_PER_MINUTE, max.as_secs() / SECONDS_PER_MINUTE)]
+    OutOfRange {
+        value: Duration,
+        min: Duration,
+        max: Duration,
+    },
+    #[error("sleep preset of {} minutes is not above the one before", .0.as_secs() / SECONDS_PER_MINUTE)]
+    NotAscending(Duration),
+    #[error("at most 5 sleep presets are allowed, found {0}")]
+    TooMany(usize),
 }
 
 #[cfg(test)]
@@ -147,11 +153,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::zero_minutes(&[0], SleepPresetError::OutOfRange { minutes: 0 })]
-    #[case::over_the_ceiling(&[721], SleepPresetError::OutOfRange { minutes: 721 })]
-    #[case::not_ascending(&[30, 20], SleepPresetError::NotAscending { minutes: 20 })]
-    #[case::repeated(&[30, 30], SleepPresetError::NotAscending { minutes: 30 })]
-    #[case::too_many(&[1, 2, 3, 4, 5, 6], SleepPresetError::TooMany { count: 6 })]
+    #[case::zero_minutes(&[0], SleepPresetError::OutOfRange { value: Duration::ZERO, min: Duration::from_mins(1), max: Duration::from_mins(720) })]
+    #[case::over_the_ceiling(&[721], SleepPresetError::OutOfRange { value: Duration::from_mins(721), min: Duration::from_mins(1), max: Duration::from_mins(720) })]
+    #[case::not_ascending(&[30, 20], SleepPresetError::NotAscending(Duration::from_mins(20)))]
+    #[case::repeated(&[30, 30], SleepPresetError::NotAscending(Duration::from_mins(30)))]
+    #[case::too_many(&[1, 2, 3, 4, 5, 6], SleepPresetError::TooMany(6))]
     fn sleep_presets_from_minutes_rejects_what_it_cannot_place(
         #[case] minutes: &[u64],
         #[case] expected: SleepPresetError,

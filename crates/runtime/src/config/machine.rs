@@ -7,14 +7,16 @@ use config::{AppearanceFile, ThemeFile};
 use kernel::{
     ConfigCmd,
     ConfigEvent,
+    ConfigReload,
+    IoError,
     domain::{
         ConfigError,
-        ConfigFile,
+        ConfigName,
         OptionIndex,
         ThemeName,
         appearance_rows::AppearanceField,
     },
-    update::Machine,
+    update::{Machine, Unhandled},
 };
 use strum::IntoStaticStr;
 
@@ -22,7 +24,7 @@ use crate::config::{
     ConfigPaths,
     reload::{appearance_reload, config_reload, theme_reload},
     save_queue::{SavePatches, SaveQueue, Saves},
-    watch::{ConfigChange, ConfigWatch, ConfigWatchError, WatchEffect, WatchMessage},
+    watch::{ConfigChange, ConfigWatch, WatchEffect, WatchMessage},
     write::{SaveResult, Written},
 };
 
@@ -52,14 +54,14 @@ pub(crate) enum ConfigMessage {
     },
     FilesChanged,
     Read {
-        file: ConfigFile,
+        file: ConfigName,
         text: Option<String>,
     },
     Unreadable {
-        file: ConfigFile,
-        detail: String,
+        file: ConfigName,
+        kind: IoError,
     },
-    Listed(Result<Vec<String>, String>),
+    Listed(Result<Vec<String>, IoError>),
     SaveDue {
         now: Instant,
     },
@@ -75,7 +77,7 @@ pub(crate) enum Published {
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum ConfigEffect {
-    Read { file: ConfigFile, path: PathBuf },
+    Read { file: ConfigName, path: PathBuf },
     List(PathBuf),
     Save(SavePatches),
     Changed(Published),
@@ -108,13 +110,12 @@ impl ConfigState {
 
 impl Machine for ConfigState {
     type Message = ConfigMessage;
-    type Error = ConfigWatchError;
     type Effect = Vec<ConfigEffect>;
 
     fn transition(
         &mut self,
         input: ConfigMessage,
-    ) -> Result<Vec<ConfigEffect>, ConfigWatchError> {
+    ) -> Result<Vec<ConfigEffect>, Unhandled> {
         match input {
             ConfigMessage::Command {
                 cmd: ConfigCmd::Save(patch),
@@ -135,19 +136,23 @@ impl Machine for ConfigState {
             ConfigMessage::Read { file, text } => {
                 self.drive(WatchMessage::Observed { file, text })
             }
-            ConfigMessage::Unreadable { file, detail } => {
-                self.drive(WatchMessage::Unreadable { file, detail })
+            ConfigMessage::Unreadable { file, kind } => {
+                self.drive(WatchMessage::Unreadable { file, kind })
             }
             ConfigMessage::Listed(Ok(names)) => self.drive(WatchMessage::Listed(names)),
-            ConfigMessage::Listed(Err(detail)) => {
-                self.drive(WatchMessage::ThemesUnreadable(detail))
+            ConfigMessage::Listed(Err(kind)) => {
+                self.drive(WatchMessage::ThemesUnreadable(kind))
             }
             ConfigMessage::SaveDue { now } => {
                 let writes = self.saves.take_due(now);
                 Ok(writes.map(ConfigEffect::Save).into_iter().collect())
             }
             ConfigMessage::Saved(results) => Ok(self.saved(results)),
-            ConfigMessage::Stopping => {
+            ConfigMessage::Stopping
+            | ConfigMessage::Command {
+                cmd: ConfigCmd::Flush,
+                ..
+            } => {
                 let writes = self.saves.take_all();
                 Ok(writes.map(ConfigEffect::Save).into_iter().collect())
             }
@@ -156,10 +161,7 @@ impl Machine for ConfigState {
 }
 
 impl ConfigState {
-    fn drive(
-        &mut self,
-        message: WatchMessage,
-    ) -> Result<Vec<ConfigEffect>, ConfigWatchError> {
+    fn drive(&mut self, message: WatchMessage) -> Result<Vec<ConfigEffect>, Unhandled> {
         let io = self.watch.transition(message)?;
         Ok(self.react(io))
     }
@@ -177,20 +179,20 @@ impl ConfigState {
         match change {
             ConfigChange::Appearance(text) => self.appearance_changed(text.as_deref()),
             ConfigChange::Keymap(text) => self.keymap_changed(text.as_deref()),
-            ConfigChange::Theme { name, text } => theme_changed(&name, text.as_deref()),
+            ConfigChange::Theme { name, text } => theme_changed(name, text.as_deref()),
             ConfigChange::Themes(names) => {
                 vec![ConfigEffect::Event(ConfigEvent::ThemesLoaded(
                     embedded_and_user(names),
                 ))]
             }
-            ConfigChange::ThemesUnreadable(detail) => {
+            ConfigChange::ThemesUnreadable(kind) => {
                 vec![ConfigEffect::Event(ConfigEvent::Error(
-                    ConfigError::ThemesUnreadable { detail },
+                    ConfigError::ThemesUnreadable(kind),
                 ))]
             }
-            ConfigChange::Unreadable { file, detail } => {
+            ConfigChange::Unreadable { file, kind } => {
                 vec![ConfigEffect::Event(ConfigEvent::Error(
-                    ConfigError::Unreadable { file, detail },
+                    ConfigError::Unreadable { file, kind },
                 ))]
             }
         }
@@ -229,15 +231,15 @@ impl ConfigState {
                 )
                 .collect()
             }
-            Err(error) => vec![source_failed(ConfigFile::Config, error.to_string())],
+            Err(error) => vec![source_failed(ConfigName::Config, error.to_string())],
         }
     }
 
     fn poll_everything(&mut self) -> Vec<ConfigEffect> {
         [
-            WatchMessage::Poll(ConfigFile::Appearance),
-            WatchMessage::Poll(ConfigFile::Config),
-            WatchMessage::Poll(ConfigFile::Theme),
+            WatchMessage::Poll(ConfigName::Appearance),
+            WatchMessage::Poll(ConfigName::Config),
+            WatchMessage::PollTheme,
             WatchMessage::PollThemes,
         ]
         .into_iter()
@@ -248,13 +250,13 @@ impl ConfigState {
 
     fn saved(&mut self, results: Saves<SaveResult, SaveResult>) -> Vec<ConfigEffect> {
         let files = match results {
-            Saves::Config(config) => vec![(ConfigFile::Config, config)],
+            Saves::Config(config) => vec![(ConfigName::Config, config)],
             Saves::Appearance(appearance) => {
-                vec![(ConfigFile::Appearance, appearance)]
+                vec![(ConfigName::Appearance, appearance)]
             }
             Saves::Both { config, appearance } => vec![
-                (ConfigFile::Config, config),
-                (ConfigFile::Appearance, appearance),
+                (ConfigName::Config, config),
+                (ConfigName::Appearance, appearance),
             ],
         };
         files
@@ -265,7 +267,7 @@ impl ConfigState {
 
     fn apply_save_result(
         &mut self,
-        file: ConfigFile,
+        file: ConfigName,
         result: SaveResult,
     ) -> Vec<ConfigEffect> {
         match result {
@@ -275,7 +277,13 @@ impl ConfigState {
             Err(error) => {
                 vec![ConfigEffect::Event(ConfigEvent::Error(ConfigError::Save {
                     file,
-                    detail: error.to_string(),
+                    kind: match error {
+                        crate::error::SaveError::Read { source, .. }
+                        | crate::error::SaveError::Write { source, .. } => {
+                            source.kind().into()
+                        }
+                        crate::error::SaveError::Parse { .. } => IoError::Other,
+                    },
                 }))]
             }
         }
@@ -287,41 +295,48 @@ impl ConfigState {
         match appearance_reload(text) {
             Ok(file) => {
                 let rows = kernel::domain::appearance_rows::appearance_settings(
-                    file.appearance(),
+                    file.settings(),
                 );
                 self.appearance_file = file.clone();
                 self.appearance = Sighting::Repeat;
                 vec![
                     ConfigEffect::Changed(Published::Appearance(file)),
                     ConfigEffect::Event(ConfigEvent::AppearanceSettingsReloaded(rows)),
-                    source_recovered(ConfigFile::Appearance),
+                    source_recovered(ConfigName::Appearance),
                 ]
             }
             Err(error) => {
-                vec![source_failed(ConfigFile::Appearance, error.to_string())]
+                vec![source_failed(ConfigName::Appearance, error.to_string())]
             }
         }
     }
 }
 
-fn theme_changed(name: &str, text: Option<&str>) -> Vec<ConfigEffect> {
-    match theme_reload(name, text) {
-        Ok(file) => std::iter::once(ConfigEffect::Changed(Published::Theme(file)))
-            .chain(ThemeName::new(name.to_string()).ok().map(|theme_name| {
-                ConfigEffect::Event(ConfigEvent::ThemeReloaded(theme_name))
-            }))
-            .chain(std::iter::once(source_recovered(ConfigFile::Theme)))
-            .collect(),
-        Err(error) => vec![source_failed(ConfigFile::Theme, error.to_string())],
+fn theme_changed(name: ThemeName, text: Option<&str>) -> Vec<ConfigEffect> {
+    match theme_reload(name.as_str(), text) {
+        Ok(file) => vec![
+            ConfigEffect::Changed(Published::Theme(file)),
+            ConfigEffect::Event(ConfigEvent::ThemeReloaded(name.clone())),
+            source_recovered(ConfigName::Theme(name)),
+        ],
+        Err(error) => {
+            vec![source_failed(ConfigName::Theme(name), error.to_string())]
+        }
     }
 }
 
-fn source_recovered(source: ConfigFile) -> ConfigEffect {
-    ConfigEffect::Event(ConfigEvent::SourceRecovered(source))
+fn source_recovered(name: ConfigName) -> ConfigEffect {
+    ConfigEffect::Event(ConfigEvent::Reloaded(ConfigReload {
+        name,
+        result: Ok(()),
+    }))
 }
 
-fn source_failed(source: ConfigFile, text: String) -> ConfigEffect {
-    ConfigEffect::Event(ConfigEvent::SourceFailed { source, text })
+fn source_failed(name: ConfigName, detail: String) -> ConfigEffect {
+    ConfigEffect::Event(ConfigEvent::Reloaded(ConfigReload {
+        name,
+        result: Err(ConfigError::Invalid { detail }),
+    }))
 }
 
 fn embedded_and_user(user: Vec<String>) -> Vec<ThemeName> {
@@ -340,6 +355,10 @@ fn embedded_and_user(user: Vec<String>) -> Vec<ThemeName> {
 
 #[cfg(test)]
 mod tests {
+    fn noir() -> ConfigName {
+        ConfigName::Theme(ThemeName::from_static("noir"))
+    }
+
     use std::{
         path::PathBuf,
         time::{Duration, Instant},
@@ -350,7 +369,7 @@ mod tests {
         ConfigCmd,
         ConfigPatch,
         Percent,
-        domain::{ConfigError, ConfigFile, OptionCount, ThemeName},
+        domain::{ConfigError, ConfigName, OptionCount, ThemeName},
         update::Machine,
     };
 
@@ -401,7 +420,7 @@ mod tests {
     fn with_appearance_read(mut state: ConfigState) -> ConfigState {
         state
             .transition(ConfigMessage::Read {
-                file: ConfigFile::Appearance,
+                file: ConfigName::Appearance,
                 text: None,
             })
             .unwrap();
@@ -413,7 +432,7 @@ mod tests {
         let mut next = driver(None);
         let outputs = next
             .transition(ConfigMessage::Read {
-                file: ConfigFile::Config,
+                file: ConfigName::Config,
                 text: Some("[keymap]\nnext = \"x\"\n".to_string()),
             })
             .unwrap();
@@ -427,7 +446,7 @@ mod tests {
         let mut settled = driver(None);
         let _ = settled
             .transition(ConfigMessage::Read {
-                file: ConfigFile::Config,
+                file: ConfigName::Config,
                 text: Some("[keymap]\nnext = \"x\"\n".to_string()),
             })
             .unwrap();
@@ -435,7 +454,7 @@ mod tests {
         let mut state = settled;
         let outputs = state
             .transition(ConfigMessage::Read {
-                file: ConfigFile::Config,
+                file: ConfigName::Config,
                 text: Some("[keymap]\nnext = \"y\"\n".to_string()),
             })
             .unwrap();
@@ -451,7 +470,7 @@ mod tests {
         let mut state = driver(Some("noir"));
         let outputs = state
             .transition(ConfigMessage::Read {
-                file: ConfigFile::Theme,
+                file: noir(),
                 text: Some(NOIR_THEME.to_string()),
             })
             .unwrap();
@@ -461,8 +480,11 @@ mod tests {
             [
                 ConfigEffect::Changed(Published::Theme(_)),
                 ConfigEffect::Event(kernel::ConfigEvent::ThemeReloaded(_)),
-                ConfigEffect::Event(kernel::ConfigEvent::SourceRecovered(
-                    ConfigFile::Theme
+                ConfigEffect::Event(kernel::ConfigEvent::Reloaded(
+                    kernel::ConfigReload {
+                        name: ConfigName::Theme(_),
+                        result: Ok(()),
+                    }
                 )),
             ]
         ));
@@ -473,17 +495,19 @@ mod tests {
         let mut state = driver(None);
         let outputs = state
             .transition(ConfigMessage::Read {
-                file: ConfigFile::Appearance,
+                file: ConfigName::Appearance,
                 text: Some("[cover\nnot toml".to_string()),
             })
             .unwrap();
 
         assert!(matches!(
             outputs.as_slice(),
-            [ConfigEffect::Event(kernel::ConfigEvent::SourceFailed {
-                source: ConfigFile::Appearance,
-                ..
-            })]
+            [ConfigEffect::Event(kernel::ConfigEvent::Reloaded(
+                kernel::ConfigReload {
+                    name: ConfigName::Appearance,
+                    result: Err(ConfigError::Invalid { .. }),
+                }
+            ))]
         ));
     }
 
@@ -501,7 +525,7 @@ mod tests {
             outputs.as_slice(),
             [ConfigEffect::Event(kernel::ConfigEvent::Error(
                 ConfigError::Save {
-                    file: ConfigFile::Config,
+                    file: ConfigName::Config,
                     ..
                 }
             ))]
@@ -533,7 +557,7 @@ mod tests {
         assert!(matches!(
             outputs.as_slice(),
             [ConfigEffect::Read {
-                file: ConfigFile::Theme,
+                file: ConfigName::Theme(_),
                 ..
             }]
         ));

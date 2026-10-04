@@ -10,8 +10,8 @@ use crossbeam_channel::{Sender, TrySendError};
 use thiserror::Error;
 
 use crate::{
-    domain::Driver,
-    message::{AudioEvent, DriverEvent, Message},
+    domain::DriverName,
+    message::{DriverEvent, Message},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -55,7 +55,7 @@ impl<F> Outbox<F> {
 
     pub fn report(
         &self,
-        driver: Driver,
+        driver: DriverName,
         message: DriverEvent,
     ) -> Result<(), SendError> {
         self.send_message(Message::Driver {
@@ -85,12 +85,6 @@ impl<F: Into<Message>> Outbox<F> {
     }
 }
 
-impl Outbox<AudioEvent> {
-    pub fn refused(&self, input: &'static str) -> Result<(), SendError> {
-        self.report(Driver::Audio, DriverEvent::Rejected { input })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{thread, time::Duration};
@@ -111,13 +105,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::room(Scenario::Room, Ok(()), false)]
-    #[case::receiver_dropped(Scenario::ReceiverDropped, Err(SendError::Closed), false)]
-    #[case::full(Scenario::Full, Err(SendError::Full), true)]
+    #[case::room(Scenario::Room, Ok(()))]
+    #[case::receiver_dropped(Scenario::ReceiverDropped, Err(SendError::Closed))]
+    #[case::full(Scenario::Full, Err(SendError::Full))]
     fn a_sender_reports_the_outcome_of_a_send(
         #[case] scenario: Scenario,
         #[case] expected: Result<(), SendError>,
-        #[case] raised: bool,
     ) {
         let (sender, receiver) = bounded(1);
         let full_edge = Congestion::default();
@@ -141,7 +134,7 @@ mod tests {
         let delivery = sender_under_test.send(AudioEvent::TrackChanged);
 
         assert_eq!(delivery, expected);
-        assert_eq!(full_edge.take(), raised);
+        assert_eq!(full_edge.take(), matches!(scenario, Scenario::Full));
         if let Some(drainer) = drainer {
             drainer.join().unwrap();
         }

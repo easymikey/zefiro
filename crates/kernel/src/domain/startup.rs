@@ -3,12 +3,14 @@ use std::{path::PathBuf, sync::Arc};
 use crate::domain::{
     AppearanceSetting,
     AudioSettings,
+    ConfigError,
+    ConfigName,
     Percent,
     ThemeChoice,
     ThemeName,
     Track,
     ViewIndex,
-    appearance::Look,
+    appearance::Appearance,
     playlist::PlaylistSource,
 };
 
@@ -27,10 +29,10 @@ pub struct Startup {
     pub playlist_source: PlaylistSource,
     pub shuffle: Shuffle,
     pub audio: AudioSettings,
-    pub look: Look,
+    pub appearance: Appearance,
     pub theme: ThemeChoice,
     pub volume: Percent,
     pub themes: Vec<ThemeName>,
     pub appearance_settings: Vec<AppearanceSetting>,
-    pub toast_texts: Vec<String>,
+    pub errors: Vec<(ConfigName, ConfigError)>,
 }

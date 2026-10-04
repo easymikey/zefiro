@@ -12,7 +12,7 @@ use crate::{
     overlay::modal::{
         COLUMN_SPACING,
         ModalPlacement,
-        ModalRowColors,
+        ModalRowStyle,
         ModalScrollAreas,
         OverlayAreas,
         OverlayContainer,
@@ -25,16 +25,16 @@ use crate::{
         canvas::Canvas,
         glyphs,
         inset::Inset,
-        list_chrome::{ScrollbarTrack, render_scrollbar, scroll_offset},
+        list_chrome::{ScrollbarTrack, paint_scrollbar, scroll_offset},
         relative_time::relative_time,
         span::{line, text},
         text::truncate,
     },
-    theme::{ActiveTheme, Role},
+    theme::ActiveTheme,
 };
 
 #[derive(Debug)]
-pub(crate) struct HistoryOverlay<'a> {
+pub(crate) struct HistoryWidget<'a> {
     pub(crate) theme: ActiveTheme<'a>,
     pub(crate) entries: &'a [HistoryEntry],
     pub(crate) now: Moment,
@@ -42,13 +42,13 @@ pub(crate) struct HistoryOverlay<'a> {
     pub(crate) container: OverlayContainer<'a>,
 }
 
-impl HistoryOverlay<'_> {
+impl HistoryWidget<'_> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
         OverlayAreas::List(self.placement().areas(screen))
     }
 
-    pub(crate) fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
+    fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
         let OverlayAreas::List(areas) = areas else {
             return;
         };
@@ -64,13 +64,13 @@ impl HistoryOverlay<'_> {
             return;
         }
         if self.entries.is_empty() {
-            let dim = self.theme.role(Role::Dim);
+            let dim = ModalRowStyle::from_theme(&self.theme).muted_foreground;
             let placeholder = glyphs::history::EMPTY_PLACEHOLDER;
             Paragraph::new(line([text(placeholder).fg(dim)]))
                 .render(areas.content, buffer);
             return;
         }
-        self.render_rows(areas, buffer);
+        self.paint_rows(areas, buffer);
     }
 
     fn placement(&self) -> ModalPlacement<'_> {
@@ -82,7 +82,7 @@ impl HistoryOverlay<'_> {
             border_title: modal_title(
                 glyphs::history::TITLE_WORD,
                 format!("{} tracks", self.entries.len()),
-                theme,
+                ModalRowStyle::from_theme(&theme),
             ),
             modal_title: glyphs::history::TITLE_WORD,
             content_width: measures.natural_width(COLUMN_SPACING),
@@ -92,8 +92,8 @@ impl HistoryOverlay<'_> {
         }
     }
 
-    fn render_rows(&self, areas: ModalScrollAreas, buffer: &mut Buffer) {
-        let colors = ModalRowColors::from_theme(&self.theme);
+    fn paint_rows(&self, areas: ModalScrollAreas, buffer: &mut Buffer) {
+        let style = ModalRowStyle::from_theme(&self.theme);
         let table_area = areas.rows;
         let lead = leading_cells(&areas);
         let total = self.entries.len();
@@ -108,30 +108,36 @@ impl HistoryOverlay<'_> {
                         columns,
                         lead,
                     },
-                    colors,
+                    style,
                     self.now,
                 )
             }),
             columns.constraints(),
         )
         .column_spacing(columns.spacing)
-        .row_highlight_style(colors.highlight());
+        .row_highlight_style(style.highlight());
         let mut table_rows = TableState::new()
             .with_offset(offset)
             .with_selected(Some(self.selected));
         StatefulWidget::render(table, table_area, buffer, &mut table_rows);
 
-        render_scrollbar(
+        paint_scrollbar(
             areas.scrollbar,
             ScrollbarTrack {
                 total,
                 offset,
                 viewport: height,
-                thumb: self.theme.role(Role::Frame),
-                track: colors.dim,
+                thumb: style.border,
+                track: style.muted_foreground,
             },
             buffer,
         );
+    }
+}
+
+impl Widget for &HistoryWidget<'_> {
+    fn render(self, area: Rect, buffer: &mut Buffer) {
+        self.paint(self.areas(area), Canvas { area, buffer });
     }
 }
 
@@ -226,13 +232,13 @@ fn when_label(played: &HistoryEntry, now: Moment) -> String {
     relative_time(now, played.at)
 }
 
-fn entry_row(row: &EntryRow<'_>, colors: ModalRowColors, now: Moment) -> Row<'static> {
+fn entry_row(row: &EntryRow<'_>, style: ModalRowStyle, now: Moment) -> Row<'static> {
     let [label, when] = entry_cells(row, now);
     Row::new(vec![
-        Line::from(label).style(Style::default().fg(colors.text)),
+        Line::from(label).style(Style::default().fg(style.foreground)),
         Line::from(when)
             .right_aligned()
-            .style(Style::default().fg(colors.dim)),
+            .style(Style::default().fg(style.muted_foreground)),
     ])
 }
 
@@ -254,9 +260,9 @@ mod tests {
     use ratatui::layout::Rect;
 
     use crate::{
-        overlay::{history::HistoryOverlay, modal::OverlayContainer, rendered_canvas},
+        overlay::{history::HistoryWidget, modal::OverlayContainer},
         primitive::canvas::find_text,
-        test_support::noir,
+        test_support::{noir, rendered},
         theme::{ActiveTheme, ColorDepth, Role},
     };
 
@@ -266,7 +272,7 @@ mod tests {
 
     fn entry(path: &str, title: &str, artist: Option<&str>) -> HistoryEntry {
         HistoryEntry {
-            path: path.into(),
+            track: kernel::domain::TrackRef::Local(path.into()),
             title: title.to_string(),
             artist: artist.map(str::to_string),
             at: now(),
@@ -292,18 +298,16 @@ mod tests {
             entry("/m/a.flac", "Alpha", Some("Artist A")),
             entry("/m/b.flac", "Beta", None),
         ];
-        let overlay = HistoryOverlay {
+        let overlay = HistoryWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
             selected: 1,
-            container: OverlayContainer::Modal { avoid: &[] },
+            container: OverlayContainer::Modal(&[]),
         };
         insta::assert_snapshot!(
-            rendered_canvas(80, 28, |canvas| {
-                overlay.render_in(overlay.areas(canvas.area), canvas);
-            })
-            .to_string()
+            rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
+                .to_string()
         );
     }
 
@@ -315,18 +319,17 @@ mod tests {
             entry("/m/a.flac", "Alpha", Some("Artist A")),
             entry("/m/b.flac", "Beta", None),
         ];
-        let overlay = HistoryOverlay {
+        let overlay = HistoryWidget {
             theme: active,
             entries: &entries,
             now: now(),
             selected: 1,
-            container: OverlayContainer::Modal { avoid: &[] },
+            container: OverlayContainer::Modal(&[]),
         };
-        let buffer = rendered_canvas(80, 28, |canvas| {
-            overlay.render_in(overlay.areas(canvas.area), canvas);
-        })
-        .buffer()
-        .clone();
+        let buffer =
+            rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
+                .buffer()
+                .clone();
         let selection_bg = active.role(Role::SelectionBackground);
         let (alpha_x, alpha_y) = find_text(&buffer, "Artist A — Alpha").unwrap();
         let (beta_x, beta_y) = find_text(&buffer, "Beta").unwrap();
@@ -339,7 +342,7 @@ mod tests {
     fn history_overlay_with_a_scrollbar_keeps_its_time_column_clear_of_it() {
         let theme = noir();
         let entries = scrolling_entries();
-        let overlay = HistoryOverlay {
+        let overlay = HistoryWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
@@ -347,10 +350,8 @@ mod tests {
             container: OverlayContainer::Pane(Rect::new(0, 0, 120, 40)),
         };
         insta::assert_snapshot!(
-            rendered_canvas(120, 40, |canvas| {
-                overlay.render_in(overlay.areas(canvas.area), canvas);
-            })
-            .to_string()
+            rendered(120, 40, |frame| frame.render_widget(&overlay, frame.area()))
+                .to_string()
         );
     }
 
@@ -358,18 +359,17 @@ mod tests {
     fn the_history_time_column_never_touches_the_scrollbar() {
         let theme = noir();
         let entries = scrolling_entries();
-        let overlay = HistoryOverlay {
+        let overlay = HistoryWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
             selected: 0,
             container: OverlayContainer::Pane(Rect::new(0, 0, 120, 40)),
         };
-        let buffer = rendered_canvas(120, 40, |canvas| {
-            overlay.render_in(overlay.areas(canvas.area), canvas);
-        })
-        .buffer()
-        .clone();
+        let buffer =
+            rendered(120, 40, |frame| frame.render_widget(&overlay, frame.area()))
+                .buffer()
+                .clone();
         let when = "just now";
         let (x, y) = find_text(&buffer, when).unwrap();
         let after = x + u16::try_from(when.chars().count()).unwrap();
@@ -381,18 +381,16 @@ mod tests {
     fn history_overlay_shows_a_placeholder_when_empty() {
         let theme = noir();
         let entries: [HistoryEntry; 0] = [];
-        let overlay = HistoryOverlay {
+        let overlay = HistoryWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
             selected: 0,
-            container: OverlayContainer::Modal { avoid: &[] },
+            container: OverlayContainer::Modal(&[]),
         };
         insta::assert_snapshot!(
-            rendered_canvas(80, 28, |canvas| {
-                overlay.render_in(overlay.areas(canvas.area), canvas);
-            })
-            .to_string()
+            rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
+                .to_string()
         );
     }
 
@@ -400,16 +398,19 @@ mod tests {
     fn history_overlay_does_not_panic_on_a_tiny_terminal() {
         let theme = noir();
         let entries: [HistoryEntry; 0] = [];
-        let overlay = HistoryOverlay {
+        let overlay = HistoryWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             entries: &entries,
             now: now(),
             selected: 0,
-            container: OverlayContainer::Modal { avoid: &[] },
+            container: OverlayContainer::Modal(&[]),
         };
-        let _ = rendered_canvas(4, 3, |canvas| {
-            overlay.render_in(overlay.areas(canvas.area), canvas);
-        })
-        .to_string();
+        assert_eq!(
+            rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()))
+                .buffer()
+                .area
+                .height,
+            3
+        );
     }
 }

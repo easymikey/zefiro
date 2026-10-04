@@ -10,11 +10,11 @@ expression: "walked(model, messages)"
                 ConfirmDelete,
             ),
         ),
-        One(
+        [
             Animate(
                 OverlayOpened,
             ),
-        ),
+        ],
         Stopped,
         Some(
             ConfirmDelete(
@@ -53,21 +53,19 @@ expression: "walked(model, messages)"
         Overlay(
             Confirm,
         ),
-        Batch(
-            [
-                Animate(
-                    OverlayClosed,
+        [
+            Animate(
+                OverlayClosed,
+            ),
+            Library(
+                Trash(
+                    "/m/0.flac",
                 ),
-                Library(
-                    Trash(
-                        "/m/0.flac",
-                    ),
-                ),
-                Animate(
-                    TrackDeleted,
-                ),
-            ],
-        ),
+            ),
+            Animate(
+                TrackDeleted,
+            ),
+        ],
         Stopped,
         None,
         Cursor {

@@ -3,4 +3,4 @@ source: crates/config/src/rows.rs
 expression: written
 ---
 [cover]
-style = "off"
+mode = "off"

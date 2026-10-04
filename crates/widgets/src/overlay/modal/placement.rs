@@ -23,7 +23,7 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum OverlayContainer<'a> {
     Pane(Rect),
-    Modal { avoid: &'a [Rect] },
+    Modal(&'a [Rect]),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,7 +159,7 @@ impl<'a> ModalPlacement<'a> {
     pub(crate) fn areas(&self, screen: Rect) -> ModalScrollAreas {
         match self.container {
             OverlayContainer::Pane(pane) => self.border(pane).areas(),
-            OverlayContainer::Modal { avoid } => {
+            OverlayContainer::Modal(avoid) => {
                 self.scroll_areas(&self.modal().areas(screen, avoid))
             }
         }
@@ -181,7 +181,7 @@ impl<'a> ModalPlacement<'a> {
         let Canvas { area, buffer } = canvas;
         match self.container {
             OverlayContainer::Pane(pane) => self.border(pane).paint(buffer),
-            OverlayContainer::Modal { avoid } => self.modal().paint(
+            OverlayContainer::Modal(avoid) => self.modal().paint(
                 PlacedModal {
                     areas: areas.frame(),
                     bounds: ModalBounds { area, avoid },

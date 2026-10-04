@@ -10,11 +10,11 @@ expression: "walked(model, messages)"
                 Search,
             ),
         ),
-        One(
+        [
             Animate(
                 OverlayOpened,
             ),
-        ),
+        ],
         Stopped,
         Some(
             Search(
@@ -26,9 +26,9 @@ expression: "walked(model, messages)"
                     content: SearchQuery {
                         input: "",
                         matches: [
-                            0,
-                            1,
-                            2,
+                            Index(0),
+                            Index(1),
+                            Index(2),
                         ],
                     },
                 },
@@ -68,7 +68,7 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Stopped,
         Some(
             Search(
@@ -80,9 +80,9 @@ expression: "walked(model, messages)"
                     content: SearchQuery {
                         input: "m",
                         matches: [
-                            0,
-                            2,
-                            1,
+                            Index(0),
+                            Index(2),
+                            Index(1),
                         ],
                     },
                 },
@@ -122,7 +122,7 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Stopped,
         Some(
             Search(
@@ -134,9 +134,9 @@ expression: "walked(model, messages)"
                     content: SearchQuery {
                         input: "mo",
                         matches: [
-                            0,
-                            2,
-                            1,
+                            Index(0),
+                            Index(2),
+                            Index(1),
                         ],
                     },
                 },
@@ -176,7 +176,7 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Stopped,
         Some(
             Search(
@@ -188,8 +188,8 @@ expression: "walked(model, messages)"
                     content: SearchQuery {
                         input: "moo",
                         matches: [
-                            0,
-                            2,
+                            Index(0),
+                            Index(2),
                         ],
                     },
                 },
@@ -229,7 +229,7 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Stopped,
         Some(
             Search(
@@ -241,8 +241,8 @@ expression: "walked(model, messages)"
                     content: SearchQuery {
                         input: "moon",
                         matches: [
-                            0,
-                            2,
+                            Index(0),
+                            Index(2),
                         ],
                     },
                 },
@@ -280,7 +280,7 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Stopped,
         Some(
             Search(
@@ -292,8 +292,8 @@ expression: "walked(model, messages)"
                     content: SearchQuery {
                         input: "moon",
                         matches: [
-                            0,
-                            2,
+                            Index(0),
+                            Index(2),
                         ],
                     },
                 },
@@ -327,104 +327,104 @@ expression: "walked(model, messages)"
         Overlay(
             Confirm,
         ),
-        Batch(
-            [
-                Animate(
-                    OverlayClosed,
-                ),
-                Audio(
-                    Stop,
-                ),
-                Audio(
-                    Load(
-                        TrackLoad {
-                            path: "/m/2.flac",
-                            gain: None,
-                            revision: Revision(
-                                1,
-                            ),
-                        },
-                    ),
-                ),
-                Library(
-                    AppendHistory(
-                        HistoryEntry {
-                            path: "/m/2.flac",
-                            title: "Moonlight Sonata",
-                            artist: Some(
-                                "Beethoven",
-                            ),
-                            at: Moment(
-                                0ns,
-                            ),
-                        },
-                    ),
-                ),
-                Macos(
-                    NowPlaying(
-                        Some(
-                            Track {
-                                path: "/m/2.flac",
-                                duration: Some(
-                                    100s,
-                                ),
-                                tags: Tags {
-                                    title: Some(
-                                        "Moonlight Sonata",
-                                    ),
-                                    artist: Some(
-                                        "Beethoven",
-                                    ),
-                                    album: None,
-                                    album_artist: None,
-                                    date: None,
-                                    genre: None,
-                                    track: None,
-                                    track_total: None,
-                                    disc: None,
-                                    composer: None,
-                                    comment: None,
-                                    lyrics: None,
-                                },
-                                audio_format: AudioFormat {
-                                    format: None,
-                                    bitrate_kbps: None,
-                                    sample_rate_hz: None,
-                                    bits_per_sample: None,
-                                    channels: None,
-                                    replay_gain: None,
-                                },
-                                display: "Beethoven — Moonlight Sonata",
-                                tagging: Read,
-                            },
+        [
+            Animate(
+                OverlayClosed,
+            ),
+            Audio(
+                Stop,
+            ),
+            Audio(
+                Load(
+                    TrackLoad {
+                        path: "/m/2.flac",
+                        gain: None,
+                        revision: Revision(
+                            1,
                         ),
+                    },
+                ),
+            ),
+            Library(
+                AppendHistory(
+                    HistoryEntry {
+                        track: Local(
+                            "/m/2.flac",
+                        ),
+                        title: "Moonlight Sonata",
+                        artist: Some(
+                            "Beethoven",
+                        ),
+                        at: Moment(
+                            0ns,
+                        ),
+                    },
+                ),
+            ),
+            Macos(
+                NowPlaying(
+                    Some(
+                        Track {
+                            source: Local(
+                                "/m/2.flac",
+                            ),
+                            tags: Tags {
+                                title: Some(
+                                    "Moonlight Sonata",
+                                ),
+                                artist: Some(
+                                    "Beethoven",
+                                ),
+                                album: None,
+                                album_artist: None,
+                                date: None,
+                                genre: None,
+                                track: None,
+                                track_total: None,
+                                disc: None,
+                                composer: None,
+                                comment: None,
+                                lyrics: None,
+                            },
+                            audio_format: AudioFormat {
+                                format: None,
+                                bitrate_kbps: None,
+                                sample_rate_hz: None,
+                                bits_per_sample: None,
+                                channels: None,
+                                replay_gain: None,
+                            },
+                            display: "Beethoven — Moonlight Sonata",
+                            tagging: Read(
+                                100s,
+                            ),
+                        },
                     ),
                 ),
-                Audio(
-                    Playback(
-                        Playing,
-                    ),
+            ),
+            Audio(
+                Playback(
+                    Playing,
                 ),
-                Macos(
-                    PlaybackState(
-                        Playing,
-                    ),
+            ),
+            Macos(
+                SetPlayback(
+                    Playing,
                 ),
-                Animate(
-                    TrackChanged,
+            ),
+            Animate(
+                TrackChanged,
+            ),
+            Animate(
+                PlaybackChanged(
+                    Play,
                 ),
-                Animate(
-                    PlaybackChanged(
-                        Play,
-                    ),
-                ),
-            ],
-        ),
+            ),
+        ],
         Loading {
             track: Track {
-                path: "/m/2.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/m/2.flac",
                 ),
                 tags: Tags {
                     title: Some(
@@ -453,7 +453,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "Beethoven — Moonlight Sonata",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             at: 0ns,
         },

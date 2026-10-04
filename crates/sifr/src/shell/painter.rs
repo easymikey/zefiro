@@ -164,13 +164,13 @@ impl<'terminal> Painter<'terminal> {
         self.motion.outgoing_theme_background = None;
         if self.window_colors_write == WindowColorsWrite::Staged {
             self.window_colors_write = WindowColorsWrite::Done;
-            self.apply_window_colors(&WindowColorsCmd::Apply(
+            self.set_window_colors(&WindowColorsCmd::Set(
                 self.presentation.theme.name.clone(),
             ));
         }
     }
 
-    fn apply_window_colors(&mut self, cmd: &WindowColorsCmd) {
+    fn set_window_colors(&mut self, cmd: &WindowColorsCmd) {
         if let Err(error) = write_window_colors(cmd, &self.presentation.theme) {
             self.toasts.push(Message::Toast(
                 Toast::error("Window colors failed").with_text(error.to_string()),
@@ -207,7 +207,7 @@ impl<'terminal> Painter<'terminal> {
         let background = theme.role(Role::WindowBackground);
         let mix = self.animation_stage.timings().volume_pulse_mix;
         Backdrop {
-            animations: laid_out.scene.look().appearance.animations,
+            animations: laid_out.scene.appearance().settings.animations,
             layout: protected_layout(laid_out.layout, cover_art),
             background,
             accent: theme.role(Role::Accent),
@@ -228,15 +228,15 @@ impl<'terminal> Painter<'terminal> {
         let (pending, crossfade) = take_crossfade_permit(pending);
         self.motion.pending_crossfade = pending;
         let laid_out = view::view(frame, &self.presentation, &self.motion);
-        let cover_style = laid_out.scene.cover_style();
+        let cover_mode = laid_out.scene.cover_mode();
         let on_screen = laid_out.scene.on_screen(&laid_out.layout);
         let body_height = laid_out
             .layout
             .playlist
             .map_or(0, |areas| areas.body.height);
-        let size_px = laid_out.scene.look().cover_size_px;
+        let size_px = laid_out.scene.appearance().cover_size_px;
         let cover =
-            wanted_cover(&mut self.motion.wanted_cover, current_track, cover_style)
+            wanted_cover(&mut self.motion.wanted_cover, current_track, cover_mode)
                 .map(|path| CoverRequest { path, size_px });
         self.motion.on_screen = on_screen;
         let visible_rows = (body_height != self.motion.playlist_body_height)
@@ -306,8 +306,8 @@ impl runtime::Shell for Painter<'_> {
 
     fn effect(&mut self, effect: ShellEffect, animations: Animations) {
         match &effect {
-            ShellEffect::WindowColors(WindowColorsCmd::Apply(_)) => match animations {
-                Animations::Off => self.apply_window_colors(&WindowColorsCmd::Apply(
+            ShellEffect::WindowColors(WindowColorsCmd::Set(_)) => match animations {
+                Animations::Off => self.set_window_colors(&WindowColorsCmd::Set(
                     self.presentation.theme.name.clone(),
                 )),
                 Animations::On => {
@@ -315,7 +315,7 @@ impl runtime::Shell for Painter<'_> {
                 }
             },
             ShellEffect::WindowColors(cmd @ WindowColorsCmd::Reset) => {
-                self.apply_window_colors(cmd);
+                self.set_window_colors(cmd);
             }
             ShellEffect::Animate(cue) => self.pending_cues.push(*cue),
         }

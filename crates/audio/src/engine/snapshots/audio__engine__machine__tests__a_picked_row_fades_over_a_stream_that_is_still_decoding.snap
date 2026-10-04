@@ -4,42 +4,71 @@ assertion_line: 302
 expression: wiring.log
 ---
 [
-    Clear,
-    StartLoad {
-        path: "/tmp/track0.flac",
-        speed: Speed(
-            1.0,
-        ),
-    },
-    Batch(
-        [
-            Play,
-            Report,
+    Cmd {
+        effects: [
+            Clear,
         ],
-    ),
-    Clear,
-    StartLoad {
-        path: "/tmp/track2.flac",
-        speed: Speed(
-            1.0,
-        ),
+        messages: [],
     },
-    Batch(
-        [
-            Play,
-            Report,
-        ],
-    ),
-    Batch(
-        [
-            Start {
-                volume: 1.0,
-                total: Some(
-                    100s,
+    Cmd {
+        effects: [
+            StartLoad {
+                path: "/tmp/track0.flac",
+                speed: Speed(
+                    1.0,
                 ),
             },
+        ],
+        messages: [],
+    },
+    Cmd {
+        effects: [
+            Play,
             Report,
         ],
-    ),
-    Nothing,
+        messages: [],
+    },
+    Cmd {
+        effects: [
+            Clear,
+        ],
+        messages: [],
+    },
+    Cmd {
+        effects: [
+            StartLoad {
+                path: "/tmp/track2.flac",
+                speed: Speed(
+                    1.0,
+                ),
+            },
+        ],
+        messages: [],
+    },
+    Cmd {
+        effects: [
+            Play,
+            Report,
+        ],
+        messages: [],
+    },
+    Cmd {
+        effects: [
+            Start(
+                1.0,
+            ),
+            Report,
+        ],
+        messages: [
+            Loaded(
+                Some(
+                    100s,
+                ),
+            ),
+        ],
+    },
+    Cmd {
+        effects: [],
+        messages: [],
+    },
 ]

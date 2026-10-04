@@ -13,7 +13,10 @@ use crate::{
         Themes,
         appearance_rows::AppearanceField,
     },
-    update::config::ConfigParts,
+    update::{
+        config::ConfigParts,
+        machine::{Machine, Unhandled},
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,11 +27,11 @@ pub enum SettingsMessage {
     SleepPresets(Direction),
 }
 
-pub(crate) fn adjust(
+pub(crate) fn step_setting(
     config: ConfigParts<'_>,
     row: SettingRow,
     direction: Direction,
-) -> Cmd {
+) -> Result<Cmd, Unhandled> {
     let ConfigParts {
         themes,
         settings,
@@ -36,16 +39,16 @@ pub(crate) fn adjust(
         ..
     } = config;
     let message = match row {
-        SettingRow::Theme => return theme_picked(themes, direction),
+        SettingRow::Theme => return Ok(theme_picked(themes, direction)),
         SettingRow::Appearance(field) => {
-            return appearance_stepped(appearance_settings, field, direction);
+            return Ok(appearance_stepped(appearance_settings, field, direction));
         }
         SettingRow::Crossfade => SettingsMessage::Crossfade(direction),
         SettingRow::ReplayGain => SettingsMessage::ToggleReplayGain,
         SettingRow::OutputDevice => SettingsMessage::OutputDevice(direction),
         SettingRow::SleepPresets => SettingsMessage::SleepPresets(direction),
     };
-    settings.apply(message)
+    settings.transition(message)
 }
 
 fn appearance_stepped(
@@ -57,7 +60,7 @@ fn appearance_stepped(
         .iter_mut()
         .find(|slot| slot.row.field == field)
     else {
-        return Cmd::None;
+        return Cmd::none();
     };
     let option = slot.choice.stepped(slot.row.control, direction);
     slot.choice = Choice::Option(option);
@@ -77,15 +80,15 @@ fn appearance_stepped(
     [Some(setting), theme, cue]
         .into_iter()
         .flatten()
-        .fold(Cmd::None, Cmd::then)
+        .fold(Cmd::none(), Cmd::then)
 }
 
 fn theme_picked(themes: &mut Themes, direction: Direction) -> Cmd {
     let Some(next) = themes.stepped(direction) else {
-        return Cmd::None;
+        return Cmd::none();
     };
     themes.selected = ThemeChoice::Named(next.clone());
-    Cmd::Batch(vec![
+    Cmd::from_iter([
         Effect::Config(ConfigCmd::Save(
             ConfigPatch::builder().theme(next.clone()).build(),
         )),
@@ -93,27 +96,30 @@ fn theme_picked(themes: &mut Themes, direction: Direction) -> Cmd {
     ])
 }
 
-impl Settings {
-    pub fn apply(&mut self, message: SettingsMessage) -> Cmd {
-        match message {
-            SettingsMessage::ToggleReplayGain => adjust_replay_gain(self),
-            SettingsMessage::Crossfade(direction) => adjust_crossfade(self, direction),
+impl Machine for Settings {
+    type Message = SettingsMessage;
+    type Effect = Cmd;
+
+    fn transition(&mut self, message: SettingsMessage) -> Result<Cmd, Unhandled> {
+        Ok(match message {
+            SettingsMessage::ToggleReplayGain => step_replay_gain(self),
+            SettingsMessage::Crossfade(direction) => step_crossfade(self, direction),
             SettingsMessage::OutputDevice(direction) => {
-                adjust_output_device(self, direction)
+                step_output_device(self, direction)
             }
             SettingsMessage::SleepPresets(direction) => {
-                adjust_sleep_presets(self, direction)
+                step_sleep_presets(self, direction)
             }
-        }
+        })
     }
 }
 
-fn adjust_replay_gain(settings: &mut Settings) -> Cmd {
+fn step_replay_gain(settings: &mut Settings) -> Cmd {
     settings.audio.replay_gain = match settings.audio.replay_gain {
         ReplayGain::On => ReplayGain::Off,
         ReplayGain::Off => ReplayGain::On,
     };
-    Cmd::Batch(vec![
+    Cmd::from_iter([
         Effect::Config(ConfigCmd::Save(
             ConfigPatch::builder()
                 .replay_gain(settings.audio.replay_gain)
@@ -123,9 +129,9 @@ fn adjust_replay_gain(settings: &mut Settings) -> Cmd {
     ])
 }
 
-fn adjust_crossfade(settings: &mut Settings, direction: Direction) -> Cmd {
+fn step_crossfade(settings: &mut Settings, direction: Direction) -> Cmd {
     settings.audio.crossfade = settings.audio.crossfade.step(direction);
-    Cmd::Batch(vec![
+    Cmd::from_iter([
         Effect::Config(ConfigCmd::Save(
             ConfigPatch::builder()
                 .crossfade(settings.audio.crossfade)
@@ -135,9 +141,9 @@ fn adjust_crossfade(settings: &mut Settings, direction: Direction) -> Cmd {
     ])
 }
 
-fn adjust_output_device(settings: &mut Settings, direction: Direction) -> Cmd {
+fn step_output_device(settings: &mut Settings, direction: Direction) -> Cmd {
     if settings.output_devices.is_empty() {
-        return Cmd::None;
+        return Cmd::none();
     }
     let ring_len = settings.output_devices.len() + 1;
     let current = settings.audio.device.named().map_or(0, |name| {
@@ -155,7 +161,7 @@ fn adjust_output_device(settings: &mut Settings, direction: Direction) -> Cmd {
             OutputDevice::Named(device.name.clone())
         });
     settings.audio.device = next.clone();
-    Cmd::Batch(vec![
+    Cmd::from_iter([
         Effect::Config(ConfigCmd::Save(
             ConfigPatch::builder().device(next.clone()).build(),
         )),
@@ -163,13 +169,13 @@ fn adjust_output_device(settings: &mut Settings, direction: Direction) -> Cmd {
     ])
 }
 
-fn adjust_sleep_presets(settings: &mut Settings, direction: Direction) -> Cmd {
+fn step_sleep_presets(settings: &mut Settings, direction: Direction) -> Cmd {
     let presets = settings.audio.sleep_presets.as_slice();
     let current = SleepPresets::bundle_index(presets)
         .unwrap_or_else(|| SleepPresets::nearest_bundle(presets));
     let next_index = direction.wrapped(current, SleepPresets::BUNDLES.len());
     let Some(next) = SleepPresets::bundle(next_index) else {
-        return Cmd::None;
+        return Cmd::none();
     };
     settings.audio.sleep_presets = next.clone();
     Effect::Config(ConfigCmd::Save(

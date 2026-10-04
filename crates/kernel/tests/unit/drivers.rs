@@ -18,18 +18,21 @@ use kernel::{
     Speed,
     ToastKind,
     TrackLoad,
-    domain::{Driver, DriverError, DriverStatus},
-    update::update,
+    domain::{DriverError, DriverName, DriverStatus},
 };
 
-use crate::support::{bare_track, dated_track, first_toast_expiry, playing_model};
+use crate::support::{
+    bare_track,
+    dated_track,
+    first_toast_expiry,
+    playing_model,
+    step::update,
+};
 
-fn died(driver: Driver) -> Message {
+fn died(driver: DriverName) -> Message {
     Message::Driver {
         driver,
-        event: DriverEvent::Died(DriverError::panicked(
-            "index out of bounds".to_string(),
-        )),
+        event: DriverEvent::Died(DriverError::Panicked),
     }
 }
 
@@ -37,19 +40,16 @@ fn died(driver: Driver) -> Message {
 fn a_driver_death_is_recorded_and_told_as_an_error() {
     let mut model = playing_model(3);
 
-    let cmd = update(&mut model, died(Driver::Config), Moment::default()).unwrap();
+    let cmd = update(&mut model, died(DriverName::Config), Moment::default()).unwrap();
 
     assert_eq!(
         cmd,
-        Cmd::Batch(vec![
-            Effect::Animate(Cue::ToastRaised),
-            first_toast_expiry()
-        ])
+        Cmd::from_iter([Effect::Animate(Cue::ToastRaised), first_toast_expiry()])
     );
 
     assert_eq!(
-        model.drivers.status(Driver::Config),
-        &DriverStatus::Dead(DriverError::panicked("index out of bounds".to_string()))
+        model.drivers.status(DriverName::Config),
+        &DriverStatus::Dead(DriverError::Panicked)
     );
     assert_eq!(
         model.workspace.toasts.first().map(|toast| (
@@ -60,13 +60,13 @@ fn a_driver_death_is_recorded_and_told_as_an_error() {
         Some((
             ToastKind::Error,
             "The config driver stopped",
-            Some("panicked: index out of bounds")
+            Some("panicked")
         ))
     );
 }
 
 struct StrategyRow {
-    driver: Driver,
+    driver: DriverName,
     prior_restarts: usize,
     expected_status: fn() -> DriverStatus,
     check: fn(&Cmd),
@@ -76,7 +76,7 @@ fn starts_with_restart_and_starts_audio(cmd: &Cmd) {
     let effects: Vec<&Effect> = cmd.effects().collect();
     assert!(matches!(
         effects.first(),
-        Some(Effect::Restart(Driver::Audio))
+        Some(Effect::Restart(DriverName::Audio))
     ));
     assert!(
         effects
@@ -95,14 +95,14 @@ fn degrades_audio_with_a_toast(cmd: &Cmd) {
 }
 
 fn changes_nothing(cmd: &Cmd) {
-    assert_eq!(cmd, &Cmd::None);
+    assert_eq!(cmd, &Cmd::none());
 }
 
 fn restarts_and_rescans_library(cmd: &Cmd) {
     let effects: Vec<&Effect> = cmd.effects().collect();
     assert!(matches!(
         effects.first(),
-        Some(Effect::Restart(Driver::Library))
+        Some(Effect::Restart(DriverName::Library))
     ));
     assert!(
         effects
@@ -113,29 +113,25 @@ fn restarts_and_rescans_library(cmd: &Cmd) {
 
 #[rstest::rstest]
 #[case::restart_emits_restart_and_boot(StrategyRow {
-    driver: Driver::Audio,
+    driver: DriverName::Audio,
     prior_restarts: 0,
     expected_status: || DriverStatus::Running,
     check: starts_with_restart_and_starts_audio,
 })]
 #[case::restart_budget_spent_degrades_with_a_toast(StrategyRow {
-    driver: Driver::Audio,
+    driver: DriverName::Audio,
     prior_restarts: 3,
-    expected_status: || DriverStatus::Dead(DriverError::panicked(
-        "index out of bounds".to_string()
-    )),
+    expected_status: || DriverStatus::Dead(DriverError::Panicked),
     check: degrades_audio_with_a_toast,
 })]
 #[case::degrade_silent_changes_nothing_but_status(StrategyRow {
-    driver: Driver::Macos,
+    driver: DriverName::Macos,
     prior_restarts: 0,
-    expected_status: || DriverStatus::Dead(DriverError::panicked(
-        "index out of bounds".to_string()
-    )),
+    expected_status: || DriverStatus::Dead(DriverError::Panicked),
     check: changes_nothing,
 })]
 #[case::library_restart_rescans(StrategyRow {
-    driver: Driver::Library,
+    driver: DriverName::Library,
     prior_restarts: 0,
     expected_status: || DriverStatus::Running,
     check: restarts_and_rescans_library,
@@ -164,7 +160,7 @@ fn congestion_raises_one_toast_naming_the_driver() {
     let cmd = update(
         &mut model,
         Message::Driver {
-            driver: Driver::Library,
+            driver: DriverName::Library,
             event: DriverEvent::Full,
         },
         Moment::default(),
@@ -173,10 +169,7 @@ fn congestion_raises_one_toast_naming_the_driver() {
 
     assert_eq!(
         cmd,
-        Cmd::Batch(vec![
-            Effect::Animate(Cue::ToastRaised),
-            first_toast_expiry()
-        ])
+        Cmd::from_iter([Effect::Animate(Cue::ToastRaised), first_toast_expiry()])
     );
     assert_eq!(
         model
@@ -187,7 +180,7 @@ fn congestion_raises_one_toast_naming_the_driver() {
         Some((ToastKind::Info, "The library driver is falling behind"))
     );
     assert_eq!(
-        model.drivers.status(Driver::Library),
+        model.drivers.status(DriverName::Library),
         &DriverStatus::Running
     );
 }
@@ -236,7 +229,7 @@ fn an_audio_restart_resumes_from_the_same_place(#[case] row: ResumeRow) {
         .map(|track| track.path().to_path_buf())
         .unwrap();
 
-    let cmd = update(&mut model, died(Driver::Audio), Moment::default()).unwrap();
+    let cmd = update(&mut model, died(DriverName::Audio), Moment::default()).unwrap();
     let effects: Vec<&Effect> = cmd.effects().collect();
 
     assert!(effects.iter().any(|effect| matches!(
@@ -251,5 +244,8 @@ fn an_audio_restart_resumes_from_the_same_place(#[case] row: ResumeRow) {
         effect,
         Effect::Audio(AudioCmd::Playback(playback)) if *playback == row.playback
     )));
-    assert_eq!(model.drivers.status(Driver::Audio), &DriverStatus::Running);
+    assert_eq!(
+        model.drivers.status(DriverName::Audio),
+        &DriverStatus::Running
+    );
 }

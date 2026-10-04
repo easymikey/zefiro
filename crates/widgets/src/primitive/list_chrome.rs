@@ -54,7 +54,7 @@ pub(crate) struct ScrollbarTrack {
     pub track: Color,
 }
 
-pub(crate) fn render_scrollbar(column: Rect, bar: ScrollbarTrack, buffer: &mut Buffer) {
+pub(crate) fn paint_scrollbar(column: Rect, bar: ScrollbarTrack, buffer: &mut Buffer) {
     if bar.total <= bar.viewport {
         return;
     }

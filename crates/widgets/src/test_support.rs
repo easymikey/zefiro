@@ -2,7 +2,14 @@ use std::{sync::Arc, time::Duration};
 
 use kernel::{
     Moment,
-    domain::{AudioFormat, KeymapOverrides, Model, Tags, Track, appearance::Look},
+    domain::{
+        AudioFormat,
+        KeymapOverrides,
+        Model,
+        Tags,
+        Track,
+        appearance::Appearance,
+    },
     playlist::Playlist,
     update::keymap::{Bindings, KeyBinding},
 };
@@ -96,8 +103,8 @@ impl SceneSources {
         }
     }
 
-    pub(crate) fn look_mut(&mut self) -> &mut Look {
-        &mut self.model.settings.look
+    pub(crate) fn appearance_mut(&mut self) -> &mut Appearance {
+        &mut self.model.settings.appearance
     }
 
     pub(crate) fn scene(&self) -> Scene<'_> {

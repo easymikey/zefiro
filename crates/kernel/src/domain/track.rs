@@ -31,14 +31,18 @@ pub struct AudioFormat {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tagging {
-    Listed,
-    Read,
+    Listed(Option<Duration>),
+    Read(Duration),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum TrackRef {
+    Local(PathBuf),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Track {
-    path: PathBuf,
-    duration: Option<Duration>,
+    source: TrackRef,
     tags: Tags,
     audio_format: AudioFormat,
     display: Box<str>,
@@ -56,12 +60,11 @@ impl Track {
     ) -> Self {
         let display = Self::compute_display(&path, &tags);
         Self {
-            path,
-            duration: Some(duration),
+            source: TrackRef::Local(path),
             tags,
             audio_format,
             display,
-            tagging: Tagging::Read,
+            tagging: Tagging::Read(duration),
         }
     }
 
@@ -69,11 +72,10 @@ impl Track {
     pub fn listed(path: &Path) -> Self {
         Self {
             display: file_stem(path).into_boxed_str(),
-            path: path.to_path_buf(),
-            duration: None,
+            source: TrackRef::Local(path.to_path_buf()),
             tags: Tags::default(),
             audio_format: AudioFormat::default(),
-            tagging: Tagging::Listed,
+            tagging: Tagging::Listed(None),
         }
     }
 
@@ -91,13 +93,22 @@ impl Track {
     }
 
     #[must_use]
+    pub fn source(&self) -> &TrackRef {
+        &self.source
+    }
+
+    #[must_use]
     pub fn path(&self) -> &Path {
-        &self.path
+        let TrackRef::Local(path) = &self.source;
+        path
     }
 
     #[must_use]
     pub fn duration(&self) -> Option<Duration> {
-        self.duration
+        match self.tagging {
+            Tagging::Listed(duration) => duration,
+            Tagging::Read(duration) => Some(duration),
+        }
     }
 
     #[must_use]
@@ -125,13 +136,17 @@ impl Track {
         if let Some(title) = &self.tags.title {
             return title.clone();
         }
-        file_stem(&self.path)
+        file_stem(self.path())
     }
 
     #[must_use]
     pub fn with_duration(&self, duration: Duration) -> Self {
+        let tagging = match self.tagging {
+            Tagging::Listed(_) => Tagging::Listed(Some(duration)),
+            Tagging::Read(_) => Tagging::Read(duration),
+        };
         Self {
-            duration: Some(duration),
+            tagging,
             ..self.clone()
         }
     }

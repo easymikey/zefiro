@@ -3,7 +3,7 @@ use std::sync::Arc;
 use kernel::domain::{Track, appearance::FormatChips};
 use ratatui::text::Line;
 
-use crate::primitive::{chip::ChipColors, format_chips};
+use crate::primitive::{chip::ChipStyle, format_chips};
 
 const CHIP_GAP: usize = 2;
 
@@ -15,7 +15,7 @@ pub(crate) struct FormatChipFit {
 pub(crate) struct FormatChipContent<'a> {
     pub(crate) current: Option<&'a Arc<Track>>,
     pub(crate) visibility: FormatChips,
-    pub(crate) colors: ChipColors,
+    pub(crate) colors: ChipStyle,
 }
 
 pub(crate) struct ChipBudget {

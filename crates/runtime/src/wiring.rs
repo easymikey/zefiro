@@ -5,7 +5,7 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use kernel::{
     DriverEvent,
     Message,
-    domain::{Driver, DriverStatus, Model},
+    domain::{DriverName, DriverStatus, Model},
 };
 
 use crate::{
@@ -52,10 +52,10 @@ impl Wiring {
         let macos = (spawners.macos)(&spawn_parts)?;
 
         let ports = Ports {
-            audio: Port::spawned(Driver::Audio, audio),
-            library: LibraryPort::new(Port::spawned(Driver::Library, library)),
-            config: Port::spawned(Driver::Config, config),
-            macos: Port::spawned(Driver::Macos, macos),
+            audio: Port::spawned(DriverName::Audio, audio),
+            library: LibraryPort::new(Port::spawned(DriverName::Library, library)),
+            config: Port::spawned(DriverName::Config, config),
+            macos: Port::spawned(DriverName::Macos, macos),
         };
 
         Ok(Self {
@@ -71,7 +71,11 @@ impl Wiring {
         })
     }
 
-    pub(crate) fn restart(&mut self, driver: Driver, model: &Model) -> Vec<TraceEntry> {
+    pub(crate) fn restart(
+        &mut self,
+        driver: DriverName,
+        model: &Model,
+    ) -> Vec<TraceEntry> {
         let join_failed = matches!(self.ports.join(driver), Some(Err(_)))
             .then_some(TraceEntry::JoinFailed { driver });
         let paths = self.paths.clone();
@@ -92,24 +96,24 @@ impl Wiring {
 
     fn restart_driver(
         &mut self,
-        driver: Driver,
+        driver: DriverName,
         spawn_parts: &SpawnParts<'_>,
     ) -> Result<(), Error> {
         match driver {
-            Driver::Audio => {
+            DriverName::Audio => {
                 let (thread, spectrum) = (self.spawners.audio)(spawn_parts)?;
                 self.spectrum = spectrum;
                 self.ports.audio = Port::spawned(driver, thread);
             }
-            Driver::Library => {
+            DriverName::Library => {
                 let thread = (self.spawners.library)(spawn_parts)?;
                 self.ports.library = LibraryPort::new(Port::spawned(driver, thread));
             }
-            Driver::Config => {
+            DriverName::Config => {
                 let thread = (self.spawners.config)(spawn_parts)?;
                 self.ports.config = Port::spawned(driver, thread);
             }
-            Driver::Macos => {
+            DriverName::Macos => {
                 let thread = (self.spawners.macos)(spawn_parts)?;
                 self.ports.macos = Port::spawned(driver, thread);
             }
@@ -122,13 +126,13 @@ pub(crate) fn await_exits(
     model: &Model,
     inbox: &Receiver<Message>,
     timeout: Duration,
-) -> Vec<Driver> {
-    let mut awaited: Vec<Driver> = registry::REGISTRY
+) -> Vec<DriverName> {
+    let mut awaited: Vec<DriverName> = registry::REGISTRY
         .iter()
         .map(|row| row.driver)
         .filter(|driver| matches!(model.drivers.status(*driver), DriverStatus::Running))
         .collect();
-    let mut reported: Vec<Driver> = registry::REGISTRY
+    let mut reported: Vec<DriverName> = registry::REGISTRY
         .iter()
         .map(|row| row.driver)
         .filter(|driver| !awaited.contains(driver))
@@ -150,7 +154,11 @@ pub(crate) fn await_exits(
     reported
 }
 
-pub(crate) fn join_exited(ports: &mut Ports, reported: &[Driver], trace: &mut Trace) {
+pub(crate) fn join_exited(
+    ports: &mut Ports,
+    reported: &[DriverName],
+    trace: &mut Trace,
+) {
     for row in registry::REGISTRY {
         if !reported.contains(&row.driver) {
             continue;
@@ -172,7 +180,7 @@ pub(crate) mod tests {
         DriverEvent,
         MacosCmd,
         Message,
-        domain::Driver,
+        domain::DriverName,
     };
     use library::LibraryDirs;
 
@@ -189,7 +197,7 @@ pub(crate) mod tests {
     };
 
     fn idle_thread<C: Send + 'static>(
-        driver: Driver,
+        driver: DriverName,
         inbox: &Sender<Message>,
     ) -> DriverThread<C> {
         crate::driver::spawn_idle(registry::row(driver), inbox).unwrap()
@@ -221,7 +229,7 @@ pub(crate) mod tests {
                 }
             }
             report_sender.send(Message::Driver {
-                driver: Driver::Library,
+                driver: DriverName::Library,
                 event: DriverEvent::Stopped,
             })
         });
@@ -240,20 +248,20 @@ pub(crate) mod tests {
 
             let ports = Ports {
                 audio: Port::spawned(
-                    Driver::Audio,
-                    idle_thread::<AudioCmd>(Driver::Audio, &inbox),
+                    DriverName::Audio,
+                    idle_thread::<AudioCmd>(DriverName::Audio, &inbox),
                 ),
                 library: LibraryPort::new(Port::spawned(
-                    Driver::Library,
+                    DriverName::Library,
                     idle_library_thread(&inbox, library_tap),
                 )),
                 config: Port::spawned(
-                    Driver::Config,
-                    idle_thread::<ConfigCmd>(Driver::Config, &inbox),
+                    DriverName::Config,
+                    idle_thread::<ConfigCmd>(DriverName::Config, &inbox),
                 ),
                 macos: Port::spawned(
-                    Driver::Macos,
-                    idle_thread::<MacosCmd>(Driver::Macos, &inbox),
+                    DriverName::Macos,
+                    idle_thread::<MacosCmd>(DriverName::Macos, &inbox),
                 ),
             };
 

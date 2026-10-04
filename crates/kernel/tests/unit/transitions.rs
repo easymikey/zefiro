@@ -39,7 +39,6 @@ use kernel::{
         ViewIndex,
     },
     playlist::{PlayOrder, Playlist, RepeatMode},
-    update::update,
 };
 use rstest::rstest;
 
@@ -47,6 +46,7 @@ use crate::support::{
     effects,
     model_playing_at,
     model_with_tracks,
+    step::{apply, update},
     track_at as arc_track,
 };
 
@@ -60,7 +60,7 @@ fn driver_effects(cmd: Cmd) -> Vec<Effect> {
 fn ack_loaded(m: &mut Model) -> Cmd {
     update(
         m,
-        Message::Audio(kernel::AudioEvent::Loaded { total: None }),
+        Message::Audio(kernel::AudioEvent::Loaded(None)),
         Moment::default(),
     )
     .unwrap()
@@ -104,7 +104,7 @@ fn prev_at_first_track_is_noop_without_repeat() {
     )
     .unwrap();
     assert_eq!(m.playlist.playing_index(), Some(ViewIndex::new(0)));
-    assert!(matches!(cmd, Cmd::None));
+    assert!(cmd == Cmd::none());
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn volume_clamped_0_100() {
     };
     let cmd = update(
         &mut low,
-        Message::Playback(PlaybackRequest::StepVolume { steps: -5 }),
+        Message::Playback(PlaybackRequest::StepVolume(Direction::Previous)),
         Moment::default(),
     )
     .unwrap();
@@ -126,7 +126,7 @@ fn volume_clamped_0_100() {
     let effs = effects(cmd);
     assert!(matches!(
         effs.as_slice(),
-        [Effect::Macos(MacosCmd::Volume(system)), ..] if system.get() == 0
+        [Effect::Macos(MacosCmd::SetVolume(system)), ..] if system.get() == 0
     ));
 
     let mut hi = Model {
@@ -136,23 +136,21 @@ fn volume_clamped_0_100() {
         },
         ..Default::default()
     };
-    let _ = update(
+    apply(
         &mut hi,
-        Message::Playback(PlaybackRequest::StepVolume { steps: 5 }),
-        Moment::default(),
-    )
-    .unwrap();
+        Message::Playback(PlaybackRequest::StepVolume(Direction::Next)),
+    );
     assert_eq!(hi.transport.volume.get(), 100);
 }
 
 #[rstest]
 #[case::playback_seek_by_negative_saturates_at_zero(
-    Message::Playback(PlaybackRequest::SeekBy { seconds: -10 }),
+    Message::Playback(PlaybackRequest::SeekBy { direction: Direction::Previous, by: Duration::from_secs(10) }),
     Duration::from_secs(3),
     Duration::ZERO
 )]
 #[case::playback_seek_by_positive_clamps_to_duration(
-    Message::Playback(PlaybackRequest::SeekBy { seconds: 10 }),
+    Message::Playback(PlaybackRequest::SeekBy { direction: Direction::Next, by: Duration::from_secs(10) }),
     Duration::from_secs(95),
     Duration::from_secs(100)
 )]
@@ -208,21 +206,25 @@ fn seek_routes_clamp_to_duration_regardless_of_message_source(
         matches!(seek.first(), Some(Effect::Audio(AudioCmd::Seek(d))) if *d == expected)
     );
     assert!(
-        matches!(seek.get(1), Some(Effect::Macos(MacosCmd::PlaybackPosition(d))) if *d == expected)
+        matches!(seek.get(1), Some(Effect::Macos(MacosCmd::SetPosition(d))) if *d == expected)
     );
 }
 
 #[test]
-fn quit_stops_audio_resets_the_window_colors_and_ends_with_quit() {
+fn quit_stops_audio_flushes_config_resets_the_window_colors_and_ends_with_quit() {
     let mut m = Model::default();
     let cmd = update(&mut m, Message::Quit, Moment::default()).unwrap();
-    let effects: Vec<Effect> = cmd.into_iter().collect();
+    let (effects, _messages) = cmd.into_parts();
     assert!(matches!(
         effects.first(),
         Some(Effect::Audio(AudioCmd::Stop))
     ));
     assert!(matches!(
         effects.get(1),
+        Some(Effect::Config(kernel::ConfigCmd::Flush))
+    ));
+    assert!(matches!(
+        effects.get(2),
         Some(Effect::WindowColors(WindowColorsCmd::Reset))
     ));
     assert!(matches!(effects.last(), Some(Effect::Quit)));
@@ -253,7 +255,7 @@ fn jump_request_starts_selected_track() {
         |e| matches!(e, Effect::Audio(AudioCmd::Load(TrackLoad { path: p, .. })) if p == "/tmp/track2.flac")
     ));
 
-    let _ = ack_loaded(&mut m);
+    drop(ack_loaded(&mut m));
     assert!(m.player.is_playing());
     let playing = m.player.current().unwrap();
     assert_eq!(playing.duration(), Some(Duration::from_secs(42)));
@@ -277,7 +279,7 @@ fn jump_out_of_range_is_noop() {
     .unwrap();
     assert_eq!(m.playlist.playing_index(), Some(ViewIndex::new(0)));
     assert!(m.player.current().is_none());
-    assert!(matches!(cmd, Cmd::None));
+    assert!(cmd == Cmd::none());
 }
 
 #[test]
@@ -303,12 +305,7 @@ fn library_loaded_relists_the_playlist_without_effects() {
 fn an_explicit_skip_snaps_the_browse_cursor() {
     let mut m = model_playing_at(3, 0, Duration::ZERO);
     m.workspace.browse.cursor = Cursor::with_len(3).at(2);
-    let _ = update(
-        &mut m,
-        Message::Playback(PlaybackRequest::Next),
-        Moment::default(),
-    )
-    .unwrap();
+    apply(&mut m, Message::Playback(PlaybackRequest::Next));
     assert_eq!(m.workspace.browse.selected(), ViewIndex::new(1));
 }
 
@@ -321,12 +318,7 @@ fn a_natural_track_change_follows_only_a_cursor_that_was_on_the_playing_row(
 ) {
     let mut m = model_playing_at(3, 0, Duration::ZERO);
     m.workspace.browse.cursor = Cursor::with_len(3).at(cursor);
-    let _ = update(
-        &mut m,
-        Message::Audio(kernel::AudioEvent::Ended),
-        Moment::default(),
-    )
-    .unwrap();
+    apply(&mut m, Message::Audio(kernel::AudioEvent::Ended));
     assert_eq!(m.workspace.browse.selected(), ViewIndex::new(expected));
 }
 
@@ -343,14 +335,15 @@ fn toggling_shuffle_on_asks_for_an_order() {
     assert!(
         effects(cmd)
             .iter()
-            .any(|effect| matches!(effect, Effect::RollShuffle { len: 4 }))
+            .any(|effect| matches!(effect, Effect::RollShuffle(4)))
     );
 }
 
 #[test]
 fn toggle_shuffle_off_clears_order() {
     let mut m = model_with_tracks(4);
-    m.playlist.play_order = PlayOrder::Shuffle(vec![3, 1, 2, 0]);
+    m.playlist.play_order =
+        PlayOrder::Shuffle([3, 1, 2, 0].map(ViewIndex::new).to_vec());
     let cmd = update(
         &mut m,
         Message::Playback(PlaybackRequest::ToggleShuffle),
@@ -376,14 +369,12 @@ fn preload_peeks_queue_head_when_queue_nonempty() {
         head: Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default()),
         preload: Preload::None,
     };
-    m.queue.push(ViewIndex::new(2));
+    m.queue.push(m.playlist.tracks[2].source().clone());
 
-    let _ = update(
+    apply(
         &mut m,
         Message::Audio(kernel::AudioEvent::Playhead(Duration::from_secs(95))),
-        Moment::default(),
-    )
-    .unwrap();
+    );
     let mark = m.revisions.lookahead;
     let cmd = update(
         &mut m,
@@ -442,9 +433,7 @@ fn track_ended_repeat_one_without_current_stops() {
         head: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
         preload: Preload::Queued(arc_track("/tmp/track1.flac")),
     },
-    kernel::AudioError::Stream {
-        reason: "cannot preload /tmp/track1.flac: no such file".into(),
-    },
+    kernel::AudioError::Stream { reason: "cannot preload /tmp/track1.flac: no such file".into() },
     "cannot preload"
 )]
 #[case::a_seek_the_source_refuses(
@@ -453,9 +442,7 @@ fn track_ended_repeat_one_without_current_stops() {
         head: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
         preload: Preload::None,
     },
-    kernel::AudioError::Seek {
-        reason: "the source cannot seek".into(),
-    },
+    kernel::AudioError::Seek { reason: "the source cannot seek".into() },
     "cannot seek"
 )]
 fn an_audio_failure_raises_an_error_toast(
@@ -467,12 +454,7 @@ fn an_audio_failure_raises_an_error_toast(
         player,
         ..Default::default()
     };
-    let _ = update(
-        &mut m,
-        Message::Audio(kernel::AudioEvent::Error(error)),
-        Moment::default(),
-    )
-    .unwrap();
+    apply(&mut m, Message::Audio(kernel::AudioEvent::Error(error)));
     let toast = m.workspace.toasts.first().unwrap();
     assert_eq!(toast.kind, ToastKind::Error);
     let text = toast.text.as_deref().map_or("", str::trim);
@@ -524,15 +506,15 @@ fn start_track_emits_nowplaying_and_playing_state() {
         .find_map(|effect| match effect {
             Effect::Macos(MacosCmd::NowPlaying(shown)) => Some(shown.clone()),
             Effect::Macos(
-                MacosCmd::PlaybackState(_)
-                | MacosCmd::PlaybackPosition(_)
-                | MacosCmd::Volume(_),
+                MacosCmd::SetPlayback(_)
+                | MacosCmd::SetPosition(_)
+                | MacosCmd::SetVolume(_),
             )
             | Effect::Audio(_)
             | Effect::Library(_)
             | Effect::Config(_)
             | Effect::Animate(_)
-            | Effect::RollShuffle { .. }
+            | Effect::RollShuffle(..)
             | Effect::WindowColors(_)
             | Effect::After { .. }
             | Effect::Restart(_)
@@ -552,13 +534,13 @@ fn step_volume_emits_only_the_system_volume() {
     let mut m = Model::default();
     let cmd = update(
         &mut m,
-        Message::Playback(PlaybackRequest::StepVolume { steps: 5 }),
+        Message::Playback(PlaybackRequest::StepVolume(Direction::Next)),
         Moment::default(),
     )
     .unwrap();
     let effs = driver_effects(cmd);
     insta::assert_debug_snapshot!(effs);
-    let [Effect::Macos(MacosCmd::Volume(system_volume))] = effs.as_slice() else {
+    let [Effect::Macos(MacosCmd::SetVolume(system_volume))] = effs.as_slice() else {
         panic!("expected System(Volume) alone, got {effs:?}");
     };
     assert_eq!(*system_volume, m.transport.volume);
@@ -589,7 +571,7 @@ fn a_keymap_reload_moves_the_generation_only_when_the_file_says_something_new(
         keys != KeymapOverrides::default()
     );
     assert_eq!(model.workspace.keymap.overrides(), &keys);
-    assert!(matches!(cmd, Cmd::None));
+    assert!(cmd == Cmd::none());
 }
 
 #[test]

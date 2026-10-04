@@ -1,6 +1,6 @@
 use strum::IntoEnumIterator;
 
-use crate::domain::{cursor::Cursor, direction::Direction};
+use crate::domain::{ViewIndex, cursor::Cursor, direction::Direction};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CursorOver<T> {
@@ -16,8 +16,8 @@ impl<T> CursorOver<T> {
         }
     }
 
-    pub fn selected(&self) -> usize {
-        self.cursor.index()
+    pub fn selected(&self) -> ViewIndex {
+        ViewIndex::new(self.cursor.index())
     }
 
     pub fn resize(&mut self, len: usize) {

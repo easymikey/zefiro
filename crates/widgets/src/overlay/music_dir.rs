@@ -1,7 +1,7 @@
 use kernel::domain::{MusicDirError, TextEntry};
 
 use crate::{
-    overlay::modal::{Prompt, PromptBody},
+    overlay::modal::{PromptBody, PromptStyle, PromptWidget},
     primitive::glyphs,
     theme::ActiveTheme,
 };
@@ -12,15 +12,15 @@ pub(crate) fn prompt<'a>(
     typed: &'a TextEntry,
     error: Option<&MusicDirError>,
     theme: ActiveTheme<'a>,
-) -> Prompt<'a> {
-    Prompt {
+) -> PromptWidget<'a> {
+    PromptWidget {
         title: glyphs::music_dir::TITLE_WORD,
         hint: glyphs::music_dir::HINT,
         min_width: MIN_WIDTH,
         body: PromptBody::Entry(&typed.input),
         error: error.map(ToString::to_string),
         avoid: &[],
-        theme,
+        style: PromptStyle::from_theme(&theme),
     }
 }
 
@@ -29,8 +29,8 @@ mod tests {
     use kernel::domain::{MusicDirError, TextEntry};
 
     use crate::{
-        overlay::{music_dir::prompt, rendered_canvas},
-        test_support::noir,
+        overlay::music_dir::prompt,
+        test_support::{noir, rendered},
         theme::{ActiveTheme, ColorDepth},
     };
 
@@ -44,8 +44,8 @@ mod tests {
             error.as_ref(),
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
-        rendered_canvas(size.0, size.1, |canvas| {
-            prompt.render_in(prompt.areas(canvas.area), canvas);
+        rendered(size.0, size.1, |frame| {
+            frame.render_widget(&prompt, frame.area());
         })
         .to_string()
     }
@@ -62,6 +62,6 @@ mod tests {
 
     #[test]
     fn music_dir_overlay_does_not_panic_on_a_tiny_terminal() {
-        let _ = frame("", None, (4, 3));
+        assert_eq!(frame("", None, (4, 3)).lines().count(), 3);
     }
 }

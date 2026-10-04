@@ -1,7 +1,8 @@
 use crate::{
     cmd::{Cmd, Cue, Effect},
     domain::{
-        ConfigFile,
+        ConfigError,
+        ConfigName,
         Keymap,
         KeymapOverrides,
         Revision,
@@ -11,13 +12,8 @@ use crate::{
         Toast,
         Workspace,
     },
-    message::Timer,
+    message::{ConfigReload, Timer},
 };
-
-pub(crate) struct SourceOutcome {
-    pub(crate) source: ConfigFile,
-    pub(crate) text: Option<String>,
-}
 
 impl Workspace {
     pub(crate) fn keymap_reloaded(
@@ -26,14 +22,17 @@ impl Workspace {
         revisions: &mut Revisions,
     ) -> Cmd {
         if self.keymap.overrides() == &keys {
-            return Cmd::None;
+            return Cmd::none();
         }
         self.keymap = Keymap::new(keys);
-        let text = self.keymap.error_text();
-        self.source_result(
-            SourceOutcome {
-                source: ConfigFile::Config,
-                text,
+        let result = self
+            .keymap
+            .error_text()
+            .map_or(Ok(()), |detail| Err(ConfigError::Invalid { detail }));
+        self.config_reloaded(
+            ConfigReload {
+                name: ConfigName::Config,
+                result,
             },
             revisions,
         )
@@ -79,9 +78,9 @@ impl Workspace {
         let dropped = if self.toasts.len() < before {
             Cmd::from(Cue::ToastDismissed)
         } else {
-            Cmd::None
+            Cmd::none()
         };
-        let next = self.toasts.last().map_or(Cmd::None, |oldest| {
+        let next = self.toasts.last().map_or(Cmd::none(), |oldest| {
             Effect::After {
                 delay: TOAST_LIFETIME
                     .saturating_sub(now.elapsed_since(oldest.raised_at)),
@@ -92,33 +91,38 @@ impl Workspace {
         dropped.then(next)
     }
 
-    pub(crate) fn source_result(
+    pub(crate) fn config_reloaded(
         &mut self,
-        outcome: SourceOutcome,
+        reload: ConfigReload,
         revisions: &mut Revisions,
     ) -> Cmd {
-        let SourceOutcome { source, text } = outcome;
-        match text {
-            Some(text) => {
-                let fresh = self.source_errors.insert_if_changed(source, text);
-                fresh.map_or(Cmd::None, |told| {
-                    let title = format!("Trouble with {source}");
-                    self.show(Toast::error(title).with_text(told), revisions)
-                })
+        let ConfigReload { name, result } = reload;
+        match result {
+            Err(error) => {
+                let text = error.to_string();
+                if self.config_errors.insert_if_changed(name.clone(), error) {
+                    let title = format!("Trouble with {name}");
+                    self.show(Toast::error(title).with_text(text), revisions)
+                } else {
+                    Cmd::none()
+                }
             }
-            None => self.source_recovered(source),
+            Ok(()) => self.source_recovered(&name),
         }
     }
 
-    pub(crate) fn source_recovered(&mut self, source: ConfigFile) -> Cmd {
-        let cleared = self.source_errors.clear(source);
+    fn source_recovered(&mut self, name: &ConfigName) -> Cmd {
+        let cleared = self
+            .config_errors
+            .clear(name)
+            .map(|error| error.to_string());
         let before = self.toasts.len();
         self.toasts
             .retain(|toast| cleared.is_none() || toast.text != cleared);
         if self.toasts.len() < before {
             Cue::ToastDismissed.into()
         } else {
-            Cmd::None
+            Cmd::none()
         }
     }
 }

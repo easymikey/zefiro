@@ -1,4 +1,5 @@
 use ratatui::{
+    buffer::Buffer,
     layout::Rect,
     style::Color,
     text::Line,
@@ -47,18 +48,40 @@ impl PromptBody<'_> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PromptStyle {
+    pub(crate) foreground: Color,
+    pub(crate) muted_foreground: Color,
+    pub(crate) border: Color,
+    pub(crate) background: Color,
+    pub(crate) alert: Color,
+}
+
+impl PromptStyle {
+    #[must_use]
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            foreground: theme.role(Role::Text),
+            muted_foreground: theme.role(Role::Dim),
+            border: theme.role(Role::Frame),
+            background: theme.role(Role::WindowBackground),
+            alert: theme.alert(),
+        }
+    }
+}
+
 #[derive(Debug)]
-pub(crate) struct Prompt<'a> {
+pub(crate) struct PromptWidget<'a> {
     pub(crate) title: &'static str,
     pub(crate) hint: &'static str,
     pub(crate) min_width: u16,
     pub(crate) body: PromptBody<'a>,
     pub(crate) error: Option<String>,
     pub(crate) avoid: &'a [Rect],
-    pub(crate) theme: ActiveTheme<'a>,
+    pub(crate) style: PromptStyle,
 }
 
-impl Prompt<'_> {
+impl PromptWidget<'_> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> ModalAreas {
         self.modal().areas(screen, self.avoid)
@@ -76,30 +99,30 @@ impl Prompt<'_> {
                     .max(u16::try_from(widest).unwrap_or(self.min_width)),
                 content_lines: 1 + u16::from(self.error.is_some()),
             },
-            hint: Some(line([text(self.hint).fg(self.theme.role(Role::Dim))])),
-            border: self.theme.role(Role::Frame),
-            window_background: self.theme.role(Role::WindowBackground),
+            hint: Some(line([text(self.hint).fg(self.style.muted_foreground)])),
+            border: self.style.border,
+            window_background: self.style.background,
         }
     }
 
     fn lines(&self, width: usize) -> Vec<Line<'static>> {
-        let mut lines = vec![self.body.line(width, self.theme.role(Role::Text))];
+        let mut lines = vec![self.body.line(width, self.style.foreground)];
         if let Some(error) = &self.error {
             lines.push(line([
-                text(truncate(error, width).into_owned()).fg(self.theme.alert())
+                text(truncate(error, width).into_owned()).fg(self.style.alert)
             ]));
         }
         lines
     }
 }
 
-impl<'a> Prompt<'a> {
+impl<'a> PromptWidget<'a> {
     #[must_use]
     pub(crate) fn avoiding(self, avoid: &'a [Rect]) -> Self {
         Self { avoid, ..self }
     }
 
-    pub(crate) fn render_in(&self, areas: ModalAreas, canvas: Canvas<'_>) {
+    fn paint(&self, areas: ModalAreas, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
         self.modal().paint(
             PlacedModal {
@@ -116,5 +139,11 @@ impl<'a> Prompt<'a> {
         }
         Paragraph::new(self.lines(usize::from(areas.body.width)))
             .render(areas.body, buffer);
+    }
+}
+
+impl Widget for &PromptWidget<'_> {
+    fn render(self, area: Rect, buffer: &mut Buffer) {
+        self.paint(self.areas(area), Canvas { area, buffer });
     }
 }

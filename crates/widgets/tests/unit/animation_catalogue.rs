@@ -209,7 +209,7 @@ fn no_animation_outlives_its_own_timer() {
         let mut stage = AnimationStage::default();
         stage.stage(animation, SCREEN);
         for _ in 0..2 {
-            let _ = step_over(&mut stage, screen_frame, PAST_THE_END);
+            step_over(&mut stage, screen_frame, PAST_THE_END);
         }
         assert!(!stage.is_running(), "{name} outlived its own timer");
     }

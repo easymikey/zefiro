@@ -1,6 +1,6 @@
 use std::{fmt, sync::Mutex, time::Duration};
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, TrySendError};
 use rodio::Source;
 use triple_buffer::{Input, Output, triple_buffer};
 
@@ -11,27 +11,16 @@ const HOP: usize = WINDOW / 4;
 
 struct Writer {
     scratch: [f32; WINDOW],
-    position: usize,
     input: Input<[f32; WINDOW]>,
 }
 
 impl Writer {
     fn publish_hop(&mut self, hop: &[f32; HOP]) {
-        for &sample in hop {
-            let slot = self.position % WINDOW;
-            if let Some(cell) = self.scratch.get_mut(slot) {
-                *cell = sample;
-            }
-            self.position = self.position.wrapping_add(1);
+        self.scratch.rotate_left(HOP);
+        if let Some(tail) = self.scratch.last_chunk_mut::<HOP>() {
+            *tail = *hop;
         }
-        let oldest = self.position % WINDOW;
-        let window: [f32; WINDOW] = std::array::from_fn(|offset| {
-            self.scratch
-                .get((oldest + offset) % WINDOW)
-                .copied()
-                .unwrap_or(0.0)
-        });
-        self.input.write(window);
+        self.input.write(self.scratch);
     }
 }
 
@@ -78,7 +67,9 @@ impl SpectrumTap {
 pub(crate) fn new_tap() -> (Handoff, SpectrumTap) {
     let (input, output) = triple_buffer(&[0.0_f32; WINDOW]);
     let (sender, receiver) = crossbeam_channel::bounded(1);
-    let _ = sender.try_send(input);
+    match sender.try_send(input) {
+        Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
+    }
     (
         Handoff { sender, receiver },
         SpectrumTap {
@@ -104,7 +95,6 @@ where
     pub(crate) fn new(inner: S, spectrum: &Handoff) -> Self {
         let writer = spectrum.take().map(|input| Writer {
             scratch: [0.0; WINDOW],
-            position: 0,
             input,
         });
         Self {
@@ -122,7 +112,10 @@ where
 impl<S> Drop for Tap<S> {
     fn drop(&mut self) {
         if let Some(writer) = self.writer.take() {
-            let _ = self.give_back.try_send(writer.input);
+            match self.give_back.try_send(writer.input) {
+                Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                }
+            }
         }
     }
 }

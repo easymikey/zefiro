@@ -1,4 +1,4 @@
-use kernel::domain::{Track, ViewIndex};
+use kernel::domain::{Track, TrackRef, ViewIndex};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -16,9 +16,8 @@ use crate::{
     primitive::{
         list_chrome::{row_band, scroll_offset, scrollbar_column},
         marker::{FAVORITE_COLUMNS, Favorite, QueuePosition},
-        track_row::{self, RowColors, Selected, TrackRowView},
+        track_row::{self, Selected, TrackRowStyle, TrackRowView},
     },
-    theme::Role,
 };
 
 pub(crate) struct VisibleRows {
@@ -79,10 +78,10 @@ pub(crate) fn visible_rows(fit: &WindowFit<'_>) -> VisibleRows {
     }
 }
 
-fn queue_position(queue: &[ViewIndex], row: usize) -> Option<QueuePosition> {
+fn queue_position(queue: &[TrackRef], source: &TrackRef) -> Option<QueuePosition> {
     queue
         .iter()
-        .position(|&queued| queued.get() == row)
+        .position(|queued| queued == source)
         .map(|index| QueuePosition::new(index + 1))
 }
 
@@ -98,7 +97,7 @@ struct PlaylistRowParts<'a> {
     view: PlaylistView<'a>,
     playing_index: Option<usize>,
     row_width: usize,
-    colors: RowColors,
+    style: TrackRowStyle,
 }
 
 fn build_line(
@@ -112,7 +111,7 @@ fn build_line(
     } else {
         Selected::No
     };
-    let favorite = if view.favorites.is_favorite(track.path()) {
+    let favorite = if view.favorites.is_favorite(track.source()) {
         Favorite::Yes
     } else {
         Favorite::No
@@ -127,11 +126,11 @@ fn build_line(
         selected,
         favorite,
         playing,
-        queued: queue_position(view.queue, index)
+        queued: queue_position(view.queue, track.source())
             .filter(|_| context.playing_index != Some(index)),
         row_width: context.row_width,
     };
-    track_row::track_row_line(&row_view, context.colors)
+    track_row::track_row_line(&row_view, context.style)
 }
 
 pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
@@ -142,17 +141,12 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
         window,
     } = playlist_rows;
     let view = pane.view;
-    let theme = pane.theme;
+    let style = TrackRowStyle::from_theme(&pane.theme);
     let context = PlaylistRowParts {
         view,
         playing_index,
         row_width: usize::from(rows.width),
-        colors: RowColors {
-            text: theme.role(Role::Text),
-            selection_text: theme.role(Role::SelectionForeground),
-            favorite: theme.favorite(),
-            queue: theme.role(Role::Highlight),
-        },
+        style,
     };
 
     let start = window.start;
@@ -171,7 +165,7 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
 
     let list = List::new(lines)
         .highlight_spacing(HighlightSpacing::Never)
-        .highlight_style(Style::default().fg(theme.role(Role::Highlight)));
+        .highlight_style(Style::default().fg(style.highlight));
     let mut playing_row = ListState::default().with_selected(
         playing_index
             .and_then(|index| index.checked_sub(start))
@@ -180,10 +174,7 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
     StatefulWidget::render(list, rows, buffer, &mut playing_row);
 
     if let Some(band) = cursor_band(rows, window, view.browse_selected) {
-        buffer.set_style(
-            band,
-            Style::default().bg(theme.role(Role::SelectionBackground)),
-        );
+        buffer.set_style(band, Style::default().bg(style.selected_background));
     }
 }
 

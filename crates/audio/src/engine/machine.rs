@@ -1,60 +1,242 @@
-use std::path::PathBuf;
+use std::{collections::HashSet, mem::discriminant};
 
-use kernel::{AudioError, AudioEvent, update::Machine};
-
-use crate::engine::{
-    effect::{EngineEffect, EngineMessage},
-    state::Engine,
+use kernel::{
+    AudioCmd,
+    AudioError,
+    AudioEvent,
+    Cmd,
+    Cmds,
+    update::{Machine, Unhandled},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum EngineError {
-    WhileMuted(AudioError),
-    WhileNotPlaying(PathBuf),
-}
+use crate::{
+    AudioDriver,
+    deck::{DeckEvent, envelope::Signals, source::TrackSource},
+    engine::{
+        effect::{AudioMessage, EngineEffect, SinkRole},
+        state::Engine,
+    },
+    error::{output_lost, preload_error},
+};
 
-impl Machine for Engine {
-    type Message = EngineMessage;
-    type Error = EngineError;
-    type Effect = EngineEffect;
+impl Machine for AudioDriver {
+    type Message = AudioMessage;
+    type Effect = Cmd<EngineEffect, AudioEvent>;
 
     fn transition(
         &mut self,
-        message: EngineMessage,
-    ) -> Result<EngineEffect, EngineError> {
-        match (&mut *self, message) {
-            (_, EngineMessage::DevicesListed(devices)) => {
-                Ok(EngineEffect::Send(AudioEvent::DevicesListed(devices)))
+        message: AudioMessage,
+    ) -> Result<Cmd<EngineEffect, AudioEvent>, Unhandled> {
+        let cmd = match message {
+            AudioMessage::Deck(event) if !self.revisions.current(&event) => Cmd::none(),
+            AudioMessage::Deck(event) => self.landed(event)?,
+            AudioMessage::SignalsTaken { role, signals } => {
+                each_handled(signalled(role, signals), |each| {
+                    self.engine.transition(each)
+                })?
             }
-            (Engine::Muted(muted), EngineMessage::Opened(Ok(reopened))) => {
+            engine_bound @ (AudioMessage::Cmds(_)
+            | AudioMessage::Reported(_)
+            | AudioMessage::Error(_)
+            | AudioMessage::Opened(_)
+            | AudioMessage::Decoded(_)
+            | AudioMessage::Preloaded(_)
+            | AudioMessage::Finished(_)
+            | AudioMessage::Cued
+            | AudioMessage::Ramped(_)
+            | AudioMessage::DevicesListed(_)) => {
+                self.engine.transition(engine_bound)?
+            }
+        };
+        Ok(self.revisions.with_jobs(cmd))
+    }
+}
+
+impl AudioDriver {
+    fn landed(
+        &mut self,
+        event: DeckEvent,
+    ) -> Result<Cmd<EngineEffect, AudioEvent>, Unhandled> {
+        match event {
+            DeckEvent::OutputLost(error) => self
+                .engine
+                .transition(AudioMessage::Error(output_lost(&error))),
+            DeckEvent::DevicesListed(listed) => {
+                self.engine.transition(AudioMessage::DevicesListed(listed))
+            }
+            DeckEvent::Decoded {
+                revision,
+                result: Ok(source),
+            } => {
+                let track = TrackSource { revision, source };
+                let decoded = self
+                    .engine
+                    .transition(AudioMessage::Decoded(Ok(track.total())))?;
+                Ok(Cmd::effect(EngineEffect::Stage(track)).then(decoded))
+            }
+            DeckEvent::Decoded {
+                result: Err(error), ..
+            } => self
+                .engine
+                .transition(AudioMessage::Decoded(Err(AudioError::from(&error)))),
+            DeckEvent::Preloaded {
+                revision,
+                result: Ok(source),
+            } => Ok(Cmd::effect(EngineEffect::Attach(TrackSource {
+                revision,
+                source,
+            }))),
+            DeckEvent::Preloaded {
+                result: Err(error), ..
+            } => self
+                .engine
+                .transition(AudioMessage::Preloaded(Err(preload_error(&error)))),
+            DeckEvent::Track(revision) => {
+                Ok(Cmd::effect(EngineEffect::TakeSignals(revision)))
+            }
+        }
+    }
+}
+
+pub(crate) fn signalled(role: SinkRole, signals: Signals) -> Vec<AudioMessage> {
+    [
+        (signals.contains(Signals::CUED) && role == SinkRole::Primary)
+            .then_some(AudioMessage::Cued),
+        signals
+            .contains(Signals::RAMPED)
+            .then_some(AudioMessage::Ramped(role)),
+        signals
+            .contains(Signals::FINISHED)
+            .then_some(AudioMessage::Finished(role)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn each_handled<T>(
+    asked: Vec<T>,
+    mut run: impl FnMut(T) -> Result<Cmd<EngineEffect, AudioEvent>, Unhandled>,
+) -> Result<Cmd<EngineEffect, AudioEvent>, Unhandled> {
+    let count = asked.len();
+    let (handled, effect) = asked
+        .into_iter()
+        .filter_map(|each| run(each).ok())
+        .fold((0, Cmd::none()), |(handled, all), next| {
+            (handled + 1, all.then(next))
+        });
+    if count > 0 && handled == 0 {
+        Err(Unhandled)
+    } else {
+        Ok(effect)
+    }
+}
+
+impl Machine for Engine {
+    type Message = AudioMessage;
+    type Effect = Cmd<EngineEffect, AudioEvent>;
+
+    fn transition(
+        &mut self,
+        message: AudioMessage,
+    ) -> Result<Cmd<EngineEffect, AudioEvent>, Unhandled> {
+        self.step(message)
+    }
+}
+
+pub(crate) fn keep_last_idempotent(batch: Vec<AudioCmd>) -> Vec<AudioCmd> {
+    let mut seen = HashSet::new();
+    let mut kept: Vec<AudioCmd> = batch
+        .into_iter()
+        .rev()
+        .filter(|cmd| match cmd {
+            AudioCmd::Load(_) | AudioCmd::Stop => {
+                seen.clear();
+                true
+            }
+            AudioCmd::SetSpeed(_) | AudioCmd::Seek(_) => seen.insert(discriminant(cmd)),
+            AudioCmd::Playback(_)
+            | AudioCmd::Preload(_)
+            | AudioCmd::SetCrossfade(_)
+            | AudioCmd::SetReplayGain(_)
+            | AudioCmd::SetDevice(_)
+            | AudioCmd::ListDevices => true,
+        })
+        .collect();
+    kept.reverse();
+    kept
+}
+
+pub(crate) fn batched(
+    batch: Cmds<AudioCmd>,
+    run: impl FnMut(AudioCmd) -> Result<Cmd<EngineEffect, AudioEvent>, Unhandled>,
+) -> Result<Cmd<EngineEffect, AudioEvent>, Unhandled> {
+    each_handled(keep_last_idempotent(batch.cmds), run)
+}
+
+impl Engine {
+    fn step(
+        &mut self,
+        message: AudioMessage,
+    ) -> Result<Cmd<EngineEffect, AudioEvent>, Unhandled> {
+        match (&mut *self, message) {
+            (_, AudioMessage::Reported(playhead)) => Ok(playhead
+                .map_or_else(Cmd::none, |position| {
+                    Cmd::message(AudioEvent::Playhead(position))
+                })),
+            (_, AudioMessage::Error(error @ AudioError::Seek { .. })) => {
+                Ok(Cmd::message(AudioEvent::Error(error)))
+            }
+            (_, AudioMessage::DevicesListed(listed)) => {
+                Ok(Cmd::message(match listed {
+                    Ok(devices) => AudioEvent::DevicesListed(devices),
+                    Err(error) => AudioEvent::Error(error),
+                }))
+            }
+            (Engine::Muted(muted), AudioMessage::Opened(Ok(reopened))) => {
                 let (live, effect) = muted.reopened(reopened);
                 *self = Engine::Live(live);
                 Ok(effect)
             }
-            (Engine::Muted(muted), message) => muted.transition(message),
+            (
+                Engine::Muted(muted),
+                message @ (AudioMessage::Cmds(_)
+                | AudioMessage::Deck(_)
+                | AudioMessage::Opened(Err(_))
+                | AudioMessage::Error(_)
+                | AudioMessage::Decoded(_)
+                | AudioMessage::Preloaded(_)
+                | AudioMessage::Finished(_)
+                | AudioMessage::Cued
+                | AudioMessage::Ramped(_)
+                | AudioMessage::SignalsTaken { .. }),
+            ) => muted.transition(message),
             (
                 Engine::Live(live),
-                EngineMessage::Failed(error) | EngineMessage::Opened(Err(error)),
+                AudioMessage::Error(error) | AudioMessage::Opened(Err(error)),
             ) => {
-                let (muted, effect) = live.failed(error);
-                *self = Engine::Muted(muted);
+                let effect = Cmd::effect(EngineEffect::Mute)
+                    .then(Cmd::message(AudioEvent::Error(error)));
+                *self = Engine::Muted(live.failed());
                 Ok(effect)
             }
-            (Engine::Live(live), EngineMessage::Cmd(cmd)) => live.command(cmd),
-            (Engine::Live(live), EngineMessage::Opened(Ok(reopened))) => {
+            (Engine::Live(live), AudioMessage::Cmds(batch)) => {
+                batched(batch, |cmd| live.command(cmd))
+            }
+            (Engine::Live(live), AudioMessage::Opened(Ok(reopened))) => {
                 Ok(live.opened(reopened))
             }
-            (Engine::Live(live), EngineMessage::Decoded(outcome)) => {
-                Ok(live.decoded(outcome))
+            (Engine::Live(live), AudioMessage::Decoded(result)) => live.decoded(result),
+            (Engine::Live(live), AudioMessage::Preloaded(result)) => {
+                live.preloaded(result)
             }
-            (Engine::Live(live), EngineMessage::Preloaded(outcome)) => {
-                Ok(live.preloaded(outcome))
-            }
-            (Engine::Live(live), EngineMessage::Finished(role)) => {
-                Ok(live.finished(role))
-            }
-            (Engine::Live(live), EngineMessage::Cued) => Ok(live.cued()),
-            (Engine::Live(live), EngineMessage::Ramped(role)) => Ok(live.ramped(role)),
+            (Engine::Live(live), AudioMessage::Finished(role)) => live.finished(role),
+            (
+                Engine::Live(_),
+                AudioMessage::Deck(_) | AudioMessage::SignalsTaken { .. },
+            ) => Err(Unhandled),
+            (Engine::Live(live), AudioMessage::Cued) => live.cued(),
+            (Engine::Live(live), AudioMessage::Ramped(role)) => live.ramped(role),
         }
     }
 }
@@ -68,28 +250,119 @@ mod tests {
         AudioEvent,
         Bounded,
         BrowseRequest,
+        Cmd,
         Effect,
         Message,
         Model,
         Moment,
+        Playback,
         PlaybackRequest,
         Playlist,
         Track,
-        domain::{AudioFormat, Crossfade, Cursor, Tags},
-        update::{Machine, update},
+        domain::{AudioFormat, AudioSettings, Crossfade, Cursor, Speed, Tags},
+        update::{Machine, Unhandled, update},
     };
+    use rstest::rstest;
 
     use crate::{
-        EngineConfig,
+        deck::{DeckEvent, Revision, envelope::Signals},
         engine::{
-            effect::{EngineEffect, EngineMessage, SinkRole},
+            effect::{AudioMessage, EngineEffect, SinkRole},
+            machine::{keep_last_idempotent, signalled},
             state::{Engine, Live},
-            test_support::{config, live},
+            tests::{TOTAL, cmd, config, live},
         },
     };
 
-    const TOTAL: Duration = Duration::from_secs(100);
     const CROSSFADE: Duration = Duration::from_secs(7);
+
+    fn live_driver() -> crate::AudioDriver {
+        let (spectrum, _tap) = crate::tap::new_tap();
+        let (sender, _heard) = crossbeam_channel::bounded(4);
+        crate::AudioDriver {
+            engine: Engine::Live(live()),
+            revisions: crate::engine::revisions::Revisions::default(),
+            deck: crate::deck::Deck::new(spectrum, sender),
+        }
+    }
+
+    fn worker_panicked() -> crate::error::Error {
+        crate::error::Error::WorkerPanicked(PathBuf::from("/a"))
+    }
+
+    #[rstest]
+    #[case::output_lost(
+        DeckEvent::OutputLost(rodio::cpal::StreamError::DeviceNotAvailable),
+        AudioMessage::Error(crate::error::output_lost(&rodio::cpal::StreamError::DeviceNotAvailable))
+    )]
+    #[case::decode_error(
+        DeckEvent::Decoded { revision: Revision::default(), result: Err(worker_panicked()) },
+        AudioMessage::Decoded(Err(kernel::AudioError::from(&worker_panicked())))
+    )]
+    #[case::preload_error(
+        DeckEvent::Preloaded { revision: Revision::default(), result: Err(worker_panicked()) },
+        AudioMessage::Preloaded(Err(crate::error::preload_error(&worker_panicked())))
+    )]
+    fn a_landed_error_goes_to_the_engine_without_touching_the_deck(
+        #[case] event: DeckEvent,
+        #[case] routed: AudioMessage,
+    ) {
+        assert_eq!(
+            live_driver().transition(AudioMessage::Deck(event)),
+            Engine::Live(live()).transition(routed)
+        );
+    }
+
+    #[test]
+    fn a_track_event_asks_execute_to_take_its_signals() {
+        let event = DeckEvent::Track(Revision::default());
+        assert_eq!(
+            live_driver().transition(AudioMessage::Deck(event)),
+            Ok(Cmd::effect(EngineEffect::TakeSignals(Revision::default())))
+        );
+    }
+
+    #[test]
+    fn a_stale_decode_is_dropped() {
+        let event = DeckEvent::Decoded {
+            revision: Revision::default().next(),
+            result: Err(worker_panicked()),
+        };
+        assert_eq!(
+            live_driver().transition(AudioMessage::Deck(event)),
+            Ok(Cmd::none())
+        );
+    }
+
+    #[rstest]
+    #[case::cued_primary(SinkRole::Primary, Signals::CUED, "[Cued]")]
+    #[case::cued_incoming(SinkRole::Incoming, Signals::CUED, "[]")]
+    #[case::ramped_outgoing(SinkRole::Outgoing, Signals::RAMPED, "[Ramped(Outgoing)]")]
+    #[case::finished_primary(
+        SinkRole::Primary,
+        Signals::FINISHED,
+        "[Finished(Primary)]"
+    )]
+    #[case::none(SinkRole::Primary, Signals::default(), "[]")]
+    fn taken_signals_expand_into_messages(
+        #[case] role: SinkRole,
+        #[case] signals: Signals,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(format!("{:?}", signalled(role, signals)), expected);
+    }
+
+    #[test]
+    fn taken_signals_reach_the_engine_as_one_message_each() {
+        let taken = AudioMessage::SignalsTaken {
+            role: SinkRole::Primary,
+            signals: Signals::FINISHED,
+        };
+        assert_eq!(
+            live_driver().transition(taken),
+            Engine::Live(live()).transition(AudioMessage::Finished(SinkRole::Primary))
+        );
+    }
 
     fn track(number: usize) -> Arc<Track> {
         Arc::new(
@@ -115,7 +388,7 @@ mod tests {
 
     fn engine_with_crossfade() -> Engine {
         Engine::Live(Live {
-            config: EngineConfig {
+            settings: AudioSettings {
                 crossfade: Crossfade::clamped(CROSSFADE),
                 ..config()
             },
@@ -130,7 +403,7 @@ mod tests {
             | Effect::Macos(_)
             | Effect::Config(_)
             | Effect::Animate(_)
-            | Effect::RollShuffle { .. }
+            | Effect::RollShuffle(..)
             | Effect::WindowColors(_)
             | Effect::After { .. }
             | Effect::Restart(_)
@@ -152,14 +425,15 @@ mod tests {
                 + usize::from(self.outgoing.is_some())
         }
 
-        fn apply(&mut self, effect: &EngineEffect) {
+        fn execute(&mut self, cmd: &Cmd<EngineEffect, AudioEvent>) {
+            for effect in cmd.effects() {
+                self.run(effect);
+            }
+        }
+
+        fn run(&mut self, effect: &EngineEffect) {
             match effect {
-                EngineEffect::Batch(steps) => {
-                    for step in steps {
-                        self.apply(step);
-                    }
-                }
-                EngineEffect::Clear | EngineEffect::Mute(_) => {
+                EngineEffect::Clear | EngineEffect::Mute => {
                     self.primary = None;
                     self.preload = None;
                     self.outgoing = None;
@@ -173,34 +447,35 @@ mod tests {
                     self.outgoing = self.primary.replace(path.clone());
                     self.preload = None;
                 }
-                EngineEffect::Preload(request) => {
-                    self.preload = Some(request.path().to_path_buf());
+                EngineEffect::Preload { path, .. } => {
+                    self.preload = Some(path.clone());
                 }
-                EngineEffect::Promote { .. } => {
+                EngineEffect::Promote(_) => {
                     self.primary = self.preload.take();
                 }
                 EngineEffect::DropOutgoing => {
                     self.outgoing = None;
                 }
-                EngineEffect::Nothing
-                | EngineEffect::Send(_)
-                | EngineEffect::Open { .. }
+                EngineEffect::Open { .. }
                 | EngineEffect::Decode(_)
-                | EngineEffect::Start { .. }
+                | EngineEffect::Start(_)
                 | EngineEffect::Resume { .. }
                 | EngineEffect::Play
                 | EngineEffect::Pause
                 | EngineEffect::Seek(_)
                 | EngineEffect::SetVolume(_)
-                | EngineEffect::Arm { .. }
+                | EngineEffect::Arm(_)
                 | EngineEffect::Crossfade { .. }
                 | EngineEffect::CancelCrossfade
                 | EngineEffect::Ramp { .. }
                 | EngineEffect::SetSpeed(_)
                 | EngineEffect::RestartGapless(_)
-                | EngineEffect::ListDevices
+                | EngineEffect::Run(_)
                 | EngineEffect::Report
-                | EngineEffect::Advance => {}
+                | EngineEffect::Advance
+                | EngineEffect::Stage(_)
+                | EngineEffect::Attach(_)
+                | EngineEffect::TakeSignals(_) => {}
             }
         }
     }
@@ -209,7 +484,7 @@ mod tests {
         model: Model,
         engine: Engine,
         sinks: Sinks,
-        log: Vec<EngineEffect>,
+        log: Vec<Cmd<EngineEffect, AudioEvent>>,
     }
 
     impl Wiring {
@@ -222,29 +497,35 @@ mod tests {
             }
         }
 
-        fn engine_step(&mut self, message: EngineMessage) {
-            let effect = self.engine.transition(message).unwrap();
-            self.sinks.apply(&effect);
+        fn engine_step(&mut self, message: AudioMessage) {
+            let effect = self
+                .engine
+                .transition(message)
+                .unwrap_or_else(|Unhandled| Cmd::none());
+            self.sinks.execute(&effect);
             self.log.push(effect);
         }
 
         fn press(&mut self, message: Message) {
-            let cmd = update(&mut self.model, message, Moment::default()).unwrap();
-            let audio: Vec<AudioCmd> = cmd.effects().filter_map(as_audio).collect();
+            let produced = update(&mut self.model, message, Moment::default()).unwrap();
+            let audio: Vec<AudioCmd> = produced.iter().filter_map(as_audio).collect();
             for command in audio {
-                self.engine_step(EngineMessage::Cmd(command));
+                self.engine_step(cmd(command));
             }
         }
 
         fn decoded(&mut self) {
-            self.engine_step(EngineMessage::Decoded(Ok(Some(TOTAL))));
-            if matches!(self.log.last(), Some(EngineEffect::Start { .. })) {
-                self.press(Message::Audio(AudioEvent::Loaded { total: Some(TOTAL) }));
+            self.engine_step(AudioMessage::Decoded(Ok(Some(TOTAL))));
+            let started = self.log.last().is_some_and(|logged| {
+                matches!(logged.effects().as_slice(), [EngineEffect::Start(_)])
+            });
+            if started {
+                self.press(Message::Audio(AudioEvent::Loaded(Some(TOTAL))));
             }
         }
 
         fn handover_settles(&mut self) {
-            self.engine_step(EngineMessage::Ramped(SinkRole::Outgoing));
+            self.engine_step(AudioMessage::Ramped(SinkRole::Outgoing));
         }
 
         fn at_most_two_streams(&self, named: &str) {
@@ -272,6 +553,78 @@ mod tests {
                 self.sinks.primary
             );
         }
+    }
+
+    fn load(path: &str) -> AudioCmd {
+        AudioCmd::Load(kernel::TrackLoad {
+            path: PathBuf::from(path),
+            gain: None,
+            revision: Revision::default(),
+        })
+    }
+
+    #[rstest]
+    #[case::two_speeds(
+        vec![
+            AudioCmd::SetSpeed(Speed::clamped(1.5)),
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
+        ],
+        vec![AudioCmd::SetSpeed(Speed::clamped(2.0))]
+    )]
+    #[case::speed_seek_speed(
+        vec![
+            AudioCmd::SetSpeed(Speed::clamped(1.5)),
+            AudioCmd::Seek(Duration::from_secs(1)),
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
+        ],
+        vec![
+            AudioCmd::Seek(Duration::from_secs(1)),
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
+        ]
+    )]
+    #[case::seeks_across_a_load(
+        vec![
+            AudioCmd::Seek(Duration::from_secs(1)),
+            load("/b"),
+            AudioCmd::Seek(Duration::from_secs(2)),
+            AudioCmd::Seek(Duration::from_secs(3)),
+        ],
+        vec![
+            AudioCmd::Seek(Duration::from_secs(1)),
+            load("/b"),
+            AudioCmd::Seek(Duration::from_secs(3)),
+        ]
+    )]
+    #[case::stop_splits(
+        vec![
+            AudioCmd::SetSpeed(Speed::clamped(1.5)),
+            AudioCmd::Stop,
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
+        ],
+        vec![
+            AudioCmd::SetSpeed(Speed::clamped(1.5)),
+            AudioCmd::Stop,
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
+        ]
+    )]
+    #[case::others_untouched(
+        vec![
+            AudioCmd::Playback(Playback::Playing),
+            AudioCmd::Playback(Playback::Playing),
+            AudioCmd::ListDevices,
+        ],
+        vec![
+            AudioCmd::Playback(Playback::Playing),
+            AudioCmd::Playback(Playback::Playing),
+            AudioCmd::ListDevices,
+        ]
+    )]
+    #[case::empty(Vec::new(), Vec::new())]
+    fn coalesced_keeps_the_last_idempotent_command(
+        #[case] batch: Vec<AudioCmd>,
+        #[case] expected: Vec<AudioCmd>,
+    ) {
+        assert_eq!(keep_last_idempotent(batch), expected);
     }
 
     #[test]

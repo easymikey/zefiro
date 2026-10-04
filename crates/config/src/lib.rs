@@ -5,6 +5,7 @@
 mod appearance;
 mod appearance_file;
 mod config_file;
+mod driver;
 mod embedded_theme;
 mod error;
 mod keymap;
@@ -13,11 +14,11 @@ pub(crate) mod theme_file;
 
 pub use appearance::{
     Animations,
-    Appearance,
     AppearancePatch,
     AppearancePreset,
+    AppearanceSettings,
     CoverBrackets,
-    CoverStyle,
+    CoverMode,
     FormatChips,
     KeyHints,
     LayoutMode,
@@ -37,10 +38,18 @@ pub use appearance_file::{
 };
 pub use config_file::{
     CONFIG_FILE_NAME,
-    ConfigReload,
+    ConfigSettings,
     ConfigToml,
     parse_config,
     parse_config_reload,
+};
+pub use driver::{
+    ConfigChange,
+    ConfigDriver,
+    ConfigEffect,
+    ConfigMessage,
+    ConfigPaths,
+    SeenTexts,
 };
 pub use embedded_theme::{EMBEDDED_THEMES, embedded_theme, resolve_theme};
 pub use error::Error;

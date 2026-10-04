@@ -8,7 +8,6 @@ const MARKERS: &[&str] = &[
     "open_stream",
     "recommended_watcher",
     "osascript",
-    "run_audio_loop",
 ];
 
 const ALLOWLIST: &[Allow] = &[];

@@ -1,11 +1,15 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use strum::{EnumIter, IntoStaticStr};
 
 use crate::{
     domain::{
         Crossfade,
-        Driver,
+        DriverName,
         Favorites,
         HistoryEntry,
         OptionIndex,
@@ -21,7 +25,7 @@ use crate::{
         appearance_rows::AppearanceField,
         playlist::PlaylistFileName,
     },
-    message::Timer,
+    message::{Message, Timer},
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -51,7 +55,7 @@ pub struct ConfigPatch {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowColorsCmd {
-    Apply(ThemeName),
+    Set(ThemeName),
     Reset,
 }
 
@@ -64,6 +68,7 @@ pub enum ConfigCmd {
         field: AppearanceField,
         option: OptionIndex,
     },
+    Flush,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,9 +111,7 @@ pub enum LibraryCmd {
     SaveFavorites(Favorites),
     LoadFavorites,
     Trash(PathBuf),
-    LoadHistory {
-        limit: usize,
-    },
+    LoadHistory(usize),
     SavePlaylist {
         name: PlaylistFileName,
         tracks: Vec<Arc<Track>>,
@@ -130,9 +133,9 @@ pub enum LibraryCmd {
 #[strum(serialize_all = "snake_case")]
 pub enum MacosCmd {
     NowPlaying(Option<Arc<Track>>),
-    PlaybackState(Playback),
-    PlaybackPosition(Duration),
-    Volume(Percent),
+    SetPlayback(Playback),
+    SetPosition(Duration),
+    SetVolume(Percent),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,9 +181,9 @@ pub enum Effect {
     Config(ConfigCmd),
     WindowColors(WindowColorsCmd),
     Animate(Cue),
-    RollShuffle { len: usize },
+    RollShuffle(usize),
     After { delay: Duration, timer: Timer },
-    Restart(Driver),
+    Restart(DriverName),
     Quit,
 }
 
@@ -197,80 +200,92 @@ impl PlaybackChange {
         };
         [
             Effect::Audio(audio),
-            Effect::Macos(MacosCmd::PlaybackState(playback)),
+            Effect::Macos(MacosCmd::SetPlayback(playback)),
         ]
     }
 
     pub fn cued(self) -> Cmd {
-        Cmd::Batch(
-            self.effects()
-                .into_iter()
-                .chain([Effect::Animate(Cue::PlaybackChanged(self))])
-                .collect(),
-        )
+        self.effects()
+            .into_iter()
+            .chain([Effect::Animate(Cue::PlaybackChanged(self))])
+            .collect()
     }
 }
 
 #[must_use]
-#[derive(Debug, Clone, Default, PartialEq)]
-pub enum Cmd {
-    #[default]
-    None,
-    One(Effect),
-    Batch(Vec<Effect>),
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cmd<E = Effect, M = Message> {
+    effects: Vec<E>,
+    messages: Vec<M>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cmds<C> {
+    pub cmds: Vec<C>,
+    pub at: Instant,
+}
+
+impl<E, M> Default for Cmd<E, M> {
+    fn default() -> Self {
+        Cmd::none()
+    }
+}
+
+impl<E, M> Cmd<E, M> {
+    pub fn none() -> Self {
+        Cmd {
+            effects: Vec::new(),
+            messages: Vec::new(),
+        }
+    }
+
+    pub fn effect(effect: E) -> Self {
+        Cmd {
+            effects: vec![effect],
+            messages: Vec::new(),
+        }
+    }
+
+    pub fn message(message: M) -> Self {
+        Cmd {
+            effects: Vec::new(),
+            messages: vec![message],
+        }
+    }
+
+    pub fn effects(&self) -> std::slice::Iter<'_, E> {
+        self.effects.iter()
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<E>, Vec<M>) {
+        (self.effects, self.messages)
+    }
+
+    pub fn then(mut self, other: Cmd<E, M>) -> Cmd<E, M> {
+        self.effects.extend(other.effects);
+        self.messages.extend(other.messages);
+        self
+    }
 }
 
 impl From<Effect> for Cmd {
     fn from(effect: Effect) -> Self {
-        Cmd::One(effect)
+        Cmd::effect(effect)
     }
 }
 
 impl From<Cue> for Cmd {
     fn from(cue: Cue) -> Self {
-        Cmd::One(Effect::Animate(cue))
+        Cmd::effect(Effect::Animate(cue))
     }
 }
 
-impl Cmd {
-    pub fn effects(&self) -> std::slice::Iter<'_, Effect> {
-        match self {
-            Cmd::None => [].iter(),
-            Cmd::One(effect) => std::slice::from_ref(effect).iter(),
-            Cmd::Batch(effects) => effects.iter(),
-        }
-    }
-
-    pub fn then(self, other: Cmd) -> Cmd {
-        match (self, other) {
-            (Cmd::None, other) => other,
-            (first, Cmd::None) => first,
-            (Cmd::One(first), Cmd::One(second)) => Cmd::Batch(vec![first, second]),
-            (Cmd::One(effect), Cmd::Batch(mut rest)) => {
-                rest.insert(0, effect);
-                Cmd::Batch(rest)
-            }
-            (Cmd::Batch(mut effects), Cmd::One(effect)) => {
-                effects.push(effect);
-                Cmd::Batch(effects)
-            }
-            (Cmd::Batch(mut effects), Cmd::Batch(more)) => {
-                effects.extend(more);
-                Cmd::Batch(effects)
-            }
-        }
-    }
-}
-
-impl IntoIterator for Cmd {
-    type Item = Effect;
-    type IntoIter = std::vec::IntoIter<Effect>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        match self {
-            Cmd::None => Vec::new().into_iter(),
-            Cmd::One(effect) => vec![effect].into_iter(),
-            Cmd::Batch(effects) => effects.into_iter(),
+impl<E, M> FromIterator<E> for Cmd<E, M> {
+    fn from_iter<I: IntoIterator<Item = E>>(effects: I) -> Self {
+        Cmd {
+            effects: effects.into_iter().collect(),
+            messages: Vec::new(),
         }
     }
 }
@@ -281,27 +296,34 @@ mod tests {
 
     #[test]
     fn then_with_none_keeps_the_other_cmd() {
-        let leading = Cmd::One(Effect::Audio(AudioCmd::Stop));
-        assert!(matches!(Cmd::None.then(leading), Cmd::One(_)));
-        let trailing = Cmd::One(Effect::Audio(AudioCmd::Stop));
-        assert!(matches!(trailing.then(Cmd::None), Cmd::One(_)));
+        let leading: Cmd = Cmd::effect(Effect::Audio(AudioCmd::Stop));
+        assert_eq!(Cmd::none().then(leading.clone()), leading);
+        let trailing: Cmd = Cmd::effect(Effect::Audio(AudioCmd::Stop));
+        assert_eq!(trailing.clone().then(Cmd::none()), trailing);
     }
 
     #[test]
-    fn then_merges_two_single_effects_into_a_batch() {
-        let first = Cmd::One(Effect::Audio(AudioCmd::Playback(Playback::Paused)));
-        let second = Cmd::One(Effect::Audio(AudioCmd::Stop));
+    fn then_appends_effects_in_order() {
+        let first: Cmd =
+            Cmd::effect(Effect::Audio(AudioCmd::Playback(Playback::Paused)));
+        let second = Cmd::effect(Effect::Audio(AudioCmd::Stop));
         let merged = first.then(second);
-        assert!(matches!(merged, Cmd::Batch(effects) if effects.len() == 2));
+        assert_eq!(
+            merged,
+            Cmd::<Effect>::from_iter([
+                Effect::Audio(AudioCmd::Playback(Playback::Paused)),
+                Effect::Audio(AudioCmd::Stop),
+            ])
+        );
     }
 
     #[test]
-    fn a_batch_iterates_its_effects_in_order() {
-        let cmd = Cmd::Batch(vec![
+    fn a_cmd_iterates_its_effects_in_order() {
+        let cmd: Cmd = Cmd::from_iter([
             Effect::Audio(AudioCmd::Playback(Playback::Paused)),
             Effect::Audio(AudioCmd::Stop),
         ]);
-        let effects: Vec<Effect> = cmd.into_iter().collect();
+        let (effects, _messages) = cmd.into_parts();
         assert!(matches!(
             effects.as_slice(),
             [

@@ -14,7 +14,10 @@ use config::{
 };
 use kernel::{
     Bounded,
+    IoError,
     domain::{
+        ConfigError,
+        ConfigName,
         Percent,
         Shuffle,
         Startup,
@@ -43,7 +46,7 @@ pub(crate) struct Look {
 struct ReadFile<T> {
     value: T,
     text: Option<String>,
-    warning: Option<String>,
+    error: Option<(ConfigName, ConfigError)>,
 }
 
 #[derive(Debug, Parser)]
@@ -118,11 +121,17 @@ fn config_paths(
     }
 }
 
-fn fallback<T>(fallback: T, path: &Path, source: &std::io::Error) -> ReadFile<T> {
+fn fallback<T>(fallback: T, file: ConfigName, source: &std::io::Error) -> ReadFile<T> {
     ReadFile {
         value: fallback,
         text: None,
-        warning: Some(format!("cannot read {}: {source}", path.display())),
+        error: Some((
+            file.clone(),
+            ConfigError::Unreadable {
+                file,
+                kind: IoError::from(source.kind()),
+            },
+        )),
     }
 }
 
@@ -133,21 +142,27 @@ fn read_appearance(path: &Path) -> ReadFile<AppearanceFile> {
             return ReadFile {
                 value: AppearanceFile::default(),
                 text: None,
-                warning: None,
+                error: None,
             };
         }
-        Err(source) => return fallback(AppearanceFile::default(), path, &source),
+        Err(source) => {
+            return fallback(
+                AppearanceFile::default(),
+                ConfigName::Appearance,
+                &source,
+            );
+        }
     };
     match parse_appearance(&text) {
         Ok(value) => ReadFile {
             value,
             text: Some(text),
-            warning: None,
+            error: None,
         },
         Err(error) => ReadFile {
             value: AppearanceFile::default(),
             text: Some(text),
-            warning: Some(error.to_string()),
+            error: invalid(ConfigName::Appearance, error.to_string()),
         },
     }
 }
@@ -203,40 +218,50 @@ fn stock_theme() -> ThemeFile {
         .unwrap_or_else(fallback_theme_file)
 }
 
-fn parsed_theme(name: &str, text: &str, seen: Option<String>) -> ReadFile<ThemeFile> {
-    match config::parse_theme(text, name) {
+fn invalid(name: ConfigName, detail: String) -> Option<(ConfigName, ConfigError)> {
+    Some((name, ConfigError::Invalid { detail }))
+}
+
+fn parsed_theme(
+    name: &ThemeName,
+    text: &str,
+    seen: Option<String>,
+) -> ReadFile<ThemeFile> {
+    match config::parse_theme(text, name.as_str()) {
         Ok(value) => ReadFile {
             value,
             text: seen,
-            warning: None,
+            error: None,
         },
         Err(error) => ReadFile {
             value: stock_theme(),
             text: seen,
-            warning: Some(error.to_string()),
+            error: invalid(ConfigName::Theme(name.clone()), error.to_string()),
         },
     }
 }
 
-fn embedded_or_stock_theme(name: &str) -> ReadFile<ThemeFile> {
-    config::embedded_theme(name).map_or_else(
+fn embedded_or_stock_theme(name: &ThemeName) -> ReadFile<ThemeFile> {
+    config::embedded_theme(name.as_str()).map_or_else(
         || ReadFile {
             value: stock_theme(),
             text: None,
-            warning: Some(format!("no theme named `{name}`")),
+            error: invalid(
+                ConfigName::Theme(name.clone()),
+                format!("no theme named `{name}`"),
+            ),
         },
         |embedded| parsed_theme(name, embedded, None),
     )
 }
 
 fn read_theme(choice: &ThemeChoice, themes: &Path) -> ReadFile<ThemeFile> {
-    let resolved = config::resolve_theme(choice);
-    let name = resolved.as_str();
-    let path = themes.join(config::theme_file_name(name));
+    let name = config::resolve_theme(choice);
+    let path = themes.join(config::theme_file_name(name.as_str()));
     match library::files::read_if_present(&path) {
-        Ok(Some(text)) => parsed_theme(name, &text, Some(text.clone())),
-        Ok(None) => embedded_or_stock_theme(name),
-        Err(source) => fallback(stock_theme(), &path, &source),
+        Ok(Some(text)) => parsed_theme(&name, &text, Some(text.clone())),
+        Ok(None) => embedded_or_stock_theme(&name),
+        Err(source) => fallback(stock_theme(), ConfigName::Theme(name), &source),
     }
 }
 
@@ -247,8 +272,8 @@ fn with_look(
 ) -> Boot {
     let appearance = read_appearance(&appearance_path(config_dir));
     let theme = read_theme(&startup.theme, &themes_dir(config_dir));
-    let appearance_settings = appearance_settings(appearance.value.appearance());
-    let toasts = [appearance.warning, theme.warning]
+    let appearance_settings = appearance_settings(appearance.value.settings());
+    let errors = [appearance.error, theme.error]
         .into_iter()
         .flatten()
         .collect();
@@ -258,8 +283,8 @@ fn with_look(
     Boot {
         startup: Startup {
             appearance_settings,
-            look: appearance.value.look(),
-            toast_texts: toasts,
+            appearance: appearance.value.appearance(),
+            errors,
             ..startup
         },
         paths,
@@ -340,6 +365,8 @@ mod tests {
     use clap::Parser;
     use config::AppearanceFile;
     use kernel::domain::{
+        ConfigError,
+        ConfigName,
         Shuffle,
         Startup,
         ThemeChoice,
@@ -374,14 +401,18 @@ mod tests {
     }
 
     #[rstest]
-    #[case::valid(Some(COMPACT), "noir", &[])]
-    #[case::broken(Some(BROKEN), "noir", &["sifr-ui.toml"])]
-    #[case::missing(None, "noir", &[])]
-    #[case::embedded_or_stock_theme(None, "ghost", &["ghost"])]
-    fn a_broken_appearance_or_missing_theme_falls_back_and_toasts_why(
+    #[case::valid(Some(COMPACT), "noir", vec![])]
+    #[case::broken(Some(BROKEN), "noir", vec![ConfigName::Appearance])]
+    #[case::missing(None, "noir", vec![])]
+    #[case::embedded_or_stock_theme(
+        None,
+        "ghost",
+        vec![ConfigName::Theme(ThemeName::from_static("ghost"))]
+    )]
+    fn a_broken_appearance_or_missing_theme_falls_back_and_reports_why(
         #[case] appearance: Option<&str>,
         #[case] theme: &str,
-        #[case] toasts: &[&str],
+        #[case] failed: Vec<ConfigName>,
     ) {
         let directory = tempfile::tempdir().unwrap();
         if let Some(text) = appearance {
@@ -395,11 +426,17 @@ mod tests {
         } else {
             AppearanceFile::default()
         };
-        assert_eq!(booted.startup.look, expected.look());
-        assert_eq!(booted.startup.toast_texts.len(), toasts.len());
-        for (warning, fragment) in booted.startup.toast_texts.iter().zip(toasts) {
-            assert!(warning.contains(fragment), "{warning} lacks {fragment}");
-        }
+        assert_eq!(booted.startup.appearance, expected.appearance());
+        let names: Vec<_> = booted
+            .startup
+            .errors
+            .iter()
+            .map(|(name, error)| {
+                assert!(matches!(error, ConfigError::Invalid { .. }), "{error:?}");
+                name.clone()
+            })
+            .collect();
+        assert_eq!(names, failed);
         assert!(!booted.look.theme.name.as_str().is_empty());
     }
 
@@ -446,13 +483,11 @@ mod tests {
 
         assert_eq!(
             booted.startup.appearance_settings,
-            appearance_settings(
-                config::parse_appearance(COMPACT).unwrap().appearance()
-            )
+            appearance_settings(config::parse_appearance(COMPACT).unwrap().settings())
         );
         assert_ne!(
             booted.startup.appearance_settings,
-            appearance_settings(AppearanceFile::default().appearance())
+            appearance_settings(AppearanceFile::default().settings())
         );
     }
 

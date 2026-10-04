@@ -1,9 +1,9 @@
 use ratatui::{buffer::Buffer, layout::Rect};
 
 #[derive(Debug)]
-pub struct Canvas<'a> {
-    pub area: Rect,
-    pub buffer: &'a mut Buffer,
+pub(crate) struct Canvas<'a> {
+    pub(crate) area: Rect,
+    pub(crate) buffer: &'a mut Buffer,
 }
 
 #[cfg(test)]

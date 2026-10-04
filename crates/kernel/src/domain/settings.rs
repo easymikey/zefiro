@@ -3,7 +3,7 @@ use std::{fmt, time::Duration};
 use crate::domain::{
     Crossfade,
     SleepPresets,
-    appearance::Look,
+    appearance::Appearance,
     time::SECONDS_PER_MINUTE,
 };
 
@@ -77,7 +77,7 @@ pub struct AudioSettings {
 pub struct Settings {
     pub audio: AudioSettings,
     pub output_devices: Vec<ListedDevice>,
-    pub look: Look,
+    pub appearance: Appearance,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

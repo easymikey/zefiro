@@ -3,15 +3,28 @@ source: crates/audio/src/engine/live/track.rs
 expression: log
 ---
 [
-    Preload(
-        Crossfade {
-            path: "/b",
-            gain: None,
-            speed: Speed(
-                1.0,
-            ),
-        },
-    ),
-    Clear,
-    Nothing,
+    Cmd {
+        effects: [
+            Preload {
+                path: "/b",
+                mode: Crossfade {
+                    gain: None,
+                    speed: Speed(
+                        1.0,
+                    ),
+                },
+            },
+        ],
+        messages: [],
+    },
+    Cmd {
+        effects: [
+            Clear,
+        ],
+        messages: [],
+    },
+    Cmd {
+        effects: [],
+        messages: [],
+    },
 ]

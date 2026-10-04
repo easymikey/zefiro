@@ -10,7 +10,7 @@ use kernel::{
     Congestion,
     LibraryCmd,
     MacosCmd,
-    domain::{Driver, DriverStatus, Drivers},
+    domain::{DriverName, DriverStatus, Drivers},
 };
 
 use crate::{
@@ -21,7 +21,7 @@ use crate::{
 
 #[derive(Debug)]
 pub(crate) struct Port<C> {
-    driver: Driver,
+    driver: DriverName,
     sender: Option<Sender<C>>,
     full_edge: Congestion,
     handle: Option<JoinHandle<Exit>>,
@@ -29,7 +29,7 @@ pub(crate) struct Port<C> {
 
 impl<C> Port<C> {
     pub(crate) fn new(
-        driver: Driver,
+        driver: DriverName,
         sender: Sender<C>,
         full_edge: Congestion,
     ) -> Self {
@@ -41,7 +41,7 @@ impl<C> Port<C> {
         }
     }
 
-    pub(crate) fn spawned(driver: Driver, thread: DriverThread<C>) -> Self {
+    pub(crate) fn spawned(driver: DriverName, thread: DriverThread<C>) -> Self {
         Self {
             handle: Some(thread.handle),
             ..Self::new(driver, thread.commands, thread.full_edge)
@@ -121,7 +121,7 @@ impl LibraryPort {
             | LibraryCmd::SaveFavorites(_)
             | LibraryCmd::LoadFavorites
             | LibraryCmd::Trash(_)
-            | LibraryCmd::LoadHistory { .. }
+            | LibraryCmd::LoadHistory(..)
             | LibraryCmd::Scan { .. }
             | LibraryCmd::SavePlaylist { .. }
             | LibraryCmd::TagTracks { .. }) => {
@@ -149,12 +149,12 @@ pub(crate) struct Ports {
 }
 
 impl Ports {
-    pub(crate) fn full_edge(&self, driver: Driver) -> &Congestion {
+    pub(crate) fn full_edge(&self, driver: DriverName) -> &Congestion {
         match driver {
-            Driver::Audio => self.audio.full_edge(),
-            Driver::Library => self.library.port.full_edge(),
-            Driver::Config => self.config.full_edge(),
-            Driver::Macos => self.macos.full_edge(),
+            DriverName::Audio => self.audio.full_edge(),
+            DriverName::Library => self.library.port.full_edge(),
+            DriverName::Config => self.config.full_edge(),
+            DriverName::Macos => self.macos.full_edge(),
         }
     }
 
@@ -165,12 +165,12 @@ impl Ports {
         self.config.hang_up();
     }
 
-    pub(crate) fn join(&mut self, driver: Driver) -> Option<thread::Result<Exit>> {
+    pub(crate) fn join(&mut self, driver: DriverName) -> Option<thread::Result<Exit>> {
         match driver {
-            Driver::Audio => self.audio.join(),
-            Driver::Library => self.library.port.join(),
-            Driver::Config => self.config.join(),
-            Driver::Macos => self.macos.join(),
+            DriverName::Audio => self.audio.join(),
+            DriverName::Library => self.library.port.join(),
+            DriverName::Config => self.config.join(),
+            DriverName::Macos => self.macos.join(),
         }
     }
 }
@@ -181,7 +181,7 @@ mod tests {
     use kernel::{
         AudioCmd,
         Congestion,
-        domain::{Driver, DriverStatus, Drivers},
+        domain::{DriverName, DriverStatus, Drivers},
     };
     use rstest::rstest;
 
@@ -192,7 +192,7 @@ mod tests {
 
     fn dropped(reason: DropReason) -> TraceEntry {
         TraceEntry::Dropped {
-            driver: Driver::Audio,
+            driver: DriverName::Audio,
             command: (&AudioCmd::Stop).into(),
             reason,
         }
@@ -212,7 +212,7 @@ mod tests {
         Err(DropReason::NotRunning)
     )]
     #[case::dead(
-        DriverStatus::Dead(kernel::domain::DriverError::panicked("boom".to_owned())),
+        DriverStatus::Dead(kernel::domain::DriverError::Panicked),
         Inbox::Connected,
         Err(DropReason::NotRunning)
     )]
@@ -231,8 +231,8 @@ mod tests {
             drop(receiver);
         }
         let mut drivers = Drivers::default();
-        drivers.record_mut(Driver::Audio).status = status;
-        let port = Port::new(Driver::Audio, sender, Congestion::default());
+        drivers.record_mut(DriverName::Audio).status = status;
+        let port = Port::new(DriverName::Audio, sender, Congestion::default());
 
         let sent = port.send(&drivers, AudioCmd::Stop);
 
@@ -243,9 +243,9 @@ mod tests {
     fn a_full_inbox_is_dropped_and_raises_the_flag() {
         let (sender, _receiver) = bounded(1);
         let mut drivers = Drivers::default();
-        drivers.record_mut(Driver::Audio).status = DriverStatus::Running;
+        drivers.record_mut(DriverName::Audio).status = DriverStatus::Running;
         let full_edge = Congestion::default();
-        let port = Port::new(Driver::Audio, sender, full_edge.clone());
+        let port = Port::new(DriverName::Audio, sender, full_edge.clone());
 
         port.send(&drivers, AudioCmd::Stop).unwrap();
         let second = port.send(&drivers, AudioCmd::Stop);

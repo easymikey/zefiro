@@ -1,3 +1,6 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unhandled;
+
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a state machine — it has no `Machine` impl",
     label = "missing `impl Machine for {Self}`",
@@ -5,20 +8,23 @@
 )]
 pub trait Machine {
     type Message;
-    type Error;
     type Effect;
 
-    fn transition(
-        &mut self,
-        message: Self::Message,
-    ) -> Result<Self::Effect, Self::Error>;
+    fn transition(&mut self, message: Self::Message)
+    -> Result<Self::Effect, Unhandled>;
+}
+
+pub trait Driver: Machine {
+    type Effect;
+
+    fn execute(&mut self, effect: <Self as Driver>::Effect) -> Option<Self::Message>;
 }
 
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
-    use crate::update::machine::Machine;
+    use crate::update::machine::{Machine, Unhandled};
 
     #[derive(Debug, PartialEq)]
     enum Latch {
@@ -33,22 +39,15 @@ mod tests {
     }
 
     #[derive(Debug, PartialEq)]
-    enum LatchError {
-        WhileOpen,
-        WhileClosed,
-    }
-
-    #[derive(Debug, PartialEq)]
     enum Click {
         Clicked,
     }
 
     impl Machine for Latch {
         type Message = LatchMessage;
-        type Error = LatchError;
         type Effect = Click;
 
-        fn transition(&mut self, message: LatchMessage) -> Result<Click, LatchError> {
+        fn transition(&mut self, message: LatchMessage) -> Result<Click, Unhandled> {
             match (&*self, message) {
                 (Latch::Open, LatchMessage::Close) => {
                     *self = Latch::Closed;
@@ -58,8 +57,8 @@ mod tests {
                     *self = Latch::Open;
                     Ok(Click::Clicked)
                 }
-                (Latch::Open, LatchMessage::Open) => Err(LatchError::WhileOpen),
-                (Latch::Closed, LatchMessage::Close) => Err(LatchError::WhileClosed),
+                (Latch::Open, LatchMessage::Open)
+                | (Latch::Closed, LatchMessage::Close) => Err(Unhandled),
             }
         }
     }
@@ -68,7 +67,7 @@ mod tests {
         start: Latch,
         message: LatchMessage,
         next: Latch,
-        outcome: Result<Click, LatchError>,
+        result: Result<Click, Unhandled>,
     }
 
     #[rstest]
@@ -76,30 +75,30 @@ mod tests {
         start: Latch::Open,
         message: LatchMessage::Close,
         next: Latch::Closed,
-        outcome: Ok(Click::Clicked),
+        result: Ok(Click::Clicked),
     })]
     #[case::closed_opens(LatchRow {
         start: Latch::Closed,
         message: LatchMessage::Open,
         next: Latch::Open,
-        outcome: Ok(Click::Clicked),
+        result: Ok(Click::Clicked),
     })]
     #[case::open_refuses_open(LatchRow {
         start: Latch::Open,
         message: LatchMessage::Open,
         next: Latch::Open,
-        outcome: Err(LatchError::WhileOpen),
+        result: Err(Unhandled),
     })]
     #[case::closed_refuses_close(LatchRow {
         start: Latch::Closed,
         message: LatchMessage::Close,
         next: Latch::Closed,
-        outcome: Err(LatchError::WhileClosed),
+        result: Err(Unhandled),
     })]
     fn transition_writes_only_on_success(#[case] row: LatchRow) {
         let mut slot = row.start;
-        let outcome = slot.transition(row.message);
+        let result = slot.transition(row.message);
         assert_eq!(slot, row.next);
-        assert_eq!(outcome, row.outcome);
+        assert_eq!(result, row.result);
     }
 }

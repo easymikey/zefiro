@@ -54,17 +54,17 @@ pub struct LatestSenders {
 
 #[must_use]
 pub fn latest_channels() -> (LatestSenders, LatestReceivers, Receiver<()>) {
-    let (ring, notified) = bounded(1);
+    let (notifier, notified) = bounded(1);
     let theme = Arc::new(ArcSwapOption::empty());
     let cover = Arc::new(ArcSwapOption::empty());
     let writers = LatestSenders {
         theme: LatestSender {
             value: Arc::clone(&theme),
-            notify: ring.clone(),
+            notify: notifier.clone(),
         },
         cover: LatestSender {
             value: Arc::clone(&cover),
-            notify: ring,
+            notify: notifier,
         },
     };
     let cells = LatestReceivers {
@@ -88,12 +88,12 @@ mod tests {
         LatestReceiver<T>,
         crossbeam_channel::Receiver<()>,
     ) {
-        let (ring, notified) = bounded(1);
+        let (notifier, notified) = bounded(1);
         let value = std::sync::Arc::new(arc_swap::ArcSwapOption::empty());
         (
             LatestSender {
                 value: std::sync::Arc::clone(&value),
-                notify: ring,
+                notify: notifier,
             },
             LatestReceiver { value },
             notified,

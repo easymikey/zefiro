@@ -13,7 +13,7 @@ use kernel::{
         Overlay,
         Workspace,
     },
-    update::keymap::{KeyOutcome, route},
+    update::keymap::route,
 };
 use rstest::rstest;
 
@@ -91,8 +91,8 @@ fn an_override_that_takes_a_default_leaves_its_action_unbound() {
     let config = config_with(Some("p"), None);
     assert!(!bindings(&config).iter().any(|binding| {
         matches!(
-            binding.outcome,
-            KeyOutcome::Message(Message::Playback(PlaybackRequest::Previous))
+            binding.message,
+            Message::Playback(PlaybackRequest::Previous)
         )
     }));
 }
@@ -116,10 +116,7 @@ fn a_binding_that_names_a_context_compiles_into_that_focus() {
     let config = next_in_search();
     assert!(validation_errors(&config).is_empty());
     let moved = bindings(&config).into_iter().find(|binding| {
-        matches!(
-            binding.outcome,
-            KeyOutcome::Message(Message::Playback(PlaybackRequest::Next))
-        )
+        matches!(binding.message, Message::Playback(PlaybackRequest::Next))
     });
     assert_eq!(
         moved.map(|binding| binding.key_context),

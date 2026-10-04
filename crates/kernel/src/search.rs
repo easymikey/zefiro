@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, sync::Arc};
 
-use crate::domain::Track;
+use crate::domain::{Track, ViewIndex};
 
 const MATCH_SCORE: i32 = 16;
 const CONSECUTIVE_BONUS: i32 = 15;
@@ -77,16 +77,16 @@ fn score_chars(query_chars: &[char], haystack: &str) -> Option<i32> {
 }
 
 #[must_use]
-pub fn rank(tracks: &[Arc<Track>], query: &str) -> Vec<usize> {
+pub fn rank(tracks: &[Arc<Track>], query: &str) -> Vec<ViewIndex> {
     let mut matches = Vec::new();
     rank_into(tracks, query, &mut matches);
     matches
 }
 
-pub fn rank_into(tracks: &[Arc<Track>], query: &str, matches: &mut Vec<usize>) {
+pub fn rank_into(tracks: &[Arc<Track>], query: &str, matches: &mut Vec<ViewIndex>) {
     matches.clear();
     if query.is_empty() {
-        matches.extend(0..tracks.len());
+        matches.extend((0..tracks.len()).map(ViewIndex::new));
         return;
     }
     let query_chars: Vec<char> = query.to_lowercase().chars().collect();
@@ -98,7 +98,7 @@ pub fn rank_into(tracks: &[Arc<Track>], query: &str, matches: &mut Vec<usize>) {
         })
         .collect();
     scored.sort_by_key(|&(index, score)| (Reverse(score), index));
-    matches.extend(scored.into_iter().map(|(index, _)| index));
+    matches.extend(scored.into_iter().map(|(index, _)| ViewIndex::new(index)));
 }
 
 fn best_track_score(query_chars: &[char], track: &Track) -> Option<i32> {
@@ -211,7 +211,7 @@ mod score_tests {
                 .enumerate()
                 .filter_map(|(index, title)| score(&query, title).map(|_| index))
                 .collect();
-            let found: BTreeSet<usize> = matches.iter().copied().collect();
+            let found: BTreeSet<usize> = matches.iter().copied().map(usize::from).collect();
             prop_assert_eq!(found.len(), matches.len());
             prop_assert_eq!(found, expected);
 
@@ -219,7 +219,7 @@ mod score_tests {
             let scored = |index: usize| scores.get(index).copied().flatten().unwrap_or(i32::MIN);
             for window in matches.windows(2) {
                 if let [left, right] = *window {
-                    let (left_score, right_score) = (scored(left), scored(right));
+                    let (left_score, right_score) = (scored(left.get()), scored(right.get()));
                     prop_assert!(left_score >= right_score);
                     if left_score == right_score {
                         prop_assert!(left < right);

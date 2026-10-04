@@ -177,7 +177,7 @@ pub(crate) struct BrailleBuffers {
 }
 
 impl BrailleBuffers {
-    pub(crate) fn render_meter(&mut self, fill: &MeterFill<'_>) -> &[String] {
+    pub(crate) fn paint_meter(&mut self, fill: &MeterFill<'_>) -> &[String] {
         self.canvas
             .resize_and_clear(fill.size.width, fill.size.height);
         fill_meter(&mut self.canvas, fill);

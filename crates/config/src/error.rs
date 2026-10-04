@@ -1,6 +1,6 @@
-use std::{fmt, num::ParseIntError};
+use std::num::ParseIntError;
 
-use kernel::domain::CrossfadeOutOfRange;
+use kernel::domain::{ConfigName, ThemeNameError};
 use serde::de::DeserializeOwned;
 
 use crate::{
@@ -9,20 +9,12 @@ use crate::{
     theme_file::theme_file_name,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TomlFile {
-    Config,
-    Appearance,
-    Theme(String),
-}
-
-impl fmt::Display for TomlFile {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TomlFile::Config => formatter.write_str(CONFIG_FILE_NAME),
-            TomlFile::Appearance => formatter.write_str(APPEARANCE_FILE_NAME),
-            TomlFile::Theme(name) => formatter.write_str(&theme_file_name(name)),
-        }
+#[must_use]
+pub(crate) fn config_file_name(name: &ConfigName) -> String {
+    match name {
+        ConfigName::Config => CONFIG_FILE_NAME.to_owned(),
+        ConfigName::Appearance => APPEARANCE_FILE_NAME.to_owned(),
+        ConfigName::Theme(theme) => theme_file_name(theme.as_str()),
     }
 }
 
@@ -33,13 +25,15 @@ fn first_line(error: &toml::de::Error) -> &str {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("{}\n{file}:{line}", first_line(.source))]
+    #[error("{}\n{}:{line}", first_line(.source), config_file_name(.file))]
     Parse {
-        file: TomlFile,
+        file: ConfigName,
         line: usize,
         #[source]
         source: Box<toml::de::Error>,
     },
+    #[error(transparent)]
+    ThemeName(#[from] ThemeNameError),
     #[error("`{key}` is not a table")]
     NotATable { key: String },
     #[error("{}", .0.message())]
@@ -59,7 +53,7 @@ pub(crate) enum CrossfadeError {
     )]
     MissingSuffix { value: String },
     #[error(transparent)]
-    OutOfRange(#[from] CrossfadeOutOfRange),
+    OutOfRange(#[from] kernel::domain::CrossfadeError),
 }
 
 fn line_at(source: &str, offset: usize) -> usize {
@@ -72,7 +66,7 @@ fn line_at(source: &str, offset: usize) -> usize {
         + 1
 }
 
-pub(crate) fn parse_toml<T>(source: &str, file: TomlFile) -> Result<T, Error>
+pub(crate) fn parse_toml<T>(source: &str, file: ConfigName) -> Result<T, Error>
 where
     T: DeserializeOwned,
 {
@@ -85,11 +79,12 @@ where
 
 #[cfg(test)]
 mod tests {
+    use kernel::domain::{ConfigName, ThemeName};
     use rstest::rstest;
 
-    use crate::error::{Error, TomlFile, parse_toml};
+    use crate::error::{Error, config_file_name, parse_toml};
 
-    fn error_text(source: &str, file: TomlFile) -> String {
+    fn error_text(source: &str, file: ConfigName) -> String {
         let parsed: Result<toml::Table, Error> = parse_toml(source, file);
         parsed
             .err()
@@ -98,7 +93,8 @@ mod tests {
 
     #[test]
     fn an_error_puts_the_message_first_and_the_place_below_it() {
-        let text = error_text("a = 1\n\n[card]\nb = 2\n[card]\n", TomlFile::Appearance);
+        let text =
+            error_text("a = 1\n\n[card]\nb = 2\n[card]\n", ConfigName::Appearance);
 
         let place = text.lines().nth(1);
 
@@ -107,17 +103,20 @@ mod tests {
 
     #[test]
     fn an_error_on_the_first_line_reports_line_one_in_exactly_two_lines() {
-        let text = error_text("[card\n", TomlFile::Config);
+        let text = error_text("[card\n", ConfigName::Config);
 
         assert_eq!(text.lines().nth(1), Some("config.toml:1"));
         assert_eq!(text.lines().count(), 2, "whole text was {text:?}");
     }
 
     #[rstest]
-    #[case::config(TomlFile::Config, "a = 1\n[b]\nc = 1\n[b]\n")]
-    #[case::appearance(TomlFile::Appearance, "[card]\n[card]\n")]
-    #[case::theme_noir(TomlFile::Theme("noir".to_owned()), "[colors]\n[colors]\n")]
-    fn a_parse_error_keeps_its_cause(#[case] file: TomlFile, #[case] source: &str) {
+    #[case::config(ConfigName::Config, "a = 1\n[b]\nc = 1\n[b]\n")]
+    #[case::appearance(ConfigName::Appearance, "[card]\n[card]\n")]
+    #[case::theme_noir(
+        ConfigName::Theme(ThemeName::from_static("noir")),
+        "[colors]\n[colors]\n"
+    )]
+    fn a_parse_error_keeps_its_cause(#[case] file: ConfigName, #[case] source: &str) {
         let parsed: Result<toml::Table, Error> = parse_toml(source, file.clone());
         let error = parsed.expect_err("duplicate tables must not parse");
 
@@ -125,19 +124,19 @@ mod tests {
         let text = error.to_string();
         let place = text.lines().last().unwrap();
         assert!(
-            place.starts_with(&format!("{file}:")),
+            place.starts_with(&format!("{}:", config_file_name(&file))),
             "whole text was {text:?}"
         );
     }
 
     #[rstest]
-    #[case::config(TomlFile::Config, "config.toml")]
-    #[case::appearance(TomlFile::Appearance, "sifr-ui.toml")]
-    #[case::theme(TomlFile::Theme("noir".to_owned()), "noir.toml")]
+    #[case::config(ConfigName::Config, "config.toml")]
+    #[case::appearance(ConfigName::Appearance, "sifr-ui.toml")]
+    #[case::theme(ConfigName::Theme(ThemeName::from_static("noir")), "noir.toml")]
     fn toml_file_names_the_file_on_disk(
-        #[case] file: TomlFile,
+        #[case] file: ConfigName,
         #[case] expected: &str,
     ) {
-        assert_eq!(file.to_string(), expected);
+        assert_eq!(config_file_name(&file), expected);
     }
 }

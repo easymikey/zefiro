@@ -4,43 +4,36 @@ use crate::domain::Restarts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub enum Driver {
+pub enum DriverName {
     Audio,
     Library,
     Config,
     Macos,
 }
 
-impl Driver {
-    pub const ALL: [Driver; 4] = [
-        Driver::Audio,
-        Driver::Library,
-        Driver::Config,
-        Driver::Macos,
+impl DriverName {
+    pub const ALL: [DriverName; 4] = [
+        DriverName::Audio,
+        DriverName::Library,
+        DriverName::Config,
+        DriverName::Macos,
     ];
 
     #[must_use]
     pub const fn index(self) -> usize {
         match self {
-            Driver::Audio => 0,
-            Driver::Library => 1,
-            Driver::Config => 2,
-            Driver::Macos => 3,
+            DriverName::Audio => 0,
+            DriverName::Library => 1,
+            DriverName::Config => 2,
+            DriverName::Macos => 3,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DriverError {
-    #[error("panicked: {text}")]
-    Panicked { text: String },
-}
-
-impl DriverError {
-    #[must_use]
-    pub fn panicked(text: impl Into<String>) -> Self {
-        DriverError::Panicked { text: text.into() }
-    }
+    #[error("panicked")]
+    Panicked,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -62,7 +55,7 @@ pub struct Drivers([DriverRecord; 4]);
 
 impl Default for Drivers {
     fn default() -> Self {
-        Self(Driver::ALL.map(|_| DriverRecord {
+        Self(DriverName::ALL.map(|_| DriverRecord {
             status: DriverStatus::default(),
             restarts: Restarts::default(),
         }))
@@ -71,45 +64,45 @@ impl Default for Drivers {
 
 impl Drivers {
     #[must_use]
-    pub fn status(&self, driver: Driver) -> &DriverStatus {
+    pub fn status(&self, driver: DriverName) -> &DriverStatus {
         &self.record(driver).status
     }
 
     #[must_use]
-    pub fn record(&self, driver: Driver) -> &DriverRecord {
+    pub fn record(&self, driver: DriverName) -> &DriverRecord {
         let [audio, library, config, macos] = &self.0;
         match driver {
-            Driver::Audio => audio,
-            Driver::Library => library,
-            Driver::Config => config,
-            Driver::Macos => macos,
+            DriverName::Audio => audio,
+            DriverName::Library => library,
+            DriverName::Config => config,
+            DriverName::Macos => macos,
         }
     }
 
-    pub fn record_mut(&mut self, driver: Driver) -> &mut DriverRecord {
+    pub fn record_mut(&mut self, driver: DriverName) -> &mut DriverRecord {
         let [audio, library, config, macos] = &mut self.0;
         match driver {
-            Driver::Audio => audio,
-            Driver::Library => library,
-            Driver::Config => config,
-            Driver::Macos => macos,
+            DriverName::Audio => audio,
+            DriverName::Library => library,
+            DriverName::Config => config,
+            DriverName::Macos => macos,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::{Driver, DriverStatus, Drivers};
+    use crate::domain::{DriverName, DriverStatus, Drivers};
 
     #[test]
     fn every_driver_indexes_its_own_record() {
-        for (position, driver) in Driver::ALL.into_iter().enumerate() {
+        for (position, driver) in DriverName::ALL.into_iter().enumerate() {
             assert_eq!(driver.index(), position);
 
             let mut drivers = Drivers::default();
             drivers.record_mut(driver).status = DriverStatus::Stopped;
 
-            for other in Driver::ALL {
+            for other in DriverName::ALL {
                 let expected = if other == driver {
                     &DriverStatus::Stopped
                 } else {

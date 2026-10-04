@@ -9,8 +9,8 @@ use ratatui::{
 use crate::{
     playlist::pane::PlaylistView,
     primitive::{inset::Inset, list_chrome::spaced_title},
-    status_line::{self, ScanProgress, StatusLineColors, StatusLineView},
-    theme::{ActiveTheme, Role},
+    status_line::{self, ScanProgress, StatusLineStyle, StatusLineView},
+    theme::ActiveTheme,
 };
 
 const TITLE_CELLS: u16 = 2;
@@ -56,12 +56,11 @@ pub(crate) fn pane_title<'a>(
         theme_name: theme.theme.name.as_str(),
         sleep_left: view.sleep_left,
     };
-    let colors = StatusLineColors {
-        frame: theme.role(Role::Frame),
-        dim: theme.role(Role::Dim),
-        accent: theme.role(Role::Accent),
-    };
-    status_line::status_line(status, colors, title_budget(area))
+    status_line::status_line(
+        status,
+        StatusLineStyle::from_theme(&theme),
+        title_budget(area),
+    )
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@ use kernel::{
         SavePhase,
         SettingRow,
         Track,
-        appearance::CoverStyle,
+        appearance::CoverMode,
     },
     update::keymap::KeyBinding,
 };
@@ -23,14 +23,14 @@ use ratatui::{
 use crate::{
     overlay::{
         confirm_delete,
-        help::HelpOverlay,
-        history::HistoryOverlay,
+        help::HelpWidget,
+        history::HistoryWidget,
         jump_to_time,
-        modal::{OverlayAreas, OverlayContainer, Prompt},
+        modal::{ModalRowStyle, OverlayAreas, OverlayContainer, PromptWidget},
         music_dir,
-        search::SearchOverlay,
-        settings::{SettingsOverlay, SettingsView},
-        track_details::TrackDetailsOverlay,
+        search::SearchWidget,
+        settings::{SettingsView, SettingsWidget},
+        track_details::TrackDetailsWidget,
     },
     primitive::canvas::Canvas,
     screen::FrameLayout,
@@ -49,7 +49,7 @@ pub(crate) struct OverlayContent<'a> {
 }
 
 #[derive(Debug)]
-pub(crate) struct OverlayLayer<'a> {
+pub(crate) struct OverlayWidget<'a> {
     content: OverlayContent<'a>,
     layout: &'a FrameLayout,
     avoid: Option<Rect>,
@@ -57,12 +57,12 @@ pub(crate) struct OverlayLayer<'a> {
 
 #[derive(Debug)]
 enum ActiveOverlay<'a> {
-    Help(HelpOverlay<'a>),
-    Search(SearchOverlay<'a>),
-    History(HistoryOverlay<'a>),
-    Settings(SettingsOverlay<'a>),
-    Prompt(Prompt<'a>),
-    TrackDetails(TrackDetailsOverlay<'a>),
+    Help(HelpWidget<'a>),
+    Search(SearchWidget<'a>),
+    History(HistoryWidget<'a>),
+    Settings(SettingsWidget<'a>),
+    Prompt(PromptWidget<'a>),
+    TrackDetails(TrackDetailsWidget<'a>),
 }
 
 impl ActiveOverlay<'_> {
@@ -77,18 +77,19 @@ impl ActiveOverlay<'_> {
         }
     }
 
-    fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
+    fn paint(&self, canvas: Canvas<'_>) {
+        let Canvas { area, buffer } = canvas;
         match self {
-            Self::Help(overlay) => overlay.render_in(areas, canvas),
-            Self::Search(overlay) => overlay.render_in(areas, canvas),
-            Self::History(overlay) => overlay.render_in(areas, canvas),
-            Self::Settings(overlay) => overlay.render_in(areas, canvas),
-            Self::Prompt(prompt) => {
-                if let OverlayAreas::Dialog(areas) = areas {
-                    prompt.render_in(areas, canvas);
-                }
+            Self::Help(widget) => Widget::render(widget, area, buffer),
+            Self::Search(widget) => Widget::render(widget, area, buffer),
+            Self::History(widget) => Widget::render(widget, area, buffer),
+            Self::Settings(widget) => {
+                Widget::render(widget, area, buffer);
             }
-            Self::TrackDetails(overlay) => overlay.render_in(areas, canvas),
+            Self::Prompt(prompt) => Widget::render(prompt, area, buffer),
+            Self::TrackDetails(widget) => {
+                Widget::render(widget, area, buffer);
+            }
         }
     }
 }
@@ -103,27 +104,27 @@ fn banner_area(screen: Rect) -> Option<Rect> {
 fn banner_color(phase: SavePhase, theme: ActiveTheme<'_>) -> ratatui::style::Color {
     match phase {
         SavePhase::Prompt => theme.role(Role::Accent),
-        SavePhase::Failure => theme.role(Role::Accent2),
+        SavePhase::Failed => theme.role(Role::Accent2),
     }
 }
 
-impl<'a> OverlayLayer<'a> {
+impl<'a> OverlayWidget<'a> {
     #[must_use]
     pub(crate) fn placed(
         content: OverlayContent<'a>,
         layout: &'a FrameLayout,
-        cover_style: CoverStyle,
+        cover_mode: CoverMode,
     ) -> Self {
         Self {
             content,
             layout,
-            avoid: layout.cover_exclusion(cover_style),
+            avoid: layout.cover_exclusion(cover_mode),
         }
     }
 
     fn container(&self, avoid: &'a [Rect]) -> OverlayContainer<'a> {
         if self.layout.playlist_pane.is_empty() {
-            OverlayContainer::Modal { avoid }
+            OverlayContainer::Modal(avoid)
         } else {
             OverlayContainer::Pane(self.layout.playlist_pane)
         }
@@ -132,31 +133,31 @@ impl<'a> OverlayLayer<'a> {
     fn active(&'a self) -> Option<ActiveOverlay<'a>> {
         let avoid = self.avoid.as_slice();
         match self.content.overlay? {
-            Overlay::Help => Some(ActiveOverlay::Help(HelpOverlay {
+            Overlay::Help => Some(ActiveOverlay::Help(HelpWidget {
                 theme: self.content.theme,
                 bindings: self.content.bindings,
                 avoid,
             })),
-            Overlay::Search(search) => Some(ActiveOverlay::Search(SearchOverlay {
+            Overlay::Search(search) => Some(ActiveOverlay::Search(SearchWidget {
                 theme: self.content.theme,
                 tracks: self.content.tracks,
                 search,
                 bounds: self.layout.search_bounds,
                 container: self.container(avoid),
             })),
-            Overlay::History(cursor) => Some(ActiveOverlay::History(HistoryOverlay {
+            Overlay::History(cursor) => Some(ActiveOverlay::History(HistoryWidget {
                 theme: self.content.theme,
                 entries: self.content.history,
                 now: self.content.now,
-                selected: cursor.selected(),
+                selected: usize::from(cursor.selected()),
                 container: self.container(avoid),
             })),
-            Overlay::Settings { selected: current } => {
+            Overlay::Settings(current) => {
                 let rows =
                     SettingRow::all(self.content.settings_view.appearance_settings);
                 let selected =
                     rows.iter().position(|row| *row == *current).unwrap_or(0);
-                Some(ActiveOverlay::Settings(SettingsOverlay {
+                Some(ActiveOverlay::Settings(SettingsWidget {
                     theme: self.content.theme,
                     values: self.content.settings_view,
                     selected,
@@ -184,9 +185,9 @@ impl<'a> OverlayLayer<'a> {
                 jump_to_time::prompt(digits, self.content.theme).avoiding(avoid),
             )),
             Overlay::TrackDetails(track) => {
-                Some(ActiveOverlay::TrackDetails(TrackDetailsOverlay {
+                Some(ActiveOverlay::TrackDetails(TrackDetailsWidget {
                     track: track.as_ref(),
-                    theme: self.content.theme,
+                    style: ModalRowStyle::from_theme(&self.content.theme),
                     avoid,
                 }))
             }
@@ -197,7 +198,7 @@ impl<'a> OverlayLayer<'a> {
             Overlay::Help
             | Overlay::Search(_)
             | Overlay::History(_)
-            | Overlay::Settings { .. }
+            | Overlay::Settings(..)
             | Overlay::SavePlaylist { .. } => None,
         }
     }
@@ -214,28 +215,27 @@ impl<'a> OverlayLayer<'a> {
         Some(self.active()?.areas(screen))
     }
 
-    pub(crate) fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
-        if let Some(save_line) = self.save_line() {
-            if let OverlayAreas::Banner(banner) = areas {
-                Paragraph::new(save_line.text.as_str())
-                    .style(
-                        Style::default()
-                            .fg(banner_color(save_line.phase, self.content.theme)),
-                    )
-                    .render(banner, canvas.buffer);
-            }
-            return;
-        }
-        if let Some(overlay) = self.active() {
-            overlay.render_in(areas, canvas);
+    fn paint_banner(&self, save_line: SaveLine, canvas: Canvas<'_>) {
+        let Canvas { area, buffer } = canvas;
+        if let Some(banner) = banner_area(area) {
+            Paragraph::new(save_line.text)
+                .style(
+                    Style::default()
+                        .fg(banner_color(save_line.phase, self.content.theme)),
+                )
+                .render(banner, buffer);
         }
     }
 }
 
-impl Widget for &OverlayLayer<'_> {
+impl Widget for &OverlayWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        if let Some(areas) = self.areas(area) {
-            self.render_in(areas, Canvas { area, buffer });
+        if let Some(save_line) = self.save_line() {
+            self.paint_banner(save_line, Canvas { area, buffer });
+            return;
+        }
+        if let Some(overlay) = self.active() {
+            overlay.paint(Canvas { area, buffer });
         }
     }
 }
@@ -258,7 +258,7 @@ mod tests {
 
     use crate::{
         overlay::{
-            layer::{OverlayContent, OverlayLayer},
+            layer::{OverlayContent, OverlayWidget},
             modal::OverlayAreas,
             settings::test_support::{appearance_settings, settings_values},
         },
@@ -294,8 +294,8 @@ mod tests {
         theme: &'a crate::theme::Theme,
         model: &'a Model,
         layout: &'a FrameLayout,
-    ) -> OverlayLayer<'a> {
-        OverlayLayer {
+    ) -> OverlayWidget<'a> {
+        OverlayWidget {
             content: OverlayContent {
                 overlay: model.workspace.overlay.as_ref(),
                 tracks: &model.playlist.tracks,
@@ -362,9 +362,7 @@ mod tests {
     fn settings_overlay_lists_the_settings_view() {
         let theme = noir();
         let custom = appearance_settings();
-        let model = model_with(Overlay::Settings {
-            selected: SettingRow::first(&custom),
-        });
+        let model = model_with(Overlay::Settings(SettingRow::first(&custom)));
         let layout = layout(Rect::default());
         let mut with_values = layer(&theme, &model, &layout);
         with_values.content.settings_view = settings_values(&custom);
@@ -467,7 +465,8 @@ mod tests {
         let model = model_with(Overlay::Help);
         let layout = layout(Rect::default());
         let overlay = layer(&theme, &model, &layout);
-        let _ = rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()))
+        let frame = rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()))
             .to_string();
+        assert_eq!(frame.lines().count(), 3);
     }
 }

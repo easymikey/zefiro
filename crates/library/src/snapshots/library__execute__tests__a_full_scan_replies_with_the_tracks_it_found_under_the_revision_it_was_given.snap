@@ -6,9 +6,8 @@ Some(
     Loaded {
         tracks: [
             Track {
-                path: "[tmp]/music/a.wav",
-                duration: Some(
-                    100ms,
+                source: Local(
+                    "[tmp]/music/a.wav",
                 ),
                 tags: Tags {
                     title: None,
@@ -43,7 +42,9 @@ Some(
                     replay_gain: None,
                 },
                 display: "a.wav",
-                tagging: Read,
+                tagging: Read(
+                    100ms,
+                ),
             },
         ],
         revision: Revision(

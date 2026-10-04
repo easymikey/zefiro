@@ -17,9 +17,10 @@ use kernel::{
         Themes,
         Toast,
         Track,
+        TrackRef,
         Transport,
         ViewIndex,
-        appearance::{CoverStyle, Look, ProgressTime},
+        appearance::{Appearance, CoverMode, ProgressTime},
         playlist::Playlist,
     },
     update::keymap::KeyBinding,
@@ -64,7 +65,7 @@ pub struct Scene<'a> {
     pub player: &'a Player,
     pub transport: &'a Transport,
     pub playlist: &'a Playlist,
-    pub queue: &'a [ViewIndex],
+    pub queue: &'a [TrackRef],
     pub favorites: &'a Favorites,
     pub themes: &'a Themes,
     pub appearance_settings: &'a [AppearanceSetting],
@@ -131,11 +132,11 @@ impl<'a> Scene<'a> {
     #[must_use]
     pub fn active_theme(&self) -> ActiveTheme<'a> {
         ActiveTheme::new(self.theme, self.color_depth)
-            .with_progress(self.look().progress)
+            .with_progress(self.appearance().progress)
     }
 
-    pub fn look(&self) -> Look {
-        self.settings.look
+    pub fn appearance(&self) -> Appearance {
+        self.settings.appearance
     }
 
     #[must_use]
@@ -180,7 +181,7 @@ impl<'a> Scene<'a> {
             music_dir: self.music_dir,
             output_device: audio.device.named().map(DeviceName::as_str),
             output_devices: &self.settings.output_devices,
-            appearance: self.look().appearance,
+            appearance: self.appearance().settings,
             appearance_settings: self.appearance_settings,
         }
     }
@@ -188,19 +189,19 @@ impl<'a> Scene<'a> {
     #[must_use]
     pub(crate) fn key_hints(&self) -> KeyHintsContent<'a> {
         match self.overlay {
-            Some(Overlay::Settings { .. }) => KeyHintsContent::settings(self.bindings),
+            Some(Overlay::Settings(..)) => KeyHintsContent::settings(self.bindings),
             _ => KeyHintsContent::keys(self.bindings),
         }
     }
 
     #[must_use]
-    pub fn cover_style(&self) -> CoverStyle {
-        painted_cover_style(self.look().appearance.cover_style, self.pixel_path)
+    pub fn cover_mode(&self) -> CoverMode {
+        painted_cover_mode(self.appearance().settings.cover_mode, self.pixel_path)
     }
 
     #[must_use]
     pub fn cover_sizing(&self) -> CoverSizing {
-        cover_sizing(self.cover_style(), self.look().cover_cells)
+        cover_sizing(self.cover_mode(), self.appearance().cover_cells)
     }
 
     #[must_use]
@@ -242,10 +243,10 @@ impl<'a> Scene<'a> {
     #[must_use]
     pub fn layout_parts(&self) -> FrameLayoutParts<'a> {
         FrameLayoutParts {
-            look: self.look(),
+            appearance: self.appearance(),
             cell_aspect: self.cell_aspect,
             cover_sizing: self.cover_sizing(),
-            cover_style: self.cover_style(),
+            cover_mode: self.cover_mode(),
             playlist: self.playlist_pane(),
             overlay: self.overlay_content(),
             toast: self.toaster(),
@@ -287,7 +288,7 @@ impl<'a> Scene<'a> {
             .card
             .is_some_and(|metrics| !metrics.spectrum_row.is_empty());
         let milkdrop_spectrum =
-            self.cover_style() == CoverStyle::Milkdrop && layout.cover.is_some();
+            self.cover_mode() == CoverMode::Milkdrop && layout.cover.is_some();
         card_spectrum || milkdrop_spectrum
     }
 
@@ -299,7 +300,7 @@ impl<'a> Scene<'a> {
             Breakpoint::Compact => Some(compact_progress_bar_width(layout.header)),
             Breakpoint::Minimal => Some(minimal_progress_bar_width(
                 self.card_view(),
-                self.look().appearance.speed_chip,
+                self.appearance().settings.speed_chip,
                 layout.screen.width,
             )),
             Breakpoint::TooSmall => None,
@@ -308,7 +309,7 @@ impl<'a> Scene<'a> {
 
     fn full_progress_bar_width(&self, metrics: &CardMetrics) -> u16 {
         let row_width = metrics.progress_row.width;
-        match self.look().appearance.progress_time {
+        match self.appearance().settings.progress_time {
             ProgressTime::Remaining => {
                 hud_progress_bar_width(row_width, self.card_view().remaining())
             }
@@ -324,14 +325,14 @@ fn theme_label(choice: &ThemeChoice) -> &str {
     }
 }
 
-fn painted_cover_style(style: CoverStyle, detected: PixelPath) -> CoverStyle {
+fn painted_cover_mode(style: CoverMode, detected: PixelPath) -> CoverMode {
     match (style, detected) {
-        (CoverStyle::Vinyl | CoverStyle::Plain, PixelPath::Halfblocks)
-        | (CoverStyle::Off, PixelPath::Protocol | PixelPath::Halfblocks) => {
-            CoverStyle::Off
+        (CoverMode::Vinyl | CoverMode::Plain, PixelPath::Halfblocks)
+        | (CoverMode::Off, PixelPath::Protocol | PixelPath::Halfblocks) => {
+            CoverMode::Off
         }
-        (CoverStyle::Vinyl | CoverStyle::Plain, PixelPath::Protocol)
-        | (CoverStyle::Milkdrop, PixelPath::Protocol | PixelPath::Halfblocks) => style,
+        (CoverMode::Vinyl | CoverMode::Plain, PixelPath::Protocol)
+        | (CoverMode::Milkdrop, PixelPath::Protocol | PixelPath::Halfblocks) => style,
     }
 }
 
@@ -348,7 +349,7 @@ pub fn abbreviate_home(path: &Path, home: &Path) -> String {
 mod tests {
     use std::path::Path;
 
-    use kernel::domain::appearance::{CoverStyle, ProgressTime};
+    use kernel::domain::appearance::{CoverMode, ProgressTime};
     use ratatui::layout::{Rect, Size};
     use rstest::rstest;
 
@@ -356,54 +357,50 @@ mod tests {
         card::compact_progress_bar_width,
         primitive::bar::hud_progress_bar_width,
         repaint::Presence,
-        scene::{PixelPath, abbreviate_home, painted_cover_style},
+        scene::{PixelPath, abbreviate_home, painted_cover_mode},
         screen::{Breakpoint, FrameLayout},
         test_support::{SceneSources, model_with_tracks},
     };
 
     #[rstest]
     #[case::vinyl_with_graphics(
-        CoverStyle::Vinyl,
+        CoverMode::Vinyl,
         PixelPath::Protocol,
-        CoverStyle::Vinyl
+        CoverMode::Vinyl
     )]
     #[case::plain_with_graphics(
-        CoverStyle::Plain,
+        CoverMode::Plain,
         PixelPath::Protocol,
-        CoverStyle::Plain
+        CoverMode::Plain
     )]
     #[case::vinyl_without_graphics(
-        CoverStyle::Vinyl,
+        CoverMode::Vinyl,
         PixelPath::Halfblocks,
-        CoverStyle::Off
+        CoverMode::Off
     )]
     #[case::plain_without_graphics(
-        CoverStyle::Plain,
+        CoverMode::Plain,
         PixelPath::Halfblocks,
-        CoverStyle::Off
+        CoverMode::Off
     )]
-    #[case::off_with_graphics(CoverStyle::Off, PixelPath::Protocol, CoverStyle::Off)]
-    #[case::off_without_graphics(
-        CoverStyle::Off,
-        PixelPath::Halfblocks,
-        CoverStyle::Off
-    )]
+    #[case::off_with_graphics(CoverMode::Off, PixelPath::Protocol, CoverMode::Off)]
+    #[case::off_without_graphics(CoverMode::Off, PixelPath::Halfblocks, CoverMode::Off)]
     #[case::milkdrop_with_graphics(
-        CoverStyle::Milkdrop,
+        CoverMode::Milkdrop,
         PixelPath::Protocol,
-        CoverStyle::Milkdrop
+        CoverMode::Milkdrop
     )]
     #[case::milkdrop_without_graphics(
-        CoverStyle::Milkdrop,
+        CoverMode::Milkdrop,
         PixelPath::Halfblocks,
-        CoverStyle::Milkdrop
+        CoverMode::Milkdrop
     )]
-    fn the_painted_cover_style_reads_the_style_and_the_terminal(
-        #[case] style: CoverStyle,
+    fn the_painted_cover_mode_reads_the_style_and_the_terminal(
+        #[case] style: CoverMode,
         #[case] detected: PixelPath,
-        #[case] expected: CoverStyle,
+        #[case] expected: CoverMode,
     ) {
-        assert_eq!(painted_cover_style(style, detected), expected);
+        assert_eq!(painted_cover_mode(style, detected), expected);
     }
 
     #[rstest]
@@ -443,10 +440,10 @@ mod tests {
     ) {
         let (min_columns, min_rows) = minimums;
         let mut sources = SceneSources::new(model_with_tracks(1));
-        sources.look_mut().breakpoints.min_columns = min_columns;
-        sources.look_mut().breakpoints.min_rows = min_rows;
+        sources.appearance_mut().breakpoints.min_columns = min_columns;
+        sources.appearance_mut().breakpoints.min_rows = min_rows;
         if let Some(style) = style {
-            sources.look_mut().appearance.progress_time = style;
+            sources.appearance_mut().settings.progress_time = style;
         }
         let scene = sources.scene();
         let layout = FrameLayout::new(

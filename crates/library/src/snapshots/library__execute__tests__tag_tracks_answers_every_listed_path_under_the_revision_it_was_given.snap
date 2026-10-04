@@ -6,9 +6,8 @@ Some(
     Tagged {
         tracks: [
             Track {
-                path: "[tmp]/music/a.wav",
-                duration: Some(
-                    100ms,
+                source: Local(
+                    "[tmp]/music/a.wav",
                 ),
                 tags: Tags {
                     title: None,
@@ -43,11 +42,14 @@ Some(
                     replay_gain: None,
                 },
                 display: "a.wav",
-                tagging: Read,
+                tagging: Read(
+                    100ms,
+                ),
             },
             Track {
-                path: "[tmp]/music/never-existed.flac",
-                duration: None,
+                source: Local(
+                    "[tmp]/music/never-existed.flac",
+                ),
                 tags: Tags {
                     title: None,
                     artist: None,
@@ -71,7 +73,9 @@ Some(
                     replay_gain: None,
                 },
                 display: "never-existed",
-                tagging: Listed,
+                tagging: Listed(
+                    None,
+                ),
             },
         ],
         revision: Revision(

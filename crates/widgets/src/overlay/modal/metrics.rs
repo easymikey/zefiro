@@ -20,39 +20,43 @@ pub(crate) const SCROLLBAR_INSET: u16 = 2;
 pub(crate) fn modal_title(
     word: &str,
     detail: String,
-    theme: ActiveTheme<'_>,
+    style: ModalRowStyle,
 ) -> Line<'static> {
     line([
-        text(format!("{word}{TITLE_SEPARATOR}")).fg(theme.role(Role::Frame)),
-        text(detail).fg(theme.role(Role::Dim)),
+        text(format!("{word}{TITLE_SEPARATOR}")).fg(style.border),
+        text(detail).fg(style.muted_foreground),
     ])
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ModalRowColors {
-    pub(crate) text: Color,
-    pub(crate) dim: Color,
-    pub(crate) selected_text: Color,
+pub(crate) struct ModalRowStyle {
+    pub(crate) foreground: Color,
+    pub(crate) muted_foreground: Color,
+    pub(crate) selected_foreground: Color,
     pub(crate) selected_background: Color,
     pub(crate) accent: Color,
+    pub(crate) border: Color,
+    pub(crate) background: Color,
 }
 
-impl ModalRowColors {
+impl ModalRowStyle {
     #[must_use]
     pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         Self {
-            text: theme.role(Role::Text),
-            dim: theme.role(Role::Dim),
-            selected_text: theme.role(Role::SelectionForeground),
+            foreground: theme.role(Role::Text),
+            muted_foreground: theme.role(Role::Dim),
+            selected_foreground: theme.role(Role::SelectionForeground),
             selected_background: theme.role(Role::SelectionBackground),
             accent: theme.role(Role::Accent),
+            border: theme.role(Role::Frame),
+            background: theme.role(Role::WindowBackground),
         }
     }
 
     #[must_use]
     pub(crate) fn highlight(self) -> Style {
         Style::default()
-            .fg(self.selected_text)
+            .fg(self.selected_foreground)
             .bg(self.selected_background)
     }
 }

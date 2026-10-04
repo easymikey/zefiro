@@ -4,9 +4,8 @@ expression: decoded
 ---
 [
     Track {
-        path: "/music/one.flac",
-        duration: Some(
-            180s,
+        source: Local(
+            "/music/one.flac",
         ),
         tags: Tags {
             title: Some(
@@ -33,12 +32,13 @@ expression: decoded
             replay_gain: None,
         },
         display: "Moon River",
-        tagging: Read,
+        tagging: Read(
+            180s,
+        ),
     },
     Track {
-        path: "/music/two.flac",
-        duration: Some(
-            180s,
+        source: Local(
+            "/music/two.flac",
         ),
         tags: Tags {
             title: None,
@@ -63,6 +63,8 @@ expression: decoded
             replay_gain: None,
         },
         display: "two.flac",
-        tagging: Read,
+        tagging: Read(
+            180s,
+        ),
     },
 ]

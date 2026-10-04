@@ -8,24 +8,7 @@ pub(crate) mod session;
 pub(crate) mod watch;
 pub(crate) mod write;
 
-use std::path::PathBuf;
-
-#[must_use]
-#[derive(Debug, Clone)]
-pub struct ConfigPaths {
-    pub config: PathBuf,
-    pub appearance: PathBuf,
-    pub themes: PathBuf,
-    pub theme: Option<String>,
-    pub seen: SeenTexts,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SeenTexts {
-    pub appearance: Option<String>,
-    pub theme: Option<String>,
-    pub config: Option<String>,
-}
+pub use ::config::{ConfigPaths, SeenTexts};
 
 #[cfg(test)]
 pub(crate) mod fixtures {

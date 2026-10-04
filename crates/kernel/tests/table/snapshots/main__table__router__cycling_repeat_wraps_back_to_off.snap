@@ -8,11 +8,11 @@ expression: "walked(model, messages)"
         Playback(
             CycleRepeat,
         ),
-        One(
+        [
             Animate(
                 PlayOrderChanged,
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {
@@ -43,11 +43,11 @@ expression: "walked(model, messages)"
         Playback(
             CycleRepeat,
         ),
-        One(
+        [
             Animate(
                 PlayOrderChanged,
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {
@@ -78,11 +78,11 @@ expression: "walked(model, messages)"
         Playback(
             CycleRepeat,
         ),
-        One(
+        [
             Animate(
                 PlayOrderChanged,
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {

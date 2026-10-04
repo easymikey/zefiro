@@ -31,7 +31,7 @@ pub fn execute(
         LibraryCmd::LoadFavorites => favorites::load(dirs)
             .map(|loaded| Some(LibraryEvent::FavoritesLoaded(loaded))),
         LibraryCmd::Trash(path) => trash::move_to_trash(&path).map(|()| None),
-        LibraryCmd::LoadHistory { limit } => history::load(dirs, limit)
+        LibraryCmd::LoadHistory(limit) => history::load(dirs, limit)
             .map(|entries| Some(LibraryEvent::HistoryLoaded(entries))),
         LibraryCmd::Scan {
             music_dir,
@@ -94,6 +94,7 @@ mod tests {
         HistoryEntry,
         LibraryCmd,
         LibraryEvent,
+        TrackRef,
         cmd::ScanMode,
         domain::{Moment, Revision},
         playlist::PlaylistFileName,
@@ -141,7 +142,9 @@ mod tests {
         dirs: (TempDir, LibraryDirs),
     ) {
         let (_directory, paths) = dirs;
-        let saved: Favorites = [PathBuf::from("/music/a.flac")].into_iter().collect();
+        let saved: Favorites = [TrackRef::Local("/music/a.flac".into())]
+            .into_iter()
+            .collect();
 
         let event =
             execute(LibraryCmd::SaveFavorites(saved), &paths, DECODABLE).unwrap();
@@ -153,7 +156,9 @@ mod tests {
     #[rstest]
     fn load_favorites_replies_with_the_saved_set(dirs: (TempDir, LibraryDirs)) {
         let (_directory, paths) = dirs;
-        let saved: Favorites = [PathBuf::from("/music/a.flac")].into_iter().collect();
+        let saved: Favorites = [TrackRef::Local("/music/a.flac".into())]
+            .into_iter()
+            .collect();
         execute(LibraryCmd::SaveFavorites(saved), &paths, DECODABLE).unwrap();
 
         let event = execute(LibraryCmd::LoadFavorites, &paths, DECODABLE).unwrap();
@@ -184,16 +189,15 @@ mod tests {
         )
         .unwrap();
 
-        let event =
-            execute(LibraryCmd::LoadHistory { limit: 10 }, &paths, DECODABLE).unwrap();
+        let event = execute(LibraryCmd::LoadHistory(10), &paths, DECODABLE).unwrap();
 
         match event {
             Some(LibraryEvent::HistoryLoaded(entries)) => {
-                let listed: Vec<PathBuf> = entries
+                let listed: Vec<TrackRef> = entries
                     .iter()
-                    .map(|entry: &HistoryEntry| entry.path.clone())
+                    .map(|entry: &HistoryEntry| entry.track.clone())
                     .collect();
-                assert_eq!(listed, vec![PathBuf::from("/music/song.flac")]);
+                assert_eq!(listed, vec![TrackRef::Local("/music/song.flac".into())]);
             }
             other => panic!("expected HistoryLoaded, got {other:?}"),
         }

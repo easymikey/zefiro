@@ -55,7 +55,7 @@ fn patch_appearance(
     patch: AppearancePatch,
 ) -> Result<(), Error> {
     let AppearancePatch {
-        cover_style,
+        cover_mode,
         cover_brackets,
         format_chips,
         speed_chip,
@@ -67,7 +67,7 @@ fn patch_appearance(
     write_edits(
         doc,
         [
-            ("cover", "style", cover_style.map(|s| value(s.to_string()))),
+            ("cover", "mode", cover_mode.map(|s| value(s.to_string()))),
             (
                 "cover",
                 "brackets",
@@ -214,7 +214,7 @@ mod tests {
                 ANIMATIONS,
                 AppearanceField,
                 COVER_BRACKETS,
-                COVER_STYLES,
+                COVER_MODES,
                 FORMAT_CHIPS,
                 KEY_HINTS,
                 LAYOUT_MODES,
@@ -238,7 +238,7 @@ mod tests {
             Animations,
             AppearancePatch,
             CoverBrackets,
-            CoverStyle,
+            CoverMode,
             FormatChips,
             KeyHints,
             LayoutMode,
@@ -260,7 +260,7 @@ mod tests {
 
     fn every_appearance_field_in_text() -> AppearancePatch {
         AppearancePatch {
-            cover_style: Some(CoverStyle::Milkdrop),
+            cover_mode: Some(CoverMode::Milkdrop),
             cover_brackets: Some(CoverBrackets::Shown),
             format_chips: Some(FormatChips::Shown),
             speed_chip: Some(SpeedChip::Always),
@@ -281,7 +281,7 @@ mod tests {
         "minimal_sections",
         "",
         AppearancePatch::builder()
-            .cover_style(CoverStyle::Off)
+            .cover_mode(CoverMode::Off)
             .format_chips(FormatChips::Shown)
             .build()
     )]
@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::cover_style("cover_style", AppearanceField::CoverStyle, 3)]
+    #[case::cover_mode("cover_mode", AppearanceField::CoverMode, 3)]
     #[case::key_hints("key_hints", AppearanceField::KeyHints, 1)]
     #[case::layout_mode("layout_mode", AppearanceField::LayoutMode, 2)]
     fn an_effect_lands_in_the_file_it_belongs_to(
@@ -364,7 +364,7 @@ mod tests {
 
     fn appearance_patch() -> impl Strategy<Value = AppearancePatch> {
         (
-            option_of(select(COVER_STYLES.to_vec())),
+            option_of(select(COVER_MODES.to_vec())),
             option_of(select(COVER_BRACKETS.to_vec())),
             option_of(select(FORMAT_CHIPS.to_vec())),
             option_of(select(SPEED_CHIPS.to_vec())),
@@ -375,7 +375,7 @@ mod tests {
         )
             .prop_map(
                 |(
-                    cover_style,
+                    cover_mode,
                     cover_brackets,
                     format_chips,
                     speed_chip,
@@ -384,7 +384,7 @@ mod tests {
                     animations,
                     layout_mode,
                 )| AppearancePatch {
-                    cover_style,
+                    cover_mode,
                     cover_brackets,
                     format_chips,
                     speed_chip,
@@ -410,11 +410,11 @@ mod tests {
             text in base_appearance_texts(),
             patch in appearance_patch(),
         ) {
-            let base = parse_appearance(text).unwrap().appearance();
+            let base = parse_appearance(text).unwrap().settings();
             let written = patch_appearance_text(text, patch).unwrap();
-            let parsed = parse_appearance(&written).unwrap().appearance();
+            let parsed = parse_appearance(&written).unwrap().settings();
 
-            prop_assert_eq!(parsed.cover_style, patch.cover_style.unwrap_or(base.cover_style));
+            prop_assert_eq!(parsed.cover_mode, patch.cover_mode.unwrap_or(base.cover_mode));
             prop_assert_eq!(
                 parsed.cover_brackets,
                 patch.cover_brackets.unwrap_or(base.cover_brackets)

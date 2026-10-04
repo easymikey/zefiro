@@ -10,21 +10,19 @@ expression: "walked(model, messages)"
                 Enqueue,
             ),
         ),
-        Batch(
-            [
-                Animate(
-                    ToastRaised,
-                ),
-                After {
-                    delay: 5s,
-                    timer: Toast(
-                        Revision(
-                            1,
-                        ),
+        [
+            Animate(
+                ToastRaised,
+            ),
+            After {
+                delay: 5s,
+                timer: Toast(
+                    Revision(
+                        1,
                     ),
-                },
-            ],
-        ),
+                ),
+            },
+        ],
         Stopped,
         Some(
             History(

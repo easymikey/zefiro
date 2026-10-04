@@ -4,8 +4,9 @@ expression: report.tracks
 ---
 [
     Track {
-        path: "[tmp]/a.flac",
-        duration: None,
+        source: Local(
+            "[tmp]/a.flac",
+        ),
         tags: Tags {
             title: None,
             artist: None,
@@ -29,11 +30,14 @@ expression: report.tracks
             replay_gain: None,
         },
         display: "a",
-        tagging: Listed,
+        tagging: Listed(
+            None,
+        ),
     },
     Track {
-        path: "[tmp]/b.mp3",
-        duration: None,
+        source: Local(
+            "[tmp]/b.mp3",
+        ),
         tags: Tags {
             title: None,
             artist: None,
@@ -57,11 +61,14 @@ expression: report.tracks
             replay_gain: None,
         },
         display: "b",
-        tagging: Listed,
+        tagging: Listed(
+            None,
+        ),
     },
     Track {
-        path: "[tmp]/c.mkv",
-        duration: None,
+        source: Local(
+            "[tmp]/c.mkv",
+        ),
         tags: Tags {
             title: None,
             artist: None,
@@ -85,6 +92,8 @@ expression: report.tracks
             replay_gain: None,
         },
         display: "c",
-        tagging: Listed,
+        tagging: Listed(
+            None,
+        ),
     },
 ]

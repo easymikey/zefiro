@@ -4,9 +4,8 @@ expression: decoded
 ---
 [
     Track {
-        path: "/music/one.flac",
-        duration: Some(
-            259s,
+        source: Local(
+            "/music/one.flac",
         ),
         tags: Tags {
             title: Some(
@@ -33,6 +32,8 @@ expression: decoded
             replay_gain: None,
         },
         display: "Moon River",
-        tagging: Read,
+        tagging: Read(
+            259s,
+        ),
     },
 ]

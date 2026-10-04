@@ -1,4 +1,4 @@
-use config::{CoverStyle, KeyHints, LayoutMode};
+use config::{CoverMode, KeyHints, LayoutMode};
 use kernel::domain::appearance::Breakpoints;
 use ratatui::layout::Rect;
 use rstest::rstest;
@@ -51,8 +51,8 @@ fn full_layout_at_a_large_terminal_shows_the_cover_and_the_playlist() {
 #[test]
 fn compact_layout_at_a_small_terminal_hides_the_cover_and_shows_the_playlist() {
     let mut sources = SceneSources::new(playing_track("Test Song"));
-    sources.look_mut().breakpoints = tiny_breakpoints();
-    let bp = sources.look_mut().breakpoints;
+    sources.appearance_mut().breakpoints = tiny_breakpoints();
+    let bp = sources.appearance_mut().breakpoints;
     let text = frame(
         sources.scene(),
         (bp.compact_min_width, bp.compact_min_height),
@@ -64,7 +64,7 @@ fn compact_layout_at_a_small_terminal_hides_the_cover_and_shows_the_playlist() {
 #[test]
 fn minimal_layout_renders_all_three_rows_when_height_allows() {
     let mut sources = SceneSources::new(playing_track("Test Song"));
-    sources.look_mut().breakpoints = tiny_breakpoints();
+    sources.appearance_mut().breakpoints = tiny_breakpoints();
     let text = frame(sources.scene(), (25, 3));
     assert!(text.contains("Test Song"), "got {text:?}");
 }
@@ -72,7 +72,7 @@ fn minimal_layout_renders_all_three_rows_when_height_allows() {
 #[test]
 fn one_row_terminal_shows_the_too_small_message_instead_of_a_degraded_minimal_row() {
     let mut sources = SceneSources::new(playing_track("Test Song"));
-    sources.look_mut().breakpoints = tiny_breakpoints();
+    sources.appearance_mut().breakpoints = tiny_breakpoints();
     let text = frame(sources.scene(), (25, 1));
     assert!(text.contains("Terminal too small."), "got {text:?}");
     assert!(!text.contains("Test Song"), "got {text:?}");
@@ -95,8 +95,8 @@ fn narrowing_one_column_below_full_switches_from_the_card_to_the_compact_arrange
 #[test]
 fn narrowing_one_column_below_compact_drops_the_playlist_pane_entirely() {
     let mut sources = SceneSources::new(playing_track("Boundary Song"));
-    sources.look_mut().breakpoints = tiny_breakpoints();
-    let bp = sources.look_mut().breakpoints;
+    sources.appearance_mut().breakpoints = tiny_breakpoints();
+    let bp = sources.appearance_mut().breakpoints;
 
     let (at_floor, at_floor_text) = painted_frame(
         sources.scene(),
@@ -118,7 +118,7 @@ fn narrowing_one_column_below_compact_drops_the_playlist_pane_entirely() {
 #[test]
 fn a_vinyl_cover_at_the_full_floor_still_leaves_the_title_visible() {
     let mut sources = SceneSources::new(playing_track("Vinyl Floor Song"));
-    sources.look_mut().appearance.cover_style = CoverStyle::Vinyl;
+    sources.appearance_mut().settings.cover_mode = CoverMode::Vinyl;
     let scene = Scene {
         pixel_path: PixelPath::Protocol,
         ..sources.scene()
@@ -134,8 +134,8 @@ fn the_key_hints_and_layout_rows_shape_the_whole_frame(
     #[values(LayoutMode::Auto, LayoutMode::Compact)] mode: LayoutMode,
 ) {
     let mut sources = SceneSources::new(model_with_tracks(3));
-    sources.look_mut().appearance.key_hints = key_hints;
-    sources.look_mut().appearance.layout_mode = mode;
+    sources.appearance_mut().settings.key_hints = key_hints;
+    sources.appearance_mut().settings.layout_mode = mode;
     let text = frame(sources.scene(), (120, 40));
     insta::with_settings!({
         snapshot_suffix => format!("{key_hints:?}_{mode:?}"),

@@ -15,7 +15,7 @@ use crate::{
     pixels::unit_fraction,
     primitive::{
         bar::{BarFill, fill},
-        chip::{ChipColors, speed_chip_spans, speed_chip_width},
+        chip::{ChipStyle, speed_chip_spans, speed_chip_width},
         relative_time::elapsed_of,
         span::{line, text},
         text::truncate,
@@ -220,9 +220,9 @@ fn paint_status_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let indicator_spans = speed_chip_spans(
         view.speed,
         context.speed_chip,
-        ChipColors {
-            border: dim_color,
-            value: accent_color,
+        ChipStyle {
+            foreground: accent_color,
+            ..ChipStyle::from_theme(&context.theme)
         },
     );
     let indicator_width = usize::from(speed_chip_width(view.speed, context.speed_chip));

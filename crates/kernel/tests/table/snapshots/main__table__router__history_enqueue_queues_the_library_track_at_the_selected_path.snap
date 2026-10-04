@@ -10,11 +10,11 @@ expression: "walked(model, messages)"
                 Enqueue,
             ),
         ),
-        One(
+        [
             Animate(
                 QueueChanged,
             ),
-        ),
+        ],
         Stopped,
         Some(
             History(
@@ -36,7 +36,9 @@ expression: "walked(model, messages)"
             len: 0,
         },
         [
-            Index(1),
+            Local(
+                "/m/b.flac",
+            ),
         ],
         Off,
         Linear,

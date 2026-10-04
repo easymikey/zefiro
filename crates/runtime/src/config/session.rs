@@ -9,10 +9,9 @@ use crossbeam_channel::{Receiver, Select, unbounded};
 use kernel::{
     ConfigCmd,
     ConfigEvent,
-    DriverEvent,
     Outbox,
     SendError,
-    domain::{ConfigError, ConfigFile, Driver},
+    domain::{ConfigError, ConfigName},
     update::Machine,
 };
 use notify::RecommendedWatcher;
@@ -26,7 +25,7 @@ use crate::{
         write::{save_appearance, save_config},
     },
     latest::LatestSender,
-    watcher::{Watcher, config_directory, recommended, watch_if_present},
+    watcher::{Watcher, config_directory, io_error, recommended, watch_if_present},
 };
 
 enum Wake {
@@ -45,11 +44,10 @@ pub(crate) struct Watch<W> {
 impl Watch<Option<RecommendedWatcher>> {
     pub(crate) fn recommended(outbox: &Outbox<ConfigEvent>) -> Self {
         let (events, receiver) = unbounded();
-        let watcher = recommended(events, |error| {
-            match outbox.send(watch_failure(&error.to_string())) {
+        let watcher =
+            recommended(events, |error| match outbox.send(watch_failure(error)) {
                 Ok(()) | Err(SendError::Full | SendError::Closed) => {}
-            }
-        });
+            });
         Self {
             watcher,
             events: receiver,
@@ -89,7 +87,7 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
 
     fn mount(&mut self, directory: &Path) {
         if let Err(error) = watch_if_present(&mut self.watcher, directory) {
-            let _closed = self.emit(watch_failure(&error.to_string()));
+            let _closed = self.emit(watch_failure(&error));
         }
     }
 
@@ -155,23 +153,13 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
     }
 
     fn feed(&mut self, input: ConfigMessage) -> ControlFlow<()> {
-        let label: &'static str = (&input).into();
-        match self.driver.transition(input) {
-            Ok(outputs) => self.act_all(outputs),
-            Err(_) => self.reject(label),
-        }
+        self.driver
+            .transition(input)
+            .map_or(ControlFlow::Continue(()), |outputs| self.act_all(outputs))
     }
 
     fn act_all(&mut self, outputs: Vec<ConfigEffect>) -> ControlFlow<()> {
         outputs.into_iter().try_for_each(|output| self.act(output))
-    }
-
-    fn reject(&self, input: &'static str) -> ControlFlow<()> {
-        let rejected = DriverEvent::Rejected { input };
-        match self.outbox.report(Driver::Config, rejected) {
-            Err(SendError::Closed) => ControlFlow::Break(()),
-            Ok(()) | Err(SendError::Full) => ControlFlow::Continue(()),
-        }
     }
 
     fn act(&mut self, output: ConfigEffect) -> ControlFlow<()> {
@@ -190,7 +178,7 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
         }
     }
 
-    fn read(&mut self, file: ConfigFile, path: &Path) -> ControlFlow<()> {
+    fn read(&mut self, file: ConfigName, path: &Path) -> ControlFlow<()> {
         self.feed(read(file, path))
     }
 
@@ -212,7 +200,7 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
             Published::Appearance(file) => {
                 let _ = self
                     .outbox
-                    .send(ConfigEvent::AppearanceReloaded(file.look()));
+                    .send(ConfigEvent::AppearanceReloaded(file.appearance()));
             }
         }
     }
@@ -225,10 +213,8 @@ impl<'a, W: Watcher> ConfigLoop<'a, W> {
     }
 }
 
-fn watch_failure(reason: &str) -> ConfigEvent {
-    ConfigEvent::Error(ConfigError::Watch {
-        detail: reason.to_owned(),
-    })
+fn watch_failure(error: &notify::Error) -> ConfigEvent {
+    ConfigEvent::Error(ConfigError::Watch(io_error(error)))
 }
 
 #[cfg(test)]
@@ -243,7 +229,7 @@ mod tests {
         DriverEvent,
         Message,
         Outbox,
-        domain::{ConfigFile, Driver, ThemeName, appearance_rows::AppearanceField},
+        domain::{DriverName, ThemeName, appearance_rows::AppearanceField},
     };
 
     use crate::{
@@ -272,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn a_fake_theme_change_publishes_the_theme() {
+    fn a_fake_theme_change_publishes_the_noir() {
         let directory = tempfile::tempdir().unwrap();
         let (sender, _messages) = unbounded::<Message>();
         let outbox = Outbox::new(sender, Congestion::default());
@@ -309,42 +295,6 @@ mod tests {
 
         let edited = cells.theme.take();
         assert!(edited.is_some(), "a changed theme file must be published");
-    }
-
-    #[test]
-    fn a_rejected_input_is_reported_to_the_inbox() {
-        let directory = tempfile::tempdir().unwrap();
-        let (sender, messages) = unbounded::<Message>();
-        let outbox = Outbox::new(sender, Congestion::default());
-        let (writers, _cells, _doorbell) = latest_channels();
-        let mut unselected = paths(&directory);
-        unselected.theme = None;
-        let parts = parts(unselected, writers);
-        let outbound = Outbound {
-            outbox: &outbox,
-            theme: &parts.theme,
-        };
-        let (_events, receiver) = unbounded();
-        let watching = Watch {
-            watcher: FakeWatch::default(),
-            events: receiver,
-        };
-        let mut session = ConfigLoop::new(&parts, &outbound, watching);
-
-        let halt = session.feed(ConfigMessage::Read {
-            file: ConfigFile::Theme,
-            text: None,
-        });
-
-        assert!(halt.is_continue());
-        assert_eq!(
-            messages.try_iter().collect::<Vec<_>>(),
-            vec![Message::Driver {
-                driver: Driver::Config,
-                event: DriverEvent::Rejected { input: "Read" }
-            }]
-        );
-        assert!(session.feed(ConfigMessage::FilesChanged).is_continue());
     }
 
     #[test]
@@ -411,7 +361,7 @@ mod tests {
         assert_eq!(
             report,
             Err(SendError(Message::Driver {
-                driver: Driver::Config,
+                driver: DriverName::Config,
                 event: DriverEvent::Stopped
             }))
         );

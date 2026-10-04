@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::domain::{Driver, Moment};
+use crate::domain::{DriverName, Moment};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Supervision {
@@ -51,26 +51,30 @@ impl Restarts {
 
 impl Supervision {
     #[must_use]
-    pub const fn standard(driver: Driver) -> Self {
+    pub const fn standard(driver: DriverName) -> Self {
         match driver {
-            Driver::Audio => Supervision::Restart {
+            DriverName::Audio => Supervision::Restart {
                 attempts: 3,
                 within: Duration::from_secs(60),
                 then: Announce::Toast,
             },
-            Driver::Library => Supervision::Restart {
+            DriverName::Library => Supervision::Restart {
                 attempts: 1,
                 within: Duration::from_secs(60),
                 then: Announce::Toast,
             },
-            Driver::Config => Supervision::Degrade(Announce::Toast),
-            Driver::Macos => Supervision::Degrade(Announce::Silent),
+            DriverName::Config => Supervision::Degrade(Announce::Toast),
+            DriverName::Macos => Supervision::Degrade(Announce::Silent),
         }
     }
 }
 
 #[must_use]
-pub fn supervise(strategy: Supervision, restarts: &Restarts, now: Moment) -> Decision {
+pub fn decide_restart(
+    strategy: Supervision,
+    restarts: &Restarts,
+    now: Moment,
+) -> Decision {
     match strategy {
         Supervision::Restart {
             attempts,
@@ -94,11 +98,11 @@ mod tests {
     use crate::domain::{
         Announce,
         Decision,
-        Driver,
+        DriverName,
         Moment,
         Restarts,
         Supervision,
-        supervise,
+        decide_restart,
     };
 
     fn t(secs: u64) -> Moment {
@@ -149,19 +153,19 @@ mod tests {
         &[],
         Decision::Degrade(Announce::Silent)
     )]
-    fn supervise_decides_by_strategy(
+    fn decide_restart_decides_by_strategy(
         #[case] strategy: Supervision,
         #[case] moments: &[u64],
         #[case] expected: Decision,
     ) {
         let now = t(100);
-        assert_eq!(supervise(strategy, &history(moments), now), expected);
+        assert_eq!(decide_restart(strategy, &history(moments), now), expected);
     }
 
     #[test]
     fn the_standard_strategies_follow_the_plan() {
         assert_eq!(
-            Supervision::standard(Driver::Audio),
+            Supervision::standard(DriverName::Audio),
             Supervision::Restart {
                 attempts: 3,
                 within: std::time::Duration::from_secs(60),
@@ -169,7 +173,7 @@ mod tests {
             }
         );
         assert_eq!(
-            Supervision::standard(Driver::Library),
+            Supervision::standard(DriverName::Library),
             Supervision::Restart {
                 attempts: 1,
                 within: std::time::Duration::from_secs(60),
@@ -177,11 +181,11 @@ mod tests {
             }
         );
         assert_eq!(
-            Supervision::standard(Driver::Config),
+            Supervision::standard(DriverName::Config),
             Supervision::Degrade(Announce::Toast)
         );
         assert_eq!(
-            Supervision::standard(Driver::Macos),
+            Supervision::standard(DriverName::Macos),
             Supervision::Degrade(Announce::Silent)
         );
     }

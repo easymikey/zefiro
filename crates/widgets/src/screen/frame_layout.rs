@@ -1,11 +1,11 @@
-use kernel::domain::appearance::{CoverStyle, KeyHints, Look};
+use kernel::domain::appearance::{Appearance, CoverMode, KeyHints};
 use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::{
     card::{self, CardMetrics, compact_height},
     geometry::CoverSizing,
     overlay::{
-        layer::{OverlayContent, OverlayLayer},
+        layer::{OverlayContent, OverlayWidget},
         modal::OverlayAreas,
     },
     playlist::{PlaylistAreas, PlaylistPane},
@@ -19,10 +19,10 @@ const KEY_HINTS_ROWS: u16 = 1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct FrameLayoutParts<'a> {
-    pub look: Look,
+    pub appearance: Appearance,
     pub cell_aspect: f32,
     pub cover_sizing: CoverSizing,
-    pub cover_style: CoverStyle,
+    pub cover_mode: CoverMode,
     pub(crate) playlist: Option<PlaylistPane<'a>>,
     pub(crate) overlay: OverlayContent<'a>,
     pub(crate) toast: Option<Toaster<'a>>,
@@ -52,7 +52,7 @@ impl FrameLayout {
             return body;
         }
         Self {
-            overlay: OverlayLayer::placed(parts.overlay, &body, parts.cover_style)
+            overlay: OverlayWidget::placed(parts.overlay, &body, parts.cover_mode)
                 .areas(screen),
             toast: parts
                 .toast
@@ -62,10 +62,10 @@ impl FrameLayout {
     }
 
     #[must_use]
-    pub fn cover_exclusion(&self, cover_style: CoverStyle) -> Option<Rect> {
-        match cover_style {
-            CoverStyle::Vinyl | CoverStyle::Plain => self.cover,
-            CoverStyle::Milkdrop | CoverStyle::Off => None,
+    pub fn cover_exclusion(&self, cover_mode: CoverMode) -> Option<Rect> {
+        match cover_mode {
+            CoverMode::Vinyl | CoverMode::Plain => self.cover,
+            CoverMode::Milkdrop | CoverMode::Off => None,
         }
     }
 }
@@ -125,12 +125,12 @@ fn search_bounds(content: Rect, header_rows: u16, hint_rows: u16) -> Rect {
 fn body(parts: &FrameLayoutParts<'_>, screen: Rect) -> FrameLayout {
     let breakpoint = Breakpoint::new(
         screen.as_size(),
-        &parts.look.breakpoints,
-        parts.look.appearance.layout_mode,
+        &parts.appearance.breakpoints,
+        parts.appearance.settings.layout_mode,
     );
     let content = content_area(screen);
     let header_rows = header_rows(breakpoint);
-    let hint_rows = key_hint_rows(parts.look.appearance.key_hints);
+    let hint_rows = key_hint_rows(parts.appearance.settings.key_hints);
     let [header, pane, hints] = content.layout(&Layout::vertical([
         Constraint::Length(header_rows),
         Constraint::Min(0),
@@ -188,7 +188,7 @@ mod tests {
         SearchQuery,
         SettingRow,
         Toast,
-        appearance::CoverStyle,
+        appearance::CoverMode,
     };
     use ratatui::layout::Rect;
     use rstest::rstest;
@@ -219,7 +219,7 @@ mod tests {
         let card = layout.card.unwrap();
         assert_eq!(layout.breakpoint, Breakpoint::Full);
         assert_eq!(layout.cover, Some(card.cover_square));
-        assert_eq!(layout.cover_exclusion(scene.cover_style()), layout.cover);
+        assert_eq!(layout.cover_exclusion(scene.cover_mode()), layout.cover);
         assert!(layout.playlist.is_some());
         assert!(layout.key_hints.is_some());
     }
@@ -235,11 +235,11 @@ mod tests {
     #[test]
     fn a_text_art_cover_is_not_avoided_by_overlays() {
         let mut sources = SceneSources::new(model_with_tracks(3));
-        sources.look_mut().appearance.cover_style = CoverStyle::Milkdrop;
+        sources.appearance_mut().settings.cover_mode = CoverMode::Milkdrop;
         let scene = sources.scene();
         let layout = FrameLayout::new(&scene.layout_parts(), screen());
         assert!(layout.cover.is_some());
-        assert_eq!(layout.cover_exclusion(scene.cover_style()), None);
+        assert_eq!(layout.cover_exclusion(scene.cover_mode()), None);
     }
 
     #[test]
@@ -300,9 +300,7 @@ mod tests {
         PlaylistPresence::Hidden
     )]
     #[case::settings(
-        Some(Overlay::Settings {
-            selected: SettingRow::Theme
-        }),
+        Some(Overlay::Settings(SettingRow::Theme)),
         screen(),
         PlaylistPresence::Shown
     )]
@@ -329,16 +327,16 @@ mod tests {
     }
 
     #[rstest]
-    #[case::vinyl(CoverStyle::Vinyl, CoverAvoidance::Avoided)]
-    #[case::plain(CoverStyle::Plain, CoverAvoidance::Avoided)]
-    #[case::milkdrop(CoverStyle::Milkdrop, CoverAvoidance::Ignored)]
-    #[case::off(CoverStyle::Off, CoverAvoidance::Ignored)]
-    fn avoid_follows_the_cover_style(
-        #[case] style: CoverStyle,
+    #[case::vinyl(CoverMode::Vinyl, CoverAvoidance::Avoided)]
+    #[case::plain(CoverMode::Plain, CoverAvoidance::Avoided)]
+    #[case::milkdrop(CoverMode::Milkdrop, CoverAvoidance::Ignored)]
+    #[case::off(CoverMode::Off, CoverAvoidance::Ignored)]
+    fn avoid_follows_the_cover_mode(
+        #[case] style: CoverMode,
         #[case] avoidance: CoverAvoidance,
     ) {
         let mut sources = SceneSources::new(model_with_tracks(3));
-        sources.look_mut().appearance.cover_style = style;
+        sources.appearance_mut().settings.cover_mode = style;
         let scene = with_pixels(sources.scene());
         let layout = FrameLayout::new(&scene.layout_parts(), screen());
         let expected = match avoidance {

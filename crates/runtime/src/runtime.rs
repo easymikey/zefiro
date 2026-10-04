@@ -7,8 +7,8 @@ use std::{
 
 use crossbeam_channel::Sender;
 use kernel::{
-    Cmd,
     DriverEvent,
+    Effect,
     Message,
     Moment,
     domain::{Model, Startup},
@@ -24,7 +24,7 @@ use crate::{
     shell::{Frame, ShellEffect},
     spawn::Spawners,
     timers::Timers,
-    trace::{Trace, TraceEntry},
+    trace::Trace,
     wiring::{Wiring, await_exits, join_exited},
 };
 
@@ -50,7 +50,7 @@ pub struct Runtime {
 
 pub(crate) struct Seed {
     model: Model,
-    cmd: Cmd,
+    effects: Vec<Effect>,
 }
 
 impl Runtime {
@@ -67,12 +67,12 @@ impl Runtime {
     }
 
     pub(crate) fn seeded(startup: Startup) -> Seed {
-        let (model, cmd) = kernel::startup(startup);
-        Seed { model, cmd }
+        let (model, effects) = kernel::startup(startup);
+        Seed { model, effects }
     }
 
     pub(crate) fn assemble(seed: Seed, wiring: Wiring, trace: Trace) -> Self {
-        let Seed { model, cmd } = seed;
+        let Seed { model, effects } = seed;
         let mut runtime = Self {
             model,
             wiring,
@@ -87,7 +87,7 @@ impl Runtime {
             cover: None,
             full_episodes: 0,
         };
-        for answer in runtime.interpret(cmd) {
+        for answer in runtime.interpret(effects) {
             runtime.step(answer);
         }
         for row in registry::REGISTRY {
@@ -207,23 +207,14 @@ impl Runtime {
     }
 
     fn update(&mut self, message: Message) -> Option<Vec<Message>> {
-        let label: &'static str = (&message).into();
         let now = self.now();
-        match kernel::update::update(&mut self.model, message, now) {
-            Ok(cmd) => Some(self.interpret(cmd)),
-            Err(error) => {
-                self.trace.push(TraceEntry::Rejected {
-                    message: label,
-                    error,
-                });
-                None
-            }
-        }
+        let effects = kernel::update::update(&mut self.model, message, now).ok()?;
+        Some(self.interpret(effects))
     }
 
-    fn interpret(&mut self, cmd: Cmd) -> Vec<Message> {
+    fn interpret(&mut self, effects: Vec<Effect>) -> Vec<Message> {
         let mut answers = Vec::new();
-        let mut pending = cmd;
+        let mut pending = effects;
         loop {
             let mut interpreter = Interpreter {
                 drivers: &self.model.drivers,
@@ -237,13 +228,13 @@ impl Runtime {
             if interpreted.flow.is_break() {
                 self.flow = ControlFlow::Break(());
             }
-            let Some((driver, effects)) = interpreted.restart else {
+            let Some((driver, rest)) = interpreted.restart else {
                 break;
             };
             for entry in self.wiring.restart(driver, &self.model) {
                 self.trace.push(entry);
             }
-            pending = Cmd::Batch(effects);
+            pending = rest;
         }
         answers
     }
@@ -258,6 +249,7 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
+    use audio::SpectrumTap;
     use crossbeam_channel::{Receiver, Sender, unbounded};
     use kernel::{
         AudioCmd,
@@ -267,19 +259,20 @@ mod tests {
         Message,
         Outbox,
         Toast,
-        domain::{Driver, DriverStatus, SettingRow, Startup},
+        domain::{DriverName, DriverStatus, SettingRow, Startup},
     };
     use library::LibraryDirs;
     use rstest::rstest;
 
     use crate::{
         config::{ConfigPaths, SeenTexts},
+        driver::DriverThread,
         error::Error,
         event_loop::run,
         library::{cover::CoverRequest, machine::LibraryMessage},
         runtime::{Runtime, StartupPaths},
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
-        spawn::{AudioDriver, SpawnParts, Spawners, spawn_audio_loop, spawn_config},
+        spawn::{SpawnParts, Spawners, spawn_config, tests::spawn_audio_loop},
         trace::{DropReason, Trace, TraceEntry},
         wiring::Wiring,
     };
@@ -330,7 +323,9 @@ mod tests {
         static AUDIO_TAP: RefCell<Option<Sender<AudioCmd>>> = const { RefCell::new(None) };
     }
 
-    fn recording_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioDriver, Error> {
+    fn recording_audio(
+        spawn_parts: &SpawnParts<'_>,
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
         let forward = AUDIO_TAP.with(|tap| tap.borrow().clone()).unwrap();
         spawn_audio_loop(
             move |inbox: &Receiver<AudioCmd>, _: &Outbox<AudioEvent>| {
@@ -356,7 +351,9 @@ mod tests {
         )
     }
 
-    fn panicking_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioDriver, Error> {
+    fn panicking_audio(
+        spawn_parts: &SpawnParts<'_>,
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
         spawn_audio_loop(
             |_: &Receiver<AudioCmd>, _: &Outbox<AudioEvent>| boom(),
             spawn_parts,
@@ -390,19 +387,19 @@ mod tests {
 
     #[derive(Debug, Clone, Copy)]
     enum SaveStep {
-        Adjust,
+        Step,
         Quit,
     }
 
-    struct AdjustThenQuit;
+    struct StepThenQuit;
 
-    impl Shell for AdjustThenQuit {
+    impl Shell for StepThenQuit {
         type Input = SaveStep;
         type Error = Infallible;
 
         fn input(&mut self, event: SaveStep) -> Reaction {
             match event {
-                SaveStep::Adjust => Reaction::Message(Message::Adjust {
+                SaveStep::Step => Reaction::Message(Message::Step {
                     row: SettingRow::ReplayGain,
                     direction: Direction::Next,
                 }),
@@ -434,9 +431,9 @@ mod tests {
         let runtime = Runtime::start(startup, &paths, &spawners).unwrap();
 
         let (steps, input) = unbounded();
-        steps.send(SaveStep::Adjust).unwrap();
+        steps.send(SaveStep::Step).unwrap();
         steps.send(SaveStep::Quit).unwrap();
-        let mut shell = AdjustThenQuit;
+        let mut shell = StepThenQuit;
 
         let ended = run(runtime, &mut shell, &input);
 
@@ -479,7 +476,12 @@ mod tests {
 
         fn paint(&mut self, frame: Frame<'_>) -> Result<Painted, Infallible> {
             self.paints += 1;
-            self.restarts = frame.model.drivers.record(Driver::Audio).restarts.count();
+            self.restarts = frame
+                .model
+                .drivers
+                .record(DriverName::Audio)
+                .restarts
+                .count();
             let next = if self.restarts > 0 || self.paints >= 20 {
                 LifeStep::Quit
             } else {
@@ -523,7 +525,7 @@ mod tests {
         let (wiring, cover_inbox, _writers) = Wiring::idle();
         let seed = Runtime::seeded(stock_startup());
         let mut runtime = Runtime::assemble(seed, wiring, Trace::default());
-        runtime.model.drivers.record_mut(Driver::Library).status = library;
+        runtime.model.drivers.record_mut(DriverName::Library).status = library;
         (runtime, cover_inbox)
     }
 
@@ -563,7 +565,7 @@ mod tests {
                 matches!(
                     entry,
                     TraceEntry::Dropped {
-                        driver: Driver::Library,
+                        driver: DriverName::Library,
                         command: "cover",
                         reason: DropReason::NotRunning,
                     }
@@ -602,7 +604,7 @@ mod tests {
     )]
     #[case::a_rejected_message_is_refused(
         DriverStatus::Stopped,
-        Message::Driver { driver: Driver::Library, event: DriverEvent::Stopped },
+        Message::Driver { driver: DriverName::Library, event: DriverEvent::Stopped },
         false
     )]
     fn step_reports_whether_the_message_changed_the_model(

@@ -7,7 +7,7 @@ expression: effs
         Stop,
     ),
     Macos(
-        PlaybackState(
+        SetPlayback(
             Paused,
         ),
     ),

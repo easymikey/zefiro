@@ -12,9 +12,9 @@ use kernel::{
         ThemeName,
         appearance::{
             Animations,
-            Appearance,
             AppearancePatch,
             AppearancePreset,
+            AppearanceSettings,
             CoverBrackets,
             FormatChips,
             KeyHints,
@@ -39,7 +39,7 @@ pub(crate) struct SettingsView<'a> {
     pub music_dir: &'a str,
     pub output_device: Option<&'a str>,
     pub output_devices: &'a [ListedDevice],
-    pub appearance: Appearance,
+    pub appearance: AppearanceSettings,
     pub appearance_settings: &'a [AppearanceSetting],
 }
 
@@ -121,7 +121,7 @@ fn custom_label(id: AppearanceField) -> &'static str {
 fn appearance_field_label(field: AppearanceField) -> &'static str {
     match field {
         AppearanceField::Preset => "Preset",
-        AppearanceField::CoverStyle => "Cover style",
+        AppearanceField::CoverMode => "Cover mode",
         AppearanceField::CoverBrackets => "Cover brackets",
         AppearanceField::FormatChips => "Format chips",
         AppearanceField::SpeedChip => "Speed chip",
@@ -157,7 +157,7 @@ fn custom_value_text(id: AppearanceField, values: &SettingsView<'_>) -> String {
     let appearance = values.appearance;
     match row.field {
         AppearanceField::Preset => format_pick(preset_label(appearance)),
-        AppearanceField::CoverStyle => format_pick(&appearance.cover_style.to_string()),
+        AppearanceField::CoverMode => format_pick(&appearance.cover_mode.to_string()),
         AppearanceField::CoverBrackets => {
             format_toggle(Toggle::from(appearance.cover_brackets))
         }
@@ -176,7 +176,7 @@ fn custom_value_text(id: AppearanceField, values: &SettingsView<'_>) -> String {
     }
 }
 
-fn preset_label(appearance: Appearance) -> &'static str {
+fn preset_label(appearance: AppearanceSettings) -> &'static str {
     match preset_of(appearance) {
         Some(AppearancePreset::Stock) => "default",
         Some(AppearancePreset::Noir) => "noir",
@@ -242,21 +242,8 @@ fn with_patched_appearance<'a>(
     patch: AppearancePatch,
 ) -> SettingsView<'a> {
     SettingsView {
-        appearance: apply_patch(values.appearance, patch),
+        appearance: values.appearance.patched(patch),
         ..*values
-    }
-}
-
-fn apply_patch(appearance: Appearance, patch: AppearancePatch) -> Appearance {
-    Appearance {
-        cover_style: patch.cover_style.unwrap_or(appearance.cover_style),
-        cover_brackets: patch.cover_brackets.unwrap_or(appearance.cover_brackets),
-        format_chips: patch.format_chips.unwrap_or(appearance.format_chips),
-        speed_chip: patch.speed_chip.unwrap_or(appearance.speed_chip),
-        progress_time: patch.progress_time.unwrap_or(appearance.progress_time),
-        key_hints: patch.key_hints.unwrap_or(appearance.key_hints),
-        animations: patch.animations.unwrap_or(appearance.animations),
-        layout_mode: patch.layout_mode.unwrap_or(appearance.layout_mode),
     }
 }
 
@@ -288,7 +275,7 @@ mod tests {
     use kernel::domain::{
         ReplayGain,
         SettingRow,
-        appearance::CoverStyle,
+        appearance::CoverMode,
         appearance_rows::{APPEARANCE_ROWS, AppearanceField},
     };
 
@@ -322,17 +309,17 @@ mod tests {
     fn a_custom_row_renders_its_appearance_fields_label_and_value() {
         let custom = appearance_settings();
         let values = settings_values(&custom);
-        let cover_style_row = SettingRow::Appearance(
+        let cover_mode_row = SettingRow::Appearance(
             APPEARANCE_ROWS
                 .into_iter()
-                .find(|row| row.field == AppearanceField::CoverStyle)
+                .find(|row| row.field == AppearanceField::CoverMode)
                 .unwrap()
                 .field,
         );
-        assert_eq!(settings_label(cover_style_row), "Cover style");
+        assert_eq!(settings_label(cover_mode_row), "Cover mode");
         assert!(
-            value_text(cover_style_row, &values)
-                .contains(&CoverStyle::default().to_string())
+            value_text(cover_mode_row, &values)
+                .contains(&CoverMode::default().to_string())
         );
     }
 }

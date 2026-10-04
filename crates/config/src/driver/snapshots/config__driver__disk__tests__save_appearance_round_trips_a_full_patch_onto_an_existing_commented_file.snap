@@ -6,7 +6,7 @@ expression: text
 # sifr-ui.toml
 [cover]
 # the noir look
-style = "off"
+mode = "off"
 brackets = true
 
 [card]

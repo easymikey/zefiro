@@ -16,11 +16,14 @@ use kernel::{
     Tags,
     Track,
     domain::{Preload, Revision, ScanStatus, Tagging},
-    update::update,
 };
 use rstest::rstest;
 
-use crate::support::{effects, track_at};
+use crate::support::{
+    effects,
+    step::{apply, update},
+    track_at,
+};
 
 fn tagged(path: &str, title: &str, seconds: u64) -> Arc<Track> {
     Arc::new(
@@ -79,7 +82,7 @@ fn a_listing_shows_file_stems_in_the_order_it_arrived() {
             .tracks
             .iter()
             .all(|track| track.duration().is_none()
-                && track.tagging() == Tagging::Listed)
+                && matches!(track.tagging(), Tagging::Listed(_)))
     );
     assert_eq!(openings(cmd), 0);
 }
@@ -128,7 +131,7 @@ fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
         Some((
             "Alpha".to_owned(),
             Some(Duration::from_secs(200)),
-            Tagging::Read
+            Tagging::Read(Duration::from_secs(200))
         ))
     );
     assert_eq!(model.scan_status, ScanStatus::Tagging { done: 1, total: 2 });
@@ -139,15 +142,13 @@ fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
 fn a_tagged_chunk_reaches_the_library_behind_the_playlist() {
     let (mut model, _) = listed_library(&["/music/a.flac", "/music/b.flac"]);
 
-    let _ = update(
+    apply(
         &mut model,
         Message::Library(LibraryEvent::Tagged {
             tracks: vec![tagged("/music/b.flac", "Beta", 30)],
             revision: Revision::default(),
         }),
-        Moment::default(),
-    )
-    .unwrap();
+    );
 
     assert_eq!(
         model.library.as_ref().map(|ready| ready
@@ -239,7 +240,7 @@ fn rescanning_model() -> Model {
         | Effect::Config(_)
         | Effect::WindowColors(_)
         | Effect::Animate(_)
-        | Effect::RollShuffle { .. }
+        | Effect::RollShuffle(..)
         | Effect::After { .. }
         | Effect::Restart(_)
         | Effect::Quit => None,

@@ -8,12 +8,11 @@ expression: "walked(model, messages)"
         Playback(
             AbMark,
         ),
-        None,
+        [],
         Playing {
             track: Track {
-                path: "/tmp/track0.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/tmp/track0.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -38,7 +37,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "track0.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 10s,

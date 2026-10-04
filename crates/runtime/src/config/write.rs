@@ -95,7 +95,7 @@ mod tests {
     }
 
     const EXISTING_UI: &str =
-        "# keep me\n[cover]\nstyle = \"vinyl\"\nbrackets = false\n";
+        "# keep me\n[cover]\nmode = \"vinyl\"\nbrackets = false\n";
     const EXISTING_CONFIG: &str =
         "# keep me\ntheme = \"auto\"\n\n[audio]\ncrossfade = \"0s\"\n";
 

@@ -12,24 +12,29 @@ use crate::{
         ScanMode,
     },
     domain::{
-        Driver,
+        ConfigError,
+        ConfigName,
+        DriverName,
         Model,
         Settings,
         Shuffle,
         Startup,
         Themes,
-        Toast,
         playlist::Playlist,
     },
-    update::playlist::PlaylistMessage,
+    message::ConfigReload,
+    update::{
+        machine::{Machine, Unhandled},
+        playlist::PlaylistMessage,
+    },
 };
 
 pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
-    let toasts = startup.toast_texts;
+    let errors = startup.errors;
     model.settings = Settings {
         audio: startup.audio,
         output_devices: Vec::new(),
-        look: startup.look,
+        appearance: startup.appearance,
     };
     model.transport.volume = startup.volume;
     model.appearance_settings = startup.appearance_settings;
@@ -46,28 +51,28 @@ pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
         .relist(startup.playlist_tracks, startup.playlist_index);
     let cmd = shuffled(&mut model.playlist, startup.shuffle);
 
-    let effects = PlaybackChange::Stop
+    let stopped: Cmd = PlaybackChange::Stop
         .effects()
         .into_iter()
         .chain([Effect::Macos(MacosCmd::NowPlaying(None))])
         .collect();
-    let notices = toast_notices(model, &toasts);
-    cmd.then(Cmd::Batch(effects))
-        .then(startup_cmd(model, Driver::Audio))
-        .then(startup_cmd(model, Driver::Library))
-        .then(startup_cmd(model, Driver::Config))
+    let notices = toast_notices(model, errors);
+    cmd.then(stopped)
+        .then(startup_cmd(model, DriverName::Audio))
+        .then(startup_cmd(model, DriverName::Library))
+        .then(startup_cmd(model, DriverName::Config))
         .then(notices)
 }
 
-pub(crate) fn startup_cmd(model: &mut Model, driver: Driver) -> Cmd {
+pub(crate) fn startup_cmd(model: &mut Model, driver: DriverName) -> Cmd {
     match driver {
-        Driver::Audio => Cmd::Batch(vec![
+        DriverName::Audio => Cmd::from_iter([
             Effect::Audio(AudioCmd::ListDevices),
             Effect::Audio(AudioCmd::SetDevice(model.settings.audio.device.clone())),
             Effect::Audio(AudioCmd::SetCrossfade(model.settings.audio.crossfade)),
             Effect::Audio(AudioCmd::SetReplayGain(model.settings.audio.replay_gain)),
         ]),
-        Driver::Library => Cmd::Batch(vec![
+        DriverName::Library => Cmd::from_iter([
             Effect::Library(LibraryCmd::LoadFavorites),
             Effect::Library(LibraryCmd::Scan {
                 music_dir: model.music_dir.clone(),
@@ -75,32 +80,44 @@ pub(crate) fn startup_cmd(model: &mut Model, driver: Driver) -> Cmd {
                 mode: ScanMode::Cached,
             }),
         ]),
-        Driver::Config => {
+        DriverName::Config => {
             Effect::Config(ConfigCmd::SelectTheme(model.themes.selected.clone())).into()
         }
-        Driver::Macos => Cmd::Batch(vec![
+        DriverName::Macos => Cmd::from_iter([
             Effect::Macos(MacosCmd::NowPlaying(None)),
-            Effect::Macos(MacosCmd::PlaybackState(Playback::Paused)),
-            Effect::Macos(MacosCmd::Volume(model.transport.volume)),
+            Effect::Macos(MacosCmd::SetPlayback(Playback::Paused)),
+            Effect::Macos(MacosCmd::SetVolume(model.transport.volume)),
         ]),
     }
 }
 
-fn toast_notices(model: &mut Model, toasts: &[String]) -> Cmd {
-    if toasts.is_empty() {
-        return Cmd::None;
-    }
-    model.workspace.show(
-        Toast::error("Started with fallbacks").with_text(toasts.join("\n")),
+fn toast_notices(model: &mut Model, errors: Vec<(ConfigName, ConfigError)>) -> Cmd {
+    let mut errors = errors.into_iter();
+    let Some((name, error)) = errors.next() else {
+        return Cmd::none();
+    };
+    let cmd = model.workspace.config_reloaded(
+        ConfigReload {
+            name,
+            result: Err(error),
+        },
         &mut model.revisions,
-    )
+    );
+    errors.for_each(|(rest_name, rest_error)| {
+        model
+            .workspace
+            .config_errors
+            .insert_if_changed(rest_name, rest_error);
+    });
+    cmd
 }
 
 fn shuffled(playlist: &mut Playlist, shuffle: Shuffle) -> Cmd {
     match shuffle {
-        Shuffle::Disabled => Cmd::None,
+        Shuffle::Disabled => Cmd::none(),
         Shuffle::Enabled => playlist
-            .apply(PlaylistMessage::ToggleShuffle)
+            .transition(PlaylistMessage::ToggleShuffle)
+            .unwrap_or_else(|Unhandled| Cmd::none())
             .then(Cue::PlayOrderChanged.into()),
     }
 }
@@ -130,6 +147,7 @@ mod tests {
             ThemeChoice,
             ThemeName,
             Track,
+            TrackRef,
             ViewIndex,
             playlist::{PlayOrder, PlaylistSource},
         },
@@ -156,7 +174,7 @@ mod tests {
                 ),
                 sleep_presets: SleepPresets::from_minutes(&[15, 30]).unwrap(),
             },
-            look: crate::domain::appearance::Look::default(),
+            appearance: crate::domain::appearance::Appearance::default(),
             theme: ThemeChoice::Named(ThemeName::from_static("dark")),
             volume: Percent::clamped(42),
             themes: vec![
@@ -164,37 +182,66 @@ mod tests {
                 ThemeName::from_static("solar"),
             ],
             appearance_settings: Vec::new(),
-            toast_texts: Vec::new(),
+            errors: Vec::new(),
         }
     }
 
     #[test]
-    fn startup_notices_raise_one_error_toast() {
+    fn startup_errors_raise_one_toast_with_the_first_error() {
         let mut model = Model::default();
+        let broken = crate::domain::ConfigError::Invalid {
+            detail: "broken".to_string(),
+        };
+        let unreadable = crate::domain::ConfigError::Unreadable {
+            file: crate::domain::ConfigName::Appearance,
+            kind: crate::IoError::Other,
+        };
         let startup = Startup {
-            toast_texts: vec!["broken a".to_string(), "broken b".to_string()],
+            errors: vec![
+                (
+                    crate::domain::ConfigName::Theme(ThemeName::from_static("ghost")),
+                    broken.clone(),
+                ),
+                (crate::domain::ConfigName::Appearance, unreadable.clone()),
+            ],
             ..stock_startup()
         };
 
-        let _ = seed_model(&mut model, startup);
+        drop(seed_model(&mut model, startup));
 
-        assert_eq!(model.workspace.toasts.len(), 1);
-        let toast = model.workspace.toasts.first().unwrap();
-        assert_eq!(toast.kind, crate::domain::ToastKind::Error);
-        assert_eq!(toast.text.as_deref(), Some("broken a\nbroken b"));
+        let texts: Vec<_> = model
+            .workspace
+            .toasts
+            .iter()
+            .map(|toast| (toast.kind, toast.text.clone()))
+            .collect();
+        assert_eq!(
+            texts,
+            [(crate::domain::ToastKind::Error, Some(broken.to_string()))]
+        );
+        assert!(
+            !model
+                .workspace
+                .config_errors
+                .insert_if_changed(crate::domain::ConfigName::Appearance, unreadable)
+        );
+        assert!(!model.workspace.config_errors.insert_if_changed(
+            crate::domain::ConfigName::Theme(ThemeName::from_static("ghost")),
+            broken
+        ));
     }
 
     #[test]
     fn startup_without_notices_raises_no_toast() {
         let mut model = Model::default();
-        let _ = seed_model(&mut model, stock_startup());
+        drop(seed_model(&mut model, stock_startup()));
 
         assert!(model.workspace.toasts.is_empty());
     }
 
     fn startup_model() -> Model {
         let mut model = Model::default();
-        let _ = seed_model(&mut model, stock_startup());
+        drop(seed_model(&mut model, stock_startup()));
         model
     }
 
@@ -224,7 +271,7 @@ mod tests {
         let cmd = seed_model(&mut model, stock_startup());
 
         assert_eq!(model.music_dir, PathBuf::from("/music"));
-        let effects: Vec<Effect> = cmd.into_iter().collect();
+        let (effects, _messages) = cmd.into_parts();
         assert!(effects.iter().any(|effect| matches!(
             effect,
             Effect::Library(LibraryCmd::Scan { music_dir, .. }) if music_dir == Path::new("/music")
@@ -237,7 +284,11 @@ mod tests {
 
         assert!(model.settings.output_devices.is_empty());
         assert_eq!(model.playlist.play_order, PlayOrder::ShufflePending);
-        assert!(!model.favorites.is_favorite(&PathBuf::from("/music/a.flac")));
+        assert!(
+            !model
+                .favorites
+                .is_favorite(&TrackRef::Local("/music/a.flac".into()))
+        );
         assert_eq!(
             model.themes.names,
             [
@@ -253,7 +304,7 @@ mod tests {
         let mut model = Model::default();
         let cmd = seed_model(&mut model, stock_startup());
 
-        let effects: Vec<Effect> = cmd.into_iter().collect();
+        let (effects, _messages) = cmd.into_parts();
         insta::assert_debug_snapshot!(effects);
     }
 
@@ -272,11 +323,11 @@ mod tests {
     #[test]
     fn startup_is_idempotent_for_the_same_startup() {
         let mut first = Model::default();
-        let _ = seed_model(&mut first, stock_startup());
+        drop(seed_model(&mut first, stock_startup()));
 
         let mut second = Model::default();
-        let _ = seed_model(&mut second, stock_startup());
-        let _ = seed_model(&mut second, stock_startup());
+        drop(seed_model(&mut second, stock_startup()));
+        drop(seed_model(&mut second, stock_startup()));
 
         let projected = idempotence_fields(&second);
         assert_eq!(idempotence_fields(&first), projected);

@@ -10,8 +10,8 @@ use ratatui::{layout::Rect, text::Line};
 use crate::{
     CoverArt,
     MilkdropAdvance,
-    MilkdropColors,
     MilkdropField,
+    MilkdropStyle,
     Playing,
     Scene,
     lines_into,
@@ -102,8 +102,8 @@ impl MilkdropCover {
                 tick: u64::try_from(scene.clock.as_millis()).unwrap_or(u64::MAX),
             });
             *tick = desired;
-            let colors = MilkdropColors::from_theme(&scene.active_theme());
-            lines_into(field, &colors, &mut self.rows);
+            let style = MilkdropStyle::from_theme(&scene.active_theme());
+            lines_into(field, &style, &mut self.rows);
             self.lines = Arc::from(self.rows.as_slice());
         }
         CoverArt::Text(Arc::clone(&self.lines))

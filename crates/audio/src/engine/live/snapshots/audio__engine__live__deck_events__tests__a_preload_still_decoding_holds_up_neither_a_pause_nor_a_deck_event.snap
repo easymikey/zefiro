@@ -4,16 +4,24 @@ assertion_line: 160
 expression: log
 ---
 [
-    Preload(
-        Gapless(
-            "/b",
-        ),
-    ),
-    Batch(
-        [
+    Cmd {
+        effects: [
+            Preload {
+                path: "/b",
+                mode: Gapless,
+            },
+        ],
+        messages: [],
+    },
+    Cmd {
+        effects: [
             Pause,
             Report,
         ],
-    ),
-    Nothing,
+        messages: [],
+    },
+    Cmd {
+        effects: [],
+        messages: [],
+    },
 ]

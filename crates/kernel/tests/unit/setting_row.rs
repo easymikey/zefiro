@@ -57,14 +57,14 @@ fn down_from_last_stays_on_the_last_row() {
 fn kept_when_row_still_there() {
     let appearance_settings = [
         custom(AppearanceField::CoverBrackets),
-        custom(AppearanceField::CoverStyle),
+        custom(AppearanceField::CoverMode),
     ];
     let rows = SettingRow::all(&appearance_settings);
-    let cursor = SettingRow::Appearance(AppearanceField::CoverStyle);
+    let cursor = SettingRow::Appearance(AppearanceField::CoverMode);
 
     let kept = cursor.kept(&rows);
 
-    assert_eq!(kept, SettingRow::Appearance(AppearanceField::CoverStyle));
+    assert_eq!(kept, SettingRow::Appearance(AppearanceField::CoverMode));
 }
 
 #[test]

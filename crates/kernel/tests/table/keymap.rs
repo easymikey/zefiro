@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use insta::assert_snapshot;
 use kernel::{
@@ -34,10 +34,7 @@ use kernel::{
         ViewIndex,
         Workspace,
     },
-    update::{
-        keymap::{KeyOutcome, route},
-        update,
-    },
+    update::{keymap::route, update},
 };
 use rstest::rstest;
 
@@ -74,7 +71,7 @@ fn history_after_g() -> Workspace {
 }
 
 fn settings_on(row: SettingRow) -> Workspace {
-    with_overlay(Overlay::Settings { selected: row })
+    with_overlay(Overlay::Settings(row))
 }
 
 fn confirming_delete() -> Workspace {
@@ -149,17 +146,17 @@ fn confirm() -> Option<Message> {
     character('?'),
     Some(Message::Overlay(OverlayRequest::Open(OverlayName::Help)))
 )]
-#[case::browse_shift_left_seeks_far_back(browsing(), with(KeyCode::Left, Modifiers::SHIFT), Some(Message::Playback(PlaybackRequest::SeekBy { seconds: -30 })))]
+#[case::browse_shift_left_seeks_far_back(browsing(), with(KeyCode::Left, Modifiers::SHIFT), Some(Message::Playback(PlaybackRequest::SeekBy { direction: Direction::Previous, by: Duration::from_secs(30) })))]
 #[case::browse_shift_right_seeks_far_forward(
     browsing(),
     with(KeyCode::Right, Modifiers::SHIFT),
-    Some(Message::Playback(PlaybackRequest::SeekBy { seconds: 30 }))
+    Some(Message::Playback(PlaybackRequest::SeekBy { direction: Direction::Next, by: Duration::from_secs(30) }))
 )]
-#[case::browse_left_seeks_back(browsing(), plain(KeyCode::Left), Some(Message::Playback(PlaybackRequest::SeekBy { seconds: -5 })))]
+#[case::browse_left_seeks_back(browsing(), plain(KeyCode::Left), Some(Message::Playback(PlaybackRequest::SeekBy { direction: Direction::Previous, by: Duration::from_secs(5) })))]
 #[case::browse_right_seeks_forward(
     browsing(),
     plain(KeyCode::Right),
-    Some(Message::Playback(PlaybackRequest::SeekBy { seconds: 5 }))
+    Some(Message::Playback(PlaybackRequest::SeekBy { direction: Direction::Next, by: Duration::from_secs(5) }))
 )]
 #[case::browse_ctrl_u_pages_the_playlist(
     browsing(),
@@ -272,22 +269,22 @@ fn confirm() -> Option<Message> {
 #[case::settings_l_adjusts_up(
     settings_on(SettingRow::Theme),
     character('l'),
-    settings_row(SettingsRowRequest::Adjust(Direction::Next))
+    settings_row(SettingsRowRequest::Step(Direction::Next))
 )]
 #[case::settings_right_adjusts_up(
     settings_on(SettingRow::Theme),
     plain(KeyCode::Right),
-    settings_row(SettingsRowRequest::Adjust(Direction::Next))
+    settings_row(SettingsRowRequest::Step(Direction::Next))
 )]
 #[case::settings_h_adjusts_down(
     settings_on(SettingRow::Theme),
     character('h'),
-    settings_row(SettingsRowRequest::Adjust(Direction::Previous))
+    settings_row(SettingsRowRequest::Step(Direction::Previous))
 )]
 #[case::settings_left_adjusts_down(
     settings_on(SettingRow::Theme),
     plain(KeyCode::Left),
-    settings_row(SettingsRowRequest::Adjust(Direction::Previous))
+    settings_row(SettingsRowRequest::Step(Direction::Previous))
 )]
 #[case::settings_space_activates_a_pick_row(
     settings_on(SettingRow::Theme),
@@ -312,22 +309,22 @@ fn confirm() -> Option<Message> {
 #[case::settings_h_on_a_toggle_row_adjusts_never_seeks(
     settings_on(SettingRow::ReplayGain),
     character('h'),
-    settings_row(SettingsRowRequest::Adjust(Direction::Previous))
+    settings_row(SettingsRowRequest::Step(Direction::Previous))
 )]
 #[case::settings_left_on_a_toggle_row_adjusts_never_seeks(
     settings_on(SettingRow::ReplayGain),
     plain(KeyCode::Left),
-    settings_row(SettingsRowRequest::Adjust(Direction::Previous))
+    settings_row(SettingsRowRequest::Step(Direction::Previous))
 )]
 #[case::settings_l_on_a_toggle_row_adjusts_never_seeks(
     settings_on(SettingRow::ReplayGain),
     character('l'),
-    settings_row(SettingsRowRequest::Adjust(Direction::Next))
+    settings_row(SettingsRowRequest::Step(Direction::Next))
 )]
 #[case::settings_right_on_a_toggle_row_adjusts_never_seeks(
     settings_on(SettingRow::ReplayGain),
     plain(KeyCode::Right),
-    settings_row(SettingsRowRequest::Adjust(Direction::Next))
+    settings_row(SettingsRowRequest::Step(Direction::Next))
 )]
 #[case::settings_enter_on_a_toggle_row_activates_it(
     settings_on(SettingRow::ReplayGain),
@@ -461,7 +458,8 @@ fn a_key_press_routes_through_update(
     model.workspace.toasts = vec![Toast::info("hello")];
 
     let press = KeyPress { key, typed };
-    let _ = update(&mut model, Message::Key(press), Moment::default()).unwrap();
+    let routed = update(&mut model, Message::Key(press), Moment::default());
+    assert_eq!(routed.is_err(), typed.code == KeyCode::Char('w'));
 
     match typed.code {
         KeyCode::Char('j') => {
@@ -526,18 +524,11 @@ fn the_default_keymap_compiles_to_this_table() {
                 "{:<14} {:<16} {:?}",
                 format!("{:?}", binding.key_context),
                 binding.pattern.to_string(),
-                binding.outcome
+                binding.message
             )
         })
         .collect();
     assert_snapshot!(rendered.join("\n"));
-}
-
-fn fixed_message(outcome: &KeyOutcome) -> Option<Message> {
-    match outcome {
-        KeyOutcome::Message(message) => Some(message.clone()),
-        KeyOutcome::TypeChar(_) => None,
-    }
 }
 
 #[test]
@@ -565,10 +556,6 @@ fn every_compiled_binding_is_what_its_chord_routes_to() {
             }
         };
         let press = KeyPress { key, typed: key };
-        assert_eq!(
-            route(&workspace, press),
-            fixed_message(&binding.outcome),
-            "{chord}"
-        );
+        assert_eq!(route(&workspace, press), Some(binding.message), "{chord}");
     }
 }

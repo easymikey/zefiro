@@ -2,51 +2,57 @@ use std::time::Duration;
 
 use crate::{
     cmd::{AudioCmd, Cmd, Cue, Effect, MacosCmd},
-    domain::{AbLoop, Percent, Revision, SleepPresets, SleepTimer, Transport},
+    domain::{
+        AbLoop,
+        Direction,
+        Percent,
+        Revision,
+        SleepPresets,
+        SleepTimer,
+        Transport,
+    },
     message::Timer,
+    update::machine::{Machine, Unhandled},
 };
 
 #[derive(Debug, Clone)]
 pub enum TransportMessage {
-    StepVolume {
-        steps: i8,
-    },
+    StepVolume(Direction),
     SetVolume(Percent),
-    StepSpeed {
-        steps: i8,
-    },
+    StepSpeed(Direction),
     CycleSleep {
         presets: SleepPresets,
         revision: Revision,
     },
-    AbMark {
-        position: Option<Duration>,
-    },
+    AbMark(Option<Duration>),
 }
 
-impl Transport {
-    pub fn apply(&mut self, message: TransportMessage) -> Cmd {
-        match message {
-            TransportMessage::StepVolume { steps } => {
-                self.volume = self.volume.step(steps);
-                Effect::Macos(MacosCmd::Volume(self.volume)).into()
+impl Machine for Transport {
+    type Message = TransportMessage;
+    type Effect = Cmd;
+
+    fn transition(&mut self, message: TransportMessage) -> Result<Cmd, Unhandled> {
+        Ok(match message {
+            TransportMessage::StepVolume(direction) => {
+                self.volume = self.volume.step_by(direction);
+                Effect::Macos(MacosCmd::SetVolume(self.volume)).into()
             }
-            TransportMessage::SetVolume(volume) if volume == self.volume => Cmd::None,
+            TransportMessage::SetVolume(volume) if volume == self.volume => Cmd::none(),
             TransportMessage::SetVolume(volume) => {
                 self.volume = volume;
                 Cue::VolumeChanged.into()
             }
-            TransportMessage::StepSpeed { steps } if steps > 0 => {
+            TransportMessage::StepSpeed(Direction::Next) => {
                 self.speed = self.speed.step_up();
                 Effect::Audio(AudioCmd::SetSpeed(self.speed)).into()
             }
-            TransportMessage::StepSpeed { .. } => {
+            TransportMessage::StepSpeed(Direction::Previous) => {
                 self.speed = self.speed.step_down();
                 Effect::Audio(AudioCmd::SetSpeed(self.speed)).into()
             }
             TransportMessage::CycleSleep { presets, revision } => {
                 self.sleep = next_sleep(self.sleep, presets.as_slice());
-                self.sleep.map_or(Cmd::None, |timer| {
+                self.sleep.map_or(Cmd::none(), |timer| {
                     Effect::After {
                         delay: timer.delay,
                         timer: Timer::Sleep(revision),
@@ -54,14 +60,12 @@ impl Transport {
                     .into()
                 })
             }
-            TransportMessage::AbMark { position: None } => Cmd::None,
-            TransportMessage::AbMark {
-                position: Some(position),
-            } => {
+            TransportMessage::AbMark(None) => Cmd::none(),
+            TransportMessage::AbMark(Some(position)) => {
                 self.ab_loop = AbLoop::mark(self.ab_loop, position);
-                Cmd::None
+                Cmd::none()
             }
-        }
+        })
     }
 }
 

@@ -1,10 +1,9 @@
 use std::{ops::ControlFlow, time::Instant};
 
 use kernel::{
-    Cmd,
     Effect,
     Message,
-    domain::{Driver, Drivers, TrackIndex},
+    domain::{DriverName, Drivers, TrackIndex},
 };
 
 use crate::{
@@ -19,7 +18,7 @@ pub(crate) struct Interpreted {
     pub(crate) answers: Vec<Message>,
     pub(crate) shell_effects: Vec<ShellEffect>,
     pub(crate) flow: ControlFlow<()>,
-    pub(crate) restart: Option<(Driver, Vec<Effect>)>,
+    pub(crate) restart: Option<(DriverName, Vec<Effect>)>,
 }
 
 impl Default for Interpreted {
@@ -47,9 +46,12 @@ fn shuffle_order(len: usize) -> Vec<TrackIndex> {
     order
 }
 
-pub(crate) fn interpret(cmd: Cmd, interpreter: &mut Interpreter<'_>) -> Interpreted {
+pub(crate) fn interpret(
+    effects: Vec<Effect>,
+    interpreter: &mut Interpreter<'_>,
+) -> Interpreted {
     let mut interpreted = Interpreted::default();
-    let mut effects = cmd.into_iter();
+    let mut effects = effects.into_iter();
     while let Some(effect) = effects.next() {
         match effect {
             Effect::Audio(command) => {
@@ -79,7 +81,7 @@ pub(crate) fn interpret(cmd: Cmd, interpreter: &mut Interpreter<'_>) -> Interpre
             Effect::Animate(cue) => {
                 interpreted.shell_effects.push(ShellEffect::Animate(cue));
             }
-            Effect::RollShuffle { len } => {
+            Effect::RollShuffle(len) => {
                 interpreted
                     .answers
                     .push(Message::ShuffleRolled(shuffle_order(len)));
@@ -124,7 +126,7 @@ mod tests {
         Timer,
         WindowColorsCmd,
         domain::{
-            Driver,
+            DriverName,
             DriverStatus,
             Model,
             OptionCount,
@@ -135,7 +137,7 @@ mod tests {
     };
 
     use crate::{
-        interpret::{Interpreter, interpret},
+        interpret::{Interpreted, Interpreter, interpret},
         library::machine::LibraryMessage,
         port::{LibraryPort, Port, Ports},
         shell::ShellEffect,
@@ -160,17 +162,26 @@ mod tests {
             let (library_tx, library_rx) = unbounded();
             let (config_tx, config_rx) = unbounded();
             let (macos_tx, macos_rx) = unbounded();
-            let macos_port = Port::new(Driver::Macos, macos_tx, Congestion::default());
+            let macos_port =
+                Port::new(DriverName::Macos, macos_tx, Congestion::default());
             Self {
                 model: Model::default(),
                 ports: Ports {
-                    audio: Port::new(Driver::Audio, audio_tx, Congestion::default()),
+                    audio: Port::new(
+                        DriverName::Audio,
+                        audio_tx,
+                        Congestion::default(),
+                    ),
                     library: LibraryPort::new(Port::new(
-                        Driver::Library,
+                        DriverName::Library,
                         library_tx,
                         Congestion::default(),
                     )),
-                    config: Port::new(Driver::Config, config_tx, Congestion::default()),
+                    config: Port::new(
+                        DriverName::Config,
+                        config_tx,
+                        Congestion::default(),
+                    ),
                     macos: macos_port,
                 },
                 audio_rx,
@@ -192,12 +203,16 @@ mod tests {
         }
     }
 
+    fn run(cmd: Cmd, interpreter: &mut Interpreter<'_>) -> Interpreted {
+        interpret(cmd.into_parts().0, interpreter)
+    }
+
     #[test]
     fn a_command_to_a_running_driver_is_routed() {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
-        interpret(Cmd::One(Effect::Audio(AudioCmd::Stop)), &mut interpreter);
+        run(Cmd::effect(Effect::Audio(AudioCmd::Stop)), &mut interpreter);
 
         assert_eq!(fixture.audio_rx.try_recv(), Ok(AudioCmd::Stop));
         assert!(fixture.trace.is_empty());
@@ -207,18 +222,18 @@ mod tests {
     fn a_restart_effect_hands_back_the_driver_and_the_rest() {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
-        let cmd = Cmd::Batch(vec![
-            Effect::Restart(Driver::Audio),
+        let cmd = Cmd::from_iter([
+            Effect::Restart(DriverName::Audio),
             Effect::Audio(AudioCmd::Stop),
             Effect::Audio(AudioCmd::SetDevice(OutputDevice::SystemDefault)),
         ]);
 
-        let interpreted = interpret(cmd, &mut interpreter);
+        let interpreted = run(cmd, &mut interpreter);
 
         assert_eq!(
             interpreted.restart,
             Some((
-                Driver::Audio,
+                DriverName::Audio,
                 vec![
                     Effect::Audio(AudioCmd::Stop),
                     Effect::Audio(AudioCmd::SetDevice(OutputDevice::SystemDefault)),
@@ -231,16 +246,17 @@ mod tests {
     #[test]
     fn a_command_to_a_dead_driver_is_dropped_and_traced() {
         let mut fixture = Fixture::new();
-        fixture.model.drivers.record_mut(Driver::Audio).status = DriverStatus::Stopped;
+        fixture.model.drivers.record_mut(DriverName::Audio).status =
+            DriverStatus::Stopped;
         let mut interpreter = fixture.interpreter();
 
-        interpret(Cmd::One(Effect::Audio(AudioCmd::Stop)), &mut interpreter);
+        run(Cmd::effect(Effect::Audio(AudioCmd::Stop)), &mut interpreter);
 
         assert!(fixture.audio_rx.try_recv().is_err());
         assert_eq!(
             fixture.trace.iter().next(),
             Some(&TraceEntry::Dropped {
-                driver: Driver::Audio,
+                driver: DriverName::Audio,
                 command: "stop",
                 reason: DropReason::NotRunning,
             })
@@ -253,12 +269,12 @@ mod tests {
         fixture.audio_rx = never();
         let mut interpreter = fixture.interpreter();
 
-        interpret(Cmd::One(Effect::Audio(AudioCmd::Stop)), &mut interpreter);
+        run(Cmd::effect(Effect::Audio(AudioCmd::Stop)), &mut interpreter);
 
         assert_eq!(
             fixture.trace.iter().next(),
             Some(&TraceEntry::Dropped {
-                driver: Driver::Audio,
+                driver: DriverName::Audio,
                 command: "stop",
                 reason: DropReason::Closed,
             })
@@ -268,19 +284,22 @@ mod tests {
     #[test]
     fn a_macos_command_to_a_stopped_macos_driver_is_dropped_and_traced() {
         let mut fixture = Fixture::new();
-        fixture.model.drivers.record_mut(Driver::Macos).status = DriverStatus::Stopped;
+        fixture.model.drivers.record_mut(DriverName::Macos).status =
+            DriverStatus::Stopped;
         let mut interpreter = fixture.interpreter();
 
-        interpret(
-            Cmd::One(Effect::Macos(MacosCmd::Volume(kernel::Percent::default()))),
+        run(
+            Cmd::effect(Effect::Macos(MacosCmd::SetVolume(
+                kernel::Percent::default(),
+            ))),
             &mut interpreter,
         );
 
         assert_eq!(
             fixture.trace.iter().next(),
             Some(&TraceEntry::Dropped {
-                driver: Driver::Macos,
-                command: "volume",
+                driver: DriverName::Macos,
+                command: "set_volume",
                 reason: DropReason::NotRunning,
             })
         );
@@ -292,16 +311,18 @@ mod tests {
         fixture.macos_rx = never();
         let mut interpreter = fixture.interpreter();
 
-        interpret(
-            Cmd::One(Effect::Macos(MacosCmd::Volume(kernel::Percent::default()))),
+        run(
+            Cmd::effect(Effect::Macos(MacosCmd::SetVolume(
+                kernel::Percent::default(),
+            ))),
             &mut interpreter,
         );
 
         assert_eq!(
             fixture.trace.iter().next(),
             Some(&TraceEntry::Dropped {
-                driver: Driver::Macos,
-                command: "volume",
+                driver: DriverName::Macos,
+                command: "set_volume",
                 reason: DropReason::Closed,
             })
         );
@@ -312,8 +333,8 @@ mod tests {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
-        interpret(
-            Cmd::One(Effect::Library(LibraryCmd::LoadFavorites)),
+        run(
+            Cmd::effect(Effect::Library(LibraryCmd::LoadFavorites)),
             &mut interpreter,
         );
 
@@ -328,8 +349,8 @@ mod tests {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
-        interpret(
-            Cmd::One(Effect::Config(ConfigCmd::Save(
+        run(
+            Cmd::effect(Effect::Config(ConfigCmd::Save(
                 ConfigPatch::builder()
                     .theme(kernel::domain::ThemeName::from_static("dark"))
                     .build(),
@@ -349,8 +370,8 @@ mod tests {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
-        let interpreted = interpret(
-            Cmd::Batch(vec![
+        let interpreted = run(
+            Cmd::from_iter([
                 Effect::WindowColors(WindowColorsCmd::Reset),
                 Effect::Animate(Cue::TrackChanged),
             ]),
@@ -371,8 +392,8 @@ mod tests {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
-        let interpreted = interpret(
-            Cmd::Batch(vec![Effect::Audio(AudioCmd::Stop), Effect::Quit]),
+        let interpreted = run(
+            Cmd::from_iter([Effect::Audio(AudioCmd::Stop), Effect::Quit]),
             &mut interpreter,
         );
 
@@ -385,8 +406,7 @@ mod tests {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
-        let interpreted =
-            interpret(Cmd::One(Effect::RollShuffle { len: 5 }), &mut interpreter);
+        let interpreted = run(Cmd::effect(Effect::RollShuffle(5)), &mut interpreter);
         let [Message::ShuffleRolled(order)] = interpreted.answers.as_slice() else {
             panic!("expected a single shuffle answer");
         };
@@ -400,11 +420,8 @@ mod tests {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
-        let interpreted = interpret(
-            Cmd::Batch(vec![
-                Effect::RollShuffle { len: 2 },
-                Effect::RollShuffle { len: 3 },
-            ]),
+        let interpreted = run(
+            Cmd::from_iter([Effect::RollShuffle(2), Effect::RollShuffle(3)]),
             &mut interpreter,
         );
 
@@ -426,8 +443,8 @@ mod tests {
         let field = kernel::domain::appearance_rows::AppearanceField::CoverBrackets;
         let option = OptionCount::new(2).unwrap().index(0).unwrap();
 
-        let interpreted = interpret(
-            Cmd::One(Effect::Config(ConfigCmd::Setting { field, option })),
+        let interpreted = run(
+            Cmd::effect(Effect::Config(ConfigCmd::Setting { field, option })),
             &mut interpreter,
         );
 
@@ -444,8 +461,8 @@ mod tests {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
-        interpret(
-            Cmd::One(Effect::After {
+        run(
+            Cmd::effect(Effect::After {
                 delay: Duration::from_secs(1),
                 timer: Timer::Toast(Revision::default()),
             }),
@@ -460,8 +477,8 @@ mod tests {
         let mut fixture = Fixture::new();
         let mut interpreter = fixture.interpreter();
 
-        interpret(
-            Cmd::One(Effect::After {
+        run(
+            Cmd::effect(Effect::After {
                 delay: Duration::MAX,
                 timer: Timer::Toast(Revision::default()),
             }),

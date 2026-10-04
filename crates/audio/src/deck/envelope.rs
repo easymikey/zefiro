@@ -7,12 +7,16 @@ use std::{
 };
 
 use crossbeam_channel::Sender;
+use kernel::update::{Machine, Unhandled};
 use rodio::Source;
 use triple_buffer::{Input, Output, triple_buffer};
 
 use crate::{
-    deck::{DeckEvent, Ticket},
-    engine::crossfade::{gain_in, gain_out},
+    deck::{DeckEvent, Revision},
+    engine::{
+        crossfade::{gain_in, gain_out},
+        effect::{AudioMessage, SinkRole},
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -29,6 +33,35 @@ pub(crate) struct Ramp {
     pub(crate) frames: u64,
 }
 
+impl Ramp {
+    pub(crate) fn fade_in(frames: u64) -> Self {
+        Self {
+            from: 0.0,
+            to: 1.0,
+            curve: Curve::EqualPowerIn,
+            frames,
+        }
+    }
+
+    pub(crate) fn fade_out(frames: u64) -> Self {
+        Self {
+            from: 1.0,
+            to: 0.0,
+            curve: Curve::EqualPowerOut,
+            frames,
+        }
+    }
+
+    pub(crate) fn hold(level: f32) -> Self {
+        Self {
+            from: level,
+            to: level,
+            curve: Curve::EqualPowerIn,
+            frames: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct Order {
     pub(crate) serial: u32,
@@ -37,7 +70,7 @@ pub(crate) struct Order {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct Signals(u8);
+pub struct Signals(u8);
 
 impl Signals {
     pub(crate) const FINISHED: Self = Self(1);
@@ -66,17 +99,22 @@ impl Published {
     }
 }
 
-fn frames_to_duration(frames: u64, rate: u32) -> Duration {
-    if rate == 0 {
-        return Duration::ZERO;
-    }
-    let nanos = u128::from(frames) * 1_000_000_000u128 / u128::from(rate);
-    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Frames(u64);
 
-fn duration_to_frames(duration: Duration, rate: u32) -> u64 {
-    let frames = duration.as_nanos() * u128::from(rate) / 1_000_000_000u128;
-    u64::try_from(frames).unwrap_or(u64::MAX)
+impl Frames {
+    fn duration(self, rate: u32) -> Duration {
+        if rate == 0 {
+            return Duration::ZERO;
+        }
+        let nanos = u128::from(self.0) * 1_000_000_000u128 / u128::from(rate);
+        Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
+    }
+
+    fn of(duration: Duration, rate: u32) -> Self {
+        let frames = duration.as_nanos() * u128::from(rate) / 1_000_000_000u128;
+        Self(u64::try_from(frames).unwrap_or(u64::MAX))
+    }
 }
 
 #[derive(Default)]
@@ -89,19 +127,33 @@ pub(crate) struct Envelopes {
 
 impl Envelopes {
     #[must_use]
-    pub(crate) fn holding(&self, ticket: Ticket) -> Option<&EnvelopeControl> {
+    pub(crate) fn holding(&self, revision: Revision) -> Option<&EnvelopeControl> {
         [&self.primary, &self.queued, &self.incoming, &self.outgoing]
             .into_iter()
             .filter_map(Option::as_ref)
-            .find(|control| control.ticket() == ticket)
+            .find(|control| control.revision() == revision)
+    }
+
+    #[must_use]
+    pub(crate) fn role(&self, revision: Revision) -> Option<SinkRole> {
+        [
+            (&self.primary, SinkRole::Primary),
+            (&self.incoming, SinkRole::Incoming),
+            (&self.outgoing, SinkRole::Outgoing),
+        ]
+        .into_iter()
+        .find_map(|(slot, role)| {
+            slot.as_ref()
+                .filter(|control| control.revision() == revision)
+                .map(|_| role)
+        })
     }
 }
 
 pub(crate) struct EnvelopeControl {
     orders: Input<Order>,
     published: Arc<Published>,
-    ticket: Ticket,
-    serial: u32,
+    revision: Revision,
     pending: Order,
     rate: u32,
 }
@@ -109,21 +161,21 @@ pub(crate) struct EnvelopeControl {
 impl EnvelopeControl {
     #[must_use]
     pub(crate) fn frames(&self, duration: Duration) -> u64 {
-        duration_to_frames(duration, self.rate)
+        Frames::of(duration, self.rate).0
+    }
+
+    fn order(&mut self, edit: impl FnOnce(&mut Order)) {
+        self.pending.serial += 1;
+        edit(&mut self.pending);
+        self.orders.write(self.pending);
     }
 
     pub(crate) fn ramp(&mut self, ramp: Ramp) {
-        self.serial += 1;
-        self.pending.serial = self.serial;
-        self.pending.ramp = Some(ramp);
-        self.orders.write(self.pending);
+        self.order(|order| order.ramp = Some(ramp));
     }
 
     pub(crate) fn cue(&mut self, at: Option<Duration>) {
-        self.serial += 1;
-        self.pending.serial = self.serial;
-        self.pending.cue = at;
-        self.orders.write(self.pending);
+        self.order(|order| order.cue = at);
     }
 
     #[must_use]
@@ -142,9 +194,8 @@ impl EnvelopeControl {
         Duration::from_nanos(self.published.position.load(Ordering::Relaxed))
     }
 
-    #[must_use]
-    pub(crate) fn ticket(&self) -> Ticket {
-        self.ticket
+    pub(crate) fn revision(&self) -> Revision {
+        self.revision
     }
 }
 
@@ -154,12 +205,24 @@ struct Running {
     elapsed: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wake {
+    Sent,
+    Pending,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ending {
+    Playing,
+    Ended,
+}
+
 pub(crate) struct Envelope<S> {
     inner: S,
     orders: Output<Order>,
     published: Arc<Published>,
-    wake: Sender<DeckEvent>,
-    ticket: Ticket,
+    sender: Sender<AudioMessage>,
+    revision: Revision,
     frames: u64,
     rate: u32,
     base: Duration,
@@ -167,14 +230,15 @@ pub(crate) struct Envelope<S> {
     gain: f32,
     running: Option<Running>,
     cue: Option<u64>,
-    applied: u32,
     previous: Order,
+    wake: Wake,
+    ending: Ending,
 }
 
 pub(crate) fn envelope<S: Source>(
     inner: S,
-    ticket: Ticket,
-    wake: Sender<DeckEvent>,
+    revision: Revision,
+    sender: Sender<AudioMessage>,
 ) -> (Envelope<S>, EnvelopeControl) {
     let rate = inner.sample_rate();
     let published = Arc::new(Published::fresh());
@@ -183,8 +247,8 @@ pub(crate) fn envelope<S: Source>(
         inner,
         orders: orders_output,
         published: Arc::clone(&published),
-        wake,
-        ticket,
+        sender,
+        revision,
         frames: 0,
         rate,
         base: Duration::ZERO,
@@ -192,14 +256,14 @@ pub(crate) fn envelope<S: Source>(
         gain: 1.0,
         running: None,
         cue: None,
-        applied: 0,
         previous: Order::default(),
+        wake: Wake::Sent,
+        ending: Ending::Playing,
     };
     let control = EnvelopeControl {
         orders: orders_input,
         published,
-        ticket,
-        serial: 0,
+        revision,
         pending: Order::default(),
         rate,
     };
@@ -214,40 +278,35 @@ fn curved_gain(ramp: Ramp, fraction: f32) -> f32 {
 }
 
 impl<S: Source> Envelope<S> {
-    fn raise(&self, flag: Signals) {
+    fn raise(&mut self, flag: Signals) {
         let previous = self.published.flags.fetch_or(flag.0, Ordering::Release);
         if previous & flag.0 == 0 {
-            let _ = self.wake.try_send(DeckEvent::Track(self.ticket));
+            self.wake();
         }
+    }
+
+    fn wake(&mut self) {
+        self.wake = match DeckEvent::Track(self.revision).notify(&self.sender) {
+            Ok(()) => Wake::Sent,
+            Err(_) => Wake::Pending,
+        };
+    }
+
+    fn end(&mut self) -> Option<f32> {
+        if self.ending == Ending::Playing {
+            self.ending = Ending::Ended;
+            self.raise(Signals::FINISHED);
+        }
+        (self.wake == Wake::Pending).then_some(0.0)
     }
 
     fn reconcile_rate(&mut self) {
         let rate = self.inner.sample_rate();
         if rate != self.rate {
-            self.base += frames_to_duration(self.frames, self.rate);
+            self.base += Frames(self.frames).duration(self.rate);
             self.frames = 0;
             self.rate = rate;
         }
-    }
-
-    fn apply_order(&mut self, order: Order) {
-        if order.ramp != self.previous.ramp
-            && let Some(ramp) = order.ramp
-        {
-            let from = if self.running.is_some() {
-                self.gain
-            } else {
-                ramp.from
-            };
-            self.running = Some(Running {
-                ramp: Ramp { from, ..ramp },
-                elapsed: 0,
-            });
-        }
-        if order.cue != self.previous.cue {
-            self.cue = order.cue.map(|at| duration_to_frames(at, self.rate));
-        }
-        self.previous = order;
     }
 
     fn advance_cue(&mut self) {
@@ -271,8 +330,8 @@ impl<S: Source> Envelope<S> {
             self.raise(Signals::RAMPED);
             return;
         }
-        let elapsed = frames_to_duration(running.elapsed, self.rate);
-        let total = frames_to_duration(running.ramp.frames, self.rate);
+        let elapsed = Frames(running.elapsed).duration(self.rate);
+        let total = Frames(running.ramp.frames).duration(self.rate);
         let fraction = if total.is_zero() {
             1.0
         } else {
@@ -286,7 +345,7 @@ impl<S: Source> Envelope<S> {
         self.published
             .gain
             .store(self.gain.to_bits(), Ordering::Relaxed);
-        let position = self.base + frames_to_duration(self.frames, self.rate);
+        let position = self.base + Frames(self.frames).duration(self.rate);
         let nanos = u64::try_from(position.as_nanos()).unwrap_or(u64::MAX);
         self.published.position.store(nanos, Ordering::Relaxed);
     }
@@ -296,9 +355,8 @@ impl<S: Source> Envelope<S> {
         self.reconcile_rate();
         if self.orders.update() {
             let order = *self.orders.output_buffer();
-            if order.serial != self.applied {
-                self.applied = order.serial;
-                self.apply_order(order);
+            match self.transition(EnvelopeMessage::Order(order)) {
+                Ok(()) | Err(Unhandled) => {}
             }
         }
         self.advance_cue();
@@ -307,13 +365,50 @@ impl<S: Source> Envelope<S> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum EnvelopeMessage {
+    Order(Order),
+}
+
+impl<S: Source> Machine for Envelope<S> {
+    type Message = EnvelopeMessage;
+    type Effect = ();
+
+    fn transition(&mut self, message: EnvelopeMessage) -> Result<(), Unhandled> {
+        let EnvelopeMessage::Order(order) = message;
+        if order.serial == self.previous.serial {
+            return Err(Unhandled);
+        }
+        if order.ramp != self.previous.ramp
+            && let Some(ramp) = order.ramp
+        {
+            let from = if self.running.is_some() {
+                self.gain
+            } else {
+                ramp.from
+            };
+            self.running = Some(Running {
+                ramp: Ramp { from, ..ramp },
+                elapsed: 0,
+            });
+        }
+        if order.cue != self.previous.cue {
+            self.cue = order.cue.map(|at| Frames::of(at, self.rate).0);
+        }
+        self.previous = order;
+        Ok(())
+    }
+}
+
 impl<S: Source> Iterator for Envelope<S> {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
+        if self.wake == Wake::Pending {
+            self.wake();
+        }
         let Some(sample) = self.inner.next() else {
-            self.raise(Signals::FINISHED);
-            return None;
+            return self.end();
         };
         let channels = self.inner.channels();
         self.channel += 1;
@@ -351,6 +446,7 @@ impl<S: Source> Source for Envelope<S> {
         self.base = position;
         self.frames = 0;
         self.rate = self.inner.sample_rate();
+        self.ending = Ending::Playing;
         Ok(())
     }
 }
@@ -363,7 +459,8 @@ mod tests {
     use rstest::rstest;
 
     use crate::deck::{
-        Ticket,
+        DeckEvent,
+        Revision,
         envelope::{Curve, Ramp, Signals, envelope},
     };
 
@@ -382,7 +479,7 @@ mod tests {
     #[rstest]
     fn an_envelope_raises_finished_when_the_source_ends() {
         let (wake, heard) = crossbeam_channel::bounded(4);
-        let (source, control) = envelope(tone(100), Ticket::default(), wake);
+        let (source, control) = envelope(tone(100), Revision::default(), wake);
         drain(source);
         assert_eq!(control.take_signals(), Signals::FINISHED);
         assert_eq!(heard.len(), 1);
@@ -391,7 +488,7 @@ mod tests {
     #[rstest]
     fn an_envelope_raises_cued_at_its_cue_point() {
         let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (source, mut control) = envelope(tone(100), Ticket::default(), wake);
+        let (source, mut control) = envelope(tone(100), Revision::default(), wake);
         control.cue(Some(Duration::from_millis(50)));
         drain(source);
         let flags = control.take_signals();
@@ -402,13 +499,8 @@ mod tests {
     #[rstest]
     fn an_envelope_raises_ramped_and_ends_at_the_target_gain() {
         let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (source, mut control) = envelope(tone(100), Ticket::default(), wake);
-        control.ramp(Ramp {
-            from: 1.0,
-            to: 0.0,
-            curve: Curve::EqualPowerOut,
-            frames: 441,
-        });
+        let (source, mut control) = envelope(tone(100), Revision::default(), wake);
+        control.ramp(Ramp::fade_out(441));
         drain(source);
         let flags = control.take_signals();
         assert!(flags.contains(Signals::RAMPED));
@@ -419,27 +511,31 @@ mod tests {
     #[rstest]
     fn an_envelope_with_no_order_stays_at_unity_gain() {
         let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (source, control) = envelope(tone(100), Ticket::default(), wake);
+        let (source, control) = envelope(tone(100), Revision::default(), wake);
         drain(source);
         assert_eq!(control.take_signals(), Signals::FINISHED);
         assert!((control.gain() - 1.0).abs() < 1e-6);
     }
 
     #[rstest]
-    fn a_full_wake_channel_loses_no_flag() {
+    fn a_wake_up_that_does_not_fit_is_delivered_on_the_next_callback() {
         let (wake, heard) = crossbeam_channel::bounded(1);
-        wake.try_send(crate::deck::DeckEvent::Track(Ticket::default()))
-            .unwrap();
-        let (source, control) = envelope(tone(10), Ticket::default(), wake);
-        drain(source);
+        assert!(DeckEvent::Track(Revision::default()).notify(&wake).is_ok());
+        let (mut source, control) = envelope(tone(10), Revision::default(), wake);
+        assert_eq!(source.by_ref().take(4096).count(), 4096);
         assert!(control.take_signals().contains(Signals::FINISHED));
+        assert!(heard.try_recv().is_ok());
+        assert!(heard.is_empty());
+        assert_eq!(source.next(), None);
+        assert_eq!(heard.len(), 1);
+        assert_eq!(source.next(), None);
         assert_eq!(heard.len(), 1);
     }
 
     #[rstest]
     fn a_seek_rebases_the_published_position() {
         let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (mut source, control) = envelope(tone(200), Ticket::default(), wake);
+        let (mut source, control) = envelope(tone(200), Revision::default(), wake);
         for _ in 0..100 {
             source.next();
         }
@@ -452,13 +548,8 @@ mod tests {
     #[rstest]
     fn a_newer_order_retargets_the_ramp() {
         let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (mut source, mut control) = envelope(tone(100), Ticket::default(), wake);
-        control.ramp(Ramp {
-            from: 1.0,
-            to: 0.0,
-            curve: Curve::EqualPowerOut,
-            frames: 4410,
-        });
+        let (mut source, mut control) = envelope(tone(100), Revision::default(), wake);
+        control.ramp(Ramp::fade_out(4410));
         for _ in 0..441 {
             source.next();
         }

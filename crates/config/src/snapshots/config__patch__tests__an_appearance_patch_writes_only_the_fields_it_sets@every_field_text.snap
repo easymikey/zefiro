@@ -5,7 +5,7 @@ expression: out
 # sifr-ui.toml
 [cover]
 # the noir look
-style = "milkdrop"
+mode = "milkdrop"
 brackets = true
 
 [card]

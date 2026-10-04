@@ -1,4 +1,4 @@
-use config::{AppearancePatch, CoverStyle, parse_appearance, patch_appearance_text};
+use config::{AppearancePatch, CoverMode, parse_appearance, patch_appearance_text};
 
 const COMMENTED_UI: &str = include_str!("../fixtures/sifr-ui_commented.toml");
 
@@ -11,7 +11,7 @@ fn the_commented_fixture_parses_into_every_table() {
 #[test]
 fn a_patch_round_trips_through_the_public_parser() {
     let patch = AppearancePatch::builder()
-        .cover_style(CoverStyle::Milkdrop)
+        .cover_mode(CoverMode::Milkdrop)
         .build();
     let written = patch_appearance_text(COMMENTED_UI, patch).unwrap();
     let round_tripped = parse_appearance(&written).unwrap();

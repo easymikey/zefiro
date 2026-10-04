@@ -132,7 +132,6 @@ impl std::str::FromStr for Chord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyPattern {
     Chord(Chord),
-    AnyChar,
     AnyKey,
 }
 
@@ -141,7 +140,7 @@ impl KeyPattern {
     pub fn chord(self) -> Option<Chord> {
         match self {
             Self::Chord(chord) => Some(chord),
-            Self::AnyChar | Self::AnyKey => None,
+            Self::AnyKey => None,
         }
     }
 }
@@ -150,14 +149,7 @@ impl fmt::Display for KeyPattern {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Chord(chord) => chord.fmt(formatter),
-            Self::AnyChar => formatter.write_str("any character"),
             Self::AnyKey => formatter.write_str("any key"),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CharSink {
-    Text,
-    Search,
 }

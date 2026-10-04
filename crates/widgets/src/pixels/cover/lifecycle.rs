@@ -231,7 +231,7 @@ impl CoverLifecycle {
                 frame: self.advance(tick),
             };
         }
-        let crossfade = if scene.look().appearance.animations == Animations::On
+        let crossfade = if scene.appearance().settings.animations == Animations::On
             && plan == PaintPlan::NewContent
         {
             crossfade
@@ -562,7 +562,7 @@ mod tests {
 
     fn animated_sources() -> SceneSources {
         let mut sources = SceneSources::new(Model::default());
-        sources.look_mut().appearance.animations = Animations::On;
+        sources.appearance_mut().settings.animations = Animations::On;
         sources
     }
 

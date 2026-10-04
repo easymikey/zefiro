@@ -8,7 +8,7 @@ use ratatui::{
 use crate::{
     card::CoverArt,
     key_hints::KeyHintsLine,
-    overlay::layer::OverlayLayer,
+    overlay::layer::OverlayWidget,
     playlist::PlaylistPane,
     primitive::canvas::Canvas,
     scene::Scene,
@@ -43,7 +43,7 @@ impl Widget for &Screen<'_> {
         let layout = self.layout;
         match layout.breakpoint {
             Breakpoint::TooSmall => {
-                let breakpoints = self.scene.look().breakpoints;
+                let breakpoints = self.scene.appearance().breakpoints;
                 (&TooSmallNotice {
                     theme,
                     minimum: Size::new(breakpoints.min_columns, breakpoints.min_rows),
@@ -54,7 +54,7 @@ impl Widget for &Screen<'_> {
             Breakpoint::Minimal => (&MinimalScreen {
                 view: self.scene.card_view(),
                 theme,
-                speed_chip: self.scene.look().appearance.speed_chip,
+                speed_chip: self.scene.appearance().settings.speed_chip,
             })
                 .render(layout.screen, buffer),
             Breakpoint::Full => (&FullScreen {
@@ -69,13 +69,13 @@ impl Widget for &Screen<'_> {
             })
                 .render(layout.screen, buffer),
         }
-        self.render_lists(buffer);
-        self.render_layers(buffer);
+        self.paint_lists(buffer);
+        self.paint_layers(buffer);
     }
 }
 
 impl Screen<'_> {
-    fn render_lists(&self, buffer: &mut Buffer) {
+    fn paint_lists(&self, buffer: &mut Buffer) {
         let scene = self.scene;
         let theme = scene.active_theme();
         if let Some(areas) = self.layout.playlist {
@@ -83,7 +83,7 @@ impl Screen<'_> {
                 view: scene.playlist_view(),
                 theme,
             }
-            .render_in(&areas, buffer);
+            .paint(&areas, buffer);
         }
         if let Some(hints) = self.layout.key_hints {
             (&KeyHintsLine {
@@ -94,24 +94,21 @@ impl Screen<'_> {
         }
     }
 
-    fn render_layers(&self, buffer: &mut Buffer) {
+    fn paint_layers(&self, buffer: &mut Buffer) {
         let screen = self.layout.screen;
-        if let Some(areas) = self.layout.overlay {
-            OverlayLayer::placed(
-                self.scene.overlay_content(),
-                self.layout,
-                self.scene.cover_style(),
-            )
-            .render_in(
-                areas,
-                Canvas {
-                    area: screen,
-                    buffer: &mut *buffer,
-                },
+        if self.layout.overlay.is_some() {
+            Widget::render(
+                &OverlayWidget::placed(
+                    self.scene.overlay_content(),
+                    self.layout,
+                    self.scene.cover_mode(),
+                ),
+                screen,
+                buffer,
             );
         }
         if let Some((toast, areas)) = self.scene.toaster().zip(self.layout.toast) {
-            toast.render_in(
+            toast.paint(
                 areas,
                 Canvas {
                     area: screen,

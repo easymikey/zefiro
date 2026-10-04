@@ -21,7 +21,9 @@ expression: effects(cmd)
     Library(
         AppendHistory(
             HistoryEntry {
-                path: "/tmp/track0.flac",
+                track: Local(
+                    "/tmp/track0.flac",
+                ),
                 title: "track0",
                 artist: None,
                 at: Moment(
@@ -34,8 +36,9 @@ expression: effects(cmd)
         NowPlaying(
             Some(
                 Track {
-                    path: "/tmp/track0.flac",
-                    duration: None,
+                    source: Local(
+                        "/tmp/track0.flac",
+                    ),
                     tags: Tags {
                         title: None,
                         artist: None,
@@ -59,7 +62,9 @@ expression: effects(cmd)
                         replay_gain: None,
                     },
                     display: "track0",
-                    tagging: Listed,
+                    tagging: Listed(
+                        None,
+                    ),
                 },
             ),
         ),
@@ -70,7 +75,7 @@ expression: effects(cmd)
         ),
     ),
     Macos(
-        PlaybackState(
+        SetPlayback(
             Playing,
         ),
     ),

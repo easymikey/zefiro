@@ -1,5 +1,6 @@
 use kernel::domain::{Track, format_time};
 use ratatui::{
+    buffer::Buffer,
     layout::Rect,
     text::Line,
     widgets::{Paragraph, Widget},
@@ -7,7 +8,14 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    overlay::modal::{Modal, ModalBounds, ModalSize, OverlayAreas, PlacedModal},
+    overlay::modal::{
+        Modal,
+        ModalBounds,
+        ModalRowStyle,
+        ModalSize,
+        OverlayAreas,
+        PlacedModal,
+    },
     primitive::{
         canvas::Canvas,
         format_chips::kilohertz,
@@ -15,26 +23,25 @@ use crate::{
         span::{line, text},
         text::{truncate, truncate_from_left},
     },
-    theme::{ActiveTheme, Role},
 };
 
 const MIN_WIDTH: u16 = 28;
 const LEADER_COLUMN: usize = 10;
 
 #[derive(Debug)]
-pub(crate) struct TrackDetailsOverlay<'a> {
+pub(crate) struct TrackDetailsWidget<'a> {
     pub(crate) track: &'a Track,
-    pub(crate) theme: ActiveTheme<'a>,
+    pub(crate) style: ModalRowStyle,
     pub(crate) avoid: &'a [Rect],
 }
 
-impl TrackDetailsOverlay<'_> {
+impl TrackDetailsWidget<'_> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
         OverlayAreas::Dialog(self.modal().areas(screen, self.avoid))
     }
 
-    pub(crate) fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
+    fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
         let OverlayAreas::Dialog(areas) = areas else {
             return;
         };
@@ -76,10 +83,10 @@ impl TrackDetailsOverlay<'_> {
                 content_lines: u16::try_from(rows.len()).unwrap_or(u16::MAX),
             },
             hint: Some(line([
-                text(glyphs::track_details::HINT).fg(self.theme.role(Role::Dim))
+                text(glyphs::track_details::HINT).fg(self.style.muted_foreground)
             ])),
-            border: self.theme.role(Role::Accent),
-            window_background: self.theme.role(Role::WindowBackground),
+            border: self.style.accent,
+            window_background: self.style.background,
         }
     }
 
@@ -98,11 +105,17 @@ impl TrackDetailsOverlay<'_> {
                     truncate(&detail_row.value, budget).into_owned()
                 };
                 line([
-                    text(detail_row.prefix).fg(self.theme.role(Role::Dim)),
-                    text(value).fg(self.theme.role(Role::Text)),
+                    text(detail_row.prefix).fg(self.style.muted_foreground),
+                    text(value).fg(self.style.foreground),
                 ])
             })
             .collect()
+    }
+}
+
+impl Widget for &TrackDetailsWidget<'_> {
+    fn render(self, area: Rect, buffer: &mut Buffer) {
+        self.paint(self.areas(area), Canvas { area, buffer });
     }
 }
 
@@ -239,8 +252,8 @@ mod tests {
     use kernel::domain::{AudioFormat, Tags, Track};
 
     use crate::{
-        overlay::{rendered_canvas, track_details::TrackDetailsOverlay},
-        test_support::noir,
+        overlay::{modal::ModalRowStyle, track_details::TrackDetailsWidget},
+        test_support::{noir, rendered},
         theme::{ActiveTheme, ColorDepth},
     };
 
@@ -270,16 +283,17 @@ mod tests {
     fn track_details_overlay_shows_every_row_at_80x24() {
         let theme = noir();
         let track = full_track();
-        let overlay = TrackDetailsOverlay {
+        let overlay = TrackDetailsWidget {
             track: &track,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            style: ModalRowStyle::from_theme(&ActiveTheme::new(
+                &theme,
+                ColorDepth::TrueColor,
+            )),
             avoid: &[],
         };
         insta::assert_snapshot!(
-            rendered_canvas(80, 24, |canvas| {
-                overlay.render_in(overlay.areas(canvas.area), canvas);
-            })
-            .to_string()
+            rendered(80, 24, |frame| frame.render_widget(&overlay, frame.area()))
+                .to_string()
         );
     }
 
@@ -297,16 +311,17 @@ mod tests {
             })
             .audio_format(AudioFormat::default())
             .build();
-        let overlay = TrackDetailsOverlay {
+        let overlay = TrackDetailsWidget {
             track: &track,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            style: ModalRowStyle::from_theme(&ActiveTheme::new(
+                &theme,
+                ColorDepth::TrueColor,
+            )),
             avoid: &[],
         };
         insta::assert_snapshot!(
-            rendered_canvas(48, 16, |canvas| {
-                overlay.render_in(overlay.areas(canvas.area), canvas);
-            })
-            .to_string()
+            rendered(48, 16, |frame| frame.render_widget(&overlay, frame.area()))
+                .to_string()
         );
     }
 
@@ -314,14 +329,20 @@ mod tests {
     fn track_details_overlay_does_not_panic_on_a_tiny_terminal() {
         let theme = noir();
         let track = full_track();
-        let overlay = TrackDetailsOverlay {
+        let overlay = TrackDetailsWidget {
             track: &track,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            style: ModalRowStyle::from_theme(&ActiveTheme::new(
+                &theme,
+                ColorDepth::TrueColor,
+            )),
             avoid: &[],
         };
-        let _ = rendered_canvas(4, 3, |canvas| {
-            overlay.render_in(overlay.areas(canvas.area), canvas);
-        })
-        .to_string();
+        assert_eq!(
+            rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()))
+                .buffer()
+                .area
+                .height,
+            3
+        );
     }
 }

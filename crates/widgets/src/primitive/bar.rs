@@ -8,11 +8,11 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     pixels::floor,
     primitive::{
-        chip::{self, ChipColors},
+        chip::{self, ChipStyle},
         glyphs,
         span::{line, text},
     },
-    theme::BarStyle,
+    theme::{ActiveTheme, BarStyle},
 };
 
 const FULL_RUN: &str = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
@@ -111,9 +111,19 @@ pub(crate) struct HudProgressRow {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct HudProgressColors {
+pub(crate) struct HudProgressStyle {
     pub bar: BarStyle,
-    pub chip: ChipColors,
+    pub chip: ChipStyle,
+}
+
+impl HudProgressStyle {
+    #[must_use]
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            bar: BarStyle::progress(theme),
+            chip: ChipStyle::from_theme(theme),
+        }
+    }
 }
 
 #[must_use]
@@ -130,7 +140,7 @@ pub(crate) fn hud_progress_bar_width(row_width: u16, remaining: Duration) -> u16
 #[must_use]
 pub(crate) fn hud_progress_line(
     input: &HudProgressRow,
-    colors: &HudProgressColors,
+    colors: &HudProgressStyle,
 ) -> Line<'static> {
     let chip_spans = chip::spans(&remaining_label(input.remaining), colors.chip);
     let row_width = u16::try_from(input.row_width).unwrap_or(u16::MAX);
@@ -159,14 +169,8 @@ mod tests {
 
     use crate::{
         primitive::{
-            bar::{
-                BarFill,
-                HudProgressColors,
-                HudProgressRow,
-                fill,
-                hud_progress_line,
-            },
-            chip::ChipColors,
+            bar::{BarFill, HudProgressRow, HudProgressStyle, fill, hud_progress_line},
+            chip::ChipStyle,
             glyphs,
         },
         theme::BarStyle,
@@ -236,14 +240,14 @@ mod tests {
                 row_width,
                 remaining,
             },
-            &HudProgressColors {
+            &HudProgressStyle {
                 bar: BarStyle {
                     fill: Color::Red,
                     track: Color::Black,
                 },
-                chip: ChipColors {
+                chip: ChipStyle {
                     border: Color::Black,
-                    value: Color::White,
+                    foreground: Color::White,
                 },
             },
         );

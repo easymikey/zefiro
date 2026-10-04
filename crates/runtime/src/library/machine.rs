@@ -4,13 +4,12 @@ use std::{
 };
 
 use kernel::{
-    IoError,
     LibraryCmd,
     LibraryError,
     LibraryEvent,
     LibrarySubject,
     cmd::ScanMode,
-    update::Machine,
+    update::{Machine, Unhandled},
 };
 use strum::IntoStaticStr;
 
@@ -22,9 +21,8 @@ use crate::library::{
         DecodeFinished,
         DecodeMessage,
         Decoding,
-        DecodingError,
     },
-    watch::{LibraryWatch, WatchEffect, WatchError, WatchMessage},
+    watch::{LibraryWatch, WatchEffect, WatchMessage},
 };
 
 const DEBOUNCE: Duration = Duration::from_millis(500);
@@ -56,12 +54,6 @@ pub(crate) enum LibraryMessage {
     Stopping,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LibraryDriverError {
-    Watch(WatchError),
-    Decoding(DecodingError),
-}
-
 #[derive(Debug)]
 pub(crate) enum WatchChange {
     Watch(PathBuf),
@@ -79,13 +71,12 @@ pub(crate) enum LibraryEffect {
 
 impl Machine for LibraryState {
     type Message = LibraryMessage;
-    type Error = LibraryDriverError;
     type Effect = Vec<LibraryEffect>;
 
     fn transition(
         &mut self,
         input: LibraryMessage,
-    ) -> Result<Vec<LibraryEffect>, LibraryDriverError> {
+    ) -> Result<Vec<LibraryEffect>, Unhandled> {
         match input {
             LibraryMessage::Cmd(LibraryCmd::Scan {
                 music_dir,
@@ -126,11 +117,8 @@ impl LibraryState {
         &mut self,
         message: WatchMessage,
         scan_mode: ScanMode,
-    ) -> Result<Vec<LibraryEffect>, LibraryDriverError> {
-        let io = self
-            .watch
-            .transition(message)
-            .map_err(LibraryDriverError::Watch)?;
+    ) -> Result<Vec<LibraryEffect>, Unhandled> {
+        let io = self.watch.transition(message)?;
         self.scan_mode = scan_mode;
         Ok(self.outputs_for(io))
     }
@@ -139,11 +127,10 @@ impl LibraryState {
         &mut self,
         event: Result<(), notify::Error>,
         at: Instant,
-    ) -> Result<Vec<LibraryEffect>, LibraryDriverError> {
+    ) -> Result<Vec<LibraryEffect>, Unhandled> {
         let io = self
             .watch
-            .transition(WatchMessage::FilesystemChange(event))
-            .map_err(LibraryDriverError::Watch)?;
+            .transition(WatchMessage::FilesystemChange(event))?;
         self.scan_mode = ScanMode::Full;
         if matches!(io, WatchEffect::ArmDebounce) {
             self.debounce = Some(at + DEBOUNCE);
@@ -195,7 +182,7 @@ impl LibraryState {
     fn request_decode(
         &mut self,
         request: CoverRequest,
-    ) -> Result<Vec<LibraryEffect>, LibraryDriverError> {
+    ) -> Result<Vec<LibraryEffect>, Unhandled> {
         if let Some(outcome) = self.cover_cache.answer(&request) {
             let decoded = CoverDecoded {
                 path: request.path,
@@ -204,10 +191,7 @@ impl LibraryState {
             };
             return Ok(vec![LibraryEffect::Publish(decoded)]);
         }
-        let io = self
-            .decoding
-            .transition(DecodeMessage::Request(request))
-            .map_err(LibraryDriverError::Decoding)?;
+        let io = self.decoding.transition(DecodeMessage::Request(request))?;
         Ok(io.map(LibraryEffect::Decode).into_iter().collect())
     }
 
@@ -231,14 +215,7 @@ fn executed_outputs(
 }
 
 pub(crate) fn watch_failure(error: &notify::Error) -> LibraryEvent {
-    let kind = match &error.kind {
-        notify::ErrorKind::Io(source) => source.kind().into(),
-        notify::ErrorKind::PathNotFound => IoError::Missing,
-        notify::ErrorKind::Generic(_)
-        | notify::ErrorKind::WatchNotFound
-        | notify::ErrorKind::InvalidConfig(_)
-        | notify::ErrorKind::MaxFilesWatch => IoError::Other,
-    };
+    let kind = crate::watcher::io_error(error);
     let path = error.paths.first().map_or_else(PathBuf::new, Clone::clone);
     LibraryEvent::Error(LibraryError::File {
         subject: LibrarySubject::Watch,
@@ -256,7 +233,7 @@ mod tests {
         LibraryEvent,
         cmd::ScanMode,
         domain::Revision,
-        update::Machine,
+        update::{Machine, Unhandled},
     };
 
     use crate::library::{
@@ -266,16 +243,8 @@ mod tests {
             CoverOutcome,
             CoverRequest,
             DecodeFinished,
-            DecodingError,
         },
-        machine::{
-            DEBOUNCE,
-            LibraryDriverError,
-            LibraryEffect,
-            LibraryMessage,
-            LibraryState,
-            WatchChange,
-        },
+        machine::{DEBOUNCE, LibraryEffect, LibraryMessage, LibraryState, WatchChange},
     };
 
     #[test]
@@ -447,10 +416,7 @@ mod tests {
         let result = driver
             .transition(LibraryMessage::Cover(CoverRequest { path, size_px: 64 }));
 
-        assert!(matches!(
-            result,
-            Err(LibraryDriverError::Decoding(DecodingError::WhileBusy))
-        ));
+        assert!(matches!(result, Err(Unhandled)));
     }
 
     fn finished(path: &str) -> DecodeFinished {

@@ -5,6 +5,7 @@ use kernel::{
     Cmd,
     ConfigEvent,
     Cue,
+    Direction,
     Effect,
     LibraryEvent,
     MacosEvent,
@@ -20,11 +21,15 @@ use kernel::{
     Toast,
     domain::{Bounded, Percent, Revision, ThemeName, ViewIndex},
     message::AudioEvent,
-    update::update,
 };
 use rstest::rstest;
 
-use crate::support::{model_with_tracks, playing_model, router::moon_library_scanned};
+use crate::support::{
+    model_with_tracks,
+    playing_model,
+    router::moon_library_scanned,
+    step::update,
+};
 
 fn cues(model: &mut Model, messages: Vec<Message>) -> Vec<Cue> {
     let mut seen = Vec::new();
@@ -44,7 +49,7 @@ fn found(cmd: &Cmd) -> Vec<Cue> {
             | Effect::Macos(_)
             | Effect::Config(_)
             | Effect::WindowColors(_)
-            | Effect::RollShuffle { .. }
+            | Effect::RollShuffle(..)
             | Effect::After { .. }
             | Effect::Restart(_)
             | Effect::Quit => None,
@@ -107,9 +112,9 @@ fn toasted() -> Message {
     vec![Message::Playback(PlaybackRequest::CycleRepeat)],
     Cue::PlayOrderChanged
 )]
-#[case::nudging_the_volume_raises_a_cue(
+#[case::stepping_the_volume_raises_a_cue(
     model_with_tracks(3),
-    vec![Message::Playback(PlaybackRequest::StepVolume { steps: 1 })],
+    vec![Message::Playback(PlaybackRequest::StepVolume(Direction::Next))],
     Cue::VolumeChanged
 )]
 #[case::the_system_raising_the_volume_raises_a_cue(
@@ -169,7 +174,7 @@ fn a_non_transition_stays_silent(
 #[rstest]
 #[case::the_next_key(vec![
     Message::Playback(PlaybackRequest::Next),
-    Message::Audio(AudioEvent::Loaded { total: None }),
+    Message::Audio(AudioEvent::Loaded(None)),
     Message::Audio(AudioEvent::Playhead(Duration::from_millis(100))),
 ])]
 #[case::a_gapless_handoff(vec![
@@ -179,7 +184,7 @@ fn a_non_transition_stays_silent(
 ])]
 #[case::the_track_running_out(vec![
     Message::Audio(AudioEvent::Ended),
-    Message::Audio(AudioEvent::Loaded { total: None }),
+    Message::Audio(AudioEvent::Loaded(None)),
     Message::Audio(AudioEvent::Playhead(Duration::from_millis(10))),
 ])]
 fn one_track_change_cues_one_sweep_and_one_chip_pulse(#[case] messages: Vec<Message>) {

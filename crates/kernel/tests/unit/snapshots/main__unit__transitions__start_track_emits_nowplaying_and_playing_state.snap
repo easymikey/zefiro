@@ -21,7 +21,9 @@ expression: effs
     Library(
         AppendHistory(
             HistoryEntry {
-                path: "/tmp/track0.flac",
+                track: Local(
+                    "/tmp/track0.flac",
+                ),
                 title: "Song",
                 artist: Some(
                     "Artist",
@@ -36,9 +38,8 @@ expression: effs
         NowPlaying(
             Some(
                 Track {
-                    path: "/tmp/track0.flac",
-                    duration: Some(
-                        200s,
+                    source: Local(
+                        "/tmp/track0.flac",
                     ),
                     tags: Tags {
                         title: Some(
@@ -67,7 +68,9 @@ expression: effs
                         replay_gain: None,
                     },
                     display: "Artist — Song",
-                    tagging: Read,
+                    tagging: Read(
+                        200s,
+                    ),
                 },
             ),
         ),
@@ -78,7 +81,7 @@ expression: effs
         ),
     ),
     Macos(
-        PlaybackState(
+        SetPlayback(
             Playing,
         ),
     ),

@@ -107,7 +107,8 @@ mod tests {
     #[test]
     fn decay_pulls_bands_to_near_zero_within_a_few_frames() {
         let mut smoothing = SpectrumSmoothing::default();
-        let _ = smoothing.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
+        let bands = smoothing.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
+        assert_eq!(bands, *smoothing.bands());
         let mut decayed = *smoothing.bands();
         for _ in 0..30 {
             decayed = smoothing.fade(FRAME);
@@ -118,7 +119,8 @@ mod tests {
     #[test]
     fn bands_returns_the_same_values_without_advancing_them() {
         let mut smoothing = SpectrumSmoothing::default();
-        let _ = smoothing.smooth(&[0.4; SPECTRUM_BANDS], FRAME);
+        let bands = smoothing.smooth(&[0.4; SPECTRUM_BANDS], FRAME);
+        assert_eq!(bands, *smoothing.bands());
         assert_eq!(smoothing.bands(), smoothing.bands());
     }
 
@@ -150,17 +152,19 @@ mod tests {
     #[test]
     fn one_live_frame_moves() {
         let mut smoothing = SpectrumSmoothing::default();
-        let _ = smoothing.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
+        let bands = smoothing.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
+        assert_eq!(bands, *smoothing.bands());
         assert_eq!(smoothing.motion(), SpectrumMotion::Moving);
     }
 
     #[test]
     fn fade_settles_within_seven_frames_at_33_ms() {
         let mut smoothing = SpectrumSmoothing::default();
-        let _ = smoothing.smooth(&[1.0; SPECTRUM_BANDS], Duration::from_secs(1));
+        let bands = smoothing.smooth(&[1.0; SPECTRUM_BANDS], Duration::from_secs(1));
+        assert_eq!(bands, *smoothing.bands());
         let frame = Duration::from_millis(33);
         for _ in 0..7 {
-            let _ = smoothing.fade(frame);
+            assert_eq!(smoothing.fade(frame), *smoothing.bands());
         }
         assert_eq!(smoothing.motion(), SpectrumMotion::Settled);
     }
@@ -168,8 +172,10 @@ mod tests {
     #[test]
     fn zero_elapsed_keeps_moving() {
         let mut smoothing = SpectrumSmoothing::default();
-        let _ = smoothing.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
-        let _ = smoothing.smooth(&[1.0; SPECTRUM_BANDS], Duration::ZERO);
+        let first = smoothing.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
+        assert_eq!(first, *smoothing.bands());
+        let second = smoothing.smooth(&[1.0; SPECTRUM_BANDS], Duration::ZERO);
+        assert_eq!(second, *smoothing.bands());
         assert_eq!(smoothing.motion(), SpectrumMotion::Moving);
     }
 

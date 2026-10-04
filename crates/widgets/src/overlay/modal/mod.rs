@@ -8,7 +8,7 @@ pub use frame::ModalAreas;
 pub(crate) use frame::{Hint, Modal, ModalBounds, ModalSize, PlacedModal};
 pub(crate) use metrics::{
     COLUMN_SPACING,
-    ModalRowColors,
+    ModalRowStyle,
     QUERY_ROWS,
     SCROLL_PADDING,
     SCROLLBAR_INSET,
@@ -24,4 +24,4 @@ pub(crate) use placement::{
     leading_cells,
 };
 pub use placement::{ModalScrollAreas, OverlayAreas};
-pub(crate) use prompt::{Prompt, PromptBody};
+pub(crate) use prompt::{PromptBody, PromptStyle, PromptWidget};

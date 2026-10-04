@@ -5,13 +5,14 @@ use kernel::{
     ConfigCmd,
     MacosCmd,
     Message,
-    domain::{Driver, Model},
+    domain::{DriverName, Model},
 };
 
 use crate::{
     config::{ConfigPaths, driver::ConfigParts, machine::SAVE_DEBOUNCE},
-    driver::{DriverThread, spawn_driver, spawn_idle},
+    driver::{DriverLoop, DriverThread, spawn_idle},
     error::Error,
+    jobs::Jobs,
     latest::LatestSenders,
     library::{driver::LibraryParts, machine::LibraryMessage},
     registry,
@@ -26,11 +27,10 @@ pub(crate) struct SpawnParts<'a> {
     pub(crate) writers: &'a LatestSenders,
 }
 
-pub(crate) type AudioDriver = (DriverThread<AudioCmd>, SpectrumTap);
-
 pub(crate) type Spawn<C> = fn(&SpawnParts<'_>) -> Result<DriverThread<C>, Error>;
 
-pub(crate) type StartAudio = fn(&SpawnParts<'_>) -> Result<AudioDriver, Error>;
+pub(crate) type StartAudio =
+    fn(&SpawnParts<'_>) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Spawners {
@@ -45,9 +45,11 @@ impl Spawners {
     pub fn idle() -> Self {
         Self {
             audio: idle_audio,
-            library: |parts| spawn_idle(registry::row(Driver::Library), parts.sender),
-            config: |parts| spawn_idle(registry::row(Driver::Config), parts.sender),
-            macos: |parts| spawn_idle(registry::row(Driver::Macos), parts.sender),
+            library: |parts| {
+                spawn_idle(registry::row(DriverName::Library), parts.sender)
+            },
+            config: |parts| spawn_idle(registry::row(DriverName::Config), parts.sender),
+            macos: |parts| spawn_idle(registry::row(DriverName::Macos), parts.sender),
         }
     }
 
@@ -65,34 +67,43 @@ impl Spawners {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn spawn_audio_loop<R>(
-    run: R,
+fn idle_audio(
     spawn_parts: &SpawnParts<'_>,
-) -> Result<AudioDriver, Error>
-where
-    R: FnOnce(
-            &crossbeam_channel::Receiver<AudioCmd>,
-            &kernel::Outbox<kernel::AudioEvent>,
-        ) + Send
-        + 'static,
-{
-    let thread = spawn_driver(registry::row(Driver::Audio), run, spawn_parts.sender)?;
+) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
+    let thread = spawn_idle(registry::row(DriverName::Audio), spawn_parts.sender)?;
     Ok((thread, SpectrumTap::silent()))
 }
 
-fn idle_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioDriver, Error> {
-    let thread = spawn_idle(registry::row(Driver::Audio), spawn_parts.sender)?;
-    Ok((thread, SpectrumTap::silent()))
-}
-
-fn spawn_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioDriver, Error> {
-    let (audio_loop, spectrum) = crate::audio::audio_loop(spawn_parts.model);
-    let thread = spawn_driver(
-        registry::row(Driver::Audio),
-        move |inbox, outbox| audio_loop.run(inbox, outbox),
-        spawn_parts.sender,
-    )?;
+fn spawn_audio(
+    spawn_parts: &SpawnParts<'_>,
+) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
+    let settings = spawn_parts.model.settings.audio.clone();
+    let (tap_sender, tap_receiver) = crossbeam_channel::bounded(1);
+    let (deck_sender, heard) = crossbeam_channel::bounded(64);
+    let row = registry::row(DriverName::Audio);
+    let jobs = Jobs {
+        pick: audio::EngineEffect::into_job,
+        run: audio::AudioJob::run,
+    };
+    let thread = DriverLoop::<audio::AudioDriver, _> {
+        row,
+        inbox: spawn_parts.sender.clone(),
+        heard,
+        jobs,
+    }
+    .spawn(move || {
+        let (driver, spectrum) = audio::AudioDriver::new(settings, deck_sender);
+        if let Err(unclaimed) = tap_sender.send(spectrum) {
+            drop(unclaimed.into_inner());
+        }
+        driver
+    })?;
+    let spectrum = tap_receiver.recv().map_err(|_disconnected| Error::Spawn {
+        driver: row.driver,
+        source: std::io::Error::other(
+            "audio driver stopped before handing over its tap",
+        ),
+    })?;
     Ok((thread, spectrum))
 }
 
@@ -128,7 +139,7 @@ fn spawn_macos(spawn_parts: &SpawnParts<'_>) -> Result<DriverThread<MacosCmd>, E
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::{
         cell::RefCell,
         path::Path,
@@ -136,13 +147,14 @@ mod tests {
         time::Duration,
     };
 
+    use audio::SpectrumTap;
     use crossbeam_channel::{Receiver, Sender, unbounded};
     use kernel::{
         AudioCmd,
         AudioEvent,
         Message,
         Outbox,
-        domain::{Direction, Driver, DriverStatus, SettingRow, Startup},
+        domain::{Direction, DriverName, DriverStatus, SettingRow, Startup},
     };
     use library::LibraryDirs;
     use rstest::rstest;
@@ -152,16 +164,23 @@ mod tests {
         driver::{DriverThread, spawn_driver},
         error::Error,
         runtime::{Runtime, StartupPaths},
-        spawn::{
-            AudioDriver,
-            ConfigCmd,
-            LibraryMessage,
-            SpawnParts,
-            Spawners,
-            idle_audio,
-            spawn_audio_loop,
-        },
+        spawn::{ConfigCmd, LibraryMessage, SpawnParts, Spawners, idle_audio},
     };
+
+    pub(crate) fn spawn_audio_loop<R>(
+        run: R,
+        spawn_parts: &SpawnParts<'_>,
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error>
+    where
+        R: FnOnce(&Receiver<AudioCmd>, &Outbox<AudioEvent>) + Send + 'static,
+    {
+        let thread = spawn_driver(
+            crate::registry::row(DriverName::Audio),
+            run,
+            spawn_parts.sender,
+        )?;
+        Ok((thread, SpectrumTap::silent()))
+    }
 
     fn boom() -> ! {
         panic!("boom")
@@ -187,7 +206,9 @@ mod tests {
     static CONFIG_CALLS: AtomicUsize = AtomicUsize::new(0);
     static MACOS_CALLS: AtomicUsize = AtomicUsize::new(0);
 
-    fn counting_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioDriver, Error> {
+    fn counting_audio(
+        spawn_parts: &SpawnParts<'_>,
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
         AUDIO_CALLS.fetch_add(1, Ordering::SeqCst);
         idle_audio(spawn_parts)
     }
@@ -262,7 +283,7 @@ mod tests {
     }
 
     fn died_from_replay_gain_step(runtime: &mut Runtime) -> Message {
-        runtime.step(Message::Adjust {
+        runtime.step(Message::Step {
             row: SettingRow::ReplayGain,
             direction: Direction::Next,
         });
@@ -278,7 +299,7 @@ mod tests {
 
     fn panic_once_then_record_audio(
         spawn_parts: &SpawnParts<'_>,
-    ) -> Result<AudioDriver, Error> {
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
         let forward = AUDIO_RESTART_FORWARD
             .with(|slot| slot.borrow().clone())
             .unwrap();
@@ -326,7 +347,7 @@ mod tests {
         assert!(matches!(received[2], AudioCmd::SetCrossfade(_)));
         assert!(matches!(received[3], AudioCmd::SetReplayGain(_)));
         assert_eq!(
-            *runtime.model.drivers.status(Driver::Audio),
+            *runtime.model.drivers.status(DriverName::Audio),
             DriverStatus::Running
         );
         runtime.drain();
@@ -346,7 +367,9 @@ mod tests {
         }
     }
 
-    fn sequenced_audio(spawn_parts: &SpawnParts<'_>) -> Result<AudioDriver, Error> {
+    fn sequenced_audio(
+        spawn_parts: &SpawnParts<'_>,
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
         if SEQUENCED_SPAWNES.fetch_add(1, Ordering::SeqCst) == 1 {
             let order = DROP_SPAWN_SEQUENCE.fetch_add(1, Ordering::SeqCst);
             SECOND_SPAWN_ORDER.store(order, Ordering::SeqCst);
@@ -397,7 +420,7 @@ mod tests {
     ) -> Result<DriverThread<LibraryMessage>, Error> {
         RESTART_LIBRARY_CALLS.fetch_add(1, Ordering::SeqCst);
         spawn_driver(
-            crate::registry::row(Driver::Library),
+            crate::registry::row(DriverName::Library),
             |_: &Receiver<LibraryMessage>, _: &Outbox<Message>| boom(),
             spawn_parts.sender,
         )
@@ -408,21 +431,21 @@ mod tests {
     ) -> Result<DriverThread<ConfigCmd>, Error> {
         RESTART_CONFIG_CALLS.fetch_add(1, Ordering::SeqCst);
         spawn_driver(
-            crate::registry::row(Driver::Config),
+            crate::registry::row(DriverName::Config),
             |_: &Receiver<ConfigCmd>, _: &Outbox<Message>| boom(),
             spawn_parts.sender,
         )
     }
 
     struct RestartRow {
-        driver: Driver,
+        driver: DriverName,
         deaths: usize,
         spawns: usize,
         calls: &'static AtomicUsize,
     }
 
-    fn spawners_for(driver: Driver) -> Spawners {
-        if driver == Driver::Library {
+    fn spawners_for(driver: DriverName) -> Spawners {
+        if driver == DriverName::Library {
             Spawners {
                 library: panicking_library,
                 ..Spawners::idle()
@@ -437,13 +460,13 @@ mod tests {
 
     #[rstest]
     #[case::config_degrades_without_a_restart(RestartRow {
-        driver: Driver::Config,
+        driver: DriverName::Config,
         deaths: 1,
         spawns: 1,
         calls: &RESTART_CONFIG_CALLS,
     })]
     #[case::library_restarts_once_then_degrades(RestartRow {
-        driver: Driver::Library,
+        driver: DriverName::Library,
         deaths: 2,
         spawns: 2,
         calls: &RESTART_LIBRARY_CALLS,

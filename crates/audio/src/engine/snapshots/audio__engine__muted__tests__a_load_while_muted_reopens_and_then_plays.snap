@@ -4,27 +4,41 @@ assertion_line: 450
 expression: log
 ---
 [
-    Open {
-        device: SystemDefault,
-        speed: Speed(
-            1.0,
-        ),
-    },
-    StartLoad {
-        path: "/a",
-        speed: Speed(
-            1.0,
-        ),
-    },
-    Batch(
-        [
-            Start {
-                volume: 1.0,
-                total: Some(
-                    100s,
+    Cmd {
+        effects: [
+            Open {
+                device: SystemDefault,
+                speed: Speed(
+                    1.0,
                 ),
             },
+        ],
+        messages: [],
+    },
+    Cmd {
+        effects: [
+            StartLoad {
+                path: "/a",
+                speed: Speed(
+                    1.0,
+                ),
+            },
+        ],
+        messages: [],
+    },
+    Cmd {
+        effects: [
+            Start(
+                1.0,
+            ),
             Report,
         ],
-    ),
+        messages: [
+            Loaded(
+                Some(
+                    100s,
+                ),
+            ),
+        ],
+    },
 ]

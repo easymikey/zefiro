@@ -10,18 +10,16 @@ expression: "walked(model, messages)"
                 History,
             ),
         ),
-        Batch(
-            [
-                Library(
-                    LoadHistory {
-                        limit: 200,
-                    },
+        [
+            Library(
+                LoadHistory(
+                    200,
                 ),
-                Animate(
-                    OverlayOpened,
-                ),
-            ],
-        ),
+            ),
+            Animate(
+                OverlayOpened,
+            ),
+        ],
         Stopped,
         Some(
             History(
@@ -62,11 +60,11 @@ expression: "walked(model, messages)"
         Overlay(
             Close,
         ),
-        One(
+        [
             Animate(
                 OverlayClosed,
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {

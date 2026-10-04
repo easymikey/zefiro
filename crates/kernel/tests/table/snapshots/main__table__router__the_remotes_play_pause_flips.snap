@@ -8,92 +8,96 @@ expression: "walked(model, messages)"
         Playback(
             Toggle,
         ),
-        Batch(
-            [
-                Audio(
-                    Stop,
-                ),
-                Audio(
-                    Load(
-                        TrackLoad {
-                            path: "/tmp/track0.flac",
-                            gain: None,
-                            revision: Revision(
-                                1,
-                            ),
-                        },
-                    ),
-                ),
-                Library(
-                    AppendHistory(
-                        HistoryEntry {
-                            path: "/tmp/track0.flac",
-                            title: "track0",
-                            artist: None,
-                            at: Moment(
-                                0ns,
-                            ),
-                        },
-                    ),
-                ),
-                Macos(
-                    NowPlaying(
-                        Some(
-                            Track {
-                                path: "/tmp/track0.flac",
-                                duration: None,
-                                tags: Tags {
-                                    title: None,
-                                    artist: None,
-                                    album: None,
-                                    album_artist: None,
-                                    date: None,
-                                    genre: None,
-                                    track: None,
-                                    track_total: None,
-                                    disc: None,
-                                    composer: None,
-                                    comment: None,
-                                    lyrics: None,
-                                },
-                                audio_format: AudioFormat {
-                                    format: None,
-                                    bitrate_kbps: None,
-                                    sample_rate_hz: None,
-                                    bits_per_sample: None,
-                                    channels: None,
-                                    replay_gain: None,
-                                },
-                                display: "track0",
-                                tagging: Listed,
-                            },
+        [
+            Audio(
+                Stop,
+            ),
+            Audio(
+                Load(
+                    TrackLoad {
+                        path: "/tmp/track0.flac",
+                        gain: None,
+                        revision: Revision(
+                            1,
                         ),
+                    },
+                ),
+            ),
+            Library(
+                AppendHistory(
+                    HistoryEntry {
+                        track: Local(
+                            "/tmp/track0.flac",
+                        ),
+                        title: "track0",
+                        artist: None,
+                        at: Moment(
+                            0ns,
+                        ),
+                    },
+                ),
+            ),
+            Macos(
+                NowPlaying(
+                    Some(
+                        Track {
+                            source: Local(
+                                "/tmp/track0.flac",
+                            ),
+                            tags: Tags {
+                                title: None,
+                                artist: None,
+                                album: None,
+                                album_artist: None,
+                                date: None,
+                                genre: None,
+                                track: None,
+                                track_total: None,
+                                disc: None,
+                                composer: None,
+                                comment: None,
+                                lyrics: None,
+                            },
+                            audio_format: AudioFormat {
+                                format: None,
+                                bitrate_kbps: None,
+                                sample_rate_hz: None,
+                                bits_per_sample: None,
+                                channels: None,
+                                replay_gain: None,
+                            },
+                            display: "track0",
+                            tagging: Listed(
+                                None,
+                            ),
+                        },
                     ),
                 ),
-                Audio(
-                    Playback(
-                        Playing,
-                    ),
+            ),
+            Audio(
+                Playback(
+                    Playing,
                 ),
-                Macos(
-                    PlaybackState(
-                        Playing,
-                    ),
+            ),
+            Macos(
+                SetPlayback(
+                    Playing,
                 ),
-                Animate(
-                    TrackChanged,
+            ),
+            Animate(
+                TrackChanged,
+            ),
+            Animate(
+                PlaybackChanged(
+                    Play,
                 ),
-                Animate(
-                    PlaybackChanged(
-                        Play,
-                    ),
-                ),
-            ],
-        ),
+            ),
+        ],
         Loading {
             track: Track {
-                path: "/tmp/track0.flac",
-                duration: None,
+                source: Local(
+                    "/tmp/track0.flac",
+                ),
                 tags: Tags {
                     title: None,
                     artist: None,
@@ -117,7 +121,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "track0",
-                tagging: Listed,
+                tagging: Listed(
+                    None,
+                ),
             },
             at: 0ns,
         },
@@ -148,21 +154,22 @@ expression: "walked(model, messages)"
     ),
     (
         Audio(
-            Loaded {
-                total: None,
-            },
+            Loaded(
+                None,
+            ),
         ),
-        One(
+        [
             Macos(
-                PlaybackPosition(
+                SetPosition(
                     0ns,
                 ),
             ),
-        ),
+        ],
         Playing {
             track: Track {
-                path: "/tmp/track0.flac",
-                duration: None,
+                source: Local(
+                    "/tmp/track0.flac",
+                ),
                 tags: Tags {
                     title: None,
                     artist: None,
@@ -186,7 +193,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "track0",
-                tagging: Listed,
+                tagging: Listed(
+                    None,
+                ),
             },
             head: Playhead {
                 offset: 0ns,
@@ -228,29 +237,28 @@ expression: "walked(model, messages)"
         Playback(
             Toggle,
         ),
-        Batch(
-            [
-                Audio(
-                    Playback(
-                        Paused,
-                    ),
+        [
+            Audio(
+                Playback(
+                    Paused,
                 ),
-                Macos(
-                    PlaybackState(
-                        Paused,
-                    ),
+            ),
+            Macos(
+                SetPlayback(
+                    Paused,
                 ),
-                Animate(
-                    PlaybackChanged(
-                        Pause,
-                    ),
+            ),
+            Animate(
+                PlaybackChanged(
+                    Pause,
                 ),
-            ],
-        ),
+            ),
+        ],
         Paused {
             track: Track {
-                path: "/tmp/track0.flac",
-                duration: None,
+                source: Local(
+                    "/tmp/track0.flac",
+                ),
                 tags: Tags {
                     title: None,
                     artist: None,
@@ -274,7 +282,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "track0",
-                tagging: Listed,
+                tagging: Listed(
+                    None,
+                ),
             },
             at: 0ns,
             by: Listener,

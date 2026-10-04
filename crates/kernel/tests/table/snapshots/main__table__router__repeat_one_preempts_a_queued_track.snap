@@ -10,18 +10,17 @@ expression: "walked(model, messages)"
                 95s,
             ),
         ),
-        One(
+        [
             Macos(
-                PlaybackPosition(
+                SetPosition(
                     95s,
                 ),
             ),
-        ),
+        ],
         Playing {
             track: Track {
-                path: "/tmp/track1.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/tmp/track1.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -46,7 +45,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "track1.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 95s,
@@ -69,7 +70,9 @@ expression: "walked(model, messages)"
             len: 3,
         },
         [
-            Index(2),
+            Local(
+                "/tmp/track2.flac",
+            ),
         ],
         One,
         Linear,
@@ -94,36 +97,33 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        Batch(
-            [
-                Audio(
-                    Preload(
-                        TrackLoad {
-                            path: "/tmp/track1.flac",
-                            gain: None,
-                            revision: Revision(
-                                1,
-                            ),
-                        },
-                    ),
+        [
+            Audio(
+                Preload(
+                    TrackLoad {
+                        path: "/tmp/track1.flac",
+                        gain: None,
+                        revision: Revision(
+                            1,
+                        ),
+                    },
                 ),
-                Library(
-                    PrefetchCover(
-                        "/tmp/track1.flac",
-                    ),
+            ),
+            Library(
+                PrefetchCover(
+                    "/tmp/track1.flac",
                 ),
-                Macos(
-                    PlaybackPosition(
-                        95s,
-                    ),
+            ),
+            Macos(
+                SetPosition(
+                    95s,
                 ),
-            ],
-        ),
+            ),
+        ],
         Playing {
             track: Track {
-                path: "/tmp/track1.flac",
-                duration: Some(
-                    100s,
+                source: Local(
+                    "/tmp/track1.flac",
                 ),
                 tags: Tags {
                     title: None,
@@ -148,7 +148,9 @@ expression: "walked(model, messages)"
                     replay_gain: None,
                 },
                 display: "track1.flac",
-                tagging: Read,
+                tagging: Read(
+                    100s,
+                ),
             },
             head: Playhead {
                 offset: 95s,
@@ -161,9 +163,8 @@ expression: "walked(model, messages)"
             },
             preload: Queued(
                 Track {
-                    path: "/tmp/track1.flac",
-                    duration: Some(
-                        100s,
+                    source: Local(
+                        "/tmp/track1.flac",
                     ),
                     tags: Tags {
                         title: None,
@@ -188,7 +189,9 @@ expression: "walked(model, messages)"
                         replay_gain: None,
                     },
                     display: "track1.flac",
-                    tagging: Read,
+                    tagging: Read(
+                        100s,
+                    ),
                 },
             ),
         },
@@ -202,7 +205,9 @@ expression: "walked(model, messages)"
             len: 3,
         },
         [
-            Index(2),
+            Local(
+                "/tmp/track2.flac",
+            ),
         ],
         One,
         Linear,

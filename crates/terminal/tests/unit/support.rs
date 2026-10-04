@@ -14,7 +14,7 @@ use kernel::{
         Speed,
         Tags,
         Track,
-        appearance::Look,
+        appearance::Appearance,
     },
     update::keymap::{Bindings, KeyBinding},
 };
@@ -109,8 +109,8 @@ impl Scenery {
         }
     }
 
-    pub(crate) fn look_mut(&mut self) -> &mut Look {
-        &mut self.model.settings.look
+    pub(crate) fn appearance_mut(&mut self) -> &mut Appearance {
+        &mut self.model.settings.appearance
     }
 
     pub(crate) fn scene_at(&self, clock: Duration) -> Scene<'_> {

@@ -19,10 +19,9 @@ use kernel::{
         ThemeName,
         appearance_rows::AppearanceField,
     },
-    update::update,
 };
 
-use crate::support::{effects, model_with_tracks, playing_model};
+use crate::support::{effects, model_with_tracks, playing_model, step::update};
 
 #[test]
 fn toggling_from_stopped_starts_the_track() {
@@ -49,7 +48,7 @@ fn play_selected_emits_its_effects() {
 }
 
 #[test]
-fn adjusting_a_custom_row_emits_its_effect() {
+fn stepping_an_appearance_row_emits_its_effect() {
     let mut m = Model::default();
     let id = AppearanceField::SpeedChip;
     let count = OptionCount::new(4).unwrap();
@@ -65,7 +64,7 @@ fn adjusting_a_custom_row_emits_its_effect() {
     });
     let cmd = update(
         &mut m,
-        Message::Adjust {
+        Message::Step {
             row: SettingRow::Appearance(id),
             direction: Direction::Next,
         },

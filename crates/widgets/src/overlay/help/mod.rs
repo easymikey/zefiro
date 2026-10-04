@@ -12,16 +12,16 @@ use ratatui::{
 use crate::{
     overlay::{
         help::{
-            columns::{HelpColors, HelpColumn, select_help_columns},
-            groups::{CHORD_GAP, COLUMN_GAP, build_help_groups, small_count_u16},
+            columns::{HelpColumn, HelpStyle, select_help_columns},
+            groups::{CHORD_GAP, COLUMN_GAP, HelpGroups, small_count_u16},
         },
         modal::{ModalPlacement, OverlayAreas, OverlayContainer},
     },
     primitive::{canvas::Canvas, inset::Inset},
-    theme::{ActiveTheme, Role},
+    theme::ActiveTheme,
 };
 
-fn render_help_columns(body: Rect, content: &HelpContent, buffer: &mut Buffer) {
+fn paint_help_columns(body: Rect, content: &HelpContent, buffer: &mut Buffer) {
     let widths: Vec<Constraint> = content
         .columns
         .iter()
@@ -44,7 +44,7 @@ fn render_help_columns(body: Rect, content: &HelpContent, buffer: &mut Buffer) {
 const TITLE: &str = "KEYS";
 
 #[derive(Debug)]
-pub(crate) struct HelpOverlay<'a> {
+pub(crate) struct HelpWidget<'a> {
     pub theme: ActiveTheme<'a>,
     pub bindings: &'a [KeyBinding],
     pub avoid: &'a [Rect],
@@ -55,13 +55,13 @@ struct HelpContent {
     column_gap: u16,
 }
 
-impl<'a> HelpOverlay<'a> {
+impl<'a> HelpWidget<'a> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
         OverlayAreas::List(self.placement(&self.content(screen)).areas(screen))
     }
 
-    pub(crate) fn render_in(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
+    fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
         let OverlayAreas::List(areas) = areas else {
             return;
         };
@@ -77,21 +77,13 @@ impl<'a> HelpOverlay<'a> {
         if areas.content.width == 0 || areas.content.height == 0 {
             return;
         }
-        render_help_columns(areas.content, &content, buffer);
-    }
-
-    fn colors(&self) -> HelpColors {
-        let theme = self.theme;
-        HelpColors {
-            title: theme.role(Role::Frame),
-            key: theme.muted_accent(),
-            description: theme.role(Role::Text),
-        }
+        paint_help_columns(areas.content, &content, buffer);
     }
 
     fn content(&self, screen: Rect) -> HelpContent {
-        let groups = build_help_groups(self.bindings);
-        let columns = select_help_columns(&groups, self.colors(), screen);
+        let groups = HelpGroups::new(self.bindings);
+        let columns =
+            select_help_columns(&groups, HelpStyle::from_theme(&self.theme), screen);
         let column_gap = if columns.len() > 1 { COLUMN_GAP } else { 0 };
         HelpContent {
             columns,
@@ -110,7 +102,7 @@ impl<'a> HelpOverlay<'a> {
         let gaps = small_count_u16(columns.len().saturating_sub(1));
         ModalPlacement {
             inset: Inset::overlay(),
-            container: OverlayContainer::Modal { avoid: self.avoid },
+            container: OverlayContainer::Modal(self.avoid),
             border_title: Line::default(),
             modal_title: TITLE,
             content_width: columns.iter().map(|column| column.width).sum::<u16>()
@@ -125,26 +117,32 @@ impl<'a> HelpOverlay<'a> {
     }
 }
 
+impl Widget for &HelpWidget<'_> {
+    fn render(self, area: Rect, buffer: &mut Buffer) {
+        self.paint(self.areas(area), Canvas { area, buffer });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
     use crate::{
-        overlay::{help::HelpOverlay, rendered_canvas},
-        test_support::{bindings, noir},
+        overlay::help::HelpWidget,
+        test_support::{bindings, noir, rendered},
         theme::{ActiveTheme, ColorDepth},
     };
 
     fn help_frame(width: u16, height: u16) -> String {
         let theme = noir();
         let bindings = bindings();
-        let overlay = HelpOverlay {
+        let overlay = HelpWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             bindings: &bindings,
             avoid: &[],
         };
-        rendered_canvas(width, height, |canvas| {
-            overlay.render_in(overlay.areas(canvas.area), canvas);
+        rendered(width, height, |frame| {
+            frame.render_widget(&overlay, frame.area());
         })
         .to_string()
     }
@@ -163,6 +161,6 @@ mod tests {
 
     #[test]
     fn help_overlay_does_not_panic_on_a_tiny_terminal() {
-        let _ = help_frame(4, 3);
+        assert_eq!(help_frame(4, 3).lines().count(), 3);
     }
 }

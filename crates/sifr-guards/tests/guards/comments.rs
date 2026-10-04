@@ -40,6 +40,21 @@ const ALLOW: &[Allow] = &[
         "one line saying why this guard exists",
     ),
     Allow::new(
+        "sifr-guards/tests/guards/conventions.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/conventions_allow.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
+        "sifr-guards/tests/guards/lexer.rs",
+        "GUARD:",
+        "one line saying why this guard exists",
+    ),
+    Allow::new(
         "sifr-guards/tests/guards/demeter.rs",
         "GUARD:",
         "one line saying why this guard exists",

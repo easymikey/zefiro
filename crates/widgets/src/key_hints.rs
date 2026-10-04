@@ -60,8 +60,8 @@ const SETTINGS_HINTS: [SettingsHint; 4] = [
         label: "move",
     },
     SettingsHint {
-        primary: Action::SettingsAdjustDown,
-        secondary: Some(Action::SettingsAdjustUp),
+        primary: Action::SettingsStepDown,
+        secondary: Some(Action::SettingsStepUp),
         label: "adjust",
     },
     SettingsHint {

@@ -1,4 +1,4 @@
-use config::{AppearanceFile, ConfigReload, ThemeFile};
+use config::{AppearanceFile, ConfigSettings, ThemeFile};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum ThemeReloadError {
@@ -14,7 +14,9 @@ pub(crate) fn appearance_reload(
     text.map_or_else(|| Ok(AppearanceFile::default()), config::parse_appearance)
 }
 
-pub(crate) fn config_reload(text: Option<&str>) -> Result<ConfigReload, config::Error> {
+pub(crate) fn config_reload(
+    text: Option<&str>,
+) -> Result<ConfigSettings, config::Error> {
     config::parse_config_reload(text.unwrap_or(""))
 }
 

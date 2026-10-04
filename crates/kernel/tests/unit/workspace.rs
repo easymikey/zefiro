@@ -1,15 +1,17 @@
 use kernel::{
     Cmd,
     ConfigEvent,
+    ConfigReload,
     Cue,
     Effect,
+    IoError,
     Message,
     Moment,
     Timer,
     domain::{
         Action,
         ConfigError,
-        ConfigFile,
+        ConfigName,
         KeyOverride,
         KeymapOverrides,
         Model,
@@ -18,34 +20,39 @@ use kernel::{
         ThemeName,
         Toast,
     },
-    update::update,
 };
 use rstest::rstest;
 
-use crate::support::first_toast_expiry;
+use crate::support::{first_toast_expiry, step::update};
 
 fn reduce(model: &mut Model, message: Message) -> Cmd {
     update(model, message, Moment::default()).unwrap()
 }
 
-fn fail(source: ConfigFile, text: &str) -> ConfigEvent {
-    ConfigEvent::SourceFailed {
-        source,
-        text: text.to_string(),
-    }
+fn theme() -> ConfigName {
+    ConfigName::Theme(ThemeName::from_static("noir"))
 }
 
-fn recovered(source: ConfigFile) -> ConfigEvent {
-    ConfigEvent::SourceRecovered(source)
+fn fail(source: ConfigName, text: &str) -> ConfigEvent {
+    ConfigEvent::Reloaded(ConfigReload {
+        name: source,
+        result: Err(ConfigError::Invalid {
+            detail: text.to_string(),
+        }),
+    })
+}
+
+fn recovered(source: ConfigName) -> ConfigEvent {
+    ConfigEvent::Reloaded(ConfigReload {
+        name: source,
+        result: Ok(()),
+    })
 }
 
 fn has_raised_a_toast(cmd: &Cmd) -> bool {
     matches!(
-        cmd,
-        Cmd::Batch(effects) if matches!(
-            effects.as_slice(),
-            [Effect::Animate(Cue::ToastRaised), Effect::After { .. }]
-        )
+        cmd.effects().as_slice(),
+        [Effect::Animate(Cue::ToastRaised), Effect::After { .. }]
     )
 }
 
@@ -59,10 +66,7 @@ fn showing_a_toast_installs_it_and_clearing_takes_it_away() {
     assert_eq!(model.workspace.toasts, vec![toast]);
     assert_eq!(
         cmd,
-        Cmd::Batch(vec![
-            Effect::Animate(Cue::ToastRaised),
-            first_toast_expiry()
-        ])
+        Cmd::from_iter([Effect::Animate(Cue::ToastRaised), first_toast_expiry()])
     );
 }
 
@@ -84,22 +88,13 @@ fn a_shown_toast_schedules_its_expiry_after_the_one_lifetime() {
 fn a_source_failing_again_with_the_same_words_does_not_raise_a_second_toast() {
     let mut model = Model::default();
 
-    let first = reduce(
-        &mut model,
-        Message::Config(fail(ConfigFile::Theme, "Theme: boom")),
-    );
+    let first = reduce(&mut model, Message::Config(fail(theme(), "Theme: boom")));
     model.workspace.toasts.clear();
-    let repeat = reduce(
-        &mut model,
-        Message::Config(fail(ConfigFile::Theme, "Theme: boom")),
-    );
-    let changed = reduce(
-        &mut model,
-        Message::Config(fail(ConfigFile::Theme, "Theme: worse")),
-    );
+    let repeat = reduce(&mut model, Message::Config(fail(theme(), "Theme: boom")));
+    let changed = reduce(&mut model, Message::Config(fail(theme(), "Theme: worse")));
 
     assert!(has_raised_a_toast(&first), "{first:?}");
-    assert!(matches!(repeat, Cmd::None));
+    assert!(repeat == Cmd::none());
     assert!(has_raised_a_toast(&changed), "{changed:?}");
     assert_eq!(
         model
@@ -120,42 +115,42 @@ fn keys_reloaded_installs_the_merged_table() {
         Message::Config(ConfigEvent::KeymapReloaded(Box::new(config.clone()))),
     );
     assert_eq!(model.workspace.keymap.overrides(), &config);
-    assert!(matches!(cmd, Cmd::None));
+    assert!(cmd == Cmd::none());
 }
 
 #[rstest]
 #[case::a_failing_source_shows_its_own_text(
-    &[Message::Config(fail(ConfigFile::Theme, "Theme: boom"))],
+    &[Message::Config(fail(theme(), "Theme: boom"))],
     Some("Theme: boom")
 )]
 #[case::recovery_clears_the_toast_it_put_up(
     &[
-        Message::Config(fail(ConfigFile::Theme, "Theme: boom")),
-        Message::Config(recovered(ConfigFile::Theme)),
+        Message::Config(fail(theme(), "Theme: boom")),
+        Message::Config(recovered(theme())),
     ],
     None
 )]
 #[case::recovery_uncovers_the_toast_beneath(
     &[
-        Message::Config(fail(ConfigFile::Config, "Keymap: bad chord")),
-        Message::Config(fail(ConfigFile::Theme, "Theme: boom")),
-        Message::Config(recovered(ConfigFile::Theme)),
+        Message::Config(fail(ConfigName::Config, "Keymap: bad chord")),
+        Message::Config(fail(theme(), "Theme: boom")),
+        Message::Config(recovered(theme())),
     ],
     Some("Keymap: bad chord")
 )]
 #[case::recovery_of_a_source_nobody_is_showing_keeps_the_toast(
     &[
-        Message::Config(fail(ConfigFile::Theme, "Theme: boom")),
-        Message::Config(fail(ConfigFile::Appearance, "UI: broken")),
-        Message::Config(recovered(ConfigFile::Theme)),
+        Message::Config(fail(theme(), "Theme: boom")),
+        Message::Config(fail(ConfigName::Appearance, "UI: broken")),
+        Message::Config(recovered(theme())),
     ],
     Some("UI: broken")
 )]
 #[case::recovery_without_a_failure_disturbs_nothing(
-    &[Message::Config(recovered(ConfigFile::Theme))],
+    &[Message::Config(recovered(theme()))],
     None
 )]
-fn source_errors_decide_which_toast_is_on_screen(
+fn config_errors_decide_which_toast_is_on_screen(
     #[case] requests: &[Message],
     #[case] expected: Option<&str>,
 ) {
@@ -182,8 +177,8 @@ fn a_config_failure_shows_the_kernels_own_words() {
     let cmd = reduce(
         &mut model,
         Message::Config(ConfigEvent::Error(ConfigError::Unreadable {
-            file: ConfigFile::Appearance,
-            detail: "permission denied".to_string(),
+            file: ConfigName::Appearance,
+            kind: IoError::Denied,
         })),
     );
 
@@ -202,8 +197,8 @@ fn a_config_failure_shows_the_kernels_own_words() {
 fn a_repeated_config_failure_still_raises_its_own_toast() {
     let mut model = Model::default();
     let failure = ConfigError::Save {
-        file: ConfigFile::Config,
-        detail: "disk full".to_string(),
+        file: ConfigName::Config,
+        kind: IoError::Full,
     };
 
     let _first = reduce(
@@ -221,12 +216,10 @@ fn a_repeated_config_failure_still_raises_its_own_toast() {
 
 #[test]
 fn config_failures_word_each_kind_distinctly() {
-    let unreadable = ConfigError::ThemesUnreadable {
-        detail: "not a directory".to_string(),
-    };
+    let unreadable = ConfigError::ThemesUnreadable(IoError::Other);
     let save = ConfigError::Save {
-        file: ConfigFile::Theme,
-        detail: "disk full".to_string(),
+        file: theme(),
+        kind: IoError::Full,
     };
 
     insta::assert_debug_snapshot!((unreadable.to_string(), save.to_string()));

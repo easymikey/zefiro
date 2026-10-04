@@ -28,9 +28,7 @@ pub enum Overlay {
         error: Option<PlaylistNameError>,
     },
     History(CursorOver<()>),
-    Settings {
-        selected: SettingRow,
-    },
+    Settings(SettingRow),
     ConfirmDelete(DeleteCandidate),
     JumpToTime(JumpDigits),
     TrackDetails(Arc<Track>),
@@ -49,7 +47,7 @@ impl Overlay {
             | Overlay::MusicDir { .. } => true,
             Overlay::Help
             | Overlay::History(_)
-            | Overlay::Settings { .. }
+            | Overlay::Settings(..)
             | Overlay::ConfirmDelete(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_) => false,
@@ -68,12 +66,12 @@ impl Overlay {
                 ..
             } => Some(SaveLine {
                 text: reason.to_string(),
-                phase: SavePhase::Failure,
+                phase: SavePhase::Failed,
             }),
             Overlay::Help
             | Overlay::Search(_)
             | Overlay::History(_)
-            | Overlay::Settings { .. }
+            | Overlay::Settings(..)
             | Overlay::ConfirmDelete(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_)
@@ -96,7 +94,7 @@ pub enum MusicDirError {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchQuery {
     pub input: String,
-    pub matches: Vec<usize>,
+    pub matches: Vec<ViewIndex>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

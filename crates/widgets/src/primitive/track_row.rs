@@ -21,6 +21,7 @@ use crate::{
         span::{line, text},
         text::{blanks, truncate},
     },
+    theme::{ActiveTheme, Role},
 };
 
 const CHIP_GAP: usize = 1;
@@ -42,17 +43,31 @@ pub(crate) struct TrackRowView<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct RowColors {
-    pub(crate) text: Color,
-    pub(crate) selection_text: Color,
+pub(crate) struct TrackRowStyle {
+    pub(crate) foreground: Color,
+    pub(crate) selected_foreground: Color,
+    pub(crate) selected_background: Color,
     pub(crate) favorite: Color,
-    pub(crate) queue: Color,
+    pub(crate) highlight: Color,
+}
+
+impl TrackRowStyle {
+    #[must_use]
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        Self {
+            foreground: theme.role(Role::Text),
+            selected_foreground: theme.role(Role::SelectionForeground),
+            selected_background: theme.role(Role::SelectionBackground),
+            favorite: theme.favorite(),
+            highlight: theme.role(Role::Highlight),
+        }
+    }
 }
 
 #[must_use]
 pub(crate) fn track_row_line(
     view: &TrackRowView<'_>,
-    colors: RowColors,
+    style: TrackRowStyle,
 ) -> Line<'static> {
     let favorite_width = usize::from(FAVORITE_COLUMNS);
     let playing_width = usize::from(PLAYING_COLUMNS);
@@ -77,41 +92,37 @@ pub(crate) fn track_row_line(
     } else {
         CHIP_GAP
     };
-    let style = match view.selected {
-        Selected::Yes => Style::default().fg(colors.selection_text),
-        Selected::No => Style::default().fg(colors.text),
+    let row_style = match view.selected {
+        Selected::Yes => Style::default().fg(style.selected_foreground),
+        Selected::No => Style::default().fg(style.foreground),
     };
     line([
-        text(fav).fg(colors.favorite),
-        text(blanks(column_padding(fav, favorite_width))).style(style),
-        text(playing).style(style),
-        text(blanks(column_padding(playing, playing_width))).style(style),
-        text(title).style(style),
-        text(blanks(gap)).style(style),
-        text(chip).fg(colors.queue),
+        text(fav).fg(style.favorite),
+        text(blanks(column_padding(fav, favorite_width))).style(row_style),
+        text(playing).style(row_style),
+        text(blanks(column_padding(playing, playing_width))).style(row_style),
+        text(title).style(row_style),
+        text(blanks(gap)).style(row_style),
+        text(chip).fg(style.highlight),
     ])
 }
 
 #[cfg(test)]
 mod tests {
-    use ratatui::style::Color;
     use unicode_width::UnicodeWidthStr;
 
     use crate::{
         Playing,
         primitive::{
             marker::{Favorite, MARKERS_WIDTH, QueuePosition},
-            track_row::{RowColors, Selected, TrackRowView, track_row_line},
+            track_row::{Selected, TrackRowStyle, TrackRowView, track_row_line},
         },
+        test_support::noir,
+        theme::{ActiveTheme, ColorDepth},
     };
 
-    fn colors() -> RowColors {
-        RowColors {
-            text: Color::White,
-            selection_text: Color::Yellow,
-            favorite: Color::Magenta,
-            queue: Color::Cyan,
-        }
+    fn colors() -> TrackRowStyle {
+        TrackRowStyle::from_theme(&ActiveTheme::new(&noir(), ColorDepth::TrueColor))
     }
 
     fn base_props(title: &str, row_width: usize) -> TrackRowView<'_> {

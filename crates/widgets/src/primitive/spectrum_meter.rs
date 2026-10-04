@@ -18,7 +18,7 @@ pub(crate) fn lines(
     color_at: impl Fn(f32) -> Color,
     buffers: &mut braille::BrailleBuffers,
 ) -> Vec<Line<'static>> {
-    let spectrum_rows = buffers.render_meter(fill);
+    let spectrum_rows = buffers.paint_meter(fill);
     let spectrum_total_rows = u16::try_from(spectrum_rows.len()).unwrap_or(u16::MAX);
     spectrum_rows
         .iter()

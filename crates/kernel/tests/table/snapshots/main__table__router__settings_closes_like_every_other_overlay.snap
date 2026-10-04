@@ -10,16 +10,16 @@ expression: "walked(model, messages)"
                 Settings,
             ),
         ),
-        One(
+        [
             Animate(
                 OverlayOpened,
             ),
-        ),
+        ],
         Stopped,
         Some(
-            Settings {
-                selected: Theme,
-            },
+            Settings(
+                Theme,
+            ),
         ),
         Cursor {
             index: 0,
@@ -49,11 +49,11 @@ expression: "walked(model, messages)"
         Overlay(
             Close,
         ),
-        One(
+        [
             Animate(
                 OverlayClosed,
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {

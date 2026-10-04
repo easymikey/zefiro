@@ -10,18 +10,17 @@ expression: "walked(model, messages)"
                 TrackDetails,
             ),
         ),
-        One(
+        [
             Animate(
                 OverlayOpened,
             ),
-        ),
+        ],
         Stopped,
         Some(
             TrackDetails(
                 Track {
-                    path: "/m/1.flac",
-                    duration: Some(
-                        100s,
+                    source: Local(
+                        "/m/1.flac",
                     ),
                     tags: Tags {
                         title: Some(
@@ -50,7 +49,9 @@ expression: "walked(model, messages)"
                         replay_gain: None,
                     },
                     display: "Someone — Sun Song",
-                    tagging: Read,
+                    tagging: Read(
+                        100s,
+                    ),
                 },
             ),
         ),
@@ -82,11 +83,11 @@ expression: "walked(model, messages)"
         Overlay(
             Close,
         ),
-        One(
+        [
             Animate(
                 OverlayClosed,
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {

@@ -2,6 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use kernel::domain::{
     AudioSettings,
+    ConfigName,
     Crossfade,
     DeviceName,
     KeymapOverrides,
@@ -16,7 +17,7 @@ use serde::{Deserialize, Deserializer};
 
 use crate::{
     appearance::{Flag, flag},
-    error::{CrossfadeError, Error, TomlFile, parse_toml},
+    error::{CrossfadeError, Error, parse_toml},
     keymap::KeymapFile,
 };
 
@@ -152,18 +153,18 @@ impl Default for ConfigToml {
 }
 
 pub fn parse_config(text: &str) -> Result<ConfigToml, Error> {
-    parse_toml(text, TomlFile::Config)
+    parse_toml(text, ConfigName::Config)
 }
 
 #[must_use]
 #[derive(Debug, Clone, PartialEq)]
-pub struct ConfigReload {
+pub struct ConfigSettings {
     pub keymap: KeymapOverrides,
     pub music_dir: Option<PathBuf>,
 }
 
-pub fn parse_config_reload(text: &str) -> Result<ConfigReload, Error> {
-    parse_config(text).map(|config| ConfigReload {
+pub fn parse_config_reload(text: &str) -> Result<ConfigSettings, Error> {
+    parse_config(text).map(|config| ConfigSettings {
         keymap: config
             .keymap
             .0
@@ -192,7 +193,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        config_file::{ConfigReload, parse_config, parse_config_reload},
+        config_file::{ConfigSettings, parse_config, parse_config_reload},
         error::Error,
     };
 
@@ -325,7 +326,7 @@ mod tests {
         );
         assert_eq!(
             parsed.ok(),
-            Some(ConfigReload {
+            Some(ConfigSettings {
                 keymap: KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]),
                 music_dir: Some(PathBuf::from("/tmp")),
             })

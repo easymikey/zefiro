@@ -1,12 +1,16 @@
 use std::time::Duration;
 
 use crossbeam_channel::Sender;
-use kernel::{Playback, domain::OutputDevice};
+use kernel::{
+    Playback,
+    domain::{OutputDevice, Speed},
+};
 use rodio::{Source, mixer::MixerSource, source::Zero};
 
 use crate::{
-    deck::{DeckEvent, DeviceChoice, envelope::Envelope},
+    deck::{DeviceChoice, envelope::Envelope},
     device::open_stream,
+    engine::effect::AudioMessage,
     error::DeviceError,
     tap::{Handoff, Tap},
 };
@@ -28,34 +32,41 @@ pub(crate) struct OpenedOutput {
 
 pub(crate) fn open_output_stream(
     device: OutputDevice,
-    wake: &Sender<DeckEvent>,
+    sender: &Sender<AudioMessage>,
 ) -> Result<OpenedOutput, DeviceError> {
-    match open_stream(&device, wake) {
+    match open_stream(&device, sender) {
         Ok(stream) => Ok(OpenedOutput {
             stream,
             device,
             opened: DeviceChoice::Requested,
         }),
-        Err(DeviceError::NotFound { .. }) => {
-            open_stream(&OutputDevice::SystemDefault, wake).map(|stream| OpenedOutput {
-                stream,
-                device: OutputDevice::SystemDefault,
-                opened: DeviceChoice::FellBack,
+        Err(DeviceError::NotFound(_)) => {
+            open_stream(&OutputDevice::SystemDefault, sender).map(|stream| {
+                OpenedOutput {
+                    stream,
+                    device: OutputDevice::SystemDefault,
+                    opened: DeviceChoice::FellBack,
+                }
             })
         }
         Err(error) => Err(error),
     }
 }
 
+fn fresh_sink(mix: &rodio::mixer::Mixer, speed: Speed) -> rodio::Sink {
+    let sink = rodio::Sink::connect_new(mix);
+    sink.set_speed(speed.get());
+    sink.pause();
+    sink
+}
+
 impl Output {
-    pub(crate) fn with_stream(stream: rodio::OutputStream, speed: f32) -> Self {
+    pub(crate) fn with_stream(stream: rodio::OutputStream, speed: Speed) -> Self {
         let channels = stream.config().channel_count();
         let rate = stream.config().sample_rate();
         let (mix, mix_source) = rodio::mixer::mixer(channels, rate);
         mix.add(Zero::new(channels, rate));
-        let primary = rodio::Sink::connect_new(&mix);
-        primary.set_speed(speed);
-        primary.pause();
+        let primary = fresh_sink(&mix, speed);
         Self {
             stream,
             mix,
@@ -73,19 +84,12 @@ impl Output {
         self.stream.mixer().add(Tap::new(mix_source, spectrum));
     }
 
-    fn fresh_sink(&self, speed: f32) -> rodio::Sink {
-        let primary = rodio::Sink::connect_new(&self.mix);
-        primary.set_speed(speed);
-        primary.pause();
-        primary
+    pub(crate) fn swap_sink(&mut self, speed: Speed) {
+        self.primary = fresh_sink(&self.mix, speed);
     }
 
-    pub(crate) fn swap_sink(&mut self, speed: f32) {
-        self.primary = self.fresh_sink(speed);
-    }
-
-    pub(crate) fn retire_sink(&mut self, speed: f32) {
-        let primary = self.fresh_sink(speed);
+    pub(crate) fn retire_sink(&mut self, speed: Speed) {
+        let primary = fresh_sink(&self.mix, speed);
         self.outgoing = Some(std::mem::replace(&mut self.primary, primary));
     }
 
@@ -111,15 +115,13 @@ impl Output {
         self.primary.append(source);
     }
 
-    pub(crate) fn stage<S>(&mut self, source: Envelope<S>, speed: f32)
+    pub(crate) fn stage<S>(&mut self, source: Envelope<S>, speed: Speed)
     where
         S: Source + Send + 'static,
     {
-        let next = rodio::Sink::connect_new(&self.mix);
-        next.set_speed(speed);
+        let next = fresh_sink(&self.mix, speed);
         next.set_volume(0.0);
         next.append(source);
-        next.pause();
         self.incoming = Some(next);
     }
 

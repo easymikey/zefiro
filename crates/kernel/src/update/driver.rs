@@ -5,141 +5,154 @@ use crate::{
     domain::{
         Announce,
         Decision,
-        Driver,
+        DriverError,
+        DriverName,
         DriverStatus,
         Drivers,
-        Model,
         Moment,
         Player,
         Revisions,
         Supervision,
         Toast,
-        supervise,
+        Workspace,
+        decide_restart,
     },
-    message::DriverEvent,
-    update::{error::UpdateError, machine::Machine, startup::startup_cmd},
+    message::{DriverEvent, Message},
+    update::machine::{Machine, Unhandled},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum DriverStatusError {
-    #[error("driver already running")]
-    Running,
-    #[error("driver is dead")]
-    Dead,
-    #[error("driver is stopped")]
-    Stopped,
-    #[error("driver rejected input {0}")]
-    Input(&'static str),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DriverSignal {
-    Died,
-    Full,
+pub enum DriverStatusMessage {
+    Died {
+        driver: DriverName,
+        failure: DriverError,
+    },
+    Stopped,
+    Full(DriverName),
 }
 
 impl Machine for DriverStatus {
-    type Message = DriverEvent;
-    type Error = DriverStatusError;
-    type Effect = Option<DriverSignal>;
+    type Message = DriverStatusMessage;
+    type Effect = Cmd;
 
-    fn transition(
-        &mut self,
-        message: DriverEvent,
-    ) -> Result<Option<DriverSignal>, DriverStatusError> {
+    fn transition(&mut self, message: DriverStatusMessage) -> Result<Cmd, Unhandled> {
         match (&*self, message) {
-            (_, DriverEvent::Rejected { input }) => {
-                Err(DriverStatusError::Input(input))
-            }
-            (DriverStatus::Running, DriverEvent::Died(failure)) => {
+            (DriverStatus::Running, DriverStatusMessage::Died { driver, failure }) => {
                 *self = DriverStatus::Dead(failure);
-                Ok(Some(DriverSignal::Died))
-            }
-            (DriverStatus::Running | DriverStatus::Dead(_), DriverEvent::Stopped) => {
-                *self = DriverStatus::Stopped;
-                Ok(None)
-            }
-            (DriverStatus::Running, DriverEvent::Full) => Ok(Some(DriverSignal::Full)),
-            (DriverStatus::Dead(_), DriverEvent::Died(_) | DriverEvent::Full) => {
-                Err(DriverStatusError::Dead)
+                Ok(Cmd::message(Message::DriverDied(driver)))
             }
             (
+                DriverStatus::Running | DriverStatus::Dead(_),
+                DriverStatusMessage::Stopped,
+            ) => {
+                *self = DriverStatus::Stopped;
+                Ok(Cmd::none())
+            }
+            (DriverStatus::Running, DriverStatusMessage::Full(driver)) => {
+                Ok(Cmd::message(Message::Toast(Toast::info(format!(
+                    "The {driver} driver is falling behind"
+                )))))
+            }
+            (
+                DriverStatus::Dead(_),
+                DriverStatusMessage::Died { .. } | DriverStatusMessage::Full(..),
+            )
+            | (
                 DriverStatus::Stopped,
-                DriverEvent::Died(_) | DriverEvent::Stopped | DriverEvent::Full,
-            ) => Err(DriverStatusError::Stopped),
+                DriverStatusMessage::Died { .. }
+                | DriverStatusMessage::Stopped
+                | DriverStatusMessage::Full(..),
+            ) => Err(Unhandled),
         }
     }
 }
 
 pub(crate) fn update(
     drivers: &mut Drivers,
-    driver: Driver,
+    driver: DriverName,
     event: DriverEvent,
-) -> Result<Option<DriverSignal>, UpdateError> {
-    drivers
-        .record_mut(driver)
-        .status
-        .transition(event)
-        .map_err(|reason| UpdateError::Driver(driver, reason))
+) -> Result<Cmd, Unhandled> {
+    let message = match event {
+        DriverEvent::Died(failure) => DriverStatusMessage::Died { driver, failure },
+        DriverEvent::Stopped => DriverStatusMessage::Stopped,
+        DriverEvent::Full => DriverStatusMessage::Full(driver),
+    };
+    drivers.record_mut(driver).status.transition(message)
 }
 
-pub(crate) fn decided(model: &mut Model, driver: Driver, now: Moment) -> Cmd {
-    let Model {
+pub(crate) struct DriverParts<'a> {
+    pub(crate) drivers: &'a mut Drivers,
+    pub(crate) workspace: &'a mut Workspace,
+    pub(crate) revisions: &'a mut Revisions,
+}
+
+pub(crate) enum Restart {
+    Granted,
+    Declined(Cmd),
+}
+
+pub(crate) fn decided(
+    parts: DriverParts<'_>,
+    driver: DriverName,
+    now: Moment,
+) -> Restart {
+    let DriverParts {
         drivers,
         workspace,
         revisions,
-        ..
-    } = &mut *model;
+    } = parts;
     let record = drivers.record(driver);
-    let decision = supervise(Supervision::standard(driver), &record.restarts, now);
+    let decision = decide_restart(Supervision::standard(driver), &record.restarts, now);
     match decision {
         Decision::Restart => {
             let restarting = drivers.record_mut(driver);
             restarting.restarts.record(now);
             restarting.status = DriverStatus::Running;
-            restarted(model, driver, now)
+            Restart::Granted
         }
         Decision::Degrade(Announce::Toast) => match &record.status {
-            DriverStatus::Dead(failure) => workspace.show(
-                Toast::error(format!("The {driver} driver stopped"))
-                    .with_text(failure.to_string()),
-                revisions,
+            DriverStatus::Dead(failure) => Restart::Declined(
+                workspace.show(
+                    Toast::error(format!("The {driver} driver stopped"))
+                        .with_text(failure.to_string()),
+                    revisions,
+                ),
             ),
-            DriverStatus::Running | DriverStatus::Stopped => Cmd::None,
+            DriverStatus::Running | DriverStatus::Stopped => {
+                Restart::Declined(Cmd::none())
+            }
         },
-        Decision::Degrade(Announce::Silent) => Cmd::None,
+        Decision::Degrade(Announce::Silent) => Restart::Declined(Cmd::none()),
     }
 }
 
-fn restarted(model: &mut Model, driver: Driver, now: Moment) -> Cmd {
-    let startup = startup_cmd(model, driver);
-    let Model {
-        player, revisions, ..
-    } = model;
-    let resumed = match driver {
-        Driver::Audio => resume(player, revisions, now),
-        Driver::Library | Driver::Config | Driver::Macos => Cmd::None,
-    };
-    Cmd::from(Effect::Restart(driver))
-        .then(startup)
-        .then(resumed)
+pub(crate) fn resumed(
+    player: &Player,
+    revisions: &mut Revisions,
+    restart: (DriverName, Moment),
+) -> Cmd {
+    let (driver, now) = restart;
+    match driver {
+        DriverName::Audio => resume(player, revisions, now),
+        DriverName::Library | DriverName::Config | DriverName::Macos => Cmd::none(),
+    }
 }
 
 fn resume(player: &Player, revisions: &mut Revisions, now: Moment) -> Cmd {
     let playback = match player {
         Player::Playing { .. } => Playback::Playing,
         Player::Paused { .. } => Playback::Paused,
-        Player::Stopped | Player::Loading { .. } => return Cmd::None,
+        Player::Stopped | Player::Loading { .. } => return Cmd::none(),
     };
     let Some(track) = player.current() else {
-        return Cmd::None;
+        return Cmd::none();
     };
     let request = TrackLoad::for_track(track, revisions.issue_effect());
     load_at(request, player.position_at(now), playback)
 }
 
 fn load_at(request: TrackLoad, at: Duration, playback: Playback) -> Cmd {
-    Cmd::Batch(vec![
+    Cmd::from_iter([
         Effect::Audio(AudioCmd::Load(request)),
         Effect::Audio(AudioCmd::Seek(at)),
         Effect::Audio(AudioCmd::Playback(playback)),
@@ -151,27 +164,45 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        domain::{DriverError, DriverStatus},
-        message::DriverEvent,
+        cmd::Cmd,
+        domain::{DriverError, DriverName, DriverStatus, Toast},
+        message::Message,
         update::{
-            driver::{DriverSignal, DriverStatusError},
-            machine::Machine,
+            driver::DriverStatusMessage,
+            machine::{Machine, Unhandled},
         },
     };
 
     fn dead() -> DriverStatus {
-        DriverStatus::Dead(DriverError::panicked("boom".to_string()))
+        DriverStatus::Dead(DriverError::Panicked)
     }
 
-    fn died() -> DriverEvent {
-        DriverEvent::Died(DriverError::panicked("boom".to_string()))
+    fn died() -> DriverStatusMessage {
+        DriverStatusMessage::Died {
+            driver: DriverName::Audio,
+            failure: DriverError::Panicked,
+        }
+    }
+
+    fn filled() -> DriverStatusMessage {
+        DriverStatusMessage::Full(DriverName::Audio)
+    }
+
+    fn decide_restart() -> Result<Cmd, Unhandled> {
+        Ok(Cmd::message(Message::DriverDied(DriverName::Audio)))
+    }
+
+    fn full() -> Result<Cmd, Unhandled> {
+        Ok(Cmd::message(Message::Toast(Toast::info(
+            "The audio driver is falling behind".to_string(),
+        ))))
     }
 
     struct LifeRow {
         start: DriverStatus,
-        message: DriverEvent,
+        message: DriverStatusMessage,
         next: DriverStatus,
-        outcome: Result<Option<DriverSignal>, DriverStatusError>,
+        result: Result<Cmd, Unhandled>,
     }
 
     #[rstest]
@@ -179,66 +210,60 @@ mod tests {
         start: DriverStatus::Running,
         message: died(),
         next: dead(),
-        outcome: Ok(Some(DriverSignal::Died)),
+        result: decide_restart(),
     })]
     #[case::running_stops(LifeRow {
         start: DriverStatus::Running,
-        message: DriverEvent::Stopped,
+        message: DriverStatusMessage::Stopped,
         next: DriverStatus::Stopped,
-        outcome: Ok(None),
+        result: Ok(Cmd::none()),
     })]
-    #[case::running_is_congested(LifeRow {
+    #[case::running_is_full(LifeRow {
         start: DriverStatus::Running,
-        message: DriverEvent::Full,
+        message: filled(),
         next: DriverStatus::Running,
-        outcome: Ok(Some(DriverSignal::Full)),
+        result: full(),
     })]
     #[case::dead_refuses_a_second_death(LifeRow {
         start: dead(),
         message: died(),
         next: dead(),
-        outcome: Err(DriverStatusError::Dead),
+        result: Err(Unhandled),
     })]
     #[case::dead_stops(LifeRow {
         start: dead(),
-        message: DriverEvent::Stopped,
+        message: DriverStatusMessage::Stopped,
         next: DriverStatus::Stopped,
-        outcome: Ok(None),
+        result: Ok(Cmd::none()),
     })]
     #[case::dead_refuses_congestion(LifeRow {
         start: dead(),
-        message: DriverEvent::Full,
+        message: filled(),
         next: dead(),
-        outcome: Err(DriverStatusError::Dead),
+        result: Err(Unhandled),
     })]
     #[case::stopped_refuses_a_death(LifeRow {
         start: DriverStatus::Stopped,
         message: died(),
         next: DriverStatus::Stopped,
-        outcome: Err(DriverStatusError::Stopped),
+        result: Err(Unhandled),
     })]
     #[case::stopped_refuses_a_second_stop(LifeRow {
         start: DriverStatus::Stopped,
-        message: DriverEvent::Stopped,
+        message: DriverStatusMessage::Stopped,
         next: DriverStatus::Stopped,
-        outcome: Err(DriverStatusError::Stopped),
+        result: Err(Unhandled),
     })]
     #[case::stopped_refuses_congestion(LifeRow {
         start: DriverStatus::Stopped,
-        message: DriverEvent::Full,
+        message: filled(),
         next: DriverStatus::Stopped,
-        outcome: Err(DriverStatusError::Stopped),
-    })]
-    #[case::running_reports_a_rejected_input(LifeRow {
-        start: DriverStatus::Running,
-        message: DriverEvent::Rejected { input: "seek" },
-        next: DriverStatus::Running,
-        outcome: Err(DriverStatusError::Input("seek")),
+        result: Err(Unhandled),
     })]
     fn a_driver_lives_through_its_table(#[case] row: LifeRow) {
         let mut status = row.start;
-        let outcome = status.transition(row.message);
+        let result = status.transition(row.message);
         assert_eq!(status, row.next);
-        assert_eq!(outcome, row.outcome);
+        assert_eq!(result, row.result);
     }
 }

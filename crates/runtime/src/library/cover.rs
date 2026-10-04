@@ -7,7 +7,7 @@ use fast_image_resize::{
     images::{Image, ImageRef},
 };
 use image::{DynamicImage, RgbaImage};
-use kernel::update::Machine;
+use kernel::update::{Machine, Unhandled};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) enum Decoding {
@@ -49,27 +49,17 @@ pub(crate) enum DecodeMessage {
     Decoded(PathBuf),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DecodingError {
-    WhileBusy,
-    WhileIdle,
-}
-
 impl Machine for Decoding {
     type Message = DecodeMessage;
-    type Error = DecodingError;
     type Effect = Option<CoverRequest>;
 
     fn transition(
         &mut self,
         message: DecodeMessage,
-    ) -> Result<Option<CoverRequest>, DecodingError> {
+    ) -> Result<Option<CoverRequest>, Unhandled> {
         match (&*self, message) {
             (Decoding::Idle, DecodeMessage::Request(request)) => {
                 Ok(self.start(request))
-            }
-            (Decoding::Idle, DecodeMessage::Decoded(_)) => {
-                Err(DecodingError::WhileIdle)
             }
             (Decoding::Busy(path), DecodeMessage::Request(request))
                 if *path != request.path =>
@@ -82,10 +72,11 @@ impl Machine for Decoding {
                 *self = Decoding::Idle;
                 Ok(None)
             }
-            (
+            (Decoding::Idle, DecodeMessage::Decoded(_))
+            | (
                 Decoding::Busy(_),
                 DecodeMessage::Request(_) | DecodeMessage::Decoded(_),
-            ) => Err(DecodingError::WhileBusy),
+            ) => Err(Unhandled),
         }
     }
 }
@@ -228,7 +219,10 @@ mod tests {
 
     use crossbeam_channel::Receiver;
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
-    use kernel::{Message, update::Machine};
+    use kernel::{
+        Message,
+        update::{Machine, Unhandled},
+    };
     use library::LibraryDirs;
     use rstest::rstest;
 
@@ -242,7 +236,6 @@ mod tests {
                 CoverRequest,
                 DecodeMessage,
                 Decoding,
-                DecodingError,
                 decode,
                 fit_square,
             },
@@ -311,29 +304,25 @@ mod tests {
     #[rstest]
     #[case::idle_refuses_an_answer(
         idle(),
-        DecodeMessage::Decoded(PathBuf::from("/music/cover.jpg")),
-        DecodingError::WhileIdle
+        DecodeMessage::Decoded(PathBuf::from("/music/cover.jpg"))
     )]
     #[case::busy_refuses_the_same_request_again(
         busy("/music/cover.jpg"),
-        DecodeMessage::Request(request("/music/cover.jpg", 64)),
-        DecodingError::WhileBusy
+        DecodeMessage::Request(request("/music/cover.jpg", 64))
     )]
     #[case::busy_refuses_an_unrelated_answer(
         busy("/music/cover.jpg"),
-        DecodeMessage::Decoded(PathBuf::from("/music/other.jpg")),
-        DecodingError::WhileBusy
+        DecodeMessage::Decoded(PathBuf::from("/music/other.jpg"))
     )]
     fn a_refused_cell_hands_the_state_back(
         #[case] start: Decoding,
         #[case] message: DecodeMessage,
-        #[case] reason: DecodingError,
     ) {
         let expected = start.clone();
         let mut state = start;
         let refused = state.transition(message).err().unwrap();
         assert_eq!(state, expected);
-        assert_eq!(refused, reason);
+        assert_eq!(refused, Unhandled);
     }
 
     #[test]

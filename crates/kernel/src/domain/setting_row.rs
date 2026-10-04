@@ -231,7 +231,7 @@ mod tests {
         OptionCount::new(count).unwrap().index(at).unwrap()
     }
 
-    struct NudgeRow {
+    struct StepRow {
         choice: Choice,
         control: AppearanceControl,
         direction: Direction,
@@ -239,55 +239,55 @@ mod tests {
     }
 
     #[rstest]
-    #[case::toggle_up_from_0(NudgeRow {
+    #[case::toggle_up_from_0(StepRow {
         choice: Choice::Option(option(2, 0)),
         control: AppearanceControl::Toggle,
         direction: Direction::Next,
         expected: option(2, 1),
     })]
-    #[case::toggle_down_from_0(NudgeRow {
+    #[case::toggle_down_from_0(StepRow {
         choice: Choice::Option(option(2, 0)),
         control: AppearanceControl::Toggle,
         direction: Direction::Previous,
         expected: option(2, 1),
     })]
-    #[case::cycle_wraps_up_at_the_end(NudgeRow {
+    #[case::cycle_wraps_up_at_the_end(StepRow {
         choice: Choice::Option(option(3, 2)),
         control: AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
         direction: Direction::Next,
         expected: option(3, 0),
     })]
-    #[case::cycle_wraps_down_at_0(NudgeRow {
+    #[case::cycle_wraps_down_at_0(StepRow {
         choice: Choice::Option(option(3, 0)),
         control: AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
         direction: Direction::Previous,
         expected: option(3, 2),
     })]
-    #[case::step_stops_at_the_top(NudgeRow {
+    #[case::step_stops_at_the_top(StepRow {
         choice: Choice::Option(option(3, 2)),
         control: AppearanceControl::Step(OptionCount::new(3).unwrap()),
         direction: Direction::Next,
         expected: option(3, 2),
     })]
-    #[case::step_stops_at_0(NudgeRow {
+    #[case::step_stops_at_0(StepRow {
         choice: Choice::Option(option(3, 0)),
         control: AppearanceControl::Step(OptionCount::new(3).unwrap()),
         direction: Direction::Previous,
         expected: option(3, 0),
     })]
-    #[case::mixed_up(NudgeRow {
+    #[case::mixed_up(StepRow {
         choice: Choice::Mixed,
         control: AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
         direction: Direction::Next,
         expected: option(3, 0),
     })]
-    #[case::mixed_down(NudgeRow {
+    #[case::mixed_down(StepRow {
         choice: Choice::Mixed,
         control: AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
         direction: Direction::Previous,
         expected: option(3, 0),
     })]
-    fn choice_nudges_onto_a_real_option(#[case] row: NudgeRow) {
+    fn choice_steps_onto_a_real_option(#[case] row: StepRow) {
         assert_eq!(row.choice.stepped(row.control, row.direction), row.expected);
     }
 

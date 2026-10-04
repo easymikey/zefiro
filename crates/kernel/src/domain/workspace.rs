@@ -1,13 +1,17 @@
 use std::{collections::HashMap, time::Duration};
 
-use crate::domain::{
-    ChordPrefix,
-    Cursor,
-    Keymap,
-    Moment,
-    Overlay,
-    ViewIndex,
-    library::SortKey,
+use crate::{
+    domain::{
+        ChordPrefix,
+        Cursor,
+        Keymap,
+        Moment,
+        Overlay,
+        ThemeName,
+        ViewIndex,
+        library::SortKey,
+    },
+    message::IoError,
 };
 
 pub const TOAST_SECONDS: u64 = 5;
@@ -24,22 +28,22 @@ pub struct Workspace {
     pub keymap: Keymap,
     pub visible_rows: usize,
     pub played_for: Duration,
-    pub(crate) source_errors: ConfigFileErrors,
+    pub(crate) config_errors: ConfigErrors,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ConfigFile {
-    Appearance,
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ConfigName {
     Config,
-    Theme,
+    Appearance,
+    Theme(ThemeName),
 }
 
-impl std::fmt::Display for ConfigFile {
+impl std::fmt::Display for ConfigName {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
-            ConfigFile::Appearance => "the appearance file",
-            ConfigFile::Config => "the config file",
-            ConfigFile::Theme => "the theme file",
+            ConfigName::Appearance => "the appearance file",
+            ConfigName::Config => "the config file",
+            ConfigName::Theme(_) => "the theme file",
         };
         formatter.write_str(name)
     }
@@ -47,34 +51,34 @@ impl std::fmt::Display for ConfigFile {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
-    #[error("{file} is unreadable: {detail}")]
-    Unreadable { file: ConfigFile, detail: String },
-    #[error("the themes folder is unreadable: {detail}")]
-    ThemesUnreadable { detail: String },
-    #[error("{file} could not be saved: {detail}")]
-    Save { file: ConfigFile, detail: String },
-    #[error("Config watch failed: {detail}")]
-    Watch { detail: String },
+    #[error("{file} is unreadable: {kind}")]
+    Unreadable { file: ConfigName, kind: IoError },
+    #[error("the themes folder is unreadable: {0}")]
+    ThemesUnreadable(IoError),
+    #[error("{file} could not be saved: {kind}")]
+    Save { file: ConfigName, kind: IoError },
+    #[error("Config watch failed: {0}")]
+    Watch(IoError),
+    #[error("{detail}")]
+    Invalid { detail: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct ConfigFileErrors(HashMap<ConfigFile, String>);
+pub(crate) struct ConfigErrors(HashMap<ConfigName, ConfigError>);
 
-impl ConfigFileErrors {
+impl ConfigErrors {
     pub(crate) fn insert_if_changed(
         &mut self,
-        source: ConfigFile,
-        text: String,
-    ) -> Option<String> {
-        if self.0.get(&source) == Some(&text) {
-            return None;
-        }
-        self.0.insert(source, text.clone());
-        Some(text)
+        name: ConfigName,
+        error: ConfigError,
+    ) -> bool {
+        let unchanged = self.0.get(&name) == Some(&error);
+        self.0.insert(name, error);
+        !unchanged
     }
 
-    pub(crate) fn clear(&mut self, source: ConfigFile) -> Option<String> {
-        self.0.remove(&source)
+    pub(crate) fn clear(&mut self, name: &ConfigName) -> Option<ConfigError> {
+        self.0.remove(name)
     }
 }
 
@@ -149,7 +153,7 @@ impl Toast {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SavePhase {
     Prompt,
-    Failure,
+    Failed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,7 +217,7 @@ mod save_line_tests {
             workspace.save_line(),
             Some(SaveLine {
                 text: PlaylistNameError::AllDots.to_string(),
-                phase: SavePhase::Failure,
+                phase: SavePhase::Failed,
             })
         );
     }

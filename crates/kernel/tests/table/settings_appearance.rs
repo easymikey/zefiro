@@ -17,12 +17,13 @@ use kernel::{
         ThemeName,
         appearance_rows::AppearanceField,
     },
-    update::update,
 };
 use rstest::rstest;
 
+use crate::support::step::update;
+
 fn step(model: &mut Model, row: SettingRow, direction: Direction) -> Cmd {
-    update(model, Message::Adjust { row, direction }, Moment::default()).unwrap()
+    update(model, Message::Step { row, direction }, Moment::default()).unwrap()
 }
 
 fn setting_option(cmd: &Cmd, id: AppearanceField) -> Option<usize> {
@@ -65,7 +66,7 @@ fn model_with_custom_row(control: AppearanceControl) -> (Model, AppearanceField)
 }
 
 #[test]
-fn nudging_an_unregistered_custom_row_emits_nothing() {
+fn stepping_an_unregistered_custom_row_emits_nothing() {
     let mut model = Model::default();
 
     let cmd = step(
@@ -74,19 +75,19 @@ fn nudging_an_unregistered_custom_row_emits_nothing() {
         Direction::Next,
     );
 
-    assert!(matches!(cmd, Cmd::None));
+    assert!(cmd == Cmd::none());
 }
 
 #[rstest]
 #[case::up_then_up_wraps(vec![Direction::Next, Direction::Next], vec![1, 0])]
 #[case::down_wraps_backward(vec![Direction::Previous], vec![1])]
 fn a_toggle_custom_row_wraps_mod_two(
-    #[case] nudges: Vec<Direction>,
+    #[case] steps: Vec<Direction>,
     #[case] expected_options: Vec<usize>,
 ) {
     let (mut model, id) = model_with_custom_row(AppearanceControl::Toggle);
 
-    let seen: Vec<usize> = nudges
+    let seen: Vec<usize> = steps
         .into_iter()
         .map(|direction| {
             let cmd = step(&mut model, SettingRow::Appearance(id), direction);
@@ -138,7 +139,7 @@ fn a_step_custom_row_saturates_at_both_ends() {
 fn all_places_the_leading_custom_row_before_theme_then_the_rest_after() {
     let custom = vec![
         custom_setting(AppearanceField::CoverBrackets, AppearanceControl::Toggle),
-        custom_setting(AppearanceField::CoverStyle, AppearanceControl::Toggle),
+        custom_setting(AppearanceField::CoverMode, AppearanceControl::Toggle),
         custom_setting(AppearanceField::SpeedChip, AppearanceControl::Toggle),
     ];
 
@@ -149,7 +150,7 @@ fn all_places_the_leading_custom_row_before_theme_then_the_rest_after() {
         vec![
             SettingRow::Appearance(AppearanceField::CoverBrackets),
             SettingRow::Theme,
-            SettingRow::Appearance(AppearanceField::CoverStyle),
+            SettingRow::Appearance(AppearanceField::CoverMode),
             SettingRow::Appearance(AppearanceField::SpeedChip),
             SettingRow::Crossfade,
             SettingRow::ReplayGain,
@@ -163,7 +164,7 @@ fn all_places_the_leading_custom_row_before_theme_then_the_rest_after() {
 #[case::toggle(AppearanceControl::Toggle, 2)]
 #[case::cycle(AppearanceControl::Cycle(OptionCount::new(3).unwrap()), 3)]
 #[case::step(AppearanceControl::Step(OptionCount::new(5).unwrap()), 5)]
-fn nudging_every_option_of_a_custom_row_never_reorders_settings_row_all(
+fn stepping_every_option_of_a_custom_row_never_reorders_settings_row_all(
     #[case] control: AppearanceControl,
     #[case] option_count: usize,
 ) {
@@ -179,17 +180,17 @@ fn nudging_every_option_of_a_custom_row_never_reorders_settings_row_all(
     let before = SettingRow::all(&model.appearance_settings);
 
     for _ in 0..option_count {
-        let _ = step(
+        drop(step(
             &mut model,
             SettingRow::Appearance(AppearanceField::ProgressRemaining),
             Direction::Next,
-        );
+        ));
         assert_eq!(SettingRow::all(&model.appearance_settings), before);
     }
 }
 
 #[test]
-fn nudging_a_custom_row_with_a_cue_emits_the_setting_then_the_cue() {
+fn stepping_a_custom_row_with_a_cue_emits_the_setting_then_the_cue() {
     let id = AppearanceField::LayoutMode;
     let count = OptionCount::new(3).unwrap();
     let mut model = Model::default();
@@ -219,7 +220,7 @@ fn nudging_a_custom_row_with_a_cue_emits_the_setting_then_the_cue() {
 }
 
 #[test]
-fn nudging_a_custom_row_without_a_cue_emits_only_the_setting() {
+fn stepping_a_custom_row_without_a_cue_emits_only_the_setting() {
     let (mut model, id) = model_with_custom_row(AppearanceControl::Toggle);
 
     let cmd = step(&mut model, SettingRow::Appearance(id), Direction::Next);
@@ -238,12 +239,12 @@ fn nudging_a_custom_row_without_a_cue_emits_only_the_setting() {
 fn control_reads_the_matching_slot_for_a_custom_row() {
     let count = OptionCount::new(5).unwrap();
     let custom = vec![custom_setting(
-        AppearanceField::CoverStyle,
+        AppearanceField::CoverMode,
         AppearanceControl::Cycle(count),
     )];
 
     assert_eq!(
-        SettingRow::Appearance(AppearanceField::CoverStyle).control(&custom),
+        SettingRow::Appearance(AppearanceField::CoverMode).control(&custom),
         Some(AppearanceControl::Cycle(count))
     );
     assert_eq!(
@@ -255,10 +256,10 @@ fn control_reads_the_matching_slot_for_a_custom_row() {
 }
 
 #[rstest]
-#[case::custom_nudges_to_default(Choice::Mixed, Direction::Next, (0, None))]
-#[case::default_nudges_to_noir(Choice::Option(OptionCount::new(2).unwrap().index(0).unwrap()), Direction::Next, (1, Some("noir")))]
-#[case::noir_nudges_to_default(Choice::Option(OptionCount::new(2).unwrap().index(1).unwrap()), Direction::Previous, (0, None))]
-fn nudging_the_preset_row_selects_its_options_theme(
+#[case::custom_steps_to_default(Choice::Mixed, Direction::Next, (0, None))]
+#[case::default_steps_to_noir(Choice::Option(OptionCount::new(2).unwrap().index(0).unwrap()), Direction::Next, (1, Some("noir")))]
+#[case::noir_steps_to_default(Choice::Option(OptionCount::new(2).unwrap().index(1).unwrap()), Direction::Previous, (0, None))]
+fn stepping_the_preset_row_selects_its_options_theme(
     #[case] start: Choice,
     #[case] direction: Direction,
     #[case] expected: (usize, Option<&str>),

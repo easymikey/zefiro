@@ -1,7 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use config::theme_file_name;
-use kernel::{domain::ConfigFile, update::Machine};
+use kernel::{
+    IoError,
+    domain::{ConfigName, ThemeName},
+    update::{Machine, Unhandled},
+};
 
 use crate::config::{ConfigPaths, seen::Seen};
 
@@ -22,7 +26,7 @@ impl WatchedPath {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SelectedTheme {
-    name: String,
+    name: ThemeName,
     seen: Seen,
 }
 
@@ -47,61 +51,66 @@ impl ConfigWatch {
                 paths.config.clone(),
                 paths.seen.config.as_deref(),
             ),
-            theme: paths.theme.clone().map(|name| SelectedTheme {
-                name,
-                seen: Seen::starting(paths.seen.theme.as_deref()),
-            }),
+            theme: paths
+                .theme
+                .clone()
+                .and_then(|name| ThemeName::new(name).ok())
+                .map(|name| SelectedTheme {
+                    name,
+                    seen: Seen::starting(paths.seen.theme.as_deref()),
+                }),
             themes: paths.themes.clone(),
             theme_list: Seen::Never,
         }
     }
 
-    fn theme_path(&self, name: &str) -> PathBuf {
-        self.themes.join(theme_file_name(name))
+    fn theme_path(&self, name: &ThemeName) -> PathBuf {
+        self.themes.join(theme_file_name(name.as_str()))
     }
 }
 
 #[derive(Debug)]
 pub(crate) enum WatchMessage {
-    Poll(ConfigFile),
+    Poll(ConfigName),
+    PollTheme,
     PollThemes,
     Observed {
-        file: ConfigFile,
+        file: ConfigName,
         text: Option<String>,
     },
     Unreadable {
-        file: ConfigFile,
-        detail: String,
+        file: ConfigName,
+        kind: IoError,
     },
-    ThemesUnreadable(String),
+    ThemesUnreadable(IoError),
     Listed(Vec<String>),
     SelectTheme(String),
     Wrote {
-        file: ConfigFile,
+        file: ConfigName,
         text: String,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConfigWatchError {
-    Unselected,
-    Selected,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ConfigChange {
     Appearance(Option<String>),
     Keymap(Option<String>),
-    Theme { name: String, text: Option<String> },
+    Theme {
+        name: ThemeName,
+        text: Option<String>,
+    },
     Themes(Vec<String>),
-    Unreadable { file: ConfigFile, detail: String },
-    ThemesUnreadable(String),
+    Unreadable {
+        file: ConfigName,
+        kind: IoError,
+    },
+    ThemesUnreadable(IoError),
 }
 
 #[derive(Debug, Default)]
 pub(crate) enum WatchEffect {
     Read {
-        file: ConfigFile,
+        file: ConfigName,
         path: PathBuf,
     },
     List(PathBuf),
@@ -112,55 +121,52 @@ pub(crate) enum WatchEffect {
 
 impl Machine for ConfigWatch {
     type Message = WatchMessage;
-    type Error = ConfigWatchError;
     type Effect = WatchEffect;
 
-    fn transition(
-        &mut self,
-        message: WatchMessage,
-    ) -> Result<WatchEffect, ConfigWatchError> {
+    fn transition(&mut self, message: WatchMessage) -> Result<WatchEffect, Unhandled> {
         match message {
-            WatchMessage::Poll(ConfigFile::Appearance) => {
-                Ok(read(ConfigFile::Appearance, &self.appearance.path))
+            WatchMessage::Poll(ConfigName::Appearance) => {
+                Ok(read(ConfigName::Appearance, &self.appearance.path))
             }
             WatchMessage::PollThemes => Ok(WatchEffect::List(self.themes.clone())),
             WatchMessage::Listed(names) => Ok(self.themes_listed(names)),
-            WatchMessage::Poll(ConfigFile::Config) => {
-                Ok(read(ConfigFile::Config, &self.keys.path))
+            WatchMessage::Poll(ConfigName::Config) => {
+                Ok(read(ConfigName::Config, &self.keys.path))
             }
-            WatchMessage::Poll(ConfigFile::Theme) => self.poll_theme(),
+            WatchMessage::PollTheme => self.poll_theme(),
+            WatchMessage::Poll(ConfigName::Theme(_)) => Err(Unhandled),
             WatchMessage::Observed {
-                file: ConfigFile::Appearance,
+                file: ConfigName::Appearance,
                 text,
             } => Ok(self.appearance_observed(text)),
             WatchMessage::Observed {
-                file: ConfigFile::Config,
+                file: ConfigName::Config,
                 text,
             } => Ok(self.config_observed(text)),
             WatchMessage::Observed {
-                file: ConfigFile::Theme,
+                file: ConfigName::Theme(_),
                 text,
             } => self.theme_observed(text),
-            WatchMessage::Unreadable { file, detail } => {
+            WatchMessage::Unreadable { file, kind } => {
                 Ok(WatchEffect::Changed(ConfigChange::Unreadable {
                     file,
-                    detail,
+                    kind,
                 }))
             }
-            WatchMessage::ThemesUnreadable(detail) => {
-                Ok(WatchEffect::Changed(ConfigChange::ThemesUnreadable(detail)))
+            WatchMessage::ThemesUnreadable(kind) => {
+                Ok(WatchEffect::Changed(ConfigChange::ThemesUnreadable(kind)))
             }
             WatchMessage::SelectTheme(name) => self.select_theme(name),
             WatchMessage::Wrote {
-                file: ConfigFile::Appearance,
+                file: ConfigName::Appearance,
                 text,
             } => Ok(self.appearance_written(&text)),
             WatchMessage::Wrote {
-                file: ConfigFile::Config,
+                file: ConfigName::Config,
                 text,
             } => Ok(self.keys_written(&text)),
             WatchMessage::Wrote {
-                file: ConfigFile::Theme,
+                file: ConfigName::Theme(_),
                 ..
             } => Ok(WatchEffect::Nothing),
         }
@@ -181,9 +187,12 @@ impl ConfigWatch {
         WatchEffect::Nothing
     }
 
-    fn poll_theme(&self) -> Result<WatchEffect, ConfigWatchError> {
-        let theme = self.theme.as_ref().ok_or(ConfigWatchError::Unselected)?;
-        Ok(read(ConfigFile::Theme, &self.theme_path(&theme.name)))
+    fn poll_theme(&self) -> Result<WatchEffect, Unhandled> {
+        let theme = self.theme.as_ref().ok_or(Unhandled)?;
+        Ok(read(
+            ConfigName::Theme(theme.name.clone()),
+            &self.theme_path(&theme.name),
+        ))
     }
 
     fn appearance_observed(&mut self, text: Option<String>) -> WatchEffect {
@@ -197,8 +206,8 @@ impl ConfigWatch {
     fn theme_observed(
         &mut self,
         text: Option<String>,
-    ) -> Result<WatchEffect, ConfigWatchError> {
-        let theme = self.theme.as_mut().ok_or(ConfigWatchError::Unselected)?;
+    ) -> Result<WatchEffect, Unhandled> {
+        let theme = self.theme.as_mut().ok_or(Unhandled)?;
         if !theme.seen.changed_by(text.as_deref()) {
             return Ok(WatchEffect::Nothing);
         }
@@ -207,11 +216,12 @@ impl ConfigWatch {
         Ok(WatchEffect::Changed(ConfigChange::Theme { name, text }))
     }
 
-    fn select_theme(&mut self, name: String) -> Result<WatchEffect, ConfigWatchError> {
+    fn select_theme(&mut self, name: String) -> Result<WatchEffect, Unhandled> {
+        let name = ThemeName::new(name).map_err(|_| Unhandled)?;
         if self.theme.as_ref().is_some_and(|theme| theme.name == name) {
-            return Err(ConfigWatchError::Selected);
+            return Err(Unhandled);
         }
-        let io = read(ConfigFile::Theme, &self.theme_path(&name));
+        let io = read(ConfigName::Theme(name.clone()), &self.theme_path(&name));
         self.theme = Some(SelectedTheme {
             name,
             seen: Seen::Never,
@@ -234,7 +244,7 @@ impl ConfigWatch {
     }
 }
 
-fn read(file: ConfigFile, path: &Path) -> WatchEffect {
+fn read(file: ConfigName, path: &Path) -> WatchEffect {
     WatchEffect::Read {
         file,
         path: path.to_path_buf(),
@@ -243,21 +253,22 @@ fn read(file: ConfigFile, path: &Path) -> WatchEffect {
 
 #[cfg(test)]
 mod tests {
+    fn noir() -> ConfigName {
+        ConfigName::Theme(ThemeName::from_static("noir"))
+    }
+
     use std::path::{Path, PathBuf};
 
-    use kernel::{domain::ConfigFile, update::Machine};
+    use kernel::{
+        domain::{ConfigName, ThemeName},
+        update::{Machine, Unhandled},
+    };
     use rstest::rstest;
 
     use crate::config::{
         ConfigPaths,
         SeenTexts,
-        watch::{
-            ConfigChange,
-            ConfigWatch,
-            ConfigWatchError,
-            WatchEffect,
-            WatchMessage,
-        },
+        watch::{ConfigChange, ConfigWatch, WatchEffect, WatchMessage},
     };
 
     const UI_PATH: &str = "/config/sifr-ui.toml";
@@ -285,11 +296,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case(ConfigFile::Appearance, "a = 1\n")]
-    #[case(ConfigFile::Theme, "b = 2\n")]
-    #[case(ConfigFile::Config, "c = 3\n")]
+    #[case(ConfigName::Appearance, "a = 1\n")]
+    #[case(noir(), "b = 2\n")]
+    #[case(ConfigName::Config, "c = 3\n")]
     fn a_seen_start_text_is_not_reported_on_the_first_poll(
-        #[case] file: ConfigFile,
+        #[case] file: ConfigName,
         #[case] text: &str,
     ) {
         let watch = seen_at_start("a = 1\n", "b = 2\n", "c = 3\n");
@@ -298,11 +309,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case(ConfigFile::Appearance, "a = 1 \n")]
-    #[case(ConfigFile::Theme, "b = 3\n")]
-    #[case(ConfigFile::Config, "c = 3")]
+    #[case(ConfigName::Appearance, "a = 1 \n")]
+    #[case(noir(), "b = 3\n")]
+    #[case(ConfigName::Config, "c = 3")]
     fn a_changed_file_after_start_is_reported(
-        #[case] file: ConfigFile,
+        #[case] file: ConfigName,
         #[case] text: &str,
     ) {
         let watch = seen_at_start("a = 1\n", "b = 2\n", "c = 3\n");
@@ -318,7 +329,7 @@ mod tests {
         ConfigWatch::new(&paths(Some(name)))
     }
 
-    fn observed(file: ConfigFile, text: Option<&str>) -> WatchMessage {
+    fn observed(file: ConfigName, text: Option<&str>) -> WatchMessage {
         WatchMessage::Observed {
             file,
             text: text.map(str::to_string),
@@ -332,12 +343,12 @@ mod tests {
         (state, io)
     }
 
-    fn reads(io: &WatchEffect, file: ConfigFile, path: &str) -> bool {
+    fn reads(io: &WatchEffect, file: &ConfigName, path: &str) -> bool {
         match io {
             WatchEffect::Read {
                 file: read_file,
                 path: read_path,
-            } => *read_file == file && read_path == Path::new(path),
+            } => read_file == file && read_path == Path::new(path),
             WatchEffect::List(_) | WatchEffect::Changed(_) | WatchEffect::Nothing => {
                 false
             }
@@ -358,33 +369,38 @@ mod tests {
     }
 
     #[rstest]
-    #[case(ConfigFile::Appearance, UI_PATH)]
-    #[case(ConfigFile::Config, KEYS_PATH)]
-    #[case(ConfigFile::Theme, "/config/themes/noir.toml")]
-    fn poll_asks_for_the_file_it_watches(#[case] file: ConfigFile, #[case] path: &str) {
-        let (_, io) = step(selected("noir"), WatchMessage::Poll(file));
-        assert!(reads(&io, file, path));
+    #[case(ConfigName::Appearance, UI_PATH)]
+    #[case(ConfigName::Config, KEYS_PATH)]
+    fn poll_asks_for_the_file_it_watches(#[case] file: ConfigName, #[case] path: &str) {
+        let (_, io) = step(selected("noir"), WatchMessage::Poll(file.clone()));
+        assert!(reads(&io, &file, path));
+    }
+
+    #[test]
+    fn polling_the_theme_asks_for_the_selected_theme_file() {
+        let (_, io) = step(selected("noir"), WatchMessage::PollTheme);
+        assert!(reads(&io, &noir(), "/config/themes/noir.toml"));
     }
 
     #[rstest]
-    #[case(WatchMessage::Poll(ConfigFile::Theme))]
-    #[case(observed(ConfigFile::Theme, Some("name = \"noir\"")))]
+    #[case(WatchMessage::PollTheme)]
+    #[case(observed(noir(), Some("name = \"noir\"")))]
     fn the_theme_target_refuses_while_unselected(#[case] message: WatchMessage) {
         let mut watch = unselected();
         let reason = watch.transition(message).err();
         assert_eq!(watch, unselected());
-        assert_eq!(reason, Some(ConfigWatchError::Unselected));
+        assert_eq!(reason, Some(Unhandled));
     }
 
     #[rstest]
-    #[case(ConfigFile::Appearance, Some("[window]\nkey_hints = false\n"))]
-    #[case(ConfigFile::Appearance, None)]
-    #[case(ConfigFile::Config, Some("[keymap]\nnext = \"x\"\n"))]
-    #[case(ConfigFile::Config, None)]
-    #[case(ConfigFile::Theme, Some("name = \"noir\"\n"))]
-    #[case(ConfigFile::Theme, None)]
+    #[case(ConfigName::Appearance, Some("[window]\nkey_hints = false\n"))]
+    #[case(ConfigName::Appearance, None)]
+    #[case(ConfigName::Config, Some("[keymap]\nnext = \"x\"\n"))]
+    #[case(ConfigName::Config, None)]
+    #[case(noir(), Some("name = \"noir\"\n"))]
+    #[case(noir(), None)]
     fn the_first_observation_is_reported(
-        #[case] file: ConfigFile,
+        #[case] file: ConfigName,
         #[case] text: Option<&str>,
     ) {
         let (_, io) = step(selected("noir"), observed(file, text));
@@ -397,7 +413,7 @@ mod tests {
                 name,
                 text: content,
             } => {
-                assert_eq!(name, "noir");
+                assert_eq!("noir", name);
                 content
             }
             ConfigChange::Themes(_)
@@ -408,38 +424,38 @@ mod tests {
     }
 
     #[rstest]
-    #[case(ConfigFile::Appearance, Some("[window]\nkey_hints = false\n"))]
-    #[case(ConfigFile::Appearance, None)]
-    #[case(ConfigFile::Config, Some("[keymap]\nnext = \"x\"\n"))]
-    #[case(ConfigFile::Config, None)]
-    #[case(ConfigFile::Theme, Some("name = \"noir\"\n"))]
-    #[case(ConfigFile::Theme, None)]
+    #[case(ConfigName::Appearance, Some("[window]\nkey_hints = false\n"))]
+    #[case(ConfigName::Appearance, None)]
+    #[case(ConfigName::Config, Some("[keymap]\nnext = \"x\"\n"))]
+    #[case(ConfigName::Config, None)]
+    #[case(noir(), Some("name = \"noir\"\n"))]
+    #[case(noir(), None)]
     fn an_unchanged_observation_reports_nothing(
-        #[case] file: ConfigFile,
+        #[case] file: ConfigName,
         #[case] text: Option<&str>,
     ) {
-        let (settled, _) = step(selected("noir"), observed(file, text));
+        let (settled, _) = step(selected("noir"), observed(file.clone(), text));
         let (_, io) = step(settled, observed(file, text));
         assert!(is_nothing(&io));
     }
 
     #[rstest]
     #[case(
-        ConfigFile::Appearance,
+        ConfigName::Appearance,
         "[window]\nkey_hints = false\n",
         "[window]\nkey_hints = true\n"
     )]
     #[case(
-        ConfigFile::Config,
+        ConfigName::Config,
         "[keymap]\nnext = \"x\"\n",
         "[keymap]\nnext = \"y\"\n"
     )]
     fn a_changed_observation_is_reported_again(
-        #[case] file: ConfigFile,
+        #[case] file: ConfigName,
         #[case] first: &str,
         #[case] second: &str,
     ) {
-        let (settled, _) = step(selected("noir"), observed(file, Some(first)));
+        let (settled, _) = step(selected("noir"), observed(file.clone(), Some(first)));
         let (_, io) = step(settled, observed(file, Some(second)));
         let content = match sent(io).unwrap() {
             ConfigChange::Appearance(content) | ConfigChange::Keymap(content) => {
@@ -454,12 +470,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case(ConfigFile::Appearance)]
-    #[case(ConfigFile::Config)]
-    fn the_drivers_own_write_is_not_reported_back(#[case] file: ConfigFile) {
+    #[case(ConfigName::Appearance)]
+    #[case(ConfigName::Config)]
+    fn the_drivers_own_write_is_not_reported_back(#[case] file: ConfigName) {
         let written = "written\n";
         let wrote = WatchMessage::Wrote {
-            file,
+            file: file.clone(),
             text: written.to_string(),
         };
         let (after_write, io) = step(selected("noir"), wrote);
@@ -474,7 +490,11 @@ mod tests {
             selected("noir"),
             WatchMessage::SelectTheme("wafer".to_string()),
         );
-        assert!(reads(&io, ConfigFile::Theme, "/config/themes/wafer.toml"));
+        assert!(reads(
+            &io,
+            &ConfigName::Theme(ThemeName::from_static("wafer")),
+            "/config/themes/wafer.toml",
+        ));
         assert_eq!(state, selected("wafer"));
     }
 
@@ -484,11 +504,11 @@ mod tests {
             selected("noir"),
             WatchMessage::SelectTheme("wafer".to_string()),
         );
-        let (_, io) = step(state, observed(ConfigFile::Theme, None));
+        let (_, io) = step(state, observed(noir(), None));
         assert_eq!(
             sent(io),
             Some(ConfigChange::Theme {
-                name: "wafer".to_string(),
+                name: ThemeName::from_static("wafer"),
                 text: None,
             })
         );
@@ -501,14 +521,14 @@ mod tests {
             .transition(WatchMessage::SelectTheme("noir".to_string()))
             .err();
         assert_eq!(watch, selected("noir"));
-        assert_eq!(reason, Some(ConfigWatchError::Selected));
+        assert_eq!(reason, Some(Unhandled));
     }
 
     #[test]
     fn selecting_a_theme_while_unselected_arms_the_target() {
         let (state, io) =
             step(unselected(), WatchMessage::SelectTheme("noir".to_string()));
-        assert!(reads(&io, ConfigFile::Theme, "/config/themes/noir.toml"));
+        assert!(reads(&io, &noir(), "/config/themes/noir.toml"));
         assert_eq!(state, selected("noir"));
     }
 
@@ -516,9 +536,9 @@ mod tests {
     fn a_keys_file_that_cannot_be_read_is_reported_as_no_text() {
         let (settled, _) = step(
             selected("noir"),
-            observed(ConfigFile::Config, Some("[keymap]\nnext = \"x\"\n")),
+            observed(ConfigName::Config, Some("[keymap]\nnext = \"x\"\n")),
         );
-        let (_, io) = step(settled, observed(ConfigFile::Config, None));
+        let (_, io) = step(settled, observed(ConfigName::Config, None));
         assert_eq!(sent(io), Some(ConfigChange::Keymap(None)));
     }
 
@@ -569,20 +589,22 @@ mod tests {
     }
 
     #[rstest]
-    #[case("permission denied")]
-    fn an_unreadable_file_is_reported_without_being_marked_seen(#[case] error: &str) {
+    #[case(kernel::IoError::Denied)]
+    fn an_unreadable_file_is_reported_without_being_marked_seen(
+        #[case] error: kernel::IoError,
+    ) {
         let (state, io) = step(
             selected("noir"),
             WatchMessage::Unreadable {
-                file: ConfigFile::Theme,
-                detail: error.to_string(),
+                file: noir(),
+                kind: error,
             },
         );
         assert_eq!(
             sent(io),
             Some(ConfigChange::Unreadable {
-                file: ConfigFile::Theme,
-                detail: error.to_string(),
+                file: noir(),
+                kind: error,
             })
         );
         assert_eq!(state, selected("noir"));

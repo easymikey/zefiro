@@ -12,8 +12,16 @@ pub enum TimecodeError {
     Empty,
     #[error("not a valid time (use m:ss, mm:ss, h:mm:ss, or plain seconds)")]
     Malformed,
-    #[error("minutes/seconds field must be less than 60")]
-    SecondsOutOfRange,
+    #[error("minutes/seconds field {value} is above {max}")]
+    OutOfRange { value: u64, max: u64 },
+}
+
+fn bounded(field: u64, max: u64) -> Result<u64, TimecodeError> {
+    if field > max {
+        Err(TimecodeError::OutOfRange { value: field, max })
+    } else {
+        Ok(field)
+    }
 }
 
 pub(crate) fn parse_timecode(input: &str) -> Result<Duration, TimecodeError> {
@@ -25,19 +33,13 @@ pub(crate) fn parse_timecode(input: &str) -> Result<Duration, TimecodeError> {
         [seconds_only] => parse_field(seconds_only)?,
         [minutes, seconds] => {
             let minutes = parse_field(minutes)?;
-            let seconds = parse_field(seconds)?;
-            if seconds >= SECONDS_PER_MINUTE {
-                return Err(TimecodeError::SecondsOutOfRange);
-            }
+            let seconds = bounded(parse_field(seconds)?, SECONDS_PER_MINUTE - 1)?;
             minutes * SECONDS_PER_MINUTE + seconds
         }
         [hours, minutes, seconds] => {
             let hours = parse_field(hours)?;
-            let minutes = parse_field(minutes)?;
-            let seconds = parse_field(seconds)?;
-            if minutes >= MINUTES_PER_HOUR || seconds >= SECONDS_PER_MINUTE {
-                return Err(TimecodeError::SecondsOutOfRange);
-            }
+            let minutes = bounded(parse_field(minutes)?, MINUTES_PER_HOUR - 1)?;
+            let seconds = bounded(parse_field(seconds)?, SECONDS_PER_MINUTE - 1)?;
             hours * SECONDS_PER_HOUR + minutes * SECONDS_PER_MINUTE + seconds
         }
         _ => return Err(TimecodeError::Malformed),
@@ -98,12 +100,16 @@ impl Revision {
         Self(self.0.wrapping_add(1))
     }
 
-    pub fn bump(&mut self) -> Self {
+    pub fn advance(&mut self) {
         *self = self.next();
+    }
+
+    pub fn bump(&mut self) -> Self {
+        self.advance();
         *self
     }
 
-    pub fn reply(self, awaited: Self) -> Freshness {
+    pub fn freshness(self, awaited: Self) -> Freshness {
         if self == awaited {
             Freshness::Awaited
         } else {
@@ -200,7 +206,7 @@ mod tests {
     fn parse_timecode_rejects_an_out_of_range_seconds_field() {
         assert_eq!(
             parse_timecode("1:99"),
-            Err(TimecodeError::SecondsOutOfRange)
+            Err(TimecodeError::OutOfRange { value: 99, max: 59 })
         );
     }
 
@@ -251,8 +257,8 @@ mod tests {
     fn only_the_awaited_generation_answers(
         #[case] stamp: u64,
         #[case] awaited: u64,
-        #[case] reply: Freshness,
+        #[case] freshness: Freshness,
     ) {
-        assert_eq!(bumped(stamp).reply(bumped(awaited)), reply);
+        assert_eq!(bumped(stamp).freshness(bumped(awaited)), freshness);
     }
 }

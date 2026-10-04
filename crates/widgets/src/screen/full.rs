@@ -25,10 +25,10 @@ impl Widget for &FullScreen<'_> {
             theme: scene.active_theme(),
             cell_aspect: scene.cell_aspect,
             cover_sizing: scene.cover_sizing(),
-            appearance: scene.look().appearance,
+            appearance: scene.appearance().settings,
             cover_art: self.cover_art,
         }
-        .render_in(
+        .paint(
             &metrics,
             Canvas {
                 area: self.layout.header,

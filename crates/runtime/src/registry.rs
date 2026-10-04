@@ -1,4 +1,4 @@
-use kernel::domain::Driver;
+use kernel::domain::DriverName;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Hosting {
@@ -24,7 +24,7 @@ impl Platform {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DriverRow {
-    pub(crate) driver: Driver,
+    pub(crate) driver: DriverName,
     pub(crate) thread_name: &'static str,
     pub(crate) hosting: Hosting,
     pub(crate) platform: Platform,
@@ -32,44 +32,44 @@ pub(crate) struct DriverRow {
 
 pub(crate) const REGISTRY: [DriverRow; 4] = [
     DriverRow {
-        driver: Driver::Audio,
+        driver: DriverName::Audio,
         thread_name: "sifr-audio",
         hosting: Hosting::Worker,
         platform: Platform::Every,
     },
     DriverRow {
-        driver: Driver::Macos,
+        driver: DriverName::Macos,
         thread_name: "sifr-macos",
         hosting: Hosting::WorkerWithMainLoop,
         platform: Platform::Macos,
     },
     DriverRow {
-        driver: Driver::Library,
+        driver: DriverName::Library,
         thread_name: "sifr-library",
         hosting: Hosting::Worker,
         platform: Platform::Every,
     },
     DriverRow {
-        driver: Driver::Config,
+        driver: DriverName::Config,
         thread_name: "sifr-config",
         hosting: Hosting::Worker,
         platform: Platform::Every,
     },
 ];
 
-pub(crate) const fn row(driver: Driver) -> &'static DriverRow {
+pub(crate) const fn row(driver: DriverName) -> &'static DriverRow {
     let [audio, macos, library, config] = &REGISTRY;
     match driver {
-        Driver::Audio => audio,
-        Driver::Macos => macos,
-        Driver::Library => library,
-        Driver::Config => config,
+        DriverName::Audio => audio,
+        DriverName::Macos => macos,
+        DriverName::Library => library,
+        DriverName::Config => config,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::Driver;
+    use kernel::domain::DriverName;
 
     use crate::registry::{REGISTRY, row};
 
@@ -78,13 +78,13 @@ mod tests {
         assert_eq!(
             REGISTRY.map(|entry| entry.driver),
             [
-                Driver::Audio,
-                Driver::Macos,
-                Driver::Library,
-                Driver::Config
+                DriverName::Audio,
+                DriverName::Macos,
+                DriverName::Library,
+                DriverName::Config
             ]
         );
-        for driver in Driver::ALL {
+        for driver in DriverName::ALL {
             assert_eq!(row(driver).driver, driver);
         }
     }

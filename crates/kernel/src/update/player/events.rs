@@ -4,13 +4,9 @@ use crate::{
     cmd::{AudioCmd, Cmd, Effect, LibraryCmd, PlaybackChange, TrackLoad},
     domain::{Moment, PausedBy, Player, Playhead, Preload, Revision, Track},
     message::AudioError,
-    update::player::{
-        Anchor,
-        PlayerError,
-        Stamp,
-        StartOrigin,
-        handover_effects,
-        seek_effect,
+    update::{
+        machine::Unhandled,
+        player::{Anchor, Stamp, StartOrigin, handover_effects, seek_effect},
     },
 };
 
@@ -41,7 +37,7 @@ impl Lookahead {
     fn preloading(self, at: Duration, preload: &mut Preload) -> Cmd {
         match self.next {
             Some(next) if self.is_preload_due(at) => {
-                let cmd = Cmd::Batch(vec![
+                let cmd = Cmd::from_iter([
                     Effect::Audio(AudioCmd::Preload(TrackLoad::for_track(
                         &next,
                         self.revision,
@@ -53,7 +49,7 @@ impl Lookahead {
                 *preload = Preload::Queued(next);
                 cmd
             }
-            Some(_) | None => Cmd::None,
+            Some(_) | None => Cmd::none(),
         }
     }
 }
@@ -63,7 +59,7 @@ impl Player {
         &mut self,
         total: Option<Duration>,
         anchor: Anchor,
-    ) -> Result<Cmd, PlayerError> {
+    ) -> Result<Cmd, Unhandled> {
         match mem::replace(self, Player::Stopped) {
             Player::Loading { track, at } => {
                 let track = match total {
@@ -75,26 +71,25 @@ impl Player {
                     head: Playhead::anchored(at, anchor.since, anchor.speed),
                     preload: Preload::None,
                 };
-                Ok(Cmd::None)
+                Ok(Cmd::none())
             }
             other @ (Player::Playing { .. }
             | Player::Paused { .. }
             | Player::Stopped) => {
-                let refusal = other.refusal();
                 *self = other;
-                Err(refusal)
+                Err(Unhandled)
             }
         }
     }
 
     pub(crate) fn failed(&mut self, failure: &AudioError, now: Moment) -> Cmd {
         match failure {
-            AudioError::OutputLost { .. } => self.output_lost(now),
+            AudioError::OutputLost(..) => self.output_lost(now),
             AudioError::Decode { .. }
             | AudioError::Device { .. }
             | AudioError::Stream { .. }
             | AudioError::Preload { .. } => self.load_failed(),
-            AudioError::Seek { .. } => Cmd::None,
+            AudioError::Seek { .. } => Cmd::none(),
         }
     }
 
@@ -102,7 +97,7 @@ impl Player {
         match self {
             Player::Playing { .. } => self.pause(now, PausedBy::Listener),
             Player::Loading { .. } => self.stop(),
-            Player::Paused { .. } | Player::Stopped => Cmd::None,
+            Player::Paused { .. } | Player::Stopped => Cmd::none(),
         }
     }
 
@@ -110,7 +105,7 @@ impl Player {
         match self {
             Player::Loading { .. } => self.stop(),
             Player::Playing { .. } | Player::Paused { .. } | Player::Stopped => {
-                Cmd::None
+                Cmd::none()
             }
         }
     }
@@ -119,7 +114,7 @@ impl Player {
         &mut self,
         offset: Duration,
         lookahead: Lookahead,
-    ) -> Result<Cmd, PlayerError> {
+    ) -> Result<Cmd, Unhandled> {
         match (&mut *self, lookahead.loop_start(offset)) {
             (Player::Playing { head, preload, .. }, Some(a)) => {
                 *head = Playhead::anchored(a, lookahead.now, head.speed);
@@ -130,16 +125,17 @@ impl Player {
                 *head = Playhead::anchored(offset, lookahead.now, head.speed);
                 match preload {
                     Preload::None => Ok(lookahead.preloading(offset, preload)),
-                    Preload::Queued(_) | Preload::Stale(_) => Ok(Cmd::None),
+                    Preload::Queued(_) | Preload::Stale(_) => Ok(Cmd::none()),
                 }
             }
             (Player::Paused { at, .. }, Some(a)) => {
                 *at = a;
                 Ok(seek_effect(a))
             }
-            (Player::Paused { .. }, None) => Err(PlayerError::Paused),
-            (Player::Loading { .. }, Some(_) | None) => Err(PlayerError::Loading),
-            (Player::Stopped, Some(_) | None) => Err(PlayerError::Stopped),
+            (Player::Paused { .. }, None)
+            | (Player::Loading { .. } | Player::Stopped, Some(_) | None) => {
+                Err(Unhandled)
+            }
         }
     }
 
@@ -147,14 +143,14 @@ impl Player {
         &mut self,
         offset: Duration,
         now: Moment,
-    ) -> Result<Cmd, PlayerError> {
+    ) -> Result<Cmd, Unhandled> {
         match self {
             Player::Playing { head, .. } => {
                 *head = Playhead::anchored(offset, now, head.speed);
-                Ok(Cmd::None)
+                Ok(Cmd::none())
             }
             Player::Paused { .. } | Player::Loading { .. } | Player::Stopped => {
-                Err(self.refusal())
+                Err(Unhandled)
             }
         }
     }
@@ -163,7 +159,7 @@ impl Player {
         &mut self,
         next: Option<Arc<Track>>,
         now: Moment,
-    ) -> Result<Cmd, PlayerError> {
+    ) -> Result<Cmd, Unhandled> {
         match self {
             Player::Playing {
                 track,
@@ -175,16 +171,24 @@ impl Player {
                 }
                 *head = Playhead::anchored(Duration::ZERO, now, head.speed);
                 *preload = Preload::None;
-                Ok(handover_effects(track, PlaybackChange::Play, now))
+                Ok(Cmd::from_iter(handover_effects(
+                    track,
+                    PlaybackChange::Play,
+                    now,
+                )))
             }
             Player::Paused { track, at, .. } => {
                 if let Some(next) = next {
                     *track = next;
                 }
                 *at = Duration::ZERO;
-                Ok(handover_effects(track, PlaybackChange::Pause, now))
+                Ok(Cmd::from_iter(handover_effects(
+                    track,
+                    PlaybackChange::Pause,
+                    now,
+                )))
             }
-            Player::Loading { .. } | Player::Stopped => Err(self.refusal()),
+            Player::Loading { .. } | Player::Stopped => Err(Unhandled),
         }
     }
 
@@ -192,14 +196,14 @@ impl Player {
         &mut self,
         next: Option<Arc<Track>>,
         stamp: Stamp,
-    ) -> Result<Cmd, PlayerError> {
+    ) -> Result<Cmd, Unhandled> {
         match self {
             Player::Playing { .. } => Ok(match next {
                 Some(track) => self.start(track, StartOrigin::TrackEnded(stamp)),
                 None => self.stop(),
             }),
             Player::Paused { .. } | Player::Loading { .. } | Player::Stopped => {
-                Err(self.refusal())
+                Err(Unhandled)
             }
         }
     }

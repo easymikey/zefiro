@@ -16,7 +16,7 @@ AppearanceFile {
     },
     cover: CoverConfig {
         size_px: 160,
-        style: Milkdrop,
+        mode: Milkdrop,
         text_cells: TextCoverCells {
             width: 20,
             height: 8,

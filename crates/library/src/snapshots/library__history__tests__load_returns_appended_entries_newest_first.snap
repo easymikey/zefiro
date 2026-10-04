@@ -5,7 +5,9 @@ expression: entries
 ---
 [
     HistoryEntry {
-        path: "/music/second.flac",
+        track: Local(
+            "/music/second.flac",
+        ),
         title: "Second",
         artist: None,
         at: Moment(
@@ -13,7 +15,9 @@ expression: entries
         ),
     },
     HistoryEntry {
-        path: "/music/first.flac",
+        track: Local(
+            "/music/first.flac",
+        ),
         title: "First",
         artist: Some(
             "Artist A",

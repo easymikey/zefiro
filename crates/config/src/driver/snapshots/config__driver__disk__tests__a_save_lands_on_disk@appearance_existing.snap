@@ -4,5 +4,5 @@ expression: text
 ---
 # keep me
 [cover]
-style = "vinyl"
+mode = "vinyl"
 brackets = true

@@ -6,8 +6,9 @@ Some(
     Listed {
         tracks: [
             Track {
-                path: "[tmp]/music/a.wav",
-                duration: None,
+                source: Local(
+                    "[tmp]/music/a.wav",
+                ),
                 tags: Tags {
                     title: None,
                     artist: None,
@@ -31,7 +32,9 @@ Some(
                     replay_gain: None,
                 },
                 display: "a",
-                tagging: Listed,
+                tagging: Listed(
+                    None,
+                ),
             },
         ],
         revision: Revision(

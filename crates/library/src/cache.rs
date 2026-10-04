@@ -126,7 +126,7 @@ pub(crate) fn save(
     let read: Vec<&Track> = tracks
         .iter()
         .map(Arc::as_ref)
-        .filter(|track| track.tagging() == Tagging::Read)
+        .filter(|track| matches!(track.tagging(), Tagging::Read(_)))
         .collect();
     if read.is_empty() {
         return Ok(());

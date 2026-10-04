@@ -114,54 +114,54 @@ mod tests {
         values.iter().copied().map(ThemeName::from_static).collect()
     }
 
-    struct NudgeRow {
+    struct StepRow {
         themes: Themes,
         direction: Direction,
         expected: Option<&'static str>,
     }
 
     #[rstest]
-    #[case::next(NudgeRow {
+    #[case::next(StepRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("a")) },
         direction: Direction::Next,
         expected: Some("b"),
     })]
-    #[case::wraps_at_end(NudgeRow {
+    #[case::wraps_at_end(StepRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("c")) },
         direction: Direction::Next,
         expected: Some("a"),
     })]
-    #[case::previous_wraps_at_start(NudgeRow {
+    #[case::previous_wraps_at_start(StepRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("a")) },
         direction: Direction::Previous,
         expected: Some("c"),
     })]
-    #[case::selected_missing_from_list_up(NudgeRow {
+    #[case::selected_missing_from_list_up(StepRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("gone")) },
         direction: Direction::Next,
         expected: Some("a"),
     })]
-    #[case::selected_missing_from_list_down(NudgeRow {
+    #[case::selected_missing_from_list_down(StepRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("gone")) },
         direction: Direction::Previous,
         expected: Some("c"),
     })]
-    #[case::auto_up(NudgeRow {
+    #[case::auto_up(StepRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Auto },
         direction: Direction::Next,
         expected: Some("a"),
     })]
-    #[case::auto_down(NudgeRow {
+    #[case::auto_down(StepRow {
         themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Auto },
         direction: Direction::Previous,
         expected: Some("c"),
     })]
-    #[case::empty_list_gives_none(NudgeRow {
+    #[case::empty_list_gives_none(StepRow {
         themes: Themes { names: Vec::new(), selected: ThemeChoice::Auto },
         direction: Direction::Next,
         expected: None,
     })]
-    fn themes_nudge_onto_a_listed_name(#[case] row: NudgeRow) {
+    fn themes_step_onto_a_listed_name(#[case] row: StepRow) {
         assert_eq!(
             row.themes
                 .stepped(row.direction)

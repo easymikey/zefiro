@@ -3,8 +3,9 @@ source: crates/library/src/tags.rs
 expression: meta
 ---
 Track {
-    path: "[tmp]/clip.mkv",
-    duration: None,
+    source: Local(
+        "[tmp]/clip.mkv",
+    ),
     tags: Tags {
         title: None,
         artist: None,
@@ -28,5 +29,7 @@ Track {
         replay_gain: None,
     },
     display: "clip",
-    tagging: Listed,
+    tagging: Listed(
+        None,
+    ),
 }

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use config::ThemeFile;
 use crossbeam_channel::Sender;
-use kernel::{ConfigCmd, ConfigEvent, Message, Outbox, domain::Driver};
+use kernel::{ConfigCmd, ConfigEvent, Message, Outbox, domain::DriverName};
 
 use crate::{
     config::{
@@ -26,7 +26,7 @@ pub(crate) fn spawn(
     inbox: &Sender<Message>,
 ) -> Result<DriverThread<ConfigCmd>, Error> {
     let thread = spawn_driver(
-        registry::row(Driver::Config),
+        registry::row(DriverName::Config),
         move |inbox, outbox| {
             let outbound = Outbound {
                 outbox,
@@ -57,10 +57,12 @@ mod tests {
         ConfigCmd,
         ConfigEvent,
         ConfigPatch,
+        ConfigReload,
         Message,
         domain::{
             AppearanceSetting,
-            ConfigFile,
+            ConfigError,
+            ConfigName,
             OptionIndex,
             ThemeName,
             appearance_rows::AppearanceField,
@@ -166,10 +168,10 @@ mod tests {
         let failed = drain(&messages).into_iter().any(|message| {
             matches!(
                 message,
-                Message::Config(ConfigEvent::SourceFailed {
-                    source: ConfigFile::Config,
-                    ..
-                })
+                Message::Config(ConfigEvent::Reloaded(ConfigReload {
+                    name: ConfigName::Config,
+                    result: Err(_),
+                }))
             )
         });
         assert!(failed, "a broken keymap must report a source failure");
@@ -191,18 +193,18 @@ mod tests {
             spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
 
         let failure = drain(&messages).into_iter().find_map(|message| {
-            let Message::Config(ConfigEvent::SourceFailed {
-                source: ConfigFile::Appearance,
-                text,
-            }) = message
+            let Message::Config(ConfigEvent::Reloaded(ConfigReload {
+                name: ConfigName::Appearance,
+                result: Err(error),
+            })) = message
             else {
                 return None;
             };
-            Some(text)
+            Some(error)
         });
-        let text =
+        let error =
             failure.expect("a broken appearance file must report a source failure");
-        assert!(text.contains("sifr-ui.toml"), "{text:?}");
+        assert!(matches!(error, ConfigError::Invalid { .. }), "{error:?}");
 
         drop(thread.commands);
         thread.handle.join().unwrap().unwrap();
@@ -215,7 +217,9 @@ mod tests {
         let (thread, _cells, doorbell) =
             spawn(paths(&directory), TEST_DEBOUNCE, &inbox).unwrap();
         drain(&doorbell);
-        let first_rows = drain(&messages).into_iter().find_map(custom_rows_reloaded);
+        let first_rows = drain(&messages)
+            .into_iter()
+            .find_map(appearance_rows_reloaded);
         assert!(
             first_rows.is_some(),
             "the stock appearance file must seed the rows once"
@@ -236,17 +240,17 @@ mod tests {
         let failed = later_messages.iter().any(|message| {
             matches!(
                 message,
-                Message::Config(ConfigEvent::SourceFailed {
-                    source: ConfigFile::Appearance,
-                    ..
-                })
+                Message::Config(ConfigEvent::Reloaded(ConfigReload {
+                    name: ConfigName::Appearance,
+                    result: Err(_),
+                }))
             )
         });
         assert!(failed, "the broken edit must be reported");
         assert!(
             later_messages
                 .into_iter()
-                .find_map(custom_rows_reloaded)
+                .find_map(appearance_rows_reloaded)
                 .is_none(),
             "a broken edit must never clear the last good rows"
         );
@@ -269,7 +273,7 @@ mod tests {
         Some(themes)
     }
 
-    fn custom_rows_reloaded(message: Message) -> Option<Vec<AppearanceSetting>> {
+    fn appearance_rows_reloaded(message: Message) -> Option<Vec<AppearanceSetting>> {
         let Message::Config(ConfigEvent::AppearanceSettingsReloaded(rows)) = message
         else {
             return None;
@@ -396,7 +400,7 @@ mod tests {
     const COMMENTED_APPEARANCE: &str = r#"# sifr-ui.toml
 [cover]
 # the noir look
-style = "vinyl"
+mode = "vinyl"
 brackets = false
 
 [card]
@@ -415,7 +419,7 @@ speed_chip = "always"
 
     fn appearance_rows() -> [(AppearanceField, OptionIndex); 6] {
         [
-            (AppearanceField::CoverStyle, 3),
+            (AppearanceField::CoverMode, 3),
             (AppearanceField::CoverBrackets, 1),
             (AppearanceField::FormatChips, 0),
             (AppearanceField::ProgressRemaining, 1),
@@ -429,7 +433,7 @@ speed_chip = "always"
     }
 
     fn assert_appearance_rows_landed(parsed: &toml::Value) {
-        assert_eq!(text_at(parsed, "cover", "style"), Some("off"));
+        assert_eq!(text_at(parsed, "cover", "mode"), Some("off"));
         assert_eq!(flag_at(parsed, "cover", "brackets"), Some(true));
         assert_eq!(flag_at(parsed, "card", "format_chips"), Some(false));
         assert_eq!(flag_at(parsed, "progress", "remaining"), Some(true));
@@ -464,7 +468,7 @@ speed_chip = "always"
                 .unwrap();
         }
 
-        let text = wait_for_content(&appearance_path, "style = \"off\"").unwrap();
+        let text = wait_for_content(&appearance_path, "mode = \"off\"").unwrap();
         insta::assert_snapshot!(text);
         let parsed: toml::Value = toml::from_str(&text).unwrap();
         assert_appearance_rows_landed(&parsed);
@@ -512,7 +516,7 @@ speed_chip = "always"
         let text = wait_for_content(&appearance_path, "milkdrop").unwrap();
         let parsed: toml::Value = toml::from_str(&text).unwrap();
         assert_eq!(
-            text_at(&parsed, "cover", "style"),
+            text_at(&parsed, "cover", "mode"),
             Some("milkdrop"),
             "the written file must hold noir's full appearance"
         );
@@ -526,7 +530,7 @@ speed_chip = "always"
     }
 
     #[test]
-    fn an_appearance_save_sends_no_custom_rows() {
+    fn an_appearance_save_sends_no_appearance_rows() {
         let directory = tempfile::tempdir().unwrap();
         let appearance_path = directory.path().join("sifr-ui.toml");
         let (inbox, messages) = crossbeam_channel::unbounded();
@@ -551,7 +555,10 @@ speed_chip = "always"
             settled.push(message);
         }
         assert!(
-            settled.into_iter().find_map(custom_rows_reloaded).is_none(),
+            settled
+                .into_iter()
+                .find_map(appearance_rows_reloaded)
+                .is_none(),
             "a successful appearance write must send no custom rows echo"
         );
 

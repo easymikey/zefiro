@@ -5,7 +5,7 @@ expression: out
 # sifr-ui.toml
 [cover]
 # the noir look
-style = "vinyl"
+mode = "vinyl"
 brackets = true
 
 [card]

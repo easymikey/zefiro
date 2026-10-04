@@ -106,7 +106,7 @@ mod tests {
         )
     }
 
-    fn mark(revision: u64) -> Timer {
+    fn lookahead(revision: u64) -> Timer {
         Timer::Lookahead(
             (0..revision).fold(Revision::default(), |revision, _| revision.next()),
         )
@@ -122,7 +122,7 @@ mod tests {
     #[rstest]
     #[case::toast(toast(1))]
     #[case::sleep(sleep(1))]
-    #[case::mark(mark(1))]
+    #[case::lookahead(lookahead(1))]
     fn schedule_sets_the_next_deadline(#[case] message: Timer) {
         let mut timers = Timers::default();
         let now = Instant::now();
@@ -134,7 +134,7 @@ mod tests {
 
     #[rstest]
     #[case::toast(toast(1), toast(2))]
-    #[case::mark(mark(1), mark(2))]
+    #[case::lookahead(lookahead(1), lookahead(2))]
     #[case::sleep(sleep(1), sleep(2))]
     fn rescheduling_a_slot_replaces_its_deadline(
         #[case] first: Timer,
@@ -185,9 +185,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case::toast(toast(1), mark(1))]
+    #[case::toast(toast(1), lookahead(1))]
     #[case::sleep(sleep(1), toast(1))]
-    #[case::mark(mark(1), sleep(1))]
+    #[case::lookahead(lookahead(1), sleep(1))]
     fn a_timer_lands_in_its_own_slot(#[case] message: Timer, #[case] sentinel: Timer) {
         let mut timers = Timers::default();
         let now = Instant::now();
@@ -205,13 +205,13 @@ mod tests {
     fn due_orders_by_deadline_across_slots() {
         let mut timers = Timers::default();
         let now = Instant::now();
-        timers.schedule(now + Duration::from_secs(3), mark(1));
+        timers.schedule(now + Duration::from_secs(3), lookahead(1));
         timers.schedule(now + Duration::from_secs(1), sleep(1));
         timers.schedule(now + Duration::from_secs(2), toast(1));
 
         let fired = timers.due(now + Duration::from_secs(10));
 
-        assert_eq!(fired, vec![sleep(1), toast(1), mark(1)]);
+        assert_eq!(fired, vec![sleep(1), toast(1), lookahead(1)]);
     }
 
     #[rstest]

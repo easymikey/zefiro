@@ -10,11 +10,11 @@ expression: "walked(model, messages)"
                 ConfirmDelete,
             ),
         ),
-        One(
+        [
             Animate(
                 OverlayOpened,
             ),
-        ),
+        ],
         Stopped,
         Some(
             ConfirmDelete(
@@ -53,11 +53,11 @@ expression: "walked(model, messages)"
         Overlay(
             Close,
         ),
-        One(
+        [
             Animate(
                 OverlayClosed,
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {

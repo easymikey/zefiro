@@ -13,16 +13,20 @@ use kernel::{
     Player,
     domain::{Output, StreamError},
     message::{AudioError, AudioEvent},
-    update::update,
 };
 use rstest::rstest;
 
-use crate::support::{first_toast_expiry, model_with_tracks, playing_model};
+use crate::support::{
+    first_toast_expiry,
+    model_with_tracks,
+    playing_model,
+    step::update,
+};
 
 fn output_lost() -> Message {
-    Message::Audio(AudioEvent::Error(AudioError::OutputLost {
-        kind: StreamError::DeviceGone,
-    }))
+    Message::Audio(AudioEvent::Error(AudioError::OutputLost(
+        StreamError::DeviceGone,
+    )))
 }
 
 fn lost_while_playing(count: usize) -> Model {
@@ -34,18 +38,18 @@ fn lost_while_playing(count: usize) -> Model {
 #[rstest]
 #[case::playing_pauses_and_says_so(
     playing_model(3),
-    Cmd::Batch(vec![
+    Cmd::from_iter([
         Effect::Animate(Cue::ToastRaised),
         first_toast_expiry(),
         Effect::Audio(AudioCmd::Playback(Playback::Paused)),
-        Effect::Macos(MacosCmd::PlaybackState(Playback::Paused)),
+        Effect::Macos(MacosCmd::SetPlayback(Playback::Paused)),
         Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Pause)),
     ]),
     "Output lost — paused"
 )]
 #[case::stopped_only_marks_the_output(
     model_with_tracks(3),
-    Cmd::Batch(vec![Effect::Animate(Cue::ToastRaised), first_toast_expiry()]),
+    Cmd::from_iter([Effect::Animate(Cue::ToastRaised), first_toast_expiry()]),
     "Audio output lost: the device is gone"
 )]
 fn a_lost_output_is_mirrored_in_the_model(
@@ -57,7 +61,7 @@ fn a_lost_output_is_mirrored_in_the_model(
     let cmd = update(&mut model, output_lost(), Moment::default()).unwrap();
 
     assert_eq!(cmd, expected);
-    assert!(matches!(model.transport.output, Output::Lost { .. }));
+    assert!(matches!(model.transport.output, Output::Lost(..)));
     assert_eq!(
         model
             .workspace
@@ -102,7 +106,7 @@ fn a_track_that_loads_after_the_reopen_clears_the_lost_output() {
 
     let _loaded = update(
         &mut model,
-        Message::Audio(AudioEvent::Loaded { total: None }),
+        Message::Audio(AudioEvent::Loaded(None)),
         Moment::default(),
     )
     .unwrap();

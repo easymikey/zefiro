@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use kernel::{
-    domain::{AbLoop, Cursor, Direction},
+    domain::{AbLoop, Cursor, Direction, ViewIndex},
     playlist::{PlayOrder, Playlist},
 };
 use proptest::prelude::{Just, prop_assert, prop_assert_eq, prop_oneof, proptest};
@@ -19,7 +19,7 @@ proptest! {
     ) {
         let tracks = (0..len).map(bare_track).collect::<Vec<_>>();
         let play_order = if shuffled && len > 0 {
-            PlayOrder::Shuffle((0..len).collect())
+            PlayOrder::Shuffle((0..len).map(ViewIndex::new).collect())
         } else {
             PlayOrder::Linear
         };
@@ -38,7 +38,7 @@ proptest! {
         if let PlayOrder::Shuffle(order) = &playlist.play_order {
             let mut sorted = order.clone();
             sorted.sort_unstable();
-            prop_assert_eq!(sorted, (0..len).collect::<Vec<_>>());
+            prop_assert_eq!(sorted, (0..len).map(ViewIndex::new).collect::<Vec<_>>());
         }
     }
 

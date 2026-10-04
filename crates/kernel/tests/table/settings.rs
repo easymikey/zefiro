@@ -33,11 +33,13 @@ use kernel::{
         Themes,
         appearance_rows::AppearanceField,
     },
-    update::update,
 };
 use rstest::rstest;
 
-use crate::support::device;
+use crate::support::{
+    device,
+    step::{apply, update},
+};
 
 fn all_rows() -> Vec<SettingRow> {
     SettingRow::all(&[])
@@ -48,14 +50,18 @@ fn row_index(row: SettingRow) -> usize {
     found.unwrap_or_else(|| panic!("row missing from the settings list: {row:?}"))
 }
 
+fn navigate(model: &mut Model, direction: Direction) -> Cmd {
+    let request = SettingsRowRequest::Navigate(direction);
+    let message = Message::Overlay(OverlayRequest::Settings(request));
+    update(model, message, Moment::default()).unwrap()
+}
+
 fn opened_settings() -> Model {
     let mut model = Model::default();
-    let _ = update(
+    apply(
         &mut model,
         Message::Overlay(OverlayRequest::Open(OverlayName::Settings)),
-        Moment::default(),
-    )
-    .unwrap();
+    );
     model
 }
 
@@ -70,47 +76,26 @@ fn navigated_to(index: usize) -> Model {
 #[test]
 fn navigate_down_steps_to_the_next_row() {
     let mut model = navigated_to(0);
-    let cmd = update(
-        &mut model,
-        Message::Overlay(OverlayRequest::Settings(SettingsRowRequest::Navigate(
-            Direction::Next,
-        ))),
-        Moment::default(),
-    )
-    .unwrap();
+    let cmd = navigate(&mut model, Direction::Next);
     assert_eq!(selected_row(&model), all_rows().get(1).copied());
-    assert!(matches!(cmd, Cmd::None));
+    assert!(cmd == Cmd::none());
 }
 
 #[test]
 fn navigate_up_clamps_at_the_first_row() {
     let mut model = navigated_to(0);
-    let cmd = update(
-        &mut model,
-        Message::Overlay(OverlayRequest::Settings(SettingsRowRequest::Navigate(
-            Direction::Previous,
-        ))),
-        Moment::default(),
-    )
-    .unwrap();
+    let cmd = navigate(&mut model, Direction::Previous);
     assert_eq!(selected_row(&model), all_rows().first().copied());
-    assert!(matches!(cmd, Cmd::None));
+    assert!(cmd == Cmd::none());
 }
 
 #[test]
 fn navigate_down_clamps_at_the_last_row() {
     let last = all_rows().len() - 1;
     let mut model = navigated_to(last);
-    let cmd = update(
-        &mut model,
-        Message::Overlay(OverlayRequest::Settings(SettingsRowRequest::Navigate(
-            Direction::Next,
-        ))),
-        Moment::default(),
-    )
-    .unwrap();
+    let cmd = navigate(&mut model, Direction::Next);
     assert_eq!(selected_row(&model), all_rows().last().copied());
-    assert!(matches!(cmd, Cmd::None));
+    assert!(cmd == Cmd::none());
 }
 
 #[rstest]
@@ -126,17 +111,16 @@ fn adjust_resolves_the_row_under_the_cursor(
     let mut model = navigated_to(row_index(row));
     assert_eq!(selected_row(&model), Some(row));
 
+    let request = SettingsRowRequest::Step(direction);
     let cmd = update(
         &mut model,
-        Message::Overlay(OverlayRequest::Settings(SettingsRowRequest::Adjust(
-            direction,
-        ))),
+        Message::Overlay(OverlayRequest::Settings(request)),
         Moment::default(),
     )
     .unwrap();
 
     assert_eq!(selected_row(&model), Some(row));
-    assert!(!matches!(cmd, Cmd::None));
+    assert!(cmd != Cmd::none());
 }
 
 fn seeded() -> Model {
@@ -176,8 +160,12 @@ fn adjust_row_theme_never_touches_window_colors() {
     );
 }
 
+fn press(model: &mut Model, row: SettingRow, direction: Direction) {
+    apply(model, Message::Step { row, direction });
+}
+
 fn step(model: &mut Model, row: SettingRow, direction: Direction) -> Cmd {
-    update(model, Message::Adjust { row, direction }, Moment::default()).unwrap()
+    update(model, Message::Step { row, direction }, Moment::default()).unwrap()
 }
 
 #[test]
@@ -191,7 +179,7 @@ fn adjust_row_toggles_a_config_row() {
             .filter_map(|effect| match effect {
                 Effect::Audio(command) => Some(format!("{command:?}")),
                 Effect::Library(command) => Some(format!("{command:?}")),
-                Effect::RollShuffle { .. } => Some("RollShuffle".to_string()),
+                Effect::RollShuffle(..) => Some("RollShuffle".to_string()),
                 Effect::WindowColors(_)
                 | Effect::Config(_)
                 | Effect::Macos(_)
@@ -246,7 +234,7 @@ fn adjust_row_crossfade_steps_by_500ms_and_clamps_both_ends() {
     );
 
     for _ in 0..21 {
-        let _ = step(&mut model, SettingRow::Crossfade, Direction::Next);
+        press(&mut model, SettingRow::Crossfade, Direction::Next);
     }
     let ceiling = Crossfade::try_from(Duration::from_secs(10)).unwrap();
     assert_eq!(model.settings.audio.crossfade, ceiling);
@@ -309,7 +297,7 @@ fn adjust_row_does_nothing_until_the_shell_delivers_a_list(
     let cmd = step(&mut model, row, Direction::Next);
 
     assert!(unchanged(&model));
-    assert!(matches!(cmd, Cmd::None));
+    assert!(cmd == Cmd::none());
 }
 
 #[test]
@@ -340,16 +328,16 @@ fn adjust_row_output_device_cycles_system_default_and_devices_and_wraps() {
             .any(|effect| matches!(effect, Effect::Audio(AudioCmd::SetDevice(_))))
     );
 
-    let _ = step(&mut model, SettingRow::OutputDevice, Direction::Next);
+    press(&mut model, SettingRow::OutputDevice, Direction::Next);
     assert_eq!(
         model.settings.audio.device,
         OutputDevice::Named(device("Headphones"))
     );
 
-    let _ = step(&mut model, SettingRow::OutputDevice, Direction::Next);
+    press(&mut model, SettingRow::OutputDevice, Direction::Next);
     assert_eq!(model.settings.audio.device, OutputDevice::SystemDefault);
 
-    let _ = step(&mut model, SettingRow::OutputDevice, Direction::Previous);
+    press(&mut model, SettingRow::OutputDevice, Direction::Previous);
     assert_eq!(
         model.settings.audio.device,
         OutputDevice::Named(device("Headphones"))
@@ -380,7 +368,7 @@ fn adjust_row_sleep_presets_cycles_and_wraps_and_persists() {
     );
     assert_eq!(sleep_presets_patch(&cmd), SleepPresets::bundle(1));
 
-    let _ = step(&mut model, SettingRow::SleepPresets, Direction::Previous);
+    press(&mut model, SettingRow::SleepPresets, Direction::Previous);
     let wrapped = step(&mut model, SettingRow::SleepPresets, Direction::Previous);
     assert!(model.settings.audio.sleep_presets.as_slice().is_empty());
     assert_eq!(sleep_presets_patch(&wrapped), SleepPresets::bundle(4));
@@ -391,7 +379,7 @@ fn adjust_row_sleep_presets_snaps_a_custom_value_to_the_nearest_bundle() {
     let mut model = seeded();
     model.settings.audio.sleep_presets = SleepPresets::from_minutes(&[100]).unwrap();
 
-    let _ = step(&mut model, SettingRow::SleepPresets, Direction::Next);
+    press(&mut model, SettingRow::SleepPresets, Direction::Next);
 
     assert_eq!(
         Some(model.settings.audio.sleep_presets.as_slice()),
@@ -407,14 +395,9 @@ fn adjust_row_sleep_presets_leaves_the_clamp_to_the_next_cycle() {
         delay: Duration::from_secs(60),
     });
 
-    let _ = step(&mut model, SettingRow::SleepPresets, Direction::Previous);
+    press(&mut model, SettingRow::SleepPresets, Direction::Previous);
     let armed = model.transport.sleep.map(|timer| timer.preset_index);
-    let _ = update(
-        &mut model,
-        Message::Playback(PlaybackRequest::CycleSleep),
-        Moment::default(),
-    )
-    .unwrap();
+    apply(&mut model, Message::Playback(PlaybackRequest::CycleSleep));
 
     assert_eq!(armed, Some(2));
     assert!(model.transport.sleep.is_none());
@@ -437,7 +420,7 @@ fn adjust_row_keeps_the_two_config_files_apart() {
     let custom_id = AppearanceField::LayoutMode;
     model
         .appearance_settings
-        .push(custom_row(custom_id, AppearanceControl::Toggle));
+        .push(appearance_row(custom_id, AppearanceControl::Toggle));
     let custom = step(
         &mut model,
         SettingRow::Appearance(custom_id),
@@ -460,7 +443,10 @@ fn adjust_row_keeps_the_two_config_files_apart() {
     );
 }
 
-fn custom_row(id: AppearanceField, control: AppearanceControl) -> AppearanceSetting {
+fn appearance_row(
+    id: AppearanceField,
+    control: AppearanceControl,
+) -> AppearanceSetting {
     let row: &'static AppearanceRow = Box::leak(Box::new(AppearanceRow {
         field: id,
         control,
@@ -476,57 +462,48 @@ fn custom_row(id: AppearanceField, control: AppearanceControl) -> AppearanceSett
 fn model_with_appearance_rows() -> Model {
     Model {
         appearance_settings: vec![
-            custom_row(AppearanceField::CoverBrackets, AppearanceControl::Toggle),
-            custom_row(
-                AppearanceField::CoverStyle,
+            appearance_row(AppearanceField::CoverBrackets, AppearanceControl::Toggle),
+            appearance_row(
+                AppearanceField::CoverMode,
                 AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
             ),
-            custom_row(AppearanceField::SpeedChip, AppearanceControl::Toggle),
+            appearance_row(AppearanceField::SpeedChip, AppearanceControl::Toggle),
         ],
         ..Model::default()
     }
 }
 
 fn selected_row(model: &Model) -> Option<SettingRow> {
-    let Some(Overlay::Settings { selected }) = &model.workspace.overlay else {
+    let Some(Overlay::Settings(selected)) = &model.workspace.overlay else {
         return None;
     };
     Some(*selected)
 }
 
 fn navigate_down(model: &mut Model) {
-    let _ = update(
-        model,
-        Message::Overlay(OverlayRequest::Settings(SettingsRowRequest::Navigate(
-            Direction::Next,
-        ))),
-        Moment::default(),
-    )
-    .unwrap();
+    drop(navigate(model, Direction::Next));
 }
 
 #[test]
-fn the_highlighted_row_is_the_row_that_changes_across_nudges() {
+fn the_highlighted_row_is_the_row_that_changes_across_steps() {
     let mut model = model_with_appearance_rows();
-    let cover_style = AppearanceField::CoverStyle;
+    let cover_mode = AppearanceField::CoverMode;
 
-    let _ = update(
+    apply(
         &mut model,
         Message::Overlay(OverlayRequest::Open(OverlayName::Settings)),
-        Moment::default(),
-    )
-    .unwrap();
+    );
     navigate_down(&mut model);
     navigate_down(&mut model);
     assert_eq!(
         selected_row(&model),
-        Some(SettingRow::Appearance(cover_style))
+        Some(SettingRow::Appearance(cover_mode))
     );
 
     for _ in 0..3 {
         let cmd = update(
             &mut model,
-            Message::Overlay(OverlayRequest::Settings(SettingsRowRequest::Adjust(
+            Message::Overlay(OverlayRequest::Settings(SettingsRowRequest::Step(
                 Direction::Next,
             ))),
             Moment::default(),
@@ -538,10 +515,10 @@ fn the_highlighted_row_is_the_row_that_changes_across_nudges() {
             };
             Some(*field)
         });
-        assert_eq!(emitted_id, Some(cover_style));
+        assert_eq!(emitted_id, Some(cover_mode));
         assert_eq!(
             selected_row(&model),
-            Some(SettingRow::Appearance(cover_style))
+            Some(SettingRow::Appearance(cover_mode))
         );
     }
 }
@@ -549,39 +526,35 @@ fn the_highlighted_row_is_the_row_that_changes_across_nudges() {
 #[test]
 fn a_custom_rows_reload_while_open_keeps_the_selection_on_the_same_row() {
     let mut model = model_with_appearance_rows();
-    let cover_style = AppearanceField::CoverStyle;
+    let cover_mode = AppearanceField::CoverMode;
 
-    let _ = update(
+    apply(
         &mut model,
         Message::Overlay(OverlayRequest::Open(OverlayName::Settings)),
-        Moment::default(),
-    )
-    .unwrap();
+    );
     navigate_down(&mut model);
     navigate_down(&mut model);
     assert_eq!(
         selected_row(&model),
-        Some(SettingRow::Appearance(cover_style))
+        Some(SettingRow::Appearance(cover_mode))
     );
 
     let reloaded = vec![
-        custom_row(AppearanceField::KeyHints, AppearanceControl::Toggle),
-        custom_row(AppearanceField::CoverBrackets, AppearanceControl::Toggle),
-        custom_row(
-            cover_style,
+        appearance_row(AppearanceField::KeyHints, AppearanceControl::Toggle),
+        appearance_row(AppearanceField::CoverBrackets, AppearanceControl::Toggle),
+        appearance_row(
+            cover_mode,
             AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
         ),
-        custom_row(AppearanceField::SpeedChip, AppearanceControl::Toggle),
+        appearance_row(AppearanceField::SpeedChip, AppearanceControl::Toggle),
     ];
-    let _ = update(
+    apply(
         &mut model,
         Message::Config(ConfigEvent::AppearanceSettingsReloaded(reloaded)),
-        Moment::default(),
-    )
-    .unwrap();
+    );
 
     assert_eq!(
         selected_row(&model),
-        Some(SettingRow::Appearance(cover_style))
+        Some(SettingRow::Appearance(cover_mode))
     );
 }

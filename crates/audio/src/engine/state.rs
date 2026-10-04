@@ -1,18 +1,13 @@
 use kernel::{
-    AudioError,
     AudioEvent,
+    Cmd,
     TrackLoad,
-    domain::{OutputDevice, Revision, Speed},
+    domain::{AudioSettings, OutputDevice, Revision, Speed},
 };
 
 use crate::{
-    EngineConfig,
     deck::DeviceChoice,
-    engine::{
-        crossfade::replaygain_factor,
-        effect::EngineEffect,
-        phase::{Phase, Playing},
-    },
+    engine::{crossfade::replaygain_factor, effect::EngineEffect, phase::Phase},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,8 +18,7 @@ pub(crate) enum Engine {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Muted {
-    pub(crate) error: AudioError,
-    pub(crate) config: EngineConfig,
+    pub(crate) settings: AudioSettings,
     pub(crate) pending: Option<TrackLoad>,
     pub(crate) speed: Speed,
 }
@@ -33,7 +27,7 @@ pub(crate) struct Muted {
 pub(crate) struct Live {
     pub(crate) phase: Phase,
     pub(crate) speed: Speed,
-    pub(crate) config: EngineConfig,
+    pub(crate) settings: AudioSettings,
     pub(crate) performed: PerformedRevisions,
 }
 
@@ -45,53 +39,34 @@ pub(crate) struct PerformedRevisions {
 
 impl Live {
     #[must_use]
-    pub(crate) fn new(config: EngineConfig, speed: Speed) -> Self {
+    pub(crate) fn new(settings: AudioSettings, speed: Speed) -> Self {
         Self {
             phase: Phase::Idle,
             speed,
-            config,
+            settings,
             performed: PerformedRevisions::default(),
-        }
-    }
-
-    pub(crate) fn take_playing(&mut self) -> Option<Playing> {
-        match std::mem::take(&mut self.phase) {
-            Phase::Playing(playing) => Some(playing),
-            phase @ (Phase::Idle | Phase::Loading(_) | Phase::Handover(_)) => {
-                self.phase = phase;
-                None
-            }
         }
     }
 
     pub(crate) fn volume(&self) -> f32 {
         let gain = self.phase.current().and_then(|current| current.gain);
-        replaygain_factor(self.config.replay_gain, gain)
+        replaygain_factor(self.settings.replay_gain, gain)
     }
 }
 
 pub(crate) fn announce(
     opened: DeviceChoice,
     device: OutputDevice,
-    effect: EngineEffect,
-) -> EngineEffect {
+    cmd: Cmd<EngineEffect, AudioEvent>,
+) -> Cmd<EngineEffect, AudioEvent> {
     if matches!(opened, DeviceChoice::Requested) {
-        return effect;
+        return cmd;
     }
-    let told = EngineEffect::Send(AudioEvent::DeviceFellBack(device));
-    if matches!(effect, EngineEffect::Nothing) {
-        return told;
-    }
-    EngineEffect::Batch(vec![told, effect])
+    Cmd::message(AudioEvent::DeviceFellBack(device)).then(cmd)
 }
 
-pub(crate) fn then_report(effect: EngineEffect) -> EngineEffect {
-    if matches!(effect, EngineEffect::Nothing) {
-        return EngineEffect::Report;
-    }
-    if let EngineEffect::Batch(mut steps) = effect {
-        steps.push(EngineEffect::Report);
-        return EngineEffect::Batch(steps);
-    }
-    EngineEffect::Batch(vec![effect, EngineEffect::Report])
+pub(crate) fn then_report(
+    cmd: Cmd<EngineEffect, AudioEvent>,
+) -> Cmd<EngineEffect, AudioEvent> {
+    cmd.then(Cmd::effect(EngineEffect::Report))
 }

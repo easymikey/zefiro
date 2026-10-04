@@ -1,8 +1,9 @@
 use std::fmt;
 
-use crate::domain::Bounded;
+use crate::domain::{Bounded, Direction};
 
 const MAX: u8 = 100;
+const VOLUME_STEP: i8 = 5;
 
 #[must_use]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -41,6 +42,13 @@ impl Percent {
 
     pub fn step(self, delta: i8) -> Self {
         Self::clamped(self.0.saturating_add_signed(delta))
+    }
+
+    pub fn step_by(self, direction: Direction) -> Self {
+        match direction {
+            Direction::Next => self.step(VOLUME_STEP),
+            Direction::Previous => self.step(-VOLUME_STEP),
+        }
     }
 }
 

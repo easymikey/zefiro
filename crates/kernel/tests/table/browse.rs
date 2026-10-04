@@ -27,11 +27,15 @@ use kernel::{
     domain::{Cursor, Direction, Revision, ScanStatus, TrackIndex, ViewIndex},
     library::{Library, SortKey},
     playlist::PlayOrder,
-    update::update,
 };
 use rstest::rstest;
 
-use crate::support::{bare_track, model_with_tracks, titled_track};
+use crate::support::{
+    bare_track,
+    model_with_tracks,
+    step::{apply, update},
+    titled_track,
+};
 
 fn browse(model: &mut Model, message: BrowseRequest) -> Cmd {
     update(model, Message::Browse(message), Moment::default()).unwrap()
@@ -41,8 +45,11 @@ fn queue(model: &mut Model, message: QueueRequest) -> Cmd {
     update(model, Message::Queue(message), Moment::default()).unwrap()
 }
 
-fn indices(queue: &[usize]) -> Vec<ViewIndex> {
-    queue.iter().copied().map(ViewIndex::new).collect()
+fn queued_refs(model: &Model, queue: &[usize]) -> Vec<kernel::TrackRef> {
+    queue
+        .iter()
+        .map(|&row| model.playlist.tracks[row].source().clone())
+        .collect()
 }
 
 fn paths(tracks: &[Arc<kernel::Track>]) -> Vec<PathBuf> {
@@ -55,7 +62,7 @@ fn paths(tracks: &[Arc<kernel::Track>]) -> Vec<PathBuf> {
 fn browsing(count: usize, row: usize, queue: &[usize]) -> Model {
     let mut model = model_with_tracks(count);
     model.workspace.browse.cursor = Cursor::with_len(count).at(row);
-    model.queue = indices(queue);
+    model.queue = queued_refs(&model, queue);
     model
 }
 
@@ -67,12 +74,15 @@ struct QueueRow {
 }
 
 fn queue_changed() -> Cmd {
-    Cmd::One(Effect::Animate(Cue::QueueChanged))
+    Cmd::effect(Effect::Animate(Cue::QueueChanged))
 }
 
 fn favorites_saved(paths: &[&str]) -> Cmd {
-    let saved: Favorites = paths.iter().map(PathBuf::from).collect();
-    Cmd::Batch(vec![
+    let saved: Favorites = paths
+        .iter()
+        .map(|path| kernel::TrackRef::Local(PathBuf::from(path)))
+        .collect();
+    Cmd::from_iter([
         Effect::Library(LibraryCmd::SaveFavorites(saved)),
         Effect::Animate(Cue::FavoriteToggled),
     ])
@@ -89,7 +99,7 @@ fn favorites_saved(paths: &[&str]) -> Cmd {
     model: Model::default(),
     message: QueueRequest::Enqueue,
     queued: &[],
-    effects: Cmd::None,
+    effects: Cmd::none(),
 })]
 #[case::enqueue_of_an_already_queued_track_takes_it_back_out(QueueRow {
     model: browsing(2, 1, &[1, 0]),
@@ -101,73 +111,73 @@ fn favorites_saved(paths: &[&str]) -> Cmd {
     model: browsing(2, 1, &[0]),
     message: QueueRequest::PlayNext,
     queued: &[1, 0],
-    effects: Cmd::None,
+    effects: Cmd::none(),
 })]
 #[case::play_next_moves_an_already_queued_track_to_the_front(QueueRow {
     model: browsing(3, 2, &[0, 2, 1]),
     message: QueueRequest::PlayNext,
     queued: &[2, 0, 1],
-    effects: Cmd::None,
+    effects: Cmd::none(),
 })]
 #[case::play_next_on_an_empty_playlist_queues_nothing(QueueRow {
     model: Model::default(),
     message: QueueRequest::PlayNext,
     queued: &[],
-    effects: Cmd::None,
+    effects: Cmd::none(),
 })]
 #[case::dequeue_removes_the_single_occurrence(QueueRow {
     model: browsing(2, 1, &[1, 0]),
     message: QueueRequest::Dequeue,
     queued: &[0],
-    effects: Cmd::None,
+    effects: Cmd::none(),
 })]
 #[case::dequeue_of_an_unqueued_selection_changes_nothing(QueueRow {
     model: browsing(2, 1, &[0]),
     message: QueueRequest::Dequeue,
     queued: &[0],
-    effects: Cmd::None,
+    effects: Cmd::none(),
 })]
 #[case::dequeue_on_an_empty_playlist_changes_nothing(QueueRow {
-    model: browsing(0, 0, &[0]),
+    model: browsing(0, 0, &[]),
     message: QueueRequest::Dequeue,
-    queued: &[0],
-    effects: Cmd::None,
+    queued: &[],
+    effects: Cmd::none(),
 })]
 #[case::move_up_swaps_with_the_predecessor(QueueRow {
     model: browsing(3, 1, &[0, 1, 2]),
     message: QueueRequest::MoveInQueue(Direction::Previous),
     queued: &[1, 0, 2],
-    effects: Cmd::None,
+    effects: Cmd::none(),
 })]
 #[case::move_down_swaps_with_the_successor(QueueRow {
     model: browsing(3, 0, &[0, 1, 2]),
     message: QueueRequest::MoveInQueue(Direction::Next),
     queued: &[1, 0, 2],
-    effects: Cmd::None,
+    effects: Cmd::none(),
 })]
 #[case::move_up_at_the_front_changes_nothing(QueueRow {
     model: browsing(2, 0, &[0, 1]),
     message: QueueRequest::MoveInQueue(Direction::Previous),
     queued: &[0, 1],
-    effects: Cmd::None,
+    effects: Cmd::none(),
 })]
 #[case::move_down_at_the_back_changes_nothing(QueueRow {
     model: browsing(2, 1, &[0, 1]),
     message: QueueRequest::MoveInQueue(Direction::Next),
     queued: &[0, 1],
-    effects: Cmd::None,
+    effects: Cmd::none(),
 })]
 #[case::move_of_an_unqueued_selection_changes_nothing(QueueRow {
     model: browsing(2, 1, &[0]),
     message: QueueRequest::MoveInQueue(Direction::Previous),
     queued: &[0],
-    effects: Cmd::None,
+    effects: Cmd::none(),
 })]
 #[case::move_on_an_empty_playlist_changes_nothing(QueueRow {
-    model: browsing(0, 0, &[0]),
+    model: browsing(0, 0, &[]),
     message: QueueRequest::MoveInQueue(Direction::Previous),
-    queued: &[0],
-    effects: Cmd::None,
+    queued: &[],
+    effects: Cmd::none(),
 })]
 fn queue_row(#[case] row: QueueRow) {
     let QueueRow {
@@ -177,7 +187,7 @@ fn queue_row(#[case] row: QueueRow) {
         effects,
     } = row;
     let seen = queue(&mut model, message);
-    assert_eq!(model.queue, indices(queued));
+    assert_eq!(model.queue, queued_refs(&model, queued));
     assert_eq!(seen, effects);
 }
 
@@ -265,7 +275,7 @@ fn cursor_row(#[case] row: CursorRow) {
     model.workspace.visible_rows = row.visible_rows;
     let effects = browse(&mut model, row.message);
     assert_eq!(model.workspace.browse.selected().get(), row.expected);
-    assert_eq!(effects, Cmd::None);
+    assert_eq!(effects, Cmd::none());
 }
 
 #[rstest]
@@ -278,7 +288,10 @@ fn page_by_uses_the_stored_viewport(
 ) {
     let mut model = browsing(30, 0, &[]);
     model.workspace.visible_rows = visible_rows;
-    let _ = browse(&mut model, BrowseRequest::PageBy(Direction::Next));
+    apply(
+        &mut model,
+        Message::Browse(BrowseRequest::PageBy(Direction::Next)),
+    );
     assert_eq!(model.workspace.browse.selected().get(), expected);
 }
 
@@ -301,15 +314,15 @@ fn unsorted_library() -> Model {
 fn cycle_sort_walks_the_keys(#[case] from: SortKey, #[case] expected: SortKey) {
     let mut model = Model::default();
     model.workspace.browse.sort = from;
-    let _ = browse(&mut model, BrowseRequest::CycleSort);
+    apply(&mut model, Message::Browse(BrowseRequest::CycleSort));
     assert_eq!(model.workspace.browse.sort, expected);
 }
 
 #[test]
 fn cycle_sort_to_artist_reorders_the_view_and_the_playlist_under_it() {
     let mut model = unsorted_library();
-    let _ = browse(&mut model, BrowseRequest::CycleSort);
-    let _ = browse(&mut model, BrowseRequest::CycleSort);
+    apply(&mut model, Message::Browse(BrowseRequest::CycleSort));
+    apply(&mut model, Message::Browse(BrowseRequest::CycleSort));
 
     assert_eq!(model.workspace.browse.sort, SortKey::Artist);
     let sorted = vec![
@@ -332,24 +345,25 @@ fn cycle_sort_to_artist_reorders_the_view_and_the_playlist_under_it() {
 #[test]
 fn cycle_sort_collapses_a_stale_shuffle_order_to_pending() {
     let mut model = unsorted_library();
-    model.playlist.play_order = PlayOrder::Shuffle(vec![1, 0, 2]);
-    let _ = browse(&mut model, BrowseRequest::CycleSort);
+    model.playlist.play_order =
+        PlayOrder::Shuffle([1, 0, 2].map(ViewIndex::new).to_vec());
+    apply(&mut model, Message::Browse(BrowseRequest::CycleSort));
     assert_eq!(model.playlist.play_order, PlayOrder::ShufflePending);
 }
 
 #[test]
 fn toggle_favorite_adds_then_removes_the_selected_track() {
     let mut model = browsing(2, 1, &[]);
-    let selected = Path::new("/tmp/track1.flac");
-    let other = Path::new("/tmp/track0.flac");
+    let selected = kernel::TrackRef::Local("/tmp/track1.flac".into());
+    let other = kernel::TrackRef::Local("/tmp/track0.flac".into());
 
     let effects = browse(&mut model, BrowseRequest::ToggleFavorite);
-    assert!(model.favorites.is_favorite(selected));
-    assert!(!model.favorites.is_favorite(other));
+    assert!(model.favorites.is_favorite(&selected));
+    assert!(!model.favorites.is_favorite(&other));
     assert_eq!(effects, favorites_saved(&["/tmp/track1.flac"]));
 
     let untoggled = browse(&mut model, BrowseRequest::ToggleFavorite);
-    assert!(!model.favorites.is_favorite(selected));
+    assert!(!model.favorites.is_favorite(&selected));
     assert_eq!(untoggled, favorites_saved(&[]));
 }
 
@@ -358,7 +372,7 @@ fn toggle_favorite_on_an_empty_playlist_writes_nothing() {
     let mut model = Model::default();
     let effects = browse(&mut model, BrowseRequest::ToggleFavorite);
     assert!(model.favorites.is_empty());
-    assert_eq!(effects, Cmd::None);
+    assert_eq!(effects, Cmd::none());
 }
 
 #[test]
@@ -374,7 +388,7 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
     let track = bare_track(1);
     assert_eq!(
         effects,
-        Cmd::Batch(vec![
+        Cmd::from_iter([
             Effect::Audio(AudioCmd::Stop),
             Effect::Audio(AudioCmd::Load(TrackLoad {
                 path: track.path().to_path_buf(),
@@ -387,7 +401,7 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
             ))),
             Effect::Macos(MacosCmd::NowPlaying(Some(track))),
             Effect::Audio(AudioCmd::Playback(Playback::Playing)),
-            Effect::Macos(MacosCmd::PlaybackState(Playback::Playing)),
+            Effect::Macos(MacosCmd::SetPlayback(Playback::Playing)),
             Effect::Animate(Cue::TrackChanged),
             Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Play)),
         ])
@@ -397,18 +411,8 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
 #[test]
 fn play_selected_retires_the_stream_the_media_key_started() {
     let mut model = browsing(3, 2, &[]);
-    let _ = update(
-        &mut model,
-        Message::Playback(PlaybackRequest::Play),
-        Moment::default(),
-    )
-    .unwrap();
-    let _ = update(
-        &mut model,
-        Message::Audio(AudioEvent::Loaded { total: None }),
-        Moment::default(),
-    )
-    .unwrap();
+    apply(&mut model, Message::Playback(PlaybackRequest::Play));
+    apply(&mut model, Message::Audio(AudioEvent::Loaded(None)));
 
     let picked = browse(&mut model, BrowseRequest::PlaySelected);
     let audio: Vec<&Effect> = picked
@@ -435,7 +439,7 @@ fn play_selected_on_an_empty_playlist_starts_nothing() {
     let effects = browse(&mut model, BrowseRequest::PlaySelected);
     assert_eq!(model.playlist.playing_index(), None);
     assert_eq!(model.player, Player::Stopped);
-    assert_eq!(effects, Cmd::None);
+    assert_eq!(effects, Cmd::none());
 }
 
 #[test]
@@ -448,7 +452,7 @@ fn rescan_asks_once_until_the_scan_lands() {
     let effects = browse(&mut model, BrowseRequest::FullScan);
     assert_eq!(
         effects,
-        Cmd::One(Effect::Library(LibraryCmd::Scan {
+        Cmd::effect(Effect::Library(LibraryCmd::Scan {
             music_dir: PathBuf::from("/music"),
             revision: Revision::default().next(),
             mode: ScanMode::Full,
@@ -457,7 +461,7 @@ fn rescan_asks_once_until_the_scan_lands() {
     assert_eq!(model.scan_status, ScanStatus::Scanning);
 
     let repeated = browse(&mut model, BrowseRequest::FullScan);
-    assert_eq!(repeated, Cmd::None);
+    assert_eq!(repeated, Cmd::none());
     assert_eq!(model.scan_status, ScanStatus::Scanning);
 }
 
@@ -496,7 +500,7 @@ fn trash_removes_the_track_everywhere_and_asks_for_the_file_to_go() {
     assert_eq!(paths(&model.playlist.tracks), left);
     assert_eq!(
         effects,
-        Cmd::Batch(vec![
+        Cmd::from_iter([
             Effect::Library(LibraryCmd::Trash(PathBuf::from("/music/a.flac"))),
             Effect::Animate(Cue::TrackDeleted),
         ])
@@ -506,9 +510,12 @@ fn trash_removes_the_track_everywhere_and_asks_for_the_file_to_go() {
 #[test]
 fn trash_remaps_the_queue_and_drops_the_deleted_entry() {
     let mut model = scanned(&["/music/a.flac", "/music/b.flac", "/music/c.flac"]);
-    model.queue = indices(&[2, 0]);
+    model.queue = queued_refs(&model, &[2, 0]);
 
-    let _ = browse(&mut model, BrowseRequest::Trash(ViewIndex::new(0)));
+    apply(
+        &mut model,
+        Message::Browse(BrowseRequest::Trash(ViewIndex::new(0))),
+    );
 
     assert_eq!(
         paths(&model.playlist.tracks),
@@ -517,7 +524,7 @@ fn trash_remaps_the_queue_and_drops_the_deleted_entry() {
             PathBuf::from("/music/c.flac"),
         ]
     );
-    assert_eq!(model.queue, indices(&[1]));
+    assert_eq!(model.queue, queued_refs(&model, &[1]));
 }
 
 #[test]
@@ -525,5 +532,5 @@ fn trash_on_an_empty_library_removes_nothing() {
     let mut model = scanned(&[]);
     let effects = browse(&mut model, BrowseRequest::Trash(ViewIndex::new(0)));
     assert!(model.library.as_ref().unwrap().tracks.is_empty());
-    assert_eq!(effects, Cmd::None);
+    assert_eq!(effects, Cmd::none());
 }

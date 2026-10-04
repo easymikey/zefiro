@@ -1,6 +1,6 @@
 use std::{io, path::PathBuf};
 
-use kernel::domain::Driver;
+use kernel::domain::DriverName;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SaveError {
@@ -28,7 +28,7 @@ pub(crate) enum SaveError {
 pub enum Error<E: std::error::Error + 'static = io::Error> {
     #[error("spawning the {driver} thread: {source}")]
     Spawn {
-        driver: Driver,
+        driver: DriverName,
         #[source]
         source: io::Error,
     },
@@ -46,7 +46,7 @@ pub enum Error<E: std::error::Error + 'static = io::Error> {
 mod tests {
     use std::{io, path::PathBuf};
 
-    use kernel::domain::Driver;
+    use kernel::domain::DriverName;
 
     use crate::error::{Error, SaveError};
 
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn spawn_message_includes_the_driver_and_the_source() {
         let error: Error = Error::Spawn {
-            driver: Driver::Audio,
+            driver: DriverName::Audio,
             source: io::Error::other("resource temporarily unavailable"),
         };
 

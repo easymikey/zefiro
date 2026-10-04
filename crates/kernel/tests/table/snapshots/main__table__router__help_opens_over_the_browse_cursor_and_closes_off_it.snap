@@ -10,11 +10,11 @@ expression: "walked(model, messages)"
                 Help,
             ),
         ),
-        One(
+        [
             Animate(
                 OverlayOpened,
             ),
-        ),
+        ],
         Stopped,
         Some(
             Help,
@@ -47,11 +47,11 @@ expression: "walked(model, messages)"
         Overlay(
             Close,
         ),
-        One(
+        [
             Animate(
                 OverlayClosed,
             ),
-        ),
+        ],
         Stopped,
         None,
         Cursor {

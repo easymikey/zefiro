@@ -23,9 +23,9 @@ expression: "(model.settings, model.transport.volume, model.themes,)"
             ),
         },
         output_devices: [],
-        look: Look {
-            appearance: Appearance {
-                cover_style: Vinyl,
+        appearance: Appearance {
+            settings: AppearanceSettings {
+                cover_mode: Vinyl,
                 cover_brackets: Hidden,
                 format_chips: Hidden,
                 speed_chip: Always,

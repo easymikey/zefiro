@@ -10,11 +10,11 @@ expression: "walked(model, messages)"
                 SavePlaylist,
             ),
         ),
-        One(
+        [
             Animate(
                 OverlayOpened,
             ),
-        ),
+        ],
         Stopped,
         Some(
             SavePlaylist {
@@ -56,7 +56,7 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Stopped,
         Some(
             SavePlaylist {
@@ -98,7 +98,7 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Stopped,
         Some(
             SavePlaylist {
@@ -140,7 +140,7 @@ expression: "walked(model, messages)"
                 ),
             ),
         ),
-        None,
+        [],
         Stopped,
         Some(
             SavePlaylist {
@@ -178,50 +178,51 @@ expression: "walked(model, messages)"
         Overlay(
             Confirm,
         ),
-        Batch(
-            [
-                Animate(
-                    OverlayClosed,
-                ),
-                Library(
-                    SavePlaylist {
-                        name: PlaylistFileName(
-                            "mix",
-                        ),
-                        tracks: [
-                            Track {
-                                path: "/tmp/track0.flac",
-                                duration: None,
-                                tags: Tags {
-                                    title: None,
-                                    artist: None,
-                                    album: None,
-                                    album_artist: None,
-                                    date: None,
-                                    genre: None,
-                                    track: None,
-                                    track_total: None,
-                                    disc: None,
-                                    composer: None,
-                                    comment: None,
-                                    lyrics: None,
-                                },
-                                audio_format: AudioFormat {
-                                    format: None,
-                                    bitrate_kbps: None,
-                                    sample_rate_hz: None,
-                                    bits_per_sample: None,
-                                    channels: None,
-                                    replay_gain: None,
-                                },
-                                display: "track0",
-                                tagging: Listed,
+        [
+            Animate(
+                OverlayClosed,
+            ),
+            Library(
+                SavePlaylist {
+                    name: PlaylistFileName(
+                        "mix",
+                    ),
+                    tracks: [
+                        Track {
+                            source: Local(
+                                "/tmp/track0.flac",
+                            ),
+                            tags: Tags {
+                                title: None,
+                                artist: None,
+                                album: None,
+                                album_artist: None,
+                                date: None,
+                                genre: None,
+                                track: None,
+                                track_total: None,
+                                disc: None,
+                                composer: None,
+                                comment: None,
+                                lyrics: None,
                             },
-                        ],
-                    },
-                ),
-            ],
-        ),
+                            audio_format: AudioFormat {
+                                format: None,
+                                bitrate_kbps: None,
+                                sample_rate_hz: None,
+                                bits_per_sample: None,
+                                channels: None,
+                                replay_gain: None,
+                            },
+                            display: "track0",
+                            tagging: Listed(
+                                None,
+                            ),
+                        },
+                    ],
+                },
+            ),
+        ],
         Stopped,
         None,
         Cursor {

@@ -1,7 +1,7 @@
 # sifr-ui.toml
 [cover]
 # the noir look
-style = "vinyl"
+mode = "vinyl"
 brackets = false
 
 [card]

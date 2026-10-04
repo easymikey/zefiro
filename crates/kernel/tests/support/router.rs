@@ -104,7 +104,7 @@ pub(crate) fn logged(log: &[&str], playlist: &[&str]) -> Model {
         history: log
             .iter()
             .map(|path| HistoryEntry {
-                path: (*path).into(),
+                track: kernel::TrackRef::Local((*path).into()),
                 title: (*path).to_string(),
                 artist: None,
                 at: Moment::default(),
@@ -161,7 +161,10 @@ pub(crate) fn repeating(mut model: Model, repeat: RepeatMode) -> Model {
 }
 
 pub(crate) fn queued(mut model: Model, queue: &[usize]) -> Model {
-    model.queue = queue.iter().copied().map(ViewIndex::new).collect();
+    model.queue = queue
+        .iter()
+        .map(|&row| model.playlist.tracks[row].source().clone())
+        .collect();
     model
 }
 
@@ -178,7 +181,7 @@ pub(crate) fn ended() -> Message {
 }
 
 pub(crate) fn acknowledged() -> Message {
-    Message::Audio(AudioEvent::Loaded { total: None })
+    Message::Audio(AudioEvent::Loaded(None))
 }
 
 pub(crate) fn skip() -> Message {
@@ -213,8 +216,8 @@ pub(crate) fn mark_fires() -> Message {
     Message::Elapsed(Timer::Lookahead(Revision::default()))
 }
 
-pub(crate) fn step_speed(steps: i8) -> Message {
-    Message::Playback(PlaybackRequest::StepSpeed { steps })
+pub(crate) fn step_speed(direction: Direction) -> Message {
+    Message::Playback(PlaybackRequest::StepSpeed(direction))
 }
 
 pub(crate) fn toasted() -> Model {

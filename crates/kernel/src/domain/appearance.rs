@@ -8,7 +8,7 @@ use crate::domain::ThemeName;
     Debug, Clone, Copy, PartialEq, Eq, Default, strum::Display, EnumString, VariantNames,
 )]
 #[strum(serialize_all = "lowercase")]
-pub enum CoverStyle {
+pub enum CoverMode {
     #[default]
     Vinyl,
     Plain,
@@ -75,8 +75,8 @@ pub enum KeyHints {
 
 #[must_use]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Appearance {
-    pub cover_style: CoverStyle,
+pub struct AppearanceSettings {
+    pub cover_mode: CoverMode,
     pub cover_brackets: CoverBrackets,
     pub format_chips: FormatChips,
     pub speed_chip: SpeedChip,
@@ -104,11 +104,11 @@ impl AppearancePreset {
     }
 }
 
-pub fn preset_appearance(preset: AppearancePreset) -> Appearance {
+pub fn preset_appearance(preset: AppearancePreset) -> AppearanceSettings {
     match preset {
-        AppearancePreset::Stock => Appearance::default(),
-        AppearancePreset::Noir => Appearance {
-            cover_style: CoverStyle::Milkdrop,
+        AppearancePreset::Stock => AppearanceSettings::default(),
+        AppearancePreset::Noir => AppearanceSettings {
+            cover_mode: CoverMode::Milkdrop,
             cover_brackets: CoverBrackets::Shown,
             format_chips: FormatChips::Shown,
             speed_chip: SpeedChip::Always,
@@ -121,15 +121,15 @@ pub fn preset_appearance(preset: AppearancePreset) -> Appearance {
 }
 
 #[must_use]
-pub fn preset_of(appearance: Appearance) -> Option<AppearancePreset> {
+pub fn preset_of(appearance: AppearanceSettings) -> Option<AppearancePreset> {
     AppearancePreset::iter().find(|&preset| preset_appearance(preset) == appearance)
 }
 
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, bon::Builder)]
 pub struct AppearancePatch {
-    #[builder(setters(option_fn(name = with_cover_style)))]
-    pub cover_style: Option<CoverStyle>,
+    #[builder(setters(option_fn(name = with_cover_mode)))]
+    pub cover_mode: Option<CoverMode>,
     #[builder(setters(option_fn(name = with_cover_brackets)))]
     pub cover_brackets: Option<CoverBrackets>,
     #[builder(setters(option_fn(name = with_format_chips)))]
@@ -146,10 +146,10 @@ pub struct AppearancePatch {
     pub layout_mode: Option<LayoutMode>,
 }
 
-impl From<Appearance> for AppearancePatch {
-    fn from(appearance: Appearance) -> Self {
+impl From<AppearanceSettings> for AppearancePatch {
+    fn from(appearance: AppearanceSettings) -> Self {
         Self {
-            cover_style: Some(appearance.cover_style),
+            cover_mode: Some(appearance.cover_mode),
             cover_brackets: Some(appearance.cover_brackets),
             format_chips: Some(appearance.format_chips),
             speed_chip: Some(appearance.speed_chip),
@@ -161,23 +161,25 @@ impl From<Appearance> for AppearancePatch {
     }
 }
 
-impl AppearancePatch {
-    pub fn apply(self, appearance: Appearance) -> Appearance {
-        Appearance {
-            cover_style: self.cover_style.unwrap_or(appearance.cover_style),
-            cover_brackets: self.cover_brackets.unwrap_or(appearance.cover_brackets),
-            format_chips: self.format_chips.unwrap_or(appearance.format_chips),
-            speed_chip: self.speed_chip.unwrap_or(appearance.speed_chip),
-            progress_time: self.progress_time.unwrap_or(appearance.progress_time),
-            key_hints: self.key_hints.unwrap_or(appearance.key_hints),
-            animations: self.animations.unwrap_or(appearance.animations),
-            layout_mode: self.layout_mode.unwrap_or(appearance.layout_mode),
+impl AppearanceSettings {
+    pub fn patched(self, patch: AppearancePatch) -> AppearanceSettings {
+        AppearanceSettings {
+            cover_mode: patch.cover_mode.unwrap_or(self.cover_mode),
+            cover_brackets: patch.cover_brackets.unwrap_or(self.cover_brackets),
+            format_chips: patch.format_chips.unwrap_or(self.format_chips),
+            speed_chip: patch.speed_chip.unwrap_or(self.speed_chip),
+            progress_time: patch.progress_time.unwrap_or(self.progress_time),
+            key_hints: patch.key_hints.unwrap_or(self.key_hints),
+            animations: patch.animations.unwrap_or(self.animations),
+            layout_mode: patch.layout_mode.unwrap_or(self.layout_mode),
         }
     }
+}
 
+impl AppearancePatch {
     pub fn then(self, later: Self) -> Self {
         Self {
-            cover_style: later.cover_style.or(self.cover_style),
+            cover_mode: later.cover_mode.or(self.cover_mode),
             cover_brackets: later.cover_brackets.or(self.cover_brackets),
             format_chips: later.format_chips.or(self.format_chips),
             speed_chip: later.speed_chip.or(self.speed_chip),
@@ -297,18 +299,18 @@ impl Default for ProgressBar {
 
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Look {
-    pub appearance: Appearance,
+pub struct Appearance {
+    pub settings: AppearanceSettings,
     pub cover_size_px: u32,
     pub cover_cells: CoverCells,
     pub breakpoints: Breakpoints,
     pub progress: ProgressBar,
 }
 
-impl Default for Look {
+impl Default for Appearance {
     fn default() -> Self {
         Self {
-            appearance: Appearance::default(),
+            settings: AppearanceSettings::default(),
             cover_size_px: 160,
             cover_cells: CoverCells::default(),
             breakpoints: Breakpoints::default(),
@@ -322,10 +324,10 @@ mod tests {
     use rstest::rstest;
 
     use crate::domain::appearance::{
-        Appearance,
         AppearancePatch,
         AppearancePreset,
-        CoverStyle,
+        AppearanceSettings,
+        CoverMode,
         FormatChips,
         KeyHints,
         LayoutMode,
@@ -339,10 +341,10 @@ mod tests {
     fn then_folds_disjoint_fields_and_the_later_field_wins() {
         let earlier = AppearancePatch::builder()
             .format_chips(FormatChips::Hidden)
-            .cover_style(CoverStyle::Vinyl)
+            .cover_mode(CoverMode::Vinyl)
             .build();
         let later = AppearancePatch::builder()
-            .cover_style(CoverStyle::Off)
+            .cover_mode(CoverMode::Off)
             .key_hints(KeyHints::Hidden)
             .build();
 
@@ -350,7 +352,7 @@ mod tests {
 
         assert_eq!(merged.format_chips, Some(FormatChips::Hidden));
         assert_eq!(merged.key_hints, Some(KeyHints::Hidden));
-        assert_eq!(merged.cover_style, Some(CoverStyle::Off));
+        assert_eq!(merged.cover_mode, Some(CoverMode::Off));
     }
 
     #[test]
@@ -358,21 +360,21 @@ mod tests {
         let noir = preset_appearance(AppearancePreset::Noir);
 
         assert_eq!(
-            AppearancePatch::from(noir).apply(Appearance::default()),
+            AppearanceSettings::default().patched(AppearancePatch::from(noir)),
             noir
         );
     }
 
     #[test]
     fn the_stock_appearance_is_every_vocabulary_default() {
-        insta::assert_debug_snapshot!(Appearance::default());
+        insta::assert_debug_snapshot!(AppearanceSettings::default());
     }
 
     #[test]
     fn the_stock_preset_is_exactly_the_stock_appearance() {
         assert_eq!(
             preset_appearance(AppearancePreset::Stock),
-            Appearance::default()
+            AppearanceSettings::default()
         );
     }
 
@@ -382,17 +384,17 @@ mod tests {
     }
 
     #[rstest]
-    #[case::stock(Appearance::default(), Some(AppearancePreset::Stock))]
+    #[case::stock(AppearanceSettings::default(), Some(AppearancePreset::Stock))]
     #[case::noir(
         preset_appearance(AppearancePreset::Noir),
         Some(AppearancePreset::Noir)
     )]
     #[case::a_custom_mix(
-        Appearance { format_chips: FormatChips::Shown, ..Appearance::default() },
+        AppearanceSettings { format_chips: FormatChips::Shown, ..AppearanceSettings::default() },
         None
     )]
     fn preset_of_names_the_preset_an_appearance_came_from(
-        #[case] appearance: Appearance,
+        #[case] appearance: AppearanceSettings,
         #[case] preset: Option<AppearancePreset>,
     ) {
         assert_eq!(preset_of(appearance), preset);
@@ -412,7 +414,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::cover_style(CoverStyle::Milkdrop, "milkdrop")]
+    #[case::cover_mode(CoverMode::Milkdrop, "milkdrop")]
     #[case::speed_chip(SpeedChip::Changed, "changed")]
     #[case::layout_mode(LayoutMode::Compact, "compact")]
     fn display_spells_each_option_the_way_the_file_does(

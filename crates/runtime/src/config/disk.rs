@@ -1,22 +1,22 @@
 use std::{io, path::Path};
 
-use kernel::domain::ConfigFile;
+use kernel::domain::ConfigName;
 
 use crate::config::machine::ConfigMessage;
 
 const THEME_EXTENSION: &str = "toml";
 
-pub(crate) fn read(file: ConfigFile, path: &Path) -> ConfigMessage {
+pub(crate) fn read(file: ConfigName, path: &Path) -> ConfigMessage {
     match library::files::read_if_present(path) {
         Ok(text) => ConfigMessage::Read { file, text },
         Err(error) => ConfigMessage::Unreadable {
             file,
-            detail: error.to_string(),
+            kind: error.kind().into(),
         },
     }
 }
 
-pub(crate) fn list_theme_names(dir: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn list_theme_names(dir: &Path) -> Result<Vec<String>, kernel::IoError> {
     match std::fs::read_dir(dir) {
         Ok(entries) => Ok(entries
             .flatten()
@@ -28,13 +28,17 @@ pub(crate) fn list_theme_names(dir: &Path) -> Result<Vec<String>, String> {
             .filter_map(|path| Some(path.file_stem()?.to_str()?.to_owned()))
             .collect()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error.to_string()),
+        Err(error) => Err(error.kind().into()),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::ConfigFile;
+    fn noir() -> ConfigName {
+        ConfigName::Theme(ThemeName::from_static("noir"))
+    }
+
+    use kernel::domain::{ConfigName, ThemeName};
 
     use crate::config::{
         disk::{list_theme_names, read},
@@ -44,7 +48,7 @@ mod tests {
     #[test]
     fn a_missing_file_reads_as_no_text() {
         let directory = tempfile::tempdir().unwrap();
-        let message = read(ConfigFile::Theme, &directory.path().join("noir.toml"));
+        let message = read(noir(), &directory.path().join("noir.toml"));
 
         assert!(matches!(message, ConfigMessage::Read { text: None, .. }));
     }

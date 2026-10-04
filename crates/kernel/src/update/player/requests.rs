@@ -3,7 +3,10 @@ use std::{mem, sync::Arc, time::Duration};
 use crate::{
     cmd::{Cmd, PlaybackChange},
     domain::{Moment, PausedBy, Player, Playhead, Preload, Track},
-    update::player::{Anchor, PlayerError, Stamp, StartOrigin, seek_effect},
+    update::{
+        machine::Unhandled,
+        player::{Anchor, Stamp, StartOrigin, seek_effect},
+    },
 };
 
 impl Player {
@@ -11,13 +14,13 @@ impl Player {
         &mut self,
         current: Option<Arc<Track>>,
         stamp: Stamp,
-    ) -> Result<Cmd, PlayerError> {
+    ) -> Result<Cmd, Unhandled> {
         match self {
             Player::Stopped => {
-                let track = current.ok_or(PlayerError::Stopped)?;
+                let track = current.ok_or(Unhandled)?;
                 Ok(self.start(track, StartOrigin::User(stamp)))
             }
-            Player::Loading { .. } => Err(PlayerError::Loading),
+            Player::Loading { .. } => Err(Unhandled),
             Player::Playing { .. } => {
                 Ok(self.pause(stamp.anchor.since, PausedBy::Listener))
             }
@@ -29,7 +32,7 @@ impl Player {
         &mut self,
         target: Duration,
         now: Moment,
-    ) -> Result<Cmd, PlayerError> {
+    ) -> Result<Cmd, Unhandled> {
         match self {
             Player::Playing { head, preload, .. } => {
                 *head = Playhead::anchored(target, now, head.speed);
@@ -40,7 +43,7 @@ impl Player {
                 *at = target;
                 Ok(seek_effect(target))
             }
-            Player::Loading { .. } | Player::Stopped => Err(self.refusal()),
+            Player::Loading { .. } | Player::Stopped => Err(Unhandled),
         }
     }
 
@@ -58,7 +61,7 @@ impl Player {
             | Player::Loading { .. }
             | Player::Stopped) => {
                 *self = other;
-                Cmd::None
+                Cmd::none()
             }
         }
     }
@@ -75,7 +78,7 @@ impl Player {
             }
             | Player::Playing { .. }
             | Player::Loading { .. }
-            | Player::Stopped => Cmd::None,
+            | Player::Stopped => Cmd::none(),
         }
     }
 
@@ -93,7 +96,7 @@ impl Player {
             | Player::Loading { .. }
             | Player::Stopped) => {
                 *self = other;
-                Cmd::None
+                Cmd::none()
             }
         }
     }

@@ -25,7 +25,7 @@ fn track(path: &str, artist: Option<&str>, album: Option<&str>) -> Track {
 fn favorited(paths: &[&str]) -> Favorites {
     let mut favorites = Favorites::default();
     for path in paths {
-        favorites.toggle(PathBuf::from(*path));
+        favorites.toggle(kernel::TrackRef::Local(PathBuf::from(*path)));
     }
     favorites
 }
@@ -67,5 +67,8 @@ struct SortCase {
 })]
 fn sort_indices_orders_tracks(#[case] case: SortCase) {
     let result = library::sort_indices(&case.tracks, case.key, &case.favorites);
-    assert_eq!(result, case.expected);
+    assert_eq!(
+        result.into_iter().map(usize::from).collect::<Vec<_>>(),
+        case.expected
+    );
 }

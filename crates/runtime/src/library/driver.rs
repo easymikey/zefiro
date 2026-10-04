@@ -14,7 +14,7 @@ use kernel::{
     Message,
     Outbox,
     SendError,
-    domain::{Driver, DriverError},
+    domain::{DriverError, DriverName},
     update::Machine,
 };
 use library::{LibraryDirs, execute};
@@ -68,7 +68,7 @@ pub(crate) fn spawn(
     inbox: &Sender<Message>,
 ) -> Result<DriverThread<LibraryMessage>, Error> {
     spawn_driver(
-        registry::row(Driver::Library),
+        registry::row(DriverName::Library),
         move |inbox, outbox| {
             let watching = Watch::recommended(outbox);
             LibraryLoop::new(parts, outbox, watching).run(inbox);
@@ -200,9 +200,9 @@ impl<'a, W: Watcher> LibraryLoop<'a, W> {
 
     fn retire(self) {
         if self.worker.join().is_err() {
-            let failure = DriverError::panicked("cover worker".to_owned());
+            let failure = DriverError::Panicked;
             let died = DriverEvent::Died(failure);
-            match self.outbox.report(Driver::Library, died) {
+            match self.outbox.report(DriverName::Library, died) {
                 Ok(()) | Err(SendError::Full | SendError::Closed) => {}
             }
         }
@@ -253,23 +253,13 @@ impl<'a, W: Watcher> LibraryLoop<'a, W> {
     }
 
     fn feed(&mut self, input: LibraryMessage) -> ControlFlow<()> {
-        let label: &'static str = (&input).into();
-        match self.driver.transition(input) {
-            Ok(outputs) => self.act_all(outputs),
-            Err(_) => self.reject(label),
-        }
+        self.driver
+            .transition(input)
+            .map_or(ControlFlow::Continue(()), |outputs| self.act_all(outputs))
     }
 
     fn act_all(&mut self, outputs: Vec<LibraryEffect>) -> ControlFlow<()> {
         outputs.into_iter().try_for_each(|output| self.act(output))
-    }
-
-    fn reject(&self, input: &'static str) -> ControlFlow<()> {
-        let rejected = DriverEvent::Rejected { input };
-        match self.outbox.report(Driver::Library, rejected) {
-            Err(SendError::Closed) => ControlFlow::Break(()),
-            Ok(()) | Err(SendError::Full) => ControlFlow::Continue(()),
-        }
     }
 
     fn act(&mut self, output: LibraryEffect) -> ControlFlow<()> {
@@ -331,7 +321,7 @@ mod tests {
         Message,
         Outbox,
         cmd::ScanMode,
-        domain::{Driver, DriverError, Revision},
+        domain::{DriverError, DriverName, Revision},
     };
     use library::LibraryDirs;
 
@@ -450,7 +440,7 @@ mod tests {
             matches!(
                 message,
                 Message::Driver {
-                    driver: Driver::Library,
+                    driver: DriverName::Library,
                     ..
                 }
             )
@@ -605,42 +595,10 @@ mod tests {
         assert_eq!(
             report,
             Err(SendError(Message::Driver {
-                driver: Driver::Library,
+                driver: DriverName::Library,
                 event: DriverEvent::Stopped
             }))
         );
-    }
-
-    #[test]
-    fn a_rejected_input_is_reported_to_the_inbox() {
-        let directory = tempfile::tempdir().unwrap();
-        let (sender, messages) = crossbeam_channel::unbounded::<Message>();
-        let outbox = Outbox::new(sender, Congestion::default());
-        let (writers, _cells, _doorbell) = latest_channels();
-        let (_events, filesystem_events) = crossbeam_channel::unbounded();
-        let parts =
-            LibraryParts::new(paths(&directory), DECODABLE, writers.cover).unwrap();
-        let watching = Watch {
-            watcher: FakeWatch::default(),
-            events: filesystem_events,
-            overflow: Overflow::default(),
-        };
-        let mut driver_loop = LibraryLoop::new(parts, &outbox, watching);
-
-        let halt = driver_loop.feed(LibraryMessage::DebounceDue);
-
-        assert!(halt.is_continue());
-        assert_eq!(
-            messages.try_iter().collect::<Vec<_>>(),
-            vec![Message::Driver {
-                driver: Driver::Library,
-                event: DriverEvent::Rejected {
-                    input: "debounce_due"
-                }
-            }]
-        );
-        assert!(driver_loop.feed(LibraryMessage::Stopping).is_continue());
-        driver_loop.retire();
     }
 
     #[test]
@@ -678,10 +636,8 @@ mod tests {
         assert_eq!(
             messages.try_iter().collect::<Vec<_>>(),
             vec![Message::Driver {
-                driver: Driver::Library,
-                event: DriverEvent::Died(DriverError::panicked(
-                    "cover worker".to_owned()
-                ))
+                driver: DriverName::Library,
+                event: DriverEvent::Died(DriverError::Panicked)
             }]
         );
     }

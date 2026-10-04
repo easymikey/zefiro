@@ -1,22 +1,25 @@
 use kernel::domain::JumpDigits;
 
 use crate::{
-    overlay::modal::{Prompt, PromptBody},
+    overlay::modal::{PromptBody, PromptStyle, PromptWidget},
     primitive::glyphs,
     theme::ActiveTheme,
 };
 
 const MIN_WIDTH: u16 = 61;
 
-pub(crate) fn prompt<'a>(digits: &'a JumpDigits, theme: ActiveTheme<'a>) -> Prompt<'a> {
-    Prompt {
+pub(crate) fn prompt<'a>(
+    digits: &'a JumpDigits,
+    theme: ActiveTheme<'a>,
+) -> PromptWidget<'a> {
+    PromptWidget {
         title: glyphs::jump_to_time::TITLE_WORD,
         hint: glyphs::jump_to_time::HINT,
         min_width: MIN_WIDTH,
         body: PromptBody::Entry(&digits.input),
         error: digits.error.as_ref().map(ToString::to_string),
         avoid: &[],
-        theme,
+        style: PromptStyle::from_theme(&theme),
     }
 }
 
@@ -25,16 +28,16 @@ mod tests {
     use kernel::domain::{JumpDigits, TimecodeError};
 
     use crate::{
-        overlay::{jump_to_time::prompt, rendered_canvas},
-        test_support::noir,
+        overlay::jump_to_time::prompt,
+        test_support::{noir, rendered},
         theme::{ActiveTheme, ColorDepth},
     };
 
     fn frame(digits: &JumpDigits, width: u16, height: u16) -> String {
         let theme = noir();
         let prompt = prompt(digits, ActiveTheme::new(&theme, ColorDepth::TrueColor));
-        rendered_canvas(width, height, |canvas| {
-            prompt.render_in(prompt.areas(canvas.area), canvas);
+        rendered(width, height, |frame| {
+            frame.render_widget(&prompt, frame.area());
         })
         .to_string()
     }
@@ -59,6 +62,6 @@ mod tests {
 
     #[test]
     fn jump_to_time_overlay_does_not_panic_on_a_tiny_terminal() {
-        let _ = frame(&JumpDigits::default(), 4, 3);
+        assert_eq!(frame(&JumpDigits::default(), 4, 3).lines().count(), 3);
     }
 }

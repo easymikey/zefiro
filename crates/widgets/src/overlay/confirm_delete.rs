@@ -1,7 +1,7 @@
 use kernel::domain::DeleteCandidate;
 
 use crate::{
-    overlay::modal::{Prompt, PromptBody},
+    overlay::modal::{PromptBody, PromptStyle, PromptWidget},
     primitive::glyphs,
     theme::ActiveTheme,
 };
@@ -23,15 +23,15 @@ fn sentence(candidate: &DeleteCandidate) -> String {
 pub(crate) fn prompt<'a>(
     candidate: &DeleteCandidate,
     theme: ActiveTheme<'a>,
-) -> Prompt<'a> {
-    Prompt {
+) -> PromptWidget<'a> {
+    PromptWidget {
         title: glyphs::confirm_delete::TITLE_WORD,
         hint: glyphs::confirm_delete::HINT,
         min_width: MIN_WIDTH,
         body: PromptBody::Sentence(sentence(candidate)),
         error: None,
         avoid: &[],
-        theme,
+        style: PromptStyle::from_theme(&theme),
     }
 }
 
@@ -40,11 +40,8 @@ mod tests {
     use kernel::domain::{DeleteCandidate, ViewIndex};
 
     use crate::{
-        overlay::{
-            confirm_delete::{prompt, sentence},
-            rendered_canvas,
-        },
-        test_support::noir,
+        overlay::confirm_delete::{prompt, sentence},
+        test_support::{noir, rendered},
         theme::{ActiveTheme, ColorDepth},
     };
 
@@ -62,8 +59,8 @@ mod tests {
             &candidate(),
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
-        rendered_canvas(width, height, |canvas| {
-            prompt.render_in(prompt.areas(canvas.area), canvas);
+        rendered(width, height, |frame| {
+            frame.render_widget(&prompt, frame.area());
         })
         .to_string()
     }
@@ -80,6 +77,6 @@ mod tests {
 
     #[test]
     fn confirm_delete_does_not_panic_on_a_tiny_terminal() {
-        let _ = frame(4, 3);
+        assert_eq!(frame(4, 3).lines().count(), 3);
     }
 }

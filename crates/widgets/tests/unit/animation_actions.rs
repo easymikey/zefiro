@@ -22,7 +22,7 @@ use crate::unit::{
 fn animated(cues: &[Cue], backdrop: &Backdrop, watched: &[Rect]) -> (bool, Vec<Rect>) {
     let mut stage = AnimationStage::default();
     stage.play(Vec::new(), backdrop);
-    let _ = run_out_over(&mut stage, volume_bar_frame);
+    run_out_over(&mut stage, volume_bar_frame);
 
     stage.play(cues.to_vec(), backdrop);
     let staged = stage.is_running();

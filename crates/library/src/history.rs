@@ -1,6 +1,6 @@
 use std::{io::Write, path::PathBuf};
 
-use kernel::{HistoryEntry, LibrarySubject, Moment};
+use kernel::{HistoryEntry, LibrarySubject, Moment, TrackRef};
 use serde::{Deserialize, Serialize};
 
 use crate::{dirs::LibraryDirs, error::Error};
@@ -17,7 +17,7 @@ struct HistoryRecord {
 impl From<HistoryRecord> for HistoryEntry {
     fn from(record: HistoryRecord) -> Self {
         Self {
-            path: record.path,
+            track: TrackRef::Local(record.path),
             title: record.title,
             artist: record.artist,
             at: Moment::new(std::time::Duration::from_secs(
@@ -32,7 +32,10 @@ pub(crate) fn append(dirs: &LibraryDirs, played: &HistoryEntry) -> Result<(), Er
     crate::files::create_parent_dir(&path)
         .map_err(Error::io(LibrarySubject::History, &path))?;
     let record = HistoryRecord {
-        path: played.path.clone(),
+        path: {
+            let TrackRef::Local(track_path) = &played.track;
+            track_path.clone()
+        },
         title: played.title.clone(),
         artist: played.artist.clone(),
         at: i64::try_from(played.at.since_epoch().as_secs()).unwrap_or(i64::MAX),
@@ -71,7 +74,7 @@ fn parse_history(contents: &str, limit: usize) -> Vec<HistoryEntry> {
 mod tests {
     use std::path::PathBuf;
 
-    use kernel::{HistoryEntry, Moment};
+    use kernel::{HistoryEntry, Moment, TrackRef};
     use rstest::rstest;
 
     use crate::{
@@ -83,7 +86,7 @@ mod tests {
 
     fn entry(path: &str, title: &str, artist: Option<&str>) -> HistoryEntry {
         HistoryEntry {
-            path: PathBuf::from(path),
+            track: TrackRef::Local(PathBuf::from(path)),
             title: title.to_string(),
             artist: artist.map(str::to_string),
             at: Moment::default(),
@@ -168,10 +171,16 @@ mod tests {
     #[case::two(2, &["/music/third.flac", "/music/also-good.flac"])]
     #[case::more_than_there_are(9, &["/music/third.flac", "/music/also-good.flac", "/music/good.flac"])]
     fn parse_history_caps_at_limit(#[case] limit: usize, #[case] expected: &[&str]) {
-        let dirs: Vec<PathBuf> = parse_history(HISTORY_LOG, limit)
+        let dirs: Vec<TrackRef> = parse_history(HISTORY_LOG, limit)
             .into_iter()
-            .map(|entry| entry.path)
+            .map(|entry| entry.track)
             .collect();
-        assert_eq!(dirs, expected.iter().map(PathBuf::from).collect::<Vec<_>>());
+        assert_eq!(
+            dirs,
+            expected
+                .iter()
+                .map(|path| TrackRef::Local(PathBuf::from(path)))
+                .collect::<Vec<_>>()
+        );
     }
 }

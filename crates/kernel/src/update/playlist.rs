@@ -3,9 +3,11 @@ use crate::{
     domain::{
         Direction,
         TrackIndex,
+        ViewIndex,
         cycled,
         playlist::{PlayOrder, Playlist, RepeatMode},
     },
+    update::machine::{Machine, Unhandled},
 };
 
 #[derive(Debug, Clone)]
@@ -15,9 +17,12 @@ pub enum PlaylistMessage {
     CycleRepeat,
 }
 
-impl Playlist {
-    pub fn apply(&mut self, message: PlaylistMessage) -> Cmd {
-        match message {
+impl Machine for Playlist {
+    type Message = PlaylistMessage;
+    type Effect = Cmd;
+
+    fn transition(&mut self, message: PlaylistMessage) -> Result<Cmd, Unhandled> {
+        Ok(match message {
             PlaylistMessage::ToggleShuffle => {
                 self.play_order = match &self.play_order {
                     PlayOrder::Linear => PlayOrder::ShufflePending,
@@ -25,22 +30,27 @@ impl Playlist {
                         PlayOrder::Linear
                     }
                 };
-                Cmd::None
+                Cmd::none()
             }
             PlaylistMessage::ShuffleRolled(order) => {
                 self.play_order = match &self.play_order {
                     PlayOrder::Linear => PlayOrder::Linear,
                     PlayOrder::ShufflePending | PlayOrder::Shuffle(_) => {
-                        PlayOrder::Shuffle(order.into_iter().map(usize::from).collect())
+                        PlayOrder::Shuffle(
+                            order
+                                .into_iter()
+                                .map(|index| ViewIndex::new(index.get()))
+                                .collect(),
+                        )
                     }
                 };
-                Cmd::None
+                Cmd::none()
             }
             PlaylistMessage::CycleRepeat => {
                 self.repeat = cycle_repeat(self.repeat);
-                Cmd::None
+                Cmd::none()
             }
-        }
+        })
     }
 }
 

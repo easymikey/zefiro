@@ -3,7 +3,7 @@ use crate::{
     domain::{Moment, Toast},
     message::{MacosEvent, PlaybackRequest},
     update::{
-        error::UpdateError,
+        machine::{Machine, Unhandled},
         playback,
         player::PlaybackParts,
         transport::TransportMessage,
@@ -14,16 +14,15 @@ pub(crate) fn update(
     playback: &mut PlaybackParts<'_>,
     event: MacosEvent,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     match event {
-        MacosEvent::Volume(volume) => Ok(playback
+        MacosEvent::Volume(volume) => playback
             .transport
-            .apply(TransportMessage::SetVolume(volume))),
+            .transition(TransportMessage::SetVolume(volume)),
         MacosEvent::OutputRouteChanged => route_changed(playback, now),
-        MacosEvent::HardwareWatchError(detail) => Ok(playback.workspace.show(
-            Toast::error("Audio device watch failed").with_text(detail),
-            playback.revisions,
-        )),
+        MacosEvent::Error(error) => Ok(playback
+            .workspace
+            .show(Toast::error(error.to_string()), playback.revisions)),
         MacosEvent::MediaKey(request) => playback::update(playback, request, now),
     }
 }
@@ -31,9 +30,9 @@ pub(crate) fn update(
 fn route_changed(
     playback: &mut PlaybackParts<'_>,
     now: Moment,
-) -> Result<Cmd, UpdateError> {
+) -> Result<Cmd, Unhandled> {
     if !playback.player.is_playing() {
-        return Ok(Cmd::None);
+        return Ok(Cmd::none());
     }
     let paused = playback::update(playback, PlaybackRequest::Pause, now)?;
     let raised = playback.workspace.show(
@@ -100,7 +99,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(model.transport.volume, volume);
-        assert!(matches!(cmd, Cmd::One(Effect::Animate(Cue::VolumeChanged))));
+        assert_eq!(cmd, Cmd::effect(Effect::Animate(Cue::VolumeChanged)));
     }
 
     #[test]
@@ -127,7 +126,7 @@ mod tests {
             Moment::default(),
         )
         .unwrap();
-        assert!(matches!(cmd, Cmd::None));
+        assert!(cmd == Cmd::none());
     }
 
     #[test]

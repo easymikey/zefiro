@@ -5,7 +5,9 @@ expression: "parse_history(HISTORY_LOG, 10)"
 ---
 [
     HistoryEntry {
-        path: "/music/third.flac",
+        track: Local(
+            "/music/third.flac",
+        ),
         title: "Third",
         artist: None,
         at: Moment(
@@ -13,7 +15,9 @@ expression: "parse_history(HISTORY_LOG, 10)"
         ),
     },
     HistoryEntry {
-        path: "/music/also-good.flac",
+        track: Local(
+            "/music/also-good.flac",
+        ),
         title: "Also Good",
         artist: Some(
             "Artist",
@@ -23,7 +27,9 @@ expression: "parse_history(HISTORY_LOG, 10)"
         ),
     },
     HistoryEntry {
-        path: "/music/good.flac",
+        track: Local(
+            "/music/good.flac",
+        ),
         title: "Good",
         artist: None,
         at: Moment(

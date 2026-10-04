@@ -1,6 +1,5 @@
 use crate::{
     domain::{
-        CharSink,
         Chord,
         ChordPrefix,
         Key,
@@ -19,10 +18,7 @@ use crate::{
         SearchRequest,
         TextRequest,
     },
-    update::keymap::{
-        chord::{KeyBinding, KeyOutcome},
-        key_context::key_context_stack,
-    },
+    update::keymap::{chord::KeyBinding, key_context::key_context_stack},
 };
 
 #[must_use]
@@ -40,7 +36,9 @@ pub fn route(workspace: &Workspace, press: KeyPress) -> Option<Message> {
             key,
         )
     };
-    lookup(stack.primary()).or_else(|| stack.fallback().and_then(lookup))
+    lookup(stack.primary())
+        .or_else(|| typed_input(stack.primary(), key))
+        .or_else(|| stack.fallback().and_then(lookup))
 }
 
 fn pressed_key(workspace: &Workspace, press: KeyPress) -> Key {
@@ -81,7 +79,7 @@ fn in_key_context(
         .iter()
         .filter(|binding| binding.key_context == lookup.key_context)
         .find(|binding| matched(binding.pattern, key))
-        .and_then(|binding| message_of(&binding.outcome, key))
+        .map(|binding| binding.message.clone())
 }
 
 fn looked_up(
@@ -93,10 +91,7 @@ fn looked_up(
         .iter()
         .filter(|binding| binding.key_context == key_context)
         .find(|binding| binding.pattern == pattern)
-        .and_then(|binding| match &binding.outcome {
-            KeyOutcome::Message(message) => Some(message.clone()),
-            KeyOutcome::TypeChar(_) => None,
-        })
+        .map(|binding| binding.message.clone())
 }
 
 fn armable_prefix(
@@ -115,9 +110,7 @@ fn armable_prefix(
 fn starts_with(pattern: KeyPattern, prefix: ChordPrefix) -> bool {
     match pattern {
         KeyPattern::Chord(Chord::Sequence { prefix: armed, .. }) => armed == prefix,
-        KeyPattern::Chord(Chord::Key(_)) | KeyPattern::AnyChar | KeyPattern::AnyKey => {
-            false
-        }
+        KeyPattern::Chord(Chord::Key(_)) | KeyPattern::AnyKey => false,
     }
 }
 
@@ -125,37 +118,28 @@ fn matched(pattern: KeyPattern, key: Key) -> bool {
     match pattern {
         KeyPattern::Chord(Chord::Key(bound)) => bound == key,
         KeyPattern::Chord(Chord::Sequence { .. }) => false,
-        KeyPattern::AnyChar => matches!(key.code, KeyCode::Char(_)),
         KeyPattern::AnyKey => true,
     }
 }
 
-fn message_of(outcome: &KeyOutcome, key: Key) -> Option<Message> {
-    match outcome {
-        KeyOutcome::Message(message) => Some(message.clone()),
-        KeyOutcome::TypeChar(sink) => match key.code {
-            KeyCode::Char(character) => Some(typed(*sink, character)),
-            KeyCode::Enter
-            | KeyCode::Esc
-            | KeyCode::Backspace
-            | KeyCode::Up
-            | KeyCode::Down
-            | KeyCode::Left
-            | KeyCode::Right
-            | KeyCode::Home
-            | KeyCode::End
-            | KeyCode::Tab
-            | KeyCode::PageUp
-            | KeyCode::PageDown => None,
-        },
+fn typed_input(key_context: KeyContext, key: Key) -> Option<Message> {
+    let KeyCode::Char(character) = key.code else {
+        return None;
+    };
+    match key_context {
+        KeyContext::TextPrompt => Some(Message::Overlay(OverlayRequest::Text(
+            TextRequest::Char(character),
+        ))),
+        KeyContext::Search => Some(Message::Overlay(OverlayRequest::Search(
+            SearchRequest::Edit(SearchEdit::Char(character)),
+        ))),
+        KeyContext::Global
+        | KeyContext::Playlist
+        | KeyContext::Help
+        | KeyContext::History
+        | KeyContext::Settings
+        | KeyContext::ConfirmDelete
+        | KeyContext::JumpToTime
+        | KeyContext::TrackDetails => None,
     }
-}
-
-fn typed(sink: CharSink, character: char) -> Message {
-    Message::Overlay(match sink {
-        CharSink::Text => OverlayRequest::Text(TextRequest::Char(character)),
-        CharSink::Search => {
-            OverlayRequest::Search(SearchRequest::Edit(SearchEdit::Char(character)))
-        }
-    })
 }

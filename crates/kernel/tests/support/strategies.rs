@@ -34,8 +34,8 @@ use kernel::{
     Toast,
     domain::{
         ChordPrefix,
-        Driver,
         DriverError,
+        DriverName,
         OutputDevice,
         Revision,
         SettingRow,
@@ -131,7 +131,7 @@ fn overlay_input() -> impl Strategy<Value = OverlayRequest> {
             OverlayRequest::Settings(SettingsRowRequest::Navigate(direction))
         }),
         direction().prop_map(|direction| OverlayRequest::Settings(
-            SettingsRowRequest::Adjust(direction)
+            SettingsRowRequest::Step(direction)
         )),
         Just(OverlayRequest::Settings(SettingsRowRequest::Activate)),
         typed
@@ -178,9 +178,12 @@ fn playback() -> impl Strategy<Value = PlaybackRequest> {
             PlaybackRequest::CycleSleep,
             PlaybackRequest::AbMark,
         ]),
-        (-30i64..30).prop_map(|seconds| PlaybackRequest::SeekBy { seconds }),
-        (-3i8..3).prop_map(|steps| PlaybackRequest::StepVolume { steps }),
-        (-3i8..3).prop_map(|steps| PlaybackRequest::StepSpeed { steps }),
+        (direction(), 0u64..30).prop_map(|(direction, secs)| PlaybackRequest::SeekBy {
+            direction,
+            by: Duration::from_secs(secs),
+        }),
+        direction().prop_map(PlaybackRequest::StepVolume),
+        direction().prop_map(PlaybackRequest::StepSpeed),
         (0u64..200).prop_map(|secs| PlaybackRequest::SeekTo(Duration::from_secs(secs))),
         (0u8..10).prop_map(|tenths| {
             PlaybackRequest::SeekTenths(SeekTenths::try_from(tenths).unwrap())
@@ -225,9 +228,7 @@ fn audio() -> impl Strategy<Value = AudioEvent> {
             path: "/tmp/track0.flac".into(),
             kind: DecodeError::Corrupt,
         }),
-        Just(AudioError::OutputLost {
-            kind: StreamError::DeviceGone,
-        }),
+        Just(AudioError::OutputLost(StreamError::DeviceGone)),
     ];
     prop_oneof![
         (0u64..200).prop_map(|secs| AudioEvent::Playhead(Duration::from_secs(secs))),
@@ -236,7 +237,7 @@ fn audio() -> impl Strategy<Value = AudioEvent> {
             AudioEvent::Ended,
             AudioEvent::DeviceFellBack(OutputDevice::SystemDefault),
             AudioEvent::DevicesListed(Vec::new()),
-            AudioEvent::Loaded { total: None },
+            AudioEvent::Loaded(None),
         ]),
         failure.prop_map(AudioEvent::Error),
     ]
@@ -263,9 +264,9 @@ fn config() -> impl Strategy<Value = ConfigEvent> {
 }
 
 fn driver() -> impl Strategy<Value = Message> {
-    let driver = select(Driver::ALL.to_vec());
+    let driver = select(DriverName::ALL.to_vec());
     let change = prop_oneof![
-        Just(DriverEvent::Died(DriverError::panicked("boom".to_string()))),
+        Just(DriverEvent::Died(DriverError::Panicked)),
         Just(DriverEvent::Stopped),
         Just(DriverEvent::Full),
     ];
@@ -287,7 +288,7 @@ fn event() -> impl Strategy<Value = Message> {
             select(vec![SettingRow::Crossfade, SettingRow::ReplayGain]),
             direction()
         )
-            .prop_map(|(row, direction)| Message::Adjust { row, direction }),
+            .prop_map(|(row, direction)| Message::Step { row, direction }),
         Just(Message::Toast(Toast::info("hello".to_string()))),
         stamped().prop_map(|revision| Message::Elapsed(Timer::Toast(revision))),
         stamped().prop_map(|revision| Message::Elapsed(Timer::Sleep(revision))),
@@ -341,7 +342,7 @@ pub(crate) fn reached_model() -> impl Strategy<Value = Model> {
     ];
     (seed, proptest::collection::vec(message(), 0..16)).prop_map(|(seed, path)| {
         path.into_iter().fold(seed, |mut model, message| {
-            let _ = update(&mut model, message, Moment::default());
+            drop(update(&mut model, message, Moment::default()));
             model
         })
     })

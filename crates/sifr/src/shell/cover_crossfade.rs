@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use config::CoverStyle;
+use config::CoverMode;
 use kernel::Cue;
 use terminal::{CoverWash, CrossfadePermit};
 
@@ -72,10 +72,10 @@ pub(crate) fn take_crossfade_permit(
 pub(crate) fn wanted_cover(
     wanted: &mut Option<PathBuf>,
     current_track: Option<&Path>,
-    style: CoverStyle,
+    style: CoverMode,
 ) -> Option<PathBuf> {
-    let current_track = current_track
-        .filter(|_| matches!(style, CoverStyle::Plain | CoverStyle::Vinyl));
+    let current_track =
+        current_track.filter(|_| matches!(style, CoverMode::Plain | CoverMode::Vinyl));
     let Some(path) = current_track else {
         *wanted = None;
         return None;
@@ -91,7 +91,7 @@ pub(crate) fn wanted_cover(
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use config::CoverStyle;
+    use config::CoverMode;
     use kernel::Cue;
     use terminal::{CoverWash, CrossfadePermit};
 
@@ -108,7 +108,7 @@ mod tests {
     fn want(
         wanted: &mut Option<PathBuf>,
         current: Option<&str>,
-        style: CoverStyle,
+        style: CoverMode,
     ) -> Option<PathBuf> {
         wanted_cover(wanted, current.map(Path::new), style)
     }
@@ -117,7 +117,7 @@ mod tests {
     fn an_off_style_wants_no_cover_and_forgets_it() {
         let mut wanted = Some(PathBuf::from("/music/old.jpg"));
 
-        let request = want(&mut wanted, Some("/music/old.jpg"), CoverStyle::Off);
+        let request = want(&mut wanted, Some("/music/old.jpg"), CoverMode::Off);
 
         assert_eq!(request, None);
         assert_eq!(wanted, None);
@@ -127,7 +127,7 @@ mod tests {
     fn a_milkdrop_style_wants_no_decoded_cover() {
         let mut wanted = None;
 
-        let request = want(&mut wanted, Some("/music/track.jpg"), CoverStyle::Milkdrop);
+        let request = want(&mut wanted, Some("/music/track.jpg"), CoverMode::Milkdrop);
 
         assert_eq!(request, None);
     }
@@ -136,7 +136,7 @@ mod tests {
     fn playback_stopping_forgets_the_wanted_cover() {
         let mut wanted = Some(PathBuf::from("/music/old.jpg"));
 
-        let request = want(&mut wanted, None, CoverStyle::Plain);
+        let request = want(&mut wanted, None, CoverMode::Plain);
 
         assert_eq!(request, None);
         assert_eq!(wanted, None);
@@ -146,7 +146,7 @@ mod tests {
     fn a_new_track_path_is_requested() {
         let mut wanted = None;
 
-        let request = want(&mut wanted, Some("/music/track.jpg"), CoverStyle::Vinyl);
+        let request = want(&mut wanted, Some("/music/track.jpg"), CoverMode::Vinyl);
 
         assert_eq!(request, Some(PathBuf::from("/music/track.jpg")));
         assert_eq!(wanted, Some(PathBuf::from("/music/track.jpg")));
@@ -156,7 +156,7 @@ mod tests {
     fn the_same_track_path_is_not_requested_again() {
         let mut wanted = Some(PathBuf::from("/music/track.jpg"));
 
-        let request = want(&mut wanted, Some("/music/track.jpg"), CoverStyle::Plain);
+        let request = want(&mut wanted, Some("/music/track.jpg"), CoverMode::Plain);
 
         assert_eq!(request, None);
     }
@@ -165,7 +165,7 @@ mod tests {
     fn a_changed_track_path_is_requested_again() {
         let mut wanted = Some(PathBuf::from("/music/old.jpg"));
 
-        let request = want(&mut wanted, Some("/music/new.jpg"), CoverStyle::Plain);
+        let request = want(&mut wanted, Some("/music/new.jpg"), CoverMode::Plain);
 
         assert_eq!(request, Some(PathBuf::from("/music/new.jpg")));
         assert_eq!(wanted, Some(PathBuf::from("/music/new.jpg")));

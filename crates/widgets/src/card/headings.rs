@@ -26,7 +26,7 @@ pub(crate) enum CardStatus {
 #[must_use]
 pub(crate) fn card_status(output: &Output, player: &Player) -> CardStatus {
     match output {
-        Output::Lost { .. } => CardStatus::OutputLost,
+        Output::Lost(..) => CardStatus::OutputLost,
         Output::Ready => match player {
             Player::Playing { .. } | Player::Loading { .. } => CardStatus::Playing,
             Player::Paused { .. } => CardStatus::Paused,

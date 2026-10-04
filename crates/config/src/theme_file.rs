@@ -1,9 +1,9 @@
-use kernel::domain::ThemeName;
+use kernel::domain::{ConfigName, ThemeName};
 use serde::{Deserialize, Deserializer};
 
 use crate::{
     appearance::{Rgb, from_str_field, from_str_option},
-    error::{Error, TomlFile, parse_toml},
+    error::{Error, parse_toml},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -57,7 +57,8 @@ pub fn theme_file_name(name: &str) -> String {
 }
 
 pub fn parse_theme(source: &str, name: &str) -> Result<ThemeFile, Error> {
-    parse_toml(source, TomlFile::Theme(name.to_owned()))
+    let theme = ThemeName::new(name.to_owned())?;
+    parse_toml(source, ConfigName::Theme(theme))
 }
 
 #[cfg(test)]

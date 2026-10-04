@@ -24,6 +24,12 @@ pub(crate) struct CoreAudioError {
     status: i32,
 }
 
+impl CoreAudioError {
+    pub(crate) const fn status(self) -> i32 {
+        self.status
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct HardwareWatch {
     notify: *mut Sender<()>,

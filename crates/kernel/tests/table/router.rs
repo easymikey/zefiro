@@ -4,22 +4,17 @@ use kernel::{
     AbLoop,
     AudioEvent,
     Bounded,
-    Cmd,
     Direction,
+    Effect,
     Message,
     Model,
     Moment,
     OverlayName,
     PlaybackRequest,
     Timer,
-    domain::{Cursor, Overlay, Player, Revision, Transport, ViewIndex},
+    domain::{Cursor, Overlay, Player, Revision, Transport},
     playlist::{PlayOrder, RepeatMode},
-    update::{
-        UpdateError,
-        overlay::{HistoryError, OverlayError},
-        player::PlayerError,
-        update,
-    },
+    update::{Unhandled, update},
 };
 use rstest::{Context, rstest};
 
@@ -65,12 +60,12 @@ use crate::support::{
 
 type Step = (
     Message,
-    Cmd,
+    Vec<Effect>,
     Player,
     Option<Overlay>,
     Cursor,
     Cursor,
-    Vec<ViewIndex>,
+    Vec<kernel::TrackRef>,
     RepeatMode,
     PlayOrder,
     Transport,
@@ -86,7 +81,7 @@ fn walked(mut model: Model, messages: Vec<Message>) -> Vec<Step> {
             let cmd = update(&mut model, message, Moment::default()).unwrap();
             (
                 sent,
-                cmd,
+                cmd.into_iter().collect(),
                 model.player.clone(),
                 model.workspace.overlay.clone(),
                 model.workspace.browse.cursor,
@@ -265,7 +260,7 @@ fn resolved(message: Message, model: &Model) -> Message {
 #[case::shuffle_wraps_at_the_end_of_its_order_with_repeat_off(
     {
         let mut model = model_playing_at(4, 1, Duration::ZERO);
-        model.playlist.play_order = PlayOrder::Shuffle(vec![2, 0, 3, 1]);
+        model.playlist.play_order = PlayOrder::Shuffle([2, 0, 3, 1].map(kernel::domain::ViewIndex::new).to_vec());
         model
     },
     vec![skip()]
@@ -273,7 +268,7 @@ fn resolved(message: Message, model: &Model) -> Message {
 #[case::toggling_shuffle_leaves_a_pin_the_engine_already_committed_to(
     {
         let mut model = model_playing_at(4, 0, Duration::ZERO);
-        model.playlist.play_order = PlayOrder::Shuffle(vec![0, 2, 1, 3]);
+        model.playlist.play_order = PlayOrder::Shuffle([0, 2, 1, 3].map(kernel::domain::ViewIndex::new).to_vec());
         model
     },
     vec![near_the_end(), mark_fires(), shuffle(), handed_off()]
@@ -343,13 +338,13 @@ fn resolved(message: Message, model: &Model) -> Message {
         Message::Playback(PlaybackRequest::CycleSleep),
     ]
 )]
-#[case::nudging_speed_up_saturates_at_the_top(
+#[case::stepping_speed_up_saturates_at_the_top(
     Model::default(),
-    vec![step_speed(1), step_speed(1), step_speed(1), step_speed(1), step_speed(1)]
+    vec![step_speed(Direction::Next), step_speed(Direction::Next), step_speed(Direction::Next), step_speed(Direction::Next), step_speed(Direction::Next)]
 )]
-#[case::nudging_speed_down_steps(
+#[case::stepping_speed_down_steps(
     Model::default(),
-    vec![step_speed(-1)]
+    vec![step_speed(Direction::Previous)]
 )]
 #[case::a_track_change_leaves_the_speed_alone(
     {
@@ -372,37 +367,33 @@ fn router_trace(
 #[case::confirm_delete_on_an_empty_playlist_never_opens(
     Model::default(),
     open(OverlayName::ConfirmDelete),
-    UpdateError::Overlay(OverlayError::NoTrack)
+    Unhandled
 )]
 #[case::track_details_with_nothing_selected_and_nothing_playing_never_opens(
     Model::default(),
     open(OverlayName::TrackDetails),
-    UpdateError::Overlay(OverlayError::NoTrack)
+    Unhandled
 )]
-#[case::closing_nothing_is_refused(
-    moon_library(),
-    close(),
-    UpdateError::Overlay(OverlayError::WhileClosed)
-)]
+#[case::closing_nothing_is_refused(moon_library(), close(), Unhandled)]
 #[case::history_enqueue_against_an_empty_log_selects_nothing(
     logged(&[], &[]),
     history_enqueue(),
-    UpdateError::Overlay(OverlayError::History(HistoryError::NothingSelected))
+    Unhandled
 )]
 #[case::the_remotes_seek_while_stopped_is_refused(
     Model::default(),
     media(PlaybackRequest::SeekForward),
-    UpdateError::Player(PlayerError::Stopped)
+    Unhandled
 )]
 #[case::a_refused_key_keeps_the_toast_up(
     toasted(),
     media(PlaybackRequest::SeekForward),
-    UpdateError::Player(PlayerError::Stopped)
+    Unhandled
 )]
 fn a_refused_message_leaves_the_model_alone(
     #[case] mut model: Model,
     #[case] message: Message,
-    #[case] rejection: UpdateError,
+    #[case] rejection: Unhandled,
 ) {
     let before = format!("{model:?}");
     assert_eq!(

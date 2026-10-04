@@ -1,7 +1,6 @@
 use crate::{
     domain::{
         Action,
-        CharSink,
         Chord,
         ChordPrefix,
         Direction,
@@ -22,7 +21,7 @@ use crate::{
         TextRequest,
     },
     update::keymap::{
-        chord::{ActionRow, KeyBinding, KeyContextRow, KeyOutcome, bare, key},
+        chord::{ActionRow, KeyBinding, KeyContextRow, bare, key},
         table::{digit_char, digits},
     },
 };
@@ -58,40 +57,40 @@ fn settings_bindings(
         .collect()
 }
 
-fn overlay(request: OverlayRequest) -> KeyOutcome {
-    KeyOutcome::Message(Message::Overlay(request))
+fn overlay(request: OverlayRequest) -> Message {
+    Message::Overlay(request)
 }
 
-fn search(request: SearchRequest) -> KeyOutcome {
+fn search(request: SearchRequest) -> Message {
     overlay(OverlayRequest::Search(request))
 }
 
-fn edit(edit: SearchEdit) -> KeyOutcome {
+fn edit(edit: SearchEdit) -> Message {
     search(SearchRequest::Edit(edit))
 }
 
-fn history(request: HistoryRequest) -> KeyOutcome {
+fn history(request: HistoryRequest) -> Message {
     overlay(OverlayRequest::History(request))
 }
 
-fn close() -> KeyOutcome {
+fn close() -> Message {
     overlay(OverlayRequest::Close)
 }
 
-fn confirm() -> KeyOutcome {
+fn confirm() -> Message {
     overlay(OverlayRequest::Confirm)
 }
 
 fn rows_in(
     key_context: KeyContext,
-    rows: Vec<(KeyPattern, KeyOutcome)>,
+    rows: Vec<(KeyPattern, Message)>,
 ) -> Vec<KeyBinding> {
     rows.into_iter()
-        .map(|(pattern, outcome)| {
+        .map(|(pattern, message)| {
             KeyContextRow {
                 key_context,
                 pattern,
-                outcome,
+                message,
             }
             .into()
         })
@@ -108,7 +107,6 @@ fn text_prompt_rows() -> Vec<KeyBinding> {
                 plain(KeyCode::Backspace),
                 overlay(OverlayRequest::Text(TextRequest::Backspace)),
             ),
-            (KeyPattern::AnyChar, KeyOutcome::TypeChar(CharSink::Text)),
         ],
     )
 }
@@ -145,7 +143,6 @@ fn search_rows() -> Vec<KeyBinding> {
                 search(SearchRequest::Navigate(Direction::Previous)),
             ),
             (plain(KeyCode::Tab), search(SearchRequest::Enqueue)),
-            (KeyPattern::AnyChar, KeyOutcome::TypeChar(CharSink::Search)),
         ],
     )
 }
@@ -155,7 +152,7 @@ fn help_rows() -> Vec<KeyBinding> {
         KeyContext::Help,
         vec![
             (plain(KeyCode::Esc), close()),
-            (letter('q'), KeyOutcome::Message(Message::Quit)),
+            (letter('q'), Message::Quit),
             (held(Modifiers::CTRL, KeyCode::Char('k')), close()),
         ],
     )
@@ -196,15 +193,15 @@ fn history_rows() -> Vec<KeyBinding> {
 }
 
 fn settings_rows() -> Vec<KeyBinding> {
-    use SettingsRowRequest::{Activate, Adjust, Navigate};
+    use SettingsRowRequest::{Activate, Navigate, Step};
 
     use crate::domain::Action::{
         SettingsActivate,
-        SettingsAdjustDown,
-        SettingsAdjustUp,
         SettingsClose,
         SettingsNavigateDown,
         SettingsNavigateUp,
+        SettingsStepDown,
+        SettingsStepUp,
     };
     let settings = |request| Message::Overlay(OverlayRequest::Settings(request));
     [
@@ -229,14 +226,14 @@ fn settings_rows() -> Vec<KeyBinding> {
             &settings(Navigate(Direction::Previous)),
         ),
         settings_bindings(
-            SettingsAdjustDown,
+            SettingsStepDown,
             &[key('h'), bare(KeyCode::Left)],
-            &settings(Adjust(Direction::Previous)),
+            &settings(Step(Direction::Previous)),
         ),
         settings_bindings(
-            SettingsAdjustUp,
+            SettingsStepUp,
             &[key('l'), bare(KeyCode::Right)],
-            &settings(Adjust(Direction::Next)),
+            &settings(Step(Direction::Next)),
         ),
     ]
     .concat()

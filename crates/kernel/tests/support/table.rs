@@ -1,14 +1,13 @@
 use std::fmt::Debug;
 
-use kernel::update::Machine;
+use kernel::update::{Machine, Unhandled};
 
-pub(crate) type Cell<S> = Result<(S, <S as Machine>::Effect), <S as Machine>::Error>;
+pub(crate) type Cell<S> = Result<(S, <S as Machine>::Effect), Unhandled>;
 
 pub(crate) fn cell<S>(start: S, message: S::Message, expected: Cell<S>)
 where
     S: Machine + Clone + Debug + PartialEq,
     S::Effect: Debug + PartialEq,
-    S::Error: Debug + PartialEq,
 {
     let before = start.clone();
     let mut state = start;

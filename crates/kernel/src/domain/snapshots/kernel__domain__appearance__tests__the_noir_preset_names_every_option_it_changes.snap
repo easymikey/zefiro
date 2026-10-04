@@ -2,8 +2,8 @@
 source: crates/kernel/src/domain/appearance.rs
 expression: "preset_appearance(AppearancePreset::Noir)"
 ---
-Appearance {
-    cover_style: Milkdrop,
+AppearanceSettings {
+    cover_mode: Milkdrop,
     cover_brackets: Shown,
     format_chips: Shown,
     speed_chip: Always,

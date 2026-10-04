@@ -1,31 +1,20 @@
-use std::path::Path;
-
 use crate::{
     Cmd,
     domain::{
         CursorOver,
         Direction,
         HistoryEntry,
-        Model,
-        Moment,
         Overlay,
         Toast,
+        TrackRef,
         ViewIndex,
         Workspace,
         playlist::Playlist,
     },
-    message::{HistoryRequest, QueueRequest},
+    message::{HistoryRequest, Message, QueueRequest},
     update::{
-        error::UpdateError,
-        machine::Machine,
-        overlay::{
-            FollowUp,
-            InnerMessage,
-            OverlayError,
-            OverlayMessage,
-            OverlayOutcome,
-            follow,
-        },
+        machine::{Machine, Unhandled},
+        overlay::{InnerMessage, OverlayMessage, OverlayParts},
     },
 };
 
@@ -40,92 +29,62 @@ pub enum HistoryPick {
 pub enum HistoryMessage {
     Navigate { direction: Direction, len: usize },
     Top,
-    Bottom { len: usize },
+    Bottom(usize),
     Enqueue(HistoryPick),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum HistoryError {
-    #[error("no history entry selected")]
-    NothingSelected,
-    #[error("track is not in the library")]
-    NotInLibrary,
 }
 
 impl Machine for CursorOver<()> {
     type Message = HistoryMessage;
-    type Error = HistoryError;
-    type Effect = OverlayOutcome;
+    type Effect = Cmd;
 
-    fn transition(
-        &mut self,
-        message: HistoryMessage,
-    ) -> Result<OverlayOutcome, HistoryError> {
+    fn transition(&mut self, message: HistoryMessage) -> Result<Cmd, Unhandled> {
         match message {
             HistoryMessage::Navigate { direction, len } => {
                 self.resize(len);
                 self.navigate(direction);
-                Ok(OverlayOutcome::default())
+                Ok(Cmd::none())
             }
             HistoryMessage::Top => {
                 self.cursor = self.cursor.first();
-                Ok(OverlayOutcome::default())
+                Ok(Cmd::none())
             }
-            HistoryMessage::Bottom { len } => {
+            HistoryMessage::Bottom(len) => {
                 self.resize(len);
                 self.cursor = self.cursor.last();
-                Ok(OverlayOutcome::default())
+                Ok(Cmd::none())
             }
-            HistoryMessage::Enqueue(HistoryPick::Queued(index)) => {
-                let queued = FollowUp::Queue(QueueRequest::EnqueueTrack(index));
-                Ok(OverlayOutcome::from(queued))
-            }
-            HistoryMessage::Enqueue(HistoryPick::Missing) => {
-                Err(HistoryError::NotInLibrary)
-            }
-            HistoryMessage::Enqueue(HistoryPick::Nothing) => {
-                Err(HistoryError::NothingSelected)
-            }
+            HistoryMessage::Enqueue(HistoryPick::Queued(index)) => Ok(Cmd::message(
+                Message::Queue(QueueRequest::EnqueueTrack(index)),
+            )),
+            HistoryMessage::Enqueue(HistoryPick::Missing) => Ok(Cmd::message(
+                Message::Toast(Toast::info("Not in library".to_string())),
+            )),
+            HistoryMessage::Enqueue(HistoryPick::Nothing) => Err(Unhandled),
         }
     }
 }
 
 pub(crate) fn request(
-    model: &mut Model,
+    parts: &mut OverlayParts<'_>,
     request: HistoryRequest,
-    now: Moment,
-) -> Result<Cmd, UpdateError> {
-    let len = model.history.len();
+) -> Result<Cmd, Unhandled> {
+    let len = parts.history.len();
     let message = match request {
         HistoryRequest::Navigate(direction) => {
             HistoryMessage::Navigate { direction, len }
         }
         HistoryRequest::Top => HistoryMessage::Top,
-        HistoryRequest::Bottom => HistoryMessage::Bottom { len },
+        HistoryRequest::Bottom => HistoryMessage::Bottom(len),
         HistoryRequest::Enqueue => HistoryMessage::Enqueue(pick(
-            &model.workspace,
-            &model.history,
-            &model.playlist,
+            parts.workspace,
+            parts.history,
+            parts.playlist,
         )),
     };
-    match model
+    parts
         .workspace
         .overlay
         .transition(OverlayMessage::Inner(InnerMessage::History(message)))
-    {
-        Ok(effect) => follow(model, effect, now),
-        Err(OverlayError::History(HistoryError::NotInLibrary)) => not_in_library(model),
-        Err(
-            rejection @ (OverlayError::WhileClosed
-            | OverlayError::NoTrack
-            | OverlayError::WrongOverlay
-            | OverlayError::NoConfirm
-            | OverlayError::NothingSelected
-            | OverlayError::Jump(_)
-            | OverlayError::Search(_)
-            | OverlayError::History(HistoryError::NothingSelected)),
-        ) => Err(rejection.into()),
-    }
 }
 
 fn pick(
@@ -133,30 +92,30 @@ fn pick(
     history: &[HistoryEntry],
     playlist: &Playlist,
 ) -> HistoryPick {
-    selected_path(workspace, history).map_or(HistoryPick::Nothing, |path| {
+    selected_track(workspace, history).map_or(HistoryPick::Nothing, |source| {
         playlist
             .tracks
             .iter()
-            .position(|track| track.path() == path)
+            .position(|track| track.source() == source)
             .map_or(HistoryPick::Missing, |index| {
                 HistoryPick::Queued(ViewIndex::new(index))
             })
     })
 }
 
-fn selected_path<'a>(
+fn selected_track<'a>(
     workspace: &Workspace,
     history: &'a [HistoryEntry],
-) -> Option<&'a Path> {
+) -> Option<&'a TrackRef> {
     match &workspace.overlay {
         Some(Overlay::History(cursor)) => history
-            .get(cursor.selected())
-            .map(|entry| entry.path.as_path()),
+            .get(cursor.selected().get())
+            .map(|entry| &entry.track),
         Some(
             Overlay::Help
             | Overlay::Search(_)
             | Overlay::SavePlaylist { .. }
-            | Overlay::Settings { .. }
+            | Overlay::Settings(..)
             | Overlay::ConfirmDelete(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_)
@@ -164,11 +123,4 @@ fn selected_path<'a>(
         )
         | None => None,
     }
-}
-
-fn not_in_library(model: &mut Model) -> Result<Cmd, UpdateError> {
-    Ok(model.workspace.show(
-        Toast::info("Not in library".to_string()),
-        &mut model.revisions,
-    ))
 }
