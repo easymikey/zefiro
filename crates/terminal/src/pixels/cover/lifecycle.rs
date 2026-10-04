@@ -3,15 +3,15 @@ use std::{fmt, time::Duration};
 use image::DynamicImage;
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
 use widgets::{
-    CardCover,
-    CellPixels,
-    CoverFrame,
-    CoverImage,
-    CoverLifecycle,
-    CoverMotion,
-    CoverRefresh,
-    PixmapSource,
-    Scene,
+    card::CardCover,
+    pixels::cover::{
+        CoverImage,
+        CoverMotion,
+        CoverRefresh,
+        lifecycle::{CoverFrame, CoverLifecycle, PixmapSource},
+        pixmap::CellPixels,
+    },
+    scene::Scene,
 };
 
 use crate::pixels::cover::protocol::cover_protocol;

@@ -5,7 +5,10 @@ use std::{
 };
 
 use bincode::config::Config;
-use kernel::{AudioFormat, LibrarySubject, Tagging, Tags, Track, domain::Decibels};
+use kernel::{
+    domain::track::{AudioFormat, Decibels, Tagging, Tags, Track},
+    message::LibrarySubject,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{dirs::LibraryDirs, error::Error};
@@ -43,7 +46,7 @@ struct AudioFormatRecord {
 }
 
 mod decibels_record {
-    use kernel::domain::Decibels;
+    use kernel::domain::track::Decibels;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub(crate) fn serialize<G: std::borrow::Borrow<Option<Decibels>>, S: Serializer>(
@@ -180,7 +183,7 @@ pub(crate) fn save(
 mod tests {
     use std::{path::Path, sync::Arc, time::Duration};
 
-    use kernel::{Tags, Track};
+    use kernel::domain::track::{Tags, Track};
     use rstest::rstest;
 
     use crate::{cache, dirs::LibraryDirs, test_support};

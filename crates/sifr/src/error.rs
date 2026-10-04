@@ -3,11 +3,11 @@ use std::{io, path::PathBuf};
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum Error {
     #[error(transparent)]
-    Runtime(#[from] runtime::Error),
+    Runtime(#[from] runtime::error::Error),
     #[error(transparent)]
-    Terminal(#[from] terminal::Error),
+    Terminal(#[from] terminal::error::Error),
     #[error(transparent)]
-    Library(#[from] library::Error),
+    Library(#[from] library::error::Error),
     #[error("no config directory available")]
     ConfigDirUnset,
     #[error("no music directory configured and no default audio directory available")]
@@ -15,11 +15,11 @@ pub(crate) enum Error {
     #[error("music directory not found: {path}")]
     MusicDirMissing { path: PathBuf },
     #[error("--playlist: {0}")]
-    PlaylistName(#[source] kernel::playlist::PlaylistNameError),
+    PlaylistName(#[source] kernel::domain::playlist::PlaylistNameError),
     #[error("--theme: {0}")]
-    ThemeName(#[source] kernel::domain::ThemeNameError),
+    ThemeName(#[source] kernel::domain::theme::ThemeNameError),
     #[error("the embedded stock theme: {0}")]
-    StockTheme(#[source] config::Error),
+    StockTheme(#[source] config::error::Error),
     #[error("installing signal handlers: {0}")]
     SignalHandlers(#[source] io::Error),
     #[error("the signal handler is already installed")]
@@ -31,7 +31,7 @@ pub(crate) enum Error {
     #[error("{run} (teardown after also failed: {teardown})")]
     RunAndTeardown {
         #[source]
-        run: runtime::Error,
+        run: runtime::error::Error,
         teardown: io::Error,
     },
 }
@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn run_and_teardown_message_names_both_errors() {
         let error = Error::RunAndTeardown {
-            run: runtime::Error::InputClosed,
+            run: runtime::error::Error::InputClosed,
             teardown: io::Error::other("broken pipe"),
         };
 

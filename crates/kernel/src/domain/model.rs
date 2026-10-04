@@ -1,21 +1,20 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crate::domain::{
-    AppearanceSetting,
-    Drivers,
-    Favorites,
-    HistoryEntry,
-    Player,
-    Revisions,
-    Settings,
-    Themes,
-    Track,
-    TrackRef,
-    Transport,
-    ViewIndex,
-    Workspace,
+    driver::Drivers,
+    favorites::Favorites,
+    history::HistoryEntry,
+    index::ViewIndex,
     library::Library,
+    player::Player,
     playlist::{Playlist, PlaylistSource},
+    revision::Revisions,
+    setting_row::AppearanceSetting,
+    settings::Settings,
+    theme::Themes,
+    track::{Track, TrackRef},
+    transport::Transport,
+    workspace::Workspace,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -74,11 +73,11 @@ fn titled_track(title: &str) -> Arc<Track> {
         Track::builder()
             .path(format!("{title}.mp3"))
             .duration(std::time::Duration::from_secs(1))
-            .tags(crate::domain::Tags {
+            .tags(crate::domain::track::Tags {
                 title: Some(title.to_string()),
-                ..crate::domain::Tags::default()
+                ..crate::domain::track::Tags::default()
             })
-            .audio_format(crate::domain::AudioFormat::default())
+            .audio_format(crate::domain::track::AudioFormat::default())
             .build(),
     )
 }
@@ -88,17 +87,15 @@ mod displayed_track_tests {
     use std::time::Duration;
 
     use crate::domain::{
-        Browse,
-        Cursor,
-        Moment,
-        Player,
-        Playhead,
-        Preload,
-        Speed,
-        TrackIndex,
-        Workspace,
+        cursor::Cursor,
+        index::TrackIndex,
         library::Library,
         model::{Model, titled_track},
+        player::{Player, Preload},
+        playhead::Playhead,
+        speed::Speed,
+        time::Moment,
+        workspace::{Browse, Workspace},
     };
 
     #[test]
@@ -162,17 +159,15 @@ mod playing_index_tests {
     use rstest::rstest;
 
     use crate::domain::{
-        Cursor,
-        Moment,
-        PausedBy,
-        Player,
-        Playhead,
-        Preload,
-        Speed,
-        Track,
-        ViewIndex,
+        cursor::Cursor,
+        index::ViewIndex,
         model::{Model, titled_track},
+        player::{PausedBy, Player, Preload},
+        playhead::Playhead,
         playlist::Playlist,
+        speed::Speed,
+        time::Moment,
+        track::Track,
     };
 
     fn anchored_at_zero() -> Playhead {

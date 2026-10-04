@@ -1,4 +1,8 @@
-use kernel::{AudioError, AudioEvent, Cmd, update::Unhandled};
+use kernel::{
+    cmd::Cmd,
+    message::{AudioError, AudioEvent},
+    update::machine::Unhandled,
+};
 
 use crate::engine::{
     crossfade::{arm_cue, replay_gain_factor},
@@ -155,19 +159,17 @@ impl Live {
 #[cfg(test)]
 mod tests {
     use kernel::{
-        AudioCmd,
-        AudioEvent,
-        Bounded,
-        Cmd,
-        Playback,
-        domain::Crossfade,
-        update::{Machine, Unhandled},
+        cmd::{AudioCmd, Cmd, Playback},
+        domain::{bounded::Bounded, crossfade::Crossfade},
+        message::AudioEvent,
+        update::machine::{Machine, Unhandled},
     };
     use proptest::prelude::{prop_assert, prop_assert_eq, prop_assume, proptest};
     use rstest::rstest;
 
     use crate::engine::{
-        effect::{EngineEffect, EngineMessage, PreloadKind, SinkRole},
+        effect::{EngineEffect, PreloadKind, SinkRole},
+        message::EngineMessage,
         phase::{CurrentTrack, Incoming, Next, Phase, Playing},
         state::{Engine, Live},
         tests::{

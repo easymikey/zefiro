@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Select, never};
-use kernel::Cmds;
+use kernel::cmd::Cmds;
 
 use crate::watcher::FileStream;
 

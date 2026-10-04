@@ -1,42 +1,41 @@
 use std::path::PathBuf;
 
 use image::RgbaImage;
-use kernel::domain::{Revision, appearance::Rgb};
+use kernel::domain::{appearance::Rgb, revision::Revision};
 use tiny_skia::Pixmap;
 
-use crate::{ActiveTheme, Role, shade};
+use crate::theme::{active_theme::ActiveTheme, colors::Role, rgb::shade};
 
-mod art;
-mod geometry;
-mod layers;
+pub(crate) mod art;
+pub(crate) mod geometry;
+pub(crate) mod layers;
 
-pub(crate) use art::{VinylArt, prepare_art};
+use art::{VinylArt, prepare_art};
 use geometry::VinylGeometry;
-pub(crate) use geometry::canvas_aspect_ratio;
-use layers::solid_fallback;
-pub(crate) use layers::{
+use layers::{
     VinylFrameStyle,
     VinylParts,
     compose_vinyl_frame,
     paint_record_layer,
     paint_sleeve_layer,
+    solid_fallback,
 };
 
 const RECORD_SHADE_FACTOR: f32 = 0.35;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VinylStyle {
-    pub paper: Rgb,
-    pub border: Rgb,
-    pub record: Rgb,
-    pub groove: Rgb,
-    pub accent: Rgb,
-    pub shadow: Rgb,
+pub(crate) struct VinylStyle {
+    pub(crate) paper: Rgb,
+    pub(crate) border: Rgb,
+    pub(crate) record: Rgb,
+    pub(crate) groove: Rgb,
+    pub(crate) accent: Rgb,
+    pub(crate) shadow: Rgb,
 }
 
 impl VinylStyle {
     #[must_use]
-    pub fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         let colors = &theme.colors;
         Self {
             paper: colors.role(Role::Text),
@@ -98,12 +97,12 @@ pub(crate) type VinylBaseCacheKey = (Revision, Revision, u32);
 pub(crate) type VinylOverlayCacheKey = (Revision, Revision, Option<PathBuf>, u32);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VinylCacheKey {
-    pub config_revision: Revision,
-    pub theme_revision: Revision,
-    pub path: Option<PathBuf>,
-    pub size_px: u32,
-    pub colors: VinylStyle,
+pub(crate) struct VinylCacheKey {
+    pub(crate) config_revision: Revision,
+    pub(crate) theme_revision: Revision,
+    pub(crate) path: Option<PathBuf>,
+    pub(crate) size_px: u32,
+    pub(crate) colors: VinylStyle,
 }
 
 #[derive(Debug, Default)]
@@ -116,7 +115,7 @@ pub struct VinylCache {
 
 impl VinylCache {
     #[must_use]
-    pub fn compose(
+    pub(crate) fn compose(
         &mut self,
         key: VinylCacheKey,
         art: Option<&RgbaImage>,
@@ -191,24 +190,22 @@ pub(crate) mod test_support {
 mod tests {
     use std::{cell::Cell, path::PathBuf};
 
-    use kernel::domain::Revision;
+    use kernel::domain::revision::Revision;
     use tiny_skia::Pixmap;
 
     use crate::pixels::{
         numeric::dimension_f32,
         vinyl::{
             Memo,
-            VinylArt,
             VinylBaseCacheKey,
             VinylCache,
             VinylCacheKey,
-            VinylFrameStyle,
-            VinylParts,
             VinylStyle,
+            art::{VinylArt, prepare_art},
             compose_uncached,
             geometry,
             geometry::{VINYL_LAYOUT, canvas_aspect_ratio},
-            prepare_art,
+            layers::{VinylFrameStyle, VinylParts},
             test_support::synthetic_art,
         },
     };

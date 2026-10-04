@@ -1,8 +1,14 @@
 use std::{num::NonZeroU32, time::Duration};
 
-use kernel::{Bounded, Moment, Playhead, Speed, domain::geometry::Cells};
+use kernel::domain::{
+    bounded::Bounded,
+    geometry::Cells,
+    playhead::Playhead,
+    speed::Speed,
+    time::Moment,
+};
 use rstest::rstest;
-use widgets::{ProgressScale, next_clock_second, next_progress_step};
+use widgets::repaint::{ProgressScale, next_clock_second, next_progress_step};
 
 fn playhead(offset_secs: f64, speed: f32) -> Playhead {
     Playhead::anchored(

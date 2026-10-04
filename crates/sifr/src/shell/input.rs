@@ -1,7 +1,25 @@
-use crossterm::event::{Event, KeyEvent, KeyEventKind};
-use kernel::{Key, KeyPress, Message, PaintError, PaintEvent};
-use runtime::Reaction;
-use terminal::{LayoutTranslation, from_event};
+use std::{
+    io,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
+};
+
+use crossbeam_channel::Sender;
+use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use kernel::{
+    domain::key::{Key, KeyPress},
+    message::{Message, PaintError, PaintEvent},
+};
+use runtime::shell::Reaction;
+use terminal::keys::{LayoutTranslation, from_event};
+
+use crate::termination::{JoinOnDrop, ThreadStop, remember_input_error};
+
+const INPUT_POLL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone)]
 pub(crate) enum ShellInput {
@@ -47,12 +65,43 @@ fn key_press(key: Option<Key>, typed: Option<Key>) -> Option<KeyPress> {
     })
 }
 
+pub(crate) fn spawn_input(sender: Sender<ShellInput>) -> JoinOnDrop {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopped = Arc::clone(&stop);
+    let thread = thread::spawn(move || {
+        if let Err(error) = read_input(&sender, &stopped) {
+            remember_input_error(error);
+        }
+    });
+    JoinOnDrop {
+        stop: ThreadStop::Flag(stop),
+        thread: Some(thread),
+    }
+}
+
+fn read_input(sender: &Sender<ShellInput>, stop: &AtomicBool) -> Result<(), io::Error> {
+    while !stop.load(Ordering::Acquire) {
+        if event::poll(INPUT_POLL)?
+            && sender.send(ShellInput::Terminal(event::read()?)).is_err()
+        {
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::event::{Event, KeyCode as CrosstermCode, KeyEvent, KeyModifiers};
-    use kernel::{Diagnostic, Key, KeyCode, KeyPress, Message, PaintError, PaintEvent};
+    use kernel::{
+        domain::{
+            config::Diagnostic,
+            key::{Key, KeyCode, KeyPress},
+        },
+        message::{Message, PaintError, PaintEvent},
+    };
     use rstest::rstest;
-    use runtime::Reaction;
+    use runtime::shell::Reaction;
 
     use crate::shell::input::{ShellInput, reaction_for};
 

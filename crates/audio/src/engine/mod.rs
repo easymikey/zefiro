@@ -4,6 +4,7 @@ pub mod effect;
 mod execute;
 mod live;
 mod machine;
+pub(crate) mod message;
 pub(crate) mod phase;
 pub(crate) mod revisions;
 pub(crate) mod state;
@@ -13,33 +14,26 @@ pub(crate) mod tests {
     use std::time::{Duration, Instant};
 
     use kernel::{
-        AudioCmd,
-        AudioError,
-        AudioEvent,
-        Bounded,
-        Cmd,
-        Cmds,
-        DecodeError,
-        Playback,
-        TrackLoad,
+        cmd::{AudioCmd, Cmd, Cmds, Playback, TrackLoad},
         domain::{
-            AudioSettings,
-            Crossfade,
-            DeviceName,
-            OutputDevice,
-            ReplayGain,
-            Revision,
-            Speed,
-            StreamError,
+            bounded::Bounded,
+            crossfade::Crossfade,
+            device::{DeviceName, OutputDevice},
+            revision::Revision,
+            settings::{AudioSettings, ReplayGain},
+            speed::Speed,
+            transport::StreamError,
         },
-        update::{Machine, Unhandled},
+        message::{AudioError, AudioEvent, DecodeError},
+        update::machine::{Machine, Unhandled},
     };
     use proptest::test_runner::TestCaseError;
 
     use crate::{
         deck::{DeviceChoice, DeviceOpened, source::PreloadMode},
         engine::{
-            effect::{EngineEffect, EngineMessage, PreloadKind},
+            effect::{EngineEffect, PreloadKind},
+            message::EngineMessage,
             phase::{
                 CurrentTrack,
                 Fade,
@@ -103,9 +97,9 @@ pub(crate) mod tests {
 
     pub(crate) fn error() -> AudioError {
         AudioError::Stream {
-            reason: kernel::domain::Diagnostic::from_error(&std::io::Error::other(
-                "no output device available",
-            )),
+            reason: kernel::domain::config::Diagnostic::from_error(
+                &std::io::Error::other("no output device available"),
+            ),
         }
     }
 

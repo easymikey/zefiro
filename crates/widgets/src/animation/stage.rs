@@ -1,10 +1,14 @@
 use std::time::Duration;
 
-use kernel::domain::appearance::Animations;
+use kernel::domain::{appearance::Animations, time::Moment};
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 use tachyonfx::{CellFilter, Effect as Animation, EffectRenderer, RefRect};
 
-use crate::{animation::timings::AnimationTimings, screen::FrameLayout};
+use crate::{
+    animation::timings::AnimationTimings,
+    pixels::cover::CoverMotion,
+    screen::frame_layout::FrameLayout,
+};
 
 #[derive(Debug, Default)]
 enum Stage {
@@ -95,8 +99,8 @@ pub(crate) struct VacatedAreas {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct LiveProtected {
-    pub(crate) cover: RefRect,
+pub struct LiveProtected {
+    pub cover: RefRect,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -193,7 +197,7 @@ impl AnimationStage {
     }
 
     #[must_use]
-    pub fn cell_filter(&self) -> CellFilter {
+    pub(crate) fn cell_filter(&self) -> CellFilter {
         if self.protected.is_empty() {
             return CellFilter::All;
         }
@@ -215,14 +219,28 @@ impl AnimationStage {
     }
 }
 
+#[must_use]
+pub fn animation_frame_due(
+    stage: &AnimationStage,
+    cover_motion: CoverMotion,
+    next_frame: Moment,
+) -> Option<Moment> {
+    (stage.is_animating() || cover_motion == CoverMotion::Animating)
+        .then_some(next_frame)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
+    use kernel::domain::time::Moment;
     use ratatui::{buffer::Buffer, layout::Rect, style::Color};
     use tachyonfx::{Interpolation, fx};
 
-    use crate::animation::stage::Stage;
+    use crate::{
+        animation::stage::{AnimationStage, Stage, animation_frame_due},
+        pixels::cover::CoverMotion,
+    };
 
     const INSIDE: Rect = Rect {
         x: 0,
@@ -309,5 +327,27 @@ mod tests {
         let stage = Stage::Running(vec![(fade(900), INSIDE)]);
         let advanced = stage.advance(&mut buffer, Duration::from_millis(1));
         assert!(advanced.is_running());
+    }
+
+    #[test]
+    fn a_running_crossfade_wants_the_next_frame() {
+        let stage = AnimationStage::default();
+        let next_frame = Moment::new(Duration::from_millis(1_033));
+
+        assert_eq!(
+            animation_frame_due(&stage, CoverMotion::Animating, next_frame),
+            Some(next_frame)
+        );
+    }
+
+    #[test]
+    fn a_settled_crossfade_wants_no_frame() {
+        let stage = AnimationStage::default();
+        let next_frame = Moment::new(Duration::from_millis(1_033));
+
+        assert_eq!(
+            animation_frame_due(&stage, CoverMotion::Still, next_frame),
+            None
+        );
     }
 }

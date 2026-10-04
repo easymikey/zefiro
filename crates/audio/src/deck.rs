@@ -8,9 +8,9 @@ use std::{path::PathBuf, time::Duration};
 
 use crossbeam_channel::Sender;
 use kernel::{
-    AudioError,
-    Playback,
-    domain::{OutputDevice, Revision, Speed},
+    cmd::Playback,
+    domain::{device::OutputDevice, revision::Revision, speed::Speed},
+    message::AudioError,
 };
 
 use crate::{
@@ -20,10 +20,7 @@ use crate::{
         source::{PreloadMode, TrackDecoding, TrackSource},
     },
     device::OutputLoss,
-    engine::{
-        effect::{AudioMessage, PreloadKind},
-        phase::CurrentTrack,
-    },
+    engine::{effect::PreloadKind, message::AudioMessage, phase::CurrentTrack},
     error::device_error,
     gain::Gain,
     tap::Handoff,
@@ -272,7 +269,7 @@ fn fade(
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::Revision;
+    use kernel::domain::revision::Revision;
     use rodio::{Source, source::SineWave};
 
     use crate::{
@@ -280,7 +277,7 @@ mod tests {
             Deck,
             envelope::{Ramp, Signals, envelope},
         },
-        engine::effect::{AudioMessage, SinkRole},
+        engine::{effect::SinkRole, message::AudioMessage},
         tap,
     };
 

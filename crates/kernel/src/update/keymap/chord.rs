@@ -1,5 +1,9 @@
 use crate::{
-    domain::{Action, Chord, Key, KeyCode, KeyContext, KeyPattern, Modifiers},
+    domain::{
+        chord::{Chord, KeyPattern},
+        key::{Key, KeyCode, Modifiers},
+        keymap::{Action, KeyContext},
+    },
     message::Message,
 };
 
@@ -19,10 +23,10 @@ pub struct KeyBinding {
 }
 
 pub(crate) struct ActionRow {
-    pub(crate) action: Action,
+    pub action: Action,
     pub(crate) chord: Chord,
-    pub(crate) message: Message,
-    pub(crate) key_context: KeyContext,
+    pub message: Message,
+    pub key_context: KeyContext,
 }
 
 impl From<ActionRow> for KeyBinding {
@@ -38,9 +42,9 @@ impl From<ActionRow> for KeyBinding {
 }
 
 pub(crate) struct KeyContextRow {
-    pub(crate) key_context: KeyContext,
-    pub(crate) pattern: KeyPattern,
-    pub(crate) message: Message,
+    pub key_context: KeyContext,
+    pub pattern: KeyPattern,
+    pub message: Message,
 }
 
 impl From<KeyContextRow> for KeyBinding {

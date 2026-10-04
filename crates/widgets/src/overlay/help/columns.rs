@@ -18,13 +18,13 @@ use crate::{
             MINIMUM_DESCRIPTION,
             small_count_u16,
         },
-        modal::{Hint, list_capacity},
+        modal::{frame::Hint, place::list_capacity},
     },
     primitive::{
         glyphs,
         span::{StyledText, line, text},
     },
-    theme::{ActiveTheme, Role},
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -279,7 +279,7 @@ mod tests {
             groups::{COLUMN_GAP, HelpGroup, HelpRow},
         },
         test_support::noir,
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn colors() -> HelpStyle {

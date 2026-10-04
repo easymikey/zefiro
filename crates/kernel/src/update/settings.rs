@@ -1,17 +1,13 @@
 use crate::{
     cmd::{AudioCmd, Cmd, ConfigCmd, ConfigPatch, Effect},
     domain::{
-        AppearanceSetting,
-        Choice,
-        Direction,
-        OutputDevice,
-        ReplayGain,
-        SettingRow,
-        Settings,
-        SleepPresets,
-        ThemeChoice,
-        Themes,
         appearance_rows::AppearanceField,
+        device::OutputDevice,
+        direction::Direction,
+        setting_row::{AppearanceSetting, Choice, SettingRow},
+        settings::{ReplayGain, Settings},
+        sleep_presets::SleepPresets,
+        theme::{ThemeChoice, Themes},
     },
     update::{
         config::ConfigParts,

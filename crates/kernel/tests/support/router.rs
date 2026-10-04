@@ -1,41 +1,53 @@
 use std::time::Duration;
 
 use kernel::{
-    AudioEvent,
-    Direction,
-    HistoryRequest,
-    Message,
-    Model,
-    Moment,
-    OverlayName,
-    OverlayRequest,
-    PlaybackRequest,
-    QueueRequest,
-    SearchEdit,
-    SearchRequest,
-    TextRequest,
-    Timer,
     domain::{
-        AudioFormat,
-        Cursor,
-        CursorOver,
-        HistoryEntry,
-        Overlay,
-        Player,
-        Playhead,
-        Preload,
-        Revision,
-        Speed,
-        Tags,
-        Track,
-        TrackIndex,
-        ViewIndex,
+        cursor::Cursor,
+        cursor_over::CursorOver,
+        direction::Direction,
+        geometry::{Cells, Pixels},
+        history::HistoryEntry,
+        index::{TrackIndex, ViewIndex},
+        library::Library,
+        model::Model,
+        overlay::{Overlay, OverlayName},
+        player::{Player, Preload},
+        playhead::Playhead,
+        playlist::RepeatMode,
+        revision::Revision,
+        speed::Speed,
+        time::Moment,
+        track::{AudioFormat, Tags, Track},
     },
-    library::Library,
-    playlist::RepeatMode,
+    message::{
+        AudioEvent,
+        HistoryRequest,
+        Message,
+        OverlayRequest,
+        PlaybackRequest,
+        QueueRequest,
+        SearchEdit,
+        SearchRequest,
+        TextRequest,
+        Timer,
+    },
 };
 
 use crate::support::{model_with_titled_tracks, titled_track};
+
+pub(crate) fn cover_side_known() -> Message {
+    Message::Viewport {
+        visible_rows: Cells(10),
+        cover_side: Some(Pixels(240)),
+    }
+}
+
+pub(crate) fn cover_side_unknown() -> Message {
+    Message::Viewport {
+        visible_rows: Cells(10),
+        cover_side: None,
+    }
+}
 
 pub(crate) fn open(kind: OverlayName) -> Message {
     Message::Overlay(OverlayRequest::Open(kind))
@@ -104,7 +116,7 @@ pub(crate) fn logged(log: &[&str], playlist: &[&str]) -> Model {
         history: log
             .iter()
             .map(|path| HistoryEntry {
-                track: kernel::TrackRef::Local((*path).into()),
+                track: kernel::domain::track::TrackRef::Local((*path).into()),
                 title: (*path).to_string(),
                 artist: None,
                 at: Moment::default(),
@@ -222,7 +234,7 @@ pub(crate) fn step_speed(direction: Direction) -> Message {
 
 pub(crate) fn toasted() -> Model {
     let mut model = Model::default();
-    model.workspace.toasts = vec![kernel::Toast::info("a toast")];
+    model.workspace.toasts = vec![kernel::domain::toast::Toast::info("a toast")];
     model
 }
 

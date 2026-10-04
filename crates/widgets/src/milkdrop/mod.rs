@@ -33,7 +33,7 @@ use crate::{
     },
     primitive::span::text,
     spectrum::Spectrum,
-    theme::{ActiveTheme, Role},
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 fn resolve_mirror(field: &mut MilkdropField, size: FieldSize, mirror: Mirror) {
@@ -49,7 +49,7 @@ fn resolve_mirror(field: &mut MilkdropField, size: FieldSize, mirror: Mirror) {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MilkdropField {
+pub(crate) struct MilkdropField {
     cells: Vec<f32>,
     scratch: Vec<f32>,
     width: usize,
@@ -59,7 +59,7 @@ pub struct MilkdropField {
 
 impl MilkdropField {
     #[must_use]
-    pub fn new(width: usize, height: usize) -> Self {
+    pub(crate) fn new(width: usize, height: usize) -> Self {
         let width = width.max(1);
         let height = height.max(1);
         Self {
@@ -71,16 +71,6 @@ impl MilkdropField {
         }
     }
 
-    #[must_use]
-    pub fn width(&self) -> usize {
-        self.width
-    }
-
-    #[must_use]
-    pub fn height(&self) -> usize {
-        self.height
-    }
-
     fn cell(&self, position: CellPosition) -> f32 {
         self.cells
             .get(position.row * self.width + position.column)
@@ -90,15 +80,15 @@ impl MilkdropField {
 }
 
 #[derive(Debug)]
-pub struct MilkdropAdvance<'a> {
-    pub bands: &'a Spectrum,
-    pub playing: Playing,
-    pub seed: u64,
-    pub tick: u64,
+pub(crate) struct MilkdropAdvance<'a> {
+    pub(crate) bands: &'a Spectrum,
+    pub(crate) playing: Playing,
+    pub(crate) seed: u64,
+    pub(crate) tick: u64,
 }
 
 impl MilkdropField {
-    pub fn advance(&mut self, input: &MilkdropAdvance<'_>) {
+    pub(crate) fn advance(&mut self, input: &MilkdropAdvance<'_>) {
         let levels = band_levels(input.bands);
         let preset = preset_for_seed(input.seed);
 
@@ -148,7 +138,7 @@ impl MilkdropField {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MilkdropStyle {
+pub(crate) struct MilkdropStyle {
     muted_foreground: Color,
     accent: Color,
     foreground: Color,
@@ -156,7 +146,7 @@ pub struct MilkdropStyle {
 
 impl MilkdropStyle {
     #[must_use]
-    pub fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         Self {
             muted_foreground: theme.role(Role::Dim),
             accent: theme.role(Role::Accent),
@@ -178,13 +168,14 @@ impl MilkdropStyle {
 fn ramp_glyph(intensity: f32) -> &'static str {
     let last_index = RAMP.len() - 1;
     let clamped = intensity.clamp(0.0, 1.0);
-    let index = crate::pixels::round::<usize>(clamped * usize_to_f32(last_index));
+    let index =
+        crate::pixels::numeric::round::<usize>(clamped * usize_to_f32(last_index));
     RAMP.get(index.min(last_index))
         .copied()
         .unwrap_or(RAMP_FALLBACK)
 }
 
-pub fn lines_into(
+pub(crate) fn lines_into(
     field: &MilkdropField,
     style: &MilkdropStyle,
     output: &mut Vec<Line<'static>>,
@@ -284,7 +275,7 @@ mod tests {
     #[test]
     fn a_degenerate_zero_size_request_still_produces_a_one_by_one_field() {
         let field = MilkdropField::new(0, 0);
-        assert_eq!((field.width(), field.height()), (1, 1));
+        assert_eq!((field.width, field.height), (1, 1));
     }
 
     #[test]

@@ -1,16 +1,12 @@
-use kernel::domain::ThemeName;
+use kernel::domain::theme::ThemeName;
 
-mod active_theme;
-mod backdrop_style;
-mod colors;
+pub mod active_theme;
+pub mod backdrop_style;
+pub mod colors;
 mod contrast;
-mod rgb;
+pub mod rgb;
 
-pub use active_theme::ActiveTheme;
-pub(crate) use active_theme::{ProgressStyle, VolumeStyle};
-pub use backdrop_style::BackdropStyle;
-pub use colors::{Colors, Role, ThemeBase};
-pub use rgb::{ColorDepth, color_at_depth, lerp_rgb, shade};
+use colors::Colors;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Theme {

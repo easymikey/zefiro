@@ -1,8 +1,12 @@
 use kernel::{
-    AudioEvent,
-    Cmd,
-    TrackLoad,
-    domain::{AudioSettings, OutputDevice, Revision, Speed},
+    cmd::{Cmd, TrackLoad},
+    domain::{
+        device::OutputDevice,
+        revision::Revision,
+        settings::AudioSettings,
+        speed::Speed,
+    },
+    message::AudioEvent,
 };
 
 use crate::{

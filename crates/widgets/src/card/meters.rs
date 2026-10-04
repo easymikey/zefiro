@@ -10,13 +10,12 @@ use ratatui::{
 use crate::{
     braille::{BrailleBuffers, CanvasSize, MeterFill},
     card::{
-        CardMetrics,
-        CardStyle,
         CardWidget,
-        SPECTRUM_MAX_DOTS,
         chips::{self, ChipBudget, FormatChipContent},
+        headings::CardStyle,
+        metrics::{CardMetrics, SPECTRUM_MAX_DOTS},
     },
-    pixels::unit_fraction,
+    pixels::numeric::unit_fraction,
     primitive::{
         bar::{BarFill, HudProgressRow, HudProgressStyle, fill, hud_progress_line},
         chip::{self, ChipStyle},
@@ -24,7 +23,7 @@ use crate::{
         spectrum_meter,
         text::truncate,
     },
-    theme::VolumeStyle,
+    theme::active_theme::VolumeStyle,
 };
 
 pub(crate) fn paint(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetrics) {
@@ -158,32 +157,33 @@ fn paint_volume_row(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMe
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use kernel::{
-        Bounded,
-        Moment,
-        domain::{
-            AudioFormat,
-            Output,
-            Percent,
-            Player,
-            Playhead,
-            Preload,
-            Speed,
-            Tags,
-            Track,
-            appearance::AppearanceSettings,
-        },
+    use kernel::domain::{
+        appearance::AppearanceSettings,
+        bounded::Bounded,
+        percent::Percent,
+        player::{Player, Preload},
+        playhead::Playhead,
         playlist::PlayOrder,
+        speed::Speed,
+        time::Moment,
+        track::{AudioFormat, Tags, Track},
+        transport::Output,
     };
     use ratatui::{buffer::Buffer, layout::Rect};
 
     use crate::{
-        card::{CardCover, CardView, CardWidget, card_metrics, meters::paint_time_row},
+        card::{
+            CardCover,
+            CardView,
+            CardWidget,
+            meters::paint_time_row,
+            metrics::card_metrics,
+        },
         geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
         primitive::canvas::find_text,
         spectrum::{SPECTRUM_BANDS, Spectrum},
         test_support::noir,
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     #[test]
@@ -216,7 +216,6 @@ mod tests {
             spectrum: &spectrum,
             repeat: Default::default(),
             play_order: &play_order,
-            queue_length: 1,
             displayed_track: Some(&track),
             output: &output,
             now: Moment::new(Duration::from_secs(5)),

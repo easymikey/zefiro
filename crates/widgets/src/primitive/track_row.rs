@@ -22,7 +22,7 @@ use crate::{
         span::{line, text},
         text::{blanks, truncate},
     },
-    theme::{ActiveTheme, Role},
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 const CHIP_GAP: usize = 1;
@@ -119,7 +119,7 @@ mod tests {
             track_row::{Selected, TrackRowStyle, TrackRowView, track_row_line},
         },
         test_support::noir,
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn colors() -> TrackRowStyle {

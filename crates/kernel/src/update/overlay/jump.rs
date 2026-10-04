@@ -1,6 +1,6 @@
 use crate::{
-    Cmd,
-    domain::JumpDigits,
+    cmd::Cmd,
+    domain::overlay::JumpDigits,
     message::TextRequest,
     update::machine::{Machine, Unhandled},
 };

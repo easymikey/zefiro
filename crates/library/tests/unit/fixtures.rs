@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use kernel::{AudioFormat, Tags, Track};
+use kernel::domain::track::{AudioFormat, Tags, Track};
 
 const FIXTURE_LENGTH: Duration = Duration::from_secs(180);
 

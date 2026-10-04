@@ -1,37 +1,23 @@
 mod chips;
-mod compact;
-mod headings;
+pub(crate) mod compact;
+pub(crate) mod headings;
 mod meters;
-mod metrics;
+pub mod metrics;
 
 use std::{sync::Arc, time::Duration};
 
-pub(crate) use compact::{
-    CompactCardWidget,
-    compact_height,
-    progress_bar_width as compact_progress_bar_width,
-};
-pub(crate) use headings::{CardStyle, card_status, status_label};
-use kernel::{
-    Moment,
-    domain::{
-        Output,
-        Percent,
-        Player,
-        Speed,
-        Track,
-        appearance::{AppearanceSettings, CoverBrackets},
-    },
+use headings::CardStyle;
+use kernel::domain::{
+    appearance::{AppearanceSettings, CoverBrackets},
+    percent::Percent,
+    player::Player,
     playlist::{PlayOrder, RepeatMode},
+    speed::Speed,
+    time::Moment,
+    track::Track,
+    transport::Output,
 };
-pub use metrics::CardMetrics;
-pub(crate) use metrics::{
-    BRACKET_MARGIN,
-    SPECTRUM_MAX_DOTS,
-    card_height,
-    card_metrics,
-    content_rect,
-};
+use metrics::{BRACKET_MARGIN, CardMetrics, card_metrics, content_rect};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Rect},
@@ -48,20 +34,20 @@ use crate::{
         corner_brackets::CornerBracketsWidget,
         inset::Inset,
     },
+    repaint::{Presence, next_clock_second},
     spectrum::Spectrum,
-    theme::ActiveTheme,
+    theme::active_theme::ActiveTheme,
 };
 
 #[derive(Debug, Clone, Copy)]
-pub struct CardView<'a> {
-    pub player: &'a Player,
-    pub speed: Speed,
-    pub volume: Percent,
-    pub spectrum: &'a Spectrum,
-    pub repeat: RepeatMode,
-    pub play_order: &'a PlayOrder,
-    pub queue_length: usize,
-    pub displayed_track: Option<&'a Arc<Track>>,
+pub(crate) struct CardView<'a> {
+    pub(crate) player: &'a Player,
+    pub(crate) speed: Speed,
+    pub(crate) volume: Percent,
+    pub(crate) spectrum: &'a Spectrum,
+    pub(crate) repeat: RepeatMode,
+    pub(crate) play_order: &'a PlayOrder,
+    pub(crate) displayed_track: Option<&'a Arc<Track>>,
     pub output: &'a Output,
     pub now: Moment,
 }
@@ -74,13 +60,13 @@ pub enum CardCover {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct CardWidget<'a> {
-    pub view: CardView<'a>,
-    pub theme: ActiveTheme<'a>,
-    pub cell_aspect: f32,
-    pub cover_sizing: CoverSizing,
-    pub appearance: AppearanceSettings,
-    pub cover_art: &'a CardCover,
+pub(crate) struct CardWidget<'a> {
+    pub(crate) view: CardView<'a>,
+    pub(crate) theme: ActiveTheme<'a>,
+    pub(crate) cell_aspect: f32,
+    pub(crate) cover_sizing: CoverSizing,
+    pub(crate) appearance: AppearanceSettings,
+    pub(crate) cover_art: &'a CardCover,
 }
 
 impl CardView<'_> {
@@ -161,7 +147,7 @@ impl Widget for &CardWidget<'_> {
 
 impl<'a> CardView<'a> {
     #[must_use]
-    pub fn from_scene(scene: &crate::scene::Scene<'a>) -> Self {
+    pub(crate) fn from_scene(scene: &crate::scene::Scene<'a>) -> Self {
         Self {
             player: scene.player,
             speed: scene.transport.speed,
@@ -169,7 +155,6 @@ impl<'a> CardView<'a> {
             spectrum: scene.spectrum,
             repeat: scene.playlist.repeat,
             play_order: &scene.playlist.play_order,
-            queue_length: scene.queue.len(),
             displayed_track: scene.displayed_track,
             output: &scene.transport.output,
             now: scene.now,
@@ -177,36 +162,49 @@ impl<'a> CardView<'a> {
     }
 }
 
+#[must_use]
+pub fn clock_frame_due(
+    player: &Player,
+    clock: Presence,
+    now: Moment,
+) -> Option<Moment> {
+    let Player::Playing { head, .. } = player else {
+        return None;
+    };
+    (clock == Presence::Shown).then(|| next_clock_second(*head, now))
+}
+
 #[cfg(test)]
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use kernel::{
-        Bounded,
-        Moment,
-        domain::{
-            AudioFormat,
-            Output,
-            Percent,
-            Player,
-            Playhead,
-            Preload,
-            Speed,
-            StreamError,
-            Tags,
-            Track,
-            appearance::{AppearanceSettings, ProgressTime},
-            format_time,
-        },
+    use kernel::domain::{
+        appearance::{AppearanceSettings, ProgressTime},
+        bounded::Bounded,
+        percent::Percent,
+        player::{PausedBy, Player, Preload},
+        playhead::Playhead,
         playlist::PlayOrder,
+        speed::Speed,
+        time::Moment,
+        track::{AudioFormat, Tags, Track},
+        transport::{Output, StreamError},
     };
 
     use crate::{
-        card::{CardCover, CardView, CardWidget, card_height},
+        card::{
+            CardCover,
+            CardView,
+            CardWidget,
+            clock_frame_due,
+            metrics::card_height,
+        },
         geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
+        primitive::relative_time::format_time,
+        repaint::Presence,
         spectrum::{SPECTRUM_BANDS, Spectrum},
         test_support::{noir, rendered, track},
-        theme::{ActiveTheme, ColorDepth, Theme},
+        theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn full_format_track() -> Arc<Track> {
@@ -284,7 +282,6 @@ mod tests {
                 spectrum: &self.spectrum,
                 repeat: Default::default(),
                 play_order: &self.play_order,
-                queue_length: 3,
                 displayed_track: self.track.as_ref(),
                 output: &self.output,
                 now: Moment::default(),
@@ -402,5 +399,46 @@ mod tests {
         })
         .to_string();
         assert!(!text.contains("No cover"), "got {text:?}");
+    }
+
+    fn clock_player(offset: Duration, since: Moment) -> Player {
+        Player::Playing {
+            track: track("Moon River"),
+            head: Playhead::anchored(offset, since, Speed::clamped(1.0)),
+            preload: Preload::None,
+        }
+    }
+
+    #[test]
+    fn a_playing_clock_wants_the_next_second() {
+        let now = Moment::new(Duration::from_secs(100));
+        let player = clock_player(Duration::from_secs(10), now);
+
+        assert_eq!(
+            clock_frame_due(&player, Presence::Shown, now),
+            Some(Moment::new(
+                now.since_epoch() + Duration::from_millis(1_001)
+            ))
+        );
+    }
+
+    #[test]
+    fn a_hidden_clock_wants_no_frame() {
+        let now = Moment::new(Duration::from_secs(100));
+        let player = clock_player(Duration::from_secs(10), now);
+
+        assert_eq!(clock_frame_due(&player, Presence::Hidden, now), None);
+    }
+
+    #[test]
+    fn a_paused_clock_wants_no_frame() {
+        let now = Moment::new(Duration::from_secs(100));
+        let player = Player::Paused {
+            track: track("Moon River"),
+            at: Duration::from_secs(10),
+            by: PausedBy::Listener,
+        };
+
+        assert_eq!(clock_frame_due(&player, Presence::Shown, now), None);
     }
 }

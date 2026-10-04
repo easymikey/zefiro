@@ -1,10 +1,6 @@
-mod bindings;
-mod chord;
+pub mod bindings;
+pub mod chord;
 mod key_context;
-mod lookup;
+pub mod lookup;
 mod overlays;
 pub(crate) mod table;
-
-pub use bindings::Bindings;
-pub use chord::KeyBinding;
-pub use lookup::route;

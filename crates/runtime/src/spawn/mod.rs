@@ -1,31 +1,34 @@
 use audio::tap::SpectrumTap;
 use crossbeam_channel::Sender;
+#[cfg(test)] use kernel::domain::driver::DriverName;
 use kernel::{
-    AudioCmd,
-    ConfigCmd,
-    LibraryCmd,
-    MacosCmd,
-    Message,
-    domain::{AudioSettings, DriverName, ThemeChoice},
+    cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd},
+    domain::{settings::AudioSettings, theme::ThemeChoice},
+    message::Message,
 };
-use library::LibraryMessage;
 
 use crate::{
-    driver::{DriverThread, spawn_idle},
+    driver::DriverThread,
     error::Error,
     latest::LatestSenders,
-    registry,
     runtime::StartupPaths,
     spawn::{
-        audio_thread::{idle_audio, spawn_audio},
+        audio_thread::spawn_audio,
         config_thread::spawn_config,
-        library_thread::{idle_library, spawn_library},
+        library_thread::spawn_library,
     },
+};
+#[cfg(test)]
+use crate::{
+    driver::spawn_idle,
+    registry,
+    spawn::{audio_thread::idle_audio, library_thread::idle_library},
 };
 
 pub(crate) mod audio_thread;
 pub(crate) mod config_thread;
 mod library_thread;
+pub(crate) mod macos_thread;
 
 #[derive(Debug)]
 pub(crate) struct SpawnSetup<'a> {
@@ -35,7 +38,7 @@ pub(crate) struct SpawnSetup<'a> {
     pub(crate) inbox: &'a Sender<Message>,
     pub(crate) writers: &'a LatestSenders,
     #[cfg(target_os = "macos")]
-    pub(crate) macos: &'a crate::macos::MacosChannel,
+    pub(crate) macos: &'a macos_thread::MacosChannel,
 }
 
 pub(crate) type Spawn<C> = fn(&SpawnSetup<'_>) -> Result<DriverThread<C>, Error>;
@@ -43,22 +46,18 @@ pub(crate) type Spawn<C> = fn(&SpawnSetup<'_>) -> Result<DriverThread<C>, Error>
 pub(crate) type SpawnAudio =
     fn(&SpawnSetup<'_>) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error>;
 
-pub(crate) type SpawnLibrary =
-    fn(
-        &SpawnSetup<'_>,
-    ) -> Result<(DriverThread<LibraryCmd>, Sender<LibraryMessage>), Error>;
-
 #[derive(Debug, Clone, Copy)]
 pub struct Spawners {
     pub(crate) audio: SpawnAudio,
-    pub(crate) library: SpawnLibrary,
+    pub(crate) library: Spawn<LibraryCmd>,
     pub(crate) config: Spawn<ConfigCmd>,
     pub(crate) macos: Spawn<MacosCmd>,
 }
 
 impl Spawners {
+    #[cfg(test)]
     #[must_use]
-    pub fn idle() -> Self {
+    pub(crate) fn idle() -> Self {
         Self {
             audio: idle_audio,
             library: idle_library,
@@ -74,7 +73,7 @@ impl Spawners {
             library: spawn_library,
             config: spawn_config,
             #[cfg(target_os = "macos")]
-            macos: crate::macos::spawn,
+            macos: macos_thread::spawn,
             #[cfg(not(target_os = "macos"))]
             macos: Self::idle().macos,
         }
@@ -89,15 +88,14 @@ pub(crate) mod tests {
     };
 
     use audio::tap::SpectrumTap;
-    use config::{ConfigPaths, SeenTexts};
-    use crossbeam_channel::{Receiver, Sender, unbounded};
+    use config::driver::{ConfigPaths, SeenTexts};
+    use crossbeam_channel::Receiver;
     use kernel::{
-        AudioCmd,
-        AudioEvent,
-        Message,
-        domain::{DriverName, Startup},
+        cmd::AudioCmd,
+        domain::{driver::DriverName, startup::Startup},
+        message::{AudioEvent, Message},
     };
-    use library::LibraryDirs;
+    use library::dirs::LibraryDirs;
     use rstest::rstest;
 
     use crate::{
@@ -108,7 +106,6 @@ pub(crate) mod tests {
         spawn::{
             ConfigCmd,
             LibraryCmd,
-            LibraryMessage,
             SpawnSetup,
             Spawners,
             audio_thread::idle_audio,
@@ -160,7 +157,7 @@ pub(crate) mod tests {
 
     fn counting_library(
         setup: &SpawnSetup<'_>,
-    ) -> Result<(DriverThread<LibraryCmd>, Sender<LibraryMessage>), Error> {
+    ) -> Result<DriverThread<LibraryCmd>, Error> {
         LIBRARY_CALLS.fetch_add(1, Ordering::SeqCst);
         (Spawners::idle().library)(setup)
     }
@@ -174,7 +171,7 @@ pub(crate) mod tests {
 
     fn counting_macos(
         setup: &SpawnSetup<'_>,
-    ) -> Result<DriverThread<kernel::MacosCmd>, Error> {
+    ) -> Result<DriverThread<kernel::cmd::MacosCmd>, Error> {
         MACOS_CALLS.fetch_add(1, Ordering::SeqCst);
         (Spawners::idle().macos)(setup)
     }
@@ -212,7 +209,7 @@ pub(crate) mod tests {
         let directory = tempfile::tempdir().unwrap();
         let paths = stub_paths(directory.path());
         let (inbox, _arrivals) = crossbeam_channel::bounded(4);
-        let (model, _cmd) = kernel::startup(Startup::default());
+        let (model, _cmd) = kernel::update::startup::startup(Startup::default());
         let (writers, _cells, _notified) = crate::latest::latest_channels();
         let setup = SpawnSetup {
             audio: &model.settings.audio,
@@ -221,7 +218,7 @@ pub(crate) mod tests {
             inbox: &inbox,
             writers: &writers,
             #[cfg(target_os = "macos")]
-            macos: &crate::macos::MacosChannel::new(),
+            macos: &crate::spawn::macos_thread::MacosChannel::new(),
         };
         let (audio, _tap) = idle_audio(&setup).unwrap();
 
@@ -234,14 +231,13 @@ pub(crate) mod tests {
 
     fn panicking_library(
         setup: &SpawnSetup<'_>,
-    ) -> Result<(DriverThread<LibraryCmd>, Sender<LibraryMessage>), Error> {
+    ) -> Result<DriverThread<LibraryCmd>, Error> {
         RESTART_LIBRARY_CALLS.fetch_add(1, Ordering::SeqCst);
-        let thread = spawn_driver(
+        spawn_driver(
             crate::registry::row(DriverName::Library),
             |_: &Receiver<LibraryCmd>, _: &Outbox<Message>| boom(),
             setup.inbox,
-        )?;
-        Ok((thread, unbounded().0))
+        )
     }
 
     fn panicking_config(

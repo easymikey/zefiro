@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::domain::{Key, KeyCode, Modifiers};
+use crate::domain::key::{Key, KeyCode, Modifiers};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid key chord `{spelling}`")]

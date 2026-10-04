@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use kernel::{IoError, LibraryError, LibrarySubject};
+use kernel::{
+    domain::io_error::IoError,
+    message::{LibraryError, LibrarySubject},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -155,7 +158,10 @@ impl From<&Error> for LibraryError {
 
 #[cfg(test)]
 mod tests {
-    use kernel::{IoError, LibraryError, LibrarySubject};
+    use kernel::{
+        domain::io_error::IoError,
+        message::{LibraryError, LibrarySubject},
+    };
     use rstest::rstest;
 
     use crate::error::Error;

@@ -1,12 +1,12 @@
 use std::{path::PathBuf, time::Duration};
 
-use kernel::{Playback, domain::Speed, update::Driver};
+use kernel::{cmd::Playback, domain::speed::Speed, update::machine::Driver};
 use rodio::Sink;
 
 use crate::{
     AudioDriver,
     deck::{Deck, source::PreloadMode},
-    engine::effect::{AudioMessage, EngineEffect},
+    engine::{effect::EngineEffect, message::AudioMessage},
     error::seek_error,
     gain::Gain,
 };

@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Select, never};
-use kernel::Message;
+use kernel::message::Message;
 
 use crate::{
     error::Error,
@@ -189,35 +189,39 @@ fn ready<T>(receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::{convert::Infallible, path::PathBuf, time::Instant};
+    use std::{
+        convert::Infallible,
+        path::Path,
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
-    use config::{TomlColors, TomlTheme};
+    use config::theme_file::{TomlColors, TomlTheme};
     use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
     use kernel::{
-        ConfigEvent,
-        Cue,
-        DriverEvent,
-        LibraryEvent,
-        Message,
-        Timer,
-        WindowColorsCmd,
+        cmd::{Cue, LibraryCmd, WindowColorsCmd},
         domain::{
-            DriverName,
-            DriverStatus,
-            Startup,
-            ThemeName,
-            Toast,
-            appearance::Rgb,
+            appearance::{CoverMode, Rgb},
+            driver::{DriverName, DriverStatus},
+            geometry::Pixels,
+            player::{Player, Preload},
+            playhead::Playhead,
+            speed::Speed,
+            startup::Startup,
+            theme::ThemeName,
+            time::Moment,
+            toast::Toast,
+            track::Track,
         },
+        message::{ConfigEvent, DriverEvent, LibraryEvent, Message, Timer},
     };
-    use library::{CoverJob, LibraryMessage};
 
     use crate::{
         error::Error,
         event_loop::EventLoop,
         latest::LatestSenders,
         outbox::{Congestion, Outbox},
-        port::{LibraryPort, Port},
+        port::Port,
         runtime::Runtime,
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
         trace::Trace,
@@ -242,7 +246,7 @@ pub(crate) mod tests {
         keys: Sender<Key>,
         quit_after: usize,
         continue_with: Key,
-        cover: Option<CoverJob>,
+        cover_side: Option<Pixels>,
         effects: Vec<ShellEffect>,
         pub(crate) toasts: Vec<Option<String>>,
         order: Vec<Order>,
@@ -255,7 +259,7 @@ pub(crate) mod tests {
                 keys,
                 quit_after,
                 continue_with: Key::Stray,
-                cover: None,
+                cover_side: None,
                 effects: Vec::new(),
                 toasts: Vec::new(),
                 order: Vec::new(),
@@ -310,7 +314,7 @@ pub(crate) mod tests {
                 .send(next)
                 .expect("the key receiver outlives the shell");
             Ok(Painted {
-                cover: self.cover.clone(),
+                cover_side: self.cover_side,
                 visible_rows: None,
                 toasts: std::mem::take(&mut self.pending_failures),
             })
@@ -319,7 +323,7 @@ pub(crate) mod tests {
 
     pub(crate) struct Fixture {
         pub(crate) runtime: Runtime,
-        cover_inbox: Receiver<LibraryMessage>,
+        library_inbox: Receiver<LibraryCmd>,
         _writers: LatestSenders,
     }
 
@@ -328,11 +332,11 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn fixture() -> Fixture {
-        let (wiring, cover_inbox, writers) = Wiring::idle();
+        let (wiring, library_inbox, writers) = Wiring::idle();
         let seed = Runtime::seeded(stock_startup());
         Fixture {
             runtime: Runtime::assemble(seed, wiring, Trace::default()),
-            cover_inbox,
+            library_inbox,
             _writers: writers,
         }
     }
@@ -425,28 +429,35 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_cover_the_frame_keeps_asking_for_is_forwarded_on_every_paint() {
+    fn a_side_the_frame_keeps_reporting_decodes_the_cover_once() {
         let mut fixture = fixture();
+        fixture.runtime.model.settings.appearance.cover_mode = CoverMode::Plain;
+        fixture.runtime.model.player = Player::Playing {
+            track: Arc::new(Track::listed(Path::new("/music/cover.mp3"))),
+            head: Playhead::anchored(
+                Duration::ZERO,
+                Moment::default(),
+                Speed::default(),
+            ),
+            preload: Preload::None,
+        };
         let (keys, input) = unbounded();
         keys.send(Key::Ping).unwrap();
         let mut shell = Scripted::new(keys, 2);
         shell.continue_with = Key::Ping;
-        shell.cover = Some(CoverJob::new(
-            PathBuf::from("/music/cover.mp3"),
-            kernel::domain::geometry::Pixels(64),
-        ));
+        shell.cover_side = Some(Pixels(64));
 
         let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Ok(())));
         assert_eq!(shell.toasts.len(), 2);
         fixture.runtime.drain();
-        let covers = fixture
-            .cover_inbox
+        let decodes = fixture
+            .library_inbox
             .iter()
-            .filter(|command| matches!(command, LibraryMessage::Cover(_)))
+            .filter(|command| matches!(command, LibraryCmd::DecodeCover(_)))
             .count();
-        assert_eq!(covers, 2);
+        assert_eq!(decodes, 1);
     }
 
     #[test]
@@ -547,7 +558,6 @@ pub(crate) mod tests {
             .model
             .settings
             .appearance
-            .settings
             .animations;
         for effect in effects {
             event_loop.shell.effect(effect, animations);
@@ -568,10 +578,8 @@ pub(crate) mod tests {
         let (library_commands, _library_inbox) = unbounded();
         fixture.runtime.wiring.receiver = arrivals;
         fixture.runtime.wiring.inbox = inbox;
-        fixture.runtime.wiring.ports.library = LibraryPort::new(
-            Port::new(DriverName::Library, library_commands, full.clone()),
-            unbounded().0,
-        );
+        fixture.runtime.wiring.ports.library =
+            Port::new(DriverName::Library, library_commands, full.clone());
 
         fill_the_inbox(&outbox, &full);
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);

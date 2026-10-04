@@ -1,9 +1,5 @@
-mod cover_crossfade;
-mod frame_due;
-mod input;
+pub(crate) mod input;
 mod motion;
-mod painter;
+pub(crate) mod painter;
+pub(crate) mod presentation;
 mod view;
-
-pub(crate) use input::ShellInput;
-pub(crate) use painter::Painter;

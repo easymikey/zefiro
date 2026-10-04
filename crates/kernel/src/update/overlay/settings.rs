@@ -1,6 +1,11 @@
 use crate::{
-    Cmd,
-    domain::{AppearanceSetting, Direction, Overlay, SettingRow, Workspace},
+    cmd::Cmd,
+    domain::{
+        direction::Direction,
+        overlay::Overlay,
+        setting_row::{AppearanceSetting, SettingRow},
+        workspace::Workspace,
+    },
     message::{Message, SettingsRowRequest},
     update::{
         machine::{Machine, Unhandled},

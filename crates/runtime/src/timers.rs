@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use kernel::{SleepTimer, Timer};
+use kernel::{domain::sleep::SleepTimer, message::Timer};
 
 #[derive(Debug, Clone, Copy)]
 struct Scheduled {
@@ -90,9 +90,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use kernel::{
-        SleepTimer,
-        Timer,
-        domain::{PresetIndex, Revision},
+        domain::{index::PresetIndex, revision::Revision, sleep::SleepTimer},
+        message::Timer,
     };
     use rstest::rstest;
 

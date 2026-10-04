@@ -38,7 +38,7 @@ Why:
 
 ## Events like an operating system
 
-The kernel receives only decisions and domain facts. How a driver does its work stays inside the driver; values that only matter when painted (spectrum, decoded cover, reloaded theme) bypass the kernel through latest-value cells. Motion belongs to the shell, the way a compositor owns vsync.
+The kernel receives only decisions and domain facts. How a driver does its work stays inside the driver; values that only matter when painted (spectrum, decoded cover, reloaded theme) bypass the kernel through latest-value cells. Motion state is per component: the shell owns the clock, the paint and the component state instances; the step logic is in widgets.
 
 Why: the kernel is never flooded, a burst of input becomes one batch and one paint, and nothing is sent to the kernel only because time passed.
 

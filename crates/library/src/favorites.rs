@@ -1,6 +1,9 @@
 use std::{collections::BTreeSet, path::PathBuf};
 
-use kernel::{Favorites, LibrarySubject, TrackRef};
+use kernel::{
+    domain::{favorites::Favorites, track::TrackRef},
+    message::LibrarySubject,
+};
 
 use crate::{dirs::LibraryDirs, error::Error};
 
@@ -37,7 +40,7 @@ pub(crate) fn load(dirs: &LibraryDirs) -> Result<Favorites, Error> {
 mod tests {
     use std::path::PathBuf;
 
-    use kernel::{Favorites, TrackRef};
+    use kernel::domain::{favorites::Favorites, track::TrackRef};
 
     use crate::{dirs::LibraryDirs, favorites};
 

@@ -4,14 +4,14 @@ use std::{
 };
 
 use kernel::{
-    Cmd,
-    domain::{ConfigName, ThemeName},
-    update::{Machine, Unhandled},
+    cmd::Cmd,
+    domain::{config::ConfigName, theme::ThemeName},
+    update::machine::{Machine, Unhandled},
 };
 
 use crate::{
     driver::{ConfigChange, ConfigMessage, ConfigPaths},
-    theme_file_name,
+    theme_file::theme_file_name,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,7 +235,7 @@ impl ConfigWatch {
             return Cmd::none();
         }
         self.theme_list = Seen::of(Some(&listing));
-        Cmd::message(ConfigMessage::Changed(ConfigChange::Themes(names)))
+        Cmd::message(ConfigMessage::Reloaded(ConfigChange::Themes(names)))
     }
 }
 
@@ -248,7 +248,7 @@ fn observed(
         return Cmd::none();
     }
     *seen = Seen::of(text.as_deref());
-    Cmd::message(ConfigMessage::Changed(change(text)))
+    Cmd::message(ConfigMessage::Reloaded(change(text)))
 }
 
 fn read(file: ConfigName, path: &Path) -> Cmd<WatchEffect, ConfigMessage> {
@@ -263,9 +263,9 @@ mod tests {
     use std::path::PathBuf;
 
     use kernel::{
-        Cmd,
-        domain::{ConfigName, ThemeName},
-        update::{Machine, Unhandled},
+        cmd::Cmd,
+        domain::{config::ConfigName, theme::ThemeName},
+        update::machine::{Machine, Unhandled},
     };
     use proptest::{option, prop_assert, prop_assume, proptest};
     use rstest::rstest;
@@ -339,7 +339,7 @@ mod tests {
         Cmd::effect(WatchEffect::List(PathBuf::from("/config/themes")))
     )]
     #[case::seen_at_start(WatchMessage::Observed { file: ConfigName::Appearance, text: Some("seen".to_string()) }, Cmd::none())]
-    #[case::first_sighting(WatchMessage::Observed { file: ConfigName::Config, text: None }, Cmd::message(ConfigMessage::Changed(ConfigChange::Keymap(None))))]
+    #[case::first_sighting(WatchMessage::Observed { file: ConfigName::Config, text: None }, Cmd::message(ConfigMessage::Reloaded(ConfigChange::Keymap(None))))]
     #[case::own_write(WatchMessage::Wrote { file: ConfigName::Config, text: "x".to_string() }, Cmd::none())]
     #[case::other_theme(
         WatchMessage::SelectTheme(ThemeName::from_static("ink")),
@@ -406,7 +406,7 @@ mod tests {
 
         assert_eq!(
             first,
-            Cmd::message(ConfigMessage::Changed(ConfigChange::Themes(vec![
+            Cmd::message(ConfigMessage::Reloaded(ConfigChange::Themes(vec![
                 ThemeName::from_static("mine")
             ])))
         );

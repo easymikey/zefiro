@@ -2,13 +2,13 @@ use kernel::domain::appearance::Rgb;
 use num_traits::ToPrimitive;
 use ratatui::style::Color;
 
-use crate::pixels::{channel_byte, floor};
+use crate::pixels::numeric::{channel_byte, floor};
 
 pub(crate) fn scale_channel(channel: u8, factor: f32) -> u8 {
     channel_byte(f32::from(channel) * factor)
 }
 
-pub fn shade(color: Rgb, factor: f32) -> Rgb {
+pub(crate) fn shade(color: Rgb, factor: f32) -> Rgb {
     Rgb([
         scale_channel(color.0[0], factor),
         scale_channel(color.0[1], factor),

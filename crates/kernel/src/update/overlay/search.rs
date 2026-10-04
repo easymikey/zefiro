@@ -1,8 +1,14 @@
 use std::sync::Arc;
 
 use crate::{
-    Cmd,
-    domain::{Cursor, CursorOver, Direction, SearchQuery, Track},
+    cmd::Cmd,
+    domain::{
+        cursor::Cursor,
+        cursor_over::CursorOver,
+        direction::Direction,
+        overlay::SearchQuery,
+        track::Track,
+    },
     message::{Message, QueueRequest, SearchEdit},
     update::machine::{Machine, Unhandled},
 };

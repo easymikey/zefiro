@@ -1,5 +1,6 @@
 mod appearance;
 mod browse;
+mod cover;
 mod cues;
 mod history;
 mod jump;

@@ -2,7 +2,11 @@ use std::num::NonZeroUsize;
 
 use crate::{
     cmd::Cue,
-    domain::{Direction, ThemeName, appearance_rows::AppearanceField},
+    domain::{
+        appearance_rows::AppearanceField,
+        direction::Direction,
+        theme::ThemeName,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -137,7 +141,7 @@ pub enum Choice {
 
 impl Choice {
     #[must_use]
-    pub fn stepped(
+    pub(crate) fn stepped(
         self,
         control: AppearanceControl,
         direction: Direction,
@@ -220,11 +224,8 @@ mod tests {
     use rstest::rstest;
 
     use crate::domain::{
-        AppearanceControl,
-        Choice,
-        Direction,
-        OptionCount,
-        OptionIndex,
+        direction::Direction,
+        setting_row::{AppearanceControl, Choice, OptionCount, OptionIndex},
     };
 
     fn option(count: usize, at: usize) -> OptionIndex {

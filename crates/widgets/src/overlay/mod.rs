@@ -1,9 +1,9 @@
 pub(crate) mod confirm_delete;
 pub(crate) mod help;
 pub(crate) mod history;
-pub(crate) mod jump_to_time;
-pub(crate) mod layer;
-pub(crate) mod modal;
+pub mod jump_to_time;
+pub mod layer;
+pub mod modal;
 pub(crate) mod music_dir;
 pub(crate) mod search;
 pub(crate) mod settings;

@@ -15,7 +15,7 @@ use crate::{
         span::{line, text},
         text::truncate,
     },
-    theme::{ActiveTheme, Role},
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 const MARKER: &str = "> ";

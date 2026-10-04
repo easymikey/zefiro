@@ -1,39 +1,36 @@
 mod confirm_delete;
-mod history;
-mod jump;
+pub mod history;
+pub mod jump;
 mod machine;
-mod search;
-mod settings;
+pub mod search;
+pub mod settings;
 mod text;
 mod track_details;
 
 use std::{path::Path, sync::Arc};
 
-pub use history::{HistoryMessage, HistoryPick};
-pub use jump::JumpDigitsMessage;
-pub use search::SearchQueryMessage;
-pub use settings::SettingRowMessage;
-
 use crate::{
     cmd::{Cmd, Effect, LibraryCmd},
     domain::{
-        AppearanceSetting,
-        CursorOver,
-        HISTORY_LIMIT,
-        HistoryEntry,
-        JumpDigits,
-        Overlay,
-        OverlayName,
-        Player,
-        SearchQuery,
-        SettingRow,
-        TextEntry,
-        Track,
-        Workspace,
+        cursor_over::CursorOver,
+        history::{HISTORY_LIMIT, HistoryEntry},
+        overlay::{JumpDigits, Overlay, OverlayName, SearchQuery, TextEntry},
+        player::Player,
         playlist::Playlist,
+        setting_row::{AppearanceSetting, SettingRow},
+        track::Track,
+        workspace::Workspace,
     },
     message::{OverlayRequest, SearchRequest, TextRequest},
-    update::machine::{Machine, Unhandled},
+    update::{
+        machine::{Machine, Unhandled},
+        overlay::{
+            history::HistoryMessage,
+            jump::JumpDigitsMessage,
+            search::SearchQueryMessage,
+            settings::SettingRowMessage,
+        },
+    },
 };
 
 #[derive(Debug)]

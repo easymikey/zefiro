@@ -1,10 +1,13 @@
 use std::path::PathBuf;
 
 use kernel::{
-    AudioError,
-    DecodeError,
-    IoError,
-    domain::{DeviceName, Diagnostic, OutputDevice, StreamError},
+    domain::{
+        config::Diagnostic,
+        device::{DeviceName, OutputDevice},
+        io_error::IoError,
+        transport::StreamError,
+    },
+    message::{AudioError, DecodeError},
 };
 use rodio::cpal;
 
@@ -118,10 +121,8 @@ mod tests {
     use std::path::PathBuf;
 
     use kernel::{
-        AudioError,
-        DecodeError,
-        IoError,
-        domain::{DeviceName, StreamError},
+        domain::{device::DeviceName, io_error::IoError, transport::StreamError},
+        message::{AudioError, DecodeError},
     };
     use rstest::rstest;
 
@@ -225,7 +226,9 @@ mod tests {
         assert_eq!(
             device_error(error),
             AudioError::Device {
-                requested: kernel::domain::OutputDevice::Named(device_name("usb"))
+                requested: kernel::domain::device::OutputDevice::Named(device_name(
+                    "usb"
+                ))
             }
         );
     }

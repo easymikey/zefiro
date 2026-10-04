@@ -1,6 +1,9 @@
 use std::{io::Write, path::PathBuf};
 
-use kernel::{HistoryEntry, LibrarySubject, Moment, TrackRef};
+use kernel::{
+    domain::{history::HistoryEntry, time::Moment, track::TrackRef},
+    message::LibrarySubject,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{dirs::LibraryDirs, error::Error};
@@ -63,8 +66,8 @@ pub(crate) fn load(dirs: &LibraryDirs, limit: usize) -> Result<HistoryRead, Erro
 }
 
 pub(crate) struct HistoryRead {
-    pub entries: Vec<HistoryEntry>,
-    pub skipped: Option<Error>,
+    pub(crate) entries: Vec<HistoryEntry>,
+    pub(crate) skipped: Option<Error>,
 }
 
 fn parse_history(
@@ -89,7 +92,7 @@ fn parse_history(
 mod tests {
     use std::path::PathBuf;
 
-    use kernel::{HistoryEntry, Moment, TrackRef};
+    use kernel::domain::{history::HistoryEntry, time::Moment, track::TrackRef};
     use rstest::rstest;
 
     use crate::{

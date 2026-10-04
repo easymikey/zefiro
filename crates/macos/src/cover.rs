@@ -10,11 +10,10 @@ use std::{
 
 use block2::RcBlock;
 use kernel::{
-    Cmd,
-    MacosError,
-    MacosEvent,
-    domain::Revision,
-    update::{Machine, Unhandled},
+    cmd::Cmd,
+    domain::revision::Revision,
+    message::{MacosError, MacosEvent},
+    update::machine::{Machine, Unhandled},
 };
 use objc2::{AllocAnyThread, rc::Retained};
 use objc2_app_kit::NSImage;
@@ -27,7 +26,7 @@ use crate::{
     ffi,
 };
 
-pub type CoverReader = fn(&Path) -> Option<Vec<u8>>;
+pub(crate) type CoverReader = fn(&Path) -> Option<Vec<u8>>;
 
 const COVER_NAMES: [&str; 6] = [
     "cover.jpg",
@@ -58,7 +57,9 @@ impl MacosJob {
                     Ok(bytes) => {
                         MacosMessage::CoverRead(CoverBytes { revision, bytes })
                     }
-                    Err(error) => MacosMessage::Error(MacosError::Cover(error.kind())),
+                    Err(error) => {
+                        MacosMessage::Error(MacosError::Cover(error.kind().into()))
+                    }
                 }
             }
         }
@@ -138,7 +139,12 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    use kernel::{Cmd, MacosError, MacosEvent, domain::Revision, update::Machine};
+    use kernel::{
+        cmd::Cmd,
+        domain::revision::Revision,
+        message::{MacosError, MacosEvent},
+        update::machine::Machine,
+    };
     use rstest::rstest;
 
     use crate::{

@@ -1,4 +1,4 @@
-use kernel::domain::DriverName;
+use kernel::domain::driver::DriverName;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Hosting {
@@ -69,7 +69,7 @@ pub(crate) const fn row(driver: DriverName) -> &'static DriverRow {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::DriverName;
+    use kernel::domain::driver::DriverName;
 
     use crate::registry::{REGISTRY, row};
 

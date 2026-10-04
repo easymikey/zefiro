@@ -1,14 +1,14 @@
 use kernel::domain::appearance::{KeyHints, LayoutMode};
 use ratatui::layout::Rect;
 use rstest::rstest;
-use widgets::FrameLayout;
+use widgets::screen::frame_layout::FrameLayout;
 
-use crate::unit::support::{SceneSources, model_with_tracks};
+use crate::unit::support::fixtures::{SceneSources, model_with_tracks};
 
 fn playlist_rows(key_hints: KeyHints, mode: LayoutMode) -> u16 {
     let mut sources = SceneSources::new(model_with_tracks(3));
-    sources.appearance_mut().settings.key_hints = key_hints;
-    sources.appearance_mut().settings.layout_mode = mode;
+    sources.model.settings.appearance.key_hints = key_hints;
+    sources.model.settings.appearance.layout_mode = mode;
     let layout = FrameLayout::from_scene(&sources.scene(), Rect::new(0, 0, 120, 40));
     layout.playlist.map_or(0, |areas| areas.rows.height)
 }

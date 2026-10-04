@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
-use config::TomlTheme;
+use config::{appearance_file::TomlAppearance, theme_file::TomlTheme};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
-use library::CoverDecoded;
+use library::cover::CoverDecoded;
 
 #[derive(Debug)]
-pub struct LatestSender<T> {
+pub(crate) struct LatestSender<T> {
     value: Arc<ArcSwapOption<T>>,
     notify: Sender<()>,
 }
@@ -44,23 +44,30 @@ impl<T> LatestReceiver<T> {
 #[derive(Debug)]
 pub struct LatestReceivers {
     pub theme: LatestReceiver<TomlTheme>,
+    pub appearance: LatestReceiver<TomlAppearance>,
     pub cover: LatestReceiver<CoverDecoded>,
 }
 
 #[derive(Debug, Clone)]
 pub struct LatestSenders {
-    pub theme: LatestSender<TomlTheme>,
-    pub cover: LatestSender<CoverDecoded>,
+    pub(crate) theme: LatestSender<TomlTheme>,
+    pub(crate) appearance: LatestSender<TomlAppearance>,
+    pub(crate) cover: LatestSender<CoverDecoded>,
 }
 
 #[must_use]
 pub fn latest_channels() -> (LatestSenders, LatestReceivers, Receiver<()>) {
     let (notifier, notified) = bounded(1);
     let theme = Arc::new(ArcSwapOption::empty());
+    let appearance = Arc::new(ArcSwapOption::empty());
     let cover = Arc::new(ArcSwapOption::empty());
     let writers = LatestSenders {
         theme: LatestSender {
             value: Arc::clone(&theme),
+            notify: notifier.clone(),
+        },
+        appearance: LatestSender {
+            value: Arc::clone(&appearance),
             notify: notifier.clone(),
         },
         cover: LatestSender {
@@ -70,6 +77,7 @@ pub fn latest_channels() -> (LatestSenders, LatestReceivers, Receiver<()>) {
     };
     let cells = LatestReceivers {
         theme: LatestReceiver { value: theme },
+        appearance: LatestReceiver { value: appearance },
         cover: LatestReceiver { value: cover },
     };
     (writers, cells, notified)
@@ -78,7 +86,7 @@ pub fn latest_channels() -> (LatestSenders, LatestReceivers, Receiver<()>) {
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::bounded;
-    use library::{CoverArt, CoverDecoded};
+    use library::cover::{CoverArt, CoverDecoded};
 
     use crate::latest::{LatestReceiver, LatestSender};
 

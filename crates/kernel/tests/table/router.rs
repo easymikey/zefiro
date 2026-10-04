@@ -1,29 +1,22 @@
 use std::time::Duration;
 
 use kernel::{
-    AbLoop,
-    AudioEvent,
-    Bounded,
-    Cue,
-    Direction,
-    Effect,
-    Message,
-    Model,
-    Moment,
-    OverlayName,
-    PlaybackRequest,
-    Timer,
+    cmd::{Cue, Effect},
     domain::{
-        Cursor,
-        DeleteCandidate,
-        Overlay,
-        Player,
-        Revision,
-        Transport,
-        ViewIndex,
+        bounded::Bounded,
+        cursor::Cursor,
+        direction::Direction,
+        index::ViewIndex,
+        model::Model,
+        overlay::{DeleteCandidate, Overlay, OverlayName},
+        player::{AbLoop, Player},
+        playlist::{PlayOrder, RepeatMode},
+        revision::Revision,
+        time::Moment,
+        transport::Transport,
     },
-    playlist::{PlayOrder, RepeatMode},
-    update::{Unhandled, update},
+    message::{AudioEvent, Message, PlaybackRequest, Timer},
+    update::{machine::Unhandled, update},
 };
 use rstest::{Context, rstest};
 
@@ -36,6 +29,8 @@ use crate::support::{
         acknowledged,
         close,
         confirm,
+        cover_side_known,
+        cover_side_unknown,
         ended,
         enqueue,
         handed_off,
@@ -74,11 +69,11 @@ type Step = (
     Option<Overlay>,
     Cursor,
     Cursor,
-    Vec<kernel::TrackRef>,
+    Vec<kernel::domain::track::TrackRef>,
     RepeatMode,
     PlayOrder,
     Transport,
-    Vec<kernel::Toast>,
+    Vec<kernel::domain::toast::Toast>,
 );
 
 fn walked(mut model: Model, messages: Vec<Message>) -> Vec<Step> {
@@ -197,6 +192,14 @@ fn resolved(message: Message, model: &Model) -> Message {
 #[case::a_gapless_cycle_advances_without_a_load(
     playing_model(3),
     vec![near_the_end(), mark_fires(), handed_off(), near_the_end(), mark_fires()]
+)]
+#[case::a_known_cover_side_prefetches_the_next_cover_with_the_lookahead(
+    playing_model(3),
+    vec![cover_side_known(), near_the_end(), mark_fires()]
+)]
+#[case::an_unknown_cover_side_prefetches_no_cover_with_the_lookahead(
+    playing_model(3),
+    vec![cover_side_unknown(), near_the_end(), mark_fires()]
 )]
 #[case::repeat_one_preloads_and_hands_off_to_the_same_track(
     repeating(model_playing_at(3, 1, Duration::ZERO), RepeatMode::One),
@@ -358,7 +361,7 @@ fn resolved(message: Message, model: &Model) -> Message {
 #[case::a_track_change_leaves_the_speed_alone(
     {
         let mut model = model_with_tracks(3);
-        model.transport.speed = kernel::Speed::clamped(2.0);
+        model.transport.speed = kernel::domain::speed::Speed::clamped(2.0);
         model
     },
     vec![Message::Playback(PlaybackRequest::Toggle), skip()]
@@ -416,7 +419,7 @@ fn a_refused_message_leaves_the_model_alone(
 fn a_refused_follow_up_keeps_the_parents_effects() {
     let mut model = Model::default();
     model.workspace.overlay = Some(Overlay::ConfirmDelete(DeleteCandidate {
-        source: kernel::TrackRef::Local("/music/gone.flac".into()),
+        source: kernel::domain::track::TrackRef::Local("/music/gone.flac".into()),
         title: "Gone".to_string(),
         artist: String::new(),
     }));

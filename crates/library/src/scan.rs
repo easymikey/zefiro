@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use kernel::{LibrarySubject, Track};
+use kernel::{domain::track::Track, message::LibrarySubject};
 
 use crate::{error::Error, tags::read_track};
 
@@ -19,8 +19,8 @@ fn is_decodable(path: &Path, decodable: &[&str]) -> bool {
 #[must_use]
 #[derive(Debug, Default)]
 pub(crate) struct Listing {
-    pub paths: Vec<PathBuf>,
-    pub first_error: Option<Error>,
+    pub(crate) paths: Vec<PathBuf>,
+    pub(crate) first_error: Option<Error>,
 }
 
 impl Listing {
@@ -75,8 +75,8 @@ pub(crate) fn list_dir(music_dir: &Path, decodable: &[&str]) -> Listing {
 
 #[derive(Debug, Default)]
 pub(crate) struct TagsRead {
-    pub tracks: Vec<Arc<Track>>,
-    pub first_error: Option<Error>,
+    pub(crate) tracks: Vec<Arc<Track>>,
+    pub(crate) first_error: Option<Error>,
 }
 
 impl TagsRead {
@@ -135,7 +135,7 @@ pub(crate) fn read_tags(paths: &[PathBuf]) -> TagsRead {
 mod tests {
     use std::{path::Path, sync::Arc};
 
-    use kernel::{Tagging, Track};
+    use kernel::domain::track::{Tagging, Track};
     use rstest::{fixture, rstest};
 
     use crate::{

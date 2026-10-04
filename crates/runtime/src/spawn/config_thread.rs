@@ -1,10 +1,9 @@
-use std::{convert::Infallible, path::Path};
+use std::convert::Infallible;
 
-use config::{ConfigDriver, ConfigEffect, ConfigMessage, ConfigPaths};
+use config::driver::{ConfigDriver, ConfigEffect, ConfigMessage, ConfigPaths};
 use kernel::{
-    ConfigCmd,
-    IoError,
-    domain::{ConfigError, DriverName, ThemeChoice},
+    cmd::ConfigCmd,
+    domain::{driver::DriverName, theme::ThemeChoice},
 };
 
 use crate::{
@@ -21,7 +20,7 @@ fn config_split(
     match effect {
         ConfigEffect::Watch(path) => LoopEffect::Watch {
             path,
-            item: config_watched,
+            item: ConfigMessage::Changed,
         },
         ConfigEffect::After { delay, revision } => LoopEffect::After {
             delay,
@@ -31,14 +30,8 @@ fn config_split(
         | ConfigEffect::List(_)
         | ConfigEffect::SaveConfig(_)
         | ConfigEffect::SaveAppearance(_)
-        | ConfigEffect::Publish(_)) => LoopEffect::Execute(effect),
-    }
-}
-
-fn config_watched(_path: &Path, changed: Result<(), IoError>) -> ConfigMessage {
-    match changed {
-        Ok(()) => ConfigMessage::FilesChanged,
-        Err(kind) => ConfigMessage::Error(ConfigError::Watch(kind)),
+        | ConfigEffect::PublishTheme(_)
+        | ConfigEffect::PublishAppearance(_)) => LoopEffect::Execute(effect),
     }
 }
 
@@ -52,19 +45,26 @@ pub(crate) fn spawn_config(
         },
         ..setup.paths.config.clone()
     };
-    let writer = setup.writers.theme.clone();
+    let theme_writer = setup.writers.theme.clone();
+    let appearance_writer = setup.writers.appearance.clone();
     let jobs = Jobs {
         split: config_split,
         run: |job: Infallible| match job {},
     };
-    DriverLoop::<ConfigDriver<_>, Infallible> {
+    DriverLoop::<ConfigDriver<_, _>, Infallible> {
         row: registry::row(DriverName::Config),
         inbox: setup.inbox.clone(),
         heard: crossbeam_channel::never(),
         seed: Some(ConfigMessage::Started),
         jobs,
     }
-    .spawn(move || ConfigDriver::new(&paths, move |theme| writer.publish(theme)))
+    .spawn(move || {
+        ConfigDriver::new(
+            &paths,
+            move |theme| theme_writer.publish(theme),
+            move |appearance| appearance_writer.publish(appearance),
+        )
+    })
 }
 
 #[cfg(test)]
@@ -73,11 +73,14 @@ mod tests {
 
     use crossbeam_channel::{Receiver, unbounded};
     use kernel::{
-        ConfigCmd,
-        ConfigEvent,
-        ConfigPatch,
-        Message,
-        domain::{OptionIndex, Startup, ThemeName, appearance_rows::AppearanceField},
+        cmd::{ConfigCmd, ConfigPatch},
+        domain::{
+            appearance_rows::AppearanceField,
+            setting_row::OptionIndex,
+            startup::Startup,
+            theme::ThemeName,
+        },
+        message::{ConfigEvent, Message},
     };
 
     use crate::{
@@ -102,7 +105,7 @@ mod tests {
         fn start(directory: &Path) -> Self {
             let paths = stub_paths(directory);
             let (inbox, messages) = unbounded();
-            let (model, _cmd) = kernel::startup(Startup::default());
+            let (model, _cmd) = kernel::update::startup::startup(Startup::default());
             let (writers, _cells, doorbell) = crate::latest::latest_channels();
             let thread = spawn_config(&SpawnSetup {
                 audio: &model.settings.audio,
@@ -111,7 +114,7 @@ mod tests {
                 inbox: &inbox,
                 writers: &writers,
                 #[cfg(target_os = "macos")]
-                macos: &crate::macos::MacosChannel::new(),
+                macos: &crate::spawn::macos_thread::MacosChannel::new(),
             })
             .unwrap();
             Self {

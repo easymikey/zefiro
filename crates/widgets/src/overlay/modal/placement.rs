@@ -18,7 +18,7 @@ use crate::{
         list_chrome::{row_band, scrollbar_column, spaced_title},
         text::truncate,
     },
-    theme::ActiveTheme,
+    theme::active_theme::ActiveTheme,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -29,11 +29,11 @@ pub(crate) enum OverlayContainer<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModalScrollAreas {
-    pub outer: Rect,
-    pub rows: Rect,
-    pub content: Rect,
-    pub scrollbar: Rect,
-    pub hint_row: Rect,
+    pub(crate) outer: Rect,
+    pub(crate) rows: Rect,
+    pub(crate) content: Rect,
+    pub(crate) scrollbar: Rect,
+    pub(crate) hint_row: Rect,
 }
 
 impl ModalScrollAreas {

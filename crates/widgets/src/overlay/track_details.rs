@@ -1,4 +1,4 @@
-use kernel::domain::{Track, format_time, geometry::Cells};
+use kernel::domain::{geometry::Cells, track::Track};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -9,17 +9,15 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     overlay::modal::{
-        Modal,
-        ModalBounds,
-        ModalRowStyle,
-        ModalSize,
-        OverlayAreas,
-        PlacedModal,
+        frame::{Modal, ModalBounds, ModalSize, PlacedModal},
+        metrics::ModalRowStyle,
+        placement::OverlayAreas,
     },
     primitive::{
         canvas::Canvas,
         format_chips::kilohertz,
         glyphs,
+        relative_time::format_time,
         span::{line, text},
         text::{truncate, truncate_from_left},
     },
@@ -249,12 +247,12 @@ fn missing_or_value(tag: Option<String>) -> String {
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::{AudioFormat, Tags, Track};
+    use kernel::domain::track::{AudioFormat, Tags, Track};
 
     use crate::{
-        overlay::{modal::ModalRowStyle, track_details::TrackDetailsWidget},
+        overlay::{modal::metrics::ModalRowStyle, track_details::TrackDetailsWidget},
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn full_track() -> Track {

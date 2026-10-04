@@ -1,32 +1,34 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use kernel::{
-    Moment,
-    domain::{AudioFormat, Model, Tags, Track, appearance::Appearance},
+use kernel::domain::{
+    model::Model,
     playlist::Playlist,
+    time::Moment,
+    track::{AudioFormat, Tags, Track},
 };
 use ratatui::{Frame, Terminal, backend::TestBackend};
 use widgets::{
-    ColorDepth,
-    Colors,
-    DEFAULT_CELL_ASPECT,
-    PixelPath,
-    SPECTRUM_BANDS,
-    Scene,
-    ScenePresentation,
-    Spectrum,
-    Theme,
-    ThemeBase,
+    appearance::Appearance,
+    geometry::DEFAULT_CELL_ASPECT,
+    scene::{PixelPath, Scene, ScenePresentation},
+    spectrum::{SPECTRUM_BANDS, Spectrum},
+    theme::{
+        Theme,
+        colors::{Colors, ThemeBase},
+        rgb::ColorDepth,
+    },
 };
 
 pub(crate) fn noir() -> Theme {
-    let file =
-        config::parse_theme(include_str!("../../../../themes/noir.toml"), "noir")
-            .unwrap();
+    let file = config::theme_file::parse_theme(
+        include_str!("../../../../themes/noir.toml"),
+        "noir",
+    )
+    .unwrap();
     theme_of(file)
 }
 
-pub(crate) fn theme_of(file: config::TomlTheme) -> Theme {
+pub(crate) fn theme_of(file: config::theme_file::TomlTheme) -> Theme {
     let c = file.colors;
     let palette = ThemeBase {
         background: c.background,
@@ -77,6 +79,7 @@ pub(crate) struct SceneSources {
     pub(crate) model: Model,
     pub(crate) theme: Theme,
     pub(crate) spectrum: Spectrum,
+    pub(crate) appearance: Appearance,
 }
 
 impl SceneSources {
@@ -86,17 +89,19 @@ impl SceneSources {
             model,
             theme: noir(),
             spectrum: [0.0; SPECTRUM_BANDS],
+            appearance: Appearance::default(),
         }
     }
 
     pub(crate) fn appearance_mut(&mut self) -> &mut Appearance {
-        &mut self.model.settings.appearance
+        &mut self.appearance
     }
 
     pub(crate) fn scene(&self) -> Scene<'_> {
         Scene::from_model(
             &self.model,
             ScenePresentation {
+                appearance: &self.appearance,
                 theme: &self.theme,
                 color_depth: ColorDepth::TrueColor,
                 spectrum: &self.spectrum,

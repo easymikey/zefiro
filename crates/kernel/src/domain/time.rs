@@ -51,21 +51,6 @@ fn parse_field(field: &str) -> Result<u64, TimecodeError> {
     field.parse::<u64>().map_err(|_| TimecodeError::Malformed)
 }
 
-#[must_use]
-pub fn format_time(duration: Duration) -> String {
-    let total_secs = duration.as_secs();
-    let (hours, minutes, seconds) = (
-        total_secs / SECONDS_PER_HOUR,
-        (total_secs % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE,
-        total_secs % SECONDS_PER_MINUTE,
-    );
-    if hours > 0 {
-        format!("{hours}:{minutes:02}:{seconds:02}")
-    } else {
-        format!("{minutes:02}:{seconds:02}")
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct Moment(Duration);
 
@@ -86,113 +71,11 @@ impl Moment {
     }
 }
 
-#[must_use]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Revision(u64);
-
-impl Revision {
-    #[must_use]
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-
-    pub fn next(self) -> Self {
-        Self(self.0.wrapping_add(1))
-    }
-
-    pub fn advance(&mut self) {
-        *self = self.next();
-    }
-
-    pub fn bump(&mut self) -> Self {
-        self.advance();
-        *self
-    }
-
-    pub fn freshness(self, awaited: Self) -> Freshness {
-        if self == awaited {
-            Freshness::Awaited
-        } else {
-            Freshness::Stale
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Revisions {
-    pub effects: Revision,
-    pub config: Revision,
-    pub theme: Revision,
-    pub scan: Revision,
-    pub toast: Revision,
-    pub sleep: Revision,
-    pub lookahead: Revision,
-}
-
-impl Revisions {
-    pub fn issue_effect(&mut self) -> Revision {
-        self.effects.bump()
-    }
-
-    pub fn issue_scan(&mut self) -> Revision {
-        let issued = self.effects.bump();
-        self.scan = issued;
-        issued
-    }
-
-    pub fn issue_toast(&mut self) -> Revision {
-        let issued = self.effects.bump();
-        self.toast = issued;
-        issued
-    }
-
-    pub fn issue_lookahead(&mut self) -> Revision {
-        let issued = self.effects.bump();
-        self.lookahead = issued;
-        issued
-    }
-
-    pub fn commit_sleep(&mut self, candidate: Revision) {
-        self.effects = candidate;
-        self.sleep = candidate;
-    }
-}
-
-#[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Freshness {
-    Awaited,
-    Stale,
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use rstest::rstest;
-
-    use crate::domain::time::{
-        Freshness,
-        Moment,
-        Revision,
-        TimecodeError,
-        format_time,
-        parse_timecode,
-    };
-
-    #[rstest]
-    #[case(0, "00:00")]
-    #[case(65, "01:05")]
-    #[case(3599, "59:59")]
-    #[case(3600, "1:00:00")]
-    #[case(3661, "1:01:01")]
-    #[case(7384, "2:03:04")]
-    fn format_time_grows_an_hours_field_only_when_there_is_one(
-        #[case] seconds: u64,
-        #[case] expected: &str,
-    ) {
-        assert_eq!(format_time(Duration::from_secs(seconds)), expected);
-    }
+    use crate::domain::time::{Moment, TimecodeError, parse_timecode};
 
     #[test]
     fn parse_timecode_accepts_every_documented_shape() {
@@ -243,22 +126,5 @@ mod tests {
         let earlier = Moment::new(Duration::from_secs(3));
         let later = Moment::new(Duration::from_secs(5));
         assert_eq!(earlier.elapsed_since(later), Duration::ZERO);
-    }
-
-    fn bumped(times: u64) -> Revision {
-        (0..times).fold(Revision::default(), |revision, _| revision.next())
-    }
-
-    #[rstest]
-    #[case::same_generation(2, 2, Freshness::Awaited)]
-    #[case::superseded(1, 2, Freshness::Stale)]
-    #[case::ahead(3, 2, Freshness::Stale)]
-    #[case::untouched(0, 0, Freshness::Awaited)]
-    fn only_the_awaited_generation_answers(
-        #[case] stamp: u64,
-        #[case] awaited: u64,
-        #[case] freshness: Freshness,
-    ) {
-        assert_eq!(bumped(stamp).freshness(bumped(awaited)), freshness);
     }
 }

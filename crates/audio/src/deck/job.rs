@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
 };
 
-use kernel::domain::Revision;
+use kernel::domain::revision::Revision;
 
 use crate::{
     deck::{
@@ -11,7 +11,7 @@ use crate::{
         source::{TrackDecoder, decode},
     },
     device::list_output_devices,
-    engine::effect::AudioMessage,
+    engine::message::AudioMessage,
     error::{Error, list_devices_error},
 };
 

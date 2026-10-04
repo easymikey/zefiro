@@ -3,26 +3,24 @@ use std::sync::Arc;
 use crate::{
     cmd::Cmd,
     domain::{
-        Cursor,
-        Direction,
-        Freshness,
-        Moment,
-        Output,
-        OutputDevice,
-        Player,
-        Revision,
-        Toast,
-        Track,
-        TrackRef,
-        Transport,
-        ViewIndex,
-        Workspace,
+        cursor::Cursor,
+        device::OutputDevice,
+        direction::Direction,
+        index::ViewIndex,
+        player::Player,
         playlist::{Playlist, RepeatMode},
+        revision::{Freshness, Revision},
+        time::Moment,
+        toast::Toast,
+        track::{Track, TrackRef},
+        transport::{Output, Transport},
+        workspace::Workspace,
     },
     message::{AudioError, AudioEvent},
     update::{
         machine::{Machine, Unhandled},
-        player::{self, Anchor, PlaybackParts, PlayerMessage, Stamp},
+        player,
+        player::{Anchor, PlaybackParts, PlayerMessage, Stamp},
     },
 };
 
@@ -83,7 +81,7 @@ fn fell_back(
     }
     let opened = opened.named().map_or_else(
         || "the system default".to_string(),
-        crate::domain::DeviceName::to_string,
+        crate::domain::device::DeviceName::to_string,
     );
     let told = format!("output device '{requested}' is gone — playing on {opened}");
     Ok(playback.workspace.show(

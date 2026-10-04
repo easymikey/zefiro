@@ -1,16 +1,16 @@
-use kernel::domain::{Speed, appearance::SpeedChip};
+use kernel::domain::{appearance::SpeedChip, speed::Speed};
 use ratatui::{style::Color, text::Span};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     primitive::{glyphs, span::text},
-    theme::{ActiveTheme, Role},
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ChipStyle {
-    pub border: Color,
-    pub foreground: Color,
+    pub(crate) border: Color,
+    pub(crate) foreground: Color,
 }
 
 impl ChipStyle {
@@ -100,10 +100,7 @@ pub(crate) fn speed_chip_spans(
 
 #[cfg(test)]
 mod tests {
-    use kernel::{
-        Bounded,
-        domain::{Speed, appearance::SpeedChip},
-    };
+    use kernel::domain::{appearance::SpeedChip, bounded::Bounded, speed::Speed};
     use ratatui::style::{Color, Modifier};
     use rstest::rstest;
     use unicode_width::UnicodeWidthStr;

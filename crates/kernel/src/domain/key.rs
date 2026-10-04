@@ -41,7 +41,7 @@ impl Key {
         }
     }
 
-    pub fn new(code: KeyCode, modifiers: Modifiers) -> Self {
+    pub(crate) fn new(code: KeyCode, modifiers: Modifiers) -> Self {
         Key { code, modifiers }
     }
 }

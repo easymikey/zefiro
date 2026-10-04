@@ -1,4 +1,4 @@
-error[E0451]: fields `index` and `len` of struct `kernel::domain::Cursor` are private
+error[E0451]: fields `index` and `len` of struct `kernel::domain::cursor::Cursor` are private
  --> tests/compile_fail/cursor_cannot_be_built_out_of_range.rs:4:27
   |
 4 |     let cursor = Cursor { index: 9, len: 0 };

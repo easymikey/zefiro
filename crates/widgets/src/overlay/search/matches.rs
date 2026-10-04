@@ -1,6 +1,11 @@
 use std::sync::Arc;
 
-use kernel::domain::{CursorOver, SearchQuery, Track, geometry::Cells};
+use kernel::domain::{
+    cursor_over::CursorOver,
+    geometry::Cells,
+    overlay::SearchQuery,
+    track::Track,
+};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -11,7 +16,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    overlay::modal::{ModalRowStyle, indented},
+    overlay::modal::{metrics::ModalRowStyle, placement::indented},
     primitive::{
         glyphs,
         list_chrome::scroll_offset,

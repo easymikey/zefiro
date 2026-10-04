@@ -2,15 +2,15 @@ use std::time::Duration;
 
 use crossbeam_channel::Sender;
 use kernel::{
-    Playback,
-    domain::{OutputDevice, Speed},
+    cmd::Playback,
+    domain::{device::OutputDevice, speed::Speed},
 };
 use rodio::{Source, mixer::MixerSource, source::Zero};
 
 use crate::{
     deck::{DeviceChoice, envelope::Envelope},
     device::{OutputLoss, open_stream},
-    engine::effect::AudioMessage,
+    engine::message::AudioMessage,
     error::DeviceError,
     tap::{Handoff, Tap},
 };

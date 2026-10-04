@@ -1,9 +1,9 @@
-use kernel::domain::{JumpDigits, geometry::Cells};
+use kernel::domain::{geometry::Cells, overlay::JumpDigits};
 
 use crate::{
-    overlay::modal::{PromptBody, PromptStyle, PromptWidget},
+    overlay::modal::prompt::{PromptBody, PromptStyle, PromptWidget},
     primitive::glyphs,
-    theme::ActiveTheme,
+    theme::active_theme::ActiveTheme,
 };
 
 const MIN_WIDTH: Cells = Cells(61);
@@ -25,12 +25,12 @@ pub(crate) fn prompt<'a>(
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{JumpDigits, TimecodeError};
+    use kernel::domain::{overlay::JumpDigits, time::TimecodeError};
 
     use crate::{
         overlay::jump_to_time::prompt,
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn frame(digits: &JumpDigits, width: u16, height: u16) -> String {

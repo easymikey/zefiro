@@ -1,4 +1,4 @@
-pub(crate) mod bar;
+pub mod bar;
 pub(crate) mod canvas;
 pub(crate) mod chip;
 pub(crate) mod corner_brackets;

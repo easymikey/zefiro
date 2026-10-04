@@ -1,0 +1,289 @@
+---
+source: crates/kernel/tests/table/router.rs
+expression: "walked(model, messages)"
+---
+[
+    (
+        Viewport {
+            visible_rows: Cells(
+                10,
+            ),
+            cover_side: None,
+        },
+        [],
+        Playing {
+            track: Track {
+                source: Local(
+                    "/tmp/track0.flac",
+                ),
+                tags: Tags {
+                    title: None,
+                    artist: None,
+                    album: None,
+                    album_artist: None,
+                    date: None,
+                    genre: None,
+                    track: None,
+                    track_total: None,
+                    disc: None,
+                    composer: None,
+                    comment: None,
+                    lyrics: None,
+                },
+                audio_format: AudioFormat {
+                    format: None,
+                    bitrate_kbps: None,
+                    sample_rate_hz: None,
+                    bits_per_sample: None,
+                    channels: None,
+                    replay_gain: None,
+                },
+                display: "track0.flac",
+                tagging: Read(
+                    100s,
+                ),
+            },
+            head: Playhead {
+                offset: 0ns,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
+            preload: None,
+        },
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab_loop: None,
+            output: Ready,
+        },
+        [],
+    ),
+    (
+        Audio(
+            Playhead(
+                95s,
+            ),
+        ),
+        [
+            Macos(
+                SetPosition(
+                    95s,
+                ),
+            ),
+        ],
+        Playing {
+            track: Track {
+                source: Local(
+                    "/tmp/track0.flac",
+                ),
+                tags: Tags {
+                    title: None,
+                    artist: None,
+                    album: None,
+                    album_artist: None,
+                    date: None,
+                    genre: None,
+                    track: None,
+                    track_total: None,
+                    disc: None,
+                    composer: None,
+                    comment: None,
+                    lyrics: None,
+                },
+                audio_format: AudioFormat {
+                    format: None,
+                    bitrate_kbps: None,
+                    sample_rate_hz: None,
+                    bits_per_sample: None,
+                    channels: None,
+                    replay_gain: None,
+                },
+                display: "track0.flac",
+                tagging: Read(
+                    100s,
+                ),
+            },
+            head: Playhead {
+                offset: 95s,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
+            preload: None,
+        },
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab_loop: None,
+            output: Ready,
+        },
+        [],
+    ),
+    (
+        Elapsed(
+            Lookahead(
+                Revision(
+                    0,
+                ),
+            ),
+        ),
+        [
+            Audio(
+                Preload(
+                    TrackLoad {
+                        path: "/tmp/track1.flac",
+                        gain: None,
+                        revision: Revision(
+                            1,
+                        ),
+                    },
+                ),
+            ),
+            Macos(
+                SetPosition(
+                    95s,
+                ),
+            ),
+        ],
+        Playing {
+            track: Track {
+                source: Local(
+                    "/tmp/track0.flac",
+                ),
+                tags: Tags {
+                    title: None,
+                    artist: None,
+                    album: None,
+                    album_artist: None,
+                    date: None,
+                    genre: None,
+                    track: None,
+                    track_total: None,
+                    disc: None,
+                    composer: None,
+                    comment: None,
+                    lyrics: None,
+                },
+                audio_format: AudioFormat {
+                    format: None,
+                    bitrate_kbps: None,
+                    sample_rate_hz: None,
+                    bits_per_sample: None,
+                    channels: None,
+                    replay_gain: None,
+                },
+                display: "track0.flac",
+                tagging: Read(
+                    100s,
+                ),
+            },
+            head: Playhead {
+                offset: 95s,
+                since: Moment(
+                    0ns,
+                ),
+                speed: Speed(
+                    1.0,
+                ),
+            },
+            preload: Queued(
+                Track {
+                    source: Local(
+                        "/tmp/track1.flac",
+                    ),
+                    tags: Tags {
+                        title: None,
+                        artist: None,
+                        album: None,
+                        album_artist: None,
+                        date: None,
+                        genre: None,
+                        track: None,
+                        track_total: None,
+                        disc: None,
+                        composer: None,
+                        comment: None,
+                        lyrics: None,
+                    },
+                    audio_format: AudioFormat {
+                        format: None,
+                        bitrate_kbps: None,
+                        sample_rate_hz: None,
+                        bits_per_sample: None,
+                        channels: None,
+                        replay_gain: None,
+                    },
+                    display: "track1.flac",
+                    tagging: Read(
+                        100s,
+                    ),
+                },
+            ),
+        },
+        None,
+        Cursor {
+            index: 0,
+            len: 0,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep: None,
+            ab_loop: None,
+            output: Ready,
+        },
+        [],
+    ),
+]

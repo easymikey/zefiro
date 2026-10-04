@@ -1,6 +1,6 @@
 use std::io;
 
-use kernel::domain::DriverName;
+use kernel::domain::driver::DriverName;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error<E: std::error::Error + 'static = io::Error> {
@@ -26,7 +26,7 @@ pub enum Error<E: std::error::Error + 'static = io::Error> {
 mod tests {
     use std::io;
 
-    use kernel::domain::DriverName;
+    use kernel::domain::driver::DriverName;
 
     use crate::error::Error;
 

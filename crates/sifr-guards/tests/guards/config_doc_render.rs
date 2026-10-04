@@ -1,6 +1,6 @@
 // GUARD: the `defaults:window` doc block parses into the window default.
 
-use config::{TomlAppearance, parse_appearance};
+use config::appearance_file::{TomlAppearance, parse_appearance};
 
 use crate::guards::{fault::TestFault, support};
 

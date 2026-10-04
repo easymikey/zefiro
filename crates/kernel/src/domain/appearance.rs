@@ -2,10 +2,7 @@ use std::{fmt, str::FromStr};
 
 use strum::{EnumIter, EnumString, IntoEnumIterator, VariantNames};
 
-use crate::domain::{
-    ThemeName,
-    geometry::{Cells, Pixels},
-};
+use crate::domain::theme::ThemeName;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, strum::Display, EnumString, VariantNames,
@@ -201,7 +198,7 @@ struct MalformedHex(String);
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ColorError {
     #[error("{0}")]
-    Malformed(crate::domain::Diagnostic),
+    Malformed(crate::domain::config::Diagnostic),
 }
 
 #[must_use]
@@ -235,7 +232,7 @@ impl FromStr for Rgb {
                 ]))
             })
             .ok_or_else(|| {
-                ColorError::Malformed(crate::domain::Diagnostic::from_error(
+                ColorError::Malformed(crate::domain::config::Diagnostic::from_error(
                     &MalformedHex(spelling.to_string()),
                 ))
             })
@@ -246,85 +243,6 @@ impl fmt::Display for Rgb {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let [r, g, b] = self.0;
         write!(formatter, "#{r:02x}{g:02x}{b:02x}")
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CoverCells {
-    pub width: Cells,
-    pub height: Cells,
-}
-
-impl Default for CoverCells {
-    fn default() -> Self {
-        Self {
-            width: Cells(20),
-            height: Cells(8),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Breakpoints {
-    pub full_min_width: Cells,
-    pub full_min_height: Cells,
-    pub compact_min_width: Cells,
-    pub compact_min_height: Cells,
-    pub min_columns: Cells,
-    pub min_rows: Cells,
-}
-
-impl Default for Breakpoints {
-    fn default() -> Self {
-        Self {
-            full_min_width: Cells(60),
-            full_min_height: Cells(19),
-            compact_min_width: Cells(30),
-            compact_min_height: Cells(13),
-            min_columns: Cells(48),
-            min_rows: Cells(16),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ProgressBar {
-    pub height_px: f32,
-    pub radius: Option<f32>,
-    pub fill: Option<Rgb>,
-    pub groove: Option<Rgb>,
-}
-
-impl Default for ProgressBar {
-    fn default() -> Self {
-        Self {
-            height_px: 4.0,
-            radius: None,
-            fill: None,
-            groove: None,
-        }
-    }
-}
-
-#[must_use]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Appearance {
-    pub settings: AppearanceSettings,
-    pub cover_size_px: Pixels,
-    pub cover_cells: CoverCells,
-    pub breakpoints: Breakpoints,
-    pub progress: ProgressBar,
-}
-
-impl Default for Appearance {
-    fn default() -> Self {
-        Self {
-            settings: AppearanceSettings::default(),
-            cover_size_px: Pixels(160),
-            cover_cells: CoverCells::default(),
-            breakpoints: Breakpoints::default(),
-            progress: ProgressBar::default(),
-        }
     }
 }
 

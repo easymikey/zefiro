@@ -1,32 +1,24 @@
-use std::path::Path;
-
 use audio::DECODABLE_EXTENSIONS;
-use crossbeam_channel::Sender;
-use kernel::{
-    IoError,
-    LibraryCmd,
-    LibraryError,
-    LibraryEvent,
-    LibrarySubject,
-    domain::DriverName,
+use kernel::{cmd::LibraryCmd, domain::driver::DriverName};
+use library::{
+    driver::{LibraryDriver, LibraryEffect, LibraryMessage},
+    job::LibraryJob,
 };
-use library::{LibraryDriver, LibraryEffect, LibraryJob, LibraryMessage};
 
+#[cfg(test)] use crate::driver::spawn_idle;
 use crate::{
-    driver::{DriverLoop, DriverThread, LoopEffect, spawn_idle},
+    driver::{DriverLoop, DriverThread, LoopEffect},
     error::Error,
     jobs::Jobs,
     registry,
     spawn::SpawnSetup,
 };
 
+#[cfg(test)]
 pub(crate) fn idle_library(
     setup: &SpawnSetup<'_>,
-) -> Result<(DriverThread<LibraryCmd>, Sender<LibraryMessage>), Error> {
-    let thread = spawn_idle(registry::row(DriverName::Library), setup.inbox)?;
-    let (covers, unheard) = crossbeam_channel::bounded(1);
-    drop(unheard);
-    Ok((thread, covers))
+) -> Result<DriverThread<LibraryCmd>, Error> {
+    spawn_idle(registry::row(DriverName::Library), setup.inbox)
 }
 
 fn library_split(
@@ -40,43 +32,28 @@ fn library_split(
         },
         LibraryEffect::Watch(path) => LoopEffect::Watch {
             path,
-            item: library_watched,
+            item: LibraryMessage::Changed,
         },
         LibraryEffect::Unwatch(path) => LoopEffect::Unwatch(path),
-        effect @ (LibraryEffect::Publish(_) | LibraryEffect::Execute(_)) => {
+        effect @ (LibraryEffect::PublishCover(_) | LibraryEffect::Execute(_)) => {
             LoopEffect::Execute(effect)
         }
     }
 }
 
-fn library_watched(path: &Path, changed: Result<(), IoError>) -> LibraryMessage {
-    match changed {
-        Ok(()) => LibraryMessage::Changed,
-        Err(kind) => LibraryMessage::Executed {
-            event: LibraryEvent::Error(LibraryError::File {
-                subject: LibrarySubject::Watch,
-                path: path.to_path_buf(),
-                kind,
-            }),
-            skipped: None,
-        },
-    }
-}
-
 pub(crate) fn spawn_library(
     setup: &SpawnSetup<'_>,
-) -> Result<(DriverThread<LibraryCmd>, Sender<LibraryMessage>), Error> {
+) -> Result<DriverThread<LibraryCmd>, Error> {
     let dirs = setup.paths.library.clone();
     let cover = setup.writers.cover.clone();
-    let (covers, heard) = crossbeam_channel::bounded(64);
     let jobs = Jobs {
         split: library_split,
         run: LibraryJob::run,
     };
-    let thread = DriverLoop::<LibraryDriver<_>, LibraryJob> {
+    DriverLoop::<LibraryDriver<_>, LibraryJob> {
         row: registry::row(DriverName::Library),
         inbox: setup.inbox.clone(),
-        heard,
+        heard: crossbeam_channel::never(),
         seed: None,
         jobs,
     }
@@ -84,24 +61,25 @@ pub(crate) fn spawn_library(
         LibraryDriver::new(dirs, DECODABLE_EXTENSIONS, move |decoded| {
             cover.publish(decoded);
         })
-    })?;
-    Ok((thread, covers))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use std::{path::Path, sync::Arc, time::Duration};
 
-    use crossbeam_channel::{Receiver, Sender, unbounded};
+    use crossbeam_channel::{Receiver, unbounded};
     use kernel::{
-        LibraryCmd,
-        LibraryEvent,
-        Message,
-        Track,
-        cmd::ScanMode,
-        domain::{DriverName, Revision, Startup},
+        cmd::{CoverJob, LibraryCmd, ScanMode},
+        domain::{
+            driver::DriverName,
+            revision::Revision,
+            startup::Startup,
+            track::Track,
+        },
+        message::{LibraryEvent, Message},
     };
-    use library::{CoverArt, CoverDecoded, CoverJob, LibraryMessage};
+    use library::cover::{CoverArt, CoverDecoded};
 
     use crate::{
         driver::DriverThread,
@@ -117,7 +95,6 @@ mod tests {
 
     struct LibraryRun {
         thread: DriverThread<LibraryCmd>,
-        covers: Sender<LibraryMessage>,
         messages: Receiver<Message>,
         cells: LatestReceivers,
         doorbell: Receiver<()>,
@@ -127,21 +104,20 @@ mod tests {
         fn start(directory: &Path) -> Self {
             let paths = stub_paths(directory);
             let (inbox, messages) = unbounded();
-            let (model, _cmd) = kernel::startup(Startup::default());
+            let (model, _cmd) = kernel::update::startup::startup(Startup::default());
             let (writers, cells, doorbell) = crate::latest::latest_channels();
-            let (thread, covers) = spawn_library(&SpawnSetup {
+            let thread = spawn_library(&SpawnSetup {
                 audio: &model.settings.audio,
                 theme: &model.themes.selected,
                 paths: &paths,
                 inbox: &inbox,
                 writers: &writers,
                 #[cfg(target_os = "macos")]
-                macos: &crate::macos::MacosChannel::new(),
+                macos: &crate::spawn::macos_thread::MacosChannel::new(),
             })
             .unwrap();
             Self {
                 thread,
-                covers,
                 messages,
                 cells,
                 doorbell,
@@ -160,11 +136,12 @@ mod tests {
         }
 
         fn ask(&self, path: &Path) {
-            self.covers
-                .send(LibraryMessage::Cover(CoverJob::new(
-                    path.to_path_buf(),
-                    kernel::domain::geometry::Pixels(64),
-                )))
+            self.thread
+                .commands
+                .send(LibraryCmd::DecodeCover(CoverJob {
+                    path: path.to_path_buf(),
+                    side: kernel::domain::geometry::Pixels(64),
+                }))
                 .unwrap();
         }
 

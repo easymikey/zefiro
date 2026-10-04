@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use kernel::{Cue, PlaybackChange};
+use kernel::cmd::{Cue, PlaybackChange};
 use ratatui::{
     buffer::Buffer,
     style::{Color, Style},
 };
-use widgets::AnimationStage;
+use widgets::animation::stage::AnimationStage;
 
 use crate::unit::{
     animation_stage::step_over,

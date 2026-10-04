@@ -1,6 +1,13 @@
 use audio::tap::SpectrumTap;
-use kernel::{Cue, Message, Moment, WindowColorsCmd, domain::Model};
-use library::CoverJob;
+use kernel::{
+    cmd::{Cue, WindowColorsCmd},
+    domain::{
+        geometry::{Cells, Pixels},
+        model::Model,
+        time::Moment,
+    },
+    message::Message,
+};
 
 use crate::latest::LatestReceivers;
 
@@ -50,7 +57,7 @@ pub struct Frame<'a> {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Painted {
-    pub cover: Option<CoverJob>,
-    pub visible_rows: Option<usize>,
+    pub cover_side: Option<Pixels>,
+    pub visible_rows: Option<Cells>,
     pub toasts: Vec<Message>,
 }

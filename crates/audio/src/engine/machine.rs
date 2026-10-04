@@ -4,19 +4,17 @@ use std::{
 };
 
 use kernel::{
-    AudioCmd,
-    AudioError,
-    AudioEvent,
-    Cmd,
-    Cmds,
-    update::{Machine, Unhandled},
+    cmd::{AudioCmd, Cmd, Cmds},
+    message::{AudioError, AudioEvent},
+    update::machine::{Machine, Unhandled},
 };
 
 use crate::{
     AudioDriver,
     deck::{envelope::Signals, event::DeckEvent, source::TrackSource},
     engine::{
-        effect::{AudioMessage, EngineEffect, EngineMessage, SinkRole},
+        effect::{EngineEffect, SinkRole},
+        message::{AudioMessage, EngineMessage},
         state::Engine,
     },
     error::preload_error,
@@ -284,37 +282,33 @@ mod tests {
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
     use kernel::{
-        AudioCmd,
-        AudioEvent,
-        Bounded,
-        BrowseRequest,
-        Cmd,
-        Effect,
-        Message,
-        Model,
-        Moment,
-        Playback,
-        PlaybackRequest,
-        Playlist,
-        Track,
+        cmd::{AudioCmd, Cmd, Effect, Playback},
         domain::{
-            AudioFormat,
-            AudioSettings,
-            Crossfade,
-            Cursor,
-            Revision,
-            Speed,
-            Tags,
+            bounded::Bounded,
+            crossfade::Crossfade,
+            cursor::Cursor,
+            model::Model,
+            playlist::Playlist,
+            revision::Revision,
+            settings::AudioSettings,
+            speed::Speed,
+            time::Moment,
+            track::{AudioFormat, Tags, Track},
         },
-        update::{Machine, Unhandled, update},
+        message::{AudioEvent, BrowseRequest, Message, PlaybackRequest},
+        update::{
+            machine::{Machine, Unhandled},
+            update,
+        },
     };
     use rstest::rstest;
 
     use crate::{
         deck::{envelope::Signals, event::DeckEvent},
         engine::{
-            effect::{AudioMessage, EngineEffect, EngineMessage, SinkRole},
+            effect::{EngineEffect, SinkRole},
             machine::{keep_last_idempotent, signalled},
+            message::{AudioMessage, EngineMessage},
             state::{Engine, Live},
             tests::{TOTAL, cmd, live, settings},
         },
@@ -327,7 +321,7 @@ mod tests {
         let (sender, _heard) = crossbeam_channel::bounded(4);
         crate::AudioDriver {
             engine: Engine::Live(live()),
-            revisions: crate::engine::revisions::Revisions::default(),
+            revisions: crate::engine::revisions::JobRevisions::default(),
             deck: crate::deck::Deck::new(spectrum, sender),
         }
     }
@@ -338,14 +332,14 @@ mod tests {
 
     #[rstest]
     #[case::output_lost(
-        DeckEvent::OutputLost(kernel::domain::StreamError::DeviceGone),
-        EngineMessage::Error(kernel::AudioError::OutputLost(
-            kernel::domain::StreamError::DeviceGone
+        DeckEvent::OutputLost(kernel::domain::transport::StreamError::DeviceGone),
+        EngineMessage::Error(kernel::message::AudioError::OutputLost(
+            kernel::domain::transport::StreamError::DeviceGone
         ))
     )]
     #[case::decode_error(
         DeckEvent::Decoded { revision: Revision::default(), result: Err(worker_panicked()) },
-        EngineMessage::Error(kernel::AudioError::from(&worker_panicked()))
+        EngineMessage::Error(kernel::message::AudioError::from(&worker_panicked()))
     )]
     #[case::preload_error(
         DeckEvent::Preloaded { revision: Revision::default(), result: Err(worker_panicked()) },
@@ -604,7 +598,7 @@ mod tests {
     }
 
     fn load(path: &str) -> AudioCmd {
-        AudioCmd::Load(kernel::TrackLoad {
+        AudioCmd::Load(kernel::cmd::TrackLoad {
             path: PathBuf::from(path),
             gain: None,
             revision: Revision::default(),

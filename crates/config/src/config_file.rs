@@ -1,17 +1,15 @@
 use std::{path::PathBuf, time::Duration};
 
 use kernel::domain::{
-    AudioSettings,
-    ConfigName,
-    Crossfade,
-    DeviceName,
-    KeymapOverrides,
-    OutputDevice,
-    Percent,
-    ReplayGain,
-    SleepPresets,
-    ThemeChoice,
-    Transport,
+    config::ConfigName,
+    crossfade::Crossfade,
+    device::{DeviceName, OutputDevice},
+    keymap::KeymapOverrides,
+    percent::Percent,
+    settings::{AudioSettings, ReplayGain},
+    sleep_presets::SleepPresets,
+    theme::ThemeChoice,
+    transport::Transport,
 };
 use serde::{Deserialize, Deserializer};
 
@@ -100,14 +98,14 @@ where
 #[serde(default, deny_unknown_fields, expecting = "an [audio] table")]
 pub struct TomlAudio {
     #[serde(deserialize_with = "crossfade")]
-    pub crossfade: Crossfade,
+    pub(crate) crossfade: Crossfade,
     #[serde(deserialize_with = "flag")]
     #[serde(rename = "replaygain")]
-    pub replay_gain: ReplayGain,
+    pub(crate) replay_gain: ReplayGain,
     #[serde(deserialize_with = "device")]
-    pub device: OutputDevice,
+    pub(crate) device: OutputDevice,
     #[serde(deserialize_with = "sleep_presets")]
-    pub sleep_presets: SleepPresets,
+    pub(crate) sleep_presets: SleepPresets,
 }
 
 impl From<TomlAudio> for AudioSettings {
@@ -124,17 +122,17 @@ impl From<TomlAudio> for AudioSettings {
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct ConfigToml {
+pub struct TomlConfig {
     pub music_dir: Option<PathBuf>,
     #[serde(deserialize_with = "theme")]
     pub theme: ThemeChoice,
     #[serde(deserialize_with = "volume")]
     pub volume: Percent,
     pub audio: TomlAudio,
-    pub keymap: TomlKeymap,
+    pub(crate) keymap: TomlKeymap,
 }
 
-impl Default for ConfigToml {
+impl Default for TomlConfig {
     fn default() -> Self {
         Self {
             music_dir: None,
@@ -146,7 +144,7 @@ impl Default for ConfigToml {
     }
 }
 
-pub fn parse_config(text: &str) -> Result<ConfigToml, Error> {
+pub fn parse_config(text: &str) -> Result<TomlConfig, Error> {
     parse_toml(text, ConfigName::Config)
 }
 
@@ -154,7 +152,7 @@ pub fn parse_config(text: &str) -> Result<ConfigToml, Error> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigSettings {
     pub keymap: KeymapOverrides,
-    pub music_dir: Option<PathBuf>,
+    pub(crate) music_dir: Option<PathBuf>,
 }
 
 pub fn parse_config_reload(text: &str) -> Result<ConfigSettings, Error> {
@@ -173,16 +171,11 @@ pub fn parse_config_reload(text: &str) -> Result<ConfigSettings, Error> {
 mod tests {
     use std::{path::PathBuf, time::Duration};
 
-    use kernel::{
-        Bounded,
-        domain::{
-            Action,
-            Crossfade,
-            KeyOverride,
-            KeymapOverrides,
-            ThemeChoice,
-            ThemeName,
-        },
+    use kernel::domain::{
+        bounded::Bounded,
+        crossfade::Crossfade,
+        keymap::{Action, KeyOverride, KeymapOverrides},
+        theme::{ThemeChoice, ThemeName},
     };
     use rstest::rstest;
 

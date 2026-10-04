@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt};
 
-use kernel::domain::{Action, KeyContext, KeyOverride};
+use kernel::domain::keymap::{Action, KeyContext, KeyOverride};
 use serde::{
     Deserialize,
     de::{Deserializer, MapAccess, Visitor, value::MapAccessDeserializer},
@@ -61,7 +61,7 @@ type KeymapByName = HashMap<String, KeyBindingEntry>;
 
 #[derive(Clone, Default, PartialEq, Deserialize)]
 #[serde(try_from = "KeymapByName", expecting = "a [keymap] table")]
-pub struct TomlKeymap(pub(crate) HashMap<Action, KeyBindingEntry>);
+pub(crate) struct TomlKeymap(pub(crate) HashMap<Action, KeyBindingEntry>);
 
 impl TryFrom<KeymapByName> for TomlKeymap {
     type Error = strum::ParseError;

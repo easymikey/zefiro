@@ -3,15 +3,13 @@ use std::path::PathBuf;
 use crate::{
     cmd::{Cmd, Cue, Effect, LibraryCmd, ScanMode, WindowColorsCmd},
     domain::{
-        AppearanceSetting,
-        Overlay,
-        Revisions,
-        SettingRow,
-        Settings,
-        ThemeName,
-        Themes,
-        Toast,
-        Workspace,
+        overlay::Overlay,
+        revision::Revisions,
+        setting_row::{AppearanceSetting, SettingRow},
+        settings::Settings,
+        theme::{ThemeName, Themes},
+        toast::Toast,
+        workspace::Workspace,
     },
     message::ConfigEvent,
     update::machine::Unhandled,
@@ -116,17 +114,14 @@ mod tests {
     use crate::{
         cmd::{Cmd, Effect, LibraryCmd},
         domain::{
-            Action,
-            ConfigError,
-            KeyOverride,
-            KeymapOverrides,
-            Model,
-            ThemeName,
-            Themes,
-            ToastKind,
+            config::ConfigError,
+            keymap::{Action, KeyOverride, KeymapOverrides},
+            model::Model,
+            theme::{ThemeName, Themes},
+            toast::ToastKind,
         },
         message::ConfigEvent,
-        update::{Unhandled, config, config_parts},
+        update::{config, config_parts, machine::Unhandled},
     };
 
     fn update(model: &mut Model, event: ConfigEvent) -> Result<(), Unhandled> {
@@ -184,7 +179,9 @@ mod tests {
 
         update(
             &mut model,
-            ConfigEvent::Error(ConfigError::Watch(crate::IoError::Other)),
+            ConfigEvent::Error(ConfigError::Watch(
+                crate::domain::io_error::IoError::Other,
+            )),
         )
         .unwrap();
 

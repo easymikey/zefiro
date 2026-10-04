@@ -2,44 +2,38 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use insta::assert_snapshot;
 use kernel::{
-    BrowseRequest,
-    Direction,
-    HistoryRequest,
-    Key,
-    KeyCode,
-    KeyPress,
-    Message,
-    Modifiers,
-    Moment,
-    OverlayName,
-    OverlayRequest,
-    PlaybackRequest,
-    SearchEdit,
-    SearchRequest,
-    SettingsRowRequest,
-    TextRequest,
-    Toast,
     domain::{
-        Chord,
-        ChordPrefix,
-        CursorOver,
-        DeleteCandidate,
-        JumpDigits,
-        KeyContext,
-        KeymapOverrides,
-        Overlay,
-        SettingRow,
-        TextEntry,
-        Track,
-        Workspace,
+        chord::{Chord, ChordPrefix},
+        cursor_over::CursorOver,
+        direction::Direction,
+        geometry::Cells,
+        key::{Key, KeyCode, KeyPress, Modifiers},
+        keymap::{KeyContext, KeymapOverrides},
+        overlay::{DeleteCandidate, JumpDigits, Overlay, OverlayName, TextEntry},
+        setting_row::SettingRow,
+        time::Moment,
+        toast::Toast,
+        track::Track,
+        workspace::Workspace,
     },
-    update::{keymap::route, update},
+    message::{
+        BrowseRequest,
+        HistoryRequest,
+        Message,
+        OverlayRequest,
+        PlaybackRequest,
+        SearchEdit,
+        SearchRequest,
+        SettingsRowRequest,
+        TextRequest,
+    },
+    update::{keymap::lookup::route, update},
 };
 use rstest::rstest;
 
 use crate::support::keymap::{bindings, character};
 
-const VISIBLE_ROWS: usize = 10;
+const VISIBLE_ROWS: Cells = Cells(10);
 
 fn browsing() -> Workspace {
     Workspace::default()
@@ -75,7 +69,7 @@ fn settings_on(row: SettingRow) -> Workspace {
 
 fn confirming_delete() -> Workspace {
     with_overlay(Overlay::ConfirmDelete(DeleteCandidate {
-        source: kernel::TrackRef::Local("/music/moon.flac".into()),
+        source: kernel::domain::track::TrackRef::Local("/music/moon.flac".into()),
         title: "Moon River".to_string(),
         artist: "Audrey Hepburn".to_string(),
     }))

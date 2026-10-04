@@ -15,9 +15,8 @@ use tiny_skia::{
 use crate::pixels::{
     numeric::{channel_byte, dimension_f32},
     vinyl::{
-        VinylArt,
         VinylStyle,
-        art::{ArtClip, paint_art_clipped},
+        art::{ArtClip, VinylArt, paint_art_clipped},
         geometry::{
             Disc,
             RoundedRect,
@@ -46,8 +45,8 @@ fn scale_alpha(peak: u8, fraction: f32) -> u8 {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct VinylFrameStyle {
-    pub size_px: u32,
-    pub colors: VinylStyle,
+    pub(crate) size_px: u32,
+    pub(crate) colors: VinylStyle,
 }
 
 #[must_use]
@@ -60,8 +59,8 @@ pub(crate) fn paint_record_layer(style: VinylFrameStyle) -> Option<Pixmap> {
 }
 
 pub(crate) struct VinylParts<'a> {
-    pub style: VinylFrameStyle,
-    pub art: Option<&'a VinylArt>,
+    pub(crate) style: VinylFrameStyle,
+    pub(crate) art: Option<&'a VinylArt>,
 }
 
 #[must_use]
@@ -324,6 +323,7 @@ mod tests {
 
     use crate::pixels::vinyl::{
         VinylStyle,
+        art::prepare_art,
         compose_uncached,
         layers::{
             VinylFrameStyle,
@@ -334,7 +334,6 @@ mod tests {
             skia_color,
             skia_color_with_alpha,
         },
-        prepare_art,
         test_support::synthetic_art,
     };
 

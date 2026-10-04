@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
 use kernel::{
-    Cmd,
-    domain::Revision,
-    update::{Machine, Unhandled},
+    cmd::Cmd,
+    domain::{io_error::IoError, revision::Revision},
+    message::{LibraryError, LibraryEvent, LibrarySubject},
+    update::machine::{Machine, Unhandled},
 };
 
-use crate::LibraryMessage;
+use crate::driver::LibraryMessage;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct LibraryWatch {
@@ -36,7 +37,7 @@ pub(crate) enum LibraryWatchMessage {
         music_dir: PathBuf,
         revision: Revision,
     },
-    Changed,
+    Changed(Result<(), IoError>),
     Elapsed,
 }
 
@@ -64,7 +65,8 @@ impl Machine for LibraryWatch {
                 music_dir,
                 revision,
             } => Ok(self.rescan(music_dir, revision)),
-            LibraryWatchMessage::Changed => self.changed(),
+            LibraryWatchMessage::Changed(Ok(())) => self.changed(),
+            LibraryWatchMessage::Changed(Err(kind)) => self.failed(kind),
             LibraryWatchMessage::Elapsed => self.elapsed(),
         }
     }
@@ -81,6 +83,25 @@ impl LibraryWatch {
             Registered::On { burst, .. } => {
                 *burst = Burst::Armed;
                 Ok(Cmd::effect(WatchEffect::Arm))
+            }
+        }
+    }
+
+    fn failed(
+        &self,
+        kind: IoError,
+    ) -> Result<Cmd<WatchEffect, LibraryMessage>, Unhandled> {
+        match &self.registered {
+            Registered::Unrooted => Err(Unhandled),
+            Registered::On { music_dir, .. } => {
+                Ok(Cmd::message(LibraryMessage::Executed {
+                    event: LibraryEvent::Error(LibraryError::File {
+                        subject: LibrarySubject::Watch,
+                        path: music_dir.clone(),
+                        kind,
+                    }),
+                    skipped: None,
+                }))
             }
         }
     }
@@ -134,14 +155,15 @@ mod tests {
     use std::path::PathBuf;
 
     use kernel::{
-        Cmd,
-        domain::Revision,
-        update::{Machine, Unhandled},
+        cmd::Cmd,
+        domain::{io_error::IoError, revision::Revision},
+        message::{LibraryError, LibraryEvent, LibrarySubject},
+        update::machine::{Machine, Unhandled},
     };
     use rstest::rstest;
 
     use crate::{
-        LibraryMessage,
+        driver::LibraryMessage,
         watch::{Burst, LibraryWatch, LibraryWatchMessage, Registered, WatchEffect},
     };
 
@@ -263,13 +285,13 @@ mod tests {
     })]
     #[case::quiet_change_arms(WatchRow {
         start: quiet(),
-        message: LibraryWatchMessage::Changed,
+        message: LibraryWatchMessage::Changed(Ok(())),
         next: armed(),
         effects: "arm",
     })]
     #[case::armed_change_waits_for_the_armed_timer(WatchRow {
         start: armed(),
-        message: LibraryWatchMessage::Changed,
+        message: LibraryWatchMessage::Changed(Ok(())),
         next: armed(),
         effects: "nothing",
     })]
@@ -286,8 +308,34 @@ mod tests {
         assert_eq!(describe(cmd), row.effects);
     }
 
+    #[test]
+    fn a_failure_under_a_root_reports_a_watch_error_for_that_root() {
+        let mut state = quiet();
+        let cmd = state
+            .transition(LibraryWatchMessage::Changed(Err(IoError::Missing)))
+            .unwrap();
+        let (effects, messages) = cmd.into_parts();
+        assert!(effects.is_empty());
+        let [LibraryMessage::Executed { event, skipped }] = messages.as_slice() else {
+            panic!("expected one executed message: {messages:?}");
+        };
+        assert_eq!(
+            *event,
+            LibraryEvent::Error(LibraryError::File {
+                subject: LibrarySubject::Watch,
+                path: music_dir(),
+                kind: IoError::Missing,
+            })
+        );
+        assert!(skipped.is_none());
+    }
+
     #[rstest]
-    #[case::unrooted_refuses_a_change(unrooted(), LibraryWatchMessage::Changed)]
+    #[case::unrooted_refuses_a_change(unrooted(), LibraryWatchMessage::Changed(Ok(())))]
+    #[case::unrooted_refuses_a_failure(
+        unrooted(),
+        LibraryWatchMessage::Changed(Err(IoError::Other))
+    )]
     #[case::unrooted_refuses_an_elapse(unrooted(), LibraryWatchMessage::Elapsed)]
     #[case::quiet_refuses_an_elapse(quiet(), LibraryWatchMessage::Elapsed)]
     fn a_refused_row_hands_the_state_back(

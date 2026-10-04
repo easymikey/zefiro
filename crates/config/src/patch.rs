@@ -1,12 +1,8 @@
 use std::time::Duration;
 
 use kernel::{
-    ConfigPatch,
+    cmd::ConfigPatch,
     domain::{
-        Crossfade,
-        OutputDevice,
-        ReplayGain,
-        ThemeName,
         appearance::{
             Animations,
             AppearancePatch,
@@ -15,6 +11,10 @@ use kernel::{
             KeyHints,
             ProgressTime,
         },
+        crossfade::Crossfade,
+        device::OutputDevice,
+        settings::ReplayGain,
+        theme::ThemeName,
     },
 };
 use toml_edit::{Array, DocumentMut, Item, Table, value};
@@ -199,18 +199,8 @@ mod tests {
     use std::{path::PathBuf, time::Duration};
 
     use kernel::{
-        Bounded,
-        ConfigPatch,
+        cmd::ConfigPatch,
         domain::{
-            Crossfade,
-            DeviceName,
-            OptionCount,
-            OutputDevice,
-            Percent,
-            ReplayGain,
-            SleepPresets,
-            ThemeChoice,
-            ThemeName,
             appearance::{
                 Animations,
                 AppearancePatch,
@@ -233,6 +223,14 @@ mod tests {
                 PROGRESS_STYLES,
                 SPEED_CHIPS,
             },
+            bounded::Bounded,
+            crossfade::Crossfade,
+            device::{DeviceName, OutputDevice},
+            percent::Percent,
+            setting_row::OptionCount,
+            settings::ReplayGain,
+            sleep_presets::SleepPresets,
+            theme::{ThemeChoice, ThemeName},
         },
     };
     use proptest::{

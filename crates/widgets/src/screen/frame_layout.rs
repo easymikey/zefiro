@@ -1,18 +1,19 @@
 use kernel::domain::{
-    Overlay,
     appearance::{CoverMode, KeyHints},
+    geometry::Cells,
+    overlay::Overlay,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::{
-    card::{self, CardMetrics, compact_height},
+    card::{self, compact::compact_height, metrics::CardMetrics},
     overlay::{
         layer::{OverlayView, OverlayWidget},
-        modal::OverlayAreas,
+        modal::placement::OverlayAreas,
     },
-    playlist::{PlaylistAreas, PlaylistView, PlaylistWidget},
+    playlist::pane::{PlaylistAreas, PlaylistView, PlaylistWidget},
     scene::Scene,
-    screen::Breakpoint,
+    screen::breakpoint::Breakpoint,
     toast::{ToastAreas, ToastWidget},
 };
 
@@ -57,7 +58,13 @@ impl FrameLayout {
     }
 
     #[must_use]
-    pub fn cover_exclusion(&self, cover_mode: CoverMode) -> Option<Rect> {
+    pub fn playlist_body_height(&self) -> Cells {
+        self.playlist
+            .map_or(Cells(0), |areas| Cells(areas.body.height))
+    }
+
+    #[must_use]
+    pub(crate) fn cover_exclusion(&self, cover_mode: CoverMode) -> Option<Rect> {
         match cover_mode {
             CoverMode::Vinyl | CoverMode::Plain => self.cover,
             CoverMode::Milkdrop | CoverMode::Off => None,
@@ -101,7 +108,7 @@ fn key_hint_rows(key_hints: KeyHints) -> u16 {
 
 fn header_rows(breakpoint: Breakpoint) -> u16 {
     match breakpoint {
-        Breakpoint::Full => card::card_height(),
+        Breakpoint::Full => card::metrics::card_height(),
         Breakpoint::Compact => compact_height(),
         Breakpoint::Minimal | Breakpoint::TooSmall => 0,
     }
@@ -118,15 +125,15 @@ fn search_bounds(content: Rect, header_rows: u16, hint_rows: u16) -> Rect {
 }
 
 fn body(scene: &Scene<'_>, screen: Rect) -> FrameLayout {
-    let appearance = scene.appearance();
+    let settings = scene.appearance_settings();
     let breakpoint = Breakpoint::new(
         screen.as_size(),
-        &appearance.breakpoints,
-        appearance.settings.layout_mode,
+        &scene.appearance().breakpoints,
+        settings.layout_mode,
     );
     let content = content_area(screen);
     let header_rows = header_rows(breakpoint);
-    let hint_rows = key_hint_rows(appearance.settings.key_hints);
+    let hint_rows = key_hint_rows(settings.key_hints);
     let [header, pane, hints] = content.layout(&Layout::vertical([
         Constraint::Length(header_rows),
         Constraint::Min(0),
@@ -156,7 +163,8 @@ fn card_areas(scene: &Scene<'_>, header: Rect, layout: FrameLayout) -> FrameLayo
     if layout.breakpoint != Breakpoint::Full {
         return layout;
     }
-    let metrics = card::card_metrics(header, scene.cell_aspect, scene.cover_sizing());
+    let metrics =
+        card::metrics::card_metrics(header, scene.cell_aspect, scene.cover_sizing());
     FrameLayout {
         card: Some(metrics),
         cover: Some(metrics.cover_square).filter(|cover| !cover.is_empty()),
@@ -184,20 +192,19 @@ fn playlist(scene: &Scene<'_>, pane: Rect) -> Option<PlaylistAreas> {
 #[cfg(test)]
 mod tests {
     use kernel::domain::{
-        CursorOver,
-        Overlay,
-        SearchQuery,
-        SettingRow,
-        Toast,
         appearance::CoverMode,
+        cursor_over::CursorOver,
+        overlay::{Overlay, SearchQuery},
+        setting_row::SettingRow,
+        toast::Toast,
     };
     use ratatui::layout::Rect;
     use rstest::rstest;
 
     use crate::{
-        overlay::modal::OverlayAreas,
+        overlay::modal::placement::OverlayAreas,
         scene::{PixelPath, Scene},
-        screen::{Breakpoint, FrameLayout},
+        screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
         test_support::{SceneSources, model_with_tracks},
     };
 
@@ -236,7 +243,7 @@ mod tests {
     #[test]
     fn a_text_art_cover_is_not_avoided_by_overlays() {
         let mut sources = SceneSources::new(model_with_tracks(3));
-        sources.appearance_mut().settings.cover_mode = CoverMode::Milkdrop;
+        sources.model.settings.appearance.cover_mode = CoverMode::Milkdrop;
         let scene = sources.scene();
         let layout = FrameLayout::from_scene(&scene, screen());
         assert!(layout.cover.is_some());
@@ -336,7 +343,7 @@ mod tests {
         #[case] avoidance: CoverAvoidance,
     ) {
         let mut sources = SceneSources::new(model_with_tracks(3));
-        sources.appearance_mut().settings.cover_mode = style;
+        sources.model.settings.appearance.cover_mode = style;
         let scene = with_pixels(sources.scene());
         let layout = FrameLayout::from_scene(&scene, screen());
         let expected = match avoidance {

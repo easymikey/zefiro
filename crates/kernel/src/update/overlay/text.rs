@@ -1,4 +1,4 @@
-use crate::{domain::TextEntry, message::TextRequest};
+use crate::{domain::overlay::TextEntry, message::TextRequest};
 
 pub(crate) fn retype(text: &mut TextEntry, message: TextRequest) {
     match message {
@@ -14,7 +14,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        domain::TextEntry,
+        domain::overlay::TextEntry,
         message::TextRequest,
         update::overlay::text::retype,
     };

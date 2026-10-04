@@ -8,7 +8,7 @@ use crate::{
         glyphs::TITLE_SEPARATOR,
         span::{line, text},
     },
-    theme::{ActiveTheme, Role},
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 pub(crate) const COLUMN_SPACING: u16 = 1;

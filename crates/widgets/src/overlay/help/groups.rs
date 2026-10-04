@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use kernel::{domain::Action, update::keymap::KeyBinding};
+use kernel::{domain::keymap::Action, update::keymap::chord::KeyBinding};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HelpRow {

@@ -11,13 +11,13 @@ pub fn read_if_present(path: &Path) -> io::Result<Option<String>> {
     }
 }
 
-pub fn create_parent_dir(path: &Path) -> io::Result<()> {
+pub(crate) fn create_parent_dir(path: &Path) -> io::Result<()> {
     path.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .map_or(Ok(()), std::fs::create_dir_all)
 }
 
-pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

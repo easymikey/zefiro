@@ -1,8 +1,15 @@
-use config::{parse_config, parse_config_reload, patch_config_text};
+use config::{
+    config_file::{parse_config, parse_config_reload},
+    patch::patch_config_text,
+};
 use kernel::{
-    Bounded,
-    ConfigPatch,
-    domain::{DeviceName, OutputDevice, Percent, ThemeName},
+    cmd::ConfigPatch,
+    domain::{
+        bounded::Bounded,
+        device::{DeviceName, OutputDevice},
+        percent::Percent,
+        theme::ThemeName,
+    },
 };
 
 const COMMENTED_CONFIG: &str = include_str!("../fixtures/config_commented.toml");

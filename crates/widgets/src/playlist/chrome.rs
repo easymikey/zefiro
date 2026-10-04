@@ -9,7 +9,7 @@ use ratatui::{
 use crate::{
     primitive::{inset::Inset, list_chrome::spaced_title},
     status_line::{self, StatusLineStyle, StatusLineView},
-    theme::ActiveTheme,
+    theme::active_theme::ActiveTheme,
 };
 
 const TITLE_CELLS: u16 = 2;
@@ -49,17 +49,14 @@ pub(crate) fn pane_title<'a>(
 
 #[cfg(test)]
 mod tests {
-    use kernel::{
-        domain::{Shuffle, ViewIndex},
-        playlist::RepeatMode,
-    };
+    use kernel::domain::{index::ViewIndex, playlist::RepeatMode, startup::Shuffle};
     use ratatui::layout::Rect;
 
     use crate::{
         playlist::chrome::pane_title,
         status_line::{ScanProgress, StatusLineView},
         test_support::noir,
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn status() -> StatusLineView<'static> {

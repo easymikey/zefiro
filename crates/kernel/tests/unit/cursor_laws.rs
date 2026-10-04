@@ -1,4 +1,4 @@
-use kernel::domain::Cursor;
+use kernel::domain::cursor::Cursor;
 use proptest::prelude::{Just, Strategy, any, prop_assert, prop_assert_eq, proptest};
 use rstest::rstest;
 

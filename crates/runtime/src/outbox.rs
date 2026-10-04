@@ -7,7 +7,7 @@ use std::{
 };
 
 use crossbeam_channel::{Sender, TrySendError};
-use kernel::Message;
+use kernel::message::Message;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -73,7 +73,7 @@ mod tests {
     use std::{thread, time::Duration};
 
     use crossbeam_channel::bounded;
-    use kernel::AudioEvent;
+    use kernel::message::AudioEvent;
     use rstest::rstest;
 
     use crate::outbox::{Congestion, Outbox, SendError};

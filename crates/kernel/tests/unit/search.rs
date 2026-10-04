@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use kernel::{Track, domain::Tags, search};
+use kernel::{
+    domain::track::{Tags, Track},
+    search,
+};
 use rstest::rstest;
 
 use crate::support::track_with_tags;

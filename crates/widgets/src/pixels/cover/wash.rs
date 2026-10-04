@@ -1,9 +1,18 @@
+use kernel::domain::geometry::Cells;
 use ratatui::layout::Rect;
 
-use crate::{pixels::cover::CoverWash, wash_reveal};
+use crate::{animation::catalogue::wash_reveal, pixels::cover::CoverWash};
 
 #[must_use]
-pub fn column_reveal(
+pub fn cover_wash(progress: Option<f32>, screen_width: Cells) -> CoverWash {
+    progress.map_or(CoverWash::Idle, |progress| CoverWash::Running {
+        progress,
+        screen_width,
+    })
+}
+
+#[must_use]
+pub(crate) fn column_reveal(
     rect: Rect,
     cell_width_px: u16,
     wash: CoverWash,
@@ -31,7 +40,7 @@ mod tests {
     use crate::pixels::cover::{
         CoverWash,
         crossfade::blend_by_column,
-        wash::column_reveal,
+        wash::{column_reveal, cover_wash},
     };
 
     const OLD_PIXEL: Rgba<u8> = Rgba([200, 0, 0, 255]);
@@ -84,5 +93,21 @@ mod tests {
     #[test]
     fn an_idle_wash_reveals_nothing() {
         assert!(column_reveal(Rect::default(), 1, CoverWash::Idle).is_none());
+    }
+
+    #[test]
+    fn no_wash_progress_is_an_idle_wash() {
+        assert_eq!(cover_wash(None, Cells(80)), CoverWash::Idle);
+    }
+
+    #[test]
+    fn a_wash_progress_carries_the_screen_width_along() {
+        assert_eq!(
+            cover_wash(Some(0.4), Cells(80)),
+            CoverWash::Running {
+                progress: 0.4,
+                screen_width: Cells(80),
+            }
+        );
     }
 }

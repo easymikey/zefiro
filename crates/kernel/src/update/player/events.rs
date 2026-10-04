@@ -1,8 +1,15 @@
 use std::{mem, sync::Arc, time::Duration};
 
 use crate::{
-    cmd::{AudioCmd, Cmd, Effect, LibraryCmd, PlaybackChange, TrackLoad},
-    domain::{Moment, PausedBy, Player, Playhead, Preload, Revision, Track},
+    cmd::{AudioCmd, Cmd, CoverJob, Effect, LibraryCmd, PlaybackChange, TrackLoad},
+    domain::{
+        geometry::Pixels,
+        player::{PausedBy, Player, Preload},
+        playhead::Playhead,
+        revision::Revision,
+        time::Moment,
+        track::Track,
+    },
     message::AudioError,
     update::{
         machine::Unhandled,
@@ -18,6 +25,7 @@ pub struct Lookahead {
     pub duration: Duration,
     pub now: Moment,
     pub revision: Revision,
+    pub cover_side: Option<Pixels>,
 }
 
 impl Lookahead {
@@ -37,15 +45,16 @@ impl Lookahead {
     fn preloading(self, at: Duration, preload: &mut Preload) -> Cmd {
         match self.next {
             Some(next) if self.is_preload_due(at) => {
-                let cmd = Cmd::from_iter([
-                    Effect::Audio(AudioCmd::Preload(TrackLoad::for_track(
-                        &next,
-                        self.revision,
-                    ))),
-                    Effect::Library(LibraryCmd::PrefetchCover(
-                        next.path().to_path_buf(),
-                    )),
-                ]);
+                let preload_cmd = Effect::Audio(AudioCmd::Preload(
+                    TrackLoad::for_track(&next, self.revision),
+                ));
+                let prefetch = self.cover_side.map(|side| {
+                    Effect::Library(LibraryCmd::PrefetchCover(CoverJob {
+                        path: next.path().to_path_buf(),
+                        side,
+                    }))
+                });
+                let cmd = Cmd::from_iter(std::iter::once(preload_cmd).chain(prefetch));
                 *preload = Preload::Queued(next);
                 cmd
             }
@@ -232,14 +241,12 @@ mod tests {
 
     use crate::{
         domain::{
-            AudioFormat,
-            Bounded,
-            Moment,
-            Playhead,
-            Revision,
-            Speed,
-            Tags,
-            Track,
+            bounded::Bounded,
+            playhead::Playhead,
+            revision::Revision,
+            speed::Speed,
+            time::Moment,
+            track::{AudioFormat, Tags, Track},
         },
         update::player::events::{Lookahead, next_decision},
     };
@@ -280,6 +287,7 @@ mod tests {
             duration: Duration::from_secs(setup.duration),
             now: Moment::new(Duration::ZERO),
             revision: Revision::default(),
+            cover_side: None,
         }
     }
 

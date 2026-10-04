@@ -7,19 +7,21 @@ pub(crate) mod table;
 use std::{path::Path, sync::Arc, time::Duration};
 
 use kernel::{
-    Cmd,
-    Effect,
-    Model,
-    Moment,
-    Player,
-    Playhead,
-    Preload,
-    Speed,
-    TOAST_LIFETIME,
-    Timer,
-    Track,
-    domain::{AudioFormat, Cursor, DeviceName, Revision, Tags},
-    playlist::Playlist,
+    cmd::{Cmd, Effect},
+    domain::{
+        cursor::Cursor,
+        device::DeviceName,
+        model::Model,
+        player::{Player, Preload},
+        playhead::Playhead,
+        playlist::Playlist,
+        revision::Revision,
+        speed::Speed,
+        time::Moment,
+        toast::TOAST_LIFETIME,
+        track::{AudioFormat, Tags, Track},
+    },
+    message::Timer,
 };
 
 const FIXTURE_LENGTH: Duration = Duration::from_secs(100);

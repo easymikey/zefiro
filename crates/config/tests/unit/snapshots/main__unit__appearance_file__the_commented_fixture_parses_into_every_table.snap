@@ -8,14 +8,15 @@ TomlAppearance {
         speed_chip: Always,
     },
     progress: TomlProgress {
-        height_px: 4.0,
+        height_px: Pixels(
+            4,
+        ),
         radius: None,
         fill: None,
         groove: None,
         remaining: Elapsed,
     },
     cover: TomlCover {
-        size_px: 160,
         mode: Vinyl,
         text_cells: TextCoverCells {
             width: 20,

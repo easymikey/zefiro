@@ -7,26 +7,26 @@ const PULSE_MS: u32 = 900;
 const PULSE_HALF_MS: u32 = PULSE_MS / 2;
 const DELETE_BURST_MS: u32 = 900;
 const THEME_WASH_MS: u32 = 400;
-pub(crate) const THEME_WASH_GRADIENT_CELLS: u16 = 30;
+pub const THEME_WASH_GRADIENT_CELLS: u16 = 30;
 const COVER_CROSSFADE_MS: u32 = 900;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnimationTimings {
     pub modal_in: (u32, Interpolation),
     pub modal_out: (u32, Interpolation),
-    pub modal_transition_width: f32,
+    pub(crate) modal_transition_width: f32,
     pub toast_slide_in: (u32, Interpolation),
-    pub scatter_seed: u32,
+    pub(crate) scatter_seed: u32,
     pub chip_pulse_half: (u32, Interpolation),
-    pub row_flash: (u32, Interpolation),
-    pub favorite_pulse_half: (u32, Interpolation),
+    pub(crate) row_flash: (u32, Interpolation),
+    pub(crate) favorite_pulse_half: (u32, Interpolation),
     pub volume_pulse: (u32, Interpolation),
     pub volume_pulse_mix: f32,
     pub screen_wash: (u32, Interpolation),
     pub cover_crossfade: (u32, Interpolation),
     pub delete_burst: (u32, Interpolation),
-    pub delete_force: f32,
-    pub delete_force_variance: f32,
+    pub(crate) delete_force: f32,
+    pub(crate) delete_force_variance: f32,
 }
 
 impl Default for AnimationTimings {

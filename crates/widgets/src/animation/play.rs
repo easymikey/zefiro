@@ -1,4 +1,7 @@
-use kernel::{Cue, PlaybackChange, domain::appearance::Animations};
+use kernel::{
+    cmd::{Cue, PlaybackChange},
+    domain::appearance::Animations,
+};
 use ratatui::style::Color;
 
 use crate::{
@@ -18,8 +21,8 @@ use crate::{
         },
         stage::{AnimationStage, Backdrop, VacatedAreas},
     },
-    overlay::modal::OverlayAreas,
-    playlist::favorite_cell,
+    overlay::modal::placement::OverlayAreas,
+    playlist::row::favorite_cell,
 };
 
 impl AnimationStage {
@@ -135,7 +138,10 @@ fn pulsed(change: PlaybackChange, backdrop: &Backdrop) -> Color {
 
 #[cfg(test)]
 mod tests {
-    use kernel::{Cue, PlaybackChange, domain::appearance::Animations};
+    use kernel::{
+        cmd::{Cue, PlaybackChange},
+        domain::appearance::Animations,
+    };
     use ratatui::{layout::Rect, style::Color};
 
     use crate::{
@@ -143,7 +149,7 @@ mod tests {
             play::{once_each, pulsed},
             stage::{AnimationStage, Backdrop},
         },
-        screen::{Breakpoint, FrameLayout},
+        screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
     };
 
     #[test]

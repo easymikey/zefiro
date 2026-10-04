@@ -31,7 +31,9 @@ pub(crate) fn inner(area: Rect) -> Rect {
 }
 
 fn cover_width_for_height(height: u16, cell_aspect: f32, cover_aspect: f32) -> u16 {
-    crate::pixels::floor((f32::from(height) * cell_aspect * cover_aspect).ceil())
+    crate::pixels::numeric::floor(
+        (f32::from(height) * cell_aspect * cover_aspect).ceil(),
+    )
 }
 
 #[must_use]
@@ -205,7 +207,7 @@ mod tests {
             text_width,
         },
         geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
-        pixels::canvas_aspect_ratio,
+        pixels::vinyl::geometry::canvas_aspect_ratio,
     };
 
     #[test]

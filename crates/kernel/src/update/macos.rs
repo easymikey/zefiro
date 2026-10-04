@@ -1,6 +1,6 @@
 use crate::{
     cmd::Cmd,
-    domain::{Moment, Toast},
+    domain::{time::Moment, toast::Toast},
     message::{MacosEvent, PlaybackRequest},
     update::{
         machine::{Machine, Unhandled},
@@ -49,17 +49,14 @@ mod tests {
     use crate::{
         cmd::{Cmd, Cue, Effect},
         domain::{
-            AudioFormat,
-            Bounded,
-            Model,
-            Moment,
-            Percent,
-            Player,
-            Playhead,
-            Preload,
-            Speed,
-            Tags,
-            Track,
+            bounded::Bounded,
+            model::Model,
+            percent::Percent,
+            player::{Player, Preload},
+            playhead::Playhead,
+            speed::Speed,
+            time::Moment,
+            track::{AudioFormat, Tags, Track},
         },
         message::{MacosEvent, PlaybackRequest},
         update::{macos::update, playback, playback_parts},

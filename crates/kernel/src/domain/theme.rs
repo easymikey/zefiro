@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fmt, str::FromStr};
 
-use crate::domain::Direction;
+use crate::domain::direction::Direction;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ThemeName(Cow<'static, str>);
@@ -83,7 +83,7 @@ pub struct Themes {
 
 impl Themes {
     #[must_use]
-    pub fn stepped(&self, direction: Direction) -> Option<ThemeName> {
+    pub(crate) fn stepped(&self, direction: Direction) -> Option<ThemeName> {
         if self.names.is_empty() {
             return None;
         }
@@ -108,7 +108,10 @@ impl Themes {
 mod tests {
     use rstest::rstest;
 
-    use crate::domain::{Direction, ThemeChoice, ThemeName, ThemeNameError, Themes};
+    use crate::domain::{
+        direction::Direction,
+        theme::{ThemeChoice, ThemeName, ThemeNameError, Themes},
+    };
 
     fn names(values: &[&'static str]) -> Vec<ThemeName> {
         values.iter().copied().map(ThemeName::from_static).collect()

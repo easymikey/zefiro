@@ -1,4 +1,9 @@
-use kernel::{Cmd, Message, Model, Moment, update::Unhandled};
+use kernel::{
+    cmd::Cmd,
+    domain::{model::Model, time::Moment},
+    message::Message,
+    update::machine::Unhandled,
+};
 
 pub(crate) fn update(
     model: &mut Model,

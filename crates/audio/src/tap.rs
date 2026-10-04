@@ -57,7 +57,7 @@ impl SpectrumTap {
         new_tap().1
     }
 
-    pub fn latest(&self, out: &mut [f32; WINDOW]) {
+    pub(crate) fn latest(&self, out: &mut [f32; WINDOW]) {
         *out = *self.output.borrow_mut().read();
     }
 }

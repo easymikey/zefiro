@@ -1,11 +1,13 @@
 use kernel::domain::{
-    AppearanceControl,
-    AppearanceRow,
-    AppearanceSetting,
-    Choice,
-    Direction,
-    SettingRow,
     appearance_rows::AppearanceField,
+    direction::Direction,
+    setting_row::{
+        AppearanceControl,
+        AppearanceRow,
+        AppearanceSetting,
+        Choice,
+        SettingRow,
+    },
 };
 
 fn rows() -> Vec<SettingRow> {

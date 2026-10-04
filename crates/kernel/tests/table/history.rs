@@ -1,11 +1,16 @@
 use kernel::{
-    Cmd,
-    Message,
-    QueueRequest,
-    domain::{Cursor, CursorOver, Direction, Toast, ViewIndex},
+    cmd::Cmd,
+    domain::{
+        cursor::Cursor,
+        cursor_over::CursorOver,
+        direction::Direction,
+        index::ViewIndex,
+        toast::Toast,
+    },
+    message::{Message, QueueRequest},
     update::{
-        Unhandled,
-        overlay::{HistoryMessage, HistoryPick},
+        machine::Unhandled,
+        overlay::history::{HistoryMessage, HistoryPick},
     },
 };
 use rstest::rstest;
@@ -62,7 +67,7 @@ fn history_cell(
     #[case] expected: Result<
         (
             CursorOver<()>,
-            <CursorOver<()> as kernel::update::Machine>::Effect,
+            <CursorOver<()> as kernel::update::machine::Machine>::Effect,
         ),
         Unhandled,
     >,

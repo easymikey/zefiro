@@ -1,6 +1,9 @@
 use std::{borrow::Cow, path::Path, sync::Arc};
 
-use kernel::{LibrarySubject, Track, domain::Decibels};
+use kernel::{
+    domain::track::{Decibels, Track},
+    message::LibrarySubject,
+};
 use lofty::{
     config::ParseOptions,
     file::TaggedFile,
@@ -39,7 +42,7 @@ pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
     let properties = tagged.properties();
     let duration = properties.duration();
     let tag = main_tag(&tagged);
-    let audio_format = kernel::AudioFormat {
+    let audio_format = kernel::domain::track::AudioFormat {
         format: Some(format!("{:?}", tagged.file_type())),
         sample_rate_hz: properties.sample_rate(),
         bitrate_kbps: properties.audio_bitrate(),
@@ -49,7 +52,7 @@ pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
             .and_then(|tag| tag.get_string(ItemKey::ReplayGainTrackGain))
             .and_then(parse_replay_gain),
     };
-    let tags = tag.map_or_else(kernel::Tags::default, tags_from);
+    let tags = tag.map_or_else(kernel::domain::track::Tags::default, tags_from);
     Ok(Track::builder()
         .path(path)
         .duration(duration)
@@ -58,8 +61,8 @@ pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
         .build())
 }
 
-fn tags_from(tag: &Tag) -> kernel::Tags {
-    kernel::Tags {
+fn tags_from(tag: &Tag) -> kernel::domain::track::Tags {
+    kernel::domain::track::Tags {
         title: tag_text(tag.title()),
         artist: tag_text(tag.artist()),
         album: tag_text(tag.album()),
@@ -102,7 +105,7 @@ pub fn embedded_cover(path: &Path) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::Decibels;
+    use kernel::domain::track::Decibels;
     use rstest::{fixture, rstest};
 
     use crate::{

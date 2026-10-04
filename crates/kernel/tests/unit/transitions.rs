@@ -1,44 +1,35 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use kernel::{
-    AudioCmd,
-    AudioFormat,
-    Bounded,
-    Cmd,
-    ConfigEvent,
-    Cue,
-    Effect,
-    LibraryEvent,
-    MacosCmd,
-    MacosEvent,
-    Message,
-    Model,
-    Moment,
-    Percent,
-    PlaybackRequest,
-    Player,
-    Playhead,
-    PlaylistRequest,
-    Preload,
-    Speed,
-    Tags,
-    Timer,
-    ToastKind,
-    Track,
-    TrackLoad,
-    Transport,
-    WindowColorsCmd,
+    cmd::{AudioCmd, Cmd, Cue, Effect, MacosCmd, TrackLoad, WindowColorsCmd},
     domain::{
-        Action,
-        Cursor,
-        Direction,
-        KeyOverride,
-        KeymapOverrides,
-        Revision,
-        ThemeName,
-        ViewIndex,
+        bounded::Bounded,
+        cursor::Cursor,
+        direction::Direction,
+        index::ViewIndex,
+        keymap::{Action, KeyOverride, KeymapOverrides},
+        model::Model,
+        percent::Percent,
+        player::{Player, Preload},
+        playhead::Playhead,
+        playlist::{PlayOrder, Playlist, RepeatMode},
+        revision::Revision,
+        speed::Speed,
+        theme::ThemeName,
+        time::Moment,
+        toast::ToastKind,
+        track::{AudioFormat, Tags, Track},
+        transport::Transport,
     },
-    playlist::{PlayOrder, Playlist, RepeatMode},
+    message::{
+        ConfigEvent,
+        LibraryEvent,
+        MacosEvent,
+        Message,
+        PlaybackRequest,
+        PlaylistRequest,
+        Timer,
+    },
 };
 use rstest::rstest;
 
@@ -60,7 +51,7 @@ fn driver_effects(cmd: Cmd) -> Vec<Effect> {
 fn ack_loaded(m: &mut Model) -> Cmd {
     update(
         m,
-        Message::Audio(kernel::AudioEvent::Loaded(None)),
+        Message::Audio(kernel::message::AudioEvent::Loaded(None)),
         Moment::default(),
     )
     .unwrap()
@@ -221,7 +212,7 @@ fn quit_stops_audio_flushes_config_resets_the_window_colors_and_ends_with_quit()
     ));
     assert!(matches!(
         effects.get(1),
-        Some(Effect::Config(kernel::ConfigCmd::Flush))
+        Some(Effect::Config(kernel::cmd::ConfigCmd::Flush))
     ));
     assert!(matches!(
         effects.get(2),
@@ -318,7 +309,7 @@ fn a_natural_track_change_follows_only_a_cursor_that_was_on_the_playing_row(
 ) {
     let mut m = model_playing_at(3, 0, Duration::ZERO);
     m.workspace.browse.cursor = Cursor::with_len(3).at(cursor);
-    apply(&mut m, Message::Audio(kernel::AudioEvent::Ended));
+    apply(&mut m, Message::Audio(kernel::message::AudioEvent::Ended));
     assert_eq!(m.workspace.browse.selected(), ViewIndex::new(expected));
 }
 
@@ -373,7 +364,9 @@ fn preload_peeks_queue_head_when_queue_nonempty() {
 
     apply(
         &mut m,
-        Message::Audio(kernel::AudioEvent::Playhead(Duration::from_secs(95))),
+        Message::Audio(kernel::message::AudioEvent::Playhead(Duration::from_secs(
+            95,
+        ))),
     );
     let mark = m.revisions.lookahead;
     let cmd = update(
@@ -406,7 +399,7 @@ fn track_ended_repeat_one_without_current_stops() {
 
     let cmd2 = update(
         &mut m,
-        Message::Audio(kernel::AudioEvent::Ended),
+        Message::Audio(kernel::message::AudioEvent::Ended),
         Moment::default(),
     )
     .unwrap();
@@ -421,9 +414,9 @@ fn track_ended_repeat_one_without_current_stops() {
         track: arc_track("/tmp/track0.flac"),
         at: Duration::ZERO,
     },
-    kernel::AudioError::Decode {
+    kernel::message::AudioError::Decode {
         path: "/tmp/track0.flac".into(),
-        kind: kernel::DecodeError::Unreadable(kernel::IoError::Missing),
+        kind: kernel::message::DecodeError::Unreadable(kernel::domain::io_error::IoError::Missing),
     },
     "not found"
 )]
@@ -433,7 +426,7 @@ fn track_ended_repeat_one_without_current_stops() {
         head: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
         preload: Preload::Queued(arc_track("/tmp/track1.flac")),
     },
-    kernel::AudioError::Stream { reason: kernel::domain::Diagnostic::from_error(&std::io::Error::other("cannot preload /tmp/track1.flac: no such file")) },
+    kernel::message::AudioError::Stream { reason: kernel::domain::config::Diagnostic::from_error(&std::io::Error::other("cannot preload /tmp/track1.flac: no such file")) },
     "cannot preload"
 )]
 #[case::a_seek_the_source_refuses(
@@ -442,19 +435,22 @@ fn track_ended_repeat_one_without_current_stops() {
         head: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
         preload: Preload::None,
     },
-    kernel::AudioError::Seek { reason: kernel::domain::Diagnostic::from_error(&std::io::Error::other("the source cannot seek")) },
+    kernel::message::AudioError::Seek { reason: kernel::domain::config::Diagnostic::from_error(&std::io::Error::other("the source cannot seek")) },
     "cannot seek"
 )]
 fn an_audio_failure_raises_an_error_toast(
     #[case] player: Player,
-    #[case] error: kernel::AudioError,
+    #[case] error: kernel::message::AudioError,
     #[case] excerpt: &str,
 ) {
     let mut m = Model {
         player,
         ..Default::default()
     };
-    apply(&mut m, Message::Audio(kernel::AudioEvent::Error(error)));
+    apply(
+        &mut m,
+        Message::Audio(kernel::message::AudioEvent::Error(error)),
+    );
     let toast = m.workspace.toasts.first().unwrap();
     assert_eq!(toast.kind, ToastKind::Error);
     let text = toast.text.as_deref().map_or("", str::trim);

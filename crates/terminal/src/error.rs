@@ -20,7 +20,7 @@ pub enum Error {
 mod tests {
     use std::io;
 
-    use kernel::domain::ThemeName;
+    use kernel::domain::theme::ThemeName;
     use rstest::rstest;
 
     use crate::{error::Error, window_colors::UnknownThemeError};

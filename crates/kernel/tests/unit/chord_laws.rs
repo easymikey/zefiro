@@ -1,4 +1,7 @@
-use kernel::{Key, Modifiers, domain::Chord};
+use kernel::domain::{
+    chord::Chord,
+    key::{Key, Modifiers},
+};
 use proptest::prelude::{prop_assert_eq, proptest};
 
 use crate::support::strategies::unmodified_key_code;

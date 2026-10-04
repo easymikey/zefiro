@@ -1,9 +1,12 @@
 use std::{ops::ControlFlow, time::Instant};
 
 use kernel::{
-    Effect,
-    Message,
-    domain::{DriverName, Drivers, TrackIndex},
+    cmd::Effect,
+    domain::{
+        driver::{DriverName, Drivers},
+        index::TrackIndex,
+    },
+    message::Message,
 };
 
 use crate::{
@@ -59,10 +62,7 @@ pub(crate) fn interpret(
                 interpreter.trace.record(sent);
             }
             Effect::Library(command) => {
-                let sent = interpreter
-                    .ports
-                    .library
-                    .send_command(interpreter.drivers, command);
+                let sent = interpreter.ports.library.send(interpreter.drivers, command);
                 interpreter.trace.record(sent);
             }
             Effect::Macos(command) => {
@@ -109,36 +109,38 @@ pub(crate) fn interpret(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{path::PathBuf, time::Duration};
 
     use crossbeam_channel::{Receiver, never, unbounded};
     use kernel::{
-        AudioCmd,
-        Cmd,
-        ConfigCmd,
-        ConfigPatch,
-        Cue,
-        Effect,
-        LibraryCmd,
-        MacosCmd,
-        Message,
-        Timer,
-        WindowColorsCmd,
-        domain::{
-            DriverName,
-            DriverStatus,
-            Model,
-            OptionCount,
-            OutputDevice,
-            Revision,
-            TrackIndex,
+        cmd::{
+            AudioCmd,
+            Cmd,
+            ConfigCmd,
+            ConfigPatch,
+            CoverJob,
+            Cue,
+            Effect,
+            LibraryCmd,
+            MacosCmd,
+            WindowColorsCmd,
         },
+        domain::{
+            device::OutputDevice,
+            driver::{DriverName, DriverStatus},
+            geometry::Pixels,
+            index::TrackIndex,
+            model::Model,
+            revision::Revision,
+            setting_row::OptionCount,
+        },
+        message::{Message, Timer},
     };
 
     use crate::{
         interpret::{Interpreted, Interpreter, interpret},
         outbox::Congestion,
-        port::{LibraryPort, Port, Ports},
+        port::{Port, Ports},
         shell::ShellEffect,
         timers::Timers,
         trace::{DropReason, Trace, TraceEntry},
@@ -171,13 +173,10 @@ mod tests {
                         audio_tx,
                         Congestion::default(),
                     ),
-                    library: LibraryPort::new(
-                        Port::new(
-                            DriverName::Library,
-                            library_tx,
-                            Congestion::default(),
-                        ),
-                        unbounded().0,
+                    library: Port::new(
+                        DriverName::Library,
+                        library_tx,
+                        Congestion::default(),
                     ),
                     config: Port::new(
                         DriverName::Config,
@@ -292,7 +291,7 @@ mod tests {
 
         run(
             Cmd::effect(Effect::Macos(MacosCmd::SetVolume(
-                kernel::Percent::default(),
+                kernel::domain::percent::Percent::default(),
             ))),
             &mut interpreter,
         );
@@ -315,7 +314,7 @@ mod tests {
 
         run(
             Cmd::effect(Effect::Macos(MacosCmd::SetVolume(
-                kernel::Percent::default(),
+                kernel::domain::percent::Percent::default(),
             ))),
             &mut interpreter,
         );
@@ -346,6 +345,57 @@ mod tests {
         ));
     }
 
+    fn cover_job() -> CoverJob {
+        CoverJob {
+            path: PathBuf::from("/music/cover.jpg"),
+            side: Pixels(64),
+        }
+    }
+
+    #[test]
+    fn every_cover_job_is_forwarded_to_the_library() {
+        let mut fixture = Fixture::new();
+        let mut interpreter = fixture.interpreter();
+        let cmd = Cmd::from_iter([
+            Effect::Library(LibraryCmd::DecodeCover(cover_job())),
+            Effect::Library(LibraryCmd::PrefetchCover(cover_job())),
+        ]);
+
+        run(cmd, &mut interpreter);
+
+        assert_eq!(
+            fixture.library_rx.try_iter().collect::<Vec<_>>(),
+            [
+                LibraryCmd::DecodeCover(cover_job()),
+                LibraryCmd::PrefetchCover(cover_job()),
+            ]
+        );
+        assert!(fixture.trace.is_empty());
+    }
+
+    #[test]
+    fn a_cover_job_for_a_stopped_library_is_dropped_and_traced_once() {
+        let mut fixture = Fixture::new();
+        fixture.model.drivers.record_mut(DriverName::Library).status =
+            DriverStatus::Stopped;
+        let mut interpreter = fixture.interpreter();
+
+        run(
+            Cmd::effect(Effect::Library(LibraryCmd::DecodeCover(cover_job()))),
+            &mut interpreter,
+        );
+
+        assert!(fixture.library_rx.try_recv().is_err());
+        assert_eq!(
+            fixture.trace.iter().collect::<Vec<_>>(),
+            [&TraceEntry::Dropped {
+                driver: DriverName::Library,
+                command: "decode_cover",
+                reason: DropReason::NotRunning,
+            }]
+        );
+    }
+
     #[test]
     fn a_config_save_is_routed() {
         let mut fixture = Fixture::new();
@@ -354,7 +404,7 @@ mod tests {
         run(
             Cmd::effect(Effect::Config(ConfigCmd::Save(
                 ConfigPatch::builder()
-                    .theme(kernel::domain::ThemeName::from_static("dark"))
+                    .theme(kernel::domain::theme::ThemeName::from_static("dark"))
                     .build(),
             ))),
             &mut interpreter,
@@ -363,7 +413,7 @@ mod tests {
         assert!(matches!(
             fixture.config_rx.try_recv(),
             Ok(ConfigCmd::Save(patch))
-                if patch.theme.as_ref().map(kernel::domain::ThemeName::as_str) == Some("dark")
+                if patch.theme.as_ref().map(kernel::domain::theme::ThemeName::as_str) == Some("dark")
         ));
     }
 

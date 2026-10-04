@@ -8,18 +8,19 @@ use kernel::domain::{
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 use ratatui_image::picker::Picker;
 use rstest::rstest;
-use terminal::CoverPainter;
+use terminal::pixels::CoverPainter;
 use widgets::{
-    AnimationTimings,
-    Breakpoint,
-    CardCover,
-    CoverImage,
-    CoverMotion,
-    CoverRefresh,
-    CoverWash,
-    CrossfadePermit,
-    FrameLayout,
-    ToastAreas,
+    animation::timings::AnimationTimings,
+    card::CardCover,
+    pixels::cover::{
+        CoverImage,
+        CoverMotion,
+        CoverRefresh,
+        CoverWash,
+        CrossfadePermit,
+    },
+    screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
+    toast::ToastAreas,
 };
 
 use crate::unit::support::{Scenery, playing_model};
@@ -54,7 +55,7 @@ fn layout_with_cover(cover: Option<Rect>) -> FrameLayout {
 
 fn parts(layout: FrameLayout, crossfade: CrossfadePermit) -> CoverRefresh {
     CoverRefresh {
-        layout,
+        cover: layout.cover,
         crossfade,
         wash: CoverWash::Idle,
     }
@@ -74,7 +75,7 @@ fn painted(buffer: &Buffer, rect: Rect) -> bool {
 #[test]
 fn no_decoded_cover_is_missing_art() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Plain;
+    sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
@@ -86,7 +87,7 @@ fn no_decoded_cover_is_missing_art() {
 #[test]
 fn a_decoded_cover_is_placed_as_an_image() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Plain;
+    sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
     pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
@@ -103,7 +104,7 @@ fn a_decoded_cover_is_placed_as_an_image() {
 #[test]
 fn an_off_style_never_shows_the_cover() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Off;
+    sources.model.settings.appearance.cover_mode = CoverMode::Off;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
     pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
@@ -116,7 +117,7 @@ fn an_off_style_never_shows_the_cover() {
 #[test]
 fn a_vinyl_style_paints_an_image_over_the_cover_rect_even_without_art() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Vinyl;
+    sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
@@ -132,7 +133,7 @@ fn a_vinyl_style_paints_an_image_over_the_cover_rect_even_without_art() {
 #[test]
 fn a_vinyl_style_with_no_cover_rect_is_missing() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Vinyl;
+    sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
 
@@ -146,7 +147,7 @@ fn a_vinyl_style_with_no_cover_rect_is_missing() {
 #[test]
 fn a_milkdrop_style_returns_text_sized_to_the_cover_rect() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Milkdrop;
+    sources.model.settings.appearance.cover_mode = CoverMode::Milkdrop;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let rect = cover_rect();
     let layout = layout_with_cover(Some(rect));
@@ -165,7 +166,7 @@ fn a_milkdrop_style_returns_text_sized_to_the_cover_rect() {
 #[test]
 fn a_milkdrop_style_with_no_cover_rect_is_missing() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Milkdrop;
+    sources.model.settings.appearance.cover_mode = CoverMode::Milkdrop;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
 
     let art = pixels.refresh(
@@ -182,15 +183,15 @@ fn switching_from_plain_to_vinyl_and_back_keeps_showing_the_plain_image() {
     let layout = layout_with_cover(Some(cover_rect()));
     pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
 
-    sources.appearance_mut().settings.cover_mode = CoverMode::Plain;
+    sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     let first =
         pixels.refresh(&sources.scene(), parts(layout, CrossfadePermit::Withheld));
     assert!(matches!(first, CardCover::Image));
 
-    sources.appearance_mut().settings.cover_mode = CoverMode::Vinyl;
+    sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
     pixels.refresh(&sources.scene(), parts(layout, CrossfadePermit::Withheld));
 
-    sources.appearance_mut().settings.cover_mode = CoverMode::Plain;
+    sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     let back =
         pixels.refresh(&sources.scene(), parts(layout, CrossfadePermit::Withheld));
     assert!(
@@ -209,17 +210,17 @@ fn switching_between_milkdrop_and_vinyl_changes_the_cover_art_kind_immediately()
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
-    sources.appearance_mut().settings.cover_mode = CoverMode::Milkdrop;
+    sources.model.settings.appearance.cover_mode = CoverMode::Milkdrop;
     let text =
         pixels.refresh(&sources.scene(), parts(layout, CrossfadePermit::Withheld));
     assert!(matches!(text, CardCover::Text(_)));
 
-    sources.appearance_mut().settings.cover_mode = CoverMode::Vinyl;
+    sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
     let image =
         pixels.refresh(&sources.scene(), parts(layout, CrossfadePermit::Withheld));
     assert!(matches!(image, CardCover::Image));
 
-    sources.appearance_mut().settings.cover_mode = CoverMode::Milkdrop;
+    sources.model.settings.appearance.cover_mode = CoverMode::Milkdrop;
     let text_again =
         pixels.refresh(&sources.scene(), parts(layout, CrossfadePermit::Withheld));
     assert!(matches!(text_again, CardCover::Text(_)));
@@ -230,7 +231,7 @@ fn a_reused_plan_returns_the_same_lines_allocation() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Milkdrop;
+    sources.model.settings.appearance.cover_mode = CoverMode::Milkdrop;
     let parts = parts(layout, CrossfadePermit::Withheld);
 
     let first = pixels.refresh(&sources.scene(), parts);
@@ -245,7 +246,7 @@ fn a_reused_plan_returns_the_same_lines_allocation() {
 #[test]
 fn reusing_the_same_path_and_rect_stays_an_image_across_frames() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Plain;
+    sources.model.settings.appearance.cover_mode = CoverMode::Plain;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
     pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
@@ -259,8 +260,8 @@ fn reusing_the_same_path_and_rect_stays_an_image_across_frames() {
 #[test]
 fn an_allowed_track_change_crossfades_over_time() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Plain;
-    sources.appearance_mut().settings.animations = Animations::On;
+    sources.model.settings.appearance.cover_mode = CoverMode::Plain;
+    sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
@@ -298,8 +299,8 @@ fn no_cover_reports_a_still_motion() {
 #[test]
 fn an_allowed_new_path_reports_crossfading() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Plain;
-    sources.appearance_mut().settings.animations = Animations::On;
+    sources.model.settings.appearance.cover_mode = CoverMode::Plain;
+    sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
@@ -324,8 +325,8 @@ fn an_allowed_new_path_reports_crossfading() {
 #[test]
 fn a_withheld_new_path_stays_still() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Plain;
-    sources.appearance_mut().settings.animations = Animations::On;
+    sources.model.settings.appearance.cover_mode = CoverMode::Plain;
+    sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
@@ -350,8 +351,8 @@ fn a_withheld_new_path_stays_still() {
 #[test]
 fn a_crossfade_reports_crossfading_until_a_paint_settles_it() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Plain;
-    sources.appearance_mut().settings.animations = Animations::On;
+    sources.model.settings.appearance.cover_mode = CoverMode::Plain;
+    sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
@@ -380,8 +381,8 @@ fn a_crossfade_reports_crossfading_until_a_paint_settles_it() {
 #[test]
 fn a_wider_rect_forces_a_rebuild_without_a_crossfade() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Plain;
-    sources.appearance_mut().settings.animations = Animations::On;
+    sources.model.settings.appearance.cover_mode = CoverMode::Plain;
+    sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     pixels.set_cover(cover("song.mp3", Rgba([200, 10, 10, 255])));
 
@@ -404,7 +405,7 @@ fn a_wider_rect_forces_a_rebuild_without_a_crossfade() {
 #[test]
 fn a_settled_theme_wash_ends_on_the_new_image_and_goes_still() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Vinyl;
+    sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
@@ -433,8 +434,8 @@ fn a_settled_theme_wash_ends_on_the_new_image_and_goes_still() {
 #[test]
 fn a_theme_change_with_no_wash_staged_installs_the_new_image_at_once() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Vinyl;
-    sources.appearance_mut().settings.animations = Animations::Off;
+    sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
+    sources.model.settings.appearance.animations = Animations::Off;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(cover_rect()));
 
@@ -451,8 +452,8 @@ fn a_theme_change_with_no_wash_staged_installs_the_new_image_at_once() {
 #[test]
 fn a_vinyl_rebuild_with_permission_on_a_new_path_crossfades_then_settles() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Vinyl;
-    sources.appearance_mut().settings.animations = Animations::On;
+    sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
+    sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(Rect::new(0, 0, 10, 10)));
     let allowed = parts(layout, CrossfadePermit::Allowed);
@@ -477,8 +478,8 @@ fn a_vinyl_rebuild_with_permission_on_a_new_path_crossfades_then_settles() {
 #[test]
 fn a_vinyl_rebuild_without_permission_never_crossfades() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Vinyl;
-    sources.appearance_mut().settings.animations = Animations::On;
+    sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
+    sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let layout = layout_with_cover(Some(Rect::new(0, 0, 10, 10)));
 
@@ -492,8 +493,8 @@ fn a_vinyl_rebuild_without_permission_never_crossfades() {
 #[test]
 fn a_vinyl_rebuild_for_a_new_rect_on_the_same_path_never_crossfades() {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Vinyl;
-    sources.appearance_mut().settings.animations = Animations::On;
+    sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
+    sources.model.settings.appearance.animations = Animations::On;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     pixels.set_cover(cover("a.jpg", Rgba([200, 100, 50, 255])));
 
@@ -513,7 +514,7 @@ fn a_toast_overlapping_the_cover_rect_hides_it(
     #[case] visible: bool,
 ) {
     let mut sources = Scenery::new(playing_model("moon-river", 200, 50));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Vinyl;
+    sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
     let mut pixels = CoverPainter::new(Picker::halfblocks());
     let mut layout = layout_with_cover(Some(cover_rect()));
     layout.toast = toast.map(|rect| ToastAreas {

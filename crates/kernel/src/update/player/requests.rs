@@ -2,7 +2,12 @@ use std::{mem, sync::Arc, time::Duration};
 
 use crate::{
     cmd::{Cmd, PlaybackChange},
-    domain::{Moment, PausedBy, Player, Playhead, Preload, Track},
+    domain::{
+        player::{PausedBy, Player, Preload},
+        playhead::Playhead,
+        time::Moment,
+        track::Track,
+    },
     update::{
         machine::Unhandled,
         player::{Anchor, Stamp, StartOrigin, seek_effect},

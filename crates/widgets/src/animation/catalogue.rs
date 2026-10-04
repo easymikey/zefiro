@@ -66,7 +66,7 @@ fn slide_inside_the_card(
 ) {
     let CardSlide { background, hidden } = slide;
     let card = context.area.intersection(buffer.area);
-    let shift = crate::pixels::round::<u16>(f32::from(card.width) * hidden);
+    let shift = crate::pixels::numeric::round::<u16>(f32::from(card.width) * hidden);
     if shift == 0 {
         return;
     }

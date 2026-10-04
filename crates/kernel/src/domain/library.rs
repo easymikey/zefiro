@@ -2,7 +2,11 @@ use std::{borrow::Borrow, sync::Arc};
 
 use strum::EnumIter;
 
-use crate::domain::{Favorites, Track, TrackIndex, ViewIndex};
+use crate::domain::{
+    favorites::Favorites,
+    index::{TrackIndex, ViewIndex},
+    track::Track,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct Library {
@@ -12,7 +16,7 @@ pub struct Library {
 
 impl Library {
     #[must_use]
-    pub(crate) fn view_track(&self, row: ViewIndex) -> Option<&Arc<Track>> {
+    pub fn view_track(&self, row: ViewIndex) -> Option<&Arc<Track>> {
         let index = self.view.get(row.get())?;
         self.tracks.get(index.get())
     }

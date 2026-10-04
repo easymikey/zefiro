@@ -7,7 +7,7 @@ pub enum Direction {
 
 impl Direction {
     #[must_use]
-    pub const fn sign(self) -> isize {
+    pub(crate) const fn sign(self) -> isize {
         match self {
             Direction::Next => 1,
             Direction::Previous => -1,
@@ -15,7 +15,7 @@ impl Direction {
     }
 
     #[must_use]
-    pub fn wrapped(self, current: usize, len: usize) -> usize {
+    pub(crate) fn wrapped(self, current: usize, len: usize) -> usize {
         let len = len.max(1);
         match self {
             Direction::Next => current.saturating_add(1) % len,

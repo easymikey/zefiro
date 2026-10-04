@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use strum::IntoStaticStr;
 
-use crate::domain::{Moment, Playhead, Speed, Track};
+use crate::domain::{playhead::Playhead, speed::Speed, time::Moment, track::Track};
 
 #[derive(Debug, Clone, Default, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -57,7 +57,7 @@ impl Player {
     }
 
     #[must_use]
-    pub fn preloaded(&self) -> Option<&Arc<Track>> {
+    pub(crate) fn preloaded(&self) -> Option<&Arc<Track>> {
         match self {
             Self::Playing { preload, .. } => preload.track(),
             Self::Stopped | Self::Loading { .. } | Self::Paused { .. } => None,
@@ -65,7 +65,7 @@ impl Player {
     }
 
     #[must_use]
-    pub fn reanchored(self, now: Moment, speed: Speed) -> Self {
+    pub(crate) fn reanchored(self, now: Moment, speed: Speed) -> Self {
         match self {
             Self::Playing {
                 track,
@@ -94,14 +94,14 @@ pub enum Preload {
 
 impl Preload {
     #[must_use]
-    pub fn track(&self) -> Option<&Arc<Track>> {
+    pub(crate) fn track(&self) -> Option<&Arc<Track>> {
         match self {
             Self::None => None,
             Self::Queued(track) | Self::Stale(track) => Some(track),
         }
     }
 
-    pub fn seek_reset(self) -> Self {
+    pub(crate) fn seek_reset(self) -> Self {
         match self {
             Self::Queued(track) => Self::Stale(track),
             other @ (Self::None | Self::Stale(_)) => other,

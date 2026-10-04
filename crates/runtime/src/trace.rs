@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use kernel::domain::DriverName;
+use kernel::domain::driver::DriverName;
 use strum::IntoStaticStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
@@ -70,7 +70,7 @@ impl Trace {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::DriverName;
+    use kernel::domain::driver::DriverName;
 
     use crate::trace::{DropReason, Trace, TraceEntry};
 

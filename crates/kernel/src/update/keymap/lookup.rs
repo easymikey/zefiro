@@ -1,14 +1,10 @@
 use crate::{
     domain::{
-        Chord,
-        ChordPrefix,
-        Key,
-        KeyCode,
-        KeyContext,
-        KeyPattern,
-        KeyPress,
-        Overlay,
-        Workspace,
+        chord::{Chord, ChordPrefix, KeyPattern},
+        key::{Key, KeyCode, KeyPress},
+        keymap::KeyContext,
+        overlay::Overlay,
+        workspace::Workspace,
     },
     message::{
         BrowseRequest,

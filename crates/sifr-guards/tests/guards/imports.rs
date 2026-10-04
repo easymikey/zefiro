@@ -9,6 +9,8 @@ const GLOB_SEGMENT: &str = concat!("::", "*");
 
 const PARENT_RULE: &str = "parent-relative import";
 const GLOB_RULE: &str = "glob import";
+const REEXPORT_RULE: &str = "re-export";
+const VISIBILITY_PREFIX: &str = "pub";
 
 fn starts_use_statement(line: &str) -> bool {
     let rest = line.strip_prefix("pub").map_or(line, |after| {
@@ -43,6 +45,9 @@ fn offenders(content: &str) -> Vec<(usize, &'static str)> {
                 continue;
             }
             inside_use = true;
+            if line.starts_with(VISIBILITY_PREFIX) {
+                found.push((index + 1, REEXPORT_RULE));
+            }
         }
         if let Some(rule) = broken_rule(line) {
             found.push((index + 1, rule));
@@ -79,7 +84,7 @@ fn every_use_names_an_absolute_path_and_no_glob() {
 
     support::report(
         "import guard: every `use` names its path from `crate::` (or an external \
-         crate) and no `use` ends in a glob — see docs/agent-rules.md.",
+         crate), no `use` ends in a glob and no `use` is public — see docs/agent-rules.md.",
         &violations,
         &support::stale(ALLOWLIST, &seen_allowlist),
     );

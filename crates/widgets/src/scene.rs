@@ -1,41 +1,47 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use kernel::{
-    Moment,
     domain::{
-        AppearanceSetting,
-        Favorites,
-        HistoryEntry,
-        Model,
-        Overlay,
-        Player,
-        Revisions,
-        ScanStatus,
-        Settings,
-        ThemeChoice,
-        Themes,
-        Toast,
-        Track,
-        TrackRef,
-        Transport,
-        ViewIndex,
-        appearance::{Appearance, CoverMode, ProgressTime},
+        appearance::{AppearanceSettings, CoverMode, ProgressTime},
+        favorites::Favorites,
         geometry::Cells,
+        history::HistoryEntry,
+        index::ViewIndex,
+        model::{Model, ScanStatus},
+        overlay::Overlay,
+        player::Player,
         playlist::Playlist,
+        revision::Revisions,
+        setting_row::AppearanceSetting,
+        settings::Settings,
+        theme::{ThemeChoice, Themes},
+        time::Moment,
+        toast::Toast,
+        track::{Track, TrackRef},
+        transport::Transport,
     },
-    update::keymap::KeyBinding,
+    update::keymap::chord::KeyBinding,
 };
 
 use crate::{
-    card::{CardMetrics, CardView, compact_progress_bar_width},
+    appearance::Appearance,
+    card::{
+        CardView,
+        compact::progress_bar_width as compact_progress_bar_width,
+        metrics::CardMetrics,
+    },
     geometry::{CoverSizing, cover_sizing},
     key_hints::KeyHintsView,
-    playlist::LibraryLoad,
+    playlist::pane::LibraryLoad,
     primitive::bar::hud_progress_bar_width,
     repaint::{OnScreen, Presence},
-    screen::{Breakpoint, FrameLayout, minimal_progress_bar_width},
+    screen::{
+        breakpoint::Breakpoint,
+        frame_layout::FrameLayout,
+        minimal::progress_bar_width as minimal_progress_bar_width,
+    },
     spectrum::Spectrum,
-    theme::{ActiveTheme, ColorDepth, Theme},
+    theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +52,7 @@ pub enum PixelPath {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScenePresentation<'a> {
+    pub appearance: &'a Appearance,
     pub theme: &'a Theme,
     pub color_depth: ColorDepth,
     pub spectrum: &'a Spectrum,
@@ -65,6 +72,7 @@ pub struct Scene<'a> {
     pub queue: &'a [TrackRef],
     pub favorites: &'a Favorites,
     pub themes: &'a Themes,
+    pub appearance: &'a Appearance,
     pub appearance_settings: &'a [AppearanceSetting],
     pub settings: &'a Settings,
     pub revisions: &'a Revisions,
@@ -99,6 +107,7 @@ impl<'a> Scene<'a> {
             queue: &model.queue,
             favorites: &model.favorites,
             themes: &model.themes,
+            appearance: presentation.appearance,
             appearance_settings: &model.appearance_settings,
             settings: &model.settings,
             revisions: &model.revisions,
@@ -134,12 +143,17 @@ impl<'a> Scene<'a> {
     }
 
     #[must_use]
-    pub fn active_theme(&self) -> ActiveTheme<'a> {
+    pub(crate) fn active_theme(&self) -> ActiveTheme<'a> {
         ActiveTheme::new(self.theme, self.color_depth)
             .with_progress(self.appearance().progress)
     }
 
-    pub fn appearance(&self) -> Appearance {
+    #[must_use]
+    pub fn appearance(&self) -> &Appearance {
+        self.appearance
+    }
+
+    pub fn appearance_settings(&self) -> AppearanceSettings {
         self.settings.appearance
     }
 
@@ -163,11 +177,11 @@ impl<'a> Scene<'a> {
 
     #[must_use]
     pub fn cover_mode(&self) -> CoverMode {
-        painted_cover_mode(self.appearance().settings.cover_mode, self.pixel_path)
+        painted_cover_mode(self.appearance_settings().cover_mode, self.pixel_path)
     }
 
     #[must_use]
-    pub fn cover_sizing(&self) -> CoverSizing {
+    pub(crate) fn cover_sizing(&self) -> CoverSizing {
         cover_sizing(self.cover_mode(), self.appearance().cover_cells)
     }
 
@@ -219,7 +233,7 @@ impl<'a> Scene<'a> {
             Breakpoint::Minimal => Some(
                 minimal_progress_bar_width(
                     CardView::from_scene(self),
-                    self.appearance().settings.speed_chip,
+                    self.appearance_settings().speed_chip,
                     Cells(layout.screen.width),
                 )
                 .0,
@@ -230,7 +244,7 @@ impl<'a> Scene<'a> {
 
     fn full_progress_bar_width(&self, metrics: &CardMetrics) -> u16 {
         let row_width = metrics.progress_row.width;
-        match self.appearance().settings.progress_time {
+        match self.appearance_settings().progress_time {
             ProgressTime::Remaining => hud_progress_bar_width(
                 row_width,
                 CardView::from_scene(self).remaining(),
@@ -279,11 +293,11 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        card::{CardView, compact_progress_bar_width},
+        card::{CardView, compact::progress_bar_width as compact_progress_bar_width},
         primitive::bar::hud_progress_bar_width,
         repaint::Presence,
         scene::{PixelPath, abbreviate_home, painted_cover_mode},
-        screen::{Breakpoint, FrameLayout},
+        screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
         test_support::{SceneSources, model_with_tracks},
     };
 
@@ -368,7 +382,7 @@ mod tests {
         sources.appearance_mut().breakpoints.min_columns = Cells(min_columns);
         sources.appearance_mut().breakpoints.min_rows = Cells(min_rows);
         if let Some(style) = style {
-            sources.appearance_mut().settings.progress_time = style;
+            sources.model.settings.appearance.progress_time = style;
         }
         let scene = sources.scene();
         let layout =

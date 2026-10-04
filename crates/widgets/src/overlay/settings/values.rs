@@ -1,47 +1,43 @@
 use std::{path::Path, time::Duration};
 
-use kernel::{
-    Bounded,
-    domain::{
-        AppearanceSetting,
-        Crossfade,
-        ListedDevice,
-        ReplayGain,
-        SettingRow,
-        SleepPresets,
-        ThemeName,
-        appearance::{
-            Animations,
-            AppearancePatch,
-            AppearancePreset,
-            AppearanceSettings,
-            CoverBrackets,
-            FormatChips,
-            KeyHints,
-            ProgressTime,
-            preset_of,
-        },
-        appearance_rows::{AppearanceField, appearance_patch, appearance_row},
-        format_sleep_presets_label,
+use kernel::domain::{
+    appearance::{
+        Animations,
+        AppearancePatch,
+        AppearancePreset,
+        AppearanceSettings,
+        CoverBrackets,
+        FormatChips,
+        KeyHints,
+        ProgressTime,
+        preset_of,
     },
+    appearance_rows::{AppearanceField, appearance_patch, appearance_row},
+    bounded::Bounded,
+    crossfade::Crossfade,
+    device::ListedDevice,
+    setting_row::{AppearanceSetting, SettingRow},
+    settings::ReplayGain,
+    sleep_presets::SleepPresets,
+    theme::ThemeName,
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::primitive::glyphs;
+use crate::{primitive::glyphs, repaint::SECONDS_PER_MINUTE};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SettingsView<'a> {
-    pub crossfade: Crossfade,
-    pub replay_gain: ReplayGain,
-    pub theme: &'a str,
-    pub themes: &'a [ThemeName],
-    pub sleep_presets: &'a [Duration],
-    pub music_dir: &'a Path,
-    pub home: Option<&'a Path>,
-    pub output_device: Option<&'a str>,
-    pub output_devices: &'a [ListedDevice],
-    pub appearance: AppearanceSettings,
-    pub appearance_settings: &'a [AppearanceSetting],
+    pub(crate) crossfade: Crossfade,
+    pub(crate) replay_gain: ReplayGain,
+    pub(crate) theme: &'a str,
+    pub(crate) themes: &'a [ThemeName],
+    pub(crate) sleep_presets: &'a [Duration],
+    pub(crate) music_dir: &'a Path,
+    pub(crate) home: Option<&'a Path>,
+    pub(crate) output_device: Option<&'a str>,
+    pub(crate) output_devices: &'a [ListedDevice],
+    pub(crate) appearance: AppearanceSettings,
+    pub(crate) appearance_settings: &'a [AppearanceSetting],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,6 +259,17 @@ fn format_duration_step(duration: Duration) -> String {
     )
 }
 
+fn format_sleep_presets_label(presets: &[Duration]) -> String {
+    if presets.is_empty() {
+        return "off".to_string();
+    }
+    presets
+        .iter()
+        .map(|preset| format!("{}m", preset.as_secs() / SECONDS_PER_MINUTE))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn format_pick(current: &str) -> String {
     format!(
         "{}{current}{}",
@@ -283,9 +290,12 @@ impl<'a> SettingsView<'a> {
             sleep_presets: audio.sleep_presets.as_slice(),
             music_dir: scene.music_dir,
             home: scene.home,
-            output_device: audio.device.named().map(kernel::domain::DeviceName::as_str),
+            output_device: audio
+                .device
+                .named()
+                .map(kernel::domain::device::DeviceName::as_str),
             output_devices: &scene.settings.output_devices,
-            appearance: scene.appearance().settings,
+            appearance: scene.appearance_settings(),
             appearance_settings: scene.appearance_settings,
         }
     }
@@ -301,17 +311,37 @@ impl<'a> SettingsView<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use kernel::domain::{
-        ReplayGain,
-        SettingRow,
         appearance::CoverMode,
         appearance_rows::{APPEARANCE_ROWS, AppearanceField},
+        setting_row::SettingRow,
+        settings::ReplayGain,
     };
 
     use crate::overlay::settings::{
         test_support::{appearance_settings, settings_values},
-        values::{SettingsView, settings_label, value_text},
+        values::{
+            SettingsView,
+            format_sleep_presets_label,
+            settings_label,
+            value_text,
+        },
     };
+
+    #[test]
+    fn sleep_presets_label_renders_minutes_or_off() {
+        assert_eq!(
+            format_sleep_presets_label(&[
+                Duration::from_secs(15 * 60),
+                Duration::from_secs(30 * 60),
+                Duration::from_secs(60 * 60),
+            ]),
+            "15m, 30m, 60m"
+        );
+        assert_eq!(format_sleep_presets_label(&[]), "off");
+    }
 
     #[test]
     fn toggle_on_off_render_distinct_glyphs() {

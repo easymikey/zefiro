@@ -1,4 +1,4 @@
-use kernel::domain::AudioFormat;
+use kernel::domain::track::AudioFormat;
 use num_traits::ToPrimitive;
 use ratatui::text::{Line, Span};
 
@@ -54,7 +54,7 @@ pub(crate) fn fit_format_chips(
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::AudioFormat;
+    use kernel::domain::track::AudioFormat;
     use ratatui::style::Color;
     use rstest::rstest;
 

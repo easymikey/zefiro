@@ -1,41 +1,9 @@
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
-use runtime::Frame;
-use widgets::{
-    ColorDepth,
-    FrameLayout,
-    PixelPath,
-    Scene,
-    ScenePresentation,
-    Spectrum,
-    Theme,
-};
+use runtime::shell::Frame;
+use widgets::scene::{Scene, ScenePresentation};
 
-use crate::shell::motion::Motion;
-
-pub(crate) struct ShellPresentation {
-    pub(in crate::shell) theme: Theme,
-    pub(in crate::shell) pixel_path: PixelPath,
-    pub(in crate::shell) color_depth: ColorDepth,
-    pub(in crate::shell) cell_aspect: f32,
-    pub(in crate::shell) home: Option<PathBuf>,
-    pub(in crate::shell) spectrum: Spectrum,
-}
-
-pub(crate) struct LaidOutScene<'a> {
-    pub(crate) scene: Scene<'a>,
-    pub(crate) layout: FrameLayout,
-}
-
-pub(crate) fn view<'a>(
-    frame: &Frame<'a>,
-    presentation: &'a ShellPresentation,
-    motion: &Motion,
-) -> LaidOutScene<'a> {
-    let scene = scene(frame, presentation, motion);
-    let layout = FrameLayout::from_scene(&scene, motion.area);
-    LaidOutScene { scene, layout }
-}
+use crate::shell::{motion::Motion, presentation::ShellPresentation};
 
 pub(crate) fn scene<'a>(
     frame: &Frame<'a>,
@@ -45,6 +13,7 @@ pub(crate) fn scene<'a>(
     Scene::from_model(
         frame.model,
         ScenePresentation {
+            appearance: &presentation.appearance,
             theme: &presentation.theme,
             color_depth: presentation.color_depth,
             spectrum: &presentation.spectrum,
@@ -63,35 +32,21 @@ pub(crate) fn scene<'a>(
 }
 
 #[cfg(test)]
-pub(in crate::shell) fn test_presentation() -> ShellPresentation {
-    ShellPresentation {
-        theme: crate::startup::theme(crate::startup::fallback_theme()),
-        pixel_path: PixelPath::Halfblocks,
-        color_depth: ColorDepth::TrueColor,
-        cell_aspect: widgets::DEFAULT_CELL_ASPECT,
-        home: None,
-        spectrum: [0.0; widgets::SPECTRUM_BANDS],
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use audio::tap::SpectrumTap;
-    use kernel::{Moment, domain::Model};
+    use kernel::domain::{model::Model, time::Moment};
     use ratatui::layout::Rect;
-    use runtime::Frame;
+    use runtime::shell::Frame;
+    use widgets::screen::frame_layout::FrameLayout;
 
-    use crate::shell::{
-        motion::Motion,
-        view::{LaidOutScene, test_presentation, view},
-    };
+    use crate::shell::{motion::Motion, presentation::test_presentation, view::scene};
 
     #[test]
     fn a_view_of_a_stock_model_lays_out_the_whole_frame() {
         let model = Model::default();
-        let (_senders, latest, _doorbell) = runtime::latest_channels();
+        let (_senders, latest, _doorbell) = runtime::latest::latest_channels();
         let spectrum = SpectrumTap::silent();
         let area = Rect::new(0, 0, 80, 24);
         let presentation = test_presentation();
@@ -107,7 +62,8 @@ mod tests {
             now: Moment::new(Duration::from_secs(5)),
         };
 
-        let LaidOutScene { layout, .. } = view(&frame, &presentation, &motion);
+        let layout =
+            FrameLayout::from_scene(&scene(&frame, &presentation, &motion), area);
 
         assert_eq!(layout.screen, area);
         insta::assert_debug_snapshot!(layout);

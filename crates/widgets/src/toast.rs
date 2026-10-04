@@ -1,4 +1,7 @@
-use kernel::domain::{Moment, TOAST_LIFETIME, Toast, ToastKind};
+use kernel::domain::{
+    time::Moment,
+    toast::{TOAST_LIFETIME, Toast, ToastKind},
+};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -10,8 +13,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     primitive::{canvas::Canvas, inset::Inset, text::truncate},
     scene::Scene,
-    screen::Breakpoint,
-    theme::{ActiveTheme, Role},
+    screen::breakpoint::Breakpoint,
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 const TOAST_WIDTH: u16 = 42;
@@ -77,7 +80,7 @@ fn icon(kind: ToastKind) -> &'static str {
 pub(crate) struct ToastWidget<'a> {
     pub(crate) toasts: &'a [Toast],
     pub(crate) now: Moment,
-    pub(crate) style: ToastStyle,
+    pub style: ToastStyle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -312,13 +315,16 @@ impl Widget for ToastWidget<'_> {
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::{Moment, Toast, ToastKind};
+    use kernel::domain::{
+        time::Moment,
+        toast::{Toast, ToastKind},
+    };
     use ratatui::layout::Rect;
 
     use crate::{
-        screen::Breakpoint,
+        screen::breakpoint::Breakpoint,
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
         toast::{ToastStyle, ToastWidget, icon},
     };
 

@@ -1,6 +1,6 @@
 use num_traits::ToPrimitive;
 
-use crate::pixels::floor;
+use crate::pixels::numeric::floor;
 
 const BASE: u32 = 0x2800;
 

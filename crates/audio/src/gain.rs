@@ -2,11 +2,11 @@
 pub struct Gain(f32);
 
 impl Gain {
-    pub const UNITY: Self = Self(1.0);
+    pub(crate) const UNITY: Self = Self(1.0);
     pub(crate) const SILENCE: Self = Self(0.0);
 
     #[must_use]
-    pub fn from_decibels(decibels: kernel::domain::Decibels) -> Self {
+    pub(crate) fn from_decibels(decibels: kernel::domain::track::Decibels) -> Self {
         Self(10f32.powf(decibels.0 / 20.0))
     }
 
@@ -16,7 +16,7 @@ impl Gain {
     }
 
     #[must_use]
-    pub fn amplitude(self) -> f32 {
+    pub(crate) fn amplitude(self) -> f32 {
         self.0
     }
 }

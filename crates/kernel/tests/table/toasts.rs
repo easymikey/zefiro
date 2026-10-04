@@ -1,14 +1,14 @@
 use std::time::Duration;
 
 use kernel::{
-    Message,
-    Model,
-    Moment,
-    OverlayName,
-    OverlayRequest,
-    Timer,
-    Toast,
-    domain::Revision,
+    domain::{
+        model::Model,
+        overlay::OverlayName,
+        revision::Revision,
+        time::Moment,
+        toast::Toast,
+    },
+    message::{Message, OverlayRequest, Timer},
     update::update,
 };
 use rstest::rstest;

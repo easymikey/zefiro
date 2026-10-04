@@ -10,7 +10,7 @@ use crate::{
         span::{line, text},
         text::truncate,
     },
-    theme::{ActiveTheme, Role},
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 const HEADLINE: &str = "Terminal too small.";
@@ -36,9 +36,9 @@ impl TooSmallStyle {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct TooSmallWidget<'a> {
-    pub theme: ActiveTheme<'a>,
-    pub minimum: Size,
+pub(crate) struct TooSmallWidget<'a> {
+    pub(crate) theme: ActiveTheme<'a>,
+    pub(crate) minimum: Size,
 }
 
 impl Widget for &TooSmallWidget<'_> {

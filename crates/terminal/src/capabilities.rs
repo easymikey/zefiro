@@ -2,7 +2,11 @@ use ratatui_image::{
     FontSize,
     picker::{Capability, Picker, ProtocolType},
 };
-use widgets::{ColorDepth, DEFAULT_CELL_ASPECT, PixelPath};
+use widgets::{
+    geometry::DEFAULT_CELL_ASPECT,
+    scene::PixelPath,
+    theme::rgb::ColorDepth,
+};
 
 use crate::error::Error;
 
@@ -169,7 +173,11 @@ mod tests {
         picker::{Capability, ProtocolType},
     };
     use rstest::rstest;
-    use widgets::{ColorDepth, DEFAULT_CELL_ASPECT, PixelPath};
+    use widgets::{
+        geometry::DEFAULT_CELL_ASPECT,
+        scene::PixelPath,
+        theme::rgb::ColorDepth,
+    };
 
     use crate::capabilities::{
         Capabilities,

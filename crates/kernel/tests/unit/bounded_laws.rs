@@ -1,6 +1,12 @@
 use std::time::Duration;
 
-use kernel::domain::{Bounded, Crossfade, Percent, SleepPresets, Speed};
+use kernel::domain::{
+    bounded::Bounded,
+    crossfade::Crossfade,
+    percent::Percent,
+    sleep_presets::SleepPresets,
+    speed::Speed,
+};
 use proptest::prelude::{any, prop_assert, proptest};
 
 use crate::support::strategies::durations;

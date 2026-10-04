@@ -1,7 +1,7 @@
 use kernel::{
-    Cmd,
-    domain::{JumpDigits, TimecodeError},
-    update::{Unhandled, overlay::JumpDigitsMessage},
+    cmd::Cmd,
+    domain::{overlay::JumpDigits, time::TimecodeError},
+    update::{machine::Unhandled, overlay::jump::JumpDigitsMessage},
 };
 use rstest::rstest;
 
@@ -64,7 +64,10 @@ fn jump_cell(
     #[case] start: JumpDigits,
     #[case] message: JumpDigitsMessage,
     #[case] expected: Result<
-        (JumpDigits, <JumpDigits as kernel::update::Machine>::Effect),
+        (
+            JumpDigits,
+            <JumpDigits as kernel::update::machine::Machine>::Effect,
+        ),
         Unhandled,
     >,
 ) {

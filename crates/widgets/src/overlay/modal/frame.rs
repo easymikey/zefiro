@@ -52,9 +52,9 @@ pub(crate) struct ModalBounds<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModalAreas {
-    pub outer: Rect,
-    pub body: Rect,
-    pub hint_row: Rect,
+    pub(crate) outer: Rect,
+    pub(crate) body: Rect,
+    pub(crate) hint_row: Rect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

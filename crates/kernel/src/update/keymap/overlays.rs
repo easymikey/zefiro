@@ -1,15 +1,10 @@
 use crate::{
     domain::{
-        Action,
-        Chord,
-        ChordPrefix,
-        Direction,
-        JumpDigits,
-        Key,
-        KeyCode,
-        KeyContext,
-        KeyPattern,
-        Modifiers,
+        chord::{Chord, ChordPrefix, KeyPattern},
+        direction::Direction,
+        key::{Key, KeyCode, Modifiers},
+        keymap::{Action, KeyContext},
+        overlay::JumpDigits,
     },
     message::{
         HistoryRequest,
@@ -195,7 +190,7 @@ fn history_rows() -> Vec<KeyBinding> {
 fn settings_rows() -> Vec<KeyBinding> {
     use SettingsRowRequest::{Activate, Navigate, Step};
 
-    use crate::domain::Action::{
+    use crate::domain::keymap::Action::{
         SettingsActivate,
         SettingsClose,
         SettingsNavigateDown,

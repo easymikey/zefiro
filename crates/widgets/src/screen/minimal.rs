@@ -1,7 +1,4 @@
-use kernel::{
-    domain::{appearance::SpeedChip, geometry::Cells},
-    playlist::RepeatMode,
-};
+use kernel::domain::{appearance::SpeedChip, geometry::Cells, playlist::RepeatMode};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -11,8 +8,11 @@ use ratatui::{
 };
 
 use crate::{
-    card::{CardStyle, CardView, card_status, status_label},
-    pixels::unit_fraction,
+    card::{
+        CardView,
+        headings::{CardStyle, card_status, status_label},
+    },
+    pixels::numeric::unit_fraction,
     primitive::{
         bar::{BarFill, fill},
         chip::{ChipStyle, speed_chip_spans, speed_chip_width},
@@ -20,14 +20,14 @@ use crate::{
         span::{line, text},
         text::truncate,
     },
-    theme::ActiveTheme,
+    theme::active_theme::ActiveTheme,
 };
 
 #[derive(Debug, Clone, Copy)]
-pub struct MinimalScreenWidget<'a> {
-    pub view: CardView<'a>,
-    pub theme: ActiveTheme<'a>,
-    pub speed_chip: SpeedChip,
+pub(crate) struct MinimalScreenWidget<'a> {
+    pub(crate) view: CardView<'a>,
+    pub(crate) theme: ActiveTheme<'a>,
+    pub(crate) speed_chip: SpeedChip,
 }
 
 impl Widget for &MinimalScreenWidget<'_> {

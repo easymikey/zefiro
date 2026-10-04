@@ -3,21 +3,19 @@ use std::{path::Path, sync::Arc};
 use crate::{
     cmd::{Cmd, Cue, Effect, LibraryCmd, ScanMode},
     domain::{
-        Browse,
-        Cursor,
-        Direction,
-        Favorites,
-        Moment,
-        Player,
-        ScanStatus,
-        Track,
-        TrackIndex,
-        TrackRef,
-        ViewIndex,
-        Workspace,
-        cycled,
+        cursor::Cursor,
+        cursor_over::cycled,
+        direction::Direction,
+        favorites::Favorites,
+        geometry::Cells,
+        index::{TrackIndex, ViewIndex},
         library::Library,
+        model::ScanStatus,
+        player::Player,
         playlist::{PlayOrder, Playlist, index_of_path},
+        time::Moment,
+        track::{Track, TrackRef},
+        workspace::{Browse, Workspace},
     },
     message::{BrowseRequest, QueueRequest},
     update::{
@@ -102,7 +100,7 @@ pub(crate) fn update(
             crate::update::audio::jump_to(&mut parts.playback, selected, now)
         }
         BrowseRequest::PageBy(direction) => {
-            let rows = workspace.visible_rows;
+            let rows = workspace.visible_rows.count();
             navigate(workspace, BrowseMessage::PageBy(rows, direction))
         }
         BrowseRequest::FullScan => Ok(full_scan(&mut parts)),
@@ -117,12 +115,12 @@ pub(crate) fn update(
     }
 }
 
-fn refused(message: &BrowseRequest, len: usize, visible_rows: usize) -> bool {
+fn refused(message: &BrowseRequest, len: usize, visible_rows: Cells) -> bool {
     match message {
         BrowseRequest::CursorBy { .. }
         | BrowseRequest::CursorTo(_)
         | BrowseRequest::ToggleFavorite => len == 0,
-        BrowseRequest::PageBy(_) => len == 0 || visible_rows == 0,
+        BrowseRequest::PageBy(_) => len == 0 || visible_rows == Cells(0),
         BrowseRequest::ChordPrefix(_)
         | BrowseRequest::Top
         | BrowseRequest::Bottom

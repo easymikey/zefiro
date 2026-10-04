@@ -1,22 +1,21 @@
 use kernel::{
-    Cmd,
-    ConfigCmd,
-    Cue,
-    Direction,
-    Effect,
-    Message,
-    Model,
-    Moment,
+    cmd::{Cmd, ConfigCmd, Cue, Effect},
     domain::{
-        AppearanceControl,
-        AppearanceRow,
-        AppearanceSetting,
-        Choice,
-        OptionCount,
-        SettingRow,
-        ThemeName,
         appearance_rows::AppearanceField,
+        direction::Direction,
+        model::Model,
+        setting_row::{
+            AppearanceControl,
+            AppearanceRow,
+            AppearanceSetting,
+            Choice,
+            OptionCount,
+            SettingRow,
+        },
+        theme::ThemeName,
+        time::Moment,
     },
+    message::Message,
 };
 use rstest::rstest;
 

@@ -5,11 +5,8 @@ use std::sync::{
 
 use crossbeam_channel::{Sender, TrySendError};
 use kernel::domain::{
-    DeviceDefault,
-    DeviceName,
-    ListedDevice,
-    OutputDevice,
-    StreamError,
+    device::{DeviceDefault, DeviceName, ListedDevice, OutputDevice},
+    transport::StreamError,
 };
 use rodio::{
     cpal,
@@ -18,7 +15,7 @@ use rodio::{
 
 use crate::{
     deck::event::DeckEvent,
-    engine::effect::AudioMessage,
+    engine::message::AudioMessage,
     error::{DeviceError, stream_error},
 };
 
@@ -159,11 +156,8 @@ fn find_by_name(name: &DeviceName) -> Result<Option<cpal::Device>, cpal::Devices
 mod tests {
     use crossbeam_channel::TryRecvError;
     use kernel::domain::{
-        DeviceDefault,
-        DeviceName,
-        ListedDevice,
-        OutputDevice,
-        StreamError,
+        device::{DeviceDefault, DeviceName, ListedDevice, OutputDevice},
+        transport::StreamError,
     };
     use rodio::{cpal, cpal::traits::HostTrait};
     use rstest::rstest;
@@ -171,7 +165,7 @@ mod tests {
     use crate::{
         deck::event::DeckEvent,
         device::{OutputLoss, list_output_devices, listed, open_stream},
-        engine::effect::AudioMessage,
+        engine::message::AudioMessage,
         error::DeviceError,
     };
 

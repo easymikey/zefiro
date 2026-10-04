@@ -1,22 +1,15 @@
-mod crossfade;
-mod lifecycle;
-mod milkdrop;
-mod pixmap;
-mod wash;
+pub mod crossfade;
+pub mod gate;
+pub mod lifecycle;
+pub mod milkdrop;
+pub mod pixmap;
+pub mod wash;
 
 use std::{path::PathBuf, sync::Arc};
 
 use image::RgbaImage;
 use kernel::domain::geometry::Cells;
-
-use crate::FrameLayout;
-pub use crate::pixels::cover::{
-    crossfade::{CoverCrossfade, CrossfadeStage, blend_by_column},
-    lifecycle::{CoverFrame, CoverLifecycle, CoverUpdate, PixmapSource},
-    milkdrop::MilkdropCover,
-    pixmap::CellPixels,
-    wash::column_reveal,
-};
+use ratatui::layout::Rect;
 
 #[derive(Debug, Clone)]
 pub struct CoverImage {
@@ -44,7 +37,7 @@ pub enum CoverWash {
 
 #[derive(Debug, Clone, Copy)]
 pub struct CoverRefresh {
-    pub layout: FrameLayout,
+    pub cover: Option<Rect>,
     pub crossfade: CrossfadePermit,
     pub wash: CoverWash,
 }

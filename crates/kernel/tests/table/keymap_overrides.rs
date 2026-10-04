@@ -1,19 +1,20 @@
 use kernel::{
-    KeyPress,
-    Message,
-    PlaybackRequest,
     domain::{
-        Action,
-        CursorOver,
-        KeyContext,
-        KeyOverride,
-        KeyValidationError,
-        Keymap,
-        KeymapOverrides,
-        Overlay,
-        Workspace,
+        cursor_over::CursorOver,
+        key::KeyPress,
+        keymap::{
+            Action,
+            KeyContext,
+            KeyOverride,
+            KeyValidationError,
+            Keymap,
+            KeymapOverrides,
+        },
+        overlay::Overlay,
+        workspace::Workspace,
     },
-    update::keymap::route,
+    message::{Message, PlaybackRequest},
+    update::keymap::lookup::route,
 };
 use rstest::rstest;
 

@@ -1,14 +1,16 @@
 use std::ops::Deref;
 
-use kernel::domain::appearance::{ProgressBar, Rgb};
+use kernel::domain::appearance::Rgb;
 use ratatui::style::Color;
 
-use crate::theme::{
-    ColorDepth,
-    Role,
-    Theme,
-    contrast::{MIN_MARKER_CONTRAST, raise_contrast},
-    rgb::{color_at_depth, lerp_rgb, scale_channel},
+use crate::{
+    primitive::bar::ProgressBar,
+    theme::{
+        Theme,
+        colors::Role,
+        contrast::{MIN_MARKER_CONTRAST, raise_contrast},
+        rgb::{ColorDepth, color_at_depth, lerp_rgb, scale_channel},
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,11 +48,11 @@ impl VolumeStyle {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ActiveTheme<'a> {
-    pub theme: &'a Theme,
-    pub color_depth: ColorDepth,
+    pub(crate) theme: &'a Theme,
+    pub(crate) color_depth: ColorDepth,
     fill: Option<Rgb>,
     track: Option<Rgb>,
-    pub(crate) volume_pulse_mix: f32,
+    pub volume_pulse_mix: f32,
 }
 
 impl<'a> ActiveTheme<'a> {
@@ -66,7 +68,7 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
-    pub fn with_progress(self, progress: ProgressBar) -> Self {
+    pub(crate) fn with_progress(self, progress: ProgressBar) -> Self {
         Self {
             fill: progress.fill,
             track: progress.groove,
@@ -83,33 +85,33 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
-    pub fn color(&self, rgb: Rgb) -> Color {
+    pub(crate) fn color(&self, rgb: Rgb) -> Color {
         color_at_depth(rgb, self.color_depth)
     }
 
     #[must_use]
-    pub fn lifted(&self, rgb: Rgb, toward_text: f32) -> Color {
+    pub(crate) fn lifted(&self, rgb: Rgb, toward_text: f32) -> Color {
         self.color(lerp_rgb(rgb, self.colors.role(Role::Text), toward_text))
     }
 
     #[must_use]
-    pub fn spectrum_color_at(&self, t: f32) -> Color {
+    pub(crate) fn spectrum_color_at(&self, t: f32) -> Color {
         self.color(self.theme.colors.spectrum_color_at(t))
     }
 
     #[must_use]
-    pub fn role(&self, role: Role) -> Color {
+    pub(crate) fn role(&self, role: Role) -> Color {
         self.color(self.colors.role(role))
     }
 
     #[must_use]
-    pub fn muted_accent(&self) -> Color {
+    pub(crate) fn muted_accent(&self) -> Color {
         let accent = self.colors.role(Role::Accent).0;
         self.color(Rgb(accent.map(|channel| scale_channel(channel, 0.82))))
     }
 
     #[must_use]
-    pub fn favorite(&self) -> Color {
+    pub(crate) fn favorite(&self) -> Color {
         self.color(raise_contrast(
             self.colors.role(Role::Accent2),
             &[
@@ -121,7 +123,7 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
-    pub fn alert(&self) -> Color {
+    pub(crate) fn alert(&self) -> Color {
         let [_, _, hot] = self.colors.spectrum;
         self.color(hot)
     }
@@ -136,17 +138,17 @@ impl<'a> Deref for ActiveTheme<'a> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::appearance::{ProgressBar, Rgb};
+    use kernel::domain::appearance::Rgb;
     use ratatui::style::Color;
 
     use crate::{
+        primitive::bar::ProgressBar,
         test_support::noir,
         theme::{
-            ColorDepth,
-            Role,
             Theme,
             active_theme::{ActiveTheme, ProgressStyle, VolumeStyle},
-            color_at_depth,
+            colors::Role,
+            rgb::{ColorDepth, color_at_depth},
         },
     };
 

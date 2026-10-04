@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use kernel::Message;
+use kernel::message::Message;
 
 use crate::{
     error::Error,
@@ -58,11 +58,14 @@ where
             .map_err(Error::Paint)?;
         self.repaint = Repaint::Settled;
         self.last_paint = Some(now);
-        if let Some(job) = painted.cover {
-            self.runtime.send_cover(job);
-        }
-        if let Some(visible_rows) = painted.visible_rows {
-            self.step_and_repaint(Message::Viewport { visible_rows }, Source::Event);
+        let workspace = &self.runtime.model.workspace;
+        if painted.visible_rows.is_some() || painted.cover_side != workspace.cover_side
+        {
+            let viewport = Message::Viewport {
+                visible_rows: painted.visible_rows.unwrap_or(workspace.visible_rows),
+                cover_side: painted.cover_side,
+            };
+            self.step_and_repaint(viewport, Source::Event);
         }
         for message in painted.toasts {
             self.step_and_repaint(message, Source::Event);
@@ -76,7 +79,10 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crossbeam_channel::{bounded, unbounded};
-    use kernel::{Message, Moment, domain::Toast};
+    use kernel::{
+        domain::{time::Moment, toast::Toast},
+        message::Message,
+    };
     use rstest::rstest;
 
     use crate::{

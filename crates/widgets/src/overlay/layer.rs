@@ -2,17 +2,16 @@ use std::sync::Arc;
 
 use kernel::{
     domain::{
-        HistoryEntry,
-        Moment,
-        Overlay,
-        SaveLine,
-        SavePhase,
-        SettingRow,
-        Track,
-        ViewIndex,
         appearance::CoverMode,
+        history::HistoryEntry,
+        index::ViewIndex,
+        overlay::Overlay,
+        setting_row::SettingRow,
+        time::Moment,
+        track::Track,
+        workspace::{SaveLine, SavePhase},
     },
-    update::keymap::KeyBinding,
+    update::keymap::chord::KeyBinding,
 };
 use ratatui::{
     buffer::Buffer,
@@ -27,16 +26,20 @@ use crate::{
         help::HelpWidget,
         history::HistoryWidget,
         jump_to_time,
-        modal::{ModalRowStyle, OverlayAreas, OverlayContainer, PromptWidget},
+        modal::{
+            metrics::ModalRowStyle,
+            placement::{OverlayAreas, OverlayContainer},
+            prompt::PromptWidget,
+        },
         music_dir,
         search::SearchWidget,
-        settings::{SettingsView, SettingsWidget},
+        settings::{SettingsWidget, values::SettingsView},
         track_details::TrackDetailsWidget,
     },
     primitive::canvas::Canvas,
     scene::Scene,
-    screen::FrameLayout,
-    theme::{ActiveTheme, Role},
+    screen::frame_layout::FrameLayout,
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -277,14 +280,11 @@ impl Widget for &OverlayWidget<'_> {
 #[cfg(test)]
 mod tests {
     use kernel::domain::{
-        CursorOver,
-        DeleteCandidate,
-        Model,
-        Moment,
-        Overlay,
-        SearchQuery,
-        SettingRow,
-        TextEntry,
+        cursor_over::CursorOver,
+        model::Model,
+        overlay::{DeleteCandidate, Overlay, SearchQuery, TextEntry},
+        setting_row::SettingRow,
+        time::Moment,
     };
     use ratatui::layout::Rect;
     use rstest::rstest;
@@ -292,12 +292,12 @@ mod tests {
     use crate::{
         overlay::{
             layer::{OverlayView, OverlayWidget},
-            modal::OverlayAreas,
+            modal::placement::OverlayAreas,
             settings::test_support::{appearance_settings, settings_values},
         },
-        screen::{Breakpoint, FrameLayout},
+        screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn model_with(overlay: Overlay) -> Model {
@@ -410,7 +410,7 @@ mod tests {
     fn confirm_delete_overlay_shows_the_prompt() {
         let theme = noir();
         let model = model_with(Overlay::ConfirmDelete(DeleteCandidate {
-            source: kernel::TrackRef::Local("/music/moon.flac".into()),
+            source: kernel::domain::track::TrackRef::Local("/music/moon.flac".into()),
             title: "Moon River".to_string(),
             artist: "Audrey Hepburn".to_string(),
         }));
@@ -425,8 +425,9 @@ mod tests {
     #[test]
     fn jump_to_time_overlay_shows_the_prompt() {
         let theme = noir();
-        let model =
-            model_with(Overlay::JumpToTime(kernel::domain::JumpDigits::default()));
+        let model = model_with(Overlay::JumpToTime(
+            kernel::domain::overlay::JumpDigits::default(),
+        ));
         let layout = layout(Rect::default());
         let overlay = layer(&theme, &model, &layout);
         insta::assert_snapshot!(
@@ -439,11 +440,11 @@ mod tests {
     fn track_details_overlay_shows_the_dialog() {
         let theme = noir();
         let track = std::sync::Arc::new(
-            kernel::domain::Track::builder()
+            kernel::domain::track::Track::builder()
                 .path("/music/moon_river.mp3")
                 .duration(std::time::Duration::from_secs(245))
-                .tags(kernel::domain::Tags::default())
-                .audio_format(kernel::domain::AudioFormat::default())
+                .tags(kernel::domain::track::Tags::default())
+                .audio_format(kernel::domain::track::AudioFormat::default())
                 .build(),
         );
         let model = model_with(Overlay::TrackDetails(track));

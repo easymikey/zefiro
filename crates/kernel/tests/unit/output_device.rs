@@ -1,11 +1,11 @@
 use kernel::{
-    Cmd,
-    Cue,
-    Effect,
-    Message,
-    Model,
-    Moment,
-    domain::{DeviceDefault, ListedDevice, OutputDevice},
+    cmd::{Cmd, Cue, Effect},
+    domain::{
+        device::{DeviceDefault, ListedDevice, OutputDevice},
+        model::Model,
+        time::Moment,
+    },
+    message::Message,
 };
 
 use crate::support::{device, first_toast_expiry, step::update};
@@ -17,7 +17,7 @@ fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
 
     let cmd = update(
         &mut m,
-        Message::Audio(kernel::AudioEvent::DeviceFellBack(
+        Message::Audio(kernel::message::AudioEvent::DeviceFellBack(
             OutputDevice::SystemDefault,
         )),
         Moment::default(),
@@ -47,9 +47,9 @@ fn a_device_that_opened_as_asked_leaves_the_toast_alone() {
 
     let cmd = update(
         &mut m,
-        Message::Audio(kernel::AudioEvent::DeviceFellBack(OutputDevice::Named(
-            device("usb-dac"),
-        ))),
+        Message::Audio(kernel::message::AudioEvent::DeviceFellBack(
+            OutputDevice::Named(device("usb-dac")),
+        )),
         Moment::default(),
     )
     .unwrap();
@@ -79,7 +79,7 @@ fn devices_loaded_replaces_output_devices_and_emits_nothing() {
     ];
     let cmd = update(
         &mut m,
-        Message::Audio(kernel::AudioEvent::DevicesListed(devices.clone())),
+        Message::Audio(kernel::message::AudioEvent::DevicesListed(devices.clone())),
         Moment::default(),
     )
     .unwrap();

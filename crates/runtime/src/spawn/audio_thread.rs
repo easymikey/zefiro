@@ -1,14 +1,16 @@
 use audio::tap::SpectrumTap;
-use kernel::{AudioCmd, domain::DriverName, update::Machine};
+use kernel::{cmd::AudioCmd, domain::driver::DriverName, update::machine::Machine};
 
+#[cfg(test)] use crate::driver::spawn_idle;
 use crate::{
-    driver::{DriverLoop, DriverThread, LoopEffect, spawn_idle},
+    driver::{DriverLoop, DriverThread, LoopEffect},
     error::Error,
     jobs::Jobs,
     registry,
     spawn::SpawnSetup,
 };
 
+#[cfg(test)]
 pub(crate) fn idle_audio(
     setup: &SpawnSetup<'_>,
 ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
@@ -97,10 +99,14 @@ mod tests {
     use audio::tap::SpectrumTap;
     use crossbeam_channel::{Receiver, Sender, unbounded};
     use kernel::{
-        AudioCmd,
-        AudioEvent,
-        Message,
-        domain::{Direction, DriverName, DriverStatus, SettingRow, Startup},
+        cmd::AudioCmd,
+        domain::{
+            direction::Direction,
+            driver::{DriverName, DriverStatus},
+            setting_row::SettingRow,
+            startup::Startup,
+        },
+        message::{AudioEvent, Message},
     };
 
     use crate::{

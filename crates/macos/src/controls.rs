@@ -4,7 +4,7 @@ use std::{ptr::NonNull, time::Duration};
 
 use block2::RcBlock;
 use crossbeam_channel::{Sender, TrySendError};
-use kernel::PlaybackRequest;
+use kernel::message::PlaybackRequest;
 use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject};
 use objc2_media_player::{
     MPChangePlaybackPositionCommandEvent,
@@ -81,7 +81,7 @@ pub enum RemoteInput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum RemoteInputError {
+pub(crate) enum RemoteInputError {
     #[error("the remote command arrived with an event of the wrong kind")]
     WrongEvent,
     #[error("the remote command asked for a negative or invalid position")]
@@ -138,7 +138,7 @@ mod tests {
     use std::time::Duration;
 
     use crossbeam_channel::bounded;
-    use kernel::PlaybackRequest;
+    use kernel::message::PlaybackRequest;
     use objc2_media_player::{MPRemoteCommandHandlerStatus, MPSeekCommandEventType};
     use rstest::rstest;
 

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::domain::{Moment, Speed};
+use crate::domain::{speed::Speed, time::Moment};
 
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -32,7 +32,12 @@ mod tests {
 
     use rstest::rstest;
 
-    use crate::domain::{Bounded, Moment, Speed, playhead::Playhead};
+    use crate::domain::{
+        bounded::Bounded,
+        playhead::Playhead,
+        speed::Speed,
+        time::Moment,
+    };
 
     #[rstest]
     #[case::no_time_passed_keeps_the_offset(1.0, 0, 10_000)]

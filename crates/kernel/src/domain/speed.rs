@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::domain::Bounded;
+use crate::domain::bounded::Bounded;
 
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -32,11 +32,11 @@ impl Speed {
         self.0
     }
 
-    pub fn step_up(self) -> Self {
+    pub(crate) fn step_up(self) -> Self {
         Self::clamped(self.0 + Self::STEP)
     }
 
-    pub fn step_down(self) -> Self {
+    pub(crate) fn step_down(self) -> Self {
         Self::clamped(self.0 - Self::STEP)
     }
 
@@ -68,7 +68,7 @@ impl fmt::Display for Speed {
 mod tests {
     use rstest::rstest;
 
-    use crate::domain::{Bounded, speed::Speed};
+    use crate::domain::{bounded::Bounded, speed::Speed};
 
     #[rstest]
     #[case::saturates_above_the_ceiling(10.0, 4.0)]

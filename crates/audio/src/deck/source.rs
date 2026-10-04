@@ -7,7 +7,7 @@ use std::{
 };
 
 use crossbeam_channel::Sender;
-use kernel::domain::{Revision, Speed};
+use kernel::domain::{revision::Revision, speed::Speed};
 use rodio::Source;
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
         envelope::{Envelopes, envelope},
         output::Output,
     },
-    engine::effect::AudioMessage,
+    engine::message::AudioMessage,
     error::Error,
 };
 
@@ -52,7 +52,7 @@ const READ_CAPACITY: usize = 1 << 20;
 pub enum PreloadMode {
     Gapless,
     Crossfade {
-        gain: Option<kernel::domain::Decibels>,
+        gain: Option<kernel::domain::track::Decibels>,
         speed: Speed,
     },
 }

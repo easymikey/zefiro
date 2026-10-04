@@ -4,97 +4,30 @@
 
 #[cfg(test)] extern crate self as widgets;
 
-mod animation;
+pub mod animation;
+pub mod appearance;
 mod braille;
-mod card;
-mod geometry;
+pub mod card;
+pub mod geometry;
 mod key_hints;
-mod milkdrop;
-mod overlay;
-mod pixels;
-mod playlist;
-mod primitive;
-mod repaint;
-mod scene;
-mod screen;
-mod spectrum;
-mod status_line;
+pub mod milkdrop;
+pub mod overlay;
+pub mod pixels;
+pub mod playlist;
+pub mod primitive;
+pub mod repaint;
+pub mod scene;
+pub mod screen;
+pub mod spectrum;
+pub mod status_line;
 #[cfg(test)]
 #[path = "../tests/unit/fixtures.rs"]
 mod test_support;
-mod theme;
-mod toast;
+pub mod theme;
+pub mod toast;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Playing {
+pub(crate) enum Playing {
     Yes,
     No,
 }
-
-pub use animation::{
-    AnimationStage,
-    AnimationTimings,
-    Backdrop,
-    VolumeShades,
-    chip_pulse,
-    delete_burst,
-    favorite_pulse,
-    modal_in,
-    modal_out,
-    row_flash,
-    screen_wash,
-    toast_burst,
-    toast_slide_in,
-    volume_pulse,
-    wash_reveal,
-};
-pub use card::{CardCover, CardMetrics};
-pub use geometry::DEFAULT_CELL_ASPECT;
-pub use milkdrop::{MilkdropAdvance, MilkdropField, MilkdropStyle, lines_into};
-pub use overlay::modal::{ModalAreas, ModalScrollAreas, OverlayAreas};
-pub use pixels::{
-    CellPixels,
-    CoverCrossfade,
-    CoverFrame,
-    CoverImage,
-    CoverLifecycle,
-    CoverMotion,
-    CoverRefresh,
-    CoverUpdate,
-    CoverWash,
-    CrossfadePermit,
-    CrossfadeStage,
-    MilkdropCover,
-    PixmapSource,
-    VinylCache,
-    VinylCacheKey,
-    VinylStyle,
-    blend_by_column,
-    channel_byte,
-    column_reveal,
-};
-pub use playlist::{PlaylistAreas, favorite_cell};
-pub use repaint::{
-    OnScreen,
-    Presence,
-    ProgressScale,
-    next_clock_second,
-    next_progress_step,
-    next_sleep_minute,
-};
-pub use scene::{PixelPath, Scene, ScenePresentation};
-pub use screen::{Breakpoint, FrameLayout, ScreenWidget};
-pub use spectrum::{SPECTRUM_BANDS, Spectrum, SpectrumMotion, SpectrumSmoothing};
-pub use theme::{
-    ActiveTheme,
-    BackdropStyle,
-    ColorDepth,
-    Colors,
-    Role,
-    Theme,
-    ThemeBase,
-    color_at_depth,
-    lerp_rgb,
-    shade,
-};
-pub use toast::ToastAreas;

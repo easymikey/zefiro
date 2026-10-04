@@ -4,18 +4,18 @@ pub mod deck;
 mod device;
 pub mod engine;
 mod error;
-pub mod gain;
+pub(crate) mod gain;
 pub mod spectrum;
 pub mod tap;
 
 use crossbeam_channel::Sender;
-use kernel::domain::{AudioSettings, Speed};
+use kernel::domain::{settings::AudioSettings, speed::Speed};
 
 use crate::{
     deck::Deck,
     engine::{
-        effect::AudioMessage,
-        revisions::Revisions,
+        message::AudioMessage,
+        revisions::JobRevisions,
         state::{Closed, Engine},
     },
 };
@@ -25,7 +25,7 @@ pub const DECODABLE_EXTENSIONS: &[&str] =
 
 pub struct AudioDriver {
     engine: Engine,
-    revisions: Revisions,
+    revisions: JobRevisions,
     deck: Deck,
 }
 
@@ -51,7 +51,7 @@ impl AudioDriver {
                 pending: None,
                 speed: Speed::default(),
             }),
-            revisions: Revisions::default(),
+            revisions: JobRevisions::default(),
             deck: Deck::new(spectrum, sender),
         };
         (driver, tap)

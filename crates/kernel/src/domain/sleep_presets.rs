@@ -22,7 +22,7 @@ impl SleepPresets {
     ];
 
     #[must_use]
-    pub fn bundle_index(current: &[Duration]) -> Option<usize> {
+    pub(crate) fn bundle_index(current: &[Duration]) -> Option<usize> {
         Self::BUNDLES.iter().position(|bundle| *bundle == current)
     }
 

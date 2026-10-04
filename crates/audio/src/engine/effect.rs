@@ -1,18 +1,12 @@
 use std::{path::PathBuf, time::Duration};
 
 use kernel::{
-    AudioCmd,
-    AudioError,
-    Cmds,
-    Playback,
-    domain::{ListedDevice, OutputDevice, Revision, Speed},
+    cmd::Playback,
+    domain::{device::OutputDevice, revision::Revision, speed::Speed},
 };
 
 use crate::{
     deck::{
-        DeviceOpened,
-        envelope::Signals,
-        event::DeckEvent,
         job::AudioJob,
         source::{PreloadMode, TrackSource},
     },
@@ -31,42 +25,6 @@ pub enum SinkRole {
 pub enum PreloadKind {
     Gapless(PathBuf),
     Crossfade(CurrentTrack),
-}
-
-#[derive(Debug)]
-pub enum AudioMessage {
-    Deck(DeckEvent),
-    Cmds(Cmds<AudioCmd>),
-    Reported(Option<Duration>),
-    Error(AudioError),
-    Opened(DeviceOpened),
-    Decoded(Option<Duration>),
-    Preloaded(PreloadKind),
-    Finished(SinkRole),
-    Cued,
-    Ramped(SinkRole),
-    DevicesListed(Vec<ListedDevice>),
-    SignalsTaken { role: SinkRole, signals: Signals },
-}
-
-#[derive(Debug)]
-pub(crate) enum EngineMessage {
-    Cmds(Cmds<AudioCmd>),
-    Reported(Option<Duration>),
-    Error(AudioError),
-    Opened(DeviceOpened),
-    Decoded(Option<Duration>),
-    Preloaded(PreloadKind),
-    Finished(SinkRole),
-    Cued,
-    Ramped(SinkRole),
-    DevicesListed(Vec<ListedDevice>),
-}
-
-impl From<Cmds<AudioCmd>> for AudioMessage {
-    fn from(cmds: Cmds<AudioCmd>) -> Self {
-        AudioMessage::Cmds(cmds)
-    }
 }
 
 #[derive(Debug, PartialEq)]

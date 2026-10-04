@@ -1,4 +1,8 @@
-use kernel::domain::{Track, TrackRef, ViewIndex, geometry::Cells};
+use kernel::domain::{
+    geometry::Cells,
+    index::ViewIndex,
+    track::{Track, TrackRef},
+};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -8,7 +12,7 @@ use ratatui::{
 
 use crate::{
     Playing,
-    overlay::modal::SCROLLBAR_INSET,
+    overlay::modal::metrics::SCROLLBAR_INSET,
     playlist::{
         chrome::pane_block,
         pane::{PlaylistView, PlaylistWidget},
@@ -233,7 +237,7 @@ pub fn favorite_cell(row: Rect) -> Rect {
 mod tests {
     use std::{path::Path, sync::Arc};
 
-    use kernel::{domain::Favorites, playlist::Playlist};
+    use kernel::domain::{favorites::Favorites, playlist::Playlist};
 
     use crate::{
         playlist::{
@@ -247,7 +251,7 @@ mod tests {
         Playlist {
             tracks: (0..count)
                 .map(|index| {
-                    Arc::new(kernel::domain::Track::listed(Path::new(&format!(
+                    Arc::new(kernel::domain::track::Track::listed(Path::new(&format!(
                         "song{index:02}.mp3"
                     ))))
                 })
@@ -269,10 +273,10 @@ mod tests {
             playing: None,
             library_loading: LibraryLoad::Ready,
             status: StatusLineView {
-                shuffle: kernel::domain::Shuffle::Disabled,
-                repeat_mode: kernel::playlist::RepeatMode::Off,
+                shuffle: kernel::domain::startup::Shuffle::Disabled,
+                repeat_mode: kernel::domain::playlist::RepeatMode::Off,
                 queue_len: 0,
-                position: kernel::domain::ViewIndex::new(browse_selected),
+                position: kernel::domain::index::ViewIndex::new(browse_selected),
                 total: playlist.tracks.len(),
                 scan: ScanProgress::Done,
                 theme_name: "noir",

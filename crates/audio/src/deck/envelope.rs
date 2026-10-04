@@ -8,8 +8,8 @@ use std::{
 
 use crossbeam_channel::Sender;
 use kernel::{
-    domain::Revision,
-    update::{Machine, Unhandled},
+    domain::revision::Revision,
+    update::machine::{Machine, Unhandled},
 };
 use rodio::Source;
 use triple_buffer::{Input, Output, triple_buffer};
@@ -18,7 +18,8 @@ use crate::{
     deck::event::DeckEvent,
     engine::{
         crossfade::{gain_in, gain_out},
-        effect::{AudioMessage, SinkRole},
+        effect::SinkRole,
+        message::AudioMessage,
     },
     gain::Gain,
 };
@@ -468,7 +469,7 @@ impl<S: Source> Source for Envelope<S> {
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::Revision;
+    use kernel::domain::revision::Revision;
     use rodio::{Source, source::SineWave};
     use rstest::rstest;
 

@@ -1,4 +1,4 @@
-use kernel::domain::Cursor;
+use kernel::domain::cursor::Cursor;
 
 fn main() {
     let cursor = Cursor { index: 9, len: 0 };

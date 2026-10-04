@@ -1,44 +1,43 @@
 use std::time::Duration;
 
 use kernel::{
-    BrowseRequest,
-    Cmd,
-    ConfigCmd,
-    ConfigPatch,
-    Cue,
-    Direction,
-    Effect,
-    Message,
-    Overlay,
-    PlaybackRequest,
-    PlaylistRequest,
-    QueueRequest,
-    SearchEdit,
-    TextRequest,
+    cmd::{Cmd, ConfigCmd, ConfigPatch, Cue, Effect},
     domain::{
-        Cursor,
-        CursorOver,
-        DeleteCandidate,
-        JumpDigits,
-        MusicDirError,
-        SearchQuery,
-        SettingRow,
-        TextEntry,
-        TimecodeError,
-        Toast,
-        ViewIndex,
+        cursor::Cursor,
+        cursor_over::CursorOver,
+        direction::Direction,
+        index::ViewIndex,
+        overlay::{
+            DeleteCandidate,
+            JumpDigits,
+            MusicDirError,
+            Overlay,
+            SearchQuery,
+            TextEntry,
+        },
         playlist::{PlaylistFileName, PlaylistNameError},
+        setting_row::SettingRow,
+        time::TimecodeError,
+        toast::Toast,
+    },
+    message::{
+        BrowseRequest,
+        Message,
+        PlaybackRequest,
+        PlaylistRequest,
+        QueueRequest,
+        SearchEdit,
+        TextRequest,
     },
     update::{
-        Unhandled,
+        machine::Unhandled,
         overlay::{
-            HistoryMessage,
-            HistoryPick,
-            JumpDigitsMessage,
             OverlayContentMessage,
             OverlayMessage,
-            SearchQueryMessage,
-            SettingRowMessage,
+            history::{HistoryMessage, HistoryPick},
+            jump::JumpDigitsMessage,
+            search::SearchQueryMessage,
+            settings::SettingRowMessage,
         },
     },
 };
@@ -95,7 +94,7 @@ fn fresh_settings() -> Overlay {
 
 fn candidate() -> DeleteCandidate {
     DeleteCandidate {
-        source: kernel::TrackRef::Local("/music/sun.flac".into()),
+        source: kernel::domain::track::TrackRef::Local("/music/sun.flac".into()),
         title: "Sun Song".to_string(),
         artist: "Someone".to_string(),
     }
@@ -294,7 +293,7 @@ fn overlay_cell(
     #[case] expected: Result<
         (
             Option<Overlay>,
-            <Option<Overlay> as kernel::update::Machine>::Effect,
+            <Option<Overlay> as kernel::update::machine::Machine>::Effect,
         ),
         Unhandled,
     >,

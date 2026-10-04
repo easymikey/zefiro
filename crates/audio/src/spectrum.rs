@@ -21,7 +21,7 @@ impl std::fmt::Debug for SpectrumAnalyzer {
 }
 
 impl SpectrumAnalyzer {
-    pub const WINDOW: usize = 2048;
+    pub(crate) const WINDOW: usize = 2048;
 
     #[must_use]
     pub fn new() -> Self {

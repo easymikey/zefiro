@@ -1,6 +1,6 @@
 use ratatui::style::Color;
 
-use crate::theme::{ActiveTheme, Role};
+use crate::theme::{active_theme::ActiveTheme, colors::Role};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackdropStyle {

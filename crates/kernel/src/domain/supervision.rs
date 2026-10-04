@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use crate::domain::{DriverName, Moment};
+use crate::domain::{driver::DriverName, time::Moment};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Supervision {
+pub(crate) enum Supervision {
     Restart {
         attempts: u8,
         within: Duration,
@@ -13,13 +13,13 @@ pub enum Supervision {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Announce {
+pub(crate) enum Announce {
     Toast,
     Silent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Decision {
+pub(crate) enum Decision {
     Restart,
     Degrade(Announce),
 }
@@ -41,7 +41,7 @@ impl Restarts {
     }
 
     #[must_use]
-    pub fn within(&self, window: Duration, now: Moment) -> usize {
+    pub(crate) fn within(&self, window: Duration, now: Moment) -> usize {
         self.0
             .iter()
             .filter(|moment| now.elapsed_since(**moment) < window)
@@ -51,7 +51,7 @@ impl Restarts {
 
 impl Supervision {
     #[must_use]
-    pub const fn standard(driver: DriverName) -> Self {
+    pub(crate) const fn standard(driver: DriverName) -> Self {
         match driver {
             DriverName::Audio => Supervision::Restart {
                 attempts: 3,
@@ -70,7 +70,7 @@ impl Supervision {
 }
 
 #[must_use]
-pub fn decide_restart(
+pub(crate) fn decide_restart(
     strategy: Supervision,
     restarts: &Restarts,
     now: Moment,
@@ -96,13 +96,9 @@ mod tests {
     use rstest::rstest;
 
     use crate::domain::{
-        Announce,
-        Decision,
-        DriverName,
-        Moment,
-        Restarts,
-        Supervision,
-        decide_restart,
+        driver::DriverName,
+        supervision::{Announce, Decision, Restarts, Supervision, decide_restart},
+        time::Moment,
     };
 
     fn t(secs: u64) -> Moment {

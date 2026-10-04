@@ -1,16 +1,20 @@
 use kernel::domain::{
-    CursorOver,
-    DeleteCandidate,
-    JumpDigits,
-    Overlay,
-    SearchQuery,
-    SettingRow,
-    TextEntry,
+    cursor_over::CursorOver,
+    overlay::{DeleteCandidate, JumpDigits, Overlay, SearchQuery, TextEntry},
+    setting_row::SettingRow,
 };
 use ratatui::layout::Rect;
-use widgets::{CardCover, FrameLayout, ScreenWidget};
+use widgets::{
+    card::CardCover,
+    screen::{frame_layout::FrameLayout, root::ScreenWidget},
+};
 
-use crate::unit::support::{SceneSources, model_with_tracks, rendered, track};
+use crate::unit::support::fixtures::{
+    SceneSources,
+    model_with_tracks,
+    rendered,
+    track,
+};
 
 fn frame_with_overlay(overlay: Overlay) -> String {
     let mut sources = SceneSources::new(model_with_tracks(3));
@@ -63,7 +67,7 @@ fn the_settings_overlay_is_painted_over_the_full_frame() {
 #[test]
 fn the_confirm_delete_overlay_is_painted_over_the_full_frame() {
     let text = frame_with_overlay(Overlay::ConfirmDelete(DeleteCandidate {
-        source: kernel::TrackRef::Local("/music/moon.flac".into()),
+        source: kernel::domain::track::TrackRef::Local("/music/moon.flac".into()),
         title: "Moon River".to_string(),
         artist: "Audrey Hepburn".to_string(),
     }));

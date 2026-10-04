@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
-use kernel::Playback;
+use kernel::cmd::Playback;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) enum Phase {
@@ -66,7 +66,7 @@ pub(crate) enum Incoming {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CurrentTrack {
     pub(crate) total: Option<Duration>,
-    pub(crate) gain: Option<kernel::domain::Decibels>,
+    pub(crate) gain: Option<kernel::domain::track::Decibels>,
     pub(crate) path: PathBuf,
 }
 
@@ -91,7 +91,7 @@ pub(crate) enum Fade {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Loading {
     pub(crate) path: PathBuf,
-    pub(crate) gain: Option<kernel::domain::Decibels>,
+    pub(crate) gain: Option<kernel::domain::track::Decibels>,
     pub(crate) after_load: Option<Resume>,
 }
 

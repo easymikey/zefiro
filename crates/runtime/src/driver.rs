@@ -7,12 +7,10 @@ use std::{
 
 use crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded};
 use kernel::{
-    Cmd,
-    Cmds,
-    DriverEvent,
-    Message,
-    domain::DriverError,
-    update::{Driver, Machine},
+    cmd::{Cmd, Cmds},
+    domain::driver::DriverError,
+    message::{DriverEvent, Message},
+    update::machine::{Driver, Machine},
 };
 
 use crate::{
@@ -34,6 +32,7 @@ pub(crate) struct DriverThread<C> {
 const INBOX: usize = 64;
 const JOB_RESULTS: usize = 8;
 
+#[cfg(test)]
 pub(crate) fn spawn_idle<C: Send + 'static>(
     row: &DriverRow,
     inbox: &Sender<Message>,
@@ -298,15 +297,14 @@ mod tests {
     use audio::AudioDriver;
     use crossbeam_channel::{Receiver, Sender, bounded, never, unbounded};
     use kernel::{
-        AudioCmd,
-        AudioEvent,
-        Cmd,
-        Cmds,
-        DriverEvent,
-        IoError,
-        Message,
-        domain::{AudioSettings, DriverError, DriverName},
-        update::{Driver, Machine, Unhandled},
+        cmd::{AudioCmd, Cmd, Cmds},
+        domain::{
+            driver::{DriverError, DriverName},
+            io_error::IoError,
+            settings::AudioSettings,
+        },
+        message::{AudioEvent, DriverEvent, Message},
+        update::machine::{Driver, Machine, Unhandled},
     };
 
     use crate::{
@@ -415,7 +413,7 @@ mod tests {
             },
             ProbeEffect::Watch(path) => LoopEffect::Watch {
                 path,
-                item: |_path, changed| ProbeMessage::Changed(changed),
+                item: ProbeMessage::Changed,
             },
             report @ ProbeEffect::Report(_) => LoopEffect::Execute(report),
         }

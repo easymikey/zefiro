@@ -173,8 +173,6 @@ mod tests {
     use crate::pixels::{
         numeric::{dimension_f32, floor},
         vinyl::{
-            VinylFrameStyle,
-            VinylParts,
             VinylStyle,
             art::{
                 VinylArt,
@@ -185,6 +183,7 @@ mod tests {
             },
             compose_uncached,
             geometry::{VINYL_LAYOUT, shadow_horizontal_reach_fraction},
+            layers::{VinylFrameStyle, VinylParts},
             test_support::synthetic_art,
         },
     };

@@ -1,10 +1,9 @@
 use crate::{
     cmd::Cmd,
     domain::{
-        Direction,
-        TrackIndex,
-        ViewIndex,
-        cycled,
+        cursor_over::cycled,
+        direction::Direction,
+        index::{TrackIndex, ViewIndex},
         playlist::{PlayOrder, Playlist, RepeatMode},
     },
     update::machine::{Machine, Unhandled},

@@ -12,7 +12,7 @@ use crate::{
         CardView,
         headings::{CardStyle, card_status, status_label},
     },
-    pixels::unit_fraction,
+    pixels::numeric::unit_fraction,
     primitive::{
         bar::{BarFill, fill},
         chip::{ChipStyle, speed_chip_spans, speed_chip_width},
@@ -20,7 +20,7 @@ use crate::{
         span::{line, text},
         text::truncate,
     },
-    theme::{ActiveTheme, VolumeStyle},
+    theme::active_theme::{ActiveTheme, VolumeStyle},
 };
 
 const PADDING: u16 = 1;
@@ -250,26 +250,26 @@ fn paint_meter_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use kernel::{
-        Bounded,
-        Moment,
-        domain::{
-            Output,
-            Percent,
-            Player,
-            Playhead,
-            Preload,
-            Speed,
-            appearance::SpeedChip,
-        },
+    use kernel::domain::{
+        appearance::SpeedChip,
+        bounded::Bounded,
+        percent::Percent,
+        player::{Player, Preload},
+        playhead::Playhead,
         playlist::PlayOrder,
+        speed::Speed,
+        time::Moment,
+        transport::Output,
     };
 
     use crate::{
-        card::{CardView, CompactCardWidget, compact_height},
+        card::{
+            CardView,
+            compact::{CompactCardWidget, compact_height},
+        },
         spectrum::{SPECTRUM_BANDS, Spectrum},
         test_support::{noir, rendered, track},
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     #[test]
@@ -295,7 +295,6 @@ mod tests {
             spectrum: &spectrum,
             repeat: Default::default(),
             play_order: &play_order,
-            queue_length: 1,
             displayed_track: Some(&track),
             output: &output,
             now: Moment::default(),
@@ -327,7 +326,6 @@ mod tests {
             spectrum: &spectrum,
             repeat: Default::default(),
             play_order: &play_order,
-            queue_length: 0,
             displayed_track: None,
             output: &output,
             now: Moment::default(),

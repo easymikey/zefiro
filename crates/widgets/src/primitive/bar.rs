@@ -1,6 +1,11 @@
 use std::{borrow::Cow, time::Duration};
 
-use kernel::domain::format_time;
+use kernel::domain::{
+    appearance::Rgb,
+    geometry::{Cells, Pixels},
+    player::Player,
+    time::Moment,
+};
 use num_traits::ToPrimitive;
 use ratatui::{
     style::Color,
@@ -9,14 +14,35 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    pixels::floor,
+    pixels::numeric::floor,
     primitive::{
         chip::{self, ChipStyle},
         glyphs,
+        relative_time::format_time,
         span::{line, text},
     },
-    theme::{ActiveTheme, ProgressStyle},
+    repaint::{ProgressScale, next_progress_step},
+    theme::active_theme::{ActiveTheme, ProgressStyle},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProgressBar {
+    pub height: Pixels,
+    pub radius: Option<Pixels>,
+    pub fill: Option<Rgb>,
+    pub groove: Option<Rgb>,
+}
+
+impl Default for ProgressBar {
+    fn default() -> Self {
+        Self {
+            height: Pixels(4),
+            radius: None,
+            fill: None,
+            groove: None,
+        }
+    }
+}
 
 const FULL_RUN: &str = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
 const EMPTY_RUN: &str = "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────";
@@ -108,15 +134,15 @@ pub(crate) fn remaining_label(remaining: Duration) -> String {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HudProgressRow {
-    pub fraction: f32,
-    pub row_width: usize,
-    pub remaining: Duration,
+    pub(crate) fraction: f32,
+    pub(crate) row_width: usize,
+    pub(crate) remaining: Duration,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HudProgressStyle {
-    pub bar: ProgressStyle,
-    pub chip: ChipStyle,
+    pub(crate) bar: ProgressStyle,
+    pub(crate) chip: ChipStyle,
 }
 
 impl HudProgressStyle {
@@ -168,21 +194,78 @@ pub(crate) fn hud_progress_line(
     )
 }
 
+#[must_use]
+pub fn progress_frame_due(
+    player: &Player,
+    bar_width: Option<Cells>,
+    now: Moment,
+) -> Option<Moment> {
+    let Player::Playing { head, track, .. } = player else {
+        return None;
+    };
+    let scale = ProgressScale::text_bar(bar_width?, track.duration()?)?;
+    next_progress_step(scale, *head, now)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
 
+    use kernel::domain::{
+        bounded::Bounded,
+        geometry::Cells,
+        player::{PausedBy, Player, Preload},
+        playhead::Playhead,
+        speed::Speed,
+        time::Moment,
+        track::{AudioFormat, Tags, Track},
+    };
     use ratatui::{style::Color, symbols::block, text::Line};
     use rstest::rstest;
 
     use crate::{
         primitive::{
-            bar::{BarFill, HudProgressRow, HudProgressStyle, fill, hud_progress_line},
+            bar::{
+                BarFill,
+                HudProgressRow,
+                HudProgressStyle,
+                fill,
+                hud_progress_line,
+                progress_frame_due,
+            },
             chip::ChipStyle,
             glyphs,
         },
-        theme::ProgressStyle,
+        repaint::{ProgressScale, next_progress_step},
+        theme::active_theme::ProgressStyle,
     };
+
+    fn track(duration: Duration) -> Arc<Track> {
+        Arc::new(
+            Track::builder()
+                .path("/music/song.mp3")
+                .duration(duration)
+                .tags(Tags::default())
+                .audio_format(AudioFormat::default())
+                .build(),
+        )
+    }
+
+    fn playing(offset: Duration, since: Moment, duration: Duration) -> Player {
+        Player::Playing {
+            track: track(duration),
+            head: Playhead::anchored(offset, since, Speed::clamped(1.0)),
+            preload: Preload::None,
+        }
+    }
+
+    fn paused(at: Duration, duration: Duration) -> Player {
+        Player::Paused {
+            track: track(duration),
+            at,
+            by: PausedBy::Listener,
+        }
+    }
 
     fn painted(spec: &BarFill) -> Line<'static> {
         fill(spec, Color::Green, Color::Black)
@@ -341,6 +424,65 @@ mod tests {
                 .count(),
             filled,
             "the fill colour reaches exactly the level"
+        );
+    }
+
+    #[rstest]
+    #[case::a_stopped_player_has_no_progress_frame(Player::Stopped, Some(50), None)]
+    #[case::a_paused_player_has_no_progress_frame(
+        paused(Duration::from_secs(10), Duration::from_secs(100)),
+        Some(50),
+        None
+    )]
+    #[case::a_playing_track_wants_the_next_progress_step(
+        playing(
+            Duration::from_millis(10_200),
+            Moment::new(Duration::from_secs(100)),
+            Duration::from_secs(100)
+        ),
+        Some(50),
+        Some(Moment::new(Duration::from_millis(100_801)))
+    )]
+    #[case::no_bar_has_no_progress_frame(
+        playing(
+            Duration::from_millis(10_200),
+            Moment::new(Duration::from_secs(100)),
+            Duration::from_secs(100)
+        ),
+        None,
+        None
+    )]
+    #[case::a_sped_up_track_still_wants_a_progress_step(
+        Player::Playing {
+            track: track(Duration::from_secs(100)),
+            head: Playhead::anchored(
+                Duration::from_millis(10_200),
+                Moment::new(Duration::from_secs(100)),
+                Speed::clamped(1.5)
+            ),
+            preload: Preload::None,
+        },
+        Some(50),
+        next_progress_step(
+            ProgressScale::text_bar(Cells(50), Duration::from_secs(100)).unwrap(),
+            Playhead::anchored(
+                Duration::from_millis(10_200),
+                Moment::new(Duration::from_secs(100)),
+                Speed::clamped(1.5)
+            ),
+            Moment::new(Duration::from_secs(100))
+        )
+    )]
+    fn a_progress_frame_is_due_only_while_the_bar_can_move(
+        #[case] player: Player,
+        #[case] bar_width: Option<u16>,
+        #[case] expected: Option<Moment>,
+    ) {
+        let now = Moment::new(Duration::from_secs(100));
+
+        assert_eq!(
+            progress_frame_due(&player, bar_width.map(Cells), now),
+            expected
         );
     }
 }

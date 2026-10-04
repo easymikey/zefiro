@@ -1,4 +1,9 @@
-use kernel::domain::{HistoryEntry, Moment, ViewIndex, geometry::Cells};
+use kernel::domain::{
+    geometry::Cells,
+    history::HistoryEntry,
+    index::ViewIndex,
+    time::Moment,
+};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
@@ -10,16 +15,16 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     overlay::modal::{
-        COLUMN_SPACING,
-        ModalPlacement,
-        ModalRowStyle,
-        ModalScrollAreas,
-        OverlayAreas,
-        OverlayContainer,
-        column_width,
-        indented,
-        leading_cells,
-        modal_title,
+        metrics::{COLUMN_SPACING, ModalRowStyle, modal_title},
+        placement::{
+            ModalPlacement,
+            ModalScrollAreas,
+            OverlayAreas,
+            OverlayContainer,
+            column_width,
+            indented,
+            leading_cells,
+        },
     },
     primitive::{
         canvas::Canvas,
@@ -30,7 +35,7 @@ use crate::{
         span::{line, text},
         text::truncate,
     },
-    theme::ActiveTheme,
+    theme::active_theme::ActiveTheme,
 };
 
 #[derive(Debug)]
@@ -258,17 +263,17 @@ fn entry_cells(row: &EntryRow<'_>, now: Moment) -> [String; 2] {
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::{HistoryEntry, Moment, ViewIndex};
+    use kernel::domain::{history::HistoryEntry, index::ViewIndex, time::Moment};
     use ratatui::layout::Rect;
 
     use crate::{
         overlay::{
             history::HistoryWidget,
-            modal::{ModalRowStyle, OverlayContainer},
+            modal::{metrics::ModalRowStyle, placement::OverlayContainer},
         },
         primitive::canvas::find_text,
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn now() -> Moment {
@@ -277,7 +282,7 @@ mod tests {
 
     fn entry(path: &str, title: &str, artist: Option<&str>) -> HistoryEntry {
         HistoryEntry {
-            track: kernel::domain::TrackRef::Local(path.into()),
+            track: kernel::domain::track::TrackRef::Local(path.into()),
             title: title.to_string(),
             artist: artist.map(str::to_string),
             at: now(),

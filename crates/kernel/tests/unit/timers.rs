@@ -1,18 +1,9 @@
 use std::time::Duration;
 
 use kernel::{
-    AudioEvent,
-    Cmd,
-    Cue,
-    Effect,
-    Message,
-    Model,
-    Moment,
-    PlaybackChange,
-    PlaybackRequest,
-    Player,
-    Timer,
-    Toast,
+    cmd::{Cmd, Cue, Effect, PlaybackChange},
+    domain::{model::Model, player::Player, time::Moment, toast::Toast},
+    message::{AudioEvent, Message, PlaybackRequest, Timer},
 };
 
 use crate::support::{

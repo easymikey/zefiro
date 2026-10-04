@@ -9,18 +9,18 @@ use crate::{
     card::CardCover,
     key_hints::KeyHintsWidget,
     overlay::layer::{OverlayView, OverlayWidget},
-    playlist::PlaylistWidget,
+    playlist::pane::PlaylistWidget,
     primitive::canvas::Canvas,
     scene::Scene,
     screen::{
-        Breakpoint,
-        CompactScreenWidget,
-        FrameLayout,
-        FullScreenWidget,
-        MinimalScreenWidget,
-        TooSmallWidget,
+        breakpoint::Breakpoint,
+        compact::CompactScreenWidget,
+        frame_layout::FrameLayout,
+        full::FullScreenWidget,
+        minimal::MinimalScreenWidget,
+        too_small::TooSmallWidget,
     },
-    theme::{ActiveTheme, Role},
+    theme::{active_theme::ActiveTheme, colors::Role},
     toast::ToastWidget,
 };
 
@@ -71,7 +71,7 @@ impl Widget for &ScreenWidget<'_> {
             Breakpoint::Minimal => (&MinimalScreenWidget {
                 view: crate::card::CardView::from_scene(&self.scene),
                 theme,
-                speed_chip: self.scene.appearance().settings.speed_chip,
+                speed_chip: self.scene.appearance_settings().speed_chip,
             })
                 .render(layout.screen, buffer),
             Breakpoint::Full => (&FullScreenWidget {
@@ -97,7 +97,7 @@ impl ScreenWidget<'_> {
         let theme = scene.active_theme();
         if let Some(areas) = self.layout.playlist {
             PlaylistWidget {
-                view: crate::playlist::PlaylistView::from_scene(&scene),
+                view: crate::playlist::pane::PlaylistView::from_scene(&scene),
                 theme,
             }
             .paint(&areas, buffer);
@@ -140,13 +140,13 @@ impl ScreenWidget<'_> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::Toast;
+    use kernel::domain::toast::Toast;
     use ratatui::layout::Rect;
 
     use crate::{
         card::CardCover,
         scene::{PixelPath, Scene},
-        screen::{FrameLayout, ScreenWidget},
+        screen::{frame_layout::FrameLayout, root::ScreenWidget},
         test_support::{SceneSources, model_with_tracks, rendered},
     };
 

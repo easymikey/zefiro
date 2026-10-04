@@ -2,33 +2,22 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use config::{
-    APPEARANCE_FILE_NAME,
-    CONFIG_FILE_NAME,
-    ConfigToml,
-    TomlColors,
-    TomlTheme,
-    parse_appearance,
-    parse_config,
+    appearance_file::{APPEARANCE_FILE_NAME, parse_appearance},
+    config_file::{CONFIG_FILE_NAME, TomlConfig, parse_config},
+    theme_file::{TomlColors, TomlTheme},
 };
-use kernel::{
-    Bounded,
-    IoError,
-    domain::{
-        ConfigError,
-        ConfigName,
-        Diagnostic,
-        Percent,
-        Shuffle,
-        Startup,
-        ThemeChoice,
-        ThemeName,
-        appearance::Rgb,
-        appearance_rows::appearance_settings,
-    },
+use kernel::domain::{
+    appearance::Rgb,
+    appearance_rows::appearance_settings,
+    bounded::Bounded,
+    config::{ConfigError, ConfigName, Diagnostic},
+    io_error::IoError,
+    percent::Percent,
     playlist::{PlaylistFileName, PlaylistSource},
+    startup::{Shuffle, Startup},
+    theme::{ThemeChoice, ThemeName},
 };
-use library::LibraryDirs;
-use widgets::{Colors, Theme, ThemeBase};
+use library::dirs::LibraryDirs;
 
 use crate::error::Error;
 
@@ -47,8 +36,9 @@ const FALLBACK_COLORS: TomlColors = TomlColors {
 
 pub(crate) struct Launch {
     pub(crate) startup: Startup,
-    pub(crate) paths: runtime::StartupPaths,
+    pub(crate) paths: runtime::runtime::StartupPaths,
     pub(crate) theme: TomlTheme,
+    pub(crate) appearance: widgets::appearance::Appearance,
 }
 
 struct Parsed<T> {
@@ -101,13 +91,13 @@ fn config_paths(
     config_dir: &Path,
     choice: &ThemeChoice,
     config_file: PathBuf,
-) -> config::ConfigPaths {
-    config::ConfigPaths {
+) -> config::driver::ConfigPaths {
+    config::driver::ConfigPaths {
         config: config_file,
         appearance: appearance_path(config_dir),
         themes: themes_dir(config_dir),
-        theme: Some(config::resolve_theme(choice)),
-        seen: config::SeenTexts::default(),
+        theme: Some(config::embedded_theme::resolve_theme(choice)),
+        seen: config::driver::SeenTexts::default(),
     }
 }
 
@@ -128,7 +118,7 @@ fn fallback<T>(fallback: T, file: ConfigName, source: &std::io::Error) -> Parsed
 fn read_parsed<T: Default>(
     path: &Path,
     name: ConfigName,
-    parse: fn(&str) -> Result<T, config::Error>,
+    parse: fn(&str) -> Result<T, config::error::Error>,
 ) -> Parsed<T> {
     let text = match library::files::read_if_present(path) {
         Ok(Some(text)) => text,
@@ -155,34 +145,6 @@ fn read_parsed<T: Default>(
     }
 }
 
-pub(crate) fn theme(raw: TomlTheme) -> Theme {
-    let TomlColors {
-        background,
-        foreground,
-        bright_foreground,
-        accent,
-        green,
-        yellow,
-        red,
-        window_background,
-    } = raw.colors;
-    let seed = ThemeBase {
-        background,
-        foreground,
-        bright_foreground,
-        accent,
-        green,
-        yellow,
-        red,
-        window_background,
-    };
-    Theme {
-        name: raw.name,
-        colors: Colors::derive(&seed),
-        scanning_label: raw.scanning_label,
-    }
-}
-
 pub(crate) fn fallback_theme() -> TomlTheme {
     TomlTheme {
         name: ThemeName::from_static("fallback"),
@@ -192,15 +154,18 @@ pub(crate) fn fallback_theme() -> TomlTheme {
 }
 
 fn stock_theme() -> Result<TomlTheme, Error> {
-    config::embedded_theme(STOCK_THEME).map_or_else(
+    config::embedded_theme::embedded_theme(STOCK_THEME).map_or_else(
         || Ok(fallback_theme()),
-        |source| config::parse_theme(source, STOCK_THEME).map_err(Error::StockTheme),
+        |source| {
+            config::theme_file::parse_theme(source, STOCK_THEME)
+                .map_err(Error::StockTheme)
+        },
     )
 }
 
 fn invalid(
     name: ConfigName,
-    error: &config::Error,
+    error: &config::error::Error,
 ) -> Option<(ConfigName, ConfigError)> {
     Some((name, ConfigError::Invalid(Diagnostic::from_error(error))))
 }
@@ -210,7 +175,7 @@ fn parsed_theme(
     text: &str,
     seen: Option<String>,
 ) -> Result<Parsed<TomlTheme>, Error> {
-    Ok(match config::parse_theme(text, name.as_str()) {
+    Ok(match config::theme_file::parse_theme(text, name.as_str()) {
         Ok(value) => Parsed {
             value,
             text: seen,
@@ -225,22 +190,22 @@ fn parsed_theme(
 }
 
 fn embedded_or_stock_theme(name: &ThemeName) -> Result<Parsed<TomlTheme>, Error> {
-    match config::embedded_theme(name.as_str()) {
+    match config::embedded_theme::embedded_theme(name.as_str()) {
         Some(embedded) => parsed_theme(name, embedded, None),
         None => Ok(Parsed {
             value: stock_theme()?,
             text: None,
             error: invalid(
                 ConfigName::Theme(name.clone()),
-                &config::Error::UnknownTheme(name.clone()),
+                &config::error::Error::UnknownTheme(name.clone()),
             ),
         }),
     }
 }
 
 fn read_theme(choice: &ThemeChoice, themes: &Path) -> Result<Parsed<TomlTheme>, Error> {
-    let name = config::resolve_theme(choice);
-    let path = themes.join(config::theme_file_name(name.as_str()));
+    let name = config::embedded_theme::resolve_theme(choice);
+    let path = themes.join(config::theme_file::theme_file_name(name.as_str()));
     match library::files::read_if_present(&path) {
         Ok(Some(text)) => parsed_theme(&name, &text, Some(text.clone())),
         Ok(None) => embedded_or_stock_theme(&name),
@@ -251,7 +216,7 @@ fn read_theme(choice: &ThemeChoice, themes: &Path) -> Result<Parsed<TomlTheme>, 
 fn startup_with_appearance(
     startup: Startup,
     config_dir: &Path,
-    paths: runtime::StartupPaths,
+    paths: runtime::runtime::StartupPaths,
 ) -> Result<Launch, Error> {
     let appearance = read_parsed(
         &appearance_path(config_dir),
@@ -265,9 +230,9 @@ fn startup_with_appearance(
         .into_iter()
         .chain([appearance.error, theme.error].into_iter().flatten())
         .collect();
-    let paths = runtime::StartupPaths {
-        config: config::ConfigPaths {
-            seen: config::SeenTexts {
+    let paths = runtime::runtime::StartupPaths {
+        config: config::driver::ConfigPaths {
+            seen: config::driver::SeenTexts {
                 appearance: appearance.text,
                 ..paths.config.seen
             },
@@ -278,17 +243,18 @@ fn startup_with_appearance(
     Ok(Launch {
         startup: Startup {
             appearance_settings,
-            appearance: appearance.value.appearance(),
+            appearance: appearance.value.settings(),
             errors,
             ..startup
         },
         paths,
         theme: theme.value,
+        appearance: crate::shell::presentation::appearance(&appearance.value),
     })
 }
 
 fn resolved_music_dir(
-    config_toml: &ConfigToml,
+    config_toml: &TomlConfig,
     cli_path: Option<PathBuf>,
 ) -> Result<PathBuf, Error> {
     let music_dir = cli_path
@@ -308,7 +274,7 @@ fn load_named_playlist(
     name: &str,
 ) -> Result<Startup, Error> {
     let file_name = PlaylistFileName::new(name).map_err(Error::PlaylistName)?;
-    let playlist = library::load_playlist(library, &file_name)?;
+    let playlist = library::playlists::load(library, &file_name)?;
     Ok(Startup {
         playlist_index: playlist.playing_index(),
         playlist_tracks: playlist.tracks,
@@ -318,7 +284,7 @@ fn load_named_playlist(
 }
 
 fn merged_startup(
-    config_toml: ConfigToml,
+    config_toml: TomlConfig,
     music_dir: PathBuf,
     cli: &Cli,
 ) -> Result<Startup, Error> {
@@ -356,9 +322,9 @@ pub(crate) fn launch() -> Result<Launch, Error> {
         None => merged,
     };
     let config = config_paths(&config_dir, &startup.theme, config_file);
-    let paths = runtime::StartupPaths {
-        config: config::ConfigPaths {
-            seen: config::SeenTexts {
+    let paths = runtime::runtime::StartupPaths {
+        config: config::driver::ConfigPaths {
+            seen: config::driver::SeenTexts {
                 config: config_text,
                 ..config.seen
             },
@@ -372,15 +338,12 @@ pub(crate) fn launch() -> Result<Launch, Error> {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use config::TomlAppearance;
+    use config::appearance_file::TomlAppearance;
     use kernel::domain::{
-        ConfigError,
-        ConfigName,
-        Shuffle,
-        Startup,
-        ThemeChoice,
-        ThemeName,
         appearance_rows::appearance_settings,
+        config::{ConfigError, ConfigName},
+        startup::{Shuffle, Startup},
+        theme::{ThemeChoice, ThemeName},
     };
     use rstest::rstest;
 
@@ -401,13 +364,13 @@ mod tests {
     }
 
     fn booted(directory: &std::path::Path, theme: &ThemeChoice) -> Launch {
-        let paths = runtime::StartupPaths {
+        let paths = runtime::runtime::StartupPaths {
             config: crate::startup::config_paths(
                 directory,
                 theme,
                 directory.join(CONFIG_FILE_NAME),
             ),
-            library: library::LibraryDirs::user().unwrap(),
+            library: library::dirs::LibraryDirs::user().unwrap(),
         };
         let startup = Startup {
             theme: theme.clone(),
@@ -418,8 +381,11 @@ mod tests {
 
     #[rstest]
     fn every_embedded_theme_parses() {
-        for &(name, source) in config::EMBEDDED_THEMES {
-            assert!(config::parse_theme(source, name).is_ok(), "{name}");
+        for &(name, source) in config::embedded_theme::EMBEDDED_THEMES {
+            assert!(
+                config::theme_file::parse_theme(source, name).is_ok(),
+                "{name}"
+            );
         }
     }
 
@@ -445,11 +411,15 @@ mod tests {
         let booted = booted(directory.path(), &choice(theme));
 
         let expected = if appearance == Some(COMPACT) {
-            config::parse_appearance(COMPACT).unwrap()
+            config::appearance_file::parse_appearance(COMPACT).unwrap()
         } else {
             TomlAppearance::default()
         };
-        assert_eq!(booted.startup.appearance, expected.appearance());
+        assert_eq!(booted.startup.appearance, expected.settings());
+        assert_eq!(
+            booted.appearance,
+            crate::shell::presentation::appearance(&expected)
+        );
         let names: Vec<_> = booted
             .startup
             .errors
@@ -469,9 +439,10 @@ mod tests {
         let path = directory.path().join(CONFIG_FILE_NAME);
         std::fs::write(&path, "volume = \"loud\"\n").unwrap();
 
-        let parsed = read_parsed(&path, ConfigName::Config, config::parse_config);
+        let parsed =
+            read_parsed(&path, ConfigName::Config, config::config_file::parse_config);
 
-        assert_eq!(parsed.value, config::ConfigToml::default());
+        assert_eq!(parsed.value, config::config_file::TomlConfig::default());
         assert_eq!(parsed.text.as_deref(), Some("volume = \"loud\"\n"));
         assert!(matches!(
             parsed.error,
@@ -509,7 +480,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("sifr-ui.toml"), COMPACT).unwrap();
         std::fs::create_dir(directory.path().join("themes")).unwrap();
-        let theme = config::embedded_theme("noir").unwrap();
+        let theme = config::embedded_theme::embedded_theme("noir").unwrap();
         std::fs::write(directory.path().join("themes/mine.toml"), theme).unwrap();
 
         let booted = booted(directory.path(), &choice("mine"));
@@ -527,7 +498,11 @@ mod tests {
 
         assert_eq!(
             booted.startup.appearance_settings,
-            appearance_settings(config::parse_appearance(COMPACT).unwrap().settings())
+            appearance_settings(
+                config::appearance_file::parse_appearance(COMPACT)
+                    .unwrap()
+                    .settings()
+            )
         );
         assert_ne!(
             booted.startup.appearance_settings,

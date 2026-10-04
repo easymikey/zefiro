@@ -4,30 +4,30 @@ mod config;
 mod driver;
 pub mod keymap;
 mod library;
-mod machine;
+pub mod machine;
 mod macos;
 pub mod overlay;
 mod playback;
 pub mod player;
 mod playlist;
 mod settings;
-mod startup;
+pub mod startup;
 mod timer;
 mod transport;
 mod workspace;
 
-pub use machine::{Driver, Machine, Unhandled};
-
 use crate::{
-    cmd::{AudioCmd, Cmd, Cue, Effect, WindowColorsCmd},
+    cmd::{AudioCmd, Cmd, CoverJob, Cue, Effect, LibraryCmd, WindowColorsCmd},
     domain::{
-        DriverName,
-        Model,
-        Moment,
-        Startup,
-        Toast,
-        Workspace,
+        appearance::CoverMode,
+        driver::DriverName,
+        geometry::Pixels,
+        model::Model,
         playlist::{PlayOrder, Playlist},
+        settings::Settings,
+        time::Moment,
+        toast::Toast,
+        workspace::Workspace,
     },
     message::{
         BrowseRequest,
@@ -39,21 +39,11 @@ use crate::{
         PlaylistRequest,
         Timer,
     },
+    update::machine::{Machine, Unhandled},
 };
 
 fn paint_toast(error: &PaintError) -> Toast {
     Toast::error(error.to_string()).with_text(error.diagnostic().text())
-}
-
-#[must_use]
-pub fn startup(startup: Startup) -> (Model, Vec<Effect>) {
-    let mut model = Model::default();
-    let (mut effects, messages) = startup::seed_model(&mut model, startup).into_parts();
-    for queued in messages {
-        effects.extend(follow_up(&mut model, queued, 0));
-    }
-    effects.extend(roll_pending(&model.playlist));
-    (model, effects)
 }
 
 const DRAIN_DEPTH: usize = 8;
@@ -66,12 +56,28 @@ pub fn update(
     if let Message::Quit = message {
         return Ok(quit().into_parts().0);
     }
-    if let Message::Viewport { visible_rows } = message {
+    let before = shown_cover(model);
+    let mut effects = route(model, message, now)?;
+    effects.extend(decode_cover(before.as_ref(), model));
+    Ok(effects)
+}
+
+fn route(
+    model: &mut Model,
+    message: Message,
+    now: Moment,
+) -> Result<Vec<Effect>, Unhandled> {
+    if let Message::Viewport {
+        visible_rows,
+        cover_side,
+    } = message
+    {
         model.workspace.visible_rows = visible_rows;
+        model.workspace.cover_side = cover_side;
         return Ok(Vec::new());
     }
     let message = if let Message::Key(press) = message {
-        match keymap::route(&model.workspace, press) {
+        match keymap::lookup::route(&model.workspace, press) {
             Some(routed) => routed,
             None => return Err(Unhandled),
         }
@@ -81,6 +87,28 @@ pub fn update(
     let mut effects = update_model(model, message, now)?;
     effects.extend(roll_pending(&model.playlist));
     Ok(effects)
+}
+
+pub(crate) fn cover_side(workspace: &Workspace, settings: &Settings) -> Option<Pixels> {
+    match settings.appearance.cover_mode {
+        CoverMode::Plain | CoverMode::Vinyl => workspace.cover_side,
+        CoverMode::Milkdrop | CoverMode::Off => None,
+    }
+}
+
+fn shown_cover(model: &Model) -> Option<CoverJob> {
+    let side = cover_side(&model.workspace, &model.settings)?;
+    let track = model.player.current()?;
+    Some(CoverJob {
+        path: track.path().to_path_buf(),
+        side,
+    })
+}
+
+fn decode_cover(before: Option<&CoverJob>, model: &Model) -> Option<Effect> {
+    shown_cover(model)
+        .filter(|after| Some(after) != before)
+        .map(|job| Effect::Library(LibraryCmd::DecodeCover(job)))
 }
 
 fn drain(
@@ -419,9 +447,16 @@ mod tests {
 
     use crate::{
         cmd::Effect,
-        domain::{Diagnostic, Model, Moment, Shuffle, Startup, Toast, Track},
+        domain::{
+            config::Diagnostic,
+            model::Model,
+            startup::{Shuffle, Startup},
+            time::Moment,
+            toast::Toast,
+            track::Track,
+        },
         message::{Message, PaintError, PaintEvent},
-        update::{startup, update},
+        update::{startup::startup, update},
     };
 
     fn startup_with(shuffle: Shuffle) -> Startup {

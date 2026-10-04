@@ -1,6 +1,9 @@
-use crate::domain::{Moment, Track, TrackRef};
+use crate::domain::{
+    time::Moment,
+    track::{Track, TrackRef},
+};
 
-pub const HISTORY_LIMIT: usize = 200;
+pub(crate) const HISTORY_LIMIT: usize = 200;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct HistoryEntry {

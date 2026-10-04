@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crossbeam_channel::{Receiver, RecvError, TrySendError};
-use kernel::IoError;
+use kernel::domain::io_error::IoError;
 use notify::{RecommendedWatcher, RecursiveMode};
 
 fn io_error(error: &notify::Error) -> IoError {
@@ -67,13 +67,12 @@ fn recommended<H: notify::EventHandler>(
     }
 }
 
-pub(crate) type Changed<M> = fn(&Path, Result<(), IoError>) -> M;
+pub(crate) type Changed<M> = fn(Result<(), IoError>) -> M;
 
 pub(crate) struct FileStream<M> {
     watcher: Option<RecommendedWatcher>,
     events: Receiver<notify::Result<notify::Event>>,
     item: Option<Changed<M>>,
-    watched: PathBuf,
 }
 
 impl<M> FileStream<M> {
@@ -82,7 +81,6 @@ impl<M> FileStream<M> {
             watcher: None,
             events: crossbeam_channel::never(),
             item: None,
-            watched: PathBuf::new(),
         }
     }
 
@@ -92,7 +90,6 @@ impl<M> FileStream<M> {
 
     pub(crate) fn watch(&mut self, path: &Path, changed: Changed<M>) -> Option<M> {
         self.item = Some(changed);
-        self.watched = path.to_path_buf();
         if self.watcher.is_none() {
             let (sender, events) = crossbeam_channel::bounded(1);
             let mut failure = None;
@@ -105,12 +102,12 @@ impl<M> FileStream<M> {
             );
             self.events = events;
             if let Some(error) = failure {
-                return Some(changed(path, Err(error)));
+                return Some(changed(Err(error)));
             }
         }
         watch_if_present(&mut self.watcher, path)
             .err()
-            .map(|error| changed(path, Err(io_error(&error))))
+            .map(|error| changed(Err(io_error(&error))))
     }
 
     pub(crate) fn unwatch(&mut self, path: &Path) -> Option<M> {
@@ -119,7 +116,7 @@ impl<M> FileStream<M> {
             .unwatch(path)
             .err()
             .filter(|error| !matches!(error.kind, notify::ErrorKind::WatchNotFound))
-            .map(|error| item(path, Err(io_error(&error))))
+            .map(|error| item(Err(io_error(&error))))
     }
 
     pub(crate) fn heard(
@@ -129,7 +126,6 @@ impl<M> FileStream<M> {
         let event = received.ok()?;
         let item = self.item?;
         Some(item(
-            &self.watched,
             event.map(|_event| ()).map_err(|error| io_error(&error)),
         ))
     }

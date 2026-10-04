@@ -142,8 +142,8 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | small label | chip (`format_chips`, `speed_chip`) | badge, `tech_chips` |
 | preload-due / A-B-end timer | `Lookahead` (`Timer::Lookahead`) | `Mark` |
 | A-B point | `Mark` (`AbLoop::mark`) | — |
-| compiled whole of `sifr-ui.toml` | `Appearance` | `Look`, `Custom*`, `UiOptions`, `[ui]` |
-| choices the settings overlay edits | `AppearanceSettings` (field `settings`) | — |
+| render part of `sifr-ui.toml` | widgets `Appearance` | `Look`, `Custom*`, `UiOptions`, `[ui]` |
+| choices the settings overlay edits | kernel `AppearanceSettings` (field `Settings.appearance`) | — |
 | how the cover is shown | `CoverMode` (key `cover_mode`) | `CoverStyle` |
 | step a setting / volume / speed | `Step` + `Direction { Next, Previous }` (`Message::Step { row, direction }`, `StepVolume(Direction)`); size is a constant beside the value (`VOLUME_STEP = 5`) | `Adjust`, `Nudge`, `steps: i8` |
 | absolute input (remote, IPC, macOS) | `Set*(value)` (`SetVolume`, as cliamp) | — |
@@ -186,7 +186,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | read-models `KeyHintsContent`, `OverlayContent` | `KeyHintsView`, `OverlayView` (View row) | `Content` suffix |
 | theme input colours before derivation | `ThemeBase` | `ThemeSeed` (`Seed` = DriverLoop seed) |
 | sifr's values beside the Model for `ScenePresentation` | `ShellPresentation` | `Presentation` |
-| the shell's cover-crossfade state machine | `CrossfadeGate`, `CrossfadeGateMessage`; `CoverArrival`; per-frame step `FrameAdvance`; `Motion`, `LaidOutScene`, library `JobPriority` keep their names | `PendingCrossfade`, `Advance` |
+| the cover-crossfade state machine (widgets `pixels::cover::gate`) | `CrossfadeGate`, `CrossfadeGateMessage`; `CoverArrival`; `Motion`, library `JobPriority` keep their names | `PendingCrossfade`, `Advance` |
 | CPU-parallel work inside one job (tag reading) | allowed: `thread::scope` inside a job body, joined before the job returns (decided 2026-10-04) | detached threads in jobs |
 | turning the raw `TomlTheme` into the widgets `Theme` | the shell (sifr) does it: `Theme` is a widgets type and config sits below widgets; config publishes `TomlTheme` (decided 2026-10-04) | config depending on widgets |
 | which cover to decode and at what size | the kernel decides: the shell reports the laid-out cover side through `Message::Viewport` (`Pixels`), kernel emits `Effect::Library(LibraryCmd::DecodeCover(CoverJob))` on track or side change; no shell→driver side channel (decided 2026-10-04) | paint path sending `LibraryMessage::Cover` |
@@ -248,7 +248,7 @@ A name or shape this file does not cover (a new suffix, a new domain word, a sec
 
 ## 12. Events, frames and performance
 
-1. Three event classes, one path each: a fact reaches `update` as a `Message` through the bounded mailbox; driver internals never leave the driver thread; a stream value (spectrum, decoded cover, reloaded theme) goes into a latest-value cell, never a queue. No message exists only because time passed. `review`
+1. Three event classes, one path each: a fact reaches `update` as a `Message` through the bounded mailbox; driver internals never leave the driver thread; a stream value (spectrum, decoded cover, reloaded theme, reloaded appearance) goes into a latest-value cell, never a queue. No message exists only because time passed. `review`
 2. Cells are lock-free: `triple_buffer` for samples, atomics for scalars, `arc-swap` for large rare values. On a realtime path (audio callback, OS callback) no `Mutex`, allocation or blocking call; it only sets a flag or `try_send`s into a bounded(1) doorbell. `review`
 3. Kernel timers (`Effect::After`) exist only for decisions (`Timer::Lookahead`, `Sleep`, `Toast`); a timer whose only purpose is to move pixels is a defect. `review`
 4. `update` names each transition worth animating as `Effect::Animate(Cue)`; the shell plays the cue and never diffs the model to guess what changed. `review`

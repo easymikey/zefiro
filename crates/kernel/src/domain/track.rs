@@ -143,7 +143,7 @@ impl Track {
     }
 
     #[must_use]
-    pub fn with_duration(&self, duration: Duration) -> Self {
+    pub(crate) fn with_duration(&self, duration: Duration) -> Self {
         let tagging = match self.tagging {
             Tagging::Listed(_) => Tagging::Listed(Some(duration)),
             Tagging::Read(_) => Tagging::Read(duration),

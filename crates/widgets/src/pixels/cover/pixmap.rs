@@ -4,12 +4,14 @@ use image::{RgbaImage, imageops::FilterType};
 use ratatui::layout::Rect;
 
 use crate::{
-    CoverImage,
-    Scene,
-    VinylCache,
-    VinylCacheKey,
-    VinylStyle,
-    pixels::cover::lifecycle::{BuiltPixmap, Identity},
+    pixels::{
+        cover::{
+            CoverImage,
+            lifecycle::{BuiltPixmap, Identity},
+        },
+        vinyl::{VinylCache, VinylCacheKey, VinylStyle},
+    },
+    scene::Scene,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

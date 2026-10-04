@@ -1,28 +1,24 @@
 use kernel::domain::{
-    ConfigName,
     appearance::{
         Animations,
-        Appearance,
         AppearancePatch,
         AppearanceSettings,
-        Breakpoints,
         CoverBrackets,
-        CoverCells,
         CoverMode,
         FormatChips,
         KeyHints,
         LayoutMode,
-        ProgressBar,
         ProgressTime,
         Rgb,
         SpeedChip,
     },
-    geometry::{Cells, Pixels},
+    config::ConfigName,
+    geometry::Pixels,
 };
 use serde::Deserialize;
 
 use crate::{
-    appearance::{from_str_option, variant_field},
+    appearance::{from_str_option, rounded_pixels, variant_field},
     error::{Error, parse_toml},
 };
 
@@ -45,18 +41,16 @@ impl Default for TextCoverCells {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields, expecting = "a [cover] table")]
 pub struct TomlCover {
-    pub size_px: u32,
     #[serde(deserialize_with = "variant_field")]
-    pub mode: CoverMode,
+    pub(crate) mode: CoverMode,
     pub text_cells: TextCoverCells,
     #[serde(deserialize_with = "crate::appearance::flag")]
-    pub brackets: CoverBrackets,
+    pub(crate) brackets: CoverBrackets,
 }
 
 impl Default for TomlCover {
     fn default() -> Self {
         Self {
-            size_px: 160,
             mode: CoverMode::Vinyl,
             text_cells: TextCoverCells::default(),
             brackets: CoverBrackets::default(),
@@ -68,28 +62,30 @@ impl Default for TomlCover {
 #[serde(default, deny_unknown_fields, expecting = "a [card] table")]
 pub struct TomlCard {
     #[serde(deserialize_with = "crate::appearance::flag")]
-    pub format_chips: FormatChips,
+    pub(crate) format_chips: FormatChips,
     #[serde(deserialize_with = "variant_field")]
-    pub speed_chip: SpeedChip,
+    pub(crate) speed_chip: SpeedChip,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields, expecting = "a [progress] table")]
 pub struct TomlProgress {
-    pub height_px: f32,
-    pub radius: Option<f32>,
+    #[serde(deserialize_with = "rounded_pixels")]
+    pub height_px: Pixels,
+    #[serde(deserialize_with = "rounded_pixels")]
+    pub radius: Option<Pixels>,
     #[serde(deserialize_with = "from_str_option")]
     pub fill: Option<Rgb>,
     #[serde(deserialize_with = "from_str_option")]
     pub groove: Option<Rgb>,
     #[serde(deserialize_with = "crate::appearance::flag")]
-    pub remaining: ProgressTime,
+    pub(crate) remaining: ProgressTime,
 }
 
 impl Default for TomlProgress {
     fn default() -> Self {
         Self {
-            height_px: 4.0,
+            height_px: Pixels(4),
             radius: None,
             fill: None,
             groove: None,
@@ -102,9 +98,9 @@ impl Default for TomlProgress {
 #[serde(default, deny_unknown_fields, expecting = "a [window] table")]
 pub struct TomlWindow {
     #[serde(deserialize_with = "crate::appearance::flag")]
-    pub animations: Animations,
+    pub(crate) animations: Animations,
     #[serde(deserialize_with = "crate::appearance::flag")]
-    pub key_hints: KeyHints,
+    pub(crate) key_hints: KeyHints,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -117,7 +113,7 @@ pub struct TomlLayout {
     pub min_columns: u16,
     pub min_rows: u16,
     #[serde(deserialize_with = "variant_field")]
-    pub mode: LayoutMode,
+    pub(crate) mode: LayoutMode,
 }
 
 impl Default for TomlLayout {
@@ -138,11 +134,11 @@ impl Default for TomlLayout {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, expecting = "the sifr-ui.toml file")]
 pub struct TomlAppearance {
-    pub card: TomlCard,
+    pub(crate) card: TomlCard,
     pub progress: TomlProgress,
     pub cover: TomlCover,
     pub layout: TomlLayout,
-    pub window: TomlWindow,
+    pub(crate) window: TomlWindow,
 }
 
 impl TomlAppearance {
@@ -156,31 +152,6 @@ impl TomlAppearance {
             key_hints: self.window.key_hints,
             animations: self.window.animations,
             layout_mode: self.layout.mode,
-        }
-    }
-
-    pub fn appearance(&self) -> Appearance {
-        Appearance {
-            settings: self.settings(),
-            cover_size_px: Pixels(self.cover.size_px),
-            cover_cells: CoverCells {
-                width: Cells(self.cover.text_cells.width),
-                height: Cells(self.cover.text_cells.height),
-            },
-            breakpoints: Breakpoints {
-                full_min_width: Cells(self.layout.full_min_width),
-                full_min_height: Cells(self.layout.full_min_height),
-                compact_min_width: Cells(self.layout.compact_min_width),
-                compact_min_height: Cells(self.layout.compact_min_height),
-                min_columns: Cells(self.layout.min_columns),
-                min_rows: Cells(self.layout.min_rows),
-            },
-            progress: ProgressBar {
-                height_px: self.progress.height_px,
-                radius: self.progress.radius,
-                fill: self.progress.fill,
-                groove: self.progress.groove,
-            },
         }
     }
 
@@ -223,20 +194,22 @@ pub fn parse_appearance(source: &str) -> Result<TomlAppearance, Error> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::appearance::{
-        Animations,
-        Appearance,
-        AppearancePatch,
-        AppearancePreset,
-        AppearanceSettings,
-        CoverBrackets,
-        CoverMode,
-        FormatChips,
-        KeyHints,
-        LayoutMode,
-        ProgressTime,
-        SpeedChip,
-        preset_appearance,
+    use kernel::domain::{
+        appearance::{
+            Animations,
+            AppearancePatch,
+            AppearancePreset,
+            AppearanceSettings,
+            CoverBrackets,
+            CoverMode,
+            FormatChips,
+            KeyHints,
+            LayoutMode,
+            ProgressTime,
+            SpeedChip,
+            preset_appearance,
+        },
+        geometry::Pixels,
     };
     use rstest::rstest;
 
@@ -244,8 +217,8 @@ mod tests {
         appearance_file::{
             TextCoverCells,
             TomlAppearance,
-            TomlCover,
             TomlLayout,
+            TomlProgress,
             parse_appearance,
         },
         error::Error,
@@ -266,14 +239,6 @@ mod tests {
         assert_eq!(
             TomlAppearance::default().settings(),
             AppearanceSettings::default()
-        );
-    }
-
-    #[test]
-    fn the_stock_file_reads_as_the_stock_appearance() {
-        assert_eq!(
-            TomlAppearance::default().appearance(),
-            Appearance::default()
         );
     }
 
@@ -308,16 +273,16 @@ mod tests {
     #[test]
     fn writing_an_appearance_keeps_the_keys_it_says_nothing_about() {
         let sized = TomlAppearance {
-            cover: TomlCover {
-                size_px: 320,
-                ..TomlCover::default()
+            progress: TomlProgress {
+                height_px: Pixels(9),
+                ..TomlProgress::default()
             },
             ..TomlAppearance::default()
         };
 
         let noir = sized.with_appearance(preset_appearance(AppearancePreset::Noir));
 
-        assert_eq!(noir.cover.size_px, 320);
+        assert_eq!(noir.progress.height_px, Pixels(9));
         assert_eq!(noir.cover.mode, CoverMode::Milkdrop);
     }
 
@@ -363,18 +328,20 @@ mod tests {
     })]
     #[case::a_vinyl_cover("[cover]\nmode = \"vinyl\"\n", |c: &TomlAppearance| {
         assert_eq!(c.cover.mode, CoverMode::Vinyl);
-        assert_eq!(c.cover.size_px, TomlCover::default().size_px);
     })]
-    #[case::a_cover_size("[cover]\nsize_px = 99\n", |c: &TomlAppearance| {
-        assert_eq!(c.cover.size_px, 99);
-        assert_eq!(c.cover.mode, CoverMode::Vinyl);
+    #[case::a_fractional_bar("[progress]\nheight_px = 5.6\nradius = 2.4\n", |c: &TomlAppearance| {
+        assert_eq!(c.progress.height_px, Pixels(6));
+        assert_eq!(c.progress.radius, Some(Pixels(2)));
+    })]
+    #[case::a_whole_bar("[progress]\nheight_px = 7\n", |c: &TomlAppearance| {
+        assert_eq!(c.progress.height_px, Pixels(7));
+        assert_eq!(c.progress.radius, None);
     })]
     #[case::a_text_cover_box(
         "[cover]\n[cover.text_cells]\nwidth = 40\nheight = 20\n",
         |c: &TomlAppearance| {
             assert_eq!(c.cover.text_cells, TextCoverCells { width: 40, height: 20 });
             assert_eq!(c.cover.mode, CoverMode::Vinyl);
-            assert_eq!(c.cover.size_px, TomlCover::default().size_px);
         }
     )]
     #[case::every_widget_key(
@@ -420,6 +387,7 @@ mod tests {
     #[case::a_removed_theme_key("theme = \"oreo\"\n")]
     #[case::a_removed_keymap_table("[keymap]\nnext = \"x\"\n")]
     #[case::a_misspelt_key("[cover]\nbrakcets = true\n")]
+    #[case::a_negative_bar_height("[progress]\nheight_px = -1\n")]
     fn a_key_nothing_reads_is_rejected(#[case] text: &str) {
         assert!(parse_appearance(text).is_err(), "{text} must not parse");
     }
@@ -492,9 +460,9 @@ mod tests {
     #[test]
     fn patched_keeps_the_keys_the_patch_says_nothing_about() {
         let sized = TomlAppearance {
-            cover: TomlCover {
-                size_px: 320,
-                ..TomlCover::default()
+            progress: TomlProgress {
+                height_px: Pixels(9),
+                ..TomlProgress::default()
             },
             ..TomlAppearance::default()
         };
@@ -505,7 +473,7 @@ mod tests {
                 .build(),
         );
 
-        assert_eq!(after.cover.size_px, 320);
+        assert_eq!(after.progress.height_px, Pixels(9));
         assert_eq!(after.cover.mode, CoverMode::Off);
     }
 }

@@ -1,12 +1,27 @@
 use std::time::Duration;
 
-use kernel::domain::{Moment, format_time};
+use kernel::domain::time::Moment;
 
 const JUST_NOW_SECONDS: u64 = 60;
 const MINUTE_SECONDS: u64 = 60;
 const HOUR_SECONDS: u64 = 3_600;
 const DAY_SECONDS: u64 = 86_400;
 const WEEK_SECONDS: u64 = 604_800;
+
+#[must_use]
+pub(crate) fn format_time(duration: Duration) -> String {
+    let total_secs = duration.as_secs();
+    let (hours, minutes, seconds) = (
+        total_secs / HOUR_SECONDS,
+        (total_secs % HOUR_SECONDS) / MINUTE_SECONDS,
+        total_secs % MINUTE_SECONDS,
+    );
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
+}
 
 #[must_use]
 pub(crate) fn elapsed_of(position: Duration, duration: Duration) -> String {
@@ -35,11 +50,25 @@ pub(crate) fn relative_time(now: Moment, then: Moment) -> String {
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::Moment;
+    use kernel::domain::time::Moment;
     use proptest::prelude::{any, prop_assert, proptest};
     use rstest::rstest;
 
-    use crate::primitive::relative_time::relative_time;
+    use crate::primitive::relative_time::{format_time, relative_time};
+
+    #[rstest]
+    #[case(0, "00:00")]
+    #[case(65, "01:05")]
+    #[case(3599, "59:59")]
+    #[case(3600, "1:00:00")]
+    #[case(3661, "1:01:01")]
+    #[case(7384, "2:03:04")]
+    fn format_time_grows_an_hours_field_only_when_there_is_one(
+        #[case] seconds: u64,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(format_time(Duration::from_secs(seconds)), expected);
+    }
 
     #[rstest]
     #[case::under_a_minute(59, 0, "just now")]

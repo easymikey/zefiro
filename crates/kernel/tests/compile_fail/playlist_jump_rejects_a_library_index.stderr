@@ -6,8 +6,8 @@ error[E0308]: mismatched types
   |                  |
   |                  arguments to this method are incorrect
   |
-  = note: expected struct `Index<domain::index::ViewSpace>`
-             found struct `Index<domain::index::TrackSpace>`
+  = note: expected struct `Index<ViewSpace>`
+             found struct `Index<TrackSpace>`
 note: method defined here
  --> src/domain/playlist.rs
   |

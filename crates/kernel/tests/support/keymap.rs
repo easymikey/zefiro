@@ -1,8 +1,9 @@
 use kernel::{
-    Key,
-    KeyCode,
-    domain::KeymapOverrides,
-    update::keymap::{Bindings, KeyBinding},
+    domain::{
+        key::{Key, KeyCode},
+        keymap::KeymapOverrides,
+    },
+    update::keymap::{bindings::Bindings, chord::KeyBinding},
 };
 
 pub(crate) fn bindings(config: &KeymapOverrides) -> Vec<KeyBinding> {

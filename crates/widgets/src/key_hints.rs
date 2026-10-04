@@ -1,4 +1,4 @@
-use kernel::{domain::Action, update::keymap::KeyBinding};
+use kernel::{domain::keymap::Action, update::keymap::chord::KeyBinding};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -13,7 +13,7 @@ use crate::{
         span::{line, text},
         text::truncate_line_to_width,
     },
-    theme::{ActiveTheme, Role},
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 const KEY_HINTS: &[(Action, &str)] = &[
@@ -77,27 +77,27 @@ const SETTINGS_HINTS: [SettingsHint; 4] = [
 ];
 
 #[derive(Debug, Clone, Copy)]
-pub enum KeyHintsView<'a> {
+pub(crate) enum KeyHintsView<'a> {
     Keys(&'a [KeyBinding]),
     SettingsHints(&'a [KeyBinding]),
 }
 
 impl<'a> KeyHintsView<'a> {
     #[must_use]
-    pub fn keys(bindings: &'a [KeyBinding]) -> Self {
+    pub(crate) fn keys(bindings: &'a [KeyBinding]) -> Self {
         Self::Keys(bindings)
     }
 
     #[must_use]
-    pub fn settings(bindings: &'a [KeyBinding]) -> Self {
+    pub(crate) fn settings(bindings: &'a [KeyBinding]) -> Self {
         Self::SettingsHints(bindings)
     }
 }
 
 #[derive(Debug)]
-pub struct KeyHintsWidget<'a> {
-    pub theme: ActiveTheme<'a>,
-    pub content: KeyHintsView<'a>,
+pub(crate) struct KeyHintsWidget<'a> {
+    pub(crate) theme: ActiveTheme<'a>,
+    pub(crate) content: KeyHintsView<'a>,
 }
 
 impl Widget for &KeyHintsWidget<'_> {
@@ -208,15 +208,15 @@ fn key_hints_line(
 #[cfg(test)]
 mod tests {
     use kernel::{
-        domain::{Action, KeymapOverrides},
-        update::keymap::{Bindings, KeyBinding},
+        domain::keymap::{Action, KeymapOverrides},
+        update::keymap::{bindings::Bindings, chord::KeyBinding},
     };
     use rstest::rstest;
 
     use crate::{
         key_hints::{KeyHintsView, KeyHintsWidget, chord_for_action},
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     #[rstest]

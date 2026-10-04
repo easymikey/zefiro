@@ -5,9 +5,9 @@ use crate::error::Error;
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LibraryDirs {
-    pub cache_dir: PathBuf,
-    pub data_dir: PathBuf,
-    pub playlists_dir: PathBuf,
+    pub(crate) cache_dir: PathBuf,
+    pub(crate) data_dir: PathBuf,
+    pub(crate) playlists_dir: PathBuf,
 }
 
 impl LibraryDirs {

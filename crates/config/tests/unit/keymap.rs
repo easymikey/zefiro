@@ -1,5 +1,5 @@
-use config::parse_config_reload;
-use kernel::domain::{Action, KeyContext, KeyOverride};
+use config::config_file::parse_config_reload;
+use kernel::domain::keymap::{Action, KeyContext, KeyOverride};
 use rstest::rstest;
 
 #[rstest]

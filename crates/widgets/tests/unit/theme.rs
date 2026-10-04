@@ -1,6 +1,6 @@
-use config::parse_theme;
+use config::theme_file::parse_theme;
 use rstest::rstest;
-use widgets::{Colors, ThemeBase};
+use widgets::theme::colors::{Colors, ThemeBase};
 
 #[rstest]
 #[case::terracotta_dark(

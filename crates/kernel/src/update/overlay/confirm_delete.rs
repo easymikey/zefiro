@@ -1,4 +1,8 @@
-use crate::domain::{DeleteCandidate, Workspace, playlist::Playlist};
+use crate::domain::{
+    overlay::DeleteCandidate,
+    playlist::Playlist,
+    workspace::Workspace,
+};
 
 pub(crate) fn candidate(
     playlist: &Playlist,

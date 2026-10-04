@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use kernel::domain::{player::Player, time::Moment};
+
 pub const SPECTRUM_BANDS: usize = 16;
 
 pub type Spectrum = [f32; SPECTRUM_BANDS];
@@ -8,9 +10,26 @@ const REFERENCE_RATE_HZ: f32 = 60.0;
 const SILENT_BAND: f32 = 1.0 / 1024.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpectrumMotion {
+pub(crate) enum SpectrumMotion {
     Moving,
     Settled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SpectrumFeed<'a> {
+    Live(&'a Spectrum),
+    Silent,
+}
+
+impl<'a> SpectrumFeed<'a> {
+    #[must_use]
+    pub fn of(player: &Player, raw: &'a Spectrum) -> Self {
+        if player.is_playing() {
+            Self::Live(raw)
+        } else {
+            Self::Silent
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -40,6 +59,27 @@ fn smooth_band(previous: f32, raw: f32, coefficient: f32) -> f32 {
 
 impl SpectrumSmoothing {
     #[must_use]
+    pub fn advance(&mut self, feed: SpectrumFeed<'_>, elapsed: Duration) -> Spectrum {
+        match feed {
+            SpectrumFeed::Live(raw) => self.smooth(raw, elapsed),
+            SpectrumFeed::Silent => self.fade(elapsed),
+        }
+    }
+
+    #[must_use]
+    pub fn frame_due(
+        &self,
+        feed: SpectrumFeed<'_>,
+        next_frame: Moment,
+    ) -> Option<Moment> {
+        let is_due = match feed {
+            SpectrumFeed::Live(_) => true,
+            SpectrumFeed::Silent => self.motion() == SpectrumMotion::Moving,
+        };
+        is_due.then_some(next_frame)
+    }
+
+    #[must_use]
     pub fn smooth(&mut self, raw: &Spectrum, elapsed: Duration) -> Spectrum {
         let elapsed_secs = elapsed.as_secs_f32();
         let attack = effective_coefficient(self.attack, elapsed_secs);
@@ -67,7 +107,7 @@ impl SpectrumSmoothing {
     }
 
     #[must_use]
-    pub fn motion(&self) -> SpectrumMotion {
+    pub(crate) fn motion(&self) -> SpectrumMotion {
         if self.bands.iter().all(|&band| band == 0.0) {
             SpectrumMotion::Settled
         } else {
@@ -80,9 +120,12 @@ impl SpectrumSmoothing {
 mod tests {
     use std::time::Duration;
 
+    use kernel::domain::time::Moment;
+
     use crate::spectrum::{
         SILENT_BAND,
         SPECTRUM_BANDS,
+        SpectrumFeed,
         SpectrumMotion,
         SpectrumSmoothing,
     };
@@ -185,5 +228,62 @@ mod tests {
         raw[0] = SILENT_BAND / 2.0;
         let bands = smoothing.smooth(&raw, FRAME);
         assert_eq!(bands[0], 0.0);
+    }
+
+    #[test]
+    fn advance_follows_the_feed_and_a_silent_feed_fades() {
+        let mut live = SpectrumSmoothing::default();
+        let raw = [1.0; SPECTRUM_BANDS];
+        let lifted = live.advance(SpectrumFeed::Live(&raw), FRAME);
+        assert_eq!(lifted, *live.bands());
+        assert!(lifted.iter().all(|&band| band > 0.0));
+
+        let faded = live.advance(SpectrumFeed::Silent, FRAME);
+
+        assert_eq!(faded, *live.bands());
+        assert!(
+            faded
+                .iter()
+                .zip(lifted.iter())
+                .all(|(after, before)| after < before)
+        );
+    }
+
+    #[test]
+    fn a_frame_is_due_only_while_bands_can_move() {
+        let next_frame = Moment::new(Duration::from_millis(33));
+        let raw = [0.0; SPECTRUM_BANDS];
+        let settled = SpectrumSmoothing::default();
+        let mut moving = SpectrumSmoothing::default();
+        let lifted = moving.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
+        assert_eq!(lifted, *moving.bands());
+
+        assert_eq!(
+            settled.frame_due(SpectrumFeed::Live(&raw), next_frame),
+            Some(next_frame)
+        );
+        assert_eq!(
+            moving.frame_due(SpectrumFeed::Silent, next_frame),
+            Some(next_frame)
+        );
+        assert_eq!(settled.frame_due(SpectrumFeed::Silent, next_frame), None);
+    }
+
+    #[test]
+    fn a_paused_spectrum_decays_to_settled_and_stops_asking_for_frames() {
+        let next_frame = Moment::new(Duration::from_millis(33));
+        let mut smoothing = SpectrumSmoothing::default();
+        let lifted = smoothing.smooth(&[1.0; SPECTRUM_BANDS], Duration::from_secs(10));
+        assert!(lifted.iter().all(|&band| band > 0.0));
+        let mut frames = 0;
+        while smoothing.motion() == SpectrumMotion::Moving && frames < 300 {
+            let faded =
+                smoothing.advance(SpectrumFeed::Silent, Duration::from_millis(33));
+            assert!(faded.iter().all(|&band| band < 1.0));
+            frames += 1;
+        }
+
+        assert!(frames < 300);
+        assert_eq!(smoothing.frame_due(SpectrumFeed::Silent, next_frame), None);
     }
 }

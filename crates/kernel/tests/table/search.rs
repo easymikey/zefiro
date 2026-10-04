@@ -1,10 +1,14 @@
 use kernel::{
-    Cmd,
-    Message,
-    QueueRequest,
-    SearchEdit,
-    domain::{Cursor, CursorOver, Direction, SearchQuery, ViewIndex},
-    update::{Unhandled, overlay::SearchQueryMessage},
+    cmd::Cmd,
+    domain::{
+        cursor::Cursor,
+        cursor_over::CursorOver,
+        direction::Direction,
+        index::ViewIndex,
+        overlay::SearchQuery,
+    },
+    message::{Message, QueueRequest, SearchEdit},
+    update::{machine::Unhandled, overlay::search::SearchQueryMessage},
 };
 use rstest::rstest;
 
@@ -56,7 +60,7 @@ fn search_cell(
     #[case] expected: Result<
         (
             CursorOver<SearchQuery>,
-            <CursorOver<SearchQuery> as kernel::update::Machine>::Effect,
+            <CursorOver<SearchQuery> as kernel::update::machine::Machine>::Effect,
         ),
         Unhandled,
     >,

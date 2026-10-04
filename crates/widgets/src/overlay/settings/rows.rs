@@ -1,9 +1,9 @@
-use kernel::domain::{SettingRow, geometry::Cells};
+use kernel::domain::{geometry::Cells, setting_row::SettingRow};
 use ratatui::{layout::Constraint, style::Style, text::Line, widgets::Row};
 
 use crate::{
     overlay::{
-        modal::{ModalRowStyle, indented},
+        modal::{metrics::ModalRowStyle, placement::indented},
         settings::values::{SettingsView, settings_label, value_text},
     },
     primitive::text::truncate,
@@ -71,7 +71,7 @@ fn settings_cells(view: &SettingsTableRow<'_>) -> [String; 2] {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{AppearanceSetting, SettingRow};
+    use kernel::domain::setting_row::{AppearanceSetting, SettingRow};
     use unicode_width::UnicodeWidthStr;
 
     use crate::overlay::settings::{

@@ -54,7 +54,7 @@ impl Cursor {
         self.step(magnitude.saturating_mul(direction.sign()))
     }
 
-    pub fn first(self) -> Self {
+    pub(crate) fn first(self) -> Self {
         Self::with_len(self.len).at(0)
     }
 

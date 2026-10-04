@@ -4,14 +4,14 @@ use crate::{
     card::{CardCover, CardWidget},
     primitive::canvas::Canvas,
     scene::Scene,
-    screen::FrameLayout,
+    screen::frame_layout::FrameLayout,
 };
 
 #[derive(Debug, Clone, Copy)]
-pub struct FullScreenWidget<'a> {
-    pub scene: Scene<'a>,
-    pub layout: &'a FrameLayout,
-    pub cover_art: &'a CardCover,
+pub(crate) struct FullScreenWidget<'a> {
+    pub(crate) scene: Scene<'a>,
+    pub(crate) layout: &'a FrameLayout,
+    pub(crate) cover_art: &'a CardCover,
 }
 
 impl Widget for &FullScreenWidget<'_> {
@@ -25,7 +25,7 @@ impl Widget for &FullScreenWidget<'_> {
             theme: scene.active_theme(),
             cell_aspect: scene.cell_aspect,
             cover_sizing: scene.cover_sizing(),
-            appearance: scene.appearance().settings,
+            appearance: scene.appearance_settings(),
             cover_art: self.cover_art,
         }
         .paint(

@@ -6,18 +6,20 @@ use kernel::domain::appearance::CoverMode;
 use ratatui::{buffer::Buffer, layout::Rect, widgets::StatefulWidget};
 use ratatui_image::{StatefulImage, picker::Picker};
 use widgets::{
-    CardCover,
-    CoverImage,
-    CoverMotion,
-    CoverRefresh,
-    FrameLayout,
-    MilkdropCover,
-    OverlayAreas,
-    PixmapSource,
-    Scene,
+    card::CardCover,
+    overlay::modal::placement::OverlayAreas,
+    pixels::cover::{
+        CoverImage,
+        CoverMotion,
+        CoverRefresh,
+        lifecycle::PixmapSource,
+        milkdrop::MilkdropCover,
+    },
+    scene::Scene,
+    screen::frame_layout::FrameLayout,
 };
 
-use crate::pixels::cover::Cover;
+use crate::pixels::cover::lifecycle::Cover;
 
 #[derive(Debug)]
 pub struct CoverPainter {
@@ -55,7 +57,7 @@ impl CoverPainter {
             CoverMode::Off => CardCover::Missing,
             CoverMode::Plain => self.plain.refresh(scene, refresh),
             CoverMode::Vinyl => self.vinyl.refresh(scene, refresh),
-            CoverMode::Milkdrop => self.milkdrop.refresh(scene, refresh.layout.cover),
+            CoverMode::Milkdrop => self.milkdrop.refresh(scene, refresh.cover),
         }
     }
 

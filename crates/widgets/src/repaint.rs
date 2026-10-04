@@ -1,9 +1,9 @@
 use std::{num::NonZeroU32, time::Duration};
 
-use kernel::{Moment, Playhead, domain::geometry::Cells};
+use kernel::domain::{geometry::Cells, playhead::Playhead, time::Moment};
 
 const STEP_CORRECTION: Duration = Duration::from_millis(1);
-const SECONDS_PER_MINUTE: u64 = 60;
+pub(crate) const SECONDS_PER_MINUTE: u64 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Presence {
@@ -63,7 +63,7 @@ pub fn next_clock_second(playhead: Playhead, now: Moment) -> Moment {
 }
 
 #[must_use]
-pub fn next_sleep_minute(deadline: Moment, now: Moment) -> Option<Moment> {
+pub(crate) fn next_sleep_minute(deadline: Moment, now: Moment) -> Option<Moment> {
     if now >= deadline {
         return None;
     }
@@ -93,7 +93,7 @@ fn wall_moment(playhead: Playhead, target_position: Duration) -> Moment {
 mod tests {
     use std::time::Duration;
 
-    use kernel::Moment;
+    use kernel::domain::time::Moment;
     use rstest::rstest;
 
     use crate::repaint::next_sleep_minute;

@@ -112,11 +112,6 @@ expression: "walked(model, messages)"
                     },
                 ),
             ),
-            Library(
-                PrefetchCover(
-                    "/tmp/track2.flac",
-                ),
-            ),
             Macos(
                 SetPosition(
                     95s,

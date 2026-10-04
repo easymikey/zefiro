@@ -1,16 +1,28 @@
-use kernel::domain::{
-    appearance::{CoverCells, CoverMode},
-    geometry::Cells,
-};
+use kernel::domain::{appearance::CoverMode, geometry::Cells};
 
-use crate::pixels::canvas_aspect_ratio;
+use crate::pixels::vinyl::geometry::canvas_aspect_ratio;
 
 pub const DEFAULT_CELL_ASPECT: f32 = 2.0;
 
 const SQUARE_COVER_ASPECT: f32 = 1.0;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CoverCells {
+    pub width: Cells,
+    pub height: Cells,
+}
+
+impl Default for CoverCells {
+    fn default() -> Self {
+        Self {
+            width: Cells(20),
+            height: Cells(8),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum CoverSizing {
+pub(crate) enum CoverSizing {
     Auto(f32),
     Fixed { width: Cells, height: Cells },
     Off,
@@ -37,13 +49,10 @@ pub(crate) fn cover_sizing(style: CoverMode, cells: CoverCells) -> CoverSizing {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{
-        appearance::{CoverCells, CoverMode},
-        geometry::Cells,
-    };
+    use kernel::domain::{appearance::CoverMode, geometry::Cells};
     use rstest::rstest;
 
-    use crate::geometry::{CoverSizing, canvas_aspect_ratio, cover_sizing};
+    use crate::geometry::{CoverCells, CoverSizing, canvas_aspect_ratio, cover_sizing};
 
     #[test]
     fn a_plain_cover_is_square() {

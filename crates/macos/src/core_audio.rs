@@ -1,7 +1,10 @@
 use std::{ffi::c_void, mem, mem::MaybeUninit, ptr, ptr::NonNull};
 
 use crossbeam_channel::Sender;
-use kernel::{Bounded, Percent, message::OsStatus};
+use kernel::{
+    domain::{bounded::Bounded, percent::Percent},
+    message::OsStatus,
+};
 use objc2_core_audio::{
     AudioObjectAddPropertyListener,
     AudioObjectGetPropertyData,
@@ -24,7 +27,7 @@ const SIZE_OVERFLOW_STATUS: OsStatus = OsStatus(-1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("CoreAudio refused the request (status {status})")]
-pub struct Error {
+pub(crate) struct Error {
     status: OsStatus,
 }
 
@@ -292,7 +295,7 @@ extern "C-unwind" fn on_property_changed(
 
 #[cfg(test)]
 mod tests {
-    use kernel::{Bounded, Percent};
+    use kernel::domain::{bounded::Bounded, percent::Percent};
     use rstest::rstest;
 
     use crate::core_audio::{

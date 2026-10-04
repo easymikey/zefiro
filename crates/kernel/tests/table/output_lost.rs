@@ -1,18 +1,12 @@
 use kernel::{
-    AudioCmd,
-    Cmd,
-    Cue,
-    Effect,
-    MacosCmd,
-    Message,
-    Model,
-    Moment,
-    Playback,
-    PlaybackChange,
-    PlaybackRequest,
-    Player,
-    domain::{Output, StreamError},
-    message::{AudioError, AudioEvent},
+    cmd::{AudioCmd, Cmd, Cue, Effect, MacosCmd, Playback, PlaybackChange},
+    domain::{
+        model::Model,
+        player::Player,
+        time::Moment,
+        transport::{Output, StreamError},
+    },
+    message::{AudioError, AudioEvent, Message, PlaybackRequest},
 };
 use rstest::rstest;
 

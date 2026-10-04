@@ -8,40 +8,21 @@ use fast_image_resize::{
 };
 use image::{DynamicImage, RgbaImage};
 use kernel::{
-    Cmd,
-    domain::{Revision, geometry::Pixels},
-    update::{Machine, Unhandled},
+    cmd::{Cmd, CoverJob},
+    domain::{geometry::Pixels, revision::Revision},
+    update::machine::{Machine, Unhandled},
 };
 
-use crate::{LibraryMessage, tags::embedded_cover};
+use crate::{driver::LibraryMessage, tags::embedded_cover};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) enum CoverDecoding {
     #[default]
     Idle,
-    Busy(CoverJob),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct CoverJob {
-    pub path: PathBuf,
-    pub side: Pixels,
-    pub(crate) revision: Revision,
-}
-
-impl CoverJob {
-    #[must_use]
-    pub fn new(path: PathBuf, side: Pixels) -> Self {
-        Self {
-            path,
-            side,
-            revision: Revision::default(),
-        }
-    }
-
-    pub(crate) fn issued(self, revision: Revision) -> Self {
-        Self { revision, ..self }
-    }
+    Busy {
+        job: CoverJob,
+        revision: Revision,
+    },
 }
 
 #[derive(Debug)]
@@ -67,46 +48,53 @@ pub struct CoverDecoded {
 
 #[derive(Debug)]
 pub(crate) enum CoverDecodingMessage {
-    Request(CoverJob),
+    Request { job: CoverJob, revision: Revision },
     Decoded(Revision),
 }
 
 impl Machine for CoverDecoding {
     type Message = CoverDecodingMessage;
-    type Effect = Cmd<CoverJob, LibraryMessage>;
+    type Effect = Cmd<(CoverJob, Revision), LibraryMessage>;
 
     fn transition(
         &mut self,
         message: CoverDecodingMessage,
-    ) -> Result<Cmd<CoverJob, LibraryMessage>, Unhandled> {
+    ) -> Result<Cmd<(CoverJob, Revision), LibraryMessage>, Unhandled> {
         match (&*self, message) {
-            (CoverDecoding::Idle, CoverDecodingMessage::Request(job)) => {
-                Ok(self.start(job))
+            (CoverDecoding::Idle, CoverDecodingMessage::Request { job, revision }) => {
+                Ok(self.start(job, revision))
             }
-            (CoverDecoding::Busy(busy), CoverDecodingMessage::Request(job))
-                if busy.path != job.path =>
-            {
-                Ok(self.start(job))
-            }
-            (CoverDecoding::Busy(busy), CoverDecodingMessage::Decoded(answered))
-                if busy.revision == answered =>
-            {
+            (
+                CoverDecoding::Busy { job: busy, .. },
+                CoverDecodingMessage::Request { job, revision },
+            ) if busy.path != job.path => Ok(self.start(job, revision)),
+            (
+                CoverDecoding::Busy { revision, .. },
+                CoverDecodingMessage::Decoded(answered),
+            ) if *revision == answered => {
                 *self = CoverDecoding::Idle;
                 Ok(Cmd::none())
             }
             (CoverDecoding::Idle, CoverDecodingMessage::Decoded(_))
             | (
-                CoverDecoding::Busy(_),
-                CoverDecodingMessage::Request(_) | CoverDecodingMessage::Decoded(_),
+                CoverDecoding::Busy { .. },
+                CoverDecodingMessage::Request { .. } | CoverDecodingMessage::Decoded(_),
             ) => Err(Unhandled),
         }
     }
 }
 
 impl CoverDecoding {
-    fn start(&mut self, job: CoverJob) -> Cmd<CoverJob, LibraryMessage> {
-        *self = CoverDecoding::Busy(job.clone());
-        Cmd::effect(job)
+    fn start(
+        &mut self,
+        job: CoverJob,
+        revision: Revision,
+    ) -> Cmd<(CoverJob, Revision), LibraryMessage> {
+        *self = CoverDecoding::Busy {
+            job: job.clone(),
+            revision,
+        };
+        Cmd::effect((job, revision))
     }
 }
 
@@ -231,14 +219,13 @@ mod tests {
 
     use image::{DynamicImage, RgbaImage};
     use kernel::{
-        Cmd,
-        domain::{Revision, geometry::Pixels},
-        update::{Machine, Unhandled},
+        cmd::{Cmd, CoverJob},
+        domain::{geometry::Pixels, revision::Revision},
+        update::machine::{Machine, Unhandled},
     };
     use rstest::rstest;
 
     use crate::{
-        LibraryMessage,
         cover::{
             CACHE_CAPACITY,
             CoverArt,
@@ -247,14 +234,24 @@ mod tests {
             CoverDecoding,
             CoverDecodingMessage,
             CoverError,
-            CoverJob,
             decode,
             fit_square,
         },
+        driver::LibraryMessage,
     };
 
     fn job(path: &str, side: u32) -> CoverJob {
-        CoverJob::new(PathBuf::from(path), Pixels(side))
+        CoverJob {
+            path: PathBuf::from(path),
+            side: Pixels(side),
+        }
+    }
+
+    fn request(path: &str) -> CoverDecodingMessage {
+        CoverDecodingMessage::Request {
+            job: job(path, 64),
+            revision: Revision::default(),
+        }
     }
 
     fn idle() -> CoverDecoding {
@@ -262,13 +259,16 @@ mod tests {
     }
 
     fn busy(path: &str) -> CoverDecoding {
-        CoverDecoding::Busy(job(path, 64))
+        CoverDecoding::Busy {
+            job: job(path, 64),
+            revision: Revision::default(),
+        }
     }
 
-    fn describe(cmd: &Cmd<CoverJob, LibraryMessage>) -> String {
+    fn describe(cmd: &Cmd<(CoverJob, Revision), LibraryMessage>) -> String {
         cmd.effects().next().map_or_else(
             || "nothing".to_string(),
-            |job| format!("decode {} @ {}", job.path.display(), job.side.0),
+            |(job, _)| format!("decode {} @ {}", job.path.display(), job.side.0),
         )
     }
 
@@ -282,13 +282,13 @@ mod tests {
     #[rstest]
     #[case::idle_starts_a_decode(CoverDecodingRow {
         start: idle(),
-        message: CoverDecodingMessage::Request(job("/music/cover.jpg", 64)),
+        message: request("/music/cover.jpg"),
         next: busy("/music/cover.jpg"),
         effect: "decode /music/cover.jpg @ 64",
     })]
     #[case::busy_switches_to_another_path(CoverDecodingRow {
         start: busy("/music/one.jpg"),
-        message: CoverDecodingMessage::Request(job("/music/two.jpg", 64)),
+        message: request("/music/two.jpg"),
         next: busy("/music/two.jpg"),
         effect: "decode /music/two.jpg @ 64",
     })]
@@ -312,7 +312,7 @@ mod tests {
     )]
     #[case::busy_refuses_the_same_request_again(
         busy("/music/cover.jpg"),
-        CoverDecodingMessage::Request(job("/music/cover.jpg", 64))
+        request("/music/cover.jpg")
     )]
     #[case::busy_refuses_a_stale_answer(
         busy("/music/cover.jpg"),

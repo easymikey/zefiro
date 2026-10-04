@@ -8,23 +8,22 @@ use strum::{EnumIter, IntoStaticStr};
 
 use crate::{
     domain::{
-        Crossfade,
-        DriverName,
-        Favorites,
-        HistoryEntry,
-        OptionIndex,
-        OutputDevice,
-        Percent,
-        ReplayGain,
-        Revision,
-        SleepPresets,
-        Speed,
-        ThemeChoice,
-        ThemeName,
-        Track,
-        TrackRef,
         appearance_rows::AppearanceField,
+        crossfade::Crossfade,
+        device::OutputDevice,
+        driver::DriverName,
+        favorites::Favorites,
+        geometry::Pixels,
+        history::HistoryEntry,
+        percent::Percent,
         playlist::PlaylistFileName,
+        revision::Revision,
+        setting_row::OptionIndex,
+        settings::ReplayGain,
+        sleep_presets::SleepPresets,
+        speed::Speed,
+        theme::{ThemeChoice, ThemeName},
+        track::{Track, TrackRef},
     },
     message::{Message, Timer},
 };
@@ -75,7 +74,7 @@ pub enum ConfigCmd {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackLoad {
     pub path: PathBuf,
-    pub gain: Option<crate::domain::Decibels>,
+    pub gain: Option<crate::domain::track::Decibels>,
     pub revision: Revision,
 }
 
@@ -127,7 +126,14 @@ pub enum LibraryCmd {
         tracks: Vec<TrackRef>,
         revision: Revision,
     },
-    PrefetchCover(PathBuf),
+    DecodeCover(CoverJob),
+    PrefetchCover(CoverJob),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverJob {
+    pub path: PathBuf,
+    pub side: Pixels,
 }
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
@@ -268,20 +274,6 @@ impl<E, M> Cmd<E, M> {
         self.messages.extend(other.messages);
         self
     }
-
-    pub fn map_effect<F>(self, lift: impl FnMut(E) -> F) -> Cmd<F, M> {
-        Cmd {
-            effects: self.effects.into_iter().map(lift).collect(),
-            messages: self.messages,
-        }
-    }
-
-    pub fn map_message<N>(self, lift: impl FnMut(M) -> N) -> Cmd<E, N> {
-        Cmd {
-            effects: self.effects,
-            messages: self.messages.into_iter().map(lift).collect(),
-        }
-    }
 }
 
 impl<E, M> IntoIterator for Cmd<E, M> {
@@ -363,12 +355,5 @@ mod tests {
                 Effect::Audio(AudioCmd::Stop)
             ]
         ));
-    }
-
-    #[test]
-    fn map_effect_and_map_message_lift_each_part() {
-        let cmd: Cmd<u8, u8> = Cmd::effect(1).then(Cmd::message(2));
-        let lifted = cmd.map_effect(u16::from).map_message(u32::from);
-        assert_eq!(lifted.into_parts(), (vec![1_u16], vec![2_u32]));
     }
 }

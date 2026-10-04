@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::domain::{Bounded, Direction};
+use crate::domain::{bounded::Bounded, direction::Direction};
 
 const MAX: u8 = 100;
 const VOLUME_STEP: i8 = 5;
@@ -50,11 +50,11 @@ impl Percent {
         )
     }
 
-    pub fn step(self, delta: i8) -> Self {
+    pub(crate) fn step(self, delta: i8) -> Self {
         Self::clamped(self.0.saturating_add_signed(delta))
     }
 
-    pub fn step_by(self, direction: Direction) -> Self {
+    pub(crate) fn step_by(self, direction: Direction) -> Self {
         match direction {
             Direction::Next => self.step(VOLUME_STEP),
             Direction::Previous => self.step(-VOLUME_STEP),
@@ -72,7 +72,7 @@ impl fmt::Display for Percent {
 mod tests {
     use rstest::rstest;
 
-    use crate::domain::{Bounded, percent::Percent};
+    use crate::domain::{bounded::Bounded, percent::Percent};
 
     #[rstest]
     #[case::at_the_ceiling_is_accepted(100, Some(100))]

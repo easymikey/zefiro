@@ -1,16 +1,11 @@
 use crate::{
     cmd::{Cmd, Cue, Effect},
     domain::{
-        ConfigError,
-        ConfigName,
-        Keymap,
-        KeymapOverrides,
-        Revision,
-        Revisions,
-        TOAST_LIFETIME,
-        TOAST_STACK,
-        Toast,
-        Workspace,
+        config::{ConfigError, ConfigName},
+        keymap::{Keymap, KeymapOverrides},
+        revision::{Revision, Revisions},
+        toast::{TOAST_LIFETIME, TOAST_STACK, Toast},
+        workspace::Workspace,
     },
     message::{ConfigReload, Timer},
 };

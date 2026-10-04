@@ -3,34 +3,28 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use strum::IntoStaticStr;
 
 use crate::domain::{
-    AppearanceSetting,
-    ChordPrefix,
-    ConfigError,
-    ConfigName,
-    Diagnostic,
-    Direction,
-    DriverError,
-    DriverName,
-    Favorites,
-    HistoryEntry,
-    IoError,
-    KeyPress,
-    KeymapOverrides,
-    ListedDevice,
-    OutputDevice,
-    OverlayName,
-    Percent,
-    Revision,
-    SettingRow,
-    StreamError,
-    ThemeName,
-    Toast,
-    Track,
-    TrackIndex,
-    TrackRef,
-    ViewIndex,
-    appearance::Appearance,
+    appearance::AppearanceSettings,
+    chord::ChordPrefix,
+    config::{ConfigError, ConfigName, Diagnostic},
+    device::{ListedDevice, OutputDevice},
+    direction::Direction,
+    driver::{DriverError, DriverName},
+    favorites::Favorites,
+    geometry::{Cells, Pixels},
+    history::HistoryEntry,
+    index::{TrackIndex, ViewIndex},
+    io_error::IoError,
+    key::KeyPress,
+    keymap::KeymapOverrides,
+    overlay::OverlayName,
+    percent::Percent,
     playlist::PlaylistFileName,
+    revision::Revision,
+    setting_row::{AppearanceSetting, SettingRow},
+    theme::ThemeName,
+    toast::Toast,
+    track::{Track, TrackRef},
+    transport::StreamError,
 };
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
@@ -59,7 +53,8 @@ pub enum Message {
     },
     Key(KeyPress),
     Viewport {
-        visible_rows: usize,
+        visible_rows: Cells,
+        cover_side: Option<Pixels>,
     },
     Quit,
 }
@@ -165,7 +160,7 @@ pub enum HistoryRequest {
 pub enum ConfigEvent {
     KeymapReloaded(Box<KeymapOverrides>),
     ThemeReloaded(ThemeName),
-    AppearanceReloaded(Appearance),
+    AppearanceReloaded(AppearanceSettings),
     ThemesLoaded(Vec<ThemeName>),
     MusicDirReloaded(PathBuf),
     AppearanceSettingsReloaded(Vec<AppearanceSetting>),
@@ -206,11 +201,11 @@ pub enum PlaybackRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SeekTenths(u8);
 
-pub const SEEK_TENTHS_MAX: u8 = 9;
+pub(crate) const SEEK_TENTHS_MAX: u8 = 9;
 
 impl SeekTenths {
     #[must_use]
-    pub fn get(self) -> u8 {
+    pub(crate) fn get(self) -> u8 {
         self.0
     }
 }
@@ -365,7 +360,7 @@ pub enum PaintError {
 
 impl PaintError {
     #[must_use]
-    pub fn diagnostic(&self) -> &Diagnostic {
+    pub(crate) fn diagnostic(&self) -> &Diagnostic {
         match self {
             Self::WindowColors(diagnostic)
             | Self::Cover(diagnostic)
@@ -395,7 +390,7 @@ pub enum MacosError {
     #[error("Cannot set the system volume (CoreAudio status {0})")]
     Volume(OsStatus),
     #[error("Cannot read the cover file: {0}")]
-    Cover(std::io::ErrorKind),
+    Cover(IoError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -430,7 +425,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        domain::{IoError, StreamError, ThemeName},
+        domain::{io_error::IoError, theme::ThemeName, transport::StreamError},
         message::{
             AudioError,
             AudioEvent,

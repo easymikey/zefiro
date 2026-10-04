@@ -2,9 +2,13 @@
 
 use std::time::Duration;
 
-use kernel::{
-    Moment,
-    domain::{Model, Player, Playhead, Preload, Speed, appearance::Rgb},
+use kernel::domain::{
+    appearance::Rgb,
+    model::Model,
+    player::{Player, Preload},
+    playhead::Playhead,
+    speed::Speed,
+    time::Moment,
 };
 use ratatui::{
     buffer::Buffer,
@@ -12,20 +16,16 @@ use ratatui::{
     style::{Color, Style},
 };
 use widgets::{
-    AnimationTimings,
-    Backdrop,
-    Breakpoint,
-    CardMetrics,
-    ColorDepth,
-    FrameLayout,
-    PlaylistAreas,
-    color_at_depth,
-    lerp_rgb,
+    animation::{stage::Backdrop, timings::AnimationTimings},
+    card::metrics::CardMetrics,
+    playlist::pane::PlaylistAreas,
+    screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
+    theme::rgb::{ColorDepth, color_at_depth, lerp_rgb},
 };
 
-#[path = "fixtures.rs"] mod test_support;
+#[path = "fixtures.rs"] pub(crate) mod fixtures;
 
-pub(crate) use test_support::{SceneSources, model_with_tracks, rendered, track};
+use fixtures::track;
 
 pub(crate) const AREA: Rect = Rect {
     x: 0,
@@ -84,7 +84,7 @@ pub(crate) const VOLUME_LABEL: Rect = Rect {
 };
 
 pub(crate) fn pane_star() -> Rect {
-    widgets::favorite_cell(PANE_ROW)
+    widgets::playlist::row::favorite_cell(PANE_ROW)
 }
 
 pub(crate) const TOAST_CARD: Rect = Rect {
@@ -243,7 +243,8 @@ pub(crate) fn chip_backdrop() -> Backdrop {
 pub(crate) fn overlay_backdrop(overlay: Option<Rect>) -> Backdrop {
     Backdrop {
         layout: FrameLayout {
-            overlay: overlay.map(widgets::OverlayAreas::Banner),
+            overlay: overlay
+                .map(widgets::overlay::modal::placement::OverlayAreas::Banner),
             ..empty_layout(Rect::default())
         },
         ..quiet_backdrop()
@@ -258,7 +259,7 @@ pub(crate) enum ToastPresence {
 
 pub(crate) fn toast_backdrop(presence: ToastPresence) -> Backdrop {
     let toast = match presence {
-        ToastPresence::Shown => Some(widgets::ToastAreas {
+        ToastPresence::Shown => Some(widgets::toast::ToastAreas {
             outer: AREA,
             painted: AREA,
         }),
@@ -276,7 +277,7 @@ pub(crate) fn toast_backdrop(presence: ToastPresence) -> Backdrop {
 pub(crate) fn toast_card_backdrop() -> Backdrop {
     Backdrop {
         layout: FrameLayout {
-            toast: Some(widgets::ToastAreas {
+            toast: Some(widgets::toast::ToastAreas {
                 outer: TOAST_CARD,
                 painted: TOAST_CARD,
             }),

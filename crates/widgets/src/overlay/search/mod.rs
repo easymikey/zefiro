@@ -2,7 +2,12 @@ mod matches;
 
 use std::sync::Arc;
 
-use kernel::domain::{CursorOver, SearchQuery, Track, geometry::Cells};
+use kernel::domain::{
+    cursor_over::CursorOver,
+    geometry::Cells,
+    overlay::SearchQuery,
+    track::Track,
+};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
@@ -13,19 +18,15 @@ use ratatui::{
 use crate::{
     overlay::{
         modal::{
-            Modal,
-            ModalBorder,
-            ModalBounds,
-            ModalRowStyle,
-            ModalScrollAreas,
-            ModalSize,
-            OverlayAreas,
-            OverlayContainer,
-            PlacedModal,
-            QUERY_ROWS,
-            SCROLL_PADDING,
-            leading_cells,
-            modal_title,
+            frame::{Modal, ModalBounds, ModalSize, PlacedModal},
+            metrics::{ModalRowStyle, QUERY_ROWS, SCROLL_PADDING, modal_title},
+            placement::{
+                ModalBorder,
+                ModalScrollAreas,
+                OverlayAreas,
+                OverlayContainer,
+                leading_cells,
+            },
         },
         search::matches::{SearchMatchList, paint_match_pane, paint_match_rows},
     },
@@ -35,7 +36,7 @@ use crate::{
         inset::Inset,
         span::{line, text},
     },
-    theme::ActiveTheme,
+    theme::active_theme::ActiveTheme,
 };
 
 #[derive(Debug)]
@@ -262,18 +263,24 @@ fn content_rows(search: &CursorOver<SearchQuery>) -> u16 {
 mod tests {
     use std::sync::Arc;
 
-    use kernel::domain::{Cursor, CursorOver, SearchQuery, Track, ViewIndex};
+    use kernel::domain::{
+        cursor::Cursor,
+        cursor_over::CursorOver,
+        index::ViewIndex,
+        overlay::SearchQuery,
+        track::Track,
+    };
     use ratatui::layout::Rect;
     use rstest::rstest;
 
     use crate::{
         overlay::{
-            modal::{ModalRowStyle, OverlayContainer},
+            modal::{metrics::ModalRowStyle, placement::OverlayContainer},
             search::SearchWidget,
         },
         primitive::canvas::find_text,
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn titled_track(title: &str) -> Arc<Track> {
@@ -281,11 +288,11 @@ mod tests {
             Track::builder()
                 .path(format!("{title}.mp3"))
                 .duration(std::time::Duration::from_secs(180))
-                .tags(kernel::domain::Tags {
+                .tags(kernel::domain::track::Tags {
                     title: Some(title.to_string()),
-                    ..kernel::domain::Tags::default()
+                    ..kernel::domain::track::Tags::default()
                 })
-                .audio_format(kernel::domain::AudioFormat::default())
+                .audio_format(kernel::domain::track::AudioFormat::default())
                 .build(),
         )
     }

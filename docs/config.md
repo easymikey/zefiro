@@ -239,7 +239,6 @@ as before.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `size_px` | u32 | `160` | Vinyl canvas height in pixels, used only before the terminal has reported real font metrics. |
 | `mode` | `plain \| vinyl \| milkdrop \| off` | `"vinyl"` | Cover art treatment. `mode` alone decides pixel vs. text: `vinyl`/`plain` render on the pixel path (dropping the cover column entirely when the terminal has no real graphics protocol); `milkdrop` never uses an image at all, and `off` draws no cover column at all — the card's text takes its whole width. |
 | `text_cells.width` / `text_cells.height` | u16 / u16 | `20` / `8` | On-screen cell size reserved for `mode = "milkdrop"`; only consulted for that mode. The field scales to whatever cell it is given. |
 | `brackets` | bool | `false` | Draw accent/dim corner brackets around whichever cover treatment is active (accent while `Player::Loading`, dim otherwise). |
@@ -259,8 +258,8 @@ changes the shape of the bar and never its colour.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `height_px` | f32 | `4.0` | Line thickness (px) — deliberately thinner than the full cell height. |
-| `radius` | optional f32 | unset (`height_px / 2.0`) | Pill-cap radius override. |
+| `height_px` | number, rounded to whole pixels | `4.0` | Line thickness (px) — deliberately thinner than the full cell height. |
+| `radius` | optional number, rounded to whole pixels | unset (`height_px / 2.0`) | Pill-cap radius override. |
 | `fill` | optional hex color | unset (falls back to theme `accent`) | Filled-portion color override. |
 | `groove` | optional hex color | unset (falls back to the theme's derived `bar_groove` band — the window background pulled toward the body text until it clears 1.5:1, so the unfilled half is visible on every theme) | Unfilled-groove color override. |
 | `mode` | `auto \| pixel \| text` | `"auto"` | Forces the pixel or text rendering path for the progress bar. |
@@ -304,7 +303,6 @@ height_px = 4.0
 remaining = false
 
 [cover]
-size_px = 160
 mode = "vinyl"
 brackets = false
 

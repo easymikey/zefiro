@@ -1,6 +1,8 @@
-use kernel::{
-    domain::{Favorites, TrackRef, ViewIndex},
+use kernel::domain::{
+    favorites::Favorites,
+    index::ViewIndex,
     playlist::Playlist,
+    track::TrackRef,
 };
 use ratatui::{
     buffer::Buffer,
@@ -10,7 +12,7 @@ use ratatui::{
 };
 
 use crate::{
-    overlay::modal::SCROLLBAR_INSET,
+    overlay::modal::metrics::SCROLLBAR_INSET,
     playlist::{
         chrome::{pane_block, pane_title},
         row::{self, PlaylistRows, WindowFit, cursor_row, visible_rows},
@@ -22,7 +24,7 @@ use crate::{
         scrollbar_column,
     },
     status_line::StatusLineView,
-    theme::{ActiveTheme, Role},
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,20 +184,17 @@ mod tests {
     use std::{path::Path, sync::Arc};
 
     use kernel::{
-        Message,
-        Moment,
-        PlaybackRequest,
         domain::{
-            Cursor,
-            Favorites,
-            Model,
-            ScanStatus,
-            Shuffle,
-            Track,
-            TrackIndex,
-            ViewIndex,
+            cursor::Cursor,
+            favorites::Favorites,
+            index::{TrackIndex, ViewIndex},
+            model::{Model, ScanStatus},
+            playlist::Playlist,
+            startup::Shuffle,
+            time::Moment,
+            track::Track,
         },
-        playlist::Playlist,
+        message::{Message, PlaybackRequest},
         update::update,
     };
     use ratatui::style::Color;
@@ -205,7 +204,7 @@ mod tests {
         primitive::canvas::find_text,
         status_line::{ScanProgress, StatusLineView},
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth, Role, Theme},
+        theme::{Theme, active_theme::ActiveTheme, colors::Role, rgb::ColorDepth},
     };
 
     fn titled_track(title: &str) -> Arc<Track> {
@@ -213,11 +212,11 @@ mod tests {
             Track::builder()
                 .path(format!("{title}.mp3"))
                 .duration(std::time::Duration::from_secs(120))
-                .tags(kernel::domain::Tags {
+                .tags(kernel::domain::track::Tags {
                     title: Some(title.to_string()),
-                    ..kernel::domain::Tags::default()
+                    ..kernel::domain::track::Tags::default()
                 })
-                .audio_format(kernel::domain::AudioFormat::default())
+                .audio_format(kernel::domain::track::AudioFormat::default())
                 .build(),
         )
     }
@@ -233,7 +232,7 @@ mod tests {
 
     fn status<'a>(
         playlist: &'a Playlist,
-        queue: &[kernel::TrackRef],
+        queue: &[kernel::domain::track::TrackRef],
         theme: &'a Theme,
     ) -> StatusLineView<'a> {
         StatusLineView {
@@ -264,7 +263,10 @@ mod tests {
         }
     }
 
-    fn queued(playlist: &Playlist, rows: &[usize]) -> Vec<kernel::TrackRef> {
+    fn queued(
+        playlist: &Playlist,
+        rows: &[usize],
+    ) -> Vec<kernel::domain::track::TrackRef> {
         rows.iter()
             .map(|&row| playlist.tracks[row].source().clone())
             .collect()

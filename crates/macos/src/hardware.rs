@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 
 use kernel::{
-    Cmd,
-    MacosEvent,
-    Percent,
-    update::{Machine, Unhandled},
+    cmd::Cmd,
+    domain::percent::Percent,
+    message::MacosEvent,
+    update::machine::{Machine, Unhandled},
 };
 use objc2_core_audio::AudioObjectID;
 
@@ -81,7 +81,12 @@ impl Machine for Hardware {
 
 #[cfg(test)]
 mod tests {
-    use kernel::{Bounded, Cmd, MacosEvent, Percent, update::Machine};
+    use kernel::{
+        cmd::Cmd,
+        domain::{bounded::Bounded, percent::Percent},
+        message::MacosEvent,
+        update::machine::Machine,
+    };
     use objc2_core_audio::AudioObjectID;
     use rstest::rstest;
 

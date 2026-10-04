@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, sync::Arc};
 
-use crate::domain::{Track, ViewIndex};
+use crate::domain::{index::ViewIndex, track::Track};
 
 const MATCH_SCORE: i32 = 16;
 const CONSECUTIVE_BONUS: i32 = 15;
@@ -83,7 +83,11 @@ pub fn rank(tracks: &[Arc<Track>], query: &str) -> Vec<ViewIndex> {
     matches
 }
 
-pub fn rank_into(tracks: &[Arc<Track>], query: &str, matches: &mut Vec<ViewIndex>) {
+pub(crate) fn rank_into(
+    tracks: &[Arc<Track>],
+    query: &str,
+    matches: &mut Vec<ViewIndex>,
+) {
     matches.clear();
     if query.is_empty() {
         matches.extend((0..tracks.len()).map(ViewIndex::new));
@@ -123,7 +127,7 @@ mod score_tests {
     use rstest::rstest;
 
     use crate::{
-        domain::{AudioFormat, Tags, Track},
+        domain::track::{AudioFormat, Tags, Track},
         search::{rank_into, score},
     };
 

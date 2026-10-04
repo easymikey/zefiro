@@ -3,15 +3,13 @@ use std::sync::Arc;
 use strum::{EnumDiscriminants, EnumIter, IntoStaticStr};
 
 use crate::domain::{
-    CursorOver,
-    SaveLine,
-    SavePhase,
-    SettingRow,
-    TimecodeError,
-    Track,
-    TrackRef,
-    ViewIndex,
+    cursor_over::CursorOver,
+    index::ViewIndex,
     playlist::PlaylistNameError,
+    setting_row::SettingRow,
+    time::TimecodeError,
+    track::{Track, TrackRef},
+    workspace::{SaveLine, SavePhase},
 };
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr, EnumDiscriminants)]
@@ -41,7 +39,7 @@ pub enum Overlay {
 
 impl Overlay {
     #[must_use]
-    pub fn captures_text(&self) -> bool {
+    pub(crate) fn captures_text(&self) -> bool {
         match self {
             Overlay::Search(_)
             | Overlay::SavePlaylist { .. }
@@ -112,6 +110,6 @@ pub struct JumpDigits {
 }
 
 impl JumpDigits {
-    pub const SEPARATOR: char = ':';
-    pub const MAX_LEN: usize = 8;
+    pub(crate) const SEPARATOR: char = ':';
+    pub(crate) const MAX_LEN: usize = 8;
 }

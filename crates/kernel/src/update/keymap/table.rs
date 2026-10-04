@@ -1,15 +1,11 @@
 use crate::{
     domain::{
-        Action,
-        Chord,
-        ChordPrefix,
-        Direction,
-        KeyCode,
-        KeyContext,
-        OverlayName,
-        SEEK_LARGE,
-        SEEK_MEDIUM,
-        SEEK_SMALL,
+        chord::{Chord, ChordPrefix},
+        direction::Direction,
+        key::KeyCode,
+        keymap::{Action, KeyContext},
+        overlay::OverlayName,
+        transport::{SEEK_LARGE, SEEK_MEDIUM, SEEK_SMALL},
     },
     message::{
         BrowseRequest,
@@ -61,12 +57,7 @@ fn digit_seek_rows() -> impl Iterator<Item = KeyBinding> {
 
 #[rustfmt::skip]
 fn global_rows() -> Vec<KeyBinding> {
-    use crate::domain::KeyContext::Global;
-    use crate::domain::Action::{
-        AbRepeat, Help, History, JumpToTime, Next, PlayPause, Previous, Quit, Repeat, Search,
-        SeekBack, SeekBackLong, SeekBackShort, SeekForward, SeekForwardLong, SeekForwardShort,
-        Settings, Shuffle, SleepTimer, MusicDir, SpeedDown, SpeedUp, VolumeDown, VolumeUp,
-    };
+    use crate::{domain::{keymap::{Action::{AbRepeat, Help, History, JumpToTime, MusicDir, Next, PlayPause, Previous, Quit, Repeat, Search, SeekBack, SeekBackLong, SeekBackShort, SeekForward, SeekForwardLong, SeekForwardShort, Settings, Shuffle, SleepTimer, SpeedDown, SpeedUp, VolumeDown, VolumeUp}, KeyContext::{Global}}}};
     use PlaybackRequest as P;
     let row = row(Global);
     vec![
@@ -102,11 +93,7 @@ fn global_rows() -> Vec<KeyBinding> {
 
 #[rustfmt::skip]
 fn playlist_rows() -> Vec<KeyBinding> {
-    use crate::domain::KeyContext::Playlist;
-    use crate::domain::Action::{
-        Bottom, CycleSort, Delete, Dequeue, Down, Enqueue, Favorite, PageDown, PageUp, PlayNext,
-        PlaySelected, QueueMoveDown, QueueMoveUp, FullScan, SavePlaylist, Top, TrackDetails, Up,
-    };
+    use crate::{domain::{keymap::{Action::{Bottom, CycleSort, Delete, Dequeue, Down, Enqueue, Favorite, FullScan, PageDown, PageUp, PlayNext, PlaySelected, QueueMoveDown, QueueMoveUp, SavePlaylist, Top, TrackDetails, Up}, KeyContext::{Playlist}}}};
     use BrowseRequest as B;
     use QueueRequest as Q;
     let row = row(Playlist);

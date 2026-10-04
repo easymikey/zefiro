@@ -39,7 +39,7 @@ The layer map is conventions §1.1; edges only point down the table.
 | 2 | `runtime` | event loop, interpreter, timers, trace, cells, registry, ports, `Outbox`, `DriverLoop`, start, drain, `host` |
 | 2 | `widgets` | pure terminal view: `Scene`, `FrameLayout`, the `screen` module, card, playlist, overlays, toast, animations, milkdrop, spectrum smoothing, pixel images |
 | 3 | `terminal` | terminal IO: session, input, key conversion, capability probe, window colours, image protocols |
-| 4 | `sifr` | binary: command line, startup, signals, the `Shell` implementation (view, motion, painter, frame clock) |
+| 4 | `sifr` | binary: command line, startup, signals, the `Shell` implementation (view, presentation, motion clock, painter) |
 
 `macos` is a target-gated dependency (§4.9): off macOS it is not linked.
 
@@ -71,7 +71,7 @@ Hardware drivers are injected: the binary passes the real spawners to `Runtime::
 
 **Hand edit of `sifr-ui.toml`.** a `notify` stream item → the config driver re-reads the file → the appearance into the cell and `ConfigEvent::AppearanceSettingsReloaded` to the kernel, so the settings rows show the file's values. A theme file works the same way with `ConfigEvent::ThemeReloaded`.
 
-**Cover.** `Shell::paint` returns the cover it wants → runtime asks the library driver once per distinct request → a cached decode is published at once, otherwise a `CoverJob` runs on a worker → the decoded cover goes into the cover cell and rings the doorbell → the next paint takes it → the terminal encodes it once per (path, rect) and places it after the text in the same draw.
+**Cover.** the kernel asks for a cover with `Effect::Library(LibraryCmd::DecodeCover)` when track, side or mode changes → the library driver answers once per distinct request → a cached decode is published at once, otherwise a `CoverJob` runs on a worker → the decoded cover goes into the cover cell and rings the doorbell → the next paint takes it → the terminal encodes it once per (path, rect) and places it after the text in the same draw.
 
 **Timer.** `Effect::After { delay, timer }` → one slot per `Timer` kind (`Toast`, `Sleep`, `Lookahead`; a new one replaces the old) → the loop's deadline is the earliest slot → each due timer becomes `Message::Elapsed(timer)` → `update`; a timer whose `Revision` is stale returns `Err(Unhandled)` and causes no repaint.
 
@@ -109,7 +109,7 @@ The displayed playhead is not a cell: the kernel holds the anchor `Playhead { of
 
 One `select` over input, the mailbox and the cell doorbell, with one deadline: the earliest of the kernel timers, the frame clock and the pending repaint. After a wake the loop gathers input first, then the mailbox, then the doorbell; the ready items form one batch, and a batch paints once. Timers fire after the batch, then congestion is settled and shell effects are handed over.
 
-The pending repaint is `Repaint { Settled, Now, Frame }`: input raises it to `Now` (paint at once), a fact or a doorbell to `Frame` (wait for the 33 ms grid since the last paint), `Settled` paints only when the shell's own `frame_due` has passed. The frame sources (animation, spectrum, progress bar, clock, sleep countdown) live in `sifr/src/shell/frame_clock.rs`; when nothing moves the loop blocks with no deadline.
+The pending repaint is `Repaint { Settled, Now, Frame }`: input raises it to `Now` (paint at once), a fact or a doorbell to `Frame` (wait for the 33 ms grid since the last paint), `Settled` paints only when the shell's own `frame_due` has passed. The frame sources (animation, spectrum, progress bar, clock, sleep countdown) each live in its component's widgets module (`frame_due` fns); when nothing moves the loop blocks with no deadline.
 
 Every channel that carries traffic is bounded. The loop only `try_send`s to drivers; a full port records a `Dropped` trace entry and raises the port's congestion flag; a driver that finds the mailbox full raises its flag before it blocks. After each batch a raised flag with no open episode becomes one `DriverEvent::Full` and one toast. No cycle can deadlock: the loop only `try_send`s, drivers only `send`.
 

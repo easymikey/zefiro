@@ -12,22 +12,33 @@ use crate::{
         ScanMode,
     },
     domain::{
-        ConfigError,
-        ConfigName,
-        DriverName,
-        Model,
-        Settings,
-        Shuffle,
-        Startup,
-        Themes,
+        config::{ConfigError, ConfigName},
+        driver::DriverName,
+        model::Model,
         playlist::Playlist,
+        settings::Settings,
+        startup::{Shuffle, Startup},
+        theme::Themes,
     },
     message::ConfigReload,
     update::{
+        follow_up,
         machine::{Machine, Unhandled},
         playlist::PlaylistMessage,
+        roll_pending,
     },
 };
+
+#[must_use]
+pub fn startup(startup: Startup) -> (Model, Vec<Effect>) {
+    let mut model = Model::default();
+    let (mut effects, messages) = seed_model(&mut model, startup).into_parts();
+    for queued in messages {
+        effects.extend(follow_up(&mut model, queued, 0));
+    }
+    effects.extend(roll_pending(&model.playlist));
+    (model, effects)
+}
 
 pub(crate) fn seed_model(model: &mut Model, startup: Startup) -> Cmd {
     let errors = startup.errors;
@@ -133,23 +144,18 @@ mod tests {
     use crate::{
         cmd::{Effect, LibraryCmd},
         domain::{
-            AudioSettings,
-            Bounded,
-            Crossfade,
-            DeviceName,
-            Model,
-            OutputDevice,
-            Percent,
-            ReplayGain,
-            Shuffle,
-            SleepPresets,
-            Startup,
-            ThemeChoice,
-            ThemeName,
-            Track,
-            TrackRef,
-            ViewIndex,
+            bounded::Bounded,
+            crossfade::Crossfade,
+            device::{DeviceName, OutputDevice},
+            index::ViewIndex,
+            model::Model,
+            percent::Percent,
             playlist::{PlayOrder, PlaylistSource},
+            settings::{AudioSettings, ReplayGain},
+            sleep_presets::SleepPresets,
+            startup::{Shuffle, Startup},
+            theme::{ThemeChoice, ThemeName},
+            track::{Track, TrackRef},
         },
         update::startup::seed_model,
     };
@@ -174,7 +180,7 @@ mod tests {
                 ),
                 sleep_presets: SleepPresets::from_minutes(&[15, 30]).unwrap(),
             },
-            appearance: crate::domain::appearance::Appearance::default(),
+            appearance: crate::domain::appearance::AppearanceSettings::default(),
             theme: ThemeChoice::Named(ThemeName::from_static("dark")),
             volume: Percent::clamped(42),
             themes: vec![
@@ -189,20 +195,27 @@ mod tests {
     #[test]
     fn startup_errors_raise_one_toast_with_the_first_error() {
         let mut model = Model::default();
-        let broken = crate::domain::ConfigError::Invalid(
-            crate::domain::Diagnostic::from_error(&std::io::Error::other("broken")),
+        let broken = crate::domain::config::ConfigError::Invalid(
+            crate::domain::config::Diagnostic::from_error(&std::io::Error::other(
+                "broken",
+            )),
         );
-        let unreadable = crate::domain::ConfigError::Unreadable {
-            file: crate::domain::ConfigName::Appearance,
-            kind: crate::IoError::Other,
+        let unreadable = crate::domain::config::ConfigError::Unreadable {
+            file: crate::domain::config::ConfigName::Appearance,
+            kind: crate::domain::io_error::IoError::Other,
         };
         let startup = Startup {
             errors: vec![
                 (
-                    crate::domain::ConfigName::Theme(ThemeName::from_static("ghost")),
+                    crate::domain::config::ConfigName::Theme(ThemeName::from_static(
+                        "ghost",
+                    )),
                     broken.clone(),
                 ),
-                (crate::domain::ConfigName::Appearance, unreadable.clone()),
+                (
+                    crate::domain::config::ConfigName::Appearance,
+                    unreadable.clone(),
+                ),
             ],
             ..stock_startup()
         };
@@ -217,16 +230,17 @@ mod tests {
             .collect();
         assert_eq!(
             texts,
-            [(crate::domain::ToastKind::Error, Some(broken.to_string()))]
-        );
-        assert!(
-            !model
-                .workspace
-                .config_errors
-                .insert_if_changed(crate::domain::ConfigName::Appearance, unreadable)
+            [(
+                crate::domain::toast::ToastKind::Error,
+                Some(broken.to_string())
+            )]
         );
         assert!(!model.workspace.config_errors.insert_if_changed(
-            crate::domain::ConfigName::Theme(ThemeName::from_static("ghost")),
+            crate::domain::config::ConfigName::Appearance,
+            unreadable
+        ));
+        assert!(!model.workspace.config_errors.insert_if_changed(
+            crate::domain::config::ConfigName::Theme(ThemeName::from_static("ghost")),
             broken
         ));
     }

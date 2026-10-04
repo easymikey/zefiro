@@ -8,13 +8,10 @@ use std::{
 use ratatui::{layout::Rect, text::Line};
 
 use crate::{
-    CardCover,
-    MilkdropAdvance,
-    MilkdropField,
-    MilkdropStyle,
     Playing,
-    Scene,
-    lines_into,
+    card::CardCover,
+    milkdrop::{MilkdropAdvance, MilkdropField, MilkdropStyle, lines_into},
+    scene::Scene,
 };
 
 type MilkdropResetKey = (u64, usize, usize);

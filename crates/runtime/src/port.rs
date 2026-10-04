@@ -2,14 +2,10 @@ use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{SendError, Sender, TrySendError};
 use kernel::{
-    AudioCmd,
-    ConfigCmd,
-    LibraryCmd,
-    MacosCmd,
-    Message,
-    domain::{DriverName, DriverStatus, Drivers},
+    cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd},
+    domain::driver::{DriverName, DriverStatus, Drivers},
+    message::Message,
 };
-use library::{CoverJob, LibraryMessage};
 
 use crate::{
     driver::DriverThread,
@@ -95,51 +91,9 @@ impl<C> Port<C> {
 }
 
 #[derive(Debug)]
-pub(crate) struct LibraryPort {
-    port: Port<LibraryCmd>,
-    covers: Sender<LibraryMessage>,
-}
-
-impl LibraryPort {
-    pub(crate) fn new(port: Port<LibraryCmd>, covers: Sender<LibraryMessage>) -> Self {
-        Self { port, covers }
-    }
-
-    pub(crate) fn spawned(
-        (thread, covers): (DriverThread<LibraryCmd>, Sender<LibraryMessage>),
-    ) -> Self {
-        Self::new(Port::spawned(DriverName::Library, thread), covers)
-    }
-
-    pub(crate) fn send_command(
-        &self,
-        drivers: &Drivers,
-        command: LibraryCmd,
-    ) -> Result<(), TraceEntry> {
-        self.port.send(drivers, command)
-    }
-
-    pub(crate) fn send_cover(
-        &self,
-        drivers: &Drivers,
-        job: CoverJob,
-    ) -> Result<(), TraceEntry> {
-        let dropped = |reason| TraceEntry::Dropped {
-            driver: self.port.driver,
-            command: "cover",
-            reason,
-        };
-        self.port.open(drivers).map_err(dropped)?;
-        self.covers
-            .try_send(LibraryMessage::Cover(job))
-            .map_err(|error| dropped(self.port.refused(&error)))
-    }
-}
-
-#[derive(Debug)]
 pub(crate) struct Ports {
     pub(crate) audio: Port<AudioCmd>,
-    pub(crate) library: LibraryPort,
+    pub(crate) library: Port<LibraryCmd>,
     pub(crate) config: Port<ConfigCmd>,
     pub(crate) macos: Port<MacosCmd>,
 }
@@ -148,7 +102,7 @@ impl Ports {
     pub(crate) fn full(&self, driver: DriverName) -> &Congestion {
         match driver {
             DriverName::Audio => self.audio.full(),
-            DriverName::Library => self.library.port.full(),
+            DriverName::Library => self.library.full(),
             DriverName::Config => self.config.full(),
             DriverName::Macos => self.macos.full(),
         }
@@ -157,7 +111,7 @@ impl Ports {
     pub(crate) fn hang_up(&mut self) {
         self.audio.hang_up();
         self.macos.hang_up();
-        self.library.port.hang_up();
+        self.library.hang_up();
         self.config.hang_up();
     }
 
@@ -167,7 +121,7 @@ impl Ports {
     ) -> Option<thread::Result<Result<(), SendError<Message>>>> {
         match driver {
             DriverName::Audio => self.audio.join(),
-            DriverName::Library => self.library.port.join(),
+            DriverName::Library => self.library.join(),
             DriverName::Config => self.config.join(),
             DriverName::Macos => self.macos.join(),
         }
@@ -178,8 +132,8 @@ impl Ports {
 mod tests {
     use crossbeam_channel::{bounded, unbounded};
     use kernel::{
-        AudioCmd,
-        domain::{DriverName, DriverStatus, Drivers},
+        cmd::AudioCmd,
+        domain::driver::{DriverName, DriverStatus, Drivers},
     };
     use rstest::rstest;
 
@@ -211,7 +165,7 @@ mod tests {
         Err(DropReason::NotRunning)
     )]
     #[case::dead(
-        DriverStatus::Dead(kernel::domain::DriverError::Panicked),
+        DriverStatus::Dead(kernel::domain::driver::DriverError::Panicked),
         Inbox::Connected,
         Err(DropReason::NotRunning)
     )]

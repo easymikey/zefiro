@@ -1,7 +1,7 @@
 mod columns;
 mod groups;
 
-use kernel::{domain::geometry::Cells, update::keymap::KeyBinding};
+use kernel::{domain::geometry::Cells, update::keymap::chord::KeyBinding};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Flex, Layout, Rect},
@@ -15,10 +15,10 @@ use crate::{
             columns::{HelpColumn, HelpStyle, select_help_columns},
             groups::{CHORD_GAP, COLUMN_GAP, HelpGroups, small_count_u16},
         },
-        modal::{ModalPlacement, OverlayAreas, OverlayContainer},
+        modal::placement::{ModalPlacement, OverlayAreas, OverlayContainer},
     },
     primitive::{canvas::Canvas, inset::Inset},
-    theme::ActiveTheme,
+    theme::active_theme::ActiveTheme,
 };
 
 fn paint_help_columns(body: Rect, content: &HelpContent, buffer: &mut Buffer) {
@@ -45,9 +45,9 @@ const TITLE: &str = "KEYS";
 
 #[derive(Debug)]
 pub(crate) struct HelpWidget<'a> {
-    pub theme: ActiveTheme<'a>,
-    pub bindings: &'a [KeyBinding],
-    pub avoid: &'a [Rect],
+    pub(crate) theme: ActiveTheme<'a>,
+    pub(crate) bindings: &'a [KeyBinding],
+    pub(crate) avoid: &'a [Rect],
 }
 
 struct HelpContent {
@@ -131,13 +131,13 @@ impl Widget for &HelpWidget<'_> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::{domain::KeymapOverrides, update::keymap::Bindings};
+    use kernel::{domain::keymap::KeymapOverrides, update::keymap::bindings::Bindings};
     use rstest::rstest;
 
     use crate::{
         overlay::help::HelpWidget,
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn help_frame(width: u16, height: u16) -> String {

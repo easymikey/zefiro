@@ -1,10 +1,10 @@
 use std::io::{self, Write};
 
 use kernel::{
-    WindowColorsCmd,
-    domain::{ThemeName, appearance::Rgb},
+    cmd::WindowColorsCmd,
+    domain::{appearance::Rgb, theme::ThemeName},
 };
-use widgets::{Role, Theme};
+use widgets::theme::{Theme, colors::Role};
 
 use crate::error::Error;
 
@@ -54,7 +54,7 @@ pub(crate) fn reset_on_panic() -> Result<(), io::Error> {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("no such theme: {name}")]
 pub struct UnknownThemeError {
-    pub name: ThemeName,
+    pub(crate) name: ThemeName,
 }
 
 fn sequence_for(name: &ThemeName, theme: &Theme) -> Result<String, UnknownThemeError> {
@@ -90,11 +90,14 @@ pub fn write_window_colors(
 #[cfg(test)]
 mod tests {
     use kernel::{
-        WindowColorsCmd,
-        domain::{ThemeName, appearance::Rgb},
+        cmd::WindowColorsCmd,
+        domain::{appearance::Rgb, theme::ThemeName},
     };
     use rstest::rstest;
-    use widgets::{Colors, Role, Theme, ThemeBase};
+    use widgets::theme::{
+        Theme,
+        colors::{Colors, Role, ThemeBase},
+    };
 
     use crate::window_colors::{
         UnknownThemeError,

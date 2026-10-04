@@ -8,21 +8,17 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::Duration,
 };
 
 use crossbeam_channel::{Sender, TrySendError};
-use crossterm::event;
 
-use crate::{error::Error, shell::ShellInput};
+use crate::{error::Error, shell::input::ShellInput};
 
 static TERMINATE_SENDER: OnceLock<Sender<ShellInput>> = OnceLock::new();
 
 static WORKER_PANICKED: AtomicBool = AtomicBool::new(false);
 
 static INPUT_ERROR: Mutex<Option<io::Error>> = Mutex::new(None);
-
-const INPUT_POLL: Duration = Duration::from_millis(50);
 
 #[cfg(unix)]
 const TERMINATING_SIGNALS: [std::ffi::c_int; 3] = [
@@ -31,7 +27,7 @@ const TERMINATING_SIGNALS: [std::ffi::c_int; 3] = [
     signal_hook::consts::SIGINT,
 ];
 
-enum ThreadStop {
+pub(crate) enum ThreadStop {
     #[cfg(unix)]
     Signals(signal_hook::iterator::Handle),
     Flag(Arc<AtomicBool>),
@@ -48,8 +44,8 @@ impl ThreadStop {
 }
 
 pub(crate) struct JoinOnDrop {
-    stop: ThreadStop,
-    thread: Option<JoinHandle<()>>,
+    pub(crate) stop: ThreadStop,
+    pub(crate) thread: Option<JoinHandle<()>>,
 }
 
 impl Drop for JoinOnDrop {
@@ -75,31 +71,6 @@ pub(crate) fn install(sender: Sender<ShellInput>) -> Result<JoinOnDrop, Error> {
         stop: ThreadStop::Flag(Arc::default()),
         thread: None,
     })
-}
-
-pub(crate) fn spawn_input(sender: Sender<ShellInput>) -> JoinOnDrop {
-    let stop = Arc::new(AtomicBool::new(false));
-    let stopped = Arc::clone(&stop);
-    let thread = thread::spawn(move || {
-        if let Err(error) = read_input(&sender, &stopped) {
-            remember_input_error(error);
-        }
-    });
-    JoinOnDrop {
-        stop: ThreadStop::Flag(stop),
-        thread: Some(thread),
-    }
-}
-
-fn read_input(sender: &Sender<ShellInput>, stop: &AtomicBool) -> Result<(), io::Error> {
-    while !stop.load(Ordering::Acquire) {
-        if event::poll(INPUT_POLL)?
-            && sender.send(ShellInput::Terminal(event::read()?)).is_err()
-        {
-            return Ok(());
-        }
-    }
-    Ok(())
 }
 
 #[cfg(unix)]
@@ -148,7 +119,7 @@ fn terminate_if_listening() {
     }
 }
 
-fn remember_input_error(error: io::Error) {
+pub(crate) fn remember_input_error(error: io::Error) {
     let mut stored = INPUT_ERROR.lock().unwrap_or_else(PoisonError::into_inner);
     *stored = stored.take().or(Some(error));
     drop(stored);
@@ -179,7 +150,7 @@ mod tests {
 
     use crate::{
         error::Error,
-        shell::ShellInput,
+        shell::input::ShellInput,
         termination::{
             forward,
             install_with,

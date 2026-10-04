@@ -2,7 +2,12 @@ use std::sync::Arc;
 
 use strum::{EnumIter, IntoStaticStr};
 
-use crate::domain::{Cursor, Direction, Track, TrackRef, ViewIndex};
+use crate::domain::{
+    cursor::Cursor,
+    direction::Direction,
+    index::ViewIndex,
+    track::{Track, TrackRef},
+};
 
 const ILLEGAL_NAME_CHARS: [char; 9] = ['/', '\\', '?', '<', '>', ':', '*', '|', '"'];
 
@@ -190,7 +195,7 @@ impl Playlist {
         self.tracks.get(next_index)
     }
 
-    pub fn index_of(&self, source: &TrackRef) -> Option<ViewIndex> {
+    pub(crate) fn index_of(&self, source: &TrackRef) -> Option<ViewIndex> {
         self.tracks
             .iter()
             .position(|track| track.source() == source)

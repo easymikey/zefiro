@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use kernel::{Playback, Track};
+use kernel::{cmd::Playback, domain::track::Track};
 use objc2::{rc::Retained, runtime::AnyObject};
 use objc2_foundation::{NSDictionary, NSNumber, NSString};
 use objc2_media_player::{MPMediaItemArtwork, MPNowPlayingPlaybackState};
@@ -89,7 +89,10 @@ pub(crate) fn publish(shown: NowPlaying<'_>, now: Instant) {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use kernel::{AudioFormat, Playback, Tags, Track};
+    use kernel::{
+        cmd::Playback,
+        domain::track::{AudioFormat, Tags, Track},
+    };
     use objc2::runtime::AnyObject;
     use objc2_foundation::{NSDictionary, NSNumber, NSString};
 

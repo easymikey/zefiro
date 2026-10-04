@@ -1,13 +1,10 @@
 use std::time::Duration;
 
 use kernel::{
-    AudioCmd,
-    AudioEvent,
-    Cmd,
-    Playback,
-    TrackLoad,
-    domain::{Crossfade, OutputDevice},
-    update::Unhandled,
+    cmd::{AudioCmd, Cmd, Playback, TrackLoad},
+    domain::{crossfade::Crossfade, device::OutputDevice},
+    message::AudioEvent,
+    update::machine::Unhandled,
 };
 
 use crate::{
@@ -184,19 +181,22 @@ impl Live {
 #[cfg(test)]
 mod tests {
     use kernel::{
-        AudioCmd,
-        AudioEvent,
-        Bounded,
-        Cmd,
-        Playback,
-        domain::{AudioSettings, DeviceName, OutputDevice, ReplayGain, Speed},
-        update::{Machine, Unhandled},
+        cmd::{AudioCmd, Cmd, Playback},
+        domain::{
+            bounded::Bounded,
+            device::{DeviceName, OutputDevice},
+            settings::{AudioSettings, ReplayGain},
+            speed::Speed,
+        },
+        message::AudioEvent,
+        update::machine::{Machine, Unhandled},
     };
     use proptest::prelude::{any, prop_assert, prop_assert_eq, proptest};
     use rstest::rstest;
 
     use crate::engine::{
-        effect::{EngineEffect, EngineMessage},
+        effect::EngineEffect,
+        message::EngineMessage,
         phase::{Handover, Incoming, Phase},
         state::{Engine, Live, PerformedRevisions, then_report},
         tests::{

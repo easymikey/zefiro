@@ -33,7 +33,7 @@ pub(crate) fn unit_fraction(raw: f64) -> f32 {
 
 #[inline]
 #[must_use]
-pub fn channel_byte(raw: f32) -> u8 {
+pub(crate) fn channel_byte(raw: f32) -> u8 {
     if raw.is_nan() {
         return 0;
     }

@@ -1,7 +1,7 @@
 mod rows;
-mod values;
+pub(crate) mod values;
 
-use kernel::domain::{SettingRow, geometry::Cells};
+use kernel::domain::{geometry::Cells, setting_row::SettingRow};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -9,18 +9,20 @@ use ratatui::{
     widgets::{StatefulWidget, Table, TableState, Widget},
 };
 use unicode_width::UnicodeWidthStr;
-pub(crate) use values::SettingsView;
+use values::SettingsView;
 
 use crate::{
     overlay::{
         modal::{
-            ModalPlacement,
-            ModalRowStyle,
-            ModalScrollAreas,
-            OverlayAreas,
-            OverlayContainer,
-            column_width,
-            leading_cells,
+            metrics::ModalRowStyle,
+            placement::{
+                ModalPlacement,
+                ModalScrollAreas,
+                OverlayAreas,
+                OverlayContainer,
+                column_width,
+                leading_cells,
+            },
         },
         settings::{
             rows::{SettingsColumns, SettingsTableRow, settings_row},
@@ -34,17 +36,17 @@ use crate::{
         list_chrome::scroll_offset,
         text::truncate_from_left,
     },
-    theme::ActiveTheme,
+    theme::active_theme::ActiveTheme,
 };
 
 const LABEL_GAP: usize = 2;
 
 #[derive(Debug)]
 pub(crate) struct SettingsWidget<'a> {
-    pub theme: ActiveTheme<'a>,
-    pub values: SettingsView<'a>,
-    pub selected: usize,
-    pub avoid: &'a [Rect],
+    pub(crate) theme: ActiveTheme<'a>,
+    pub(crate) values: SettingsView<'a>,
+    pub(crate) selected: usize,
+    pub(crate) avoid: &'a [Rect],
 }
 
 impl<'a> SettingsWidget<'a> {
@@ -169,15 +171,15 @@ fn settings_content_width(rows: &[SettingRow], values: &SettingsView<'_>) -> u16
 pub(crate) mod test_support {
     use std::path::Path;
 
-    use config::TomlAppearance;
+    use config::appearance_file::TomlAppearance;
     use kernel::domain::{
-        AppearanceSetting,
-        Crossfade,
-        ReplayGain,
         appearance::AppearanceSettings,
+        crossfade::Crossfade,
+        setting_row::AppearanceSetting,
+        settings::ReplayGain,
     };
 
-    use crate::overlay::settings::SettingsView;
+    use crate::overlay::settings::values::SettingsView;
 
     pub(crate) fn appearance_settings() -> Vec<AppearanceSetting> {
         kernel::domain::appearance_rows::appearance_settings(
@@ -208,12 +210,12 @@ pub(crate) mod test_support {
 mod tests {
     use std::path::Path;
 
-    use kernel::domain::{ThemeName, appearance::CoverMode};
+    use kernel::domain::{appearance::CoverMode, theme::ThemeName};
     use ratatui::layout::Rect;
 
     use crate::{
         overlay::{
-            modal::{ModalRowStyle, OverlayAreas},
+            modal::{metrics::ModalRowStyle, placement::OverlayAreas},
             settings::{
                 SettingsWidget,
                 test_support::{appearance_settings, settings_values},
@@ -221,7 +223,7 @@ mod tests {
         },
         primitive::canvas::find_text,
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn outer_rect(overlay: &SettingsWidget<'_>, screen: Rect) -> Option<Rect> {

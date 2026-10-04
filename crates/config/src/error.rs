@@ -1,6 +1,9 @@
 use std::num::ParseIntError;
 
-use kernel::domain::{ConfigName, ThemeName, ThemeNameError};
+use kernel::domain::{
+    config::ConfigName,
+    theme::{ThemeName, ThemeNameError},
+};
 use serde::de::DeserializeOwned;
 
 use crate::{
@@ -49,7 +52,7 @@ pub(crate) enum CrossfadeError {
     #[error("invalid crossfade: expected an integer with an 's' or 'ms' suffix")]
     MissingSuffix,
     #[error(transparent)]
-    OutOfRange(#[from] kernel::domain::CrossfadeError),
+    OutOfRange(#[from] kernel::domain::crossfade::CrossfadeError),
 }
 
 fn line_at(source: &str, offset: usize) -> usize {
@@ -75,7 +78,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{ConfigName, ThemeName};
+    use kernel::domain::{config::ConfigName, theme::ThemeName};
     use rstest::rstest;
 
     use crate::error::{Error, config_file_name, parse_toml};

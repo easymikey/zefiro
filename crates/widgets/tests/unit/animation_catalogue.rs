@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use kernel::Cue;
+use kernel::cmd::Cue;
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -8,21 +8,23 @@ use ratatui::{
 };
 use rstest::rstest;
 use tachyonfx::{CellFilter, Effect as Animation};
-use widgets::{
-    AnimationStage,
-    AnimationTimings,
-    VolumeShades,
-    chip_pulse,
-    delete_burst,
-    favorite_pulse,
-    modal_in,
-    modal_out,
-    row_flash,
-    screen_wash,
-    toast_burst,
-    toast_slide_in,
-    volume_pulse,
-    wash_reveal,
+use widgets::animation::{
+    catalogue::{
+        VolumeShades,
+        chip_pulse,
+        delete_burst,
+        favorite_pulse,
+        modal_in,
+        modal_out,
+        row_flash,
+        screen_wash,
+        toast_burst,
+        toast_slide_in,
+        volume_pulse,
+        wash_reveal,
+    },
+    stage::AnimationStage,
+    timings::AnimationTimings,
 };
 
 use crate::unit::{

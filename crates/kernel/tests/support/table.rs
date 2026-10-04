@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use kernel::update::{Machine, Unhandled};
+use kernel::update::machine::{Machine, Unhandled};
 
 pub(crate) fn cell<S>(
     start: S,

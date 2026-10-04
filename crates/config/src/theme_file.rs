@@ -1,4 +1,4 @@
-use kernel::domain::{ConfigName, ThemeName, appearance::Rgb};
+use kernel::domain::{appearance::Rgb, config::ConfigName, theme::ThemeName};
 use serde::{Deserialize, Deserializer};
 
 use crate::{

@@ -2,11 +2,11 @@ use std::fmt;
 
 use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
-    AudioError,
-    domain::{ListedDevice, Revision, StreamError},
+    domain::{device::ListedDevice, revision::Revision, transport::StreamError},
+    message::AudioError,
 };
 
-use crate::{deck::source::TrackDecoder, engine::effect::AudioMessage, error::Error};
+use crate::{deck::source::TrackDecoder, engine::message::AudioMessage, error::Error};
 
 pub enum DeckEvent {
     OutputLost(StreamError),

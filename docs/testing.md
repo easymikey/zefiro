@@ -30,7 +30,7 @@ Every guard that reads source text lives in `crates/sifr-guards/tests/guards/`, 
 | `errors.rs` | error enum shape and `From` along real crate edges (§6) |
 | `forbidden_names.rs` | verb module files, `get_`, `should_`/`wants_`/`needs_`, mechanism constructors (§9) |
 | `hardware.rs` | every test that touches hardware is `#[ignore]` (§13.4) |
-| `imports.rs` | every `use` is absolute, no glob (§9) |
+| `imports.rs` | every `use` is absolute, no glob, no `pub use` of any visibility (§9); the clippy `pub_use` lint stays off because `bon` builders expand to `pub use` |
 | `layering.rs` | the layer map; no widgets module outside `src/screen/` imports `crate::screen` (§1.1, §11.10) |
 | `length.rs` | ≤800 lines per file, tests included (§9) |
 | `macros.rs` | no `macro_rules!`, no proc-macro crate of our own (§9) |

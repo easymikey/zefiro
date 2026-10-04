@@ -1,7 +1,7 @@
-use kernel::Cue;
+use kernel::cmd::Cue;
 use ratatui::layout::Rect;
 use rstest::rstest;
-use widgets::{AnimationStage, Backdrop};
+use widgets::animation::stage::{AnimationStage, Backdrop};
 
 use crate::unit::{
     animation_stage::{moved, run_out_over, step_over},

@@ -7,16 +7,10 @@ use std::{
 
 use crossbeam_channel::Sender;
 use kernel::{
-    Cmd,
-    Cmds,
-    MacosCmd,
-    MacosError,
-    MacosEvent,
-    Percent,
-    PlaybackRequest,
-    Track,
-    message::OsStatus,
-    update::{Driver, Machine, Unhandled},
+    cmd::{Cmd, Cmds, MacosCmd},
+    domain::{percent::Percent, track::Track},
+    message::{MacosError, MacosEvent, OsStatus, PlaybackRequest},
+    update::machine::{Driver, Machine, Unhandled},
 };
 use objc2::rc::{Retained, autoreleasepool};
 use objc2_core_audio::AudioObjectID;
@@ -268,17 +262,10 @@ mod tests {
 
     use crossbeam_channel::bounded;
     use kernel::{
-        Bounded,
-        Cmd,
-        Cmds,
-        MacosCmd,
-        MacosError,
-        MacosEvent,
-        Percent,
-        Playback,
-        PlaybackRequest,
-        message::OsStatus,
-        update::Machine,
+        cmd::{Cmd, Cmds, MacosCmd, Playback},
+        domain::{bounded::Bounded, percent::Percent},
+        message::{MacosError, MacosEvent, OsStatus, PlaybackRequest},
+        update::machine::Machine,
     };
     use rstest::rstest;
 

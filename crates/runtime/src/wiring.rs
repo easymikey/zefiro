@@ -3,16 +3,18 @@ use std::time::{Duration, Instant};
 use audio::tap::SpectrumTap;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use kernel::{
-    DriverEvent,
-    Message,
-    domain::{DriverName, DriverStatus, Model},
+    domain::{
+        driver::{DriverName, DriverStatus},
+        model::Model,
+    },
+    message::{DriverEvent, Message},
 };
 
-#[cfg(target_os = "macos")] use crate::macos::MacosChannel;
+#[cfg(target_os = "macos")] use crate::spawn::macos_thread::MacosChannel;
 use crate::{
     error::Error,
     latest::{LatestReceivers, LatestSenders, latest_channels},
-    port::{LibraryPort, Port, Ports},
+    port::{Port, Ports},
     registry,
     runtime::StartupPaths,
     spawn::{SpawnSetup, Spawners},
@@ -61,7 +63,7 @@ impl Wiring {
 
         let ports = Ports {
             audio: Port::spawned(DriverName::Audio, audio),
-            library: LibraryPort::spawned(library),
+            library: Port::spawned(DriverName::Library, library),
             config: Port::spawned(DriverName::Config, config),
             macos: Port::spawned(DriverName::Macos, macos),
         };
@@ -121,8 +123,8 @@ impl Wiring {
                 self.ports.audio = Port::spawned(driver, thread);
             }
             DriverName::Library => {
-                let spawned = (self.spawners.library)(setup)?;
-                self.ports.library = LibraryPort::spawned(spawned);
+                let thread = (self.spawners.library)(setup)?;
+                self.ports.library = Port::spawned(driver, thread);
             }
             DriverName::Config => {
                 let thread = (self.spawners.config)(setup)?;
@@ -186,27 +188,20 @@ pub(crate) fn join_exited(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::time::Instant;
-
     use audio::tap::SpectrumTap;
     use crossbeam_channel::{Receiver, Sender};
     use kernel::{
-        AudioCmd,
-        Cmds,
-        ConfigCmd,
-        DriverEvent,
-        LibraryCmd,
-        MacosCmd,
-        Message,
-        domain::DriverName,
+        cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd},
+        domain::driver::DriverName,
+        message::{DriverEvent, Message},
     };
-    use library::{LibraryDirs, LibraryMessage};
+    use library::dirs::LibraryDirs;
 
     use crate::{
         driver::DriverThread,
         latest::{LatestSenders, latest_channels},
         outbox::Congestion,
-        port::{LibraryPort, Port, Ports},
+        port::{Port, Ports},
         registry,
         runtime::StartupPaths,
         spawn::Spawners,
@@ -222,12 +217,12 @@ pub(crate) mod tests {
 
     pub(crate) fn stub_paths() -> StartupPaths {
         StartupPaths {
-            config: config::ConfigPaths {
+            config: config::driver::ConfigPaths {
                 config: std::path::PathBuf::new(),
                 appearance: std::path::PathBuf::new(),
                 themes: std::path::PathBuf::new(),
                 theme: None,
-                seen: config::SeenTexts::default(),
+                seen: config::driver::SeenTexts::default(),
             },
             library: LibraryDirs::under(std::path::Path::new("")),
         }
@@ -235,18 +230,13 @@ pub(crate) mod tests {
 
     fn idle_library_thread(
         inbox: &Sender<Message>,
-        tap: Sender<LibraryMessage>,
-    ) -> (DriverThread<LibraryCmd>, Sender<LibraryMessage>) {
+        tap: Sender<LibraryCmd>,
+    ) -> DriverThread<LibraryCmd> {
         let (commands, command_inbox) = crossbeam_channel::unbounded();
         let inbox = inbox.clone();
-        let covers = tap.clone();
         let handle = std::thread::spawn(move || {
             for command in &command_inbox {
-                let cmds = Cmds {
-                    cmds: vec![command],
-                    at: Instant::now(),
-                };
-                if tap.send(LibraryMessage::Cmds(cmds)).is_err() {
+                if tap.send(command).is_err() {
                     break;
                 }
             }
@@ -255,16 +245,15 @@ pub(crate) mod tests {
                 event: DriverEvent::Stopped,
             })
         });
-        let thread = DriverThread {
+        DriverThread {
             commands,
             handle,
             full: Congestion::default(),
-        };
-        (thread, covers)
+        }
     }
 
     impl Wiring {
-        pub(crate) fn idle() -> (Self, Receiver<LibraryMessage>, LatestSenders) {
+        pub(crate) fn idle() -> (Self, Receiver<LibraryCmd>, LatestSenders) {
             let (inbox, arrivals) = crossbeam_channel::unbounded();
             let (library_tap, library_inbox) = crossbeam_channel::unbounded();
             let (writers, cells, notified) = latest_channels();
@@ -274,7 +263,10 @@ pub(crate) mod tests {
                     DriverName::Audio,
                     idle_thread::<AudioCmd>(DriverName::Audio, &inbox),
                 ),
-                library: LibraryPort::spawned(idle_library_thread(&inbox, library_tap)),
+                library: Port::spawned(
+                    DriverName::Library,
+                    idle_library_thread(&inbox, library_tap),
+                ),
                 config: Port::spawned(
                     DriverName::Config,
                     idle_thread::<ConfigCmd>(DriverName::Config, &inbox),
@@ -298,7 +290,7 @@ pub(crate) mod tests {
                 paths,
                 writers: writers.clone(),
                 #[cfg(target_os = "macos")]
-                macos: crate::macos::MacosChannel::new(),
+                macos: crate::spawn::macos_thread::MacosChannel::new(),
             };
             (wiring, library_inbox, writers)
         }

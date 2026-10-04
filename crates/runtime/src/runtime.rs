@@ -5,16 +5,14 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use config::ConfigPaths;
+use config::driver::ConfigPaths;
 use kernel::{
-    DriverEvent,
-    Effect,
-    Message,
-    Moment,
-    domain::{Model, Startup},
-    update::Unhandled,
+    cmd::Effect,
+    domain::{model::Model, startup::Startup, time::Moment},
+    message::{DriverEvent, Message},
+    update::machine::Unhandled,
 };
-use library::{CoverJob, LibraryDirs};
+use library::dirs::LibraryDirs;
 
 use crate::{
     error::Error,
@@ -60,7 +58,7 @@ impl Runtime {
     }
 
     pub(crate) fn seeded(startup: Startup) -> (Model, Vec<Effect>) {
-        kernel::startup(startup)
+        kernel::update::startup::startup(startup)
     }
 
     pub(crate) fn assemble(
@@ -147,7 +145,7 @@ impl Runtime {
     }
 
     pub(crate) fn animations(&self) -> kernel::domain::appearance::Animations {
-        self.model.settings.appearance.settings.animations
+        self.model.settings.appearance.animations
     }
 
     pub(crate) fn take_shell_effects(&mut self) -> Vec<ShellEffect> {
@@ -174,15 +172,6 @@ impl Runtime {
 
     pub(crate) fn instant_of(&self, moment: Moment) -> Instant {
         self.epoch + moment.since_epoch().saturating_sub(self.unix_offset)
-    }
-
-    pub(crate) fn send_cover(&mut self, job: CoverJob) {
-        let sent = self
-            .wiring
-            .ports
-            .library
-            .send_cover(&self.model.drivers, job);
-        self.trace.record(sent);
     }
 
     pub(crate) fn drain(self) {
@@ -241,24 +230,26 @@ mod tests {
     use std::{
         cell::RefCell,
         convert::Infallible,
-        path::{Path, PathBuf},
+        path::Path,
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     use audio::tap::SpectrumTap;
-    use config::{ConfigPaths, SeenTexts};
+    use config::driver::{ConfigPaths, SeenTexts};
     use crossbeam_channel::{Receiver, Sender, unbounded};
     use kernel::{
-        AudioCmd,
-        AudioEvent,
-        Direction,
-        DriverEvent,
-        Message,
-        Toast,
-        domain::{DriverName, DriverStatus, SettingRow, Startup},
-        update::Unhandled,
+        cmd::{AudioCmd, LibraryCmd},
+        domain::{
+            direction::Direction,
+            driver::{DriverName, DriverStatus},
+            setting_row::SettingRow,
+            startup::Startup,
+            toast::Toast,
+        },
+        message::{AudioEvent, DriverEvent, Message},
+        update::machine::Unhandled,
     };
-    use library::{CoverJob, LibraryDirs, LibraryMessage};
+    use library::dirs::LibraryDirs;
     use rstest::rstest;
 
     use crate::{
@@ -274,7 +265,7 @@ mod tests {
             config_thread::spawn_config,
             tests::spawn_audio_loop,
         },
-        trace::{DropReason, Trace, TraceEntry},
+        trace::Trace,
         wiring::Wiring,
     };
 
@@ -539,17 +530,17 @@ mod tests {
         );
     }
 
-    fn start(library: DriverStatus) -> (Runtime, Receiver<LibraryMessage>) {
-        let (wiring, cover_inbox, _writers) = Wiring::idle();
+    fn start(library: DriverStatus) -> (Runtime, Receiver<LibraryCmd>) {
+        let (wiring, library_inbox, _writers) = Wiring::idle();
         let seed = Runtime::seeded(stock_startup());
         let mut runtime = Runtime::assemble(seed, wiring, Trace::default());
         runtime.model.drivers.record_mut(DriverName::Library).status = library;
-        (runtime, cover_inbox)
+        (runtime, library_inbox)
     }
 
     #[test]
     fn now_is_anchored_to_the_wall_clock_and_round_trips_through_instant_of() {
-        let (runtime, _cover_inbox) = start(DriverStatus::Running);
+        let (runtime, _library_inbox) = start(DriverStatus::Running);
 
         let now = runtime.now();
 
@@ -562,50 +553,6 @@ mod tests {
         let back = runtime.moment_of(runtime.instant_of(now));
         assert_eq!(back, now);
         runtime.drain();
-    }
-
-    #[test]
-    fn a_refused_cover_job_is_traced_once_not_on_every_paint() {
-        let (mut runtime, _cover_inbox) = start(DriverStatus::Stopped);
-        let job = CoverJob::new(
-            PathBuf::from("/music/cover.jpg"),
-            kernel::domain::geometry::Pixels(64),
-        );
-
-        runtime.send_cover(job.clone());
-        runtime.send_cover(job.clone());
-        runtime.send_cover(job);
-
-        let dropped: Vec<&TraceEntry> = runtime.trace.iter().collect();
-        assert_eq!(
-            dropped,
-            [&TraceEntry::Dropped {
-                driver: DriverName::Library,
-                command: "cover",
-                reason: DropReason::NotRunning,
-            }]
-        );
-        runtime.drain();
-    }
-
-    #[test]
-    fn every_cover_job_is_forwarded_to_the_library() {
-        let (mut runtime, cover_inbox) = start(DriverStatus::Running);
-        let job = CoverJob::new(
-            PathBuf::from("/music/cover.jpg"),
-            kernel::domain::geometry::Pixels(64),
-        );
-
-        runtime.send_cover(job.clone());
-        runtime.send_cover(job);
-
-        assert!(runtime.trace.is_empty());
-        runtime.drain();
-        let covers = cover_inbox
-            .iter()
-            .filter(|command| matches!(command, LibraryMessage::Cover(_)))
-            .count();
-        assert_eq!(covers, 2);
     }
 
     #[rstest]
@@ -624,7 +571,7 @@ mod tests {
         #[case] message: Message,
         #[case] expected: Result<(), Unhandled>,
     ) {
-        let (mut runtime, _cover_inbox) = start(library);
+        let (mut runtime, _library_inbox) = start(library);
 
         let change = runtime.step(message);
 

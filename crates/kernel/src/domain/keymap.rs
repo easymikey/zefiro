@@ -6,8 +6,11 @@ use std::{
 use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 
 use crate::{
-    domain::{Chord, ChordParseError, Diagnostic},
-    update::keymap::{Bindings, KeyBinding},
+    domain::{
+        chord::{Chord, ChordParseError},
+        config::Diagnostic,
+    },
+    update::keymap::{bindings::Bindings, chord::KeyBinding},
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, EnumString)]
@@ -329,7 +332,7 @@ pub(crate) fn resolve(overrides: &KeymapOverrides, base: &[KeyBinding]) -> Resol
 pub struct Keymap {
     pub(crate) overrides: KeymapOverrides,
     pub(crate) errors: Vec<KeyValidationError>,
-    pub(crate) bindings: Bindings,
+    pub bindings: Bindings,
 }
 
 impl Keymap {
@@ -381,14 +384,10 @@ mod validation_error_tests {
     use rstest::rstest;
 
     use crate::domain::{
-        Action,
-        Chord,
-        ChordParseError,
-        Diagnostic,
-        Key,
-        KeyCode,
-        Modifiers,
-        keymap::{KeyValidationError, Keymap},
+        chord::{Chord, ChordParseError},
+        config::Diagnostic,
+        key::{Key, KeyCode, Modifiers},
+        keymap::{Action, KeyValidationError, Keymap},
     };
 
     #[rstest]

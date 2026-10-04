@@ -1,11 +1,10 @@
 use std::{path::PathBuf, time::Duration};
 
-use kernel::{
-    AudioFormat,
-    Favorites,
-    Tags,
-    Track,
-    library::{self, SortKey},
+use kernel::domain::{
+    favorites::Favorites,
+    library,
+    library::SortKey,
+    track::{AudioFormat, Tags, Track},
 };
 use rstest::rstest;
 
@@ -25,7 +24,7 @@ fn track(path: &str, artist: Option<&str>, album: Option<&str>) -> Track {
 fn favorited(paths: &[&str]) -> Favorites {
     let mut favorites = Favorites::default();
     for path in paths {
-        favorites.toggle(kernel::TrackRef::Local(PathBuf::from(*path)));
+        favorites.toggle(kernel::domain::track::TrackRef::Local(PathBuf::from(*path)));
     }
     favorites
 }

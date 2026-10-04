@@ -47,11 +47,11 @@ pub(crate) fn scrollbar_column(outer: Rect, content: Rect, inset: u16) -> Rect {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ScrollbarTrack {
-    pub total: usize,
-    pub offset: usize,
-    pub viewport: usize,
-    pub thumb: Color,
-    pub track: Color,
+    pub(crate) total: usize,
+    pub(crate) offset: usize,
+    pub(crate) viewport: usize,
+    pub(crate) thumb: Color,
+    pub(crate) track: Color,
 }
 
 pub(crate) fn paint_scrollbar(column: Rect, bar: ScrollbarTrack, buffer: &mut Buffer) {

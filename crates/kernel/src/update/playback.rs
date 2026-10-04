@@ -2,12 +2,18 @@ use std::time::Duration;
 
 use crate::{
     cmd::{Cmd, Cue},
-    domain::{Direction, Moment, Output, Player, SEEK_MEDIUM},
+    domain::{
+        direction::Direction,
+        player::Player,
+        time::Moment,
+        transport::{Output, SEEK_MEDIUM},
+    },
     message::{PlaybackRequest, SeekTenths},
     update::{
         audio,
         machine::{Machine, Unhandled},
-        player::{self, Anchor, PlaybackParts, PlayerMessage, Stamp},
+        player,
+        player::{Anchor, PlaybackParts, PlayerMessage, Stamp},
         playlist::PlaylistMessage,
         transport::TransportMessage,
     },
@@ -231,15 +237,12 @@ mod tests {
     use crate::{
         cmd::{AudioCmd, Cmd, Effect},
         domain::{
-            AudioFormat,
-            Model,
-            Moment,
-            Player,
-            Playhead,
-            Preload,
-            Speed,
-            Tags,
-            Track,
+            model::Model,
+            player::{Player, Preload},
+            playhead::Playhead,
+            speed::Speed,
+            time::Moment,
+            track::{AudioFormat, Tags, Track},
         },
         message::{PlaybackRequest, SeekTenths},
         update::{playback::update, playback_parts},

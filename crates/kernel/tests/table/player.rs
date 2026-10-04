@@ -1,33 +1,38 @@
 use std::{sync::Arc, time::Duration};
 
 use kernel::{
-    AudioCmd,
-    AudioError,
-    Cmd,
-    Cue,
-    DecodeError,
-    Effect,
-    HistoryEntry,
-    LibraryCmd,
-    MacosCmd,
-    Moment,
-    PausedBy,
-    PlaybackChange,
-    Player,
-    Playhead,
-    Preload,
-    Speed,
-    Track,
-    TrackLoad,
-    domain::Revision,
+    cmd::{
+        AudioCmd,
+        Cmd,
+        CoverJob,
+        Cue,
+        Effect,
+        LibraryCmd,
+        MacosCmd,
+        PlaybackChange,
+        TrackLoad,
+    },
+    domain::{
+        geometry::Pixels,
+        history::HistoryEntry,
+        player::{PausedBy, Player, Preload},
+        playhead::Playhead,
+        revision::Revision,
+        speed::Speed,
+        time::Moment,
+        track::Track,
+    },
+    message::{AudioError, DecodeError},
     update::{
-        Unhandled,
-        player::{Anchor, Lookahead, PlayerMessage, Stamp},
+        machine::Unhandled,
+        player::{Anchor, PlayerMessage, Stamp, events::Lookahead},
     },
 };
 use rstest::rstest;
 
 use crate::support::{table::cell, track_with_duration};
+
+const COVER_SIDE: Pixels = Pixels(240);
 
 const TRACK_LENGTH: Duration = Duration::from_secs(100);
 const AT: Duration = Duration::from_secs(5);
@@ -84,9 +89,9 @@ fn error() -> PlayerMessage {
 fn seek_error() -> PlayerMessage {
     PlayerMessage::Error {
         error: AudioError::Seek {
-            reason: kernel::domain::Diagnostic::from_error(&std::io::Error::other(
-                "the source cannot seek",
-            )),
+            reason: kernel::domain::config::Diagnostic::from_error(
+                &std::io::Error::other("the source cannot seek"),
+            ),
         },
         now: now(),
     }
@@ -102,6 +107,7 @@ fn tick(at: u64, ab: Option<(u64, u64)>, next: Option<Arc<Track>>) -> PlayerMess
             duration: TRACK_LENGTH,
             now: now(),
             revision: revision(),
+            cover_side: Some(COVER_SIDE),
         },
     }
 }
@@ -223,7 +229,10 @@ fn stopped() -> Cmd {
 fn preloads(track: &Arc<Track>) -> Cmd {
     Cmd::from_iter([
         Effect::Audio(AudioCmd::Preload(TrackLoad::for_track(track, revision()))),
-        Effect::Library(LibraryCmd::PrefetchCover(track.path().to_path_buf())),
+        Effect::Library(LibraryCmd::PrefetchCover(CoverJob {
+            path: track.path().to_path_buf(),
+            side: COVER_SIDE,
+        })),
     ])
 }
 
@@ -321,7 +330,7 @@ fn player_cell(
     #[case] start: Player,
     #[case] message: PlayerMessage,
     #[case] expected: Result<
-        (Player, <Player as kernel::update::Machine>::Effect),
+        (Player, <Player as kernel::update::machine::Machine>::Effect),
         Unhandled,
     >,
 ) {

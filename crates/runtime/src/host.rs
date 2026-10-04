@@ -9,10 +9,11 @@ where
     F: FnOnce(Runtime) -> R + Send + 'static,
 {
     debug_assert!(matches!(
-        crate::registry::row(kernel::domain::DriverName::Macos).hosting,
+        crate::registry::row(kernel::domain::driver::DriverName::Macos).hosting,
         crate::registry::Hosting::WorkerWithMainLoop
     ));
-    let Some(main) = ::macos::MainLoop::attach(&runtime.wiring.macos.sender) else {
+    let Some(main) = ::macos::main_loop::MainLoop::attach(&runtime.wiring.macos.sender)
+    else {
         let mut runtime = runtime;
         runtime
             .trace
@@ -32,7 +33,7 @@ where
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn run_on_main_thread<R, F>(runtime: Runtime, body: F) -> Result<R, Error>
+pub(crate) fn run_on_main_thread<R, F>(runtime: Runtime, body: F) -> Result<R, Error>
 where
     R: Send + 'static,
     F: FnOnce(Runtime) -> R + Send + 'static,
@@ -41,7 +42,7 @@ where
 }
 
 #[cfg(target_os = "macos")]
-struct StopOnDrop(::macos::MainLoopStop);
+struct StopOnDrop(::macos::main_loop::MainLoopStop);
 
 #[cfg(target_os = "macos")]
 impl Drop for StopOnDrop {
@@ -52,7 +53,7 @@ impl Drop for StopOnDrop {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::Startup;
+    use kernel::domain::startup::Startup;
 
     use crate::{
         host::run_on_main_thread,

@@ -1,37 +1,33 @@
 use std::time::Duration;
 
 use kernel::{
-    AudioCmd,
-    Cmd,
-    ConfigCmd,
-    ConfigEvent,
-    Effect,
-    Message,
-    Model,
-    Moment,
-    Overlay,
-    OverlayName,
-    OverlayRequest,
-    PlaybackRequest,
-    SettingsRowRequest,
+    cmd::{AudioCmd, Cmd, ConfigCmd, Effect},
     domain::{
-        AppearanceControl,
-        AppearanceRow,
-        AppearanceSetting,
-        Choice,
-        Crossfade,
-        DeviceDefault,
-        Direction,
-        ListedDevice,
-        OptionCount,
-        OutputDevice,
-        ReplayGain,
-        SettingRow,
-        SleepPresets,
-        ThemeChoice,
-        ThemeName,
-        Themes,
         appearance_rows::AppearanceField,
+        crossfade::Crossfade,
+        device::{DeviceDefault, ListedDevice, OutputDevice},
+        direction::Direction,
+        model::Model,
+        overlay::{Overlay, OverlayName},
+        setting_row::{
+            AppearanceControl,
+            AppearanceRow,
+            AppearanceSetting,
+            Choice,
+            OptionCount,
+            SettingRow,
+        },
+        settings::ReplayGain,
+        sleep_presets::SleepPresets,
+        theme::{ThemeChoice, ThemeName, Themes},
+        time::Moment,
+    },
+    message::{
+        ConfigEvent,
+        Message,
+        OverlayRequest,
+        PlaybackRequest,
+        SettingsRowRequest,
     },
 };
 use rstest::rstest;
@@ -390,8 +386,8 @@ fn adjust_row_sleep_presets_snaps_a_custom_value_to_the_nearest_bundle() {
 #[test]
 fn adjust_row_sleep_presets_leaves_the_clamp_to_the_next_cycle() {
     let mut model = seeded();
-    model.transport.sleep = Some(kernel::domain::SleepTimer {
-        preset_index: kernel::domain::PresetIndex::new(2),
+    model.transport.sleep = Some(kernel::domain::sleep::SleepTimer {
+        preset_index: kernel::domain::index::PresetIndex::new(2),
         delay: Duration::from_secs(60),
     });
 

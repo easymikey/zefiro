@@ -1,4 +1,4 @@
-use kernel::{Moment, update::update};
+use kernel::{domain::time::Moment, update::update};
 use proptest::prelude::{prop_assert_eq, proptest};
 
 use crate::support::strategies::{message, reached_model};

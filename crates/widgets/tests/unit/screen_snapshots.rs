@@ -1,12 +1,19 @@
 use kernel::domain::{
-    appearance::{Breakpoints, CoverMode, KeyHints, LayoutMode},
+    appearance::{CoverMode, KeyHints, LayoutMode},
     geometry::Cells,
 };
 use ratatui::layout::Rect;
 use rstest::rstest;
-use widgets::{CardCover, FrameLayout, PixelPath, Scene, ScreenWidget};
+use widgets::{
+    card::CardCover,
+    scene::{PixelPath, Scene},
+    screen::{breakpoint::Breakpoints, frame_layout::FrameLayout, root::ScreenWidget},
+};
 
-use crate::unit::support::{SceneSources, model_with_tracks, playing_track, rendered};
+use crate::unit::support::{
+    fixtures::{SceneSources, model_with_tracks, rendered},
+    playing_track,
+};
 
 fn painted_frame(scene: Scene<'_>, size: (u16, u16)) -> (FrameLayout, String) {
     let (width, height) = size;
@@ -119,7 +126,7 @@ fn narrowing_one_column_below_compact_drops_the_playlist_pane_entirely() {
 #[test]
 fn a_vinyl_cover_at_the_full_floor_still_leaves_the_title_visible() {
     let mut sources = SceneSources::new(playing_track("Vinyl Floor Song"));
-    sources.appearance_mut().settings.cover_mode = CoverMode::Vinyl;
+    sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
     let scene = Scene {
         pixel_path: PixelPath::Protocol,
         ..sources.scene()
@@ -135,8 +142,8 @@ fn the_key_hints_and_layout_rows_shape_the_whole_frame(
     #[values(LayoutMode::Auto, LayoutMode::Compact)] mode: LayoutMode,
 ) {
     let mut sources = SceneSources::new(model_with_tracks(3));
-    sources.appearance_mut().settings.key_hints = key_hints;
-    sources.appearance_mut().settings.layout_mode = mode;
+    sources.model.settings.appearance.key_hints = key_hints;
+    sources.model.settings.appearance.layout_mode = mode;
     let text = frame(sources.scene(), (120, 40));
     insta::with_settings!({
         snapshot_suffix => format!("{key_hints:?}_{mode:?}"),

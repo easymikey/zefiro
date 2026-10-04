@@ -1,6 +1,6 @@
 use std::{fmt, time::Duration};
 
-use crate::domain::{Bounded, Direction};
+use crate::domain::{bounded::Bounded, direction::Direction};
 
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -25,15 +25,15 @@ impl Crossfade {
         self.0
     }
 
-    pub fn step_up(self) -> Self {
+    pub(crate) fn step_up(self) -> Self {
         Self::clamped(self.0.saturating_add(Self::STEP))
     }
 
-    pub fn step_down(self) -> Self {
+    pub(crate) fn step_down(self) -> Self {
         Self::clamped(self.0.saturating_sub(Self::STEP))
     }
 
-    pub fn step(self, direction: Direction) -> Self {
+    pub(crate) fn step(self, direction: Direction) -> Self {
         match direction {
             Direction::Next => self.step_up(),
             Direction::Previous => self.step_down(),
@@ -72,7 +72,7 @@ mod tests {
 
     use rstest::rstest;
 
-    use crate::domain::{Bounded, Direction, crossfade::Crossfade};
+    use crate::domain::{bounded::Bounded, crossfade::Crossfade, direction::Direction};
 
     #[rstest]
     #[case::saturates_above_the_ceiling(Duration::from_secs(20), Crossfade::MAX)]

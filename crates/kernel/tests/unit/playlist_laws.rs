@@ -1,7 +1,10 @@
 use std::time::Duration;
 
-use kernel::{
-    domain::{AbLoop, Cursor, Direction, ViewIndex},
+use kernel::domain::{
+    cursor::Cursor,
+    direction::Direction,
+    index::ViewIndex,
+    player::AbLoop,
     playlist::{PlayOrder, Playlist},
 };
 use proptest::prelude::{Just, prop_assert, prop_assert_eq, prop_oneof, proptest};

@@ -1,8 +1,11 @@
 #![cfg(target_os = "macos")]
 
-use ::macos::{MacosDriver, MacosEffect, MacosJob, MacosMessage};
+use ::macos::{
+    cover::MacosJob,
+    driver::{MacosDriver, MacosEffect, MacosMessage},
+};
 use crossbeam_channel::{Receiver, Sender, bounded};
-use kernel::{MacosCmd, domain::DriverName};
+use kernel::{cmd::MacosCmd, domain::driver::DriverName};
 
 use crate::{
     driver::{DriverLoop, DriverThread, LoopEffect},
@@ -47,7 +50,7 @@ pub(crate) fn spawn(setup: &SpawnSetup<'_>) -> Result<DriverThread<MacosCmd>, Er
     }
     let jobs = Jobs {
         split: macos_split,
-        run: |job: MacosJob| job.run(library::embedded_cover),
+        run: |job: MacosJob| job.run(library::tags::embedded_cover),
     };
     DriverLoop::<MacosDriver, MacosJob> {
         row: registry::row(DriverName::Macos),
@@ -64,20 +67,22 @@ mod tests {
     use std::time::Duration;
 
     use crossbeam_channel::Sender;
-    use kernel::{Message, domain::Startup};
+    use kernel::{domain::startup::Startup, message::Message};
 
     use crate::{
-        macos::{MacosChannel, MacosMessage, spawn},
         runtime::StartupPaths,
-        spawn::SpawnSetup,
+        spawn::{
+            SpawnSetup,
+            macos_thread::{MacosChannel, MacosMessage, spawn},
+        },
     };
 
     fn spawn_on(
         channel: &MacosChannel,
         paths: &StartupPaths,
         inbox: &Sender<Message>,
-    ) -> crate::driver::DriverThread<kernel::MacosCmd> {
-        let (model, _cmd) = kernel::startup(Startup::default());
+    ) -> crate::driver::DriverThread<kernel::cmd::MacosCmd> {
+        let (model, _cmd) = kernel::update::startup::startup(Startup::default());
         let (writers, _cells, _notified) = crate::latest::latest_channels();
         spawn(&SpawnSetup {
             audio: &model.settings.audio,

@@ -1,24 +1,32 @@
 use std::{
-    io::{self, Write},
+    io,
     path::{Path, PathBuf},
 };
 
 use kernel::{
-    IoError,
-    domain::{ConfigError, ConfigName, Diagnostic, ThemeName},
-    update::Driver,
+    domain::{
+        config::{ConfigError, ConfigName, Diagnostic},
+        io_error::IoError,
+        theme::ThemeName,
+    },
+    update::machine::Driver,
 };
 
 use crate::{
-    TomlTheme,
-    driver::{ConfigDriver, ConfigEffect, ConfigMessage},
-    patch_appearance_text,
-    patch_config_text,
+    appearance_file::TomlAppearance,
+    driver::{
+        ConfigDriver,
+        ConfigEffect,
+        ConfigMessage,
+        files::{read_if_present, store},
+    },
+    patch::{patch_appearance_text, patch_config_text},
+    theme_file::TomlTheme,
 };
 
 const THEME_EXTENSION: &str = "toml";
 
-impl<P: Fn(TomlTheme)> Driver for ConfigDriver<P> {
+impl<P: Fn(TomlTheme), A: Fn(TomlAppearance)> Driver for ConfigDriver<P, A> {
     type Effect = ConfigEffect;
 
     fn execute(&mut self, effect: ConfigEffect) -> Option<ConfigMessage> {
@@ -35,8 +43,12 @@ impl<P: Fn(TomlTheme)> Driver for ConfigDriver<P> {
                 &self.paths.appearance,
                 |existing| patch_appearance_text(existing, patch),
             )),
-            ConfigEffect::Publish(theme) => {
-                self.publish(theme);
+            ConfigEffect::PublishTheme(theme) => {
+                self.publish_theme(theme);
+                None
+            }
+            ConfigEffect::PublishAppearance(appearance) => {
+                self.publish_appearance(appearance);
                 None
             }
             ConfigEffect::Watch(_) | ConfigEffect::After { .. } => None,
@@ -90,7 +102,7 @@ fn theme_name(path: io::Result<PathBuf>) -> Result<ThemeName, ConfigError> {
 fn save(
     file: ConfigName,
     path: &Path,
-    produce: impl FnOnce(&str) -> Result<String, crate::Error>,
+    produce: impl FnOnce(&str) -> Result<String, crate::error::Error>,
 ) -> ConfigMessage {
     let existing = match read_if_present(path) {
         Ok(existing) => existing,
@@ -114,63 +126,38 @@ fn save_failed(file: ConfigName, kind: IoError) -> ConfigMessage {
     ConfigMessage::Error(ConfigError::Save { file, kind })
 }
 
-fn store(path: &Path, contents: &[u8]) -> Result<(), IoError> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .ok_or(IoError::Missing)?;
-    std::fs::create_dir_all(parent).map_err(|error| IoError::from(error.kind()))?;
-    write_atomic(parent, path, contents).map_err(|error| IoError::from(error.kind()))
-}
-
-fn read_if_present(path: &Path) -> io::Result<Option<String>> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => Ok(Some(text)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-fn write_atomic(parent: &Path, path: &Path, contents: &[u8]) -> io::Result<()> {
-    let mut staging = tempfile::NamedTempFile::new_in(parent)?;
-    staging.write_all(contents)?;
-    staging.as_file().sync_all()?;
-    staging.persist(path).map_err(|error| error.error)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use kernel::{
-        Bounded,
-        ConfigPatch,
-        IoError,
+        cmd::ConfigPatch,
         domain::{
-            ConfigError,
-            ConfigName,
-            Crossfade,
-            OptionIndex,
-            ThemeName,
             appearance::{AppearancePatch, CoverBrackets},
             appearance_rows::{AppearanceField, appearance_patch, appearance_row},
+            bounded::Bounded,
+            config::{ConfigError, ConfigName},
+            crossfade::Crossfade,
+            io_error::IoError,
+            setting_row::OptionIndex,
+            theme::ThemeName,
         },
-        update::Driver,
+        update::machine::Driver,
     };
     use rstest::{fixture, rstest};
 
     use crate::{
-        TomlTheme,
+        appearance_file::TomlAppearance,
         driver::{ConfigDriver, ConfigEffect, ConfigMessage, ConfigPaths, SeenTexts},
+        theme_file::TomlTheme,
     };
 
-    type Sink = fn(TomlTheme);
+    type Sink = ConfigDriver<fn(TomlTheme), fn(TomlAppearance)>;
 
     struct Disk {
         directory: tempfile::TempDir,
         paths: ConfigPaths,
-        driver: ConfigDriver<Sink>,
+        driver: Sink,
     }
 
     #[fixture]
@@ -183,7 +170,7 @@ mod tests {
             theme: None,
             seen: SeenTexts::default(),
         };
-        let driver: ConfigDriver<Sink> = ConfigDriver::new(&paths, drop);
+        let driver: Sink = ConfigDriver::new(&paths, drop, drop);
         Disk {
             directory,
             paths,
@@ -382,7 +369,7 @@ mod tests {
             theme: None,
             seen: SeenTexts::default(),
         };
-        let mut driver: ConfigDriver<Sink> = ConfigDriver::new(&paths, drop);
+        let mut driver: Sink = ConfigDriver::new(&paths, drop, drop);
 
         let refused = driver.execute(save_crossfade());
 

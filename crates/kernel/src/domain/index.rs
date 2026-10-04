@@ -19,10 +19,12 @@ pub type ViewIndex = Index<ViewSpace>;
 pub type PresetIndex = Index<PresetSpace>;
 
 impl<Space> Index<Space> {
+    #[must_use]
     pub const fn new(position: usize) -> Self {
         Self(position, PhantomData)
     }
 
+    #[must_use]
     pub const fn get(self) -> usize {
         self.0
     }

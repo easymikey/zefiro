@@ -1,4 +1,5 @@
 mod disk;
+mod files;
 mod saves;
 mod watch;
 
@@ -8,35 +9,28 @@ use std::{
 };
 
 use kernel::{
-    Cmd,
-    Cmds,
-    ConfigCmd,
-    ConfigEvent,
-    ConfigPatch,
-    ConfigReload,
-    IoError,
+    cmd::{Cmd, Cmds, ConfigCmd, ConfigPatch},
     domain::{
-        ConfigError,
-        ConfigName,
-        Diagnostic,
-        OptionIndex,
-        Revision,
-        ThemeChoice,
-        ThemeName,
         appearance::AppearancePatch,
         appearance_rows::{AppearanceField, appearance_patch, appearance_settings},
+        config::{ConfigError, ConfigName, Diagnostic},
+        io_error::IoError,
+        revision::Revision,
+        setting_row::OptionIndex,
+        theme::{ThemeChoice, ThemeName},
     },
-    update::{Machine, Unhandled},
+    message::{ConfigEvent, ConfigReload},
+    update::machine::{Machine, Unhandled},
 };
 use strum::IntoStaticStr;
 
 use crate::{
-    TomlAppearance,
-    TomlTheme,
+    appearance_file::TomlAppearance,
     driver::{
         saves::SaveQueue,
         watch::{ConfigWatch, WatchEffect, WatchMessage},
     },
+    theme_file::TomlTheme,
 };
 
 #[must_use]
@@ -62,7 +56,7 @@ enum Sighting {
     Repeat,
 }
 
-pub struct ConfigDriver<P: Fn(TomlTheme)> {
+pub struct ConfigDriver<P: Fn(TomlTheme), A: Fn(TomlAppearance)> {
     directory: Option<PathBuf>,
     paths: ConfigPaths,
     watch: ConfigWatch,
@@ -70,14 +64,15 @@ pub struct ConfigDriver<P: Fn(TomlTheme)> {
     appearance: Sighting,
     appearance_file: TomlAppearance,
     saves: SaveQueue,
-    publish: P,
+    publish_theme: P,
+    publish_appearance: A,
 }
 
 #[derive(Debug, PartialEq, IntoStaticStr)]
 pub enum ConfigMessage {
     Cmds(Cmds<ConfigCmd>),
     Started,
-    FilesChanged,
+    Changed(Result<(), IoError>),
     ReadDone {
         file: ConfigName,
         text: Option<String>,
@@ -88,7 +83,7 @@ pub enum ConfigMessage {
         file: ConfigName,
         text: String,
     },
-    Changed(ConfigChange),
+    Reloaded(ConfigChange),
     Error(ConfigError),
 }
 
@@ -117,10 +112,11 @@ pub enum ConfigEffect {
     After { delay: Duration, revision: Revision },
     SaveConfig(ConfigPatch),
     SaveAppearance(AppearancePatch),
-    Publish(TomlTheme),
+    PublishTheme(TomlTheme),
+    PublishAppearance(TomlAppearance),
 }
 
-impl<P: Fn(TomlTheme)> std::fmt::Debug for ConfigDriver<P> {
+impl<P: Fn(TomlTheme), A: Fn(TomlAppearance)> std::fmt::Debug for ConfigDriver<P, A> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ConfigDriver")
@@ -131,8 +127,8 @@ impl<P: Fn(TomlTheme)> std::fmt::Debug for ConfigDriver<P> {
     }
 }
 
-impl<P: Fn(TomlTheme)> ConfigDriver<P> {
-    pub fn new(paths: &ConfigPaths, publish: P) -> Self {
+impl<P: Fn(TomlTheme), A: Fn(TomlAppearance)> ConfigDriver<P, A> {
+    pub fn new(paths: &ConfigPaths, publish_theme: P, publish_appearance: A) -> Self {
         Self {
             directory: config_directory(&paths.appearance),
             paths: ConfigPaths {
@@ -147,16 +143,21 @@ impl<P: Fn(TomlTheme)> ConfigDriver<P> {
             appearance: Sighting::First,
             appearance_file: TomlAppearance::default(),
             saves: SaveQueue::default(),
-            publish,
+            publish_theme,
+            publish_appearance,
         }
     }
 
-    pub fn publish(&self, theme: TomlTheme) {
-        (self.publish)(theme);
+    pub fn publish_theme(&self, theme: TomlTheme) {
+        (self.publish_theme)(theme);
+    }
+
+    pub fn publish_appearance(&self, appearance: TomlAppearance) {
+        (self.publish_appearance)(appearance);
     }
 }
 
-impl<P: Fn(TomlTheme)> Machine for ConfigDriver<P> {
+impl<P: Fn(TomlTheme), A: Fn(TomlAppearance)> Machine for ConfigDriver<P, A> {
     type Message = ConfigMessage;
     type Effect = Cmd<ConfigEffect, ConfigEvent>;
 
@@ -177,7 +178,10 @@ impl<P: Fn(TomlTheme)> Machine for ConfigDriver<P> {
                 );
                 Ok(watch.then(self.poll_everything()))
             }
-            ConfigMessage::FilesChanged => Ok(self.poll_everything()),
+            ConfigMessage::Changed(Ok(())) => Ok(self.poll_everything()),
+            ConfigMessage::Changed(Err(kind)) => {
+                Ok(Cmd::message(ConfigEvent::Error(ConfigError::Watch(kind))))
+            }
             ConfigMessage::ReadDone { file, text } => {
                 self.drive_watch(WatchMessage::Observed { file, text })
             }
@@ -188,13 +192,13 @@ impl<P: Fn(TomlTheme)> Machine for ConfigDriver<P> {
             ConfigMessage::Saved { file, text } => {
                 self.drive_watch(WatchMessage::Wrote { file, text })
             }
-            ConfigMessage::Changed(change) => Ok(self.changed(change)),
+            ConfigMessage::Reloaded(change) => Ok(self.changed(change)),
             ConfigMessage::Error(error) => Ok(Cmd::message(ConfigEvent::Error(error))),
         }
     }
 }
 
-impl<P: Fn(TomlTheme)> ConfigDriver<P> {
+impl<P: Fn(TomlTheme), A: Fn(TomlAppearance)> ConfigDriver<P, A> {
     fn commanded(
         &mut self,
         cmds: Vec<ConfigCmd>,
@@ -241,8 +245,8 @@ impl<P: Fn(TomlTheme)> ConfigDriver<P> {
         let patch = appearance_patch(field, option).ok_or(Unhandled)?;
         self.appearance_file = self.appearance_file.patched(patch);
         self.saves.queue_appearance(patch);
-        let appearance = self.appearance_file.appearance();
-        Ok(Cmd::message(ConfigEvent::AppearanceReloaded(appearance)))
+        let settings = self.appearance_file.settings();
+        Ok(Cmd::message(ConfigEvent::AppearanceReloaded(settings)))
     }
 
     fn drive_watch(
@@ -285,19 +289,21 @@ impl<P: Fn(TomlTheme)> ConfigDriver<P> {
         &mut self,
         text: Option<&str>,
     ) -> Cmd<ConfigEffect, ConfigEvent> {
-        let parsed =
-            text.map_or_else(|| Ok(TomlAppearance::default()), crate::parse_appearance);
+        let parsed = text.map_or_else(
+            || Ok(TomlAppearance::default()),
+            crate::appearance_file::parse_appearance,
+        );
         match parsed {
             Ok(file) => {
-                let rows = appearance_settings(file.settings());
-                let appearance = file.appearance();
-                self.appearance_file = file;
+                let settings = file.settings();
+                let rows = appearance_settings(settings);
+                self.appearance_file = file.clone();
                 self.appearance = Sighting::Repeat;
-                reports([
-                    ConfigEvent::AppearanceReloaded(appearance),
+                Cmd::effect(ConfigEffect::PublishAppearance(file)).then(reports([
+                    ConfigEvent::AppearanceReloaded(settings),
                     ConfigEvent::AppearanceSettingsReloaded(rows),
                     reloaded(ConfigName::Appearance, Ok(())),
-                ])
+                ]))
             }
             Err(error) => {
                 Cmd::message(reloaded(ConfigName::Appearance, Err(invalid(&error))))
@@ -306,7 +312,7 @@ impl<P: Fn(TomlTheme)> ConfigDriver<P> {
     }
 
     fn keymap_changed(&mut self, text: Option<&str>) -> Cmd<ConfigEffect, ConfigEvent> {
-        match crate::parse_config_reload(text.unwrap_or("")) {
+        match crate::config_file::parse_config_reload(text.unwrap_or("")) {
             Ok(parsed) => {
                 let sighting = std::mem::replace(&mut self.config, Sighting::Repeat);
                 if sighting == Sighting::First {
@@ -338,7 +344,7 @@ fn theme_changed(
     text: Option<&str>,
 ) -> Cmd<ConfigEffect, ConfigEvent> {
     match theme_parsed(&name, text) {
-        Ok(file) => Cmd::effect(ConfigEffect::Publish(file)).then(reports([
+        Ok(file) => Cmd::effect(ConfigEffect::PublishTheme(file)).then(reports([
             ConfigEvent::ThemeReloaded(name.clone()),
             reloaded(ConfigName::Theme(name), Ok(())),
         ])),
@@ -351,12 +357,13 @@ fn theme_parsed(
     text: Option<&str>,
 ) -> Result<TomlTheme, ConfigError> {
     let source = text
-        .or_else(|| crate::embedded_theme(name.as_str()))
-        .ok_or_else(|| invalid(&crate::Error::UnknownTheme(name.clone())))?;
-    crate::parse_theme(source, name.as_str()).map_err(|error| invalid(&error))
+        .or_else(|| crate::embedded_theme::embedded_theme(name.as_str()))
+        .ok_or_else(|| invalid(&crate::error::Error::UnknownTheme(name.clone())))?;
+    crate::theme_file::parse_theme(source, name.as_str())
+        .map_err(|error| invalid(&error))
 }
 
-fn invalid(error: &crate::Error) -> ConfigError {
+fn invalid(error: &crate::error::Error) -> ConfigError {
     ConfigError::Invalid(Diagnostic::from_error(error))
 }
 
@@ -374,7 +381,7 @@ fn reports(
 }
 
 fn embedded_and_user(user: Vec<ThemeName>) -> Vec<ThemeName> {
-    crate::EMBEDDED_THEMES
+    crate::embedded_theme::EMBEDDED_THEMES
         .iter()
         .map(|&(name, _)| ThemeName::from_static(name))
         .chain(user)
@@ -398,30 +405,24 @@ mod tests {
     use std::{path::PathBuf, time::Instant};
 
     use kernel::{
-        Bounded,
-        Cmd,
-        Cmds,
-        ConfigCmd,
-        ConfigEvent,
-        ConfigPatch,
-        ConfigReload,
-        IoError,
-        Percent,
+        cmd::{Cmd, Cmds, ConfigCmd, ConfigPatch},
         domain::{
-            ConfigError,
-            ConfigName,
-            OptionCount,
-            OptionIndex,
-            Revision,
-            ThemeName,
             appearance_rows::{AppearanceField, appearance_patch},
+            bounded::Bounded,
+            config::{ConfigError, ConfigName},
+            io_error::IoError,
+            percent::Percent,
+            revision::Revision,
+            setting_row::{OptionCount, OptionIndex},
+            theme::ThemeName,
         },
-        update::{Machine, Unhandled},
+        message::{ConfigEvent, ConfigReload},
+        update::machine::{Machine, Unhandled},
     };
     use rstest::rstest;
 
     use crate::{
-        TomlTheme,
+        appearance_file::TomlAppearance,
         driver::{
             ConfigDriver,
             ConfigEffect,
@@ -431,11 +432,12 @@ mod tests {
             Sighting,
             saves::SAVE_DEBOUNCE,
         },
+        theme_file::TomlTheme,
     };
 
     const NOIR_THEME: &str = "name = \"mine\"\n[colors]\nbg = \"#000000\"\nfg = \"#000000\"\nbright_fg = \"#000000\"\naccent = \"#000000\"\ngreen = \"#000000\"\nyellow = \"#000000\"\nred = \"#000000\"\n";
 
-    type Driver = ConfigDriver<fn(TomlTheme)>;
+    type Driver = ConfigDriver<fn(TomlTheme), fn(TomlAppearance)>;
 
     fn driver(theme: Option<&'static str>) -> Driver {
         let paths = ConfigPaths {
@@ -445,7 +447,7 @@ mod tests {
             theme: theme.map(ThemeName::from_static),
             seen: SeenTexts::default(),
         };
-        ConfigDriver::new(&paths, drop::<TomlTheme>)
+        ConfigDriver::new(&paths, drop::<TomlTheme>, drop::<TomlAppearance>)
     }
 
     fn noir() -> ConfigName {
@@ -523,6 +525,10 @@ mod tests {
         ConfigMessage::Error(ConfigError::Save { file: ConfigName::Config, kind: IoError::Other }),
         Ok(Cmd::message(ConfigEvent::Error(ConfigError::Save { file: ConfigName::Config, kind: IoError::Other }))),
     )]
+    #[case::watch_error(
+        ConfigMessage::Changed(Err(IoError::Missing)),
+        Ok(Cmd::message(ConfigEvent::Error(ConfigError::Watch(IoError::Missing))))
+    )]
     #[case::select_theme(commanded(vec![ConfigCmd::SelectTheme("noir".parse().unwrap())]), Ok(Cmd::effect(reading(noir(), "/config/themes/noir.toml"))))]
     #[case::save(saving(ConfigPatch::builder().build()), Ok(after(1)))]
     #[case::setting_before_read(setting(), Err(Unhandled))]
@@ -588,7 +594,10 @@ mod tests {
         let (effects, events) =
             step(&mut state, read_done(noir(), Some(NOIR_THEME))).into_parts();
 
-        assert!(matches!(effects.as_slice(), [ConfigEffect::Publish(_)]));
+        assert!(matches!(
+            effects.as_slice(),
+            [ConfigEffect::PublishTheme(_)]
+        ));
         assert!(matches!(
             events.as_slice(),
             [
@@ -611,7 +620,30 @@ mod tests {
         let (effects, _) =
             step(&mut state, read_done(noir(), Some(NOIR_THEME))).into_parts();
 
-        assert!(matches!(effects.as_slice(), [ConfigEffect::Publish(_)]));
+        assert!(matches!(
+            effects.as_slice(),
+            [ConfigEffect::PublishTheme(_)]
+        ));
+    }
+
+    #[test]
+    fn a_changed_appearance_publishes_then_tells_appearance_reloaded() {
+        let mut state = driver(None);
+
+        let (effects, events) = step(
+            &mut state,
+            read_done(ConfigName::Appearance, Some("[cover]\nmode = \"plain\"\n")),
+        )
+        .into_parts();
+
+        assert!(matches!(
+            effects.as_slice(),
+            [ConfigEffect::PublishAppearance(_)]
+        ));
+        assert!(matches!(
+            events.as_slice(),
+            [ConfigEvent::AppearanceReloaded(_), ..]
+        ));
     }
 
     #[test]

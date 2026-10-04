@@ -1,9 +1,12 @@
 use std::time::Duration;
 
-use kernel::{Cue, domain::appearance::Animations};
+use kernel::{cmd::Cue, domain::appearance::Animations};
 use ratatui::{buffer::Buffer, layout::Rect};
 use strum::IntoEnumIterator;
-use widgets::{AnimationStage, Backdrop, FrameLayout};
+use widgets::{
+    animation::stage::{AnimationStage, Backdrop},
+    screen::frame_layout::FrameLayout,
+};
 
 use crate::unit::support::{
     ACCENT,
@@ -11,10 +14,9 @@ use crate::unit::support::{
     BACKGROUND,
     COVER,
     PROGRESS_LINE,
-    SceneSources,
     ToastPresence,
     animation_frame,
-    model_with_tracks,
+    fixtures::{SceneSources, model_with_tracks},
     overlay_backdrop,
     pane_backdrop,
     quiet_backdrop,

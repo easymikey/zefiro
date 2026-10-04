@@ -1,6 +1,6 @@
 use strum::{Display, IntoStaticStr};
 
-use crate::domain::Restarts;
+use crate::domain::supervision::Restarts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -92,7 +92,7 @@ impl Drivers {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::{DriverName, DriverStatus, Drivers};
+    use crate::domain::driver::{DriverName, DriverStatus, Drivers};
 
     #[test]
     fn every_driver_indexes_its_own_record() {

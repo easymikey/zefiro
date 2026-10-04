@@ -1,21 +1,17 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use kernel::{
-    BrowseRequest,
-    Cmd,
-    Cue,
-    Effect,
-    LibraryCmd,
-    LibraryEvent,
-    Message,
-    Model,
-    Moment,
-    Player,
-    Playhead,
-    Speed,
-    Tags,
-    Track,
-    domain::{Preload, Revision, ScanStatus, Tagging},
+    cmd::{Cmd, Cue, Effect, LibraryCmd},
+    domain::{
+        model::{Model, ScanStatus},
+        player::{Player, Preload},
+        playhead::Playhead,
+        revision::Revision,
+        speed::Speed,
+        time::Moment,
+        track::{Tagging, Tags, Track},
+    },
+    message::{BrowseRequest, LibraryEvent, Message},
 };
 use rstest::rstest;
 
@@ -34,7 +30,7 @@ fn tagged(path: &str, title: &str, seconds: u64) -> Arc<Track> {
                 title: Some(title.to_owned()),
                 ..Tags::default()
             })
-            .audio_format(kernel::AudioFormat::default())
+            .audio_format(kernel::domain::track::AudioFormat::default())
             .build(),
     )
 }

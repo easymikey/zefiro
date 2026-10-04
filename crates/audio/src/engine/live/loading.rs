@@ -1,6 +1,10 @@
 use std::time::Duration;
 
-use kernel::{AudioError, AudioEvent, Cmd, update::Unhandled};
+use kernel::{
+    cmd::Cmd,
+    message::{AudioError, AudioEvent},
+    update::machine::Unhandled,
+};
 
 use crate::{
     deck::DeviceOpened,
@@ -149,17 +153,16 @@ mod tests {
     use std::time::Duration;
 
     use kernel::{
-        AudioCmd,
-        AudioEvent,
-        Cmd,
-        Playback,
-        domain::{AudioSettings, Speed},
-        update::{Machine, Unhandled},
+        cmd::{AudioCmd, Cmd, Playback},
+        domain::{settings::AudioSettings, speed::Speed},
+        message::AudioEvent,
+        update::machine::{Machine, Unhandled},
     };
     use rstest::rstest;
 
     use crate::engine::{
-        effect::{EngineEffect, EngineMessage},
+        effect::EngineEffect,
+        message::EngineMessage,
         phase::{Incoming, Loading, Phase, Playing, Resume},
         state::{Closed, Engine, Live, then_report},
         tests::{
@@ -200,7 +203,7 @@ mod tests {
         fell_back(Duration::ZERO, Playback::Playing),
         EngineRow {
             next: Engine::Live(live()),
-            effect: Cmd::message(AudioEvent::DeviceFellBack(kernel::domain::OutputDevice::SystemDefault)).then(Cmd::effect(EngineEffect::SetGain(crate::gain::Gain::UNITY))),
+            effect: Cmd::message(AudioEvent::DeviceFellBack(kernel::domain::device::OutputDevice::SystemDefault)).then(Cmd::effect(EngineEffect::SetGain(crate::gain::Gain::UNITY))),
         }
     )]
     #[case::open_failure_mutes_the_engine(

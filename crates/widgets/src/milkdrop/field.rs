@@ -184,8 +184,8 @@ pub(crate) fn bilinear_sample(
         return 0.0;
     }
 
-    let column_low = crate::pixels::floor::<usize>(source.column);
-    let row_low = crate::pixels::floor::<usize>(source.row);
+    let column_low = crate::pixels::numeric::floor::<usize>(source.column);
+    let row_low = crate::pixels::numeric::floor::<usize>(source.row);
     let column_high = (column_low + 1).min(size.width.saturating_sub(1));
     let row_high = (row_low + 1).min(size.height.saturating_sub(1));
     let column_fraction = source.column - usize_to_f32(column_low);

@@ -1,6 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
-use crate::domain::TrackRef;
+use crate::domain::track::TrackRef;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Favorites(Arc<HashSet<TrackRef>>);
@@ -36,7 +36,7 @@ impl FromIterator<TrackRef> for Favorites {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::{TrackRef, favorites::Favorites};
+    use crate::domain::{favorites::Favorites, track::TrackRef};
 
     fn path(text: &str) -> TrackRef {
         TrackRef::Local(text.into())

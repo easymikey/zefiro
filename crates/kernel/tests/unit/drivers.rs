@@ -1,24 +1,17 @@
 use std::time::Duration;
 
 use kernel::{
-    AudioCmd,
-    Cmd,
-    Cue,
-    DriverEvent,
-    Effect,
-    LibraryCmd,
-    Message,
-    Model,
-    Moment,
-    PausedBy,
-    Playback,
-    Player,
-    Playhead,
-    Preload,
-    Speed,
-    ToastKind,
-    TrackLoad,
-    domain::{DriverError, DriverName, DriverStatus},
+    cmd::{AudioCmd, Cmd, Cue, Effect, LibraryCmd, Playback, TrackLoad},
+    domain::{
+        driver::{DriverError, DriverName, DriverStatus},
+        model::Model,
+        player::{PausedBy, Player, Preload},
+        playhead::Playhead,
+        speed::Speed,
+        time::Moment,
+        toast::ToastKind,
+    },
+    message::{DriverEvent, Message},
 };
 
 use crate::support::{

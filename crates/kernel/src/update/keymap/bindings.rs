@@ -4,11 +4,8 @@ use strum::IntoEnumIterator;
 
 use crate::{
     domain::{
-        Action,
-        KeyPattern,
-        KeyValidationError,
-        KeymapOverrides,
-        keymap::{Resolution, resolve},
+        chord::KeyPattern,
+        keymap::{Action, KeyValidationError, KeymapOverrides, Resolution, resolve},
     },
     update::keymap::{
         chord::{BindingSource, KeyBinding},

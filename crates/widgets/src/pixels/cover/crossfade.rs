@@ -3,19 +3,19 @@ use std::{sync::Arc, time::Duration};
 use image::{Rgba, RgbaImage};
 use tachyonfx::Interpolation;
 
-use crate::{AnimationTimings, channel_byte};
+use crate::{animation::timings::AnimationTimings, pixels::numeric::channel_byte};
 
 pub(crate) const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CrossfadeStage {
+pub(crate) enum CrossfadeStage {
     Idle,
     Running,
     Over,
 }
 
 #[derive(Debug, Default)]
-pub struct CoverCrossfade {
+pub(crate) struct CoverCrossfade {
     running: Option<FadingCover>,
 }
 
@@ -28,7 +28,7 @@ struct FadingCover {
 }
 
 impl CoverCrossfade {
-    pub fn begin(&mut self, outgoing: Arc<RgbaImage>, now: Duration) {
+    pub(crate) fn begin(&mut self, outgoing: Arc<RgbaImage>, now: Duration) {
         let (millis, interpolation) = AnimationTimings::default().cover_crossfade;
         self.running = Some(FadingCover {
             outgoing,
@@ -53,7 +53,7 @@ impl CoverCrossfade {
     }
 
     #[must_use]
-    pub fn stage(&self, now: Duration) -> CrossfadeStage {
+    pub(crate) fn stage(&self, now: Duration) -> CrossfadeStage {
         match self.alpha(now) {
             None => CrossfadeStage::Idle,
             Some(alpha) if alpha < 1.0 => CrossfadeStage::Running,
@@ -61,14 +61,14 @@ impl CoverCrossfade {
         }
     }
 
-    pub fn finish_if_done(&mut self, now: Duration) {
+    pub(crate) fn finish_if_done(&mut self, now: Duration) {
         if self.stage(now) == CrossfadeStage::Over {
             self.running = None;
         }
     }
 
     #[must_use]
-    pub fn crossfade_at(
+    pub(crate) fn crossfade_at(
         &self,
         incoming: &RgbaImage,
         now: Duration,
@@ -79,7 +79,7 @@ impl CoverCrossfade {
     }
 }
 
-pub fn blend_by_column(
+pub(crate) fn blend_by_column(
     back: &RgbaImage,
     front: &RgbaImage,
     alpha_at: impl Fn(u32) -> f32,
@@ -111,7 +111,7 @@ mod tests {
     use image::{Rgba, RgbaImage};
 
     use crate::{
-        AnimationTimings,
+        animation::timings::AnimationTimings,
         pixels::cover::crossfade::{CoverCrossfade, CrossfadeStage},
     };
 

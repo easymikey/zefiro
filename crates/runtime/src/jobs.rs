@@ -84,7 +84,7 @@ pub(crate) fn stash<J>(pending: &mut Vec<J>, job: J) {
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::DriverName;
+    use kernel::domain::driver::DriverName;
 
     use crate::{
         jobs::{JOB_SLOTS, serve, stash},

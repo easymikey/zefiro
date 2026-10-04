@@ -5,28 +5,29 @@ use kernel::domain::appearance::Animations;
 use ratatui::layout::Rect;
 
 use crate::{
-    CardCover,
-    CoverCrossfade,
-    CoverImage,
-    CoverMotion,
-    CoverRefresh,
-    CoverWash,
-    CrossfadePermit,
-    CrossfadeStage,
-    Scene,
-    VinylCache,
-    VinylCacheKey,
-    blend_by_column,
-    column_reveal,
-    pixels::cover::pixmap::{
-        CellPixels,
-        compose_vinyl,
-        fit_to_rect,
-        plain_pixmap,
-        translucent,
-        vinyl_key,
-        vinyl_size_px,
+    card::CardCover,
+    pixels::{
+        cover::{
+            CoverImage,
+            CoverMotion,
+            CoverRefresh,
+            CoverWash,
+            CrossfadePermit,
+            crossfade::{CoverCrossfade, CrossfadeStage, blend_by_column},
+            pixmap::{
+                CellPixels,
+                compose_vinyl,
+                fit_to_rect,
+                plain_pixmap,
+                translucent,
+                vinyl_key,
+                vinyl_size_px,
+            },
+            wash::column_reveal,
+        },
+        vinyl::{VinylCache, VinylCacheKey},
     },
+    scene::Scene,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,8 +51,8 @@ impl Identity {
 }
 
 pub(crate) struct BuiltPixmap {
-    pub(crate) pixmap: Arc<RgbaImage>,
-    pub(crate) identity: Identity,
+    pub pixmap: Arc<RgbaImage>,
+    pub identity: Identity,
 }
 
 #[derive(Debug)]
@@ -202,11 +203,11 @@ impl CoverLifecycle {
 
     pub fn refresh(&mut self, scene: &Scene<'_>, parts: CoverRefresh) -> CoverUpdate {
         let CoverRefresh {
-            layout,
+            cover,
             crossfade,
             wash,
         } = parts;
-        let Some(rect) = layout.cover else {
+        let Some(rect) = cover else {
             return self.forget();
         };
         let Some(built) = self.build(scene, rect) else {
@@ -227,7 +228,7 @@ impl CoverLifecycle {
                 frame: self.advance(tick),
             };
         }
-        let crossfade = if scene.appearance().settings.animations == Animations::On
+        let crossfade = if scene.appearance_settings().animations == Animations::On
             && plan == PaintPlan::NewContent
         {
             crossfade
@@ -391,29 +392,28 @@ mod tests {
     use std::{path::PathBuf, sync::Arc};
 
     use image::{Rgba, RgbaImage};
-    use kernel::domain::{Model, Revision, appearance::Animations};
+    use kernel::domain::{appearance::Animations, model::Model, revision::Revision};
     use ratatui::layout::Rect;
     use rstest::rstest;
 
     use crate::{
-        Breakpoint,
-        CoverImage,
-        CoverRefresh,
-        CoverWash,
-        CrossfadePermit,
-        FrameLayout,
-        VinylCacheKey,
-        VinylStyle,
-        pixels::cover::{
-            lifecycle::{
-                CoverLifecycle,
-                Identity,
-                PaintPlan,
-                PixmapSource,
-                Placed,
-                plan_paint,
+        pixels::{
+            cover::{
+                CoverImage,
+                CoverRefresh,
+                CoverWash,
+                CrossfadePermit,
+                lifecycle::{
+                    CoverLifecycle,
+                    Identity,
+                    PaintPlan,
+                    PixmapSource,
+                    Placed,
+                    plan_paint,
+                },
+                pixmap::CellPixels,
             },
-            pixmap::CellPixels,
+            vinyl::{VinylCacheKey, VinylStyle},
         },
         test_support::SceneSources,
     };
@@ -539,26 +539,9 @@ mod tests {
         RgbaImage::from_pixel(4, 4, Rgba([200, 100, 50, 255]))
     }
 
-    fn layout_with_cover(cover: Rect) -> FrameLayout {
-        FrameLayout {
-            screen: Rect::default(),
-            breakpoint: Breakpoint::Full,
-            content: Rect::default(),
-            header: Rect::default(),
-            card: None,
-            cover: Some(cover),
-            playlist_pane: Rect::default(),
-            playlist: None,
-            key_hints: None,
-            search_bounds: Rect::default(),
-            overlay: None,
-            toast: None,
-        }
-    }
-
     fn animated_sources() -> SceneSources {
         let mut sources = SceneSources::new(Model::default());
-        sources.appearance_mut().settings.animations = Animations::On;
+        sources.model.settings.appearance.animations = Animations::On;
         sources
     }
 
@@ -571,7 +554,7 @@ mod tests {
 
     fn parts(crossfade: CrossfadePermit) -> CoverRefresh {
         CoverRefresh {
-            layout: layout_with_cover(rect()),
+            cover: Some(rect()),
             crossfade,
             wash: CoverWash::Idle,
         }

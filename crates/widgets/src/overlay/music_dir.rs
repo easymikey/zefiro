@@ -1,9 +1,12 @@
-use kernel::domain::{MusicDirError, TextEntry, geometry::Cells};
+use kernel::domain::{
+    geometry::Cells,
+    overlay::{MusicDirError, TextEntry},
+};
 
 use crate::{
-    overlay::modal::{PromptBody, PromptStyle, PromptWidget},
+    overlay::modal::prompt::{PromptBody, PromptStyle, PromptWidget},
     primitive::glyphs,
-    theme::ActiveTheme,
+    theme::active_theme::ActiveTheme,
 };
 
 const MIN_WIDTH: Cells = Cells(40);
@@ -26,12 +29,12 @@ pub(crate) fn prompt<'a>(
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{MusicDirError, TextEntry};
+    use kernel::domain::overlay::{MusicDirError, TextEntry};
 
     use crate::{
         overlay::music_dir::prompt,
         test_support::{noir, rendered},
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn frame(input: &str, error: Option<MusicDirError>, size: (u16, u16)) -> String {

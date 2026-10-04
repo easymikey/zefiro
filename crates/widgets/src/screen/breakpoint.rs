@@ -1,5 +1,28 @@
-use kernel::domain::appearance::{Breakpoints, LayoutMode};
+use kernel::domain::{appearance::LayoutMode, geometry::Cells};
 use ratatui::layout::Size;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Breakpoints {
+    pub full_min_width: Cells,
+    pub full_min_height: Cells,
+    pub compact_min_width: Cells,
+    pub compact_min_height: Cells,
+    pub min_columns: Cells,
+    pub min_rows: Cells,
+}
+
+impl Default for Breakpoints {
+    fn default() -> Self {
+        Self {
+            full_min_width: Cells(60),
+            full_min_height: Cells(19),
+            compact_min_width: Cells(30),
+            compact_min_height: Cells(13),
+            min_columns: Cells(48),
+            min_rows: Cells(16),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Breakpoint {
@@ -56,14 +79,11 @@ impl Breakpoint {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{
-        appearance::{Breakpoints, LayoutMode},
-        geometry::Cells,
-    };
+    use kernel::domain::{appearance::LayoutMode, geometry::Cells};
     use ratatui::layout::Size;
     use rstest::rstest;
 
-    use crate::screen::Breakpoint;
+    use crate::screen::breakpoint::{Breakpoint, Breakpoints};
 
     #[rstest]
     #[case::wide(LayoutMode::Auto, Size::new(80, 24), Breakpoint::Full)]

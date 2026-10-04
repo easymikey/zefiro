@@ -1,10 +1,7 @@
-mod events;
+pub mod events;
 mod requests;
 
 use std::{sync::Arc, time::Duration};
-
-pub use events::Lookahead;
-use events::next_decision;
 
 use crate::{
     cmd::{
@@ -18,26 +15,22 @@ use crate::{
         TrackLoad,
     },
     domain::{
-        AbLoop,
-        HistoryEntry,
-        Moment,
-        PRELOAD_LEAD,
-        PausedBy,
-        Player,
-        Revision,
-        Revisions,
-        Settings,
-        Speed,
-        Track,
-        TrackRef,
-        Transport,
-        Workspace,
+        history::HistoryEntry,
+        player::{AbLoop, PausedBy, Player},
         playlist::Playlist,
+        revision::{Revision, Revisions},
+        settings::Settings,
+        speed::Speed,
+        time::Moment,
+        track::{Track, TrackRef},
+        transport::{PRELOAD_LEAD, Transport},
+        workspace::Workspace,
     },
     message::{AudioError, Timer},
     update::{
         audio,
         machine::{Machine, Unhandled},
+        player::events::{Lookahead, next_decision},
     },
 };
 
@@ -239,6 +232,7 @@ pub(crate) fn lookahead(playback: &PlaybackParts<'_>, now: Moment) -> Lookahead 
         duration: duration_of(playback.player),
         now,
         revision: playback.revisions.effects.next(),
+        cover_side: crate::update::cover_side(playback.workspace, playback.settings),
     }
 }
 

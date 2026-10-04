@@ -1,14 +1,10 @@
 use crate::{
     cmd::{Cmd, ConfigCmd, ConfigPatch, Cue, Effect},
     domain::{
-        CursorOver,
-        JumpDigits,
-        MusicDirError,
-        Overlay,
-        SearchQuery,
-        TextEntry,
-        parse_timecode,
+        cursor_over::CursorOver,
+        overlay::{JumpDigits, MusicDirError, Overlay, SearchQuery, TextEntry},
         playlist::{PlaylistFileName, PlaylistNameError},
+        time::parse_timecode,
     },
     message::{BrowseRequest, Message, PlaybackRequest, PlaylistRequest},
     update::{

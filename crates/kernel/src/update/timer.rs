@@ -1,9 +1,14 @@
 use crate::{
     cmd::Cmd,
-    domain::{Freshness, Moment, Revision, Workspace},
+    domain::{
+        revision::{Freshness, Revision},
+        time::Moment,
+        workspace::Workspace,
+    },
     update::{
         machine::Unhandled,
-        player::{self, PlaybackParts, PlayerMessage},
+        player,
+        player::{PlaybackParts, PlayerMessage},
     },
 };
 

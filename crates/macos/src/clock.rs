@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use kernel::Playback;
+use kernel::cmd::Playback;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NowPlayingClock {
@@ -56,7 +56,7 @@ impl NowPlayingClock {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use kernel::Playback;
+    use kernel::cmd::Playback;
 
     use crate::clock::NowPlayingClock;
 

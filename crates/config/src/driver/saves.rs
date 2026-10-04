@@ -1,11 +1,10 @@
 use std::time::Duration;
 
 use kernel::{
-    Cmd,
-    ConfigEvent,
-    ConfigPatch,
-    domain::{Revision, appearance::AppearancePatch},
-    update::Unhandled,
+    cmd::{Cmd, ConfigPatch},
+    domain::{appearance::AppearancePatch, revision::Revision},
+    message::ConfigEvent,
+    update::machine::Unhandled,
 };
 
 use crate::driver::ConfigEffect;
@@ -101,9 +100,13 @@ mod tests {
     use std::time::Duration;
 
     use kernel::{
-        Bounded,
-        ConfigPatch,
-        domain::{Crossfade, DeviceName, OutputDevice, ThemeName},
+        cmd::ConfigPatch,
+        domain::{
+            bounded::Bounded,
+            crossfade::Crossfade,
+            device::{DeviceName, OutputDevice},
+            theme::ThemeName,
+        },
     };
 
     use crate::driver::saves::merge_config_patch;

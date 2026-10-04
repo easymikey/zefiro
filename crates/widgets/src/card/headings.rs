@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use kernel::domain::{Output, Player};
+use kernel::domain::{player::Player, transport::Output};
 use ratatui::{
     buffer::Buffer,
     layout::Alignment,
@@ -10,9 +10,9 @@ use ratatui::{
 };
 
 use crate::{
-    card::{CardMetrics, CardWidget},
+    card::{CardWidget, metrics::CardMetrics},
     primitive::{span::text, text::truncate},
-    theme::{ActiveTheme, Role},
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]

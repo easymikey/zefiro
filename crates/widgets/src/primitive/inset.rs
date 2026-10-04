@@ -2,10 +2,10 @@ use ratatui::widgets::Padding;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Inset {
-    pub top: u16,
-    pub left: u16,
-    pub right: u16,
-    pub bottom: u16,
+    pub(crate) top: u16,
+    pub(crate) left: u16,
+    pub(crate) right: u16,
+    pub(crate) bottom: u16,
 }
 
 impl Inset {

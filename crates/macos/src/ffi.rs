@@ -1,7 +1,7 @@
 use std::ptr::NonNull;
 
 use block2::RcBlock;
-use kernel::PlaybackRequest;
+use kernel::message::PlaybackRequest;
 use objc2::{AnyThread, rc::Retained, runtime::AnyObject};
 use objc2_app_kit::NSImage;
 use objc2_core_foundation::CGSize;

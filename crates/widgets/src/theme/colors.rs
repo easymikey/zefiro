@@ -57,7 +57,7 @@ pub struct Colors {
     frame: Rgb,
     dim: Rgb,
     bar_groove: Rgb,
-    pub spectrum: [Rgb; 3],
+    pub(crate) spectrum: [Rgb; 3],
 }
 
 impl fmt::Debug for Colors {

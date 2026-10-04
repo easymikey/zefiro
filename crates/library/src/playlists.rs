@@ -1,6 +1,12 @@
 use std::{path::PathBuf, sync::Arc};
 
-use kernel::{LibrarySubject, Playlist, Track, playlist::PlaylistFileName};
+use kernel::{
+    domain::{
+        playlist::{Playlist, PlaylistFileName},
+        track::Track,
+    },
+    message::LibrarySubject,
+};
 
 use crate::{dirs::LibraryDirs, error::Error};
 
@@ -61,7 +67,10 @@ fn parse(text: &str) -> Vec<PathBuf> {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use kernel::{Tags, Track, playlist::PlaylistFileName};
+    use kernel::domain::{
+        playlist::PlaylistFileName,
+        track::{Tags, Track},
+    };
     use rstest::rstest;
 
     use crate::{

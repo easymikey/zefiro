@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode as CrosstermCode, KeyEvent, KeyModifiers};
-use kernel::{Key, KeyCode, Modifiers};
+use kernel::domain::key::{Key, KeyCode, Modifiers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutTranslation {
@@ -88,7 +88,7 @@ fn reportable_shift(code: CrosstermCode) -> bool {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode as CrosstermCode, KeyEvent, KeyModifiers};
-    use kernel::{KeyCode, Modifiers};
+    use kernel::domain::key::{KeyCode, Modifiers};
     use rstest::rstest;
 
     use crate::keys::{LayoutTranslation, from_event, to_key};

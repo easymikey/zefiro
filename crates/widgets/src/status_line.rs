@@ -1,8 +1,12 @@
 use std::{borrow::Cow, time::Duration};
 
-use kernel::{
-    domain::{ScanStatus, Shuffle, ViewIndex, geometry::Cells},
+use kernel::domain::{
+    geometry::Cells,
+    index::ViewIndex,
+    model::ScanStatus,
     playlist::RepeatMode,
+    startup::Shuffle,
+    time::Moment,
 };
 use ratatui::{style::Color, text::Line};
 
@@ -11,9 +15,9 @@ use crate::{
         span::{StyledText, line, text},
         text::truncate_line_to_width,
     },
-    repaint::ceil_minutes,
+    repaint::{Presence, ceil_minutes, next_sleep_minute},
     scene::Scene,
-    theme::{ActiveTheme, Role},
+    theme::{active_theme::ActiveTheme, colors::Role},
 };
 
 const SHUFFLE_LABEL: &str = "shuffle ";
@@ -163,28 +167,45 @@ pub(crate) fn status_line<'a>(
     truncate_line_to_width(line(pieces), row_width.count())
 }
 
+#[must_use]
+pub fn sleep_frame_due(
+    deadline: Option<Moment>,
+    label: Presence,
+    now: Moment,
+) -> Option<Moment> {
+    if label != Presence::Shown {
+        return None;
+    }
+    next_sleep_minute(deadline?, now)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use kernel::{
-        domain::{Shuffle, ViewIndex, geometry::Cells},
+    use kernel::domain::{
+        geometry::Cells,
+        index::ViewIndex,
         playlist::RepeatMode,
+        startup::Shuffle,
+        time::Moment,
     };
     use ratatui::style::Color;
     use rstest::rstest;
     use unicode_width::UnicodeWidthStr;
 
     use crate::{
+        repaint::Presence,
         status_line::{
             ScanProgress,
             StatusLineStyle,
             StatusLineView,
+            sleep_frame_due,
             sleep_label,
             status_line,
         },
         test_support::noir,
-        theme::{ActiveTheme, ColorDepth},
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn colors() -> StatusLineStyle {
@@ -287,5 +308,32 @@ mod tests {
         assert!(text.width() <= budget.count(), "got {text:?}");
         assert!(text.ends_with('…'), "got {text:?}");
         assert!(text.starts_with("Playlist"), "got {text:?}");
+    }
+
+    #[test]
+    fn a_sleep_timer_wakes_once_a_minute() {
+        let now = Moment::new(Duration::from_secs(1_000));
+        let deadline =
+            Moment::new(now.since_epoch() + Duration::from_secs(14 * 60 + 59));
+
+        assert_eq!(
+            sleep_frame_due(Some(deadline), Presence::Shown, now),
+            Some(Moment::new(now.since_epoch() + Duration::from_secs(59)))
+        );
+    }
+
+    #[test]
+    fn a_hidden_sleep_label_wants_no_frame() {
+        let now = Moment::new(Duration::from_secs(1_000));
+        let deadline = Moment::new(now.since_epoch() + Duration::from_secs(60));
+
+        assert_eq!(sleep_frame_due(Some(deadline), Presence::Hidden, now), None);
+    }
+
+    #[test]
+    fn no_deadline_wants_no_sleep_frame() {
+        let now = Moment::new(Duration::from_secs(1_000));
+
+        assert_eq!(sleep_frame_due(None, Presence::Shown, now), None);
     }
 }

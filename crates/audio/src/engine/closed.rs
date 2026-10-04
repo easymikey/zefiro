@@ -1,18 +1,16 @@
 use kernel::{
-    AudioCmd,
-    AudioError,
-    AudioEvent,
-    Cmd,
-    Playback,
-    domain::AudioSettings,
-    update::{Machine, Unhandled},
+    cmd::{AudioCmd, Cmd, Playback},
+    domain::settings::AudioSettings,
+    message::{AudioError, AudioEvent},
+    update::machine::{Machine, Unhandled},
 };
 
 use crate::{
     deck::{DeviceOpened, job::AudioJob},
     engine::{
-        effect::{EngineEffect, EngineMessage},
+        effect::EngineEffect,
         machine::batched,
+        message::EngineMessage,
         state::{Closed, Live, announce},
     },
 };
@@ -126,20 +124,21 @@ mod tests {
     use std::time::Duration;
 
     use kernel::{
-        AudioCmd,
-        AudioError,
-        AudioEvent,
-        Bounded,
-        Cmd,
-        Playback,
-        TrackLoad,
-        domain::{AudioSettings, DeviceName, OutputDevice, ReplayGain, Speed},
-        update::{Machine, Unhandled},
+        cmd::{AudioCmd, Cmd, Playback, TrackLoad},
+        domain::{
+            bounded::Bounded,
+            device::{DeviceName, OutputDevice},
+            settings::{AudioSettings, ReplayGain},
+            speed::Speed,
+        },
+        message::{AudioError, AudioEvent},
+        update::machine::{Machine, Unhandled},
     };
     use rstest::rstest;
 
     use crate::engine::{
-        effect::{EngineEffect, EngineMessage},
+        effect::EngineEffect,
+        message::EngineMessage,
         state::{Closed, Engine, Live},
         tests::{
             EngineRow,

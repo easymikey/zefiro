@@ -12,7 +12,7 @@ pub(crate) enum TestFault {
     Toml(#[from] toml::de::Error),
 
     #[error(transparent)]
-    Config(#[from] config::Error),
+    Config(#[from] config::error::Error),
 }
 
 impl TestFault {

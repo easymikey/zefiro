@@ -1,17 +1,9 @@
 use std::{path::PathBuf, time::Duration};
 
 use kernel::{
-    AudioCmd,
-    AudioEvent,
-    Cmd,
-    Effect,
-    Message,
-    Model,
-    Moment,
-    PlaybackRequest,
-    Preload,
-    Timer,
-    TrackLoad,
+    cmd::{AudioCmd, Cmd, Effect, TrackLoad},
+    domain::{model::Model, player::Preload, time::Moment},
+    message::{AudioEvent, Message, PlaybackRequest, Timer},
 };
 
 use crate::support::{
@@ -45,7 +37,7 @@ fn load_path(effect: &Effect) -> Option<PathBuf> {
     None
 }
 
-fn preload_revision(effect: &Effect) -> Option<kernel::domain::Revision> {
+fn preload_revision(effect: &Effect) -> Option<kernel::domain::revision::Revision> {
     if let Effect::Audio(AudioCmd::Preload(TrackLoad { revision, .. })) = effect {
         return Some(*revision);
     }
@@ -84,7 +76,7 @@ fn a_tick_near_the_end_arms_the_preload() {
     assert_eq!(preloaded(&late), Some(PathBuf::from("/tmp/track1.flac")));
     assert!(matches!(
         model.player,
-        kernel::Player::Playing {
+        kernel::domain::player::Player::Playing {
             preload: Preload::Queued(_),
             ..
         }
@@ -103,10 +95,9 @@ fn the_armed_preload_is_stamped_fresh() {
     )
     .unwrap();
     let revision = cmd.effects().find_map(preload_revision);
-    assert!(
-        revision
-            .is_some_and(|revision| revision != kernel::domain::Revision::default())
-    );
+    assert!(revision.is_some_and(
+        |revision| revision != kernel::domain::revision::Revision::default()
+    ));
 }
 
 #[test]

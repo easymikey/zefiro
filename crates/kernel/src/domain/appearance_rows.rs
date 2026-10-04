@@ -1,13 +1,6 @@
 use crate::{
-    Cue,
+    cmd::Cue,
     domain::{
-        AppearanceControl,
-        AppearanceRow,
-        AppearanceSetting,
-        Choice,
-        OptionCount,
-        OptionIndex,
-        ThemeName,
         appearance::{
             Animations,
             AppearancePatch,
@@ -23,6 +16,15 @@ use crate::{
             preset_appearance,
             preset_of,
         },
+        setting_row::{
+            AppearanceControl,
+            AppearanceRow,
+            AppearanceSetting,
+            Choice,
+            OptionCount,
+            OptionIndex,
+        },
+        theme::ThemeName,
     },
 };
 
@@ -243,12 +245,8 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        Cue,
+        cmd::Cue,
         domain::{
-            Choice,
-            OptionCount,
-            OptionIndex,
-            ThemeName,
             appearance::{
                 AppearancePatch,
                 AppearancePreset,
@@ -263,6 +261,8 @@ mod tests {
                 appearance_row,
                 appearance_settings,
             },
+            setting_row::{Choice, OptionCount, OptionIndex},
+            theme::ThemeName,
         },
     };
 

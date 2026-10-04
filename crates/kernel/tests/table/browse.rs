@@ -4,30 +4,34 @@ use std::{
 };
 
 use kernel::{
-    AudioCmd,
-    AudioEvent,
-    BrowseRequest,
-    Cmd,
-    Cue,
-    Effect,
-    Favorites,
-    HistoryEntry,
-    LibraryCmd,
-    MacosCmd,
-    Message,
-    Model,
-    Moment,
-    Playback,
-    PlaybackChange,
-    PlaybackRequest,
-    Player,
-    QueueRequest,
-    TrackLoad,
-    cmd::ScanMode,
-    domain::{Cursor, Direction, Revision, ScanStatus, TrackIndex, ViewIndex},
-    library::{Library, SortKey},
-    playlist::PlayOrder,
-    update::Unhandled,
+    cmd::{
+        AudioCmd,
+        Cmd,
+        Cue,
+        Effect,
+        LibraryCmd,
+        MacosCmd,
+        Playback,
+        PlaybackChange,
+        ScanMode,
+        TrackLoad,
+    },
+    domain::{
+        cursor::Cursor,
+        direction::Direction,
+        favorites::Favorites,
+        geometry::Cells,
+        history::HistoryEntry,
+        index::{TrackIndex, ViewIndex},
+        library::{Library, SortKey},
+        model::{Model, ScanStatus},
+        player::Player,
+        playlist::PlayOrder,
+        revision::Revision,
+        time::Moment,
+    },
+    message::{AudioEvent, BrowseRequest, Message, PlaybackRequest, QueueRequest},
+    update::machine::Unhandled,
 };
 use rstest::rstest;
 
@@ -46,14 +50,14 @@ fn queue(model: &mut Model, message: QueueRequest) -> Result<Cmd, Unhandled> {
     update(model, Message::Queue(message), Moment::default())
 }
 
-fn queued_refs(model: &Model, queue: &[usize]) -> Vec<kernel::TrackRef> {
+fn queued_refs(model: &Model, queue: &[usize]) -> Vec<kernel::domain::track::TrackRef> {
     queue
         .iter()
         .map(|&row| model.playlist.tracks[row].source().clone())
         .collect()
 }
 
-fn paths(tracks: &[Arc<kernel::Track>]) -> Vec<PathBuf> {
+fn paths(tracks: &[Arc<kernel::domain::track::Track>]) -> Vec<PathBuf> {
     tracks
         .iter()
         .map(|track| track.path().to_path_buf())
@@ -81,7 +85,7 @@ fn queue_changed() -> Result<Cmd, Unhandled> {
 fn favorites_saved(paths: &[&str]) -> Cmd {
     let saved: Favorites = paths
         .iter()
-        .map(|path| kernel::TrackRef::Local(PathBuf::from(path)))
+        .map(|path| kernel::domain::track::TrackRef::Local(PathBuf::from(path)))
         .collect();
     Cmd::from_iter([
         Effect::Library(LibraryCmd::SaveFavorites(saved)),
@@ -201,7 +205,7 @@ fn queue_row(#[case] row: QueueRow) {
 struct CursorRow {
     tracks: usize,
     from: usize,
-    visible_rows: usize,
+    visible_rows: Cells,
     message: BrowseRequest,
     expected: usize,
     effects: Result<Cmd, Unhandled>,
@@ -211,7 +215,7 @@ struct CursorRow {
 #[case::cursor_to_lands_on_the_row(CursorRow {
     tracks: 2,
     from: 0,
-    visible_rows: 0,
+    visible_rows: Cells(0),
     message: BrowseRequest::CursorTo(ViewIndex::new(1)),
     expected: 1,
     effects: Ok(Cmd::none()),
@@ -219,7 +223,7 @@ struct CursorRow {
 #[case::cursor_to_past_the_end_clamps(CursorRow {
     tracks: 2,
     from: 0,
-    visible_rows: 0,
+    visible_rows: Cells(0),
     message: BrowseRequest::CursorTo(ViewIndex::new(99)),
     expected: 1,
     effects: Ok(Cmd::none()),
@@ -227,7 +231,7 @@ struct CursorRow {
 #[case::cursor_to_on_an_empty_playlist_is_refused(CursorRow {
     tracks: 0,
     from: 0,
-    visible_rows: 0,
+    visible_rows: Cells(0),
     message: BrowseRequest::CursorTo(ViewIndex::new(0)),
     expected: 0,
     effects: Err(Unhandled),
@@ -235,7 +239,7 @@ struct CursorRow {
 #[case::page_down_moves_by_the_reported_rows(CursorRow {
     tracks: 20,
     from: 0,
-    visible_rows: 5,
+    visible_rows: Cells(5),
     message: BrowseRequest::PageBy(Direction::Next),
     expected: 5,
     effects: Ok(Cmd::none()),
@@ -243,7 +247,7 @@ struct CursorRow {
 #[case::page_down_clamps_at_the_last_track(CursorRow {
     tracks: 8,
     from: 6,
-    visible_rows: 5,
+    visible_rows: Cells(5),
     message: BrowseRequest::PageBy(Direction::Next),
     expected: 7,
     effects: Ok(Cmd::none()),
@@ -251,7 +255,7 @@ struct CursorRow {
 #[case::page_up_moves_by_the_reported_rows(CursorRow {
     tracks: 20,
     from: 8,
-    visible_rows: 5,
+    visible_rows: Cells(5),
     message: BrowseRequest::PageBy(Direction::Previous),
     expected: 3,
     effects: Ok(Cmd::none()),
@@ -259,7 +263,7 @@ struct CursorRow {
 #[case::page_up_clamps_at_the_first_track(CursorRow {
     tracks: 20,
     from: 2,
-    visible_rows: 5,
+    visible_rows: Cells(5),
     message: BrowseRequest::PageBy(Direction::Previous),
     expected: 0,
     effects: Ok(Cmd::none()),
@@ -267,7 +271,7 @@ struct CursorRow {
 #[case::page_down_with_no_rows_reported_is_refused(CursorRow {
     tracks: 20,
     from: 0,
-    visible_rows: 0,
+    visible_rows: Cells(0),
     message: BrowseRequest::PageBy(Direction::Next),
     expected: 0,
     effects: Err(Unhandled),
@@ -275,7 +279,7 @@ struct CursorRow {
 #[case::page_down_on_an_empty_playlist_is_refused(CursorRow {
     tracks: 0,
     from: 0,
-    visible_rows: 5,
+    visible_rows: Cells(5),
     message: BrowseRequest::PageBy(Direction::Next),
     expected: 0,
     effects: Err(Unhandled),
@@ -283,7 +287,7 @@ struct CursorRow {
 #[case::page_up_on_an_empty_playlist_is_refused(CursorRow {
     tracks: 0,
     from: 0,
-    visible_rows: 5,
+    visible_rows: Cells(5),
     message: BrowseRequest::PageBy(Direction::Previous),
     expected: 0,
     effects: Err(Unhandled),
@@ -291,7 +295,7 @@ struct CursorRow {
 #[case::cursor_by_on_an_empty_playlist_is_refused(CursorRow {
     tracks: 0,
     from: 0,
-    visible_rows: 5,
+    visible_rows: Cells(5),
     message: BrowseRequest::CursorBy { rows: 1 },
     expected: 0,
     effects: Err(Unhandled),
@@ -305,10 +309,10 @@ fn cursor_row(#[case] row: CursorRow) {
 }
 
 #[rstest]
-#[case::a_single_row(1, 1)]
-#[case::a_full_page(20, 20)]
+#[case::a_single_row(Cells(1), 1)]
+#[case::a_full_page(Cells(20), 20)]
 fn page_by_uses_the_stored_viewport(
-    #[case] visible_rows: usize,
+    #[case] visible_rows: Cells,
     #[case] expected: usize,
 ) {
     let mut model = browsing(30, 0, &[]);
@@ -379,8 +383,8 @@ fn cycle_sort_collapses_a_stale_shuffle_order_to_pending() {
 #[test]
 fn toggle_favorite_adds_then_removes_the_selected_track() {
     let mut model = browsing(2, 1, &[]);
-    let selected = kernel::TrackRef::Local("/tmp/track1.flac".into());
-    let other = kernel::TrackRef::Local("/tmp/track0.flac".into());
+    let selected = kernel::domain::track::TrackRef::Local("/tmp/track1.flac".into());
+    let other = kernel::domain::track::TrackRef::Local("/tmp/track0.flac".into());
 
     let effects = browse(&mut model, BrowseRequest::ToggleFavorite);
     assert!(model.favorites.is_favorite(&selected));
@@ -560,7 +564,8 @@ fn trash_remaps_the_queue_and_drops_the_deleted_entry() {
 #[case::without_a_library(Model::default())]
 fn trash_of_an_unknown_track_is_refused(#[case] mut model: Model) {
     let before = format!("{model:?}");
-    let gone = kernel::TrackRef::Local(PathBuf::from("/music/gone.flac"));
+    let gone =
+        kernel::domain::track::TrackRef::Local(PathBuf::from("/music/gone.flac"));
 
     let refused = update(
         &mut model,
@@ -573,10 +578,10 @@ fn trash_of_an_unknown_track_is_refused(#[case] mut model: Model) {
 }
 
 fn listed(paths: &[&str]) -> Message {
-    Message::Library(kernel::LibraryEvent::Listed {
+    Message::Library(kernel::message::LibraryEvent::Listed {
         tracks: paths
             .iter()
-            .map(|path| Arc::new(kernel::Track::listed(Path::new(path))))
+            .map(|path| Arc::new(kernel::domain::track::Track::listed(Path::new(path))))
             .collect(),
         revision: Revision::default(),
     })
@@ -592,8 +597,8 @@ fn a_rescan_under_the_confirm_overlay_trashes_the_same_file() {
     );
     apply(
         &mut model,
-        Message::Overlay(kernel::OverlayRequest::Open(
-            kernel::OverlayName::ConfirmDelete,
+        Message::Overlay(kernel::message::OverlayRequest::Open(
+            kernel::domain::overlay::OverlayName::ConfirmDelete,
         )),
     );
     apply(
@@ -603,7 +608,7 @@ fn a_rescan_under_the_confirm_overlay_trashes_the_same_file() {
 
     let confirmed = update(
         &mut model,
-        Message::Overlay(kernel::OverlayRequest::Confirm),
+        Message::Overlay(kernel::message::OverlayRequest::Confirm),
         Moment::default(),
     )
     .unwrap();

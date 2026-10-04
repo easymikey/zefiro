@@ -1,4 +1,4 @@
-use kernel::domain::{ThemeChoice, ThemeName};
+use kernel::domain::theme::{ThemeChoice, ThemeName};
 
 pub const EMBEDDED_THEMES: &[(&str, &str)] = &[
     (
@@ -54,7 +54,7 @@ pub fn resolve_theme(choice: &ThemeChoice) -> ThemeName {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{ThemeChoice, ThemeName};
+    use kernel::domain::theme::{ThemeChoice, ThemeName};
     use rstest::rstest;
 
     use crate::embedded_theme::{EMBEDDED_THEMES, embedded_theme, resolve_theme};

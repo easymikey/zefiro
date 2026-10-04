@@ -1,6 +1,12 @@
 use std::time::Duration;
 
-use crate::domain::{AbLoop, Bounded, Percent, SleepTimer, Speed};
+use crate::domain::{
+    bounded::Bounded,
+    percent::Percent,
+    player::AbLoop,
+    sleep::SleepTimer,
+    speed::Speed,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum StreamError {

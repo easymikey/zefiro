@@ -1,4 +1,4 @@
-use kernel::{AudioEvent, Cmd, domain::Revision};
+use kernel::{cmd::Cmd, domain::revision::Revision, message::AudioEvent};
 
 use crate::{
     deck::{event::DeckEvent, job::AudioJob},
@@ -6,13 +6,13 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct Revisions {
+pub(crate) struct JobRevisions {
     issued: Revision,
     decode: Revision,
     preload: Revision,
 }
 
-impl Revisions {
+impl JobRevisions {
     pub(crate) fn current(&self, event: &DeckEvent) -> bool {
         match event {
             DeckEvent::Decoded { revision, .. } => *revision == self.decode,
@@ -103,14 +103,14 @@ mod tests {
     use std::path::PathBuf;
 
     use kernel::{
-        Cmd,
-        domain::{Revision, Speed},
+        cmd::Cmd,
+        domain::{revision::Revision, speed::Speed},
     };
     use rstest::rstest;
 
     use crate::{
         deck::{event::DeckEvent, job::AudioJob, source::PreloadMode},
-        engine::{effect::EngineEffect, revisions::Revisions},
+        engine::{effect::EngineEffect, revisions::JobRevisions},
         error::Error,
     };
 
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn a_load_runs_a_decode_job_after_the_load() {
-        let mut revisions = Revisions::default();
+        let mut revisions = JobRevisions::default();
         let cmd = revisions.with_jobs(Cmd::effect(load("/a")));
         let job = AudioJob::Decode {
             path: "/a".into(),
@@ -162,7 +162,7 @@ mod tests {
         #[case] event: DeckEvent,
         #[case] current: bool,
     ) {
-        let mut revisions = Revisions::default();
+        let mut revisions = JobRevisions::default();
         for effect in effects {
             assert!(revisions.with_jobs(Cmd::effect(effect)).effects().count() > 0);
         }

@@ -1,4 +1,4 @@
-use crate::domain::{KeyContext, Overlay, Workspace};
+use crate::domain::{keymap::KeyContext, overlay::Overlay, workspace::Workspace};
 
 #[must_use]
 fn key_context_of(overlay: &Overlay) -> KeyContext {
