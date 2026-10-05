@@ -4,7 +4,7 @@ use kernel::{
     cmd::WindowColorsCmd,
     domain::{appearance::Rgb, theme::ThemeName},
 };
-use widgets::theme::{Theme, colors::Role};
+use widgets::theme::Theme;
 
 use crate::error::{Error, UnknownThemeError};
 
@@ -58,8 +58,8 @@ pub(crate) fn reset_on_panic() -> Result<(), io::Error> {
 fn sequence_for(name: &ThemeName, theme: &Theme) -> Result<String, UnknownThemeError> {
     if *name == theme.name {
         Ok(set_sequence(
-            theme.colors.role(Role::WindowBackground),
-            theme.colors.role(Role::Text),
+            theme.colors.window_background,
+            theme.colors.text,
         ))
     } else {
         Err(UnknownThemeError { name: name.clone() })
@@ -94,7 +94,7 @@ mod tests {
     use rstest::rstest;
     use widgets::theme::{
         Theme,
-        colors::{Colors, Role, ThemeBase},
+        colors::{Colors, ThemeBase},
     };
 
     use crate::{
@@ -135,8 +135,8 @@ mod tests {
     #[case::set_to_the_same_theme(
         WindowColorsCmd::Set(ThemeName::from_static(KNOWN_THEME)),
         Ok(set_sequence(
-            theme().colors.role(Role::WindowBackground),
-            theme().colors.role(Role::Text),
+            theme().colors.window_background,
+            theme().colors.text,
         ))
     )]
     #[case::set_to_another_name(

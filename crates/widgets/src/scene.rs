@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use kernel::{
     domain::{
-        appearance::{AppearanceSettings, CoverMode},
+        appearance::{Appearance, CoverMode},
         device::DeviceName,
         favorites::Favorites,
         history::HistoryEntry,
@@ -12,7 +12,6 @@ use kernel::{
         player::Player,
         playlist::Playlist,
         revision::Revisions,
-        setting_row::AppearanceSetting,
         settings::Settings,
         startup::Shuffle,
         theme::{ThemeChoice, Themes},
@@ -25,16 +24,15 @@ use kernel::{
 };
 
 use crate::{
-    appearance::Appearance,
     card::CardView,
     geometry::{CoverSizing, cover_sizing},
     key_hints::{KeyHintChords, KeyHintsView},
     overlay::{layer::OverlayView, settings::view::SettingsView},
-    playlist::row::{LibraryLoad, PlaylistView},
+    playlist::view::{LibraryLoad, PlaylistView},
     spectrum::Spectrum,
-    status_line::{ScanProgress, StatusLineView},
+    status_line::StatusLineView,
     theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
-    toast::{ToastStyle, ToastWidget},
+    toast::ToastWidget,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,8 +63,6 @@ pub struct Scene<'a> {
     pub queue: &'a [TrackRef],
     pub favorites: &'a Favorites,
     pub themes: &'a Themes,
-    pub appearance: &'a Appearance,
-    pub appearance_rows: &'a [AppearanceSetting],
     pub settings: &'a Settings,
     pub revisions: &'a Revisions,
     pub overlay: Option<&'a Overlay>,
@@ -77,17 +73,9 @@ pub struct Scene<'a> {
     pub displayed_track: Option<&'a Arc<Track>>,
     pub library_loading: LibraryLoad,
     pub scan: ScanStatus,
-    pub theme: &'a Theme,
-    pub color_depth: ColorDepth,
     pub bindings: &'a [KeyBinding],
-    pub key_hint_chords: &'a KeyHintChords,
-    pub spectrum: &'a Spectrum,
-    pub pixel_path: PixelPath,
-    pub cell_aspect: f32,
-    pub clock: Duration,
-    pub now: Moment,
     pub music_dir: &'a Path,
-    pub home: Option<&'a Path>,
+    pub presentation: ScenePresentation<'a>,
 }
 
 impl<'a> Scene<'a> {
@@ -100,8 +88,6 @@ impl<'a> Scene<'a> {
             queue: &model.queue,
             favorites: &model.favorites,
             themes: &model.themes,
-            appearance: presentation.appearance,
-            appearance_rows: &model.appearance_rows,
             settings: &model.settings,
             revisions: &model.revisions,
             overlay: model.workspace.overlay.as_ref(),
@@ -116,17 +102,9 @@ impl<'a> Scene<'a> {
                 LibraryLoad::Ready
             },
             scan: model.scan_status,
-            theme: presentation.theme,
-            color_depth: presentation.color_depth,
             bindings: model.workspace.keymap.bindings(),
-            key_hint_chords: presentation.key_hint_chords,
-            spectrum: presentation.spectrum,
-            pixel_path: presentation.pixel_path,
-            cell_aspect: presentation.cell_aspect,
-            clock: presentation.clock,
-            now: presentation.now,
             music_dir: &model.music_dir,
-            home: presentation.home,
+            presentation,
         }
     }
 
@@ -137,29 +115,28 @@ impl<'a> Scene<'a> {
 
     #[must_use]
     pub(crate) fn active_theme(&self) -> ActiveTheme<'a> {
-        ActiveTheme::new(self.theme, self.color_depth)
-            .with_progress(self.appearance.progress)
-    }
-
-    pub fn appearance_settings(&self) -> AppearanceSettings {
-        self.settings.appearance
+        ActiveTheme::new(self.presentation.theme, self.presentation.color_depth)
+            .with_progress(self.presentation.appearance.progress)
     }
 
     #[must_use]
     pub fn cover_mode(&self) -> CoverMode {
-        painted_cover_mode(self.appearance_settings().cover_mode, self.pixel_path)
+        painted_cover_mode(
+            self.settings.appearance.cover_mode,
+            self.presentation.pixel_path,
+        )
     }
 
     #[must_use]
     pub(crate) fn cover_sizing(&self) -> CoverSizing {
-        cover_sizing(self.cover_mode(), self.appearance.cover_cells)
+        cover_sizing(self.cover_mode(), self.presentation.appearance.cover_cells)
     }
 }
 
 impl<'a> KeyHintsView<'a> {
     #[must_use]
     pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
-        let chords = scene.key_hint_chords;
+        let chords = scene.presentation.key_hint_chords;
         match scene.overlay {
             Some(Overlay::Settings(..)) => Self {
                 full: &chords.settings,
@@ -169,12 +146,12 @@ impl<'a> KeyHintsView<'a> {
             | Some(
                 Overlay::Help
                 | Overlay::Search(_)
-                | Overlay::SavePlaylist { .. }
+                | Overlay::SavePlaylist(_)
                 | Overlay::History(_)
                 | Overlay::ConfirmDelete(_)
                 | Overlay::JumpToTime(_)
                 | Overlay::TrackDetails(_)
-                | Overlay::MusicDir { .. },
+                | Overlay::MusicDir(_),
             ) => Self {
                 full: &chords.keys,
                 compact: &chords.compact,
@@ -190,12 +167,12 @@ impl<'a> CardView<'a> {
             player: scene.player,
             speed: scene.transport.speed,
             volume: scene.transport.volume,
-            spectrum: scene.spectrum,
+            spectrum: scene.presentation.spectrum,
             repeat: scene.playlist.repeat,
             play_order: &scene.playlist.play_order,
             displayed_track: scene.displayed_track,
             output: &scene.transport.output,
-            now: scene.now,
+            now: scene.presentation.now,
         }
     }
 }
@@ -214,12 +191,13 @@ impl<'a> StatusLineView<'a> {
             queue_len: scene.queue.len(),
             position: scene.browse_selected,
             total: scene.playlist.tracks.len(),
-            scan: ScanProgress::of(scene.scan, scene.theme.scanning_label.as_str()),
-            theme_name: scene.theme.name.as_str(),
+            scan_status: scene.scan,
+            scanning_label: scene.presentation.theme.scanning_label.as_str(),
+            theme_name: scene.presentation.theme.name.as_str(),
             sleep_left: scene
                 .transport
                 .sleep
-                .map(|timer| timer.deadline.elapsed_since(scene.now)),
+                .map(|timer| timer.deadline.elapsed_since(scene.presentation.now)),
         }
     }
 }
@@ -250,11 +228,10 @@ impl<'a> SettingsView<'a> {
             themes: &scene.themes.names,
             sleep_presets: audio.sleep_presets.as_slice(),
             music_dir: scene.music_dir,
-            home: scene.home,
+            home: scene.presentation.home,
             output_device: audio.device.named().map(DeviceName::as_str),
             output_devices: &scene.settings.output_devices,
-            appearance: scene.appearance_settings(),
-            appearance_rows: scene.appearance_rows,
+            appearance: scene.settings.appearance,
         }
     }
 }
@@ -269,7 +246,7 @@ impl<'a> OverlayView<'a> {
             theme: scene.active_theme(),
             settings_view: SettingsView::from_scene(scene),
             bindings: scene.bindings,
-            now: scene.now,
+            now: scene.presentation.now,
         }
     }
 }
@@ -279,7 +256,7 @@ impl<'a> ToastWidget<'a> {
     pub(crate) fn from_scene(scene: &Scene<'a>) -> Option<Self> {
         (!scene.toasts.is_empty()).then(|| Self {
             toasts: scene.toasts,
-            style: ToastStyle::from_theme(&scene.active_theme()),
+            theme: scene.active_theme(),
         })
     }
 }

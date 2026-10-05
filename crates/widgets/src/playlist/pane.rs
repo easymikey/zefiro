@@ -6,49 +6,26 @@ use ratatui::{
 };
 
 use crate::{
-    overlay::modal::metrics::SCROLLBAR_INSET,
+    overlay::modal::placement::{ModalScrollAreas, scroll_areas},
     playlist::{
         chrome::{pane_block, pane_title},
-        row::{
-            self,
-            LibraryLoad,
-            PlaylistRows,
-            PlaylistWidget,
-            WindowFit,
-            cursor_row,
-            visible_rows,
-        },
+        row::{self, PlaylistRows, WindowFit, cursor_band, visible_rows},
+        view::{LibraryLoad, PlaylistView},
     },
-    primitive::list_chrome::{Scrollbar, paint_scrollbar, row_band, scrollbar_column},
-    theme::{active_theme::ActiveTheme, colors::Role},
+    primitive::list_chrome::{Scrollbar, paint_scrollbar},
+    theme::active_theme::ActiveTheme,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct PlaylistPaneStyle {
-    pub(crate) foreground: Color,
-    pub(crate) border: Color,
-    pub(crate) scrollbar_thumb: Color,
-    pub(crate) scrollbar_groove: Color,
-}
-
-impl PlaylistPaneStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            foreground: theme.role(Role::Text),
-            border: theme.role(Role::Frame),
-            scrollbar_thumb: theme.role(Role::Frame),
-            scrollbar_groove: theme.role(Role::Dim),
-        }
-    }
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PlaylistWidget<'a> {
+    pub(crate) view: PlaylistView<'a>,
+    pub(crate) theme: ActiveTheme<'a>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlaylistAreas {
     pub pane: Rect,
-    pub body: Rect,
-    pub rows: Rect,
-    pub scrollbar: Rect,
+    pub scroll_areas: ModalScrollAreas,
     pub selected: Option<Rect>,
 }
 
@@ -56,13 +33,17 @@ impl PlaylistWidget<'_> {
     #[must_use]
     pub(crate) fn areas(&self, pane: Rect) -> PlaylistAreas {
         let body = pane_block(None, Color::Reset).inner(pane);
-        let scrollbar = scrollbar_column(pane, body, SCROLLBAR_INSET);
+        let scroll_areas = scroll_areas(pane, body);
+        let window = visible_rows(&WindowFit {
+            view: self.view,
+            height: body.height,
+        });
+        let selected =
+            cursor_band(scroll_areas.rows, &window, self.view.browse_selected);
         PlaylistAreas {
             pane,
-            body,
-            rows: row_band(pane, body, scrollbar),
-            scrollbar,
-            selected: cursor_row(pane, self.view),
+            scroll_areas,
+            selected,
         }
     }
 
@@ -73,10 +54,12 @@ impl PlaylistWidget<'_> {
         }
         pane_block(
             Some(pane_title(pane, self.view.status, &self.theme)),
-            PlaylistPaneStyle::from_theme(&self.theme).border,
+            self.theme.colors().muted_foreground,
         )
         .render(pane, buffer);
-        if areas.body.width == 0 || areas.body.height == 0 {
+        if areas.scroll_areas.content.width == 0
+            || areas.scroll_areas.content.height == 0
+        {
             return;
         }
         paint_body(buffer, areas, *self);
@@ -90,10 +73,10 @@ impl Widget for &PlaylistWidget<'_> {
 }
 
 fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistWidget<'_>) {
-    let inner = areas.body;
+    let inner = areas.scroll_areas.content;
     let view = pane.view;
     let theme = pane.theme;
-    let style = PlaylistPaneStyle::from_theme(&theme);
+    let colors = theme.colors();
 
     if view.playlist.tracks.is_empty() {
         let text: &str = match view.library_loading {
@@ -101,7 +84,7 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistWidget<'
             LibraryLoad::Ready => "Empty playlist",
         };
         Paragraph::new(text)
-            .style(Style::default().fg(style.foreground))
+            .style(Style::default().fg(colors.text))
             .render(inner, buffer);
         return;
     }
@@ -114,20 +97,21 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistWidget<'
     row::paint_rows(
         buffer,
         PlaylistRows {
-            pane,
-            rows: areas.rows,
+            view,
+            theme,
+            rows: areas.scroll_areas.rows,
             window: &window,
         },
     );
 
     paint_scrollbar(
-        areas.scrollbar,
+        areas.scroll_areas.scrollbar,
         Scrollbar {
             total: window.total,
             offset: usize::from(window.offset),
-            viewport: usize::from(areas.scrollbar.height),
-            thumb: style.scrollbar_thumb,
-            groove: style.scrollbar_groove,
+            viewport: usize::from(areas.scroll_areas.scrollbar.height),
+            thumb: colors.muted_foreground,
+            groove: colors.muted_foreground,
         },
         buffer,
     );
@@ -141,7 +125,7 @@ mod tests {
         domain::{
             cursor::Cursor,
             favorites::Favorites,
-            index::{TrackIndex, ViewIndex},
+            index::ViewIndex,
             model::{Model, ScanStatus},
             playlist::Playlist,
             startup::Shuffle,
@@ -154,11 +138,14 @@ mod tests {
     use ratatui::style::Color;
 
     use crate::{
-        playlist::row::{LibraryLoad, PlaylistView, PlaylistWidget},
+        playlist::{
+            pane::PlaylistWidget,
+            view::{LibraryLoad, PlaylistView},
+        },
         primitive::canvas::find_text,
-        status_line::{ScanProgress, StatusLineView},
+        status_line::StatusLineView,
         test_support::{noir, rendered},
-        theme::{Theme, active_theme::ActiveTheme, colors::Role, rgb::ColorDepth},
+        theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     fn titled_track(title: &str) -> Arc<Track> {
@@ -199,7 +186,8 @@ mod tests {
             queue_len: queue.len(),
             position: ViewIndex::new(0),
             total: playlist.tracks.len(),
-            scan: ScanProgress::of(ScanStatus::Idle, theme.scanning_label.as_str()),
+            scan_status: ScanStatus::Idle,
+            scanning_label: theme.scanning_label.as_str(),
             theme_name: theme.name.as_str(),
             sleep_left: None,
         }
@@ -250,7 +238,7 @@ mod tests {
     #[test]
     fn markers_sit_in_their_own_columns() {
         let mut playlist = library(3);
-        playlist.cursor = Cursor::with_len(3).at(1);
+        playlist.cursor = Cursor::at(3, 1);
         let theme = noir();
         let queue = queued(&playlist, &[2]);
         let mut favorites = Favorites::default();
@@ -350,7 +338,7 @@ mod tests {
             tracks: vec![titled_track(
                 "a very long track title that will not fit inside this pane",
             )],
-            cursor: Cursor::with_len(1).at(0),
+            cursor: Cursor::at(1, 0),
             ..Playlist::default()
         };
         let theme = noir();
@@ -392,7 +380,7 @@ mod tests {
                 playing: None,
                 library_loading: LibraryLoad::Ready,
                 status: StatusLineView {
-                    scan: ScanProgress::Tagging { done: 1, total: 3 },
+                    scan_status: ScanStatus::Tagging { done: 1, total: 3 },
                     ..status(&playlist, &[], &theme)
                 },
             },
@@ -449,9 +437,10 @@ mod tests {
         let playlist = library(3);
         let theme = noir();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        let highlight = active.role(Role::Highlight);
-        let selection_text = active.role(Role::SelectionForeground);
-        let selection_background = active.role(Role::SelectionBackground);
+        let colors = active.colors();
+        let highlight = colors.highlight;
+        let selection_text = colors.selection_foreground;
+        let selection_background = colors.selection_background;
 
         let widget = PlaylistWidget {
             view: PlaylistView {
@@ -496,7 +485,8 @@ mod tests {
         let theme = noir();
         let selection_background: Color =
             ActiveTheme::new(&theme, ColorDepth::TrueColor)
-                .role(Role::SelectionBackground);
+                .colors()
+                .selection_background;
 
         let widget = PlaylistWidget {
             view: PlaylistView {
@@ -544,7 +534,7 @@ mod tests {
                     ))))
                 })
                 .collect(),
-            cursor: Cursor::with_len(10_000).at(9_999),
+            cursor: Cursor::at(10_000, 9_999),
             ..Playlist::default()
         };
         let theme = noir();
@@ -596,8 +586,8 @@ mod tests {
             Moment::default(),
         )
         .unwrap();
-        let mut order: Vec<TrackIndex> = vec![TrackIndex::new(0), TrackIndex::new(39)];
-        order.extend((1..39).map(TrackIndex::new));
+        let mut order: Vec<ViewIndex> = vec![ViewIndex::new(0), ViewIndex::new(39)];
+        order.extend((1..39).map(ViewIndex::new));
         update(&mut model, Message::ShuffleRolled(order), Moment::default()).unwrap();
         update(
             &mut model,
@@ -616,7 +606,7 @@ mod tests {
             "sanity: shuffle actually jumped to the far end"
         );
         model.workspace.browse.cursor =
-            Cursor::with_len(model.playlist.tracks.len()).at(playing.get());
+            Cursor::at(model.playlist.tracks.len(), playing.get());
 
         let theme = noir();
         let widget = PlaylistWidget {

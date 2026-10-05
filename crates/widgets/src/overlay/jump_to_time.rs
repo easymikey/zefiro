@@ -1,7 +1,7 @@
-use kernel::domain::{geometry::Cells, overlay::JumpDigits};
+use kernel::domain::{geometry::Cells, overlay::TextEntry, time::TimecodeError};
 
 use crate::{
-    overlay::modal::prompt::{PromptBody, PromptStyle, PromptWidget},
+    overlay::modal::prompt::{PromptBody, PromptWidget},
     primitive::glyphs,
     theme::active_theme::ActiveTheme,
 };
@@ -9,23 +9,23 @@ use crate::{
 const MIN_WIDTH: Cells = Cells(61);
 
 pub(crate) fn prompt<'a>(
-    digits: &'a JumpDigits,
+    text_entry: &'a TextEntry<TimecodeError>,
     theme: ActiveTheme<'a>,
 ) -> PromptWidget<'a> {
     PromptWidget {
         title: glyphs::jump_to_time::TITLE_WORD,
         hint: glyphs::jump_to_time::HINT,
         min_width: MIN_WIDTH,
-        body: PromptBody::Entry(&digits.input),
-        error: digits.error.as_ref().map(ToString::to_string),
+        body: PromptBody::Entry(&text_entry.input),
+        error: text_entry.error.as_ref().map(ToString::to_string),
         avoid: &[],
-        style: PromptStyle::from_theme(&theme),
+        theme,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{overlay::JumpDigits, time::TimecodeError};
+    use kernel::domain::{overlay::TextEntry, time::TimecodeError};
 
     use crate::{
         overlay::jump_to_time::prompt,
@@ -33,9 +33,10 @@ mod tests {
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
-    fn frame(digits: &JumpDigits, width: u16, height: u16) -> String {
+    fn frame(text_entry: &TextEntry<TimecodeError>, width: u16, height: u16) -> String {
         let theme = noir();
-        let prompt = prompt(digits, ActiveTheme::new(&theme, ColorDepth::TrueColor));
+        let prompt =
+            prompt(text_entry, ActiveTheme::new(&theme, ColorDepth::TrueColor));
         rendered(width, height, |frame| {
             frame.render_widget(&prompt, frame.area());
         })
@@ -44,24 +45,24 @@ mod tests {
 
     #[test]
     fn jump_to_time_overlay_shows_title_input_and_hint() {
-        let digits = JumpDigits {
+        let text_entry = TextEntry {
             input: "1:05".to_string(),
             error: None,
         };
-        insta::assert_snapshot!(frame(&digits, 80, 24));
+        insta::assert_snapshot!(frame(&text_entry, 80, 24));
     }
 
     #[test]
     fn jump_to_time_overlay_shows_error_line_for_malformed_input() {
-        let digits = JumpDigits {
+        let text_entry = TextEntry {
             input: "abc".to_string(),
             error: Some(TimecodeError::Malformed),
         };
-        insta::assert_snapshot!(frame(&digits, 80, 24));
+        insta::assert_snapshot!(frame(&text_entry, 80, 24));
     }
 
     #[test]
     fn jump_to_time_overlay_does_not_panic_on_a_tiny_terminal() {
-        assert_eq!(frame(&JumpDigits::default(), 4, 3).lines().count(), 3);
+        assert_eq!(frame(&TextEntry::default(), 4, 3).lines().count(), 3);
     }
 }

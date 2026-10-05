@@ -17,10 +17,6 @@ impl<P: FnMut(CoverDecoded)> Driver for LibraryDriver<P> {
 
     fn execute(&mut self, effect: LibraryEffect) -> Option<LibraryMessage> {
         match effect {
-            LibraryEffect::Run(job) => Some(job.run()),
-            LibraryEffect::After { .. }
-            | LibraryEffect::Watch(_)
-            | LibraryEffect::Unwatch(_) => None,
             LibraryEffect::PublishCover(decoded) => {
                 (self.publish)(decoded);
                 None
@@ -62,7 +58,7 @@ fn executed(event: LibraryEvent, skipped: Option<Error>) -> Option<LibraryMessag
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc, time::Duration};
+    use std::{path::PathBuf, sync::Arc};
 
     use kernel::{
         cmd::{CoverJob, ScanMode},
@@ -76,7 +72,7 @@ mod tests {
             track::TrackRef,
         },
         message::LibraryEvent,
-        update::machine::{Driver, Machine},
+        update::machine::{Driver, LoopEffect, Machine},
     };
     use rstest::{fixture, rstest};
     use tempfile::TempDir;
@@ -86,7 +82,7 @@ mod tests {
         dirs::LibraryDirs,
         driver::{DiskEffect, LibraryDriver, LibraryEffect},
         job::LibraryJob,
-        message::{LibraryMessage, LibraryTimer},
+        message::LibraryMessage,
         test_support::{self, temp_dir_filters},
     };
 
@@ -145,7 +141,7 @@ mod tests {
         let listed: Vec<LibraryEvent> = effects
             .into_iter()
             .flat_map(|effect| {
-                let LibraryEffect::Run(job) = effect else {
+                let LoopEffect::Run(job) = effect else {
                     panic!("expected a job, got {effect:?}");
                 };
                 driver.transition(job.run()).unwrap().into_parts().1
@@ -261,24 +257,6 @@ mod tests {
 
         assert_eq!(event, None);
         assert!(paths.playlists_dir.join("My Mix.m3u8").is_file());
-    }
-
-    #[rstest]
-    fn a_stream_or_timer_effect_answers_nothing(dirs: (TempDir, LibraryDirs)) {
-        let (_directory, paths) = dirs;
-        let mut driver: LibraryDriver<fn(CoverDecoded)> =
-            LibraryDriver::new(paths, DECODABLE, unpublished);
-
-        for effect in [
-            LibraryEffect::Watch(PathBuf::from("/music")),
-            LibraryEffect::Unwatch(PathBuf::from("/music")),
-            LibraryEffect::After {
-                delay: Duration::from_millis(500),
-                timer: LibraryTimer::Debounce,
-            },
-        ] {
-            assert!(driver.execute(effect).is_none());
-        }
     }
 
     #[rstest]

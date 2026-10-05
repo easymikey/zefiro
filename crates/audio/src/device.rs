@@ -164,7 +164,15 @@ mod tests {
 
     use crate::{
         deck::event::DeckEvent,
-        device::{OutputLoss, list_output_devices, listed, open_stream},
+        device::{
+            OutputLoss,
+            latched,
+            list_output_devices,
+            listed,
+            loss_code,
+            open_stream,
+            readable,
+        },
         engine::message::AudioMessage,
         error::DeviceError,
     };
@@ -206,6 +214,57 @@ mod tests {
             })
             .collect();
         assert_eq!(listed(names.into_iter(), Some(&name("B"))), expected);
+    }
+
+    #[rstest]
+    #[case::device_gone(StreamError::DeviceGone)]
+    #[case::backend(StreamError::Backend)]
+    fn a_latched_loss_code_reads_back_as_its_kind(#[case] stream_error: StreamError) {
+        assert_eq!(latched(loss_code(stream_error)), Some(stream_error));
+    }
+
+    #[rstest]
+    #[case::clear(0)]
+    #[case::unknown(7)]
+    fn an_unlatched_code_reads_back_as_nothing(#[case] code: u8) {
+        assert_eq!(latched(code), None);
+    }
+
+    #[rstest]
+    #[case::a_plain_name(Ok("Speakers".to_owned()), Some(name("Speakers")))]
+    #[case::an_empty_name(Ok(String::new()), None)]
+    #[case::an_unreadable_name(unreadable(), None)]
+    fn readable_keeps_only_valid_names(
+        #[case] text: Result<String, cpal::DeviceNameError>,
+        #[case] expected: Option<DeviceName>,
+    ) {
+        assert_eq!(readable(text), expected);
+    }
+
+    #[test]
+    fn a_loss_on_an_open_inbox_is_sent_at_once_and_not_latched() {
+        let (sender, heard) = crossbeam_channel::bounded(1);
+        let lost = OutputLoss::default();
+        lost.report(StreamError::Backend, &sender);
+        assert!(matches!(
+            heard.try_recv(),
+            Ok(AudioMessage::Deck(DeckEvent::OutputLost(
+                StreamError::Backend
+            )))
+        ));
+        lost.resend(&sender);
+        assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)));
+    }
+
+    #[test]
+    fn a_loss_on_a_closed_inbox_is_not_latched() {
+        let (closed, gone) = crossbeam_channel::bounded(1);
+        drop(gone);
+        let lost = OutputLoss::default();
+        lost.report(StreamError::DeviceGone, &closed);
+        let (sender, heard) = crossbeam_channel::bounded(1);
+        lost.resend(&sender);
+        assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)));
     }
 
     #[test]

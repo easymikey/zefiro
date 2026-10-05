@@ -4,6 +4,7 @@ use crate::domain::{
     appearance::AppearanceSettings,
     config::{ConfigError, ConfigName},
     index::ViewIndex,
+    keymap::KeymapOverrides,
     percent::Percent,
     playlist::PlaylistSource,
     settings::AudioSettings,
@@ -29,6 +30,7 @@ pub struct Startup {
     pub appearance: AppearanceSettings,
     pub theme: ThemeChoice,
     pub volume: Percent,
+    pub keymap: KeymapOverrides,
     pub themes: Vec<ThemeName>,
     pub errors: Vec<(ConfigName, ConfigError)>,
 }

@@ -1,5 +1,3 @@
-use std::thread;
-
 use crate::{error::Error, runtime::Runtime};
 
 #[cfg(target_os = "macos")]
@@ -8,20 +6,12 @@ where
     R: Send + 'static,
     F: FnOnce(Runtime) -> R + Send + 'static,
 {
-    debug_assert!(matches!(
-        crate::registry::row(kernel::domain::driver::DriverName::Macos).hosting,
-        crate::registry::Hosting::WorkerWithMainLoop
-    ));
     let Some(main) = ::macos::main_loop::MainLoop::attach(&runtime.wiring.macos.sender)
     else {
-        let mut runtime = runtime;
-        runtime
-            .trace
-            .push(crate::trace::TraceEntry::ControlsUnattached);
         return Ok(body(runtime));
     };
     let guard = StopOnDrop(main.stopper());
-    let handle = thread::Builder::new()
+    let handle = std::thread::Builder::new()
         .name("sifr-event-loop".to_owned())
         .spawn(move || {
             let _guard = guard;
@@ -33,7 +23,7 @@ where
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn run_on_main_thread<R, F>(runtime: Runtime, body: F) -> Result<R, Error>
+pub fn run_on_main_thread<R, F>(runtime: Runtime, body: F) -> Result<R, Error>
 where
     R: Send + 'static,
     F: FnOnce(Runtime) -> R + Send + 'static,
@@ -55,17 +45,12 @@ impl Drop for StopOnDrop {
 mod tests {
     use kernel::domain::startup::Startup;
 
-    use crate::{
-        host::run_on_main_thread,
-        runtime::Runtime,
-        trace::Trace,
-        wiring::Wiring,
-    };
+    use crate::{host::run_on_main_thread, runtime::Runtime, wiring::Wiring};
 
     fn idle_runtime() -> Runtime {
         let (wiring, ..) = Wiring::idle();
         let started = kernel::update::startup::startup(Startup::default());
-        Runtime::assemble(started, wiring, Trace::default()).unwrap()
+        Runtime::assemble(started, wiring).unwrap()
     }
 
     #[test]
@@ -73,11 +58,6 @@ mod tests {
         let runtime = idle_runtime();
 
         let outcome = run_on_main_thread(runtime, |runtime| {
-            #[cfg(target_os = "macos")]
-            assert!(runtime.trace().iter().any(|entry| matches!(
-                entry,
-                crate::trace::TraceEntry::ControlsUnattached
-            )));
             runtime.drain();
             42
         });

@@ -5,7 +5,7 @@ expression: "painted(&toasts, (60, 12))"
 ---
 "                                                            "
 "                 ╭────────────────────────────────────────╮ "
-"                 │ ! Careful                              │ "
+"                 │ i Careful                              │ "
 "                 │ The quick brown fox jumps over the     │ "
 "                 │ lazy dog and keeps running far away    │ "
 "                 ╰────────────────────────────────────────╯ "

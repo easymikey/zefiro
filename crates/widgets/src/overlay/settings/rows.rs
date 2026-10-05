@@ -1,12 +1,18 @@
 use kernel::domain::{geometry::Cells, setting_row::SettingRow};
-use ratatui::{layout::Constraint, style::Style, text::Line, widgets::Row};
+use ratatui::{
+    layout::Constraint,
+    style::{Color, Style},
+    text::Line,
+    widgets::Row,
+};
 
 use crate::{
     overlay::{
-        modal::{metrics::ModalRowStyle, placement::indented},
+        modal::placement::indented,
         settings::view::{SettingsView, settings_label, value_text},
     },
     primitive::text::truncate,
+    theme::colors::Colors,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,12 +48,12 @@ pub(crate) struct SettingsTableRow<'a> {
 
 pub(crate) fn settings_row(
     table_row: &SettingsTableRow<'_>,
-    style: ModalRowStyle,
+    colors: Colors<Color>,
 ) -> Row<'static> {
     let [label, value] = settings_cells(table_row);
     Row::new(vec![
-        Line::from(label).style(Style::default().fg(style.foreground)),
-        Line::from(value).style(Style::default().fg(style.foreground)),
+        Line::from(label).style(Style::default().fg(colors.text)),
+        Line::from(value).style(Style::default().fg(colors.text)),
     ])
 }
 
@@ -80,7 +86,7 @@ mod tests {
     #[test]
     fn every_row_fits_its_columns() {
         let custom = appearance_rows();
-        let view = settings_values(&custom);
+        let view = settings_values();
         let columns = SettingsColumns::for_width(Cells(60), Cells(0), Cells(20));
         for row in all_rows(&custom) {
             let [label, value] = settings_cells(&SettingsTableRow {

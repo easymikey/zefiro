@@ -10,7 +10,9 @@ fn playlist_rows(key_hints: KeyHints, mode: LayoutMode) -> u16 {
     sources.model.settings.appearance.key_hints = key_hints;
     sources.model.settings.appearance.layout_mode = mode;
     let layout = FrameLayout::from_scene(&sources.scene(), Rect::new(0, 0, 120, 40));
-    layout.playlist.map_or(0, |areas| areas.rows.height)
+    layout
+        .playlist
+        .map_or(0, |areas| areas.scroll_areas.rows.height)
 }
 
 #[rstest]

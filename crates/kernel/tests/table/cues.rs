@@ -27,6 +27,7 @@ use kernel::{
         QueueRequest,
         Timer,
     },
+    update::machine::Unhandled,
 };
 use rstest::rstest;
 
@@ -158,13 +159,17 @@ fn a_transition_raises_its_cue(
     );
 }
 
+#[test]
+fn the_system_echoing_a_volume_is_refused() {
+    let mut model = model_with_tracks(3);
+    let message = Message::Macos(MacosEvent::Volume(model.transport.volume));
+
+    let result = update(&mut model, message, Moment::default());
+
+    assert_eq!(result, Err(Unhandled));
+}
+
 #[rstest]
-#[case::the_system_echoing_a_volume_stays_silent(
-    model_with_tracks(3),
-    vec![Message::Macos(MacosEvent::Volume(
-        model_with_tracks(3).transport.volume
-    ))]
-)]
 #[case::a_toast_timer_without_a_toast_stays_silent(
     model_with_tracks(3),
     vec![Message::Elapsed(Timer::Toast(Revision::default()))]

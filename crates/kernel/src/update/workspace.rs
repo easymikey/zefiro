@@ -26,13 +26,15 @@ impl Workspace {
             .keymap
             .diagnostic()
             .map_or(Ok(()), |diagnostic| Err(ConfigError::Invalid(diagnostic)));
-        self.config_reloaded(
+        let cmd = self.config_reloaded(
             ConfigReload {
                 name: ConfigName::Config,
                 result,
             },
             revisions,
-        )
+        );
+        revisions.config.advance();
+        cmd
     }
 
     pub(crate) fn show(&mut self, toast: Toast, revisions: &mut Revisions) -> Cmd {

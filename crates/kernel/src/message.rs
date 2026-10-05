@@ -4,6 +4,7 @@ use strum::IntoStaticStr;
 
 use crate::domain::{
     appearance::AppearanceSettings,
+    bounded::Bounded,
     chord::ChordPrefix,
     config::{ConfigError, ConfigName, Diagnostic},
     device::{ListedDevice, OutputDevice},
@@ -12,7 +13,7 @@ use crate::domain::{
     favorites::Favorites,
     geometry::{Cells, Pixels},
     history::HistoryEntry,
-    index::{TrackIndex, ViewIndex},
+    index::ViewIndex,
     io_error::IoError,
     key::KeyPress,
     keymap::KeymapOverrides,
@@ -39,8 +40,7 @@ pub enum Message {
     Playback(PlaybackRequest),
     Browse(BrowseRequest),
     Queue(QueueRequest),
-    Playlist(PlaylistRequest),
-    ShuffleRolled(Vec<TrackIndex>),
+    ShuffleRolled(Vec<ViewIndex>),
     Library(LibraryEvent),
     Config(ConfigEvent),
     Audio(AudioEvent),
@@ -89,8 +89,7 @@ impl From<ConfigEvent> for Message {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Timer {
     Toast(Revision),
     Sleep(Revision),
@@ -179,8 +178,6 @@ pub enum PlaybackRequest {
     Toggle,
     Play,
     Pause,
-    SeekForward,
-    SeekBack,
     HoldForOverlay,
     Release,
     Stop,
@@ -195,6 +192,7 @@ pub enum PlaybackRequest {
     StepSpeed(Direction),
     SeekTo(Duration),
     SeekTenths(SeekTenths),
+    JumpTo(ViewIndex),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -209,24 +207,14 @@ impl SeekTenths {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum SeekTenthsError {
-    #[error("seek tenths {value} is above {max}")]
-    OutOfRange { value: u8, max: u8 },
-}
+impl Bounded for SeekTenths {
+    type Raw = u8;
 
-impl TryFrom<u8> for SeekTenths {
-    type Error = SeekTenthsError;
+    const MIN: u8 = 0;
+    const MAX: u8 = SEEK_TENTHS_MAX;
 
-    fn try_from(tenths: u8) -> Result<Self, Self::Error> {
-        if tenths <= SEEK_TENTHS_MAX {
-            Ok(Self(tenths))
-        } else {
-            Err(SeekTenthsError::OutOfRange {
-                value: tenths,
-                max: SEEK_TENTHS_MAX,
-            })
-        }
+    fn within_bounds(raw: u8) -> Self {
+        Self(raw)
     }
 }
 
@@ -242,7 +230,6 @@ pub enum BrowseRequest {
     CycleSort,
     FullScan,
     ToggleFavorite,
-    CursorTo(ViewIndex),
     PageBy(Direction),
 }
 
@@ -254,12 +241,6 @@ pub enum QueueRequest {
     PlayNext,
     Dequeue,
     MoveInQueue(Direction),
-}
-
-#[derive(Debug, Clone, PartialEq, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
-pub enum PlaylistRequest {
-    JumpTo(ViewIndex),
 }
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
@@ -419,7 +400,13 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        domain::{io_error::IoError, theme::ThemeName, transport::StreamError},
+        domain::{
+            bounded::Bounded,
+            config::Diagnostic,
+            io_error::IoError,
+            theme::ThemeName,
+            transport::StreamError,
+        },
         message::{
             AudioError,
             AudioEvent,
@@ -428,8 +415,13 @@ mod tests {
             LibraryError,
             LibraryEvent,
             LibrarySubject,
+            MacosError,
             MacosEvent,
             Message,
+            OsStatus,
+            PaintError,
+            SEEK_TENTHS_MAX,
+            SeekTenths,
         },
     };
 
@@ -511,5 +503,78 @@ mod tests {
         #[case] expected: &str,
     ) {
         assert_eq!(failure.to_string(), expected);
+    }
+
+    #[rstest::rstest]
+    #[case::hardware_watch(
+        MacosError::HardwareWatch(OsStatus(-50)),
+        "Audio device watch failed (CoreAudio status -50)"
+    )]
+    #[case::rebind(
+        MacosError::Rebind(OsStatus(560_227_702)),
+        "Cannot follow the new audio device (CoreAudio status 560227702)"
+    )]
+    #[case::volume(
+        MacosError::Volume(OsStatus(0)),
+        "Cannot set the system volume (CoreAudio status 0)"
+    )]
+    #[case::cover(
+        MacosError::Cover(IoError::Denied),
+        "Cannot read the cover file: permission denied"
+    )]
+    fn a_macos_failure_renders_its_cause(
+        #[case] macos_error: MacosError,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(macos_error.to_string(), expected);
+    }
+
+    #[rstest::rstest]
+    #[case::negative(OsStatus(-10_851), "-10851")]
+    #[case::zero(OsStatus(0), "0")]
+    #[case::positive(OsStatus(1_852_797_029), "1852797029")]
+    fn an_os_status_renders_its_code(#[case] status: OsStatus, #[case] expected: &str) {
+        assert_eq!(status.to_string(), expected);
+    }
+
+    #[rstest::rstest]
+    #[case::unsupported(DecodeError::Unsupported, "unsupported format")]
+    #[case::corrupt(DecodeError::Corrupt, "corrupt data")]
+    #[case::unreadable(DecodeError::Unreadable(IoError::Missing), "not found")]
+    #[case::panicked(DecodeError::Panicked, "the decoder panicked")]
+    fn a_decode_failure_renders_its_cause(
+        #[case] decode_error: DecodeError,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(decode_error.to_string(), expected);
+    }
+
+    #[rstest::rstest]
+    #[case::window_colors(
+        PaintError::WindowColors(Diagnostic::from_error(&IoError::Full)),
+        "Window colors failed",
+        "disk full"
+    )]
+    #[case::query(
+        PaintError::Query(Diagnostic::from_error(&IoError::Other)),
+        "Terminal probe failed",
+        "an unknown error"
+    )]
+    fn a_paint_failure_renders_its_title_and_keeps_its_diagnostic(
+        #[case] paint_error: PaintError,
+        #[case] title: &str,
+        #[case] diagnostic: &str,
+    ) {
+        assert_eq!(
+            (paint_error.to_string(), paint_error.diagnostic().text()),
+            (title.to_owned(), diagnostic)
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::above_the_ceiling(SEEK_TENTHS_MAX + 1, SEEK_TENTHS_MAX)]
+    #[case::at_the_ceiling(SEEK_TENTHS_MAX, SEEK_TENTHS_MAX)]
+    fn seek_tenths_clamped_saturates(#[case] raw: u8, #[case] expected: u8) {
+        assert_eq!(SeekTenths::clamped(raw).get(), expected);
     }
 }

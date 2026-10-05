@@ -6,34 +6,49 @@ expression: log
 [
     Cmd {
         effects: [
-            Open {
-                device: SystemDefault,
-                speed: Speed(
-                    1.0,
-                ),
-            },
+            Execute(
+                Open {
+                    device: SystemDefault,
+                    speed: Speed(
+                        1.0,
+                    ),
+                },
+            ),
         ],
         messages: [],
     },
     Cmd {
         effects: [
-            StartLoad {
-                path: "/a",
-                speed: Speed(
-                    1.0,
-                ),
-            },
-        ],
-        messages: [],
-    },
-    Cmd {
-        effects: [
-            Start(
-                Gain(
-                    1.0,
+            Execute(
+                StartLoad(
+                    Speed(
+                        1.0,
+                    ),
                 ),
             ),
-            Report,
+            Run(
+                Decode {
+                    path: "/a",
+                    revision: Revision(
+                        2,
+                    ),
+                },
+            ),
+        ],
+        messages: [],
+    },
+    Cmd {
+        effects: [
+            Execute(
+                Start(
+                    Gain(
+                        1.0,
+                    ),
+                ),
+            ),
+            Execute(
+                Report,
+            ),
         ],
         messages: [
             Loaded(

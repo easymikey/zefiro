@@ -3,14 +3,14 @@ use crate::{
     domain::{
         cue::Cue,
         cursor_over::CursorOver,
-        overlay::{JumpDigits, MusicDirError, Overlay, SearchQuery, TextEntry},
+        overlay::{MusicDirError, Overlay, SearchQuery, TextEntry},
         playlist::{PlaylistFileName, PlaylistNameError},
-        time::parse_timecode,
+        time::{TimecodeError, parse_timecode},
     },
-    message::{BrowseRequest, Message, PlaybackRequest, PlaylistRequest},
+    message::{BrowseRequest, Message, PlaybackRequest},
     update::{
         machine::{Machine, Unhandled},
-        overlay::{OverlayContentMessage, OverlayMessage, text},
+        overlay::{OverlayContentMessage, OverlayMessage, jump},
     },
 };
 
@@ -58,12 +58,12 @@ fn closed_playback(open: &Overlay) -> Cmd {
         Overlay::Settings(..) => release(),
         Overlay::Help
         | Overlay::Search(_)
-        | Overlay::SavePlaylist { .. }
+        | Overlay::SavePlaylist(_)
         | Overlay::History(_)
         | Overlay::ConfirmDelete(_)
         | Overlay::TrackDetails(_)
         | Overlay::JumpToTime(_)
-        | Overlay::MusicDir { .. } => Cmd::none(),
+        | Overlay::MusicDir(_) => Cmd::none(),
     }
 }
 
@@ -79,9 +79,9 @@ fn confirm(state: &mut Option<Overlay>) -> Result<Cmd, Unhandled> {
 
 fn has_error(open: &Overlay) -> bool {
     match open {
-        Overlay::SavePlaylist { error, .. } => error.is_some(),
-        Overlay::MusicDir { error, .. } => error.is_some(),
-        Overlay::JumpToTime(digits) => digits.error.is_some(),
+        Overlay::SavePlaylist(text_entry) => text_entry.error.is_some(),
+        Overlay::MusicDir(text_entry) => text_entry.error.is_some(),
+        Overlay::JumpToTime(text_entry) => text_entry.error.is_some(),
         Overlay::Search(_)
         | Overlay::ConfirmDelete(_)
         | Overlay::Settings(..)
@@ -94,14 +94,12 @@ fn has_error(open: &Overlay) -> bool {
 fn confirmed(open: &mut Overlay) -> Result<Cmd, Unhandled> {
     match open {
         Overlay::Search(search) => confirm_search(search),
-        Overlay::SavePlaylist { typed, error } => {
-            Ok(confirm_save_playlist(typed, error))
-        }
+        Overlay::SavePlaylist(text_entry) => Ok(confirm_save_playlist(text_entry)),
         Overlay::ConfirmDelete(candidate) => Ok(Cmd::message(Message::Browse(
             BrowseRequest::Trash(candidate.source.clone()),
         ))),
-        Overlay::JumpToTime(digits) => Ok(confirm_jump(digits)),
-        Overlay::MusicDir { typed, error } => Ok(confirm_music_dir(typed, error)),
+        Overlay::JumpToTime(text_entry) => Ok(confirm_jump(text_entry)),
+        Overlay::MusicDir(text_entry) => Ok(confirm_music_dir(text_entry)),
         Overlay::Settings(..) => Ok(release()),
         Overlay::Help | Overlay::TrackDetails(_) | Overlay::History(_) => {
             Err(Unhandled)
@@ -110,55 +108,47 @@ fn confirmed(open: &mut Overlay) -> Result<Cmd, Unhandled> {
 }
 
 fn confirm_search(search: &CursorOver<SearchQuery>) -> Result<Cmd, Unhandled> {
-    let index = search
-        .content
-        .matches
-        .get(search.selected().get())
-        .copied()
-        .ok_or(Unhandled)?;
-    Ok(Cmd::message(Message::Playlist(PlaylistRequest::JumpTo(
+    let index = search.selected_match().ok_or(Unhandled)?;
+    Ok(Cmd::message(Message::Playback(PlaybackRequest::JumpTo(
         index,
     ))))
 }
 
-fn confirm_jump(digits: &mut JumpDigits) -> Cmd {
-    match parse_timecode(&digits.input) {
+fn confirm_jump(text_entry: &mut TextEntry<TimecodeError>) -> Cmd {
+    match parse_timecode(&text_entry.input) {
         Ok(target) => {
-            digits.error = None;
+            text_entry.error = None;
             Cmd::message(Message::Playback(PlaybackRequest::SeekTo(target)))
         }
         Err(error) => {
-            digits.error = Some(error);
+            text_entry.error = Some(error);
             Cmd::none()
         }
     }
 }
 
-fn confirm_save_playlist(
-    typed: &TextEntry,
-    error: &mut Option<PlaylistNameError>,
-) -> Cmd {
-    match PlaylistFileName::new(&typed.input) {
+fn confirm_save_playlist(text_entry: &mut TextEntry<PlaylistNameError>) -> Cmd {
+    match PlaylistFileName::new(&text_entry.input) {
         Ok(name) => {
-            *error = None;
+            text_entry.error = None;
             Cmd::message(Message::Browse(BrowseRequest::SavePlaylist(name)))
         }
         Err(reason) => {
-            *error = Some(reason);
+            text_entry.error = Some(reason);
             Cmd::none()
         }
     }
 }
 
-fn confirm_music_dir(typed: &TextEntry, error: &mut Option<MusicDirError>) -> Cmd {
-    if typed.input.trim().is_empty() {
-        *error = Some(MusicDirError::Empty);
+fn confirm_music_dir(text_entry: &mut TextEntry<MusicDirError>) -> Cmd {
+    if text_entry.input.trim().is_empty() {
+        text_entry.error = Some(MusicDirError::Empty);
         return Cmd::none();
     }
-    *error = None;
+    text_entry.error = None;
     Cmd::from(Effect::Config(ConfigCmd::Save(
         ConfigPatch::builder()
-            .music_dir(std::path::PathBuf::from(typed.input.as_str()))
+            .music_dir(std::path::PathBuf::from(text_entry.input.as_str()))
             .build(),
     )))
 }
@@ -175,21 +165,17 @@ fn inner_transition(
         (Overlay::Settings(selected), OverlayContentMessage::Settings(message)) => {
             selected.transition(message)
         }
-        (
-            Overlay::SavePlaylist { typed, error },
-            OverlayContentMessage::Text(message),
-        ) => {
-            text::retype(typed, message);
-            *error = None;
-            Ok(Cmd::none())
+        (Overlay::SavePlaylist(text_entry), OverlayContentMessage::Text(message)) => {
+            text_entry.transition(message)
         }
-        (Overlay::MusicDir { typed, error }, OverlayContentMessage::Text(message)) => {
-            text::retype(typed, message);
-            *error = None;
-            Ok(Cmd::none())
+        (Overlay::MusicDir(text_entry), OverlayContentMessage::Text(message)) => {
+            text_entry.transition(message)
         }
-        (Overlay::JumpToTime(digits), OverlayContentMessage::Jump(message)) => {
-            digits.transition(message)
+        (Overlay::JumpToTime(text_entry), OverlayContentMessage::Jump(message)) => {
+            if !jump::admits(text_entry, message) {
+                return Err(Unhandled);
+            }
+            text_entry.transition(message)
         }
         (Overlay::History(cursor), OverlayContentMessage::History(message)) => {
             cursor.transition(message)

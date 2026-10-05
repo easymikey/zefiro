@@ -1,12 +1,12 @@
 use audio::tap::SpectrumTap;
-use kernel::{cmd::AudioCmd, domain::driver::DriverName, update::machine::Machine};
+use kernel::{cmd::AudioCmd, domain::driver::DriverName};
 
 #[cfg(test)] use crate::driver_thread::spawn_idle;
 use crate::{
     driver::DriverLoop,
     driver_thread::DriverThread,
     error::Error,
-    jobs::{Jobs, LoopEffect},
+    jobs::Jobs,
     registry,
     spawn_setup::SpawnSetup,
 };
@@ -19,46 +19,6 @@ pub(crate) fn idle_audio(
     Ok((thread, SpectrumTap::silent()))
 }
 
-pub(crate) fn audio_split(
-    effect: audio::engine::effect::EngineEffect,
-) -> LoopEffect<
-    audio::engine::effect::EngineEffect,
-    audio::deck::job::AudioJob,
-    <audio::AudioDriver as Machine>::Message,
-> {
-    match effect {
-        audio::engine::effect::EngineEffect::Run(job) => LoopEffect::Run(job),
-        effect @ (audio::engine::effect::EngineEffect::Silence
-        | audio::engine::effect::EngineEffect::Open { .. }
-        | audio::engine::effect::EngineEffect::StartLoad { .. }
-        | audio::engine::effect::EngineEffect::StartHandover { .. }
-        | audio::engine::effect::EngineEffect::Decode(_)
-        | audio::engine::effect::EngineEffect::Start(_)
-        | audio::engine::effect::EngineEffect::Resume { .. }
-        | audio::engine::effect::EngineEffect::Play
-        | audio::engine::effect::EngineEffect::Pause
-        | audio::engine::effect::EngineEffect::Seek(_)
-        | audio::engine::effect::EngineEffect::SetGain(_)
-        | audio::engine::effect::EngineEffect::Arm(_)
-        | audio::engine::effect::EngineEffect::Crossfade { .. }
-        | audio::engine::effect::EngineEffect::CancelCrossfade
-        | audio::engine::effect::EngineEffect::Ramp { .. }
-        | audio::engine::effect::EngineEffect::DropOutgoing
-        | audio::engine::effect::EngineEffect::SetSpeed(_)
-        | audio::engine::effect::EngineEffect::Clear(_)
-        | audio::engine::effect::EngineEffect::Preload { .. }
-        | audio::engine::effect::EngineEffect::RestartGapless(_)
-        | audio::engine::effect::EngineEffect::Promote(_)
-        | audio::engine::effect::EngineEffect::Report
-        | audio::engine::effect::EngineEffect::Advance(_)
-        | audio::engine::effect::EngineEffect::Stage(_)
-        | audio::engine::effect::EngineEffect::Attach(_)
-        | audio::engine::effect::EngineEffect::TakeSignals(_)) => {
-            LoopEffect::Execute(effect)
-        }
-    }
-}
-
 pub(crate) fn spawn_audio(
     setup: &SpawnSetup<'_>,
 ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
@@ -67,7 +27,6 @@ pub(crate) fn spawn_audio(
     let (deck_sender, heard) = crossbeam_channel::bounded(64);
     let row = registry::row(DriverName::Audio);
     let jobs = Jobs {
-        split: audio_split,
         run: audio::deck::job::AudioJob::run,
     };
     let thread = DriverLoop::<audio::AudioDriver, _> {
@@ -115,10 +74,10 @@ mod tests {
         error::Error,
         runtime::Runtime,
         spawn::{
+            SpawnSetup,
             Spawners,
             tests::{RECV_TIMEOUT, boom, spawn_audio_loop, stub_paths},
         },
-        spawn_setup::SpawnSetup,
     };
 
     fn died_from_replay_gain_step(runtime: &mut Runtime) -> Message {

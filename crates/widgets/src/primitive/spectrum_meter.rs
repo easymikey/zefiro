@@ -2,6 +2,7 @@ use ratatui::{style::Color, text::Line};
 
 use crate::{
     braille,
+    pixels::numeric::small_count_u16,
     primitive::span::{line, text},
 };
 
@@ -18,15 +19,12 @@ pub(crate) fn lines(
     color_at: impl Fn(f32) -> Color,
 ) -> Vec<Line<'static>> {
     let spectrum_rows = braille::meter_rows(fill);
-    let spectrum_total_rows = u16::try_from(spectrum_rows.len()).unwrap_or(u16::MAX);
+    let spectrum_total_rows = small_count_u16(spectrum_rows.len());
     spectrum_rows
         .into_iter()
         .enumerate()
         .map(|(row, glyphs)| {
-            let t = spectrum_row_fraction(
-                u16::try_from(row).unwrap_or(u16::MAX),
-                spectrum_total_rows,
-            );
+            let t = spectrum_row_fraction(small_count_u16(row), spectrum_total_rows);
             let color = color_at(t);
             line([text(glyphs).fg(color)])
         })

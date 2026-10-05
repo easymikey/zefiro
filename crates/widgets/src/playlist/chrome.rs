@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::{
     primitive::{inset::Inset, list_chrome::spaced_title},
-    status_line::{self, StatusLineStyle, StatusLineView},
+    status_line::{self, StatusLineView},
     theme::active_theme::ActiveTheme,
 };
 
@@ -40,11 +40,7 @@ pub(crate) fn pane_title<'a>(
     status: StatusLineView<'a>,
     theme: &ActiveTheme<'_>,
 ) -> Line<'a> {
-    status_line::status_line(
-        status,
-        StatusLineStyle::from_theme(theme),
-        title_budget(area),
-    )
+    status_line::status_line(status, &theme.colors(), title_budget(area))
 }
 
 #[cfg(test)]
@@ -54,7 +50,7 @@ mod tests {
 
     use crate::{
         playlist::chrome::pane_title,
-        status_line::{ScanProgress, StatusLineView},
+        status_line::StatusLineView,
         test_support::noir,
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
@@ -66,7 +62,8 @@ mod tests {
             queue_len: 0,
             position: ViewIndex::new(0),
             total: 0,
-            scan: ScanProgress::Done,
+            scan_status: kernel::domain::model::ScanStatus::Idle,
+            scanning_label: "Scanning…",
             theme_name: "noir",
             sleep_left: None,
         }

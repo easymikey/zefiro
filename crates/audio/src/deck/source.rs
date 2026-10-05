@@ -1,15 +1,9 @@
-use std::{
-    ffi::OsStr,
-    fs::File,
-    io::BufReader,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{ffi::OsStr, fs::File, io::BufReader, path::Path, time::Duration};
 
 use kernel::domain::{revision::Revision, speed::Speed};
 use rodio::Source;
 
-use crate::{engine::phase::CurrentTrack, error::Error};
+use crate::error::Error;
 
 pub(crate) type TrackDecoder = rodio::Decoder<BufReader<File>>;
 
@@ -40,10 +34,10 @@ impl std::fmt::Debug for TrackSource {
 
 const READ_CAPACITY: usize = 1 << 20;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PreloadMode {
-    Gapless(PathBuf),
-    Crossfade { track: CurrentTrack, speed: Speed },
+    Gapless,
+    Crossfade(Speed),
 }
 
 pub(crate) fn decode(path: &Path) -> Result<TrackDecoder, Error> {

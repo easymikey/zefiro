@@ -17,12 +17,12 @@ expression: "walked(model, messages)"
         ],
         Stopped,
         Some(
-            SavePlaylist {
-                typed: TextEntry {
+            SavePlaylist(
+                TextEntry {
                     input: "",
+                    error: None,
                 },
-                error: None,
-            },
+            ),
         ),
         Cursor {
             index: 0,
@@ -59,12 +59,12 @@ expression: "walked(model, messages)"
         [],
         Stopped,
         Some(
-            SavePlaylist {
-                typed: TextEntry {
+            SavePlaylist(
+                TextEntry {
                     input: "m",
+                    error: None,
                 },
-                error: None,
-            },
+            ),
         ),
         Cursor {
             index: 0,
@@ -101,12 +101,12 @@ expression: "walked(model, messages)"
         [],
         Stopped,
         Some(
-            SavePlaylist {
-                typed: TextEntry {
+            SavePlaylist(
+                TextEntry {
                     input: "mi",
+                    error: None,
                 },
-                error: None,
-            },
+            ),
         ),
         Cursor {
             index: 0,
@@ -143,12 +143,12 @@ expression: "walked(model, messages)"
         [],
         Stopped,
         Some(
-            SavePlaylist {
-                typed: TextEntry {
+            SavePlaylist(
+                TextEntry {
                     input: "mix",
+                    error: None,
                 },
-                error: None,
-            },
+            ),
         ),
         Cursor {
             index: 0,

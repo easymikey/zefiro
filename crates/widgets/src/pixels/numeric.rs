@@ -46,6 +46,12 @@ pub(crate) fn dimension_f32<T: ToPrimitive + Copy>(count: T) -> f32 {
     count.to_f32().unwrap_or(f32::MAX)
 }
 
+#[inline]
+#[must_use]
+pub(crate) fn small_count_u16(count: impl TryInto<u16>) -> u16 {
+    count.try_into().unwrap_or(u16::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::pixels::numeric::{

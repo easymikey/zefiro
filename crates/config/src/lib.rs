@@ -10,5 +10,6 @@ pub mod embedded_theme;
 pub mod error;
 pub mod file_name;
 pub(crate) mod keymap;
+pub mod load;
 pub mod patch;
 pub mod theme_file;

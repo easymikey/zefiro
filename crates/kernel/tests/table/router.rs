@@ -395,7 +395,7 @@ fn router_trace(
 )]
 #[case::the_remotes_seek_while_stopped_is_refused(
     Model::default(),
-    media(PlaybackRequest::SeekForward),
+    media(PlaybackRequest::SeekBy { direction: Direction::Next, by: Duration::from_secs(10) }),
     Unhandled
 )]
 #[case::the_remotes_play_while_playing_is_refused(
@@ -410,7 +410,7 @@ fn router_trace(
 )]
 #[case::a_refused_key_keeps_the_toast_up(
     toasted(),
-    media(PlaybackRequest::SeekForward),
+    media(PlaybackRequest::SeekBy { direction: Direction::Next, by: Duration::from_secs(10) }),
     Unhandled
 )]
 fn a_refused_message_leaves_the_model_alone(

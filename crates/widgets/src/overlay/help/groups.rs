@@ -23,10 +23,6 @@ pub(crate) const COLUMN_GAP: u16 = 3;
 pub(crate) const CHORD_GAP: u16 = 2;
 pub(crate) const MINIMUM_DESCRIPTION: u16 = 10;
 
-pub(crate) fn small_count_u16(count: usize) -> u16 {
-    u16::try_from(count).unwrap_or(u16::MAX)
-}
-
 #[derive(Clone, Copy)]
 enum HelpLabel {
     Text(&'static str),

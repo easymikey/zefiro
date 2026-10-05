@@ -11,7 +11,7 @@ use kernel::{
         keymap::{Action, KeyOverride, KeymapOverrides},
         model::Model,
         percent::Percent,
-        player::{Player, Preload},
+        player::Player,
         playhead::Playhead,
         playlist::{PlayOrder, Playlist, RepeatMode},
         revision::Revision,
@@ -22,15 +22,8 @@ use kernel::{
         track::{AudioFormat, Tags, Track},
         transport::Transport,
     },
-    message::{
-        ConfigEvent,
-        LibraryEvent,
-        MacosEvent,
-        Message,
-        PlaybackRequest,
-        PlaylistRequest,
-        Timer,
-    },
+    message::{ConfigEvent, LibraryEvent, MacosEvent, Message, PlaybackRequest, Timer},
+    update::machine::Unhandled,
 };
 use rstest::rstest;
 
@@ -77,7 +70,7 @@ fn advance_respects_edges_and_repeat_all(
 ) {
     let mut pl = load_three();
     pl.repeat = from.repeat;
-    pl.cursor = Cursor::with_len(pl.tracks.len()).at(from.start);
+    pl.cursor = Cursor::at(pl.tracks.len(), from.start);
     assert_eq!(pl.skip(from.direction).is_some(), moved);
     assert_eq!(pl.playing_index(), Some(expected_index));
 }
@@ -152,17 +145,17 @@ fn volume_clamped_0_100() {
     Duration::from_secs(100)
 )]
 #[case::media_key_seek_forward_steps_ten_seconds(
-    Message::Playback(PlaybackRequest::SeekForward),
+    Message::Playback(PlaybackRequest::SeekBy { direction: Direction::Next, by: Duration::from_secs(10) }),
     Duration::from_secs(30),
     Duration::from_secs(40)
 )]
 #[case::media_key_seek_back_steps_ten_seconds(
-    Message::Playback(PlaybackRequest::SeekBack),
+    Message::Playback(PlaybackRequest::SeekBy { direction: Direction::Previous, by: Duration::from_secs(10) }),
     Duration::from_secs(40),
     Duration::from_secs(30)
 )]
 #[case::media_key_seek_back_saturates_at_zero(
-    Message::Playback(PlaybackRequest::SeekBack),
+    Message::Playback(PlaybackRequest::SeekBy { direction: Direction::Previous, by: Duration::from_secs(10) }),
     Duration::from_secs(3),
     Duration::ZERO
 )]
@@ -186,8 +179,8 @@ fn seek_routes_clamp_to_duration_regardless_of_message_source(
                     .audio_format(AudioFormat::default())
                     .build(),
             ),
-            head: Playhead::anchored(at, Moment::default(), Speed::default()),
-            preload: Preload::None,
+            playhead: Playhead::anchored(at, Moment::default(), Speed::default()),
+            preloaded: None,
         },
         ..Default::default()
     };
@@ -235,12 +228,12 @@ fn jump_request_starts_selected_track() {
     );
     let cmd = update(
         &mut m,
-        Message::Playlist(PlaylistRequest::JumpTo(ViewIndex::new(2))),
+        Message::Playback(PlaybackRequest::JumpTo(ViewIndex::new(2))),
         Moment::default(),
     )
     .unwrap();
     assert_eq!(m.playlist.playing_index(), Some(ViewIndex::new(2)));
-    assert!(matches!(m.player, Player::Loading { .. }));
+    assert!(matches!(m.player, Player::Loading(..)));
     let loading = m.player.current().unwrap();
     assert_eq!(loading.path(), Path::new("/tmp/track2.flac"));
     assert!(effects(cmd).iter().any(
@@ -254,24 +247,23 @@ fn jump_request_starts_selected_track() {
     assert!(matches!(
         m.player,
         Player::Playing {
-            preload: Preload::None,
+            preloaded: None,
             ..
         }
     ));
 }
 
 #[test]
-fn jump_out_of_range_is_noop() {
+fn jump_out_of_range_is_refused() {
     let mut m = model_with_tracks(3);
-    let cmd = update(
+    let result = update(
         &mut m,
-        Message::Playlist(PlaylistRequest::JumpTo(ViewIndex::new(9))),
+        Message::Playback(PlaybackRequest::JumpTo(ViewIndex::new(9))),
         Moment::default(),
-    )
-    .unwrap();
+    );
     assert_eq!(m.playlist.playing_index(), Some(ViewIndex::new(0)));
     assert!(m.player.current().is_none());
-    assert!(cmd == Cmd::none());
+    assert_eq!(result, Err(Unhandled));
 }
 
 #[test]
@@ -296,7 +288,7 @@ fn library_loaded_relists_the_playlist_without_effects() {
 #[test]
 fn an_explicit_skip_snaps_the_browse_cursor() {
     let mut m = model_playing_at(3, 0, Duration::ZERO);
-    m.workspace.browse.cursor = Cursor::with_len(3).at(2);
+    m.workspace.browse.cursor = Cursor::at(3, 2);
     send(&mut m, Message::Playback(PlaybackRequest::Next));
     assert_eq!(m.workspace.browse.selected(), ViewIndex::new(1));
 }
@@ -309,7 +301,7 @@ fn a_natural_track_change_follows_only_a_cursor_that_was_on_the_playing_row(
     #[case] expected: usize,
 ) {
     let mut m = model_playing_at(3, 0, Duration::ZERO);
-    m.workspace.browse.cursor = Cursor::with_len(3).at(cursor);
+    m.workspace.browse.cursor = Cursor::at(3, cursor);
     send(&mut m, Message::Audio(kernel::message::AudioEvent::Ended));
     assert_eq!(m.workspace.browse.selected(), ViewIndex::new(expected));
 }
@@ -358,8 +350,12 @@ fn preload_peeks_queue_head_when_queue_nonempty() {
                 .audio_format(AudioFormat::default())
                 .build(),
         ),
-        head: Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default()),
-        preload: Preload::None,
+        playhead: Playhead::anchored(
+            Duration::ZERO,
+            Moment::default(),
+            Speed::default(),
+        ),
+        preloaded: None,
     };
     m.queue.push(m.playlist.tracks[2].source().clone());
 
@@ -411,10 +407,7 @@ fn track_ended_repeat_one_without_current_stops() {
 
 #[rstest]
 #[case::a_load_that_never_arrives(
-    Player::Loading {
-        track: arc_track("/tmp/track0.flac"),
-        at: Duration::ZERO,
-    },
+    Player::Loading(arc_track("/tmp/track0.flac")),
     kernel::message::AudioError::Decode {
         path: "/tmp/track0.flac".into(),
         kind: kernel::message::DecodeError::Unreadable(kernel::domain::io_error::IoError::Missing),
@@ -424,8 +417,8 @@ fn track_ended_repeat_one_without_current_stops() {
 #[case::a_preload_that_never_arrives(
     Player::Playing {
         track: arc_track("/tmp/track0.flac"),
-        head: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
-        preload: Preload::Queued(arc_track("/tmp/track1.flac")),
+        playhead: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
+        preloaded: Some(arc_track("/tmp/track1.flac")),
     },
     kernel::message::AudioError::Stream { reason: kernel::domain::config::Diagnostic::from_error(&std::io::Error::other("cannot preload /tmp/track1.flac: no such file")) },
     "cannot preload"
@@ -433,8 +426,8 @@ fn track_ended_repeat_one_without_current_stops() {
 #[case::a_seek_the_source_refuses(
     Player::Playing {
         track: arc_track("/tmp/track0.flac"),
-        head: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
-        preload: Preload::None,
+        playhead: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
+        preloaded: None,
     },
     kernel::message::AudioError::Seek { reason: kernel::domain::config::Diagnostic::from_error(&std::io::Error::other("the source cannot seek")) },
     "cannot seek"

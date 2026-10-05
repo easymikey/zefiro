@@ -10,38 +10,17 @@ use ratatui::{
 use crate::{
     card::{CardWidget, metrics::CardMetrics},
     primitive::{span::text, text::truncate},
-    theme::{active_theme::ActiveTheme, colors::Role},
+    theme::active_theme::ActiveTheme,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct CardStyle {
-    pub(crate) foreground: Color,
-    pub(crate) muted_foreground: Color,
-    pub(crate) accent: Color,
-    pub(crate) alert: Color,
-    pub(crate) border: Color,
-}
-
-impl CardStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            foreground: theme.role(Role::Text),
-            muted_foreground: theme.role(Role::Dim),
-            accent: theme.role(Role::Accent),
-            alert: theme.role(Role::Accent2),
-            border: theme.role(Role::Frame),
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn status_color(self, status: CardStatus) -> Color {
-        match status {
-            CardStatus::OutputLost => self.alert,
-            CardStatus::Playing => self.accent,
-            CardStatus::Paused => self.foreground,
-            CardStatus::Stopped => self.muted_foreground,
-        }
+#[must_use]
+pub(crate) fn status_color(theme: &ActiveTheme<'_>, status: CardStatus) -> Color {
+    let colors = theme.colors();
+    match status {
+        CardStatus::OutputLost => theme.alert(),
+        CardStatus::Playing => colors.accent,
+        CardStatus::Paused => colors.text,
+        CardStatus::Stopped => colors.muted_foreground,
     }
 }
 
@@ -58,7 +37,7 @@ pub(crate) fn card_status(output: &Output, player: &Player) -> CardStatus {
     match output {
         Output::Lost(..) => CardStatus::OutputLost,
         Output::Ready => match player {
-            Player::Playing { .. } | Player::Loading { .. } => CardStatus::Playing,
+            Player::Playing { .. } | Player::Loading(..) => CardStatus::Playing,
             Player::Paused { .. } => CardStatus::Paused,
             Player::Stopped => CardStatus::Stopped,
         },
@@ -94,13 +73,13 @@ pub(crate) fn status_label(status: CardStatus) -> StatusLabel {
 }
 
 pub(crate) fn paint(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetrics) {
-    let style = CardStyle::from_theme(&card.theme);
+    let colors = card.theme.colors();
 
     let title = card.view.title();
     let artist = card.view.artist();
 
     let status = card_status(card.view.output, card.view.player);
-    let status_color = style.status_color(status);
+    let status_color = status_color(&card.theme, status);
     let label = status_label(status);
     let status_text = format!("{} {}", label.glyph, label.word);
     let status_line = truncate(&status_text, usize::from(metrics.status_row.width));
@@ -111,13 +90,13 @@ pub(crate) fn paint(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMe
 
     let title_span: Span<'_> =
         text(truncate(&title, usize::from(metrics.title_row.width)))
-            .fg(style.foreground)
+            .fg(colors.text)
             .bold()
             .into();
     Paragraph::new(title_span).render(metrics.title_row, buffer);
 
     let artist_span: Span<'_> = text(truncate(artist, metrics.row_width.count()))
-        .fg(style.muted_foreground)
+        .fg(colors.muted_foreground)
         .into();
     Paragraph::new(artist_span).render(metrics.artist_row, buffer);
 }

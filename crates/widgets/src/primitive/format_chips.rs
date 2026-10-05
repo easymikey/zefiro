@@ -1,27 +1,35 @@
 use kernel::domain::track::{AudioFormat, Hertz, Kbps};
-use ratatui::text::{Line, Span};
+use ratatui::{
+    style::Color,
+    text::{Line, Span},
+};
 
 use crate::{
     pixels::numeric::dimension_f32,
-    primitive::chip::{self, ChipStyle},
+    primitive::{
+        chip,
+        glyphs::audio_format::{BITRATE_UNIT, SAMPLE_RATE_UNIT},
+    },
+    theme::colors::Colors,
 };
 
 const HZ_PER_KHZ: f32 = 1000.0;
 
 #[must_use]
-pub(crate) fn kilohertz(Hertz(sample_rate): Hertz) -> f32 {
+fn kilohertz(Hertz(sample_rate): Hertz) -> f32 {
     dimension_f32(sample_rate) / HZ_PER_KHZ
 }
 
-fn format_chip_values(audio_format: &AudioFormat) -> Vec<String> {
+#[must_use]
+pub(crate) fn format_chip_values(audio_format: &AudioFormat) -> Vec<String> {
     [
-        audio_format.format.clone(),
+        audio_format.format.as_deref().map(str::to_uppercase),
         audio_format
             .bitrate
-            .map(|Kbps(bitrate)| format!("{bitrate} kbps")),
-        audio_format
-            .sample_rate
-            .map(|sample_rate| format!("{:.1} khz", kilohertz(sample_rate))),
+            .map(|Kbps(bitrate)| format!("{bitrate}{BITRATE_UNIT}")),
+        audio_format.sample_rate.map(|sample_rate| {
+            format!("{:.1}{SAMPLE_RATE_UNIT}", kilohertz(sample_rate))
+        }),
     ]
     .into_iter()
     .flatten()
@@ -31,7 +39,7 @@ fn format_chip_values(audio_format: &AudioFormat) -> Vec<String> {
 #[must_use]
 pub(crate) fn fit_format_chips(
     audio_format: &AudioFormat,
-    colors: ChipStyle,
+    colors: &Colors<Color>,
     max_width: usize,
 ) -> Option<Line<'static>> {
     let values = format_chip_values(audio_format);
@@ -60,12 +68,13 @@ mod tests {
     use ratatui::style::Color;
     use rstest::rstest;
 
-    use crate::primitive::{chip::ChipStyle, format_chips::fit_format_chips};
+    use crate::{primitive::format_chips::fit_format_chips, theme::colors::Colors};
 
-    fn colors() -> ChipStyle {
-        ChipStyle {
-            border: Color::Gray,
-            foreground: Color::White,
+    fn colors() -> Colors<Color> {
+        Colors {
+            muted_foreground: Color::Gray,
+            text: Color::White,
+            ..Colors::default()
         }
     }
 
@@ -105,7 +114,7 @@ mod tests {
         #[case] width: usize,
         #[case] expected: Option<&str>,
     ) {
-        let line = fit_format_chips(&audio_format, colors(), width);
+        let line = fit_format_chips(&audio_format, &colors(), width);
         assert_eq!(line.as_ref().map(ToString::to_string).as_deref(), expected);
     }
 }

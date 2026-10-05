@@ -116,7 +116,7 @@ expression: "walked(model, messages)"
                     100s,
                 ),
             },
-            head: Playhead {
+            playhead: Playhead {
                 offset: 0ns,
                 since: Moment(
                     0ns,
@@ -125,7 +125,7 @@ expression: "walked(model, messages)"
                     1.0,
                 ),
             },
-            preload: None,
+            preloaded: None,
         },
         None,
         Cursor {

@@ -10,16 +10,14 @@ use kernel::{
     message::{DriverEvent, Message},
 };
 
-#[cfg(target_os = "macos")] use crate::macos_channel::MacosChannel;
+#[cfg(target_os = "macos")] use crate::spawn_setup::MacosChannel;
 use crate::{
     error::Error,
     latest::{LatestReceivers, LatestSenders, latest_channels},
     port::{Port, Ports},
     registry,
     spawn::Spawners,
-    spawn_setup::SpawnSetup,
-    startup_paths::StartupPaths,
-    trace::{Trace, TraceEntry, TraceError},
+    spawn_setup::{SpawnSetup, StartupPaths},
 };
 
 #[derive(Debug)]
@@ -59,13 +57,16 @@ impl Wiring {
         let (audio, spectrum) = (spawners.audio)(&setup)?;
         let library = (spawners.library)(&setup)?;
         let config = (spawners.config)(&setup)?;
-        let macos = (spawners.macos)(&setup)?;
+        #[cfg(target_os = "macos")]
+        let port = Port::spawned(DriverName::Macos, (spawners.macos)(&setup)?);
+        #[cfg(not(target_os = "macos"))]
+        let port = Port::Closed;
 
         let ports = Ports {
             audio: Port::spawned(DriverName::Audio, audio),
             library: Port::spawned(DriverName::Library, library),
             config: Port::spawned(DriverName::Config, config),
-            macos: Port::spawned(DriverName::Macos, macos),
+            macos: port,
         };
 
         Ok(Self {
@@ -83,13 +84,9 @@ impl Wiring {
         })
     }
 
-    pub(crate) fn restart(
-        &mut self,
-        driver: DriverName,
-        model: &Model,
-    ) -> Vec<TraceEntry> {
-        let join_failed = matches!(self.ports.join(driver), Some(Err(_)))
-            .then_some(TraceEntry::Error(TraceError::Join(driver)));
+    pub(crate) fn restart(&mut self, driver: DriverName, model: &Model) {
+        self.ports.hang_up(driver);
+        drop(self.ports.join(driver));
         let paths = self.paths.clone();
         let inbox = self.inbox.clone();
         let writers = self.writers.clone();
@@ -103,11 +100,9 @@ impl Wiring {
             #[cfg(target_os = "macos")]
             macos: &macos,
         };
-        let restart_failed = self
-            .restart_driver(driver, &setup)
-            .is_err()
-            .then_some(TraceEntry::Error(TraceError::Restart(driver)));
-        join_failed.into_iter().chain(restart_failed).collect()
+        match self.restart_driver(driver, &setup) {
+            Ok(()) | Err(_) => {}
+        }
     }
 
     fn restart_driver(
@@ -129,10 +124,13 @@ impl Wiring {
                 let thread = (self.spawners.config)(setup)?;
                 self.ports.config = Port::spawned(driver, thread);
             }
+            #[cfg(target_os = "macos")]
             DriverName::Macos => {
                 let thread = (self.spawners.macos)(setup)?;
                 self.ports.macos = Port::spawned(driver, thread);
             }
+            #[cfg(not(target_os = "macos"))]
+            DriverName::Macos => {}
         }
         Ok(())
     }
@@ -170,17 +168,10 @@ pub(crate) fn await_exits(
     reported
 }
 
-pub(crate) fn join_exited(
-    ports: &mut Ports,
-    reported: &[DriverName],
-    trace: &mut Trace,
-) {
+pub(crate) fn join_exited(ports: &mut Ports, reported: &[DriverName]) {
     for row in registry::REGISTRY {
-        if !reported.contains(&row.driver) {
-            continue;
-        }
-        if matches!(ports.join(row.driver), Some(Err(_) | Ok(Err(_)))) {
-            trace.push(TraceEntry::Error(TraceError::Join(row.driver)));
+        if reported.contains(&row.driver) {
+            drop(ports.join(row.driver));
         }
     }
 }
@@ -202,7 +193,7 @@ pub(crate) mod tests {
         port::{Port, Ports},
         registry,
         spawn::Spawners,
-        startup_paths::StartupPaths,
+        spawn_setup::StartupPaths,
         wiring::Wiring,
     };
 
@@ -219,6 +210,7 @@ pub(crate) mod tests {
                 config: std::path::PathBuf::new(),
                 appearance: std::path::PathBuf::new(),
                 themes: std::path::PathBuf::new(),
+                default_music_dir: None,
                 theme: None,
                 seen: config::driver::paths::SeenTexts::default(),
             },
@@ -292,7 +284,7 @@ pub(crate) mod tests {
                 paths,
                 writers: writers.clone(),
                 #[cfg(target_os = "macos")]
-                macos: crate::macos_channel::MacosChannel::new(),
+                macos: crate::spawn_setup::MacosChannel::new(),
             };
             (wiring, library_inbox, writers)
         }

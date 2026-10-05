@@ -32,7 +32,7 @@ fn route_changed(
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
     if !playback.player.is_playing() {
-        return Ok(Cmd::none());
+        return Err(Unhandled);
     }
     let paused = playback::update(playback, PlaybackRequest::Pause, now)?;
     let raised = playback.workspace.show(
@@ -53,14 +53,14 @@ mod tests {
             cue::Cue,
             model::Model,
             percent::Percent,
-            player::{Player, Preload},
+            player::Player,
             playhead::Playhead,
             speed::Speed,
             time::Moment,
             track::{AudioFormat, Tags, Track},
         },
         message::{MacosEvent, PlaybackRequest},
-        update::{macos::update, playback, playback_parts},
+        update::{machine::Unhandled, macos::update, playback, playback_parts},
     };
 
     fn playing_model() -> Model {
@@ -75,12 +75,12 @@ mod tests {
         Model {
             player: Player::Playing {
                 track,
-                head: Playhead::anchored(
+                playhead: Playhead::anchored(
                     Duration::ZERO,
                     Moment::default(),
                     Speed::default(),
                 ),
-                preload: Preload::None,
+                preloaded: None,
             },
             ..Model::default()
         }
@@ -116,15 +116,14 @@ mod tests {
     }
 
     #[test]
-    fn route_change_while_idle_does_nothing() {
+    fn route_change_while_idle_is_refused() {
         let mut model = Model::default();
-        let cmd = update(
+        let result = update(
             &mut playback_parts(&mut model),
             MacosEvent::OutputRouteChanged,
             Moment::default(),
-        )
-        .unwrap();
-        assert!(cmd == Cmd::none());
+        );
+        assert_eq!(result, Err(Unhandled));
     }
 
     #[test]

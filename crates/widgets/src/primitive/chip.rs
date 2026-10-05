@@ -1,37 +1,22 @@
-use kernel::domain::{appearance::SpeedChip, speed::Speed};
+use kernel::domain::{appearance::SpeedChip, geometry::Cells, speed::Speed};
 use ratatui::{style::Color, text::Span};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
+    pixels::numeric::small_count_u16,
     primitive::{glyphs, span::text},
-    theme::{active_theme::ActiveTheme, colors::Role},
+    theme::colors::Colors,
 };
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ChipStyle {
-    pub(crate) border: Color,
-    pub(crate) foreground: Color,
-}
-
-impl ChipStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            border: theme.role(Role::Dim),
-            foreground: theme.role(Role::Text),
-        }
-    }
-}
-
 #[must_use]
-pub(crate) fn spans(label: &str, colors: ChipStyle) -> Vec<Span<'static>> {
+pub(crate) fn spans(label: &str, colors: &Colors<Color>) -> Vec<Span<'static>> {
     vec![
         text(format!("{}{}", glyphs::chip::OPEN, glyphs::chip::PAD))
-            .fg(colors.border)
+            .fg(colors.muted_foreground)
             .into(),
-        text(label.to_uppercase()).fg(colors.foreground).into(),
+        text(label.to_uppercase()).fg(colors.text).into(),
         text(format!("{}{}", glyphs::chip::PAD, glyphs::chip::CLOSE))
-            .fg(colors.border)
+            .fg(colors.muted_foreground)
             .into(),
     ]
 }
@@ -47,7 +32,7 @@ pub(crate) fn compact(label: &str) -> String {
 }
 
 #[must_use]
-pub(crate) fn width(label: &str) -> u16 {
+pub(crate) fn width(label: &str) -> Cells {
     let decoration = format!(
         "{}{}{}{}",
         glyphs::chip::OPEN,
@@ -56,7 +41,7 @@ pub(crate) fn width(label: &str) -> u16 {
         glyphs::chip::CLOSE
     );
     let cells = decoration.width() + label.to_uppercase().width();
-    u16::try_from(cells).unwrap_or(u16::MAX)
+    Cells(small_count_u16(cells))
 }
 
 fn speed_chip_text(speed: Speed, mode: SpeedChip) -> Option<String> {
@@ -69,21 +54,21 @@ fn speed_chip_text(speed: Speed, mode: SpeedChip) -> Option<String> {
 }
 
 #[must_use]
-pub(crate) fn speed_chip_width(speed: Speed, mode: SpeedChip) -> u16 {
+pub(crate) fn speed_chip_width(speed: Speed, mode: SpeedChip) -> Cells {
     let Some(label) = speed_chip_text(speed, mode) else {
-        return 0;
+        return Cells(0);
     };
     let width = glyphs::speed_chip::GAP.width()
         + glyphs::speed_chip::MARKER.width()
         + label.width();
-    u16::try_from(width).unwrap_or(u16::MAX)
+    Cells(small_count_u16(width))
 }
 
 #[must_use]
 pub(crate) fn speed_chip_spans(
     speed: Speed,
     mode: SpeedChip,
-    colors: ChipStyle,
+    colors: &Colors<Color>,
 ) -> Vec<Span<'static>> {
     let Some(label) = speed_chip_text(speed, mode) else {
         return Vec::new();
@@ -91,10 +76,10 @@ pub(crate) fn speed_chip_spans(
     vec![
         text(glyphs::speed_chip::GAP).into(),
         text(glyphs::speed_chip::MARKER)
-            .fg(colors.border)
+            .fg(colors.muted_foreground)
             .dim()
             .into(),
-        text(label).fg(colors.foreground).dim().into(),
+        text(label).fg(colors.accent).dim().into(),
     ]
 }
 
@@ -105,17 +90,16 @@ mod tests {
     use rstest::rstest;
     use unicode_width::UnicodeWidthStr;
 
-    use crate::primitive::chip::{
-        ChipStyle,
-        spans,
-        speed_chip_spans,
-        speed_chip_width,
+    use crate::{
+        primitive::chip::{spans, speed_chip_spans, speed_chip_width},
+        theme::colors::Colors,
     };
 
-    fn colors() -> ChipStyle {
-        ChipStyle {
-            border: Color::DarkGray,
-            foreground: Color::Cyan,
+    fn colors() -> Colors<Color> {
+        Colors {
+            muted_foreground: Color::DarkGray,
+            accent: Color::Cyan,
+            ..Colors::default()
         }
     }
 
@@ -138,7 +122,7 @@ mod tests {
         #[case] mode: SpeedChip,
         #[case] expected: Option<&str>,
     ) {
-        let spans = speed_chip_spans(speed, mode, colors());
+        let spans = speed_chip_spans(speed, mode, &colors());
         let text = (!spans.is_empty()).then(|| {
             spans
                 .iter()
@@ -149,7 +133,7 @@ mod tests {
 
         let rendered: usize = spans.iter().map(|span| span.content.width()).sum();
         assert_eq!(
-            usize::from(speed_chip_width(speed, mode)),
+            speed_chip_width(speed, mode).count(),
             rendered,
             "the reserved width must match what is painted"
         );
@@ -158,7 +142,7 @@ mod tests {
     #[test]
     fn the_marker_and_the_value_carry_the_dim_face_and_their_own_colours() {
         let spans =
-            speed_chip_spans(Speed::clamped(1.25), SpeedChip::Changed, colors());
+            speed_chip_spans(Speed::clamped(1.25), SpeedChip::Changed, &colors());
         let faces: Vec<(Option<Color>, bool)> = spans
             .iter()
             .skip(1)
@@ -177,11 +161,12 @@ mod tests {
     }
 
     fn joined_generic(text: &str) -> String {
-        let colors = ChipStyle {
-            border: Color::White,
-            foreground: Color::Red,
+        let colors = Colors {
+            muted_foreground: Color::White,
+            text: Color::Red,
+            ..Colors::default()
         };
-        spans(text, colors)
+        spans(text, &colors)
             .iter()
             .map(|span| span.content.to_string())
             .collect()

@@ -1,7 +1,7 @@
 use kernel::{
     cmd::{Cmd, Effect},
     domain::{
-        config::{ConfigError, ConfigName, Diagnostic},
+        config::{ConfigError, ConfigName},
         cue::Cue,
         io_error::IoError,
         keymap::{Action, KeyOverride, KeymapOverrides},
@@ -28,8 +28,8 @@ fn theme() -> ConfigName {
 fn fail(source: ConfigName, text: &str) -> ConfigEvent {
     ConfigEvent::Reloaded(ConfigReload {
         name: source,
-        result: Err(ConfigError::Invalid(Diagnostic::from_error(
-            &std::io::Error::other(text.to_string()),
+        result: Err(ConfigError::invalid(&std::io::Error::other(
+            text.to_string(),
         ))),
     })
 }

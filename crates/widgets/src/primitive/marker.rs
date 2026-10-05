@@ -1,4 +1,3 @@
-use kernel::cmd::Playback;
 use unicode_width::UnicodeWidthStr;
 
 use crate::primitive::glyphs;
@@ -19,14 +18,6 @@ pub(crate) fn favorite_marker(favorite: Favorite) -> &'static str {
 pub(crate) enum Favorite {
     Yes,
     No,
-}
-
-#[must_use]
-pub(crate) fn playing_marker(playing: Playback) -> &'static str {
-    match playing {
-        Playback::Playing => glyphs::playlist::PLAYING,
-        Playback::Paused => "",
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

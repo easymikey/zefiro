@@ -7,20 +7,28 @@ use kernel::{
         speed::Speed,
     },
     message::AudioEvent,
+    update::machine::LoopEffect,
 };
 
 use crate::{
     engine::{
         crossfade::replay_gain_factor,
-        effect::EngineEffect,
+        effect::{AudioLoopCmd, EngineEffect},
         message::DeviceChoice,
         phase::Phase,
+        revisions::JobRevisions,
     },
     gain::Gain,
 };
 
+#[derive(Debug)]
+pub(crate) struct Engine {
+    pub(crate) state: EngineState,
+    pub(crate) job_revisions: JobRevisions,
+}
+
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Engine {
+pub(crate) enum EngineState {
     Closed(Closed),
     Live(Live),
 }
@@ -66,16 +74,14 @@ impl Live {
 pub(crate) fn announce(
     opened: DeviceChoice,
     device: OutputDevice,
-    cmd: Cmd<EngineEffect, AudioEvent>,
-) -> Cmd<EngineEffect, AudioEvent> {
+    loop_cmd: AudioLoopCmd,
+) -> AudioLoopCmd {
     if matches!(opened, DeviceChoice::Requested) {
-        return cmd;
+        return loop_cmd;
     }
-    Cmd::message(AudioEvent::DeviceFellBack(device)).then(cmd)
+    Cmd::message(AudioEvent::DeviceFellBack(device)).then(loop_cmd)
 }
 
-pub(crate) fn then_report(
-    cmd: Cmd<EngineEffect, AudioEvent>,
-) -> Cmd<EngineEffect, AudioEvent> {
-    cmd.then(Cmd::effect(EngineEffect::Report))
+pub(crate) fn then_report(loop_cmd: AudioLoopCmd) -> AudioLoopCmd {
+    loop_cmd.then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))
 }

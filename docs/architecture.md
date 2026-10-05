@@ -36,7 +36,7 @@ The layer map is conventions §1.1; edges only point down the table.
 | 1 | `library` | scan, tags, embedded covers, playlists, history, favorites; `LibraryDriver` |
 | 1 | `audio` | playback engine on rodio, spectrum tap; `AudioDriver` |
 | 1 | `macos` | media keys, Now Playing, system volume and output device (CoreAudio listeners); `MacosDriver`, `MainLoop` |
-| 2 | `runtime` | event loop, interpreter, timers, trace, cells, registry, ports, `DriverLoop`, start, drain, `host` |
+| 2 | `runtime` | event loop, interpreter, timers, cells, registry, ports, `DriverLoop`, start, drain, `host` |
 | 2 | `widgets` | pure terminal view: `Scene`, `FrameLayout`, the `screen` module, card, playlist, overlays, toast, animations, milkdrop, spectrum smoothing, pixel images |
 | 3 | `terminal` | terminal IO: session, input, key conversion, capability probe, window colours, image protocols |
 | 4 | `sifr` | binary: command line, startup, signals, the `Shell` implementation (view, presentation, motion clock, painter) |
@@ -55,7 +55,7 @@ The layer map is conventions §1.1; edges only point down the table.
 | terminal input | crossterm `read` | terminal events to the event loop |
 | signals | signal-hook | terminate |
 
-Off macOS `host` runs the body inline. Every driver thread runs under `catch_unwind`; on exit it reports `Message::Driver { driver, event: Stopped | Died(..) }`. `model.drivers` holds each driver's status; a port sends a command only to a running driver, otherwise the interpreter records a `Dropped` trace entry.
+Off macOS `host` runs the body inline. Every driver thread runs under `catch_unwind`; on exit it reports `Message::Driver { driver, event: Stopped | Died(..) }`. `model.drivers` holds each driver's status; a port sends a command only to a running driver, otherwise the interpreter drops the command (`DropReason::NotRunning` or `Closed`).
 
 Hardware drivers are injected: the binary passes the real spawners to `Runtime::start`, tests pass stubs, so start and stop are tested without a sound device.
 
@@ -111,6 +111,6 @@ One `select` over input, the mailbox and the cell doorbell, with one deadline: t
 
 The pending repaint is `Repaint { Settled, Now, NextFrame }`: input raises it to `Now` (paint at once), a fact or a doorbell to `NextFrame` (wait for the 33 ms grid since the last paint), `Settled` paints only when the shell's own `frame_due` has passed. The frame sources (animation, spectrum, progress bar, clock, sleep countdown) each live in its component's widgets module (`frame_due` fns); when nothing moves the loop blocks with no deadline.
 
-Every channel that carries traffic is bounded. The loop only `try_send`s to drivers; a full port records a `Dropped` trace entry and raises the port's congestion flag; a driver that finds the mailbox full raises its flag before it blocks. After each batch a raised flag with no open episode becomes one `DriverEvent::Full` and one toast. No cycle can deadlock: the loop only `try_send`s, drivers only `send`.
+Every channel that carries traffic is bounded. The loop only `try_send`s to drivers; a full port drops the command (`DropReason::Full`) and raises the port's congestion flag; a driver that finds the mailbox full raises its flag before it blocks. After each batch a raised flag with no open episode becomes one `DriverEvent::Full` and one toast. No cycle can deadlock: the loop only `try_send`s, drivers only `send`.
 
-The trace records dropped commands, join and restart failures and platform events; refused messages are not traced (an `Err(Unhandled)` is ordinary).
+Nothing records dropped commands, join or restart failures: the runtime keeps no trace. A debugging record is future devtools (§6.4).

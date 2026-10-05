@@ -1,7 +1,7 @@
 use kernel::domain::{geometry::Cells, overlay::DeleteCandidate};
 
 use crate::{
-    overlay::modal::prompt::{PromptBody, PromptStyle, PromptWidget},
+    overlay::modal::prompt::{PromptBody, PromptWidget},
     primitive::glyphs,
     theme::active_theme::ActiveTheme,
 };
@@ -31,7 +31,7 @@ pub(crate) fn prompt<'a>(
         body: PromptBody::Sentence(sentence(candidate)),
         error: None,
         avoid: &[],
-        style: PromptStyle::from_theme(&theme),
+        theme,
     }
 }
 

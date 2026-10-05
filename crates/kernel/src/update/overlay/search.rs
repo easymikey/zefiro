@@ -5,36 +5,29 @@ use crate::{
     domain::{
         cursor::Cursor,
         cursor_over::CursorOver,
-        direction::Direction,
+        index::ViewIndex,
         overlay::SearchQuery,
         track::Track,
     },
-    message::{Message, QueueRequest, SearchEdit},
+    message::{Message, QueueRequest, SearchEdit, SearchRequest},
     update::machine::{Machine, Unhandled},
 };
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum SearchQueryMessage {
-    Edit(SearchEdit),
-    Navigate(Direction),
-    Enqueue,
-}
-
 impl Machine for CursorOver<SearchQuery> {
-    type Message = SearchQueryMessage;
+    type Message = SearchRequest;
     type Effect = Cmd;
 
-    fn transition(&mut self, message: SearchQueryMessage) -> Result<Cmd, Unhandled> {
+    fn transition(&mut self, message: SearchRequest) -> Result<Cmd, Unhandled> {
         match message {
-            SearchQueryMessage::Edit(edit) => {
+            SearchRequest::Edit(edit) => {
                 edit_query(&mut self.content.input, edit);
                 Ok(Cmd::none())
             }
-            SearchQueryMessage::Navigate(direction) => {
+            SearchRequest::Navigate(direction) => {
                 self.navigate(direction);
                 Ok(Cmd::none())
             }
-            SearchQueryMessage::Enqueue => enqueue(self),
+            SearchRequest::Enqueue => enqueue(self),
         }
     }
 }
@@ -59,13 +52,15 @@ fn edit_query(input: &mut String, edit: SearchEdit) {
     }
 }
 
+impl CursorOver<SearchQuery> {
+    #[must_use]
+    pub(crate) fn selected_match(&self) -> Option<ViewIndex> {
+        self.content.matches.get(self.selected().get()).copied()
+    }
+}
+
 fn enqueue(search: &CursorOver<SearchQuery>) -> Result<Cmd, Unhandled> {
-    let index = search
-        .content
-        .matches
-        .get(search.selected().get())
-        .copied()
-        .ok_or(Unhandled)?;
+    let index = search.selected_match().ok_or(Unhandled)?;
     Ok(Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(
         index,
     ))))

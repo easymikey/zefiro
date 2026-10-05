@@ -5,7 +5,7 @@ use kernel::{
     domain::{
         cue::Cue,
         model::{Model, ScanStatus},
-        player::{Player, Preload},
+        player::Player,
         playhead::Playhead,
         revision::Revision,
         speed::Speed,
@@ -105,8 +105,12 @@ fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
     let (mut model, _) = listed_library(&["/music/a.flac", "/music/b.flac"]);
     model.player = Player::Playing {
         track: track_at("/music/a.flac"),
-        head: Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default()),
-        preload: Preload::None,
+        playhead: Playhead::anchored(
+            Duration::ZERO,
+            Moment::default(),
+            Speed::default(),
+        ),
+        preloaded: None,
     };
 
     let cmd = update(

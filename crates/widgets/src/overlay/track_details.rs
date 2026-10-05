@@ -1,10 +1,8 @@
-use kernel::domain::{
-    geometry::Cells,
-    track::{Kbps, Track},
-};
+use kernel::domain::{geometry::Cells, track::Track};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
+    style::Color,
     text::Line,
     widgets::{Paragraph, Widget},
 };
@@ -12,18 +10,19 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     overlay::modal::{
-        frame::{Modal, ModalBounds, ModalSize, PlacedModal},
-        metrics::ModalRowStyle,
+        frame::{Modal, ModalSize},
         placement::OverlayAreas,
     },
+    pixels::numeric::small_count_u16,
     primitive::{
         canvas::Canvas,
-        format_chips::kilohertz,
+        format_chips::format_chip_values,
         glyphs,
         relative_time::format_time,
         span::{line, text},
         text::{truncate, truncate_from_left},
     },
+    theme::colors::Colors,
 };
 
 const MIN_WIDTH: u16 = 28;
@@ -32,7 +31,7 @@ const LEADER_COLUMN: usize = 10;
 #[derive(Debug)]
 pub(crate) struct TrackDetailsWidget<'a> {
     pub(crate) track: &'a Track,
-    pub(crate) style: ModalRowStyle,
+    pub(crate) colors: Colors<Color>,
     pub(crate) avoid: &'a [Rect],
 }
 
@@ -49,18 +48,9 @@ impl TrackDetailsWidget<'_> {
         let OverlayAreas::Dialog(areas) = areas else {
             return;
         };
-        let Canvas { area, buffer } = canvas;
+        let buffer = canvas.buffer;
         let rows = value_rows(self.track);
-        self.modal(&rows).paint(
-            PlacedModal {
-                areas,
-                bounds: ModalBounds {
-                    area,
-                    avoid: self.avoid,
-                },
-            },
-            buffer,
-        );
+        self.modal(&rows).paint(areas, buffer);
         if areas.body.width == 0 || areas.body.height == 0 {
             return;
         }
@@ -73,8 +63,7 @@ impl TrackDetailsWidget<'_> {
             .iter()
             .filter(|detail_row| detail_row.truncation == Truncation::Tail)
             .map(|detail_row| {
-                u16::try_from(detail_row.prefix.width() + detail_row.value.width())
-                    .unwrap_or(u16::MAX)
+                small_count_u16(detail_row.prefix.width() + detail_row.value.width())
             })
             .max()
             .unwrap_or(0)
@@ -84,13 +73,13 @@ impl TrackDetailsWidget<'_> {
             size: ModalSize::Dialog {
                 min_width: Cells(MIN_WIDTH),
                 content_width: Cells(content_width),
-                content_lines: Cells(u16::try_from(rows.len()).unwrap_or(u16::MAX)),
+                content_lines: Cells(small_count_u16(rows.len())),
             },
             hint: Some(line([
-                text(glyphs::track_details::HINT).fg(self.style.muted_foreground)
+                text(glyphs::track_details::HINT).fg(self.colors.muted_foreground)
             ])),
-            border: self.style.accent,
-            window_background: self.style.background,
+            border: self.colors.accent,
+            window_background: self.colors.window_background,
         }
     }
 
@@ -104,8 +93,8 @@ impl TrackDetailsWidget<'_> {
                 }
                 .into_owned();
                 line([
-                    text(detail_row.prefix).fg(self.style.muted_foreground),
-                    text(value).fg(self.style.foreground),
+                    text(detail_row.prefix).fg(self.colors.muted_foreground),
+                    text(value).fg(self.colors.text),
                 ])
             })
             .collect()
@@ -226,29 +215,21 @@ fn plain_prefix(label: &str) -> String {
 
 fn track_number(track: &Track) -> String {
     match (track.tags().track, track.tags().track_total) {
-        (Some(number), Some(total)) => format!("{number}/{total}"),
+        (Some(number), Some(total)) => {
+            format!("{number}{}{total}", glyphs::track_details::TRACK_OF)
+        }
         (Some(number), None) => number.to_string(),
         (None, _) => glyphs::track_details::MISSING.to_string(),
     }
 }
 
 fn format_summary(track: &Track) -> String {
-    let audio_format = track.audio_format();
-    let mut parts = Vec::new();
-    if let Some(format) = &audio_format.format {
-        parts.push(format.to_uppercase());
-    }
-    if let Some(Kbps(bitrate)) = audio_format.bitrate {
-        parts.push(format!("{bitrate} kbps"));
-    }
-    if let Some(sample_rate) = audio_format.sample_rate {
-        parts.push(format!("{:.1} kHz", kilohertz(sample_rate)));
-    }
-    if parts.is_empty() {
-        glyphs::track_details::MISSING.to_string()
-    } else {
-        parts.join(" · ")
-    }
+    Some(format_chip_values(track.audio_format()))
+        .filter(|values| !values.is_empty())
+        .map_or_else(
+            || glyphs::track_details::MISSING.to_string(),
+            |values| values.join(glyphs::DOT_SEPARATOR),
+        )
 }
 
 fn missing_or_value(tag: Option<String>) -> String {
@@ -260,12 +241,19 @@ mod tests {
     use std::time::Duration;
 
     use kernel::domain::track::{AudioFormat, Hertz, Kbps, Tags, Track};
+    use ratatui::style::Color;
+    use rstest::{fixture, rstest};
 
     use crate::{
-        overlay::{modal::metrics::ModalRowStyle, track_details::TrackDetailsWidget},
+        overlay::track_details::TrackDetailsWidget,
         test_support::{noir, rendered},
-        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
+        theme::{active_theme::ActiveTheme, colors::Colors, rgb::ColorDepth},
     };
+
+    #[fixture]
+    fn colors() -> Colors<Color> {
+        ActiveTheme::new(&noir(), ColorDepth::TrueColor).colors()
+    }
 
     fn full_track() -> Track {
         Track::builder()
@@ -289,16 +277,12 @@ mod tests {
             .build()
     }
 
-    #[test]
-    fn track_details_overlay_shows_every_row_at_80x24() {
-        let theme = noir();
+    #[rstest]
+    fn track_details_overlay_shows_every_row_at_80x24(colors: Colors<Color>) {
         let track = full_track();
         let overlay = TrackDetailsWidget {
             track: &track,
-            style: ModalRowStyle::from_theme(&ActiveTheme::new(
-                &theme,
-                ColorDepth::TrueColor,
-            )),
+            colors,
             avoid: &[],
         };
         insta::assert_snapshot!(
@@ -307,9 +291,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn track_details_overlay_truncates_a_long_path_from_the_left_at_48x16() {
-        let theme = noir();
+    #[rstest]
+    fn track_details_overlay_truncates_a_long_path_from_the_left_at_48x16(
+        colors: Colors<Color>,
+    ) {
         let track = Track::builder()
             .path(
                 "/Users/listener/Music/Library/Soundtracks/Breakfast_at_Tiffanys/moon_river.mp3",
@@ -323,10 +308,7 @@ mod tests {
             .build();
         let overlay = TrackDetailsWidget {
             track: &track,
-            style: ModalRowStyle::from_theme(&ActiveTheme::new(
-                &theme,
-                ColorDepth::TrueColor,
-            )),
+            colors,
             avoid: &[],
         };
         insta::assert_snapshot!(
@@ -335,16 +317,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn track_details_overlay_does_not_panic_on_a_tiny_terminal() {
-        let theme = noir();
+    #[rstest]
+    fn track_details_overlay_does_not_panic_on_a_tiny_terminal(colors: Colors<Color>) {
         let track = full_track();
         let overlay = TrackDetailsWidget {
             track: &track,
-            style: ModalRowStyle::from_theme(&ActiveTheme::new(
-                &theme,
-                ColorDepth::TrueColor,
-            )),
+            colors,
             avoid: &[],
         };
         assert_eq!(

@@ -1,26 +1,16 @@
 use crate::{
     cmd::{AudioCmd, Cmd, ConfigCmd, ConfigPatch, Effect},
     domain::{
+        appearance_rows::{appearance_patch, appearance_rows},
         device::OutputDevice,
         direction::Direction,
-        setting_row::{AppearanceField, AppearanceSetting, Choice, SettingRow},
+        setting_row::{AppearanceSetting, SettingRow},
         settings::{ReplayGain, Settings},
         sleep_presets::SleepPresets,
         theme::{ThemeChoice, Themes},
     },
-    update::{
-        config::ConfigParts,
-        machine::{Machine, Unhandled},
-    },
+    update::{config::ConfigParts, machine::Unhandled},
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingsMessage {
-    ToggleReplayGain,
-    Crossfade(Direction),
-    OutputDevice(Direction),
-    SleepPresets(Direction),
-}
 
 pub(crate) fn step_setting(
     config: ConfigParts<'_>,
@@ -28,38 +18,34 @@ pub(crate) fn step_setting(
     direction: Direction,
 ) -> Result<Cmd, Unhandled> {
     let ConfigParts {
-        themes,
-        settings,
-        appearance_rows,
-        ..
+        themes, settings, ..
     } = config;
-    let message = match row {
-        SettingRow::Theme => return Ok(theme_picked(themes, direction)),
-        SettingRow::Appearance(field) => {
-            return Ok(appearance_stepped(appearance_rows, field, direction));
-        }
-        SettingRow::Crossfade => SettingsMessage::Crossfade(direction),
-        SettingRow::ReplayGain => SettingsMessage::ToggleReplayGain,
-        SettingRow::OutputDevice => SettingsMessage::OutputDevice(direction),
-        SettingRow::SleepPresets => SettingsMessage::SleepPresets(direction),
-    };
-    settings.transition(message)
+    match row {
+        SettingRow::Theme => theme_picked(themes, direction),
+        SettingRow::Appearance(field) => appearance_rows(settings.appearance)
+            .into_iter()
+            .find(|slot| slot.row.field == field)
+            .ok_or(Unhandled)
+            .map(|slot| appearance_stepped(settings, slot, direction)),
+        SettingRow::Crossfade => Ok(step_crossfade(settings, direction)),
+        SettingRow::ReplayGain => Ok(step_replay_gain(settings)),
+        SettingRow::OutputDevice => step_output_device(settings, direction),
+        SettingRow::SleepPresets => step_sleep_presets(settings, direction),
+    }
 }
 
 fn appearance_stepped(
-    appearance_rows: &mut [AppearanceSetting],
-    field: AppearanceField,
+    settings: &mut Settings,
+    slot: AppearanceSetting,
     direction: Direction,
 ) -> Cmd {
-    let Some(slot) = appearance_rows
-        .iter_mut()
-        .find(|slot| slot.row.field == field)
-    else {
-        return Cmd::none();
-    };
     let option = slot.choice.stepped(slot.row.control, direction);
-    slot.choice = Choice::Option(option);
-    let setting = Cmd::from(Effect::Config(ConfigCmd::SetAppearance { field, option }));
+    let patch = appearance_patch(slot.row.field, option);
+    if let Some(patch) = patch {
+        settings.appearance = settings.appearance.patched(patch);
+    }
+    let setting =
+        patch.map(|patch| Cmd::from(Effect::Config(ConfigCmd::SetAppearance(patch))));
     let theme = slot
         .row
         .themes
@@ -72,41 +58,21 @@ fn appearance_stepped(
             ))))
         });
     let cue = slot.row.cue.map(Cmd::from);
-    [Some(setting), theme, cue]
+    [setting, theme, cue]
         .into_iter()
         .flatten()
         .fold(Cmd::none(), Cmd::then)
 }
 
-fn theme_picked(themes: &mut Themes, direction: Direction) -> Cmd {
-    let Some(next) = themes.stepped(direction) else {
-        return Cmd::none();
-    };
+fn theme_picked(themes: &mut Themes, direction: Direction) -> Result<Cmd, Unhandled> {
+    let next = themes.stepped(direction).ok_or(Unhandled)?;
     themes.selected = ThemeChoice::Named(next.clone());
-    Cmd::from_iter([
+    Ok(Cmd::from_iter([
         Effect::Config(ConfigCmd::Save(
             ConfigPatch::builder().theme(next.clone()).build(),
         )),
         Effect::Config(ConfigCmd::SelectTheme(ThemeChoice::Named(next))),
-    ])
-}
-
-impl Machine for Settings {
-    type Message = SettingsMessage;
-    type Effect = Cmd;
-
-    fn transition(&mut self, message: SettingsMessage) -> Result<Cmd, Unhandled> {
-        Ok(match message {
-            SettingsMessage::ToggleReplayGain => step_replay_gain(self),
-            SettingsMessage::Crossfade(direction) => step_crossfade(self, direction),
-            SettingsMessage::OutputDevice(direction) => {
-                step_output_device(self, direction)
-            }
-            SettingsMessage::SleepPresets(direction) => {
-                step_sleep_presets(self, direction)
-            }
-        })
-    }
+    ]))
 }
 
 fn step_replay_gain(settings: &mut Settings) -> Cmd {
@@ -136,9 +102,12 @@ fn step_crossfade(settings: &mut Settings, direction: Direction) -> Cmd {
     ])
 }
 
-fn step_output_device(settings: &mut Settings, direction: Direction) -> Cmd {
+fn step_output_device(
+    settings: &mut Settings,
+    direction: Direction,
+) -> Result<Cmd, Unhandled> {
     if settings.output_devices.is_empty() {
-        return Cmd::none();
+        return Err(Unhandled);
     }
     let ring_len = settings.output_devices.len() + 1;
     let current = settings.audio.device.named().map_or(0, |name| {
@@ -156,25 +125,26 @@ fn step_output_device(settings: &mut Settings, direction: Direction) -> Cmd {
             OutputDevice::Named(device.name.clone())
         });
     settings.audio.device = next.clone();
-    Cmd::from_iter([
+    Ok(Cmd::from_iter([
         Effect::Config(ConfigCmd::Save(
             ConfigPatch::builder().device(next.clone()).build(),
         )),
         Effect::Audio(AudioCmd::SetDevice(next)),
-    ])
+    ]))
 }
 
-fn step_sleep_presets(settings: &mut Settings, direction: Direction) -> Cmd {
+fn step_sleep_presets(
+    settings: &mut Settings,
+    direction: Direction,
+) -> Result<Cmd, Unhandled> {
     let presets = settings.audio.sleep_presets.as_slice();
     let current = SleepPresets::bundle_index(presets)
         .unwrap_or_else(|| SleepPresets::nearest_bundle(presets));
     let next_index = direction.wrapped(current, SleepPresets::BUNDLES.len());
-    let Some(next) = SleepPresets::bundle(next_index) else {
-        return Cmd::none();
-    };
+    let next = SleepPresets::bundle(next_index).ok_or(Unhandled)?;
     settings.audio.sleep_presets = next.clone();
-    Effect::Config(ConfigCmd::Save(
+    Ok(Effect::Config(ConfigCmd::Save(
         ConfigPatch::builder().sleep_presets(next).build(),
     ))
-    .into()
+    .into())
 }

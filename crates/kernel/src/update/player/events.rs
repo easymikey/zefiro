@@ -1,29 +1,27 @@
 use std::{mem, sync::Arc, time::Duration};
 
 use crate::{
-    cmd::{AudioCmd, Cmd, CoverJob, Effect, LibraryCmd, TrackLoad},
+    cmd::{AudioCmd, Cmd, CoverJob, Effect, LibraryCmd, MacosCmd, TrackLoad},
     domain::{
-        cue::PlaybackChange,
+        cue::{Cue, PlaybackChange},
         geometry::Pixels,
-        player::{PausedBy, Player, Preload},
+        history::HistoryEntry,
+        player::{PausedBy, Player},
         playhead::Playhead,
         revision::Revision,
         time::Moment,
         track::Track,
+        transport::PRELOAD_LEAD,
     },
     message::AudioError,
     update::{
         machine::Unhandled,
-        player::{
-            effects::{handover_effects, seek_effect},
-            stamp::{Anchor, Stamp, StartOrigin},
-        },
+        player::stamp::{Anchor, Stamp, StartOrigin},
     },
 };
 
 #[derive(Debug)]
 pub struct Lookahead {
-    pub preload_lead: Duration,
     pub ab_loop: Option<(Duration, Duration)>,
     pub next: Option<Arc<Track>>,
     pub duration: Duration,
@@ -39,14 +37,14 @@ impl Lookahead {
 
     fn preload_due_at(&self) -> Option<Duration> {
         (self.next.is_some() && !self.duration.is_zero())
-            .then(|| self.duration.saturating_sub(self.preload_lead))
+            .then(|| self.duration.saturating_sub(PRELOAD_LEAD))
     }
 
     fn is_preload_due(&self, at: Duration) -> bool {
         self.preload_due_at().is_some_and(|due| at >= due)
     }
 
-    fn preloading(self, at: Duration, preload: &mut Preload) -> Cmd {
+    fn preloading(self, at: Duration, preloaded: &mut Option<Arc<Track>>) -> Cmd {
         match self.next {
             Some(next) if self.is_preload_due(at) => {
                 let preload_cmd = Effect::Audio(AudioCmd::Preload(
@@ -59,7 +57,7 @@ impl Lookahead {
                     }))
                 });
                 let cmd = Cmd::from_iter(std::iter::once(preload_cmd).chain(prefetch));
-                *preload = Preload::Queued(next);
+                *preloaded = Some(next);
                 cmd
             }
             Some(_) | None => Cmd::none(),
@@ -74,15 +72,19 @@ impl Player {
         anchor: Anchor,
     ) -> Result<Cmd, Unhandled> {
         match mem::replace(self, Player::Stopped) {
-            Player::Loading { track, at } => {
+            Player::Loading(track) => {
                 let track = match total {
                     Some(total) => Arc::new(track.with_duration(total)),
                     None => track,
                 };
                 *self = Player::Playing {
                     track,
-                    head: Playhead::anchored(at, anchor.since, anchor.speed),
-                    preload: Preload::None,
+                    playhead: Playhead::anchored(
+                        Duration::ZERO,
+                        anchor.since,
+                        anchor.speed,
+                    ),
+                    preloaded: None,
                 };
                 Ok(Cmd::none())
             }
@@ -95,7 +97,11 @@ impl Player {
         }
     }
 
-    pub(crate) fn failed(&mut self, failure: &AudioError, now: Moment) -> Cmd {
+    pub(crate) fn failed(
+        &mut self,
+        failure: &AudioError,
+        now: Moment,
+    ) -> Result<Cmd, Unhandled> {
         match failure {
             AudioError::OutputLost(..) => self.output_lost(now),
             AudioError::Decode { .. }
@@ -103,23 +109,23 @@ impl Player {
             | AudioError::ListDevices { .. }
             | AudioError::Stream { .. }
             | AudioError::Preload { .. } => self.load_failed(),
-            AudioError::Seek { .. } => Cmd::none(),
+            AudioError::Seek { .. } => Err(Unhandled),
         }
     }
 
-    fn output_lost(&mut self, now: Moment) -> Cmd {
+    fn output_lost(&mut self, now: Moment) -> Result<Cmd, Unhandled> {
         match self {
             Player::Playing { .. } => self.pause(now, PausedBy::Listener),
-            Player::Loading { .. } => self.stop(),
-            Player::Paused { .. } | Player::Stopped => Cmd::none(),
+            Player::Loading(..) => Ok(self.stop()),
+            Player::Paused { .. } | Player::Stopped => Err(Unhandled),
         }
     }
 
-    fn load_failed(&mut self) -> Cmd {
+    fn load_failed(&mut self) -> Result<Cmd, Unhandled> {
         match self {
-            Player::Loading { .. } => self.stop(),
+            Player::Loading(..) => Ok(self.stop()),
             Player::Playing { .. } | Player::Paused { .. } | Player::Stopped => {
-                Cmd::none()
+                Err(Unhandled)
             }
         }
     }
@@ -129,25 +135,22 @@ impl Player {
         offset: Duration,
         lookahead: Lookahead,
     ) -> Result<Cmd, Unhandled> {
-        match (&mut *self, lookahead.loop_start(offset)) {
-            (Player::Playing { head, preload, .. }, Some(a)) => {
-                *head = Playhead::anchored(a, lookahead.now, head.speed);
-                *preload = mem::replace(preload, Preload::None).seek_reset();
-                Ok(seek_effect(a))
+        if let Some(a) = lookahead.loop_start(offset) {
+            return self.seek(a, lookahead.now);
+        }
+        match self {
+            Player::Playing {
+                playhead,
+                preloaded,
+                ..
+            } => {
+                *playhead = Playhead::anchored(offset, lookahead.now, playhead.speed);
+                Ok(match preloaded {
+                    None => lookahead.preloading(offset, preloaded),
+                    Some(_) => Cmd::none(),
+                })
             }
-            (Player::Playing { head, preload, .. }, None) => {
-                *head = Playhead::anchored(offset, lookahead.now, head.speed);
-                match preload {
-                    Preload::None => Ok(lookahead.preloading(offset, preload)),
-                    Preload::Queued(_) | Preload::Stale(_) => Ok(Cmd::none()),
-                }
-            }
-            (Player::Paused { at, .. }, Some(a)) => {
-                *at = a;
-                Ok(seek_effect(a))
-            }
-            (Player::Paused { .. }, None)
-            | (Player::Loading { .. } | Player::Stopped, Some(_) | None) => {
+            Player::Paused { .. } | Player::Loading(..) | Player::Stopped => {
                 Err(Unhandled)
             }
         }
@@ -159,11 +162,11 @@ impl Player {
         now: Moment,
     ) -> Result<Cmd, Unhandled> {
         match self {
-            Player::Playing { head, .. } => {
-                *head = Playhead::anchored(offset, now, head.speed);
+            Player::Playing { playhead, .. } => {
+                *playhead = Playhead::anchored(offset, now, playhead.speed);
                 Ok(Cmd::none())
             }
-            Player::Paused { .. } | Player::Loading { .. } | Player::Stopped => {
+            Player::Paused { .. } | Player::Loading(..) | Player::Stopped => {
                 Err(Unhandled)
             }
         }
@@ -177,32 +180,34 @@ impl Player {
         match self {
             Player::Playing {
                 track,
-                head,
-                preload,
+                playhead,
+                preloaded,
             } => {
                 if let Some(next) = next {
                     *track = next;
                 }
-                *head = Playhead::anchored(Duration::ZERO, now, head.speed);
-                *preload = Preload::None;
+                *playhead = Playhead::anchored(Duration::ZERO, now, playhead.speed);
+                *preloaded = None;
                 Ok(Cmd::from_iter(handover_effects(
                     track,
                     PlaybackChange::Play,
                     now,
                 )))
             }
-            Player::Paused { track, at, .. } => {
+            Player::Paused {
+                track, position, ..
+            } => {
                 if let Some(next) = next {
                     *track = next;
                 }
-                *at = Duration::ZERO;
+                *position = Duration::ZERO;
                 Ok(Cmd::from_iter(handover_effects(
                     track,
                     PlaybackChange::Pause,
                     now,
                 )))
             }
-            Player::Loading { .. } | Player::Stopped => Err(Unhandled),
+            Player::Loading(..) | Player::Stopped => Err(Unhandled),
         }
     }
 
@@ -216,7 +221,7 @@ impl Player {
                 Some(track) => self.start(track, StartOrigin::TrackEnded(stamp)),
                 None => self.stop(),
             }),
-            Player::Paused { .. } | Player::Loading { .. } | Player::Stopped => {
+            Player::Paused { .. } | Player::Loading(..) | Player::Stopped => {
                 Err(Unhandled)
             }
         }
@@ -235,6 +240,33 @@ pub(crate) fn next_decision(head: Playhead, lookahead: &Lookahead) -> Option<Dur
     .filter(|&point| point > current)
     .min()?;
     Some((target - current).div_f32(head.speed.get()))
+}
+
+pub(crate) fn seek_effect(target: Duration) -> Cmd {
+    Cmd::from_iter([
+        Effect::Audio(AudioCmd::Seek(target)),
+        Effect::Macos(MacosCmd::SetPosition(target)),
+    ])
+}
+
+pub(crate) fn handover_effects(
+    track: &Arc<Track>,
+    playback: PlaybackChange,
+    now: Moment,
+) -> Vec<Effect> {
+    [
+        Effect::Library(LibraryCmd::AppendHistory(HistoryEntry::from_track(
+            track, now,
+        ))),
+        Effect::Macos(MacosCmd::NowPlaying(Some(Arc::clone(track)))),
+    ]
+    .into_iter()
+    .chain(playback.effects())
+    .chain([
+        Effect::Animate(Cue::TrackChanged),
+        Effect::Animate(Cue::PlaybackChanged(playback)),
+    ])
+    .collect()
 }
 
 #[cfg(test)]
@@ -275,7 +307,6 @@ mod tests {
     }
 
     struct Setup {
-        preload_lead: u64,
         ab_loop: Option<(u64, u64)>,
         next: Option<Arc<Track>>,
         duration: u64,
@@ -283,7 +314,6 @@ mod tests {
 
     fn lookahead(setup: Setup) -> Lookahead {
         Lookahead {
-            preload_lead: Duration::from_secs(setup.preload_lead),
             ab_loop: setup
                 .ab_loop
                 .map(|(a, b)| (Duration::from_secs(a), Duration::from_secs(b))),
@@ -298,37 +328,37 @@ mod tests {
     #[rstest]
     #[case::no_decision_ahead_arms_nothing(
         head_at(0, 1.0),
-        lookahead(Setup { preload_lead: 10, ab_loop: None, next: None, duration: 0 }),
+        lookahead(Setup { ab_loop: None, next: None, duration: 0 }),
         None
     )]
     #[case::preload_due_point_arms_at_unity_speed(
         head_at(0, 1.0),
-        lookahead(Setup { preload_lead: 10, ab_loop: None, next: Some(a_track()), duration: 100 }),
+        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration: 100 }),
         Some(90)
     )]
     #[case::ab_b_point_arms_when_earlier_than_preload(
         head_at(0, 1.0),
-        lookahead(Setup { preload_lead: 10, ab_loop: Some((5, 20)), next: Some(a_track()), duration: 100 }),
+        lookahead(Setup { ab_loop: Some((5, 20)), next: Some(a_track()), duration: 100 }),
         Some(20)
     )]
     #[case::double_speed_halves_the_wait(
         head_at(0, 2.0),
-        lookahead(Setup { preload_lead: 10, ab_loop: None, next: Some(a_track()), duration: 100 }),
+        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration: 100 }),
         Some(45)
     )]
     #[case::half_speed_doubles_the_wait(
         head_at(0, 0.5),
-        lookahead(Setup { preload_lead: 10, ab_loop: None, next: Some(a_track()), duration: 100 }),
+        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration: 100 }),
         Some(180)
     )]
     #[case::a_past_decision_is_not_armed(
         head_at(95, 1.0),
-        lookahead(Setup { preload_lead: 10, ab_loop: None, next: Some(a_track()), duration: 100 }),
+        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration: 100 }),
         None
     )]
     #[case::no_next_track_skips_the_preload_point(
         head_at(0, 1.0),
-        lookahead(Setup { preload_lead: 10, ab_loop: None, next: None, duration: 100 }),
+        lookahead(Setup { ab_loop: None, next: None, duration: 100 }),
         None
     )]
     fn next_decision_arms_the_earlier_of_preload_or_ab(

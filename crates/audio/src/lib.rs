@@ -16,7 +16,7 @@ use crate::{
     engine::{
         message::AudioMessage,
         revisions::JobRevisions,
-        state::{Closed, Engine},
+        state::{Closed, Engine, EngineState},
     },
 };
 
@@ -25,7 +25,6 @@ pub const DECODABLE_EXTENSIONS: &[&str] =
 
 pub struct AudioDriver {
     engine: Engine,
-    revisions: JobRevisions,
     deck: Deck,
 }
 
@@ -33,7 +32,6 @@ impl std::fmt::Debug for AudioDriver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AudioDriver")
             .field("engine", &self.engine)
-            .field("revisions", &self.revisions)
             .finish_non_exhaustive()
     }
 }
@@ -46,12 +44,14 @@ impl AudioDriver {
     ) -> (Self, tap::SpectrumTap) {
         let (spectrum, tap) = tap::new_tap();
         let driver = Self {
-            engine: Engine::Closed(Closed {
-                settings,
-                pending: None,
-                speed: Speed::default(),
-            }),
-            revisions: JobRevisions::default(),
+            engine: Engine {
+                state: EngineState::Closed(Closed {
+                    settings,
+                    pending: None,
+                    speed: Speed::default(),
+                }),
+                job_revisions: JobRevisions::default(),
+            },
             deck: Deck::new(spectrum, sender),
         };
         (driver, tap)

@@ -3,11 +3,11 @@ use kernel::{
         key::{Key, KeyCode},
         keymap::KeymapOverrides,
     },
-    update::keymap::{bindings::Bindings, chord::KeyBinding},
+    update::keymap::{bindings::Keymap, chord::KeyBinding},
 };
 
 pub(crate) fn bindings(config: &KeymapOverrides) -> Vec<KeyBinding> {
-    Bindings::new(config).as_slice().to_vec()
+    Keymap::new(config.clone()).bindings().to_vec()
 }
 
 pub(crate) fn character(letter: char) -> Key {

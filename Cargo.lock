@@ -93,6 +93,7 @@ dependencies = [
  "realfft",
  "rodio",
  "rstest",
+ "tempfile",
  "thiserror 2.0.20",
  "triple_buffer",
 ]
@@ -336,7 +337,6 @@ name = "config"
 version = "0.1.0"
 dependencies = [
  "bon",
- "dirs",
  "insta",
  "kernel",
  "num-traits",
@@ -2063,7 +2063,6 @@ dependencies = [
  "notify",
  "proptest",
  "rstest",
- "strum",
  "tempfile",
  "thiserror 2.0.20",
  "toml",
@@ -2246,6 +2245,8 @@ name = "sifr-guards"
 version = "0.1.0"
 dependencies = [
  "config",
+ "proc-macro2",
+ "syn 2.0.119",
  "thiserror 2.0.20",
  "toml",
 ]
@@ -2611,7 +2612,6 @@ dependencies = [
 name = "terminal"
 version = "0.1.0"
 dependencies = [
- "config",
  "crossterm",
  "image",
  "insta",
@@ -3005,7 +3005,6 @@ dependencies = [
 name = "widgets"
 version = "0.1.0"
 dependencies = [
- "config",
  "fast_image_resize",
  "image",
  "insta",

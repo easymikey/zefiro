@@ -50,15 +50,12 @@ impl Percent {
         )
     }
 
-    pub(crate) fn step(self, delta: i8) -> Self {
+    pub(crate) fn step(self, direction: Direction) -> Self {
+        let delta = match direction {
+            Direction::Next => VOLUME_STEP,
+            Direction::Previous => -VOLUME_STEP,
+        };
         Self::clamped(self.0.saturating_add_signed(delta))
-    }
-
-    pub(crate) fn step_by(self, direction: Direction) -> Self {
-        match direction {
-            Direction::Next => self.step(VOLUME_STEP),
-            Direction::Previous => self.step(-VOLUME_STEP),
-        }
     }
 }
 
@@ -72,7 +69,7 @@ impl fmt::Display for Percent {
 mod tests {
     use rstest::rstest;
 
-    use crate::domain::{bounded::Bounded, percent::Percent};
+    use crate::domain::{bounded::Bounded, direction::Direction, percent::Percent};
 
     #[rstest]
     #[case::at_the_ceiling_is_accepted(100, Some(100))]
@@ -113,16 +110,17 @@ mod tests {
     }
 
     #[rstest]
-    #[case::saturates_at_the_ceiling(98, 5, 100)]
-    #[case::saturates_at_the_floor(3, -5, 0)]
-    #[case::stays_within_bounds_upward(50, 10, 60)]
-    #[case::stays_at_the_floor_when_already_there(0, -1, 0)]
-    fn clamp_saturates_a_delta_both_directions(
+    #[case::saturates_at_the_ceiling(98, Direction::Next, 100)]
+    #[case::saturates_at_the_floor(3, Direction::Previous, 0)]
+    #[case::next_adds_five(50, Direction::Next, 55)]
+    #[case::previous_subtracts_five(50, Direction::Previous, 45)]
+    #[case::stays_at_the_floor_when_already_there(0, Direction::Previous, 0)]
+    fn step_saturates_in_both_directions(
         #[case] start: u8,
-        #[case] delta: i8,
+        #[case] direction: Direction,
         #[case] expected: u8,
     ) {
-        assert_eq!(Percent::clamped(start).step(delta).get(), expected);
+        assert_eq!(Percent::clamped(start).step(direction).get(), expected);
     }
 
     #[test]

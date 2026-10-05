@@ -1,75 +1,72 @@
 use kernel::{
     cmd::Cmd,
-    domain::{overlay::JumpDigits, time::TimecodeError},
-    update::{machine::Unhandled, overlay::jump::JumpDigitsMessage},
+    domain::{
+        overlay::{Overlay, TextEntry},
+        time::TimecodeError,
+    },
+    message::TextRequest,
+    update::{
+        machine::Unhandled,
+        overlay::{OverlayContentMessage, OverlayMessage},
+    },
 };
 use rstest::rstest;
 
 use crate::support::table::cell;
 
-fn digits(input: &str, error: Option<TimecodeError>) -> JumpDigits {
-    JumpDigits {
+fn digits(input: &str, error: Option<TimecodeError>) -> Option<Overlay> {
+    Some(Overlay::JumpToTime(TextEntry {
         input: input.to_string(),
         error,
-    }
+    }))
+}
+
+fn typed(text_request: TextRequest) -> OverlayMessage {
+    OverlayMessage::Inner(OverlayContentMessage::Jump(text_request))
 }
 
 #[rstest]
 #[case::empty_digit_starts_the_time(
     digits("", None),
-    JumpDigitsMessage::Char('1'),
+    TextRequest::Char('1'),
     Ok((digits("1", None), Cmd::none()))
 )]
 #[case::digit_appends(
     digits("1", None),
-    JumpDigitsMessage::Char('0'),
+    TextRequest::Char('0'),
     Ok((digits("10", None), Cmd::none()))
 )]
 #[case::colon_appends(
     digits("1", None),
-    JumpDigitsMessage::Char(':'),
+    TextRequest::Char(':'),
     Ok((digits("1:", None), Cmd::none()))
 )]
 #[case::digit_clears_a_stale_error(
     digits("5:", Some(TimecodeError::Malformed)),
-    JumpDigitsMessage::Char('3'),
+    TextRequest::Char('3'),
     Ok((digits("5:3", None), Cmd::none()))
 )]
-#[case::letter_is_refused(
-    digits("1", None),
-    JumpDigitsMessage::Char('a'),
-    Err(Unhandled)
-)]
-#[case::space_is_refused(
-    digits("1", None),
-    JumpDigitsMessage::Char(' '),
-    Err(Unhandled)
-)]
+#[case::letter_is_refused(digits("1", None), TextRequest::Char('a'), Err(Unhandled))]
+#[case::space_is_refused(digits("1", None), TextRequest::Char(' '), Err(Unhandled))]
 #[case::full_input_refuses_a_ninth_char(
     digits("1:02:034", None),
-    JumpDigitsMessage::Char('5'),
+    TextRequest::Char('5'),
     Err(Unhandled)
 )]
 #[case::backspace_erases_and_clears_the_error(
     digits("5:", Some(TimecodeError::Malformed)),
-    JumpDigitsMessage::Backspace,
+    TextRequest::Backspace,
     Ok((digits("5", None), Cmd::none()))
 )]
-#[case::backspace_on_empty_stays_empty(
+#[case::backspace_on_empty_is_refused(
     digits("", None),
-    JumpDigitsMessage::Backspace,
-    Ok((digits("", None), Cmd::none()))
+    TextRequest::Backspace,
+    Err(Unhandled)
 )]
 fn jump_cell(
-    #[case] start: JumpDigits,
-    #[case] message: JumpDigitsMessage,
-    #[case] expected: Result<
-        (
-            JumpDigits,
-            <JumpDigits as kernel::update::machine::Machine>::Effect,
-        ),
-        Unhandled,
-    >,
+    #[case] overlay: Option<Overlay>,
+    #[case] text_request: TextRequest,
+    #[case] expected: Result<(Option<Overlay>, Cmd), Unhandled>,
 ) {
-    cell(start, message, expected);
+    cell(overlay, typed(text_request), expected);
 }

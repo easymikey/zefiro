@@ -15,15 +15,7 @@ use crate::{
         SettingsRowRequest,
         TextRequest,
     },
-    update::keymap::chord::{
-        ActionRow,
-        KeyBinding,
-        KeyContextRow,
-        bare,
-        digit_char,
-        digits,
-        key,
-    },
+    update::keymap::chord::{BindingSource, KeyBinding, bare, digit_char, digits, key},
 };
 
 fn plain(code: KeyCode) -> KeyPattern {
@@ -45,14 +37,12 @@ fn settings_bindings(
 ) -> Vec<KeyBinding> {
     chords
         .iter()
-        .map(|&chord| {
-            ActionRow {
-                action,
-                chord,
-                message: message.clone(),
-                key_context: KeyContext::Settings,
-            }
-            .into()
+        .map(|&chord| KeyBinding {
+            pattern: KeyPattern::Chord(chord),
+            message: message.clone(),
+            action: Some(action),
+            key_context: KeyContext::Settings,
+            source: BindingSource::Default,
         })
         .collect()
 }
@@ -86,13 +76,12 @@ fn rows_in(
     rows: Vec<(KeyPattern, Message)>,
 ) -> Vec<KeyBinding> {
     rows.into_iter()
-        .map(|(pattern, message)| {
-            KeyContextRow {
-                key_context,
-                pattern,
-                message,
-            }
-            .into()
+        .map(|(pattern, message)| KeyBinding {
+            pattern,
+            message,
+            action: None,
+            key_context,
+            source: BindingSource::Default,
         })
         .collect()
 }

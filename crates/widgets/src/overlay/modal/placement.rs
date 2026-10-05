@@ -4,18 +4,18 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::Line,
-    widgets::{Block, BorderType, Borders, Clear, Widget},
+    widgets::{Block, Clear, Widget},
 };
 
 use crate::{
     overlay::modal::{
-        frame::{Modal, ModalAreas, ModalBounds, ModalSize, PlacedModal},
-        metrics::{ModalRowStyle, SCROLLBAR_INSET},
+        frame::{Modal, ModalAreas, ModalSize},
+        metrics::SCROLLBAR_INSET,
     },
+    playlist::chrome::pane_block,
     primitive::{
         canvas::Canvas,
-        inset::Inset,
-        list_chrome::{row_band, scrollbar_column, spaced_title},
+        list_chrome::{row_band, scrollbar_column},
         text::truncate,
     },
     theme::active_theme::ActiveTheme,
@@ -27,10 +27,10 @@ pub(crate) enum ModalContainer<'a> {
     Modal(&'a [Rect]),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ModalScrollAreas {
     pub(crate) outer: Rect,
-    pub(crate) rows: Rect,
+    pub rows: Rect,
     pub(crate) content: Rect,
     pub(crate) scrollbar: Rect,
     pub(crate) hint_row: Rect,
@@ -78,20 +78,15 @@ impl OverlayAreas {
 pub(crate) struct ModalBorder<'a> {
     pub(crate) area: Rect,
     pub(crate) title: Line<'static>,
-    pub(crate) inset: Inset,
     pub(crate) theme: ActiveTheme<'a>,
 }
 
 impl ModalBorder<'_> {
     fn block(&self) -> Block<'static> {
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Thick)
-            .border_style(
-                Style::default().fg(ModalRowStyle::from_theme(&self.theme).border),
-            )
-            .padding(self.inset.padding())
-            .title(spaced_title(self.title.clone()))
+        pane_block(
+            Some(self.title.clone()),
+            self.theme.colors().muted_foreground,
+        )
     }
 
     #[must_use]
@@ -100,21 +95,18 @@ impl ModalBorder<'_> {
         if inner.width == 0 || inner.height == 0 {
             return ModalScrollAreas::empty(self.area);
         }
-        let scrollbar = scrollbar_column(self.area, inner, SCROLLBAR_INSET);
-        ModalScrollAreas {
-            outer: self.area,
-            rows: row_band(self.area, inner, scrollbar),
-            content: inner,
-            scrollbar,
-            hint_row: Rect::default(),
-        }
+        scroll_areas(self.area, inner)
     }
 
     pub(crate) fn paint(&self, buffer: &mut Buffer) {
         Clear.render(self.area, buffer);
-        let style = ModalRowStyle::from_theme(&self.theme);
+        let colors = self.theme.colors();
         Block::new()
-            .style(Style::default().bg(style.background).fg(style.foreground))
+            .style(
+                Style::default()
+                    .bg(colors.window_background)
+                    .fg(colors.text),
+            )
             .render(self.area, buffer);
         self.block().render(self.area, buffer);
     }
@@ -123,7 +115,6 @@ impl ModalBorder<'_> {
 #[derive(Debug)]
 pub(crate) struct ModalPlacement<'a> {
     pub(crate) container: ModalContainer<'a>,
-    pub(crate) inset: Inset,
     pub(crate) border_title: Line<'static>,
     pub(crate) modal_title: &'a str,
     pub(crate) content_width: Cells,
@@ -137,13 +128,12 @@ impl<'a> ModalPlacement<'a> {
         ModalBorder {
             area,
             title: self.border_title.clone(),
-            inset: self.inset,
             theme: self.theme,
         }
     }
 
     fn modal(&self) -> Modal<'_> {
-        let style = ModalRowStyle::from_theme(&self.theme);
+        let colors = self.theme.colors();
         Modal {
             title: self.modal_title,
             size: ModalSize::List {
@@ -151,8 +141,8 @@ impl<'a> ModalPlacement<'a> {
                 content_rows: self.content_rows.max(Cells(1)),
             },
             hint: self.hint.clone(),
-            border: style.border,
-            window_background: style.background,
+            border: colors.muted_foreground,
+            window_background: colors.window_background,
         }
     }
 
@@ -161,35 +151,33 @@ impl<'a> ModalPlacement<'a> {
         match self.container {
             ModalContainer::Playlist(pane) => self.border(pane).areas(),
             ModalContainer::Modal(avoid) => {
-                self.scroll_areas(&self.modal().areas(screen, avoid))
+                let modal_frame = self.modal().areas(screen, avoid);
+                ModalScrollAreas {
+                    hint_row: modal_frame.hint_row,
+                    ..scroll_areas(modal_frame.outer, modal_frame.body)
+                }
             }
         }
     }
 
-    fn scroll_areas(&self, modal_frame: &ModalAreas) -> ModalScrollAreas {
-        let scrollbar =
-            scrollbar_column(modal_frame.outer, modal_frame.body, SCROLLBAR_INSET);
-        ModalScrollAreas {
-            outer: modal_frame.outer,
-            rows: row_band(modal_frame.outer, modal_frame.body, scrollbar),
-            content: modal_frame.body,
-            scrollbar,
-            hint_row: modal_frame.hint_row,
-        }
-    }
-
     pub(crate) fn paint(&self, areas: ModalScrollAreas, canvas: Canvas<'_>) {
-        let Canvas { area, buffer } = canvas;
+        let buffer = canvas.buffer;
         match self.container {
             ModalContainer::Playlist(pane) => self.border(pane).paint(buffer),
-            ModalContainer::Modal(avoid) => self.modal().paint(
-                PlacedModal {
-                    areas: areas.frame(),
-                    bounds: ModalBounds { area, avoid },
-                },
-                buffer,
-            ),
+            ModalContainer::Modal(_) => self.modal().paint(areas.frame(), buffer),
         }
+    }
+}
+
+#[must_use]
+pub(crate) fn scroll_areas(outer: Rect, inner: Rect) -> ModalScrollAreas {
+    let scrollbar = scrollbar_column(outer, inner, SCROLLBAR_INSET);
+    ModalScrollAreas {
+        outer,
+        rows: row_band(outer, inner, scrollbar),
+        content: inner,
+        scrollbar,
+        hint_row: Rect::default(),
     }
 }
 

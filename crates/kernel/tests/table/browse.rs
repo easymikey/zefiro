@@ -56,7 +56,7 @@ fn paths(tracks: &[Arc<kernel::domain::track::Track>]) -> Vec<PathBuf> {
 
 fn browsing(count: usize, row: usize, queue: &[usize]) -> Model {
     let mut model = model_with_tracks(count);
-    model.workspace.browse.cursor = Cursor::with_len(count).at(row);
+    model.workspace.browse.cursor = Cursor::at(count, row);
     model.queue = queued_refs(&model, queue);
     model
 }
@@ -202,30 +202,6 @@ struct CursorRow {
 }
 
 #[rstest]
-#[case::cursor_to_lands_on_the_row(CursorRow {
-    tracks: 2,
-    from: 0,
-    visible_rows: Cells(0),
-    message: BrowseRequest::CursorTo(ViewIndex::new(1)),
-    expected: 1,
-    effects: Ok(Cmd::none()),
-})]
-#[case::cursor_to_past_the_end_clamps(CursorRow {
-    tracks: 2,
-    from: 0,
-    visible_rows: Cells(0),
-    message: BrowseRequest::CursorTo(ViewIndex::new(99)),
-    expected: 1,
-    effects: Ok(Cmd::none()),
-})]
-#[case::cursor_to_on_an_empty_playlist_is_refused(CursorRow {
-    tracks: 0,
-    from: 0,
-    visible_rows: Cells(0),
-    message: BrowseRequest::CursorTo(ViewIndex::new(0)),
-    expected: 0,
-    effects: Err(Unhandled),
-})]
 #[case::page_down_moves_by_the_reported_rows(CursorRow {
     tracks: 20,
     from: 0,
@@ -487,7 +463,7 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
     assert_eq!(model.playlist.playing_index(), Some(ViewIndex::new(1)));
     assert!(matches!(
         &model.player,
-        Player::Loading { track, .. } if track.path() == Path::new("/tmp/track1.flac")
+        Player::Loading(track) if track.path() == Path::new("/tmp/track1.flac")
     ));
     let track = bare_track(1);
     assert_eq!(
@@ -540,10 +516,14 @@ fn play_selected_retires_the_stream_the_media_key_started() {
 #[test]
 fn play_selected_on_an_empty_playlist_starts_nothing() {
     let mut model = Model::default();
-    let effects = browse(&mut model, BrowseRequest::PlaySelected);
+    let result = update(
+        &mut model,
+        Message::Browse(BrowseRequest::PlaySelected),
+        Moment::default(),
+    );
     assert_eq!(model.playlist.playing_index(), None);
     assert_eq!(model.player, Player::Stopped);
-    assert_eq!(effects, Cmd::none());
+    assert_eq!(result, Err(Unhandled));
 }
 
 #[test]
@@ -564,8 +544,12 @@ fn rescan_asks_once_until_the_scan_lands() {
     );
     assert_eq!(model.scan_status, ScanStatus::Scanning);
 
-    let repeated = browse(&mut model, BrowseRequest::FullScan);
-    assert_eq!(repeated, Cmd::none());
+    let repeated = update(
+        &mut model,
+        Message::Browse(BrowseRequest::FullScan),
+        Moment::default(),
+    );
+    assert_eq!(repeated, Err(Unhandled));
     assert_eq!(model.scan_status, ScanStatus::Scanning);
 }
 
@@ -633,12 +617,12 @@ fn trash_remaps_the_queue_and_drops_the_deleted_entry() {
 #[test]
 fn trash_shrinks_the_browse_cursor_with_the_playlist() {
     let mut model = scanned(&["/music/a.flac", "/music/b.flac"]);
-    model.workspace.browse.cursor = Cursor::with_len(2).at(1);
+    model.workspace.browse.cursor = Cursor::at(2, 1);
     let source = model.playlist.tracks[0].source().clone();
 
     send(&mut model, Message::Browse(BrowseRequest::Trash(source)));
 
-    assert_eq!(model.workspace.browse.cursor, Cursor::with_len(1).at(0));
+    assert_eq!(model.workspace.browse.cursor, Cursor::at(1, 0));
 }
 
 #[rstest]
@@ -675,7 +659,7 @@ fn a_rescan_under_the_confirm_overlay_trashes_the_same_file() {
     send(&mut model, listed(&["/music/a.flac", "/music/b.flac"]));
     send(
         &mut model,
-        Message::Browse(BrowseRequest::CursorTo(ViewIndex::new(1))),
+        Message::Browse(BrowseRequest::CursorBy { rows: 1 }),
     );
     send(
         &mut model,

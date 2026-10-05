@@ -11,6 +11,7 @@ use kernel::domain::{
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
+    style::Color,
     text::Line,
     widgets::{Paragraph, Widget},
 };
@@ -18,8 +19,8 @@ use ratatui::{
 use crate::{
     overlay::{
         modal::{
-            frame::{Modal, ModalBounds, ModalSize, PlacedModal},
-            metrics::{ModalRowStyle, QUERY_ROWS, modal_title},
+            frame::{Modal, ModalAreas, ModalSize},
+            metrics::{QUERY_ROWS, modal_title},
             placement::{
                 ModalBorder,
                 ModalContainer,
@@ -30,13 +31,13 @@ use crate::{
         },
         search::matches::{SearchMatchList, paint_match_pane, paint_match_rows},
     },
+    pixels::numeric::small_count_u16,
     primitive::{
         canvas::Canvas,
         glyphs,
-        inset::Inset,
         span::{line, text},
     },
-    theme::active_theme::ActiveTheme,
+    theme::{active_theme::ActiveTheme, colors::Colors},
 };
 
 #[derive(Debug)]
@@ -68,32 +69,12 @@ impl SearchWidget<'_> {
     }
 
     pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
-        let Canvas { area, buffer } = canvas;
+        let buffer = canvas.buffer;
         match areas {
             OverlayAreas::List(areas) => self.paint_pane(areas, buffer),
-            OverlayAreas::Dialog(areas) => self.paint_modal(
-                PlacedModal {
-                    areas,
-                    bounds: ModalBounds {
-                        area,
-                        avoid: self.avoid(),
-                    },
-                },
-                buffer,
-            ),
+            OverlayAreas::Dialog(areas) => self.paint_modal(areas, buffer),
             OverlayAreas::Banner(_) => {}
         }
-    }
-
-    fn avoid(&self) -> &[Rect] {
-        match self.container {
-            ModalContainer::Modal(avoid) => avoid,
-            ModalContainer::Playlist(_) => &[],
-        }
-    }
-
-    fn style(&self) -> ModalRowStyle {
-        ModalRowStyle::from_theme(&self.theme)
     }
 
     fn header(&self) -> SearchHeader<'_> {
@@ -109,13 +90,12 @@ impl SearchWidget<'_> {
         ModalBorder {
             area,
             title: search_title(&self.header(), theme),
-            inset: Inset::overlay(),
             theme,
         }
     }
 
     fn modal(&self) -> Modal<'static> {
-        let style = self.style();
+        let colors = self.theme.colors();
         Modal {
             title: glyphs::search::TITLE_WORD,
             size: ModalSize::FrameWidth {
@@ -123,8 +103,8 @@ impl SearchWidget<'_> {
                 content_rows: Cells(content_rows(self.search)),
             },
             hint: None,
-            border: style.border,
-            window_background: style.background,
+            border: colors.muted_foreground,
+            window_background: colors.window_background,
         }
     }
 
@@ -156,9 +136,9 @@ impl SearchWidget<'_> {
         );
     }
 
-    fn paint_modal(&self, placed: PlacedModal<'_>, buffer: &mut Buffer) {
-        self.modal().paint(placed, buffer);
-        let inner = placed.areas.body;
+    fn paint_modal(&self, areas: ModalAreas, buffer: &mut Buffer) {
+        self.modal().paint(areas, buffer);
+        let inner = areas.body;
         if inner.width == 0 || inner.height == 0 {
             return;
         }
@@ -170,7 +150,7 @@ impl SearchWidget<'_> {
         else {
             return;
         };
-        Paragraph::new(header_line(&self.header(), self.style()))
+        Paragraph::new(header_line(&self.header(), self.theme.colors()))
             .render(header_area, buffer);
         paint_match_rows(&self.match_list(matches_area, 0), buffer);
     }
@@ -181,14 +161,14 @@ impl SearchWidget<'_> {
             return;
         };
         if query_row.width > 0 && query_row.height > 0 {
-            Paragraph::new(query_line(&self.header(), self.style()))
+            Paragraph::new(query_line(&self.header(), self.theme.colors()))
                 .render(query_row, buffer);
         }
         if rule_row.width == 0 || rule_row.height == 0 {
             return;
         }
         let rule = glyphs::search::RULE.repeat(usize::from(rule_row.width));
-        Paragraph::new(line([text(rule).fg(self.style().border)]))
+        Paragraph::new(line([text(rule).fg(self.theme.colors().muted_foreground)]))
             .render(rule_row, buffer);
     }
 
@@ -197,7 +177,7 @@ impl SearchWidget<'_> {
             area,
             tracks: self.tracks,
             search: self.search,
-            style: self.style(),
+            colors: self.theme.colors(),
             lead,
         }
     }
@@ -213,26 +193,26 @@ fn search_title(header: &SearchHeader<'_>, theme: ActiveTheme<'_>) -> Line<'stat
     modal_title(
         glyphs::search::TITLE_WORD,
         format!("{} {} {}", header.matches, glyphs::search::OF, header.total),
-        ModalRowStyle::from_theme(&theme),
+        theme.colors(),
     )
 }
 
-fn query_line(header: &SearchHeader<'_>, style: ModalRowStyle) -> Line<'static> {
+fn query_line(header: &SearchHeader<'_>, colors: Colors<Color>) -> Line<'static> {
     line([
-        text(glyphs::search::HEADER_PREFIX).fg(style.accent),
-        text(header.query.to_string()).fg(style.foreground),
-        text(glyphs::search::CURSOR).fg(style.accent),
+        text(glyphs::search::HEADER_PREFIX).fg(colors.accent),
+        text(header.query.to_string()).fg(colors.text),
+        text(glyphs::search::CURSOR).fg(colors.accent),
     ])
 }
 
-fn header_line(header: &SearchHeader<'_>, style: ModalRowStyle) -> Line<'static> {
+fn header_line(header: &SearchHeader<'_>, colors: Colors<Color>) -> Line<'static> {
     let summary = match_count_text(header.matches, header.total);
     line([
-        text(glyphs::search::HEADER_PREFIX).fg(style.accent),
-        text(header.query.to_string()).fg(style.foreground),
-        text(glyphs::search::CURSOR).fg(style.accent),
-        text(glyphs::search::HEADER_GAP).fg(style.foreground),
-        text(summary).fg(style.muted_foreground),
+        text(glyphs::search::HEADER_PREFIX).fg(colors.accent),
+        text(header.query.to_string()).fg(colors.text),
+        text(glyphs::search::CURSOR).fg(colors.accent),
+        text(glyphs::search::HEADER_GAP).fg(colors.text),
+        text(summary).fg(colors.muted_foreground),
     ])
 }
 
@@ -253,7 +233,7 @@ fn content_rows(search: &CursorOver<SearchQuery>) -> u16 {
     let match_rows = if search.content.matches.is_empty() {
         1
     } else {
-        u16::try_from(search.content.matches.len()).unwrap_or(u16::MAX)
+        small_count_u16(search.content.matches.len())
     };
     1u16.saturating_add(match_rows)
 }
@@ -273,10 +253,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        overlay::{
-            modal::{metrics::ModalRowStyle, placement::ModalContainer},
-            search::SearchWidget,
-        },
+        overlay::{modal::placement::ModalContainer, search::SearchWidget},
         primitive::canvas::find_text,
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
@@ -303,7 +280,7 @@ mod tests {
     ) -> CursorOver<SearchQuery> {
         let length = matches.len();
         CursorOver {
-            cursor: Cursor::with_len(length).at(selected),
+            cursor: Cursor::at(length, selected),
             content: SearchQuery {
                 input: input.to_string(),
                 matches: matches.into_iter().map(ViewIndex::new).collect(),
@@ -413,8 +390,7 @@ mod tests {
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
                 .clone();
-        let selection_background =
-            ModalRowStyle::from_theme(&active).selected_background;
+        let selection_background = active.colors().selection_background;
         let (alpha_x, alpha_y) = find_text(&buffer, "Alpha").unwrap();
         let (beta_x, beta_y) = find_text(&buffer, "Beta").unwrap();
         assert_eq!(

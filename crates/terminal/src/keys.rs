@@ -1,19 +1,11 @@
 use crossterm::event::{KeyCode as CrosstermCode, KeyEvent, KeyModifiers};
-use kernel::domain::key::{Key, KeyCode, Modifiers};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LayoutTranslation {
-    Applied,
-    Verbatim,
-}
+use kernel::domain::key::{Key, KeyCode, KeyPress, Modifiers};
 
 #[must_use]
-pub fn from_event(event: KeyEvent, translation: LayoutTranslation) -> Option<Key> {
-    let event = match translation {
-        LayoutTranslation::Applied => normalized(event),
-        LayoutTranslation::Verbatim => event,
-    };
-    to_key(event)
+pub fn key_press(event: KeyEvent) -> Option<KeyPress> {
+    let typed = to_key(event)?;
+    let key = to_key(normalized(event)).unwrap_or(typed);
+    Some(KeyPress { key, typed })
 }
 
 const JCUKEN_LAYOUT: &str =
@@ -97,7 +89,7 @@ mod tests {
     use kernel::domain::key::{KeyCode, Modifiers};
     use rstest::rstest;
 
-    use crate::keys::{LayoutTranslation, from_event, to_key};
+    use crate::keys::{key_press, to_key};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Shift {
@@ -153,14 +145,10 @@ mod tests {
     }
 
     #[test]
-    fn layout_translation_applied_maps_ru_char_verbatim_keeps_it() {
+    fn key_press_translates_ru_char_and_types_it_verbatim() {
         let event = KeyEvent::new(CrosstermCode::Char('й'), KeyModifiers::NONE);
-        let applied = from_event(event, LayoutTranslation::Applied).map(|key| key.code);
-        assert_eq!(applied, Some(KeyCode::Char('q')));
-
-        let verbatim =
-            from_event(event, LayoutTranslation::Verbatim).map(|key| key.code);
-        assert_eq!(verbatim, Some(KeyCode::Char('й')));
+        let press = key_press(event).map(|press| (press.key.code, press.typed.code));
+        assert_eq!(press, Some((KeyCode::Char('q'), KeyCode::Char('й'))));
     }
 
     #[rstest::rstest]
@@ -182,14 +170,14 @@ mod tests {
         #[case] en: char,
     ) {
         let event = KeyEvent::new(CrosstermCode::Char(ru), KeyModifiers::NONE);
-        let applied = from_event(event, LayoutTranslation::Applied).map(|key| key.code);
-        assert_eq!(applied, Some(KeyCode::Char(en)));
+        let translated = key_press(event).map(|press| press.key.code);
+        assert_eq!(translated, Some(KeyCode::Char(en)));
     }
 
     #[test]
     fn conversion_preserves_control_modifier_after_normalization() {
         let event = KeyEvent::new(CrosstermCode::Char('л'), KeyModifiers::CONTROL);
-        let key = from_event(event, LayoutTranslation::Applied).unwrap();
+        let key = key_press(event).unwrap().key;
         assert_eq!(key.code, KeyCode::Char('k'));
         assert!(key.modifiers.contains(Modifiers::CTRL));
     }

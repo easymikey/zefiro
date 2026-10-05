@@ -3,11 +3,13 @@ use std::time::Duration;
 use kernel::{
     cmd::{Cmd, ConfigPatch},
     domain::{appearance::AppearancePatch, revision::Revision},
-    message::ConfigEvent,
-    update::machine::Unhandled,
+    update::machine::{LoopEffect, Unhandled},
 };
 
-use crate::driver::effect::ConfigEffect;
+use crate::driver::{
+    effect::{ConfigEffect, ConfigLoopCmd},
+    message::ConfigMessage,
+};
 
 pub(crate) const SAVE_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -25,7 +27,7 @@ impl PendingSaves {
 
     pub(crate) fn hold_config(&mut self, patch: ConfigPatch) {
         let merged = match self.config.take() {
-            Some(base) => merge_config_patch(base, patch),
+            Some(earlier) => earlier.then(patch),
             None => patch,
         };
         self.config = Some(merged);
@@ -38,20 +40,17 @@ impl PendingSaves {
         self.revision.advance();
     }
 
-    pub(crate) fn wait_since(
-        &self,
-        before: Revision,
-    ) -> Cmd<ConfigEffect, ConfigEvent> {
+    pub(crate) fn wait_since(&self, before: Revision) -> ConfigLoopCmd {
         if self.revision == before || self.is_empty() {
             return Cmd::none();
         }
-        Cmd::effect(ConfigEffect::After {
+        Cmd::effect(LoopEffect::After {
             delay: SAVE_DEBOUNCE,
-            revision: self.revision,
+            message: ConfigMessage::Elapsed(self.revision),
         })
     }
 
-    pub(crate) fn flush(&mut self) -> Cmd<ConfigEffect, ConfigEvent> {
+    pub(crate) fn flush(&mut self) -> ConfigLoopCmd {
         if self.is_empty() {
             return Cmd::none();
         }
@@ -63,80 +62,23 @@ impl PendingSaves {
         self.config.is_none() && self.appearance.is_none()
     }
 
-    fn drain(&mut self) -> Cmd<ConfigEffect, ConfigEvent> {
+    fn drain(&mut self) -> ConfigLoopCmd {
         let config = self.config.take().map(ConfigEffect::SaveConfig);
         let appearance = self.appearance.take().map(ConfigEffect::SaveAppearance);
-        config.into_iter().chain(appearance).collect()
+        config
+            .into_iter()
+            .chain(appearance)
+            .map(LoopEffect::Execute)
+            .collect()
     }
 
     pub(crate) fn elapsed(
         &mut self,
         revision: Revision,
-    ) -> Result<Cmd<ConfigEffect, ConfigEvent>, Unhandled> {
-        if revision != self.revision {
-            return Err(Unhandled);
-        }
-        if self.is_empty() {
+    ) -> Result<ConfigLoopCmd, Unhandled> {
+        if revision != self.revision || self.is_empty() {
             return Err(Unhandled);
         }
         Ok(self.drain())
-    }
-}
-
-fn merge_config_patch(base: ConfigPatch, next: ConfigPatch) -> ConfigPatch {
-    ConfigPatch {
-        crossfade: next.crossfade.or(base.crossfade),
-        device: next.device.or(base.device),
-        replay_gain: next.replay_gain.or(base.replay_gain),
-        theme: next.theme.or(base.theme),
-        volume: next.volume.or(base.volume),
-        sleep_presets: next.sleep_presets.or(base.sleep_presets),
-        music_dir: next.music_dir.or(base.music_dir),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use kernel::{
-        cmd::ConfigPatch,
-        domain::{
-            bounded::Bounded,
-            crossfade::Crossfade,
-            device::{DeviceName, OutputDevice},
-            theme::ThemeName,
-        },
-    };
-
-    use crate::driver::saves::merge_config_patch;
-
-    fn crossfade(seconds: u64) -> Crossfade {
-        Crossfade::clamped(Duration::from_secs(seconds))
-    }
-
-    #[test]
-    fn merge_config_patch_folds_disjoint_fields_and_later_field_wins() {
-        let earlier = ConfigPatch::builder()
-            .theme(ThemeName::from_static("dark"))
-            .crossfade(crossfade(1))
-            .build();
-        let later = ConfigPatch::builder().crossfade(crossfade(3)).build();
-
-        let merged = merge_config_patch(earlier, later);
-
-        assert_eq!(merged.theme.as_ref().map(ThemeName::as_str), Some("dark"));
-        assert_eq!(merged.crossfade, Some(crossfade(3)));
-    }
-
-    #[test]
-    fn merge_config_patch_device_keep_does_not_override() {
-        let speakers =
-            || OutputDevice::Named(DeviceName::new("Speakers".to_string()).unwrap());
-        let earlier = ConfigPatch::builder().device(speakers()).build();
-
-        let merged = merge_config_patch(earlier, ConfigPatch::builder().build());
-
-        assert_eq!(merged.device, Some(speakers()));
     }
 }

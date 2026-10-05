@@ -1,29 +1,27 @@
-mod effects;
 pub mod events;
 mod requests;
 pub mod stamp;
 
-use std::{sync::Arc, time::Duration};
+use std::{mem, sync::Arc, time::Duration};
 
 use crate::{
     cmd::{AudioCmd, Cmd, Effect, MacosCmd, TrackLoad},
     domain::{
-        cue::{Cue, PlaybackChange},
+        cue::PlaybackChange,
         player::{AbLoop, PausedBy, Player},
         playlist::Playlist,
-        revision::{Revision, Revisions},
+        revision::Revisions,
         settings::Settings,
         time::Moment,
         track::{Track, TrackRef},
-        transport::{PRELOAD_LEAD, Transport},
+        transport::Transport,
         workspace::Workspace,
     },
     message::{AudioError, Timer},
     update::{
         machine::{Machine, Unhandled},
         player::{
-            effects::handover_effects,
-            events::{Lookahead, next_decision},
+            events::{Lookahead, handover_effects, next_decision},
             stamp::{Anchor, Stamp, StartOrigin},
         },
         successor::successor,
@@ -82,6 +80,7 @@ pub enum PlayerMessage {
         next: Option<Arc<Track>>,
         stamp: Stamp,
     },
+    Reanchor(Anchor),
 }
 
 impl Machine for Player {
@@ -92,15 +91,20 @@ impl Machine for Player {
         match message {
             PlayerMessage::Toggle { current, stamp } => self.toggle(current, stamp),
             PlayerMessage::Stop => Ok(self.stop()),
-            PlayerMessage::Hold(now) => Ok(self.pause(now, PausedBy::Overlay)),
-            PlayerMessage::Release(anchor) => Ok(self.release(anchor)),
+            PlayerMessage::Hold(now) => self.pause(now, PausedBy::Overlay),
+            PlayerMessage::Release(anchor) => self.release(anchor),
             PlayerMessage::Seek { target, now } => self.seek(target, now),
-            PlayerMessage::SleepFired(now) => Ok(self.pause(now, PausedBy::Listener)),
+            PlayerMessage::SleepFired(now) => self.pause(now, PausedBy::Listener),
             PlayerMessage::Start { track, stamp } => {
                 Ok(self.start(track, StartOrigin::User(stamp)))
             }
             PlayerMessage::Loaded { total, anchor } => self.loaded(total, anchor),
-            PlayerMessage::Error { error, now } => Ok(self.failed(&error, now)),
+            PlayerMessage::Error { error, now } => self.failed(&error, now),
+            PlayerMessage::Reanchor(anchor) => {
+                *self = mem::replace(self, Player::Stopped)
+                    .reanchored(anchor.since, anchor.speed);
+                Ok(Cmd::none())
+            }
             PlayerMessage::LookaheadReached { offset, lookahead } => {
                 self.positioned(offset, lookahead)
             }
@@ -114,7 +118,9 @@ impl Machine for Player {
 impl Player {
     fn stop(&mut self) -> Cmd {
         *self = Player::Stopped;
-        stopped_effects()
+        PlaybackChange::Stop
+            .cued()
+            .then(Cmd::from(Effect::Macos(MacosCmd::NowPlaying(None))))
     }
 
     fn start(&mut self, track: Arc<Track>, origin: StartOrigin) -> Cmd {
@@ -130,10 +136,7 @@ impl Player {
                 origin.stamp().anchor.since,
             ))
             .collect();
-        *self = Player::Loading {
-            track,
-            at: Duration::ZERO,
-        };
+        *self = Player::Loading(track);
         cmd
     }
 }
@@ -143,34 +146,16 @@ pub(crate) fn update_player(
     message: PlayerMessage,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let since = playing_since(playback.player);
+    let seeks = matches!(message, PlayerMessage::Seek { .. });
     let candidate = playback.revisions.effects.next();
     let cmd = playback.player.transition(message)?;
-    commit(playback.revisions, candidate, &cmd);
-    if let Some(since) = since {
-        accumulate(playback.workspace, since, now);
-    }
-    let position_sent = cmd
-        .effects()
-        .any(|effect| matches!(effect, Effect::Macos(MacosCmd::SetPosition(_))));
-    let armed = if position_sent {
+    playback.revisions.effects = candidate;
+    let armed = if seeks {
         timer(playback, now)
     } else {
         arm(playback, now)
     };
     Ok(cmd.then(armed))
-}
-
-pub(crate) fn commit(revisions: &mut Revisions, candidate: Revision, cmd: &Cmd) {
-    let loads = cmd.effects().any(|effect| {
-        matches!(
-            effect,
-            Effect::Audio(AudioCmd::Load(_) | AudioCmd::Preload(_))
-        )
-    });
-    if loads {
-        revisions.effects = candidate;
-    }
 }
 
 pub(crate) fn duration_of(player: &Player) -> Duration {
@@ -186,7 +171,6 @@ pub(crate) fn lookahead(playback: &PlaybackParts<'_>, now: Moment) -> Lookahead 
         Some(AbLoop::AOnly(_)) | None => None,
     };
     Lookahead {
-        preload_lead: PRELOAD_LEAD,
         ab_loop,
         next: successor(playback.playlist, playback.queue)
             .track()
@@ -199,18 +183,20 @@ pub(crate) fn lookahead(playback: &PlaybackParts<'_>, now: Moment) -> Lookahead 
 }
 
 pub(crate) fn arm(playback: &mut PlaybackParts<'_>, now: Moment) -> Cmd {
-    let Player::Playing { head, .. } = &*playback.player else {
+    let Player::Playing { playhead, .. } = &*playback.player else {
         return Cmd::none();
     };
-    Cmd::from(Effect::Macos(MacosCmd::SetPosition(head.position_at(now))))
-        .then(timer(playback, now))
+    Cmd::from(Effect::Macos(MacosCmd::SetPosition(
+        playhead.position_at(now),
+    )))
+    .then(timer(playback, now))
 }
 
 fn timer(playback: &mut PlaybackParts<'_>, now: Moment) -> Cmd {
-    let Player::Playing { head, .. } = &*playback.player else {
+    let Player::Playing { playhead, .. } = &*playback.player else {
         return Cmd::none();
     };
-    next_decision(*head, &lookahead(playback, now)).map_or(Cmd::none(), |delay| {
+    next_decision(*playhead, &lookahead(playback, now)).map_or(Cmd::none(), |delay| {
         Effect::After {
             delay,
             timer: Timer::Lookahead(playback.revisions.issue_lookahead()),
@@ -219,24 +205,10 @@ fn timer(playback: &mut PlaybackParts<'_>, now: Moment) -> Cmd {
     })
 }
 
-pub(crate) fn playing_since(player: &Player) -> Option<Moment> {
-    match player {
-        Player::Playing { head, .. } => Some(head.since),
-        Player::Stopped | Player::Loading { .. } | Player::Paused { .. } => None,
-    }
-}
-
-pub(crate) fn accumulate(workspace: &mut Workspace, since: Moment, now: Moment) {
-    workspace.played_for += now.elapsed_since(since);
-}
-
 pub(crate) fn stopped_effects() -> Cmd {
     PlaybackChange::Stop
         .effects()
         .into_iter()
-        .chain([
-            Effect::Macos(MacosCmd::NowPlaying(None)),
-            Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Stop)),
-        ])
+        .chain([Effect::Macos(MacosCmd::NowPlaying(None))])
         .collect()
 }

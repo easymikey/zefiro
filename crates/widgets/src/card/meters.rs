@@ -1,4 +1,4 @@
-use kernel::domain::appearance::ProgressTime;
+use kernel::domain::{appearance::ProgressTime, geometry::Cells};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -12,17 +12,15 @@ use crate::{
     card::{
         CardWidget,
         chips::{self, ChipBudget, FormatChipsInput},
-        headings::CardStyle,
         metrics::{CardMetrics, SPECTRUM_MAX_DOTS},
     },
     primitive::{
-        bar::{BarFill, HudProgressRow, HudProgressStyle, fill, hud_progress_line},
-        chip::{self, ChipStyle},
+        bar::{BarFill, HudProgressRow, fill, hud_progress_line},
+        chip,
         relative_time::elapsed_of,
         spectrum_meter,
         text::truncate,
     },
-    theme::active_theme::VolumeStyle,
 };
 
 pub(crate) fn paint(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetrics) {
@@ -33,31 +31,23 @@ pub(crate) fn paint(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMe
 
 fn paint_time_row(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetrics) {
     let row_width = metrics.row_width;
-    let dim_color: Color = CardStyle::from_theme(&card.theme).muted_foreground;
-    let accent_color: Color = CardStyle::from_theme(&card.theme).accent;
+    let colors = card.theme.colors();
+    let dim_color: Color = colors.muted_foreground;
 
     let current = card.view.displayed_track;
     let elapsed_total = elapsed_of(card.view.position(), card.view.duration());
     let time_row = metrics.time_row;
     let elapsed_width = elapsed_total.chars().count();
-    let speed_spans = chip::speed_chip_spans(
-        card.view.speed,
-        card.appearance.speed_chip,
-        ChipStyle {
-            foreground: accent_color,
-            ..ChipStyle::from_theme(&card.theme)
-        },
-    );
-    let speed_width = usize::from(chip::speed_chip_width(
-        card.view.speed,
-        card.appearance.speed_chip,
-    ));
+    let speed_spans =
+        chip::speed_chip_spans(card.view.speed, card.appearance.speed_chip, &colors);
+    let speed_width =
+        chip::speed_chip_width(card.view.speed, card.appearance.speed_chip).count();
     let left_width = elapsed_width + speed_width;
     let fit = chips::format_chip_fit(
         &FormatChipsInput {
             current,
             visibility: card.appearance.format_chips,
-            style: ChipStyle::from_theme(&card.theme),
+            colors: &colors,
         },
         &ChipBudget {
             available_width: row_width,
@@ -98,7 +88,7 @@ fn paint_progress_text(
     metrics: &CardMetrics,
 ) {
     let row_width = metrics.row_width;
-    let style = HudProgressStyle::from_theme(&card.theme);
+    let bar_colors = (card.theme.progress_fill(), card.theme.progress_groove());
 
     let fraction = card.view.progress_fraction();
     let progress_row = metrics.progress_row;
@@ -106,16 +96,17 @@ fn paint_progress_text(
         ProgressTime::Remaining => Paragraph::new(hud_progress_line(
             &HudProgressRow {
                 fraction,
-                row_width: row_width.count(),
+                row_width,
                 remaining: card.view.remaining(),
             },
-            &style,
+            bar_colors,
+            &card.theme.colors(),
         ))
         .render(progress_row, buffer),
         ProgressTime::Elapsed => Paragraph::new(fill(
-            &BarFill::progress(fraction, row_width.count()),
-            style.bar.fill,
-            style.bar.groove,
+            &BarFill::progress(fraction, row_width),
+            bar_colors.0,
+            bar_colors.1,
         ))
         .render(progress_row, buffer),
     }
@@ -123,11 +114,11 @@ fn paint_progress_text(
 
 fn paint_volume_row(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetrics) {
     let bar_area = metrics.volume_row;
-    let style = VolumeStyle::from_theme(&card.theme);
+    let colors = card.theme.colors();
     Paragraph::new(fill(
-        &BarFill::volume(card.view.volume.ratio(), usize::from(bar_area.width)),
-        style.fill,
-        style.groove,
+        &BarFill::volume(card.view.volume.ratio(), Cells(bar_area.width)),
+        colors.accent,
+        colors.bar_groove,
     ))
     .render(bar_area, buffer);
 
@@ -154,7 +145,7 @@ mod tests {
         appearance::AppearanceSettings,
         bounded::Bounded,
         percent::Percent,
-        player::{Player, Preload},
+        player::Player,
         playhead::Playhead,
         playlist::PlayOrder,
         speed::Speed,
@@ -192,12 +183,12 @@ mod tests {
         );
         let player = Player::Playing {
             track: Arc::clone(&track),
-            head: Playhead::anchored(
+            playhead: Playhead::anchored(
                 Duration::from_secs(10),
                 Moment::default(),
                 Speed::default(),
             ),
-            preload: Preload::None,
+            preloaded: None,
         };
         let spectrum: Spectrum = [0.0; SPECTRUM_BANDS];
         let output = Output::Ready;

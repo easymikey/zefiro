@@ -8,14 +8,7 @@ use kernel::{
         cursor_over::CursorOver,
         direction::Direction,
         index::ViewIndex,
-        overlay::{
-            DeleteCandidate,
-            JumpDigits,
-            MusicDirError,
-            Overlay,
-            SearchQuery,
-            TextEntry,
-        },
+        overlay::{DeleteCandidate, MusicDirError, Overlay, SearchQuery, TextEntry},
         playlist::{PlaylistFileName, PlaylistNameError},
         setting_row::SettingRow,
         time::TimecodeError,
@@ -25,9 +18,9 @@ use kernel::{
         BrowseRequest,
         Message,
         PlaybackRequest,
-        PlaylistRequest,
         QueueRequest,
         SearchEdit,
+        SearchRequest,
         TextRequest,
     },
     update::{
@@ -36,8 +29,6 @@ use kernel::{
             OverlayContentMessage,
             OverlayMessage,
             history::{HistoryMessage, HistoryPick},
-            jump::JumpDigitsMessage,
-            search::SearchQueryMessage,
             settings::SettingRowMessage,
         },
     },
@@ -52,7 +43,7 @@ fn help() -> Overlay {
 
 fn search(input: &str, matches: Vec<usize>, selected: usize) -> Overlay {
     Overlay::Search(CursorOver {
-        cursor: Cursor::with_len(matches.len()).at(selected),
+        cursor: Cursor::at(matches.len(), selected),
         content: SearchQuery {
             input: input.to_string(),
             matches: matches.into_iter().map(ViewIndex::new).collect(),
@@ -60,17 +51,15 @@ fn search(input: &str, matches: Vec<usize>, selected: usize) -> Overlay {
     })
 }
 
-fn entry(input: &str) -> TextEntry {
+fn entry<E>(input: &str, error: Option<E>) -> TextEntry<E> {
     TextEntry {
         input: input.to_string(),
+        error,
     }
 }
 
 fn save(input: &str, error: Option<PlaylistNameError>) -> Overlay {
-    Overlay::SavePlaylist {
-        typed: entry(input),
-        error,
-    }
+    Overlay::SavePlaylist(entry(input, error))
 }
 
 fn saved_name(input: &str) -> PlaylistFileName {
@@ -79,7 +68,7 @@ fn saved_name(input: &str) -> PlaylistFileName {
 
 fn history(selected: usize, len: usize) -> Overlay {
     Overlay::History(CursorOver {
-        cursor: Cursor::with_len(len).at(selected),
+        cursor: Cursor::at(len, selected),
         content: (),
     })
 }
@@ -110,17 +99,11 @@ fn track_details() -> Overlay {
 }
 
 fn jump(input: &str, error: Option<TimecodeError>) -> Overlay {
-    Overlay::JumpToTime(JumpDigits {
-        input: input.to_string(),
-        error,
-    })
+    Overlay::JumpToTime(entry(input, error))
 }
 
 fn source_dir(input: &str, error: Option<MusicDirError>) -> Overlay {
-    Overlay::MusicDir {
-        typed: entry(input),
-        error,
-    }
+    Overlay::MusicDir(entry(input, error))
 }
 
 fn open(overlay: Overlay) -> OverlayMessage {
@@ -205,7 +188,7 @@ fn releases() -> Cmd {
     Err(Unhandled)
 )]
 #[case::settings_confirm_closes_and_releases(Some(settings(3)), OverlayMessage::Confirm, Ok((None, closed(releases()))))]
-#[case::search_confirm_plays_the_selected_match(Some(search("mo", vec![0, 2], 1)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Playlist(PlaylistRequest::JumpTo(ViewIndex::new(2))))))))]
+#[case::search_confirm_plays_the_selected_match(Some(search("mo", vec![0, 2], 1)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Playback(PlaybackRequest::JumpTo(ViewIndex::new(2))))))))]
 #[case::search_confirm_without_a_match_is_refused(Some(search("zzz", vec![], 0)), OverlayMessage::Confirm, Err(Unhandled))]
 #[case::save_confirm_saves_under_the_name(Some(save("mix", None)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::SavePlaylist(saved_name("mix"))))))))]
 #[case::save_confirm_with_an_empty_name_stays_open_with_the_error(Some(save("", None)), OverlayMessage::Confirm, Ok((Some(save("", Some(PlaylistNameError::Empty))), Cmd::none())))]
@@ -215,25 +198,35 @@ fn releases() -> Cmd {
 #[case::source_dir_confirm_saves_the_folder(Some(source_dir("/music", None)), OverlayMessage::Confirm, Ok((None, saved_music_dir("/music"))))]
 #[case::source_dir_confirm_empty_stays_open_with_the_error(Some(source_dir("  ", None)), OverlayMessage::Confirm, Ok((Some(source_dir("  ", Some(MusicDirError::Empty))), Cmd::none())))]
 #[case::save_types_a_char(Some(save("mi", None)), text(TextRequest::Char('x')), Ok((Some(save("mix", None)), Cmd::none())))]
+#[case::save_backspace_on_empty_is_refused(
+    Some(save("", None)),
+    text(TextRequest::Backspace),
+    Err(Unhandled)
+)]
+#[case::jump_backspace_on_empty_is_refused(
+    Some(jump("", None)),
+    inner(OverlayContentMessage::Jump(TextRequest::Backspace)),
+    Err(Unhandled)
+)]
 #[case::save_backspace_erases(Some(save("mix", None)), text(TextRequest::Backspace), Ok((Some(save("mi", None)), Cmd::none())))]
 #[case::save_types_a_char_and_clears_the_error(Some(save("", Some(PlaylistNameError::Empty))), text(TextRequest::Char('m')), Ok((Some(save("m", None)), Cmd::none())))]
 #[case::source_dir_types_a_char_and_clears_the_error(Some(source_dir("", Some(MusicDirError::Empty))), text(TextRequest::Char('/')), Ok((Some(source_dir("/", None)), Cmd::none())))]
 #[case::source_dir_backspace_clears_the_error(Some(source_dir("/x", Some(MusicDirError::Empty))), text(TextRequest::Backspace), Ok((Some(source_dir("/", None)), Cmd::none())))]
-#[case::jump_types_a_digit_and_clears_the_error(Some(jump("5:", Some(TimecodeError::Malformed))), inner(OverlayContentMessage::Jump(JumpDigitsMessage::Char('3'))), Ok((Some(jump("5:3", None)), Cmd::none())))]
+#[case::jump_types_a_digit_and_clears_the_error(Some(jump("5:", Some(TimecodeError::Malformed))), inner(OverlayContentMessage::Jump(TextRequest::Char('3'))), Ok((Some(jump("5:3", None)), Cmd::none())))]
 #[case::jump_refuses_a_letter(
     Some(jump("5", None)),
-    inner(OverlayContentMessage::Jump(JumpDigitsMessage::Char('a'))),
+    inner(OverlayContentMessage::Jump(TextRequest::Char('a'))),
     Err(Unhandled)
 )]
 #[case::search_types_a_char(
     Some(search("mo", vec![0], 0)),
-    inner(OverlayContentMessage::Search(SearchQueryMessage::Edit(SearchEdit::Char('o')))),
+    inner(OverlayContentMessage::Search(SearchRequest::Edit(SearchEdit::Char('o')))),
     Ok((Some(search("moo", vec![0], 0)), Cmd::none()))
 )]
-#[case::search_enqueues_the_selected_match(Some(search("mo", vec![0, 2], 1)), inner(OverlayContentMessage::Search(SearchQueryMessage::Enqueue)), Ok((Some(search("mo", vec![0, 2], 1)), Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(2)))))))]
+#[case::search_enqueues_the_selected_match(Some(search("mo", vec![0, 2], 1)), inner(OverlayContentMessage::Search(SearchRequest::Enqueue)), Ok((Some(search("mo", vec![0, 2], 1)), Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(2)))))))]
 #[case::search_enqueue_without_a_match_is_refused(
     Some(search("zzz", vec![], 0)),
-    inner(OverlayContentMessage::Search(SearchQueryMessage::Enqueue)),
+    inner(OverlayContentMessage::Search(SearchRequest::Enqueue)),
     Err(Unhandled)
 )]
 #[case::history_navigates(Some(history(0, 3)), inner(OverlayContentMessage::History(HistoryMessage::Navigate { direction: Direction::Next, len: 3 })), Ok((Some(history(1, 3)), Cmd::none())))]
@@ -251,14 +244,14 @@ fn releases() -> Cmd {
 #[case::search_refuses_history(Some(search("mo", vec![0], 0)), inner(OverlayContentMessage::History(HistoryMessage::Top)), Err(Unhandled))]
 #[case::save_refuses_jump(
     Some(save("mix", None)),
-    inner(OverlayContentMessage::Jump(JumpDigitsMessage::Char('1'))),
+    inner(OverlayContentMessage::Jump(TextRequest::Char('1'))),
     Err(Unhandled)
 )]
 #[case::history_refuses_search(
     Some(history(1, 3)),
-    inner(OverlayContentMessage::Search(SearchQueryMessage::Edit(
-        SearchEdit::Char('a')
-    ))),
+    inner(OverlayContentMessage::Search(SearchRequest::Edit(SearchEdit::Char(
+        'a'
+    )))),
     Err(Unhandled)
 )]
 #[case::settings_refuses_text(
@@ -275,7 +268,7 @@ fn releases() -> Cmd {
 )]
 #[case::track_details_refuses_jump(
     Some(track_details()),
-    inner(OverlayContentMessage::Jump(JumpDigitsMessage::Backspace)),
+    inner(OverlayContentMessage::Jump(TextRequest::Backspace)),
     Err(Unhandled)
 )]
 #[case::jump_refuses_text(
@@ -285,7 +278,7 @@ fn releases() -> Cmd {
 )]
 #[case::source_dir_refuses_search(
     Some(source_dir("/x", None)),
-    inner(OverlayContentMessage::Search(SearchQueryMessage::Enqueue)),
+    inner(OverlayContentMessage::Search(SearchRequest::Enqueue)),
     Err(Unhandled)
 )]
 fn overlay_cell(

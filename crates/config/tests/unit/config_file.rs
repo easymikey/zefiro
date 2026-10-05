@@ -1,6 +1,8 @@
 use config::{
+    appearance_file::parse_appearance,
     config_file::{parse_config, parse_config_reload},
     patch::patched_config_text,
+    theme_file::parse_theme,
 };
 use kernel::{
     cmd::ConfigPatch,
@@ -12,6 +14,7 @@ use kernel::{
         theme::{ThemeChoice, ThemeName},
     },
 };
+use rstest::rstest;
 
 const COMMENTED_CONFIG: &str = include_str!("../fixtures/config_commented.toml");
 
@@ -51,4 +54,87 @@ fn parse_config_reload_reads_the_keymap_and_the_music_dir() {
     )
     .unwrap();
     insta::assert_debug_snapshot!(parsed);
+}
+
+const THEME_KEYS: [&str; 7] = [
+    "background",
+    "muted_foreground",
+    "foreground",
+    "accent",
+    "green",
+    "yellow",
+    "red",
+];
+
+fn theme_with(new_key: &str, key: &str) -> String {
+    let colors: String = THEME_KEYS
+        .iter()
+        .filter(|theme_key| **theme_key != new_key)
+        .map(|theme_key| format!("{theme_key} = \"#102030\"\n"))
+        .collect();
+    format!("name = \"mine\"\n[colors]\n{colors}{key} = \"#a0b0c0\"\n")
+}
+
+fn parsed_config(source: &str) -> String {
+    format!("{:?}", parse_config(source))
+}
+
+fn parsed_appearance(source: &str) -> String {
+    format!("{:?}", parse_appearance(source))
+}
+
+fn parsed_theme(source: &str) -> String {
+    format!("{:?}", parse_theme(source, "mine"))
+}
+
+#[rstest]
+#[case::replaygain(
+    "[audio]\nreplaygain = true\n".to_owned(),
+    "[audio]\nreplay_gain = true\n".to_owned(),
+    parsed_config
+)]
+#[case::text_cells(
+    "[cover.text_cells]\nwidth = 30\nheight = 10\n".to_owned(),
+    "[cover.cover_cells]\nwidth = 30\nheight = 10\n".to_owned(),
+    parsed_appearance
+)]
+#[case::min_columns(
+    "[layout]\nmin_columns = 50\n".to_owned(),
+    "[layout]\nmin_width = 50\n".to_owned(),
+    parsed_appearance
+)]
+#[case::min_rows(
+    "[layout]\nmin_rows = 12\n".to_owned(),
+    "[layout]\nmin_height = 12\n".to_owned(),
+    parsed_appearance
+)]
+#[case::bg(
+    theme_with("background", "bg"),
+    theme_with("background", "background"),
+    parsed_theme
+)]
+#[case::fg(
+    theme_with("muted_foreground", "fg"),
+    theme_with("muted_foreground", "muted_foreground"),
+    parsed_theme
+)]
+#[case::bright_fg(
+    theme_with("foreground", "bright_fg"),
+    theme_with("foreground", "foreground"),
+    parsed_theme
+)]
+#[case::window_bg(
+    theme_with("window_background", "window_bg"),
+    theme_with("window_background", "window_background"),
+    parsed_theme
+)]
+fn an_old_key_parses_like_its_new_name(
+    #[case] old_source: String,
+    #[case] new_source: String,
+    #[case] parsed: fn(&str) -> String,
+) {
+    let new_parsed = parsed(&new_source);
+
+    assert!(new_parsed.starts_with("Ok("), "{new_parsed}");
+    assert_eq!(parsed(&old_source), new_parsed);
 }

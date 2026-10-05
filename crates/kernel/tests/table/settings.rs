@@ -4,20 +4,13 @@ use kernel::{
     cmd::{AudioCmd, Cmd, ConfigCmd, Effect},
     domain::{
         appearance::AppearanceSettings,
+        appearance_rows::appearance_rows,
         crossfade::Crossfade,
         device::{DeviceDefault, ListedDevice, OutputDevice},
         direction::Direction,
         model::Model,
         overlay::{Overlay, OverlayName},
-        setting_row::{
-            AppearanceControl,
-            AppearanceField,
-            AppearanceRow,
-            AppearanceSetting,
-            Choice,
-            OptionCount,
-            SettingRow,
-        },
+        setting_row::{AppearanceField, SettingRow},
         settings::ReplayGain,
         sleep_presets::SleepPresets,
         theme::{ThemeChoice, ThemeName, Themes},
@@ -30,6 +23,7 @@ use kernel::{
         PlaybackRequest,
         SettingsRowRequest,
     },
+    update::machine::Unhandled,
 };
 use rstest::rstest;
 
@@ -39,7 +33,7 @@ use crate::support::{
 };
 
 fn all_rows() -> Vec<SettingRow> {
-    SettingRow::all(&[])
+    SettingRow::all(&appearance_rows(AppearanceSettings::default()))
 }
 
 fn row_index(row: SettingRow) -> usize {
@@ -288,10 +282,17 @@ fn step_row_does_nothing_until_the_shell_delivers_a_list(
 ) {
     let mut model = Model::default();
 
-    let cmd = step(&mut model, row, Direction::Next);
+    let result = update(
+        &mut model,
+        Message::Step {
+            row,
+            direction: Direction::Next,
+        },
+        Moment::default(),
+    );
 
     assert!(unchanged(&model));
-    assert!(cmd == Cmd::none());
+    assert_eq!(result, Err(Unhandled));
 }
 
 #[test]
@@ -412,13 +413,9 @@ fn step_row_keeps_the_two_config_files_apart() {
         [Effect::Audio(AudioCmd::SetReplayGain(ReplayGain::On))]
     ));
 
-    let custom_id = AppearanceField::LayoutMode;
-    model
-        .appearance_rows
-        .push(appearance_row(custom_id, AppearanceControl::Toggle));
     let custom = step(
         &mut model,
-        SettingRow::Appearance(custom_id),
+        SettingRow::Appearance(AppearanceField::LayoutMode),
         Direction::Next,
     );
     assert!(
@@ -431,40 +428,12 @@ fn step_row_keeps_the_two_config_files_apart() {
             .effects()
             .any(|effect| matches!(effect, Effect::Audio(_) | Effect::Library(_)))
     );
-    assert!(custom.effects().any(|effect| matches!(
-        effect,
-        Effect::Config(ConfigCmd::SetAppearance { .. })
-    )));
-}
-
-fn appearance_row(
-    id: AppearanceField,
-    control: AppearanceControl,
-) -> AppearanceSetting {
-    let row: &'static AppearanceRow = Box::leak(Box::new(AppearanceRow {
-        field: id,
-        control,
-        cue: None,
-        themes: &[],
-    }));
-    AppearanceSetting {
-        row,
-        choice: Choice::Option(control.count().index(0).unwrap()),
-    }
-}
-
-fn model_with_appearance_rows() -> Model {
-    Model {
-        appearance_rows: vec![
-            appearance_row(AppearanceField::CoverBrackets, AppearanceControl::Toggle),
-            appearance_row(
-                AppearanceField::CoverMode,
-                AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
-            ),
-            appearance_row(AppearanceField::SpeedChip, AppearanceControl::Toggle),
-        ],
-        ..Model::default()
-    }
+    assert!(
+        custom.effects().any(|effect| matches!(
+            effect,
+            Effect::Config(ConfigCmd::SetAppearance(_))
+        ))
+    );
 }
 
 fn selected_row(model: &Model) -> Option<SettingRow> {
@@ -480,7 +449,7 @@ fn navigate_down(model: &mut Model) {
 
 #[test]
 fn the_highlighted_row_is_the_row_that_changes_across_steps() {
-    let mut model = model_with_appearance_rows();
+    let mut model = Model::default();
     let cover_mode = AppearanceField::CoverMode;
 
     send(
@@ -503,13 +472,13 @@ fn the_highlighted_row_is_the_row_that_changes_across_steps() {
             Moment::default(),
         )
         .unwrap();
-        let emitted_id = cmd.effects().find_map(|effect| {
-            let Effect::Config(ConfigCmd::SetAppearance { field, .. }) = effect else {
+        let patched_cover_mode = cmd.effects().find_map(|effect| {
+            let Effect::Config(ConfigCmd::SetAppearance(patch)) = effect else {
                 return None;
             };
-            Some(*field)
+            Some(patch.cover_mode.is_some())
         });
-        assert_eq!(emitted_id, Some(cover_mode));
+        assert_eq!(patched_cover_mode, Some(true));
         assert_eq!(
             selected_row(&model),
             Some(SettingRow::Appearance(cover_mode))
@@ -519,7 +488,7 @@ fn the_highlighted_row_is_the_row_that_changes_across_steps() {
 
 #[test]
 fn an_appearance_reload_while_open_keeps_the_selection_on_the_same_row() {
-    let mut model = model_with_appearance_rows();
+    let mut model = Model::default();
     let cover_mode = AppearanceField::CoverMode;
 
     send(

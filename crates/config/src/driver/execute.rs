@@ -5,7 +5,7 @@ use std::{
 
 use kernel::{
     domain::{
-        config::{ConfigError, ConfigName, Diagnostic},
+        config::{ConfigError, ConfigName},
         io_error::IoError,
         theme::ThemeName,
     },
@@ -13,12 +13,13 @@ use kernel::{
 };
 
 use crate::{
-    appearance_file::TomlAppearance,
     driver::{
+        Appearance,
         ConfigDriver,
         effect::ConfigEffect,
         files::{read_if_present, store},
         message::ConfigMessage,
+        watch::{ConfigWatchMessage, WatchEffect},
     },
     patch::{patched_appearance_text, patched_config_text},
     theme_file::TomlTheme,
@@ -26,13 +27,15 @@ use crate::{
 
 const THEME_EXTENSION: &str = "toml";
 
-impl<P: Fn(TomlTheme), A: Fn(TomlAppearance)> Driver for ConfigDriver<P, A> {
+impl<P: Fn(TomlTheme), A: Fn(Appearance)> Driver for ConfigDriver<P, A> {
     type Effect = ConfigEffect;
 
     fn execute(&mut self, effect: ConfigEffect) -> Option<ConfigMessage> {
         match effect {
-            ConfigEffect::Read { file, path } => Some(read(file, &path)),
-            ConfigEffect::List(dir) => Some(list(&dir)),
+            ConfigEffect::Watch(WatchEffect::Read { file, path }) => {
+                Some(read(file, &path))
+            }
+            ConfigEffect::Watch(WatchEffect::List(dir)) => Some(list(&dir)),
             ConfigEffect::SaveConfig(patch) => {
                 Some(save(ConfigName::Config, &self.config, |existing| {
                     patched_config_text(existing, patch)
@@ -51,14 +54,15 @@ impl<P: Fn(TomlTheme), A: Fn(TomlAppearance)> Driver for ConfigDriver<P, A> {
                 (self.publish_appearance)(appearance);
                 None
             }
-            ConfigEffect::Watch(_) | ConfigEffect::After { .. } => None,
         }
     }
 }
 
 fn read(file: ConfigName, path: &Path) -> ConfigMessage {
     match read_if_present(path) {
-        Ok(text) => ConfigMessage::ReadDone { file, text },
+        Ok(text) => {
+            ConfigMessage::Watch(ConfigWatchMessage::ReadDone { name: file, text })
+        }
         Err(error) => ConfigMessage::Error(ConfigError::Unreadable {
             file,
             kind: error.kind().into(),
@@ -78,25 +82,25 @@ fn list(dir: &Path) -> ConfigMessage {
             })
             .map(theme_name)
             .collect::<Result<Vec<_>, _>>()
-            .map_or_else(ConfigMessage::Error, ConfigMessage::Listed),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            ConfigMessage::Listed(Vec::new())
-        }
+            .map_or_else(ConfigMessage::Error, listed),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => listed(Vec::new()),
         Err(error) => {
             ConfigMessage::Error(ConfigError::ThemesUnreadable(error.kind().into()))
         }
     }
 }
 
+fn listed(names: Vec<ThemeName>) -> ConfigMessage {
+    ConfigMessage::Watch(ConfigWatchMessage::Listed(names))
+}
+
 fn theme_name(path: io::Result<PathBuf>) -> Result<ThemeName, ConfigError> {
-    let path =
-        path.map_err(|error| ConfigError::Invalid(Diagnostic::from_error(&error)))?;
+    let path = path.map_err(|error| ConfigError::invalid(&error))?;
     let stem = path.file_stem().map_or(
         std::borrow::Cow::Borrowed(""),
         std::ffi::OsStr::to_string_lossy,
     );
-    ThemeName::new(stem.into_owned())
-        .map_err(|error| ConfigError::Invalid(Diagnostic::from_error(&error)))
+    ThemeName::new(stem.into_owned()).map_err(|error| ConfigError::invalid(&error))
 }
 
 fn save(
@@ -110,11 +114,7 @@ fn save(
     };
     let text = match produce(existing.as_deref().unwrap_or("")) {
         Ok(text) => text,
-        Err(error) => {
-            return ConfigMessage::Error(ConfigError::Invalid(Diagnostic::from_error(
-                &error,
-            )));
-        }
+        Err(error) => return ConfigMessage::Error(ConfigError::invalid(&error)),
     };
     match store(path, text.as_bytes()) {
         Ok(()) => ConfigMessage::Saved { file, text },
@@ -134,7 +134,7 @@ mod tests {
         cmd::ConfigPatch,
         domain::{
             appearance::{AppearancePatch, CoverBrackets},
-            appearance_rows::{appearance_patch, appearance_row},
+            appearance_rows::{APPEARANCE_ROWS, appearance_patch},
             bounded::Bounded,
             config::{ConfigError, ConfigName},
             crossfade::Crossfade,
@@ -147,17 +147,18 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use crate::{
-        appearance_file::TomlAppearance,
         driver::{
+            Appearance,
             ConfigDriver,
             effect::ConfigEffect,
             message::ConfigMessage,
             paths::{ConfigPaths, SeenTexts},
+            watch::{ConfigWatchMessage, WatchEffect},
         },
         theme_file::TomlTheme,
     };
 
-    type Sink = ConfigDriver<fn(TomlTheme), fn(TomlAppearance)>;
+    type Sink = ConfigDriver<fn(TomlTheme), fn(Appearance)>;
 
     struct Disk {
         directory: tempfile::TempDir,
@@ -172,6 +173,7 @@ mod tests {
             config: directory.path().join("config.toml"),
             appearance: directory.path().join("sifr-ui.toml"),
             themes: directory.path().join("themes"),
+            default_music_dir: None,
             theme: None,
             seen: SeenTexts::default(),
         };
@@ -191,16 +193,17 @@ mod tests {
     fn a_missing_file_reads_as_no_text(mut disk: Disk) {
         let path = disk.paths.themes.join("noir.toml");
 
-        let message = disk
-            .driver
-            .execute(ConfigEffect::Read { file: noir(), path });
+        let message = disk.driver.execute(ConfigEffect::Watch(WatchEffect::Read {
+            file: noir(),
+            path,
+        }));
 
         assert_eq!(
             message,
-            Some(ConfigMessage::ReadDone {
-                file: noir(),
+            Some(ConfigMessage::Watch(ConfigWatchMessage::ReadDone {
+                name: noir(),
                 text: None
-            })
+            }))
         );
     }
 
@@ -210,11 +213,15 @@ mod tests {
         std::fs::write(themes.join("noir.toml"), "").unwrap();
         std::fs::write(themes.join("notes.txt"), "").unwrap();
 
-        let listed = disk.driver.execute(ConfigEffect::List(themes));
+        let listed = disk
+            .driver
+            .execute(ConfigEffect::Watch(WatchEffect::List(themes)));
 
         assert_eq!(
             listed,
-            Some(ConfigMessage::Listed(vec![ThemeName::from_static("noir")]))
+            Some(ConfigMessage::Watch(ConfigWatchMessage::Listed(vec![
+                ThemeName::from_static("noir")
+            ])))
         );
     }
 
@@ -222,9 +229,14 @@ mod tests {
     fn a_missing_directory_lists_as_empty(mut disk: Disk) {
         let missing = disk.paths.themes.clone();
 
-        let listed = disk.driver.execute(ConfigEffect::List(missing));
+        let listed = disk
+            .driver
+            .execute(ConfigEffect::Watch(WatchEffect::List(missing)));
 
-        assert_eq!(listed, Some(ConfigMessage::Listed(Vec::new())));
+        assert_eq!(
+            listed,
+            Some(ConfigMessage::Watch(ConfigWatchMessage::Listed(Vec::new())))
+        );
     }
 
     #[rstest]
@@ -232,7 +244,9 @@ mod tests {
         let not_a_directory = disk.paths.themes.clone();
         std::fs::write(&not_a_directory, "").unwrap();
 
-        let listed = disk.driver.execute(ConfigEffect::List(not_a_directory));
+        let listed = disk
+            .driver
+            .execute(ConfigEffect::Watch(WatchEffect::List(not_a_directory)));
 
         assert!(matches!(
             listed,
@@ -357,7 +371,9 @@ mod tests {
         std::fs::create_dir_all(&themes).unwrap();
         std::fs::write(themes.join("auto.toml"), "").unwrap();
 
-        let listed = disk.driver.execute(ConfigEffect::List(themes));
+        let listed = disk
+            .driver
+            .execute(ConfigEffect::Watch(WatchEffect::List(themes)));
 
         assert!(
             matches!(listed, Some(ConfigMessage::Error(ConfigError::Invalid(_)))),
@@ -371,6 +387,7 @@ mod tests {
             config: "config.toml".into(),
             appearance: "sifr-ui.toml".into(),
             themes: "themes".into(),
+            default_music_dir: None,
             theme: None,
             seen: SeenTexts::default(),
         };
@@ -399,7 +416,9 @@ speed_chip = "always"
 "#;
 
     fn option_at(id: AppearanceField, position: usize) -> OptionIndex {
-        appearance_row(id)
+        APPEARANCE_ROWS
+            .iter()
+            .find(|row| row.field == id)
             .unwrap()
             .control
             .count()

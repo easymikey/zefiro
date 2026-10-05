@@ -93,8 +93,8 @@ expression: "walked(model, messages)"
                 ),
             ),
         ],
-        Loading {
-            track: Track {
+        Loading(
+            Track {
                 source: Local(
                     "/tmp/track0.flac",
                 ),
@@ -125,8 +125,7 @@ expression: "walked(model, messages)"
                     None,
                 ),
             },
-            at: 0ns,
-        },
+        ),
         None,
         Cursor {
             index: 0,
@@ -197,7 +196,7 @@ expression: "walked(model, messages)"
                     None,
                 ),
             },
-            head: Playhead {
+            playhead: Playhead {
                 offset: 0ns,
                 since: Moment(
                     0ns,
@@ -206,7 +205,7 @@ expression: "walked(model, messages)"
                     1.0,
                 ),
             },
-            preload: None,
+            preloaded: None,
         },
         None,
         Cursor {

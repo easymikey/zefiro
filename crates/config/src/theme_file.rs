@@ -9,11 +9,11 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, expecting = "a [colors] table of hex colours")]
 pub struct TomlColors {
-    #[serde(deserialize_with = "from_str_field")]
+    #[serde(alias = "bg", deserialize_with = "from_str_field")]
     pub background: Rgb,
-    #[serde(deserialize_with = "from_str_field")]
+    #[serde(alias = "fg", deserialize_with = "from_str_field")]
     pub muted_foreground: Rgb,
-    #[serde(deserialize_with = "from_str_field")]
+    #[serde(alias = "bright_fg", deserialize_with = "from_str_field")]
     pub foreground: Rgb,
     #[serde(deserialize_with = "from_str_field")]
     pub accent: Rgb,
@@ -23,7 +23,7 @@ pub struct TomlColors {
     pub yellow: Rgb,
     #[serde(deserialize_with = "from_str_field")]
     pub red: Rgb,
-    #[serde(default, deserialize_with = "from_str_option")]
+    #[serde(default, alias = "window_bg", deserialize_with = "from_str_option")]
     pub window_background: Option<Rgb>,
 }
 

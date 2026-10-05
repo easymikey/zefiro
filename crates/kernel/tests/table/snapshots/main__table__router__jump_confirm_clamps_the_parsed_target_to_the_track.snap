@@ -47,7 +47,7 @@ expression: "walked(model, messages)"
                     100s,
                 ),
             },
-            head: Playhead {
+            playhead: Playhead {
                 offset: 0ns,
                 since: Moment(
                     0ns,
@@ -56,11 +56,11 @@ expression: "walked(model, messages)"
                     1.0,
                 ),
             },
-            preload: None,
+            preloaded: None,
         },
         Some(
             JumpToTime(
-                JumpDigits {
+                TextEntry {
                     input: "",
                     error: None,
                 },
@@ -131,7 +131,7 @@ expression: "walked(model, messages)"
                     100s,
                 ),
             },
-            head: Playhead {
+            playhead: Playhead {
                 offset: 0ns,
                 since: Moment(
                     0ns,
@@ -140,11 +140,11 @@ expression: "walked(model, messages)"
                     1.0,
                 ),
             },
-            preload: None,
+            preloaded: None,
         },
         Some(
             JumpToTime(
-                JumpDigits {
+                TextEntry {
                     input: "1",
                     error: None,
                 },
@@ -215,7 +215,7 @@ expression: "walked(model, messages)"
                     100s,
                 ),
             },
-            head: Playhead {
+            playhead: Playhead {
                 offset: 0ns,
                 since: Moment(
                     0ns,
@@ -224,11 +224,11 @@ expression: "walked(model, messages)"
                     1.0,
                 ),
             },
-            preload: None,
+            preloaded: None,
         },
         Some(
             JumpToTime(
-                JumpDigits {
+                TextEntry {
                     input: "10",
                     error: None,
                 },
@@ -299,7 +299,7 @@ expression: "walked(model, messages)"
                     100s,
                 ),
             },
-            head: Playhead {
+            playhead: Playhead {
                 offset: 0ns,
                 since: Moment(
                     0ns,
@@ -308,11 +308,11 @@ expression: "walked(model, messages)"
                     1.0,
                 ),
             },
-            preload: None,
+            preloaded: None,
         },
         Some(
             JumpToTime(
-                JumpDigits {
+                TextEntry {
                     input: "10:",
                     error: None,
                 },
@@ -383,7 +383,7 @@ expression: "walked(model, messages)"
                     100s,
                 ),
             },
-            head: Playhead {
+            playhead: Playhead {
                 offset: 0ns,
                 since: Moment(
                     0ns,
@@ -392,11 +392,11 @@ expression: "walked(model, messages)"
                     1.0,
                 ),
             },
-            preload: None,
+            preloaded: None,
         },
         Some(
             JumpToTime(
-                JumpDigits {
+                TextEntry {
                     input: "10:0",
                     error: None,
                 },
@@ -467,7 +467,7 @@ expression: "walked(model, messages)"
                     100s,
                 ),
             },
-            head: Playhead {
+            playhead: Playhead {
                 offset: 0ns,
                 since: Moment(
                     0ns,
@@ -476,11 +476,11 @@ expression: "walked(model, messages)"
                     1.0,
                 ),
             },
-            preload: None,
+            preloaded: None,
         },
         Some(
             JumpToTime(
-                JumpDigits {
+                TextEntry {
                     input: "10:00",
                     error: None,
                 },
@@ -561,7 +561,7 @@ expression: "walked(model, messages)"
                     100s,
                 ),
             },
-            head: Playhead {
+            playhead: Playhead {
                 offset: 100s,
                 since: Moment(
                     0ns,
@@ -570,7 +570,7 @@ expression: "walked(model, messages)"
                     1.0,
                 ),
             },
-            preload: None,
+            preloaded: None,
         },
         None,
         Cursor {

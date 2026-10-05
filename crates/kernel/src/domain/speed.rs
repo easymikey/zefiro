@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::domain::bounded::Bounded;
+use crate::domain::{bounded::Bounded, direction::Direction};
 
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -32,12 +32,11 @@ impl Speed {
         self.0
     }
 
-    pub(crate) fn step_up(self) -> Self {
-        Self::clamped(self.0 + Self::STEP)
-    }
-
-    pub(crate) fn step_down(self) -> Self {
-        Self::clamped(self.0 - Self::STEP)
+    pub(crate) fn step(self, direction: Direction) -> Self {
+        match direction {
+            Direction::Next => Self::clamped(self.0 + Self::STEP),
+            Direction::Previous => Self::clamped(self.0 - Self::STEP),
+        }
     }
 }
 
@@ -59,7 +58,7 @@ impl fmt::Display for Speed {
 mod tests {
     use rstest::rstest;
 
-    use crate::domain::{bounded::Bounded, speed::Speed};
+    use crate::domain::{bounded::Bounded, direction::Direction, speed::Speed};
 
     #[rstest]
     #[case::saturates_above_the_ceiling(10.0, 4.0)]
@@ -75,20 +74,20 @@ mod tests {
     }
 
     #[rstest]
-    #[case::step_up_saturates_at_the_ceiling(Speed::clamped(4.0), Speed::step_up, 4.0)]
-    #[case::step_down_saturates_at_the_floor(
+    #[case::next_saturates_at_the_ceiling(Speed::clamped(4.0), Direction::Next, 4.0)]
+    #[case::previous_saturates_at_the_floor(
         Speed::clamped(0.25),
-        Speed::step_down,
+        Direction::Previous,
         0.25
     )]
-    #[case::step_up_from_default(Speed::default(), Speed::step_up, 1.25)]
-    #[case::step_down_from_default(Speed::default(), Speed::step_down, 0.75)]
+    #[case::next_from_default(Speed::default(), Direction::Next, 1.25)]
+    #[case::previous_from_default(Speed::default(), Direction::Previous, 0.75)]
     fn step_saturates_at_bounds(
         #[case] start: Speed,
-        #[case] step: fn(Speed) -> Speed,
+        #[case] direction: Direction,
         #[case] expected: f32,
     ) {
-        assert_eq!(step(start).get(), expected);
+        assert_eq!(start.step(direction).get(), expected);
     }
 
     #[test]

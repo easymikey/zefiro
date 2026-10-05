@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::{
     domain::{
         chord::ChordPrefix,
@@ -25,7 +23,6 @@ pub struct Workspace {
     pub keymap: Keymap,
     pub visible_rows: Cells,
     pub cover_side: Option<Pixels>,
-    pub played_for: Duration,
     pub(crate) config_errors: ConfigErrors,
 }
 

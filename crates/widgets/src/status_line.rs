@@ -16,7 +16,7 @@ use crate::{
         text::truncate_line_to_width,
     },
     repaint::{Presence, ceil_minutes, next_sleep_minute},
-    theme::{active_theme::ActiveTheme, colors::Role},
+    theme::colors::Colors,
 };
 
 const SHUFFLE_LABEL: &str = "shuffle ";
@@ -26,65 +26,29 @@ const THEME_LABEL: &str = "theme ";
 const SLEEP_LABEL: &str = "sleep ";
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum ScanProgress<'a> {
-    Done,
-    Scanning(&'a str),
-    Tagging { done: usize, total: usize },
-}
-
-impl<'a> ScanProgress<'a> {
-    #[must_use]
-    pub(crate) fn of(status: ScanStatus, scanning_label: &'a str) -> Self {
-        match status {
-            ScanStatus::Idle => Self::Done,
-            ScanStatus::Scanning => Self::Scanning(scanning_label),
-            ScanStatus::Tagging { done, total } => Self::Tagging { done, total },
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
 pub(crate) struct StatusLineView<'a> {
     pub(crate) shuffle: Shuffle,
     pub(crate) repeat_mode: RepeatMode,
     pub(crate) queue_len: usize,
     pub(crate) position: ViewIndex,
     pub(crate) total: usize,
-    pub(crate) scan: ScanProgress<'a>,
+    pub(crate) scan_status: ScanStatus,
+    pub(crate) scanning_label: &'a str,
     pub(crate) theme_name: &'a str,
     pub(crate) sleep_left: Option<Duration>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct StatusLineStyle {
-    pub(crate) border: Color,
-    pub(crate) muted_foreground: Color,
-    pub(crate) accent: Color,
-}
-
-impl StatusLineStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            border: theme.role(Role::Frame),
-            muted_foreground: theme.role(Role::Dim),
-            accent: theme.role(Role::Accent),
-        }
-    }
-}
-
 const NAME: &str = "Playlist";
-const FLAG_SEPARATOR: &str = " · ";
 
 fn counts(status: StatusLineView<'_>) -> String {
-    match status.scan {
-        ScanProgress::Done => format!(
+    match status.scan_status {
+        ScanStatus::Idle => format!(
             "{}/{}",
             (status.position.get() + 1).min(status.total),
             status.total
         ),
-        ScanProgress::Scanning(label) => label.to_string(),
-        ScanProgress::Tagging { done, total } => {
+        ScanStatus::Scanning => status.scanning_label.to_string(),
+        ScanStatus::Tagging { done, total } => {
             format!("{total} tracks · tagging {done}/{total}")
         }
     }
@@ -97,7 +61,7 @@ fn sleep_label(left: Duration) -> String {
 #[must_use]
 pub(crate) fn status_line<'a>(
     status: StatusLineView<'a>,
-    style: StatusLineStyle,
+    colors: &Colors<Color>,
     row_width: Cells,
 ) -> Line<'a> {
     let pos_total = counts(status);
@@ -110,17 +74,18 @@ pub(crate) fn status_line<'a>(
 
     let flag = |label: &'static str, value: Cow<'a, str>| -> Vec<StyledText<'a>> {
         vec![
-            text(label).fg(style.muted_foreground),
-            text(value).fg(style.accent),
+            text(label).fg(colors.muted_foreground),
+            text(value).fg(colors.accent),
         ]
     };
-    let flag_separator = || text(FLAG_SEPARATOR).fg(style.muted_foreground);
+    let flag_separator =
+        || text(crate::primitive::glyphs::DOT_SEPARATOR).fg(colors.muted_foreground);
 
     let head = [
-        text(NAME).fg(style.border),
-        text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(style.muted_foreground),
-        text(pos_total).fg(style.accent),
-        text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(style.muted_foreground),
+        text(NAME).fg(colors.muted_foreground),
+        text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(colors.muted_foreground),
+        text(pos_total).fg(colors.accent),
+        text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(colors.muted_foreground),
     ];
     let flags: [(&'static str, Cow<'a, str>); 4] = [
         (SHUFFLE_LABEL, Cow::Borrowed(shuffle)),
@@ -164,6 +129,7 @@ mod tests {
     use kernel::domain::{
         geometry::Cells,
         index::ViewIndex,
+        model::ScanStatus,
         playlist::RepeatMode,
         startup::Shuffle,
         time::Moment,
@@ -174,20 +140,13 @@ mod tests {
 
     use crate::{
         repaint::Presence,
-        status_line::{
-            ScanProgress,
-            StatusLineStyle,
-            StatusLineView,
-            sleep_frame_due,
-            sleep_label,
-            status_line,
-        },
+        status_line::{StatusLineView, sleep_frame_due, sleep_label, status_line},
         test_support::noir,
-        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
+        theme::{active_theme::ActiveTheme, colors::Colors, rgb::ColorDepth},
     };
 
-    fn colors() -> StatusLineStyle {
-        StatusLineStyle::from_theme(&ActiveTheme::new(&noir(), ColorDepth::TrueColor))
+    fn colors() -> Colors<Color> {
+        ActiveTheme::new(&noir(), ColorDepth::TrueColor).colors()
     }
 
     fn view() -> StatusLineView<'static> {
@@ -197,7 +156,8 @@ mod tests {
             queue_len: 7,
             position: ViewIndex::new(2),
             total: 12,
-            scan: ScanProgress::Done,
+            scan_status: ScanStatus::Idle,
+            scanning_label: "Scanning…",
             theme_name: "rose-pine",
             sleep_left: None,
         }
@@ -206,38 +166,38 @@ mod tests {
     #[test]
     fn tagging_counts_the_tracks_whose_tags_are_already_read() {
         let status = StatusLineView {
-            scan: ScanProgress::Tagging {
+            scan_status: ScanStatus::Tagging {
                 done: 64,
                 total: 128,
             },
             ..view()
         };
-        insta::assert_snapshot!(status_line(status, colors(), Cells(80)).to_string());
+        insta::assert_snapshot!(status_line(status, &colors(), Cells(80)).to_string());
     }
 
     #[test]
     fn a_scan_in_flight_wears_the_theme_word() {
         let status = StatusLineView {
-            scan: ScanProgress::Scanning("Scanning…"),
+            scan_status: ScanStatus::Scanning,
             ..view()
         };
-        insta::assert_snapshot!(status_line(status, colors(), Cells(80)).to_string());
+        insta::assert_snapshot!(status_line(status, &colors(), Cells(80)).to_string());
     }
 
     #[test]
     fn the_status_line_shows_every_label() {
-        let style = StatusLineStyle {
-            border: Color::Blue,
+        let colors = Colors {
             muted_foreground: Color::Gray,
             accent: Color::Cyan,
+            ..Colors::default()
         };
-        let line = status_line(view(), style, Cells(80));
+        let line = status_line(view(), &colors, Cells(80));
         insta::assert_debug_snapshot!(line);
     }
 
     #[test]
     fn the_title_names_the_pane_its_position_and_its_flags() {
-        let text: String = status_line(view(), colors(), Cells(80))
+        let text: String = status_line(view(), &colors(), Cells(80))
             .spans
             .iter()
             .map(|span| span.content.as_ref())
@@ -254,7 +214,7 @@ mod tests {
             sleep_left: Some(Duration::from_secs(14 * 60 + 59)),
             ..view()
         };
-        let text: String = status_line(status, colors(), Cells(100))
+        let text: String = status_line(status, &colors(), Cells(100))
             .spans
             .iter()
             .map(|span| span.content.as_ref())
@@ -278,7 +238,7 @@ mod tests {
     #[test]
     fn a_narrow_border_truncates_the_title_with_an_ellipsis() {
         let budget = Cells(24);
-        let text: String = status_line(view(), colors(), budget)
+        let text: String = status_line(view(), &colors(), budget)
             .spans
             .iter()
             .map(|span| span.content.as_ref())

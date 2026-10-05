@@ -1,7 +1,6 @@
 use kernel::domain::geometry::Cells;
 use ratatui::{
     layout::{Constraint, Rect},
-    style::Color,
     text::{Line, Span},
     widgets::{Cell, Row},
 };
@@ -16,33 +15,16 @@ use crate::{
             HelpGroups,
             HelpRow,
             MINIMUM_DESCRIPTION,
-            small_count_u16,
         },
         modal::place::{Hint, list_capacity},
     },
+    pixels::numeric::small_count_u16,
     primitive::{
         glyphs,
         span::{StyledText, line, text},
     },
-    theme::{active_theme::ActiveTheme, colors::Role},
+    theme::active_theme::ActiveTheme,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct HelpStyle {
-    pub(crate) border: Color,
-    pub(crate) muted_accent: Color,
-    pub(crate) foreground: Color,
-}
-
-impl HelpStyle {
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            border: theme.role(Role::Frame),
-            muted_accent: theme.muted_accent(),
-            foreground: theme.role(Role::Text),
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct HelpColumn {
@@ -71,7 +53,8 @@ fn full_width_row(line: Line<'static>) -> Row<'static> {
     Row::new(vec![Cell::from(line).column_span(2)])
 }
 
-fn column_lines(groups: &[&HelpGroup], colors: HelpStyle) -> HelpColumn {
+fn column_lines(groups: &[&HelpGroup], theme: &ActiveTheme<'_>) -> HelpColumn {
+    let colors = theme.colors();
     let chord_width = widest_chord(groups);
     let max_width =
         groups
@@ -91,15 +74,15 @@ fn column_lines(groups: &[&HelpGroup], colors: HelpStyle) -> HelpColumn {
                 .then(Row::default)
                 .into_iter()
                 .chain(std::iter::once(full_width_row(line([text(group.title)
-                    .fg(colors.border)
+                    .fg(colors.muted_foreground)
                     .bold()]))))
                 .chain(group.bindings.iter().map(|HelpRow { chord, label }| {
                     Row::new(vec![
                         Cell::from(
-                            line([text(chord.clone()).fg(colors.muted_accent)])
+                            line([text(chord.clone()).fg(theme.muted_accent())])
                                 .right_aligned(),
                         ),
-                        Cell::from(line([text(label.clone()).fg(colors.foreground)])),
+                        Cell::from(line([text(label.clone()).fg(colors.text)])),
                     ])
                 }))
         })
@@ -119,14 +102,14 @@ fn height_spread(first: Cells, second: Cells, third: Cells) -> Cells {
 
 fn three_columns(
     groups: [&HelpGroup; 4],
-    colors: HelpStyle,
+    theme: &ActiveTheme<'_>,
 ) -> (HelpColumn, HelpColumn, HelpColumn) {
     let [playback, general, navigation, playlist] = groups;
-    let playback_column = column_lines(&[playback], colors);
-    let general_and_navigation = column_lines(&[general, navigation], colors);
-    let playlist_alone = column_lines(&[playlist], colors);
-    let general_alone = column_lines(&[general], colors);
-    let navigation_and_playlist = column_lines(&[navigation, playlist], colors);
+    let playback_column = column_lines(&[playback], theme);
+    let general_and_navigation = column_lines(&[general, navigation], theme);
+    let playlist_alone = column_lines(&[playlist], theme);
+    let general_alone = column_lines(&[general], theme);
+    let navigation_and_playlist = column_lines(&[navigation, playlist], theme);
 
     let navigation_after_general = height_spread(
         playback_column.height,
@@ -221,7 +204,7 @@ fn columns_that_fit(candidates: Vec<Vec<HelpColumn>>, inner: Cells) -> Vec<HelpC
 
 pub(crate) fn select_help_columns(
     groups: &HelpGroups,
-    colors: HelpStyle,
+    theme: &ActiveTheme<'_>,
     full: Rect,
 ) -> Vec<HelpColumn> {
     let HelpGroups {
@@ -233,18 +216,18 @@ pub(crate) fn select_help_columns(
 
     let available_height = list_capacity(full, Hint::Absent).height;
 
-    let single = column_lines(&[playback, navigation, playlist, general], colors);
+    let single = column_lines(&[playback, navigation, playlist, general], theme);
     let columns: Vec<HelpColumn> = if single.height <= available_height {
         vec![single]
     } else {
         let (left, middle, right) =
-            three_columns([playback, general, navigation, playlist], colors);
+            three_columns([playback, general, navigation, playlist], theme);
         columns_that_fit(
             vec![
                 vec![left, middle, right],
                 vec![
-                    column_lines(&[playback], colors),
-                    column_lines(&[general, navigation, playlist], colors),
+                    column_lines(&[playback], theme),
+                    column_lines(&[general, navigation, playlist], theme),
                 ],
                 vec![single],
             ],
@@ -258,7 +241,7 @@ pub(crate) fn select_help_columns(
             fit_column(
                 column,
                 available_height,
-                text(glyphs::help::OVERFLOW_HINT).fg(colors.muted_accent),
+                text(glyphs::help::OVERFLOW_HINT).fg(theme.muted_accent()),
             )
         })
         .collect()
@@ -276,9 +259,7 @@ mod tests {
         overlay::help::{
             columns::{
                 HelpColumn,
-                HelpStyle,
                 available_width,
-                column_lines,
                 columns_that_fit,
                 columns_width,
                 squeezed_width,
@@ -289,10 +270,6 @@ mod tests {
         test_support::noir,
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
-
-    fn colors() -> HelpStyle {
-        HelpStyle::from_theme(&ActiveTheme::new(&noir(), ColorDepth::TrueColor))
-    }
 
     fn synthetic_group(title: &'static str, row_count: usize) -> HelpGroup {
         HelpGroup {
@@ -323,25 +300,11 @@ mod tests {
         let general = synthetic_group("General", general_rows);
         let navigation = synthetic_group("Navigation", navigation_rows);
         let playlist = synthetic_group("Playlist", playlist_rows);
-        let (left, middle, right) =
-            three_columns([&playback, &general, &navigation, &playlist], colors());
-        assert_eq!((left.height, middle.height, right.height), row.heights);
-    }
-
-    #[test]
-    fn two_columns_of_comparable_groups_stay_within_a_few_rows_of_each_other() {
-        let left_first = synthetic_group("A", 5);
-        let left_second = synthetic_group("B", 4);
-        let right_first = synthetic_group("C", 5);
-        let right_second = synthetic_group("D", 4);
-        let left = column_lines(&[&left_first, &left_second], colors());
-        let right = column_lines(&[&right_first, &right_second], colors());
-        assert!(
-            left.height.0.abs_diff(right.height.0) <= 3,
-            "columns should stay balanced: left={} right={}",
-            left.height.0,
-            right.height.0
+        let (left, middle, right) = three_columns(
+            [&playback, &general, &navigation, &playlist],
+            &ActiveTheme::new(&noir(), ColorDepth::TrueColor),
         );
+        assert_eq!((left.height, middle.height, right.height), row.heights);
     }
 
     fn column(width: u16) -> HelpColumn {

@@ -36,7 +36,6 @@ use kernel::{
         Message,
         OverlayRequest,
         PlaybackRequest,
-        PlaylistRequest,
         QueueRequest,
         SearchEdit,
         SearchRequest,
@@ -166,8 +165,6 @@ fn playback() -> impl Strategy<Value = PlaybackRequest> {
             PlaybackRequest::Toggle,
             PlaybackRequest::Play,
             PlaybackRequest::Pause,
-            PlaybackRequest::SeekForward,
-            PlaybackRequest::SeekBack,
             PlaybackRequest::HoldForOverlay,
             PlaybackRequest::Release,
             PlaybackRequest::Stop,
@@ -185,9 +182,9 @@ fn playback() -> impl Strategy<Value = PlaybackRequest> {
         direction().prop_map(PlaybackRequest::StepVolume),
         direction().prop_map(PlaybackRequest::StepSpeed),
         (0u64..200).prop_map(|secs| PlaybackRequest::SeekTo(Duration::from_secs(secs))),
-        (0u8..10).prop_map(|tenths| {
-            PlaybackRequest::SeekTenths(SeekTenths::try_from(tenths).unwrap())
-        }),
+        (0u8..10).prop_map(|tenths| PlaybackRequest::SeekTenths(SeekTenths::clamped(
+            tenths
+        ))),
     ]
 }
 
@@ -208,7 +205,6 @@ fn browse() -> impl Strategy<Value = BrowseRequest> {
                 format!("/tmp/track{row}.flac").into(),
             ))
         }),
-        playlist_index().prop_map(BrowseRequest::CursorTo),
         (-4isize..4).prop_map(|rows| BrowseRequest::CursorBy { rows }),
         direction().prop_map(BrowseRequest::PageBy),
     ]
@@ -247,8 +243,8 @@ fn audio() -> impl Strategy<Value = AudioEvent> {
     ]
 }
 
-fn loaded() -> impl Strategy<Value = PlaylistRequest> {
-    playlist_index().prop_map(PlaylistRequest::JumpTo)
+fn loaded() -> impl Strategy<Value = PlaybackRequest> {
+    playlist_index().prop_map(PlaybackRequest::JumpTo)
 }
 
 fn library() -> impl Strategy<Value = LibraryEvent> {
@@ -315,8 +311,14 @@ fn system() -> impl Strategy<Value = MacosEvent> {
             PlaybackRequest::Stop,
             PlaybackRequest::Next,
             PlaybackRequest::Previous,
-            PlaybackRequest::SeekForward,
-            PlaybackRequest::SeekBack,
+            PlaybackRequest::SeekBy {
+                direction: Direction::Next,
+                by: Duration::from_secs(10),
+            },
+            PlaybackRequest::SeekBy {
+                direction: Direction::Previous,
+                by: Duration::from_secs(10),
+            },
         ])
         .prop_map(MacosEvent::MediaKey),
         (0u64..200).prop_map(|secs| MacosEvent::MediaKey(PlaybackRequest::SeekTo(
@@ -332,7 +334,7 @@ pub(crate) fn message() -> impl Strategy<Value = Message> {
         browse().prop_map(Message::Browse),
         queue().prop_map(Message::Queue),
         audio().prop_map(Message::Audio),
-        loaded().prop_map(Message::Playlist),
+        loaded().prop_map(Message::Playback),
         library().prop_map(Message::Library),
         config().prop_map(Message::Config),
         driver(),

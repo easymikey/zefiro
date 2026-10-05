@@ -418,6 +418,101 @@ fn no_retired_names() {
     );
 }
 
+const RETIRED_WORDS: &[&str] = &[
+    "seek_fraction",
+    "toast_notices",
+    "brand",
+    "ticket",
+    "boot",
+    "booted",
+    "cover_renderer",
+];
+
+const RETIRED_FN_PREFIXES: &[&str] = &["adjust_"];
+
+const RETIRED_FIELD_SUFFIXES: &[&str] = &["_bg", "_px"];
+
+fn retired_word(name: &str) -> Option<&'static str> {
+    let padded = format!("_{name}_");
+    RETIRED_WORDS
+        .iter()
+        .find(|word| padded.contains(&format!("_{word}_")))
+        .copied()
+}
+
+fn field_name(stripped: &str) -> Option<&str> {
+    let trimmed = stripped.trim();
+    if trimmed.starts_with('#') {
+        return None;
+    }
+    let (head, rest) = trimmed.split_once(':')?;
+    if rest.starts_with(':') {
+        return None;
+    }
+    tokens(head).last().copied()
+}
+
+fn retired_snake_names(stripped: &str, in_struct: bool) -> Vec<String> {
+    let toks = tokens(stripped);
+    let fn_names = toks
+        .iter()
+        .zip(toks.iter().skip(1))
+        .filter(|(keyword, _)| **keyword == "fn")
+        .map(|(_, name)| *name);
+    let fn_faults = fn_names.flat_map(|name| {
+        let word = retired_word(name).map(|word| format!("fn `{name}` uses `{word}`"));
+        let prefix = RETIRED_FN_PREFIXES
+            .iter()
+            .find(|prefix| name.starts_with(**prefix))
+            .map(|prefix| format!("fn `{name}` starts with `{prefix}`"));
+        word.into_iter().chain(prefix)
+    });
+    let field = field_name(stripped).filter(|_| in_struct);
+    let field_faults = field.into_iter().flat_map(|name| {
+        let word =
+            retired_word(name).map(|word| format!("field `{name}` uses `{word}`"));
+        let suffix = RETIRED_FIELD_SUFFIXES
+            .iter()
+            .find(|suffix| name.ends_with(**suffix))
+            .map(|suffix| format!("field `{name}` ends with `{suffix}`"));
+        word.into_iter().chain(suffix)
+    });
+    fn_faults.chain(field_faults).collect()
+}
+
+#[test]
+fn no_retired_snake_names() {
+    let mut violations: Vec<String> = Vec::new();
+
+    for (rel, path) in support::source_files(&["src", "tests", "benches"]) {
+        let content = support::read(&path);
+        let mut in_struct = false;
+        for (i, raw_line) in content.lines().enumerate() {
+            let stripped = strip_comments_and_strings(raw_line);
+            let trimmed = stripped.trim();
+            if in_struct && trimmed.starts_with('}') {
+                in_struct = false;
+                continue;
+            }
+            violations.extend(
+                retired_snake_names(&stripped, in_struct)
+                    .into_iter()
+                    .map(|fault| format!("{rel}:{}: {fault}", i + 1)),
+            );
+            if tokens(trimmed).contains(&"struct") && trimmed.ends_with('{') {
+                in_struct = true;
+            }
+        }
+    }
+
+    support::report(
+        "naming guard: a retired word stays retired in function, test and field names — \
+         the sweep renamed it once, and new code may not bring the old spelling back.",
+        &violations,
+        &[],
+    );
+}
+
 #[test]
 fn no_denied_parameter_names() {
     let mut violations: Vec<String> = Vec::new();

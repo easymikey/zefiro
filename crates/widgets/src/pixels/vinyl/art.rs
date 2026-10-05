@@ -174,7 +174,7 @@ fn rgba_to_pixmap(image: &RgbaImage) -> Option<Pixmap> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::revision::Revision;
+    use kernel::domain::geometry::Pixels;
 
     use crate::pixels::{
         numeric::{dimension_f32, floor},
@@ -213,15 +213,13 @@ mod tests {
         let art = synthetic_art(8);
         let size_px = 96;
         let key = VinylCacheKey {
-            config_revision: Revision::default(),
-            theme_revision: Revision::default(),
             path: None,
-            size_px,
+            size: Pixels(size_px),
             colors: VinylStyle::fixture(),
         };
         let mut cache = VinylCache::default();
 
-        let image = cache.compose(key, Some(&art));
+        let image = cache.compose(&key, Some(&art));
         let peek = expected_peek_px(size_px);
         assert_eq!(image.dimensions(), (size_px + peek, size_px));
         let center = (size_px / 2, size_px / 2);

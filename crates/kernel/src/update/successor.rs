@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::domain::{
     index::ViewIndex,
-    playlist::{Playlist, RepeatMode},
+    playlist::{Playlist, RepeatMode, index_of},
     track::{Track, TrackRef},
 };
 
@@ -55,8 +55,8 @@ pub(crate) fn first_queued<'a>(
     queue: &[TrackRef],
 ) -> Option<(usize, ViewIndex, &'a Arc<Track>)> {
     queue.iter().enumerate().find_map(|(position, source)| {
-        let index = playlist.index_of(source)?;
-        let track = playlist.tracks.get(index.get())?;
-        Some((position, index, track))
+        let index = index_of(&playlist.tracks, source)?;
+        let track = playlist.tracks.get(index)?;
+        Some((position, ViewIndex::new(index), track))
     })
 }

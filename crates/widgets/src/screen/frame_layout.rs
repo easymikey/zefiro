@@ -26,9 +26,27 @@ pub struct FrameLayout {
 
 impl FrameLayout {
     #[must_use]
+    pub fn empty(screen: Rect, breakpoint: Breakpoint) -> Self {
+        Self {
+            screen,
+            breakpoint,
+            content: Rect::default(),
+            header: Rect::default(),
+            card: None,
+            cover: None,
+            playlist_pane: Rect::default(),
+            playlist: None,
+            key_hints: None,
+            search_bounds: Rect::default(),
+            overlay: None,
+            toast: None,
+        }
+    }
+
+    #[must_use]
     pub fn playlist_body_height(&self) -> Cells {
         self.playlist
-            .map_or(Cells(0), |areas| Cells(areas.body.height))
+            .map_or(Cells(0), |areas| Cells(areas.scroll_areas.content.height))
     }
 
     #[must_use]

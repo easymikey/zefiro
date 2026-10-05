@@ -9,9 +9,7 @@ use crate::{
         catalogue::{
             VolumeShades,
             chip_pulse,
-            favorite_pulse,
             modal_in,
-            modal_out,
             row_flash,
             scatter_burst,
             screen_wash,
@@ -45,46 +43,36 @@ impl AnimationStage {
     }
 
     fn stage_cue(&mut self, cue: Cue, backdrop: &Backdrop) {
-        let timings = self.timings;
         let vacated = self.vacated;
         let layout = backdrop.layout;
         match cue {
             Cue::OverlayOpened => {
-                self.stage_at(
-                    modal_in(timings),
-                    layout.overlay.map(OverlayAreas::outer),
-                );
+                self.stage_at(modal_in(), layout.overlay.map(OverlayAreas::outer));
             }
-            Cue::OverlayClosed => self.stage_at(modal_out(timings), vacated.overlay),
+            Cue::OverlayClosed => self.stage_at(modal_in(), vacated.overlay),
             Cue::ToastRaised => {
-                self.stage_at(
-                    toast_slide_in(backdrop.background, timings),
-                    layout.toast,
-                );
+                self.stage_at(toast_slide_in(backdrop.background), layout.toast);
             }
             Cue::ToastDismissed => {
                 self.stage_at(
-                    scatter_burst(backdrop.background, self.cell_filter(), timings),
+                    scatter_burst(backdrop.background, self.cell_filter()),
                     vacated.toast,
                 );
             }
             Cue::PlaybackChanged(change) => {
                 self.stage_at(
-                    chip_pulse(pulsed(change, backdrop), timings),
+                    chip_pulse(pulsed(change, backdrop)),
                     layout.card.map(|metrics| metrics.status_row),
                 );
             }
             Cue::FavoriteToggled => self.stage_favorite_toggled(backdrop),
             Cue::VolumeChanged => self.stage_volume_changed(backdrop),
             Cue::TrackDeleted => self.stage_at(
-                scatter_burst(backdrop.background, self.cell_filter(), timings),
+                scatter_burst(backdrop.background, self.cell_filter()),
                 vacated.selected_row,
             ),
             Cue::ThemeChanged | Cue::LayoutChanged => {
-                self.stage_whole_screen(
-                    screen_wash(backdrop.wash_from, timings),
-                    layout.screen,
-                );
+                self.stage_whole_screen(screen_wash(backdrop.wash_from), layout.screen);
             }
             Cue::TrackChanged
             | Cue::QueueChanged
@@ -94,27 +82,22 @@ impl AnimationStage {
     }
 
     fn stage_favorite_toggled(&mut self, backdrop: &Backdrop) {
-        let timings = self.timings;
         let layout = backdrop.layout;
         let selected = layout.playlist.and_then(|playlist| playlist.selected);
+        self.stage_at(row_flash(backdrop.accent), selected.map(favorite_cell));
         self.stage_at(
-            row_flash(backdrop.accent, timings),
-            selected.map(favorite_cell),
-        );
-        self.stage_at(
-            favorite_pulse(backdrop.accent, timings),
+            chip_pulse(backdrop.accent),
             layout.card.map(|metrics| metrics.title_row),
         );
     }
 
     fn stage_volume_changed(&mut self, backdrop: &Backdrop) {
-        let timings = self.timings;
         let layout = backdrop.layout;
         let shades = VolumeShades {
             fill: backdrop.volume_fill,
             lifted: backdrop.volume_lifted,
         };
-        let pulse = volume_pulse(shades, self.cell_filter(), timings);
+        let pulse = volume_pulse(shades, self.cell_filter());
         self.stage_at(pulse, layout.card.map(|metrics| metrics.volume_row));
     }
 }
@@ -173,20 +156,7 @@ mod tests {
     fn empty_backdrop() -> Backdrop {
         Backdrop {
             animations: Animations::On,
-            layout: FrameLayout {
-                screen: Rect::default(),
-                breakpoint: Breakpoint::Full,
-                content: Rect::default(),
-                header: Rect::default(),
-                card: None,
-                cover: None,
-                playlist_pane: Rect::default(),
-                playlist: None,
-                key_hints: None,
-                search_bounds: Rect::default(),
-                overlay: None,
-                toast: None,
-            },
+            layout: FrameLayout::empty(Rect::default(), Breakpoint::Full),
             background: Color::Rgb(0, 0, 0),
             accent: Color::Rgb(240, 120, 40),
             volume_fill: Color::Rgb(220, 80, 160),

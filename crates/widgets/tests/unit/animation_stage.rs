@@ -98,7 +98,7 @@ fn a_closing_overlay_resolves_the_rect_it_vacated() {
 
     assert!(stage.is_animating(), "closing stages its own");
     assert_ne!(step(&mut stage, Duration::ZERO), animation_frame());
-    assert_eq!(step(&mut stage, whole(|t| t.modal_out)), animation_frame());
+    assert_eq!(step(&mut stage, whole(|t| t.modal_in)), animation_frame());
     step(&mut stage, Duration::ZERO);
     assert!(!stage.is_animating(), "and it ends");
 }
@@ -452,7 +452,7 @@ fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
     };
 
     let mut stage = AnimationStage::default();
-    let start = stage.advance_clock(scene.clock);
+    let start = stage.advance_clock(scene.presentation.clock);
     stage.play(vec![Cue::ThemeChanged], &backdrop);
     assert!(
         stage.is_animating(),
@@ -461,7 +461,7 @@ fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
 
     let mut buffer = Buffer::empty(crate::unit::support::SCREEN);
     stage.advance(&mut buffer, start);
-    let mid = scene.clock + slice(|t| t.screen_wash, 4);
+    let mid = scene.presentation.clock + slice(|t| t.screen_wash, 4);
     let elapsed = stage.advance_clock(mid);
     stage.advance(&mut buffer, elapsed);
     assert!(

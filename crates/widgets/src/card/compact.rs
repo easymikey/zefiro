@@ -11,16 +11,16 @@ use crate::{
     card::{
         CardView,
         card_frame,
-        headings::{CardStyle, card_status, status_label},
+        headings::{card_status, status_color, status_label},
     },
     primitive::{
         bar::{BarFill, fill},
-        chip::{ChipStyle, speed_chip_spans, speed_chip_width},
+        chip::{speed_chip_spans, speed_chip_width},
         relative_time::elapsed_of,
         span::{line, text},
         text::truncate,
     },
-    theme::active_theme::{ActiveTheme, VolumeStyle},
+    theme::active_theme::ActiveTheme,
 };
 
 const PADDING: u16 = 1;
@@ -88,7 +88,7 @@ pub(crate) fn progress_bar_width(area: Rect) -> u16 {
 impl Widget for &CompactCardWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let theme = self.theme;
-        let frame_color: Color = CardStyle::from_theme(&theme).border;
+        let frame_color: Color = theme.colors().muted_foreground;
 
         let inner = content_area(area);
         card_frame(frame_color).render(area, buffer);
@@ -111,7 +111,7 @@ fn paint_header_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let inner = context.inner;
     let clamp = |rect: Rect| rect.intersection(inner);
     let row_width = inner.width;
-    let style = CardStyle::from_theme(&context.theme);
+    let colors = context.theme.colors();
 
     let title = context.view.title();
     let artist = context.view.artist();
@@ -123,7 +123,7 @@ fn paint_header_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         height: 1,
     });
     Paragraph::new(line([text(truncate(&title, usize::from(row_width)))
-        .fg(style.foreground)
+        .fg(colors.text)
         .bold()]))
     .render(title_row, buffer);
 
@@ -134,7 +134,7 @@ fn paint_header_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         height: 1,
     });
     Paragraph::new(line([
-        text(truncate(artist, usize::from(row_width))).fg(style.muted_foreground)
+        text(truncate(artist, usize::from(row_width))).fg(colors.muted_foreground)
     ]))
     .render(artist_row, buffer);
 }
@@ -143,7 +143,7 @@ fn paint_progress_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let inner = context.inner;
     let clamp = |rect: Rect| rect.intersection(inner);
     let row_width = inner.width;
-    let style = CardStyle::from_theme(&context.theme);
+    let colors = context.theme.colors();
 
     let progress_y = inner.y + TITLE_ROWS;
     let progress_row = clamp(Rect {
@@ -153,9 +153,9 @@ fn paint_progress_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         height: 1,
     });
     Paragraph::new(fill(
-        &BarFill::progress(context.view.progress_fraction(), usize::from(row_width)),
-        style.accent,
-        style.muted_foreground,
+        &BarFill::progress(context.view.progress_fraction(), Cells(row_width)),
+        colors.accent,
+        colors.muted_foreground,
     ))
     .render(progress_row, buffer);
 }
@@ -167,10 +167,8 @@ fn paint_status_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         row, status_width, ..
     } = context.status_row;
     let view = context.view;
-    let style = CardStyle::from_theme(&context.theme);
-
     let status = card_status(view.output, view.player);
-    let status_color = style.status_color(status);
+    let status_color = status_color(&context.theme, status);
     let label = status_label(status);
 
     let status_base = format!("{} {}", label.glyph, label.word);
@@ -182,15 +180,9 @@ fn paint_status_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         width: status_width.0,
         height: 1,
     });
-    let indicator_spans = speed_chip_spans(
-        view.speed,
-        context.speed_chip,
-        ChipStyle {
-            foreground: style.accent,
-            ..ChipStyle::from_theme(&context.theme)
-        },
-    );
-    let indicator_width = usize::from(speed_chip_width(view.speed, context.speed_chip));
+    let indicator_spans =
+        speed_chip_spans(view.speed, context.speed_chip, &context.theme.colors());
+    let indicator_width = speed_chip_width(view.speed, context.speed_chip).count();
     let fits = status_text.chars().count() + indicator_width <= status_width.count();
     let status_spans: Vec<_> = std::iter::once(
         text(truncate(&status_text, status_width.count()))
@@ -216,11 +208,11 @@ fn paint_meter_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         width: volume_width.0,
         height: 1,
     });
-    let style = VolumeStyle::from_theme(&context.theme);
+    let colors = context.theme.colors();
     Paragraph::new(fill(
-        &BarFill::volume(context.view.volume.ratio(), usize::from(bar_area.width)),
-        style.fill,
-        style.groove,
+        &BarFill::volume(context.view.volume.ratio(), Cells(bar_area.width)),
+        colors.accent,
+        colors.bar_groove,
     ))
     .render(bar_area, buffer);
 }
@@ -233,7 +225,7 @@ mod tests {
         appearance::SpeedChip,
         bounded::Bounded,
         percent::Percent,
-        player::{Player, Preload},
+        player::Player,
         playhead::Playhead,
         playlist::PlayOrder,
         speed::Speed,
@@ -257,12 +249,12 @@ mod tests {
         let track = track("Moon River");
         let player = Player::Playing {
             track: Arc::clone(&track),
-            head: Playhead::anchored(
+            playhead: Playhead::anchored(
                 Duration::from_secs(30),
                 Moment::default(),
                 Speed::default(),
             ),
-            preload: Preload::None,
+            preloaded: None,
         };
         let spectrum: Spectrum = [0.0; SPECTRUM_BANDS];
         let output = Output::Ready;

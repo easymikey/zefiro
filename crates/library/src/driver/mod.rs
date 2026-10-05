@@ -10,7 +10,7 @@ use kernel::{
         track::Track,
     },
     message::LibraryEvent,
-    update::machine::{Machine, Unhandled},
+    update::machine::{LoopCmd, LoopEffect, Machine, Unhandled},
 };
 
 mod cover_requests;
@@ -47,15 +47,11 @@ impl<P> std::fmt::Debug for LibraryDriver<P> {
     }
 }
 
+pub(crate) type LibraryLoopCmd =
+    LoopCmd<LibraryEffect, LibraryJob, LibraryMessage, LibraryEvent>;
+
 #[derive(Debug)]
 pub enum LibraryEffect {
-    Run(LibraryJob),
-    After {
-        delay: Duration,
-        timer: LibraryTimer,
-    },
-    Watch(PathBuf),
-    Unwatch(PathBuf),
     PublishCover(CoverDecoded),
     Execute(DiskEffect),
 }
@@ -92,7 +88,7 @@ impl<P> LibraryDriver<P> {
         }
     }
 
-    fn command(&mut self, command: LibraryCmd) -> Cmd<LibraryEffect, LibraryEvent> {
+    fn command(&mut self, command: LibraryCmd) -> LibraryLoopCmd {
         let disk = match command {
             LibraryCmd::Scan {
                 music_dir,
@@ -118,7 +114,7 @@ impl<P> LibraryDriver<P> {
                 tracks,
                 revision,
             } => {
-                return Cmd::effect(LibraryEffect::Run(LibraryJob::Tag {
+                return Cmd::effect(LoopEffect::Run(LibraryJob::Tag {
                     music_dir,
                     tracks,
                     revision,
@@ -136,16 +132,16 @@ impl<P> LibraryDriver<P> {
                 DiskEffect::SavePlaylist { name, tracks }
             }
         };
-        Cmd::effect(LibraryEffect::Execute(disk))
+        Cmd::effect(LoopEffect::Execute(LibraryEffect::Execute(disk)))
     }
 
     fn watched(
         &mut self,
         message: LibraryWatchMessage,
         mode: ScanMode,
-    ) -> Result<Cmd<LibraryEffect, LibraryEvent>, Unhandled> {
+    ) -> Result<LibraryLoopCmd, Unhandled> {
         let (effects, messages) = self.watch.transition(message)?.into_parts();
-        let lifted: Cmd<LibraryEffect, LibraryEvent> = effects
+        let lifted: LibraryLoopCmd = effects
             .into_iter()
             .map(|effect| self.lift(effect, mode))
             .collect();
@@ -157,18 +153,25 @@ impl<P> LibraryDriver<P> {
         }))
     }
 
-    fn lift(&self, effect: WatchEffect, mode: ScanMode) -> LibraryEffect {
+    fn lift(
+        &self,
+        effect: WatchEffect,
+        mode: ScanMode,
+    ) -> LoopEffect<LibraryEffect, LibraryJob, LibraryMessage> {
         match effect {
-            WatchEffect::Watch(dir) => LibraryEffect::Watch(dir),
-            WatchEffect::Unwatch(dir) => LibraryEffect::Unwatch(dir),
-            WatchEffect::Arm => LibraryEffect::After {
+            WatchEffect::Watch(path) => LoopEffect::Watch {
+                path,
+                item: LibraryMessage::Changed,
+            },
+            WatchEffect::Unwatch(path) => LoopEffect::Unwatch(path),
+            WatchEffect::Arm => LoopEffect::After {
                 delay: DEBOUNCE,
-                timer: LibraryTimer::Debounce,
+                message: LibraryMessage::Elapsed(LibraryTimer::Debounce),
             },
             WatchEffect::Scan {
                 music_dir,
                 revision,
-            } => LibraryEffect::Run(LibraryJob::Scan {
+            } => LoopEffect::Run(LibraryJob::Scan {
                 music_dir,
                 revision,
                 mode,
@@ -183,8 +186,8 @@ fn cached(
     list: LibraryJob,
     revision: Revision,
     tracks: Result<Vec<Arc<Track>>, Error>,
-) -> Cmd<LibraryEffect, LibraryEvent> {
-    let listing = Cmd::effect(LibraryEffect::Run(list));
+) -> LibraryLoopCmd {
+    let listing = Cmd::effect(LoopEffect::Run(list));
     match tracks {
         Ok(tracks) if tracks.is_empty() => listing,
         Ok(tracks) => Cmd::message(LibraryEvent::Loaded { tracks, revision }),
@@ -192,14 +195,11 @@ fn cached(
     }
 }
 
-fn reported_error(error: &Error) -> Cmd<LibraryEffect, LibraryEvent> {
+fn reported_error(error: &Error) -> LibraryLoopCmd {
     Cmd::message(LibraryEvent::Error(error.into()))
 }
 
-fn reported(
-    event: LibraryEvent,
-    skipped: Option<Error>,
-) -> Cmd<LibraryEffect, LibraryEvent> {
+fn reported(event: LibraryEvent, skipped: Option<Error>) -> LibraryLoopCmd {
     skipped.into_iter().fold(Cmd::message(event), |cmd, error| {
         cmd.then(reported_error(&error))
     })
@@ -207,12 +207,12 @@ fn reported(
 
 impl<P> Machine for LibraryDriver<P> {
     type Message = LibraryMessage;
-    type Effect = Cmd<LibraryEffect, LibraryEvent>;
+    type Effect = LibraryLoopCmd;
 
     fn transition(
         &mut self,
         message: LibraryMessage,
-    ) -> Result<Cmd<LibraryEffect, LibraryEvent>, Unhandled> {
+    ) -> Result<LibraryLoopCmd, Unhandled> {
         match message {
             LibraryMessage::Cmds(Cmds { cmds, .. }) => Ok(cmds
                 .into_iter()
@@ -259,17 +259,17 @@ mod tests {
     };
 
     use kernel::{
-        cmd::{Cmd, Cmds, LibraryCmd, ScanMode},
+        cmd::{Cmds, LibraryCmd, ScanMode},
         domain::{geometry::Pixels, io_error::IoError, revision::Revision},
         message::LibraryEvent,
-        update::machine::{Machine, Unhandled},
+        update::machine::{LoopEffect, Machine, Unhandled},
     };
     use rstest::rstest;
 
     use crate::{
         cover::{CoverArt, CoverDecoded, CoverError},
         dirs::LibraryDirs,
-        driver::{DiskEffect, LibraryDriver, LibraryEffect},
+        driver::{DiskEffect, LibraryDriver, LibraryEffect, LibraryLoopCmd},
         error::Error,
         job::LibraryJob,
         message::{LibraryMessage, LibraryTimer},
@@ -390,14 +390,22 @@ mod tests {
         }
     }
 
-    fn describe_effect(effect: &LibraryEffect) -> String {
+    fn describe_effect(
+        effect: &LoopEffect<LibraryEffect, LibraryJob, LibraryMessage>,
+    ) -> String {
         match effect {
-            LibraryEffect::Run(job) => describe_job(job),
-            LibraryEffect::After { delay, timer } => {
-                format!("after {delay:?} {timer:?}")
+            LoopEffect::Run(job) => describe_job(job),
+            LoopEffect::After { delay, message } => {
+                format!("after {delay:?} {message:?}")
             }
-            LibraryEffect::Watch(dir) => format!("watch {}", dir.display()),
-            LibraryEffect::Unwatch(dir) => format!("unwatch {}", dir.display()),
+            LoopEffect::Watch { path, .. } => format!("watch {}", path.display()),
+            LoopEffect::Unwatch(path) => format!("unwatch {}", path.display()),
+            LoopEffect::Execute(effect) => describe_executed(effect),
+        }
+    }
+
+    fn describe_executed(effect: &LibraryEffect) -> String {
+        match effect {
             LibraryEffect::PublishCover(decoded) => {
                 let art = match decoded.art {
                     CoverArt::Image(_) => "image",
@@ -424,8 +432,8 @@ mod tests {
         }
     }
 
-    fn describe(cmd: Cmd<LibraryEffect, LibraryEvent>) -> String {
-        let (effects, events) = cmd.into_parts();
+    fn describe(library_loop_cmd: LibraryLoopCmd) -> String {
+        let (effects, events) = library_loop_cmd.into_parts();
         let described: Vec<String> = effects
             .iter()
             .map(describe_effect)
@@ -467,7 +475,7 @@ mod tests {
     #[case::a_change_arms_the_debounce(LibraryRow {
         setup: vec![scan("/music", ScanMode::Cached)],
         message: LibraryMessage::Changed(Ok(())),
-        cmd: "after 500ms Debounce",
+        cmd: "after 500ms Elapsed(Debounce)",
     })]
     #[case::a_second_change_waits_for_the_armed_debounce(LibraryRow {
         setup: vec![scan("/music", ScanMode::Cached), LibraryMessage::Changed(Ok(()))],

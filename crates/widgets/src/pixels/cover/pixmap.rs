@@ -22,10 +22,7 @@ impl Identity {
     pub(crate) fn changed_only_by_theme(&self, desired: &Self) -> bool {
         match (self, desired) {
             (Self::Vinyl(old), Self::Vinyl(new)) => {
-                old.theme_revision != new.theme_revision
-                    && old.config_revision == new.config_revision
-                    && old.path == new.path
-                    && old.size_px == new.size_px
+                old.colors != new.colors && old.path == new.path && old.size == new.size
             }
             (Self::Plain(_), _) | (Self::Vinyl(_), Self::Plain(_)) => false,
         }
@@ -79,10 +76,8 @@ pub(crate) fn vinyl_key(
     size: Pixels,
 ) -> VinylCacheKey {
     VinylCacheKey {
-        config_revision: scene.revisions.config,
-        theme_revision: scene.revisions.theme,
         path: decoded.map(|cover| cover.path.clone()),
-        size_px: size.0,
+        size,
         colors: VinylStyle::from_theme(&scene.active_theme()),
     }
 }
@@ -90,15 +85,11 @@ pub(crate) fn vinyl_key(
 #[must_use]
 pub(crate) fn compose_vinyl(
     cache: &mut VinylCache,
-    key: VinylCacheKey,
+    key: &VinylCacheKey,
     decoded: Option<&CoverImage>,
-) -> BuiltPixmap {
+) -> Arc<RgbaImage> {
     let art = decoded.map(|cover| cover.image.as_ref());
-    let pixmap = Arc::new(cache.compose(key.clone(), art).clone());
-    BuiltPixmap {
-        pixmap,
-        identity: Identity::Vinyl(key),
-    }
+    Arc::new(cache.compose(key, art))
 }
 
 #[cfg(test)]

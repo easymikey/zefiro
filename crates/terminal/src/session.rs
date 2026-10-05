@@ -72,13 +72,25 @@ impl TerminalSession<Stdout> {
                 raw_mode: RawMode::Active,
                 restoration: Restoration::Pending,
             }),
-            Err(error) => {
-                let screen = execute!(io::stdout(), LeaveAlternateScreen);
-                let raw_mode = disable_raw_mode();
-                screen.and(raw_mode).map_err(Error::Teardown)?;
-                Err(Error::Setup(error))
-            }
+            Err(error) => Err(abandon_setup(
+                || execute!(io::stdout(), LeaveAlternateScreen),
+                disable_raw_mode,
+                error,
+            )),
         }
+    }
+}
+
+fn abandon_setup(
+    leave_screen: impl FnOnce() -> Result<(), io::Error>,
+    disable_raw: impl FnOnce() -> Result<(), io::Error>,
+    setup: io::Error,
+) -> Error {
+    let screen = leave_screen();
+    let raw_mode = disable_raw();
+    match screen.and(raw_mode) {
+        Ok(()) => Error::Setup(setup),
+        Err(teardown) => Error::Teardown(teardown),
     }
 }
 
@@ -123,8 +135,9 @@ mod tests {
         backend::CrosstermBackend,
         layout::Rect,
     };
+    use rstest::rstest;
 
-    use crate::session::{RawMode, Restoration, TerminalSession};
+    use crate::session::{RawMode, Restoration, TerminalSession, abandon_setup};
 
     const LEAVE_ALTERNATE_SCREEN: &str = "\x1b[?1049l";
 
@@ -182,6 +195,39 @@ mod tests {
             raw_mode: RawMode::Disabled,
             restoration: Restoration::Pending,
         }
+    }
+
+    fn step(outcome: Result<(), &'static str>) -> Result<(), io::Error> {
+        outcome.map_err(io::Error::other)
+    }
+
+    #[rstest]
+    #[case::both_succeed(Ok(()), Ok(()), "terminal setup: no tty")]
+    #[case::screen_fails(Err("screen"), Ok(()), "terminal teardown: screen")]
+    #[case::raw_mode_fails(Ok(()), Err("raw mode"), "terminal teardown: raw mode")]
+    #[case::both_fail_keeps_the_screen_error(
+        Err("screen"),
+        Err("raw mode"),
+        "terminal teardown: screen"
+    )]
+    fn an_abandoned_setup_runs_both_steps_and_combines_them(
+        #[case] screen: Result<(), &'static str>,
+        #[case] raw_mode: Result<(), &'static str>,
+        #[case] expected: &str,
+    ) {
+        let raw_mode_ran = Cell::new(false);
+
+        let error = abandon_setup(
+            || step(screen),
+            || {
+                raw_mode_ran.set(true);
+                step(raw_mode)
+            },
+            io::Error::other("no tty"),
+        );
+
+        assert!(raw_mode_ran.get());
+        assert_eq!(error.to_string(), expected);
     }
 
     #[test]

@@ -6,7 +6,7 @@ use crate::{
         history::HistoryEntry,
         index::ViewIndex,
         overlay::Overlay,
-        playlist::Playlist,
+        playlist::{Playlist, index_of},
         toast::Toast,
         track::TrackRef,
         workspace::Workspace,
@@ -67,13 +67,9 @@ pub(crate) fn pick(
     playlist: &Playlist,
 ) -> HistoryPick {
     selected_track(workspace, history).map_or(HistoryPick::Nothing, |source| {
-        playlist
-            .tracks
-            .iter()
-            .position(|track| track.source() == source)
-            .map_or(HistoryPick::Missing, |index| {
-                HistoryPick::Queued(ViewIndex::new(index))
-            })
+        index_of(&playlist.tracks, source).map_or(HistoryPick::Missing, |index| {
+            HistoryPick::Queued(ViewIndex::new(index))
+        })
     })
 }
 
@@ -88,12 +84,12 @@ fn selected_track<'a>(
         Some(
             Overlay::Help
             | Overlay::Search(_)
-            | Overlay::SavePlaylist { .. }
+            | Overlay::SavePlaylist(_)
             | Overlay::Settings(..)
             | Overlay::ConfirmDelete(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_)
-            | Overlay::MusicDir { .. },
+            | Overlay::MusicDir(_),
         )
         | None => None,
     }

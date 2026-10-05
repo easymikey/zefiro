@@ -24,20 +24,20 @@ pub(crate) mod tests {
             speed::Speed,
             transport::StreamError,
         },
-        message::{AudioError, AudioEvent, DecodeError},
-        update::machine::{Machine, Unhandled},
+        message::{AudioError, DecodeError},
+        update::machine::{LoopEffect, Machine, Unhandled},
     };
     use proptest::test_runner::TestCaseError;
 
     use crate::{
-        deck::source::PreloadMode,
+        AudioDriver,
+        deck::{job::AudioJob, source::PreloadMode},
         engine::{
-            effect::EngineEffect,
+            effect::AudioLoopCmd,
             message::{DeviceChoice, DeviceOpened, EngineMessage},
             phase::{
                 CurrentTrack,
                 Fade,
-                Handover,
                 Incoming,
                 Loading,
                 Next,
@@ -45,24 +45,46 @@ pub(crate) mod tests {
                 Playing,
                 Resume,
             },
-            state::{Closed, Engine, ExecutedRevisions, Live},
+            revisions::JobRevisions,
+            state::{Closed, Engine, EngineState, ExecutedRevisions, Live},
         },
     };
+
+    #[track_caller]
+    pub(crate) fn assert_same<T: std::fmt::Debug>(actual: T, expected: T) {
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    }
 
     pub(crate) const TOTAL: Duration = Duration::from_secs(100);
     pub(crate) const PRELOAD_TOTAL: Duration = Duration::from_secs(90);
     pub(crate) const CROSSFADE_SECONDS: u64 = 10;
 
+    pub(crate) fn step(
+        state: &mut EngineState,
+        message: EngineMessage,
+    ) -> Result<AudioLoopCmd, Unhandled> {
+        let mut engine = Engine {
+            state: state.clone(),
+            job_revisions: JobRevisions::default(),
+        };
+        let cmd = engine.transition(message);
+        *state = engine.state;
+        cmd
+    }
+
     pub(crate) fn trace(
-        state: Engine,
+        state: EngineState,
         messages: Vec<EngineMessage>,
-    ) -> Result<(Engine, Vec<Cmd<EngineEffect, AudioEvent>>), Unhandled> {
-        let mut current = state;
+    ) -> Result<(EngineState, Vec<<AudioDriver as Machine>::Effect>), Unhandled> {
+        let mut engine = Engine {
+            state,
+            job_revisions: JobRevisions::default(),
+        };
         let log = messages
             .into_iter()
-            .map(|message| current.transition(message))
+            .map(|message| engine.transition(message))
             .collect::<Result<Vec<_>, Unhandled>>()?;
-        Ok((current, log))
+        Ok((engine.state, log))
     }
 
     pub(crate) fn unhandled(reason: impl std::fmt::Debug) -> TestCaseError {
@@ -131,16 +153,16 @@ pub(crate) mod tests {
         EngineMessage::Error(output_lost())
     }
 
-    pub(crate) fn closed() -> Engine {
-        Engine::Closed(Closed {
+    pub(crate) fn closed() -> EngineState {
+        EngineState::Closed(Closed {
             settings: settings(),
             pending: None,
             speed: Speed::default(),
         })
     }
 
-    pub(crate) fn waiting_for(path: &str) -> Engine {
-        Engine::Closed(Closed {
+    pub(crate) fn waiting_for(path: &str) -> EngineState {
+        EngineState::Closed(Closed {
             pending: Some(TrackLoad {
                 path: path.into(),
                 gain: None,
@@ -235,7 +257,7 @@ pub(crate) mod tests {
 
     pub(crate) fn handing_over(incoming: Incoming) -> Live {
         Live {
-            phase: Phase::Handover(Handover { incoming }),
+            phase: Phase::Handover(incoming),
             ..playing_with_crossfade()
         }
     }
@@ -353,25 +375,24 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn installed(preload: CurrentTrack) -> EngineMessage {
-        EngineMessage::Preloaded(PreloadMode::Crossfade {
-            track: preload,
-            speed: Speed::default(),
-        })
+    pub(crate) fn installed(preload: &CurrentTrack) -> EngineMessage {
+        EngineMessage::Attached {
+            preload_mode: PreloadMode::Crossfade(Speed::default()),
+            duration: preload.total,
+        }
     }
 
-    pub(crate) fn gapless_preload(path: &str) -> Cmd<EngineEffect, AudioEvent> {
-        Cmd::effect(EngineEffect::Preload(PreloadMode::Gapless(path.into())))
+    pub(crate) fn decoding(path: &str) -> AudioLoopCmd {
+        Cmd::effect(LoopEffect::Run(AudioJob::Decode {
+            path: path.into(),
+            revision: second(),
+        }))
     }
 
-    pub(crate) fn crossfade_preload(path: &str) -> Cmd<EngineEffect, AudioEvent> {
-        Cmd::effect(EngineEffect::Preload(PreloadMode::Crossfade {
-            track: CurrentTrack {
-                total: None,
-                gain: None,
-                path: path.into(),
-            },
-            speed: Speed::default(),
+    pub(crate) fn preloading(path: &str) -> AudioLoopCmd {
+        Cmd::effect(LoopEffect::Run(AudioJob::Preload {
+            path: path.into(),
+            revision: first(),
         }))
     }
 
@@ -412,18 +433,22 @@ pub(crate) mod tests {
     }
 
     pub(crate) struct EngineRow {
-        pub(crate) next: Engine,
-        pub(crate) effect: Result<Cmd<EngineEffect, AudioEvent>, Unhandled>,
+        pub(crate) next: EngineState,
+        pub(crate) effect: Result<AudioLoopCmd, Unhandled>,
     }
 
-    pub(crate) fn assert_cell(start: Engine, message: EngineMessage, moved: EngineRow) {
+    pub(crate) fn assert_cell(
+        start: EngineState,
+        message: EngineMessage,
+        moved: EngineRow,
+    ) {
         let mut state = start;
-        let effect = state.transition(message);
+        let effect = step(&mut state, message);
         let EngineRow {
             next,
             effect: expected,
         } = moved;
         assert_eq!(state, next);
-        assert_eq!(effect, expected);
+        assert_same(effect, expected);
     }
 }

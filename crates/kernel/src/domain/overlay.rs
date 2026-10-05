@@ -21,28 +21,22 @@ use crate::domain::{
 pub enum Overlay {
     Help,
     Search(CursorOver<SearchQuery>),
-    SavePlaylist {
-        typed: TextEntry,
-        error: Option<PlaylistNameError>,
-    },
+    SavePlaylist(TextEntry<PlaylistNameError>),
     History(CursorOver<()>),
     Settings(SettingRow),
     ConfirmDelete(DeleteCandidate),
-    JumpToTime(JumpDigits),
+    JumpToTime(TextEntry<TimecodeError>),
     TrackDetails(Arc<Track>),
-    MusicDir {
-        typed: TextEntry,
-        error: Option<MusicDirError>,
-    },
+    MusicDir(TextEntry<MusicDirError>),
 }
 
 impl Overlay {
     #[must_use]
     pub(crate) fn captures_text(&self) -> bool {
         match self {
-            Overlay::Search(_)
-            | Overlay::SavePlaylist { .. }
-            | Overlay::MusicDir { .. } => true,
+            Overlay::Search(_) | Overlay::SavePlaylist(_) | Overlay::MusicDir(_) => {
+                true
+            }
             Overlay::Help
             | Overlay::History(_)
             | Overlay::Settings(..)
@@ -53,9 +47,19 @@ impl Overlay {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TextEntry {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextEntry<E> {
     pub input: String,
+    pub error: Option<E>,
+}
+
+impl<E> Default for TextEntry<E> {
+    fn default() -> Self {
+        Self {
+            input: String::new(),
+            error: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -77,11 +81,8 @@ pub struct DeleteCandidate {
     pub artist: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct JumpDigits {
-    pub input: String,
-    pub error: Option<TimecodeError>,
-}
+#[derive(Debug, Clone, Copy)]
+pub struct JumpDigits;
 
 impl JumpDigits {
     pub(crate) const SEPARATOR: char = ':';

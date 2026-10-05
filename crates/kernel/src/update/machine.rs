@@ -1,3 +1,7 @@
+use std::{path::PathBuf, time::Duration};
+
+use crate::{cmd::Cmd, domain::io_error::IoError};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Unhandled;
 
@@ -19,6 +23,23 @@ pub trait Driver: Machine {
 
     fn execute(&mut self, effect: <Self as Driver>::Effect) -> Option<Self::Message>;
 }
+
+#[derive(Debug)]
+pub enum LoopEffect<E, J, M> {
+    Execute(E),
+    Run(J),
+    After {
+        delay: Duration,
+        message: M,
+    },
+    Watch {
+        path: PathBuf,
+        item: fn(Result<(), IoError>) -> M,
+    },
+    Unwatch(PathBuf),
+}
+
+pub type LoopCmd<E, J, M, V> = Cmd<LoopEffect<E, J, M>, V>;
 
 #[cfg(test)]
 mod tests {

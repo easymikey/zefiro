@@ -4,9 +4,6 @@ assertion_line: 249
 expression: effects
 ---
 [
-    Animate(
-        PlayOrderChanged,
-    ),
     Audio(
         Stop,
     ),

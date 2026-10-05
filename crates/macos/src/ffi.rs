@@ -1,7 +1,10 @@
 use std::ptr::NonNull;
 
 use block2::RcBlock;
-use kernel::message::PlaybackRequest;
+use kernel::{
+    domain::{direction::Direction, transport::SEEK_MEDIUM},
+    message::PlaybackRequest,
+};
 use objc2::{AnyThread, rc::Retained, runtime::AnyObject};
 use objc2_app_kit::NSImage;
 use objc2_core_foundation::CGSize;
@@ -64,11 +67,17 @@ pub(crate) fn remote_commands(
             ),
             (
                 center.seekForwardCommand(),
-                Trigger::Hold(PlaybackRequest::SeekForward),
+                Trigger::Hold(PlaybackRequest::SeekBy {
+                    direction: Direction::Next,
+                    by: SEEK_MEDIUM,
+                }),
             ),
             (
                 center.seekBackwardCommand(),
-                Trigger::Hold(PlaybackRequest::SeekBack),
+                Trigger::Hold(PlaybackRequest::SeekBy {
+                    direction: Direction::Previous,
+                    by: SEEK_MEDIUM,
+                }),
             ),
             (
                 Retained::into_super(center.changePlaybackPositionCommand()),

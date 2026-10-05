@@ -1,5 +1,4 @@
 use std::{
-    cmp::Ordering,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -22,7 +21,7 @@ use crate::{
     scan,
 };
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LibraryJob {
     Cover {
         job: CoverJob,
@@ -110,121 +109,6 @@ impl LibraryJob {
             } => {
                 listing(&music_dir, decodable).map(|listing| listed(listing, revision))
             }
-        }
-    }
-
-    fn priority(&self) -> JobPriority {
-        match self {
-            LibraryJob::Cover { .. } => JobPriority::COVER,
-            LibraryJob::Tag { .. } => JobPriority::TAG,
-            LibraryJob::Scan {
-                mode: ScanMode::Full,
-                ..
-            } => JobPriority::FULL_SCAN,
-            LibraryJob::Scan {
-                mode: ScanMode::Cached,
-                ..
-            }
-            | LibraryJob::List { .. } => JobPriority::CACHED_SCAN,
-        }
-    }
-
-    fn scan_key(&self) -> Option<ScanKey<'_>> {
-        match self {
-            LibraryJob::Cover { .. } | LibraryJob::Tag { .. } => None,
-            LibraryJob::Scan {
-                music_dir,
-                revision,
-                dirs,
-                decodable,
-                ..
-            } => Some((music_dir, revision, self.priority(), Some(dirs), decodable)),
-            LibraryJob::List {
-                music_dir,
-                revision,
-                decodable,
-            } => Some((music_dir, revision, self.priority(), None, decodable)),
-        }
-    }
-}
-
-type ScanKey<'job> = (
-    &'job PathBuf,
-    &'job Revision,
-    JobPriority,
-    Option<&'job Arc<LibraryDirs>>,
-    &'job &'static [&'static str],
-);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct JobPriority(u8);
-
-impl JobPriority {
-    const COVER: Self = Self(0);
-    const TAG: Self = Self(1);
-    const FULL_SCAN: Self = Self(2);
-    const CACHED_SCAN: Self = Self(3);
-}
-
-impl PartialOrd for LibraryJob {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for LibraryJob {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (
-                LibraryJob::Cover { job, revision },
-                LibraryJob::Cover {
-                    job: other_job,
-                    revision: other_revision,
-                },
-            ) => (&job.path, job.side, revision).cmp(&(
-                &other_job.path,
-                other_job.side,
-                other_revision,
-            )),
-            (
-                LibraryJob::Tag {
-                    music_dir,
-                    tracks,
-                    revision,
-                    dirs,
-                },
-                LibraryJob::Tag {
-                    music_dir: other_dir,
-                    tracks: other_tracks,
-                    revision: other_revision,
-                    dirs: other_dirs,
-                },
-            ) => (music_dir, tracks, revision, dirs).cmp(&(
-                other_dir,
-                other_tracks,
-                other_revision,
-                other_dirs,
-            )),
-            (
-                LibraryJob::Scan { .. } | LibraryJob::List { .. },
-                LibraryJob::Scan { .. } | LibraryJob::List { .. },
-            ) => self.scan_key().cmp(&other.scan_key()),
-            (
-                LibraryJob::Cover { .. },
-                LibraryJob::Tag { .. }
-                | LibraryJob::Scan { .. }
-                | LibraryJob::List { .. },
-            )
-            | (
-                LibraryJob::Tag { .. },
-                LibraryJob::Cover { .. }
-                | LibraryJob::Scan { .. }
-                | LibraryJob::List { .. },
-            )
-            | (
-                LibraryJob::Scan { .. } | LibraryJob::List { .. },
-                LibraryJob::Cover { .. } | LibraryJob::Tag { .. },
-            ) => self.priority().cmp(&other.priority()),
         }
     }
 }

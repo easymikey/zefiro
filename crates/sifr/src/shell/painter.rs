@@ -5,14 +5,14 @@ use crossterm::event::Event;
 use kernel::{
     cmd::WindowColorsCmd,
     domain::{
-        appearance::Animations,
+        appearance::{Animations, Appearance},
         config::Diagnostic,
         cue::Cue,
         geometry::{Cells, Pixels},
-        theme::ThemeName,
         time::Moment,
     },
     message::PaintError,
+    update::machine::{Machine, Unhandled},
 };
 use library::cover::CoverDecoded;
 use ratatui::{Terminal, backend::Backend, layout::Rect};
@@ -23,20 +23,22 @@ use terminal::{
     window_colors::write_window_colors,
 };
 use widgets::{
-    animation::stage::{AnimationStage, Backdrop, animation_frame_due},
-    appearance::Appearance,
+    animation::{
+        stage::{AnimationStage, Backdrop, animation_frame_due},
+        timings::TIMINGS,
+    },
     card::{CardCover, clock_frame_due},
     key_hints::KeyHintChords,
     pixels::cover::{
         CoverImage,
         CoverMotion,
         CoverRefresh,
+        CrossfadePermit,
         gate::{CoverArrival, CrossfadeGateMessage},
         pixmap::CellPixels,
         wash::cover_wash,
     },
-    primitive::bar::progress_frame_due,
-    repaint::Presence,
+    repaint::{Presence, progress_frame_due},
     screen::{frame_layout::FrameLayout, root::ScreenWidget},
     spectrum::{SPECTRUM_BANDS, Spectrum, SpectrumFeed},
     status_line::sleep_frame_due,
@@ -49,15 +51,10 @@ use crate::shell::{
     presentation::{self, ShellPresentation},
     shell_input::ShellInput,
     view,
+    window_colors::{WindowColorsMessage, WindowColorsWrite},
 };
 
 const NO_BANDS: Spectrum = [0.0; SPECTRUM_BANDS];
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum WindowColorsWrite {
-    Done,
-    Staged(ThemeName),
-}
 
 pub(crate) struct Painter<'terminal, B: Backend> {
     terminal: &'terminal mut Terminal<B>,
@@ -92,6 +89,10 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
         } = capabilities;
         let font_size = picker.font_size();
         let cell_aspect = terminal::capabilities::cell_aspect(font_size);
+        let cell = CellPixels {
+            width: Pixels(u32::from(font_size.width)),
+            height: Pixels(u32::from(font_size.height)),
+        };
         Self {
             terminal,
             presentation: ShellPresentation {
@@ -104,11 +105,8 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
                 spectrum: [0.0; SPECTRUM_BANDS],
                 key_hint_chords: KeyHintChords::default(),
             },
-            cover_painter: CoverPainter::new(picker),
-            cell: CellPixels {
-                width: Pixels(u32::from(font_size.width)),
-                height: Pixels(u32::from(font_size.height)),
-            },
+            cover_painter: CoverPainter::new(picker, cell),
+            cell,
             spectrum_analyzer: SpectrumAnalyzer::new(),
             motion: Motion {
                 area,
@@ -138,9 +136,10 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
                 .player
                 .current()
                 .map(|track| track.path().to_path_buf());
-            self.motion
-                .crossfade_gate
-                .settle(CrossfadeGateMessage::TrackChanged(track));
+            let message = CrossfadeGateMessage::TrackChanged(track);
+            match self.motion.crossfade_gate.transition(message) {
+                Ok(_) | Err(Unhandled) => {}
+            }
         }
         self.presentation.key_hint_chords.follow(
             frame.model.workspace.keymap.bindings(),
@@ -157,7 +156,7 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
             self.presentation.theme = presentation::theme(Arc::unwrap_or_clone(theme));
         }
         if let Some(appearance) = latest.appearance.take() {
-            self.presentation.appearance = presentation::appearance(&appearance);
+            self.presentation.appearance = *appearance;
         }
         let Some(cover) = latest.cover.take() else {
             return;
@@ -166,24 +165,24 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
     }
 
     fn flush_staged_window_colors(&mut self) {
-        if self.animation_stage.wash_progress().is_some() {
-            return;
+        let wash = self.animation_stage.wash_progress();
+        if wash.is_none() {
+            self.motion.outgoing_theme_background = None;
         }
-        self.motion.outgoing_theme_background = None;
-        self.write_staged_window_colors();
+        self.write_staged_window_colors(wash);
     }
 
-    fn write_staged_window_colors(&mut self) {
-        let cmd = match &self.window_colors_write {
-            WindowColorsWrite::Staged(name)
-                if *name == self.presentation.theme.name =>
-            {
-                WindowColorsCmd::Set(name.clone())
+    fn write_staged_window_colors(&mut self, wash: Option<f32>) {
+        let theme_name = self.presentation.theme.name.clone();
+        self.drive_window_colors(WindowColorsMessage::Painted { theme_name, wash });
+    }
+
+    fn drive_window_colors(&mut self, message: WindowColorsMessage) {
+        if let Ok(cmd) = self.window_colors_write.transition(message) {
+            for write in cmd.into_parts().0 {
+                self.set_window_colors(&write);
             }
-            WindowColorsWrite::Staged(_) | WindowColorsWrite::Done => return,
-        };
-        self.window_colors_write = WindowColorsWrite::Done;
-        self.set_window_colors(&cmd);
+        }
     }
 
     fn set_window_colors(&mut self, cmd: &WindowColorsCmd) {
@@ -205,13 +204,19 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
             }
             library::cover::CoverArt::Missing => CoverArrival::Missing,
         };
-        self.motion.crossfade_gate.cover_arrived(path, arrival);
+        let message = CrossfadeGateMessage::CoverArrived {
+            path: path.clone(),
+            arrival,
+        };
+        match self.motion.crossfade_gate.transition(message) {
+            Ok(_) | Err(Unhandled) => {}
+        }
     }
 
     fn backdrop(&self, animations: Animations, layout: FrameLayout) -> Backdrop {
         let theme =
             ActiveTheme::new(&self.presentation.theme, self.presentation.color_depth)
-                .with_volume_pulse(self.animation_stage.timings().volume_pulse_mix);
+                .with_volume_pulse(TIMINGS.volume_pulse_mix);
         let style = BackdropStyle::from_theme(&theme);
         Backdrop {
             animations,
@@ -279,12 +284,8 @@ where
 
     fn effect(&mut self, effect: ShellEffect) {
         match effect {
-            ShellEffect::WindowColors(WindowColorsCmd::Set(name)) => {
-                self.window_colors_write = WindowColorsWrite::Staged(name);
-            }
-            ShellEffect::WindowColors(cmd @ WindowColorsCmd::Reset) => {
-                self.window_colors_write = WindowColorsWrite::Done;
-                self.set_window_colors(&cmd);
+            ShellEffect::WindowColors(cmd) => {
+                self.drive_window_colors(WindowColorsMessage::Commanded(cmd));
             }
             ShellEffect::Animate(cue) => self.pending_cues.push(cue),
         }
@@ -327,7 +328,7 @@ where
     fn paint(&mut self, frame: Frame<'_>) -> Result<Painted, Self::Error> {
         self.take_latest(&frame);
         match frame.model.settings.appearance.animations {
-            Animations::Off => self.write_staged_window_colors(),
+            Animations::Off => self.write_staged_window_colors(None),
             Animations::On => {}
         }
         self.motion.record_first_paint(frame.now);
@@ -335,7 +336,11 @@ where
         self.presentation.spectrum = self.smoothed_bands(&frame);
         let scene = view::scene(&frame, &self.presentation, &self.motion);
         let layout = FrameLayout::from_scene(&scene, self.motion.area);
-        let crossfade = self.motion.crossfade_gate.permit();
+        let crossfade = self
+            .motion
+            .crossfade_gate
+            .transition(CrossfadeGateMessage::PermitTaken)
+            .unwrap_or(CrossfadePermit::Withheld);
         self.motion.on_screen = layout.on_screen(&scene);
         let wash = cover_wash(
             self.animation_stage.wash_progress(),
@@ -349,9 +354,9 @@ where
                 wash,
             },
         );
-        let elapsed = self.animation_stage.advance_clock(scene.clock);
+        let elapsed = self.animation_stage.advance_clock(scene.presentation.clock);
         let backdrop = self.backdrop(
-            scene.appearance_settings().animations,
+            scene.settings.appearance.animations,
             protected_layout(layout, &cover_art),
         );
         if mem::replace(&mut self.motion.screen_clear, ScreenClear::NotDue)
@@ -405,20 +410,12 @@ mod tests {
 
     use audio::tap::SpectrumTap;
     use crossterm::event::Event;
-    use kernel::{
-        cmd::WindowColorsCmd,
-        domain::{
-            appearance::Animations,
-            model::Model,
-            theme::ThemeName,
-            time::Moment,
-        },
-    };
+    use kernel::domain::{appearance::Animations, model::Model, time::Moment};
     use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
     use rstest::rstest;
     use runtime::{
         repaint::FRAME_INTERVAL,
-        shell::{Frame, FrameDue, Reaction, Shell as _, ShellEffect},
+        shell::{Frame, FrameDue, Reaction, Shell as _},
     };
     use terminal::capabilities::{Capabilities, TerminalEnvironment};
     use widgets::{
@@ -432,7 +429,7 @@ mod tests {
     use crate::{
         shell::{
             motion::ScreenClear,
-            painter::{Painter, WindowColorsWrite, protected_layout},
+            painter::{Painter, protected_layout},
             presentation::test_presentation,
             shell_input::ShellInput,
             view,
@@ -535,23 +532,6 @@ mod tests {
         assert_eq!(reaction, Reaction::Repaint);
         assert_eq!(layout.screen, Rect::new(0, 0, 120, 40));
         assert_eq!(painter.motion.screen_clear, ScreenClear::Due);
-    }
-
-    #[test]
-    fn commanded_window_colors_wait_for_their_own_theme() {
-        let mut terminal = test_terminal();
-        let mut painter =
-            Painter::new(&mut terminal, test_theme(), test_capabilities());
-        let commanded = ThemeName::from_static("ghost");
-
-        painter.effect(ShellEffect::WindowColors(WindowColorsCmd::Set(
-            commanded.clone(),
-        )));
-
-        assert_eq!(
-            painter.window_colors_write,
-            WindowColorsWrite::Staged(commanded)
-        );
     }
 
     fn paint_time() -> Moment {

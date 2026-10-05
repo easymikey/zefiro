@@ -182,7 +182,7 @@ mod tests {
     use rodio::Source;
     use rstest::rstest;
 
-    use crate::tap::{HOP, Tap, WINDOW, new_tap};
+    use crate::tap::{HOP, SpectrumTap, Tap, WINDOW, new_tap};
 
     struct Synthetic {
         samples: std::vec::IntoIter<f32>,
@@ -298,5 +298,19 @@ mod tests {
         tap.latest(&mut out);
         assert!(out.iter().all(|&sample| sample == 0.0));
         drop(held);
+    }
+
+    #[test]
+    fn a_handoff_lends_its_writer_only_once() {
+        let (spectrum, _tap) = new_tap();
+        assert!(spectrum.take().is_some());
+        assert!(spectrum.take().is_none());
+    }
+
+    #[test]
+    fn a_silent_tap_reads_an_empty_window() {
+        let mut out = [1.0f32; WINDOW];
+        SpectrumTap::silent().latest(&mut out);
+        assert!(out.iter().all(|&sample| sample == 0.0));
     }
 }

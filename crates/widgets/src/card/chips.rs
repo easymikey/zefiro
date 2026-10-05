@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use kernel::domain::{appearance::FormatChips, geometry::Cells, track::Track};
-use ratatui::text::Line;
+use ratatui::{style::Color, text::Line};
 
-use crate::primitive::{chip::ChipStyle, format_chips};
+use crate::{primitive::format_chips, theme::colors::Colors};
 
 const CHIP_GAP: usize = 2;
 
@@ -15,7 +15,7 @@ pub(crate) struct FormatChipFit {
 pub(crate) struct FormatChipsInput<'a> {
     pub(crate) current: Option<&'a Arc<Track>>,
     pub(crate) visibility: FormatChips,
-    pub(crate) style: ChipStyle,
+    pub(crate) colors: &'a Colors<Color>,
 }
 
 pub(crate) struct ChipBudget {
@@ -30,7 +30,7 @@ pub(crate) fn format_chip_fit(
     let &FormatChipsInput {
         current,
         visibility,
-        style,
+        colors,
     } = input;
     let &ChipBudget {
         available_width: row_width,
@@ -43,7 +43,11 @@ pub(crate) fn format_chip_fit(
     let time_chip_line = matches!(visibility, FormatChips::Shown)
         .then(|| {
             current.and_then(|track| {
-                format_chips::fit_format_chips(track.audio_format(), style, chip_budget)
+                format_chips::fit_format_chips(
+                    track.audio_format(),
+                    colors,
+                    chip_budget,
+                )
             })
         })
         .flatten();

@@ -63,11 +63,6 @@ impl Revisions {
         self.lookahead = issued;
         issued
     }
-
-    pub(crate) fn commit_sleep(&mut self, candidate: Revision) {
-        self.effects = candidate;
-        self.sleep = candidate;
-    }
 }
 
 #[must_use]

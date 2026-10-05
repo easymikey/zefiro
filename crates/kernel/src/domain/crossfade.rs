@@ -25,18 +25,10 @@ impl Crossfade {
         self.0
     }
 
-    pub(crate) fn step_up(self) -> Self {
-        Self::clamped(self.0.saturating_add(Self::STEP))
-    }
-
-    pub(crate) fn step_down(self) -> Self {
-        Self::clamped(self.0.saturating_sub(Self::STEP))
-    }
-
     pub(crate) fn step(self, direction: Direction) -> Self {
         match direction {
-            Direction::Next => self.step_up(),
-            Direction::Previous => self.step_down(),
+            Direction::Next => Self::clamped(self.0.saturating_add(Self::STEP)),
+            Direction::Previous => Self::clamped(self.0.saturating_sub(Self::STEP)),
         }
     }
 }
@@ -82,30 +74,6 @@ mod tests {
         #[case] expected: Duration,
     ) {
         assert_eq!(Crossfade::clamped(raw).get(), expected);
-    }
-
-    #[rstest]
-    #[case::step_up_saturates_at_the_ceiling(
-        Crossfade::clamped(Crossfade::MAX),
-        Crossfade::step_up,
-        Crossfade::MAX
-    )]
-    #[case::step_down_saturates_at_the_floor(
-        Crossfade::default(),
-        Crossfade::step_down,
-        Duration::ZERO
-    )]
-    #[case::step_up_from_default(
-        Crossfade::default(),
-        Crossfade::step_up,
-        Duration::from_millis(500)
-    )]
-    fn step_saturates_at_bounds(
-        #[case] start: Crossfade,
-        #[case] step: fn(Crossfade) -> Crossfade,
-        #[case] expected: Duration,
-    ) {
-        assert_eq!(step(start).get(), expected);
     }
 
     #[rstest]

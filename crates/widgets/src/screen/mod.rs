@@ -1,7 +1,5 @@
 pub mod breakpoint;
-pub mod compact;
 pub mod frame_layout;
-pub(crate) mod full;
 mod layout;
 pub mod minimal;
 pub mod root;

@@ -1,5 +1,6 @@
 use audio::tap::SpectrumTap;
-use kernel::cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd};
+#[cfg(target_os = "macos")] use kernel::cmd::MacosCmd;
+use kernel::cmd::{AudioCmd, ConfigCmd, LibraryCmd};
 #[cfg(test)] use kernel::domain::driver::DriverName;
 
 use crate::{
@@ -34,6 +35,7 @@ pub struct Spawners {
     pub(crate) audio: SpawnAudio,
     pub(crate) library: Spawn<LibraryCmd>,
     pub(crate) config: Spawn<ConfigCmd>,
+    #[cfg(target_os = "macos")]
     pub(crate) macos: Spawn<MacosCmd>,
 }
 
@@ -45,6 +47,7 @@ impl Spawners {
             audio: idle_audio,
             library: idle_library,
             config: |setup| spawn_idle(registry::row(DriverName::Config), setup.inbox),
+            #[cfg(target_os = "macos")]
             macos: |setup| spawn_idle(registry::row(DriverName::Macos), setup.inbox),
         }
     }
@@ -57,8 +60,6 @@ impl Spawners {
             config: spawn_config,
             #[cfg(target_os = "macos")]
             macos: macos_thread::spawn,
-            #[cfg(not(target_os = "macos"))]
-            macos: Self::idle().macos,
         }
     }
 }
@@ -86,8 +87,7 @@ pub(crate) mod tests {
         error::Error,
         runtime::Runtime,
         spawn::{ConfigCmd, LibraryCmd, Spawners, audio_thread::idle_audio},
-        spawn_setup::SpawnSetup,
-        startup_paths::StartupPaths,
+        spawn_setup::{SpawnSetup, StartupPaths},
     };
 
     pub(crate) fn spawn_audio_loop<R>(
@@ -114,6 +114,7 @@ pub(crate) mod tests {
                 config: directory.join("config.toml"),
                 appearance: directory.join("sifr-ui.toml"),
                 themes: directory.join("themes"),
+                default_music_dir: None,
                 theme: None,
                 seen: SeenTexts::default(),
             },
@@ -124,6 +125,7 @@ pub(crate) mod tests {
     static AUDIO_CALLS: AtomicUsize = AtomicUsize::new(0);
     static LIBRARY_CALLS: AtomicUsize = AtomicUsize::new(0);
     static CONFIG_CALLS: AtomicUsize = AtomicUsize::new(0);
+    #[cfg(target_os = "macos")]
     static MACOS_CALLS: AtomicUsize = AtomicUsize::new(0);
 
     fn counting_audio(
@@ -147,6 +149,7 @@ pub(crate) mod tests {
         (Spawners::idle().config)(setup)
     }
 
+    #[cfg(target_os = "macos")]
     fn counting_macos(
         setup: &SpawnSetup<'_>,
     ) -> Result<DriverThread<kernel::cmd::MacosCmd>, Error> {
@@ -159,12 +162,14 @@ pub(crate) mod tests {
         AUDIO_CALLS.store(0, Ordering::SeqCst);
         LIBRARY_CALLS.store(0, Ordering::SeqCst);
         CONFIG_CALLS.store(0, Ordering::SeqCst);
+        #[cfg(target_os = "macos")]
         MACOS_CALLS.store(0, Ordering::SeqCst);
         let directory = tempfile::tempdir().unwrap();
         let spawners = Spawners {
             audio: counting_audio,
             library: counting_library,
             config: counting_config,
+            #[cfg(target_os = "macos")]
             macos: counting_macos,
         };
 
@@ -179,6 +184,7 @@ pub(crate) mod tests {
         assert_eq!(AUDIO_CALLS.load(Ordering::SeqCst), 1);
         assert_eq!(LIBRARY_CALLS.load(Ordering::SeqCst), 1);
         assert_eq!(CONFIG_CALLS.load(Ordering::SeqCst), 1);
+        #[cfg(target_os = "macos")]
         assert_eq!(MACOS_CALLS.load(Ordering::SeqCst), 1);
     }
 
@@ -195,7 +201,7 @@ pub(crate) mod tests {
             inbox: &inbox,
             writers: &writers,
             #[cfg(target_os = "macos")]
-            macos: &crate::macos_channel::MacosChannel::new(),
+            macos: &crate::spawn_setup::MacosChannel::new(),
         };
         let (audio, _tap) = idle_audio(&setup).unwrap();
 

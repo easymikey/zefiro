@@ -14,14 +14,13 @@ use crate::{
         SearchRequest,
         TextRequest,
     },
-    update::keymap::{chord::KeyBinding, key_context::key_context_stack},
+    update::keymap::{chord::KeyBinding, key_context::key_context_of},
 };
 
 #[must_use]
 pub fn route(workspace: &Workspace, press: KeyPress) -> Option<Message> {
     let key = pressed_key(workspace, press);
     let bindings = workspace.keymap.bindings();
-    let stack = key_context_stack(workspace);
     let lookup = |key_context| {
         in_key_context(
             bindings,
@@ -32,9 +31,14 @@ pub fn route(workspace: &Workspace, press: KeyPress) -> Option<Message> {
             key,
         )
     };
-    lookup(stack.primary())
-        .or_else(|| typed_input(stack.primary(), key))
-        .or_else(|| stack.fallback().and_then(lookup))
+    workspace.overlay.as_ref().map(key_context_of).map_or_else(
+        || {
+            lookup(KeyContext::Playlist)
+                .or_else(|| typed_input(KeyContext::Playlist, key))
+                .or_else(|| lookup(KeyContext::Global))
+        },
+        |context| lookup(context).or_else(|| typed_input(context, key)),
+    )
 }
 
 fn pressed_key(workspace: &Workspace, press: KeyPress) -> Key {

@@ -97,7 +97,7 @@ where
 pub struct TomlAudio {
     #[serde(deserialize_with = "crossfade")]
     pub(crate) crossfade: Crossfade,
-    #[serde(deserialize_with = "flag")]
+    #[serde(alias = "replaygain", deserialize_with = "flag")]
     pub(crate) replay_gain: ReplayGain,
     #[serde(deserialize_with = "device")]
     pub(crate) device: OutputDevice,
@@ -141,6 +141,17 @@ impl Default for TomlSettings {
     }
 }
 
+impl TomlSettings {
+    #[must_use]
+    pub fn keymap(&self) -> KeymapOverrides {
+        self.keymap
+            .0
+            .iter()
+            .map(|(action, binding)| (*action, binding.0.clone()))
+            .collect()
+    }
+}
+
 pub fn parse_config(text: &str) -> Result<TomlSettings, Error> {
     parse_toml(text, ConfigName::Config)
 }
@@ -154,12 +165,7 @@ pub struct ConfigSettings {
 
 pub fn parse_config_reload(text: &str) -> Result<ConfigSettings, Error> {
     parse_config(text).map(|config| ConfigSettings {
-        keymap: config
-            .keymap
-            .0
-            .into_iter()
-            .map(|(action, binding)| (action, binding.0))
-            .collect(),
+        keymap: config.keymap(),
         music_dir: config.music_dir,
     })
 }

@@ -1,7 +1,10 @@
 use kernel::domain::geometry::{Cells, Pixels};
 use ratatui::layout::Rect;
 
-use crate::{animation::catalogue::wash_reveal, pixels::cover::CoverWash};
+use crate::{
+    animation::catalogue::wash_reveal,
+    pixels::{cover::CoverWash, numeric::small_count_u16},
+};
 
 #[must_use]
 pub fn cover_wash(progress: Option<f32>, screen_width: Cells) -> CoverWash {
@@ -26,7 +29,7 @@ pub(crate) fn column_reveal(
     };
     let cell_width = cell_width.0.max(1);
     Some(move |x: u32| {
-        let offset = u16::try_from(x / cell_width).unwrap_or(u16::MAX);
+        let offset = small_count_u16(x / cell_width);
         wash_reveal(progress, rect.x.saturating_add(offset), screen_width.0)
     })
 }

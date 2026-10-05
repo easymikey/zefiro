@@ -12,12 +12,13 @@ use ratatui::{
 use crate::{
     overlay::{
         help::{
-            columns::{HelpColumn, HelpStyle, select_help_columns},
-            groups::{CHORD_GAP, COLUMN_GAP, HelpGroups, small_count_u16},
+            columns::{HelpColumn, select_help_columns},
+            groups::{CHORD_GAP, COLUMN_GAP, HelpGroups},
         },
         modal::placement::{ModalContainer, ModalPlacement, OverlayAreas},
     },
-    primitive::{canvas::Canvas, inset::Inset},
+    pixels::numeric::small_count_u16,
+    primitive::canvas::Canvas,
     theme::active_theme::ActiveTheme,
 };
 
@@ -82,8 +83,7 @@ impl<'a> HelpWidget<'a> {
 
     fn content(&self, screen: Rect) -> HelpColumns {
         let groups = HelpGroups::new(self.bindings);
-        let columns =
-            select_help_columns(&groups, HelpStyle::from_theme(&self.theme), screen);
+        let columns = select_help_columns(&groups, &self.theme, screen);
         let column_gap = if columns.len() > 1 {
             Cells(COLUMN_GAP)
         } else {
@@ -105,7 +105,6 @@ impl<'a> HelpWidget<'a> {
         let columns = &content.columns;
         let gaps = small_count_u16(columns.len().saturating_sub(1));
         ModalPlacement {
-            inset: Inset::overlay(),
             container: ModalContainer::Modal(self.avoid),
             border_title: Line::default(),
             modal_title: TITLE,
@@ -131,7 +130,7 @@ impl Widget for &HelpWidget<'_> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::{domain::keymap::KeymapOverrides, update::keymap::bindings::Bindings};
+    use kernel::update::keymap::bindings::Keymap;
     use rstest::rstest;
 
     use crate::{
@@ -142,8 +141,8 @@ mod tests {
 
     fn help_frame(width: u16, height: u16) -> String {
         let theme = noir();
-        let keymap = Bindings::new(&KeymapOverrides::default());
-        let bindings = keymap.as_slice();
+        let keymap = Keymap::default();
+        let bindings = keymap.bindings();
         let overlay = HelpWidget {
             theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
             bindings,

@@ -4,19 +4,23 @@ use kernel::{
         cue::{Cue, PlaybackChange},
         model::Model,
         player::Player,
+        revision::Revision,
         time::Moment,
+        toast::TOAST_LIFETIME,
         transport::{Output, StreamError},
     },
-    message::{AudioError, AudioEvent, Message, PlaybackRequest},
+    message::{AudioError, AudioEvent, Message, PlaybackRequest, Timer},
 };
 use rstest::rstest;
 
-use crate::support::{
-    first_toast_expiry,
-    model_with_tracks,
-    playing_model,
-    update::update,
-};
+use crate::support::{model_with_tracks, playing_model, update::update};
+
+fn second_toast_expiry() -> Effect {
+    Effect::After {
+        delay: TOAST_LIFETIME,
+        timer: Timer::Toast(Revision::default().next().next()),
+    }
+}
 
 fn output_lost() -> Message {
     Message::Audio(AudioEvent::Error(AudioError::OutputLost(
@@ -35,7 +39,7 @@ fn lost_while_playing(count: usize) -> Model {
     playing_model(3),
     Cmd::from_iter([
         Effect::Animate(Cue::ToastRaised),
-        first_toast_expiry(),
+        second_toast_expiry(),
         Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
         Effect::Macos(MacosCmd::SetPlayback(Playback::Paused)),
         Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Pause)),
@@ -44,7 +48,13 @@ fn lost_while_playing(count: usize) -> Model {
 )]
 #[case::stopped_only_marks_the_output(
     model_with_tracks(3),
-    Cmd::from_iter([Effect::Animate(Cue::ToastRaised), first_toast_expiry()]),
+    Cmd::from_iter([
+        Effect::Animate(Cue::ToastRaised),
+        Effect::After {
+            delay: TOAST_LIFETIME,
+            timer: Timer::Toast(Revision::default().next()),
+        },
+    ]),
     "Audio output lost: the device is gone"
 )]
 fn a_lost_output_is_mirrored_in_the_model(
@@ -86,7 +96,7 @@ fn play_while_the_output_is_lost_loads_again_so_the_engine_reopens() {
             .any(|effect| matches!(effect, Effect::Audio(AudioCmd::Load(_)))),
         "expected a load among {cmd:?}"
     );
-    assert!(matches!(model.player, Player::Loading { .. }));
+    assert!(matches!(model.player, Player::Loading(..)));
 }
 
 #[test]

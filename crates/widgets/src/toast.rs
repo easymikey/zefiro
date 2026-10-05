@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     primitive::{canvas::Canvas, inset::Inset, text::truncate},
     screen::breakpoint::Breakpoint,
-    theme::{active_theme::ActiveTheme, colors::Role},
+    theme::active_theme::ActiveTheme,
 };
 
 const TOAST_WIDTH: u16 = 42;
@@ -20,7 +20,6 @@ const CHROME_CELLS: u16 = 4;
 const BORDER_ROWS: u16 = 2;
 const TITLE_ROWS: u16 = 1;
 const MAX_TEXT_ROWS: usize = 3;
-const WARNING_HEAT: f32 = 0.75;
 
 const CARD_INSET: Inset = Inset {
     top: 0,
@@ -29,45 +28,17 @@ const CARD_INSET: Inset = Inset {
     bottom: 0,
 };
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ToastStyle {
-    info: Color,
-    success: Color,
-    warning: Color,
-    error: Color,
-    text: Color,
-    background: Color,
-}
-
-impl ToastStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            info: theme.role(Role::Accent),
-            success: theme.spectrum_color_at(0.0),
-            warning: theme.spectrum_color_at(WARNING_HEAT),
-            error: theme.alert(),
-            text: theme.role(Role::Text),
-            background: theme.role(Role::WindowBackground),
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn accent(&self, kind: ToastLevel) -> Color {
-        match kind {
-            ToastLevel::Info => self.info,
-            ToastLevel::Success => self.success,
-            ToastLevel::Warning => self.warning,
-            ToastLevel::Error => self.error,
-        }
+#[must_use]
+pub(crate) fn accent(theme: &ActiveTheme<'_>, kind: ToastLevel) -> Color {
+    match kind {
+        ToastLevel::Info => theme.colors().accent,
+        ToastLevel::Error => theme.alert(),
     }
 }
 
 fn icon(kind: ToastLevel) -> &'static str {
     match kind {
         ToastLevel::Info => "i",
-        ToastLevel::Success => "\u{2713}",
-        ToastLevel::Warning => "!",
         ToastLevel::Error => "\u{2717}",
     }
 }
@@ -75,7 +46,7 @@ fn icon(kind: ToastLevel) -> &'static str {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ToastWidget<'a> {
     pub(crate) toasts: &'a [Toast],
-    pub style: ToastStyle,
+    pub(crate) theme: ActiveTheme<'a>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,14 +198,15 @@ impl<'a> ToastWidget<'a> {
     }
 
     fn paint_toast(&self, placed: &Placed<'_>, buffer: &mut Buffer) {
-        let accent = self.style.accent(placed.toast.kind);
+        let accent = accent(&self.theme, placed.toast.kind);
+        let colors = self.theme.colors();
         let rect = placed.rect;
         Clear.render(rect, buffer);
         Block::new()
             .style(
                 Style::default()
-                    .bg(self.style.background)
-                    .fg(self.style.text),
+                    .bg(colors.window_background)
+                    .fg(colors.text),
             )
             .render(rect, buffer);
         let (title_text, body_lines) = placed
@@ -262,7 +234,7 @@ impl<'a> ToastWidget<'a> {
             ..inner
         };
         Paragraph::new(body)
-            .style(Style::default().fg(self.style.text))
+            .style(Style::default().fg(colors.text))
             .render(below, buffer);
     }
 }
@@ -283,25 +255,21 @@ mod tests {
     use crate::{
         screen::breakpoint::Breakpoint,
         test_support::{noir, rendered},
-        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
-        toast::{ToastStyle, ToastWidget, icon},
+        theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
+        toast::{ToastWidget, accent, icon},
     };
 
-    fn style() -> ToastStyle {
-        let theme = noir();
-        ToastStyle::from_theme(&ActiveTheme::new(&theme, ColorDepth::TrueColor))
-    }
-
-    fn toaster(toasts: &[Toast]) -> ToastWidget<'_> {
+    fn toaster<'a>(toasts: &'a [Toast], theme: &'a Theme) -> ToastWidget<'a> {
         ToastWidget {
             toasts,
-            style: style(),
+            theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
         }
     }
 
     fn painted(toasts: &[Toast], size: (u16, u16)) -> String {
+        let theme = noir();
         rendered(size.0, size.1, |frame| {
-            frame.render_widget(toaster(toasts), frame.area());
+            frame.render_widget(toaster(toasts, &theme), frame.area());
         })
         .to_string()
     }
@@ -309,7 +277,7 @@ mod tests {
     #[test]
     fn a_toast_stack_shows_the_newest_on_top() {
         let toasts = [
-            Toast::success("Saved").with_text("The playlist was written."),
+            Toast::info("Saved").with_text("The playlist was written."),
             Toast::error("Scan failed"),
             Toast::info("Hello"),
         ];
@@ -318,7 +286,7 @@ mod tests {
 
     #[test]
     fn a_toast_wraps_its_text() {
-        let toasts = [Toast::warning("Careful").with_text(
+        let toasts = [Toast::info("Careful").with_text(
             "The quick brown fox jumps over the lazy dog and keeps running far away",
         )];
         insta::assert_snapshot!(painted(&toasts, (60, 12)));
@@ -326,25 +294,20 @@ mod tests {
 
     #[test]
     fn each_kind_has_its_own_accent_and_icon() {
-        let style = style();
-        let kinds = [
-            ToastLevel::Info,
-            ToastLevel::Success,
-            ToastLevel::Warning,
-            ToastLevel::Error,
-        ];
-        for (index, kind) in kinds.iter().enumerate() {
-            for other in kinds.iter().skip(index + 1) {
-                assert_ne!(style.accent(*kind), style.accent(*other));
-                assert_ne!(icon(*kind), icon(*other));
-            }
-        }
+        let theme = noir();
+        let theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        assert_ne!(
+            accent(&theme, ToastLevel::Info),
+            accent(&theme, ToastLevel::Error)
+        );
+        assert_ne!(icon(ToastLevel::Info), icon(ToastLevel::Error));
     }
 
     #[test]
     fn a_minimal_screen_gets_one_plain_line_for_the_newest() {
         let toasts = [Toast::info("new"), Toast::info("old")];
-        let area = toaster(&toasts)
+        let theme = noir();
+        let area = toaster(&toasts, &theme)
             .area(Rect::new(0, 0, 30, 6), Breakpoint::Minimal)
             .unwrap();
         assert_eq!((area.y, area.height), (0, 1));

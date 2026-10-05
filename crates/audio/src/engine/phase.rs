@@ -8,21 +8,17 @@ pub(crate) enum Phase {
     Idle,
     Loading(Loading),
     Playing(Playing),
-    Handover(Handover),
+    Handover(Incoming),
 }
 
 impl Phase {
     pub(crate) fn current(&self) -> Option<&CurrentTrack> {
         match self {
             Phase::Playing(Playing { current, .. })
-            | Phase::Handover(Handover {
-                incoming: Incoming::Playing(current),
-            }) => Some(current),
-            Phase::Idle
-            | Phase::Loading(_)
-            | Phase::Handover(Handover {
-                incoming: Incoming::Loading(_),
-            }) => None,
+            | Phase::Handover(Incoming::Playing(current)) => Some(current),
+            Phase::Idle | Phase::Loading(_) | Phase::Handover(Incoming::Loading(_)) => {
+                None
+            }
         }
     }
 }
@@ -53,18 +49,13 @@ impl Playing {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Handover {
-    pub(crate) incoming: Incoming,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Incoming {
     Loading(Loading),
     Playing(CurrentTrack),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct CurrentTrack {
+pub(crate) struct CurrentTrack {
     pub(crate) total: Option<Duration>,
     pub(crate) gain: Option<kernel::domain::track::Decibels>,
     pub(crate) path: PathBuf,

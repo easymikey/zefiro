@@ -1,4 +1,7 @@
-use std::thread::{self, JoinHandle};
+use std::{
+    mem,
+    thread::{self, JoinHandle},
+};
 
 use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
@@ -6,83 +9,91 @@ use kernel::{
     domain::driver::{DriverName, DriverStatus, Drivers},
 };
 
-use crate::{
-    driver_thread::{Congestion, DriverThread, SendError},
-    trace::{DropReason, TraceEntry},
-};
+use crate::driver_thread::{Congestion, DriverThread, SendError};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DropReason {
+    NotRunning,
+    Full,
+    Closed,
+}
 
 #[derive(Debug)]
-pub(crate) struct Port<C> {
-    driver: DriverName,
-    sender: Option<Sender<C>>,
-    full: Congestion,
-    handle: Option<JoinHandle<Result<(), SendError>>>,
+pub(crate) enum Port<C> {
+    Open {
+        driver: DriverName,
+        full: Congestion,
+        sender: Sender<C>,
+        thread: JoinHandle<Result<(), SendError>>,
+    },
+    HungUp(JoinHandle<Result<(), SendError>>),
+    Closed,
 }
 
 impl<C> Port<C> {
+    #[cfg(test)]
     pub(crate) fn new(driver: DriverName, sender: Sender<C>, full: Congestion) -> Self {
-        Self {
+        Self::Open {
             driver,
-            sender: Some(sender),
             full,
-            handle: None,
+            sender,
+            thread: thread::spawn(|| Ok(())),
         }
     }
 
     pub(crate) fn spawned(driver: DriverName, thread: DriverThread<C>) -> Self {
-        Self {
-            handle: Some(thread.handle),
-            ..Self::new(driver, thread.commands, thread.full)
+        Self::Open {
+            driver,
+            full: thread.full,
+            sender: thread.commands,
+            thread: thread.handle,
         }
     }
 
-    pub(crate) fn full(&self) -> &Congestion {
-        &self.full
+    pub(crate) fn full(&self) -> Option<&Congestion> {
+        match self {
+            Self::Open { full, .. } => Some(full),
+            Self::HungUp(_) | Self::Closed => None,
+        }
     }
 
     pub(crate) fn hang_up(&mut self) {
-        self.sender = None;
+        *self = match mem::replace(self, Self::Closed) {
+            Self::Open { thread, .. } => Self::HungUp(thread),
+            port @ (Self::HungUp(_) | Self::Closed) => port,
+        };
     }
 
     pub(crate) fn join(&mut self) -> Option<thread::Result<Result<(), SendError>>> {
-        self.handle.take().map(JoinHandle::join)
+        match mem::replace(self, Self::Closed) {
+            Self::HungUp(thread) => Some(thread.join()),
+            port @ (Self::Open { .. } | Self::Closed) => {
+                *self = port;
+                None
+            }
+        }
     }
-}
 
-impl<C> Port<C>
-where
-    for<'a> &'a C: Into<&'static str>,
-{
-    pub(crate) fn send(&self, drivers: &Drivers, command: C) -> Result<(), TraceEntry> {
-        let command_label: &'static str = (&command).into();
-        let dropped = |reason| TraceEntry::Dropped {
-            driver: self.driver,
-            command: command_label,
-            reason,
+    pub(crate) fn send(&self, drivers: &Drivers, command: C) -> Result<(), DropReason> {
+        let Self::Open {
+            driver,
+            full,
+            sender,
+            ..
+        } = self
+        else {
+            return Err(DropReason::Closed);
         };
-        let sender = self.open(drivers).map_err(dropped)?;
-        sender
-            .try_send(command)
-            .map_err(|error| dropped(self.refused(&error)))
-    }
-}
-
-impl<C> Port<C> {
-    fn open(&self, drivers: &Drivers) -> Result<&Sender<C>, DropReason> {
-        if !matches!(drivers.status(self.driver), DriverStatus::Running) {
+        if !matches!(drivers.status(*driver), DriverStatus::Running) {
             return Err(DropReason::NotRunning);
         }
-        self.sender.as_ref().ok_or(DropReason::Closed)
-    }
-
-    fn refused<T>(&self, error: &TrySendError<T>) -> DropReason {
-        match error {
+        sender.try_send(command).map_err(|error| match error {
             TrySendError::Full(_) => {
-                self.full.raise();
+                full.raise();
                 DropReason::Full
             }
             TrySendError::Disconnected(_) => DropReason::Closed,
-        }
+        })
     }
 }
 
@@ -95,7 +106,7 @@ pub(crate) struct Ports {
 }
 
 impl Ports {
-    pub(crate) fn full(&self, driver: DriverName) -> &Congestion {
+    pub(crate) fn full(&self, driver: DriverName) -> Option<&Congestion> {
         match driver {
             DriverName::Audio => self.audio.full(),
             DriverName::Library => self.library.full(),
@@ -104,11 +115,13 @@ impl Ports {
         }
     }
 
-    pub(crate) fn hang_up(&mut self) {
-        self.audio.hang_up();
-        self.macos.hang_up();
-        self.library.hang_up();
-        self.config.hang_up();
+    pub(crate) fn hang_up(&mut self, driver: DriverName) {
+        match driver {
+            DriverName::Audio => self.audio.hang_up(),
+            DriverName::Library => self.library.hang_up(),
+            DriverName::Config => self.config.hang_up(),
+            DriverName::Macos => self.macos.hang_up(),
+        }
     }
 
     pub(crate) fn join(
@@ -135,17 +148,8 @@ mod tests {
 
     use crate::{
         driver_thread::Congestion,
-        port::Port,
-        trace::{DropReason, TraceEntry},
+        port::{DropReason, Port},
     };
-
-    fn dropped(reason: DropReason) -> TraceEntry {
-        TraceEntry::Dropped {
-            driver: DriverName::Audio,
-            command: (&AudioCmd::Stop).into(),
-            reason,
-        }
-    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Inbox {
@@ -185,7 +189,7 @@ mod tests {
 
         let sent = port.send(&drivers, AudioCmd::Stop);
 
-        assert_eq!(sent, expected.map_err(dropped));
+        assert_eq!(sent, expected);
     }
 
     #[test]
@@ -199,7 +203,76 @@ mod tests {
         port.send(&drivers, AudioCmd::Stop).unwrap();
         let second = port.send(&drivers, AudioCmd::Stop);
 
-        assert_eq!(second, Err(dropped(DropReason::Full)));
+        assert_eq!(second, Err(DropReason::Full));
         assert!(full.take());
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Stage {
+        Open,
+        HungUp,
+        Closed,
+    }
+
+    fn stage<C>(port: &Port<C>) -> Stage {
+        match port {
+            Port::Open { .. } => Stage::Open,
+            Port::HungUp(_) => Stage::HungUp,
+            Port::Closed => Stage::Closed,
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum Step {
+        HangUp,
+        Join,
+    }
+
+    #[rstest]
+    #[case::open_stays_open_when_joined(&[Step::Join], Stage::Open, false)]
+    #[case::open_hangs_up(&[Step::HangUp], Stage::HungUp, false)]
+    #[case::hung_up_joins_into_closed(&[Step::HangUp, Step::Join], Stage::Closed, true)]
+    #[case::hanging_up_twice_is_one_hang_up(
+        &[Step::HangUp, Step::HangUp],
+        Stage::HungUp,
+        false
+    )]
+    #[case::a_joined_port_has_nothing_to_join(
+        &[Step::HangUp, Step::Join, Step::Join],
+        Stage::Closed,
+        false
+    )]
+    fn a_port_goes_from_open_to_hung_up_to_closed(
+        #[case] steps: &[Step],
+        #[case] expected: Stage,
+        #[case] joined_last: bool,
+    ) {
+        let (sender, receiver) = unbounded::<AudioCmd>();
+        let mut port = Port::new(DriverName::Audio, sender, Congestion::default());
+        let mut last_join = None;
+
+        for step in steps {
+            match step {
+                Step::HangUp => port.hang_up(),
+                Step::Join => last_join = Some(port.join()),
+            }
+        }
+
+        assert_eq!(stage(&port), expected);
+        assert_eq!(last_join.is_some_and(|exit| exit.is_some()), joined_last);
+        drop(receiver);
+    }
+
+    #[test]
+    fn a_hung_up_port_refuses_every_command() {
+        let (sender, _receiver) = unbounded();
+        let mut drivers = Drivers::default();
+        drivers.record_mut(DriverName::Audio).status = DriverStatus::Running;
+        let mut port = Port::new(DriverName::Audio, sender, Congestion::default());
+
+        port.hang_up();
+
+        assert_eq!(port.send(&drivers, AudioCmd::Stop), Err(DropReason::Closed));
+        assert!(port.full().is_none());
     }
 }

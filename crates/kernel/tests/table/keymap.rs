@@ -9,7 +9,7 @@ use kernel::{
         geometry::Cells,
         key::{Key, KeyCode, KeyPress, Modifiers},
         keymap::{KeyContext, KeymapOverrides},
-        overlay::{DeleteCandidate, JumpDigits, Overlay, OverlayName, TextEntry},
+        overlay::{DeleteCandidate, Overlay, OverlayName, TextEntry},
         setting_row::SettingRow,
         time::Moment,
         toast::Toast,
@@ -76,7 +76,7 @@ fn confirming_delete() -> Workspace {
 }
 
 fn jumping() -> Workspace {
-    with_overlay(Overlay::JumpToTime(JumpDigits::default()))
+    with_overlay(Overlay::JumpToTime(TextEntry::default()))
 }
 
 fn showing_track_details() -> Workspace {
@@ -86,17 +86,11 @@ fn showing_track_details() -> Workspace {
 }
 
 fn saving_a_playlist() -> Workspace {
-    with_overlay(Overlay::SavePlaylist {
-        typed: TextEntry::default(),
-        error: None,
-    })
+    with_overlay(Overlay::SavePlaylist(TextEntry::default()))
 }
 
 fn naming_a_source_dir() -> Workspace {
-    with_overlay(Overlay::MusicDir {
-        typed: TextEntry::default(),
-        error: None,
-    })
+    with_overlay(Overlay::MusicDir(TextEntry::default()))
 }
 
 fn typed_text(message: TextRequest) -> Option<Message> {
@@ -417,6 +411,16 @@ fn confirm() -> Option<Message> {
     plain(KeyCode::Esc),
     close()
 )]
+#[case::an_overlay_key_with_no_binding_falls_through_to_typed_input(
+    searching(),
+    character('z'),
+    search_edit(SearchEdit::Char('z'))
+)]
+#[case::a_base_key_with_no_playlist_binding_falls_back_to_global(
+    browsing(),
+    character('z'),
+    Some(Message::Playback(PlaybackRequest::CycleSleep))
+)]
 fn routed_key(
     #[case] mut workspace: Workspace,
     #[case] key: Key,
@@ -493,10 +497,11 @@ fn a_key_press_routes_through_update(
 #[rstest]
 #[case::an_unbound_key(crate::support::model_with_tracks(3), 'w')]
 #[case::a_refused_key(kernel::domain::model::Model::default(), 'j')]
-fn a_refused_key_after_g_disarms_the_chord(
+fn cancelling_a_chord_handles_the_key(
     #[case] mut model: kernel::domain::model::Model,
     #[case] letter: char,
 ) {
+    model.workspace.toasts = vec![Toast::info("hello")];
     let before = format!("{model:?}");
     model.workspace.chord_prefix = Some(ChordPrefix::G);
     let key = character(letter);
@@ -507,8 +512,9 @@ fn a_refused_key_after_g_disarms_the_chord(
         Moment::default(),
     );
 
-    assert!(matches!(routed, Err(Unhandled)));
+    assert_eq!(routed, Ok(Vec::new()));
     assert_eq!(model.workspace.chord_prefix, None);
+    assert_eq!(model.workspace.toasts, vec![Toast::info("hello")]);
     assert_eq!(format!("{model:?}"), before);
 }
 

@@ -34,6 +34,13 @@ pub enum ConfigError {
     Invalid(Diagnostic),
 }
 
+impl ConfigError {
+    #[must_use]
+    pub fn invalid(error: &impl std::error::Error) -> Self {
+        Self::Invalid(Diagnostic::from_error(error))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Diagnostic(String);
 

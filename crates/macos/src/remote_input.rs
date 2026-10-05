@@ -69,7 +69,10 @@ impl RemoteInput {
 mod tests {
     use std::time::Duration;
 
-    use kernel::message::PlaybackRequest;
+    use kernel::{
+        domain::{direction::Direction, transport::SEEK_MEDIUM},
+        message::PlaybackRequest,
+    };
     use objc2_media_player::MPSeekCommandEventType;
     use rstest::rstest;
 
@@ -78,7 +81,7 @@ mod tests {
     #[rstest]
     #[case::begin(
         MPSeekCommandEventType::BeginSeeking,
-        RemoteInput::HoldBegan(PlaybackRequest::SeekForward)
+        RemoteInput::HoldBegan(PlaybackRequest::SeekBy { direction: Direction::Next, by: SEEK_MEDIUM })
     )]
     #[case::end(MPSeekCommandEventType::EndSeeking, RemoteInput::HoldEnded)]
     fn only_the_start_of_a_hold_seeks(
@@ -86,7 +89,13 @@ mod tests {
         #[case] input: RemoteInput,
     ) {
         assert_eq!(
-            RemoteInput::from_phase(PlaybackRequest::SeekForward, phase),
+            RemoteInput::from_phase(
+                PlaybackRequest::SeekBy {
+                    direction: Direction::Next,
+                    by: SEEK_MEDIUM
+                },
+                phase
+            ),
             input
         );
     }

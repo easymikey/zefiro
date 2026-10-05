@@ -47,27 +47,21 @@ impl Signals {
 #[derive(Debug)]
 pub enum AudioMessage {
     Deck(DeckEvent),
-    Cmds(Cmds<AudioCmd>),
-    Reported(Option<Duration>),
-    Error(AudioError),
-    Opened(DeviceOpened),
-    Decoded(Option<Duration>),
-    Preloaded(PreloadMode),
-    Finished(SinkRole),
-    Cued,
-    Ramped(SinkRole),
-    DevicesListed(Vec<ListedDevice>),
     SignalsTaken { role: SinkRole, signals: Signals },
+    Engine(EngineMessage),
 }
 
 #[derive(Debug)]
-pub(crate) enum EngineMessage {
+pub enum EngineMessage {
     Cmds(Cmds<AudioCmd>),
     Reported(Option<Duration>),
     Error(AudioError),
     Opened(DeviceOpened),
     Decoded(Option<Duration>),
-    Preloaded(PreloadMode),
+    Attached {
+        preload_mode: PreloadMode,
+        duration: Option<Duration>,
+    },
     Finished(SinkRole),
     Cued,
     Ramped(SinkRole),
@@ -76,7 +70,13 @@ pub(crate) enum EngineMessage {
 
 impl From<Cmds<AudioCmd>> for AudioMessage {
     fn from(cmds: Cmds<AudioCmd>) -> Self {
-        AudioMessage::Cmds(cmds)
+        AudioMessage::Engine(EngineMessage::Cmds(cmds))
+    }
+}
+
+impl From<EngineMessage> for AudioMessage {
+    fn from(message: EngineMessage) -> Self {
+        AudioMessage::Engine(message)
     }
 }
 

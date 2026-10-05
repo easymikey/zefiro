@@ -1,6 +1,6 @@
 use std::{borrow::Cow, time::Duration};
 
-use kernel::domain::{geometry::Cells, player::Player, time::Moment};
+use kernel::domain::geometry::Cells;
 use ratatui::{
     style::Color,
     text::{Line, Span},
@@ -8,15 +8,14 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    pixels::numeric::{dimension_f32, floor},
+    pixels::numeric::{dimension_f32, floor, small_count_u16},
     primitive::{
-        chip::{self, ChipStyle},
+        chip,
         glyphs,
         relative_time::format_time,
         span::{line, text},
     },
-    repaint::{ProgressScale, next_progress_step},
-    theme::active_theme::{ActiveTheme, ProgressStyle},
+    theme::colors::Colors,
 };
 
 const FULL_RUN: &str = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
@@ -26,7 +25,7 @@ const VOLUME_RUN: &str = "██████████████████
 #[derive(Debug)]
 pub(crate) struct BarFill {
     fraction: f32,
-    width: usize,
+    width: Cells,
     filled_glyph: &'static str,
     filled_run: &'static str,
     partial: Option<&'static str>,
@@ -36,7 +35,7 @@ pub(crate) struct BarFill {
 
 impl BarFill {
     #[must_use]
-    pub(crate) fn progress(fraction: f32, width: usize) -> Self {
+    pub(crate) fn progress(fraction: f32, width: Cells) -> Self {
         Self {
             fraction,
             width,
@@ -49,7 +48,7 @@ impl BarFill {
     }
 
     #[must_use]
-    pub(crate) fn volume(fraction: f32, width: usize) -> Self {
+    pub(crate) fn volume(fraction: f32, width: Cells) -> Self {
         Self {
             fraction,
             width,
@@ -74,11 +73,12 @@ fn repeat_glyph(
 
 #[must_use]
 pub(crate) fn fill(spec: &BarFill, fill: Color, groove: Color) -> Line<'static> {
-    let width_f32 = dimension_f32(spec.width);
+    let width = spec.width.count();
+    let width_f32 = dimension_f32(width);
     let exact = spec.fraction.clamp(0.0, 1.0) * width_f32;
     let whole = floor::<usize>(exact);
     let whole_f32 = dimension_f32(whole);
-    let rounds_up = exact - whole_f32 >= 0.5 && whole < spec.width;
+    let rounds_up = exact - whole_f32 >= 0.5 && whole < width;
     let used = whole + usize::from(rounds_up);
     let partial = rounds_up.then_some(spec.partial).flatten();
     let solid = used.saturating_sub(usize::from(partial.is_some()));
@@ -86,7 +86,7 @@ pub(crate) fn fill(spec: &BarFill, fill: Color, groove: Color) -> Line<'static> 
     let empty = repeat_glyph(
         spec.groove_glyph,
         spec.groove_run,
-        spec.width.saturating_sub(used),
+        width.saturating_sub(used),
     );
     line(
         [
@@ -110,56 +110,42 @@ pub(crate) fn remaining_label(remaining: Duration) -> String {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HudProgressRow {
     pub(crate) fraction: f32,
-    pub(crate) row_width: usize,
+    pub(crate) row_width: Cells,
     pub(crate) remaining: Duration,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct HudProgressStyle {
-    pub(crate) bar: ProgressStyle,
-    pub(crate) chip: ChipStyle,
-}
-
-impl HudProgressStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            bar: ProgressStyle::from_theme(theme),
-            chip: ChipStyle::from_theme(theme),
-        }
-    }
-}
-
 #[must_use]
-pub(crate) fn hud_progress_bar_width(row_width: u16, remaining: Duration) -> u16 {
-    let gap = u16::try_from(HUD_GAP.width()).unwrap_or(u16::MAX);
-    let reserved = chip::width(&remaining_label(remaining)).saturating_add(gap);
-    if row_width <= reserved {
+pub(crate) fn hud_progress_bar_width(row_width: Cells, remaining: Duration) -> Cells {
+    let gap = small_count_u16(HUD_GAP.width());
+    let reserved = chip::width(&remaining_label(remaining))
+        .0
+        .saturating_add(gap);
+    if row_width.0 <= reserved {
         row_width
     } else {
-        row_width - reserved
+        Cells(row_width.0 - reserved)
     }
 }
 
 #[must_use]
 pub(crate) fn hud_progress_line(
     input: &HudProgressRow,
-    colors: &HudProgressStyle,
+    (fill_color, groove): (Color, Color),
+    colors: &Colors<Color>,
 ) -> Line<'static> {
-    let chip_spans = chip::spans(&remaining_label(input.remaining), colors.chip);
-    let row_width = u16::try_from(input.row_width).unwrap_or(u16::MAX);
-    let bar_width = usize::from(hud_progress_bar_width(row_width, input.remaining));
+    let chip_spans = chip::spans(&remaining_label(input.remaining), colors);
+    let bar_width = hud_progress_bar_width(input.row_width, input.remaining);
     if bar_width == input.row_width {
         return fill(
             &BarFill::progress(input.fraction, input.row_width),
-            colors.bar.fill,
-            colors.bar.groove,
+            fill_color,
+            groove,
         );
     }
     let bar = fill(
         &BarFill::progress(input.fraction, bar_width),
-        colors.bar.fill,
-        colors.bar.groove,
+        fill_color,
+        groove,
     );
     Line::from_iter(
         bar.spans
@@ -169,85 +155,28 @@ pub(crate) fn hud_progress_line(
     )
 }
 
-#[must_use]
-pub fn progress_frame_due(
-    player: &Player,
-    bar_width: Option<Cells>,
-    now: Moment,
-) -> Option<Moment> {
-    let Player::Playing { head, track, .. } = player else {
-        return None;
-    };
-    let scale = ProgressScale::text_bar(bar_width?, track.duration()?)?;
-    next_progress_step(scale, *head, now)
-}
-
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::time::Duration;
 
-    use kernel::domain::{
-        bounded::Bounded,
-        geometry::Cells,
-        player::{PausedBy, Player, Preload},
-        playhead::Playhead,
-        speed::Speed,
-        time::Moment,
-        track::{AudioFormat, Tags, Track},
-    };
+    use kernel::domain::geometry::Cells;
     use ratatui::{style::Color, symbols::block, text::Line};
     use rstest::rstest;
 
     use crate::{
         primitive::{
-            bar::{
-                BarFill,
-                HudProgressRow,
-                HudProgressStyle,
-                fill,
-                hud_progress_line,
-                progress_frame_due,
-            },
-            chip::ChipStyle,
+            bar::{BarFill, HudProgressRow, fill, hud_progress_line},
             glyphs,
         },
-        repaint::{ProgressScale, next_progress_step},
-        theme::active_theme::ProgressStyle,
+        theme::colors::Colors,
     };
-
-    fn track(duration: Duration) -> Arc<Track> {
-        Arc::new(
-            Track::builder()
-                .path("/music/song.mp3")
-                .duration(duration)
-                .tags(Tags::default())
-                .audio_format(AudioFormat::default())
-                .build(),
-        )
-    }
-
-    fn playing(offset: Duration, since: Moment, duration: Duration) -> Player {
-        Player::Playing {
-            track: track(duration),
-            head: Playhead::anchored(offset, since, Speed::clamped(1.0)),
-            preload: Preload::None,
-        }
-    }
-
-    fn paused(at: Duration, duration: Duration) -> Player {
-        Player::Paused {
-            track: track(duration),
-            at,
-            by: PausedBy::Listener,
-        }
-    }
 
     fn painted(spec: &BarFill) -> Line<'static> {
         fill(spec, Color::Green, Color::Black)
     }
 
-    fn progress_text(fraction: f32, width: usize) -> String {
-        painted(&BarFill::progress(fraction, width))
+    fn progress_text(fraction: f32, width: u16) -> String {
+        painted(&BarFill::progress(fraction, Cells(width)))
             .spans
             .iter()
             .map(|s| s.content.to_string())
@@ -261,7 +190,7 @@ mod tests {
     #[case::full(1.0, 10)]
     fn the_progress_line_is_box_drawing_with_at_most_one_partial_cell(
         #[case] fraction: f32,
-        #[case] width: usize,
+        #[case] width: u16,
     ) {
         let text = progress_text(fraction, width);
         for banned in [
@@ -283,32 +212,24 @@ mod tests {
             text.matches(glyphs::progress_line::PARTIAL).count() <= 1,
             "at most one partial cell"
         );
-        assert_eq!(text.chars().count(), width);
+        assert_eq!(text.chars().count(), usize::from(width));
         insta::with_settings!({ snapshot_suffix => format!("{fraction}") }, {
             insta::assert_snapshot!(text);
         });
     }
 
-    fn hud_progress_text(
-        fraction: f32,
-        row_width: usize,
-        remaining: Duration,
-    ) -> String {
+    fn hud_progress_text(fraction: f32, row_width: u16, remaining: Duration) -> String {
         let line = hud_progress_line(
             &HudProgressRow {
                 fraction,
-                row_width,
+                row_width: Cells(row_width),
                 remaining,
             },
-            &HudProgressStyle {
-                bar: ProgressStyle {
-                    fill: Color::Red,
-                    groove: Color::Black,
-                },
-                chip: ChipStyle {
-                    border: Color::Black,
-                    foreground: Color::White,
-                },
+            (Color::Red, Color::Black),
+            &Colors {
+                muted_foreground: Color::Black,
+                text: Color::White,
+                ..Colors::default()
             },
         );
         line.spans.iter().map(|s| s.content.to_string()).collect()
@@ -317,7 +238,7 @@ mod tests {
     struct BarRow {
         name: &'static str,
         fraction: f32,
-        row_width: usize,
+        row_width: u16,
         remaining_secs: u64,
     }
 
@@ -334,7 +255,7 @@ mod tests {
         );
         assert_eq!(
             text.chars().count(),
-            row.row_width,
+            usize::from(row.row_width),
             "the row fills its width"
         );
         insta::with_settings!({ snapshot_suffix => row.name }, {
@@ -342,8 +263,8 @@ mod tests {
         });
     }
 
-    fn volume_text(fraction: f32, bar_width: usize) -> String {
-        painted(&BarFill::volume(fraction, bar_width))
+    fn volume_text(fraction: f32, bar_width: u16) -> String {
+        painted(&BarFill::volume(fraction, Cells(bar_width)))
             .spans
             .iter()
             .map(|s| s.content.to_string())
@@ -364,9 +285,7 @@ mod tests {
             "the volume bar must not borrow the progress line's glyphs"
         );
         assert_ne!(row, progress_text(fraction, 16));
-        assert!(
-            row.contains(glyphs::VOLUME_BLOCK) || row.contains(glyphs::VOLUME_BLOCK)
-        );
+        assert!(row.contains(glyphs::VOLUME_BLOCK));
         insta::with_settings!({ snapshot_suffix => format!("{fraction}") }, {
             insta::assert_snapshot!(row);
         });
@@ -380,7 +299,7 @@ mod tests {
         #[case] fraction: f32,
         #[case] filled: usize,
     ) {
-        let line = painted(&BarFill::volume(fraction, 16));
+        let line = painted(&BarFill::volume(fraction, Cells(16)));
         let cells: Vec<(char, Option<Color>)> = line
             .spans
             .iter()
@@ -399,65 +318,6 @@ mod tests {
                 .count(),
             filled,
             "the fill colour reaches exactly the level"
-        );
-    }
-
-    #[rstest]
-    #[case::a_stopped_player_has_no_progress_frame(Player::Stopped, Some(50), None)]
-    #[case::a_paused_player_has_no_progress_frame(
-        paused(Duration::from_secs(10), Duration::from_secs(100)),
-        Some(50),
-        None
-    )]
-    #[case::a_playing_track_wants_the_next_progress_step(
-        playing(
-            Duration::from_millis(10_200),
-            Moment::new(Duration::from_secs(100)),
-            Duration::from_secs(100)
-        ),
-        Some(50),
-        Some(Moment::new(Duration::from_millis(100_801)))
-    )]
-    #[case::no_bar_has_no_progress_frame(
-        playing(
-            Duration::from_millis(10_200),
-            Moment::new(Duration::from_secs(100)),
-            Duration::from_secs(100)
-        ),
-        None,
-        None
-    )]
-    #[case::a_sped_up_track_still_wants_a_progress_step(
-        Player::Playing {
-            track: track(Duration::from_secs(100)),
-            head: Playhead::anchored(
-                Duration::from_millis(10_200),
-                Moment::new(Duration::from_secs(100)),
-                Speed::clamped(1.5)
-            ),
-            preload: Preload::None,
-        },
-        Some(50),
-        next_progress_step(
-            ProgressScale::text_bar(Cells(50), Duration::from_secs(100)).unwrap(),
-            Playhead::anchored(
-                Duration::from_millis(10_200),
-                Moment::new(Duration::from_secs(100)),
-                Speed::clamped(1.5)
-            ),
-            Moment::new(Duration::from_secs(100))
-        )
-    )]
-    fn a_progress_frame_is_due_only_while_the_bar_can_move(
-        #[case] player: Player,
-        #[case] bar_width: Option<u16>,
-        #[case] expected: Option<Moment>,
-    ) {
-        let now = Moment::new(Duration::from_secs(100));
-
-        assert_eq!(
-            progress_frame_due(&player, bar_width.map(Cells), now),
-            expected
         );
     }
 }

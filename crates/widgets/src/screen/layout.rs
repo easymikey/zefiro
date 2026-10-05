@@ -14,8 +14,8 @@ use crate::{
     },
     overlay::layer::{OverlayView, OverlayWidget},
     playlist::{
-        pane::PlaylistAreas,
-        row::{PlaylistView, PlaylistWidget},
+        pane::{PlaylistAreas, PlaylistWidget},
+        view::PlaylistView,
     },
     primitive::bar::hud_progress_bar_width,
     repaint::{OnScreen, Presence},
@@ -100,7 +100,7 @@ impl FrameLayout {
             Breakpoint::Minimal => Some(
                 minimal_progress_bar_width(
                     CardView::from_scene(scene),
-                    scene.appearance_settings().speed_chip,
+                    scene.settings.appearance.speed_chip,
                     Cells(self.screen.width),
                 )
                 .0,
@@ -112,28 +112,15 @@ impl FrameLayout {
 
 fn full_progress_bar_width(scene: &Scene<'_>, metrics: &CardMetrics) -> u16 {
     let row_width = metrics.progress_row.width;
-    match scene.appearance_settings().progress_time {
+    match scene.settings.appearance.progress_time {
         ProgressTime::Remaining => {
-            hud_progress_bar_width(row_width, CardView::from_scene(scene).remaining())
+            hud_progress_bar_width(
+                Cells(row_width),
+                CardView::from_scene(scene).remaining(),
+            )
+            .0
         }
         ProgressTime::Elapsed => row_width,
-    }
-}
-
-fn empty(screen: Rect, breakpoint: Breakpoint) -> FrameLayout {
-    FrameLayout {
-        screen,
-        breakpoint,
-        content: Rect::default(),
-        header: Rect::default(),
-        card: None,
-        cover: None,
-        playlist_pane: Rect::default(),
-        playlist: None,
-        key_hints: None,
-        search_bounds: Rect::default(),
-        overlay: None,
-        toast: None,
     }
 }
 
@@ -163,10 +150,10 @@ fn header_rows(breakpoint: Breakpoint) -> u16 {
 }
 
 fn body(scene: &Scene<'_>, screen: Rect) -> FrameLayout {
-    let settings = scene.appearance_settings();
+    let settings = scene.settings.appearance;
     let breakpoint = Breakpoint::new(
         screen.as_size(),
-        &scene.appearance.breakpoints,
+        &scene.presentation.appearance.breakpoints,
         settings.layout_mode,
     );
     let content = content_area(screen);
@@ -178,11 +165,11 @@ fn body(scene: &Scene<'_>, screen: Rect) -> FrameLayout {
         Constraint::Length(hint_rows),
     ]));
     match breakpoint {
-        Breakpoint::TooSmall => empty(screen, breakpoint),
+        Breakpoint::TooSmall => FrameLayout::empty(screen, breakpoint),
         Breakpoint::Minimal => FrameLayout {
             content,
             search_bounds: pane,
-            ..empty(screen, breakpoint)
+            ..FrameLayout::empty(screen, breakpoint)
         },
         Breakpoint::Full | Breakpoint::Compact => FrameLayout {
             content,
@@ -191,7 +178,7 @@ fn body(scene: &Scene<'_>, screen: Rect) -> FrameLayout {
             playlist: playlist(scene, pane),
             key_hints: (hint_rows > 0).then_some(hints),
             search_bounds: pane,
-            ..card_areas(scene, header, empty(screen, breakpoint))
+            ..card_areas(scene, header, FrameLayout::empty(screen, breakpoint))
         },
     }
 }
@@ -200,8 +187,11 @@ fn card_areas(scene: &Scene<'_>, header: Rect, layout: FrameLayout) -> FrameLayo
     if layout.breakpoint != Breakpoint::Full {
         return layout;
     }
-    let metrics =
-        card::metrics::card_metrics(header, scene.cell_aspect, scene.cover_sizing());
+    let metrics = card::metrics::card_metrics(
+        header,
+        scene.presentation.cell_aspect,
+        scene.cover_sizing(),
+    );
     FrameLayout {
         card: Some(metrics),
         cover: Some(metrics.cover_square).filter(|cover| !cover.is_empty()),
@@ -229,7 +219,7 @@ fn playlist(scene: &Scene<'_>, pane: Rect) -> Option<PlaylistAreas> {
 #[cfg(test)]
 mod tests {
     use kernel::domain::{
-        appearance::{CoverMode, ProgressTime},
+        appearance::{Breakpoints, CoverMode, ProgressTime},
         cursor_over::CursorOver,
         geometry::Cells,
         overlay::{Overlay, SearchQuery},
@@ -244,11 +234,8 @@ mod tests {
         overlay::modal::placement::OverlayAreas,
         primitive::bar::hud_progress_bar_width,
         repaint::Presence,
-        scene::{PixelPath, Scene},
-        screen::{
-            breakpoint::{Breakpoint, Breakpoints},
-            frame_layout::FrameLayout,
-        },
+        scene::{PixelPath, Scene, ScenePresentation},
+        screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
         test_support::{SceneSources, model_with_tracks},
     };
 
@@ -258,7 +245,10 @@ mod tests {
 
     fn with_pixels(scene: Scene<'_>) -> Scene<'_> {
         Scene {
-            pixel_path: PixelPath::Protocol,
+            presentation: ScenePresentation {
+                pixel_path: PixelPath::Protocol,
+                ..scene.presentation
+            },
             ..scene
         }
     }
@@ -452,12 +442,12 @@ mod tests {
                 let row_width = metrics.progress_row.width;
                 let expected = match style.unwrap() {
                     ProgressTime::Remaining => hud_progress_bar_width(
-                        row_width,
+                        Cells(row_width),
                         CardView::from_scene(&scene).remaining(),
                     ),
-                    ProgressTime::Elapsed => row_width,
+                    ProgressTime::Elapsed => Cells(row_width),
                 };
-                assert_eq!(on_screen.progress_bar, Some(Cells(expected)));
+                assert_eq!(on_screen.progress_bar, Some(expected));
                 assert_eq!(on_screen.clock, Presence::Shown);
             }
             Breakpoint::Compact => {

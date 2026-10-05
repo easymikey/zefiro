@@ -1,4 +1,7 @@
+pub mod cover;
 mod field;
+
+use std::sync::Arc;
 
 use kernel::cmd::Playback;
 use ratatui::{style::Color, text::Line};
@@ -32,7 +35,7 @@ use crate::{
     },
     primitive::span::text,
     spectrum::Spectrum,
-    theme::{active_theme::ActiveTheme, colors::Role},
+    theme::active_theme::ActiveTheme,
 };
 
 fn resolve_mirror(field: &mut MilkdropField, size: FieldSize, mirror: Mirror) {
@@ -142,10 +145,11 @@ pub(crate) struct MilkdropStyle {
 impl MilkdropStyle {
     #[must_use]
     pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
+        let colors = theme.colors();
         Self {
-            muted_foreground: theme.role(Role::Dim),
-            accent: theme.role(Role::Accent),
-            foreground: theme.role(Role::Text),
+            muted_foreground: colors.muted_foreground,
+            accent: colors.accent,
+            foreground: colors.text,
         }
     }
 
@@ -171,24 +175,20 @@ fn ramp_glyph(intensity: f32) -> &'static str {
         .unwrap_or(RAMP_FALLBACK)
 }
 
-pub(crate) fn lines_into(
+pub(crate) fn lines(
     field: &MilkdropField,
     style: &MilkdropStyle,
-    output: &mut Vec<Line<'static>>,
-) {
-    if output.len() != field.height {
-        output.clear();
-        output.resize_with(field.height, Line::default);
-    }
-    for (row, line) in output.iter_mut().enumerate() {
-        line.spans.clear();
-        for column in 0..field.width {
-            let intensity = field.cell(CellPosition { column, row });
-            let glyph = ramp_glyph(intensity);
-            line.spans
-                .push(text(glyph).fg(style.color_for(intensity)).into());
-        }
-    }
+) -> Arc<[Line<'static>]> {
+    (0..field.height)
+        .map(|row| {
+            (0..field.width)
+                .map(|column| {
+                    let intensity = field.cell(CellPosition { column, row });
+                    text(ramp_glyph(intensity)).fg(style.color_for(intensity))
+                })
+                .collect::<Line<'static>>()
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -202,7 +202,7 @@ mod tests {
             MilkdropAdvance,
             MilkdropField,
             MilkdropStyle,
-            lines_into,
+            lines,
         },
         spectrum::Spectrum,
     };
@@ -230,10 +230,9 @@ mod tests {
             accent: Color::Red,
             foreground: Color::White,
         };
-        let mut rendered = Vec::new();
-        lines_into(&field, &style, &mut rendered);
+        let rendered = lines(&field, &style);
         assert_eq!(rendered.len(), 8);
-        for line in &rendered {
+        for line in rendered.iter() {
             assert_eq!(line.spans.len(), 20);
         }
     }
@@ -246,26 +245,7 @@ mod tests {
             accent: Color::Red,
             foreground: Color::White,
         };
-        let mut rendered = Vec::new();
-        lines_into(&field, &style, &mut rendered);
-        assert_eq!(rendered.len(), 7);
-    }
-
-    #[test]
-    fn lines_into_reuses_an_undersized_buffer_across_a_resize() {
-        let style = MilkdropStyle {
-            muted_foreground: Color::Black,
-            accent: Color::Red,
-            foreground: Color::White,
-        };
-        let mut rendered = Vec::new();
-        lines_into(&MilkdropField::new(5, 3), &style, &mut rendered);
-        assert_eq!(rendered.len(), 3);
-        lines_into(&MilkdropField::new(20, 8), &style, &mut rendered);
-        assert_eq!(rendered.len(), 8);
-        for line in &rendered {
-            assert_eq!(line.spans.len(), 20);
-        }
+        assert_eq!(lines(&field, &style).len(), 7);
     }
 
     #[test]

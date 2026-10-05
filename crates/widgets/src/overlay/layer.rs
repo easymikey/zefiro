@@ -5,7 +5,7 @@ use kernel::{
         appearance::CoverMode,
         history::HistoryEntry,
         index::RowIndex,
-        overlay::Overlay,
+        overlay::{Overlay, TextEntry},
         time::Moment,
         track::Track,
     },
@@ -25,7 +25,6 @@ use crate::{
         history::HistoryWidget,
         jump_to_time,
         modal::{
-            metrics::ModalRowStyle,
             placement::{ModalContainer, OverlayAreas},
             prompt::PromptWidget,
         },
@@ -36,7 +35,7 @@ use crate::{
     },
     primitive::canvas::Canvas,
     screen::frame_layout::FrameLayout,
-    theme::{active_theme::ActiveTheme, colors::Role},
+    theme::active_theme::ActiveTheme,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -74,7 +73,7 @@ impl ActiveOverlay<'_> {
             Self::Search(overlay) => overlay.areas(screen),
             Self::History(overlay) => overlay.areas(screen),
             Self::Settings(overlay) => overlay.areas(screen),
-            Self::Prompt(prompt) => OverlayAreas::Dialog(prompt.areas(screen)),
+            Self::Prompt(overlay) => overlay.areas(screen),
             Self::TrackDetails(overlay) => overlay.areas(screen),
         }
     }
@@ -86,7 +85,7 @@ impl ActiveOverlay<'_> {
             Self::Settings(widget) => widget.paint(areas, canvas),
             Self::History(widget) => widget.paint(areas, canvas),
             Self::TrackDetails(widget) => widget.paint(areas, canvas),
-            Self::Prompt(prompt) => Widget::render(prompt, canvas.area, canvas.buffer),
+            Self::Prompt(widget) => widget.paint(areas, canvas),
         }
     }
 }
@@ -117,14 +116,14 @@ struct SaveLine {
 impl SaveLine {
     fn from_overlay(overlay: &Overlay) -> Option<Self> {
         match overlay {
-            Overlay::SavePlaylist { typed, error: None } => Some(Self {
-                text: format!("Save playlist: {}", typed.input),
+            Overlay::SavePlaylist(TextEntry { input, error: None }) => Some(Self {
+                text: format!("Save playlist: {input}"),
                 phase: SavePhase::Prompt,
             }),
-            Overlay::SavePlaylist {
+            Overlay::SavePlaylist(TextEntry {
                 error: Some(reason),
                 ..
-            } => Some(Self {
+            }) => Some(Self {
                 text: reason.to_string(),
                 phase: SavePhase::Failed,
             }),
@@ -135,31 +134,16 @@ impl SaveLine {
             | Overlay::ConfirmDelete(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_)
-            | Overlay::MusicDir { .. } => None,
+            | Overlay::MusicDir(_) => None,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct SaveBannerStyle {
-    accent: ratatui::style::Color,
-    alert: ratatui::style::Color,
-}
-
-impl SaveBannerStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            accent: theme.role(Role::Accent),
-            alert: theme.role(Role::Accent2),
-        }
-    }
-
-    fn color(self, phase: SavePhase) -> ratatui::style::Color {
-        match phase {
-            SavePhase::Prompt => self.accent,
-            SavePhase::Failed => self.alert,
-        }
+#[must_use]
+fn accent(theme: &ActiveTheme<'_>, phase: SavePhase) -> ratatui::style::Color {
+    match phase {
+        SavePhase::Prompt => theme.colors().accent,
+        SavePhase::Failed => theme.alert(),
     }
 }
 
@@ -218,8 +202,8 @@ impl<'a> OverlayWidget<'a> {
             overlay @ (Overlay::ConfirmDelete(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_)
-            | Overlay::MusicDir { .. }
-            | Overlay::SavePlaylist { .. }) => self.dialog(overlay, avoid),
+            | Overlay::MusicDir(_)
+            | Overlay::SavePlaylist(_)) => self.dialog(overlay, avoid),
         }
     }
 
@@ -232,25 +216,24 @@ impl<'a> OverlayWidget<'a> {
             Overlay::ConfirmDelete(candidate) => Some(ActiveOverlay::Prompt(
                 confirm_delete::prompt(candidate, self.view.theme).avoiding(avoid),
             )),
-            Overlay::JumpToTime(digits) => Some(ActiveOverlay::Prompt(
-                jump_to_time::prompt(digits, self.view.theme).avoiding(avoid),
+            Overlay::JumpToTime(entry) => Some(ActiveOverlay::Prompt(
+                jump_to_time::prompt(entry, self.view.theme).avoiding(avoid),
             )),
             Overlay::TrackDetails(track) => {
                 Some(ActiveOverlay::TrackDetails(TrackDetailsWidget {
                     track: track.as_ref(),
-                    style: ModalRowStyle::from_theme(&self.view.theme),
+                    colors: self.view.theme.colors(),
                     avoid,
                 }))
             }
-            Overlay::MusicDir { typed, error } => Some(ActiveOverlay::Prompt(
-                music_dir::prompt(typed, error.as_ref(), self.view.theme)
-                    .avoiding(avoid),
+            Overlay::MusicDir(entry) => Some(ActiveOverlay::Prompt(
+                music_dir::prompt(entry, self.view.theme).avoiding(avoid),
             )),
             Overlay::Help
             | Overlay::Search(_)
             | Overlay::History(_)
             | Overlay::Settings(..)
-            | Overlay::SavePlaylist { .. } => None,
+            | Overlay::SavePlaylist(_) => None,
         }
     }
 
@@ -269,9 +252,7 @@ impl<'a> OverlayWidget<'a> {
     fn paint_banner(&self, save_line: SaveLine, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
         Paragraph::new(save_line.text)
-            .style(Style::default().fg(
-                SaveBannerStyle::from_theme(&self.view.theme).color(save_line.phase),
-            ))
+            .style(Style::default().fg(accent(&self.view.theme, save_line.phase)))
             .render(area, buffer);
     }
 }
@@ -319,7 +300,7 @@ mod tests {
 
     use crate::{
         overlay::{
-            layer::{OverlayView, OverlayWidget, SaveBannerStyle, SavePhase},
+            layer::{OverlayView, OverlayWidget, SavePhase, accent},
             modal::placement::OverlayAreas,
             settings::test_support::{appearance_rows, settings_values},
         },
@@ -336,18 +317,9 @@ mod tests {
 
     fn layout(playlist_pane: Rect) -> FrameLayout {
         FrameLayout {
-            screen: Rect::new(0, 0, 80, 28),
-            breakpoint: Breakpoint::Full,
-            content: Rect::default(),
-            header: Rect::default(),
-            card: None,
-            cover: None,
             playlist_pane,
-            playlist: None,
-            key_hints: None,
             search_bounds: Rect::new(0, 0, 80, 28),
-            overlay: None,
-            toast: None,
+            ..FrameLayout::empty(Rect::new(0, 0, 80, 28), Breakpoint::Full)
         }
     }
 
@@ -362,7 +334,7 @@ mod tests {
                 tracks: &model.playlist.tracks,
                 history: &model.history,
                 theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
-                settings_view: settings_values(&[]),
+                settings_view: settings_values(),
                 bindings: &[],
                 now: Moment::default(),
             },
@@ -426,7 +398,7 @@ mod tests {
         let model = model_with(Overlay::Settings(SettingRow::first(&custom)));
         let layout = layout(Rect::default());
         let mut with_values = layer(&theme, &model, &layout);
-        with_values.view.settings_view = settings_values(&custom);
+        with_values.view.settings_view = settings_values();
         insta::assert_snapshot!(
             rendered(80, 28, |frame| frame
                 .render_widget(&with_values, frame.area()))
@@ -453,9 +425,7 @@ mod tests {
     #[test]
     fn jump_to_time_overlay_shows_the_prompt() {
         let theme = noir();
-        let model = model_with(Overlay::JumpToTime(
-            kernel::domain::overlay::JumpDigits::default(),
-        ));
+        let model = model_with(Overlay::JumpToTime(TextEntry::default()));
         let layout = layout(Rect::default());
         let overlay = layer(&theme, &model, &layout);
         insta::assert_snapshot!(
@@ -487,10 +457,7 @@ mod tests {
     #[test]
     fn music_dir_overlay_shows_the_prompt() {
         let theme = noir();
-        let model = model_with(Overlay::MusicDir {
-            typed: TextEntry::default(),
-            error: None,
-        });
+        let model = model_with(Overlay::MusicDir(TextEntry::default()));
         let layout = layout(Rect::default());
         let overlay = layer(&theme, &model, &layout);
         insta::assert_snapshot!(
@@ -513,12 +480,10 @@ mod tests {
         let text = error
             .as_ref()
             .map_or_else(|| "Save playlist: mixtape".to_string(), ToString::to_string);
-        let model = model_with(Overlay::SavePlaylist {
-            typed: TextEntry {
-                input: "mixtape".to_string(),
-            },
+        let model = model_with(Overlay::SavePlaylist(TextEntry {
+            input: "mixtape".to_string(),
             error,
-        });
+        }));
         let layout = layout(Rect::default());
         let overlay = layer(&theme, &model, &layout);
         let screen = Rect::new(0, 0, 80, 28);
@@ -539,20 +504,14 @@ mod tests {
         assert_eq!(banner.trim_end(), text);
         assert_eq!(
             buffer[(0, 27)].fg,
-            SaveBannerStyle::from_theme(&ActiveTheme::new(
-                &theme,
-                ColorDepth::TrueColor
-            ))
-            .color(phase)
+            accent(&ActiveTheme::new(&theme, ColorDepth::TrueColor), phase)
         );
     }
 
     #[test]
     fn a_dialog_keeps_clear_of_the_cover() {
         let theme = noir();
-        let model = model_with(Overlay::JumpToTime(
-            kernel::domain::overlay::JumpDigits::default(),
-        ));
+        let model = model_with(Overlay::JumpToTime(TextEntry::default()));
         let cover = Rect::new(0, 0, 80, 15);
         let layout = FrameLayout {
             cover: Some(cover),
@@ -568,12 +527,10 @@ mod tests {
     #[test]
     fn the_banner_sits_on_the_last_row_of_an_offset_screen() {
         let theme = noir();
-        let model = model_with(Overlay::SavePlaylist {
-            typed: TextEntry {
-                input: "mixtape".to_string(),
-            },
+        let model = model_with(Overlay::SavePlaylist(TextEntry {
+            input: "mixtape".to_string(),
             error: None,
-        });
+        }));
         let layout = layout(Rect::default());
         let overlay = layer(&theme, &model, &layout);
         let screen = Rect::new(3, 2, 60, 10);

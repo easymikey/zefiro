@@ -8,6 +8,7 @@ pub struct ConfigPaths {
     pub config: PathBuf,
     pub appearance: PathBuf,
     pub themes: PathBuf,
+    pub default_music_dir: Option<PathBuf>,
     pub theme: Option<ThemeName>,
     pub seen: SeenTexts,
 }

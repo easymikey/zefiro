@@ -4,7 +4,7 @@ use crate::{
     cmd::Cmd,
     domain::{
         cue::PlaybackChange,
-        player::{PausedBy, Player, Preload},
+        player::{PausedBy, Player},
         playhead::Playhead,
         time::Moment,
         track::Track,
@@ -12,7 +12,7 @@ use crate::{
     update::{
         machine::Unhandled,
         player::{
-            effects::seek_effect,
+            events::seek_effect,
             stamp::{Anchor, Stamp, StartOrigin},
         },
     },
@@ -29,11 +29,11 @@ impl Player {
                 let track = current.ok_or(Unhandled)?;
                 Ok(self.start(track, StartOrigin::User(stamp)))
             }
-            Player::Loading { .. } => Err(Unhandled),
+            Player::Loading(..) => Err(Unhandled),
             Player::Playing { .. } => {
-                Ok(self.pause(stamp.anchor.since, PausedBy::Listener))
+                self.pause(stamp.anchor.since, PausedBy::Listener)
             }
-            Player::Paused { .. } => Ok(self.resume(stamp.anchor)),
+            Player::Paused { .. } => self.resume(stamp.anchor),
         }
     }
 
@@ -43,39 +43,42 @@ impl Player {
         now: Moment,
     ) -> Result<Cmd, Unhandled> {
         match self {
-            Player::Playing { head, preload, .. } => {
-                *head = Playhead::anchored(target, now, head.speed);
-                *preload = mem::replace(preload, Preload::None).seek_reset();
+            Player::Playing { playhead, .. } => {
+                *playhead = Playhead::anchored(target, now, playhead.speed);
                 Ok(seek_effect(target))
             }
-            Player::Paused { at, .. } => {
-                *at = target;
+            Player::Paused { position, .. } => {
+                *position = target;
                 Ok(seek_effect(target))
             }
-            Player::Loading { .. } | Player::Stopped => Err(Unhandled),
+            Player::Loading(..) | Player::Stopped => Err(Unhandled),
         }
     }
 
-    pub(crate) fn pause(&mut self, now: Moment, by: PausedBy) -> Cmd {
+    pub(crate) fn pause(
+        &mut self,
+        now: Moment,
+        by: PausedBy,
+    ) -> Result<Cmd, Unhandled> {
         match mem::replace(self, Player::Stopped) {
-            Player::Playing { track, head, .. } => {
+            Player::Playing {
+                track, playhead, ..
+            } => {
                 *self = Player::Paused {
                     track,
-                    at: head.position_at(now),
+                    position: playhead.position_at(now),
                     by,
                 };
-                PlaybackChange::Pause.cued()
+                Ok(PlaybackChange::Pause.cued())
             }
-            other @ (Player::Paused { .. }
-            | Player::Loading { .. }
-            | Player::Stopped) => {
+            other @ (Player::Paused { .. } | Player::Loading(..) | Player::Stopped) => {
                 *self = other;
-                Cmd::none()
+                Err(Unhandled)
             }
         }
     }
 
-    pub(crate) fn release(&mut self, anchor: Anchor) -> Cmd {
+    pub(crate) fn release(&mut self, anchor: Anchor) -> Result<Cmd, Unhandled> {
         match self {
             Player::Paused {
                 by: PausedBy::Overlay,
@@ -86,26 +89,27 @@ impl Player {
                 ..
             }
             | Player::Playing { .. }
-            | Player::Loading { .. }
-            | Player::Stopped => Cmd::none(),
+            | Player::Loading(..)
+            | Player::Stopped => Err(Unhandled),
         }
     }
 
-    fn resume(&mut self, anchor: Anchor) -> Cmd {
+    fn resume(&mut self, anchor: Anchor) -> Result<Cmd, Unhandled> {
         match mem::replace(self, Player::Stopped) {
-            Player::Paused { track, at, .. } => {
+            Player::Paused {
+                track, position, ..
+            } => {
                 *self = Player::Playing {
                     track,
-                    head: Playhead::anchored(at, anchor.since, anchor.speed),
-                    preload: Preload::None,
+                    playhead: Playhead::anchored(position, anchor.since, anchor.speed),
+                    preloaded: None,
                 };
-                PlaybackChange::Play.cued()
+                Ok(PlaybackChange::Play.cued())
             }
-            other @ (Player::Playing { .. }
-            | Player::Loading { .. }
-            | Player::Stopped) => {
+            other
+            @ (Player::Playing { .. } | Player::Loading(..) | Player::Stopped) => {
                 *self = other;
-                Cmd::none()
+                Err(Unhandled)
             }
         }
     }

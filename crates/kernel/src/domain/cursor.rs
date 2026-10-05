@@ -7,24 +7,20 @@ pub struct Cursor {
     len: usize,
 }
 
-#[bon::bon]
 impl Cursor {
-    #[builder(
-        builder_type(vis = "pub"),
-        state_mod(vis = "pub"),
-        start_fn(name = with_len, vis = "pub"),
-        finish_fn(name = at, vis = "pub")
-    )]
-    fn clamped(
-        #[builder(start_fn)] len: usize,
-        #[builder(finish_fn)] index: usize,
-    ) -> Self {
-        let index = if len == 0 { 0 } else { index.min(len - 1) };
+    pub const fn at(len: usize, index: usize) -> Self {
+        let index = if len == 0 {
+            0
+        } else if index < len {
+            index
+        } else {
+            len - 1
+        };
         Self { index, len }
     }
 
     pub fn new(len: usize) -> Self {
-        Self::with_len(len).at(0)
+        Self::at(len, 0)
     }
 
     #[must_use]
@@ -46,7 +42,7 @@ impl Cursor {
         if self.is_empty() {
             return self;
         }
-        Self::with_len(self.len).at(clamped_step(self.index, self.len, delta))
+        Self::at(self.len, clamped_step(self.index, self.len, delta))
     }
 
     pub(crate) fn page(self, rows: usize, direction: Direction) -> Self {
@@ -55,15 +51,15 @@ impl Cursor {
     }
 
     pub(crate) fn first(self) -> Self {
-        Self::with_len(self.len).at(0)
+        Self::at(self.len, 0)
     }
 
     pub fn last(self) -> Self {
-        Self::with_len(self.len).at(self.len.saturating_sub(1))
+        Self::at(self.len, self.len.saturating_sub(1))
     }
 
     pub fn resize(self, len: usize) -> Self {
-        Self::with_len(len).at(self.index)
+        Self::at(len, self.index)
     }
 
     pub fn get<T>(self, items: &[T]) -> Option<&T> {
@@ -94,9 +90,7 @@ mod tests {
     #[case(PageRow { index: 3, len: 5, rows: 10, direction: Direction::Next, expected_index: 4 })]
     #[case(PageRow { index: 1, len: 5, rows: 10, direction: Direction::Previous, expected_index: 0 })]
     fn page_clamps_at_the_end(#[case] row: PageRow) {
-        let cursor = Cursor::with_len(row.len)
-            .at(row.index)
-            .page(row.rows, row.direction);
+        let cursor = Cursor::at(row.len, row.index).page(row.rows, row.direction);
         assert_eq!(cursor.index(), row.expected_index);
     }
 }

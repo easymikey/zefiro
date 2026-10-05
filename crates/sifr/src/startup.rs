@@ -2,17 +2,16 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use config::{
-    appearance_file::parse_appearance,
-    config_file::{TomlSettings, parse_config},
-    embedded_theme::STOCK_THEME,
-    file_name::{APPEARANCE_FILE_NAME, CONFIG_FILE_NAME, theme_file_name},
+    config_file::TomlSettings,
+    driver::paths::{ConfigPaths, SeenTexts},
+    embedded_theme::{STOCK_THEME, resolve_theme},
+    file_name::{APPEARANCE_FILE_NAME, CONFIG_FILE_NAME},
+    load::{Loaded, load},
     theme_file::{DEFAULT_SCANNING_LABEL, TomlColors, TomlTheme},
 };
 use kernel::domain::{
     appearance::Rgb,
     bounded::Bounded,
-    config::{ConfigError, ConfigName, Diagnostic},
-    io_error::IoError,
     percent::Percent,
     playlist::{PlaylistFileName, PlaylistSource},
     startup::{Shuffle, Startup},
@@ -35,15 +34,9 @@ const FALLBACK_COLORS: TomlColors = TomlColors {
 
 pub(crate) struct Launch {
     pub(crate) startup: Startup,
-    pub(crate) paths: runtime::startup_paths::StartupPaths,
+    pub(crate) paths: runtime::spawn_setup::StartupPaths,
     pub(crate) theme: TomlTheme,
-    pub(crate) appearance: widgets::appearance::Appearance,
-}
-
-struct Parsed<T> {
-    value: T,
-    text: Option<String>,
-    error: Option<(ConfigName, ConfigError)>,
+    pub(crate) appearance: kernel::domain::appearance::Appearance,
 }
 
 #[derive(Debug, Parser)]
@@ -78,69 +71,22 @@ fn user_config_dir() -> Result<PathBuf, Error> {
         .ok_or(Error::ConfigDirUnset)
 }
 
-fn appearance_path(config_dir: &Path) -> PathBuf {
-    config_dir.join(APPEARANCE_FILE_NAME)
+fn cli_theme(cli: &Cli) -> Result<Option<ThemeChoice>, Error> {
+    cli.theme
+        .as_deref()
+        .map(str::parse)
+        .transpose()
+        .map_err(Error::ThemeName)
 }
 
-fn themes_dir(config_dir: &Path) -> PathBuf {
-    config_dir.join("themes")
-}
-
-fn config_paths(
-    config_dir: &Path,
-    choice: &ThemeChoice,
-    config_file: PathBuf,
-) -> config::driver::paths::ConfigPaths {
-    config::driver::paths::ConfigPaths {
-        config: config_file,
-        appearance: appearance_path(config_dir),
-        themes: themes_dir(config_dir),
-        theme: Some(config::embedded_theme::resolve_theme(choice)),
-        seen: config::driver::paths::SeenTexts::default(),
-    }
-}
-
-fn fallback<T>(fallback: T, file: ConfigName, source: &std::io::Error) -> Parsed<T> {
-    Parsed {
-        value: fallback,
-        text: None,
-        error: Some((
-            file.clone(),
-            ConfigError::Unreadable {
-                file,
-                kind: IoError::from(source.kind()),
-            },
-        )),
-    }
-}
-
-fn read_parsed<T: Default>(
-    path: &Path,
-    name: ConfigName,
-    parse: fn(&str) -> Result<T, config::error::Error>,
-) -> Parsed<T> {
-    let text = match library::files::read_if_present(path) {
-        Ok(Some(text)) => text,
-        Ok(None) => {
-            return Parsed {
-                value: T::default(),
-                text: None,
-                error: None,
-            };
-        }
-        Err(source) => return fallback(T::default(), name, &source),
-    };
-    match parse(&text) {
-        Ok(value) => Parsed {
-            value,
-            text: Some(text),
-            error: None,
-        },
-        Err(error) => Parsed {
-            value: T::default(),
-            text: Some(text),
-            error: invalid(name, &error),
-        },
+fn config_paths(config_dir: &Path, choice: Option<&ThemeChoice>) -> ConfigPaths {
+    ConfigPaths {
+        config: config_dir.join(CONFIG_FILE_NAME),
+        appearance: config_dir.join(APPEARANCE_FILE_NAME),
+        themes: config_dir.join("themes"),
+        default_music_dir: dirs::audio_dir(),
+        theme: choice.map(resolve_theme),
+        seen: SeenTexts::default(),
     }
 }
 
@@ -160,94 +106,6 @@ fn stock_theme() -> Result<TomlTheme, Error> {
                 .map_err(Error::StockTheme)
         },
     )
-}
-
-fn invalid(
-    name: ConfigName,
-    error: &config::error::Error,
-) -> Option<(ConfigName, ConfigError)> {
-    Some((name, ConfigError::Invalid(Diagnostic::from_error(error))))
-}
-
-fn parsed_theme(
-    name: &ThemeName,
-    text: &str,
-    seen: Option<String>,
-) -> Result<Parsed<TomlTheme>, Error> {
-    Ok(match config::theme_file::parse_theme(text, name.as_str()) {
-        Ok(value) => Parsed {
-            value,
-            text: seen,
-            error: None,
-        },
-        Err(error) => Parsed {
-            value: stock_theme()?,
-            text: seen,
-            error: invalid(ConfigName::Theme(name.clone()), &error),
-        },
-    })
-}
-
-fn embedded_or_stock_theme(name: &ThemeName) -> Result<Parsed<TomlTheme>, Error> {
-    match config::embedded_theme::embedded_theme(name.as_str()) {
-        Some(embedded) => parsed_theme(name, embedded, None),
-        None => Ok(Parsed {
-            value: stock_theme()?,
-            text: None,
-            error: invalid(
-                ConfigName::Theme(name.clone()),
-                &config::error::Error::UnknownTheme(name.clone()),
-            ),
-        }),
-    }
-}
-
-fn read_theme(choice: &ThemeChoice, themes: &Path) -> Result<Parsed<TomlTheme>, Error> {
-    let name = config::embedded_theme::resolve_theme(choice);
-    let path = themes.join(theme_file_name(name.as_str()));
-    match library::files::read_if_present(&path) {
-        Ok(Some(text)) => parsed_theme(&name, &text, Some(text.clone())),
-        Ok(None) => embedded_or_stock_theme(&name),
-        Err(source) => Ok(fallback(stock_theme()?, ConfigName::Theme(name), &source)),
-    }
-}
-
-fn startup_with_appearance(
-    startup: Startup,
-    config_dir: &Path,
-    paths: runtime::startup_paths::StartupPaths,
-) -> Result<Launch, Error> {
-    let appearance = read_parsed(
-        &appearance_path(config_dir),
-        ConfigName::Appearance,
-        parse_appearance,
-    );
-    let theme = read_theme(&startup.theme, &themes_dir(config_dir))?;
-    let errors = startup
-        .errors
-        .into_iter()
-        .chain([appearance.error, theme.error].into_iter().flatten())
-        .collect();
-    let paths = runtime::startup_paths::StartupPaths {
-        config: config::driver::paths::ConfigPaths {
-            seen: config::driver::paths::SeenTexts {
-                appearance: appearance.text,
-                ..paths.config.seen
-            },
-            ..paths.config
-        },
-        ..paths
-    };
-    Ok(Launch {
-        startup: Startup {
-            appearance: appearance.value.settings(),
-            errors,
-            ..startup
-        },
-        paths,
-        theme: theme.value,
-        appearance: crate::shell::presentation::appearance(&appearance.value),
-    })
 }
 
 fn resolved_music_dir(
@@ -280,109 +138,122 @@ fn load_named_playlist(
     })
 }
 
-fn merged_startup(
-    config_toml: TomlSettings,
-    music_dir: PathBuf,
-    cli: &Cli,
-) -> Result<Startup, Error> {
-    let theme = match cli.theme.as_deref() {
-        Some(raw) => raw.parse().map_err(Error::ThemeName)?,
-        None => config_toml.theme,
-    };
-    Ok(Startup {
+fn merged_startup(config_toml: TomlSettings, music_dir: PathBuf, cli: &Cli) -> Startup {
+    Startup {
         music_dir,
         shuffle: shuffle_requested(cli.shuffle),
+        keymap: config_toml.keymap(),
         audio: config_toml.audio.into(),
-        theme,
+        theme: config_toml.theme,
         volume: cli.volume.map_or(config_toml.volume, Percent::clamped),
         ..Startup::default()
+    }
+}
+
+fn assembled(
+    startup: Startup,
+    loaded: Loaded,
+    paths: runtime::spawn_setup::StartupPaths,
+) -> Result<Launch, Error> {
+    let theme = match loaded.toml_theme {
+        Some(theme) => theme,
+        None => stock_theme()?,
+    };
+    Ok(Launch {
+        startup: Startup {
+            appearance: loaded.toml_appearance.settings(),
+            errors: loaded.errors,
+            ..startup
+        },
+        paths: runtime::spawn_setup::StartupPaths {
+            config: ConfigPaths {
+                theme: Some(loaded.theme_name),
+                seen: loaded.texts,
+                ..paths.config
+            },
+            ..paths
+        },
+        theme,
+        appearance: loaded.toml_appearance.appearance(),
     })
 }
 
-pub(crate) fn launch() -> Result<Launch, Error> {
-    let cli = Cli::parse();
-    let config_dir = user_config_dir()?;
-    let config_file = config_dir.join(CONFIG_FILE_NAME);
-    let Parsed {
-        value: config_toml,
-        text: config_text,
-        error: config_error,
-    } = read_parsed(&config_file, ConfigName::Config, parse_config);
-    let music_dir = resolved_music_dir(&config_toml, cli.path.clone())?;
-    let library = LibraryDirs::user()?;
-    let merged = Startup {
-        errors: config_error.into_iter().collect(),
-        ..merged_startup(config_toml, music_dir, &cli)?
+fn start(
+    cli: &Cli,
+    config_dir: &Path,
+    library_dirs: LibraryDirs,
+) -> Result<Launch, Error> {
+    let choice = cli_theme(cli)?;
+    let paths = config_paths(config_dir, choice.as_ref());
+    let loaded = load(&paths);
+    let music_dir = resolved_music_dir(&loaded.settings, cli.path.clone())?;
+    let merged = merged_startup(loaded.settings.clone(), music_dir, cli);
+    let themed_startup = Startup {
+        theme: choice.unwrap_or(merged.theme),
+        ..merged
     };
     let startup = match cli.playlist.as_deref() {
-        Some(name) => load_named_playlist(merged, &library, name)?,
-        None => merged,
+        Some(name) => load_named_playlist(themed_startup, &library_dirs, name)?,
+        None => themed_startup,
     };
-    let config = config_paths(&config_dir, &startup.theme, config_file);
-    let paths = runtime::startup_paths::StartupPaths {
-        config: config::driver::paths::ConfigPaths {
-            seen: config::driver::paths::SeenTexts {
-                config: config_text,
-                ..config.seen
-            },
-            ..config
+    assembled(
+        startup,
+        loaded,
+        runtime::spawn_setup::StartupPaths {
+            config: paths,
+            library: library_dirs,
         },
-        library,
-    };
-    startup_with_appearance(startup, &config_dir, paths)
+    )
+}
+
+pub(crate) fn launch() -> Result<Launch, Error> {
+    start(&Cli::parse(), &user_config_dir()?, LibraryDirs::user()?)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use clap::Parser;
-    use config::appearance_file::TomlAppearance;
+    use config::{appearance_file::TomlAppearance, config_file::TomlSettings};
     use kernel::domain::{
+        bounded::Bounded,
         config::{ConfigError, ConfigName},
+        keymap::{Action, KeyOverride, KeymapOverrides},
+        percent::Percent,
+        playlist::{PlaylistFileName, PlaylistSource},
         startup::{Shuffle, Startup},
-        theme::{ThemeChoice, ThemeName},
+        theme::ThemeName,
     };
+    use library::dirs::LibraryDirs;
     use rstest::rstest;
 
-    use crate::startup::{
-        CONFIG_FILE_NAME,
-        Cli,
-        Launch,
-        read_parsed,
-        shuffle_requested,
-        startup_with_appearance,
+    use crate::{
+        error::Error,
+        startup::{
+            Cli,
+            Launch,
+            cli_theme,
+            load_named_playlist,
+            merged_startup,
+            resolved_music_dir,
+            shuffle_requested,
+            start,
+        },
     };
 
     const COMPACT: &str = "[layout]\nmode = \"compact\"\n";
     const BROKEN: &str = "[volume]\nmode = \"text\"\n";
 
-    fn choice(name: &str) -> ThemeChoice {
-        ThemeChoice::Named(ThemeName::new(name.to_string()).unwrap())
-    }
-
-    fn launched(directory: &std::path::Path, theme: &ThemeChoice) -> Launch {
-        let paths = runtime::startup_paths::StartupPaths {
-            config: crate::startup::config_paths(
-                directory,
-                theme,
-                directory.join(CONFIG_FILE_NAME),
-            ),
-            library: library::dirs::LibraryDirs::user().unwrap(),
+    fn launched(directory: &Path, theme: Option<&str>) -> Launch {
+        let cli = Cli {
+            path: Some(directory.to_path_buf()),
+            theme: theme.map(str::to_owned),
+            volume: None,
+            shuffle: 0,
+            playlist: None,
         };
-        let startup = Startup {
-            theme: theme.clone(),
-            ..Startup::default()
-        };
-        startup_with_appearance(startup, directory, paths).unwrap()
-    }
-
-    #[rstest]
-    fn every_embedded_theme_parses() {
-        for &(name, source) in config::embedded_theme::EMBEDDED_THEMES {
-            assert!(
-                config::theme_file::parse_theme(source, name).is_ok(),
-                "{name}"
-            );
-        }
+        start(&cli, directory, LibraryDirs::under(directory)).unwrap()
     }
 
     #[rstest]
@@ -404,7 +275,7 @@ mod tests {
             std::fs::write(directory.path().join("sifr-ui.toml"), text).unwrap();
         }
 
-        let launched = launched(directory.path(), &choice(theme));
+        let launched = launched(directory.path(), Some(theme));
 
         let expected = if appearance == Some(COMPACT) {
             config::appearance_file::parse_appearance(COMPACT).unwrap()
@@ -412,10 +283,7 @@ mod tests {
             TomlAppearance::default()
         };
         assert_eq!(launched.startup.appearance, expected.settings());
-        assert_eq!(
-            launched.appearance,
-            crate::shell::presentation::appearance(&expected)
-        );
+        assert_eq!(launched.appearance, expected.appearance());
         let names: Vec<_> = launched
             .startup
             .errors
@@ -430,27 +298,10 @@ mod tests {
     }
 
     #[test]
-    fn a_broken_config_falls_back_to_defaults_and_reports_why() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join(CONFIG_FILE_NAME);
-        std::fs::write(&path, "volume = \"loud\"\n").unwrap();
-
-        let parsed =
-            read_parsed(&path, ConfigName::Config, config::config_file::parse_config);
-
-        assert_eq!(parsed.value, config::config_file::TomlSettings::default());
-        assert_eq!(parsed.text.as_deref(), Some("volume = \"loud\"\n"));
-        assert!(matches!(
-            parsed.error,
-            Some((ConfigName::Config, ConfigError::Invalid(_)))
-        ));
-    }
-
-    #[test]
     fn an_auto_theme_starts_as_noir_and_is_watched() {
         let directory = tempfile::tempdir().unwrap();
 
-        let launched = launched(directory.path(), &ThemeChoice::Auto);
+        let launched = launched(directory.path(), None);
 
         assert_eq!(launched.theme.name.as_str(), "noir");
         assert_eq!(
@@ -463,7 +314,7 @@ mod tests {
     fn a_named_theme_is_watched_under_its_name() {
         let directory = tempfile::tempdir().unwrap();
 
-        let launched = launched(directory.path(), &choice("ghost"));
+        let launched = launched(directory.path(), Some("ghost"));
 
         assert_eq!(
             launched.paths.config.theme.as_ref().map(ThemeName::as_str),
@@ -479,7 +330,7 @@ mod tests {
         let theme = config::embedded_theme::embedded_theme("noir").unwrap();
         std::fs::write(directory.path().join("themes/mine.toml"), theme).unwrap();
 
-        let launched = launched(directory.path(), &choice("mine"));
+        let launched = launched(directory.path(), Some("mine"));
 
         let seen = launched.paths.config.seen;
         assert_eq!(seen.appearance.as_deref(), Some(COMPACT));
@@ -490,7 +341,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("sifr-ui.toml"), COMPACT).unwrap();
 
-        let launched = launched(directory.path(), &ThemeChoice::Auto);
+        let launched = launched(directory.path(), None);
 
         assert_eq!(
             launched.startup.appearance,
@@ -501,6 +352,23 @@ mod tests {
         assert_ne!(
             launched.startup.appearance,
             TomlAppearance::default().settings()
+        );
+    }
+
+    #[test]
+    fn a_keymap_in_the_config_is_in_startup_at_launch() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("config.toml"),
+            "[keymap]\nquit = \"q\"\n",
+        )
+        .unwrap();
+
+        let launched = launched(directory.path(), None);
+
+        assert_eq!(
+            launched.startup.keymap,
+            KeymapOverrides::from([(Action::Quit, KeyOverride::from("q"))])
         );
     }
 
@@ -533,7 +401,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(cli.path.as_deref(), Some(std::path::Path::new("/music")));
+        assert_eq!(cli.path.as_deref(), Some(Path::new("/music")));
         assert_eq!(cli.theme.as_deref(), Some("noir"));
         assert_eq!(cli.volume, Some(42));
         assert_eq!(cli.shuffle, 1);
@@ -556,5 +424,97 @@ mod tests {
         #[case] expected: Shuffle,
     ) {
         assert_eq!(shuffle_requested(count), expected);
+    }
+
+    #[test]
+    fn the_cli_music_dir_wins_over_the_config() {
+        let cli_dir = tempfile::tempdir().unwrap();
+        let config_dir = tempfile::tempdir().unwrap();
+        let settings = config::config_file::parse_config(&format!(
+            "music_dir = {:?}\n",
+            config_dir.path()
+        ))
+        .unwrap();
+
+        let chosen =
+            resolved_music_dir(&settings, Some(cli_dir.path().to_path_buf())).unwrap();
+
+        assert_eq!(chosen, cli_dir.path());
+        assert_eq!(
+            resolved_music_dir(&settings, None).unwrap(),
+            config_dir.path()
+        );
+    }
+
+    #[test]
+    fn a_missing_music_dir_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing = directory.path().join("gone");
+
+        let refused =
+            resolved_music_dir(&TomlSettings::default(), Some(missing.clone()));
+
+        assert!(
+            matches!(refused, Err(Error::MusicDirMissing { path }) if path == missing)
+        );
+    }
+
+    #[test]
+    fn a_bad_cli_theme_name_is_refused() {
+        let cli = Cli::try_parse_from(["sifr", "--theme", ""]).unwrap();
+
+        let refused = cli_theme(&cli);
+
+        assert!(matches!(refused, Err(Error::ThemeName(_))));
+    }
+
+    #[rstest]
+    #[case::the_cli_volume_wins(&["sifr", "--volume", "80"], 80)]
+    #[case::the_config_volume_otherwise(&["sifr"], 10)]
+    fn the_volume_comes_from_the_cli_before_the_config(
+        #[case] flags: &[&str],
+        #[case] expected: u8,
+    ) {
+        let cli = Cli::try_parse_from(flags).unwrap();
+        let settings = config::config_file::parse_config("volume = 10\n").unwrap();
+
+        let merged = merged_startup(settings, PathBuf::from("/music"), &cli);
+
+        assert_eq!(merged.volume, Percent::clamped(expected));
+        assert_eq!(merged.music_dir, PathBuf::from("/music"));
+    }
+
+    #[test]
+    fn a_bad_playlist_name_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryDirs::under(directory.path());
+
+        let refused = load_named_playlist(Startup::default(), &library, "..");
+
+        assert!(matches!(refused, Err(Error::PlaylistName(_))));
+    }
+
+    #[test]
+    fn a_saved_playlist_sets_the_tracks_index_and_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryDirs::under(directory.path());
+        let playlists = directory.path().join("playlists");
+        std::fs::create_dir(&playlists).unwrap();
+        std::fs::write(playlists.join("fav.m3u8"), "#EXTM3U\na.flac\nb.flac\n")
+            .unwrap();
+        let saved =
+            library::playlists::load(&library, &PlaylistFileName::new("fav").unwrap())
+                .unwrap();
+
+        let startup = load_named_playlist(Startup::default(), &library, "fav").unwrap();
+
+        let paths: Vec<_> = startup
+            .playlist_tracks
+            .iter()
+            .map(|track| track.path().to_path_buf())
+            .collect();
+        assert_eq!(paths, [playlists.join("a.flac"), playlists.join("b.flac")]);
+        assert_eq!(startup.playlist_index, saved.playing_index());
+        assert_eq!(startup.playlist_source, PlaylistSource::Named);
     }
 }

@@ -5,8 +5,8 @@ mod support;
 mod fault;
 
 mod comments;
-mod config_doc_cli;
-mod config_doc_render;
+mod config_doc_appearance;
+mod config_doc_config;
 mod conventions;
 mod conventions_allow;
 mod demeter;
@@ -24,4 +24,5 @@ mod naming;
 mod public_types;
 mod purity;
 mod test_files;
+mod value_names;
 mod wildcard_arms;

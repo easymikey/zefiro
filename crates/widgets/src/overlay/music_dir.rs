@@ -4,7 +4,7 @@ use kernel::domain::{
 };
 
 use crate::{
-    overlay::modal::prompt::{PromptBody, PromptStyle, PromptWidget},
+    overlay::modal::prompt::{PromptBody, PromptWidget},
     primitive::glyphs,
     theme::active_theme::ActiveTheme,
 };
@@ -12,18 +12,17 @@ use crate::{
 const MIN_WIDTH: Cells = Cells(40);
 
 pub(crate) fn prompt<'a>(
-    typed: &'a TextEntry,
-    error: Option<&MusicDirError>,
+    text_entry: &'a TextEntry<MusicDirError>,
     theme: ActiveTheme<'a>,
 ) -> PromptWidget<'a> {
     PromptWidget {
         title: glyphs::music_dir::TITLE_WORD,
         hint: glyphs::music_dir::HINT,
         min_width: MIN_WIDTH,
-        body: PromptBody::Entry(&typed.input),
-        error: error.map(ToString::to_string),
+        body: PromptBody::Entry(&text_entry.input),
+        error: text_entry.error.as_ref().map(ToString::to_string),
         avoid: &[],
-        style: PromptStyle::from_theme(&theme),
+        theme,
     }
 }
 
@@ -39,14 +38,12 @@ mod tests {
 
     fn frame(input: &str, error: Option<MusicDirError>, size: (u16, u16)) -> String {
         let theme = noir();
-        let typed = TextEntry {
+        let text_entry = TextEntry {
             input: input.to_string(),
+            error,
         };
-        let prompt = prompt(
-            &typed,
-            error.as_ref(),
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        );
+        let prompt =
+            prompt(&text_entry, ActiveTheme::new(&theme, ColorDepth::TrueColor));
         rendered(size.0, size.1, |frame| {
             frame.render_widget(&prompt, frame.area());
         })

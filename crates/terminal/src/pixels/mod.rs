@@ -7,19 +7,20 @@ use ratatui::{buffer::Buffer, layout::Rect, widgets::StatefulWidget};
 use ratatui_image::{StatefulImage, picker::Picker};
 use widgets::{
     card::CardCover,
+    milkdrop::cover::MilkdropCover,
     overlay::modal::placement::OverlayAreas,
     pixels::cover::{
         CoverImage,
         CoverMotion,
         CoverRefresh,
         lifecycle::PixmapSource,
-        milkdrop::MilkdropCover,
+        pixmap::CellPixels,
     },
     scene::Scene,
     screen::frame_layout::FrameLayout,
 };
 
-use crate::pixels::cover::lifecycle::Cover;
+use crate::pixels::cover::Cover;
 
 #[derive(Debug)]
 pub struct CoverPainter {
@@ -31,18 +32,13 @@ pub struct CoverPainter {
 
 impl CoverPainter {
     #[must_use]
-    pub fn new(picker: Picker) -> Self {
+    pub fn new(picker: Picker, cell: CellPixels) -> Self {
         Self {
             active: CoverMode::Off,
-            plain: Cover::new(PixmapSource::Plain, picker.clone()),
-            vinyl: Cover::new(PixmapSource::Vinyl(Box::default()), picker),
+            plain: Cover::new(PixmapSource::Plain, picker.clone(), cell),
+            vinyl: Cover::new(PixmapSource::Vinyl(Box::default()), picker, cell),
             milkdrop: MilkdropCover::default(),
         }
-    }
-
-    pub fn set_picker(&mut self, picker: Picker) {
-        self.plain.set_picker(picker.clone());
-        self.vinyl.set_picker(picker);
     }
 
     pub fn set_cover(&mut self, cover: CoverImage) {

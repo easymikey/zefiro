@@ -1,12 +1,6 @@
 use kernel::domain::driver::DriverName;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Hosting {
-    Worker,
-    WorkerWithMainLoop,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Platform {
     Every,
     Macos,
@@ -26,7 +20,6 @@ impl Platform {
 pub(crate) struct DriverRow {
     pub(crate) driver: DriverName,
     pub(crate) thread_name: &'static str,
-    pub(crate) hosting: Hosting,
     pub(crate) platform: Platform,
 }
 
@@ -34,25 +27,21 @@ pub(crate) const REGISTRY: [DriverRow; 4] = [
     DriverRow {
         driver: DriverName::Audio,
         thread_name: "sifr-audio",
-        hosting: Hosting::Worker,
         platform: Platform::Every,
     },
     DriverRow {
         driver: DriverName::Macos,
         thread_name: "sifr-macos",
-        hosting: Hosting::WorkerWithMainLoop,
         platform: Platform::Macos,
     },
     DriverRow {
         driver: DriverName::Library,
         thread_name: "sifr-library",
-        hosting: Hosting::Worker,
         platform: Platform::Every,
     },
     DriverRow {
         driver: DriverName::Config,
         thread_name: "sifr-config",
-        hosting: Hosting::Worker,
         platform: Platform::Every,
     },
 ];

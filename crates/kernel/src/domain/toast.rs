@@ -9,8 +9,6 @@ pub const TOAST_STACK: usize = 3;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastLevel {
     Info,
-    Success,
-    Warning,
     Error,
 }
 
@@ -35,16 +33,6 @@ impl Toast {
     #[must_use]
     pub fn info(title: impl Into<String>) -> Self {
         Self::of(ToastLevel::Info, title)
-    }
-
-    #[must_use]
-    pub fn success(title: impl Into<String>) -> Self {
-        Self::of(ToastLevel::Success, title)
-    }
-
-    #[must_use]
-    pub fn warning(title: impl Into<String>) -> Self {
-        Self::of(ToastLevel::Warning, title)
     }
 
     #[must_use]

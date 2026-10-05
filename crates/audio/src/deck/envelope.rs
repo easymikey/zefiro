@@ -18,7 +18,7 @@ use crate::{
     deck::event::DeckEvent,
     engine::{
         crossfade::{gain_in, gain_out},
-        message::{AudioMessage, Signals, SinkRole},
+        message::{AudioMessage, Signals},
     },
     gain::Gain,
 };
@@ -110,39 +110,6 @@ impl Frames {
     fn of(duration: Duration, rate: u32) -> Self {
         let frames = duration.as_nanos() * u128::from(rate) / 1_000_000_000u128;
         Self(u64::try_from(frames).unwrap_or(u64::MAX))
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct Envelopes {
-    pub(crate) primary: Option<EnvelopeControl>,
-    pub(crate) queued: Option<EnvelopeControl>,
-    pub(crate) incoming: Option<EnvelopeControl>,
-    pub(crate) outgoing: Option<EnvelopeControl>,
-}
-
-impl Envelopes {
-    #[must_use]
-    pub(crate) fn holding(&self, revision: Revision) -> Option<&EnvelopeControl> {
-        [&self.primary, &self.queued, &self.incoming, &self.outgoing]
-            .into_iter()
-            .filter_map(Option::as_ref)
-            .find(|control| control.revision() == revision)
-    }
-
-    #[must_use]
-    pub(crate) fn role(&self, revision: Revision) -> Option<SinkRole> {
-        [
-            (&self.primary, SinkRole::Primary),
-            (&self.incoming, SinkRole::Incoming),
-            (&self.outgoing, SinkRole::Outgoing),
-        ]
-        .into_iter()
-        .find_map(|(slot, role)| {
-            slot.as_ref()
-                .filter(|control| control.revision() == revision)
-                .map(|_| role)
-        })
     }
 }
 
@@ -291,7 +258,14 @@ impl<S: Source> Envelope<S> {
         };
     }
 
+    fn retry_wake(&mut self) {
+        if self.wake == Wake::Pending {
+            self.wake();
+        }
+    }
+
     fn end(&mut self) -> Option<f32> {
+        self.retry_wake();
         if self.ending == Ending::Playing {
             self.ending = Ending::Ended;
             self.raise(Signals::FINISHED);
@@ -351,6 +325,7 @@ impl<S: Source> Envelope<S> {
 
     fn advance_frame(&mut self) {
         self.frames.advance();
+        self.retry_wake();
         self.reconcile_rate();
         if self.orders.update() {
             let order = *self.orders.output_buffer();
@@ -403,9 +378,6 @@ impl<S: Source> Iterator for Envelope<S> {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
-        if self.wake == Wake::Pending {
-            self.wake();
-        }
         let Some(sample) = self.inner.next() else {
             return self.end();
         };

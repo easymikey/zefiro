@@ -5,7 +5,6 @@ use kernel::{
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::Color,
     text::Line,
     widgets::{Paragraph, Widget},
 };
@@ -16,7 +15,7 @@ use crate::{
         span::{line, text},
         text::truncate_line_to_width,
     },
-    theme::{active_theme::ActiveTheme, colors::Role},
+    theme::active_theme::ActiveTheme,
 };
 
 const KEY_HINTS: &[(Action, &str)] = &[
@@ -142,29 +141,8 @@ impl Widget for &KeyHintsWidget<'_> {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let style = KeyHintsStyle::from_theme(&self.theme);
-        let line = key_hints_line(style, self.view, area.width);
+        let line = key_hints_line(&self.theme, self.view, area.width);
         Paragraph::new(line).render(Rect { height: 1, ..area }, buffer);
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct KeyHintsStyle {
-    chip_text: Color,
-    chip_background: Color,
-    label: Color,
-    separator: Color,
-}
-
-impl KeyHintsStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            chip_text: theme.role(Role::WindowBackground),
-            chip_background: theme.muted_accent(),
-            label: theme.role(Role::Text),
-            separator: theme.role(Role::Dim),
-        }
     }
 }
 
@@ -189,30 +167,32 @@ fn key_chips(bindings: &[KeyBinding], keep: impl Fn(Action) -> bool) -> Vec<Chip
         .collect()
 }
 
-fn chips_line(style: KeyHintsStyle, chips: &[Chip]) -> Line<'_> {
+fn chips_line<'a>(theme: &ActiveTheme<'_>, chips: &'a [Chip]) -> Line<'a> {
+    let colors = theme.colors();
+    let chip_background = theme.muted_accent();
     line(chips.iter().enumerate().flat_map(move |(position, chip)| {
         let separator = (position > 0)
-            .then(|| text(glyphs::key_hints::SEPARATOR).fg(style.separator));
+            .then(|| text(glyphs::key_hints::SEPARATOR).fg(colors.muted_foreground));
         separator.into_iter().chain([
             text(chip.key.as_str())
-                .fg(style.chip_text)
-                .bg(style.chip_background),
-            text(glyphs::key_hints::LABEL_GAP).fg(style.label),
-            text(chip.label).fg(style.label),
+                .fg(colors.window_background)
+                .bg(chip_background),
+            text(glyphs::key_hints::LABEL_GAP).fg(colors.text),
+            text(chip.label).fg(colors.text),
         ])
     }))
 }
 
-fn key_hints_line(
-    style: KeyHintsStyle,
-    view: KeyHintsView<'_>,
+fn key_hints_line<'a>(
+    theme: &ActiveTheme<'_>,
+    view: KeyHintsView<'a>,
     width: u16,
-) -> Line<'_> {
-    let full = chips_line(style, view.full);
+) -> Line<'a> {
+    let full = chips_line(theme, view.full);
     let line = if full.width() <= usize::from(width) {
         full
     } else {
-        chips_line(style, view.compact)
+        chips_line(theme, view.compact)
     };
     truncate_line_to_width(line, usize::from(width))
 }
@@ -220,11 +200,8 @@ fn key_hints_line(
 #[cfg(test)]
 mod tests {
     use kernel::{
-        domain::{
-            keymap::{Action, KeymapOverrides},
-            revision::Revision,
-        },
-        update::keymap::{bindings::Bindings, chord::KeyBinding},
+        domain::{keymap::Action, revision::Revision},
+        update::keymap::{bindings::Keymap, chord::KeyBinding},
     };
     use rstest::rstest;
 
@@ -235,9 +212,7 @@ mod tests {
     };
 
     fn stock_chords() -> KeyHintChords {
-        KeyHintChords::from_bindings(
-            Bindings::new(&KeymapOverrides::default()).as_slice(),
-        )
+        KeyHintChords::from_bindings(Keymap::default().bindings())
     }
 
     fn keys_view(chords: &KeyHintChords) -> KeyHintsView<'_> {
@@ -282,15 +257,15 @@ mod tests {
 
     #[test]
     fn an_action_bound_to_two_chords_joins_them_with_a_slash() {
-        let keymap = Bindings::new(&KeymapOverrides::default());
-        let bindings = keymap.as_slice();
+        let keymap = Keymap::default();
+        let bindings = keymap.bindings();
         assert_eq!(chord_for_action(bindings, Action::Help), "?/Ctrl+K");
     }
 
     #[test]
     fn an_action_bound_to_one_chord_shows_it_bare() {
-        let keymap = Bindings::new(&KeymapOverrides::default());
-        let bindings = keymap.as_slice();
+        let keymap = Keymap::default();
+        let bindings = keymap.bindings();
         assert_eq!(chord_for_action(bindings, Action::Quit), "q");
     }
 
@@ -309,9 +284,9 @@ mod tests {
 
     #[test]
     fn chords_rebuild_only_when_the_config_revision_moves() {
-        let stock = Bindings::new(&KeymapOverrides::default());
+        let stock = Keymap::default();
         let mut chords = KeyHintChords::default();
-        chords.follow(stock.as_slice(), Revision::default());
+        chords.follow(stock.bindings(), Revision::default());
         chords.follow(&without(Action::Search), Revision::default());
         assert!(hints_text(keys_view(&chords)).contains("Find"));
         chords.follow(&without(Action::Search), Revision::default().next());
@@ -319,8 +294,8 @@ mod tests {
     }
 
     fn without(action: Action) -> Vec<KeyBinding> {
-        Bindings::new(&KeymapOverrides::default())
-            .as_slice()
+        Keymap::default()
+            .bindings()
             .iter()
             .filter(|binding| binding.action != Some(action))
             .cloned()

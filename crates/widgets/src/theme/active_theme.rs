@@ -1,50 +1,14 @@
 use std::ops::Deref;
 
-use kernel::domain::appearance::Rgb;
+use kernel::domain::appearance::{ProgressBar, Rgb};
 use ratatui::style::Color;
 
-use crate::{
-    appearance::ProgressBar,
-    theme::{
-        Theme,
-        colors::Role,
-        contrast::{MIN_MARKER_CONTRAST, raise_contrast},
-        rgb::{ColorDepth, color_at_depth, lerp_rgb, scale_channel},
-    },
+use crate::theme::{
+    Theme,
+    colors::Colors,
+    contrast::{MIN_MARKER_CONTRAST, raise_contrast},
+    rgb::{ColorDepth, color_at_depth, lerp_rgb, scale_channel},
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ProgressStyle {
-    pub(crate) fill: Color,
-    pub(crate) groove: Color,
-}
-
-impl ProgressStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            fill: theme.color(theme.fill.unwrap_or(theme.colors.role(Role::Accent))),
-            groove: theme
-                .color(theme.groove.unwrap_or(theme.colors.role(Role::BarGroove))),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct VolumeStyle {
-    pub(crate) fill: Color,
-    pub(crate) groove: Color,
-}
-
-impl VolumeStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            fill: theme.role(Role::Accent),
-            groove: theme.role(Role::BarGroove),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct ActiveTheme<'a> {
@@ -90,8 +54,23 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
+    pub fn colors(&self) -> Colors<Color> {
+        self.theme.colors.map(|rgb| self.color(rgb))
+    }
+
+    #[must_use]
+    pub(crate) fn progress_fill(&self) -> Color {
+        self.color(self.fill.unwrap_or(self.theme.colors.accent))
+    }
+
+    #[must_use]
+    pub(crate) fn progress_groove(&self) -> Color {
+        self.color(self.groove.unwrap_or(self.theme.colors.bar_groove))
+    }
+
+    #[must_use]
     pub(crate) fn lifted(&self, rgb: Rgb, toward_text: f32) -> Color {
-        self.color(lerp_rgb(rgb, self.colors.role(Role::Text), toward_text))
+        self.color(lerp_rgb(rgb, self.theme.colors.text, toward_text))
     }
 
     #[must_use]
@@ -100,23 +79,18 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
-    pub(crate) fn role(&self, role: Role) -> Color {
-        self.color(self.colors.role(role))
-    }
-
-    #[must_use]
     pub(crate) fn muted_accent(&self) -> Color {
-        let accent = self.colors.role(Role::Accent).0;
+        let accent = self.theme.colors.accent.0;
         self.color(Rgb(accent.map(|channel| scale_channel(channel, 0.82))))
     }
 
     #[must_use]
     pub(crate) fn favorite(&self) -> Color {
         self.color(raise_contrast(
-            self.colors.role(Role::Accent2),
+            self.theme.colors.accent2,
             &[
-                self.colors.role(Role::WindowBackground),
-                self.colors.role(Role::SelectionBackground),
+                self.theme.colors.window_background,
+                self.theme.colors.selection_background,
             ],
             MIN_MARKER_CONTRAST,
         ))
@@ -124,7 +98,7 @@ impl<'a> ActiveTheme<'a> {
 
     #[must_use]
     pub(crate) fn alert(&self) -> Color {
-        let [_, _, hot] = self.colors.spectrum;
+        let [_, _, hot] = self.theme.colors.spectrum;
         self.color(hot)
     }
 }
@@ -138,16 +112,14 @@ impl<'a> Deref for ActiveTheme<'a> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::appearance::Rgb;
+    use kernel::domain::appearance::{ProgressBar, Rgb};
     use ratatui::style::Color;
 
     use crate::{
-        appearance::ProgressBar,
         test_support::noir,
         theme::{
             Theme,
-            active_theme::{ActiveTheme, ProgressStyle, VolumeStyle},
-            colors::Role,
+            active_theme::ActiveTheme,
             rgb::{ColorDepth, color_at_depth},
         },
     };
@@ -156,7 +128,7 @@ mod tests {
     fn theme_color_resolves_at_its_own_depth() {
         let theme: Theme = noir();
         let theme = ActiveTheme::new(&theme, ColorDepth::Indexed256);
-        let accent = theme.colors.role(Role::Accent);
+        let accent = theme.colors.accent;
         assert_eq!(
             theme.color(accent),
             color_at_depth(accent, ColorDepth::Indexed256)
@@ -170,8 +142,8 @@ mod tests {
         let theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         assert_eq!(theme.name, theme.name);
         assert_eq!(
-            theme.colors.role(Role::Frame),
-            theme.colors.role(Role::Frame)
+            theme.colors.muted_foreground,
+            theme.theme.colors.muted_foreground
         );
     }
 
@@ -179,13 +151,11 @@ mod tests {
     fn an_unset_progress_config_is_the_themes_accent_and_groove() {
         let theme = noir();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        let progress = ProgressStyle::from_theme(&active);
-        let volume = VolumeStyle::from_theme(&active);
+        let colors = active.colors();
         assert_eq!(
-            (progress.fill, progress.groove),
-            (volume.fill, volume.groove)
+            (active.progress_fill(), active.progress_groove()),
+            (colors.accent, colors.bar_groove)
         );
-        assert_eq!(progress.fill, active.role(Role::Accent));
     }
 
     #[test]
@@ -197,13 +167,7 @@ mod tests {
             ..ProgressBar::default()
         };
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor).with_progress(bar);
-        let progress = ProgressStyle::from_theme(&active);
-        let volume = VolumeStyle::from_theme(&active);
-        assert_eq!(progress.fill, Color::Rgb(255, 0, 0));
-        assert_eq!(progress.groove, Color::Rgb(0, 255, 0));
-        assert_ne!(
-            (progress.fill, progress.groove),
-            (volume.fill, volume.groove)
-        );
+        assert_eq!(active.progress_fill(), Color::Rgb(255, 0, 0));
+        assert_eq!(active.progress_groove(), Color::Rgb(0, 255, 0));
     }
 }

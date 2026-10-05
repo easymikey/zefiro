@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Select, never};
-use kernel::message::Message;
+use kernel::message::{DriverEvent, Message};
 
 use crate::{
     error::Error,
@@ -63,7 +63,7 @@ where
             self.gather(first);
             let now = Instant::now();
             self.fire_timers(now);
-            self.runtime.report_full();
+            self.report_congestion();
             let effects = self.runtime.take_shell_effects();
             for effect in effects {
                 self.shell.effect(effect);
@@ -123,24 +123,21 @@ where
         };
         let queued = self.runtime.wiring.mailbox.clone();
         let notified = self.runtime.wiring.notified.clone();
+        let rang = matches!(first, Arrival::Notified) || ready(&notified).count() > 0;
         let mut inputs = Vec::new();
         let mut messages = Vec::new();
-        let mut notices = Vec::new();
         match first {
             Arrival::Input(event) => inputs.push(event),
             Arrival::Message(message) => messages.push(message),
-            Arrival::Notified => notices.push(Arrival::Notified),
+            Arrival::Notified => {}
         }
         inputs.extend(ready(self.input));
         messages.extend(ready(&queued));
-        if notices.is_empty() && ready(&notified).count() > 0 {
-            notices.push(Arrival::Notified);
-        }
         let arrivals = inputs
             .into_iter()
             .map(Arrival::Input)
             .chain(messages.into_iter().map(Arrival::Message))
-            .chain(notices);
+            .chain(rang.then_some(Arrival::Notified));
         for arrival in arrivals {
             if self.runtime.flow().is_break() {
                 return;
@@ -175,8 +172,23 @@ where
         }
     }
 
+    fn report_congestion(&mut self) {
+        for driver in self.runtime.congested() {
+            if self.runtime.flow().is_break() {
+                return;
+            }
+            self.step_and_repaint(
+                Message::Driver {
+                    driver,
+                    event: DriverEvent::Full,
+                },
+                RepaintCause::Event,
+            );
+        }
+    }
+
     fn fire_timers(&mut self, now: Instant) {
-        for timer in self.runtime.timers.due(now) {
+        for timer in self.runtime.timers.take_due(now) {
             self.step_and_repaint(Message::Elapsed(timer), RepaintCause::Event);
         }
     }
@@ -201,10 +213,12 @@ pub(crate) mod tests {
         cmd::{LibraryCmd, WindowColorsCmd},
         domain::{
             appearance::{CoverMode, Rgb},
+            chord::ChordPrefix,
             cue::Cue,
             driver::{DriverName, DriverStatus},
             geometry::Pixels,
-            player::{Player, Preload},
+            key::{Key as KernelKey, KeyCode, KeyPress, Modifiers},
+            player::Player,
             playhead::Playhead,
             speed::Speed,
             startup::Startup,
@@ -222,9 +236,9 @@ pub(crate) mod tests {
         event_loop::EventLoop,
         latest::LatestSenders,
         port::Port,
+        repaint::{Repaint, RepaintCause},
         runtime::Runtime,
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
-        trace::Trace,
         wiring::Wiring,
     };
 
@@ -331,7 +345,7 @@ pub(crate) mod tests {
         let (wiring, library_inbox, writers) = Wiring::idle();
         let started = kernel::update::startup::startup(stock_startup());
         Fixture {
-            runtime: Runtime::assemble(started, wiring, Trace::default()).unwrap(),
+            runtime: Runtime::assemble(started, wiring).unwrap(),
             library_inbox,
             _writers: writers,
         }
@@ -352,6 +366,35 @@ pub(crate) mod tests {
             shell.effects,
             vec![ShellEffect::WindowColors(WindowColorsCmd::Reset)]
         );
+        fixture.runtime.drain();
+    }
+
+    #[test]
+    fn cancelling_a_chord_repaints_once() {
+        let mut fixture = fixture();
+        fixture.runtime.model.workspace.chord_prefix = Some(ChordPrefix::G);
+        let (_keys, input) = unbounded();
+        let (keys, _receiver) = unbounded();
+        let mut shell = Scripted::new(keys, 1);
+        let mut event_loop = EventLoop::new(&mut fixture.runtime, &mut shell, &input);
+        event_loop.repaint = Repaint::Settled;
+        let key = KernelKey {
+            code: KeyCode::Char('w'),
+            modifiers: Modifiers::default(),
+        };
+
+        event_loop.step_and_repaint(
+            Message::Key(KeyPress { key, typed: key }),
+            RepaintCause::Input,
+        );
+        assert_eq!(event_loop.repaint, Repaint::Now);
+        assert_eq!(event_loop.runtime.model.workspace.chord_prefix, None);
+        event_loop.repaint = Repaint::Settled;
+        event_loop.step_and_repaint(
+            Message::Key(KeyPress { key, typed: key }),
+            RepaintCause::Input,
+        );
+        assert_eq!(event_loop.repaint, Repaint::Settled);
         fixture.runtime.drain();
     }
 
@@ -432,12 +475,12 @@ pub(crate) mod tests {
         fixture.runtime.model.settings.appearance.cover_mode = CoverMode::Plain;
         fixture.runtime.model.player = Player::Playing {
             track: Arc::new(Track::listed(Path::new("/music/cover.mp3"))),
-            head: Playhead::anchored(
+            playhead: Playhead::anchored(
                 Duration::ZERO,
                 Moment::default(),
                 Speed::default(),
             ),
-            preload: Preload::None,
+            preloaded: None,
         };
         let (keys, input) = unbounded();
         keys.send(Key::Ping).unwrap();
@@ -469,7 +512,6 @@ pub(crate) mod tests {
 
         assert!(matches!(ended, Ok(())));
         assert_eq!(shell.toasts, vec![None]);
-        assert_eq!(fixture.runtime.trace.iter().count(), 0);
         fixture.runtime.drain();
     }
 
@@ -549,7 +591,7 @@ pub(crate) mod tests {
         let mut event_loop = EventLoop::new(runtime, &mut shell, &input);
         let first = event_loop.wait(Some(Instant::now())).unwrap();
         event_loop.gather(first);
-        event_loop.runtime.report_full();
+        event_loop.report_congestion();
         let effects = event_loop.runtime.take_shell_effects();
         for effect in effects {
             event_loop.shell.effect(effect);

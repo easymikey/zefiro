@@ -1,8 +1,10 @@
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
 use kernel::{
     cmd::Playback,
     domain::{device::OutputDevice, revision::Revision, speed::Speed},
+    message::AudioEvent,
+    update::machine::LoopCmd,
 };
 
 use crate::{
@@ -10,8 +12,12 @@ use crate::{
         job::AudioJob,
         source::{PreloadMode, TrackSource},
     },
+    engine::message::AudioMessage,
     gain::Gain,
 };
+
+pub(crate) type AudioLoopCmd =
+    LoopCmd<EngineEffect, AudioJob, AudioMessage, AudioEvent>;
 
 #[derive(Debug, PartialEq)]
 pub enum EngineEffect {
@@ -20,15 +26,9 @@ pub enum EngineEffect {
         device: OutputDevice,
         speed: Speed,
     },
-    StartLoad {
-        path: PathBuf,
-        speed: Speed,
-    },
-    StartHandover {
-        path: PathBuf,
-        speed: Speed,
-    },
-    Decode(PathBuf),
+    StartLoad(Speed),
+    StartHandover(Speed),
+    Decode,
     Start(Gain),
     Resume {
         gain: Gain,
@@ -52,13 +52,11 @@ pub enum EngineEffect {
     DropOutgoing,
     SetSpeed(Speed),
     Clear(Speed),
-    Preload(PreloadMode),
-    RestartGapless(PathBuf),
+    RestartGapless,
     Promote(Gain),
-    Run(AudioJob),
     Report,
     Advance(Gain),
     Stage(TrackSource),
-    Attach(TrackSource),
+    Attach(TrackSource, PreloadMode),
     TakeSignals(Revision),
 }

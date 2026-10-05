@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use image::{Rgba, RgbaImage};
 use tachyonfx::Interpolation;
 
-use crate::{animation::timings::AnimationTimings, pixels::numeric::channel_byte};
+use crate::{animation::timings::TIMINGS, pixels::numeric::channel_byte};
 
 pub(crate) const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
 
@@ -29,7 +29,7 @@ struct FadingCover {
 
 impl CoverCrossfade {
     pub(crate) fn begin(&mut self, outgoing: Arc<RgbaImage>, now: Duration) {
-        let (millis, interpolation) = AnimationTimings::default().cover_crossfade;
+        let (millis, interpolation) = TIMINGS.cover_crossfade;
         self.running = Some(FadingCover {
             outgoing,
             started: now,
@@ -111,7 +111,7 @@ mod tests {
     use image::{Rgba, RgbaImage};
 
     use crate::{
-        animation::timings::AnimationTimings,
+        animation::timings::TIMINGS,
         pixels::cover::crossfade::{CoverCrossfade, CrossfadeStage},
     };
 
@@ -123,7 +123,7 @@ mod tests {
     }
 
     fn whole() -> Duration {
-        Duration::from_millis(u64::from(AnimationTimings::default().cover_crossfade.0))
+        Duration::from_millis(u64::from(TIMINGS.cover_crossfade.0))
     }
 
     fn sample(image: &RgbaImage) -> Rgba<u8> {

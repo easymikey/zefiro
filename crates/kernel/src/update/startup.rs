@@ -1,21 +1,19 @@
 use crate::{
     cmd::{AudioCmd, Cmd, ConfigCmd, Effect, LibraryCmd, MacosCmd, Playback, ScanMode},
     domain::{
-        appearance_rows::appearance_rows,
         config::{ConfigError, ConfigName},
-        cue::{Cue, PlaybackChange},
         driver::DriverName,
         model::Model,
-        playlist::Playlist,
+        playlist::PlayOrder,
         settings::Settings,
         startup::{Shuffle, Startup},
         theme::Themes,
     },
     message::ConfigReload,
     update::{
-        follow_up,
-        machine::{Machine, Unhandled},
-        playlist::PlaylistMessage,
+        drained,
+        keymap::bindings::Keymap,
+        player::stopped_effects,
         roll_pending,
     },
 };
@@ -23,23 +21,31 @@ use crate::{
 #[must_use]
 pub fn startup(startup: Startup) -> (Model, Vec<Effect>) {
     let mut model = Model::default();
-    let (mut effects, messages) = startup_model(&mut model, startup).into_parts();
-    for queued in messages {
-        effects.extend(follow_up(&mut model, queued, 1));
-    }
-    effects.extend(roll_pending(&model.playlist));
+    let cmd = startup_model(&mut model, startup);
+    let effects = drained(&mut model, cmd)
+        .into_iter()
+        .chain(roll_pending(&model.playlist))
+        .collect();
     (model, effects)
 }
 
 pub(crate) fn startup_model(model: &mut Model, startup: Startup) -> Cmd {
-    let errors = startup.errors;
+    let keymap = Keymap::new(startup.keymap);
+    let errors =
+        startup
+            .errors
+            .into_iter()
+            .chain(keymap.diagnostic().map(|diagnostic| {
+                (ConfigName::Config, ConfigError::Invalid(diagnostic))
+            }))
+            .collect();
+    model.workspace.keymap = keymap;
     model.settings = Settings {
         audio: startup.audio,
         output_devices: Vec::new(),
         appearance: startup.appearance,
     };
     model.transport.volume = startup.volume;
-    model.appearance_rows = appearance_rows(startup.appearance);
 
     model.library = None;
     model.music_dir = startup.music_dir;
@@ -53,15 +59,13 @@ pub(crate) fn startup_model(model: &mut Model, startup: Startup) -> Cmd {
         .relist(startup.playlist_tracks, startup.playlist_index);
     let browse = &mut model.workspace.browse;
     browse.cursor = browse.cursor.resize(model.playlist.tracks.len());
-    let cmd = shuffled(&mut model.playlist, startup.shuffle);
+    model.playlist.play_order = match startup.shuffle {
+        Shuffle::Enabled => PlayOrder::ShufflePending,
+        Shuffle::Disabled => PlayOrder::Linear,
+    };
 
-    let stopped: Cmd = PlaybackChange::Stop
-        .effects()
-        .into_iter()
-        .chain([Effect::Macos(MacosCmd::NowPlaying(None))])
-        .collect();
     let toasts = startup_toasts(model, errors);
-    cmd.then(stopped)
+    stopped_effects()
         .then(startup_cmd(model, DriverName::Audio))
         .then(startup_cmd(model, DriverName::Library))
         .then(startup_cmd(model, DriverName::Config))
@@ -116,16 +120,6 @@ fn startup_toasts(model: &mut Model, errors: Vec<(ConfigName, ConfigError)>) -> 
     cmd
 }
 
-fn shuffled(playlist: &mut Playlist, shuffle: Shuffle) -> Cmd {
-    match shuffle {
-        Shuffle::Disabled => Cmd::none(),
-        Shuffle::Enabled => playlist
-            .transition(PlaylistMessage::ToggleShuffle)
-            .unwrap_or_else(|Unhandled| Cmd::none())
-            .then(Cue::PlayOrderChanged.into()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -141,6 +135,7 @@ mod tests {
             crossfade::Crossfade,
             device::{DeviceName, OutputDevice},
             index::ViewIndex,
+            keymap::{Action, KeyOverride, KeymapOverrides},
             model::Model,
             percent::Percent,
             playlist::{PlayOrder, PlaylistSource},
@@ -176,6 +171,7 @@ mod tests {
             appearance: crate::domain::appearance::AppearanceSettings::default(),
             theme: ThemeChoice::Named(ThemeName::from_static("dark")),
             volume: Percent::clamped(42),
+            keymap: KeymapOverrides::default(),
             themes: vec![
                 ThemeName::from_static("noir"),
                 ThemeName::from_static("solar"),
@@ -187,10 +183,8 @@ mod tests {
     #[test]
     fn startup_errors_raise_one_toast_with_the_first_error() {
         let mut model = Model::default();
-        let broken = crate::domain::config::ConfigError::Invalid(
-            crate::domain::config::Diagnostic::from_error(&std::io::Error::other(
-                "broken",
-            )),
+        let broken = crate::domain::config::ConfigError::invalid(
+            &std::io::Error::other("broken"),
         );
         let unreadable = crate::domain::config::ConfigError::Unreadable {
             file: crate::domain::config::ConfigName::Appearance,
@@ -235,6 +229,21 @@ mod tests {
             crate::domain::config::ConfigName::Theme(ThemeName::from_static("ghost")),
             broken
         ));
+    }
+
+    #[test]
+    fn startup_applies_the_keymap_overrides() {
+        let mut model = Model::default();
+        let keys = KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]);
+        let startup = Startup {
+            keymap: keys.clone(),
+            ..stock_startup()
+        };
+
+        drop(startup_model(&mut model, startup));
+
+        assert_eq!(model.workspace.keymap.overrides(), &keys);
+        assert!(model.workspace.toasts.is_empty());
     }
 
     #[test]

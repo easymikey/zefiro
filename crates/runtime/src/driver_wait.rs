@@ -34,7 +34,9 @@ impl<C, M: From<Cmds<C>>> Inboxes<'_, C, M> {
         let commands = select.recv(self.commands);
         let heard = select.recv(&self.heard);
         let finished = select.recv(&self.finished);
-        let changes = select.recv(files.events());
+        let silent = never();
+        let events = files.events().unwrap_or(&silent);
+        let changes = select.recv(events);
         let selected = match deadline {
             Some(deadline) => select.select_deadline(deadline),
             None => Ok(select.select()),
@@ -62,7 +64,7 @@ impl<C, M: From<Cmds<C>>> Inboxes<'_, C, M> {
         }
         if index == changes {
             return files
-                .heard(operation.recv(files.events()))
+                .heard(operation.recv(events))
                 .map_or(LoopInput::Lost(WaitSource::Files), LoopInput::Heard);
         }
         LoopInput::Closed

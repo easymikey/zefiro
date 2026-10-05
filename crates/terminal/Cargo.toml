@@ -17,7 +17,6 @@ thiserror = { workspace = true }
 widgets = { workspace = true }
 
 [dev-dependencies]
-config = { workspace = true }
 insta = { workspace = true }
 rstest = { workspace = true }
 

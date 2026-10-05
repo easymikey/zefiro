@@ -9,13 +9,16 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    overlay::modal::frame::{Modal, ModalAreas, ModalBounds, ModalSize, PlacedModal},
+    overlay::modal::{
+        frame::{Modal, ModalSize},
+        placement::OverlayAreas,
+    },
     primitive::{
         canvas::Canvas,
         span::{line, text},
         text::truncate,
     },
-    theme::{active_theme::ActiveTheme, colors::Role},
+    theme::active_theme::ActiveTheme,
 };
 
 const MARKER: &str = "> ";
@@ -49,28 +52,6 @@ impl PromptBody<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct PromptStyle {
-    pub(crate) foreground: Color,
-    pub(crate) muted_foreground: Color,
-    pub(crate) border: Color,
-    pub(crate) background: Color,
-    pub(crate) alert: Color,
-}
-
-impl PromptStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            foreground: theme.role(Role::Text),
-            muted_foreground: theme.role(Role::Dim),
-            border: theme.role(Role::Frame),
-            background: theme.role(Role::WindowBackground),
-            alert: theme.alert(),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct PromptWidget<'a> {
     pub(crate) title: &'static str,
@@ -79,18 +60,19 @@ pub(crate) struct PromptWidget<'a> {
     pub(crate) body: PromptBody<'a>,
     pub(crate) error: Option<String>,
     pub(crate) avoid: &'a [Rect],
-    pub(crate) style: PromptStyle,
+    pub(crate) theme: ActiveTheme<'a>,
 }
 
 impl PromptWidget<'_> {
     #[must_use]
-    pub(crate) fn areas(&self, screen: Rect) -> ModalAreas {
-        self.modal().areas(screen, self.avoid)
+    pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
+        OverlayAreas::Dialog(self.modal().areas(screen, self.avoid))
     }
 
     fn modal(&self) -> Modal<'_> {
         let error_width = self.error.as_deref().map_or(0, UnicodeWidthStr::width);
         let widest = self.title.width().max(self.body.width()).max(error_width);
+        let colors = self.theme.colors();
         Modal {
             title: self.title,
             size: ModalSize::Dialog {
@@ -100,17 +82,17 @@ impl PromptWidget<'_> {
                     .max(u16::try_from(widest).map_or(self.min_width, Cells)),
                 content_lines: Cells(1 + u16::from(self.error.is_some())),
             },
-            hint: Some(line([text(self.hint).fg(self.style.muted_foreground)])),
-            border: self.style.border,
-            window_background: self.style.background,
+            hint: Some(line([text(self.hint).fg(colors.muted_foreground)])),
+            border: colors.muted_foreground,
+            window_background: colors.window_background,
         }
     }
 
     fn lines(&self, width: usize) -> Vec<Line<'static>> {
-        let mut lines = vec![self.body.line(width, self.style.foreground)];
+        let mut lines = vec![self.body.line(width, self.theme.colors().text)];
         if let Some(error) = &self.error {
             lines.push(line([
-                text(truncate(error, width).into_owned()).fg(self.style.alert)
+                text(truncate(error, width).into_owned()).fg(self.theme.alert())
             ]));
         }
         lines
@@ -123,18 +105,12 @@ impl<'a> PromptWidget<'a> {
         Self { avoid, ..self }
     }
 
-    fn paint(&self, areas: ModalAreas, canvas: Canvas<'_>) {
-        let Canvas { area, buffer } = canvas;
-        self.modal().paint(
-            PlacedModal {
-                areas,
-                bounds: ModalBounds {
-                    area,
-                    avoid: self.avoid,
-                },
-            },
-            buffer,
-        );
+    pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
+        let OverlayAreas::Dialog(areas) = areas else {
+            return;
+        };
+        let buffer = canvas.buffer;
+        self.modal().paint(areas, buffer);
         if areas.body.width == 0 || areas.body.height == 0 {
             return;
         }

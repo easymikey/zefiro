@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use kernel::domain::{
     favorites::Favorites,
@@ -8,17 +8,19 @@ use kernel::domain::{
 };
 use rstest::rstest;
 
-fn track(path: &str, artist: Option<&str>, album: Option<&str>) -> Track {
-    Track::builder()
-        .path(path)
-        .duration(Duration::from_secs(1))
-        .tags(Tags {
-            artist: artist.map(str::to_string),
-            album: album.map(str::to_string),
-            ..Tags::default()
-        })
-        .audio_format(AudioFormat::default())
-        .build()
+fn track(path: &str, artist: Option<&str>, album: Option<&str>) -> Arc<Track> {
+    Arc::new(
+        Track::builder()
+            .path(path)
+            .duration(Duration::from_secs(1))
+            .tags(Tags {
+                artist: artist.map(str::to_string),
+                album: album.map(str::to_string),
+                ..Tags::default()
+            })
+            .audio_format(AudioFormat::default())
+            .build(),
+    )
 }
 
 fn favorited(paths: &[&str]) -> Favorites {
@@ -30,7 +32,7 @@ fn favorited(paths: &[&str]) -> Favorites {
 }
 
 struct SortRow {
-    tracks: Vec<Track>,
+    tracks: Vec<Arc<Track>>,
     key: SortKey,
     favorites: Favorites,
     expected: Vec<usize>,

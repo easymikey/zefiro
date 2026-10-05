@@ -6,7 +6,7 @@ use kernel::domain::{
     appearance::Rgb,
     geometry::Cells,
     model::Model,
-    player::{Player, Preload},
+    player::Player,
     playhead::Playhead,
     speed::Speed,
     time::Moment,
@@ -17,7 +17,10 @@ use ratatui::{
     style::{Color, Style},
 };
 use widgets::{
-    animation::{stage::Backdrop, timings::AnimationTimings},
+    animation::{
+        stage::Backdrop,
+        timings::{AnimationTimings, TIMINGS},
+    },
     card::metrics::CardMetrics,
     playlist::pane::PlaylistAreas,
     screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
@@ -107,11 +110,7 @@ pub(crate) fn volume_fill() -> Color {
 }
 
 pub(crate) fn volume_lifted() -> Color {
-    let mixed = lerp_rgb(
-        VOLUME_FILL,
-        TEXT_HEX,
-        AnimationTimings::default().volume_pulse_mix,
-    );
+    let mixed = lerp_rgb(VOLUME_FILL, TEXT_HEX, TIMINGS.volume_pulse_mix);
     color_at_depth(mixed, ColorDepth::TrueColor)
 }
 
@@ -177,34 +176,15 @@ pub(crate) fn card_metrics(
 pub(crate) fn playlist_areas(selected: Option<Rect>) -> PlaylistAreas {
     PlaylistAreas {
         pane: Rect::default(),
-        body: Rect::default(),
-        rows: Rect::default(),
-        scrollbar: Rect::default(),
+        scroll_areas: Default::default(),
         selected,
-    }
-}
-
-pub(crate) fn empty_layout(screen: Rect) -> FrameLayout {
-    FrameLayout {
-        screen,
-        breakpoint: Breakpoint::Full,
-        content: Rect::default(),
-        header: Rect::default(),
-        card: None,
-        cover: None,
-        playlist_pane: Rect::default(),
-        playlist: None,
-        key_hints: None,
-        search_bounds: Rect::default(),
-        overlay: None,
-        toast: None,
     }
 }
 
 pub(crate) fn quiet_backdrop() -> Backdrop {
     Backdrop {
         animations: kernel::domain::appearance::Animations::On,
-        layout: empty_layout(Rect::default()),
+        layout: FrameLayout::empty(Rect::default(), Breakpoint::Full),
         background: BACKGROUND,
         accent: ACCENT,
         volume_fill: volume_fill(),
@@ -215,7 +195,7 @@ pub(crate) fn quiet_backdrop() -> Backdrop {
 
 pub(crate) fn screen_backdrop() -> Backdrop {
     Backdrop {
-        layout: empty_layout(SCREEN),
+        layout: FrameLayout::empty(SCREEN, Breakpoint::Full),
         ..quiet_backdrop()
     }
 }
@@ -225,7 +205,7 @@ pub(crate) fn pane_backdrop() -> Backdrop {
         layout: FrameLayout {
             card: Some(card_metrics(PANE_STATUS, CARD_TITLE, VOLUME_LABEL)),
             playlist: Some(playlist_areas(Some(PANE_ROW))),
-            ..empty_layout(Rect::default())
+            ..FrameLayout::empty(Rect::default(), Breakpoint::Full)
         },
         ..quiet_backdrop()
     }
@@ -235,7 +215,7 @@ pub(crate) fn chip_backdrop() -> Backdrop {
     Backdrop {
         layout: FrameLayout {
             card: Some(card_metrics(AREA, Rect::default(), Rect::default())),
-            ..empty_layout(Rect::default())
+            ..FrameLayout::empty(Rect::default(), Breakpoint::Full)
         },
         ..quiet_backdrop()
     }
@@ -246,7 +226,7 @@ pub(crate) fn overlay_backdrop(overlay: Option<Rect>) -> Backdrop {
         layout: FrameLayout {
             overlay: overlay
                 .map(widgets::overlay::modal::placement::OverlayAreas::Banner),
-            ..empty_layout(Rect::default())
+            ..FrameLayout::empty(Rect::default(), Breakpoint::Full)
         },
         ..quiet_backdrop()
     }
@@ -266,7 +246,7 @@ pub(crate) fn toast_backdrop(presence: ToastPresence) -> Backdrop {
     Backdrop {
         layout: FrameLayout {
             toast,
-            ..empty_layout(Rect::default())
+            ..FrameLayout::empty(Rect::default(), Breakpoint::Full)
         },
         ..quiet_backdrop()
     }
@@ -276,7 +256,7 @@ pub(crate) fn toast_card_backdrop() -> Backdrop {
     Backdrop {
         layout: FrameLayout {
             toast: Some(TOAST_CARD),
-            ..empty_layout(Rect::default())
+            ..FrameLayout::empty(Rect::default(), Breakpoint::Full)
         },
         ..quiet_backdrop()
     }
@@ -292,21 +272,19 @@ pub(crate) fn slice(
     pick: fn(AnimationTimings) -> (u32, tachyonfx::Interpolation),
     parts: u32,
 ) -> Duration {
-    Duration::from_millis(u64::from(
-        pick(AnimationTimings::default()).0 / parts.max(1),
-    ))
+    Duration::from_millis(u64::from(pick(TIMINGS).0 / parts.max(1)))
 }
 
 pub(crate) fn playing_track(title: &str) -> Model {
     Model {
         player: Player::Playing {
             track: track(title),
-            head: Playhead::anchored(
+            playhead: Playhead::anchored(
                 Duration::from_secs(30),
                 Moment::default(),
                 Speed::default(),
             ),
-            preload: Preload::None,
+            preloaded: None,
         },
         ..Model::default()
     }

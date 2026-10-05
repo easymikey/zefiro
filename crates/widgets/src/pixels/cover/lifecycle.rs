@@ -160,19 +160,8 @@ impl CoverLifecycle {
         }
     }
 
-    pub fn set_cell(&mut self, cell: CellPixels) {
-        self.cell = cell;
-        self.forget_painted();
-    }
-
     pub fn set_cover(&mut self, decoded: CoverImage) {
         self.decoded = Some(decoded);
-    }
-
-    fn forget_painted(&mut self) {
-        self.painted = None;
-        self.wash_outgoing = None;
-        self.crossfade = CoverCrossfade::default();
     }
 
     pub fn refresh(&mut self, scene: &Scene<'_>, parts: CoverRefresh) -> CoverUpdate {
@@ -188,7 +177,7 @@ impl CoverLifecycle {
             return self.forget();
         };
         let tick = Tick {
-            now: scene.clock,
+            now: scene.presentation.clock,
             wash,
         };
         let desired = Placed {
@@ -202,7 +191,7 @@ impl CoverLifecycle {
                 frame: self.advance(tick),
             };
         }
-        let crossfade = if scene.appearance_settings().animations == Animations::On
+        let crossfade = if scene.settings.appearance.animations == Animations::On
             && plan == PaintPlan::NewContent
         {
             crossfade
@@ -234,7 +223,9 @@ impl CoverLifecycle {
     }
 
     fn forget(&mut self) -> CoverUpdate {
-        self.forget_painted();
+        self.painted = None;
+        self.wash_outgoing = None;
+        self.crossfade = CoverCrossfade::default();
         CoverUpdate {
             art: CardCover::Missing,
             frame: CoverFrame::Forget,
@@ -252,7 +243,18 @@ impl CoverLifecycle {
             PixmapSource::Vinyl(cache) => {
                 let size = vinyl_size(rect, self.cell);
                 let key = vinyl_key(scene, decoded, size);
-                Some(compose_vinyl(cache, key, decoded))
+                let pixmap = match &self.painted {
+                    Some(Painted {
+                        identity: Identity::Vinyl(painted),
+                        pixmap,
+                        ..
+                    }) if *painted == key => Arc::clone(pixmap),
+                    Some(_) | None => compose_vinyl(cache, &key, decoded),
+                };
+                Some(BuiltPixmap {
+                    pixmap,
+                    identity: Identity::Vinyl(key),
+                })
             }
         }
     }
@@ -378,12 +380,11 @@ mod tests {
 
     use image::{Rgba, RgbaImage};
     use kernel::domain::{
-        appearance::Animations,
+        appearance::{Animations, Rgb},
         geometry::Pixels,
         model::Model,
-        player::{Player, Preload},
+        player::Player,
         playhead::Playhead,
-        revision::Revision,
         speed::Speed,
         time::Moment,
         track::Track,
@@ -430,22 +431,23 @@ mod tests {
         Identity::Plain(PathBuf::from(path))
     }
 
-    fn vinyl_key(path: &str, theme_revision: Revision) -> VinylCacheKey {
-        VinylCacheKey {
-            config_revision: Revision::default(),
-            theme_revision,
+    fn vinyl_with_colors(path: &str, colors: VinylStyle) -> Identity {
+        Identity::Vinyl(VinylCacheKey {
             path: Some(PathBuf::from(path)),
-            size_px: 128,
-            colors: VinylStyle::fixture(),
-        }
+            size: Pixels(128),
+            colors,
+        })
     }
 
     fn vinyl(path: &str) -> Identity {
-        Identity::Vinyl(vinyl_key(path, Revision::default()))
+        vinyl_with_colors(path, VinylStyle::fixture())
     }
 
-    fn vinyl_with_theme(path: &str, theme_revision: Revision) -> Identity {
-        Identity::Vinyl(vinyl_key(path, theme_revision))
+    fn recolored() -> VinylStyle {
+        VinylStyle {
+            accent: Rgb([0x3d, 0x9b, 0xff]),
+            ..VinylStyle::fixture()
+        }
     }
 
     #[rstest]
@@ -495,23 +497,17 @@ mod tests {
         },
         PaintPlan::SameContent
     )]
-    #[case::vinyl_only_the_theme_revision_moved(
+    #[case::vinyl_only_the_colors_moved(
         PlanRow {
             painted: Some((vinyl("a.flac"), rect())),
-            desired: (
-                vinyl_with_theme("a.flac", Revision::default().next()),
-                rect(),
-            ),
+            desired: (vinyl_with_colors("a.flac", recolored()), rect()),
         },
         PaintPlan::ThemeWash
     )]
     #[case::vinyl_the_theme_moved_and_the_rect_changed(
         PlanRow {
             painted: Some((vinyl("a.flac"), rect())),
-            desired: (
-                vinyl_with_theme("a.flac", Revision::default().next()),
-                other_rect(),
-            ),
+            desired: (vinyl_with_colors("a.flac", recolored()), other_rect()),
         },
         PaintPlan::NewContent
     )]
@@ -558,12 +554,12 @@ mod tests {
     fn playing(path: &str) -> Player {
         Player::Playing {
             track: Arc::new(Track::listed(Path::new(path))),
-            head: Playhead::anchored(
+            playhead: Playhead::anchored(
                 Duration::ZERO,
                 Moment::default(),
                 Speed::default(),
             ),
-            preload: Preload::None,
+            preloaded: None,
         }
     }
 

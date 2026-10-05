@@ -1,7 +1,6 @@
 pub mod crossfade;
 pub mod gate;
 pub mod lifecycle;
-pub mod milkdrop;
 pub mod pixmap;
 pub mod wash;
 

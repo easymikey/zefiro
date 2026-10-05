@@ -1,9 +1,11 @@
 use kernel::domain::{
     appearance::{
         Animations,
-        AppearancePatch,
+        Appearance,
         AppearanceSettings,
+        Breakpoints,
         CoverBrackets,
+        CoverCells,
         CoverMode,
         DEFAULT_COMPACT_MIN_HEIGHT,
         DEFAULT_COMPACT_MIN_WIDTH,
@@ -16,12 +18,13 @@ use kernel::domain::{
         FormatChips,
         KeyHints,
         LayoutMode,
+        ProgressBar,
         ProgressTime,
         Rgb,
         SpeedChip,
     },
     config::ConfigName,
-    geometry::Pixels,
+    geometry::{Cells, Pixels},
 };
 use serde::Deserialize;
 
@@ -55,6 +58,7 @@ impl Default for TomlCoverCells {
 pub struct TomlCover {
     #[serde(deserialize_with = "variant_field")]
     pub(crate) mode: CoverMode,
+    #[serde(alias = "text_cells")]
     pub cover_cells: TomlCoverCells,
     #[serde(deserialize_with = "crate::appearance::flag")]
     pub(crate) brackets: CoverBrackets,
@@ -97,7 +101,7 @@ pub struct TomlProgress {
 impl Default for TomlProgress {
     fn default() -> Self {
         Self {
-            height: Pixels(4),
+            height: ProgressBar::default().height,
             radius: None,
             fill: None,
             groove: None,
@@ -122,7 +126,9 @@ pub struct TomlLayout {
     pub full_min_height: u16,
     pub compact_min_width: u16,
     pub compact_min_height: u16,
+    #[serde(alias = "min_columns")]
     pub min_width: u16,
+    #[serde(alias = "min_rows")]
     pub min_height: u16,
     #[serde(deserialize_with = "variant_field")]
     pub(crate) mode: LayoutMode,
@@ -167,34 +173,30 @@ impl TomlAppearance {
         }
     }
 
-    pub fn with_appearance(self, appearance: AppearanceSettings) -> Self {
-        Self {
-            card: TomlCard {
-                format_chips: appearance.format_chips,
-                speed_chip: appearance.speed_chip,
+    pub fn appearance(&self) -> Appearance {
+        let TomlCoverCells { width, height } = self.cover.cover_cells;
+        let layout = &self.layout;
+        let progress = &self.progress;
+        Appearance {
+            cover_cells: CoverCells {
+                width: Cells(width),
+                height: Cells(height),
             },
-            progress: TomlProgress {
-                remaining: appearance.progress_time,
-                ..self.progress
+            breakpoints: Breakpoints {
+                full_min_width: Cells(layout.full_min_width),
+                full_min_height: Cells(layout.full_min_height),
+                compact_min_width: Cells(layout.compact_min_width),
+                compact_min_height: Cells(layout.compact_min_height),
+                min_width: Cells(layout.min_width),
+                min_height: Cells(layout.min_height),
             },
-            cover: TomlCover {
-                mode: appearance.cover_mode,
-                brackets: appearance.cover_brackets,
-                ..self.cover
-            },
-            layout: TomlLayout {
-                mode: appearance.layout_mode,
-                ..self.layout
-            },
-            window: TomlWindow {
-                animations: appearance.animations,
-                key_hints: appearance.key_hints,
+            progress: ProgressBar {
+                height: progress.height,
+                radius: progress.radius,
+                fill: progress.fill,
+                groove: progress.groove,
             },
         }
-    }
-
-    pub fn patched(&self, patch: AppearancePatch) -> TomlAppearance {
-        self.clone().with_appearance(self.settings().patched(patch))
     }
 }
 
@@ -206,9 +208,6 @@ pub fn parse_appearance(source: &str) -> Result<TomlAppearance, Error> {
 mod tests {
     use kernel::domain::{
         appearance::{
-            Animations,
-            AppearancePatch,
-            AppearancePreset,
             AppearanceSettings,
             CoverBrackets,
             CoverMode,
@@ -217,7 +216,6 @@ mod tests {
             LayoutMode,
             ProgressTime,
             SpeedChip,
-            preset_appearance,
         },
         geometry::Pixels,
     };
@@ -228,7 +226,6 @@ mod tests {
             TomlAppearance,
             TomlCoverCells,
             TomlLayout,
-            TomlProgress,
             parse_appearance,
         },
         error::Error,
@@ -264,36 +261,6 @@ mod tests {
             ),
             "{error}"
         );
-    }
-
-    #[rstest]
-    #[case::stock(AppearanceSettings::default())]
-    #[case::noir(preset_appearance(AppearancePreset::Noir))]
-    fn a_file_written_with_an_appearance_offers_it_back(
-        #[case] appearance: AppearanceSettings,
-    ) {
-        assert_eq!(
-            TomlAppearance::default()
-                .with_appearance(appearance)
-                .settings(),
-            appearance
-        );
-    }
-
-    #[test]
-    fn writing_an_appearance_keeps_the_keys_it_says_nothing_about() {
-        let sized = TomlAppearance {
-            progress: TomlProgress {
-                height: Pixels(9),
-                ..TomlProgress::default()
-            },
-            ..TomlAppearance::default()
-        };
-
-        let noir = sized.with_appearance(preset_appearance(AppearancePreset::Noir));
-
-        assert_eq!(noir.progress.height, Pixels(9));
-        assert_eq!(noir.cover.mode, CoverMode::Milkdrop);
     }
 
     #[test]
@@ -400,90 +367,5 @@ mod tests {
     #[case::a_negative_bar_height("[progress]\nheight_px = -1\n")]
     fn a_key_nothing_reads_is_rejected(#[case] text: &str) {
         assert!(parse_appearance(text).is_err(), "{text} must not parse");
-    }
-
-    #[rstest]
-    #[case::cover_mode(
-        AppearancePatch::builder().cover_mode(CoverMode::Milkdrop).build()
-    )]
-    #[case::cover_brackets(
-        AppearancePatch::builder().cover_brackets(CoverBrackets::Shown).build()
-    )]
-    #[case::format_chips(
-        AppearancePatch::builder().format_chips(FormatChips::Shown).build()
-    )]
-    #[case::speed_chip(
-        AppearancePatch::builder().speed_chip(SpeedChip::Never).build()
-    )]
-    #[case::progress_time(
-        AppearancePatch::builder().progress_time(ProgressTime::Remaining).build()
-    )]
-    #[case::key_hints(
-        AppearancePatch::builder().key_hints(KeyHints::Hidden).build()
-    )]
-    #[case::animations(
-        AppearancePatch::builder().animations(Animations::Off).build()
-    )]
-    #[case::layout_mode(
-        AppearancePatch::builder().layout_mode(LayoutMode::Compact).build()
-    )]
-    fn patched_applies_exactly_the_row_the_patch_names(#[case] patch: AppearancePatch) {
-        let base = TomlAppearance::default();
-        let after = base.patched(patch).settings();
-        let expected = AppearanceSettings {
-            cover_mode: patch
-                .cover_mode
-                .unwrap_or(AppearanceSettings::default().cover_mode),
-            cover_brackets: patch
-                .cover_brackets
-                .unwrap_or(AppearanceSettings::default().cover_brackets),
-            format_chips: patch
-                .format_chips
-                .unwrap_or(AppearanceSettings::default().format_chips),
-            speed_chip: patch
-                .speed_chip
-                .unwrap_or(AppearanceSettings::default().speed_chip),
-            progress_time: patch
-                .progress_time
-                .unwrap_or(AppearanceSettings::default().progress_time),
-            key_hints: patch
-                .key_hints
-                .unwrap_or(AppearanceSettings::default().key_hints),
-            animations: patch
-                .animations
-                .unwrap_or(AppearanceSettings::default().animations),
-            layout_mode: patch
-                .layout_mode
-                .unwrap_or(AppearanceSettings::default().layout_mode),
-        };
-        assert_eq!(after, expected);
-    }
-
-    #[test]
-    fn patched_with_an_empty_patch_leaves_every_option_untouched() {
-        let base = TomlAppearance::default()
-            .with_appearance(preset_appearance(AppearancePreset::Noir));
-        let after = base.patched(AppearancePatch::builder().build());
-        assert_eq!(after, base);
-    }
-
-    #[test]
-    fn patched_keeps_the_keys_the_patch_says_nothing_about() {
-        let sized = TomlAppearance {
-            progress: TomlProgress {
-                height: Pixels(9),
-                ..TomlProgress::default()
-            },
-            ..TomlAppearance::default()
-        };
-
-        let after = sized.patched(
-            AppearancePatch::builder()
-                .cover_mode(CoverMode::Off)
-                .build(),
-        );
-
-        assert_eq!(after.progress.height, Pixels(9));
-        assert_eq!(after.cover.mode, CoverMode::Off);
     }
 }

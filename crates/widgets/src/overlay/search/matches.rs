@@ -11,7 +11,6 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    overlay::modal::metrics::ModalRowStyle,
     primitive::{
         glyphs,
         list_chrome::scroll_offset,
@@ -19,13 +18,14 @@ use crate::{
         text::{blanks, truncate},
         track_row::Selected,
     },
+    theme::colors::Colors,
 };
 
 pub(crate) struct SearchMatchList<'a> {
     pub(crate) area: Rect,
     pub(crate) tracks: &'a [Arc<Track>],
     pub(crate) search: &'a CursorOver<SearchQuery>,
-    pub(crate) style: ModalRowStyle,
+    pub(crate) colors: Colors<Color>,
     pub(crate) lead: u16,
 }
 
@@ -62,11 +62,11 @@ pub(crate) fn paint_match_pane(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
     let SearchMatchList {
         area,
         search,
-        style,
+        colors,
         ..
     } = *list;
     if let Some(line) =
-        match_count_line(search.content.matches.len(), style.muted_foreground)
+        match_count_line(search.content.matches.len(), colors.muted_foreground)
     {
         Paragraph::new(line).render(area, buffer);
         return;
@@ -80,13 +80,17 @@ pub(crate) fn paint_match_pane(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
                 text(truncate(track.display(), budget)),
             ]);
             match selected {
-                Selected::Yes => row.style(style.highlight()),
+                Selected::Yes => row.style(
+                    Style::default()
+                        .fg(colors.selection_foreground)
+                        .bg(colors.selection_background),
+                ),
                 Selected::No => row,
             }
         })
         .collect();
     Paragraph::new(lines)
-        .style(Style::default().fg(style.foreground))
+        .style(Style::default().fg(colors.text))
         .render(area, buffer);
 }
 
@@ -100,14 +104,14 @@ pub(crate) fn paint_match_rows(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
     let SearchMatchList {
         area,
         search,
-        style,
+        colors,
         ..
     } = *list;
     if area.height == 0 {
         return;
     }
     if let Some(line) =
-        match_count_line(search.content.matches.len(), style.muted_foreground)
+        match_count_line(search.content.matches.len(), colors.muted_foreground)
     {
         Paragraph::new(line).render(area, buffer);
         return;
@@ -121,16 +125,16 @@ pub(crate) fn paint_match_rows(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
                 selected,
                 row_width,
             };
-            match_line(&row_props, style)
+            match_line(&row_props, colors)
         })
         .collect();
     Paragraph::new(lines).render(area, buffer);
 }
 
-fn match_line<'a>(hit: &MatchRow<'a>, style: ModalRowStyle) -> Line<'a> {
+fn match_line<'a>(hit: &MatchRow<'a>, colors: Colors<Color>) -> Line<'a> {
     let base_text = match hit.selected {
-        Selected::Yes => style.selected_foreground,
-        Selected::No => style.foreground,
+        Selected::Yes => colors.selection_foreground,
+        Selected::No => colors.text,
     };
     let marker = match hit.selected {
         Selected::Yes => glyphs::search::SELECTED_MARKER,
@@ -141,11 +145,11 @@ fn match_line<'a>(hit: &MatchRow<'a>, style: ModalRowStyle) -> Line<'a> {
     let content = truncate(hit.title, title_width);
 
     let marker_piece = match hit.selected {
-        Selected::Yes => text(marker).fg(base_text).bg(style.selected_background),
-        Selected::No => text(marker).fg(style.muted_foreground),
+        Selected::Yes => text(marker).fg(base_text).bg(colors.selection_background),
+        Selected::No => text(marker).fg(colors.muted_foreground),
     };
     let content_piece = match hit.selected {
-        Selected::Yes => text(content).fg(base_text).bg(style.selected_background),
+        Selected::Yes => text(content).fg(base_text).bg(colors.selection_background),
         Selected::No => text(content).fg(base_text),
     };
 

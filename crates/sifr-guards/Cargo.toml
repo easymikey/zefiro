@@ -18,6 +18,8 @@ path = "tests/main.rs"
 toml = { workspace = true }
 thiserror = { workspace = true }
 config = { workspace = true }
+proc-macro2 = { workspace = true }
+syn = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"

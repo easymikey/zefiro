@@ -1,16 +1,10 @@
 use std::path::PathBuf;
 
-use config::{
-    appearance_file::TomlAppearance,
-    theme_file::{TomlColors, TomlTheme},
-};
-use kernel::domain::geometry::Cells;
+use config::theme_file::{TomlColors, TomlTheme};
+use kernel::domain::appearance::Appearance;
 use widgets::{
-    appearance::{Appearance, ProgressBar},
-    geometry::CoverCells,
     key_hints::KeyHintChords,
     scene::PixelPath,
-    screen::breakpoint::Breakpoints,
     spectrum::Spectrum,
     theme::{
         Theme,
@@ -58,29 +52,6 @@ pub(in crate::shell) fn theme(raw: TomlTheme) -> Theme {
     }
 }
 
-pub(crate) fn appearance(raw: &TomlAppearance) -> Appearance {
-    Appearance {
-        cover_cells: CoverCells {
-            width: Cells(raw.cover.cover_cells.width),
-            height: Cells(raw.cover.cover_cells.height),
-        },
-        breakpoints: Breakpoints {
-            full_min_width: Cells(raw.layout.full_min_width),
-            full_min_height: Cells(raw.layout.full_min_height),
-            compact_min_width: Cells(raw.layout.compact_min_width),
-            compact_min_height: Cells(raw.layout.compact_min_height),
-            min_width: Cells(raw.layout.min_width),
-            min_height: Cells(raw.layout.min_height),
-        },
-        progress: ProgressBar {
-            height: raw.progress.height,
-            radius: raw.progress.radius,
-            fill: raw.progress.fill,
-            groove: raw.progress.groove,
-        },
-    }
-}
-
 #[cfg(test)]
 pub(in crate::shell) fn test_presentation() -> ShellPresentation {
     ShellPresentation {
@@ -92,5 +63,22 @@ pub(in crate::shell) fn test_presentation() -> ShellPresentation {
         home: None,
         spectrum: [0.0; widgets::spectrum::SPECTRUM_BANDS],
         key_hint_chords: KeyHintChords::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use config::{embedded_theme::EMBEDDED_THEMES, theme_file::parse_theme};
+
+    use crate::shell::presentation::theme;
+
+    #[test]
+    fn every_repo_theme_derives_its_own_palette() {
+        for &(name, source) in EMBEDDED_THEMES {
+            let colors = theme(parse_theme(source, name).unwrap()).colors;
+            insta::with_settings!({ snapshot_suffix => name }, {
+                insta::assert_debug_snapshot!(colors);
+            });
+        }
     }
 }

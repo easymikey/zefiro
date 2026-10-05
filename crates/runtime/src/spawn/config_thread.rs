@@ -1,37 +1,16 @@
 use std::convert::Infallible;
 
-use config::driver::{ConfigDriver, effect::ConfigEffect, message::ConfigMessage};
+use config::driver::{ConfigDriver, message::ConfigMessage};
 use kernel::{cmd::ConfigCmd, domain::driver::DriverName};
 
 use crate::{
     driver::DriverLoop,
     driver_thread::DriverThread,
     error::Error,
-    jobs::{Jobs, LoopEffect},
+    jobs::Jobs,
     registry,
     spawn_setup::SpawnSetup,
 };
-
-fn config_split(
-    effect: ConfigEffect,
-) -> LoopEffect<ConfigEffect, Infallible, ConfigMessage> {
-    match effect {
-        ConfigEffect::Watch(path) => LoopEffect::Watch {
-            path,
-            item: ConfigMessage::Changed,
-        },
-        ConfigEffect::After { delay, revision } => LoopEffect::After {
-            delay,
-            message: ConfigMessage::Elapsed(revision),
-        },
-        effect @ (ConfigEffect::Read { .. }
-        | ConfigEffect::List(_)
-        | ConfigEffect::SaveConfig(_)
-        | ConfigEffect::SaveAppearance(_)
-        | ConfigEffect::PublishTheme(_)
-        | ConfigEffect::PublishAppearance(_)) => LoopEffect::Execute(effect),
-    }
-}
 
 pub(crate) fn spawn_config(
     setup: &SpawnSetup<'_>,
@@ -40,7 +19,6 @@ pub(crate) fn spawn_config(
     let theme_writer = setup.writers.theme.clone();
     let appearance_writer = setup.writers.appearance.clone();
     let jobs = Jobs {
-        split: config_split,
         run: |job: Infallible| match job {},
     };
     DriverLoop::<ConfigDriver<_, _>, Infallible> {
@@ -68,7 +46,13 @@ mod tests {
     use kernel::{
         cmd::{ConfigCmd, ConfigPatch},
         domain::{
-            setting_row::{AppearanceField, OptionIndex},
+            appearance::{
+                AppearancePatch,
+                AppearancePreset,
+                FormatChips,
+                KeyHints,
+                preset_appearance,
+            },
             startup::Startup,
             theme::ThemeName,
         },
@@ -81,8 +65,7 @@ mod tests {
             config_thread::spawn_config,
             tests::{RECV_TIMEOUT, stub_paths},
         },
-        spawn_setup::SpawnSetup,
-        startup_paths::StartupPaths,
+        spawn_setup::{SpawnSetup, StartupPaths},
     };
 
     const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
@@ -109,7 +92,7 @@ mod tests {
                 inbox: &inbox,
                 writers: &writers,
                 #[cfg(target_os = "macos")]
-                macos: &crate::macos_channel::MacosChannel::new(),
+                macos: &crate::spawn_setup::MacosChannel::new(),
             })
             .unwrap();
             Self {
@@ -135,15 +118,6 @@ mod tests {
             receiver.recv_timeout(SETTLE_TIMEOUT).ok()
         }));
         collected
-    }
-
-    fn option_at(field: AppearanceField, position: usize) -> OptionIndex {
-        kernel::domain::appearance_rows::appearance_row(field)
-            .unwrap()
-            .control
-            .count()
-            .index(position)
-            .unwrap()
     }
 
     fn wait_for_content(path: &Path, marker: &str) -> Option<String> {
@@ -250,10 +224,9 @@ mod tests {
         drain(&run.messages);
         run.doorbell.try_iter().for_each(drop);
 
-        run.send(ConfigCmd::SetAppearance {
-            field: AppearanceField::Preset,
-            option: option_at(AppearanceField::Preset, 1),
-        });
+        run.send(ConfigCmd::SetAppearance(AppearancePatch::from(
+            preset_appearance(AppearancePreset::Noir),
+        )));
 
         let text = wait_for_content(&directory.path().join("sifr-ui.toml"), "milkdrop")
             .unwrap();
@@ -284,10 +257,11 @@ mod tests {
                 .theme(ThemeName::from_static("noir"))
                 .build(),
         ));
-        run.send(ConfigCmd::SetAppearance {
-            field: AppearanceField::FormatChips,
-            option: option_at(AppearanceField::FormatChips, 1),
-        });
+        run.send(ConfigCmd::SetAppearance(
+            AppearancePatch::builder()
+                .format_chips(FormatChips::Shown)
+                .build(),
+        ));
 
         let config_path = directory.path().join("config.toml");
         let appearance_path = directory.path().join("sifr-ui.toml");
@@ -309,10 +283,11 @@ mod tests {
         let run = ConfigRun::start(directory.path());
         drain(&run.messages);
 
-        run.send(ConfigCmd::SetAppearance {
-            field: AppearanceField::KeyHints,
-            option: option_at(AppearanceField::KeyHints, 1),
-        });
+        run.send(ConfigCmd::SetAppearance(
+            AppearancePatch::builder()
+                .key_hints(KeyHints::Hidden)
+                .build(),
+        ));
         run.send(ConfigCmd::Flush);
         run.stop();
 

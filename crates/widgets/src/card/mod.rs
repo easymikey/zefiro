@@ -6,7 +6,6 @@ pub mod metrics;
 
 use std::{borrow::Cow, sync::Arc, time::Duration};
 
-use headings::CardStyle;
 use kernel::domain::{
     appearance::{AppearanceSettings, CoverBrackets},
     percent::Percent,
@@ -28,7 +27,7 @@ use ratatui::{
 
 use crate::{
     geometry::CoverSizing,
-    pixels::numeric::unit_fraction,
+    pixels::numeric::{small_count_u16, unit_fraction},
     primitive::{
         canvas::Canvas,
         corner_brackets,
@@ -123,19 +122,19 @@ impl<'a> CardView<'a> {
 impl CardWidget<'_> {
     pub(crate) fn paint(&self, metrics: &CardMetrics, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
-        let style = CardStyle::from_theme(&self.theme);
-        let frame_color: Color = style.border;
+        let colors = self.theme.colors();
+        let frame_color: Color = colors.muted_foreground;
 
         card_frame(frame_color)
             .padding(Inset::card().padding())
             .render(area, buffer);
 
         if !metrics.cover_square.is_empty() {
-            self.paint_cover(buffer, (metrics.cover_square, style));
+            self.paint_cover(buffer, metrics.cover_square);
         }
         headings::paint(buffer, self, metrics);
         meters::paint(buffer, self, metrics);
-        if let Some(color) = self.bracket_color(style) {
+        if let Some(color) = self.bracket_color() {
             (&CornerBracketsWidget { color }).render(
                 corner_brackets::expand(content_rect(metrics), BRACKET_MARGIN),
                 buffer,
@@ -143,27 +142,27 @@ impl CardWidget<'_> {
         }
     }
 
-    fn bracket_color(&self, style: CardStyle) -> Option<Color> {
+    fn bracket_color(&self) -> Option<Color> {
         matches!(self.appearance.cover_brackets, CoverBrackets::Shown)
-            .then_some(style.accent)
+            .then(|| self.theme.colors().accent)
     }
 
-    fn paint_cover(&self, buffer: &mut Buffer, (area, style): (Rect, CardStyle)) {
+    fn paint_cover(&self, buffer: &mut Buffer, area: Rect) {
         match self.cover_art {
             CardCover::Missing => Paragraph::new("No cover")
-                .style(Style::default().fg(style.muted_foreground))
+                .style(Style::default().fg(self.theme.colors().muted_foreground))
                 .alignment(Alignment::Center)
                 .render(area, buffer),
             CardCover::Image => {}
             CardCover::Text(lines) => {
-                let rows = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+                let rows = small_count_u16(lines.len());
                 let block = area.centered_vertically(Constraint::Length(rows));
                 for (line, row) in lines.iter().zip(block.rows()) {
                     line.render(row, buffer);
                 }
             }
         }
-        if let Some(color) = self.bracket_color(style) {
+        if let Some(color) = self.bracket_color() {
             (&CornerBracketsWidget { color })
                 .render(corner_brackets::expand(area, BRACKET_MARGIN), buffer);
         }
@@ -183,10 +182,10 @@ pub fn clock_frame_due(
     clock: Presence,
     now: Moment,
 ) -> Option<Moment> {
-    let Player::Playing { head, .. } = player else {
+    let Player::Playing { playhead, .. } = player else {
         return None;
     };
-    (clock == Presence::Shown).then(|| next_clock_second(*head, now))
+    (clock == Presence::Shown).then(|| next_clock_second(*playhead, now))
 }
 
 #[cfg(test)]
@@ -197,7 +196,7 @@ mod tests {
         appearance::{AppearanceSettings, ProgressTime},
         bounded::Bounded,
         percent::Percent,
-        player::{PausedBy, Player, Preload},
+        player::{PausedBy, Player},
         playhead::Playhead,
         playlist::PlayOrder,
         speed::Speed,
@@ -255,12 +254,12 @@ mod tests {
             Self {
                 player: Player::Playing {
                     track: Arc::clone(&track),
-                    head: Playhead::anchored(
+                    playhead: Playhead::anchored(
                         Duration::from_secs(30),
                         Moment::default(),
                         Speed::default(),
                     ),
-                    preload: Preload::None,
+                    preloaded: None,
                 },
                 spectrum: [0.5; SPECTRUM_BANDS],
                 output: Output::Ready,
@@ -419,8 +418,8 @@ mod tests {
     fn clock_player(offset: Duration, since: Moment) -> Player {
         Player::Playing {
             track: track("Moon River"),
-            head: Playhead::anchored(offset, since, Speed::clamped(1.0)),
-            preload: Preload::None,
+            playhead: Playhead::anchored(offset, since, Speed::clamped(1.0)),
+            preloaded: None,
         }
     }
 
@@ -450,7 +449,7 @@ mod tests {
         let now = Moment::new(Duration::from_secs(100));
         let player = Player::Paused {
             track: track("Moon River"),
-            at: Duration::from_secs(10),
+            position: Duration::from_secs(10),
             by: PausedBy::Listener,
         };
 

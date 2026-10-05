@@ -28,7 +28,7 @@ proptest! {
         };
         let mut playlist = Playlist {
             tracks,
-            cursor: Cursor::with_len(len).at(start),
+            cursor: Cursor::at(len, start),
             play_order,
             repeat,
         };

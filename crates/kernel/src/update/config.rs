@@ -8,7 +8,7 @@ use crate::{
         cue::Cue,
         overlay::Overlay,
         revision::Revisions,
-        setting_row::{AppearanceSetting, SettingRow},
+        setting_row::SettingRow,
         settings::Settings,
         theme::{ThemeName, Themes},
         toast::Toast,
@@ -23,7 +23,6 @@ pub(crate) struct ConfigParts<'a> {
     pub(crate) revisions: &'a mut Revisions,
     pub(crate) settings: &'a mut Settings,
     pub(crate) themes: &'a mut Themes,
-    pub(crate) appearance_rows: &'a mut Vec<AppearanceSetting>,
     pub(crate) music_dir: &'a mut PathBuf,
 }
 
@@ -36,22 +35,16 @@ pub(crate) fn update(
         revisions,
         settings,
         themes,
-        appearance_rows,
         music_dir,
     } = config;
     match event {
         ConfigEvent::KeymapReloaded(keys) => {
-            let changed = workspace.keymap.overrides() != &*keys;
-            let cmd = workspace.keymap_reloaded(*keys, revisions);
-            if changed {
-                revisions.config.advance();
-            }
-            Ok(cmd)
+            Ok(workspace.keymap_reloaded(*keys, revisions))
         }
         ConfigEvent::ThemeReloaded(name) => Ok(theme_reloaded(revisions, name)),
         ConfigEvent::AppearanceReloaded(appearance) => {
             settings.appearance = appearance;
-            rows_reloaded(workspace, appearance_rows, appearance);
+            rows_reloaded(workspace, appearance);
             Ok(Cmd::none())
         }
         ConfigEvent::ThemesLoaded(names) => {
@@ -77,16 +70,11 @@ fn theme_reloaded(revisions: &mut Revisions, name: ThemeName) -> Cmd {
         .then(Cue::ThemeChanged.into())
 }
 
-fn rows_reloaded(
-    workspace: &mut Workspace,
-    rows: &mut Vec<AppearanceSetting>,
-    appearance: AppearanceSettings,
-) {
-    *rows = appearance_rows(appearance);
+fn rows_reloaded(workspace: &mut Workspace, appearance: AppearanceSettings) {
     let Some(Overlay::Settings(selected)) = &mut workspace.overlay else {
         return;
     };
-    *selected = selected.kept(&SettingRow::all(rows));
+    *selected = selected.kept(&SettingRow::all(&appearance_rows(appearance)));
 }
 
 fn music_dir_reloaded(

@@ -1,6 +1,6 @@
 use kernel::domain::{
     cursor_over::CursorOver,
-    overlay::{DeleteCandidate, JumpDigits, Overlay, SearchQuery, TextEntry},
+    overlay::{DeleteCandidate, Overlay, SearchQuery, TextEntry},
     setting_row::SettingRow,
 };
 use ratatui::layout::Rect;
@@ -76,7 +76,7 @@ fn the_confirm_delete_overlay_is_painted_over_the_full_frame() {
 
 #[test]
 fn the_jump_to_time_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::JumpToTime(JumpDigits::default()));
+    let text = frame_with_overlay(Overlay::JumpToTime(TextEntry::default()));
     assert!(text.contains("JUMP TO TIME"), "got {text:?}");
 }
 
@@ -88,22 +88,17 @@ fn the_track_details_overlay_is_painted_over_the_full_frame() {
 
 #[test]
 fn the_source_dir_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::MusicDir {
-        typed: TextEntry::default(),
-        error: None,
-    });
+    let text = frame_with_overlay(Overlay::MusicDir(TextEntry::default()));
     assert!(text.contains("LIBRARY FOLDER"), "got {text:?}");
 }
 
 #[test]
 fn the_save_playlist_banner_is_painted_over_the_full_frame() {
     let mut sources = SceneSources::new(model_with_tracks(3));
-    sources.model.workspace.overlay = Some(Overlay::SavePlaylist {
-        typed: TextEntry {
-            input: "mixtape".to_string(),
-        },
+    sources.model.workspace.overlay = Some(Overlay::SavePlaylist(TextEntry {
+        input: "mixtape".to_string(),
         error: None,
-    });
+    }));
     let scene = sources.scene();
     let area = Rect::new(0, 0, 80, 24);
     let layout = FrameLayout::from_scene(&scene, area);

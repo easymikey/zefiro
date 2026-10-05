@@ -19,7 +19,7 @@ use crate::support::table::cell;
 
 fn cursor(selected: usize, len: usize) -> CursorOver<()> {
     CursorOver {
-        cursor: Cursor::with_len(len).at(selected),
+        cursor: Cursor::at(len, selected),
         content: (),
     }
 }

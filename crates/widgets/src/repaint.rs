@@ -2,6 +2,7 @@ use std::{num::NonZeroU32, time::Duration};
 
 use kernel::domain::{
     geometry::Cells,
+    player::Player,
     playhead::Playhead,
     time::{Moment, SECONDS_PER_MINUTE},
 };
@@ -59,6 +60,22 @@ pub fn next_progress_step(
 }
 
 #[must_use]
+pub fn progress_frame_due(
+    player: &Player,
+    bar_width: Option<Cells>,
+    now: Moment,
+) -> Option<Moment> {
+    let Player::Playing {
+        playhead, track, ..
+    } = player
+    else {
+        return None;
+    };
+    let scale = ProgressScale::text_bar(bar_width?, track.duration()?)?;
+    next_progress_step(scale, *playhead, now)
+}
+
+#[must_use]
 pub fn next_clock_second(playhead: Playhead, now: Moment) -> Moment {
     let position = playhead.position_at(now);
     let boundary = Duration::from_secs(position.as_secs() + 1);
@@ -94,12 +111,94 @@ fn wall_moment(playhead: Playhead, target_position: Duration) -> Moment {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
 
-    use kernel::domain::time::Moment;
+    use kernel::domain::{
+        bounded::Bounded,
+        geometry::Cells,
+        player::{PausedBy, Player},
+        playhead::Playhead,
+        speed::Speed,
+        time::Moment,
+        track::{AudioFormat, Tags, Track},
+    };
     use rstest::rstest;
 
-    use crate::repaint::next_sleep_minute;
+    use crate::repaint::{next_sleep_minute, progress_frame_due};
+
+    fn track(duration: Duration) -> Arc<Track> {
+        Arc::new(
+            Track::builder()
+                .path("/music/song.mp3")
+                .duration(duration)
+                .tags(Tags::default())
+                .audio_format(AudioFormat::default())
+                .build(),
+        )
+    }
+
+    fn playing(offset: Duration, since: Moment, speed: f32) -> Player {
+        Player::Playing {
+            track: track(Duration::from_secs(100)),
+            playhead: Playhead::anchored(offset, since, Speed::clamped(speed)),
+            preloaded: None,
+        }
+    }
+
+    fn paused(at: Duration, duration: Duration) -> Player {
+        Player::Paused {
+            track: track(duration),
+            position: at,
+            by: PausedBy::Listener,
+        }
+    }
+
+    #[rstest]
+    #[case::a_stopped_player_has_no_progress_frame(Player::Stopped, Some(50), None)]
+    #[case::a_paused_player_has_no_progress_frame(
+        paused(Duration::from_secs(10), Duration::from_secs(100)),
+        Some(50),
+        None
+    )]
+    #[case::a_playing_track_wants_the_next_progress_step(
+        playing(
+            Duration::from_millis(10_200),
+            Moment::new(Duration::from_secs(100)),
+            1.0
+        ),
+        Some(50),
+        Some(Moment::new(Duration::from_millis(100_801)))
+    )]
+    #[case::no_bar_has_no_progress_frame(
+        playing(
+            Duration::from_millis(10_200),
+            Moment::new(Duration::from_secs(100)),
+            1.0
+        ),
+        None,
+        None
+    )]
+    #[case::a_sped_up_track_still_wants_a_progress_step(
+        playing(
+            Duration::from_millis(10_500),
+            Moment::new(Duration::from_secs(100)),
+            2.0
+        ),
+        Some(50),
+        Some(Moment::new(Duration::from_millis(100_251)))
+    )]
+    fn a_progress_frame_is_due_only_while_the_bar_can_move(
+        #[case] player: Player,
+        #[case] bar_width: Option<u16>,
+        #[case] expected: Option<Moment>,
+    ) {
+        let now = Moment::new(Duration::from_secs(100));
+
+        assert_eq!(
+            progress_frame_due(&player, bar_width.map(Cells), now),
+            expected
+        );
+    }
 
     #[rstest]
     #[case::minute_boundary_soon(Duration::from_secs(14 * 60 + 59), Duration::from_secs(59))]

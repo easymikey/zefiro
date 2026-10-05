@@ -1,5 +1,5 @@
 use kernel::domain::{
-    appearance::{CoverMode, KeyHints, LayoutMode},
+    appearance::{Breakpoints, CoverMode, KeyHints, LayoutMode},
     geometry::Cells,
 };
 use ratatui::layout::Rect;
@@ -7,7 +7,7 @@ use rstest::rstest;
 use widgets::{
     card::CardCover,
     scene::{PixelPath, Scene},
-    screen::{breakpoint::Breakpoints, frame_layout::FrameLayout, root::ScreenWidget},
+    screen::{frame_layout::FrameLayout, root::ScreenWidget},
 };
 
 use crate::unit::support::{
@@ -46,11 +46,9 @@ fn tiny_breakpoints() -> Breakpoints {
 
 #[test]
 fn full_layout_at_a_large_terminal_shows_the_cover_and_the_playlist() {
-    let sources = SceneSources::new(model_with_tracks(3));
-    let scene = Scene {
-        pixel_path: PixelPath::Protocol,
-        ..sources.scene()
-    };
+    let mut sources = SceneSources::new(model_with_tracks(3));
+    sources.pixel_path = PixelPath::Protocol;
+    let scene = sources.scene();
     let text = frame(scene, (120, 40));
     assert!(text.contains("No cover"), "got {text:?}");
     assert!(text.contains("song00"), "got {text:?}");
@@ -88,11 +86,9 @@ fn one_row_terminal_shows_the_too_small_message_instead_of_a_degraded_minimal_ro
 
 #[test]
 fn narrowing_one_column_below_full_switches_from_the_card_to_the_compact_arrangement() {
-    let sources = SceneSources::new(model_with_tracks(3));
-    let scene = Scene {
-        pixel_path: PixelPath::Protocol,
-        ..sources.scene()
-    };
+    let mut sources = SceneSources::new(model_with_tracks(3));
+    sources.pixel_path = PixelPath::Protocol;
+    let scene = sources.scene();
     let bp = Breakpoints::default();
     let wide = frame(scene, (bp.full_min_width.0, bp.full_min_height.0));
     let narrow = frame(scene, (bp.full_min_width.0 - 1, bp.full_min_height.0));
@@ -127,10 +123,8 @@ fn narrowing_one_column_below_compact_drops_the_playlist_pane_entirely() {
 fn a_vinyl_cover_at_the_full_floor_still_leaves_the_title_visible() {
     let mut sources = SceneSources::new(playing_track("Vinyl Floor Song"));
     sources.model.settings.appearance.cover_mode = CoverMode::Vinyl;
-    let scene = Scene {
-        pixel_path: PixelPath::Protocol,
-        ..sources.scene()
-    };
+    sources.pixel_path = PixelPath::Protocol;
+    let scene = sources.scene();
     let bp = Breakpoints::default();
     let text = frame(scene, (bp.full_min_width.0, bp.full_min_height.0));
     assert!(text.contains("Vinyl Floor Song"), "got {text:?}");

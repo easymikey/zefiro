@@ -93,8 +93,8 @@ expression: "walked(model, messages)"
                 ),
             ),
         ],
-        Loading {
-            track: Track {
+        Loading(
+            Track {
                 source: Local(
                     "/tmp/track2.flac",
                 ),
@@ -125,8 +125,7 @@ expression: "walked(model, messages)"
                     100s,
                 ),
             },
-            at: 0ns,
-        },
+        ),
         None,
         Cursor {
             index: 2,

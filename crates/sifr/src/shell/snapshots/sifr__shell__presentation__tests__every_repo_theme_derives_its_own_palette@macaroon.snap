@@ -1,0 +1,99 @@
+---
+source: crates/sifr/src/shell/presentation.rs
+expression: colors
+---
+Colors {
+    background: Rgb(
+        [
+            216,
+            208,
+            200,
+        ],
+    ),
+    window_background: Rgb(
+        [
+            210,
+            202,
+            195,
+        ],
+    ),
+    text: Rgb(
+        [
+            26,
+            26,
+            26,
+        ],
+    ),
+    accent: Rgb(
+        [
+            42,
+            168,
+            160,
+        ],
+    ),
+    accent2: Rgb(
+        [
+            232,
+            196,
+            106,
+        ],
+    ),
+    selection_foreground: Rgb(
+        [
+            26,
+            26,
+            26,
+        ],
+    ),
+    selection_background: Rgb(
+        [
+            161,
+            155,
+            150,
+        ],
+    ),
+    highlight: Rgb(
+        [
+            21,
+            84,
+            80,
+        ],
+    ),
+    muted_foreground: Rgb(
+        [
+            122,
+            122,
+            122,
+        ],
+    ),
+    bar_groove: Rgb(
+        [
+            158,
+            152,
+            147,
+        ],
+    ),
+    spectrum: [
+        Rgb(
+            [
+                42,
+                168,
+                160,
+            ],
+        ),
+        Rgb(
+            [
+                232,
+                196,
+                106,
+            ],
+        ),
+        Rgb(
+            [
+                232,
+                122,
+                144,
+            ],
+        ),
+    ],
+}

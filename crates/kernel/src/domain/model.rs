@@ -9,7 +9,6 @@ use crate::domain::{
     player::Player,
     playlist::{Playlist, PlaylistSource},
     revision::Revisions,
-    setting_row::AppearanceSetting,
     settings::Settings,
     theme::Themes,
     track::{Track, TrackRef},
@@ -42,7 +41,6 @@ pub struct Model {
     pub history: Vec<HistoryEntry>,
     pub favorites: Favorites,
     pub settings: Settings,
-    pub appearance_rows: Vec<AppearanceSetting>,
     pub revisions: Revisions,
     pub themes: Themes,
     pub drivers: Drivers,
@@ -63,7 +61,7 @@ impl Model {
         let current = self.player.current()?;
         let index = self.playlist.playing_index()?;
         let at_index = self.playlist.current()?;
-        (current.path() == at_index.path()).then_some(index)
+        (current.source() == at_index.source()).then_some(index)
     }
 }
 
@@ -91,7 +89,7 @@ mod displayed_track_tests {
         index::TrackIndex,
         library::Library,
         model::{Model, titled_track},
-        player::{Player, Preload},
+        player::Player,
         playhead::Playhead,
         speed::Speed,
         time::Moment,
@@ -109,14 +107,14 @@ mod displayed_track_tests {
         };
         model.player = Player::Playing {
             track: titled_track("playing"),
-            head: Playhead::anchored(
+            playhead: Playhead::anchored(
                 Duration::ZERO,
                 Moment::default(),
                 Speed::default(),
             ),
-            preload: Preload::None,
+            preloaded: None,
         };
-        model.workspace.browse.cursor = Cursor::with_len(1).at(0);
+        model.workspace.browse.cursor = Cursor::at(1, 0);
         assert_eq!(
             model.displayed_track().map(|t| t.tags().title.clone()),
             Some(Some("playing".to_string()))
@@ -132,7 +130,7 @@ mod displayed_track_tests {
             }),
             workspace: Workspace {
                 browse: Browse {
-                    cursor: Cursor::with_len(2).at(1),
+                    cursor: Cursor::at(2, 1),
                     ..Browse::default()
                 },
                 ..Workspace::default()
@@ -162,7 +160,7 @@ mod playing_index_tests {
         cursor::Cursor,
         index::ViewIndex,
         model::{Model, titled_track},
-        player::{PausedBy, Player, Preload},
+        player::{PausedBy, Player},
         playhead::Playhead,
         playlist::Playlist,
         speed::Speed,
@@ -177,8 +175,7 @@ mod playing_index_tests {
     fn model_with(tracks: Vec<Arc<Track>>, index: Option<ViewIndex>) -> Model {
         Model {
             playlist: Playlist {
-                cursor: Cursor::with_len(tracks.len())
-                    .at(index.map_or(0, ViewIndex::get)),
+                cursor: Cursor::at(tracks.len(), index.map_or(0, ViewIndex::get)),
                 tracks,
                 ..Playlist::default()
             },
@@ -189,12 +186,12 @@ mod playing_index_tests {
     #[rstest]
     #[case::playing_reports_the_playlist_index(Player::Playing {
         track: titled_track("a"),
-        head: anchored_at_zero(),
-        preload: Preload::None,
+        playhead: anchored_at_zero(),
+        preloaded: None,
     }, Some(ViewIndex::new(0)))]
     #[case::paused_reports_the_playlist_index(Player::Paused {
         track: titled_track("a"),
-        at: Duration::ZERO,
+        position: Duration::ZERO,
         by: PausedBy::Listener,
     }, Some(ViewIndex::new(0)))]
     #[case::stopped_reports_none(Player::Stopped, None)]
@@ -212,8 +209,8 @@ mod playing_index_tests {
         let mut model = model_with(vec![titled_track("a")], Some(ViewIndex::new(0)));
         model.player = Player::Playing {
             track: titled_track("a"),
-            head: anchored_at_zero(),
-            preload: Preload::None,
+            playhead: anchored_at_zero(),
+            preloaded: None,
         };
         let rescanned = titled_track("a");
         assert!(!Arc::ptr_eq(&rescanned, &titled_track("a")));
@@ -229,8 +226,8 @@ mod playing_index_tests {
         );
         model.player = Player::Playing {
             track: titled_track("a"),
-            head: anchored_at_zero(),
-            preload: Preload::None,
+            playhead: anchored_at_zero(),
+            preloaded: None,
         };
         assert_eq!(model.playing_index(), None);
     }

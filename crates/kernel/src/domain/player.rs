@@ -9,18 +9,15 @@ use crate::domain::{playhead::Playhead, speed::Speed, time::Moment, track::Track
 pub enum Player {
     #[default]
     Stopped,
-    Loading {
-        track: Arc<Track>,
-        at: Duration,
-    },
+    Loading(Arc<Track>),
     Playing {
         track: Arc<Track>,
-        head: Playhead,
-        preload: Preload,
+        playhead: Playhead,
+        preloaded: Option<Arc<Track>>,
     },
     Paused {
         track: Arc<Track>,
-        at: Duration,
+        position: Duration,
         by: PausedBy,
     },
 }
@@ -36,7 +33,7 @@ impl Player {
     pub fn current(&self) -> Option<&Arc<Track>> {
         match self {
             Self::Stopped => None,
-            Self::Loading { track, .. }
+            Self::Loading(track)
             | Self::Playing { track, .. }
             | Self::Paused { track, .. } => Some(track),
         }
@@ -45,9 +42,9 @@ impl Player {
     #[must_use]
     pub fn position_at(&self, now: Moment) -> Duration {
         match self {
-            Self::Stopped => Duration::ZERO,
-            Self::Loading { at, .. } | Self::Paused { at, .. } => *at,
-            Self::Playing { head, .. } => head.position_at(now),
+            Self::Stopped | Self::Loading(..) => Duration::ZERO,
+            Self::Paused { position, .. } => *position,
+            Self::Playing { playhead, .. } => playhead.position_at(now),
         }
     }
 
@@ -59,8 +56,8 @@ impl Player {
     #[must_use]
     pub(crate) fn preloaded(&self) -> Option<&Arc<Track>> {
         match self {
-            Self::Playing { preload, .. } => preload.track(),
-            Self::Stopped | Self::Loading { .. } | Self::Paused { .. } => None,
+            Self::Playing { preloaded, .. } => preloaded.as_ref(),
+            Self::Stopped | Self::Loading(..) | Self::Paused { .. } => None,
         }
     }
 
@@ -69,42 +66,14 @@ impl Player {
         match self {
             Self::Playing {
                 track,
-                head,
-                preload,
+                playhead,
+                preloaded,
             } => Self::Playing {
                 track,
-                head: Playhead::anchored(head.position_at(now), now, speed),
-                preload,
+                playhead: Playhead::anchored(playhead.position_at(now), now, speed),
+                preloaded,
             },
-            other @ (Self::Stopped | Self::Loading { .. } | Self::Paused { .. }) => {
-                other
-            }
-        }
-    }
-}
-
-#[must_use]
-#[derive(Debug, Clone, Default, PartialEq)]
-pub enum Preload {
-    #[default]
-    None,
-    Queued(Arc<Track>),
-    Stale(Arc<Track>),
-}
-
-impl Preload {
-    #[must_use]
-    pub(crate) fn track(&self) -> Option<&Arc<Track>> {
-        match self {
-            Self::None => None,
-            Self::Queued(track) | Self::Stale(track) => Some(track),
-        }
-    }
-
-    pub(crate) fn seek_reset(self) -> Self {
-        match self {
-            Self::Queued(track) => Self::Stale(track),
-            other @ (Self::None | Self::Stale(_)) => other,
+            other @ (Self::Stopped | Self::Loading(..) | Self::Paused { .. }) => other,
         }
     }
 }

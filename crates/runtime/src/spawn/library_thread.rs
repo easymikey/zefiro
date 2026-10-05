@@ -1,17 +1,13 @@
 use audio::DECODABLE_EXTENSIONS;
 use kernel::{cmd::LibraryCmd, domain::driver::DriverName};
-use library::{
-    driver::{LibraryDriver, LibraryEffect},
-    job::LibraryJob,
-    message::LibraryMessage,
-};
+use library::{driver::LibraryDriver, job::LibraryJob};
 
 #[cfg(test)] use crate::driver_thread::spawn_idle;
 use crate::{
     driver::DriverLoop,
     driver_thread::DriverThread,
     error::Error,
-    jobs::{Jobs, LoopEffect},
+    jobs::Jobs,
     registry,
     spawn_setup::SpawnSetup,
 };
@@ -23,33 +19,12 @@ pub(crate) fn idle_library(
     spawn_idle(registry::row(DriverName::Library), setup.inbox)
 }
 
-fn library_split(
-    effect: LibraryEffect,
-) -> LoopEffect<LibraryEffect, LibraryJob, LibraryMessage> {
-    match effect {
-        LibraryEffect::Run(job) => LoopEffect::Run(job),
-        LibraryEffect::After { delay, timer } => LoopEffect::After {
-            delay,
-            message: LibraryMessage::Elapsed(timer),
-        },
-        LibraryEffect::Watch(path) => LoopEffect::Watch {
-            path,
-            item: LibraryMessage::Changed,
-        },
-        LibraryEffect::Unwatch(path) => LoopEffect::Unwatch(path),
-        effect @ (LibraryEffect::PublishCover(_) | LibraryEffect::Execute(_)) => {
-            LoopEffect::Execute(effect)
-        }
-    }
-}
-
 pub(crate) fn spawn_library(
     setup: &SpawnSetup<'_>,
 ) -> Result<DriverThread<LibraryCmd>, Error> {
     let dirs = setup.paths.library.clone();
     let cover = setup.writers.cover.clone();
     let jobs = Jobs {
-        split: library_split,
         run: LibraryJob::run,
     };
     DriverLoop::<LibraryDriver<_>, LibraryJob> {
@@ -87,10 +62,10 @@ mod tests {
         driver_thread::DriverThread,
         latest::LatestReceivers,
         spawn::{
+            SpawnSetup,
             library_thread::spawn_library,
             tests::{RECV_TIMEOUT, stub_paths},
         },
-        spawn_setup::SpawnSetup,
     };
 
     const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
@@ -114,7 +89,7 @@ mod tests {
                 inbox: &inbox,
                 writers: &writers,
                 #[cfg(target_os = "macos")]
-                macos: &crate::macos_channel::MacosChannel::new(),
+                macos: &crate::spawn_setup::MacosChannel::new(),
             })
             .unwrap();
             Self {

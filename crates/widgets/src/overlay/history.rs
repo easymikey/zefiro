@@ -7,7 +7,7 @@ use kernel::domain::{
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
-    style::Style,
+    style::{Color, Style},
     text::Line,
     widgets::{Paragraph, Row, StatefulWidget, Table, TableState, Widget},
 };
@@ -15,7 +15,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     overlay::modal::{
-        metrics::{COLUMN_SPACING, ModalRowStyle, modal_title},
+        metrics::{COLUMN_SPACING, modal_title},
         placement::{
             ModalContainer,
             ModalPlacement,
@@ -26,16 +26,16 @@ use crate::{
             leading_cells,
         },
     },
+    pixels::numeric::small_count_u16,
     primitive::{
         canvas::Canvas,
         glyphs,
-        inset::Inset,
         list_chrome::{Scrollbar, paint_scrollbar, scroll_offset},
         relative_time::relative_time,
         span::{line, text},
         text::truncate,
     },
-    theme::active_theme::ActiveTheme,
+    theme::{active_theme::ActiveTheme, colors::Colors},
 };
 
 #[derive(Debug)]
@@ -70,7 +70,7 @@ impl HistoryWidget<'_> {
             return;
         }
         if self.entries.is_empty() {
-            let dim = ModalRowStyle::from_theme(&self.theme).muted_foreground;
+            let dim = self.theme.colors().muted_foreground;
             let placeholder = glyphs::history::EMPTY_PLACEHOLDER;
             Paragraph::new(line([text(placeholder).fg(dim)]))
                 .render(areas.content, buffer);
@@ -93,16 +93,15 @@ impl HistoryWidget<'_> {
         let theme = self.theme;
         let measures = HistoryMeasures::of(labels);
         ModalPlacement {
-            inset: Inset::overlay(),
             container: self.container,
             border_title: modal_title(
                 glyphs::history::TITLE_WORD,
                 track_count_text(self.entries.len()),
-                ModalRowStyle::from_theme(&theme),
+                theme.colors(),
             ),
             modal_title: glyphs::history::TITLE_WORD,
             content_width: measures.natural_width(COLUMN_SPACING),
-            content_rows: Cells(u16::try_from(self.entries.len()).unwrap_or(u16::MAX)),
+            content_rows: Cells(small_count_u16(self.entries.len())),
             hint: None,
             theme,
         }
@@ -110,7 +109,7 @@ impl HistoryWidget<'_> {
 
     fn paint_rows(&self, rows: LabeledRows<'_>, buffer: &mut Buffer) {
         let LabeledRows { areas, labels } = rows;
-        let style = ModalRowStyle::from_theme(&self.theme);
+        let colors = self.theme.colors();
         let table_area = areas.rows;
         let lead = leading_cells(&areas).0;
         let total = self.entries.len();
@@ -126,14 +125,18 @@ impl HistoryWidget<'_> {
                         columns,
                         lead,
                     },
-                    style,
+                    colors,
                     self.now,
                 )
             }),
             columns.constraints(),
         )
         .column_spacing(columns.spacing)
-        .row_highlight_style(style.highlight());
+        .row_highlight_style(
+            Style::default()
+                .fg(colors.selection_foreground)
+                .bg(colors.selection_background),
+        );
         let mut table_rows = TableState::new()
             .with_offset(offset)
             .with_selected(Some(self.selected.get()));
@@ -145,8 +148,8 @@ impl HistoryWidget<'_> {
                 total,
                 offset,
                 viewport: height,
-                thumb: style.border,
-                groove: style.muted_foreground,
+                thumb: colors.muted_foreground,
+                groove: colors.muted_foreground,
             },
             buffer,
         );
@@ -196,14 +199,14 @@ impl HistoryMeasures {
     fn of(labels: &[String]) -> Self {
         let widest = labels.iter().map(|label| label.width()).max().unwrap_or(0);
         Self {
-            label: Cells(u16::try_from(widest).unwrap_or(u16::MAX)),
+            label: Cells(small_count_u16(widest)),
         }
     }
 
     fn natural_width(self, spacing: u16) -> Cells {
         if self.label == Cells(0) {
             let placeholder = glyphs::history::EMPTY_PLACEHOLDER.width();
-            return Cells(u16::try_from(placeholder).unwrap_or(u16::MAX));
+            return Cells(small_count_u16(placeholder));
         }
         HistoryColumns {
             label: self.label,
@@ -265,13 +268,13 @@ fn when_label(played: &HistoryEntry, now: Moment) -> String {
     relative_time(now, played.at)
 }
 
-fn entry_row(row: &EntryRow<'_>, style: ModalRowStyle, now: Moment) -> Row<'static> {
+fn entry_row(row: &EntryRow<'_>, colors: Colors<Color>, now: Moment) -> Row<'static> {
     let [label, when] = entry_cells(row, now);
     Row::new(vec![
-        Line::from(label).style(Style::default().fg(style.foreground)),
+        Line::from(label).style(Style::default().fg(colors.text)),
         Line::from(when)
             .right_aligned()
-            .style(Style::default().fg(style.muted_foreground)),
+            .style(Style::default().fg(colors.muted_foreground)),
     ])
 }
 
@@ -292,10 +295,7 @@ mod tests {
     use ratatui::layout::Rect;
 
     use crate::{
-        overlay::{
-            history::HistoryWidget,
-            modal::{metrics::ModalRowStyle, placement::ModalContainer},
-        },
+        overlay::{history::HistoryWidget, modal::placement::ModalContainer},
         primitive::canvas::find_text,
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
@@ -365,8 +365,7 @@ mod tests {
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
                 .clone();
-        let selection_background =
-            ModalRowStyle::from_theme(&active).selected_background;
+        let selection_background = active.colors().selection_background;
         let (alpha_x, alpha_y) = find_text(&buffer, "Artist A — Alpha").unwrap();
         let (beta_x, beta_y) = find_text(&buffer, "Beta").unwrap();
         assert_eq!(

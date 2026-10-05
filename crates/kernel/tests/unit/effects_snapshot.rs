@@ -3,15 +3,7 @@ use kernel::{
         direction::Direction,
         model::Model,
         revision::Revision,
-        setting_row::{
-            AppearanceControl,
-            AppearanceField,
-            AppearanceRow,
-            AppearanceSetting,
-            Choice,
-            OptionCount,
-            SettingRow,
-        },
+        setting_row::{AppearanceField, SettingRow},
         theme::ThemeName,
         time::Moment,
     },
@@ -55,17 +47,6 @@ fn play_selected_emits_its_effects() {
 fn stepping_an_appearance_row_emits_its_effect() {
     let mut m = Model::default();
     let id = AppearanceField::SpeedChip;
-    let count = OptionCount::new(4).unwrap();
-    let row: &'static AppearanceRow = Box::leak(Box::new(AppearanceRow {
-        field: id,
-        control: AppearanceControl::Cycle(count),
-        cue: None,
-        themes: &[],
-    }));
-    m.appearance_rows.push(AppearanceSetting {
-        row,
-        choice: Choice::Option(count.index(0).unwrap()),
-    });
     let cmd = update(
         &mut m,
         Message::Step {

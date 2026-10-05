@@ -6,12 +6,9 @@ use std::{
 
 use crossbeam_channel::Sender;
 use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
-use kernel::{
-    domain::key::{Key, KeyPress},
-    message::Message,
-};
+use kernel::message::Message;
 use runtime::shell::Reaction;
-use terminal::keys::{LayoutTranslation, from_event};
+use terminal::keys::key_press;
 
 use crate::{
     shell::shell_input::ShellInput,
@@ -38,18 +35,8 @@ fn key_reaction(key_event: KeyEvent) -> Reaction {
     if key_event.kind != KeyEventKind::Press {
         return Reaction::Ignored;
     }
-    let key = from_event(key_event, LayoutTranslation::Applied);
-    let typed = from_event(key_event, LayoutTranslation::Verbatim);
-    key_press(key, typed).map_or(Reaction::Ignored, |press| {
+    key_press(key_event).map_or(Reaction::Ignored, |press| {
         Reaction::Message(Message::Key(press))
-    })
-}
-
-fn key_press(key: Option<Key>, typed: Option<Key>) -> Option<KeyPress> {
-    let key = key.or(typed)?;
-    Some(KeyPress {
-        key,
-        typed: typed.unwrap_or(key),
     })
 }
 

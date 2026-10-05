@@ -3,85 +3,76 @@ source: crates/widgets/src/theme/palette.rs
 expression: test_colors_file().derive()
 ---
 Colors {
-    roles: [
-        Rgb(
-            [
-                16,
-                32,
-                48,
-            ],
-        ),
-        Rgb(
-            [
-                18,
-                34,
-                50,
-            ],
-        ),
-        Rgb(
-            [
-                112,
-                128,
-                144,
-            ],
-        ),
-        Rgb(
-            [
-                160,
-                176,
-                192,
-            ],
-        ),
-        Rgb(
-            [
-                255,
-                255,
-                0,
-            ],
-        ),
-        Rgb(
-            [
-                169,
-                178,
-                188,
-            ],
-        ),
-        Rgb(
-            [
-                50,
-                66,
-                82,
-            ],
-        ),
-        Rgb(
-            [
-                160,
-                176,
-                192,
-            ],
-        ),
-        Rgb(
-            [
-                64,
-                80,
-                96,
-            ],
-        ),
-        Rgb(
-            [
-                64,
-                80,
-                96,
-            ],
-        ),
-        Rgb(
-            [
-                51,
-                67,
-                83,
-            ],
-        ),
-    ],
+    background: Rgb(
+        [
+            16,
+            32,
+            48,
+        ],
+    ),
+    window_background: Rgb(
+        [
+            18,
+            34,
+            50,
+        ],
+    ),
+    text: Rgb(
+        [
+            112,
+            128,
+            144,
+        ],
+    ),
+    accent: Rgb(
+        [
+            160,
+            176,
+            192,
+        ],
+    ),
+    accent2: Rgb(
+        [
+            255,
+            255,
+            0,
+        ],
+    ),
+    selection_foreground: Rgb(
+        [
+            169,
+            178,
+            188,
+        ],
+    ),
+    selection_background: Rgb(
+        [
+            50,
+            66,
+            82,
+        ],
+    ),
+    highlight: Rgb(
+        [
+            160,
+            176,
+            192,
+        ],
+    ),
+    muted_foreground: Rgb(
+        [
+            64,
+            80,
+            96,
+        ],
+    ),
+    bar_groove: Rgb(
+        [
+            51,
+            67,
+            83,
+        ],
+    ),
     spectrum: [
         Rgb(
             [

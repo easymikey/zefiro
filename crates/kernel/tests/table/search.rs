@@ -7,8 +7,8 @@ use kernel::{
         index::ViewIndex,
         overlay::SearchQuery,
     },
-    message::{Message, QueueRequest, SearchEdit},
-    update::{machine::Unhandled, overlay::search::SearchQueryMessage},
+    message::{Message, QueueRequest, SearchEdit, SearchRequest},
+    update::machine::Unhandled,
 };
 use rstest::rstest;
 
@@ -17,7 +17,7 @@ use crate::support::table::cell;
 fn query(input: &str, matches: Vec<usize>, selected: usize) -> CursorOver<SearchQuery> {
     let len = matches.len();
     CursorOver {
-        cursor: Cursor::with_len(len).at(selected),
+        cursor: Cursor::at(len, selected),
         content: SearchQuery {
             input: input.to_string(),
             matches: matches.into_iter().map(ViewIndex::new).collect(),
@@ -25,8 +25,8 @@ fn query(input: &str, matches: Vec<usize>, selected: usize) -> CursorOver<Search
     }
 }
 
-fn edit(edit: SearchEdit) -> SearchQueryMessage {
-    SearchQueryMessage::Edit(edit)
+fn edit(edit: SearchEdit) -> SearchRequest {
+    SearchRequest::Edit(edit)
 }
 
 #[rstest]
@@ -38,12 +38,12 @@ fn edit(edit: SearchEdit) -> SearchQueryMessage {
 #[case::delete_word_eats_the_trailing_space_with_the_word(query("foo bar ", vec![], 0), edit(SearchEdit::DeleteWord), Ok((query("foo ", vec![], 0), Cmd::none())))]
 #[case::delete_word_on_one_word_empties_the_query(query("foo", vec![], 0), edit(SearchEdit::DeleteWord), Ok((query("", vec![], 0), Cmd::none())))]
 #[case::clear_empties_the_query(query("foo bar", vec![], 0), edit(SearchEdit::Clear), Ok((query("", vec![], 0), Cmd::none())))]
-#[case::nav_down_steps(query("mo", vec![0, 2], 0), SearchQueryMessage::Navigate(Direction::Next), Ok((query("mo", vec![0, 2], 1), Cmd::none())))]
-#[case::nav_up_clamps_at_the_top(query("mo", vec![0, 2], 0), SearchQueryMessage::Navigate(Direction::Previous), Ok((query("mo", vec![0, 2], 0), Cmd::none())))]
-#[case::nav_down_clamps_at_the_bottom(query("mo", vec![0, 2], 1), SearchQueryMessage::Navigate(Direction::Next), Ok((query("mo", vec![0, 2], 1), Cmd::none())))]
+#[case::nav_down_steps(query("mo", vec![0, 2], 0), SearchRequest::Navigate(Direction::Next), Ok((query("mo", vec![0, 2], 1), Cmd::none())))]
+#[case::nav_up_clamps_at_the_top(query("mo", vec![0, 2], 0), SearchRequest::Navigate(Direction::Previous), Ok((query("mo", vec![0, 2], 0), Cmd::none())))]
+#[case::nav_down_clamps_at_the_bottom(query("mo", vec![0, 2], 1), SearchRequest::Navigate(Direction::Next), Ok((query("mo", vec![0, 2], 1), Cmd::none())))]
 #[case::enqueue_hands_the_router_the_selected_match(
     query("mo", vec![0, 2], 1),
-    SearchQueryMessage::Enqueue,
+    SearchRequest::Enqueue,
     Ok((
         query("mo", vec![0, 2], 1),
         Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(2))))
@@ -51,12 +51,12 @@ fn edit(edit: SearchEdit) -> SearchQueryMessage {
 )]
 #[case::enqueue_without_a_match_is_refused(
     query("zzz", vec![], 0),
-    SearchQueryMessage::Enqueue,
+    SearchRequest::Enqueue,
     Err(Unhandled)
 )]
 fn search_cell(
     #[case] start: CursorOver<SearchQuery>,
-    #[case] message: SearchQueryMessage,
+    #[case] message: SearchRequest,
     #[case] expected: Result<
         (
             CursorOver<SearchQuery>,

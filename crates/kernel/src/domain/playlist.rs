@@ -140,7 +140,7 @@ impl Playlist {
         anchor: Option<ViewIndex>,
     ) {
         let index = anchor.map_or_else(|| self.cursor.index(), ViewIndex::get);
-        self.cursor = Cursor::with_len(tracks.len()).at(index);
+        self.cursor = Cursor::at(tracks.len(), index);
         self.tracks = tracks;
     }
 
@@ -149,7 +149,7 @@ impl Playlist {
             Some(_) => self.skip_shuffled(direction)?,
             None => self.skip_linear(direction)?,
         };
-        self.cursor = Cursor::with_len(self.tracks.len()).at(next_index);
+        self.cursor = Cursor::at(self.tracks.len(), next_index);
         self.current()
     }
 
@@ -195,30 +195,17 @@ impl Playlist {
         self.tracks.get(next_index)
     }
 
-    pub(crate) fn index_of(&self, source: &TrackRef) -> Option<ViewIndex> {
-        self.tracks
-            .iter()
-            .position(|track| track.source() == source)
-            .map(ViewIndex::new)
-    }
-
     pub fn jump(&mut self, index: ViewIndex) -> Option<&Arc<Track>> {
         if index.get() >= self.tracks.len() {
             return None;
         }
-        self.cursor = Cursor::with_len(self.tracks.len()).at(index.get());
+        self.cursor = Cursor::at(self.tracks.len(), index.get());
         self.current()
     }
 }
 
-pub(crate) fn index_of_path(
-    path: &std::path::Path,
-    tracks: &[Arc<Track>],
-) -> Option<ViewIndex> {
-    tracks
-        .iter()
-        .position(|track| track.path() == path)
-        .map(ViewIndex::new)
+pub(crate) fn index_of(tracks: &[Arc<Track>], source: &TrackRef) -> Option<usize> {
+    tracks.iter().position(|track| track.source() == source)
 }
 
 #[cfg(test)]

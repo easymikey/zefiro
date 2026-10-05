@@ -1,6 +1,6 @@
 use kernel::domain::geometry::Cells;
 
-use crate::pixels::numeric::{dimension_f32, floor};
+use crate::pixels::numeric::{dimension_f32, floor, small_count_u16};
 
 const BASE: u32 = 0x2800;
 
@@ -22,7 +22,7 @@ fn small_len_u32(count: usize) -> u32 {
 }
 
 pub(crate) fn dot_coord(columns: u32) -> u16 {
-    u16::try_from(columns).unwrap_or(u16::MAX)
+    small_count_u16(columns)
 }
 
 const HALF_STEP_BIAS: f32 = 0.001;

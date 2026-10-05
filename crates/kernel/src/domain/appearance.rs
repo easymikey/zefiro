@@ -2,7 +2,10 @@ use std::{fmt, str::FromStr};
 
 use strum::{EnumIter, EnumString, IntoEnumIterator, VariantNames};
 
-use crate::domain::{geometry::Cells, theme::ThemeName};
+use crate::domain::{
+    geometry::{Cells, Pixels},
+    theme::ThemeName,
+};
 
 pub const DEFAULT_COVER_WIDTH: Cells = Cells(20);
 pub const DEFAULT_COVER_HEIGHT: Cells = Cells(8);
@@ -12,6 +15,71 @@ pub const DEFAULT_COMPACT_MIN_WIDTH: Cells = Cells(30);
 pub const DEFAULT_COMPACT_MIN_HEIGHT: Cells = Cells(13);
 pub const DEFAULT_MIN_WIDTH: Cells = Cells(48);
 pub const DEFAULT_MIN_HEIGHT: Cells = Cells(16);
+
+#[must_use]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Appearance {
+    pub cover_cells: CoverCells,
+    pub breakpoints: Breakpoints,
+    pub progress: ProgressBar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CoverCells {
+    pub width: Cells,
+    pub height: Cells,
+}
+
+impl Default for CoverCells {
+    fn default() -> Self {
+        Self {
+            width: DEFAULT_COVER_WIDTH,
+            height: DEFAULT_COVER_HEIGHT,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Breakpoints {
+    pub full_min_width: Cells,
+    pub full_min_height: Cells,
+    pub compact_min_width: Cells,
+    pub compact_min_height: Cells,
+    pub min_width: Cells,
+    pub min_height: Cells,
+}
+
+impl Default for Breakpoints {
+    fn default() -> Self {
+        Self {
+            full_min_width: DEFAULT_FULL_MIN_WIDTH,
+            full_min_height: DEFAULT_FULL_MIN_HEIGHT,
+            compact_min_width: DEFAULT_COMPACT_MIN_WIDTH,
+            compact_min_height: DEFAULT_COMPACT_MIN_HEIGHT,
+            min_width: DEFAULT_MIN_WIDTH,
+            min_height: DEFAULT_MIN_HEIGHT,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProgressBar {
+    pub height: Pixels,
+    pub radius: Option<Pixels>,
+    pub fill: Option<Rgb>,
+    pub groove: Option<Rgb>,
+}
+
+impl Default for ProgressBar {
+    fn default() -> Self {
+        Self {
+            height: Pixels(4),
+            radius: None,
+            fill: None,
+            groove: None,
+        }
+    }
+}
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, strum::Display, EnumString, VariantNames,
@@ -137,21 +205,13 @@ pub fn preset_of(appearance: AppearanceSettings) -> Option<AppearancePreset> {
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, bon::Builder)]
 pub struct AppearancePatch {
-    #[builder(setters(option_fn(name = with_cover_mode)))]
     pub cover_mode: Option<CoverMode>,
-    #[builder(setters(option_fn(name = with_cover_brackets)))]
     pub cover_brackets: Option<CoverBrackets>,
-    #[builder(setters(option_fn(name = with_format_chips)))]
     pub format_chips: Option<FormatChips>,
-    #[builder(setters(option_fn(name = with_speed_chip)))]
     pub speed_chip: Option<SpeedChip>,
-    #[builder(setters(option_fn(name = with_progress_time)))]
     pub progress_time: Option<ProgressTime>,
-    #[builder(setters(option_fn(name = with_key_hints)))]
     pub key_hints: Option<KeyHints>,
-    #[builder(setters(option_fn(name = with_animations)))]
     pub animations: Option<Animations>,
-    #[builder(setters(option_fn(name = with_layout_mode)))]
     pub layout_mode: Option<LayoutMode>,
 }
 

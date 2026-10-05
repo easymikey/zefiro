@@ -46,7 +46,7 @@ pub(crate) struct Modal<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ModalBounds<'a> {
+struct ModalBounds<'a> {
     pub(crate) area: Rect,
     pub(crate) avoid: &'a [Rect],
 }
@@ -56,12 +56,6 @@ pub struct ModalAreas {
     pub(crate) outer: Rect,
     pub(crate) body: Rect,
     pub(crate) hint_row: Rect,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PlacedModal<'a> {
-    pub(crate) areas: ModalAreas,
-    pub(crate) bounds: ModalBounds<'a>,
 }
 
 impl<'a> Modal<'a> {
@@ -130,12 +124,11 @@ impl<'a> Modal<'a> {
         }
     }
 
-    pub(crate) fn paint(&self, placed: PlacedModal<'_>, buffer: &mut Buffer) {
-        let modal_frame = placed.areas;
-        Clear.render(modal_frame.outer, buffer);
+    pub(crate) fn paint(&self, modal_areas: ModalAreas, buffer: &mut Buffer) {
+        Clear.render(modal_areas.outer, buffer);
         Block::new()
             .style(Style::default().bg(self.window_background))
-            .render(modal_frame.outer, buffer);
+            .render(modal_areas.outer, buffer);
 
         let title = format!(" {} ", self.title);
         Block::default()
@@ -144,12 +137,12 @@ impl<'a> Modal<'a> {
             .border_style(Style::default().fg(self.border))
             .title(title)
             .title_style(Style::default().fg(self.border))
-            .render(modal_frame.outer, buffer);
+            .render(modal_areas.outer, buffer);
 
         if let Some(hint) = self.hint.clone()
-            && modal_frame.hint_row.height > 0
+            && modal_areas.hint_row.height > 0
         {
-            Paragraph::new(hint).render(modal_frame.hint_row, buffer);
+            Paragraph::new(hint).render(modal_areas.hint_row, buffer);
         }
     }
 }

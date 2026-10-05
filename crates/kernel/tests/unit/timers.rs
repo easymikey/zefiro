@@ -13,10 +13,7 @@ use kernel::{
     update::machine::Unhandled,
 };
 
-use crate::support::{
-    playing_model,
-    update::{send_at, update},
-};
+use crate::support::{playing_model, update::update};
 
 fn sent(model: &mut Model, message: Message) -> Cmd {
     update(model, message, Moment::default()).unwrap()
@@ -51,10 +48,6 @@ fn sleep_cycled(model: &mut Model) -> Cmd {
 
 fn secs(seconds: u64) -> Duration {
     Duration::from_secs(seconds)
-}
-
-fn millis(count: u64) -> Duration {
-    Duration::from_millis(count)
 }
 
 fn position(at: Duration) -> Message {
@@ -216,38 +209,4 @@ fn a_stale_mark_is_ignored() {
     let cmd = update(&mut model, Message::Elapsed(stale), Moment::default());
 
     assert_eq!(cmd, Err(Unhandled));
-}
-
-#[test]
-fn played_for_accumulates_wall_time_across_playhead_reports() {
-    let mut model = playing_model(3);
-    send_at(&mut model, position(millis(100)), moment(100));
-    send_at(&mut model, position(millis(200)), moment(250));
-    assert_eq!(model.workspace.played_for, millis(250));
-}
-
-#[test]
-fn played_for_keeps_accumulating_across_a_seek() {
-    let mut model = playing_model(3);
-    send_at(&mut model, position(millis(100)), moment(100));
-    send_at(
-        &mut model,
-        Message::Playback(PlaybackRequest::SeekTo(secs(60))),
-        moment(150),
-    );
-    send_at(&mut model, position(secs(60) + millis(50)), moment(400));
-    assert_eq!(model.workspace.played_for, millis(400));
-}
-
-#[test]
-fn played_for_keeps_the_wall_time_across_a_track_change() {
-    let mut model = playing_model(3);
-    send_at(&mut model, position(millis(100)), moment(100));
-    send_at(
-        &mut model,
-        Message::Audio(AudioEvent::TrackChanged),
-        moment(150),
-    );
-    send_at(&mut model, position(millis(50)), moment(300));
-    assert_eq!(model.workspace.played_for, millis(300));
 }

@@ -15,8 +15,6 @@ const MODULE_CRATES: &[&str] = &[
 
 const ROOT: &str = "crate";
 
-const KNOWN_CYCLES: &[(&str, &[&str])] = &[];
-
 type Graph = BTreeMap<String, BTreeSet<String>>;
 
 type Paths = Vec<Vec<String>>;
@@ -269,53 +267,22 @@ fn cycles(graph: &Graph) -> BTreeSet<Vec<String>> {
         .collect()
 }
 
-fn listed(crate_name: &str, modules: &[String]) -> bool {
-    KNOWN_CYCLES.iter().any(|(known_crate, known_modules)| {
-        *known_crate == crate_name
-            && known_modules
-                .iter()
-                .copied()
-                .eq(modules.iter().map(String::as_str))
-    })
-}
-
 #[test]
 fn module_cycles() {
-    let found: Vec<(&str, Vec<String>)> = MODULE_CRATES
+    let violations: Vec<String> = MODULE_CRATES
         .iter()
         .flat_map(|crate_name| {
             cycles(&module_graph(crate_name))
                 .into_iter()
-                .map(move |modules| (*crate_name, modules))
-        })
-        .collect();
-    let violations: Vec<String> = found
-        .iter()
-        .filter(|(crate_name, modules)| !listed(crate_name, modules))
-        .map(|(crate_name, modules)| format!("{crate_name}: {}", modules.join(", ")))
-        .collect();
-    let stale: Vec<String> = KNOWN_CYCLES
-        .iter()
-        .filter(|(known_crate, known_modules)| {
-            !found.iter().any(|(crate_name, modules)| {
-                crate_name == known_crate
-                    && known_modules
-                        .iter()
-                        .copied()
-                        .eq(modules.iter().map(String::as_str))
-            })
-        })
-        .map(|(known_crate, known_modules)| {
-            format!("{known_crate}: {}", known_modules.join(", "))
+                .map(move |modules| format!("{crate_name}: {}", modules.join(", ")))
         })
         .collect();
 
     support::report(
         "layering guard: a crate's modules import each other over `crate::` paths without \
-         a cycle (conventions.md §11.10). `KNOWN_CYCLES` lists today's cycles; each fix \
-         deletes its row.",
+         a cycle (conventions.md §11.10).",
         &violations,
-        &stale,
+        &[],
     );
 }
 

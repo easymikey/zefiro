@@ -12,9 +12,7 @@ use widgets::animation::{
     catalogue::{
         VolumeShades,
         chip_pulse,
-        favorite_pulse,
         modal_in,
-        modal_out,
         row_flash,
         scatter_burst,
         screen_wash,
@@ -23,7 +21,6 @@ use widgets::animation::{
         wash_reveal,
     },
     stage::AnimationStage,
-    timings::AnimationTimings,
 };
 
 use crate::unit::{
@@ -96,7 +93,7 @@ fn modal_close_storyboard() {
     stage.play(Vec::new(), &overlay_backdrop(Some(MODAL)));
     stage.play(vec![Cue::OverlayClosed], &overlay_backdrop(None));
 
-    insta::assert_snapshot!(storyboard(&mut stage, slice(|t| t.modal_out, 2)));
+    insta::assert_snapshot!(storyboard(&mut stage, slice(|t| t.modal_in, 2)));
 }
 
 #[test]
@@ -151,20 +148,11 @@ fn delete_burst_storyboard() {
 }
 
 fn every_animation() -> Vec<(String, Animation)> {
-    let timings = AnimationTimings::default();
     vec![
-        ("modal_in".to_string(), modal_in(timings)),
-        ("modal_out".to_string(), modal_out(timings)),
-        (
-            "toast_slide_in".to_string(),
-            toast_slide_in(BACKGROUND, timings),
-        ),
-        ("chip_pulse".to_string(), chip_pulse(ACCENT, timings)),
-        ("row_flash".to_string(), row_flash(ACCENT, timings)),
-        (
-            "favorite_pulse".to_string(),
-            favorite_pulse(ACCENT, timings),
-        ),
+        ("modal_in".to_string(), modal_in()),
+        ("toast_slide_in".to_string(), toast_slide_in(BACKGROUND)),
+        ("chip_pulse".to_string(), chip_pulse(ACCENT)),
+        ("row_flash".to_string(), row_flash(ACCENT)),
         (
             "volume_pulse".to_string(),
             volume_pulse(
@@ -173,13 +161,12 @@ fn every_animation() -> Vec<(String, Animation)> {
                     lifted: volume_lifted(),
                 },
                 CellFilter::All,
-                timings,
             ),
         ),
-        ("screen_wash".to_string(), screen_wash(BACKGROUND, timings)),
+        ("screen_wash".to_string(), screen_wash(BACKGROUND)),
         (
             "scatter_burst".to_string(),
-            scatter_burst(BACKGROUND, CellFilter::All, timings),
+            scatter_burst(BACKGROUND, CellFilter::All),
         ),
     ]
 }
@@ -270,10 +257,9 @@ fn wash_row(buffer: &Buffer, width: u16) -> String {
 #[test]
 fn a_theme_wash_reveals_left_before_right_mid_animation() {
     let width = 90;
-    let timings = AnimationTimings::default();
     let mut stage = AnimationStage::default();
     stage.stage(
-        screen_wash(ACCENT, timings),
+        screen_wash(ACCENT),
         Rect {
             x: 0,
             y: 0,

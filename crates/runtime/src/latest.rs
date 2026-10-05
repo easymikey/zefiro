@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
-use config::{appearance_file::TomlAppearance, theme_file::TomlTheme};
+use config::theme_file::TomlTheme;
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
+use kernel::domain::appearance::Appearance;
 use library::cover::CoverDecoded;
 
 #[derive(Debug)]
@@ -44,14 +45,14 @@ impl<T> LatestReceiver<T> {
 #[derive(Debug)]
 pub struct LatestReceivers {
     pub theme: LatestReceiver<TomlTheme>,
-    pub appearance: LatestReceiver<TomlAppearance>,
+    pub appearance: LatestReceiver<Appearance>,
     pub cover: LatestReceiver<CoverDecoded>,
 }
 
 #[derive(Debug, Clone)]
 pub struct LatestSenders {
     pub(crate) theme: LatestSender<TomlTheme>,
-    pub(crate) appearance: LatestSender<TomlAppearance>,
+    pub(crate) appearance: LatestSender<Appearance>,
     pub(crate) cover: LatestSender<CoverDecoded>,
 }
 

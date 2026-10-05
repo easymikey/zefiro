@@ -1,20 +1,25 @@
-use std::{path::PathBuf, time::Duration};
+use std::convert::Infallible;
 
 use kernel::{
     cmd::ConfigPatch,
-    domain::{appearance::AppearancePatch, config::ConfigName, revision::Revision},
+    domain::appearance::{Appearance, AppearancePatch},
+    message::ConfigEvent,
+    update::machine::LoopCmd,
 };
 
-use crate::{appearance_file::TomlAppearance, theme_file::TomlTheme};
+use crate::{
+    driver::{message::ConfigMessage, watch::WatchEffect},
+    theme_file::TomlTheme,
+};
+
+pub(crate) type ConfigLoopCmd =
+    LoopCmd<ConfigEffect, Infallible, ConfigMessage, ConfigEvent>;
 
 #[derive(Debug, PartialEq)]
 pub enum ConfigEffect {
-    Watch(PathBuf),
-    Read { file: ConfigName, path: PathBuf },
-    List(PathBuf),
-    After { delay: Duration, revision: Revision },
+    Watch(WatchEffect),
     SaveConfig(ConfigPatch),
     SaveAppearance(AppearancePatch),
     PublishTheme(TomlTheme),
-    PublishAppearance(TomlAppearance),
+    PublishAppearance(Appearance),
 }

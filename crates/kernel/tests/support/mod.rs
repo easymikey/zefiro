@@ -12,7 +12,7 @@ use kernel::{
         cursor::Cursor,
         device::DeviceName,
         model::Model,
-        player::{Player, Preload},
+        player::Player,
         playhead::Playhead,
         playlist::Playlist,
         revision::Revision,
@@ -109,11 +109,11 @@ pub(crate) fn model_with_dated_tracks(count: usize) -> Model {
 
 pub(crate) fn model_playing_at(count: usize, k: usize, at: Duration) -> Model {
     let mut m = model_with_dated_tracks(count);
-    m.playlist.cursor = Cursor::with_len(count).at(k);
+    m.playlist.cursor = Cursor::at(count, k);
     m.player = Player::Playing {
         track: dated_track(k),
-        head: Playhead::anchored(at, Moment::default(), Speed::default()),
-        preload: Preload::None,
+        playhead: Playhead::anchored(at, Moment::default(), Speed::default()),
+        preloaded: None,
     };
     m
 }
@@ -122,8 +122,12 @@ pub(crate) fn playing_model(count: usize) -> Model {
     let mut m = model_with_dated_tracks(count);
     m.player = Player::Playing {
         track: dated_track(0),
-        head: Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default()),
-        preload: Preload::None,
+        playhead: Playhead::anchored(
+            Duration::ZERO,
+            Moment::default(),
+            Speed::default(),
+        ),
+        preloaded: None,
     };
     m
 }

@@ -20,16 +20,6 @@ impl DriverName {
         DriverName::Config,
         DriverName::Macos,
     ];
-
-    #[must_use]
-    pub const fn index(self) -> usize {
-        match self {
-            DriverName::Audio => 0,
-            DriverName::Library => 1,
-            DriverName::Config => 2,
-            DriverName::Macos => 3,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -118,9 +108,7 @@ mod tests {
 
     #[test]
     fn every_driver_indexes_its_own_record() {
-        for (position, driver) in DriverName::ALL.into_iter().enumerate() {
-            assert_eq!(driver.index(), position);
-
+        for driver in DriverName::ALL {
             let mut drivers = Drivers::default();
             drivers.record_mut(driver).status = DriverStatus::Stopped;
 

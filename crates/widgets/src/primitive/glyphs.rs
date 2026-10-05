@@ -1,6 +1,7 @@
 use ratatui::symbols::block;
 
 pub(crate) const TITLE_SEPARATOR: &str = " ── ";
+pub(crate) const DOT_SEPARATOR: &str = " · ";
 pub(crate) const ELLIPSIS: char = '\u{2026}';
 
 pub(crate) mod scrollbar {
@@ -93,6 +94,12 @@ pub(crate) mod track_details {
     pub(crate) const LEADER_DASH: char = '─';
     pub(crate) const GAP: &str = "  ";
     pub(crate) const MISSING: &str = "—";
+    pub(crate) const TRACK_OF: &str = "/";
+}
+
+pub(crate) mod audio_format {
+    pub(crate) const BITRATE_UNIT: &str = " kbps";
+    pub(crate) const SAMPLE_RATE_UNIT: &str = " kHz";
 }
 
 pub(crate) mod confirm_delete {

@@ -4,10 +4,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use strum::IntoStaticStr;
-
 use crate::{
     domain::{
+        appearance::AppearancePatch,
         crossfade::Crossfade,
         cue::{Cue, PlaybackChange},
         device::OutputDevice,
@@ -18,7 +17,6 @@ use crate::{
         percent::Percent,
         playlist::PlaylistFileName,
         revision::Revision,
-        setting_row::{AppearanceField, OptionIndex},
         settings::ReplayGain,
         sleep_presets::SleepPresets,
         speed::Speed,
@@ -28,7 +26,7 @@ use crate::{
     message::{Message, Timer},
 };
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ScanMode {
     #[default]
     Full,
@@ -37,20 +35,28 @@ pub enum ScanMode {
 
 #[derive(Debug, Clone, PartialEq, bon::Builder)]
 pub struct ConfigPatch {
-    #[builder(setters(option_fn(name = with_crossfade)))]
     pub crossfade: Option<Crossfade>,
-    #[builder(setters(option_fn(name = with_device)))]
     pub device: Option<OutputDevice>,
-    #[builder(setters(option_fn(name = with_replay_gain)))]
     pub replay_gain: Option<ReplayGain>,
-    #[builder(setters(option_fn(name = with_theme)))]
     pub theme: Option<ThemeName>,
-    #[builder(setters(option_fn(name = with_volume)))]
     pub volume: Option<Percent>,
-    #[builder(setters(option_fn(name = with_sleep_presets)))]
     pub sleep_presets: Option<SleepPresets>,
-    #[builder(setters(option_fn(name = with_music_dir)))]
     pub music_dir: Option<PathBuf>,
+}
+
+impl ConfigPatch {
+    #[must_use]
+    pub fn then(self, later: Self) -> Self {
+        Self {
+            crossfade: later.crossfade.or(self.crossfade),
+            device: later.device.or(self.device),
+            replay_gain: later.replay_gain.or(self.replay_gain),
+            theme: later.theme.or(self.theme),
+            volume: later.volume.or(self.volume),
+            sleep_presets: later.sleep_presets.or(self.sleep_presets),
+            music_dir: later.music_dir.or(self.music_dir),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,15 +65,11 @@ pub enum WindowColorsCmd {
     Reset,
 }
 
-#[derive(Debug, Clone, PartialEq, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ConfigCmd {
     Save(ConfigPatch),
     SelectTheme(ThemeChoice),
-    SetAppearance {
-        field: AppearanceField,
-        option: OptionIndex,
-    },
+    SetAppearance(AppearancePatch),
     Flush,
 }
 
@@ -89,8 +91,7 @@ impl TrackLoad {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AudioCmd {
     Load(TrackLoad),
     SetPlayback(Playback),
@@ -104,8 +105,7 @@ pub enum AudioCmd {
     ListDevices,
 }
 
-#[derive(Debug, Clone, PartialEq, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LibraryCmd {
     AppendHistory(HistoryEntry),
     SaveFavorites(Favorites),
@@ -130,14 +130,13 @@ pub enum LibraryCmd {
     PrefetchCover(CoverJob),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CoverJob {
     pub path: PathBuf,
     pub side: Pixels,
 }
 
-#[derive(Debug, Clone, PartialEq, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MacosCmd {
     NowPlaying(Option<Arc<Track>>),
     SetPlayback(Playback),
@@ -246,6 +245,13 @@ impl<E, M> Cmd<E, M> {
         self.messages.extend(other.messages);
         self
     }
+
+    pub fn map_effect<F>(self, lift: impl FnMut(E) -> F) -> Cmd<F, M> {
+        Cmd {
+            effects: self.effects.into_iter().map(lift).collect(),
+            messages: self.messages,
+        }
+    }
 }
 
 impl<E, M> IntoIterator for Cmd<E, M> {
@@ -280,7 +286,46 @@ impl<E, M> FromIterator<E> for Cmd<E, M> {
 
 #[cfg(test)]
 mod tests {
-    use crate::cmd::{AudioCmd, Cmd, Effect, Playback};
+    use std::time::Duration;
+
+    use crate::{
+        cmd::{AudioCmd, Cmd, ConfigPatch, Effect, Playback},
+        domain::{
+            bounded::Bounded,
+            crossfade::Crossfade,
+            device::{DeviceName, OutputDevice},
+            theme::ThemeName,
+        },
+    };
+
+    fn crossfade(seconds: u64) -> Crossfade {
+        Crossfade::clamped(Duration::from_secs(seconds))
+    }
+
+    #[test]
+    fn config_patch_then_folds_disjoint_fields_and_the_later_field_wins() {
+        let earlier = ConfigPatch::builder()
+            .theme(ThemeName::from_static("dark"))
+            .crossfade(crossfade(1))
+            .build();
+        let later = ConfigPatch::builder().crossfade(crossfade(3)).build();
+
+        let merged = earlier.then(later);
+
+        assert_eq!(merged.theme.as_ref().map(ThemeName::as_str), Some("dark"));
+        assert_eq!(merged.crossfade, Some(crossfade(3)));
+    }
+
+    #[test]
+    fn config_patch_then_an_absent_field_keeps_the_earlier_one() {
+        let speakers =
+            || OutputDevice::Named(DeviceName::new("Speakers".to_string()).unwrap());
+        let earlier = ConfigPatch::builder().device(speakers()).build();
+
+        let merged = earlier.then(ConfigPatch::builder().build());
+
+        assert_eq!(merged.device, Some(speakers()));
+    }
 
     #[test]
     fn then_with_none_keeps_the_other_cmd() {
@@ -302,6 +347,15 @@ mod tests {
                 Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
                 Effect::Audio(AudioCmd::Stop),
             ])
+        );
+    }
+
+    #[test]
+    fn map_effect_lifts_each_effect_and_keeps_the_messages() {
+        let cmd: Cmd<u8, &str> = Cmd::effect(1).then(Cmd::message("a"));
+        assert_eq!(
+            cmd.map_effect(Some).into_parts(),
+            (vec![Some(1)], vec!["a"])
         );
     }
 

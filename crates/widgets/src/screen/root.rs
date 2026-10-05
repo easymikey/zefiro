@@ -1,44 +1,25 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Rect, Size},
-    style::{Color, Style},
+    style::Style,
     widgets::{Block, Widget},
 };
 
 use crate::{
-    card::CardCover,
+    card::{CardCover, CardView, CardWidget, compact::CompactCardWidget},
     key_hints::{KeyHintsView, KeyHintsWidget},
     overlay::layer::{OverlayView, OverlayWidget},
-    playlist::row::PlaylistWidget,
+    playlist::pane::PlaylistWidget,
     primitive::canvas::Canvas,
     scene::Scene,
     screen::{
         breakpoint::Breakpoint,
-        compact::CompactScreenWidget,
         frame_layout::FrameLayout,
-        full::FullScreenWidget,
         minimal::MinimalScreenWidget,
         too_small::TooSmallWidget,
     },
-    theme::{active_theme::ActiveTheme, colors::Role},
     toast::ToastWidget,
 };
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ScreenStyle {
-    pub(crate) foreground: Color,
-    pub(crate) background: Color,
-}
-
-impl ScreenStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            foreground: theme.role(Role::Text),
-            background: theme.role(Role::WindowBackground),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScreenWidget<'a> {
@@ -50,14 +31,18 @@ pub struct ScreenWidget<'a> {
 impl Widget for &ScreenWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let theme = self.scene.active_theme();
-        let style = ScreenStyle::from_theme(&theme);
+        let colors = theme.colors();
         Block::new()
-            .style(Style::default().bg(style.background).fg(style.foreground))
+            .style(
+                Style::default()
+                    .bg(colors.window_background)
+                    .fg(colors.text),
+            )
             .render(area, buffer);
         let layout = self.layout;
         match layout.breakpoint {
             Breakpoint::TooSmall => {
-                let breakpoints = self.scene.appearance.breakpoints;
+                let breakpoints = self.scene.presentation.appearance.breakpoints;
                 (&TooSmallWidget {
                     theme,
                     minimum: Size::new(
@@ -69,22 +54,18 @@ impl Widget for &ScreenWidget<'_> {
                 return;
             }
             Breakpoint::Minimal => (&MinimalScreenWidget {
-                view: crate::card::CardView::from_scene(&self.scene),
+                view: CardView::from_scene(&self.scene),
                 theme,
-                speed_chip: self.scene.appearance_settings().speed_chip,
+                speed_chip: self.scene.settings.appearance.speed_chip,
             })
                 .render(layout.screen, buffer),
-            Breakpoint::Full => (&FullScreenWidget {
-                scene: self.scene,
-                layout: self.layout,
-                cover_art: self.cover_art,
+            Breakpoint::Full => self.paint_card(buffer),
+            Breakpoint::Compact => (&CompactCardWidget {
+                view: CardView::from_scene(&self.scene),
+                theme,
+                speed_chip: self.scene.settings.appearance.speed_chip,
             })
-                .render(layout.screen, buffer),
-            Breakpoint::Compact => (&CompactScreenWidget {
-                scene: self.scene,
-                layout: self.layout,
-            })
-                .render(layout.screen, buffer),
+                .render(layout.header, buffer),
         }
         self.paint_lists(buffer);
         self.paint_layers(buffer);
@@ -92,12 +73,34 @@ impl Widget for &ScreenWidget<'_> {
 }
 
 impl ScreenWidget<'_> {
+    fn paint_card(&self, buffer: &mut Buffer) {
+        let Some(metrics) = self.layout.card else {
+            return;
+        };
+        let scene = self.scene;
+        CardWidget {
+            view: CardView::from_scene(&scene),
+            theme: scene.active_theme(),
+            cell_aspect: scene.presentation.cell_aspect,
+            cover_sizing: scene.cover_sizing(),
+            appearance: scene.settings.appearance,
+            cover_art: self.cover_art,
+        }
+        .paint(
+            &metrics,
+            Canvas {
+                area: self.layout.header,
+                buffer,
+            },
+        );
+    }
+
     fn paint_lists(&self, buffer: &mut Buffer) {
         let scene = self.scene;
         let theme = scene.active_theme();
         if let Some(areas) = self.layout.playlist {
             PlaylistWidget {
-                view: crate::playlist::row::PlaylistView::from_scene(&scene),
+                view: crate::playlist::view::PlaylistView::from_scene(&scene),
                 theme,
             }
             .paint(&areas, buffer);
@@ -177,11 +180,9 @@ mod tests {
 
     #[test]
     fn the_cover_art_decides_whether_the_placeholder_is_painted() {
-        let sources = SceneSources::new(model_with_tracks(3));
-        let scene = Scene {
-            pixel_path: PixelPath::Protocol,
-            ..sources.scene()
-        };
+        let mut sources = SceneSources::new(model_with_tracks(3));
+        sources.pixel_path = PixelPath::Protocol;
+        let scene = sources.scene();
         let missing = frame(scene, &CardCover::Missing, (80, 24));
         let image = frame(scene, &CardCover::Image, (80, 24));
         assert!(missing.contains("No cover"), "got {missing}");

@@ -1,6 +1,9 @@
-use kernel::domain::{appearance::LayoutMode, geometry::Cells};
+use kernel::domain::{
+    appearance::{Breakpoints, LayoutMode},
+    geometry::Cells,
+};
 use ratatui::layout::Size;
-use widgets::screen::breakpoint::{Breakpoint, Breakpoints};
+use widgets::screen::breakpoint::Breakpoint;
 
 #[test]
 fn a_zero_size_terminal_is_too_small() {

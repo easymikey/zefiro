@@ -16,14 +16,14 @@ proptest! {
         (len, index) in (3usize..12usize)
             .prop_flat_map(|len| (Just(len), 1usize..(len - 1))),
     ) {
-        let cursor = Cursor::with_len(len).at(index);
+        let cursor = Cursor::at(len, index);
         let round_trip = cursor.step(1).step(-1);
         prop_assert_eq!(round_trip, cursor);
     }
 
     #[test]
     fn resize_to_zero_is_empty(len in 0usize..12, index in 0usize..12) {
-        let cursor = Cursor::with_len(len).at(index).resize(0);
+        let cursor = Cursor::at(len, index).resize(0);
         prop_assert!(cursor.is_empty());
     }
 
@@ -36,7 +36,7 @@ proptest! {
             0..20,
         ),
     ) {
-        let mut cursor = Cursor::with_len(start_len).at(start_index);
+        let mut cursor = Cursor::at(start_len, start_index);
         prop_assert!(invariant_holds(cursor));
         for (delta, resize_len) in ops {
             cursor = cursor.step(isize::from(delta));
@@ -59,7 +59,7 @@ struct StepRow {
 #[case(StepRow { index: 0, len: 5, delta: -1, expected_index: 0 })]
 #[case(StepRow { index: 4, len: 5, delta: 1, expected_index: 4 })]
 fn step_clamps_at_both_ends(#[case] row: StepRow) {
-    let cursor = Cursor::with_len(row.len).at(row.index).step(row.delta);
+    let cursor = Cursor::at(row.len, row.index).step(row.delta);
     assert_eq!(cursor.index(), row.expected_index);
 }
 
@@ -72,6 +72,6 @@ fn get_returns_none_for_an_empty_cursor() {
 #[test]
 fn get_returns_the_item_at_index() {
     let items = ["a", "b", "c"];
-    let cursor = Cursor::with_len(items.len()).at(1);
+    let cursor = Cursor::at(items.len(), 1);
     assert_eq!(cursor.get(&items), Some(&"b"));
 }

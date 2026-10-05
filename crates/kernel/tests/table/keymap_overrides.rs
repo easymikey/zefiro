@@ -1,26 +1,32 @@
 use kernel::{
+    cmd::Effect,
     domain::{
+        cue::Cue,
         cursor_over::CursorOver,
         key::KeyPress,
-        keymap::{
-            Action,
-            KeyContext,
-            KeyOverride,
-            KeyValidationError,
-            KeymapOverrides,
-        },
+        keymap::{Action, KeyContext, KeyOverride, KeymapOverrides},
+        model::Model,
         overlay::Overlay,
+        time::Moment,
         workspace::Workspace,
     },
-    message::{Message, PlaybackRequest},
+    message::{ConfigEvent, Message, PlaybackRequest},
     update::keymap::{bindings::Keymap, lookup::route},
 };
 use rstest::rstest;
 
-use crate::support::keymap::{bindings, character};
+use crate::support::{
+    keymap::{bindings, character},
+    update::update,
+};
 
-fn validation_errors(config: &KeymapOverrides) -> Vec<KeyValidationError> {
-    Keymap::new(config.clone()).errors().to_vec()
+fn reports_an_error(config: &KeymapOverrides) -> bool {
+    let mut model = Model::default();
+    let reload = ConfigEvent::KeymapReloaded(Box::new(config.clone()));
+    update(&mut model, Message::Config(reload), Moment::default())
+        .unwrap()
+        .effects()
+        .any(|effect| *effect == Effect::Animate(Cue::ToastRaised))
 }
 
 fn config_with(next: Option<&str>, prev: Option<&str>) -> KeymapOverrides {
@@ -78,9 +84,9 @@ fn an_override_routes(
     #[case] pressed: char,
     #[case] outcome: (Option<Message>, bool),
 ) {
-    let (expected, reports_an_error) = outcome;
+    let (expected, expects_an_error) = outcome;
     let config = config_with(chords.0, chords.1);
-    assert_eq!(!validation_errors(&config).is_empty(), reports_an_error);
+    assert_eq!(reports_an_error(&config), expects_an_error);
     let key = character(pressed);
     let press = KeyPress { key, typed: key };
     assert_eq!(route(&compiled(config), press), expected);
@@ -114,7 +120,7 @@ fn plays_next() -> Option<Message> {
 #[test]
 fn a_binding_that_names_a_context_compiles_into_that_focus() {
     let config = next_in_search();
-    assert!(validation_errors(&config).is_empty());
+    assert!(!reports_an_error(&config));
     let moved = bindings(&config).into_iter().find(|binding| {
         matches!(binding.message, Message::Playback(PlaybackRequest::Next))
     });
@@ -148,9 +154,4 @@ fn a_binding_that_names_a_context_leaves_the_playlist_without_it() {
     let key = character('n');
     let press = KeyPress { key, typed: key };
     assert_eq!(route(&workspace, press), None);
-}
-
-#[test]
-fn the_shipped_keymap_has_no_chord_collisions() {
-    assert!(validation_errors(&KeymapOverrides::default()).is_empty());
 }

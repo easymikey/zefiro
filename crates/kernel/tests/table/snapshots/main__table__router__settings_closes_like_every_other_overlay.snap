@@ -18,7 +18,9 @@ expression: "walked(model, messages)"
         Stopped,
         Some(
             Settings(
-                Theme,
+                Appearance(
+                    Preset,
+                ),
             ),
         ),
         Cursor {

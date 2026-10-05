@@ -45,7 +45,7 @@ fn run() -> Result<(), Error> {
 fn run_shell(
     runtime: Runtime,
     theme: config::theme_file::TomlTheme,
-    appearance: widgets::appearance::Appearance,
+    appearance: kernel::domain::appearance::Appearance,
 ) -> Result<(), Error> {
     terminal::session::install_panic_hook();
     let mut session = TerminalSession::enter()?;

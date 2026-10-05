@@ -1,13 +1,11 @@
-use kernel::{cmd::Playback, domain::geometry::Cells};
-use ratatui::{
-    style::{Color, Style},
-    text::Line,
-};
+use kernel::domain::geometry::Cells;
+use ratatui::{style::Style, text::Line};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     primitive::{
         chip,
+        glyphs,
         marker::{
             FAVORITE_COLUMNS,
             Favorite,
@@ -16,12 +14,11 @@ use crate::{
             QueuePosition,
             column_padding,
             favorite_marker,
-            playing_marker,
         },
         span::{line, text},
         text::{blanks, truncate},
     },
-    theme::{active_theme::ActiveTheme, colors::Role},
+    theme::active_theme::ActiveTheme,
 };
 
 const CHIP_GAP: usize = 1;
@@ -32,43 +29,36 @@ pub(crate) enum Selected {
     No,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Playing {
+    Yes,
+    No,
+}
+
+#[must_use]
+pub(crate) fn playing_marker(playing: Playing) -> &'static str {
+    match playing {
+        Playing::Yes => glyphs::playlist::PLAYING,
+        Playing::No => "",
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TrackRow<'a> {
     pub(crate) title: &'a str,
     pub(crate) selected: Selected,
     pub(crate) favorite: Favorite,
-    pub(crate) playing: Playback,
+    pub(crate) playing: Playing,
     pub(crate) queued: Option<QueuePosition>,
     pub(crate) row_width: Cells,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct TrackRowStyle {
-    pub(crate) foreground: Color,
-    pub(crate) selected_foreground: Color,
-    pub(crate) selected_background: Color,
-    pub(crate) favorite: Color,
-    pub(crate) highlight: Color,
-}
-
-impl TrackRowStyle {
-    #[must_use]
-    pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        Self {
-            foreground: theme.role(Role::Text),
-            selected_foreground: theme.role(Role::SelectionForeground),
-            selected_background: theme.role(Role::SelectionBackground),
-            favorite: theme.favorite(),
-            highlight: theme.role(Role::Highlight),
-        }
-    }
 }
 
 #[must_use]
 pub(crate) fn track_row_line<'a>(
     view: &TrackRow<'a>,
-    style: TrackRowStyle,
+    theme: &ActiveTheme<'_>,
 ) -> Line<'a> {
+    let colors = theme.colors();
     let favorite_width = usize::from(FAVORITE_COLUMNS);
     let playing_width = usize::from(PLAYING_COLUMNS);
     let fav = favorite_marker(view.favorite);
@@ -92,17 +82,17 @@ pub(crate) fn track_row_line<'a>(
         CHIP_GAP
     };
     let row_style = match view.selected {
-        Selected::Yes => Style::default().fg(style.selected_foreground),
-        Selected::No => Style::default().fg(style.foreground),
+        Selected::Yes => Style::default().fg(colors.selection_foreground),
+        Selected::No => Style::default().fg(colors.text),
     };
     line([
-        text(fav).fg(style.favorite),
+        text(fav).fg(theme.favorite()),
         text(blanks(column_padding(fav, favorite_width))).style(row_style),
         text(playing).style(row_style),
         text(blanks(column_padding(playing, playing_width))).style(row_style),
         text(title).style(row_style),
         text(blanks(gap)).style(row_style),
-        text(chip).fg(style.highlight),
+        text(chip).fg(colors.highlight),
     ])
 }
 
@@ -110,28 +100,24 @@ pub(crate) fn track_row_line<'a>(
 mod tests {
     use std::borrow::Cow;
 
-    use kernel::{cmd::Playback, domain::geometry::Cells};
+    use kernel::domain::geometry::Cells;
     use unicode_width::UnicodeWidthStr;
 
     use crate::{
         primitive::{
             marker::{Favorite, MARKERS_WIDTH, QueuePosition},
-            track_row::{Selected, TrackRow, TrackRowStyle, track_row_line},
+            track_row::{Playing, Selected, TrackRow, track_row_line},
         },
         test_support::noir,
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
-
-    fn colors() -> TrackRowStyle {
-        TrackRowStyle::from_theme(&ActiveTheme::new(&noir(), ColorDepth::TrueColor))
-    }
 
     fn base_props(title: &str, row_width: Cells) -> TrackRow<'_> {
         TrackRow {
             title,
             selected: Selected::No,
             favorite: Favorite::No,
-            playing: Playback::Paused,
+            playing: Playing::No,
             queued: None,
             row_width,
         }
@@ -142,7 +128,7 @@ mod tests {
         let row_width = Cells(20);
         let text = track_row_line(
             &base_props("a very long track title that will not fit", row_width),
-            colors(),
+            &ActiveTheme::new(&noir(), ColorDepth::TrueColor),
         )
         .to_string();
         assert_eq!(text.width(), row_width.count());
@@ -156,7 +142,10 @@ mod tests {
 
     #[test]
     fn a_title_that_fits_is_borrowed_not_copied() {
-        let line = track_row_line(&base_props("song", Cells(20)), colors());
+        let line = track_row_line(
+            &base_props("song", Cells(20)),
+            &ActiveTheme::new(&noir(), ColorDepth::TrueColor),
+        );
         assert!(
             line.spans
                 .iter()
@@ -168,7 +157,9 @@ mod tests {
     fn the_chip_follows_the_title_with_one_space_and_carries_the_position() {
         let mut view = base_props("song", Cells(20));
         view.queued = Some(QueuePosition::new(12));
-        let text = track_row_line(&view, colors()).to_string();
+        let text =
+            track_row_line(&view, &ActiveTheme::new(&noir(), ColorDepth::TrueColor))
+                .to_string();
         assert!(text.ends_with("song [q12]"));
     }
 
@@ -177,7 +168,9 @@ mod tests {
         let row_width = Cells(20);
         let mut view = base_props("a very long track title", row_width);
         view.queued = Some(QueuePosition::new(1));
-        let text = track_row_line(&view, colors()).to_string();
+        let text =
+            track_row_line(&view, &ActiveTheme::new(&noir(), ColorDepth::TrueColor))
+                .to_string();
         assert_eq!(text.width(), row_width.count());
         assert!(text.ends_with("… [q1]"));
     }
@@ -187,8 +180,11 @@ mod tests {
         let row_width = Cells(12);
         let fixed_width = usize::from(MARKERS_WIDTH);
         let title_width = row_width.count() - fixed_width;
-        let text = track_row_line(&base_props("界界界界界界界界", row_width), colors())
-            .to_string();
+        let text = track_row_line(
+            &base_props("界界界界界界界界", row_width),
+            &ActiveTheme::new(&noir(), ColorDepth::TrueColor),
+        )
+        .to_string();
         let title_part = text.get(fixed_width..).unwrap_or("").trim_end();
         assert!(title_part.width() <= title_width);
         assert!(title_part.ends_with('…'));

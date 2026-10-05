@@ -20,7 +20,6 @@ tachyonfx = { workspace = true }
 unicode-width = { workspace = true }
 
 [dev-dependencies]
-config = { workspace = true }
 insta = { workspace = true }
 proptest = { workspace = true }
 rstest = { workspace = true }

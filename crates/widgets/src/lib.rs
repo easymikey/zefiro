@@ -5,7 +5,6 @@
 #[cfg(test)] extern crate self as widgets;
 
 pub mod animation;
-pub mod appearance;
 mod braille;
 pub mod card;
 pub mod geometry;

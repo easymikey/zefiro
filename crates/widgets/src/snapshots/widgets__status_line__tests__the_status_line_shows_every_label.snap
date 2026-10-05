@@ -3,7 +3,7 @@ source: crates/widgets/src/status_line.rs
 expression: line
 ---
 Line::from_iter([
-    Span::from("Playlist").blue(),
+    Span::from("Playlist").gray(),
     Span::from(" ── ").gray(),
     Span::from("3/12").cyan(),
     Span::from(" ── ").gray(),

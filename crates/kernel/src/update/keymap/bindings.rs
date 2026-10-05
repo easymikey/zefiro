@@ -191,17 +191,23 @@ fn resolve(overrides: &KeymapOverrides, base: &[KeyBinding]) -> Resolution {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Keymap {
     pub(crate) overrides: KeymapOverrides,
     pub(crate) errors: Vec<KeyValidationError>,
-    pub bindings: Bindings,
+    bindings: Vec<KeyBinding>,
+}
+
+impl Default for Keymap {
+    fn default() -> Self {
+        Self::new(KeymapOverrides::default())
+    }
 }
 
 impl Keymap {
     #[must_use]
     pub fn new(overrides: KeymapOverrides) -> Self {
-        let (bindings, errors) = Bindings::resolved(&overrides);
+        let (bindings, errors) = resolved_bindings(&overrides);
         Self {
             overrides,
             errors,
@@ -215,13 +221,8 @@ impl Keymap {
     }
 
     #[must_use]
-    pub fn errors(&self) -> &[KeyValidationError] {
-        &self.errors
-    }
-
-    #[must_use]
     pub fn bindings(&self) -> &[KeyBinding] {
-        self.bindings.as_slice()
+        &self.bindings
     }
 
     pub(crate) fn diagnostic(&self) -> Option<Diagnostic> {
@@ -288,32 +289,6 @@ fn resolved_bindings(
     (out, errors)
 }
 
-#[derive(Debug, Clone)]
-pub struct Bindings(Vec<KeyBinding>);
-
-impl Bindings {
-    #[must_use]
-    pub fn new(overrides: &KeymapOverrides) -> Self {
-        Self::resolved(overrides).0
-    }
-
-    fn resolved(overrides: &KeymapOverrides) -> (Self, Vec<KeyValidationError>) {
-        let (bindings, errors) = resolved_bindings(overrides);
-        (Self(bindings), errors)
-    }
-
-    #[must_use]
-    pub fn as_slice(&self) -> &[KeyBinding] {
-        &self.0
-    }
-}
-
-impl Default for Bindings {
-    fn default() -> Self {
-        Bindings::new(&KeymapOverrides::default())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -327,7 +302,7 @@ mod tests {
     };
 
     #[test]
-    fn a_keymap_without_errors_has_no_error_text() {
+    fn the_shipped_keymap_has_no_chord_collisions() {
         assert_eq!(Keymap::default().diagnostic(), None);
     }
 

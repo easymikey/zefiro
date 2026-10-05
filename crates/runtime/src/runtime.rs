@@ -7,20 +7,19 @@ use std::{
 
 use kernel::{
     cmd::Effect,
-    domain::{model::Model, startup::Startup, time::Moment},
-    message::{DriverEvent, Message},
+    domain::{driver::DriverName, model::Model, startup::Startup, time::Moment},
+    message::{DriverEvent, Message, Timer},
     update::machine::Unhandled,
 };
 
 use crate::{
+    driver_thread::Congestion,
     error::{ClockError, Error},
-    interpret::{Interpreter, interpret},
     registry,
     shell::{Frame, ShellEffect},
     spawn::Spawners,
-    startup_paths::StartupPaths,
+    spawn_setup::StartupPaths,
     timers::Timers,
-    trace::Trace,
     wiring::{Wiring, await_exits, join_exited},
 };
 
@@ -28,12 +27,11 @@ use crate::{
 pub struct Runtime {
     pub(crate) model: Model,
     pub(crate) wiring: Wiring,
-    pub(crate) timers: Timers,
-    pub(crate) trace: Trace,
+    pub(crate) timers: Timers<Timer>,
     epoch: Instant,
     unix_offset: Duration,
-    flow: ControlFlow<()>,
-    shell_effects: Vec<ShellEffect>,
+    pub(crate) flow: ControlFlow<()>,
+    pub(crate) shell_effects: Vec<ShellEffect>,
 }
 
 impl Runtime {
@@ -46,20 +44,18 @@ impl Runtime {
     ) -> Result<Self, Error> {
         let (model, effects) = kernel::update::startup::startup(startup);
         let wiring = Wiring::spawn(&model, paths, spawners)?;
-        Ok(Self::assemble((model, effects), wiring, Trace::default())?)
+        Ok(Self::assemble((model, effects), wiring)?)
     }
 
     pub(crate) fn assemble(
         started: (Model, Vec<Effect>),
         wiring: Wiring,
-        trace: Trace,
     ) -> Result<Self, ClockError> {
         let (model, effects) = started;
         let mut runtime = Self {
             model,
             wiring,
             timers: Timers::default(),
-            trace,
             epoch: Instant::now(),
             unix_offset: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -67,19 +63,16 @@ impl Runtime {
             flow: ControlFlow::Continue(()),
             shell_effects: Vec::new(),
         };
-        for answer in runtime.interpret(effects) {
-            match runtime.deliver(answer) {
+        let stopped = registry::REGISTRY
+            .iter()
+            .filter(|row| !row.platform.present())
+            .map(|row| Message::Driver {
+                driver: row.driver,
+                event: DriverEvent::Stopped,
+            });
+        for message in runtime.interpret(effects).into_iter().chain(stopped) {
+            match runtime.deliver(message) {
                 Ok(()) | Err(Unhandled) => {}
-            }
-        }
-        for row in registry::REGISTRY {
-            if !row.platform.present() {
-                match runtime.deliver(Message::Driver {
-                    driver: row.driver,
-                    event: DriverEvent::Stopped,
-                }) {
-                    Ok(()) | Err(Unhandled) => {}
-                }
             }
         }
         Ok(runtime)
@@ -97,26 +90,17 @@ impl Runtime {
         result
     }
 
-    pub(crate) fn report_full(&mut self) {
-        for row in registry::REGISTRY {
-            if self.flow.is_break() {
-                return;
-            }
-            if self.wiring.ports.full(row.driver).take() {
-                match self.deliver(Message::Driver {
-                    driver: row.driver,
-                    event: DriverEvent::Full,
-                }) {
-                    Ok(()) | Err(Unhandled) => {}
-                }
-            }
-        }
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn trace(&self) -> &Trace {
-        &self.trace
+    pub(crate) fn congested(&self) -> Vec<DriverName> {
+        registry::REGISTRY
+            .iter()
+            .map(|row| row.driver)
+            .filter(|driver| {
+                self.wiring
+                    .ports
+                    .full(*driver)
+                    .is_some_and(Congestion::take)
+            })
+            .collect()
     }
 
     pub(crate) fn flow(&self) -> ControlFlow<()> {
@@ -149,51 +133,21 @@ impl Runtime {
     }
 
     pub(crate) fn drain(self) {
-        let Self {
-            model,
-            wiring,
-            mut trace,
-            ..
-        } = self;
+        let Self { model, wiring, .. } = self;
         let Wiring {
             mailbox, mut ports, ..
         } = wiring;
-        ports.hang_up();
+        for row in registry::REGISTRY {
+            ports.hang_up(row.driver);
+        }
         let reported = await_exits(&model, &mailbox, Self::DRAIN);
-        join_exited(&mut ports, &reported, &mut trace);
+        join_exited(&mut ports, &reported);
     }
 
     fn update(&mut self, message: Message) -> Result<Vec<Message>, Unhandled> {
         let now = self.now();
         let effects = kernel::update::update(&mut self.model, message, now)?;
         Ok(self.interpret(effects))
-    }
-
-    fn interpret(&mut self, effects: Vec<Effect>) -> Vec<Message> {
-        let mut answers = Vec::new();
-        let mut pending = effects;
-        loop {
-            let mut interpreter = Interpreter {
-                drivers: &self.model.drivers,
-                ports: &self.wiring.ports,
-                timers: &mut self.timers,
-                trace: &mut self.trace,
-            };
-            let interpreted = interpret(pending, &mut interpreter);
-            self.shell_effects.extend(interpreted.shell_effects);
-            answers.extend(interpreted.answers);
-            if interpreted.flow.is_break() {
-                self.flow = ControlFlow::Break(());
-            }
-            let Some((driver, rest)) = interpreted.restart else {
-                break;
-            };
-            for entry in self.wiring.restart(driver, &self.model) {
-                self.trace.push(entry);
-            }
-            pending = rest;
-        }
-        answers
     }
 }
 
@@ -231,9 +185,7 @@ mod tests {
         runtime::Runtime,
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
         spawn::{Spawners, config_thread::spawn_config, tests::spawn_audio_loop},
-        spawn_setup::SpawnSetup,
-        startup_paths::StartupPaths,
-        trace::Trace,
+        spawn_setup::{SpawnSetup, StartupPaths},
         wiring::Wiring,
     };
 
@@ -251,6 +203,7 @@ mod tests {
                 config: directory.join("config.toml"),
                 appearance: directory.join("sifr-ui.toml"),
                 themes: directory.join("themes"),
+                default_music_dir: None,
                 theme: None,
                 seen: SeenTexts::default(),
             },
@@ -486,7 +439,7 @@ mod tests {
     fn start(library: DriverStatus) -> (Runtime, Receiver<LibraryCmd>) {
         let (wiring, library_inbox, _writers) = Wiring::idle();
         let started = kernel::update::startup::startup(stock_startup());
-        let mut runtime = Runtime::assemble(started, wiring, Trace::default()).unwrap();
+        let mut runtime = Runtime::assemble(started, wiring).unwrap();
         runtime.model.drivers.record_mut(DriverName::Library).status = library;
         (runtime, library_inbox)
     }

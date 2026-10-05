@@ -1,12 +1,15 @@
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
 use kernel::{cmd::Playback, domain::speed::Speed, update::machine::Driver};
 use rodio::Sink;
 
 use crate::{
     AudioDriver,
-    deck::{Deck, source::PreloadMode},
-    engine::{effect::EngineEffect, message::AudioMessage},
+    deck::Deck,
+    engine::{
+        effect::EngineEffect,
+        message::{AudioMessage, EngineMessage},
+    },
     error::seek_error,
     gain::Gain,
 };
@@ -24,15 +27,14 @@ fn execute(effect: EngineEffect, deck: &mut Deck) -> Option<AudioMessage> {
         EngineEffect::Silence => quietly(deck, Deck::silence),
         EngineEffect::Open { device, speed } => Some(
             deck.open(device, speed)
-                .map_or_else(AudioMessage::Error, AudioMessage::Opened),
+                .map_or_else(EngineMessage::Error, EngineMessage::Opened)
+                .into(),
         ),
-        EngineEffect::StartLoad { speed, .. } => {
-            quietly(deck, |deck| start_load(deck, speed))
-        }
-        EngineEffect::StartHandover { speed, .. } => {
+        EngineEffect::StartLoad(speed) => quietly(deck, |deck| start_load(deck, speed)),
+        EngineEffect::StartHandover(speed) => {
             quietly(deck, |deck| start_handover(deck, speed))
         }
-        EngineEffect::Decode(_) => quietly(deck, Deck::start_decode),
+        EngineEffect::Decode => quietly(deck, Deck::clear_staged),
         EngineEffect::Start(gain) => quietly(deck, |deck| start(deck, gain)),
         EngineEffect::Resume {
             gain,
@@ -60,19 +62,15 @@ fn execute(effect: EngineEffect, deck: &mut Deck) -> Option<AudioMessage> {
             deck.sinks().for_each(|sink| sink.set_speed(speed.get()));
         }),
         EngineEffect::Clear(speed) => quietly(deck, |deck| clear(deck, speed)),
-        EngineEffect::Preload(mode) => quietly(deck, |deck| deck.start_preload(mode)),
-        EngineEffect::RestartGapless(path) => {
-            quietly(deck, |deck| restart_gapless(deck, path))
-        }
+        EngineEffect::RestartGapless => quietly(deck, Deck::drop_preload),
         EngineEffect::Promote(gain) => quietly(deck, |deck| promote(deck, gain)),
-        EngineEffect::Run(_) => None,
         EngineEffect::Report => {
             deck.resend_lost();
-            Some(AudioMessage::Reported(deck.playhead()))
+            Some(EngineMessage::Reported(deck.playhead()).into())
         }
         EngineEffect::Advance(gain) => quietly(deck, |deck| advance(deck, gain)),
         EngineEffect::Stage(track) => quietly(deck, |deck| deck.stage(track)),
-        EngineEffect::Attach(track) => deck.attach(track),
+        EngineEffect::Attach(track, mode) => deck.attach(track, mode),
         EngineEffect::TakeSignals(revision) => {
             deck.resend_lost();
             deck.take_signals(revision)
@@ -83,11 +81,6 @@ fn execute(effect: EngineEffect, deck: &mut Deck) -> Option<AudioMessage> {
 fn quietly(deck: &mut Deck, act: impl FnOnce(&mut Deck)) -> Option<AudioMessage> {
     act(deck);
     None
-}
-
-fn restart_gapless(deck: &mut Deck, path: PathBuf) {
-    deck.drop_preload();
-    deck.start_preload(PreloadMode::Gapless(path));
 }
 
 fn promote(deck: &mut Deck, gain: Gain) {
@@ -103,13 +96,13 @@ fn start(deck: &mut Deck, gain: Gain) {
 fn start_load(deck: &mut Deck, speed: Speed) {
     deck.drop_preload();
     deck.swap_primary(speed);
-    deck.start_decode();
+    deck.clear_staged();
 }
 
 fn start_handover(deck: &mut Deck, speed: Speed) {
     deck.drop_preload();
     deck.retire_primary(speed);
-    deck.start_decode();
+    deck.clear_staged();
 }
 
 fn clear(deck: &mut Deck, speed: Speed) {
@@ -135,7 +128,7 @@ fn seek_primary(deck: &Deck, target: Duration) -> Option<AudioMessage> {
     let sink = deck.primary()?;
     sink.try_seek(target)
         .err()
-        .map(|error| AudioMessage::Error(seek_error(&error)))
+        .map(|error| EngineMessage::Error(seek_error(&error)).into())
 }
 
 fn resume_primary(

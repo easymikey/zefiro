@@ -4,11 +4,19 @@ expression: effects(cmd)
 ---
 [
     Config(
-        SetAppearance {
-            field: SpeedChip,
-            option: OptionIndex(
-                1,
-            ),
-        },
+        SetAppearance(
+            AppearancePatch {
+                cover_mode: None,
+                cover_brackets: None,
+                format_chips: None,
+                speed_chip: Some(
+                    Changed,
+                ),
+                progress_time: None,
+                key_hints: None,
+                animations: None,
+                layout_mode: None,
+            },
+        ),
     ),
 ]

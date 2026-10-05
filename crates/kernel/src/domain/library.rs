@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, sync::Arc};
+use std::sync::Arc;
 
 use strum::EnumIter;
 
@@ -42,20 +42,19 @@ fn lower(text: &Option<String>) -> String {
     text.as_deref().unwrap_or("").to_lowercase()
 }
 
-pub fn sort_indices<T: Borrow<Track>>(
-    tracks: &[T],
+pub fn sort_indices(
+    tracks: &[Arc<Track>],
     key: SortKey,
     favorites: &Favorites,
-) -> Vec<ViewIndex> {
+) -> Vec<TrackIndex> {
     match key {
-        SortKey::Added => (0..tracks.len()).map(ViewIndex::new).collect(),
+        SortKey::Added => (0..tracks.len()).map(TrackIndex::new).collect(),
         SortKey::Favorites => {
-            let mut indices: Vec<ViewIndex> =
-                (0..tracks.len()).map(ViewIndex::new).collect();
+            let mut indices: Vec<TrackIndex> =
+                (0..tracks.len()).map(TrackIndex::new).collect();
             indices.sort_by_key(|&index| {
                 !tracks
                     .get(index.get())
-                    .map(Borrow::borrow)
                     .is_some_and(|found| favorites.is_favorite(found.source()))
             });
             indices
@@ -66,29 +65,28 @@ pub fn sort_indices<T: Borrow<Track>>(
     }
 }
 
-fn sort_by_key<T: Borrow<Track>>(
-    tracks: &[T],
+fn sort_by_key(
+    tracks: &[Arc<Track>],
     field: impl Fn(&Track) -> &Option<String>,
-) -> Vec<ViewIndex> {
-    let mut keyed: Vec<(String, ViewIndex)> = tracks
+) -> Vec<TrackIndex> {
+    let mut keyed: Vec<(String, TrackIndex)> = tracks
         .iter()
         .enumerate()
-        .map(|(index, item)| (lower(field(item.borrow())), ViewIndex::new(index)))
+        .map(|(index, found)| (lower(field(found)), TrackIndex::new(index)))
         .collect();
     keyed.sort();
     keyed.into_iter().map(|(_, index)| index).collect()
 }
 
-fn sort_by_artist<T: Borrow<Track>>(tracks: &[T]) -> Vec<ViewIndex> {
-    let mut keyed: Vec<(String, String, ViewIndex)> = tracks
+fn sort_by_artist(tracks: &[Arc<Track>]) -> Vec<TrackIndex> {
+    let mut keyed: Vec<(String, String, TrackIndex)> = tracks
         .iter()
         .enumerate()
-        .map(|(index, item)| {
-            let found = item.borrow();
+        .map(|(index, found)| {
             (
                 lower(&found.tags().artist),
                 lower(&found.tags().album),
-                ViewIndex::new(index),
+                TrackIndex::new(index),
             )
         })
         .collect();

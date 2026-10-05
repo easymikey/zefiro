@@ -6,7 +6,6 @@ use crate::{
         cue::Cue,
         favorites::Favorites,
         history::HistoryEntry,
-        index::TrackIndex,
         library::{Library, sort_indices},
         model::ScanStatus,
         player::Player,
@@ -153,7 +152,7 @@ fn retag_tracks(tracks: &mut [Arc<Track>], tagged: &Tagged) {
 }
 
 fn retag_player(player: &mut Player, tagged: &Tagged) {
-    if let Player::Loading { track, .. }
+    if let Player::Loading(track)
     | Player::Playing { track, .. }
     | Player::Paused { track, .. } = player
     {
@@ -176,10 +175,7 @@ fn tagging_progress(scan_status: &mut ScanStatus, read: usize) -> Cmd {
 
 fn install_library(parts: &mut LibraryParts<'_>, tracks: Vec<Arc<Track>>) {
     let sort = parts.workspace.browse.sort;
-    let view = sort_indices(&tracks, sort, parts.favorites)
-        .into_iter()
-        .map(|row| TrackIndex::new(row.get()))
-        .collect();
+    let view = sort_indices(&tracks, sort, parts.favorites);
     *parts.library = Some(Library { tracks, view });
 }
 

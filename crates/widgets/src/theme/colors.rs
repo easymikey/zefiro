@@ -1,7 +1,4 @@
-use std::fmt;
-
 use kernel::domain::appearance::Rgb;
-use strum::{EnumIter, IntoEnumIterator};
 
 use crate::theme::{
     contrast::{
@@ -17,21 +14,6 @@ const WINDOW_BACKGROUND_MIX: f32 = 0.06;
 const SELECTION_BACKGROUND_MIX: f32 = 0.18;
 const BAR_GROOVE_MIX: f32 = 0.28;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
-pub enum Role {
-    Background,
-    WindowBackground,
-    Text,
-    Accent,
-    Accent2,
-    SelectionForeground,
-    SelectionBackground,
-    Highlight,
-    Frame,
-    Dim,
-    BarGroove,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThemeBase {
     pub background: Rgb,
@@ -44,49 +26,41 @@ pub struct ThemeBase {
     pub window_background: Option<Rgb>,
 }
 
-#[derive(Clone, PartialEq, Default)]
-pub struct Colors {
-    background: Rgb,
-    window_background: Rgb,
-    text: Rgb,
-    accent: Rgb,
-    accent2: Rgb,
-    selection_foreground: Rgb,
-    selection_background: Rgb,
-    highlight: Rgb,
-    frame: Rgb,
-    dim: Rgb,
-    bar_groove: Rgb,
-    pub(crate) spectrum: [Rgb; 3],
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Colors<C = Rgb> {
+    pub(crate) background: C,
+    pub window_background: C,
+    pub text: C,
+    pub(crate) accent: C,
+    pub(crate) accent2: C,
+    pub(crate) selection_foreground: C,
+    pub(crate) selection_background: C,
+    pub(crate) highlight: C,
+    pub(crate) muted_foreground: C,
+    pub(crate) bar_groove: C,
+    pub(crate) spectrum: [C; 3],
 }
 
-impl fmt::Debug for Colors {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let roles: Vec<Rgb> = Role::iter().map(|role| self.role(role)).collect();
-        f.debug_struct("Colors")
-            .field("roles", &roles)
-            .field("spectrum", &self.spectrum)
-            .finish()
+impl<C: Copy> Colors<C> {
+    #[must_use]
+    pub(crate) fn map<D>(&self, resolve: impl Fn(C) -> D) -> Colors<D> {
+        Colors {
+            background: resolve(self.background),
+            window_background: resolve(self.window_background),
+            text: resolve(self.text),
+            accent: resolve(self.accent),
+            accent2: resolve(self.accent2),
+            selection_foreground: resolve(self.selection_foreground),
+            selection_background: resolve(self.selection_background),
+            highlight: resolve(self.highlight),
+            muted_foreground: resolve(self.muted_foreground),
+            bar_groove: resolve(self.bar_groove),
+            spectrum: self.spectrum.map(resolve),
+        }
     }
 }
 
 impl Colors {
-    pub fn role(&self, role: Role) -> Rgb {
-        match role {
-            Role::Background => self.background,
-            Role::WindowBackground => self.window_background,
-            Role::Text => self.text,
-            Role::Accent => self.accent,
-            Role::Accent2 => self.accent2,
-            Role::SelectionForeground => self.selection_foreground,
-            Role::SelectionBackground => self.selection_background,
-            Role::Highlight => self.highlight,
-            Role::Frame => self.frame,
-            Role::Dim => self.dim,
-            Role::BarGroove => self.bar_groove,
-        }
-    }
-
     pub fn spectrum_color_at(&self, t: f32) -> Rgb {
         gradient_at(&self.spectrum, t).unwrap_or(self.spectrum[1])
     }
@@ -119,8 +93,7 @@ impl Colors {
                 &[window_background, selection_background],
                 MIN_MARKER_CONTRAST,
             ),
-            frame: base.muted_foreground,
-            dim: base.muted_foreground,
+            muted_foreground: base.muted_foreground,
             bar_groove: visible_band(
                 window_background,
                 base.foreground,
@@ -136,7 +109,7 @@ mod tests {
     use kernel::domain::appearance::Rgb;
 
     use crate::theme::{
-        colors::{Colors, Role, ThemeBase},
+        colors::{Colors, ThemeBase},
         contrast::{
             MIN_BAND_CONTRAST,
             MIN_MARKER_CONTRAST,
@@ -164,10 +137,10 @@ mod tests {
     }
 
     #[test]
-    fn every_role_reads_back_the_hex_the_derivation_table_wrote() {
+    fn every_field_reads_back_the_hex_the_derivation_table_wrote() {
         let colors = Colors::derive(&test_base());
-        assert_eq!(colors.role(Role::Background), Rgb([0x10, 0x20, 0x30]));
-        assert_eq!(colors.role(Role::Accent2), Rgb([0xff, 0xff, 0]));
+        assert_eq!(colors.background, Rgb([0x10, 0x20, 0x30]));
+        assert_eq!(colors.accent2, Rgb([0xff, 0xff, 0]));
     }
 
     #[test]
@@ -181,24 +154,21 @@ mod tests {
             ..test_base()
         };
         let colors = Colors::derive(&base);
-        let window_background = colors.role(Role::WindowBackground);
-        let selection_background = colors.role(Role::SelectionBackground);
+        let window_background = colors.window_background;
+        let selection_background = colors.selection_background;
         assert!(
             contrast_ratio(selection_background, window_background)
                 >= MIN_BAND_CONTRAST
         );
         assert!(
-            contrast_ratio(
-                colors.role(Role::SelectionForeground),
-                selection_background
-            ) >= MIN_SELECTION_TEXT_CONTRAST
+            contrast_ratio(colors.selection_foreground, selection_background)
+                >= MIN_SELECTION_TEXT_CONTRAST
         );
-        let highlight = colors.role(Role::Highlight);
+        let highlight = colors.highlight;
         assert!(contrast_ratio(highlight, window_background) >= MIN_MARKER_CONTRAST);
         assert!(contrast_ratio(highlight, selection_background) >= MIN_MARKER_CONTRAST);
         assert!(
-            contrast_ratio(colors.role(Role::BarGroove), window_background)
-                >= MIN_BAND_CONTRAST,
+            contrast_ratio(colors.bar_groove, window_background) >= MIN_BAND_CONTRAST,
             "a bar's unfilled track has to be visible on the card it is painted on"
         );
     }
@@ -215,10 +185,7 @@ mod tests {
             ..test_base()
         };
         let colors = Colors::derive(&base);
-        assert!(
-            luma(colors.role(Role::WindowBackground))
-                > luma(colors.role(Role::Background))
-        );
+        assert!(luma(colors.window_background) > luma(colors.background));
     }
 
     #[test]
@@ -229,9 +196,6 @@ mod tests {
             ..test_base()
         };
         let colors = Colors::derive(&base);
-        assert!(
-            luma(colors.role(Role::WindowBackground))
-                < luma(colors.role(Role::Background))
-        );
+        assert!(luma(colors.window_background) < luma(colors.background));
     }
 }

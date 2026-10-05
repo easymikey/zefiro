@@ -1,3 +1,4 @@
+use kernel::domain::geometry::Pixels;
 use tiny_skia::{Path, PathBuilder};
 
 use crate::pixels::numeric::{dimension_f32, floor};
@@ -78,31 +79,32 @@ pub(crate) struct Stroke {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct VinylGeometry {
-    pub(crate) width_px: u32,
-    pub(crate) height_px: u32,
+    pub(crate) width: Pixels,
+    pub(crate) height: Pixels,
     pub(crate) record_radius: f32,
     pub(crate) label_radius: f32,
 }
 
 impl VinylGeometry {
     pub(crate) fn new(size_px: u32) -> Self {
-        let height_px = size_px.max(1);
-        let size = dimension_f32(height_px);
+        let height = size_px.max(1);
+        let size = dimension_f32(height);
         let record_radius = VINYL_LAYOUT.disc_fraction * size / 2.0;
         let peek = VINYL_LAYOUT.slide_fraction * (record_radius * 2.0);
         let shadow_margin =
             VINYL_LAYOUT.shadow_offset * size * shadow_horizontal_reach_fraction();
         Self {
-            width_px: height_px
-                .saturating_add(floor::<u32>((peek + shadow_margin).ceil())),
-            height_px,
+            width: Pixels(
+                height.saturating_add(floor::<u32>((peek + shadow_margin).ceil())),
+            ),
+            height: Pixels(height),
             record_radius,
             label_radius: record_radius * VINYL_LAYOUT.label_radius_fraction,
         }
     }
 
     pub(crate) fn size(&self) -> f32 {
-        dimension_f32(self.height_px)
+        dimension_f32(self.height.0)
     }
 
     pub(crate) fn record(&self) -> Disc {
@@ -177,7 +179,7 @@ mod tests {
             let shadow_right_edge_px = disc.center_x
                 + disc.radius
                 + shadow_offset_px * shadow_horizontal_reach_fraction();
-            let canvas_width_px = dimension_f32(geometry.width_px);
+            let canvas_width_px = dimension_f32(geometry.width.0);
             assert!(
                 shadow_right_edge_px <= canvas_width_px,
                 "disc+shadow right edge {shadow_right_edge_px} exceeds canvas width \

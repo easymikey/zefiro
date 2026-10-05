@@ -11,7 +11,7 @@ use kernel::{
         library::Library,
         model::Model,
         overlay::{Overlay, OverlayName},
-        player::{Player, Preload},
+        player::Player,
         playhead::Playhead,
         playlist::RepeatMode,
         revision::Revision,
@@ -107,7 +107,7 @@ pub(crate) fn moon_library() -> Model {
 
 pub(crate) fn moon_library_selecting(row: usize) -> Model {
     let mut model = moon_library();
-    model.workspace.browse.cursor = Cursor::with_len(3).at(row);
+    model.workspace.browse.cursor = Cursor::at(3, row);
     model
 }
 
@@ -128,7 +128,7 @@ pub(crate) fn logged(log: &[&str], playlist: &[&str]) -> Model {
         })
         .collect();
     model.workspace.overlay = Some(Overlay::History(CursorOver {
-        cursor: Cursor::with_len(log.len()).at(log.len().saturating_sub(1)),
+        cursor: Cursor::at(log.len(), log.len().saturating_sub(1)),
         content: (),
     }));
     model
@@ -144,12 +144,12 @@ pub(crate) fn playing_nothing_selected(duration: Duration) -> Model {
                 .audio_format(AudioFormat::default())
                 .build()
                 .into(),
-            head: Playhead::anchored(
+            playhead: Playhead::anchored(
                 Duration::ZERO,
                 Moment::default(),
                 Speed::default(),
             ),
-            preload: Preload::None,
+            preloaded: None,
         },
         ..Default::default()
     }
@@ -208,7 +208,7 @@ pub(crate) fn shuffle() -> Message {
 }
 
 pub(crate) fn shuffled(order: Vec<usize>) -> Message {
-    Message::ShuffleRolled(order.into_iter().map(TrackIndex::new).collect())
+    Message::ShuffleRolled(order.into_iter().map(ViewIndex::new).collect())
 }
 
 pub(crate) fn a_lap_of(laps: usize) -> Vec<Message> {

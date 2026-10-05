@@ -125,11 +125,6 @@ pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
 ];
 
 #[must_use]
-pub fn appearance_row(id: AppearanceField) -> Option<&'static AppearanceRow> {
-    APPEARANCE_ROWS.iter().find(|row| row.field == id)
-}
-
-#[must_use]
 pub fn appearance_rows(appearance: AppearanceSettings) -> Vec<AppearanceSetting> {
     APPEARANCE_ROWS
         .iter()
@@ -184,7 +179,11 @@ fn field_choice(field: AppearanceField, appearance: AppearanceSettings) -> Choic
     }
 }
 
-fn field_patch(field: AppearanceField, option: OptionIndex) -> Option<AppearancePatch> {
+#[must_use]
+pub fn appearance_patch(
+    field: AppearanceField,
+    option: OptionIndex,
+) -> Option<AppearancePatch> {
     Some(match field {
         AppearanceField::Preset => {
             AppearancePatch::from(preset_appearance(*PRESETS.get(option.get())?))
@@ -216,14 +215,6 @@ fn field_patch(field: AppearanceField, option: OptionIndex) -> Option<Appearance
     })
 }
 
-#[must_use]
-pub fn appearance_patch(
-    id: AppearanceField,
-    option: OptionIndex,
-) -> Option<AppearancePatch> {
-    field_patch(appearance_row(id)?.field, option)
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -238,19 +229,16 @@ mod tests {
             FormatChips,
             preset_appearance,
         },
-        appearance_rows::{
-            APPEARANCE_ROWS,
-            appearance_patch,
-            appearance_row,
-            appearance_rows,
-        },
+        appearance_rows::{APPEARANCE_ROWS, appearance_patch, appearance_rows},
         cue::Cue,
         setting_row::{AppearanceField, Choice, OptionCount, OptionIndex},
         theme::ThemeName,
     };
 
     fn option_at_row(id: AppearanceField, position: usize) -> OptionIndex {
-        appearance_row(id)
+        APPEARANCE_ROWS
+            .iter()
+            .find(|row| row.field == id)
             .unwrap()
             .control
             .count()
@@ -335,7 +323,7 @@ mod tests {
     #[case::key_hints(AppearanceField::KeyHints, 1)]
     #[case::animations(AppearanceField::Animations, 1)]
     #[case::layout_mode(AppearanceField::LayoutMode, 2)]
-    fn appearance_rows_is_the_inverse_of_field_patch(
+    fn appearance_rows_is_the_inverse_of_appearance_patch(
         #[case] field: AppearanceField,
         #[case] position: usize,
     ) {
@@ -409,7 +397,10 @@ mod tests {
 
     #[test]
     fn the_preset_rows_options_carry_a_theme_per_preset() {
-        let row = appearance_row(AppearanceField::Preset).unwrap();
+        let row = APPEARANCE_ROWS
+            .iter()
+            .find(|row| row.field == AppearanceField::Preset)
+            .unwrap();
 
         assert_eq!(row.themes, &[None, Some(ThemeName::from_static("noir"))]);
     }

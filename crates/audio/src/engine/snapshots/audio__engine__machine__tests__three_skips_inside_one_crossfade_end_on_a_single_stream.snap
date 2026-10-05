@@ -7,9 +7,11 @@ expression: wiring.log
     Ok(
         Cmd {
             effects: [
-                Clear(
-                    Speed(
-                        1.0,
+                Execute(
+                    Clear(
+                        Speed(
+                            1.0,
+                        ),
                     ),
                 ),
             ],
@@ -19,34 +21,51 @@ expression: wiring.log
     Ok(
         Cmd {
             effects: [
-                StartLoad {
-                    path: "/tmp/track0.flac",
-                    speed: Speed(
-                        1.0,
-                    ),
-                },
-            ],
-            messages: [],
-        },
-    ),
-    Ok(
-        Cmd {
-            effects: [
-                Play,
-                Report,
-            ],
-            messages: [],
-        },
-    ),
-    Ok(
-        Cmd {
-            effects: [
-                Start(
-                    Gain(
-                        1.0,
+                Execute(
+                    StartLoad(
+                        Speed(
+                            1.0,
+                        ),
                     ),
                 ),
-                Report,
+                Run(
+                    Decode {
+                        path: "/tmp/track0.flac",
+                        revision: Revision(
+                            2,
+                        ),
+                    },
+                ),
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Execute(
+                    Play,
+                ),
+                Execute(
+                    Report,
+                ),
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Execute(
+                    Start(
+                        Gain(
+                            1.0,
+                        ),
+                    ),
+                ),
+                Execute(
+                    Report,
+                ),
             ],
             messages: [
                 Loaded(
@@ -60,9 +79,11 @@ expression: wiring.log
     Ok(
         Cmd {
             effects: [
-                Clear(
-                    Speed(
-                        1.0,
+                Execute(
+                    Clear(
+                        Speed(
+                            1.0,
+                        ),
                     ),
                 ),
             ],
@@ -72,34 +93,51 @@ expression: wiring.log
     Ok(
         Cmd {
             effects: [
-                StartLoad {
-                    path: "/tmp/track1.flac",
-                    speed: Speed(
-                        1.0,
-                    ),
-                },
-            ],
-            messages: [],
-        },
-    ),
-    Ok(
-        Cmd {
-            effects: [
-                Play,
-                Report,
-            ],
-            messages: [],
-        },
-    ),
-    Ok(
-        Cmd {
-            effects: [
-                Start(
-                    Gain(
-                        1.0,
+                Execute(
+                    StartLoad(
+                        Speed(
+                            1.0,
+                        ),
                     ),
                 ),
-                Report,
+                Run(
+                    Decode {
+                        path: "/tmp/track1.flac",
+                        revision: Revision(
+                            2,
+                        ),
+                    },
+                ),
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Execute(
+                    Play,
+                ),
+                Execute(
+                    Report,
+                ),
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Execute(
+                    Start(
+                        Gain(
+                            1.0,
+                        ),
+                    ),
+                ),
+                Execute(
+                    Report,
+                ),
             ],
             messages: [
                 Loaded(
@@ -113,9 +151,11 @@ expression: wiring.log
     Ok(
         Cmd {
             effects: [
-                Clear(
-                    Speed(
-                        1.0,
+                Execute(
+                    Clear(
+                        Speed(
+                            1.0,
+                        ),
                     ),
                 ),
             ],
@@ -125,34 +165,51 @@ expression: wiring.log
     Ok(
         Cmd {
             effects: [
-                StartLoad {
-                    path: "/tmp/track2.flac",
-                    speed: Speed(
-                        1.0,
-                    ),
-                },
-            ],
-            messages: [],
-        },
-    ),
-    Ok(
-        Cmd {
-            effects: [
-                Play,
-                Report,
-            ],
-            messages: [],
-        },
-    ),
-    Ok(
-        Cmd {
-            effects: [
-                Start(
-                    Gain(
-                        1.0,
+                Execute(
+                    StartLoad(
+                        Speed(
+                            1.0,
+                        ),
                     ),
                 ),
-                Report,
+                Run(
+                    Decode {
+                        path: "/tmp/track2.flac",
+                        revision: Revision(
+                            2,
+                        ),
+                    },
+                ),
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Execute(
+                    Play,
+                ),
+                Execute(
+                    Report,
+                ),
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Execute(
+                    Start(
+                        Gain(
+                            1.0,
+                        ),
+                    ),
+                ),
+                Execute(
+                    Report,
+                ),
             ],
             messages: [
                 Loaded(

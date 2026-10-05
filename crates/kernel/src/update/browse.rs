@@ -4,7 +4,6 @@ use crate::{
     cmd::{Cmd, Effect, LibraryCmd, ScanMode},
     domain::{
         cue::Cue,
-        cursor::Cursor,
         cursor_over::cycled,
         direction::Direction,
         favorites::Favorites,
@@ -13,51 +12,14 @@ use crate::{
         library::{Library, sort_indices},
         model::ScanStatus,
         player::Player,
-        playlist::{PlayOrder, Playlist, PlaylistSource, index_of_path},
+        playlist::{PlayOrder, Playlist, PlaylistSource, index_of},
         time::Moment,
         track::TrackRef,
-        workspace::{Browse, Workspace},
+        workspace::Browse,
     },
     message::{BrowseRequest, QueueRequest},
-    update::{
-        machine::{Machine, Unhandled},
-        player::PlaybackParts,
-    },
+    update::{machine::Unhandled, player::PlaybackParts},
 };
-
-#[derive(Debug, Clone, Copy)]
-pub enum BrowseMessage {
-    CursorBy(isize),
-    Top,
-    Bottom,
-    CursorTo(ViewIndex),
-    PageBy(usize, Direction),
-}
-
-impl Machine for Browse {
-    type Message = BrowseMessage;
-    type Effect = Cmd;
-
-    fn transition(&mut self, message: BrowseMessage) -> Result<Cmd, Unhandled> {
-        self.cursor = match message {
-            BrowseMessage::CursorBy(delta) => self.cursor.step(delta),
-            BrowseMessage::Top => self.cursor.first(),
-            BrowseMessage::Bottom => self.cursor.last(),
-            BrowseMessage::CursorTo(index) => {
-                Cursor::with_len(self.cursor.len()).at(index.get())
-            }
-            BrowseMessage::PageBy(rows, direction) => self.cursor.page(rows, direction),
-        };
-        Ok(Cmd::none())
-    }
-}
-
-fn navigate(
-    workspace: &mut Workspace,
-    message: BrowseMessage,
-) -> Result<Cmd, Unhandled> {
-    workspace.browse.transition(message)
-}
 
 pub(crate) struct BrowseParts<'a> {
     pub(crate) playback: PlaybackParts<'a>,
@@ -87,24 +49,29 @@ pub(crate) fn update(
             Ok(Cmd::none())
         }
         BrowseRequest::CursorBy { rows } => {
-            navigate(workspace, BrowseMessage::CursorBy(rows))
+            workspace.browse.cursor = workspace.browse.cursor.step(rows);
+            Ok(Cmd::none())
         }
-        BrowseRequest::Top => navigate(workspace, BrowseMessage::Top),
-        BrowseRequest::Bottom => navigate(workspace, BrowseMessage::Bottom),
+        BrowseRequest::Top => {
+            workspace.browse.cursor = workspace.browse.cursor.first();
+            Ok(Cmd::none())
+        }
+        BrowseRequest::Bottom => {
+            workspace.browse.cursor = workspace.browse.cursor.last();
+            Ok(Cmd::none())
+        }
         BrowseRequest::CycleSort => Ok(cycle_sort(&mut parts)),
         BrowseRequest::ToggleFavorite => toggle_favorite(&mut parts),
-        BrowseRequest::CursorTo(index) => {
-            navigate(workspace, BrowseMessage::CursorTo(index))
-        }
         BrowseRequest::PlaySelected => {
             let selected = workspace.browse.selected();
             crate::update::audio::jump_to(&mut parts.playback, selected, now)
         }
         BrowseRequest::PageBy(direction) => {
             let rows = workspace.visible_rows.count();
-            navigate(workspace, BrowseMessage::PageBy(rows, direction))
+            workspace.browse.cursor = workspace.browse.cursor.page(rows, direction);
+            Ok(Cmd::none())
         }
-        BrowseRequest::FullScan => Ok(full_scan(&mut parts)),
+        BrowseRequest::FullScan => full_scan(&mut parts),
         BrowseRequest::SavePlaylist(name) => {
             Ok(Effect::Library(LibraryCmd::SavePlaylist {
                 name,
@@ -118,9 +85,7 @@ pub(crate) fn update(
 
 fn refused(message: &BrowseRequest, len: usize, visible_rows: Cells) -> bool {
     match message {
-        BrowseRequest::CursorBy { .. }
-        | BrowseRequest::CursorTo(_)
-        | BrowseRequest::ToggleFavorite => len == 0,
+        BrowseRequest::CursorBy { .. } | BrowseRequest::ToggleFavorite => len == 0,
         BrowseRequest::PageBy(_) => len == 0 || visible_rows == Cells(0),
         BrowseRequest::ChordPrefix(_)
         | BrowseRequest::Top
@@ -170,18 +135,18 @@ fn source_at(playlist: &Playlist, index: ViewIndex) -> Option<TrackRef> {
         .map(|track| track.source().clone())
 }
 
-fn full_scan(parts: &mut BrowseParts<'_>) -> Cmd {
+fn full_scan(parts: &mut BrowseParts<'_>) -> Result<Cmd, Unhandled> {
     match parts.scan_status {
         ScanStatus::Idle => {
             *parts.scan_status = ScanStatus::Scanning;
-            Effect::Library(LibraryCmd::Scan {
+            Ok(Effect::Library(LibraryCmd::Scan {
                 music_dir: parts.music_dir.to_path_buf(),
                 revision: parts.playback.revisions.issue_scan(),
                 mode: ScanMode::Full,
             })
-            .into()
+            .into())
         }
-        ScanStatus::Scanning | ScanStatus::Tagging { .. } => Cmd::none(),
+        ScanStatus::Scanning | ScanStatus::Tagging { .. } => Err(Unhandled),
     }
 }
 
@@ -253,10 +218,7 @@ fn cycle_sort(parts: &mut BrowseParts<'_>) -> Cmd {
     let Some(library) = parts.library.as_mut() else {
         return Cmd::none();
     };
-    library.view = sort_indices(&library.tracks, sort, parts.favorites)
-        .into_iter()
-        .map(|row| TrackIndex::new(row.get()))
-        .collect();
+    library.view = sort_indices(&library.tracks, sort, parts.favorites);
     resync_playlist(
         *parts.playlist_source,
         ResyncParts {
@@ -282,11 +244,7 @@ fn trash_track(
 ) -> Result<Cmd, Unhandled> {
     let playback = &mut parts.playback;
     let library = parts.library.as_mut().ok_or(Unhandled)?;
-    let removed_position = library
-        .tracks
-        .iter()
-        .position(|track| track.source() == source)
-        .ok_or(Unhandled)?;
+    let removed_position = index_of(&library.tracks, source).ok_or(Unhandled)?;
     let track = library.tracks.remove(removed_position);
     library.view = library
         .view
@@ -332,7 +290,8 @@ pub(crate) fn resync_playlist(source: PlaylistSource, parts: ResyncParts<'_>) {
         .collect();
     let anchor = player
         .current()
-        .and_then(|track| index_of_path(track.path(), &tracks));
+        .and_then(|track| index_of(&tracks, track.source()))
+        .map(ViewIndex::new);
     playlist.relist(tracks, anchor);
     playlist.play_order =
         std::mem::replace(&mut playlist.play_order, PlayOrder::Linear).without_order();

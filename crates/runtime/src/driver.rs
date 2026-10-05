@@ -2,17 +2,18 @@ use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use kernel::{
-    cmd::{Cmd, Cmds},
+    cmd::Cmds,
     message::Message,
-    update::machine::{Driver, Machine},
+    update::machine::{Driver, LoopCmd, LoopEffect, Machine},
 };
 
 use crate::{
     driver_thread::{Congestion, DriverThread, SendError, send, spawn_driver},
     driver_wait::{Inboxes, LoopInput},
     error::Error,
-    jobs::{JobThread, Jobs, LoopEffect, spawn_jobs, stash},
+    jobs::{JobThread, Jobs, spawn_jobs, stash},
     registry::DriverRow,
+    timers::Timers,
     watcher::FileStream,
 };
 
@@ -24,23 +25,18 @@ pub(crate) struct DriverLoop<D: Driver, J> {
     pub(crate) inbox: Sender<Message>,
     pub(crate) heard: Receiver<D::Message>,
     pub(crate) seed: Option<D::Message>,
-    pub(crate) jobs: Jobs<<D as Driver>::Effect, J, D::Message>,
-}
-
-struct LoopTimer<M> {
-    deadline: Instant,
-    message: M,
+    pub(crate) jobs: Jobs<J, D::Message>,
 }
 
 struct Outlets<'a, D: Driver, J> {
     inbox: &'a Sender<Message>,
     full: &'a Congestion,
     row: &'static DriverRow,
-    jobs: Jobs<<D as Driver>::Effect, J, D::Message>,
+    jobs: Jobs<J, D::Message>,
     results: Sender<D::Message>,
     worker: Option<JobThread<J>>,
     pending: Vec<J>,
-    timers: Vec<LoopTimer<D::Message>>,
+    timers: Timers<D::Message>,
     files: FileStream<D::Message>,
 }
 
@@ -79,10 +75,10 @@ where
 
     fn place(
         &mut self,
-        effect: <D as Driver>::Effect,
+        effect: LoopEffect<<D as Driver>::Effect, J, D::Message>,
         driver: &mut D,
     ) -> Option<D::Message> {
-        match (self.jobs.split)(effect) {
+        match effect {
             LoopEffect::Execute(effect) => driver.execute(effect),
             LoopEffect::Run(job) => {
                 stash(&mut self.pending, job);
@@ -90,7 +86,7 @@ where
             }
             LoopEffect::After { delay, message } => {
                 if let Some(deadline) = Instant::now().checked_add(delay) {
-                    self.timers.push(LoopTimer { deadline, message });
+                    self.timers.schedule(deadline, message);
                 }
                 None
             }
@@ -98,26 +94,13 @@ where
             LoopEffect::Unwatch(path) => self.files.unwatch(&path),
         }
     }
-
-    fn next_deadline(&self) -> Option<Instant> {
-        self.timers.iter().map(|timer| timer.deadline).min()
-    }
-
-    fn take_due(&mut self, now: Instant) -> Vec<D::Message> {
-        self.timers.sort_by_key(|timer| timer.deadline);
-        let due = self.timers.partition_point(|timer| timer.deadline <= now);
-        self.timers
-            .drain(..due)
-            .map(|timer| timer.message)
-            .collect()
-    }
 }
 
-impl<D, J, M> DriverLoop<D, J>
+impl<D, J, E, X, M> DriverLoop<D, J>
 where
-    D: Driver + Machine<Effect = Cmd<<D as Driver>::Effect, M>>,
-    D::Message: Send + 'static,
-    <D as Driver>::Effect: 'static,
+    D: Driver<Effect = E> + Machine<Message = X, Effect = LoopCmd<E, J, X, M>>,
+    X: Send + 'static,
+    E: 'static,
     J: Ord + Send + 'static,
     M: Into<Message> + Send + 'static,
 {
@@ -150,8 +133,8 @@ where
                     results,
                     worker: None,
                     pending: Vec::new(),
-                    timers: Vec::new(),
-                    files: FileStream::idle(),
+                    timers: Timers::default(),
+                    files: FileStream::Idle,
                 };
                 let inboxes = Inboxes {
                     commands,
@@ -179,7 +162,8 @@ where
         D::Message: From<Cmds<C>>,
     {
         loop {
-            let fed = match inboxes.wait(&outlets.files, outlets.next_deadline()) {
+            let fed = match inboxes.wait(&outlets.files, outlets.timers.next_deadline())
+            {
                 LoopInput::Heard(message) => Self::feed(&mut driver, message, outlets),
                 LoopInput::Due => Self::feed_due(&mut driver, outlets),
                 LoopInput::Lost(source) => {
@@ -198,7 +182,7 @@ where
         driver: &mut D,
         outlets: &mut Outlets<'_, D, J>,
     ) -> Result<(), SendError> {
-        for message in outlets.take_due(Instant::now()) {
+        for message in outlets.timers.take_due(Instant::now()) {
             Self::feed(driver, message, outlets)?;
         }
         Ok(())
@@ -248,15 +232,15 @@ mod tests {
         cmd::{AudioCmd, Cmd, Cmds},
         domain::{driver::DriverName, io_error::IoError, settings::AudioSettings},
         message::{AudioEvent, DriverEvent, Message},
-        update::machine::{Driver, Machine, Unhandled},
+        update::machine::{Driver, LoopCmd, LoopEffect, Machine, Unhandled},
     };
 
     use crate::{
-        driver::{DriverLoop, LoopEffect, Outlets},
+        driver::{DriverLoop, Outlets},
         driver_thread::{Congestion, DriverThread, spawn_idle},
         jobs::Jobs,
         registry,
-        spawn::audio_thread::audio_split,
+        timers::Timers,
         watcher::FileStream,
     };
 
@@ -290,8 +274,6 @@ mod tests {
     }
 
     enum ProbeEffect {
-        After { delay: Duration, tag: u8 },
-        Watch(PathBuf),
         Report(Note),
     }
 
@@ -304,33 +286,40 @@ mod tests {
 
     impl Machine for Probe {
         type Message = ProbeMessage;
-        type Effect = Cmd<ProbeEffect, Message>;
+        type Effect = LoopCmd<ProbeEffect, NoJob, ProbeMessage, Message>;
 
         fn transition(
             &mut self,
             message: ProbeMessage,
-        ) -> Result<Cmd<ProbeEffect, Message>, Unhandled> {
+        ) -> Result<LoopCmd<ProbeEffect, NoJob, ProbeMessage, Message>, Unhandled>
+        {
             Ok(match message {
                 ProbeMessage::Cmds(cmds) => cmds
                     .cmds
                     .into_iter()
                     .map(|cmd| match cmd {
                         ProbeCmd::After { delay, tag } => {
-                            Cmd::effect(ProbeEffect::After { delay, tag })
+                            Cmd::effect(LoopEffect::After {
+                                delay,
+                                message: ProbeMessage::Fired(tag),
+                            })
                         }
-                        ProbeCmd::Watch(path) => Cmd::effect(ProbeEffect::Watch(path)),
+                        ProbeCmd::Watch(path) => Cmd::effect(LoopEffect::Watch {
+                            path,
+                            item: ProbeMessage::Changed,
+                        }),
                         ProbeCmd::Announce => Cmd::message(Message::Driver {
                             driver: DriverName::Config,
                             event: DriverEvent::Full,
                         }),
                     })
                     .fold(Cmd::none(), Cmd::then),
-                ProbeMessage::Fired(tag) => {
-                    Cmd::effect(ProbeEffect::Report(Note::Fired(tag)))
-                }
-                ProbeMessage::Changed(result) => {
-                    Cmd::effect(ProbeEffect::Report(Note::Changed(result)))
-                }
+                ProbeMessage::Fired(tag) => Cmd::effect(LoopEffect::Execute(
+                    ProbeEffect::Report(Note::Fired(tag)),
+                )),
+                ProbeMessage::Changed(result) => Cmd::effect(LoopEffect::Execute(
+                    ProbeEffect::Report(Note::Changed(result)),
+                )),
             })
         }
     }
@@ -344,24 +333,7 @@ mod tests {
                     self.notes.send(note).unwrap();
                     None
                 }
-                ProbeEffect::After { .. } | ProbeEffect::Watch(_) => None,
             }
-        }
-    }
-
-    fn probe_split(
-        effect: ProbeEffect,
-    ) -> LoopEffect<ProbeEffect, NoJob, ProbeMessage> {
-        match effect {
-            ProbeEffect::After { delay, tag } => LoopEffect::After {
-                delay,
-                message: ProbeMessage::Fired(tag),
-            },
-            ProbeEffect::Watch(path) => LoopEffect::Watch {
-                path,
-                item: ProbeMessage::Changed,
-            },
-            report @ ProbeEffect::Report(_) => LoopEffect::Execute(report),
         }
     }
 
@@ -381,7 +353,6 @@ mod tests {
                 heard,
                 seed: None,
                 jobs: Jobs {
-                    split: probe_split,
                     run: |job: NoJob| match job {},
                 },
             }
@@ -429,22 +400,20 @@ mod tests {
     }
 
     #[test]
-    fn two_afters_arrive_in_deadline_order() {
+    fn a_second_after_of_the_same_kind_replaces_the_first() {
         let run = ProbeRun::start(never());
 
         run.send(ProbeCmd::After {
-            delay: SHORT * 4,
+            delay: SHORT,
             tag: 2,
         });
         run.send(ProbeCmd::After {
-            delay: SHORT,
+            delay: SHORT * 2,
             tag: 1,
         });
 
-        let notes: Vec<_> = (0..2)
-            .map(|_round| run.notes.recv_timeout(RECV_TIMEOUT))
-            .collect();
-        assert_eq!(notes, vec![Ok(Note::Fired(1)), Ok(Note::Fired(2))]);
+        assert_eq!(run.notes.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(1)));
+        assert!(run.notes.recv_timeout(SHORT * 4).is_err());
         run.stop();
     }
 
@@ -522,14 +491,13 @@ mod tests {
             full: &full,
             row: registry::row(DriverName::Config),
             jobs: Jobs {
-                split: probe_split,
                 run: |job: NoJob| match job {},
             },
             results,
             worker: None,
             pending: Vec::new(),
-            timers: Vec::new(),
-            files: FileStream::idle(),
+            timers: Timers::default(),
+            files: FileStream::Idle,
         };
 
         assert_eq!(outlets.hand_over(), Ok(()));
@@ -542,7 +510,6 @@ mod tests {
         let settings = AudioSettings::default();
         let row = registry::row(DriverName::Audio);
         let jobs = Jobs {
-            split: audio_split,
             run: audio::deck::job::AudioJob::run,
         };
         let thread = DriverLoop::<AudioDriver, _> {

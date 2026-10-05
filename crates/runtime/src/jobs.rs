@@ -2,30 +2,18 @@ use std::{
     fmt,
     mem,
     panic,
-    path::PathBuf,
     thread::{self, JoinHandle},
-    time::Duration,
 };
 
 use crossbeam_channel::{Receiver, Sender};
 
-use crate::{error::Error, registry::DriverRow, watcher::Changed};
+use crate::{error::Error, registry::DriverRow};
 
-#[derive(Debug)]
-pub(crate) enum LoopEffect<E, J, M> {
-    Execute(E),
-    Run(J),
-    After { delay: Duration, message: M },
-    Watch { path: PathBuf, item: Changed<M> },
-    Unwatch(PathBuf),
-}
-
-pub(crate) struct Jobs<E, J, M> {
-    pub(crate) split: fn(E) -> LoopEffect<E, J, M>,
+pub(crate) struct Jobs<J, M> {
     pub(crate) run: fn(J) -> M,
 }
 
-impl<E, J, M> fmt::Debug for Jobs<E, J, M> {
+impl<J, M> fmt::Debug for Jobs<J, M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Jobs").finish_non_exhaustive()
     }

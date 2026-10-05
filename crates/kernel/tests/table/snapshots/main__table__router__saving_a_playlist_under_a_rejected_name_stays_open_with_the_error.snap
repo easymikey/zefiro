@@ -17,12 +17,12 @@ expression: "walked(model, messages)"
         ],
         Stopped,
         Some(
-            SavePlaylist {
-                typed: TextEntry {
+            SavePlaylist(
+                TextEntry {
                     input: "",
+                    error: None,
                 },
-                error: None,
-            },
+            ),
         ),
         Cursor {
             index: 0,
@@ -59,12 +59,12 @@ expression: "walked(model, messages)"
         [],
         Stopped,
         Some(
-            SavePlaylist {
-                typed: TextEntry {
+            SavePlaylist(
+                TextEntry {
                     input: ".",
+                    error: None,
                 },
-                error: None,
-            },
+            ),
         ),
         Cursor {
             index: 0,
@@ -101,12 +101,12 @@ expression: "walked(model, messages)"
         [],
         Stopped,
         Some(
-            SavePlaylist {
-                typed: TextEntry {
+            SavePlaylist(
+                TextEntry {
                     input: "..",
+                    error: None,
                 },
-                error: None,
-            },
+            ),
         ),
         Cursor {
             index: 0,
@@ -143,12 +143,12 @@ expression: "walked(model, messages)"
         [],
         Stopped,
         Some(
-            SavePlaylist {
-                typed: TextEntry {
+            SavePlaylist(
+                TextEntry {
                     input: "...",
+                    error: None,
                 },
-                error: None,
-            },
+            ),
         ),
         Cursor {
             index: 0,
@@ -181,14 +181,14 @@ expression: "walked(model, messages)"
         [],
         Stopped,
         Some(
-            SavePlaylist {
-                typed: TextEntry {
+            SavePlaylist(
+                TextEntry {
                     input: "...",
+                    error: Some(
+                        AllDots,
+                    ),
                 },
-                error: Some(
-                    AllDots,
-                ),
-            },
+            ),
         ),
         Cursor {
             index: 0,

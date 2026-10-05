@@ -4,11 +4,7 @@ use kernel::domain::{appearance::Animations, time::Moment};
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 use tachyonfx::{CellFilter, Effect as Animation, EffectRenderer, RefRect};
 
-use crate::{
-    animation::timings::AnimationTimings,
-    pixels::cover::CoverMotion,
-    screen::frame_layout::FrameLayout,
-};
+use crate::{pixels::cover::CoverMotion, screen::frame_layout::FrameLayout};
 
 #[derive(Debug, Default)]
 enum Stage {
@@ -77,11 +73,9 @@ impl Stage {
 pub struct AnimationStage {
     stage: Stage,
     last_clock: Duration,
-    protected: Vec<Rect>,
     wash_area: Option<Rect>,
     pub(crate) vacated: VacatedAreas,
-    pub(crate) live: LiveProtected,
-    pub(crate) timings: AnimationTimings,
+    cover: RefRect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -89,11 +83,6 @@ pub(crate) struct VacatedAreas {
     pub(crate) overlay: Option<Rect>,
     pub(crate) toast: Option<Rect>,
     pub(crate) selected_row: Option<Rect>,
-}
-
-#[derive(Debug, Default)]
-pub struct LiveProtected {
-    pub cover: RefRect,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -120,11 +109,6 @@ impl AnimationStage {
     #[must_use]
     pub fn is_animating(&self) -> bool {
         self.stage.is_animating()
-    }
-
-    #[must_use]
-    pub fn timings(&self) -> AnimationTimings {
-        self.timings
     }
 
     #[must_use]
@@ -156,10 +140,8 @@ impl AnimationStage {
         };
     }
 
-    pub(crate) fn remember_protected(&mut self, layout: FrameLayout) {
-        self.protected.clear();
-        self.protected.extend(layout.cover);
-        self.live.cover.set(layout.cover.unwrap_or(Rect::ZERO));
+    pub(crate) fn remember_protected(&self, layout: FrameLayout) {
+        self.cover.set(layout.cover.unwrap_or(Rect::ZERO));
     }
 
     pub fn stage(&mut self, animation: Animation, area: Rect) {
@@ -176,25 +158,12 @@ impl AnimationStage {
     pub(crate) fn stage_whole_screen(&mut self, animation: Animation, area: Rect) {
         self.wash_area = Some(area);
         self.stage
-            .push((animation.with_filter(self.live_cell_filter()), area));
+            .push((animation.with_filter(self.cell_filter()), area));
     }
 
     #[must_use]
     pub(crate) fn cell_filter(&self) -> CellFilter {
-        if self.protected.is_empty() {
-            return CellFilter::All;
-        }
-        CellFilter::Static(Box::new(CellFilter::NoneOf(
-            self.protected
-                .iter()
-                .copied()
-                .map(CellFilter::Area)
-                .collect(),
-        )))
-    }
-
-    fn live_cell_filter(&self) -> CellFilter {
-        CellFilter::NoneOf(vec![CellFilter::RefArea(self.live.cover.clone())])
+        CellFilter::NoneOf(vec![CellFilter::RefArea(self.cover.clone())])
     }
 
     pub fn advance(&mut self, buffer: &mut Buffer, elapsed: Duration) {

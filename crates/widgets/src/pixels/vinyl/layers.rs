@@ -1,5 +1,5 @@
 use image::RgbaImage;
-use kernel::domain::appearance::Rgb;
+use kernel::domain::{appearance::Rgb, geometry::Pixels};
 use tiny_skia::{Color, FillRule, Paint, Path, Pixmap, PixmapPaint, Transform};
 
 use crate::pixels::{
@@ -36,29 +36,29 @@ fn scale_alpha(peak: u8, fraction: f32) -> u8 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct VinylFrameStyle {
-    pub(crate) size_px: u32,
-    pub(crate) colors: VinylStyle,
+pub(crate) struct VinylFrame {
+    pub(crate) size: Pixels,
+    pub(crate) style: VinylStyle,
 }
 
 #[must_use]
-pub(crate) fn paint_record_layer(style: VinylFrameStyle) -> Option<Pixmap> {
-    let geometry = VinylGeometry::new(style.size_px);
-    let mut pixmap = Pixmap::new(geometry.width_px, geometry.height_px)?;
+pub(crate) fn paint_record_layer(frame: VinylFrame) -> Option<Pixmap> {
+    let geometry = VinylGeometry::new(frame.size.0);
+    let mut pixmap = Pixmap::new(geometry.width.0, geometry.height.0)?;
     pixmap.fill(Color::TRANSPARENT);
-    paint_record_and_grooves(&mut pixmap, &style, &geometry);
+    paint_record_and_grooves(&mut pixmap, &frame, &geometry);
     Some(pixmap)
 }
 
 pub(crate) struct SleeveInput<'a> {
-    pub(crate) style: VinylFrameStyle,
+    pub(crate) frame: VinylFrame,
     pub(crate) art: Option<&'a VinylArt>,
 }
 
 #[must_use]
 pub(crate) fn paint_sleeve_layer(parts: &SleeveInput<'_>) -> Option<Pixmap> {
-    let geometry = VinylGeometry::new(parts.style.size_px);
-    let mut pixmap = Pixmap::new(geometry.width_px, geometry.height_px)?;
+    let geometry = VinylGeometry::new(parts.frame.size.0);
+    let mut pixmap = Pixmap::new(geometry.width.0, geometry.height.0)?;
     paint_sleeve(&mut pixmap, parts);
     Some(pixmap)
 }
@@ -70,7 +70,7 @@ pub(crate) fn compose_vinyl_frame(
     parts: &SleeveInput<'_>,
 ) -> RgbaImage {
     let mut pixmap = record.clone();
-    let geometry = VinylGeometry::new(parts.style.size_px);
+    let geometry = VinylGeometry::new(parts.frame.size.0);
     paint_label_ring_spindle(&mut pixmap, parts, &geometry);
     pixmap.draw_pixmap(
         0,
@@ -92,19 +92,19 @@ pub(crate) fn solid_fallback(width: u32, height: u32) -> RgbaImage {
 
 fn paint_record_and_grooves(
     pixmap: &mut Pixmap,
-    style: &VinylFrameStyle,
+    frame: &VinylFrame,
     geometry: &VinylGeometry,
 ) {
     let record = geometry.record();
-    paint_drop_shadow(pixmap, style, |dx, dy, dr| {
+    paint_drop_shadow(pixmap, frame, |dx, dy, dr| {
         circle_path(Disc {
             center_x: record.center_x + dx,
             center_y: record.center_y + dy,
             radius: record.radius + dr,
         })
     });
-    fill_path(pixmap, circle_path(record), skia_color(style.colors.record));
-    paint_grooves(pixmap, style, geometry);
+    fill_path(pixmap, circle_path(record), skia_color(frame.style.record));
+    paint_grooves(pixmap, frame, geometry);
 }
 
 fn paint_label_ring_spindle(
@@ -122,14 +122,14 @@ fn paint_label_ring_spindle(
         None => fill_path(
             pixmap,
             circle_path(label),
-            skia_color(parts.style.colors.accent),
+            skia_color(parts.frame.style.accent),
         ),
     }
     stroke_path(
         pixmap,
         circle_path(label),
         Stroke {
-            color: skia_color(parts.style.colors.paper),
+            color: skia_color(parts.frame.style.paper),
             width: VINYL_LAYOUT.label_border_width * geometry.size(),
         },
     );
@@ -141,17 +141,13 @@ fn paint_label_ring_spindle(
     fill_path(
         pixmap,
         circle_path(spindle),
-        skia_color(parts.style.colors.record),
+        skia_color(parts.frame.style.record),
     );
 }
 
 const GROOVE_LINE_WIDTH: f32 = 1.0;
 
-fn paint_grooves(
-    pixmap: &mut Pixmap,
-    style: &VinylFrameStyle,
-    geometry: &VinylGeometry,
-) {
+fn paint_grooves(pixmap: &mut Pixmap, frame: &VinylFrame, geometry: &VinylGeometry) {
     let record = geometry.record();
     let gap = VINYL_LAYOUT.groove_spacing * geometry.size();
     for i in 0..VINYL_LAYOUT.groove_count {
@@ -168,7 +164,7 @@ fn paint_grooves(
             pixmap,
             circle_path(Disc { radius, ..record }),
             Stroke {
-                color: skia_color_with_alpha(style.colors.groove, alpha),
+                color: skia_color_with_alpha(frame.style.groove, alpha),
                 width: GROOVE_LINE_WIDTH,
             },
         );
@@ -176,7 +172,7 @@ fn paint_grooves(
 }
 
 fn paint_sleeve(pixmap: &mut Pixmap, parts: &SleeveInput<'_>) {
-    let size = dimension_f32(parts.style.size_px.max(1));
+    let size = dimension_f32(parts.frame.size.0.max(1));
     let layout = VINYL_LAYOUT;
     let rect = RoundedRect {
         x: 0.0,
@@ -186,7 +182,7 @@ fn paint_sleeve(pixmap: &mut Pixmap, parts: &SleeveInput<'_>) {
         radius: layout.corner_radius * size,
     };
 
-    paint_drop_shadow(pixmap, &parts.style, |dx, dy, dr| {
+    paint_drop_shadow(pixmap, &parts.frame, |dx, dy, dr| {
         rounded_rect_path(RoundedRect {
             x: rect.x + dx - dr / 2.0,
             y: rect.y + dy - dr / 2.0,
@@ -199,7 +195,7 @@ fn paint_sleeve(pixmap: &mut Pixmap, parts: &SleeveInput<'_>) {
     fill_path(
         pixmap,
         rounded_rect_path(rect),
-        skia_color(parts.style.colors.paper),
+        skia_color(parts.frame.style.paper),
     );
 
     let pad = layout.sleeve_padding * size;
@@ -217,7 +213,7 @@ fn paint_sleeve(pixmap: &mut Pixmap, parts: &SleeveInput<'_>) {
         pixmap,
         rounded_rect_path(rect),
         Stroke {
-            color: skia_color(parts.style.colors.border),
+            color: skia_color(parts.frame.style.border),
             width: layout.border_width * size,
         },
     );
@@ -225,17 +221,17 @@ fn paint_sleeve(pixmap: &mut Pixmap, parts: &SleeveInput<'_>) {
 
 fn paint_drop_shadow(
     pixmap: &mut Pixmap,
-    style: &VinylFrameStyle,
+    frame: &VinylFrame,
     shape: impl Fn(f32, f32, f32) -> Option<Path>,
 ) {
-    let offset = VINYL_LAYOUT.shadow_offset * dimension_f32(style.size_px.max(1));
+    let offset = VINYL_LAYOUT.shadow_offset * dimension_f32(frame.size.0.max(1));
     let (dx, dy) = (offset * SHADOW_DIRECTION.0, offset * SHADOW_DIRECTION.1);
     for (spread_fraction, alpha_fraction) in SHADOW_BLUR_PASSES {
         let alpha = scale_alpha(VINYL_LAYOUT.shadow_alpha, alpha_fraction);
         fill_path(
             pixmap,
             shape(dx, dy, offset * spread_fraction),
-            skia_color_with_alpha(style.colors.shadow, alpha),
+            skia_color_with_alpha(frame.style.shadow, alpha),
         );
     }
 }
@@ -275,7 +271,7 @@ fn stroke_path(pixmap: &mut Pixmap, path: Option<Path>, style: Stroke) {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{appearance::Rgb, revision::Revision};
+    use kernel::domain::{appearance::Rgb, geometry::Pixels};
     use rstest::rstest;
 
     use crate::pixels::vinyl::{
@@ -285,7 +281,7 @@ mod tests {
         art::prepare_art,
         layers::{
             SleeveInput,
-            VinylFrameStyle,
+            VinylFrame,
             compose_vinyl_frame,
             paint_record_layer,
             paint_sleeve_layer,
@@ -319,27 +315,28 @@ mod tests {
         let size_px = 96;
         let colors = VinylStyle::fixture();
         let prepared = prepare_art(&art, size_px);
-        let style = VinylFrameStyle { size_px, colors };
+        let frame = VinylFrame {
+            size: Pixels(size_px),
+            style: colors,
+        };
         let parts = SleeveInput {
-            style,
+            frame,
             art: Some(&prepared),
         };
-        let layered = paint_record_layer(style)
+        let layered = paint_record_layer(frame)
             .zip(paint_sleeve_layer(&parts))
             .map(|(record, sleeve)| {
                 compose_vinyl_frame(&record, &sleeve, &parts).into_raw()
             });
         let key = VinylCacheKey {
-            config_revision: Revision::default(),
-            theme_revision: Revision::default(),
             path: None,
-            size_px,
+            size: Pixels(size_px),
             colors,
         };
         let mut cache = VinylCache::default();
         assert_eq!(
             layered.as_ref(),
-            Some(cache.compose(key, Some(&art)).as_raw())
+            Some(cache.compose(&key, Some(&art)).as_raw())
         );
     }
 }

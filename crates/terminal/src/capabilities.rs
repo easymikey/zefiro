@@ -250,7 +250,7 @@ mod tests {
     #[case::wezterm(TerminalApp::WezTerm, &[PixelProtocol::Iterm2, PixelProtocol::Sixel])]
     #[case::apple(TerminalApp::Apple, &[])]
     #[case::unknown(TerminalApp::Unknown, &[PixelProtocol::Query])]
-    fn each_brand_names_its_protocols(
+    fn each_terminal_app_names_its_protocols(
         #[case] app: TerminalApp,
         #[case] expected: &[PixelProtocol],
     ) {

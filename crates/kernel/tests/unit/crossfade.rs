@@ -2,7 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use kernel::{
     cmd::{AudioCmd, Cmd, Effect, TrackLoad},
-    domain::{model::Model, player::Preload, time::Moment},
+    domain::{model::Model, time::Moment},
     message::{AudioEvent, Message, PlaybackRequest, Timer},
 };
 
@@ -77,7 +77,7 @@ fn a_tick_near_the_end_arms_the_preload() {
     assert!(matches!(
         model.player,
         kernel::domain::player::Player::Playing {
-            preload: Preload::Queued(_),
+            preloaded: Some(_),
             ..
         }
     ));

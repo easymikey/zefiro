@@ -8,37 +8,22 @@ use tachyonfx::{
     ColorSpace,
     Effect as Animation,
     FilterProcessor,
-    Interpolation,
     SimpleRng,
     fx,
     fx::ShaderFnContext,
-    pattern::{AnyPattern, RadialPattern},
+    pattern::RadialPattern,
 };
 
-use crate::animation::timings::{AnimationTimings, THEME_WASH_GRADIENT_CELLS};
+use crate::animation::timings::{THEME_WASH_GRADIENT_CELLS, TIMINGS};
 
 #[must_use]
-pub fn modal_in(timings: AnimationTimings) -> Animation {
-    modal_reveal(timings.modal_in, modal_pattern(timings), timings)
-}
-
-#[must_use]
-pub fn modal_out(timings: AnimationTimings) -> Animation {
-    modal_reveal(timings.modal_out, modal_pattern(timings), timings)
-}
-
-fn modal_pattern(timings: AnimationTimings) -> RadialPattern {
-    RadialPattern::center().with_transition_width(timings.modal_transition_width)
-}
-
-fn modal_reveal(
-    duration: (u32, Interpolation),
-    pattern: impl Into<AnyPattern>,
-    timings: AnimationTimings,
-) -> Animation {
-    fx::coalesce(duration)
-        .with_rng(SimpleRng::new(timings.scatter_seed))
-        .with_pattern(pattern)
+pub fn modal_in() -> Animation {
+    fx::coalesce(TIMINGS.modal_in)
+        .with_rng(SimpleRng::new(TIMINGS.scatter_seed))
+        .with_pattern(
+            RadialPattern::center()
+                .with_transition_width(TIMINGS.modal_transition_width),
+        )
 }
 
 #[derive(Clone, Copy)]
@@ -48,10 +33,10 @@ struct CardSlide {
 }
 
 #[must_use]
-pub fn toast_slide_in(background: Color, timings: AnimationTimings) -> Animation {
+pub fn toast_slide_in(background: Color) -> Animation {
     fx::effect_fn_buf(
         (),
-        timings.toast_slide_in,
+        TIMINGS.toast_slide_in,
         move |_state, context, buffer| {
             let hidden = 1.0 - context.alpha();
             slide_inside_the_card(CardSlide { background, hidden }, &context, buffer);
@@ -97,18 +82,13 @@ fn slide_inside_the_card(
 }
 
 #[must_use]
-pub fn chip_pulse(target: Color, timings: AnimationTimings) -> Animation {
-    fx::ping_pong(fx::fade_to_fg(target, timings.chip_pulse_half))
+pub fn chip_pulse(target: Color) -> Animation {
+    fx::ping_pong(fx::fade_to_fg(target, TIMINGS.chip_pulse_half))
 }
 
 #[must_use]
-pub fn row_flash(accent: Color, timings: AnimationTimings) -> Animation {
-    fx::fade_from_fg(accent, timings.row_flash)
-}
-
-#[must_use]
-pub fn favorite_pulse(accent: Color, timings: AnimationTimings) -> Animation {
-    fx::ping_pong(fx::fade_to_fg(accent, timings.favorite_pulse_half))
+pub fn row_flash(accent: Color) -> Animation {
+    fx::fade_from_fg(accent, TIMINGS.row_flash)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -118,12 +98,8 @@ pub struct VolumeShades {
 }
 
 #[must_use]
-pub fn volume_pulse(
-    shades: VolumeShades,
-    guard: CellFilter,
-    timings: AnimationTimings,
-) -> Animation {
-    fx::fade_from_fg(shades.lifted, timings.volume_pulse).with_filter(
+pub fn volume_pulse(shades: VolumeShades, guard: CellFilter) -> Animation {
+    fx::fade_from_fg(shades.lifted, TIMINGS.volume_pulse).with_filter(
         CellFilter::AllOf(vec![guard, CellFilter::FgColor(shades.fill)]),
     )
 }
@@ -136,8 +112,8 @@ pub fn wash_reveal(progress: f32, column: u16, width: u16) -> f32 {
 }
 
 #[must_use]
-pub fn screen_wash(from: Color, timings: AnimationTimings) -> Animation {
-    fx::effect_fn_buf((), timings.screen_wash, move |_state, context, buffer| {
+pub fn screen_wash(from: Color) -> Animation {
+    fx::effect_fn_buf((), TIMINGS.screen_wash, move |_state, context, buffer| {
         wash_buffer(from, &context, buffer);
     })
 }
@@ -168,21 +144,17 @@ fn wash_buffer(from: Color, context: &ShaderFnContext<'_>, buffer: &mut Buffer) 
 }
 
 #[must_use]
-pub fn scatter_burst(
-    background: Color,
-    guard: CellFilter,
-    timings: AnimationTimings,
-) -> Animation {
+pub fn scatter_burst(background: Color, guard: CellFilter) -> Animation {
     fx::parallel(&[
         fx::explode(
-            timings.delete_force,
-            timings.delete_force_variance,
-            timings.delete_burst,
+            TIMINGS.delete_force,
+            TIMINGS.delete_force_variance,
+            TIMINGS.delete_burst,
         )
-        .with_rng(SimpleRng::new(timings.scatter_seed))
+        .with_rng(SimpleRng::new(TIMINGS.scatter_seed))
         .with_filter(guard.clone())
         .reversed(),
-        fx::paint_bg(background, timings.delete_burst).with_filter(CellFilter::AllOf(
+        fx::paint_bg(background, TIMINGS.delete_burst).with_filter(CellFilter::AllOf(
             vec![CellFilter::BgColor(Color::Black), guard],
         )),
     ])

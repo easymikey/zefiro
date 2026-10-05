@@ -10,7 +10,7 @@ use kernel::{
     cmd::{Cmd, Cmds, MacosCmd},
     domain::{percent::Percent, track::Track},
     message::{MacosError, MacosEvent, OsStatus, PlaybackRequest},
-    update::machine::{Driver, Machine, Unhandled},
+    update::machine::{Driver, LoopEffect, Machine, Unhandled},
 };
 use objc2::rc::{Retained, autoreleasepool};
 use objc2_media_player::MPMediaItemArtwork;
@@ -25,7 +25,7 @@ use crate::{
         write_volume,
     },
     cover::{Cover, CoverMessage, artwork},
-    effect::MacosEffect,
+    effect::{MacosEffect, MacosLoopCmd},
     hardware::{Hardware, HardwareMessage},
     message::{HardwarePoll, MacosMessage},
     now_playing::{NowPlaying, publish},
@@ -57,10 +57,7 @@ impl MacosDriver {
         }
     }
 
-    fn take_cmds(
-        &mut self,
-        cmds: Cmds<MacosCmd>,
-    ) -> Result<Cmd<MacosEffect, MacosEvent>, Unhandled> {
+    fn take_cmds(&mut self, cmds: Cmds<MacosCmd>) -> Result<MacosLoopCmd, Unhandled> {
         let Cmds { cmds, at } = cmds;
         let last_volume = cmds.iter().rev().find_map(volume_of);
         let now_playing: Vec<MacosCmd> = cmds
@@ -70,13 +67,14 @@ impl MacosDriver {
         let publish = (!now_playing.is_empty()).then_some(MacosEffect::Publish);
         let moved = now_playing.into_iter().try_fold(
             Cmd::none(),
-            |moved: Cmd<MacosEffect, MacosEvent>, cmd| {
+            |moved: MacosLoopCmd, cmd| {
                 Ok::<_, Unhandled>(moved.then(self.move_now_playing(cmd, at)?))
             },
         )?;
         let tail = publish
             .into_iter()
             .chain(last_volume.map(MacosEffect::SetVolume))
+            .map(LoopEffect::Execute)
             .collect();
         Ok(moved.then(tail))
     }
@@ -85,7 +83,7 @@ impl MacosDriver {
         &mut self,
         cmd: MacosCmd,
         at: Instant,
-    ) -> Result<Cmd<MacosEffect, MacosEvent>, Unhandled> {
+    ) -> Result<MacosLoopCmd, Unhandled> {
         match cmd {
             MacosCmd::NowPlaying(now_playing) => {
                 let track = now_playing
@@ -103,9 +101,9 @@ impl MacosDriver {
                 self.clock = self.clock.seek(position, at);
                 Ok(Cmd::none())
             }
-            MacosCmd::SetVolume(volume) => {
-                Ok(Cmd::effect(MacosEffect::SetVolume(volume)))
-            }
+            MacosCmd::SetVolume(volume) => Ok(Cmd::effect(LoopEffect::Execute(
+                MacosEffect::SetVolume(volume),
+            ))),
         }
     }
 
@@ -148,7 +146,6 @@ impl MacosDriver {
                 self.artwork = artwork(&bytes);
                 None
             }
-            MacosEffect::Run(_job) => None,
         }
     }
 
@@ -165,29 +162,34 @@ impl MacosDriver {
 
 impl Machine for MacosDriver {
     type Message = MacosMessage;
-    type Effect = Cmd<MacosEffect, MacosEvent>;
+    type Effect = MacosLoopCmd;
 
     fn transition(&mut self, message: MacosMessage) -> Result<Self::Effect, Unhandled> {
         match message {
             MacosMessage::Started => Ok([MacosEffect::Publish, MacosEffect::Watch]
                 .into_iter()
+                .map(LoopEffect::Execute)
                 .collect()),
             MacosMessage::Cmds(cmds) => self.take_cmds(cmds),
             MacosMessage::HardwareChanged | MacosMessage::Watched => {
-                Ok(Cmd::effect(MacosEffect::Poll))
+                Ok(Cmd::effect(LoopEffect::Execute(MacosEffect::Poll)))
             }
-            MacosMessage::Polled(poll) => {
-                self.hardware.transition(HardwareMessage::Polled(poll))
-            }
+            MacosMessage::Polled(poll) => Ok(self
+                .hardware
+                .transition(HardwareMessage::Polled(poll))?
+                .map_effect(LoopEffect::Execute)),
             MacosMessage::Rebound(_device) => Ok(Cmd::none()),
-            MacosMessage::VolumeSet(volume) => {
-                self.hardware.transition(HardwareMessage::VolumeSet(volume))
-            }
+            MacosMessage::VolumeSet(volume) => Ok(self
+                .hardware
+                .transition(HardwareMessage::VolumeSet(volume))?
+                .map_effect(LoopEffect::Execute)),
             MacosMessage::Error(error) => Ok(Cmd::message(MacosEvent::Error(error))),
             MacosMessage::CoverRead(bytes) => {
                 self.cover.transition(CoverMessage::Read(bytes))
             }
-            MacosMessage::Remote(input) => Ok(remote(input)),
+            MacosMessage::Remote(input) => {
+                Ok(remote(input).map_effect(LoopEffect::Execute))
+            }
         }
     }
 }
@@ -230,21 +232,33 @@ fn failed(cause: fn(OsStatus) -> MacosError, error: core_audio::Error) -> MacosM
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     use crossbeam_channel::bounded;
     use kernel::{
         cmd::{Cmd, Cmds, MacosCmd, Playback},
-        domain::{bounded::Bounded, percent::Percent},
+        domain::{
+            bounded::Bounded,
+            direction::Direction,
+            percent::Percent,
+            revision::Revision,
+            track::Track,
+            transport::SEEK_MEDIUM,
+        },
         message::{MacosError, MacosEvent, OsStatus, PlaybackRequest},
-        update::machine::Machine,
+        update::machine::{Driver, LoopEffect, Machine},
     };
     use rstest::rstest;
 
     use crate::{
         driver::MacosDriver,
-        effect::MacosEffect,
-        message::MacosMessage,
+        effect::{MacosEffect, MacosLoopCmd},
+        job::MacosJob,
+        message::{CoverBytes, HardwarePoll, MacosMessage},
         remote_input::RemoteInput,
     };
 
@@ -261,6 +275,21 @@ mod tests {
 
     fn refused() -> OsStatus {
         OsStatus(-50)
+    }
+
+    fn executed(loop_cmd: MacosLoopCmd) -> (Vec<MacosEffect>, Vec<MacosEvent>) {
+        let (effects, events) = loop_cmd.into_parts();
+        let executed = effects
+            .into_iter()
+            .map(|effect| match effect {
+                LoopEffect::Execute(effect) => effect,
+                placed @ (LoopEffect::Run(_)
+                | LoopEffect::After { .. }
+                | LoopEffect::Watch { .. }
+                | LoopEffect::Unwatch(_)) => panic!("not executed: {placed:?}"),
+            })
+            .collect();
+        (executed, events)
     }
 
     fn reported(error: MacosError) -> Cmd<MacosEffect, MacosEvent> {
@@ -294,12 +323,12 @@ mod tests {
     )]
     #[case::a_rebind_is_quiet(MacosMessage::Rebound(2), Cmd::none())]
     #[case::a_press_is_a_media_key(
-        MacosMessage::Remote(RemoteInput::Press(PlaybackRequest::SeekForward)),
-        Cmd::message(MacosEvent::MediaKey(PlaybackRequest::SeekForward))
+        MacosMessage::Remote(RemoteInput::Press(PlaybackRequest::SeekBy { direction: Direction::Next, by: SEEK_MEDIUM })),
+        Cmd::message(MacosEvent::MediaKey(PlaybackRequest::SeekBy { direction: Direction::Next, by: SEEK_MEDIUM }))
     )]
     #[case::a_hold_start_is_a_media_key(
-        MacosMessage::Remote(RemoteInput::HoldBegan(PlaybackRequest::SeekBack)),
-        Cmd::message(MacosEvent::MediaKey(PlaybackRequest::SeekBack))
+        MacosMessage::Remote(RemoteInput::HoldBegan(PlaybackRequest::SeekBy { direction: Direction::Previous, by: SEEK_MEDIUM })),
+        Cmd::message(MacosEvent::MediaKey(PlaybackRequest::SeekBy { direction: Direction::Previous, by: SEEK_MEDIUM }))
     )]
     #[case::a_hold_end_is_quiet(
         MacosMessage::Remote(RemoteInput::HoldEnded),
@@ -341,7 +370,10 @@ mod tests {
     ) {
         let (heard, _heard_receiver) = bounded(1);
         let mut driver = MacosDriver::new(heard);
-        assert_eq!(driver.transition(message), Ok(cmd));
+        assert_eq!(
+            driver.transition(message).map(executed),
+            Ok(cmd.into_parts())
+        );
     }
 
     #[rstest]
@@ -357,9 +389,101 @@ mod tests {
             MacosCmd::SetPlayback(playback),
         ]);
         assert_eq!(
-            driver.transition(message),
-            Ok(Cmd::effect(MacosEffect::Publish))
+            driver.transition(message).map(executed),
+            Ok((vec![MacosEffect::Publish], vec![]))
         );
         assert_eq!(driver.clock.playback(), playback);
+    }
+
+    type Placed = (Vec<MacosEffect>, Vec<MacosJob>, Vec<MacosEvent>);
+
+    fn placed(loop_cmd: MacosLoopCmd) -> Placed {
+        let (effects, events) = loop_cmd.into_parts();
+        let (executed, jobs) = effects.into_iter().fold(
+            (Vec::new(), Vec::new()),
+            |(executed, jobs), effect| match effect {
+                LoopEffect::Execute(effect) => {
+                    ([executed, vec![effect]].concat(), jobs)
+                }
+                LoopEffect::Run(job) => (executed, [jobs, vec![job]].concat()),
+                other @ (LoopEffect::After { .. }
+                | LoopEffect::Watch { .. }
+                | LoopEffect::Unwatch(_)) => panic!("not placed: {other:?}"),
+            },
+        );
+        (executed, jobs, events)
+    }
+
+    fn polled(devices: (u32, u32), volume: Option<Percent>) -> MacosMessage {
+        let (tracked_device, current_device) = devices;
+        MacosMessage::Polled(HardwarePoll {
+            tracked_device,
+            current_device,
+            volume,
+        })
+    }
+
+    fn cover_read(bytes: &[u8]) -> MacosMessage {
+        MacosMessage::CoverRead(CoverBytes {
+            revision: Revision::default(),
+            bytes: Ok(bytes.to_vec()),
+        })
+    }
+
+    #[rstest]
+    #[case::a_first_poll_reports_the_volume(
+        vec![polled((1, 1), Some(Percent::clamped(30)))],
+        (vec![], vec![], vec![MacosEvent::Volume(Percent::clamped(30))])
+    )]
+    #[case::a_poll_on_another_device_rebinds(
+        vec![polled((1, 2), None)],
+        (vec![MacosEffect::Rebind(2)], vec![], vec![])
+    )]
+    #[case::a_volume_set_is_quiet(
+        vec![MacosMessage::VolumeSet(Percent::clamped(40))],
+        (vec![], vec![], vec![])
+    )]
+    #[case::the_echo_of_our_volume_is_quiet(
+        vec![MacosMessage::VolumeSet(Percent::clamped(40)), polled((1, 1), Some(Percent::clamped(40)))],
+        (vec![], vec![], vec![])
+    )]
+    #[case::cover_bytes_show_the_artwork(
+        vec![cover_read(&[1, 2])],
+        (vec![MacosEffect::ShowArtwork(vec![1, 2]), MacosEffect::Publish], vec![], vec![])
+    )]
+    #[case::empty_cover_bytes_are_quiet(vec![cover_read(&[])], (vec![], vec![], vec![]))]
+    #[case::a_new_track_clears_reads_then_publishes(
+        vec![cmds(vec![MacosCmd::NowPlaying(Some(Arc::new(Track::listed(Path::new("a.flac")))))])],
+        (
+            vec![MacosEffect::ClearArtwork, MacosEffect::Publish],
+            vec![MacosJob::ReadCover { track: PathBuf::from("a.flac"), revision: Revision::default().next() }],
+            vec![]
+        )
+    )]
+    fn the_macos_driver_routes_to_its_parts(
+        #[case] messages: Vec<MacosMessage>,
+        #[case] last: Placed,
+    ) {
+        let (heard, _heard_receiver) = bounded(1);
+        let mut driver = MacosDriver::new(heard);
+        let answers: Vec<_> = messages
+            .into_iter()
+            .map(|message| driver.transition(message).map(placed))
+            .collect();
+        assert_eq!(answers.last(), Some(&Ok(last)));
+    }
+
+    #[rstest]
+    #[case::a_rebind_without_a_watch(MacosEffect::Rebind(2))]
+    #[case::a_poll_without_a_watch(MacosEffect::Poll)]
+    #[case::clearing_the_artwork(MacosEffect::ClearArtwork)]
+    #[case::showing_no_artwork(MacosEffect::ShowArtwork(vec![]))]
+    fn the_driver_answers_nothing_and_holds_no_artwork(
+        #[case] macos_effect: MacosEffect,
+    ) {
+        let (heard, _heard_receiver) = bounded(1);
+        let mut driver = MacosDriver::new(heard);
+        assert!(driver.execute(macos_effect).is_none());
+        assert!(driver.artwork.is_none());
     }
 }

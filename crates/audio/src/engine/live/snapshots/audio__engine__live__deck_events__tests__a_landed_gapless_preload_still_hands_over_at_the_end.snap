@@ -6,10 +6,13 @@ expression: log
 [
     Cmd {
         effects: [
-            Preload(
-                Gapless(
-                    "/b",
-                ),
+            Run(
+                Preload {
+                    path: "/b",
+                    revision: Revision(
+                        1,
+                    ),
+                },
             ),
         ],
         messages: [],
@@ -20,12 +23,16 @@ expression: log
     },
     Cmd {
         effects: [
-            Advance(
-                Gain(
-                    1.0,
+            Execute(
+                Advance(
+                    Gain(
+                        1.0,
+                    ),
                 ),
             ),
-            Report,
+            Execute(
+                Report,
+            ),
         ],
         messages: [
             TrackChanged,

@@ -1,11 +1,9 @@
-mod confirm_delete;
 pub mod history;
 pub mod jump;
 mod machine;
 pub mod search;
 pub mod settings;
-mod text;
-mod track_details;
+mod text_entry;
 
 use std::{path::Path, sync::Arc};
 
@@ -14,7 +12,7 @@ use crate::{
     domain::{
         cursor_over::CursorOver,
         history::{HISTORY_LIMIT, HistoryEntry},
-        overlay::{JumpDigits, Overlay, OverlayName, SearchQuery, TextEntry},
+        overlay::{DeleteCandidate, Overlay, OverlayName, SearchQuery, TextEntry},
         player::Player,
         playlist::Playlist,
         setting_row::{AppearanceSetting, SettingRow},
@@ -24,12 +22,7 @@ use crate::{
     message::{HistoryRequest, OverlayRequest, SearchRequest, TextRequest},
     update::{
         machine::{Machine, Unhandled},
-        overlay::{
-            history::HistoryMessage,
-            jump::JumpDigitsMessage,
-            search::SearchQueryMessage,
-            settings::SettingRowMessage,
-        },
+        overlay::{history::HistoryMessage, settings::SettingRowMessage},
     },
 };
 
@@ -43,10 +36,10 @@ pub enum OverlayMessage {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OverlayContentMessage {
-    Search(SearchQueryMessage),
+    Search(SearchRequest),
     Settings(SettingRowMessage),
     Text(TextRequest),
-    Jump(JumpDigitsMessage),
+    Jump(TextRequest),
     History(HistoryMessage),
 }
 
@@ -86,9 +79,7 @@ pub(crate) fn update(
         ),
         OverlayRequest::Jump(message) => update_overlay(
             parts.workspace,
-            OverlayMessage::Inner(OverlayContentMessage::Jump(
-                JumpDigitsMessage::from(message),
-            )),
+            OverlayMessage::Inner(OverlayContentMessage::Jump(message)),
         ),
         OverlayRequest::History(request) => {
             let len = parts.history.len();
@@ -131,14 +122,9 @@ fn open_request(
 fn search_request(
     workspace: &mut Workspace,
     tracks: &[Arc<Track>],
-    request: SearchRequest,
+    message: SearchRequest,
 ) -> Result<Cmd, Unhandled> {
-    let message = match request {
-        SearchRequest::Edit(edit) => SearchQueryMessage::Edit(edit),
-        SearchRequest::Navigate(direction) => SearchQueryMessage::Navigate(direction),
-        SearchRequest::Enqueue => SearchQueryMessage::Enqueue,
-    };
-    let edited = matches!(message, SearchQueryMessage::Edit(_));
+    let edited = matches!(message, SearchRequest::Edit(_));
     let cmd = update_overlay(workspace, inner_search(message))?;
     if edited && let Some(Overlay::Search(search)) = workspace.overlay.as_mut() {
         search::rank(search, tracks);
@@ -146,7 +132,7 @@ fn search_request(
     Ok(cmd)
 }
 
-fn inner_search(message: SearchQueryMessage) -> OverlayMessage {
+fn inner_search(message: SearchRequest) -> OverlayMessage {
     OverlayMessage::Inner(OverlayContentMessage::Search(message))
 }
 
@@ -165,31 +151,36 @@ fn overlay_for(
             };
             Ok(Overlay::Search(CursorOver::new(query, len)))
         }
-        OverlayName::SavePlaylist => Ok(Overlay::SavePlaylist {
-            typed: TextEntry::default(),
-            error: None,
-        }),
+        OverlayName::SavePlaylist => Ok(Overlay::SavePlaylist(TextEntry::default())),
         OverlayName::History => Ok(Overlay::History(CursorOver::default())),
         OverlayName::Settings => {
             Ok(Overlay::Settings(SettingRow::first(parts.appearance_rows)))
         }
         OverlayName::ConfirmDelete => {
-            confirm_delete::candidate(parts.playlist, parts.workspace)
-                .map(Overlay::ConfirmDelete)
-                .ok_or(Unhandled)
+            let track = parts
+                .playlist
+                .tracks
+                .get(parts.workspace.browse.selected().get())
+                .ok_or(Unhandled)?;
+            Ok(Overlay::ConfirmDelete(DeleteCandidate {
+                source: track.source().clone(),
+                title: track.song_title(),
+                artist: track.tags().artist.clone().unwrap_or_else(String::new),
+            }))
         }
-        OverlayName::TrackDetails => {
-            track_details::candidate(parts.playlist, parts.player, parts.workspace)
-                .map(Overlay::TrackDetails)
-                .ok_or(Unhandled)
-        }
-        OverlayName::JumpToTime => Ok(Overlay::JumpToTime(JumpDigits::default())),
-        OverlayName::MusicDir => Ok(Overlay::MusicDir {
-            typed: TextEntry {
-                input: parts.music_dir.display().to_string(),
-            },
+        OverlayName::TrackDetails => parts
+            .playlist
+            .tracks
+            .get(parts.workspace.browse.selected().get())
+            .cloned()
+            .or_else(|| parts.player.current().cloned())
+            .map(Overlay::TrackDetails)
+            .ok_or(Unhandled),
+        OverlayName::JumpToTime => Ok(Overlay::JumpToTime(TextEntry::default())),
+        OverlayName::MusicDir => Ok(Overlay::MusicDir(TextEntry {
+            input: parts.music_dir.display().to_string(),
             error: None,
-        }),
+        })),
     }
 }
 

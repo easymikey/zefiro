@@ -6,7 +6,7 @@ use kernel::{
         cue::Cue,
         driver::{DriverError, DriverName, DriverStatus},
         model::Model,
-        player::{PausedBy, Player, Preload},
+        player::{PausedBy, Player},
         playhead::Playhead,
         speed::Speed,
         time::Moment,
@@ -188,15 +188,15 @@ struct ResumeRow {
 fn playing_at(at: Duration) -> Player {
     Player::Playing {
         track: dated_track(0),
-        head: Playhead::anchored(at, Moment::default(), Speed::default()),
-        preload: Preload::None,
+        playhead: Playhead::anchored(at, Moment::default(), Speed::default()),
+        preloaded: None,
     }
 }
 
 fn paused_at(at: Duration) -> Player {
     Player::Paused {
         track: bare_track(0),
-        at,
+        position: at,
         by: PausedBy::Listener,
     }
 }

@@ -1,50 +1,21 @@
 use crate::{
-    cmd::Cmd,
-    domain::overlay::JumpDigits,
+    domain::{
+        overlay::{JumpDigits, TextEntry},
+        time::TimecodeError,
+    },
     message::TextRequest,
-    update::machine::{Machine, Unhandled},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JumpDigitsMessage {
-    Char(char),
-    Backspace,
-}
-
-impl From<TextRequest> for JumpDigitsMessage {
-    fn from(request: TextRequest) -> Self {
-        match request {
-            TextRequest::Char(character) => JumpDigitsMessage::Char(character),
-            TextRequest::Backspace => JumpDigitsMessage::Backspace,
+#[must_use]
+pub(crate) fn admits(
+    text_entry: &TextEntry<TimecodeError>,
+    text_request: TextRequest,
+) -> bool {
+    match text_request {
+        TextRequest::Char(character) => {
+            (character.is_ascii_digit() || character == JumpDigits::SEPARATOR)
+                && text_entry.input.len() < JumpDigits::MAX_LEN
         }
-    }
-}
-
-impl Machine for JumpDigits {
-    type Message = JumpDigitsMessage;
-    type Effect = Cmd;
-
-    fn transition(&mut self, message: JumpDigitsMessage) -> Result<Cmd, Unhandled> {
-        match message {
-            JumpDigitsMessage::Char(character)
-                if !(character.is_ascii_digit()
-                    || character == JumpDigits::SEPARATOR) =>
-            {
-                Err(Unhandled)
-            }
-            JumpDigitsMessage::Char(_) if self.input.len() >= JumpDigits::MAX_LEN => {
-                Err(Unhandled)
-            }
-            JumpDigitsMessage::Char(character) => {
-                self.input.push(character);
-                self.error = None;
-                Ok(Cmd::none())
-            }
-            JumpDigitsMessage::Backspace => {
-                self.input.pop();
-                self.error = None;
-                Ok(Cmd::none())
-            }
-        }
+        TextRequest::Backspace => true,
     }
 }
