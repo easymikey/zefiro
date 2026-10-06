@@ -57,21 +57,19 @@ mod tests {
             playhead::Playhead,
             speed::Speed,
             time::Moment,
-            track::{AudioFormat, Tags, Track},
+            track::{AudioFormat, Tags, Track, TrackParts},
         },
         message::{MacosEvent, PlaybackRequest},
         update::{machine::Unhandled, macos::update, playback, playback_parts},
     };
 
     fn playing_model() -> Model {
-        let track = Arc::new(
-            Track::builder()
-                .path("/t.flac")
-                .duration(Duration::from_secs(200))
-                .tags(Tags::default())
-                .audio_format(AudioFormat::default())
-                .build(),
-        );
+        let track = Arc::new(Track::new(TrackParts {
+            path: "/t.flac".into(),
+            duration: Duration::from_secs(200),
+            tags: Tags::default(),
+            audio_format: AudioFormat::default(),
+        }));
         Model {
             player: Player::Playing {
                 track,

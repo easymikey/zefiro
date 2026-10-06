@@ -2,12 +2,11 @@
 
 use kernel::{
     cmd::{Cmds, MacosCmd},
-    domain::{percent::Percent, revision::Revision},
+    domain::revision::Revision,
     message::MacosError,
 };
-use objc2_core_audio::AudioObjectID;
 
-use crate::remote_input::RemoteInput;
+use crate::{hardware::HardwareMessage, remote_input::RemoteInput};
 
 #[derive(Debug)]
 pub enum MacosMessage {
@@ -15,9 +14,7 @@ pub enum MacosMessage {
     Cmds(Cmds<MacosCmd>),
     HardwareChanged,
     Watched,
-    Polled(HardwarePoll),
-    Rebound(AudioObjectID),
-    VolumeSet(Percent),
+    Hardware(HardwareMessage),
     Error(MacosError),
     CoverRead(CoverBytes),
     Remote(RemoteInput),
@@ -33,11 +30,4 @@ impl From<Cmds<MacosCmd>> for MacosMessage {
 pub struct CoverBytes {
     pub(crate) revision: Revision,
     pub(crate) bytes: Result<Vec<u8>, MacosError>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HardwarePoll {
-    pub(crate) tracked_device: AudioObjectID,
-    pub(crate) current_device: AudioObjectID,
-    pub(crate) volume: Option<Percent>,
 }

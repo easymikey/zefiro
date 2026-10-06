@@ -7,9 +7,8 @@ use ratatui::style::Color;
 use crate::{
     animation::{
         catalogue::{
-            VolumeShades,
             chip_pulse,
-            modal_in,
+            modal_reveal,
             row_flash,
             scatter_burst,
             screen_wash,
@@ -47,15 +46,15 @@ impl AnimationStage {
         let layout = backdrop.layout;
         match cue {
             Cue::OverlayOpened => {
-                self.stage_at(modal_in(), layout.overlay.map(OverlayAreas::outer));
+                self.stage_at(modal_reveal(), layout.overlay.map(OverlayAreas::outer));
             }
-            Cue::OverlayClosed => self.stage_at(modal_in(), vacated.overlay),
+            Cue::OverlayClosed => self.stage_at(modal_reveal(), vacated.overlay),
             Cue::ToastRaised => {
-                self.stage_at(toast_slide_in(backdrop.background), layout.toast);
+                self.stage_at(toast_slide_in(backdrop.style.background), layout.toast);
             }
             Cue::ToastDismissed => {
                 self.stage_at(
-                    scatter_burst(backdrop.background, self.cell_filter()),
+                    scatter_burst(backdrop.style.background, self.cell_filter()),
                     vacated.toast,
                 );
             }
@@ -68,7 +67,7 @@ impl AnimationStage {
             Cue::FavoriteToggled => self.stage_favorite_toggled(backdrop),
             Cue::VolumeChanged => self.stage_volume_changed(backdrop),
             Cue::TrackDeleted => self.stage_at(
-                scatter_burst(backdrop.background, self.cell_filter()),
+                scatter_burst(backdrop.style.background, self.cell_filter()),
                 vacated.selected_row,
             ),
             Cue::ThemeChanged | Cue::LayoutChanged => {
@@ -84,20 +83,23 @@ impl AnimationStage {
     fn stage_favorite_toggled(&mut self, backdrop: &Backdrop) {
         let layout = backdrop.layout;
         let selected = layout.playlist.and_then(|playlist| playlist.selected);
-        self.stage_at(row_flash(backdrop.accent), selected.map(favorite_cell));
         self.stage_at(
-            chip_pulse(backdrop.accent),
+            row_flash(backdrop.style.accent),
+            selected.map(favorite_cell),
+        );
+        self.stage_at(
+            chip_pulse(backdrop.style.accent),
             layout.card.map(|metrics| metrics.title_row),
         );
     }
 
     fn stage_volume_changed(&mut self, backdrop: &Backdrop) {
         let layout = backdrop.layout;
-        let shades = VolumeShades {
-            fill: backdrop.volume_fill,
-            lifted: backdrop.volume_lifted,
-        };
-        let pulse = volume_pulse(shades, self.cell_filter());
+        let pulse = volume_pulse(
+            backdrop.style.volume_fill,
+            backdrop.style.volume_lifted,
+            self.cell_filter(),
+        );
         self.stage_at(pulse, layout.card.map(|metrics| metrics.volume_row));
     }
 }
@@ -113,8 +115,8 @@ fn once_each(cues: Vec<Cue>) -> Vec<Cue> {
 
 fn pulsed(change: PlaybackChange, backdrop: &Backdrop) -> Color {
     match change {
-        PlaybackChange::Play => backdrop.background,
-        PlaybackChange::Pause | PlaybackChange::Stop => backdrop.accent,
+        PlaybackChange::Play => backdrop.style.background,
+        PlaybackChange::Pause | PlaybackChange::Stop => backdrop.style.accent,
     }
 }
 
@@ -132,6 +134,7 @@ mod tests {
             stage::{AnimationStage, Backdrop},
         },
         screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
+        theme::backdrop_style::BackdropStyle,
     };
 
     #[test]
@@ -157,10 +160,12 @@ mod tests {
         Backdrop {
             animations: Animations::On,
             layout: FrameLayout::empty(Rect::default(), Breakpoint::Full),
-            background: Color::Rgb(0, 0, 0),
-            accent: Color::Rgb(240, 120, 40),
-            volume_fill: Color::Rgb(220, 80, 160),
-            volume_lifted: Color::Rgb(200, 210, 220),
+            style: BackdropStyle {
+                background: Color::Rgb(0, 0, 0),
+                accent: Color::Rgb(240, 120, 40),
+                volume_fill: Color::Rgb(220, 80, 160),
+                volume_lifted: Color::Rgb(200, 210, 220),
+            },
             wash_from: Color::Rgb(0, 0, 0),
         }
     }
@@ -168,14 +173,23 @@ mod tests {
     #[test]
     fn pulsed_answers_the_background_when_playback_starts() {
         let backdrop = empty_backdrop();
-        assert_eq!(pulsed(PlaybackChange::Play, &backdrop), backdrop.background);
+        assert_eq!(
+            pulsed(PlaybackChange::Play, &backdrop),
+            backdrop.style.background
+        );
     }
 
     #[test]
     fn pulsed_answers_the_accent_when_playback_pauses_or_stops() {
         let backdrop = empty_backdrop();
-        assert_eq!(pulsed(PlaybackChange::Pause, &backdrop), backdrop.accent);
-        assert_eq!(pulsed(PlaybackChange::Stop, &backdrop), backdrop.accent);
+        assert_eq!(
+            pulsed(PlaybackChange::Pause, &backdrop),
+            backdrop.style.accent
+        );
+        assert_eq!(
+            pulsed(PlaybackChange::Stop, &backdrop),
+            backdrop.style.accent
+        );
     }
 
     #[test]
@@ -185,6 +199,7 @@ mod tests {
 
         stage.play(vec![Cue::LayoutChanged], &backdrop);
 
-        assert_eq!(stage.take_running().len(), 1);
+        assert!(stage.wash_progress().is_some());
+        assert!(stage.take_running().is_empty());
     }
 }

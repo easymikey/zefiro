@@ -33,7 +33,7 @@ pub enum ScanMode {
     Cached,
 }
 
-#[derive(Debug, Clone, PartialEq, bon::Builder)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ConfigPatch {
     pub crossfade: Option<Crossfade>,
     pub device: Option<OutputDevice>,
@@ -106,7 +106,7 @@ pub enum AudioCmd {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum LibraryCmd {
+pub enum DiskCmd {
     AppendHistory(HistoryEntry),
     SaveFavorites(Favorites),
     LoadFavorites,
@@ -116,6 +116,11 @@ pub enum LibraryCmd {
         name: PlaylistFileName,
         tracks: Vec<Arc<Track>>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LibraryCmd {
+    Disk(DiskCmd),
     Scan {
         music_dir: PathBuf,
         revision: Revision,
@@ -304,13 +309,17 @@ mod tests {
 
     #[test]
     fn config_patch_then_folds_disjoint_fields_and_the_later_field_wins() {
-        let earlier = ConfigPatch::builder()
-            .theme(ThemeName::from_static("dark"))
-            .crossfade(crossfade(1))
-            .build();
-        let later = ConfigPatch::builder().crossfade(crossfade(3)).build();
+        let earlier_patch = ConfigPatch {
+            theme: Some(ThemeName::from_static("dark")),
+            crossfade: Some(crossfade(1)),
+            ..ConfigPatch::default()
+        };
+        let later = ConfigPatch {
+            crossfade: Some(crossfade(3)),
+            ..ConfigPatch::default()
+        };
 
-        let merged = earlier.then(later);
+        let merged = earlier_patch.then(later);
 
         assert_eq!(merged.theme.as_ref().map(ThemeName::as_str), Some("dark"));
         assert_eq!(merged.crossfade, Some(crossfade(3)));
@@ -320,9 +329,14 @@ mod tests {
     fn config_patch_then_an_absent_field_keeps_the_earlier_one() {
         let speakers =
             || OutputDevice::Named(DeviceName::new("Speakers".to_string()).unwrap());
-        let earlier = ConfigPatch::builder().device(speakers()).build();
+        let earlier_patch = ConfigPatch {
+            device: Some(speakers()),
+            ..ConfigPatch::default()
+        };
 
-        let merged = earlier.then(ConfigPatch::builder().build());
+        let merged = earlier_patch.then(ConfigPatch {
+            ..ConfigPatch::default()
+        });
 
         assert_eq!(merged.device, Some(speakers()));
     }

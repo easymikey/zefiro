@@ -38,15 +38,15 @@ pub(crate) fn ctrl(character: char) -> Chord {
     Chord::Key(Key::ctrl(KeyCode::Char(character)))
 }
 
-const RADIX: u32 = 10;
+const RADIX: u8 = 10;
 
 pub(crate) fn digits() -> impl Iterator<Item = u8> {
-    (0..RADIX).filter_map(|digit| u8::try_from(digit).ok())
+    0..RADIX
 }
 
 #[must_use]
 pub(crate) fn digit_char(digit: u8) -> Option<char> {
-    char::from_digit(u32::from(digit), RADIX)
+    char::from_digit(u32::from(digit), u32::from(RADIX))
 }
 
 #[cfg(test)]

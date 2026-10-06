@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{any::Any, time::Instant};
 
 use crossbeam_channel::{Receiver, Select, never};
 use kernel::cmd::Cmds;
@@ -8,7 +8,7 @@ use crate::watcher::FileStream;
 pub(crate) struct Inboxes<'a, C, M> {
     pub(crate) commands: &'a Receiver<C>,
     pub(crate) heard: Receiver<M>,
-    pub(crate) finished: Receiver<M>,
+    pub(crate) finished: Receiver<Result<M, Box<dyn Any + Send>>>,
 }
 
 pub(crate) enum WaitSource {
@@ -19,6 +19,7 @@ pub(crate) enum WaitSource {
 
 pub(crate) enum LoopInput<M> {
     Heard(M),
+    Panicked(Box<dyn Any + Send>),
     Lost(WaitSource),
     Due,
     Closed,
@@ -58,9 +59,11 @@ impl<C, M: From<Cmds<C>>> Inboxes<'_, C, M> {
                 .map_or(LoopInput::Lost(WaitSource::Heard), LoopInput::Heard);
         }
         if index == finished {
-            return operation
-                .recv(&self.finished)
-                .map_or(LoopInput::Lost(WaitSource::Finished), LoopInput::Heard);
+            return match operation.recv(&self.finished) {
+                Ok(Ok(message)) => LoopInput::Heard(message),
+                Ok(Err(payload)) => LoopInput::Panicked(payload),
+                Err(_) => LoopInput::Lost(WaitSource::Finished),
+            };
         }
         if index == changes {
             return files
@@ -70,10 +73,20 @@ impl<C, M: From<Cmds<C>>> Inboxes<'_, C, M> {
         LoopInput::Closed
     }
 
-    pub(crate) fn lose(&mut self, source: &WaitSource, files: &mut FileStream<M>) {
+    pub(crate) fn lose(
+        &mut self,
+        source: &WaitSource,
+        files: &mut FileStream<M>,
+    ) -> Option<M> {
         match source {
-            WaitSource::Heard => self.heard = never(),
-            WaitSource::Finished => self.finished = never(),
+            WaitSource::Heard => {
+                self.heard = never();
+                None
+            }
+            WaitSource::Finished => {
+                self.finished = never();
+                None
+            }
             WaitSource::Files => files.lose(),
         }
     }

@@ -1,14 +1,38 @@
-use std::{borrow::Cow, fmt, str::FromStr};
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+    str::FromStr,
+    sync::Arc,
+};
 
 use crate::domain::direction::Direction;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ThemeName(Cow<'static, str>);
+#[derive(Clone)]
+enum Name {
+    Static(&'static str),
+    Shared(Arc<str>),
+}
+
+const fn is_path(name: &str) -> bool {
+    is_path_bytes(name.as_bytes())
+}
+
+const fn is_path_bytes(bytes: &[u8]) -> bool {
+    match bytes {
+        [b'/' | b'\\', ..] | [b'.', b'.', ..] => true,
+        [_, rest @ ..] => is_path_bytes(rest),
+        [] => false,
+    }
+}
+
+#[derive(Clone)]
+pub struct ThemeName(Name);
 
 impl ThemeName {
     #[must_use]
     pub const fn from_static(name: &'static str) -> Self {
-        Self(Cow::Borrowed(name))
+        assert!(!is_path(name), "a built-in theme name cannot be a path");
+        Self(Name::Static(name))
     }
 
     pub fn new(name: String) -> Result<Self, ThemeNameError> {
@@ -16,14 +40,42 @@ impl ThemeName {
             Err(ThemeNameError::Empty)
         } else if name == "auto" {
             Err(ThemeNameError::Reserved)
+        } else if is_path(&name) {
+            Err(ThemeNameError::Path)
         } else {
-            Ok(Self(Cow::Owned(name)))
+            Ok(Self(Name::Shared(Arc::from(name))))
         }
     }
 
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        match &self.0 {
+            Name::Static(name) => name,
+            Name::Shared(name) => name,
+        }
+    }
+}
+
+impl fmt::Debug for ThemeName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("ThemeName")
+            .field(&self.as_str())
+            .finish()
+    }
+}
+
+impl PartialEq for ThemeName {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for ThemeName {}
+
+impl Hash for ThemeName {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
     }
 }
 
@@ -45,6 +97,8 @@ pub enum ThemeNameError {
     Empty,
     #[error("\"auto\" is a reserved theme name")]
     Reserved,
+    #[error("a theme name cannot contain \"/\", \"\\\" or \"..\"")]
+    Path,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -186,5 +240,20 @@ mod tests {
         #[case] expected: Result<ThemeChoice, ThemeNameError>,
     ) {
         assert_eq!(text.parse::<ThemeChoice>(), expected);
+    }
+
+    #[rstest]
+    #[case::parent("../x")]
+    #[case::nested("a/b")]
+    #[case::backslash("a\\b")]
+    #[case::dots("..")]
+    fn theme_choice_refuses_a_path(#[case] text: &str) {
+        assert_eq!(text.parse::<ThemeChoice>(), Err(ThemeNameError::Path));
+    }
+
+    #[test]
+    #[should_panic]
+    fn from_static_refuses_a_path() {
+        assert_eq!(ThemeName::from_static("a/b").as_str(), "a/b");
     }
 }

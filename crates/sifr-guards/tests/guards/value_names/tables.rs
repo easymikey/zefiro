@@ -101,6 +101,8 @@ pub(crate) const ROLE_WORDS: &[(&str, &[&str])] = &[
     ("CrossfadePermit", &["crossfade_permit"]),
     ("CoverCrossfade", &["crossfade"]),
     ("Percent", &["volume"]),
+    ("TextRequest", &["message"]),
+    ("SearchRequest", &["message"]),
 ];
 
 pub(crate) const ERROR_WORDS: &[&str] = &["error", "source", "skipped"];

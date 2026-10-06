@@ -76,6 +76,11 @@ mod tests {
         Size::new(80, 18),
         Breakpoint::Compact
     )]
+    #[case::full_asked_at_the_full_edge(
+        LayoutMode::Full,
+        Size::new(60, 19),
+        Breakpoint::Full
+    )]
     #[case::below_minimum(LayoutMode::Auto, Size::new(47, 24), Breakpoint::TooSmall)]
     #[case::below_minimum_rows(
         LayoutMode::Auto,

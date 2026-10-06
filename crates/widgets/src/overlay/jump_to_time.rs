@@ -10,17 +10,13 @@ const MIN_WIDTH: Cells = Cells(61);
 
 pub(crate) fn prompt<'a>(
     text_entry: &'a TextEntry<TimecodeError>,
-    theme: ActiveTheme<'a>,
+    active_theme: ActiveTheme<'a>,
 ) -> PromptWidget<'a> {
-    PromptWidget {
-        title: glyphs::jump_to_time::TITLE_WORD,
-        hint: glyphs::jump_to_time::HINT,
-        min_width: MIN_WIDTH,
-        body: PromptBody::Entry(&text_entry.input),
-        error: text_entry.error.as_ref().map(ToString::to_string),
-        avoid: &[],
-        theme,
-    }
+    PromptWidget::new(PromptBody::Entry(&text_entry.input), active_theme)
+        .title(glyphs::jump_to_time::TITLE_WORD)
+        .hint(glyphs::jump_to_time::HINT)
+        .min_width(MIN_WIDTH)
+        .error(text_entry.error.as_ref())
 }
 
 #[cfg(test)]

@@ -1,27 +1,29 @@
 use std::time::Duration;
 
 use kernel::{
-    cmd::Effect,
+    cmd::{Effect, MacosCmd},
     domain::{
         bounded::Bounded,
+        config::Diagnostic,
         cue::Cue,
         cursor::Cursor,
         direction::Direction,
         index::ViewIndex,
         model::Model,
         overlay::{DeleteCandidate, Overlay, OverlayName},
-        player::{AbLoop, Player},
+        player::{AbLoop, PausedBy, Player},
         playlist::{PlayOrder, RepeatMode},
         revision::Revision,
         time::Moment,
-        transport::Transport,
+        transport::{StreamError, Transport},
     },
-    message::{AudioEvent, Message, PlaybackRequest, Timer},
+    message::{AudioError, AudioEvent, Message, PlaybackRequest, Timer},
     update::{machine::Unhandled, update},
 };
 use rstest::{Context, rstest};
 
 use crate::support::{
+    dated_track,
     model_playing_at,
     model_with_tracks,
     playing_model,
@@ -36,7 +38,6 @@ use crate::support::{
         enqueue,
         handed_off,
         history_enqueue,
-        jump_char,
         logged,
         mark_ab,
         mark_fires,
@@ -83,7 +84,8 @@ fn walked(mut model: Model, messages: Vec<Message>) -> Vec<Step> {
         .map(|message| {
             let message = resolved(message, &model);
             let sent = message.clone();
-            let cmd = update(&mut model, message, Moment::default()).unwrap();
+            let cmd = update(&mut model, message, Moment::default())
+                .unwrap_or_else(|Unhandled| Vec::new());
             (
                 sent,
                 cmd.into_iter().collect(),
@@ -163,7 +165,7 @@ fn resolved(message: Message, model: &Model) -> Message {
     playing_nothing_selected(Duration::from_secs(100)),
     {
         let mut messages = vec![open(OverlayName::JumpToTime)];
-        messages.extend(typed("10:00", jump_char));
+        messages.extend(typed("10:00", text_char));
         messages.push(confirm());
         messages
     }
@@ -408,9 +410,51 @@ fn router_trace(
     media(PlaybackRequest::Pause),
     Unhandled
 )]
+#[case::next_with_nothing_to_play_is_refused(
+    Model::default(),
+    media(PlaybackRequest::Next),
+    Unhandled
+)]
+#[case::previous_with_nothing_to_play_is_refused(
+    Model::default(),
+    media(PlaybackRequest::Previous),
+    Unhandled
+)]
+#[case::stepping_the_speed_past_the_top_while_playing_is_refused(
+    {
+        let mut model = model_playing_at(3, 0, Duration::ZERO);
+        model.transport.speed = kernel::domain::speed::Speed::clamped(4.0);
+        model
+    },
+    step_speed(Direction::Next),
+    Unhandled
+)]
+#[case::stepping_the_speed_past_the_top_while_paused_is_refused(
+    {
+        let mut model = paused_model();
+        model.transport.speed = kernel::domain::speed::Speed::clamped(4.0);
+        model
+    },
+    step_speed(Direction::Next),
+    Unhandled
+)]
+#[case::a_sleep_timer_with_no_sleep_set_is_refused(
+    Model::default(),
+    sleep_fires(),
+    Unhandled
+)]
 #[case::a_refused_key_keeps_the_toast_up(
     toasted(),
     media(PlaybackRequest::SeekBy { direction: Direction::Next, by: Duration::from_secs(10) }),
+    Unhandled
+)]
+#[case::an_ab_press_that_marks_nothing_new_is_refused(
+    {
+        let mut model = model_playing_at(1, 0, Duration::from_secs(10));
+        model.transport.ab_loop = Some(AbLoop::AOnly(Duration::from_secs(10)));
+        model
+    },
+    mark_ab(),
     Unhandled
 )]
 fn a_refused_message_leaves_the_model_alone(
@@ -424,6 +468,92 @@ fn a_refused_message_leaves_the_model_alone(
         Some(rejection)
     );
     assert_eq!(format!("{model:?}"), before);
+}
+
+fn paused_model() -> Model {
+    let mut model = model_playing_at(1, 0, Duration::from_secs(10));
+    model.player = Player::Paused {
+        track: dated_track(0),
+        position: Duration::from_secs(10),
+        by: PausedBy::Listener,
+    };
+    model
+}
+
+fn sleeping_paused_model() -> Model {
+    let mut model = paused_model();
+    update(
+        &mut model,
+        Message::Playback(PlaybackRequest::CycleSleep),
+        Moment::default(),
+    )
+    .expect("the first preset is set");
+    model
+}
+
+fn sleep_fires() -> Message {
+    Message::Elapsed(Timer::Sleep(Revision::default()))
+}
+
+fn awaited(message: Message, model: &Model) -> Message {
+    if let Message::Elapsed(Timer::Sleep(_)) = message {
+        return Message::Elapsed(Timer::Sleep(model.revisions.sleep));
+    }
+    message
+}
+
+fn seek_failed() -> Message {
+    Message::Audio(AudioEvent::Error(AudioError::Seek {
+        reason: Diagnostic::from_error(&std::io::Error::other(
+            "the source cannot seek",
+        )),
+    }))
+}
+
+#[rstest]
+#[case::an_audio_error_that_leaves_a_playing_player_alone(
+    model_playing_at(1, 0, Duration::from_secs(10)),
+    seek_failed()
+)]
+#[case::a_lost_output_that_leaves_a_paused_player_alone(
+    paused_model(),
+    Message::Audio(AudioEvent::OutputLost(StreamError::DeviceGone))
+)]
+#[case::a_fired_sleep_that_leaves_a_paused_player_alone(
+    sleeping_paused_model(),
+    sleep_fires()
+)]
+fn a_self_loop_sends_no_position_and_arms_no_timer(
+    #[case] mut model: Model,
+    #[case] message: Message,
+) {
+    let player = model.player.clone();
+    let message = awaited(message, &model);
+
+    let effects = update(&mut model, message, Moment::default())
+        .expect("a fact that changes nothing is answered");
+
+    assert_eq!(model.player, player);
+    assert!(!effects.into_iter().any(|effect| matches!(
+        effect,
+        Effect::Macos(MacosCmd::SetPosition(_))
+            | Effect::After {
+                timer: Timer::Lookahead(_),
+                ..
+            }
+    )));
+}
+
+#[test]
+fn a_self_loop_sleep_keeps_the_revisions() {
+    let mut model = sleeping_paused_model();
+    let before = format!("{:?}", model.revisions);
+
+    let message = awaited(sleep_fires(), &model);
+
+    update(&mut model, message, Moment::default()).expect("a fired sleep is answered");
+
+    assert_eq!(format!("{:?}", model.revisions), before);
 }
 
 #[test]

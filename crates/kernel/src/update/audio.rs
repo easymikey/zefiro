@@ -13,7 +13,7 @@ use crate::{
         time::Moment,
         toast::Toast,
         track::{Track, TrackRef},
-        transport::{Output, Transport},
+        transport::StreamError,
         workspace::Workspace,
     },
     message::{AudioError, AudioEvent},
@@ -42,7 +42,9 @@ pub(crate) fn update(
                 PlayerMessage::Playhead { offset, now },
                 now,
             )?;
-            let recovered = output_recovered(playback.transport)?;
+            let recovered = playback
+                .transport
+                .transition(TransportMessage::OutputReady)?;
             Ok(cmd.then(recovered))
         }
         AudioEvent::TrackChanged => track_changed(playback, now),
@@ -61,10 +63,15 @@ pub(crate) fn update(
                 PlayerMessage::Loaded { total, anchor },
                 now,
             )?;
-            let recovered = output_recovered(playback.transport)?;
+            let recovered = playback
+                .transport
+                .transition(TransportMessage::OutputReady)?;
             Ok(cmd.then(recovered))
         }
         AudioEvent::Error(failure) => error(playback, failure, now),
+        AudioEvent::OutputLost(stream_error) => {
+            output_lost(playback, stream_error, now)
+        }
         AudioEvent::DevicesListed(devices) => {
             playback.settings.output_devices = devices;
             Ok(Cmd::none())
@@ -96,51 +103,45 @@ fn fell_back(
     ))
 }
 
-fn output_recovered(transport: &mut Transport) -> Result<Cmd, Unhandled> {
-    match transport.output {
-        Output::Lost(..) => transport.transition(TransportMessage::OutputReady),
-        Output::Ready => Ok(Cmd::none()),
-    }
-}
-
 fn error(
     playback: &mut PlaybackParts<'_>,
     error: AudioError,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let (told, lost) = match &error {
-        AudioError::OutputLost(kind) => {
-            (output_lost_text(playback.player, &error), Some(*kind))
-        }
-        AudioError::Decode { .. }
-        | AudioError::Device { .. }
-        | AudioError::ListDevices { .. }
-        | AudioError::Stream { .. }
-        | AudioError::Preload { .. }
-        | AudioError::Seek { .. } => (error.to_string(), None),
-    };
-    let stopped =
-        player::update_player(playback, PlayerMessage::Error { error, now }, now)
-            .unwrap_or_else(|Unhandled| Cmd::none());
-    let recorded = match lost {
-        Some(kind) => playback
-            .transport
-            .transition(TransportMessage::OutputLost(kind))?,
-        None => Cmd::none(),
-    };
+    let told = error.to_string();
+    let stopped = player::record(playback, PlayerMessage::Error(error), now)?;
     let raised = playback.workspace.show(
         Toast::error("Audio error").with_text(told),
         playback.revisions,
     );
+    Ok(raised.then(stopped))
+}
+
+fn output_lost(
+    playback_parts: &mut PlaybackParts<'_>,
+    stream_error: StreamError,
+    now: Moment,
+) -> Result<Cmd, Unhandled> {
+    let told = output_lost_text(playback_parts.player, stream_error);
+    let recorded = playback_parts
+        .transport
+        .transition(TransportMessage::OutputLost(stream_error))?;
+    let stopped = player::record(playback_parts, PlayerMessage::OutputLost(now), now)?;
+    let raised = playback_parts.workspace.show(
+        Toast::error("Audio error").with_text(told),
+        playback_parts.revisions,
+    );
     Ok(raised.then(stopped).then(recorded))
 }
 
-fn output_lost_text(player: &Player, error: &AudioError) -> String {
+fn output_lost_text(player: &Player, stream_error: StreamError) -> String {
     match player {
         Player::Playing { .. } | Player::Paused { .. } => {
             "Output lost — paused".to_string()
         }
-        Player::Loading(..) | Player::Stopped => error.to_string(),
+        Player::Loading(..) | Player::Stopped => {
+            format!("Audio output lost: {stream_error}")
+        }
     }
 }
 
@@ -163,9 +164,10 @@ pub(crate) fn next(
     playback: &mut PlaybackParts<'_>,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let cmd = pop_queued_track(playback.playlist, playback.queue)
+    let track = pop_queued_track(playback.playlist, playback.queue)
         .or_else(|| playback.playlist.skip(Direction::Next).cloned())
-        .map_or(Ok(Cmd::none()), |track| start(playback, track, now))?;
+        .ok_or(Unhandled)?;
+    let cmd = start(playback, track, now)?;
     follow_playback(playback.workspace, playback.playlist);
     Ok(cmd)
 }
@@ -183,11 +185,12 @@ pub(crate) fn previous(
     playback: &mut PlaybackParts<'_>,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let cmd = playback
+    let track = playback
         .playlist
         .skip(Direction::Previous)
         .cloned()
-        .map_or(Ok(Cmd::none()), |track| start(playback, track, now))?;
+        .ok_or(Unhandled)?;
+    let cmd = start(playback, track, now)?;
     follow_playback(playback.workspace, playback.playlist);
     Ok(cmd)
 }
@@ -221,9 +224,12 @@ fn ended(playback: &mut PlaybackParts<'_>, now: Moment) -> Result<Cmd, Unhandled
     };
     let cmd = player::update_player(playback, message, now)?;
     let reset = match pick.track() {
-        Some(_) => playback
-            .transport
-            .transition(TransportMessage::TrackChanged)?,
+        Some(_) => match playback.transport.ab_loop {
+            Some(..) => playback
+                .transport
+                .transition(TransportMessage::TrackChanged)?,
+            None => Cmd::none(),
+        },
         None => Cmd::none(),
     };
     move_onto(playback.playlist, playback.queue, pick);
@@ -247,9 +253,12 @@ fn track_changed(
         now,
     };
     let cmd = player::update_player(playback, message, now)?;
-    let reset = playback
-        .transport
-        .transition(TransportMessage::TrackChanged)?;
+    let reset = match playback.transport.ab_loop {
+        Some(..) => playback
+            .transport
+            .transition(TransportMessage::TrackChanged)?,
+        None => Cmd::none(),
+    };
     move_onto(playback.playlist, playback.queue, pick);
     if following {
         follow_playback(playback.workspace, playback.playlist);
@@ -307,8 +316,11 @@ pub(crate) fn start(
     let stamp = Stamp::pending(playback.transport, playback.revisions, now);
     let cmd =
         player::update_player(playback, PlayerMessage::Start { track, stamp }, now)?;
-    let reset = playback
-        .transport
-        .transition(TransportMessage::TrackChanged)?;
+    let reset = match playback.transport.ab_loop {
+        Some(..) => playback
+            .transport
+            .transition(TransportMessage::TrackChanged)?,
+        None => Cmd::none(),
+    };
     Ok(cmd.then(reset))
 }

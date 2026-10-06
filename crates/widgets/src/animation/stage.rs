@@ -4,7 +4,11 @@ use kernel::domain::{appearance::Animations, time::Moment};
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 use tachyonfx::{CellFilter, Effect as Animation, EffectRenderer, RefRect};
 
-use crate::{pixels::cover::CoverMotion, screen::frame_layout::FrameLayout};
+use crate::{
+    pixels::cover::CoverMotion,
+    screen::frame_layout::FrameLayout,
+    theme::backdrop_style::BackdropStyle,
+};
 
 #[derive(Debug, Default)]
 enum Stage {
@@ -37,17 +41,6 @@ impl Stage {
         }
     }
 
-    fn progress_at(&self, area: Rect) -> Option<f32> {
-        match self {
-            Stage::Running(active) => active
-                .iter()
-                .find(|(_, rect)| *rect == area)
-                .and_then(|(animation, _)| animation.timer())
-                .map(|timer| timer.alpha()),
-            Stage::Idle | Stage::Ended => None,
-        }
-    }
-
     fn advance(self, buffer: &mut Buffer, elapsed: Duration) -> Self {
         let Stage::Running(mut active) = self else {
             return Stage::Idle;
@@ -73,7 +66,7 @@ impl Stage {
 pub struct AnimationStage {
     stage: Stage,
     last_clock: Duration,
-    wash_area: Option<Rect>,
+    wash: Option<(Animation, Rect)>,
     pub(crate) vacated: VacatedAreas,
     cover: RefRect,
 }
@@ -89,10 +82,7 @@ pub(crate) struct VacatedAreas {
 pub struct Backdrop {
     pub animations: Animations,
     pub layout: FrameLayout,
-    pub background: Color,
-    pub accent: Color,
-    pub volume_fill: Color,
-    pub volume_lifted: Color,
+    pub style: BackdropStyle,
     pub wash_from: Color,
 }
 
@@ -100,7 +90,7 @@ impl AnimationStage {
     pub fn advance_clock(&mut self, clock: Duration) -> Duration {
         let elapsed = clock.saturating_sub(self.last_clock);
         self.last_clock = clock;
-        if !self.stage.is_running() {
+        if !self.stage.is_running() && self.wash.is_none() {
             return Duration::ZERO;
         }
         elapsed
@@ -108,21 +98,22 @@ impl AnimationStage {
 
     #[must_use]
     pub fn is_animating(&self) -> bool {
-        self.stage.is_animating()
+        self.stage.is_animating() || self.wash.is_some()
     }
 
     #[must_use]
     pub fn wash_progress(&self) -> Option<f32> {
-        self.stage.progress_at(self.wash_area?)
+        let (animation, _) = self.wash.as_ref()?;
+        animation.timer().map(|timer| timer.alpha())
     }
 
     pub(crate) fn clear(&mut self) {
         self.stage = Stage::Idle;
-        self.wash_area = None;
+        self.wash = None;
     }
 
     pub(crate) fn take_running(&mut self) -> Vec<(Animation, Rect)> {
-        std::mem::take(&mut self.stage).take_active()
+        std::mem::replace(&mut self.stage, Stage::Idle).take_active()
     }
 
     pub(crate) fn restore_running(&mut self, running: Vec<(Animation, Rect)>) {
@@ -156,9 +147,7 @@ impl AnimationStage {
     }
 
     pub(crate) fn stage_whole_screen(&mut self, animation: Animation, area: Rect) {
-        self.wash_area = Some(area);
-        self.stage
-            .push((animation.with_filter(self.cell_filter()), area));
+        self.wash = Some((animation.with_filter(self.cell_filter()), area));
     }
 
     #[must_use]
@@ -167,7 +156,16 @@ impl AnimationStage {
     }
 
     pub fn advance(&mut self, buffer: &mut Buffer, elapsed: Duration) {
-        self.stage = std::mem::take(&mut self.stage).advance(buffer, elapsed);
+        self.stage =
+            std::mem::replace(&mut self.stage, Stage::Idle).advance(buffer, elapsed);
+        self.wash = self.wash.take().and_then(|(mut animation, area)| {
+            let visible = area.intersection(buffer.area);
+            if visible.is_empty() {
+                return None;
+            }
+            buffer.render_effect(&mut animation, visible, elapsed);
+            (!animation.done()).then_some((animation, area))
+        });
     }
 }
 
@@ -279,6 +277,19 @@ mod tests {
         let stage = Stage::Running(vec![(fade(900), INSIDE)]);
         let advanced = stage.advance(&mut buffer, Duration::from_millis(1));
         assert!(advanced.is_running());
+    }
+
+    #[test]
+    fn a_finished_wash_is_dropped_and_a_later_screen_animation_is_no_wash() {
+        let mut buffer = Buffer::empty(INSIDE);
+        let mut animation_stage = AnimationStage::default();
+        animation_stage.stage_whole_screen(fade(100), INSIDE);
+        assert!(animation_stage.wash_progress().is_some());
+        assert!(animation_stage.is_animating());
+        animation_stage.advance(&mut buffer, Duration::from_secs(10));
+        assert_eq!(animation_stage.wash_progress(), None);
+        animation_stage.stage(fade(900), INSIDE);
+        assert_eq!(animation_stage.wash_progress(), None);
     }
 
     #[test]

@@ -166,6 +166,21 @@ fn an_elapsed_sleep_timer_pauses_in_place_and_disarms() {
 }
 
 #[test]
+fn an_elapsed_sleep_timer_over_a_paused_player_only_disarms() {
+    let mut model = playing_model(3);
+    let timer = scheduled(&sleep_cycled(&mut model))[0];
+    let _paused = sent(&mut model, Message::Playback(PlaybackRequest::Toggle));
+    let paused = model.player.clone();
+
+    let cmd = update(&mut model, Message::Elapsed(timer), Moment::default());
+
+    assert_eq!(cmd, Ok(Cmd::none()));
+    assert_eq!(model.player, paused);
+    assert!(matches!(model.player, Player::Paused { .. }));
+    assert_eq!(model.transport.sleep, None);
+}
+
+#[test]
 fn a_rearmed_sleep_timer_ignores_the_first_one() {
     let mut model = playing_model(3);
     let first = scheduled(&sleep_cycled(&mut model))[0];

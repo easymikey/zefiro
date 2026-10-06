@@ -16,7 +16,7 @@ use kernel::{
 use crate::{
     deck::{
         envelope::{EnvelopeControl, Ramp, envelope},
-        output::{Output, open_output_stream},
+        output::{Fader, Output, open_output_stream},
         source::{PreloadMode, TrackSource},
     },
     device::OutputLoss,
@@ -27,6 +27,7 @@ use crate::{
 };
 
 pub(crate) struct Deck {
+    stream: Option<rodio::OutputStream>,
     pub(crate) output: Option<Output>,
     staged: Option<TrackSource>,
     sender: Sender<AudioMessage>,
@@ -37,6 +38,7 @@ pub(crate) struct Deck {
 impl Deck {
     pub(crate) fn new(spectrum: Handoff, sender: Sender<AudioMessage>) -> Self {
         Self {
+            stream: None,
             output: None,
             staged: None,
             sender,
@@ -68,11 +70,13 @@ impl Deck {
                 output.queued_control = Some(control);
             }
             PreloadMode::Crossfade(speed) => {
-                output.stage((wrapped, control), speed);
+                let sink = output.stage(wrapped, speed);
+                output.incoming_fader = Some(Fader { sink, control });
             }
         }
         Some(
             EngineMessage::Attached {
+                revision: track.revision,
                 preload_mode,
                 duration,
             }
@@ -82,15 +86,18 @@ impl Deck {
 
     pub(crate) fn take_signals(&self, revision: Revision) -> Option<AudioMessage> {
         let output = self.output.as_ref()?;
-        let signals = output.holding(revision)?.take_signals();
-        let role = output.role(revision)?;
-        Some(AudioMessage::SignalsTaken { role, signals })
+        let (role, control) = output.holder(revision)?;
+        Some(AudioMessage::SignalsTaken {
+            role,
+            signals: control.take_signals(),
+        })
     }
 
-    pub(crate) fn advance(&mut self) {
-        if let Some(output) = self.output.as_mut() {
-            output.control = output.queued_control.take();
-        }
+    pub(crate) fn advance(&mut self) -> Option<AudioMessage> {
+        let output = self.output.as_mut()?;
+        output.control = output.queued_control.take();
+        let revision = output.control.as_ref()?.revision();
+        self.take_signals(revision)
     }
 
     pub(crate) fn playhead(&self) -> Option<Duration> {
@@ -106,6 +113,7 @@ impl Deck {
     pub(crate) fn silence(&mut self) {
         self.drop_preload();
         self.output = None;
+        self.stream = None;
         self.staged = None;
     }
 
@@ -122,7 +130,8 @@ impl Deck {
             .as_ref()
             .map_or((Duration::ZERO, Playback::Playing), Output::at);
         drop(self.output.take());
-        self.output = Some(Output::with_stream(opened.stream, speed, &self.spectrum));
+        self.output = Some(Output::with_stream(&opened.stream, speed, &self.spectrum));
+        self.stream = Some(opened.stream);
         Ok(DeviceOpened {
             device: opened.device,
             position,
@@ -259,7 +268,7 @@ fn fade(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::{io::Write, time::Duration};
 
     use kernel::domain::{revision::Revision, speed::Speed};
@@ -273,7 +282,10 @@ mod tests {
             output::{Output, tests::detached_output},
             source::{PreloadMode, TrackSource, decode},
         },
-        engine::message::{AudioMessage, Signals, SinkRole},
+        engine::{
+            message::{AudioMessage, EngineMessage, Signals, SinkRole},
+            tests::assert_same,
+        },
         tap,
     };
 
@@ -298,7 +310,7 @@ mod tests {
         bytes
     }
 
-    fn track(revision: Revision) -> TrackSource {
+    pub(crate) fn track(revision: Revision) -> TrackSource {
         let mut file = tempfile::Builder::new().suffix(".wav").tempfile().unwrap();
         file.write_all(&wav_bytes()).unwrap();
         TrackSource {
@@ -351,25 +363,32 @@ mod tests {
     }
 
     fn attach_gapless(deck: &mut Deck) -> Option<AudioMessage> {
-        assert!(
-            deck.attach(track(Revision::default()), PreloadMode::Gapless)
-                .is_some()
-        );
-        None
+        deck.attach(track(Revision::default()), PreloadMode::Gapless)
     }
 
     fn attach_crossfade(deck: &mut Deck) -> Option<AudioMessage> {
-        let attached = deck.attach(
+        deck.attach(
             track(Revision::default()),
             PreloadMode::Crossfade(Speed::default()),
-        );
-        assert!(attached.is_some());
-        None
+        )
     }
 
-    fn advance(deck: &mut Deck) -> Option<AudioMessage> {
-        deck.advance();
-        None
+    fn attached(preload_mode: PreloadMode) -> Option<AudioMessage> {
+        Some(
+            EngineMessage::Attached {
+                revision: Revision::default(),
+                preload_mode,
+                duration: track(Revision::default()).total(),
+            }
+            .into(),
+        )
+    }
+
+    fn unsignalled_primary() -> Option<AudioMessage> {
+        Some(AudioMessage::SignalsTaken {
+            role: SinkRole::Primary,
+            signals: Signals::default(),
+        })
     }
 
     fn append_staged(deck: &mut Deck) -> Option<AudioMessage> {
@@ -390,7 +409,8 @@ mod tests {
     #[rstest]
     #[case::attach_gapless_replaces_the_queued_slot(
         attach_gapless,
-        [None, Some(Revision::default()), None, None, Some(staged_revision())]
+        [None, Some(Revision::default()), None, None, Some(staged_revision())],
+        attached(PreloadMode::Gapless)
     )]
     #[case::attach_crossfade_fills_the_incoming_slot(
         attach_crossfade,
@@ -400,31 +420,36 @@ mod tests {
             Some(Revision::default()),
             None,
             Some(staged_revision())
-        ]
+        ],
+        attached(PreloadMode::Crossfade(Speed::default()))
     )]
     #[case::advance_moves_queued_to_primary(
-        advance,
-        [Some(queued_revision()), None, None, None, Some(staged_revision())]
+        Deck::advance,
+        [Some(queued_revision()), None, None, None, Some(staged_revision())],
+        unsignalled_primary()
     )]
     #[case::append_staged_moves_the_staged_track_to_primary(
         append_staged,
-        [Some(staged_revision()), Some(queued_revision()), None, None, None]
+        [Some(staged_revision()), Some(queued_revision()), None, None, None],
+        None
     )]
-    #[case::silence_drops_every_slot(silence, [None, None, None, None, None])]
+    #[case::silence_drops_every_slot(silence, [None, None, None, None, None], None)]
     #[case::clear_staged_drops_only_the_staged_track(
         clear_staged,
-        [None, Some(queued_revision()), None, None, None]
+        [None, Some(queued_revision()), None, None, None],
+        None
     )]
     fn a_deck_operation_changes_only_its_own_slots(
         #[case] operation: fn(&mut Deck) -> Option<AudioMessage>,
         #[case] expected: Slots,
+        #[case] audio_message: Option<AudioMessage>,
     ) {
         let mut deck = loaded_deck();
-        assert!(operation(&mut deck).is_none());
+        assert_same(operation(&mut deck), audio_message);
         assert_eq!(slots(&deck), expected);
     }
 
-    fn deck_with_detached_output() -> Deck {
+    pub(crate) fn deck_with_detached_output() -> Deck {
         let (spectrum, _spectrum_tap) = tap::new_tap();
         let (sender, _heard) = crossbeam_channel::bounded(64);
         let mut deck = Deck::new(spectrum, sender);
@@ -432,7 +457,7 @@ mod tests {
         deck
     }
 
-    fn tone(millis: u64) -> impl Source {
+    pub(crate) fn tone(millis: u64) -> impl Source {
         SineWave::new(440.0).take_duration(Duration::from_millis(millis))
     }
 
@@ -454,6 +479,23 @@ mod tests {
         assert!(matches!(
             deck.take_signals(revision),
             Some(AudioMessage::SignalsTaken { signals, .. }) if signals == Signals::default()
+        ));
+    }
+
+    #[test]
+    fn a_gapless_queued_track_keeps_its_signals_until_it_holds_the_primary_slot() {
+        let mut deck = deck_with_detached_output();
+        let (wake, _heard) = crossbeam_channel::bounded(4);
+        let (source, control) = envelope(tone(1), Revision::default().next(), wake);
+        for _ in source {}
+        let revision = control.revision();
+        output(&mut deck).queued_control = Some(control);
+
+        assert!(deck.take_signals(revision).is_none());
+        assert!(matches!(
+            deck.advance(),
+            Some(AudioMessage::SignalsTaken { role: SinkRole::Primary, signals })
+                if signals.contains(Signals::FINISHED)
         ));
     }
 

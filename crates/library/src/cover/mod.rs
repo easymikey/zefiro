@@ -1,4 +1,10 @@
-use std::{collections::VecDeque, path::PathBuf, sync::Arc};
+use std::{
+    collections::VecDeque,
+    fs,
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use fast_image_resize::{
     PixelType,
@@ -13,7 +19,7 @@ use crate::tags::embedded_cover;
 
 pub(crate) mod decoding;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CoverArt {
     Image(Arc<RgbaImage>),
     Missing,
@@ -27,7 +33,7 @@ pub struct CoverError {
     pub source: image::ImageError,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CoverDecoded {
     pub path: PathBuf,
     pub side: Pixels,
@@ -36,59 +42,58 @@ pub struct CoverDecoded {
 
 pub(crate) const CACHE_CAPACITY: usize = 8;
 
-#[derive(Debug, PartialEq)]
-struct CoverCacheEntry {
-    path: PathBuf,
-    side: Pixels,
-    image: Option<Arc<RgbaImage>>,
-}
-
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default)]
 pub(crate) struct CoverCache {
-    entries: VecDeque<CoverCacheEntry>,
+    decodeds: VecDeque<CoverDecoded>,
 }
 
 impl CoverCache {
-    pub(crate) fn answer(&mut self, job: &CoverJob) -> Option<CoverDecoded> {
-        let position = self
-            .entries
+    pub(crate) fn answer(&self, job: &CoverJob) -> Option<&CoverDecoded> {
+        self.decodeds
             .iter()
-            .position(|entry| entry.path == job.path && entry.side == job.side)?;
-        let entry = self.entries.remove(position)?;
-        let art = entry.image.as_ref().map_or(CoverArt::Missing, |image| {
-            CoverArt::Image(Arc::clone(image))
-        });
-        self.entries.push_front(entry);
-        Some(CoverDecoded {
-            path: job.path.clone(),
-            side: job.side,
-            art,
-        })
+            .find(|entry| entry.path == job.path && entry.side == job.side)
     }
 
     pub(crate) fn remember(&mut self, decoded: &CoverDecoded) {
-        let image = match &decoded.art {
-            CoverArt::Image(image) => Some(Arc::clone(image)),
-            CoverArt::Missing => None,
-        };
-        self.entries
+        self.decodeds
             .retain(|entry| entry.path != decoded.path || entry.side != decoded.side);
-        if self.entries.len() == CACHE_CAPACITY {
-            self.entries.pop_back();
+        if self.decodeds.len() == CACHE_CAPACITY {
+            self.decodeds.pop_back();
         }
-        self.entries.push_front(CoverCacheEntry {
-            path: decoded.path.clone(),
-            side: decoded.side,
-            image,
-        });
+        self.decodeds.push_front(decoded.clone());
     }
 }
 
+const COVER_NAMES: [&str; 6] = [
+    "cover.jpg",
+    "cover.png",
+    "folder.jpg",
+    "folder.png",
+    "front.jpg",
+    "front.png",
+];
+
+pub fn cover_bytes(path: &Path) -> io::Result<Vec<u8>> {
+    if let Ok(Some(bytes)) = embedded_cover(path) {
+        return Ok(bytes);
+    }
+    folder_cover(path)
+        .map_or_else(|| Err(io::Error::from(io::ErrorKind::NotFound)), fs::read)
+}
+
+fn folder_cover(path: &Path) -> Option<PathBuf> {
+    let folder = path.parent()?;
+    COVER_NAMES
+        .iter()
+        .map(|name| folder.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
 pub(crate) fn decode(job: CoverJob) -> Result<CoverDecoded, CoverError> {
-    let art = match embedded_cover(&job.path) {
-        Ok(Some(bytes)) => decode_bytes(&bytes, job.side),
-        Ok(None) => Ok(CoverArt::Missing),
-        Err(error) => Err(image::ImageError::IoError(std::io::Error::other(error))),
+    let art = match cover_bytes(&job.path) {
+        Ok(bytes) => decode_bytes(&bytes, job.side),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(CoverArt::Missing),
+        Err(error) => Err(image::ImageError::IoError(error)),
     };
     match art {
         Ok(art) => Ok(CoverDecoded {
@@ -151,19 +156,118 @@ pub(crate) fn fit_square(
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc};
+    use std::{
+        fs,
+        io,
+        io::Cursor,
+        os::unix::fs::PermissionsExt,
+        path::PathBuf,
+        sync::Arc,
+    };
 
-    use image::{DynamicImage, RgbaImage};
+    use image::{DynamicImage, ImageFormat, RgbaImage};
     use kernel::{cmd::CoverJob, domain::geometry::Pixels};
 
-    use crate::cover::{
-        CACHE_CAPACITY,
-        CoverArt,
-        CoverCache,
-        CoverDecoded,
-        decode,
-        fit_square,
+    use crate::{
+        cover::{
+            CACHE_CAPACITY,
+            CoverArt,
+            CoverCache,
+            CoverDecoded,
+            cover_bytes,
+            decode,
+            fit_square,
+        },
+        test_support::minimal_flac_with_cover,
     };
+
+    fn untagged_track(directory: &tempfile::TempDir) -> PathBuf {
+        let path = directory.path().join("untagged.wav");
+        fs::write(&path, include_bytes!("../../tests/fixtures/tone.wav")).unwrap();
+        path
+    }
+
+    #[test]
+    fn the_embedded_cover_wins_over_the_folder_cover() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("cover.jpg"), b"jpg").unwrap();
+        let path = directory.path().join("track.flac");
+        fs::write(&path, minimal_flac_with_cover(b"embedded")).unwrap();
+
+        assert_eq!(cover_bytes(&path).unwrap(), b"embedded".to_vec());
+    }
+
+    #[test]
+    fn the_folder_cover_is_used_when_the_track_has_no_embedded_art() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("folder.png"), b"png").unwrap();
+        let path = untagged_track(&directory);
+
+        assert_eq!(cover_bytes(&path).unwrap(), b"png".to_vec());
+    }
+
+    fn unparseable_track(directory: &tempfile::TempDir) -> PathBuf {
+        let path = directory.path().join("clip.mkv");
+        fs::write(&path, b"not a real container").unwrap();
+        path
+    }
+
+    #[test]
+    fn the_folder_cover_is_used_when_the_embedded_cover_cannot_be_parsed() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("cover.jpg"), b"jpg").unwrap();
+        let path = unparseable_track(&directory);
+
+        assert_eq!(cover_bytes(&path).unwrap(), b"jpg".to_vec());
+    }
+
+    #[test]
+    fn an_unparseable_track_without_a_folder_cover_decodes_as_missing_art() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = unparseable_track(&directory);
+
+        let decoded = decode(job(path.to_str().unwrap(), 64)).unwrap();
+
+        assert!(matches!(decoded.art, CoverArt::Missing));
+    }
+
+    #[test]
+    fn a_track_with_neither_cover_is_not_found() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = untagged_track(&directory);
+
+        let error = cover_bytes(&path).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn an_unreadable_folder_cover_is_reported() {
+        let directory = tempfile::tempdir().unwrap();
+        let cover = directory.path().join("cover.jpg");
+        fs::write(&cover, b"jpg").unwrap();
+        fs::set_permissions(&cover, fs::Permissions::from_mode(0o000)).unwrap();
+        let path = untagged_track(&directory);
+
+        let error = cover_bytes(&path).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn a_job_for_an_untagged_track_decodes_the_folder_cover() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut png = Vec::new();
+        DynamicImage::ImageRgba8(RgbaImage::new(8, 8))
+            .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
+            .unwrap();
+        fs::write(directory.path().join("cover.png"), png).unwrap();
+        let path = untagged_track(&directory);
+
+        let decoded = decode(job(path.to_str().unwrap(), 4)).unwrap();
+
+        assert!(matches!(decoded.art, CoverArt::Image(_)));
+    }
 
     fn job(path: &str, side: u32) -> CoverJob {
         CoverJob {
@@ -196,7 +300,7 @@ mod tests {
     fn a_job_for_a_file_without_a_tag_decodes_as_missing_art() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("untagged.wav");
-        std::fs::write(&path, include_bytes!("../../tests/fixtures/tone.wav")).unwrap();
+        fs::write(&path, include_bytes!("../../tests/fixtures/tone.wav")).unwrap();
 
         let decoded = decode(job(path.to_str().unwrap(), 64)).unwrap();
 

@@ -220,8 +220,77 @@ expression: wiring.log
             ],
         },
     ),
-    Err(
-        Unhandled,
+    Ok(
+        Cmd {
+            effects: [
+                Execute(
+                    Clear(
+                        Speed(
+                            1.0,
+                        ),
+                    ),
+                ),
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Execute(
+                    StartLoad(
+                        Speed(
+                            1.0,
+                        ),
+                    ),
+                ),
+                Run(
+                    Decode {
+                        path: "/tmp/track3.flac",
+                        revision: Revision(
+                            2,
+                        ),
+                    },
+                ),
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Execute(
+                    Play,
+                ),
+                Execute(
+                    Report,
+                ),
+            ],
+            messages: [],
+        },
+    ),
+    Ok(
+        Cmd {
+            effects: [
+                Execute(
+                    Start(
+                        Gain(
+                            1.0,
+                        ),
+                    ),
+                ),
+                Execute(
+                    Report,
+                ),
+            ],
+            messages: [
+                Loaded(
+                    Some(
+                        100s,
+                    ),
+                ),
+            ],
+        },
     ),
     Err(
         Unhandled,

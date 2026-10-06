@@ -225,17 +225,19 @@ expression: "walked(model, messages)"
         ),
         [
             Library(
-                AppendHistory(
-                    HistoryEntry {
-                        track: Local(
-                            "/tmp/track2.flac",
-                        ),
-                        title: "track2",
-                        artist: None,
-                        at: Moment(
-                            0ns,
-                        ),
-                    },
+                Disk(
+                    AppendHistory(
+                        HistoryEntry {
+                            track: Local(
+                                "/tmp/track2.flac",
+                            ),
+                            title: "track2",
+                            artist: None,
+                            at: Moment(
+                                0ns,
+                            ),
+                        },
+                    ),
                 ),
             ),
             Macos(
@@ -392,17 +394,19 @@ expression: "walked(model, messages)"
                 ),
             ),
             Library(
-                AppendHistory(
-                    HistoryEntry {
-                        track: Local(
-                            "/tmp/track3.flac",
-                        ),
-                        title: "track3",
-                        artist: None,
-                        at: Moment(
-                            0ns,
-                        ),
-                    },
+                Disk(
+                    AppendHistory(
+                        HistoryEntry {
+                            track: Local(
+                                "/tmp/track3.flac",
+                            ),
+                            title: "track3",
+                            artist: None,
+                            at: Moment(
+                                0ns,
+                            ),
+                        },
+                    ),
                 ),
             ),
             Macos(

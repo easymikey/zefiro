@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicU8, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -27,6 +27,7 @@ use crate::{
 pub(crate) enum Curve {
     EqualPowerIn,
     EqualPowerOut,
+    Hold,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,7 +61,7 @@ impl Ramp {
         Self {
             from: level,
             to: level,
-            curve: Curve::EqualPowerIn,
+            curve: Curve::Hold,
             length: Frames::ZERO,
         }
     }
@@ -68,13 +69,13 @@ impl Ramp {
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct Order {
-    pub(crate) serial: u32,
+    pub(crate) ramp_serial: u32,
     pub(crate) ramp: Option<Ramp>,
+    pub(crate) cue_serial: u32,
     pub(crate) cue: Option<Duration>,
 }
 
 struct Published {
-    gain: AtomicU32,
     flags: AtomicU8,
     position: AtomicU64,
 }
@@ -82,7 +83,6 @@ struct Published {
 impl Published {
     fn fresh() -> Self {
         Self {
-            gain: AtomicU32::new(Gain::UNITY.amplitude().to_bits()),
             flags: AtomicU8::new(0),
             position: AtomicU64::new(0),
         }
@@ -128,30 +128,27 @@ impl EnvelopeControl {
     }
 
     fn order(&mut self, edit: impl FnOnce(&mut Order)) {
-        self.pending.serial += 1;
         edit(&mut self.pending);
         self.orders.write(self.pending);
     }
 
     pub(crate) fn ramp(&mut self, ramp: Ramp) {
-        self.order(|order| order.ramp = Some(ramp));
+        self.order(|order| {
+            order.ramp = Some(ramp);
+            order.ramp_serial += 1;
+        });
     }
 
     pub(crate) fn cue(&mut self, at: Option<Duration>) {
-        self.order(|order| order.cue = at);
+        self.order(|order| {
+            order.cue = at;
+            order.cue_serial += 1;
+        });
     }
 
     #[must_use]
     pub(crate) fn take_signals(&self) -> Signals {
         Signals(self.published.flags.swap(0, Ordering::Acquire))
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn gain(&self) -> Gain {
-        Gain::from_amplitude(f32::from_bits(
-            self.published.gain.load(Ordering::Relaxed),
-        ))
     }
 
     #[must_use]
@@ -240,6 +237,7 @@ fn curved_gain(ramp: Ramp, fraction: f32) -> Gain {
     Gain::from_amplitude(match ramp.curve {
         Curve::EqualPowerIn => from + (to - from) * gain_in(fraction),
         Curve::EqualPowerOut => to + (from - to) * gain_out(fraction),
+        Curve::Hold => to,
     })
 }
 
@@ -265,10 +263,17 @@ impl<S: Source> Envelope<S> {
     }
 
     fn end(&mut self) -> Option<f32> {
-        self.retry_wake();
         if self.ending == Ending::Playing {
             self.ending = Ending::Ended;
             self.raise(Signals::FINISHED);
+        }
+        if self.wake == Wake::Sent {
+            return None;
+        }
+        self.channel += 1;
+        if self.channel >= self.inner.channels() {
+            self.channel = 0;
+            self.advance_frame();
         }
         (self.wake == Wake::Pending).then_some(0.0)
     }
@@ -300,7 +305,9 @@ impl<S: Source> Envelope<S> {
         if running.elapsed >= running.ramp.length {
             self.gain = running.ramp.to;
             self.running = None;
-            self.raise(Signals::RAMPED);
+            if running.ramp.curve != Curve::Hold {
+                self.raise(Signals::RAMPED);
+            }
             return;
         }
         let elapsed = running.elapsed.duration(self.rate);
@@ -315,9 +322,6 @@ impl<S: Source> Envelope<S> {
     }
 
     fn publish(&self) {
-        self.published
-            .gain
-            .store(self.gain.amplitude().to_bits(), Ordering::Relaxed);
         let position = self.base + self.frames.duration(self.rate);
         let nanos = u64::try_from(position.as_nanos()).unwrap_or(u64::MAX);
         self.published.position.store(nanos, Ordering::Relaxed);
@@ -350,12 +354,12 @@ impl<S: Source> Machine for Envelope<S> {
 
     fn transition(&mut self, message: EnvelopeMessage) -> Result<(), Unhandled> {
         let EnvelopeMessage::Order(order) = message;
-        if order.serial == self.previous.serial {
+        let ramped = order.ramp_serial != self.previous.ramp_serial;
+        let cued = order.cue_serial != self.previous.cue_serial;
+        if !ramped && !cued {
             return Err(Unhandled);
         }
-        if order.ramp != self.previous.ramp
-            && let Some(ramp) = order.ramp
-        {
+        if ramped && let Some(ramp) = order.ramp {
             let from = if self.running.is_some() {
                 self.gain
             } else {
@@ -366,7 +370,7 @@ impl<S: Source> Machine for Envelope<S> {
                 elapsed: Frames::ZERO,
             });
         }
-        if order.cue != self.previous.cue {
+        if cued {
             self.cue = order.cue;
         }
         self.previous = order;
@@ -427,7 +431,7 @@ mod tests {
     use std::time::Duration;
 
     use kernel::domain::revision::Revision;
-    use rodio::{Source, source::SineWave};
+    use rodio::{Source, buffer::SamplesBuffer, source::SineWave};
     use rstest::rstest;
 
     use crate::{
@@ -476,20 +480,20 @@ mod tests {
         let (wake, _heard) = crossbeam_channel::bounded(4);
         let (source, mut control) = envelope(tone(100), Revision::default(), wake);
         control.ramp(Ramp::fade_out(Frames(441)));
-        drain(source);
+        let samples = drain(source);
         let flags = control.take_signals();
         assert!(flags.contains(Signals::RAMPED));
         assert!(flags.contains(Signals::FINISHED));
-        assert!((control.gain().amplitude() - 0.0).abs() < 1e-4);
+        assert!(samples[500..].iter().all(|sample| sample.abs() < 1e-4));
     }
 
     #[rstest]
     fn an_envelope_with_no_order_stays_at_unity_gain() {
         let (wake, _heard) = crossbeam_channel::bounded(4);
         let (source, control) = envelope(tone(100), Revision::default(), wake);
-        drain(source);
+        let samples = drain(source);
         assert_eq!(control.take_signals(), Signals::FINISHED);
-        assert!((control.gain().amplitude() - 1.0).abs() < 1e-6);
+        assert_eq!(samples, drain(tone(100)));
     }
 
     #[rstest]
@@ -503,6 +507,21 @@ mod tests {
         assert!(heard.is_empty());
         assert_eq!(source.next(), None);
         assert_eq!(heard.len(), 1);
+        assert_eq!(source.next(), None);
+        assert_eq!(heard.len(), 1);
+    }
+
+    #[rstest]
+    fn a_deck_wakes_once_per_frame_after_its_source_ends() {
+        let (wake, heard) = crossbeam_channel::bounded(1);
+        assert!(DeckEvent::Woke(Revision::default()).wake(&wake).is_ok());
+        let samples = SamplesBuffer::new(3, 44_100, vec![0.0; 3]);
+        let (mut source, _control) = envelope(samples, Revision::default(), wake);
+        assert_eq!(source.by_ref().take(3).count(), 3);
+        assert_eq!(source.next(), Some(0.0));
+        assert!(heard.try_recv().is_ok());
+        assert_eq!(source.next(), Some(0.0));
+        assert!(heard.is_empty());
         assert_eq!(source.next(), None);
         assert_eq!(heard.len(), 1);
     }
@@ -534,27 +553,56 @@ mod tests {
     }
 
     #[rstest]
+    fn a_cue_armed_again_at_the_same_time_fires_again() {
+        let (wake, _heard) = crossbeam_channel::bounded(4);
+        let (mut source, mut control) = envelope(tone(1000), Revision::default(), wake);
+        control.cue(Some(Duration::from_millis(500)));
+        while control.position() < Duration::from_millis(600) {
+            source.next();
+        }
+        assert!(control.take_signals().contains(Signals::CUED));
+        source.try_seek(Duration::from_millis(400)).unwrap();
+        control.cue(Some(Duration::from_millis(500)));
+        source.next();
+        while control.position() < Duration::from_millis(600) {
+            source.next();
+        }
+        assert!(control.take_signals().contains(Signals::CUED));
+    }
+
+    #[rstest]
+    fn a_crossfade_cancelled_by_a_hold_raises_no_ramped() {
+        let (wake, _heard) = crossbeam_channel::bounded(4);
+        let (source, mut control) = envelope(tone(100), Revision::default(), wake);
+        control.ramp(Ramp::hold(Gain::UNITY));
+        drain(source);
+        assert_eq!(control.take_signals(), Signals::FINISHED);
+    }
+
+    #[rstest]
     fn a_newer_order_retargets_the_ramp() {
         let (wake, _heard) = crossbeam_channel::bounded(4);
         let (mut source, mut control) = envelope(tone(100), Revision::default(), wake);
         control.ramp(Ramp::fade_out(Frames(4410)));
-        for _ in 0..441 {
-            source.next();
-        }
-        let mid_gain = control.gain().amplitude();
-        assert!(mid_gain < 1.0 && mid_gain > 0.0);
+        let faded: Vec<f32> = source.by_ref().take(441).collect();
         control.ramp(Ramp {
             from: Gain::UNITY,
             to: Gain::UNITY,
             curve: Curve::EqualPowerIn,
             length: Frames(441),
         });
-        for _ in 0..441 {
-            source.next();
-        }
-        let after_retarget = control.gain().amplitude();
-        assert!(after_retarget >= mid_gain);
-        drain(source);
-        assert!((control.gain().amplitude() - 1.0).abs() < 1e-4);
+        let retargeted: Vec<f32> = source.by_ref().take(441).collect();
+        let rest = drain(source);
+        let plain = drain(tone(100));
+        let energy =
+            |samples: &[f32]| samples.iter().map(|sample| sample * sample).sum::<f32>();
+        assert!(energy(&faded) > 0.0 && energy(&faded) < energy(&plain[..441]));
+        assert!(energy(&retargeted) > 0.0);
+        assert_eq!(rest.len(), plain.len() - 882);
+        assert!(
+            rest.iter()
+                .zip(&plain[882..])
+                .all(|(heard, unity)| (heard - unity).abs() < 1e-4)
+        );
     }
 }

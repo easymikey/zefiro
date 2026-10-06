@@ -5,14 +5,22 @@ use kernel::{
     domain::{
         cue::Cue,
         model::{Model, ScanStatus},
+        overlay::OverlayName,
         player::Player,
         playhead::Playhead,
         revision::Revision,
         speed::Speed,
         time::Moment,
-        track::{Tagging, Tags, Track},
+        track::{Tagging, Tags, Track, TrackParts},
     },
-    message::{BrowseRequest, LibraryEvent, Message},
+    message::{
+        BrowseRequest,
+        LibraryEvent,
+        Message,
+        OverlayRequest,
+        SearchEdit,
+        SearchRequest,
+    },
     update::machine::Unhandled,
 };
 use rstest::rstest;
@@ -24,17 +32,15 @@ use crate::support::{
 };
 
 fn tagged(path: &str, title: &str, seconds: u64) -> Arc<Track> {
-    Arc::new(
-        Track::builder()
-            .path(PathBuf::from(path))
-            .duration(Duration::from_secs(seconds))
-            .tags(Tags {
-                title: Some(title.to_owned()),
-                ..Tags::default()
-            })
-            .audio_format(kernel::domain::track::AudioFormat::default())
-            .build(),
-    )
+    Arc::new(Track::new(TrackParts {
+        path: PathBuf::from(path),
+        duration: Duration::from_secs(seconds),
+        tags: Tags {
+            title: Some(title.to_owned()),
+            ..Tags::default()
+        },
+        audio_format: kernel::domain::track::AudioFormat::default(),
+    }))
 }
 
 fn openings(cmd: Cmd) -> usize {
@@ -138,6 +144,38 @@ fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
     );
     assert_eq!(model.scan_status, ScanStatus::Tagging { done: 1, total: 2 });
     assert_eq!(openings(cmd), 0);
+}
+
+#[test]
+fn a_relist_under_an_open_search_keeps_enter_on_the_highlighted_track() {
+    let (mut model, _) = listed_library(&["/music/a.flac", "/music/b.flac"]);
+    send(
+        &mut model,
+        Message::Overlay(OverlayRequest::Open(OverlayName::Search)),
+    );
+    send(
+        &mut model,
+        Message::Overlay(OverlayRequest::Search(SearchRequest::Edit(
+            SearchEdit::Char('a'),
+        ))),
+    );
+
+    send(
+        &mut model,
+        Message::Library(LibraryEvent::Loaded {
+            tracks: vec![track_at("/music/b.flac"), track_at("/music/a.flac")],
+            revision: Revision::default(),
+        }),
+    );
+    send(&mut model, Message::Overlay(OverlayRequest::Confirm));
+
+    assert_eq!(
+        model
+            .player
+            .current()
+            .map(|track| track.display().to_owned()),
+        Some("a".to_owned())
+    );
 }
 
 #[test]

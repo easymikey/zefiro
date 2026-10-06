@@ -346,19 +346,21 @@ expression: "walked(model, messages)"
                 ),
             ),
             Library(
-                AppendHistory(
-                    HistoryEntry {
-                        track: Local(
-                            "/m/2.flac",
-                        ),
-                        title: "Moonlight Sonata",
-                        artist: Some(
-                            "Beethoven",
-                        ),
-                        at: Moment(
-                            0ns,
-                        ),
-                    },
+                Disk(
+                    AppendHistory(
+                        HistoryEntry {
+                            track: Local(
+                                "/m/2.flac",
+                            ),
+                            title: "Moonlight Sonata",
+                            artist: Some(
+                                "Beethoven",
+                            ),
+                            at: Moment(
+                                0ns,
+                            ),
+                        },
+                    ),
                 ),
             ),
             Macos(

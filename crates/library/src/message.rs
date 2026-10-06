@@ -2,8 +2,13 @@ use std::{path::PathBuf, sync::Arc};
 
 use kernel::{
     cmd::{Cmds, LibraryCmd},
-    domain::{io_error::IoError, revision::Revision, track::Track},
-    message::LibraryEvent,
+    domain::{
+        favorites::Favorites,
+        history::HistoryEntry,
+        io_error::IoError,
+        revision::Revision,
+        track::Track,
+    },
 };
 
 use crate::{
@@ -26,15 +31,23 @@ pub enum LibraryMessage {
         tracks: Result<Vec<Arc<Track>>, Error>,
     },
     Scanned {
-        event: LibraryEvent,
+        tracks: Vec<Arc<Track>>,
+        revision: Revision,
         skipped: Option<Error>,
     },
     Tagged {
-        event: LibraryEvent,
+        tracks: Vec<Arc<Track>>,
+        revision: Revision,
         skipped: Option<Error>,
     },
-    Executed {
-        event: LibraryEvent,
+    Listed {
+        tracks: Vec<Arc<Track>>,
+        revision: Revision,
+        skipped: Option<Error>,
+    },
+    FavoritesLoaded(Favorites),
+    HistoryLoaded {
+        entries: Vec<HistoryEntry>,
         skipped: Option<Error>,
     },
     Error(Error),

@@ -9,7 +9,7 @@ use crate::{
     card::{CardCover, CardView, CardWidget, compact::CompactCardWidget},
     key_hints::{KeyHintsView, KeyHintsWidget},
     overlay::layer::{OverlayView, OverlayWidget},
-    playlist::pane::PlaylistWidget,
+    playlist::{pane::PlaylistWidget, view::PlaylistView},
     primitive::canvas::Canvas,
     scene::Scene,
     screen::{
@@ -23,9 +23,26 @@ use crate::{
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScreenWidget<'a> {
-    pub scene: Scene<'a>,
-    pub layout: &'a FrameLayout,
-    pub cover_art: &'a CardCover,
+    scene: Scene<'a>,
+    frame_layout: &'a FrameLayout,
+    card_cover: &'a CardCover,
+}
+
+impl<'a> ScreenWidget<'a> {
+    #[must_use]
+    pub fn new(scene: Scene<'a>, frame_layout: &'a FrameLayout) -> Self {
+        Self {
+            scene,
+            frame_layout,
+            card_cover: &CardCover::Missing,
+        }
+    }
+
+    #[must_use]
+    pub fn card_cover(mut self, card_cover: &'a CardCover) -> Self {
+        self.card_cover = card_cover;
+        self
+    }
 }
 
 impl Widget for &ScreenWidget<'_> {
@@ -39,33 +56,29 @@ impl Widget for &ScreenWidget<'_> {
                     .fg(colors.text),
             )
             .render(area, buffer);
-        let layout = self.layout;
+        let layout = self.frame_layout;
         match layout.breakpoint {
             Breakpoint::TooSmall => {
                 let breakpoints = self.scene.presentation.appearance.breakpoints;
-                (&TooSmallWidget {
+                (&TooSmallWidget::new(
+                    Size::new(breakpoints.min_width.0, breakpoints.min_height.0),
                     theme,
-                    minimum: Size::new(
-                        breakpoints.min_width.0,
-                        breakpoints.min_height.0,
-                    ),
-                })
+                ))
                     .render(layout.screen, buffer);
                 return;
             }
-            Breakpoint::Minimal => (&MinimalScreenWidget {
-                view: CardView::from_scene(&self.scene),
-                theme,
-                speed_chip: self.scene.settings.appearance.speed_chip,
-            })
-                .render(layout.screen, buffer),
+            Breakpoint::Minimal => {
+                (&MinimalScreenWidget::new(CardView::from_scene(&self.scene), theme)
+                    .speed_chip(self.scene.settings.appearance.speed_chip))
+                    .render(layout.screen, buffer);
+            }
             Breakpoint::Full => self.paint_card(buffer),
-            Breakpoint::Compact => (&CompactCardWidget {
-                view: CardView::from_scene(&self.scene),
-                theme,
-                speed_chip: self.scene.settings.appearance.speed_chip,
-            })
-                .render(layout.header, buffer),
+            Breakpoint::Compact => {
+                let card =
+                    CompactCardWidget::new(CardView::from_scene(&self.scene), theme)
+                        .speed_chip(self.scene.settings.appearance.speed_chip);
+                (&card).render(layout.header, buffer);
+            }
         }
         self.paint_lists(buffer);
         self.paint_layers(buffer);
@@ -74,64 +87,52 @@ impl Widget for &ScreenWidget<'_> {
 
 impl ScreenWidget<'_> {
     fn paint_card(&self, buffer: &mut Buffer) {
-        let Some(metrics) = self.layout.card else {
+        let Some(metrics) = self.frame_layout.card else {
             return;
         };
         let scene = self.scene;
-        CardWidget {
-            view: CardView::from_scene(&scene),
-            theme: scene.active_theme(),
-            cell_aspect: scene.presentation.cell_aspect,
-            cover_sizing: scene.cover_sizing(),
-            appearance: scene.settings.appearance,
-            cover_art: self.cover_art,
-        }
-        .paint(
-            &metrics,
-            Canvas {
-                area: self.layout.header,
-                buffer,
-            },
-        );
+        CardWidget::new(CardView::from_scene(&scene), scene.active_theme())
+            .cell_aspect(scene.presentation.cell_aspect)
+            .cover_sizing(scene.cover_sizing())
+            .appearance_settings(scene.settings.appearance)
+            .card_cover(self.card_cover)
+            .paint(
+                &metrics,
+                Canvas {
+                    area: self.frame_layout.header,
+                    buffer,
+                },
+            );
     }
 
     fn paint_lists(&self, buffer: &mut Buffer) {
         let scene = self.scene;
         let theme = scene.active_theme();
-        if let Some(areas) = self.layout.playlist {
-            PlaylistWidget {
-                view: crate::playlist::view::PlaylistView::from_scene(&scene),
-                theme,
-            }
-            .paint(&areas, buffer);
+        if let Some(areas) = self.frame_layout.playlist {
+            PlaylistWidget::new(PlaylistView::from_scene(&scene), theme)
+                .paint(&areas, buffer);
         }
-        if let Some(hints) = self.layout.key_hints {
-            (&KeyHintsWidget {
-                theme,
-                view: KeyHintsView::from_scene(&scene),
-            })
+        if let Some(hints) = self.frame_layout.key_hints {
+            (&KeyHintsWidget::new(KeyHintsView::from_scene(&scene), theme))
                 .render(hints, buffer);
         }
     }
 
     fn paint_layers(&self, buffer: &mut Buffer) {
-        let screen = self.layout.screen;
-        if let Some(areas) = self.layout.overlay {
-            OverlayWidget::placed(
-                OverlayView::from_scene(&self.scene),
-                self.layout,
-                self.scene.cover_mode(),
-            )
-            .paint(
-                areas,
-                Canvas {
-                    area: screen,
-                    buffer: &mut *buffer,
-                },
-            );
+        let screen = self.frame_layout.screen;
+        if let Some(areas) = self.frame_layout.overlay {
+            OverlayWidget::new(OverlayView::from_scene(&self.scene), self.frame_layout)
+                .avoid(self.frame_layout.cover_exclusion(self.scene.cover_mode()))
+                .paint(
+                    areas,
+                    Canvas {
+                        area: screen,
+                        buffer: &mut *buffer,
+                    },
+                );
         }
         if let Some((toast, areas)) =
-            ToastWidget::from_scene(&self.scene).zip(self.layout.toast)
+            ToastWidget::from_scene(&self.scene).zip(self.frame_layout.toast)
         {
             toast.paint(
                 areas,
@@ -161,11 +162,7 @@ mod tests {
         let layout = FrameLayout::from_scene(&scene, Rect::new(0, 0, width, height));
         rendered(width, height, |frame| {
             frame.render_widget(
-                &ScreenWidget {
-                    scene,
-                    layout: &layout,
-                    cover_art,
-                },
+                &ScreenWidget::new(scene, &layout).card_cover(cover_art),
                 frame.area(),
             );
         })

@@ -19,7 +19,7 @@ use kernel::{
         theme::ThemeName,
         time::Moment,
         toast::ToastLevel,
-        track::{AudioFormat, Tags, Track},
+        track::{AudioFormat, Tags, Track, TrackParts},
         transport::Transport,
     },
     message::{ConfigEvent, LibraryEvent, MacosEvent, Message, PlaybackRequest, Timer},
@@ -80,16 +80,15 @@ fn load_three() -> Playlist {
 }
 
 #[test]
-fn prev_at_first_track_is_noop_without_repeat() {
+fn prev_at_first_track_is_refused_without_repeat() {
     let mut m = model_with_tracks(3);
-    let cmd = update(
+    let result = update(
         &mut m,
         Message::Playback(PlaybackRequest::Previous),
         Moment::default(),
-    )
-    .unwrap();
+    );
+    assert_eq!(result, Err(Unhandled));
     assert_eq!(m.playlist.playing_index(), Some(ViewIndex::new(0)));
-    assert!(cmd == Cmd::none());
 }
 
 #[test]
@@ -171,14 +170,12 @@ fn seek_routes_clamp_to_duration_regardless_of_message_source(
 ) {
     let mut m = Model {
         player: Player::Playing {
-            track: Arc::new(
-                Track::builder()
-                    .path("/t.flac")
-                    .duration(Duration::from_secs(100))
-                    .tags(Tags::default())
-                    .audio_format(AudioFormat::default())
-                    .build(),
-            ),
+            track: Arc::new(Track::new(TrackParts {
+                path: "/t.flac".into(),
+                duration: Duration::from_secs(100),
+                tags: Tags::default(),
+                audio_format: AudioFormat::default(),
+            })),
             playhead: Playhead::anchored(at, Moment::default(), Speed::default()),
             preloaded: None,
         },
@@ -218,14 +215,12 @@ fn quit_stops_audio_flushes_config_resets_the_window_colors_and_ends_with_quit()
 #[test]
 fn jump_request_starts_selected_track() {
     let mut m = model_with_tracks(3);
-    m.playlist.tracks[2] = Arc::new(
-        Track::builder()
-            .path("/tmp/track2.flac")
-            .duration(Duration::from_secs(42))
-            .tags(Tags::default())
-            .audio_format(AudioFormat::default())
-            .build(),
-    );
+    m.playlist.tracks[2] = Arc::new(Track::new(TrackParts {
+        path: "/tmp/track2.flac".into(),
+        duration: Duration::from_secs(42),
+        tags: Tags::default(),
+        audio_format: AudioFormat::default(),
+    }));
     let cmd = update(
         &mut m,
         Message::Playback(PlaybackRequest::JumpTo(ViewIndex::new(2))),
@@ -342,14 +337,12 @@ fn toggle_shuffle_off_clears_order() {
 fn preload_peeks_queue_head_when_queue_nonempty() {
     let mut m = model_with_tracks(3);
     m.player = Player::Playing {
-        track: Arc::new(
-            Track::builder()
-                .path("/tmp/track0.flac")
-                .duration(Duration::from_secs(100))
-                .tags(Tags::default())
-                .audio_format(AudioFormat::default())
-                .build(),
-        ),
+        track: Arc::new(Track::new(TrackParts {
+            path: "/tmp/track0.flac".into(),
+            duration: Duration::from_secs(100),
+            tags: Tags::default(),
+            audio_format: AudioFormat::default(),
+        })),
         playhead: Playhead::anchored(
             Duration::ZERO,
             Moment::default(),
@@ -420,7 +413,7 @@ fn track_ended_repeat_one_without_current_stops() {
         playhead: Playhead::anchored(Duration::from_secs(10), Moment::default(), Speed::default()),
         preloaded: Some(arc_track("/tmp/track1.flac")),
     },
-    kernel::message::AudioError::Stream { reason: kernel::domain::config::Diagnostic::from_error(&std::io::Error::other("cannot preload /tmp/track1.flac: no such file")) },
+    kernel::message::AudioError::OpenStream { reason: kernel::domain::config::Diagnostic::from_error(&std::io::Error::other("cannot preload /tmp/track1.flac: no such file")) },
     "cannot preload"
 )]
 #[case::a_seek_the_source_refuses(
@@ -471,18 +464,16 @@ fn system_volume_sets_model_and_cues_without_an_audio_effect() {
 #[test]
 fn start_track_emits_nowplaying_and_playing_state() {
     let mut m = model_with_tracks(3);
-    m.playlist.tracks[0] = Arc::new(
-        Track::builder()
-            .path("/tmp/track0.flac")
-            .duration(Duration::from_secs(200))
-            .tags(Tags {
-                title: Some("Song".into()),
-                artist: Some("Artist".into()),
-                ..Tags::default()
-            })
-            .audio_format(AudioFormat::default())
-            .build(),
-    );
+    m.playlist.tracks[0] = Arc::new(Track::new(TrackParts {
+        path: "/tmp/track0.flac".into(),
+        duration: Duration::from_secs(200),
+        tags: Tags {
+            title: Some("Song".into()),
+            artist: Some("Artist".into()),
+            ..Tags::default()
+        },
+        audio_format: AudioFormat::default(),
+    }));
     let cmd = update(
         &mut m,
         Message::Playback(PlaybackRequest::Toggle),

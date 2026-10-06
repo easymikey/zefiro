@@ -4,7 +4,6 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     primitive::{
-        chip,
         glyphs,
         marker::{
             FAVORITE_COLUMNS,
@@ -65,18 +64,16 @@ pub(crate) fn track_row_line<'a>(
     let playing = playing_marker(view.playing);
     let markers_width = usize::from(MARKERS_WIDTH);
     let body_width = view.row_width.count().saturating_sub(markers_width);
-    let chip = view
-        .queued
-        .map_or_else(String::new, |position| chip::compact(&position.label()));
-    let title_width = if chip.is_empty() {
-        body_width
-    } else {
-        body_width
-            .saturating_sub(chip.width())
-            .saturating_sub(CHIP_GAP)
+    let chip = view.queued.into_iter().flat_map(QueuePosition::chip);
+    let chip_width: usize = chip.clone().map(UnicodeWidthStr::width).sum();
+    let title_width = match view.queued {
+        Some(_) => body_width
+            .saturating_sub(chip_width)
+            .saturating_sub(CHIP_GAP),
+        None => body_width,
     };
     let title = truncate(view.title, title_width);
-    let gap = if chip.is_empty() || title.is_empty() {
+    let gap = if view.queued.is_none() || title.is_empty() {
         0
     } else {
         CHIP_GAP
@@ -85,15 +82,19 @@ pub(crate) fn track_row_line<'a>(
         Selected::Yes => Style::default().fg(colors.selection_foreground),
         Selected::No => Style::default().fg(colors.text),
     };
-    line([
+    let fixed = [
         text(fav).fg(theme.favorite()),
         text(blanks(column_padding(fav, favorite_width))).style(row_style),
         text(playing).style(row_style),
         text(blanks(column_padding(playing, playing_width))).style(row_style),
         text(title).style(row_style),
         text(blanks(gap)).style(row_style),
-        text(chip).fg(colors.highlight),
-    ])
+    ];
+    line(
+        fixed
+            .into_iter()
+            .chain(chip.map(|piece| text(piece).fg(colors.highlight))),
+    )
 }
 
 #[cfg(test)]

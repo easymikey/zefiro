@@ -1,10 +1,9 @@
 use kernel::{
     cmd::{Cmd, CoverJob},
     domain::revision::Revision,
+    message::LibraryEvent,
     update::machine::{Machine, Unhandled},
 };
-
-use crate::message::LibraryMessage;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) enum CoverDecoding {
@@ -24,12 +23,12 @@ pub(crate) enum CoverDecodingMessage {
 
 impl Machine for CoverDecoding {
     type Message = CoverDecodingMessage;
-    type Effect = Cmd<(CoverJob, Revision), LibraryMessage>;
+    type Effect = Cmd<(CoverJob, Revision), LibraryEvent>;
 
     fn transition(
         &mut self,
         message: CoverDecodingMessage,
-    ) -> Result<Cmd<(CoverJob, Revision), LibraryMessage>, Unhandled> {
+    ) -> Result<Cmd<(CoverJob, Revision), LibraryEvent>, Unhandled> {
         match (&*self, message) {
             (CoverDecoding::Idle, CoverDecodingMessage::Request { job, revision }) => {
                 Ok(self.start(job, revision))
@@ -55,11 +54,18 @@ impl Machine for CoverDecoding {
 }
 
 impl CoverDecoding {
+    pub(crate) fn busy(&self) -> Option<&CoverJob> {
+        match self {
+            CoverDecoding::Idle => None,
+            CoverDecoding::Busy { job, .. } => Some(job),
+        }
+    }
+
     fn start(
         &mut self,
         job: CoverJob,
         revision: Revision,
-    ) -> Cmd<(CoverJob, Revision), LibraryMessage> {
+    ) -> Cmd<(CoverJob, Revision), LibraryEvent> {
         *self = CoverDecoding::Busy {
             job: job.clone(),
             revision,
@@ -75,14 +81,12 @@ mod tests {
     use kernel::{
         cmd::{Cmd, CoverJob},
         domain::{geometry::Pixels, revision::Revision},
+        message::LibraryEvent,
         update::machine::{Machine, Unhandled},
     };
     use rstest::rstest;
 
-    use crate::{
-        cover::decoding::{CoverDecoding, CoverDecodingMessage},
-        message::LibraryMessage,
-    };
+    use crate::cover::decoding::{CoverDecoding, CoverDecodingMessage};
 
     fn job(path: &str, side: u32) -> CoverJob {
         CoverJob {
@@ -109,7 +113,7 @@ mod tests {
         }
     }
 
-    fn describe(cmd: &Cmd<(CoverJob, Revision), LibraryMessage>) -> String {
+    fn describe(cmd: &Cmd<(CoverJob, Revision), LibraryEvent>) -> String {
         cmd.effects().next().map_or_else(
             || "nothing".to_string(),
             |(job, _)| format!("decode {} @ {}", job.path.display(), job.side.0),

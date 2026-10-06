@@ -52,11 +52,14 @@ pub enum EngineEffect {
     DropOutgoing,
     SetSpeed(Speed),
     Clear(Speed),
-    RestartGapless,
+    ClearStaged,
     Promote(Gain),
     Report,
     Advance(Gain),
     Stage(TrackSource),
-    Attach(TrackSource, PreloadMode),
+    Attach {
+        track_source: TrackSource,
+        preload_mode: PreloadMode,
+    },
     TakeSignals(Revision),
 }

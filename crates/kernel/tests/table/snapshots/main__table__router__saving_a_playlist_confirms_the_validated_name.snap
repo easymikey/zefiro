@@ -183,44 +183,46 @@ expression: "walked(model, messages)"
                 OverlayClosed,
             ),
             Library(
-                SavePlaylist {
-                    name: PlaylistFileName(
-                        "mix",
-                    ),
-                    tracks: [
-                        Track {
-                            source: Local(
-                                "/tmp/track0.flac",
-                            ),
-                            tags: Tags {
-                                title: None,
-                                artist: None,
-                                album: None,
-                                album_artist: None,
-                                date: None,
-                                genre: None,
-                                track: None,
-                                track_total: None,
-                                disc: None,
-                                composer: None,
-                                comment: None,
-                                lyrics: None,
+                Disk(
+                    SavePlaylist {
+                        name: PlaylistFileName(
+                            "mix",
+                        ),
+                        tracks: [
+                            Track {
+                                source: Local(
+                                    "/tmp/track0.flac",
+                                ),
+                                tags: Tags {
+                                    title: None,
+                                    artist: None,
+                                    album: None,
+                                    album_artist: None,
+                                    date: None,
+                                    genre: None,
+                                    track: None,
+                                    track_total: None,
+                                    disc: None,
+                                    composer: None,
+                                    comment: None,
+                                    lyrics: None,
+                                },
+                                audio_format: AudioFormat {
+                                    format: None,
+                                    bitrate: None,
+                                    sample_rate: None,
+                                    bits_per_sample: None,
+                                    channels: None,
+                                    replay_gain: None,
+                                },
+                                display: "track0",
+                                tagging: Listed(
+                                    None,
+                                ),
                             },
-                            audio_format: AudioFormat {
-                                format: None,
-                                bitrate: None,
-                                sample_rate: None,
-                                bits_per_sample: None,
-                                channels: None,
-                                replay_gain: None,
-                            },
-                            display: "track0",
-                            tagging: Listed(
-                                None,
-                            ),
-                        },
-                    ],
-                },
+                        ],
+                    },
+                ),
             ),
         ],
         Stopped,

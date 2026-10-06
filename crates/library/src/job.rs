@@ -4,12 +4,11 @@ use std::{
 };
 
 use kernel::{
-    cmd::{CoverJob, ScanMode},
+    cmd::CoverJob,
     domain::{
         revision::Revision,
         track::{Track, TrackRef},
     },
-    message::LibraryEvent,
 };
 
 use crate::{
@@ -36,9 +35,13 @@ pub enum LibraryJob {
     Scan {
         music_dir: PathBuf,
         revision: Revision,
-        mode: ScanMode,
         dirs: Arc<LibraryDirs>,
         decodable: &'static [&'static str],
+    },
+    ReadCache {
+        music_dir: PathBuf,
+        revision: Revision,
+        dirs: Arc<LibraryDirs>,
     },
     List {
         music_dir: PathBuf,
@@ -70,14 +73,14 @@ impl LibraryJob {
                     first_error,
                 } = tagged(&dirs, &music_dir, &local_paths(tracks));
                 Ok(LibraryMessage::Tagged {
-                    event: LibraryEvent::Tagged { tracks, revision },
+                    tracks,
+                    revision,
                     skipped: first_error,
                 })
             }
             LibraryJob::Scan {
                 music_dir,
                 revision,
-                mode: ScanMode::Full,
                 dirs,
                 decodable,
             } => {
@@ -87,16 +90,15 @@ impl LibraryJob {
                     first_error,
                 } = tagged(&dirs, &music_dir, &listing.paths);
                 Ok(LibraryMessage::Scanned {
-                    event: LibraryEvent::Loaded { tracks, revision },
+                    tracks,
+                    revision,
                     skipped: listing.first_error.or(first_error),
                 })
             }
-            LibraryJob::Scan {
+            LibraryJob::ReadCache {
                 music_dir,
                 revision,
-                mode: ScanMode::Cached,
                 dirs,
-                ..
             } => Ok(LibraryMessage::Cached {
                 tracks: cache::load(&dirs, &music_dir),
                 music_dir,
@@ -115,14 +117,12 @@ impl LibraryJob {
 
 fn listed(listing: scan::Listing, revision: Revision) -> LibraryMessage {
     let scan::Listing { paths, first_error } = listing;
-    LibraryMessage::Scanned {
-        event: LibraryEvent::Listed {
-            tracks: paths
-                .iter()
-                .map(|path| Arc::new(Track::listed(path)))
-                .collect(),
-            revision,
-        },
+    LibraryMessage::Listed {
+        tracks: paths
+            .iter()
+            .map(|path| Arc::new(Track::listed(path)))
+            .collect(),
+        revision,
         skipped: first_error,
     }
 }
@@ -159,12 +159,9 @@ fn listing(music_dir: &Path, decodable: &[&str]) -> Result<scan::Listing, Error>
 mod tests {
     use std::{path::PathBuf, sync::Arc};
 
-    use kernel::{
-        domain::{
-            revision::Revision,
-            track::{Tagging, TrackRef},
-        },
-        message::LibraryEvent,
+    use kernel::domain::{
+        revision::Revision,
+        track::{Tagging, TrackRef},
     };
     use tempfile::TempDir;
 
@@ -198,8 +195,7 @@ mod tests {
         }
         .run();
         let LibraryMessage::Tagged {
-            event: LibraryEvent::Tagged { tracks, .. },
-            skipped,
+            tracks, skipped, ..
         } = message
         else {
             panic!("expected tagged tracks, got {message:?}");

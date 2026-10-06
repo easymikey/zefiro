@@ -24,7 +24,10 @@ use widgets::{
     card::metrics::CardMetrics,
     playlist::pane::PlaylistAreas,
     screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
-    theme::rgb::{ColorDepth, color_at_depth, lerp_rgb},
+    theme::{
+        backdrop_style::BackdropStyle,
+        rgb::{ColorDepth, color_at_depth, lerp_rgb},
+    },
 };
 
 #[path = "fixtures.rs"] pub(crate) mod fixtures;
@@ -174,10 +177,14 @@ pub(crate) fn card_metrics(
 }
 
 pub(crate) fn playlist_areas(selected: Option<Rect>) -> PlaylistAreas {
+    let sources = fixtures::SceneSources::new(fixtures::model_with_tracks(1));
+    let layout = FrameLayout::from_scene(&sources.scene(), Rect::new(0, 0, 120, 40));
     PlaylistAreas {
         pane: Rect::default(),
-        scroll_areas: Default::default(),
         selected,
+        ..layout
+            .playlist
+            .expect("a stock scene lays out the playlist")
     }
 }
 
@@ -185,10 +192,12 @@ pub(crate) fn quiet_backdrop() -> Backdrop {
     Backdrop {
         animations: kernel::domain::appearance::Animations::On,
         layout: FrameLayout::empty(Rect::default(), Breakpoint::Full),
-        background: BACKGROUND,
-        accent: ACCENT,
-        volume_fill: volume_fill(),
-        volume_lifted: volume_lifted(),
+        style: BackdropStyle {
+            background: BACKGROUND,
+            accent: ACCENT,
+            volume_fill: volume_fill(),
+            volume_lifted: volume_lifted(),
+        },
         wash_from: BACKGROUND,
     }
 }

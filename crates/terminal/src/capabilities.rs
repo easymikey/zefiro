@@ -1,6 +1,8 @@
+use std::time::Duration;
+
 use ratatui_image::{
     FontSize,
-    picker::{Capability, Picker, ProtocolType},
+    picker::{Capability, Picker, ProtocolType, cap_parser::QueryStdioOptions},
 };
 use widgets::{
     geometry::DEFAULT_CELL_ASPECT,
@@ -68,58 +70,37 @@ impl TerminalApp {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PixelProtocol {
-    Kitty,
-    Iterm2,
-    Sixel,
-    Query,
-}
-
 #[must_use]
-pub(crate) fn protocols(app: TerminalApp) -> &'static [PixelProtocol] {
+pub(crate) fn protocols(app: TerminalApp) -> &'static [ProtocolType] {
     match app {
-        TerminalApp::Kitty | TerminalApp::Ghostty => &[PixelProtocol::Kitty],
+        TerminalApp::Kitty | TerminalApp::Ghostty => &[ProtocolType::Kitty],
         TerminalApp::Iterm2 | TerminalApp::WezTerm => {
-            &[PixelProtocol::Iterm2, PixelProtocol::Sixel]
+            &[ProtocolType::Iterm2, ProtocolType::Sixel]
         }
         TerminalApp::Apple => &[],
-        TerminalApp::Unknown => &[PixelProtocol::Query],
+        TerminalApp::Unknown => &[
+            ProtocolType::Kitty,
+            ProtocolType::Iterm2,
+            ProtocolType::Sixel,
+        ],
     }
 }
 
 #[derive(Debug)]
 pub struct Capabilities {
     pub picker: Picker,
-    pub pixel_path: PixelPath,
     pub color_depth: ColorDepth,
 }
 
 fn select_protocol_type(
-    choices: &[PixelProtocol],
+    choices: &[ProtocolType],
     protocol_type: ProtocolType,
     capabilities: &[Capability],
 ) -> Option<ProtocolType> {
-    choices.iter().find_map(|protocol| match protocol {
-        PixelProtocol::Kitty if protocol_type == ProtocolType::Kitty => {
-            Some(ProtocolType::Kitty)
-        }
-        PixelProtocol::Iterm2 if protocol_type == ProtocolType::Iterm2 => {
-            Some(ProtocolType::Iterm2)
-        }
-        PixelProtocol::Sixel
-            if capabilities.contains(&Capability::Sixel)
-                || protocol_type == ProtocolType::Sixel =>
-        {
-            Some(ProtocolType::Sixel)
-        }
-        PixelProtocol::Query if protocol_type != ProtocolType::Halfblocks => {
-            Some(protocol_type)
-        }
-        PixelProtocol::Kitty
-        | PixelProtocol::Iterm2
-        | PixelProtocol::Sixel
-        | PixelProtocol::Query => None,
+    choices.iter().copied().find(|&choice| {
+        choice == protocol_type
+            || (choice == ProtocolType::Sixel
+                && capabilities.contains(&Capability::Sixel))
     })
 }
 
@@ -128,33 +109,41 @@ impl Capabilities {
     pub fn from_environment(environment: &TerminalEnvironment) -> Self {
         Capabilities {
             picker: Picker::halfblocks(),
-            pixel_path: PixelPath::Halfblocks,
             color_depth: ColorDepth::detect(environment.term_program.as_deref()),
+        }
+    }
+
+    #[must_use]
+    pub fn pixel_path(&self) -> PixelPath {
+        match self.picker.protocol_type() {
+            ProtocolType::Halfblocks => PixelPath::Halfblocks,
+            ProtocolType::Sixel | ProtocolType::Kitty | ProtocolType::Iterm2 => {
+                PixelPath::Protocol
+            }
         }
     }
 }
 
-#[derive(Debug)]
-pub struct QueryAnswer {
-    pub picker: Picker,
-}
+const QUERY_TIMEOUT: Duration = Duration::from_millis(300);
 
-pub fn query(app: TerminalApp) -> Result<Option<QueryAnswer>, Error> {
+pub fn query(app: TerminalApp) -> Result<Option<Picker>, Error> {
     if protocols(app).is_empty() {
         return Ok(None);
     }
-    let mut picker = Picker::from_query_stdio().map_err(Error::Query)?;
+    let mut picker = Picker::from_query_stdio_with_options(QueryStdioOptions {
+        timeout: QUERY_TIMEOUT,
+        ..QueryStdioOptions::default()
+    })
+    .map_err(Error::Query)?;
     let confirmed = select_protocol_type(
         protocols(app),
         picker.protocol_type(),
         picker.capabilities(),
-    )
-    .unwrap_or(ProtocolType::Halfblocks);
-    if confirmed == ProtocolType::Halfblocks {
-        return Ok(None);
-    }
-    picker.set_protocol_type(confirmed);
-    Ok(Some(QueryAnswer { picker }))
+    );
+    Ok(confirmed.map(|protocol_type| {
+        picker.set_protocol_type(protocol_type);
+        picker
+    }))
 }
 
 #[must_use]
@@ -170,7 +159,7 @@ pub fn cell_aspect(font_size: FontSize) -> f32 {
 mod tests {
     use ratatui_image::{
         FontSize,
-        picker::{Capability, ProtocolType},
+        picker::{Capability, Picker, ProtocolType},
     };
     use rstest::rstest;
     use widgets::{
@@ -181,7 +170,6 @@ mod tests {
 
     use crate::capabilities::{
         Capabilities,
-        PixelProtocol,
         TerminalApp,
         TerminalEnvironment,
         cell_aspect,
@@ -244,15 +232,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case::kitty(TerminalApp::Kitty, &[PixelProtocol::Kitty])]
-    #[case::ghostty(TerminalApp::Ghostty, &[PixelProtocol::Kitty])]
-    #[case::iterm2(TerminalApp::Iterm2, &[PixelProtocol::Iterm2, PixelProtocol::Sixel])]
-    #[case::wezterm(TerminalApp::WezTerm, &[PixelProtocol::Iterm2, PixelProtocol::Sixel])]
+    #[case::kitty(TerminalApp::Kitty, &[ProtocolType::Kitty])]
+    #[case::ghostty(TerminalApp::Ghostty, &[ProtocolType::Kitty])]
+    #[case::iterm2(TerminalApp::Iterm2, &[ProtocolType::Iterm2, ProtocolType::Sixel])]
+    #[case::wezterm(TerminalApp::WezTerm, &[ProtocolType::Iterm2, ProtocolType::Sixel])]
     #[case::apple(TerminalApp::Apple, &[])]
-    #[case::unknown(TerminalApp::Unknown, &[PixelProtocol::Query])]
+    #[case::unknown(TerminalApp::Unknown, &[ProtocolType::Kitty, ProtocolType::Iterm2, ProtocolType::Sixel])]
     fn each_terminal_app_names_its_protocols(
         #[case] app: TerminalApp,
-        #[case] expected: &[PixelProtocol],
+        #[case] expected: &[ProtocolType],
     ) {
         assert_eq!(protocols(app), expected);
     }
@@ -319,6 +307,12 @@ mod tests {
         sixel: &[Capability::Sixel],
         expected: Some(ProtocolType::Sixel),
     })]
+    #[case::probe_takes_sixel_over_a_halfblocks_guess(ProtocolRow {
+        app: TerminalApp::Unknown,
+        best_guess: ProtocolType::Halfblocks,
+        sixel: &[Capability::Sixel],
+        expected: Some(ProtocolType::Sixel),
+    })]
     #[case::probe_confirmed_nothing(ProtocolRow {
         app: TerminalApp::Unknown,
         best_guess: ProtocolType::Halfblocks,
@@ -346,11 +340,29 @@ mod tests {
             capabilities.picker.protocol_type(),
             ProtocolType::Halfblocks
         );
-        assert_eq!(capabilities.pixel_path, PixelPath::Halfblocks);
+        assert_eq!(capabilities.pixel_path(), PixelPath::Halfblocks);
         assert_eq!(
             capabilities.color_depth,
             ColorDepth::detect(environment.term_program.as_deref())
         );
+    }
+
+    #[rstest]
+    #[case::halfblocks(ProtocolType::Halfblocks, PixelPath::Halfblocks)]
+    #[case::kitty(ProtocolType::Kitty, PixelPath::Protocol)]
+    #[case::iterm2(ProtocolType::Iterm2, PixelPath::Protocol)]
+    #[case::sixel(ProtocolType::Sixel, PixelPath::Protocol)]
+    fn pixel_path_follows_the_picker_protocol(
+        #[case] protocol_type: ProtocolType,
+        #[case] expected: PixelPath,
+    ) {
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(protocol_type);
+        let capabilities = Capabilities {
+            picker,
+            color_depth: ColorDepth::detect(None),
+        };
+        assert_eq!(capabilities.pixel_path(), expected);
     }
 
     #[test]

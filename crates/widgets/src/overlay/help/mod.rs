@@ -46,9 +46,9 @@ const TITLE: &str = "KEYS";
 
 #[derive(Debug)]
 pub(crate) struct HelpWidget<'a> {
-    pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) bindings: &'a [KeyBinding],
-    pub(crate) avoid: &'a [Rect],
+    theme: ActiveTheme<'a>,
+    bindings: &'a [KeyBinding],
+    avoid: &'a [Rect],
 }
 
 struct HelpColumns {
@@ -57,6 +57,24 @@ struct HelpColumns {
 }
 
 impl<'a> HelpWidget<'a> {
+    #[must_use]
+    pub(crate) fn new(
+        bindings: &'a [KeyBinding],
+        active_theme: ActiveTheme<'a>,
+    ) -> Self {
+        Self {
+            theme: active_theme,
+            bindings,
+            avoid: &[],
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn avoid(mut self, avoid: &'a [Rect]) -> Self {
+        self.avoid = avoid;
+        self
+    }
+
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
         OverlayAreas::List(self.placement(&self.content(screen)).areas(screen))
@@ -143,11 +161,8 @@ mod tests {
         let theme = noir();
         let keymap = Keymap::default();
         let bindings = keymap.bindings();
-        let overlay = HelpWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            bindings,
-            avoid: &[],
-        };
+        let overlay =
+            HelpWidget::new(bindings, ActiveTheme::new(&theme, ColorDepth::TrueColor));
         rendered(width, height, |frame| {
             frame.render_widget(&overlay, frame.area());
         })

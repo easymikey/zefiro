@@ -106,14 +106,14 @@ fn step_speed(
     direction: Direction,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let cmd = playback
-        .transport
-        .transition(TransportMessage::StepSpeed(direction))?;
-    let anchor = Anchor::at(playback.transport, now);
+    let mut transport = playback.transport.clone();
+    let stepped = transport.transition(TransportMessage::StepSpeed(direction))?;
+    let anchor = Anchor::at(&transport, now);
     let reanchored = playback
         .player
-        .transition(PlayerMessage::Reanchor(anchor))?;
-    Ok(cmd.then(reanchored).then(player::arm(playback, now)))
+        .transition(PlayerMessage::SpeedChanged(anchor))?;
+    *playback.transport = transport;
+    Ok(stepped.then(reanchored).then(player::arm(playback, now)))
 }
 
 fn cycle_sleep(
@@ -245,7 +245,7 @@ mod tests {
             playhead::Playhead,
             speed::Speed,
             time::Moment,
-            track::{AudioFormat, Tags, Track},
+            track::{AudioFormat, Tags, Track, TrackParts},
             transport::SEEK_MEDIUM,
         },
         message::{PlaybackRequest, SeekTenths},
@@ -256,12 +256,12 @@ mod tests {
         let track = Arc::new(duration.map_or_else(
             || Track::listed(Path::new("/t.flac")),
             |duration| {
-                Track::builder()
-                    .path("/t.flac")
-                    .duration(duration)
-                    .tags(Tags::default())
-                    .audio_format(AudioFormat::default())
-                    .build()
+                Track::new(TrackParts {
+                    path: "/t.flac".into(),
+                    duration,
+                    tags: Tags::default(),
+                    audio_format: AudioFormat::default(),
+                })
             },
         ));
         Model {

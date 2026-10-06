@@ -86,16 +86,39 @@ pub(crate) fn rank_into(
         matches.extend((0..tracks.len()).map(ViewIndex::new));
         return;
     }
-    let query_chars: Vec<char> = query.to_lowercase().chars().collect();
-    let mut scored: Vec<(usize, i32)> = tracks
-        .iter()
-        .enumerate()
-        .filter_map(|(index, track)| {
+    *matches = ranked(tracks, query, 0..tracks.len());
+}
+
+pub(crate) fn narrow_into(
+    tracks: &[Arc<Track>],
+    query: &str,
+    matches: &mut Vec<ViewIndex>,
+) {
+    if query.is_empty() {
+        rank_into(tracks, query, matches);
+        return;
+    }
+    let narrowed = ranked(tracks, query, matches.iter().map(|index| index.get()));
+    *matches = narrowed;
+}
+
+fn ranked(
+    tracks: &[Arc<Track>],
+    query: &str,
+    candidates: impl Iterator<Item = usize>,
+) -> Vec<ViewIndex> {
+    let query_chars: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
+    let mut scored: Vec<(usize, i32)> = candidates
+        .filter_map(|index| {
+            let track = tracks.get(index)?;
             best_track_score(&query_chars, track).map(|score| (index, score))
         })
         .collect();
     scored.sort_by_key(|&(index, score)| (Reverse(score), index));
-    matches.extend(scored.into_iter().map(|(index, _)| ViewIndex::new(index)));
+    scored
+        .into_iter()
+        .map(|(index, _)| ViewIndex::new(index))
+        .collect()
 }
 
 fn best_track_score(query_chars: &[char], track: &Track) -> Option<i32> {
@@ -113,42 +136,48 @@ fn best_track_score(query_chars: &[char], track: &Track) -> Option<i32> {
 }
 
 #[cfg(test)]
-mod score_tests {
+mod tests {
     use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
     use proptest::prelude::{Strategy, prop_assert, prop_assert_eq, proptest};
     use rstest::rstest;
 
     use crate::{
-        domain::track::{AudioFormat, Tags, Track},
-        search::{rank_into, score_chars},
+        domain::{
+            index::ViewIndex,
+            track::{AudioFormat, Tags, Track, TrackParts},
+        },
+        search::{narrow_into, rank, score_chars},
     };
 
+    fn lower(haystack: &str) -> String {
+        haystack.chars().flat_map(char::to_lowercase).collect()
+    }
+
     fn score(query: &str, haystack: &str) -> Option<i32> {
-        let query_chars: Vec<char> = query.to_lowercase().chars().collect();
+        let query_chars: Vec<char> = lower(query).chars().collect();
         score_chars(&query_chars, haystack)
     }
 
-    fn ascii_lower() -> impl Strategy<Value = String> {
-        proptest::collection::vec(
-            proptest::sample::select(vec!['m', 'n', 'o', 'p', 'q']),
-            0..6,
-        )
-        .prop_map(|chars| chars.into_iter().collect())
+    fn chars() -> impl Strategy<Value = char> {
+        proptest::sample::select(vec!['m', 'n', 'Α', 'α', 'Σ', 'σ', 'ς', 'İ'])
+    }
+
+    fn title() -> impl Strategy<Value = String> {
+        proptest::collection::vec(chars(), 0..6)
+            .prop_map(|chars| chars.into_iter().collect())
     }
 
     fn titled_track(title: &str) -> Arc<Track> {
-        Arc::new(
-            Track::builder()
-                .path(format!("{title}.flac"))
-                .duration(Duration::from_secs(1))
-                .tags(Tags {
-                    title: Some(title.to_string()),
-                    ..Tags::default()
-                })
-                .audio_format(AudioFormat::default())
-                .build(),
-        )
+        Arc::new(Track::new(TrackParts {
+            path: format!("{title}.flac").into(),
+            duration: Duration::from_secs(1),
+            tags: Tags {
+                title: Some(title.to_string()),
+                ..Tags::default()
+            },
+            audio_format: AudioFormat::default(),
+        }))
     }
 
     fn is_subsequence(needle: &str, haystack: &str) -> bool {
@@ -189,37 +218,64 @@ mod score_tests {
         assert_eq!(score(query, haystack), Some(expected));
     }
 
+    #[test]
+    fn a_search_for_a_word_final_sigma_finds_its_own_title() {
+        let tracks = vec![titled_track("ΑΣ")];
+        assert_eq!(rank(&tracks, "ΑΣ"), vec![ViewIndex::new(0)]);
+    }
+
+    #[test]
+    fn narrowing_a_search_past_a_word_final_sigma_equals_a_full_rank() {
+        let tracks = vec![titled_track("ΑΣΑ")];
+        let mut narrowed = rank(&tracks, "ΑΣ");
+        narrow_into(&tracks, "ΑΣΑ", &mut narrowed);
+        assert_eq!(narrowed, rank(&tracks, "ΑΣΑ"));
+        assert_eq!(narrowed, vec![ViewIndex::new(0)]);
+    }
+
     proptest! {
         #[test]
         fn is_some_iff_query_is_a_lowercase_subsequence(
-            query in ascii_lower(),
-            haystack in ascii_lower(),
+            query in title(),
+            haystack in title(),
         ) {
-            let matched = is_subsequence(&query.to_lowercase(), &haystack.to_lowercase());
+            let matched = is_subsequence(&lower(&query), &lower(&haystack));
             prop_assert_eq!(score(&query, &haystack).is_some(), matched);
         }
 
         #[test]
-        fn rank_into_is_a_stable_permutation_of_the_matching_titles(
-            titles in proptest::collection::vec(ascii_lower(), 0..8),
-            query in ascii_lower(),
+        fn narrowing_by_an_appended_char_equals_a_full_rank(
+            titles in proptest::collection::vec(title(), 0..8),
+            query in title(),
+            appended in chars(),
         ) {
             let tracks: Vec<Arc<Track>> = titles.iter().map(|title| titled_track(title)).collect();
-            let mut matches = Vec::new();
-            rank_into(&tracks, &query, &mut matches);
+            let longer = format!("{query}{appended}");
+            let mut narrowed = rank(&tracks, &query);
+            narrow_into(&tracks, &longer, &mut narrowed);
+            prop_assert_eq!(narrowed, rank(&tracks, &longer));
+        }
+
+        #[test]
+        fn rank_into_is_a_stable_permutation_of_the_matching_titles(
+            titles in proptest::collection::vec(title(), 0..8),
+            query in title(),
+        ) {
+            let tracks: Vec<Arc<Track>> = titles.iter().map(|title| titled_track(title)).collect();
+            let ranked = rank(&tracks, &query);
 
             let expected: BTreeSet<usize> = titles
                 .iter()
                 .enumerate()
                 .filter_map(|(index, title)| score(&query, title).map(|_| index))
                 .collect();
-            let found: BTreeSet<usize> = matches.iter().copied().map(usize::from).collect();
-            prop_assert_eq!(found.len(), matches.len());
+            let found: BTreeSet<usize> = ranked.iter().copied().map(usize::from).collect();
+            prop_assert_eq!(found.len(), ranked.len());
             prop_assert_eq!(found, expected);
 
             let scores: Vec<Option<i32>> = titles.iter().map(|title| score(&query, title)).collect();
             let scored = |index: usize| scores.get(index).copied().flatten().unwrap_or(i32::MIN);
-            for window in matches.windows(2) {
+            for window in ranked.windows(2) {
                 if let [left, right] = *window {
                     let (left_score, right_score) = (scored(left.get()), scored(right.get()));
                     prop_assert!(left_score >= right_score);

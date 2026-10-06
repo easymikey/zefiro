@@ -1,12 +1,9 @@
 use std::io::{self, Write};
 
-use kernel::{
-    cmd::WindowColorsCmd,
-    domain::{appearance::Rgb, theme::ThemeName},
-};
+use kernel::domain::appearance::Rgb;
 use widgets::theme::Theme;
 
-use crate::error::{Error, UnknownThemeError};
+use crate::error::Error;
 
 const OSC: &str = "\x1b]";
 const BEL: &str = "\x07";
@@ -55,56 +52,23 @@ pub(crate) fn reset_on_panic() -> Result<(), io::Error> {
     write_to_stdout(&reset_sequence())
 }
 
-fn sequence_for(name: &ThemeName, theme: &Theme) -> Result<String, UnknownThemeError> {
-    if *name == theme.name {
-        Ok(set_sequence(
-            theme.colors.window_background,
-            theme.colors.text,
-        ))
-    } else {
-        Err(UnknownThemeError { name: name.clone() })
-    }
+pub fn write_window_colors(theme: &Theme) -> Result<(), Error> {
+    let sequence = set_sequence(theme.colors.window_background, theme.colors.text);
+    write_to_stdout(&sequence).map_err(Error::WriteWindowColors)
 }
 
-pub(crate) fn window_colors_sequence(
-    command: &WindowColorsCmd,
-    theme: &Theme,
-) -> Result<String, UnknownThemeError> {
-    match command {
-        WindowColorsCmd::Set(name) => sequence_for(name, theme),
-        WindowColorsCmd::Reset => Ok(reset_sequence()),
-    }
-}
-
-pub fn write_window_colors(
-    command: &WindowColorsCmd,
-    theme: &Theme,
-) -> Result<(), Error> {
-    let sequence =
-        window_colors_sequence(command, theme).map_err(Error::UnknownTheme)?;
-    write_to_stdout(&sequence).map_err(Error::WindowColors)
+pub fn reset_window_colors() -> Result<(), Error> {
+    write_to_stdout(&reset_sequence()).map_err(Error::WriteWindowColors)
 }
 
 #[cfg(test)]
 mod tests {
-    use kernel::{
-        cmd::WindowColorsCmd,
-        domain::{appearance::Rgb, theme::ThemeName},
-    };
-    use rstest::rstest;
-    use widgets::theme::{
-        Theme,
-        colors::{Colors, ThemeBase},
-    };
+    use kernel::domain::appearance::Rgb;
 
-    use crate::{
-        error::UnknownThemeError,
-        window_colors::{reset_sequence, set_sequence, window_colors_sequence},
-    };
+    use crate::window_colors::{reset_sequence, set_sequence};
 
     const BACKGROUND: Rgb = Rgb([0x1a, 0x2b, 0x3c]);
     const FOREGROUND: Rgb = Rgb([0xff, 0x00, 0x99]);
-    const KNOWN_THEME: &str = "noir";
 
     #[test]
     fn the_window_color_sequences_are_exact_bytes() {
@@ -112,44 +76,5 @@ mod tests {
             .map(|sequence| sequence.escape_debug().to_string())
             .join("\n");
         insta::assert_snapshot!(written);
-    }
-
-    fn theme() -> Theme {
-        Theme {
-            name: ThemeName::from_static(KNOWN_THEME),
-            colors: Colors::derive(&ThemeBase {
-                background: Rgb([0x10, 0x10, 0x10]),
-                muted_foreground: Rgb([0xe0, 0xe0, 0xe0]),
-                foreground: Rgb([0xf0, 0xf0, 0xf0]),
-                accent: Rgb([0x20, 0x60, 0xa0]),
-                green: Rgb([0x00, 0xff, 0x00]),
-                yellow: Rgb([0xff, 0xff, 0x00]),
-                red: Rgb([0xff, 0x00, 0x00]),
-                window_background: None,
-            }),
-            scanning_label: String::new(),
-        }
-    }
-
-    #[rstest]
-    #[case::set_to_the_same_theme(
-        WindowColorsCmd::Set(ThemeName::from_static(KNOWN_THEME)),
-        Ok(set_sequence(
-            theme().colors.window_background,
-            theme().colors.text,
-        ))
-    )]
-    #[case::set_to_another_name(
-        WindowColorsCmd::Set(ThemeName::from_static("no-such-theme")),
-        Err(UnknownThemeError {
-            name: ThemeName::from_static("no-such-theme"),
-        })
-    )]
-    #[case::reset_ignores_the_theme(WindowColorsCmd::Reset, Ok(reset_sequence()))]
-    fn setting_a_known_theme_sets_its_colors_an_unknown_one_errors_and_reset_ignores_the_theme(
-        #[case] command: WindowColorsCmd,
-        #[case] expected: Result<String, UnknownThemeError>,
-    ) {
-        assert_eq!(window_colors_sequence(&command, &theme()), expected);
     }
 }

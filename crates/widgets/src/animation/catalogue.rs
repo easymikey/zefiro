@@ -17,8 +17,8 @@ use tachyonfx::{
 use crate::animation::timings::{THEME_WASH_GRADIENT_CELLS, TIMINGS};
 
 #[must_use]
-pub fn modal_in() -> Animation {
-    fx::coalesce(TIMINGS.modal_in)
+pub fn modal_reveal() -> Animation {
+    fx::coalesce(TIMINGS.modal_reveal)
         .with_rng(SimpleRng::new(TIMINGS.scatter_seed))
         .with_pattern(
             RadialPattern::center()
@@ -91,17 +91,10 @@ pub fn row_flash(accent: Color) -> Animation {
     fx::fade_from_fg(accent, TIMINGS.row_flash)
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct VolumeShades {
-    pub fill: Color,
-    pub lifted: Color,
-}
-
 #[must_use]
-pub fn volume_pulse(shades: VolumeShades, guard: CellFilter) -> Animation {
-    fx::fade_from_fg(shades.lifted, TIMINGS.volume_pulse).with_filter(
-        CellFilter::AllOf(vec![guard, CellFilter::FgColor(shades.fill)]),
-    )
+pub fn volume_pulse(fill: Color, lifted: Color, guard: CellFilter) -> Animation {
+    fx::fade_from_fg(lifted, TIMINGS.volume_pulse)
+        .with_filter(CellFilter::AllOf(vec![guard, CellFilter::FgColor(fill)]))
 }
 
 #[must_use]

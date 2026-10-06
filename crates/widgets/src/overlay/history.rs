@@ -19,7 +19,6 @@ use crate::{
         placement::{
             ModalContainer,
             ModalPlacement,
-            ModalScrollAreas,
             OverlayAreas,
             column_width,
             indented,
@@ -30,7 +29,7 @@ use crate::{
     primitive::{
         canvas::Canvas,
         glyphs,
-        list_chrome::{Scrollbar, paint_scrollbar, scroll_offset},
+        list_chrome::{ScrollAreas, Scrollbar, paint_scrollbar, scroll_offset},
         relative_time::relative_time,
         span::{line, text},
         text::truncate,
@@ -40,11 +39,45 @@ use crate::{
 
 #[derive(Debug)]
 pub(crate) struct HistoryWidget<'a> {
-    pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) entries: &'a [HistoryEntry],
-    pub(crate) now: Moment,
-    pub(crate) selected: RowIndex,
-    pub(crate) container: ModalContainer<'a>,
+    theme: ActiveTheme<'a>,
+    entries: &'a [HistoryEntry],
+    now: Moment,
+    selected: RowIndex,
+    container: ModalContainer<'a>,
+}
+
+impl<'a> HistoryWidget<'a> {
+    #[must_use]
+    pub(crate) fn new(
+        entries: &'a [HistoryEntry],
+        active_theme: ActiveTheme<'a>,
+    ) -> Self {
+        Self {
+            theme: active_theme,
+            entries,
+            now: Moment::default(),
+            selected: RowIndex::new(0),
+            container: ModalContainer::Modal(&[]),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn now(mut self, now: Moment) -> Self {
+        self.now = now;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn selected(mut self, selected: RowIndex) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn container(mut self, container: ModalContainer<'a>) -> Self {
+        self.container = container;
+        self
+    }
 }
 
 impl HistoryWidget<'_> {
@@ -253,7 +286,7 @@ impl HistoryColumns {
 
 #[derive(Debug, Clone, Copy)]
 struct LabeledRows<'a> {
-    areas: ModalScrollAreas,
+    areas: ScrollAreas,
     labels: &'a [String],
 }
 
@@ -333,13 +366,13 @@ mod tests {
             entry("/m/a.flac", "Alpha", Some("Artist A")),
             entry("/m/b.flac", "Beta", None),
         ];
-        let overlay = HistoryWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            entries: &entries,
-            now: now(),
-            selected: RowIndex::new(1),
-            container: ModalContainer::Modal(&[]),
-        };
+        let overlay = HistoryWidget::new(
+            &entries,
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        )
+        .now(now())
+        .selected(RowIndex::new(1))
+        .container(ModalContainer::Modal(&[]));
         insta::assert_snapshot!(
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .to_string()
@@ -354,13 +387,10 @@ mod tests {
             entry("/m/a.flac", "Alpha", Some("Artist A")),
             entry("/m/b.flac", "Beta", None),
         ];
-        let overlay = HistoryWidget {
-            theme: active,
-            entries: &entries,
-            now: now(),
-            selected: RowIndex::new(1),
-            container: ModalContainer::Modal(&[]),
-        };
+        let overlay = HistoryWidget::new(&entries, active)
+            .now(now())
+            .selected(RowIndex::new(1))
+            .container(ModalContainer::Modal(&[]));
         let buffer =
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
@@ -383,13 +413,13 @@ mod tests {
     fn history_overlay_with_a_scrollbar_keeps_its_time_column_clear_of_it() {
         let theme = noir();
         let entries = scrolling_entries();
-        let overlay = HistoryWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            entries: &entries,
-            now: now(),
-            selected: RowIndex::new(0),
-            container: ModalContainer::Playlist(Rect::new(0, 0, 120, 40)),
-        };
+        let overlay = HistoryWidget::new(
+            &entries,
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        )
+        .now(now())
+        .selected(RowIndex::new(0))
+        .container(ModalContainer::Playlist(Rect::new(0, 0, 120, 40)));
         insta::assert_snapshot!(
             rendered(120, 40, |frame| frame.render_widget(&overlay, frame.area()))
                 .to_string()
@@ -400,13 +430,13 @@ mod tests {
     fn the_history_time_column_never_touches_the_scrollbar() {
         let theme = noir();
         let entries = scrolling_entries();
-        let overlay = HistoryWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            entries: &entries,
-            now: now(),
-            selected: RowIndex::new(0),
-            container: ModalContainer::Playlist(Rect::new(0, 0, 120, 40)),
-        };
+        let overlay = HistoryWidget::new(
+            &entries,
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        )
+        .now(now())
+        .selected(RowIndex::new(0))
+        .container(ModalContainer::Playlist(Rect::new(0, 0, 120, 40)));
         let buffer =
             rendered(120, 40, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
@@ -422,13 +452,13 @@ mod tests {
     fn history_overlay_shows_a_placeholder_when_empty() {
         let theme = noir();
         let entries: [HistoryEntry; 0] = [];
-        let overlay = HistoryWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            entries: &entries,
-            now: now(),
-            selected: RowIndex::new(0),
-            container: ModalContainer::Modal(&[]),
-        };
+        let overlay = HistoryWidget::new(
+            &entries,
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        )
+        .now(now())
+        .selected(RowIndex::new(0))
+        .container(ModalContainer::Modal(&[]));
         insta::assert_snapshot!(
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .to_string()
@@ -439,13 +469,13 @@ mod tests {
     fn history_overlay_does_not_panic_on_a_tiny_terminal() {
         let theme = noir();
         let entries: [HistoryEntry; 0] = [];
-        let overlay = HistoryWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            entries: &entries,
-            now: now(),
-            selected: RowIndex::new(0),
-            container: ModalContainer::Modal(&[]),
-        };
+        let overlay = HistoryWidget::new(
+            &entries,
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        )
+        .now(now())
+        .selected(RowIndex::new(0))
+        .container(ModalContainer::Modal(&[]));
         assert_eq!(
             rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()

@@ -4,23 +4,21 @@ use kernel::domain::{
     favorites::Favorites,
     library,
     library::SortKey,
-    track::{AudioFormat, Tags, Track},
+    track::{AudioFormat, Tags, Track, TrackParts},
 };
 use rstest::rstest;
 
 fn track(path: &str, artist: Option<&str>, album: Option<&str>) -> Arc<Track> {
-    Arc::new(
-        Track::builder()
-            .path(path)
-            .duration(Duration::from_secs(1))
-            .tags(Tags {
-                artist: artist.map(str::to_string),
-                album: album.map(str::to_string),
-                ..Tags::default()
-            })
-            .audio_format(AudioFormat::default())
-            .build(),
-    )
+    Arc::new(Track::new(TrackParts {
+        path: path.into(),
+        duration: Duration::from_secs(1),
+        tags: Tags {
+            artist: artist.map(str::to_string),
+            album: album.map(str::to_string),
+            ..Tags::default()
+        },
+        audio_format: AudioFormat::default(),
+    }))
 }
 
 fn favorited(paths: &[&str]) -> Favorites {

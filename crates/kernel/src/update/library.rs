@@ -8,6 +8,7 @@ use crate::{
         history::HistoryEntry,
         library::{Library, sort_indices},
         model::ScanStatus,
+        overlay::Overlay,
         player::Player,
         playlist::{Playlist, PlaylistSource},
         revision::{Freshness, Revision, Revisions},
@@ -64,11 +65,11 @@ pub(crate) fn update(
 fn library_failed(parts: &mut LibraryParts<'_>, failure: &LibraryError) -> Cmd {
     match failure {
         LibraryError::NoUserDirs
-        | LibraryError::File {
+        | LibraryError::Disk {
             subject: LibrarySubject::Scan,
             ..
         } => *parts.scan_status = ScanStatus::Idle,
-        LibraryError::File { .. } | LibraryError::Cover { .. } => {}
+        LibraryError::Disk { .. } | LibraryError::DecodeCover { .. } => {}
     }
     parts.workspace.show(
         Toast::error("Library error").with_text(failure.to_string()),
@@ -123,6 +124,9 @@ fn tagged_tracks(parts: &mut LibraryParts<'_>, tagged: Vec<Arc<Track>>) -> Cmd {
     }
     retag_tracks(&mut parts.playlist.tracks, &tagged);
     retag_player(parts.player, &tagged);
+    if let Some(Overlay::Search(search)) = parts.workspace.overlay.as_mut() {
+        crate::update::overlay::search::rank(search, &parts.playlist.tracks);
+    }
     tagging_progress(parts.scan_status, read)
 }
 
@@ -133,7 +137,7 @@ fn library_loaded(parts: &mut LibraryParts<'_>, tracks: Vec<Arc<Track>>) {
             *parts.playlist_source,
             crate::update::browse::ResyncParts {
                 library: ready,
-                browse: &mut parts.workspace.browse,
+                workspace: &mut *parts.workspace,
                 player: parts.player,
                 playlist: parts.playlist,
             },
@@ -321,10 +325,10 @@ mod tests {
     }
 
     fn unreadable(subject: LibrarySubject) -> LibraryError {
-        LibraryError::File {
+        LibraryError::Disk {
             subject,
             path: "/music".into(),
-            kind: IoError::Missing,
+            source: IoError::Missing,
         }
     }
 
@@ -339,7 +343,7 @@ mod tests {
         ScanStatus::Scanning
     )]
     #[case::a_cover_failure_keeps_scanning(
-        LibraryError::Cover {
+        LibraryError::DecodeCover {
             path: "/music/one.flac".into(),
             diagnostic: Diagnostic::from_error(&std::io::Error::other("no tag")),
         },

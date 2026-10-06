@@ -14,9 +14,8 @@ use crate::{
         CoverError,
         decoding::{CoverDecoding, CoverDecodingMessage},
     },
-    driver::{LibraryDriver, LibraryEffect, LibraryLoopCmd},
+    driver::{LibraryDriver, LibraryEffect, LibraryLoopCmd, drained},
     job::LibraryJob,
-    message::LibraryMessage,
 };
 
 impl<P> LibraryDriver<P> {
@@ -24,28 +23,32 @@ impl<P> LibraryDriver<P> {
         if self.asked.as_ref() == Some(&job) {
             return Err(Unhandled);
         }
-        let cmd = self.covers.answer(&job).map_or_else(
-            || {
-                self.decode(job.clone())
-                    .unwrap_or_else(|Unhandled| Cmd::none())
-            },
-            |decoded| {
+        let cmd = match self.covers.answer(&job).cloned() {
+            Some(decoded) => {
+                self.covers.remember(&decoded);
                 Cmd::effect(LoopEffect::Execute(LibraryEffect::PublishCover(decoded)))
-            },
-        );
+            }
+            None if self.decoding.busy() == Some(&job) => Cmd::none(),
+            None => self.decode(job.clone())?,
+        };
         self.asked = Some(job);
         Ok(cmd)
     }
 
-    pub(crate) fn prefetch(&mut self, path: PathBuf) -> LibraryLoopCmd {
-        let Some(side) = self.asked.as_ref().map(|asked| asked.side) else {
-            return Cmd::none();
-        };
+    pub(crate) fn prefetch(
+        &mut self,
+        path: PathBuf,
+    ) -> Result<LibraryLoopCmd, Unhandled> {
+        let side = self
+            .asked
+            .as_ref()
+            .map(|asked| asked.side)
+            .ok_or(Unhandled)?;
         let job = CoverJob { path, side };
         if self.decoding != CoverDecoding::Idle || self.covers.answer(&job).is_some() {
-            return Cmd::none();
+            return Err(Unhandled);
         }
-        self.decode(job).unwrap_or_else(|Unhandled| Cmd::none())
+        self.decode(job)
     }
 
     fn decode(&mut self, job: CoverJob) -> Result<LibraryLoopCmd, Unhandled> {
@@ -54,7 +57,7 @@ impl<P> LibraryDriver<P> {
             .decoding
             .transition(CoverDecodingMessage::Request { job, revision })?;
         self.cover_revision = revision;
-        Ok(self.lift_decoding(started))
+        Ok(lift_decoding(started))
     }
 
     pub(crate) fn decoded(
@@ -68,7 +71,7 @@ impl<P> LibraryDriver<P> {
         if let Ok(decoded) = &decoded {
             self.covers.remember(decoded);
         }
-        let settled = self.lift_decoding(settled);
+        let settled = lift_decoding(settled);
         let answer = match decoded {
             Ok(decoded) => self.published(decoded),
             Err(error) => self.failed(&error),
@@ -99,26 +102,20 @@ impl<P> LibraryDriver<P> {
                 art: CoverArt::Missing,
             },
         )))
-        .then(Cmd::message(LibraryEvent::Error(LibraryError::Cover {
-            path: error.path.clone(),
-            diagnostic: Diagnostic::from_error(error),
-        })))
+        .then(Cmd::message(LibraryEvent::Error(
+            LibraryError::DecodeCover {
+                path: error.path.clone(),
+                diagnostic: Diagnostic::from_error(error),
+            },
+        )))
     }
+}
 
-    fn lift_decoding(
-        &mut self,
-        decoding: Cmd<(CoverJob, Revision), LibraryMessage>,
-    ) -> LibraryLoopCmd {
-        let (jobs, messages) = decoding.into_parts();
-        let started: LibraryLoopCmd = jobs
-            .into_iter()
-            .map(|(job, revision)| LoopEffect::Run(LibraryJob::Cover { job, revision }))
-            .collect();
-        messages.into_iter().fold(started, |cmd, told| {
-            cmd.then(
-                self.transition(told)
-                    .unwrap_or_else(|Unhandled| Cmd::none()),
-            )
-        })
-    }
+fn lift_decoding(decoding: Cmd<(CoverJob, Revision), LibraryEvent>) -> LibraryLoopCmd {
+    let (jobs, events) = decoding.into_parts();
+    let started: LibraryLoopCmd = jobs
+        .into_iter()
+        .map(|(job, revision)| LoopEffect::Run(LibraryJob::Cover { job, revision }))
+        .collect();
+    drained(started, events)
 }

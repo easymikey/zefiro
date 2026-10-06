@@ -6,7 +6,7 @@ use kernel::domain::{
     playlist::Playlist,
     theme::ThemeName,
     time::Moment,
-    track::{AudioFormat, Tags, Track},
+    track::{AudioFormat, Tags, Track, TrackParts},
 };
 use ratatui::{Frame, Terminal, backend::TestBackend};
 use widgets::{
@@ -46,18 +46,16 @@ pub(crate) fn stock_theme(name: ThemeName, palette: &ThemeBase) -> Theme {
 }
 
 pub(crate) fn track(title: &str) -> Arc<Track> {
-    Arc::new(
-        Track::builder()
-            .path(format!("/music/{title}.mp3"))
-            .duration(Duration::from_secs(245))
-            .tags(Tags {
-                title: Some(title.to_string()),
-                artist: Some("Test Artist".to_string()),
-                ..Tags::default()
-            })
-            .audio_format(AudioFormat::default())
-            .build(),
-    )
+    Arc::new(Track::new(TrackParts {
+        path: format!("/music/{title}.mp3").into(),
+        duration: Duration::from_secs(245),
+        tags: Tags {
+            title: Some(title.to_string()),
+            artist: Some("Test Artist".to_string()),
+            ..Tags::default()
+        },
+        audio_format: AudioFormat::default(),
+    }))
 }
 
 pub(crate) fn model_with_tracks(count: usize) -> Model {

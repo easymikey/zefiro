@@ -9,9 +9,7 @@ use widgets::{
 };
 
 use crate::unit::support::{
-    ACCENT,
     AREA,
-    BACKGROUND,
     COVER,
     PROGRESS_LINE,
     ToastPresence,
@@ -25,8 +23,6 @@ use crate::unit::support::{
     slice,
     toast_backdrop,
     toast_card_backdrop,
-    volume_fill,
-    volume_lifted,
     whole,
 };
 
@@ -73,13 +69,13 @@ fn an_opening_overlay_resolves_and_ends_on_the_painted_colours() {
 
     assert_ne!(step(&mut stage, Duration::ZERO), animation_frame());
     assert_ne!(
-        step(&mut stage, slice(|t| t.modal_in, 2)),
+        step(&mut stage, slice(|t| t.modal_reveal, 2)),
         animation_frame()
     );
     assert!(stage.is_animating(), "half way through");
 
     assert_eq!(
-        step(&mut stage, slice(|t| t.modal_in, 2)),
+        step(&mut stage, slice(|t| t.modal_reveal, 2)),
         animation_frame()
     );
     step(&mut stage, Duration::ZERO);
@@ -90,7 +86,7 @@ fn an_opening_overlay_resolves_and_ends_on_the_painted_colours() {
 fn a_closing_overlay_resolves_the_rect_it_vacated() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::OverlayOpened], &overlay_backdrop(Some(AREA)));
-    step(&mut stage, whole(|t| t.modal_in));
+    step(&mut stage, whole(|t| t.modal_reveal));
     step(&mut stage, Duration::ZERO);
     assert!(!stage.is_animating(), "the open ring finished");
 
@@ -98,7 +94,10 @@ fn a_closing_overlay_resolves_the_rect_it_vacated() {
 
     assert!(stage.is_animating(), "closing stages its own");
     assert_ne!(step(&mut stage, Duration::ZERO), animation_frame());
-    assert_eq!(step(&mut stage, whole(|t| t.modal_in)), animation_frame());
+    assert_eq!(
+        step(&mut stage, whole(|t| t.modal_reveal)),
+        animation_frame()
+    );
     step(&mut stage, Duration::ZERO);
     assert!(!stage.is_animating(), "and it ends");
 }
@@ -270,7 +269,7 @@ fn only_the_cover_rect_survives_a_whole_screen_animation() {
 
     let original = screen_frame();
     let mut buffer = screen_frame();
-    stage.advance(&mut buffer, slice(|t| t.modal_in, 2));
+    stage.advance(&mut buffer, slice(|t| t.modal_reveal, 2));
 
     for y in COVER.y..COVER.bottom() {
         for x in COVER.x..COVER.right() {
@@ -442,13 +441,8 @@ fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
     let layout = FrameLayout::from_scene(&scene, crate::unit::support::SCREEN);
 
     let backdrop = Backdrop {
-        animations: Animations::On,
         layout,
-        background: BACKGROUND,
-        accent: ACCENT,
-        volume_fill: volume_fill(),
-        volume_lifted: volume_lifted(),
-        wash_from: BACKGROUND,
+        ..quiet_backdrop()
     };
 
     let mut stage = AnimationStage::default();

@@ -120,21 +120,19 @@ mod tests {
         playhead::Playhead,
         speed::Speed,
         time::Moment,
-        track::{AudioFormat, Tags, Track},
+        track::{AudioFormat, Tags, Track, TrackParts},
     };
     use rstest::rstest;
 
     use crate::repaint::{next_sleep_minute, progress_frame_due};
 
     fn track(duration: Duration) -> Arc<Track> {
-        Arc::new(
-            Track::builder()
-                .path("/music/song.mp3")
-                .duration(duration)
-                .tags(Tags::default())
-                .audio_format(AudioFormat::default())
-                .build(),
-        )
+        Arc::new(Track::new(TrackParts {
+            path: "/music/song.mp3".into(),
+            duration,
+            tags: Tags::default(),
+            audio_format: AudioFormat::default(),
+        }))
     }
 
     fn playing(offset: Duration, since: Moment, speed: f32) -> Player {

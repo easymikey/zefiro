@@ -32,11 +32,7 @@ pub fn route(workspace: &Workspace, press: KeyPress) -> Option<Message> {
         )
     };
     workspace.overlay.as_ref().map(key_context_of).map_or_else(
-        || {
-            lookup(KeyContext::Playlist)
-                .or_else(|| typed_input(KeyContext::Playlist, key))
-                .or_else(|| lookup(KeyContext::Global))
-        },
+        || lookup(KeyContext::Playlist).or_else(|| lookup(KeyContext::Global)),
         |context| lookup(context).or_else(|| typed_input(context, key)),
     )
 }
@@ -127,9 +123,9 @@ fn typed_input(key_context: KeyContext, key: Key) -> Option<Message> {
         return None;
     };
     match key_context {
-        KeyContext::TextPrompt => Some(Message::Overlay(OverlayRequest::Text(
-            TextRequest::Char(character),
-        ))),
+        KeyContext::TextPrompt | KeyContext::JumpToTime => Some(Message::Overlay(
+            OverlayRequest::Text(TextRequest::Char(character)),
+        )),
         KeyContext::Search => Some(Message::Overlay(OverlayRequest::Search(
             SearchRequest::Edit(SearchEdit::Char(character)),
         ))),
@@ -139,7 +135,6 @@ fn typed_input(key_context: KeyContext, key: Key) -> Option<Message> {
         | KeyContext::History
         | KeyContext::Settings
         | KeyContext::ConfirmDelete
-        | KeyContext::JumpToTime
         | KeyContext::TrackDetails => None,
     }
 }

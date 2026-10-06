@@ -45,9 +45,57 @@ enum Toggle {
     Off,
 }
 
-impl From<bool> for Toggle {
-    fn from(on: bool) -> Self {
-        if on { Toggle::On } else { Toggle::Off }
+impl From<ReplayGain> for Toggle {
+    fn from(replay_gain: ReplayGain) -> Self {
+        match replay_gain {
+            ReplayGain::On => Toggle::On,
+            ReplayGain::Off => Toggle::Off,
+        }
+    }
+}
+
+impl From<CoverBrackets> for Toggle {
+    fn from(brackets: CoverBrackets) -> Self {
+        match brackets {
+            CoverBrackets::Shown => Toggle::On,
+            CoverBrackets::Hidden => Toggle::Off,
+        }
+    }
+}
+
+impl From<FormatChips> for Toggle {
+    fn from(chips: FormatChips) -> Self {
+        match chips {
+            FormatChips::Shown => Toggle::On,
+            FormatChips::Hidden => Toggle::Off,
+        }
+    }
+}
+
+impl From<ProgressTime> for Toggle {
+    fn from(progress_time: ProgressTime) -> Self {
+        match progress_time {
+            ProgressTime::Remaining => Toggle::On,
+            ProgressTime::Elapsed => Toggle::Off,
+        }
+    }
+}
+
+impl From<KeyHints> for Toggle {
+    fn from(hints: KeyHints) -> Self {
+        match hints {
+            KeyHints::Shown => Toggle::On,
+            KeyHints::Hidden => Toggle::Off,
+        }
+    }
+}
+
+impl From<Animations> for Toggle {
+    fn from(animations: Animations) -> Self {
+        match animations {
+            Animations::On => Toggle::On,
+            Animations::Off => Toggle::Off,
+        }
     }
 }
 
@@ -80,9 +128,7 @@ pub(crate) fn value_text(row: SettingRow, view: &SettingsView<'_>) -> String {
     match row {
         SettingRow::Theme => format_pick(view.theme),
         SettingRow::Crossfade => format_duration_step(view.crossfade.get()),
-        SettingRow::ReplayGain => {
-            format_toggle(Toggle::from(view.replay_gain == ReplayGain::On))
-        }
+        SettingRow::ReplayGain => format_toggle(Toggle::from(view.replay_gain)),
         SettingRow::OutputDevice => {
             let name = view
                 .output_device
@@ -103,21 +149,19 @@ fn appearance_value_text(
     match field {
         AppearanceField::Preset => format_pick(preset_label(preset_of(appearance))),
         AppearanceField::CoverMode => format_pick(&appearance.cover_mode.to_string()),
-        AppearanceField::CoverBrackets => format_toggle(Toggle::from(
-            appearance.cover_brackets == CoverBrackets::Shown,
-        )),
+        AppearanceField::CoverBrackets => {
+            format_toggle(Toggle::from(appearance.cover_brackets))
+        }
         AppearanceField::FormatChips => {
-            format_toggle(Toggle::from(appearance.format_chips == FormatChips::Shown))
+            format_toggle(Toggle::from(appearance.format_chips))
         }
         AppearanceField::SpeedChip => format_pick(&appearance.speed_chip.to_string()),
-        AppearanceField::ProgressRemaining => format_toggle(Toggle::from(
-            appearance.progress_time == ProgressTime::Remaining,
-        )),
-        AppearanceField::KeyHints => {
-            format_toggle(Toggle::from(appearance.key_hints == KeyHints::Shown))
+        AppearanceField::ProgressRemaining => {
+            format_toggle(Toggle::from(appearance.progress_time))
         }
+        AppearanceField::KeyHints => format_toggle(Toggle::from(appearance.key_hints)),
         AppearanceField::Animations => {
-            format_toggle(Toggle::from(appearance.animations == Animations::On))
+            format_toggle(Toggle::from(appearance.animations))
         }
         AppearanceField::LayoutMode => format_pick(&appearance.layout_mode.to_string()),
     }
@@ -258,7 +302,15 @@ mod tests {
     use std::{path::Path, time::Duration};
 
     use kernel::domain::{
-        appearance::CoverMode,
+        appearance::{
+            Animations,
+            AppearanceSettings,
+            CoverBrackets,
+            CoverMode,
+            FormatChips,
+            KeyHints,
+            ProgressTime,
+        },
         appearance_rows::APPEARANCE_ROWS,
         setting_row::{AppearanceField, SettingRow},
         settings::ReplayGain,
@@ -270,6 +322,7 @@ mod tests {
         view::{
             SettingsView,
             abbreviate_home,
+            appearance_value_text,
             format_sleep_presets_label,
             settings_label,
             value_text,
@@ -316,6 +369,38 @@ mod tests {
             value_text(SettingRow::ReplayGain, &on),
             value_text(SettingRow::ReplayGain, &off)
         );
+    }
+
+    #[test]
+    fn settings_toggle_rows_render_their_two_values_apart() {
+        let on_appearance_settings = AppearanceSettings {
+            cover_brackets: CoverBrackets::Shown,
+            format_chips: FormatChips::Shown,
+            progress_time: ProgressTime::Remaining,
+            key_hints: KeyHints::Shown,
+            animations: Animations::On,
+            ..AppearanceSettings::default()
+        };
+        let off_appearance_settings = AppearanceSettings {
+            cover_brackets: CoverBrackets::Hidden,
+            format_chips: FormatChips::Hidden,
+            progress_time: ProgressTime::Elapsed,
+            key_hints: KeyHints::Hidden,
+            animations: Animations::Off,
+            ..on_appearance_settings
+        };
+        for field in [
+            AppearanceField::CoverBrackets,
+            AppearanceField::FormatChips,
+            AppearanceField::ProgressRemaining,
+            AppearanceField::KeyHints,
+            AppearanceField::Animations,
+        ] {
+            assert_ne!(
+                appearance_value_text(field, on_appearance_settings),
+                appearance_value_text(field, off_appearance_settings)
+            );
+        }
     }
 
     #[test]

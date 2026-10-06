@@ -42,7 +42,9 @@ expression: effects
         ),
     ),
     Library(
-        LoadFavorites,
+        Disk(
+            LoadFavorites,
+        ),
     ),
     Library(
         Scan {

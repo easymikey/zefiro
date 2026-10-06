@@ -52,10 +52,7 @@ impl Runtime {
                     }
                     None
                 }
-                Effect::Restart(driver) => {
-                    self.wiring.restart(driver, &self.model);
-                    None
-                }
+                Effect::Restart(driver) => self.wiring.restart(driver, &self.model),
                 Effect::Quit => {
                     self.flow = ControlFlow::Break(());
                     None
@@ -77,6 +74,7 @@ mod tests {
             ConfigCmd,
             ConfigPatch,
             CoverJob,
+            DiskCmd,
             Effect,
             LibraryCmd,
             MacosCmd,
@@ -245,13 +243,13 @@ mod tests {
         let mut fixture = Fixture::new();
 
         run(
-            Cmd::effect(Effect::Library(LibraryCmd::LoadFavorites)),
+            Cmd::effect(Effect::Library(LibraryCmd::Disk(DiskCmd::LoadFavorites))),
             &mut fixture.runtime,
         );
 
         assert!(matches!(
             fixture.library_rx.try_recv(),
-            Ok(LibraryCmd::LoadFavorites)
+            Ok(LibraryCmd::Disk(DiskCmd::LoadFavorites))
         ));
     }
 
@@ -304,11 +302,10 @@ mod tests {
         let mut fixture = Fixture::new();
 
         run(
-            Cmd::effect(Effect::Config(ConfigCmd::Save(
-                ConfigPatch::builder()
-                    .theme(kernel::domain::theme::ThemeName::from_static("dark"))
-                    .build(),
-            ))),
+            Cmd::effect(Effect::Config(ConfigCmd::Save(ConfigPatch {
+                theme: Some(kernel::domain::theme::ThemeName::from_static("dark")),
+                ..ConfigPatch::default()
+            }))),
             &mut fixture.runtime,
         );
 
@@ -389,9 +386,10 @@ mod tests {
     #[test]
     fn a_setting_effect_reaches_the_config_inbox_as_a_setting_command() {
         let mut fixture = Fixture::new();
-        let patch = AppearancePatch::builder()
-            .cover_brackets(CoverBrackets::Hidden)
-            .build();
+        let patch = AppearancePatch {
+            cover_brackets: Some(CoverBrackets::Hidden),
+            ..AppearancePatch::default()
+        };
 
         run(
             Cmd::effect(Effect::Config(ConfigCmd::SetAppearance(patch))),

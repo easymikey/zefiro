@@ -4,7 +4,7 @@ use audio::tap::SpectrumTap;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use kernel::{
     domain::{
-        driver::{DriverName, DriverStatus},
+        driver::{DriverError, DriverName, DriverStatus},
         model::Model,
     },
     message::{DriverEvent, Message},
@@ -84,7 +84,11 @@ impl Wiring {
         })
     }
 
-    pub(crate) fn restart(&mut self, driver: DriverName, model: &Model) {
+    pub(crate) fn restart(
+        &mut self,
+        driver: DriverName,
+        model: &Model,
+    ) -> Option<Message> {
         self.ports.hang_up(driver);
         drop(self.ports.join(driver));
         let paths = self.paths.clone();
@@ -101,7 +105,11 @@ impl Wiring {
             macos: &macos,
         };
         match self.restart_driver(driver, &setup) {
-            Ok(()) | Err(_) => {}
+            Ok(()) => None,
+            Err(_spawn) => Some(Message::Driver {
+                driver,
+                event: DriverEvent::Died(DriverError::Panicked),
+            }),
         }
     }
 

@@ -15,12 +15,12 @@ use kernel::{
     cmd::{Cmd, Cmds, ConfigCmd},
     domain::{
         appearance::Appearance,
-        config::{ConfigError, ConfigName},
+        config::{ConfigError, ConfigName, Diagnostic},
         io_error::IoError,
         theme::{ThemeChoice, ThemeName},
     },
     message::{ConfigEvent, ConfigReload},
-    update::machine::{LoopEffect, Machine, Unhandled},
+    update::machine::{LoopEffect, Machine, Unhandled, each_handled},
 };
 
 use crate::{
@@ -97,9 +97,9 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> Machine for ConfigDriver<P, A> {
                         })
                     },
                 );
-                Ok(watch.then(self.poll_everything()))
+                Ok(watch.then(self.poll_everything()?))
             }
-            ConfigMessage::Changed(Ok(())) => Ok(self.poll_everything()),
+            ConfigMessage::Changed(Ok(())) => self.poll_everything(),
             ConfigMessage::Changed(Err(kind)) => {
                 Ok(Cmd::message(ConfigEvent::Error(ConfigError::Watch(kind))))
             }
@@ -116,16 +116,8 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> Machine for ConfigDriver<P, A> {
 impl<P: Fn(TomlTheme), A: Fn(Appearance)> ConfigDriver<P, A> {
     fn commanded(&mut self, cmds: Vec<ConfigCmd>) -> Result<ConfigLoopCmd, Unhandled> {
         let before = self.saves.revision();
-        let (handled, cmd) = cmds
-            .into_iter()
-            .filter_map(|each| self.command(each).ok())
-            .fold((0_usize, Cmd::none()), |(handled, all), next| {
-                (handled + 1, all.then(next))
-            });
-        if handled == 0 {
-            return Err(Unhandled);
-        }
-        Ok(cmd.then(self.saves.wait_since(before)))
+        each_handled(cmds, |each| self.command(each))
+            .map(|cmd| cmd.then(self.saves.wait_since(before)))
     }
 
     fn command(&mut self, cmd: ConfigCmd) -> Result<ConfigLoopCmd, Unhandled> {
@@ -159,19 +151,16 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> ConfigDriver<P, A> {
             .fold(lifted, Cmd::then))
     }
 
-    fn poll_everything(&mut self) -> ConfigLoopCmd {
-        [
-            ConfigWatchMessage::PollAppearance,
-            ConfigWatchMessage::PollConfig,
-            ConfigWatchMessage::PollTheme,
-            ConfigWatchMessage::PollThemes,
-        ]
-        .into_iter()
-        .map(|message| {
-            self.drive_watch(message)
-                .unwrap_or_else(|Unhandled| Cmd::none())
-        })
-        .fold(Cmd::none(), Cmd::then)
+    fn poll_everything(&mut self) -> Result<ConfigLoopCmd, Unhandled> {
+        each_handled(
+            vec![
+                ConfigWatchMessage::PollAppearance,
+                ConfigWatchMessage::PollConfig,
+                ConfigWatchMessage::PollTheme,
+                ConfigWatchMessage::PollThemes,
+            ],
+            |message| self.drive_watch(message),
+        )
     }
 }
 
@@ -182,9 +171,13 @@ fn changed(change: ConfigChange, default_music_dir: Option<&Path>) -> ConfigLoop
             keymap_changed(text.as_deref(), default_music_dir)
         }
         ConfigChange::Theme { name, text } => theme_changed(name, text.as_deref()),
-        ConfigChange::Themes(names) => {
-            Cmd::message(ConfigEvent::ThemesLoaded(embedded_and_user(names)))
-        }
+        ConfigChange::Themes {
+            theme_names,
+            refused,
+        } => Cmd::message(ConfigEvent::ThemesLoaded {
+            theme_names: embedded_and_user(theme_names),
+            refused,
+        }),
     }
 }
 
@@ -206,7 +199,7 @@ fn appearance_changed(text: Option<&str>) -> ConfigLoopCmd {
         }
         Err(error) => Cmd::message(reloaded(
             ConfigName::Appearance,
-            Err(ConfigError::invalid(&error)),
+            Err(Diagnostic::from_error(&error).into()),
         )),
     }
 }
@@ -230,7 +223,7 @@ fn keymap_changed(
         }
         Err(error) => Cmd::message(reloaded(
             ConfigName::Config,
-            Err(ConfigError::invalid(&error)),
+            Err(Diagnostic::from_error(&error).into()),
         )),
     }
 }
@@ -396,9 +389,10 @@ mod tests {
     }
 
     fn cover_brackets() -> AppearancePatch {
-        AppearancePatch::builder()
-            .cover_brackets(CoverBrackets::Shown)
-            .build()
+        AppearancePatch {
+            cover_brackets: Some(CoverBrackets::Shown),
+            ..AppearancePatch::default()
+        }
     }
 
     fn setting() -> ConfigMessage {
@@ -438,7 +432,9 @@ mod tests {
         Ok(Cmd::message(ConfigEvent::Error(ConfigError::Watch(IoError::Missing))))
     )]
     #[case::select_theme(commanded(vec![ConfigCmd::SelectTheme("noir".parse().unwrap())]), Ok(Cmd::effect(executed(reading(noir(), "/config/themes/noir.toml")))))]
-    #[case::save(saving(ConfigPatch::builder().build()), Ok(after(1)))]
+    #[case::save(saving(ConfigPatch {
+        ..ConfigPatch::default()
+    }), Ok(after(1)))]
     fn a_fresh_driver_answers(
         #[case] message: ConfigMessage,
         #[case] expected: Result<Cmd<String, ConfigEvent>, Unhandled>,
@@ -519,6 +515,25 @@ mod tests {
     }
 
     #[test]
+    fn selecting_an_unknown_theme_reads_its_file_and_reports_nothing_yet() {
+        let mut state = driver(Some("noir"));
+
+        let (effects, events) = step(
+            &mut state,
+            commanded(vec![ConfigCmd::SelectTheme("ghost".parse().unwrap())]),
+        )
+        .into_parts();
+
+        assert!(matches!(
+            effects.as_slice(),
+            [LoopEffect::Execute(ConfigEffect::Watch(
+                WatchEffect::Read { .. }
+            ))]
+        ));
+        assert!(events.is_empty());
+    }
+
+    #[test]
     fn started_publishes_the_current_theme() {
         let mut state = driver(Some("noir"));
         let started = step(&mut state, ConfigMessage::Started);
@@ -575,7 +590,7 @@ mod tests {
             events.as_slice(),
             [ConfigEvent::Reloaded(ConfigReload {
                 name: ConfigName::Appearance,
-                result: Err(ConfigError::Invalid(_)),
+                result: Err(ConfigError::Parse(_)),
             })]
         ));
     }
@@ -585,17 +600,17 @@ mod tests {
         let mut current = driver(None);
         let first = step(
             &mut current,
-            saving(
-                ConfigPatch::builder()
-                    .theme(ThemeName::from_static("noir"))
-                    .build(),
-            ),
+            saving(ConfigPatch {
+                theme: Some(ThemeName::from_static("noir")),
+                ..ConfigPatch::default()
+            }),
         );
         assert_eq!(described(first), after(1));
         for volume in [10_u8, 20, 30, 40, 50] {
-            let patch = ConfigPatch::builder()
-                .volume(Percent::clamped(volume))
-                .build();
+            let patch = ConfigPatch {
+                volume: Some(Percent::clamped(volume)),
+                ..ConfigPatch::default()
+            };
             let queued = step(&mut current, saving(patch));
             assert_eq!(
                 described(queued),
@@ -612,10 +627,11 @@ mod tests {
         let due = step(&mut current, elapsed);
 
         assert!(matches!(stale, Err(Unhandled)));
-        let expected = ConfigPatch::builder()
-            .theme(ThemeName::from_static("noir"))
-            .volume(Percent::clamped(50))
-            .build();
+        let expected = ConfigPatch {
+            theme: Some(ThemeName::from_static("noir")),
+            volume: Some(Percent::clamped(50)),
+            ..ConfigPatch::default()
+        };
         assert_eq!(
             described(due),
             Cmd::effect(executed(ConfigEffect::SaveConfig(expected)))
@@ -636,7 +652,9 @@ mod tests {
     fn one_batch_saves_both_files_together() {
         let mut next = appearance_read(driver(None));
         let both = commanded(vec![
-            ConfigCmd::Save(ConfigPatch::builder().build()),
+            ConfigCmd::Save(ConfigPatch {
+                ..ConfigPatch::default()
+            }),
             ConfigCmd::SetAppearance(cover_brackets()),
         ]);
 
@@ -655,9 +673,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case::config(vec![ConfigCmd::Save(ConfigPatch::builder().build())], &["save_config"])]
+    #[case::config(vec![ConfigCmd::Save(ConfigPatch {
+        ..ConfigPatch::default()
+    })], &["save_config"])]
     #[case::appearance(vec![ConfigCmd::SetAppearance(cover_brackets())], &["save_appearance"])]
-    #[case::both(vec![ConfigCmd::SetAppearance(cover_brackets()), ConfigCmd::Save(ConfigPatch::builder().build())], &["save_config", "save_appearance"])]
+    #[case::both(vec![ConfigCmd::SetAppearance(cover_brackets()), ConfigCmd::Save(ConfigPatch {
+        ..ConfigPatch::default()
+    })], &["save_config", "save_appearance"])]
     #[case::nothing(vec![], &[])]
     fn flush_writes_every_pending_save_at_once(
         #[case] pending: Vec<ConfigCmd>,

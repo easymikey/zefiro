@@ -1,3 +1,8 @@
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+
 use kernel::domain::{
     geometry::Cells,
     index::ViewIndex,
@@ -75,11 +80,21 @@ pub(crate) fn visible_rows(fit: &WindowFit<'_>) -> RowWindow {
     }
 }
 
-fn queue_position(queue: &[TrackRef], source: &TrackRef) -> Option<QueuePosition> {
-    queue
-        .iter()
-        .position(|queued| queued == source)
-        .map(|index| QueuePosition::new(index + 1))
+fn queue_numbers<'a>(
+    queue: &[TrackRef],
+    tracks: &'a [Arc<Track>],
+) -> HashMap<&'a TrackRef, QueuePosition> {
+    let track_refs: HashSet<&TrackRef> =
+        tracks.iter().map(|track| track.source()).collect();
+    let mut positions = HashMap::new();
+    for (index, queued) in queue.iter().enumerate() {
+        if let Some(&source) = track_refs.get(queued) {
+            positions
+                .entry(source)
+                .or_insert_with(|| QueuePosition::new(index + 1));
+        }
+    }
+    positions
 }
 
 #[derive(Clone, Copy)]
@@ -94,6 +109,7 @@ struct PlaylistRowParts<'a> {
     view: PlaylistView<'a>,
     row_width: Cells,
     theme: ActiveTheme<'a>,
+    positions: HashMap<&'a TrackRef, QueuePosition>,
 }
 
 fn build_line<'a>(
@@ -123,7 +139,10 @@ fn build_line<'a>(
         selected,
         favorite,
         playing,
-        queued: queue_position(view.queue, track.source())
+        queued: context
+            .positions
+            .get(track.source())
+            .copied()
             .filter(|_| playing_index != Some(index)),
         row_width: context.row_width,
     };
@@ -138,19 +157,17 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
         window,
     } = playlist_rows;
     let colors = theme.colors();
+    let start = window.start;
+    let end = window.end;
+    let visible_tracks = view.playlist.tracks.get(start..end).unwrap_or(&[]);
     let context = PlaylistRowParts {
         view,
         row_width: Cells(rows.width),
         theme,
+        positions: queue_numbers(view.queue, visible_tracks),
     };
 
-    let start = window.start;
-    let end = window.end;
-    let lines: Vec<ratatui::text::Line<'_>> = view
-        .playlist
-        .tracks
-        .get(start..end)
-        .unwrap_or(&[])
+    let lines: Vec<ratatui::text::Line<'_>> = visible_tracks
         .iter()
         .enumerate()
         .map(|(relative_index, track)| {
@@ -206,13 +223,14 @@ pub fn favorite_cell(row: Rect) -> Rect {
 mod tests {
     use std::{path::Path, sync::Arc};
 
-    use kernel::domain::{favorites::Favorites, playlist::Playlist};
+    use kernel::domain::{favorites::Favorites, playlist::Playlist, track::TrackRef};
 
     use crate::{
         playlist::{
-            row::{WindowFit, visible_rows},
+            row::{WindowFit, queue_numbers, visible_rows},
             view::{LibraryLoad, PlaylistView},
         },
+        primitive::marker::QueuePosition,
         status_line::StatusLineView,
     };
 
@@ -227,6 +245,33 @@ mod tests {
                 .collect(),
             ..Playlist::default()
         }
+    }
+
+    #[test]
+    fn a_queued_row_takes_the_first_position_the_whole_queue_scan_would_find() {
+        let playlist = library(4);
+        let source = |index: usize| playlist.tracks[index].source().clone();
+        let queue = [source(3), source(1), source(3), source(0)];
+        let visible_tracks = playlist.tracks.get(1..3).unwrap_or(&[]);
+
+        let positions = queue_numbers(&queue, visible_tracks);
+
+        let found: Vec<Option<usize>> = visible_tracks
+            .iter()
+            .map(|track| {
+                queue
+                    .iter()
+                    .position(|queued| queued == track.source())
+                    .map(|index| index + 1)
+            })
+            .collect();
+        assert_eq!(found, vec![Some(2), None]);
+        assert_eq!(positions.len(), 1);
+        assert_eq!(
+            positions.get(visible_tracks[0].source()).copied(),
+            Some(QueuePosition::new(2))
+        );
+        assert!(!positions.contains_key::<TrackRef>(&source(0)));
     }
 
     fn view<'a>(

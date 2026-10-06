@@ -21,13 +21,7 @@ use crate::{
         modal::{
             frame::{Modal, ModalAreas, ModalSize},
             metrics::{QUERY_ROWS, modal_title},
-            placement::{
-                ModalBorder,
-                ModalContainer,
-                ModalScrollAreas,
-                OverlayAreas,
-                leading_cells,
-            },
+            placement::{ModalBorder, ModalContainer, OverlayAreas, leading_cells},
         },
         search::matches::{SearchMatchList, paint_match_pane, paint_match_rows},
     },
@@ -35,6 +29,7 @@ use crate::{
     primitive::{
         canvas::Canvas,
         glyphs,
+        list_chrome::ScrollAreas,
         span::{line, text},
     },
     theme::{active_theme::ActiveTheme, colors::Colors},
@@ -42,11 +37,45 @@ use crate::{
 
 #[derive(Debug)]
 pub(crate) struct SearchWidget<'a> {
-    pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) tracks: &'a [Arc<Track>],
-    pub(crate) search: &'a CursorOver<SearchQuery>,
-    pub(crate) bounds: Rect,
-    pub(crate) container: ModalContainer<'a>,
+    theme: ActiveTheme<'a>,
+    tracks: &'a [Arc<Track>],
+    search: &'a CursorOver<SearchQuery>,
+    bounds: Rect,
+    container: ModalContainer<'a>,
+}
+
+impl<'a> SearchWidget<'a> {
+    #[must_use]
+    pub(crate) fn new(
+        query: &'a CursorOver<SearchQuery>,
+        active_theme: ActiveTheme<'a>,
+    ) -> Self {
+        Self {
+            theme: active_theme,
+            tracks: &[],
+            search: query,
+            bounds: Rect::default(),
+            container: ModalContainer::Modal(&[]),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn tracks(mut self, tracks: &'a [Arc<Track>]) -> Self {
+        self.tracks = tracks;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn bounds(mut self, bounds: Rect) -> Self {
+        self.bounds = bounds;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn container(mut self, container: ModalContainer<'a>) -> Self {
+        self.container = container;
+        self
+    }
 }
 
 struct SearchHeader<'a> {
@@ -112,7 +141,7 @@ impl SearchWidget<'_> {
         Layout::vertical([Constraint::Length(QUERY_ROWS), Constraint::Min(0)])
     }
 
-    fn paint_pane(&self, areas: ModalScrollAreas, buffer: &mut Buffer) {
+    fn paint_pane(&self, areas: ScrollAreas, buffer: &mut Buffer) {
         self.border(areas.outer).paint(buffer);
         let inner = areas.content;
         if inner.width == 0 || inner.height == 0 {
@@ -247,7 +276,7 @@ mod tests {
         cursor_over::CursorOver,
         index::ViewIndex,
         overlay::SearchQuery,
-        track::Track,
+        track::{Track, TrackParts},
     };
     use ratatui::layout::Rect;
     use rstest::rstest;
@@ -260,17 +289,15 @@ mod tests {
     };
 
     fn titled_track(title: &str) -> Arc<Track> {
-        Arc::new(
-            Track::builder()
-                .path(format!("{title}.mp3"))
-                .duration(std::time::Duration::from_secs(180))
-                .tags(kernel::domain::track::Tags {
-                    title: Some(title.to_string()),
-                    ..kernel::domain::track::Tags::default()
-                })
-                .audio_format(kernel::domain::track::AudioFormat::default())
-                .build(),
-        )
+        Arc::new(Track::new(TrackParts {
+            path: format!("{title}.mp3").into(),
+            duration: std::time::Duration::from_secs(180),
+            tags: kernel::domain::track::Tags {
+                title: Some(title.to_string()),
+                ..kernel::domain::track::Tags::default()
+            },
+            audio_format: kernel::domain::track::AudioFormat::default(),
+        }))
     }
 
     fn query(
@@ -301,13 +328,11 @@ mod tests {
             titled_track("Moonlight Sonata"),
         ];
         let search = query("moon", vec![0, 2], 0);
-        let overlay = SearchWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            tracks: &tracks,
-            search: &search,
-            bounds: Rect::new(0, 0, 80, 28),
-            container: pane_container(Rect::new(0, 0, 80, 28)),
-        };
+        let overlay =
+            SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .tracks(&tracks)
+                .bounds(Rect::new(0, 0, 80, 28))
+                .container(pane_container(Rect::new(0, 0, 80, 28)));
         insta::assert_snapshot!(
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .to_string()
@@ -319,13 +344,11 @@ mod tests {
         let theme = noir();
         let tracks = [titled_track("Alpha")];
         let search = query("zz", vec![], 0);
-        let overlay = SearchWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            tracks: &tracks,
-            search: &search,
-            bounds: Rect::new(0, 0, 80, 28),
-            container: pane_container(Rect::new(0, 0, 80, 28)),
-        };
+        let overlay =
+            SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .tracks(&tracks)
+                .bounds(Rect::new(0, 0, 80, 28))
+                .container(pane_container(Rect::new(0, 0, 80, 28)));
         insta::assert_snapshot!(
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .to_string()
@@ -337,13 +360,11 @@ mod tests {
         let theme = noir();
         let tracks: Vec<Arc<Track>> = (0..1961).map(|_| titled_track("Song")).collect();
         let search = query("moon", (0..7).collect(), 0);
-        let overlay = SearchWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            tracks: &tracks,
-            search: &search,
-            bounds: Rect::new(0, 0, 80, 28),
-            container: pane_container(Rect::new(0, 0, 80, 28)),
-        };
+        let overlay =
+            SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .tracks(&tracks)
+                .bounds(Rect::new(0, 0, 80, 28))
+                .container(pane_container(Rect::new(0, 0, 80, 28)));
         insta::assert_snapshot!(
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .to_string()
@@ -361,13 +382,11 @@ mod tests {
         let theme = noir();
         let tracks = [titled_track("Alpha"), titled_track("Beta")];
         let search = query("a", matches, selected);
-        let overlay = SearchWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            tracks: &tracks,
-            search: &search,
-            bounds: Rect::new(0, 0, 80, 28),
-            container: ModalContainer::Modal(&[]),
-        };
+        let overlay =
+            SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .tracks(&tracks)
+                .bounds(Rect::new(0, 0, 80, 28))
+                .container(ModalContainer::Modal(&[]));
         insta::with_settings!({ snapshot_suffix => label }, {
             insta::assert_snapshot!(rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area())).to_string());
         });
@@ -379,13 +398,10 @@ mod tests {
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let tracks = [titled_track("Alpha"), titled_track("Beta")];
         let search = query("a", vec![0, 1], 1);
-        let overlay = SearchWidget {
-            theme: active,
-            tracks: &tracks,
-            search: &search,
-            bounds: Rect::new(0, 0, 80, 28),
-            container: pane_container(Rect::new(0, 0, 80, 28)),
-        };
+        let overlay = SearchWidget::new(&search, active)
+            .tracks(&tracks)
+            .bounds(Rect::new(0, 0, 80, 28))
+            .container(pane_container(Rect::new(0, 0, 80, 28)));
         let buffer =
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
@@ -409,13 +425,11 @@ mod tests {
         let tracks = [titled_track("Track")];
         let search = query("t", vec![0], 0);
         let pane = Rect::new(0, 0, 80, 28);
-        let overlay = SearchWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            tracks: &tracks,
-            search: &search,
-            bounds: pane,
-            container: pane_container(pane),
-        };
+        let overlay =
+            SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .tracks(&tracks)
+                .bounds(pane)
+                .container(pane_container(pane));
         assert_eq!(overlay.areas(pane).outer(), pane);
         let buffer =
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
@@ -435,13 +449,11 @@ mod tests {
         let theme = noir();
         let tracks = [titled_track("Alpha")];
         let search = query("", vec![0; count], count - 1);
-        let overlay = SearchWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            tracks: &tracks,
-            search: &search,
-            bounds: Rect::new(0, 0, 80, 28),
-            container: ModalContainer::Modal(&[]),
-        };
+        let overlay =
+            SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .tracks(&tracks)
+                .bounds(Rect::new(0, 0, 80, 28))
+                .container(ModalContainer::Modal(&[]));
         let backend =
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()));
         assert_eq!(backend.to_string().lines().count(), 28);
@@ -461,13 +473,11 @@ mod tests {
         } else {
             ModalContainer::Modal(&[])
         };
-        let overlay = SearchWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            tracks: &tracks,
-            search: &search,
-            bounds: Rect::new(0, 0, 80, 28),
-            container,
-        };
+        let overlay =
+            SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .tracks(&tracks)
+                .bounds(Rect::new(0, 0, 80, 28))
+                .container(container);
         let buffer =
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
@@ -484,13 +494,11 @@ mod tests {
         let tracks: [Arc<Track>; 0] = [];
         let search = CursorOver::default();
         let container = pane.map_or(ModalContainer::Modal(&[]), pane_container);
-        let overlay = SearchWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            tracks: &tracks,
-            search: &search,
-            bounds: Rect::new(0, 0, 4, 3),
-            container,
-        };
+        let overlay =
+            SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .tracks(&tracks)
+                .bounds(Rect::new(0, 0, 4, 3))
+                .container(container);
         let backend =
             rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()));
         assert_eq!(backend.to_string().lines().count(), 3);

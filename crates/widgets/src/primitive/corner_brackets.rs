@@ -14,7 +14,14 @@ pub(crate) fn expand(area: Rect, margin: u16) -> Rect {
 
 #[derive(Debug)]
 pub(crate) struct CornerBracketsWidget {
-    pub(crate) color: Color,
+    color: Color,
+}
+
+impl CornerBracketsWidget {
+    #[must_use]
+    pub(crate) fn new(color: Color) -> Self {
+        Self { color }
+    }
 }
 
 impl Widget for &CornerBracketsWidget {
@@ -64,10 +71,7 @@ mod tests {
     fn corner_brackets_paints_only_the_four_corners() {
         let area = Rect::new(0, 0, 5, 3);
         let mut buffer = Buffer::empty(area);
-        CornerBracketsWidget {
-            color: Color::White,
-        }
-        .render(area, &mut buffer);
+        CornerBracketsWidget::new(Color::White).render(area, &mut buffer);
 
         let expected = Buffer::with_lines(["⌜   ⌝", "     ", "⌞   ⌟"]);
         assert_eq!(symbols(&buffer), symbols(&expected));
@@ -81,10 +85,8 @@ mod tests {
     fn corner_brackets_off_buffer_drops_the_corners_that_fall_outside() {
         let buffer_area = Rect::new(0, 0, 4, 2);
         let mut buffer = Buffer::empty(buffer_area);
-        CornerBracketsWidget {
-            color: Color::White,
-        }
-        .render(Rect::new(2, 1, 5, 4), &mut buffer);
+        CornerBracketsWidget::new(Color::White)
+            .render(Rect::new(2, 1, 5, 4), &mut buffer);
 
         assert_eq!(symbols(&buffer), "      ⌜ ");
     }
@@ -92,12 +94,7 @@ mod tests {
     #[test]
     fn corner_brackets_widget_snapshot() {
         let rendered = rendered(8, 4, |frame| {
-            frame.render_widget(
-                &CornerBracketsWidget {
-                    color: Color::White,
-                },
-                frame.area(),
-            );
+            frame.render_widget(&CornerBracketsWidget::new(Color::White), frame.area());
         })
         .to_string();
         insta::assert_snapshot!("corner_brackets_frame_an_8x4_area", rendered);

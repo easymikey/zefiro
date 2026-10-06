@@ -47,9 +47,21 @@ pub(crate) fn update(
             rows_reloaded(workspace, appearance);
             Ok(Cmd::none())
         }
-        ConfigEvent::ThemesLoaded(names) => {
+        ConfigEvent::ThemesLoaded {
+            theme_names: names,
+            refused,
+        } => {
             themes.names = names;
-            Ok(Cmd::none())
+            if refused.is_empty() {
+                return Ok(Cmd::none());
+            }
+            Ok(workspace.show(
+                Toast::info(format!(
+                    "Skipped themes with invalid names: {}",
+                    refused.join(", ")
+                )),
+                revisions,
+            ))
         }
         ConfigEvent::MusicDirReloaded(reloaded) => {
             Ok(music_dir_reloaded(music_dir, revisions, reloaded))
@@ -220,10 +232,52 @@ mod tests {
 
         let cmd = emitted(
             &mut model,
-            ConfigEvent::ThemesLoaded(vec![ThemeName::from_static("wafer")]),
+            ConfigEvent::ThemesLoaded {
+                theme_names: vec![ThemeName::from_static("wafer")],
+                refused: Vec::new(),
+            },
         );
 
         assert_eq!(model.themes.names, [ThemeName::from_static("wafer")]);
         assert!(cmd == Cmd::none());
+    }
+
+    #[test]
+    fn a_theme_list_with_refused_names_raises_one_info_toast() {
+        let mut model = Model::default();
+
+        update(
+            &mut model,
+            ConfigEvent::ThemesLoaded {
+                theme_names: vec![ThemeName::from_static("wafer")],
+                refused: vec!["solar..dark".to_string(), "auto".to_string()],
+            },
+        )
+        .unwrap();
+
+        let [toast] = model.workspace.toasts.as_slice() else {
+            panic!("{:?}", model.workspace.toasts);
+        };
+        assert_eq!(toast.kind, ToastLevel::Info);
+        assert_eq!(
+            toast.title,
+            "Skipped themes with invalid names: solar..dark, auto"
+        );
+    }
+
+    #[test]
+    fn a_theme_list_with_nothing_refused_raises_no_toast() {
+        let mut model = Model::default();
+
+        update(
+            &mut model,
+            ConfigEvent::ThemesLoaded {
+                theme_names: vec![ThemeName::from_static("wafer")],
+                refused: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        assert!(model.workspace.toasts.is_empty());
     }
 }

@@ -7,13 +7,12 @@ use std::{
 
 use kernel::{
     cmd::Effect,
-    domain::{driver::DriverName, model::Model, startup::Startup, time::Moment},
+    domain::{model::Model, startup::Startup, time::Moment},
     message::{DriverEvent, Message, Timer},
     update::machine::Unhandled,
 };
 
 use crate::{
-    driver_thread::Congestion,
     error::{ClockError, Error},
     registry,
     shell::{Frame, ShellEffect},
@@ -79,28 +78,17 @@ impl Runtime {
     }
 
     pub(crate) fn deliver(&mut self, message: Message) -> Result<(), Unhandled> {
-        let mut queue: VecDeque<Message> = VecDeque::from([message]);
-        let mut result = Err(Unhandled);
+        let following = self.update(message)?;
+        if following.is_empty() {
+            return Ok(());
+        }
+        let mut queue = VecDeque::from(following);
         while let Some(current) = queue.pop_front() {
-            if let Ok(following) = self.update(current) {
-                result = Ok(());
-                queue.extend(following);
+            if let Ok(next) = self.update(current) {
+                queue.extend(next);
             }
         }
-        result
-    }
-
-    pub(crate) fn congested(&self) -> Vec<DriverName> {
-        registry::REGISTRY
-            .iter()
-            .map(|row| row.driver)
-            .filter(|driver| {
-                self.wiring
-                    .ports
-                    .full(*driver)
-                    .is_some_and(Congestion::take)
-            })
-            .collect()
+        Ok(())
     }
 
     pub(crate) fn flow(&self) -> ControlFlow<()> {
@@ -156,7 +144,9 @@ mod tests {
     use std::{
         cell::RefCell,
         convert::Infallible,
+        io,
         path::Path,
+        sync::atomic::{AtomicUsize, Ordering},
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
@@ -167,7 +157,7 @@ mod tests {
         cmd::{AudioCmd, LibraryCmd},
         domain::{
             direction::Direction,
-            driver::{DriverName, DriverStatus, Restarts},
+            driver::{DriverError, DriverName, DriverStatus, Restarts},
             setting_row::SettingRow,
             startup::Startup,
             toast::Toast,
@@ -434,6 +424,47 @@ mod tests {
             Restarts::default(),
             "audio's standard supervision restarts a panicked driver"
         );
+    }
+
+    static AUDIO_SPAWNS: AtomicUsize = AtomicUsize::new(0);
+
+    fn audio_that_cannot_restart(
+        setup: &SpawnSetup<'_>,
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
+        if AUDIO_SPAWNS.fetch_add(1, Ordering::SeqCst) == 0 {
+            panicking_audio(setup)
+        } else {
+            Err(Error::Spawn {
+                driver: DriverName::Audio,
+                source: io::Error::other("no threads left"),
+            })
+        }
+    }
+
+    #[test]
+    fn a_restart_that_fails_to_spawn_leaves_the_driver_died() {
+        AUDIO_SPAWNS.store(0, Ordering::SeqCst);
+        let directory = tempfile::tempdir().unwrap();
+        let spawners = Spawners {
+            audio: audio_that_cannot_restart,
+            ..Spawners::idle()
+        };
+        let mut runtime =
+            Runtime::start(stock_startup(), &start_paths(directory.path()), &spawners)
+                .unwrap();
+
+        let died = runtime
+            .wiring
+            .mailbox
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        runtime.deliver(died).unwrap();
+
+        assert_eq!(
+            runtime.model.drivers.status(DriverName::Audio),
+            &DriverStatus::Dead(DriverError::Panicked)
+        );
+        runtime.drain();
     }
 
     fn start(library: DriverStatus) -> (Runtime, Receiver<LibraryCmd>) {

@@ -21,8 +21,18 @@ const CURRENT_CLOSE: &str = ")";
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TooSmallWidget<'a> {
-    pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) minimum: Size,
+    minimum: Size,
+    theme: ActiveTheme<'a>,
+}
+
+impl<'a> TooSmallWidget<'a> {
+    #[must_use]
+    pub(crate) fn new(minimum: Size, active_theme: ActiveTheme<'a>) -> Self {
+        Self {
+            minimum,
+            theme: active_theme,
+        }
+    }
 }
 
 impl Widget for &TooSmallWidget<'_> {

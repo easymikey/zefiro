@@ -12,8 +12,10 @@ expression: "walked(model, messages)"
         ),
         [
             Library(
-                LoadHistory(
-                    200,
+                Disk(
+                    LoadHistory(
+                        200,
+                    ),
                 ),
             ),
             Animate(

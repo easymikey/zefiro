@@ -19,19 +19,21 @@ expression: effs
         ),
     ),
     Library(
-        AppendHistory(
-            HistoryEntry {
-                track: Local(
-                    "/tmp/track0.flac",
-                ),
-                title: "Song",
-                artist: Some(
-                    "Artist",
-                ),
-                at: Moment(
-                    0ns,
-                ),
-            },
+        Disk(
+            AppendHistory(
+                HistoryEntry {
+                    track: Local(
+                        "/tmp/track0.flac",
+                    ),
+                    title: "Song",
+                    artist: Some(
+                        "Artist",
+                    ),
+                    at: Moment(
+                        0ns,
+                    ),
+                },
+            ),
         ),
     ),
     Macos(

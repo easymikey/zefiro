@@ -1,10 +1,11 @@
-use std::time::Instant;
+use std::{mem, time::Instant};
 
 use crossbeam_channel::{Receiver, Select, never};
-use kernel::message::{DriverEvent, Message};
+use kernel::message::Message;
 
 use crate::{
     error::Error,
+    registry,
     repaint::{Repaint, RepaintCause, repaint_after},
     runtime::Runtime,
     shell::{Reaction, Shell},
@@ -35,6 +36,8 @@ pub(crate) struct EventLoop<'a, S: Shell> {
     input: &'a Receiver<S::Input>,
     pub(crate) repaint: Repaint,
     pub(crate) last_paint: Option<Instant>,
+    inputs: Vec<S::Input>,
+    messages: Vec<Message>,
 }
 
 impl<'a, S: Shell> EventLoop<'a, S>
@@ -52,6 +55,8 @@ where
             input,
             repaint: Repaint::Now,
             last_paint: None,
+            inputs: Vec::new(),
+            messages: Vec::new(),
         }
     }
 
@@ -124,8 +129,10 @@ where
         let queued = self.runtime.wiring.mailbox.clone();
         let notified = self.runtime.wiring.notified.clone();
         let rang = matches!(first, Arrival::Notified) || ready(&notified).count() > 0;
-        let mut inputs = Vec::new();
-        let mut messages = Vec::new();
+        let mut inputs = mem::take(&mut self.inputs);
+        let mut messages = mem::take(&mut self.messages);
+        inputs.clear();
+        messages.clear();
         match first {
             Arrival::Input(event) => inputs.push(event),
             Arrival::Message(message) => messages.push(message),
@@ -134,16 +141,18 @@ where
         inputs.extend(ready(self.input));
         messages.extend(ready(&queued));
         let arrivals = inputs
-            .into_iter()
+            .drain(..)
             .map(Arrival::Input)
-            .chain(messages.into_iter().map(Arrival::Message))
+            .chain(messages.drain(..).map(Arrival::Message))
             .chain(rang.then_some(Arrival::Notified));
         for arrival in arrivals {
             if self.runtime.flow().is_break() {
-                return;
+                break;
             }
             self.dispatch_arrival(arrival);
         }
+        self.inputs = inputs;
+        self.messages = messages;
     }
 
     fn dispatch_arrival(&mut self, arrival: Arrival<S::Input>) {
@@ -173,17 +182,19 @@ where
     }
 
     fn report_congestion(&mut self) {
-        for driver in self.runtime.congested() {
+        for row in registry::REGISTRY {
             if self.runtime.flow().is_break() {
                 return;
             }
-            self.step_and_repaint(
-                Message::Driver {
-                    driver,
-                    event: DriverEvent::Full,
-                },
-                RepaintCause::Event,
-            );
+            if let Some(event) = self.runtime.wiring.ports.full(row.driver) {
+                self.step_and_repaint(
+                    Message::Driver {
+                        driver: row.driver,
+                        event,
+                    },
+                    RepaintCause::Event,
+                );
+            }
         }
     }
 
@@ -202,6 +213,7 @@ fn ready<T>(receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
 pub(crate) mod tests {
     use std::{
         convert::Infallible,
+        ops::ControlFlow,
         path::Path,
         sync::Arc,
         time::{Duration, Instant},
@@ -603,19 +615,59 @@ pub(crate) mod tests {
             .count()
     }
 
-    #[test]
-    fn a_full_inbox_raises_a_toast_per_full_episode() {
-        let mut fixture = fixture();
+    fn congested_library_port(runtime: &mut Runtime) -> (Sender<Message>, Congestion) {
         let (inbox, arrivals) = bounded(CAPACITY);
         let full = Congestion::default();
         let (library_commands, _library_inbox) = unbounded();
-        fixture.runtime.wiring.mailbox = arrivals;
-        fixture.runtime.wiring.inbox = inbox.clone();
-        fixture.runtime.wiring.ports.library =
+        runtime.wiring.mailbox = arrivals;
+        runtime.wiring.inbox = inbox.clone();
+        runtime.wiring.ports.library =
             Port::new(DriverName::Library, library_commands, full.clone());
+        (inbox, full)
+    }
+
+    #[test]
+    fn a_full_inbox_raises_a_toast_per_full_episode() {
+        let mut fixture = fixture();
+        let (inbox, full) = congested_library_port(&mut fixture.runtime);
 
         fill_the_inbox(&inbox, &full);
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
+
+        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
+
+        fill_the_inbox(&inbox, &full);
+        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
+
+        fill_the_inbox(&inbox, &full);
+        fixture.runtime.flow = ControlFlow::Break(());
+        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
+        assert!(full.take());
+        fixture.runtime.drain();
+    }
+
+    #[test]
+    fn two_flagged_batches_in_one_congestion_episode_report_full_once() {
+        let mut fixture = fixture();
+        let (inbox, full) = congested_library_port(&mut fixture.runtime);
+
+        fill_the_inbox(&inbox, &full);
+        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
+
+        fill_the_inbox(&inbox, &full);
+        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
+        fixture.runtime.drain();
+    }
+
+    #[test]
+    fn a_new_congestion_episode_after_the_inbox_drains_reports_full_again() {
+        let mut fixture = fixture();
+        let (inbox, full) = congested_library_port(&mut fixture.runtime);
+
+        fill_the_inbox(&inbox, &full);
+        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
+        fill_the_inbox(&inbox, &full);
+        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
 
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
 

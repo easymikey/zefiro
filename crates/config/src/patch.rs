@@ -274,40 +274,58 @@ mod tests {
     #[case::an_empty_patch_changes_nothing(
         "empty_patch",
         COMMENTED_UI,
-        AppearancePatch::builder().build()
+        AppearancePatch {
+            ..AppearancePatch::default()
+        }
     )]
     #[case::minimal_sections_on_an_empty_document(
         "minimal_sections",
         "",
-        AppearancePatch::builder()
-            .cover_mode(CoverMode::Off)
-            .format_chips(FormatChips::Shown)
-            .build()
+        AppearancePatch {
+            cover_mode: Some(CoverMode::Off),
+            format_chips: Some(FormatChips::Shown),
+            ..AppearancePatch::default()
+        }
     )]
     #[case::the_key_hints_lands_in_the_window_table(
         "key_hints",
         "",
-        AppearancePatch::builder().key_hints(KeyHints::Hidden).build()
+        AppearancePatch {
+            key_hints: Some(KeyHints::Hidden),
+            ..AppearancePatch::default()
+        }
     )]
     #[case::the_layout_mode_lands_in_the_layout_table(
         "layout_mode",
         "",
-        AppearancePatch::builder().layout_mode(LayoutMode::Compact).build()
+        AppearancePatch {
+            layout_mode: Some(LayoutMode::Compact),
+            ..AppearancePatch::default()
+        }
     )]
     #[case::one_field_keeps_every_comment(
         "one_field",
         COMMENTED_UI,
-        AppearancePatch::builder().cover_brackets(CoverBrackets::Shown).build()
+        AppearancePatch {
+            cover_brackets: Some(CoverBrackets::Shown),
+            ..AppearancePatch::default()
+        }
     )]
     #[case::animations_off(
         "animations_off",
         "",
-        AppearancePatch::builder().animations(Animations::Off).build()
+        AppearancePatch {
+            animations: Some(Animations::Off),
+            ..AppearancePatch::default()
+        }
     )]
     #[case::animations_on(
         "animations_on",
         "",
-        AppearancePatch::builder().animations(Animations::On).build()
+        AppearancePatch {
+            animations: Some(Animations::On),
+            ..AppearancePatch::default()
+        }
     )]
     #[case::every_field_in_text_over_a_commented_file(
         "every_field_text",
@@ -350,9 +368,10 @@ mod tests {
     fn an_appearance_patch_reports_a_non_table_document_instead_of_panicking() {
         let refused = patched_appearance_text(
             "card = \"x\"\n",
-            AppearancePatch::builder()
-                .format_chips(FormatChips::Shown)
-                .build(),
+            AppearancePatch {
+                format_chips: Some(FormatChips::Shown),
+                ..AppearancePatch::default()
+            },
         );
         assert!(matches!(refused, Err(Error::NotATable("card"))));
     }
@@ -400,7 +419,9 @@ mod tests {
         fn an_untouched_appearance_patch_leaves_the_document_unchanged(
             text in base_appearance_texts(),
         ) {
-            let written = patched_appearance_text(text, AppearancePatch::builder().build()).unwrap();
+            let written = patched_appearance_text(text, AppearancePatch {
+                ..AppearancePatch::default()
+            }).unwrap();
             prop_assert_eq!(written, text);
         }
 
@@ -465,26 +486,35 @@ mod tests {
     #[case::an_empty_patch_changes_nothing(
         "empty_patch",
         COMMENTED_CONFIG,
-        ConfigPatch::builder().build()
+        ConfigPatch {
+            ..ConfigPatch::default()
+        }
     )]
     #[case::minimal_sections_on_an_empty_document(
         "minimal_sections",
         "",
-        ConfigPatch::builder()
-            .crossfade(crossfade_seconds(3))
-            .theme(ThemeName::from_static("dark"))
-            .build()
+        ConfigPatch {
+            crossfade: Some(crossfade_seconds(3)),
+            theme: Some(ThemeName::from_static("dark")),
+            ..ConfigPatch::default()
+        }
     )]
     #[case::one_field_keeps_every_comment(
         "one_field",
         COMMENTED_CONFIG,
-        ConfigPatch::builder().crossfade(crossfade_seconds(3)).build()
+        ConfigPatch {
+            crossfade: Some(crossfade_seconds(3)),
+            ..ConfigPatch::default()
+        }
     )]
     #[case::every_field_kind("every_field", "", every_config_field())]
     #[case::the_system_default_device_removes_the_key(
         "device_removed",
         CONFIG_WITH_DEVICE,
-        ConfigPatch::builder().device(OutputDevice::SystemDefault).build()
+        ConfigPatch {
+            device: Some(OutputDevice::SystemDefault),
+            ..ConfigPatch::default()
+        }
     )]
     fn a_patch_writes_only_the_fields_it_sets(
         #[case] name: &str,
@@ -519,9 +549,10 @@ mod tests {
     fn a_patch_reports_a_non_table_document_instead_of_panicking() {
         let refused = patched_config_text(
             "audio = 1\n",
-            ConfigPatch::builder()
-                .crossfade(crossfade_seconds(3))
-                .build(),
+            ConfigPatch {
+                crossfade: Some(crossfade_seconds(3)),
+                ..ConfigPatch::default()
+            },
         );
         assert!(matches!(refused, Err(Error::NotATable("audio"))));
     }

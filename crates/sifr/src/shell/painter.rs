@@ -20,7 +20,7 @@ use runtime::shell::{Frame, FrameDue, Painted, Reaction, ShellEffect};
 use terminal::{
     capabilities::Capabilities,
     pixels::CoverPainter,
-    window_colors::write_window_colors,
+    window_colors::{reset_window_colors, write_window_colors},
 };
 use widgets::{
     animation::{
@@ -82,9 +82,9 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
         capabilities: Capabilities,
     ) -> Self {
         let area = terminal.get_frame().area();
+        let pixel_path = capabilities.pixel_path();
         let Capabilities {
             picker,
-            pixel_path,
             color_depth,
         } = capabilities;
         let font_size = picker.font_size();
@@ -186,9 +186,15 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
     }
 
     fn set_window_colors(&mut self, cmd: &WindowColorsCmd) {
-        if let Err(error) = write_window_colors(cmd, &self.presentation.theme) {
+        let written = match cmd {
+            WindowColorsCmd::Set(_) => write_window_colors(&self.presentation.theme),
+            WindowColorsCmd::Reset => reset_window_colors(),
+        };
+        if let Err(error) = written {
             self.errors
-                .push(PaintError::WindowColors(Diagnostic::from_error(&error)));
+                .push(PaintError::WriteWindowColors(Diagnostic::from_error(
+                    &error,
+                )));
         }
     }
 
@@ -213,6 +219,14 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
         }
     }
 
+    fn painted(&mut self, frame_layout: &FrameLayout) -> Painted {
+        Painted {
+            cover_side: frame_layout.cover.map(|rect| cover_side(rect, self.cell)),
+            visible_rows: frame_layout.playlist_body_height(),
+            errors: mem::take(&mut self.errors),
+        }
+    }
+
     fn backdrop(&self, animations: Animations, layout: FrameLayout) -> Backdrop {
         let theme =
             ActiveTheme::new(&self.presentation.theme, self.presentation.color_depth)
@@ -221,10 +235,7 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
         Backdrop {
             animations,
             layout,
-            background: style.background,
-            accent: style.accent,
-            volume_fill: style.volume_fill,
-            volume_lifted: style.volume_lifted,
+            style,
             wash_from: self
                 .motion
                 .outgoing_theme_background
@@ -336,11 +347,14 @@ where
         self.presentation.spectrum = self.smoothed_bands(&frame);
         let scene = view::scene(&frame, &self.presentation, &self.motion);
         let layout = FrameLayout::from_scene(&scene, self.motion.area);
-        let crossfade = self
+        let crossfade_permit = match self
             .motion
             .crossfade_gate
             .transition(CrossfadeGateMessage::PermitTaken)
-            .unwrap_or(CrossfadePermit::Withheld);
+        {
+            Ok(permit) => permit,
+            Err(Unhandled) => CrossfadePermit::Withheld,
+        };
         self.motion.on_screen = layout.on_screen(&scene);
         let wash = cover_wash(
             self.animation_stage.wash_progress(),
@@ -350,7 +364,7 @@ where
             &scene,
             CoverRefresh {
                 cover: layout.cover,
-                crossfade,
+                crossfade: crossfade_permit,
                 wash,
             },
         );
@@ -369,11 +383,7 @@ where
         let cues = mem::take(&mut self.pending_cues);
         self.terminal.draw(|screen| {
             screen.render_widget(
-                &ScreenWidget {
-                    scene,
-                    layout: &layout,
-                    cover_art: &cover_art,
-                },
+                &ScreenWidget::new(scene, &layout).card_cover(&cover_art),
                 screen.area(),
             );
             pixels.paint(screen.buffer_mut(), &layout);
@@ -381,11 +391,7 @@ where
             animation_stage.advance(screen.buffer_mut(), elapsed);
         })?;
         self.flush_staged_window_colors();
-        Ok(Painted {
-            cover_side: layout.cover.map(|rect| cover_side(rect, self.cell)),
-            visible_rows: layout.playlist_body_height(),
-            errors: mem::take(&mut self.errors),
-        })
+        Ok(self.painted(&layout))
     }
 }
 
@@ -476,7 +482,7 @@ mod tests {
     fn with_no_wash_staged_the_wash_starts_from_the_current_background() {
         let backdrop = test_backdrop(&CardCover::Missing, None);
 
-        assert_eq!(backdrop.wash_from, backdrop.background);
+        assert_eq!(backdrop.wash_from, backdrop.style.background);
     }
 
     #[test]
@@ -486,7 +492,7 @@ mod tests {
         let backdrop = test_backdrop(&CardCover::Missing, Some(outgoing));
 
         assert_eq!(backdrop.wash_from, outgoing);
-        assert_ne!(backdrop.wash_from, backdrop.background);
+        assert_ne!(backdrop.wash_from, backdrop.style.background);
     }
 
     #[test]

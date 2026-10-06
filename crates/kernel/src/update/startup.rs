@@ -1,5 +1,15 @@
 use crate::{
-    cmd::{AudioCmd, Cmd, ConfigCmd, Effect, LibraryCmd, MacosCmd, Playback, ScanMode},
+    cmd::{
+        AudioCmd,
+        Cmd,
+        ConfigCmd,
+        DiskCmd,
+        Effect,
+        LibraryCmd,
+        MacosCmd,
+        Playback,
+        ScanMode,
+    },
     domain::{
         config::{ConfigError, ConfigName},
         driver::DriverName,
@@ -31,14 +41,15 @@ pub fn startup(startup: Startup) -> (Model, Vec<Effect>) {
 
 pub(crate) fn startup_model(model: &mut Model, startup: Startup) -> Cmd {
     let keymap = Keymap::new(startup.keymap);
-    let errors =
-        startup
-            .errors
-            .into_iter()
-            .chain(keymap.diagnostic().map(|diagnostic| {
-                (ConfigName::Config, ConfigError::Invalid(diagnostic))
-            }))
-            .collect();
+    let errors = startup
+        .errors
+        .into_iter()
+        .chain(
+            keymap
+                .diagnostic()
+                .map(|diagnostic| (ConfigName::Config, ConfigError::Parse(diagnostic))),
+        )
+        .collect();
     model.workspace.keymap = keymap;
     model.settings = Settings {
         audio: startup.audio,
@@ -81,7 +92,7 @@ pub(crate) fn startup_cmd(model: &mut Model, driver: DriverName) -> Cmd {
             Effect::Audio(AudioCmd::SetReplayGain(model.settings.audio.replay_gain)),
         ]),
         DriverName::Library => Cmd::from_iter([
-            Effect::Library(LibraryCmd::LoadFavorites),
+            Effect::Library(LibraryCmd::Disk(DiskCmd::LoadFavorites)),
             Effect::Library(LibraryCmd::Scan {
                 music_dir: model.music_dir.clone(),
                 revision: model.revisions.issue_scan(),
@@ -183,12 +194,14 @@ mod tests {
     #[test]
     fn startup_errors_raise_one_toast_with_the_first_error() {
         let mut model = Model::default();
-        let broken = crate::domain::config::ConfigError::invalid(
-            &std::io::Error::other("broken"),
+        let broken = crate::domain::config::ConfigError::from(
+            crate::domain::config::Diagnostic::from_error(&std::io::Error::other(
+                "broken",
+            )),
         );
-        let unreadable = crate::domain::config::ConfigError::Unreadable {
-            file: crate::domain::config::ConfigName::Appearance,
-            kind: crate::domain::io_error::IoError::Other,
+        let unreadable = crate::domain::config::ConfigError::Read {
+            name: crate::domain::config::ConfigName::Appearance,
+            source: crate::domain::io_error::IoError::Other,
         };
         let startup = Startup {
             errors: vec![

@@ -1,11 +1,8 @@
-use std::{
-    io,
-    path::{Path, PathBuf},
-};
+use std::{io, path::Path};
 
 use kernel::{
     domain::{
-        config::{ConfigError, ConfigName},
+        config::{ConfigError, ConfigName, Diagnostic},
         io_error::IoError,
         theme::ThemeName,
     },
@@ -17,7 +14,7 @@ use crate::{
         Appearance,
         ConfigDriver,
         effect::ConfigEffect,
-        files::{read_if_present, store},
+        files::{read_if_present, store, unreadable},
         message::ConfigMessage,
         watch::{ConfigWatchMessage, WatchEffect},
     },
@@ -63,10 +60,7 @@ fn read(file: ConfigName, path: &Path) -> ConfigMessage {
         Ok(text) => {
             ConfigMessage::Watch(ConfigWatchMessage::ReadDone { name: file, text })
         }
-        Err(error) => ConfigMessage::Error(ConfigError::Unreadable {
-            file,
-            kind: error.kind().into(),
-        }),
+        Err(error) => ConfigMessage::Error(unreadable(file, &error)),
     }
 }
 
@@ -80,27 +74,40 @@ fn list(dir: &Path) -> ConfigMessage {
                         == Some(THEME_EXTENSION)
                 })
             })
-            .map(theme_name)
+            .map(|path| {
+                path.map(|path| {
+                    path.file_stem().map_or_else(String::new, |stem| {
+                        stem.to_string_lossy().into_owned()
+                    })
+                })
+            })
             .collect::<Result<Vec<_>, _>>()
-            .map_or_else(ConfigMessage::Error, listed),
+            .map_or_else(
+                |error| ConfigMessage::Error(Diagnostic::from_error(&error).into()),
+                listed,
+            ),
         Err(error) if error.kind() == io::ErrorKind::NotFound => listed(Vec::new()),
         Err(error) => {
-            ConfigMessage::Error(ConfigError::ThemesUnreadable(error.kind().into()))
+            ConfigMessage::Error(ConfigError::ListThemes(error.kind().into()))
         }
     }
 }
 
-fn listed(names: Vec<ThemeName>) -> ConfigMessage {
-    ConfigMessage::Watch(ConfigWatchMessage::Listed(names))
-}
-
-fn theme_name(path: io::Result<PathBuf>) -> Result<ThemeName, ConfigError> {
-    let path = path.map_err(|error| ConfigError::invalid(&error))?;
-    let stem = path.file_stem().map_or(
-        std::borrow::Cow::Borrowed(""),
-        std::ffi::OsStr::to_string_lossy,
+fn listed(stems: Vec<String>) -> ConfigMessage {
+    let (theme_names, refused) = stems.into_iter().fold(
+        (Vec::new(), Vec::new()),
+        |(mut theme_names, mut refused), stem| {
+            match ThemeName::new(stem.clone()) {
+                Ok(name) => theme_names.push(name),
+                Err(_) => refused.push(stem),
+            }
+            (theme_names, refused)
+        },
     );
-    ThemeName::new(stem.into_owned()).map_err(|error| ConfigError::invalid(&error))
+    ConfigMessage::Watch(ConfigWatchMessage::Listed {
+        theme_names,
+        refused,
+    })
 }
 
 fn save(
@@ -114,7 +121,9 @@ fn save(
     };
     let text = match produce(existing.as_deref().unwrap_or("")) {
         Ok(text) => text,
-        Err(error) => return ConfigMessage::Error(ConfigError::invalid(&error)),
+        Err(error) => {
+            return ConfigMessage::Error(Diagnostic::from_error(&error).into());
+        }
     };
     match store(path, text.as_bytes()) {
         Ok(()) => ConfigMessage::Saved { file, text },
@@ -219,9 +228,29 @@ mod tests {
 
         assert_eq!(
             listed,
-            Some(ConfigMessage::Watch(ConfigWatchMessage::Listed(vec![
-                ThemeName::from_static("noir")
-            ])))
+            Some(ConfigMessage::Watch(ConfigWatchMessage::Listed {
+                theme_names: vec![ThemeName::from_static("noir")],
+                refused: Vec::new()
+            }))
+        );
+    }
+
+    #[rstest]
+    fn a_theme_list_reports_a_file_with_a_refused_name(mut disk: Disk) {
+        let themes = disk.directory.path().to_path_buf();
+        std::fs::write(themes.join("noir.toml"), "").unwrap();
+        std::fs::write(themes.join("solar..dark.toml"), "").unwrap();
+
+        let listed = disk
+            .driver
+            .execute(ConfigEffect::Watch(WatchEffect::List(themes)));
+
+        assert_eq!(
+            listed,
+            Some(ConfigMessage::Watch(ConfigWatchMessage::Listed {
+                theme_names: vec![ThemeName::from_static("noir")],
+                refused: vec!["solar..dark".to_string()]
+            }))
         );
     }
 
@@ -235,7 +264,10 @@ mod tests {
 
         assert_eq!(
             listed,
-            Some(ConfigMessage::Watch(ConfigWatchMessage::Listed(Vec::new())))
+            Some(ConfigMessage::Watch(ConfigWatchMessage::Listed {
+                theme_names: Vec::new(),
+                refused: Vec::new()
+            }))
         );
     }
 
@@ -250,7 +282,7 @@ mod tests {
 
         assert!(matches!(
             listed,
-            Some(ConfigMessage::Error(ConfigError::ThemesUnreadable(_)))
+            Some(ConfigMessage::Error(ConfigError::ListThemes(_)))
         ));
     }
 
@@ -264,23 +296,24 @@ mod tests {
         "# keep me\ntheme = \"auto\"\n\n[audio]\ncrossfade = \"0s\"\n";
 
     fn save_cover_brackets() -> ConfigEffect {
-        ConfigEffect::SaveAppearance(
-            AppearancePatch::builder()
-                .cover_brackets(CoverBrackets::Shown)
-                .build(),
-        )
+        ConfigEffect::SaveAppearance(AppearancePatch {
+            cover_brackets: Some(CoverBrackets::Shown),
+            ..AppearancePatch::default()
+        })
     }
 
     fn save_theme() -> ConfigEffect {
-        ConfigEffect::SaveConfig(
-            ConfigPatch::builder()
-                .theme(ThemeName::from_static("dark"))
-                .build(),
-        )
+        ConfigEffect::SaveConfig(ConfigPatch {
+            theme: Some(ThemeName::from_static("dark")),
+            ..ConfigPatch::default()
+        })
     }
 
     fn save_crossfade() -> ConfigEffect {
-        ConfigEffect::SaveConfig(ConfigPatch::builder().crossfade(crossfade(5)).build())
+        ConfigEffect::SaveConfig(ConfigPatch {
+            crossfade: Some(crossfade(5)),
+            ..ConfigPatch::default()
+        })
     }
 
     struct InstallParts {
@@ -355,7 +388,7 @@ mod tests {
         let refused = disk.driver.execute(save_crossfade());
 
         assert!(
-            matches!(refused, Some(ConfigMessage::Error(ConfigError::Invalid(_)))),
+            matches!(refused, Some(ConfigMessage::Error(ConfigError::Parse(_)))),
             "{refused:?}"
         );
         assert_eq!(
@@ -366,7 +399,7 @@ mod tests {
     }
 
     #[rstest]
-    fn an_invalid_theme_name_is_reported(mut disk: Disk) {
+    fn a_theme_list_reports_a_reserved_name_as_refused(mut disk: Disk) {
         let themes = disk.paths.themes.clone();
         std::fs::create_dir_all(&themes).unwrap();
         std::fs::write(themes.join("auto.toml"), "").unwrap();
@@ -375,9 +408,12 @@ mod tests {
             .driver
             .execute(ConfigEffect::Watch(WatchEffect::List(themes)));
 
-        assert!(
-            matches!(listed, Some(ConfigMessage::Error(ConfigError::Invalid(_)))),
-            "{listed:?}"
+        assert_eq!(
+            listed,
+            Some(ConfigMessage::Watch(ConfigWatchMessage::Listed {
+                theme_names: Vec::new(),
+                refused: vec!["auto".to_string()]
+            }))
         );
     }
 

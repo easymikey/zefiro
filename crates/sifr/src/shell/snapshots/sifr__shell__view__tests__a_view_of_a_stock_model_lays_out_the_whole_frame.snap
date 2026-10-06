@@ -99,7 +99,7 @@ FrameLayout {
                 width: 78,
                 height: 9,
             },
-            scroll_areas: ModalScrollAreas {
+            scroll_areas: ScrollAreas {
                 outer: Rect {
                     x: 1,
                     y: 13,

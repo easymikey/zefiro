@@ -22,16 +22,6 @@ pub(crate) fn spans(label: &str, colors: &Colors<Color>) -> Vec<Span<'static>> {
 }
 
 #[must_use]
-pub(crate) fn compact(label: &str) -> String {
-    format!(
-        "{}{}{}",
-        glyphs::chip::OPEN,
-        label.to_lowercase(),
-        glyphs::chip::CLOSE
-    )
-}
-
-#[must_use]
 pub(crate) fn width(label: &str) -> Cells {
     let decoration = format!(
         "{}{}{}{}",

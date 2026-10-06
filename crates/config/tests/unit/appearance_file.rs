@@ -11,9 +11,10 @@ fn the_commented_fixture_parses_into_every_table() {
 
 #[test]
 fn a_patch_round_trips_through_the_public_parser() {
-    let patch = AppearancePatch::builder()
-        .cover_mode(CoverMode::Milkdrop)
-        .build();
+    let patch = AppearancePatch {
+        cover_mode: Some(CoverMode::Milkdrop),
+        ..AppearancePatch::default()
+    };
     let written = patched_appearance_text(COMMENTED_UI, patch).unwrap();
     let round_tripped = parse_appearance(&written).unwrap();
     assert_eq!(round_tripped.settings().cover_mode, CoverMode::Milkdrop);

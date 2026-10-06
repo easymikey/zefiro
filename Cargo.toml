@@ -149,7 +149,6 @@ widgets = { path = "crates/widgets" }
 arc-swap = { version = "1", default-features = false }
 bincode = { version = "2", default-features = false, features = ["serde", "std"] }
 block2 = { version = "0.6", default-features = false, features = ["alloc"] }
-bon = { version = "3", default-features = false }
 clap = { version = "4", default-features = false, features = [
   "derive",
   "error-context",

@@ -2,7 +2,6 @@ use kernel::domain::{geometry::Cells, track::Track};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::Color,
     text::Line,
     widgets::{Paragraph, Widget},
 };
@@ -22,7 +21,7 @@ use crate::{
         span::{line, text},
         text::{truncate, truncate_from_left},
     },
-    theme::colors::Colors,
+    theme::active_theme::ActiveTheme,
 };
 
 const MIN_WIDTH: u16 = 28;
@@ -30,12 +29,27 @@ const LEADER_COLUMN: usize = 10;
 
 #[derive(Debug)]
 pub(crate) struct TrackDetailsWidget<'a> {
-    pub(crate) track: &'a Track,
-    pub(crate) colors: Colors<Color>,
-    pub(crate) avoid: &'a [Rect],
+    track: &'a Track,
+    active_theme: ActiveTheme<'a>,
+    avoid: &'a [Rect],
 }
 
-impl TrackDetailsWidget<'_> {
+impl<'a> TrackDetailsWidget<'a> {
+    #[must_use]
+    pub(crate) fn new(track: &'a Track, active_theme: ActiveTheme<'a>) -> Self {
+        Self {
+            track,
+            active_theme,
+            avoid: &[],
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn avoid(mut self, avoid: &'a [Rect]) -> Self {
+        self.avoid = avoid;
+        self
+    }
+
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
         OverlayAreas::Dialog(
@@ -59,6 +73,7 @@ impl TrackDetailsWidget<'_> {
     }
 
     fn modal(&self, rows: &[TrackDetailsRow]) -> Modal<'static> {
+        let colors = self.active_theme.colors();
         let content_width = rows
             .iter()
             .filter(|detail_row| detail_row.truncation == Truncation::Tail)
@@ -76,14 +91,15 @@ impl TrackDetailsWidget<'_> {
                 content_lines: Cells(small_count_u16(rows.len())),
             },
             hint: Some(line([
-                text(glyphs::track_details::HINT).fg(self.colors.muted_foreground)
+                text(glyphs::track_details::HINT).fg(colors.muted_foreground)
             ])),
-            border: self.colors.accent,
-            window_background: self.colors.window_background,
+            border: colors.accent,
+            window_background: colors.window_background,
         }
     }
 
     fn lines(&self, rows: Vec<TrackDetailsRow>, width: usize) -> Vec<Line<'static>> {
+        let colors = self.active_theme.colors();
         rows.into_iter()
             .map(|detail_row| {
                 let budget = width.saturating_sub(detail_row.prefix.width());
@@ -93,8 +109,8 @@ impl TrackDetailsWidget<'_> {
                 }
                 .into_owned();
                 line([
-                    text(detail_row.prefix).fg(self.colors.muted_foreground),
-                    text(value).fg(self.colors.text),
+                    text(detail_row.prefix).fg(colors.muted_foreground),
+                    text(value).fg(colors.text),
                 ])
             })
             .collect()
@@ -240,26 +256,25 @@ fn missing_or_value(tag: Option<String>) -> String {
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::track::{AudioFormat, Hertz, Kbps, Tags, Track};
-    use ratatui::style::Color;
+    use kernel::domain::track::{AudioFormat, Hertz, Kbps, Tags, Track, TrackParts};
     use rstest::{fixture, rstest};
 
     use crate::{
         overlay::track_details::TrackDetailsWidget,
         test_support::{noir, rendered},
-        theme::{active_theme::ActiveTheme, colors::Colors, rgb::ColorDepth},
+        theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
     #[fixture]
-    fn colors() -> Colors<Color> {
-        ActiveTheme::new(&noir(), ColorDepth::TrueColor).colors()
+    fn theme() -> Theme {
+        noir()
     }
 
     fn full_track() -> Track {
-        Track::builder()
-            .path("/music/tiffanys/moon_river.mp3")
-            .duration(Duration::from_secs(245))
-            .tags(Tags {
+        Track::new(TrackParts {
+            path: "/music/tiffanys/moon_river.mp3".into(),
+            duration: Duration::from_secs(245),
+            tags: Tags {
                 title: Some("Moon River".to_string()),
                 artist: Some("Audrey Hepburn".to_string()),
                 album: Some("Breakfast at Tiffany's".to_string()),
@@ -267,24 +282,23 @@ mod tests {
                 track: Some(3),
                 track_total: Some(12),
                 ..Tags::default()
-            })
-            .audio_format(AudioFormat {
+            },
+            audio_format: AudioFormat {
                 format: Some("Mp3".to_string()),
                 bitrate: Some(Kbps(320)),
                 sample_rate: Some(Hertz(44100)),
                 ..AudioFormat::default()
-            })
-            .build()
+            },
+        })
     }
 
     #[rstest]
-    fn track_details_overlay_shows_every_row_at_80x24(colors: Colors<Color>) {
+    fn track_details_overlay_shows_every_row_at_80x24(theme: Theme) {
         let track = full_track();
-        let overlay = TrackDetailsWidget {
-            track: &track,
-            colors,
-            avoid: &[],
-        };
+        let overlay = TrackDetailsWidget::new(
+            &track,
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         insta::assert_snapshot!(
             rendered(80, 24, |frame| frame.render_widget(&overlay, frame.area()))
                 .to_string()
@@ -293,24 +307,21 @@ mod tests {
 
     #[rstest]
     fn track_details_overlay_truncates_a_long_path_from_the_left_at_48x16(
-        colors: Colors<Color>,
+        theme: Theme,
     ) {
-        let track = Track::builder()
-            .path(
-                "/Users/listener/Music/Library/Soundtracks/Breakfast_at_Tiffanys/moon_river.mp3",
-            )
-            .duration(Duration::ZERO)
-            .tags(Tags {
+        let track = Track::new(TrackParts {
+            path: "/Users/listener/Music/Library/Soundtracks/Breakfast_at_Tiffanys/moon_river.mp3".into(),
+            duration: Duration::ZERO,
+            tags: Tags {
                 title: Some("Moon River".to_string()),
                 ..Tags::default()
-            })
-            .audio_format(AudioFormat::default())
-            .build();
-        let overlay = TrackDetailsWidget {
-            track: &track,
-            colors,
-            avoid: &[],
-        };
+            },
+            audio_format: AudioFormat::default(),
+        });
+        let overlay = TrackDetailsWidget::new(
+            &track,
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         insta::assert_snapshot!(
             rendered(48, 16, |frame| frame.render_widget(&overlay, frame.area()))
                 .to_string()
@@ -318,13 +329,12 @@ mod tests {
     }
 
     #[rstest]
-    fn track_details_overlay_does_not_panic_on_a_tiny_terminal(colors: Colors<Color>) {
+    fn track_details_overlay_does_not_panic_on_a_tiny_terminal(theme: Theme) {
         let track = full_track();
-        let overlay = TrackDetailsWidget {
-            track: &track,
-            colors,
-            avoid: &[],
-        };
+        let overlay = TrackDetailsWidget::new(
+            &track,
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         assert_eq!(
             rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()

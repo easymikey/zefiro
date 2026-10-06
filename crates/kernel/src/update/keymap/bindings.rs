@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet, hash_map::Entry},
-    fmt,
-};
+use std::{collections::HashMap, fmt};
 
 use strum::IntoEnumIterator;
 
@@ -55,118 +52,95 @@ struct Candidate {
     configured: Option<Binding>,
 }
 
-fn bound(
-    rebind: &KeyOverride,
-    errors: &mut Vec<KeyValidationError>,
-) -> Option<Binding> {
-    match rebind.chord.parse::<Chord>() {
-        Ok(chord) => Some(Binding {
-            chord,
-            key_context: rebind.key_context,
-        }),
-        Err(error) => {
-            errors.push(KeyValidationError::InvalidChord(error));
-            None
-        }
-    }
+fn parsed(key_override: &KeyOverride) -> Result<Binding, KeyValidationError> {
+    let chord = key_override.chord.parse::<Chord>()?;
+    Ok(Binding {
+        chord,
+        key_context: key_override.key_context,
+    })
 }
 
 fn desired_bindings(
     overrides: &KeymapOverrides,
     defaults: &[DefaultBinding],
 ) -> (Vec<Candidate>, Vec<KeyValidationError>) {
-    let mut errors = Vec::new();
-    let desired: Vec<Candidate> = Action::iter()
-        .filter_map(|action| {
-            let key_context = defaults
-                .iter()
-                .find(|default| default.action == action)?
-                .key_context;
-            let default_chords: Vec<Chord> = defaults
-                .iter()
-                .filter(|default| default.action == action)
-                .map(|default| default.chord)
-                .collect();
-            let configured = overrides
-                .get(action)
-                .and_then(|rebind| bound(rebind, &mut errors));
-            Some(Candidate {
-                action,
-                key_context,
-                default_chords,
-                configured,
+    let (candidates, errors): (Vec<Candidate>, Vec<Option<KeyValidationError>>) =
+        Action::iter()
+            .filter_map(|action| {
+                let key_context = defaults
+                    .iter()
+                    .find(|default| default.action == action)?
+                    .key_context;
+                let default_chords: Vec<Chord> = defaults
+                    .iter()
+                    .filter(|default| default.action == action)
+                    .map(|default| default.chord)
+                    .collect();
+                let (configured, error) =
+                    match overrides.get(action).map(parsed).transpose() {
+                        Ok(configured) => (configured, None),
+                        Err(error) => (None, Some(error)),
+                    };
+                Some((
+                    Candidate {
+                        action,
+                        key_context,
+                        default_chords,
+                        configured,
+                    },
+                    error,
+                ))
             })
-        })
-        .collect();
-    (desired, errors)
+            .unzip();
+    (candidates, errors.into_iter().flatten().collect())
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Placement {
-    occupied: HashMap<Binding, Action>,
-    won: HashMap<Action, Binding>,
+    action: Action,
+    binding: Binding,
 }
 
-fn configured_placement(
-    desired: &[Candidate],
-    errors: &mut Vec<KeyValidationError>,
-) -> Placement {
-    desired
+fn placed(
+    entries: impl IntoIterator<Item = Placement>,
+) -> (Vec<Placement>, Vec<Placement>) {
+    let entries = entries.into_iter().collect::<Vec<_>>();
+    entries.iter().copied().partition(|entry| {
+        entries
+            .iter()
+            .find(|earlier| earlier.binding == entry.binding)
+            == Some(entry)
+    })
+}
+
+fn configured_placement(candidates: &[Candidate]) -> Vec<Placement> {
+    candidates
         .iter()
         .filter_map(|candidate| {
-            candidate.configured.map(|slot| (candidate.action, slot))
+            Some(Placement {
+                action: candidate.action,
+                binding: candidate.configured?,
+            })
         })
-        .fold(Placement::default(), |mut placement, (action, slot)| {
-            match placement.occupied.entry(slot) {
-                Entry::Vacant(vacancy) => {
-                    vacancy.insert(action);
-                    placement.won.insert(action, slot);
-                }
-                Entry::Occupied(_) => {
-                    errors.push(KeyValidationError::ChordCollision(slot.chord));
-                }
-            }
-            placement
-        })
+        .collect()
 }
 
-fn default_chords(
-    desired: &[Candidate],
-    placement: &mut Placement,
-    errors: &mut Vec<KeyValidationError>,
-) -> HashMap<Action, Vec<Chord>> {
-    desired
+fn default_chords(candidates: &[Candidate]) -> Vec<Placement> {
+    candidates
         .iter()
-        .fold(HashMap::new(), |mut final_chords, candidate| {
-            if let Some(&slot) = placement.won.get(&candidate.action) {
-                final_chords.insert(candidate.action, vec![slot.chord]);
-                return final_chords;
-            }
-            let placed: Vec<Chord> = candidate
+        .flat_map(|candidate| {
+            candidate
                 .default_chords
                 .iter()
-                .copied()
-                .filter(|&chord| {
-                    let slot = Binding {
+                .map(move |&chord| Placement {
+                    action: candidate.action,
+                    binding: Binding {
                         chord,
                         key_context: candidate.key_context,
-                    };
-                    match placement.occupied.entry(slot) {
-                        Entry::Vacant(vacancy) => {
-                            vacancy.insert(candidate.action);
-                            true
-                        }
-                        Entry::Occupied(_) => false,
-                    }
+                    },
                 })
-                .collect();
-            if placed.is_empty() {
-                errors.push(KeyValidationError::ActionUnbound(candidate.action));
-            } else {
-                final_chords.insert(candidate.action, placed);
-            }
-            final_chords
         })
+        .collect()
 }
 
 struct Resolution {
@@ -176,13 +150,41 @@ struct Resolution {
 }
 
 fn resolve(overrides: &KeymapOverrides, base: &[KeyBinding]) -> Resolution {
-    let (desired, mut errors) = desired_bindings(overrides, &template_bindings(base));
-    let mut placement = configured_placement(&desired, &mut errors);
-    let final_chords = default_chords(&desired, &mut placement, &mut errors);
-    let contexts = placement
-        .won
+    let (candidates, errors) = desired_bindings(overrides, &template_bindings(base));
+    let (configured, refused) = placed(configured_placement(&candidates));
+    let (settled, _) = placed(configured.iter().copied().chain(
+        default_chords(&candidates).into_iter().filter(|entry| {
+            configured
+                .iter()
+                .all(|placement| placement.action != entry.action)
+        }),
+    ));
+    let final_chords: HashMap<Action, Vec<Chord>> = candidates
+        .iter()
+        .filter_map(|candidate| {
+            let chords: Vec<Chord> = settled
+                .iter()
+                .filter(|placement| placement.action == candidate.action)
+                .map(|placement| placement.binding.chord)
+                .collect();
+            (!chords.is_empty()).then_some((candidate.action, chords))
+        })
+        .collect();
+    let errors = errors
         .into_iter()
-        .map(|(action, slot)| (action, slot.key_context))
+        .chain(refused.iter().map(|placement| {
+            KeyValidationError::ChordCollision(placement.binding.chord)
+        }))
+        .chain(
+            candidates
+                .iter()
+                .filter(|candidate| !final_chords.contains_key(&candidate.action))
+                .map(|candidate| KeyValidationError::ActionUnbound(candidate.action)),
+        )
+        .collect();
+    let contexts = configured
+        .iter()
+        .map(|placement| (placement.action, placement.binding.key_context))
         .collect();
     Resolution {
         errors,
@@ -194,7 +196,7 @@ fn resolve(overrides: &KeymapOverrides, base: &[KeyBinding]) -> Resolution {
 #[derive(Debug, Clone)]
 pub struct Keymap {
     pub(crate) overrides: KeymapOverrides,
-    pub(crate) errors: Vec<KeyValidationError>,
+    errors: Vec<KeyValidationError>,
     bindings: Vec<KeyBinding>,
 }
 
@@ -253,10 +255,7 @@ fn resolved_bindings(
         contexts,
     } = resolve(overrides, &base);
 
-    let rebindable: HashSet<Action> = Action::iter()
-        .filter(|&action| base.iter().any(|binding| binding.action == Some(action)))
-        .collect();
-    let mut out: Vec<KeyBinding> = Action::iter()
+    let (configured, fallback): (Vec<KeyBinding>, Vec<KeyBinding>) = Action::iter()
         .filter_map(|action| {
             let template =
                 base.iter().find(|binding| binding.action == Some(action))?;
@@ -275,28 +274,29 @@ fn resolved_bindings(
             }))
         })
         .flatten()
+        .partition(|binding| matches!(binding.source, BindingSource::Configured));
+    let key_bindings = configured
+        .into_iter()
+        .chain(fallback)
+        .chain(
+            base.iter()
+                .filter(|binding| {
+                    !binding.action.is_some_and(|action| {
+                        Action::iter().any(|rebindable| rebindable == action)
+                    })
+                })
+                .cloned(),
+        )
         .collect();
-    out.sort_by_key(|binding| !matches!(binding.source, BindingSource::Configured));
-    out.extend(
-        base.iter()
-            .filter(|&binding| {
-                !binding
-                    .action
-                    .is_some_and(|action| rebindable.contains(&action))
-            })
-            .cloned(),
-    );
-    (out, errors)
+    (key_bindings, errors)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         domain::{
-            chord::{Chord, ChordParseError},
             config::Diagnostic,
-            key::{Key, KeyCode, Modifiers},
-            keymap::KeyValidationError,
+            keymap::{Action, KeyOverride, KeymapOverrides},
         },
         update::keymap::bindings::Keymap,
     };
@@ -308,21 +308,17 @@ mod tests {
 
     #[test]
     fn error_text_joins_entries_with_semicolon_space() {
-        let keymap = Keymap {
-            errors: vec![
-                KeyValidationError::InvalidChord(ChordParseError {
-                    spelling: "bad".into(),
-                }),
-                KeyValidationError::ChordCollision(Chord::Key(Key {
-                    code: KeyCode::Char('p'),
-                    modifiers: Modifiers::NONE,
-                })),
-            ],
-            ..Keymap::default()
-        };
+        let overrides = KeymapOverrides::from([
+            (Action::PlayPause, KeyOverride::from("bad")),
+            (Action::Next, KeyOverride::from("y")),
+            (Action::Previous, KeyOverride::from("y")),
+        ]);
         assert_eq!(
-            keymap.diagnostic().as_ref().map(Diagnostic::text),
-            Some("invalid key chord `bad`; key collision on `p`")
+            Keymap::new(overrides)
+                .diagnostic()
+                .as_ref()
+                .map(Diagnostic::text),
+            Some("invalid key chord `bad`; key collision on `y`")
         );
     }
 }

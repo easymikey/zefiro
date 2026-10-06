@@ -62,15 +62,18 @@ fn execute(effect: EngineEffect, deck: &mut Deck) -> Option<AudioMessage> {
             deck.sinks().for_each(|sink| sink.set_speed(speed.get()));
         }),
         EngineEffect::Clear(speed) => quietly(deck, |deck| clear(deck, speed)),
-        EngineEffect::RestartGapless => quietly(deck, Deck::drop_preload),
+        EngineEffect::ClearStaged => quietly(deck, Deck::drop_preload),
         EngineEffect::Promote(gain) => quietly(deck, |deck| promote(deck, gain)),
         EngineEffect::Report => {
             deck.resend_lost();
             Some(EngineMessage::Reported(deck.playhead()).into())
         }
-        EngineEffect::Advance(gain) => quietly(deck, |deck| advance(deck, gain)),
+        EngineEffect::Advance(gain) => advance(deck, gain),
         EngineEffect::Stage(track) => quietly(deck, |deck| deck.stage(track)),
-        EngineEffect::Attach(track, mode) => deck.attach(track, mode),
+        EngineEffect::Attach {
+            track_source,
+            preload_mode,
+        } => deck.attach(track_source, preload_mode),
         EngineEffect::TakeSignals(revision) => {
             deck.resend_lost();
             deck.take_signals(revision)
@@ -113,9 +116,10 @@ fn clear(deck: &mut Deck, speed: Speed) {
     deck.clear_staged();
 }
 
-fn advance(deck: &mut Deck, gain: Gain) {
-    deck.advance();
+fn advance(deck: &mut Deck, gain: Gain) -> Option<AudioMessage> {
+    let signals = deck.advance();
     gain_primary(deck, gain);
+    signals
 }
 
 fn gain_primary(deck: &Deck, gain: Gain) {
@@ -144,4 +148,39 @@ fn resume_primary(
         sink.pause();
     }
     failed
+}
+
+#[cfg(test)]
+mod tests {
+    use kernel::domain::revision::Revision;
+
+    use crate::{
+        deck::{
+            envelope::envelope,
+            tests::{deck_with_detached_output, tone},
+        },
+        engine::{
+            effect::EngineEffect,
+            execute::execute,
+            message::{AudioMessage, Signals, SinkRole},
+        },
+        gain::Gain,
+    };
+
+    #[test]
+    fn advance_answers_the_signals_a_queued_track_raised_before_it_was_promoted() {
+        let mut deck = deck_with_detached_output();
+        let (wake, _heard) = crossbeam_channel::bounded(4);
+        let (source, control) = envelope(tone(1), Revision::default().next(), wake);
+        for _ in source {}
+        deck.output.as_mut().unwrap().queued_control = Some(control);
+
+        let answer = execute(EngineEffect::Advance(Gain::UNITY), &mut deck);
+
+        assert!(matches!(
+            answer,
+            Some(AudioMessage::SignalsTaken { role: SinkRole::Primary, signals })
+                if signals.contains(Signals::FINISHED)
+        ));
+    }
 }

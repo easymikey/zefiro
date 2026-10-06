@@ -1,6 +1,6 @@
 ---
 source: crates/widgets/tests/unit/animation_catalogue.rs
-expression: "storyboard(&mut stage, slice(|t| t.modal_out, 2))"
+expression: "storyboard(&mut stage, slice(|t| t.modal_reveal, 2))"
 ---
 t=0
 XXXXXXXXXXXXXXXXXXXXXXXX  |  ........................

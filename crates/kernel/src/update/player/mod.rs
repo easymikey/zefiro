@@ -52,6 +52,7 @@ pub enum PlayerMessage {
         now: Moment,
     },
     SleepFired(Moment),
+    OutputLost(Moment),
     Start {
         track: Arc<Track>,
         stamp: Stamp,
@@ -60,10 +61,7 @@ pub enum PlayerMessage {
         total: Option<Duration>,
         anchor: Anchor,
     },
-    Error {
-        error: AudioError,
-        now: Moment,
-    },
+    Error(AudioError),
     LookaheadReached {
         offset: Duration,
         lookahead: Lookahead,
@@ -80,7 +78,7 @@ pub enum PlayerMessage {
         next: Option<Arc<Track>>,
         stamp: Stamp,
     },
-    Reanchor(Anchor),
+    SpeedChanged(Anchor),
 }
 
 impl Machine for Player {
@@ -90,19 +88,25 @@ impl Machine for Player {
     fn transition(&mut self, message: PlayerMessage) -> Result<Cmd, Unhandled> {
         match message {
             PlayerMessage::Toggle { current, stamp } => self.toggle(current, stamp),
+            PlayerMessage::OutputLost(now) => self.output_lost(now),
             PlayerMessage::Stop => Ok(self.stop()),
             PlayerMessage::Hold(now) => self.pause(now, PausedBy::Overlay),
             PlayerMessage::Release(anchor) => self.release(anchor),
             PlayerMessage::Seek { target, now } => self.seek(target, now),
-            PlayerMessage::SleepFired(now) => self.pause(now, PausedBy::Listener),
+            PlayerMessage::SleepFired(now) => match self {
+                Player::Playing { .. } => self.pause(now, PausedBy::Listener),
+                Player::Loading(..) | Player::Paused { .. } | Player::Stopped => {
+                    Ok(Cmd::none())
+                }
+            },
             PlayerMessage::Start { track, stamp } => {
                 Ok(self.start(track, StartOrigin::User(stamp)))
             }
             PlayerMessage::Loaded { total, anchor } => self.loaded(total, anchor),
-            PlayerMessage::Error { error, now } => self.failed(&error, now),
-            PlayerMessage::Reanchor(anchor) => {
-                *self = mem::replace(self, Player::Stopped)
-                    .reanchored(anchor.since, anchor.speed);
+            PlayerMessage::Error(error) => self.failed(&error),
+            PlayerMessage::SpeedChanged(anchor) => {
+                let current = mem::replace(self, Player::Stopped);
+                *self = current.reanchored(anchor.since, anchor.speed);
                 Ok(Cmd::none())
             }
             PlayerMessage::LookaheadReached { offset, lookahead } => {
@@ -156,6 +160,20 @@ pub(crate) fn update_player(
         arm(playback, now)
     };
     Ok(cmd.then(armed))
+}
+
+pub(crate) fn record(
+    playback_parts: &mut PlaybackParts<'_>,
+    message: PlayerMessage,
+    now: Moment,
+) -> Result<Cmd, Unhandled> {
+    let before = playback_parts.player.clone();
+    let cmd = playback_parts.player.transition(message)?;
+    if *playback_parts.player == before {
+        return Ok(cmd);
+    }
+    playback_parts.revisions.effects = playback_parts.revisions.effects.next();
+    Ok(cmd.then(arm(playback_parts, now)))
 }
 
 pub(crate) fn duration_of(player: &Player) -> Duration {

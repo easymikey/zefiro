@@ -150,34 +150,6 @@ fn merged_startup(config_toml: TomlSettings, music_dir: PathBuf, cli: &Cli) -> S
     }
 }
 
-fn assembled(
-    startup: Startup,
-    loaded: Loaded,
-    paths: runtime::spawn_setup::StartupPaths,
-) -> Result<Launch, Error> {
-    let theme = match loaded.toml_theme {
-        Some(theme) => theme,
-        None => stock_theme()?,
-    };
-    Ok(Launch {
-        startup: Startup {
-            appearance: loaded.toml_appearance.settings(),
-            errors: loaded.errors,
-            ..startup
-        },
-        paths: runtime::spawn_setup::StartupPaths {
-            config: ConfigPaths {
-                theme: Some(loaded.theme_name),
-                seen: loaded.texts,
-                ..paths.config
-            },
-            ..paths
-        },
-        theme,
-        appearance: loaded.toml_appearance.appearance(),
-    })
-}
-
 fn start(
     cli: &Cli,
     config_dir: &Path,
@@ -185,9 +157,16 @@ fn start(
 ) -> Result<Launch, Error> {
     let choice = cli_theme(cli)?;
     let paths = config_paths(config_dir, choice.as_ref());
-    let loaded = load(&paths);
-    let music_dir = resolved_music_dir(&loaded.settings, cli.path.clone())?;
-    let merged = merged_startup(loaded.settings.clone(), music_dir, cli);
+    let Loaded {
+        settings,
+        toml_appearance,
+        theme_name,
+        toml_theme,
+        texts,
+        errors,
+    } = load(&paths);
+    let music_dir = resolved_music_dir(&settings, cli.path.clone())?;
+    let merged = merged_startup(settings, music_dir, cli);
     let themed_startup = Startup {
         theme: choice.unwrap_or(merged.theme),
         ..merged
@@ -196,14 +175,27 @@ fn start(
         Some(name) => load_named_playlist(themed_startup, &library_dirs, name)?,
         None => themed_startup,
     };
-    assembled(
-        startup,
-        loaded,
-        runtime::spawn_setup::StartupPaths {
-            config: paths,
+    let theme = match toml_theme {
+        Some(theme) => theme,
+        None => stock_theme()?,
+    };
+    Ok(Launch {
+        startup: Startup {
+            appearance: toml_appearance.settings(),
+            errors,
+            ..startup
+        },
+        paths: runtime::spawn_setup::StartupPaths {
+            config: ConfigPaths {
+                theme: Some(theme_name),
+                seen: texts,
+                ..paths
+            },
             library: library_dirs,
         },
-    )
+        theme,
+        appearance: toml_appearance.appearance(),
+    })
 }
 
 pub(crate) fn launch() -> Result<Launch, Error> {
@@ -289,7 +281,7 @@ mod tests {
             .errors
             .iter()
             .map(|(name, error)| {
-                assert!(matches!(error, ConfigError::Invalid(_)), "{error:?}");
+                assert!(matches!(error, ConfigError::Parse(_)), "{error:?}");
                 name.clone()
             })
             .collect();

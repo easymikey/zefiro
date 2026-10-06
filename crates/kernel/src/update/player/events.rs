@@ -1,7 +1,7 @@
 use std::{mem, sync::Arc, time::Duration};
 
 use crate::{
-    cmd::{AudioCmd, Cmd, CoverJob, Effect, LibraryCmd, MacosCmd, TrackLoad},
+    cmd::{AudioCmd, Cmd, CoverJob, DiskCmd, Effect, LibraryCmd, MacosCmd, TrackLoad},
     domain::{
         cue::{Cue, PlaybackChange},
         geometry::Pixels,
@@ -97,27 +97,22 @@ impl Player {
         }
     }
 
-    pub(crate) fn failed(
-        &mut self,
-        failure: &AudioError,
-        now: Moment,
-    ) -> Result<Cmd, Unhandled> {
+    pub(crate) fn failed(&mut self, failure: &AudioError) -> Result<Cmd, Unhandled> {
         match failure {
-            AudioError::OutputLost(..) => self.output_lost(now),
             AudioError::Decode { .. }
-            | AudioError::Device { .. }
+            | AudioError::OpenDevice { .. }
             | AudioError::ListDevices { .. }
-            | AudioError::Stream { .. }
+            | AudioError::OpenStream { .. }
             | AudioError::Preload { .. } => self.load_failed(),
-            AudioError::Seek { .. } => Err(Unhandled),
+            AudioError::Seek { .. } => Ok(Cmd::none()),
         }
     }
 
-    fn output_lost(&mut self, now: Moment) -> Result<Cmd, Unhandled> {
+    pub(crate) fn output_lost(&mut self, now: Moment) -> Result<Cmd, Unhandled> {
         match self {
             Player::Playing { .. } => self.pause(now, PausedBy::Listener),
             Player::Loading(..) => Ok(self.stop()),
-            Player::Paused { .. } | Player::Stopped => Err(Unhandled),
+            Player::Paused { .. } | Player::Stopped => Ok(Cmd::none()),
         }
     }
 
@@ -125,7 +120,7 @@ impl Player {
         match self {
             Player::Loading(..) => Ok(self.stop()),
             Player::Playing { .. } | Player::Paused { .. } | Player::Stopped => {
-                Err(Unhandled)
+                Ok(Cmd::none())
             }
         }
     }
@@ -255,8 +250,8 @@ pub(crate) fn handover_effects(
     now: Moment,
 ) -> Vec<Effect> {
     [
-        Effect::Library(LibraryCmd::AppendHistory(HistoryEntry::from_track(
-            track, now,
+        Effect::Library(LibraryCmd::Disk(DiskCmd::AppendHistory(
+            HistoryEntry::from_track(track, now),
         ))),
         Effect::Macos(MacosCmd::NowPlaying(Some(Arc::clone(track)))),
     ]
@@ -282,7 +277,7 @@ mod tests {
             revision::Revision,
             speed::Speed,
             time::Moment,
-            track::{AudioFormat, Tags, Track},
+            track::{AudioFormat, Tags, Track, TrackParts},
         },
         update::player::events::{Lookahead, next_decision},
     };
@@ -296,14 +291,12 @@ mod tests {
     }
 
     fn a_track() -> Arc<Track> {
-        Arc::new(
-            Track::builder()
-                .path("/tmp/next.flac")
-                .duration(Duration::from_secs(1))
-                .tags(Tags::default())
-                .audio_format(AudioFormat::default())
-                .build(),
-        )
+        Arc::new(Track::new(TrackParts {
+            path: "/tmp/next.flac".into(),
+            duration: Duration::from_secs(1),
+            tags: Tags::default(),
+            audio_format: AudioFormat::default(),
+        }))
     }
 
     struct Setup {

@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use kernel::domain::time::{Moment, SECONDS_PER_MINUTE};
 
+use crate::pixels::numeric::small_count_u16;
+
 const JUST_NOW_SECONDS: u64 = 60;
 const HOUR_SECONDS: u64 = 3_600;
 const DAY_SECONDS: u64 = 86_400;
@@ -25,6 +27,21 @@ pub(crate) fn format_time(duration: Duration) -> String {
 #[must_use]
 pub(crate) fn elapsed_of(position: Duration, duration: Duration) -> String {
     format!("{} / {}", format_time(position), format_time(duration))
+}
+
+#[must_use]
+pub(crate) fn elapsed_width(position: Duration, duration: Duration) -> u16 {
+    [position, duration]
+        .into_iter()
+        .map(|time| {
+            let hours = time.as_secs() / HOUR_SECONDS;
+            small_count_u16("00:00".len())
+                + hours.checked_ilog10().map_or(0, |tens| {
+                    small_count_u16(tens + 1) + small_count_u16(":".len())
+                })
+        })
+        .sum::<u16>()
+        + small_count_u16(" / ".len())
 }
 
 #[must_use]
@@ -53,7 +70,12 @@ mod tests {
     use proptest::prelude::{any, prop_assert, proptest};
     use rstest::rstest;
 
-    use crate::primitive::relative_time::{format_time, relative_time};
+    use crate::primitive::relative_time::{
+        elapsed_of,
+        elapsed_width,
+        format_time,
+        relative_time,
+    };
 
     #[rstest]
     #[case(0, "00:00")]
@@ -67,6 +89,25 @@ mod tests {
         #[case] expected: &str,
     ) {
         assert_eq!(format_time(Duration::from_secs(seconds)), expected);
+    }
+
+    #[rstest]
+    #[case::zero(0, 0)]
+    #[case::the_last_minute_of_the_first_hour(3_599, 3_599)]
+    #[case::the_first_hour(3_600, 3_600)]
+    #[case::ten_hours(36_000, 36_000)]
+    #[case::mixed(0, 36_000)]
+    #[case::mixed_the_other_way(36_000, 3_599)]
+    fn elapsed_width_is_the_width_of_the_elapsed_text(
+        #[case] position_seconds: u64,
+        #[case] duration_seconds: u64,
+    ) {
+        let position = Duration::from_secs(position_seconds);
+        let duration = Duration::from_secs(duration_seconds);
+        assert_eq!(
+            usize::from(elapsed_width(position, duration)),
+            elapsed_of(position, duration).chars().count()
+        );
     }
 
     #[rstest]

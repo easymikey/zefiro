@@ -11,6 +11,41 @@ use ratatui::{
 use crate::primitive::{glyphs, span::text};
 
 const TITLE_SPACE: &str = " ";
+const SCROLLBAR_INSET: u16 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScrollAreas {
+    pub(crate) outer: Rect,
+    pub(crate) rows: Rect,
+    pub(crate) content: Rect,
+    pub(crate) scrollbar: Rect,
+    pub(crate) hint_row: Rect,
+}
+
+impl ScrollAreas {
+    #[must_use]
+    pub(crate) fn empty(outer: Rect) -> Self {
+        Self {
+            outer,
+            rows: Rect::default(),
+            content: Rect::default(),
+            scrollbar: Rect::default(),
+            hint_row: Rect::default(),
+        }
+    }
+}
+
+#[must_use]
+pub(crate) fn scroll_areas(outer: Rect, inner: Rect) -> ScrollAreas {
+    let scrollbar = scrollbar_column(outer, inner, SCROLLBAR_INSET);
+    ScrollAreas {
+        outer,
+        rows: row_band(outer, inner, scrollbar),
+        content: inner,
+        scrollbar,
+        hint_row: Rect::default(),
+    }
+}
 
 #[must_use]
 pub(crate) fn spaced_title<'a>(title: Line<'a>) -> Line<'a> {

@@ -22,7 +22,6 @@ use crate::{
         modal::placement::{
             ModalContainer,
             ModalPlacement,
-            ModalScrollAreas,
             OverlayAreas,
             column_width,
             leading_cells,
@@ -36,7 +35,7 @@ use crate::{
     primitive::{
         canvas::Canvas,
         glyphs::{self, TITLE_SEPARATOR},
-        list_chrome::scroll_offset,
+        list_chrome::{ScrollAreas, scroll_offset},
         text::truncate_from_left,
     },
     theme::active_theme::ActiveTheme,
@@ -46,10 +45,32 @@ const LABEL_GAP: Cells = Cells(2);
 
 #[derive(Debug)]
 pub(crate) struct SettingsWidget<'a> {
-    pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) view: SettingsView<'a>,
-    pub(crate) current: SettingRow,
-    pub(crate) avoid: &'a [Rect],
+    theme: ActiveTheme<'a>,
+    view: SettingsView<'a>,
+    current: SettingRow,
+    avoid: &'a [Rect],
+}
+
+impl<'a> SettingsWidget<'a> {
+    #[must_use]
+    pub(crate) fn new(
+        view: SettingsView<'a>,
+        current: SettingRow,
+        active_theme: ActiveTheme<'a>,
+    ) -> Self {
+        Self {
+            theme: active_theme,
+            view,
+            current,
+            avoid: &[],
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn avoid(mut self, avoid: &'a [Rect]) -> Self {
+        self.avoid = avoid;
+        self
+    }
 }
 
 struct SettingsContent {
@@ -114,7 +135,7 @@ impl SettingsWidget<'_> {
 
     fn rows_table(
         &self,
-        areas: &ModalScrollAreas,
+        areas: &ScrollAreas,
         rows: &[SettingRow],
     ) -> (Table<'_>, TableState) {
         let inner = areas.rows;
@@ -251,8 +272,8 @@ mod tests {
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
-    fn outer_rect(overlay: &SettingsWidget<'_>, screen: Rect) -> Option<Rect> {
-        match overlay.areas(screen) {
+    fn outer_rect(widget: &SettingsWidget<'_>, screen: Rect) -> Option<Rect> {
+        match widget.areas(screen) {
             OverlayAreas::List(areas) => Some(areas.outer),
             OverlayAreas::Dialog(_) | OverlayAreas::Banner(_) => None,
         }
@@ -262,14 +283,13 @@ mod tests {
     fn settings_overlay_lists_every_row_with_its_label_and_value() {
         let theme = noir();
         let custom = appearance_rows();
-        let overlay = SettingsWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            view: settings_values(),
-            current: SettingRow::first(&custom),
-            avoid: &[],
-        };
+        let widget = SettingsWidget::new(
+            settings_values(),
+            SettingRow::first(&custom),
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         insta::assert_snapshot!(
-            rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
+            rendered(80, 28, |frame| frame.render_widget(&widget, frame.area()))
                 .to_string()
         );
     }
@@ -278,14 +298,10 @@ mod tests {
     fn settings_overlay_highlights_the_selected_row() {
         let theme = noir();
         let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        let overlay = SettingsWidget {
-            theme: active,
-            view: settings_values(),
-            current: SettingRow::Crossfade,
-            avoid: &[],
-        };
+        let widget =
+            SettingsWidget::new(settings_values(), SettingRow::Crossfade, active);
         let buffer =
-            rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
+            rendered(80, 28, |frame| frame.render_widget(&widget, frame.area()))
                 .buffer()
                 .clone();
         let selection_background = active.colors().selection_background;
@@ -305,14 +321,13 @@ mod tests {
     fn settings_overlay_shows_the_current_theme_and_a_custom_appearance_row() {
         let theme = noir();
         let custom = appearance_rows();
-        let overlay = SettingsWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            view: settings_values(),
-            current: SettingRow::first(&custom),
-            avoid: &[],
-        };
+        let widget = SettingsWidget::new(
+            settings_values(),
+            SettingRow::first(&custom),
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         let buffer =
-            rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
+            rendered(80, 28, |frame| frame.render_widget(&widget, frame.area()))
                 .buffer()
                 .clone();
         assert!(find_text(&buffer, "noir").is_some());
@@ -326,14 +341,13 @@ mod tests {
         let mut with_long_path = settings_values();
         with_long_path.music_dir =
             Path::new("/Users/testuser/Music/Library/Deeply/Nested/Folder/apple-music");
-        let overlay = SettingsWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            view: with_long_path,
-            current: SettingRow::first(&custom),
-            avoid: &[],
-        };
+        let widget = SettingsWidget::new(
+            with_long_path,
+            SettingRow::first(&custom),
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         let buffer =
-            rendered(60, 19, |frame| frame.render_widget(&overlay, frame.area()))
+            rendered(60, 19, |frame| frame.render_widget(&widget, frame.area()))
                 .buffer()
                 .clone();
         assert!(find_text(&buffer, "apple-music").is_some());
@@ -353,26 +367,18 @@ mod tests {
         let mut with_noir = settings_values();
         with_noir.themes = &themes;
         with_noir.theme = "noir";
-        let overlay_noir = SettingsWidget {
-            theme: active,
-            view: with_noir,
-            current: SettingRow::first(&custom),
-            avoid: &[],
-        };
+        let noir_widget =
+            SettingsWidget::new(with_noir, SettingRow::first(&custom), active);
 
         let mut with_gruvbox = settings_values();
         with_gruvbox.themes = &themes;
         with_gruvbox.theme = "gruvbox-light";
         with_gruvbox.appearance.cover_mode = CoverMode::Off;
-        let overlay_gruvbox = SettingsWidget {
-            theme: active,
-            view: with_gruvbox,
-            current: SettingRow::first(&custom),
-            avoid: &[],
-        };
+        let gruvbox_widget =
+            SettingsWidget::new(with_gruvbox, SettingRow::first(&custom), active);
 
-        let outer_noir = outer_rect(&overlay_noir, screen);
-        let outer_gruvbox = outer_rect(&overlay_gruvbox, screen);
+        let outer_noir = outer_rect(&noir_widget, screen);
+        let outer_gruvbox = outer_rect(&gruvbox_widget, screen);
         assert!(outer_noir.is_some());
         assert_eq!(outer_noir, outer_gruvbox);
     }
@@ -381,13 +387,12 @@ mod tests {
     fn settings_overlay_does_not_panic_on_a_tiny_terminal() {
         let theme = noir();
         let custom = appearance_rows();
-        let overlay = SettingsWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            view: settings_values(),
-            current: SettingRow::first(&custom),
-            avoid: &[],
-        };
-        let frame = rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()))
+        let widget = SettingsWidget::new(
+            settings_values(),
+            SettingRow::first(&custom),
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
+        let frame = rendered(4, 3, |frame| frame.render_widget(&widget, frame.area()))
             .to_string();
         assert_eq!(frame.lines().count(), 3);
     }

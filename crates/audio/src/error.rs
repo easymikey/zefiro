@@ -77,10 +77,12 @@ impl From<&Error> for AudioError {
 
 pub(crate) fn device_error(error: DeviceError) -> AudioError {
     match error {
-        DeviceError::NotFound(name) => AudioError::Device {
+        DeviceError::NotFound(name) => AudioError::OpenDevice {
             requested: OutputDevice::Named(name),
         },
-        DeviceError::NoDevice { name, .. } => AudioError::Device { requested: name },
+        DeviceError::NoDevice { name, .. } => {
+            AudioError::OpenDevice { requested: name }
+        }
         DeviceError::ListDevices(source) => list_devices_error(&source),
     }
 }
@@ -107,10 +109,9 @@ pub(crate) fn seek_error(error: &rodio::source::SeekError) -> AudioError {
 pub(crate) fn preload_error(error: &Error) -> AudioError {
     match AudioError::from(error) {
         AudioError::Decode { path, kind } => AudioError::Preload { path, kind },
-        other @ (AudioError::Device { .. }
+        other @ (AudioError::OpenDevice { .. }
         | AudioError::ListDevices { .. }
-        | AudioError::Stream { .. }
-        | AudioError::OutputLost(..)
+        | AudioError::OpenStream { .. }
         | AudioError::Preload { .. }
         | AudioError::Seek { .. }) => other,
     }
@@ -230,7 +231,7 @@ mod tests {
         let error = DeviceError::NotFound(device_name("usb"));
         assert_eq!(
             device_error(error),
-            AudioError::Device {
+            AudioError::OpenDevice {
                 requested: OutputDevice::Named(device_name("usb"))
             }
         );
@@ -248,14 +249,14 @@ mod tests {
             name: OutputDevice::Named(device_name("usb")),
             source: rodio::StreamError::NoDevice,
         },
-        AudioError::Device { requested: OutputDevice::Named(device_name("usb")) }
+        AudioError::OpenDevice { requested: OutputDevice::Named(device_name("usb")) }
     )]
     #[case::no_default_device(
         DeviceError::NoDevice {
             name: OutputDevice::SystemDefault,
             source: rodio::StreamError::NoDevice,
         },
-        AudioError::Device { requested: OutputDevice::SystemDefault }
+        AudioError::OpenDevice { requested: OutputDevice::SystemDefault }
     )]
     #[case::list_devices(
         DeviceError::ListDevices(rodio::cpal::DevicesError::BackendSpecific {

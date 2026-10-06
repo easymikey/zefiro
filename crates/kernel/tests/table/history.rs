@@ -4,18 +4,19 @@ use kernel::{
         cursor::Cursor,
         cursor_over::CursorOver,
         direction::Direction,
-        index::ViewIndex,
-        toast::Toast,
+        time::Moment,
+        track::TrackRef,
     },
     message::{Message, QueueRequest},
-    update::{
-        machine::Unhandled,
-        overlay::history::{HistoryMessage, HistoryPick},
-    },
+    update::{machine::Unhandled, overlay::history::HistoryMessage},
 };
 use rstest::rstest;
 
-use crate::support::table::cell;
+use crate::support::{
+    router::{history_enqueue, logged},
+    table::cell,
+    update::{send, update},
+};
 
 fn cursor(selected: usize, len: usize) -> CursorOver<()> {
     CursorOver {
@@ -40,25 +41,30 @@ fn nav(direction: Direction, len: usize) -> HistoryMessage {
     HistoryMessage::Bottom(4),
     Ok((cursor(3, 4), Cmd::none()))
 )]
-#[case::enqueue_hands_the_router_the_resolved_track(
+#[case::enqueue_names_the_entry_under_the_cursor(
     cursor(1, 2),
-    HistoryMessage::Enqueue(HistoryPick::Queued(ViewIndex::new(3))),
+    HistoryMessage::Enqueue(2),
     Ok((
         cursor(1, 2),
-        Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(3))))
+        Cmd::message(Message::Queue(QueueRequest::EnqueueHistoryEntry(1)))
     ))
 )]
-#[case::enqueue_of_an_entry_that_left_the_library_is_refused(
-    cursor(0, 1),
-    HistoryMessage::Enqueue(HistoryPick::Missing),
+#[case::enqueue_names_the_cursor_not_the_first_entry(
+    cursor(2, 3),
+    HistoryMessage::Enqueue(3),
     Ok((
-        cursor(0, 1),
-        Cmd::message(Message::Toast(Toast::info("Not in library".to_string())))
+        cursor(2, 3),
+        Cmd::message(Message::Queue(QueueRequest::EnqueueHistoryEntry(2)))
     ))
+)]
+#[case::enqueue_with_the_cursor_past_the_end_is_refused(
+    cursor(1, 2),
+    HistoryMessage::Enqueue(1),
+    Err(Unhandled)
 )]
 #[case::enqueue_on_an_empty_log_is_refused(
     cursor(0, 0),
-    HistoryMessage::Enqueue(HistoryPick::Nothing),
+    HistoryMessage::Enqueue(0),
     Err(Unhandled)
 )]
 fn history_cell(
@@ -73,4 +79,38 @@ fn history_cell(
     >,
 ) {
     cell(start, message, expected);
+}
+
+#[test]
+fn history_enter_on_a_queued_entry_enqueues_its_library_track() {
+    let mut model = logged(&["/m/a.flac", "/m/b.flac"], &["/m/a.flac", "/m/b.flac"]);
+    send(&mut model, history_enqueue());
+
+    assert_eq!(model.queue, vec![TrackRef::Local("/m/b.flac".into())]);
+    assert!(model.workspace.toasts.is_empty());
+}
+
+#[test]
+fn history_enter_on_an_entry_missing_from_the_library_raises_the_toast() {
+    let mut model = logged(&["/m/gone.flac"], &[]);
+    send(&mut model, history_enqueue());
+
+    let titles: Vec<&str> = model
+        .workspace
+        .toasts
+        .iter()
+        .map(|toast| toast.title.as_str())
+        .collect();
+    assert_eq!(titles, vec!["Not in library"]);
+    assert!(model.queue.is_empty());
+}
+
+#[test]
+fn history_enter_past_the_end_of_the_log_is_refused() {
+    let mut model = logged(&[], &["/m/a.flac"]);
+
+    assert_eq!(
+        update(&mut model, history_enqueue(), Moment::default()),
+        Err(Unhandled)
+    );
 }

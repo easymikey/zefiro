@@ -1,12 +1,17 @@
 #![forbid(unsafe_code)]
 
-use std::{iter, path::PathBuf, ptr::NonNull};
+use std::{
+    io,
+    iter,
+    path::{Path, PathBuf},
+    ptr::NonNull,
+};
 
 use block2::RcBlock;
 use kernel::{
     cmd::Cmd,
     domain::revision::Revision,
-    message::MacosEvent,
+    message::{MacosError, MacosEvent},
     update::machine::{LoopEffect, Machine, Unhandled},
 };
 use objc2::{AllocAnyThread, rc::Retained};
@@ -16,9 +21,9 @@ use objc2_foundation::NSData;
 use objc2_media_player::MPMediaItemArtwork;
 
 use crate::{
-    effect::{MacosEffect, MacosLoopCmd},
+    effect::MacosEffect,
     ffi,
-    job::MacosJob,
+    job::{MacosJob, MacosLoopCmd},
     message::CoverBytes,
 };
 
@@ -38,6 +43,12 @@ pub(crate) struct Cover {
     revision: Revision,
 }
 
+impl Cover {
+    pub(crate) fn shows(&self, path: Option<&Path>) -> bool {
+        self.track.as_deref() == path
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CoverMessage {
     TrackShown(Option<PathBuf>),
@@ -50,7 +61,7 @@ impl Machine for Cover {
 
     fn transition(&mut self, message: CoverMessage) -> Result<Self::Effect, Unhandled> {
         match message {
-            CoverMessage::TrackShown(track) if self.track == track => Ok(Cmd::none()),
+            CoverMessage::TrackShown(track) if self.track == track => Err(Unhandled),
             CoverMessage::TrackShown(track) => {
                 self.track.clone_from(&track);
                 self.revision = self.revision.next();
@@ -65,11 +76,15 @@ impl Machine for Cover {
             CoverMessage::Read(CoverBytes { revision, .. })
                 if revision != self.revision =>
             {
-                Ok(Cmd::none())
+                Err(Unhandled)
             }
             CoverMessage::Read(CoverBytes {
                 bytes: Ok(bytes), ..
-            }) if bytes.is_empty() => Ok(Cmd::none()),
+            }) if bytes.is_empty() => Err(Unhandled),
+            CoverMessage::Read(CoverBytes {
+                bytes: Err(MacosError::ReadArtwork(error)),
+                ..
+            }) if error == io::ErrorKind::NotFound.into() => Err(Unhandled),
             CoverMessage::Read(CoverBytes {
                 bytes: Ok(bytes), ..
             }) => Ok([MacosEffect::ShowArtwork(bytes), MacosEffect::Publish]
@@ -91,14 +106,14 @@ mod tests {
         cmd::Cmd,
         domain::revision::Revision,
         message::{MacosError, MacosEvent},
-        update::machine::{LoopEffect, Machine},
+        update::machine::{LoopEffect, Machine, Unhandled},
     };
     use rstest::rstest;
 
     use crate::{
         cover::{Cover, CoverMessage, artwork},
-        effect::{MacosEffect, MacosLoopCmd},
-        job::MacosJob,
+        effect::MacosEffect,
+        job::{MacosJob, MacosLoopCmd},
         message::CoverBytes,
     };
 
@@ -157,7 +172,7 @@ mod tests {
     }
 
     fn unreadable() -> MacosError {
-        MacosError::Cover(io::ErrorKind::PermissionDenied.into())
+        MacosError::ReadArtwork(io::ErrorKind::PermissionDenied.into())
     }
 
     fn failed(count: u8) -> CoverMessage {
@@ -171,7 +186,7 @@ mod tests {
         cover: Cover,
         message: CoverMessage,
         next: Cover,
-        cmd: Cmd<MacosEffect, MacosEvent>,
+        cmd: Result<Cmd<MacosEffect, MacosEvent>, Unhandled>,
         jobs: Vec<MacosJob>,
     }
 
@@ -180,65 +195,75 @@ mod tests {
         cover: Cover::default(),
         message: CoverMessage::TrackShown(Some(track("a.flac"))),
         next: holding(Some("a.flac"), 1),
-        cmd: Cmd::effect(MacosEffect::ClearArtwork),
+        cmd: Ok(Cmd::effect(MacosEffect::ClearArtwork)),
         jobs: vec![read("a.flac", 1)],
     })]
-    #[case::the_same_track_keeps_it(Row {
+    #[case::the_same_track_is_refused(Row {
         cover: holding(Some("a.flac"), 1),
         message: CoverMessage::TrackShown(Some(track("a.flac"))),
         next: holding(Some("a.flac"), 1),
-        cmd: Cmd::none(),
+        cmd: Err(Unhandled),
         jobs: vec![],
     })]
     #[case::a_new_track_clears_and_reads(Row {
         cover: holding(Some("a.flac"), 1),
         message: CoverMessage::TrackShown(Some(track("b.flac"))),
         next: holding(Some("b.flac"), 2),
-        cmd: Cmd::effect(MacosEffect::ClearArtwork),
+        cmd: Ok(Cmd::effect(MacosEffect::ClearArtwork)),
         jobs: vec![read("b.flac", 2)],
     })]
     #[case::the_cover_read_shows_it(Row {
         cover: holding(Some("a.flac"), 1),
         message: bytes_of(1, b"art"),
         next: holding(Some("a.flac"), 1),
-        cmd: [MacosEffect::ShowArtwork(b"art".to_vec()), MacosEffect::Publish]
+        cmd: Ok([MacosEffect::ShowArtwork(b"art".to_vec()), MacosEffect::Publish]
             .into_iter()
-            .collect(),
+            .collect()),
         jobs: vec![],
     })]
-    #[case::a_stale_cover_read_is_ignored(Row {
+    #[case::a_stale_cover_read_is_refused(Row {
         cover: holding(Some("b.flac"), 2),
         message: bytes_of(1, b"art"),
         next: holding(Some("b.flac"), 2),
-        cmd: Cmd::none(),
+        cmd: Err(Unhandled),
         jobs: vec![],
     })]
     #[case::a_failed_read_is_reported(Row {
         cover: holding(Some("a.flac"), 1),
         message: failed(1),
         next: holding(Some("a.flac"), 1),
-        cmd: Cmd::message(MacosEvent::Error(unreadable())),
+        cmd: Ok(Cmd::message(MacosEvent::Error(unreadable()))),
         jobs: vec![],
     })]
-    #[case::a_stale_failed_read_is_ignored(Row {
+    #[case::a_stale_failed_read_is_refused(Row {
         cover: holding(Some("b.flac"), 2),
         message: failed(1),
         next: holding(Some("b.flac"), 2),
-        cmd: Cmd::none(),
+        cmd: Err(Unhandled),
+        jobs: vec![],
+    })]
+    #[case::a_track_with_no_cover_found_shows_nothing(Row {
+        cover: holding(Some("a.flac"), 1),
+        message: CoverMessage::Read(CoverBytes {
+            revision: revision(1),
+            bytes: Err(MacosError::ReadArtwork(io::ErrorKind::NotFound.into())),
+        }),
+        next: holding(Some("a.flac"), 1),
+        cmd: Err(Unhandled),
         jobs: vec![],
     })]
     #[case::cleared_clears(Row {
         cover: holding(Some("a.flac"), 1),
         message: CoverMessage::TrackShown(None),
         next: holding(None, 2),
-        cmd: Cmd::effect(MacosEffect::ClearArtwork),
+        cmd: Ok(Cmd::effect(MacosEffect::ClearArtwork)),
         jobs: vec![],
     })]
     #[case::a_track_without_cover_shows_nothing(Row {
         cover: holding(Some("a.flac"), 1),
         message: bytes_of(1, b""),
         next: holding(Some("a.flac"), 1),
-        cmd: Cmd::none(),
+        cmd: Err(Unhandled),
         jobs: vec![],
     })]
     fn the_cover_slot_reads_clears_or_shows_by_the_revision_it_holds(#[case] row: Row) {
@@ -249,11 +274,11 @@ mod tests {
             cmd,
             jobs,
         } = row;
-        let (effects, events) = cmd.into_parts();
-        assert_eq!(
-            cover.transition(message).map(placed),
-            Ok((effects, jobs, events))
-        );
+        let expected = cmd.map(|cmd| {
+            let (effects, events) = cmd.into_parts();
+            (effects, jobs, events)
+        });
+        assert_eq!(cover.transition(message).map(placed), expected);
         assert_eq!(cover, next);
     }
 }

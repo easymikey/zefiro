@@ -33,20 +33,14 @@ pub fn install_panic_hook() {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RawMode {
-    Active,
-    Disabled,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Restoration {
-    Pending,
+    Raw,
+    Cooked,
     Done,
 }
 
 pub struct TerminalSession<W: Write> {
     terminal: Terminal<CrosstermBackend<W>>,
-    raw_mode: RawMode,
     restoration: Restoration,
 }
 
@@ -54,7 +48,6 @@ impl<W: Write> std::fmt::Debug for TerminalSession<W> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("TerminalSession")
-            .field("raw_mode", &self.raw_mode)
             .field("restoration", &self.restoration)
             .finish_non_exhaustive()
     }
@@ -69,8 +62,7 @@ impl TerminalSession<Stdout> {
         {
             Ok(terminal) => Ok(Self {
                 terminal,
-                raw_mode: RawMode::Active,
-                restoration: Restoration::Pending,
+                restoration: Restoration::Raw,
             }),
             Err(error) => Err(abandon_setup(
                 || execute!(io::stdout(), LeaveAlternateScreen),
@@ -100,12 +92,13 @@ impl<W: Write> TerminalSession<W> {
     }
 
     pub fn restore(&mut self) -> Result<(), io::Error> {
-        if self.restoration == Restoration::Done {
-            return Ok(());
-        }
-
-        if std::mem::replace(&mut self.raw_mode, RawMode::Disabled) == RawMode::Active {
-            disable_raw_mode()?;
+        match self.restoration {
+            Restoration::Done => return Ok(()),
+            Restoration::Raw => {
+                disable_raw_mode()?;
+                self.restoration = Restoration::Cooked;
+            }
+            Restoration::Cooked => {}
         }
         execute!(self.terminal.backend_mut(), LeaveAlternateScreen)?;
         self.terminal.show_cursor()?;
@@ -137,7 +130,7 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::session::{RawMode, Restoration, TerminalSession, abandon_setup};
+    use crate::session::{Restoration, TerminalSession, abandon_setup};
 
     const LEAVE_ALTERNATE_SCREEN: &str = "\x1b[?1049l";
 
@@ -192,8 +185,7 @@ mod tests {
         TerminalSession {
             terminal: Terminal::with_options(CrosstermBackend::new(recorder), options)
                 .unwrap(),
-            raw_mode: RawMode::Disabled,
-            restoration: Restoration::Pending,
+            restoration: Restoration::Cooked,
         }
     }
 
@@ -262,6 +254,18 @@ mod tests {
 
         drop(session_over(recorder.clone()));
 
+        assert_eq!(recorder.leave_alternate_screens(), 1);
+    }
+
+    #[test]
+    fn a_raw_session_restores_to_done() {
+        let recorder = Recorder::default();
+        let mut terminal_session = session_over(recorder.clone());
+        terminal_session.restoration = Restoration::Raw;
+
+        terminal_session.restore().unwrap();
+
+        assert_eq!(terminal_session.restoration, Restoration::Done);
         assert_eq!(recorder.leave_alternate_screens(), 1);
     }
 }

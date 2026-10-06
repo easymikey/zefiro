@@ -254,10 +254,8 @@ impl<'a> OverlayView<'a> {
 impl<'a> ToastWidget<'a> {
     #[must_use]
     pub(crate) fn from_scene(scene: &Scene<'a>) -> Option<Self> {
-        (!scene.toasts.is_empty()).then(|| Self {
-            toasts: scene.toasts,
-            theme: scene.active_theme(),
-        })
+        (!scene.toasts.is_empty())
+            .then(|| Self::new(scene.toasts, scene.active_theme()))
     }
 }
 

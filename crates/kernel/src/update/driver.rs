@@ -6,7 +6,7 @@ use crate::{
         driver::{DriverError, DriverName, DriverStatus, Drivers},
         player::Player,
         revision::Revisions,
-        supervision::{Announce, Decision, Supervision, decide_restart},
+        supervision::{Decision, Supervision, decide_restart},
         time::Moment,
         toast::Toast,
     },
@@ -81,7 +81,7 @@ pub(crate) fn decided(
     drivers: &mut Drivers,
     driver: DriverName,
     now: Moment,
-) -> Decision {
+) -> Result<(Decision, Cmd), Unhandled> {
     let decision = decide_restart(
         Supervision::standard(driver),
         &drivers.record(driver).restarts,
@@ -90,15 +90,13 @@ pub(crate) fn decided(
     match decision {
         Decision::Restart => {
             let restarting = drivers.record_mut(driver);
-            match restarting.status.transition(DriverStatusMessage::Restarted) {
-                Ok(_) => {
-                    restarting.restarts.record(now);
-                    Decision::Restart
-                }
-                Err(Unhandled) => Decision::Degrade(Announce::Silent),
-            }
+            let restarted = restarting
+                .status
+                .transition(DriverStatusMessage::Restarted)?;
+            restarting.restarts.record(now);
+            Ok((Decision::Restart, restarted))
         }
-        Decision::Degrade(_) => decision,
+        Decision::Degrade(_) => Ok((decision, Cmd::none())),
     }
 }
 
@@ -144,18 +142,19 @@ mod tests {
     use crate::{
         cmd::{AudioCmd, Cmd, Effect, Playback, TrackLoad},
         domain::{
-            driver::{DriverError, DriverName, DriverStatus},
+            driver::{DriverError, DriverName, DriverStatus, Drivers},
             player::{PausedBy, Player},
             playhead::Playhead,
             revision::Revisions,
             speed::Speed,
+            supervision::Decision,
             time::Moment,
             toast::Toast,
             track::Track,
         },
         message::Message,
         update::{
-            driver::{DriverStatusMessage, ResumeParts, resume_driver},
+            driver::{DriverStatusMessage, ResumeParts, decided, resume_driver},
             machine::{Machine, Unhandled},
         },
     };
@@ -263,6 +262,38 @@ mod tests {
         let result = status.transition(row.message);
         assert_eq!(status, row.next);
         assert_eq!(result, row.result);
+    }
+
+    #[rstest]
+    #[case::a_running_driver(DriverStatus::Running)]
+    #[case::a_stopped_driver(DriverStatus::Stopped)]
+    fn a_restart_the_status_refuses_is_refused_and_not_recorded(
+        #[case] status: DriverStatus,
+    ) {
+        let mut drivers = Drivers::default();
+        drivers.record_mut(DriverName::Audio).status = status;
+        let before = drivers.clone();
+
+        let decision = decided(&mut drivers, DriverName::Audio, Moment::default());
+
+        assert_eq!(decision, Err(Unhandled));
+        assert_eq!(drivers, before);
+    }
+
+    #[test]
+    fn a_dead_driver_restarts_and_the_restart_is_recorded() {
+        let mut drivers = Drivers::default();
+        drivers.record_mut(DriverName::Audio).status = dead();
+        let before = drivers.clone();
+
+        let decision = decided(&mut drivers, DriverName::Audio, Moment::default());
+
+        assert_eq!(decision, Ok((Decision::Restart, Cmd::none())));
+        assert_eq!(drivers.status(DriverName::Audio), &DriverStatus::Running);
+        assert_ne!(
+            drivers.record(DriverName::Audio).restarts,
+            before.record(DriverName::Audio).restarts
+        );
     }
 
     struct ResumeRow {

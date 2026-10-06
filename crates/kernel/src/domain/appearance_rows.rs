@@ -188,30 +188,38 @@ pub fn appearance_patch(
         AppearanceField::Preset => {
             AppearancePatch::from(preset_appearance(*PRESETS.get(option.get())?))
         }
-        AppearanceField::CoverMode => AppearancePatch::builder()
-            .cover_mode(option_at(COVER_MODES, option)?)
-            .build(),
-        AppearanceField::CoverBrackets => AppearancePatch::builder()
-            .cover_brackets(option_at(COVER_BRACKETS, option)?)
-            .build(),
-        AppearanceField::FormatChips => AppearancePatch::builder()
-            .format_chips(option_at(FORMAT_CHIPS, option)?)
-            .build(),
-        AppearanceField::SpeedChip => AppearancePatch::builder()
-            .speed_chip(option_at(SPEED_CHIPS, option)?)
-            .build(),
-        AppearanceField::ProgressRemaining => AppearancePatch::builder()
-            .progress_time(option_at(PROGRESS_STYLES, option)?)
-            .build(),
-        AppearanceField::KeyHints => AppearancePatch::builder()
-            .key_hints(option_at(KEY_HINTS, option)?)
-            .build(),
-        AppearanceField::Animations => AppearancePatch::builder()
-            .animations(option_at(ANIMATIONS, option)?)
-            .build(),
-        AppearanceField::LayoutMode => AppearancePatch::builder()
-            .layout_mode(option_at(LAYOUT_MODES, option)?)
-            .build(),
+        AppearanceField::CoverMode => AppearancePatch {
+            cover_mode: Some(option_at(COVER_MODES, option)?),
+            ..AppearancePatch::default()
+        },
+        AppearanceField::CoverBrackets => AppearancePatch {
+            cover_brackets: Some(option_at(COVER_BRACKETS, option)?),
+            ..AppearancePatch::default()
+        },
+        AppearanceField::FormatChips => AppearancePatch {
+            format_chips: Some(option_at(FORMAT_CHIPS, option)?),
+            ..AppearancePatch::default()
+        },
+        AppearanceField::SpeedChip => AppearancePatch {
+            speed_chip: Some(option_at(SPEED_CHIPS, option)?),
+            ..AppearancePatch::default()
+        },
+        AppearanceField::ProgressRemaining => AppearancePatch {
+            progress_time: Some(option_at(PROGRESS_STYLES, option)?),
+            ..AppearancePatch::default()
+        },
+        AppearanceField::KeyHints => AppearancePatch {
+            key_hints: Some(option_at(KEY_HINTS, option)?),
+            ..AppearancePatch::default()
+        },
+        AppearanceField::Animations => AppearancePatch {
+            animations: Some(option_at(ANIMATIONS, option)?),
+            ..AppearancePatch::default()
+        },
+        AppearanceField::LayoutMode => AppearancePatch {
+            layout_mode: Some(option_at(LAYOUT_MODES, option)?),
+            ..AppearancePatch::default()
+        },
     })
 }
 
@@ -346,16 +354,20 @@ mod tests {
 
     #[test]
     fn the_noir_patch_equals_the_noir_preset_field_for_field() {
-        let expected = AppearancePatch::builder()
-            .cover_mode(preset_appearance(AppearancePreset::Noir).cover_mode)
-            .cover_brackets(preset_appearance(AppearancePreset::Noir).cover_brackets)
-            .format_chips(preset_appearance(AppearancePreset::Noir).format_chips)
-            .speed_chip(preset_appearance(AppearancePreset::Noir).speed_chip)
-            .progress_time(preset_appearance(AppearancePreset::Noir).progress_time)
-            .key_hints(preset_appearance(AppearancePreset::Noir).key_hints)
-            .animations(preset_appearance(AppearancePreset::Noir).animations)
-            .layout_mode(preset_appearance(AppearancePreset::Noir).layout_mode)
-            .build();
+        let expected = AppearancePatch {
+            cover_mode: Some(preset_appearance(AppearancePreset::Noir).cover_mode),
+            cover_brackets: Some(
+                preset_appearance(AppearancePreset::Noir).cover_brackets,
+            ),
+            format_chips: Some(preset_appearance(AppearancePreset::Noir).format_chips),
+            speed_chip: Some(preset_appearance(AppearancePreset::Noir).speed_chip),
+            progress_time: Some(
+                preset_appearance(AppearancePreset::Noir).progress_time,
+            ),
+            key_hints: Some(preset_appearance(AppearancePreset::Noir).key_hints),
+            animations: Some(preset_appearance(AppearancePreset::Noir).animations),
+            layout_mode: Some(preset_appearance(AppearancePreset::Noir).layout_mode),
+        };
         let option = option_at_row(AppearanceField::Preset, 1);
 
         assert_eq!(
@@ -381,9 +393,10 @@ mod tests {
 
     #[test]
     fn an_edited_file_puts_preset_at_custom() {
-        let patch = AppearancePatch::builder()
-            .format_chips(FormatChips::Shown)
-            .build();
+        let patch = AppearancePatch {
+            format_chips: Some(FormatChips::Shown),
+            ..AppearancePatch::default()
+        };
         let appearance = AppearanceSettings::default().patched(patch);
 
         let rows = appearance_rows(appearance);

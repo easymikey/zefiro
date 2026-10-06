@@ -1,6 +1,16 @@
 use std::{io, io::Write, path::Path};
 
-use kernel::domain::io_error::IoError;
+use kernel::domain::{
+    config::{ConfigError, ConfigName},
+    io_error::IoError,
+};
+
+pub(crate) fn unreadable(name: ConfigName, error: &io::Error) -> ConfigError {
+    ConfigError::Read {
+        name,
+        source: IoError::from(error.kind()),
+    }
+}
 
 pub(crate) fn store(path: &Path, contents: &[u8]) -> Result<(), IoError> {
     let parent = path

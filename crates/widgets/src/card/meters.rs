@@ -38,15 +38,19 @@ fn paint_time_row(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetr
     let elapsed_total = elapsed_of(card.view.position(), card.view.duration());
     let time_row = metrics.time_row;
     let elapsed_width = elapsed_total.chars().count();
-    let speed_spans =
-        chip::speed_chip_spans(card.view.speed, card.appearance.speed_chip, &colors);
+    let speed_spans = chip::speed_chip_spans(
+        card.view.speed,
+        card.appearance_settings.speed_chip,
+        &colors,
+    );
     let speed_width =
-        chip::speed_chip_width(card.view.speed, card.appearance.speed_chip).count();
+        chip::speed_chip_width(card.view.speed, card.appearance_settings.speed_chip)
+            .count();
     let left_width = elapsed_width + speed_width;
     let fit = chips::format_chip_fit(
         &FormatChipsInput {
             current,
-            visibility: card.appearance.format_chips,
+            visibility: card.appearance_settings.format_chips,
             colors: &colors,
         },
         &ChipBudget {
@@ -92,7 +96,7 @@ fn paint_progress_text(
 
     let fraction = card.view.progress_fraction();
     let progress_row = metrics.progress_row;
-    match card.appearance.progress_time {
+    match card.appearance_settings.progress_time {
         ProgressTime::Remaining => Paragraph::new(hud_progress_line(
             &HudProgressRow {
                 fraction,
@@ -142,7 +146,6 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use kernel::domain::{
-        appearance::AppearanceSettings,
         bounded::Bounded,
         percent::Percent,
         player::Player,
@@ -150,19 +153,13 @@ mod tests {
         playlist::PlayOrder,
         speed::Speed,
         time::Moment,
-        track::{AudioFormat, Tags, Track},
+        track::{AudioFormat, Tags, Track, TrackParts},
         transport::Output,
     };
     use ratatui::{buffer::Buffer, layout::Rect};
 
     use crate::{
-        card::{
-            CardCover,
-            CardView,
-            CardWidget,
-            meters::paint_time_row,
-            metrics::card_metrics,
-        },
+        card::{CardView, CardWidget, meters::paint_time_row, metrics::card_metrics},
         geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
         primitive::canvas::find_text,
         spectrum::{SPECTRUM_BANDS, Spectrum},
@@ -173,14 +170,12 @@ mod tests {
     #[test]
     fn the_time_row_reads_the_view_now_not_the_epoch() {
         let theme = noir();
-        let track = Arc::new(
-            Track::builder()
-                .path("/music/song.mp3")
-                .duration(Duration::from_secs(245))
-                .tags(Tags::default())
-                .audio_format(AudioFormat::default())
-                .build(),
-        );
+        let track = Arc::new(Track::new(TrackParts {
+            path: "/music/song.mp3".into(),
+            duration: Duration::from_secs(245),
+            tags: Tags::default(),
+            audio_format: AudioFormat::default(),
+        }));
         let player = Player::Playing {
             track: Arc::clone(&track),
             playhead: Playhead::anchored(
@@ -207,14 +202,8 @@ mod tests {
         let area = Rect::new(0, 0, 60, 12);
         let card_metrics =
             card_metrics(area, DEFAULT_CELL_ASPECT, CoverSizing::default());
-        let card = CardWidget {
-            view,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            cell_aspect: DEFAULT_CELL_ASPECT,
-            cover_sizing: CoverSizing::default(),
-            appearance: AppearanceSettings::default(),
-            cover_art: &CardCover::Missing,
-        };
+        let card =
+            CardWidget::new(view, ActiveTheme::new(&theme, ColorDepth::TrueColor));
         let mut buffer = Buffer::empty(area);
         paint_time_row(&mut buffer, &card, &card_metrics);
         assert!(

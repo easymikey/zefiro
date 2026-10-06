@@ -4,6 +4,7 @@ mod support;
 
 mod fault;
 
+mod builders;
 mod comments;
 mod config_doc_appearance;
 mod config_doc_config;

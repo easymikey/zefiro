@@ -15,11 +15,15 @@ impl JobRevisions {
     pub(crate) fn current(&self, event: &DeckEvent) -> bool {
         match event {
             DeckEvent::Decoded { revision, .. } => *revision == self.decode,
-            DeckEvent::Preloaded { revision, .. } => *revision == self.preload,
+            DeckEvent::Preloaded { revision, .. } => self.current_preload(*revision),
             DeckEvent::OutputLost(_)
             | DeckEvent::DevicesListed(_)
             | DeckEvent::Woke(_) => true,
         }
+    }
+
+    pub(crate) fn current_preload(&self, revision: Revision) -> bool {
+        revision == self.preload
     }
 
     pub(crate) fn decode(&mut self, path: PathBuf) -> AudioJob {

@@ -4,7 +4,6 @@ use crate::{
         direction::Direction,
         key::{Key, KeyCode, Modifiers},
         keymap::{Action, KeyContext},
-        overlay::JumpDigits,
     },
     message::{
         HistoryRequest,
@@ -15,7 +14,7 @@ use crate::{
         SettingsRowRequest,
         TextRequest,
     },
-    update::keymap::chord::{BindingSource, KeyBinding, bare, digit_char, digits, key},
+    update::keymap::chord::{BindingSource, KeyBinding, bare, key},
 };
 
 fn plain(code: KeyCode) -> KeyPattern {
@@ -141,7 +140,7 @@ fn help_rows() -> Vec<KeyBinding> {
         KeyContext::Help,
         vec![
             (plain(KeyCode::Esc), close()),
-            (letter('q'), Message::Quit),
+            (letter('q'), close()),
             (held(Modifiers::CTRL, KeyCode::Char('k')), close()),
         ],
     )
@@ -159,6 +158,7 @@ fn history_rows() -> Vec<KeyBinding> {
                 history(HistoryRequest::Top),
             ),
             (plain(KeyCode::Esc), close()),
+            (letter('q'), close()),
             (plain(KeyCode::Enter), history(HistoryRequest::Enqueue)),
             (
                 letter('j'),
@@ -196,7 +196,7 @@ fn settings_rows() -> Vec<KeyBinding> {
     [
         settings_bindings(
             SettingsClose,
-            &[bare(KeyCode::Esc)],
+            &[bare(KeyCode::Esc), key('q')],
             &Message::Overlay(OverlayRequest::Close),
         ),
         settings_bindings(
@@ -236,32 +236,24 @@ fn confirm_delete_rows() -> Vec<KeyBinding> {
             (plain(KeyCode::Enter), confirm()),
             (letter('n'), close()),
             (plain(KeyCode::Esc), close()),
+            (letter('q'), close()),
         ],
     )
 }
 
 fn jump_rows() -> Vec<KeyBinding> {
-    let jump_keys = digits()
-        .filter_map(digit_char)
-        .chain([JumpDigits::SEPARATOR])
-        .map(|character| {
+    rows_in(
+        KeyContext::JumpToTime,
+        vec![
+            (plain(KeyCode::Esc), close()),
+            (letter('q'), close()),
+            (plain(KeyCode::Enter), confirm()),
             (
-                letter(character),
-                overlay(OverlayRequest::Jump(TextRequest::Char(character))),
-            )
-        });
-    let rows = [
-        (plain(KeyCode::Esc), close()),
-        (plain(KeyCode::Enter), confirm()),
-        (
-            plain(KeyCode::Backspace),
-            overlay(OverlayRequest::Jump(TextRequest::Backspace)),
-        ),
-    ]
-    .into_iter()
-    .chain(jump_keys)
-    .collect();
-    rows_in(KeyContext::JumpToTime, rows)
+                plain(KeyCode::Backspace),
+                overlay(OverlayRequest::Text(TextRequest::Backspace)),
+            ),
+        ],
+    )
 }
 
 fn track_details_rows() -> Vec<KeyBinding> {

@@ -387,30 +387,26 @@ fn sleep_fired(
     revision: Revision,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    match (
-        revision.freshness(playback.revisions.sleep),
-        playback.transport.sleep,
-    ) {
-        (Freshness::Awaited, Some(_)) => {
-            let paused = player::update_player(
-                playback,
-                player::PlayerMessage::SleepFired(now),
-                now,
-            )
-            .unwrap_or_else(|Unhandled| Cmd::none());
+    match revision.freshness(playback.revisions.sleep) {
+        Freshness::Awaited => {
             let cleared = playback
                 .transport
                 .transition(transport::TransportMessage::SleepFired)?;
+            let paused =
+                player::record(playback, player::PlayerMessage::SleepFired(now), now)?;
             Ok(paused.then(cleared))
         }
-        (Freshness::Awaited, None) | (Freshness::Stale, Some(_) | None) => {
-            Err(Unhandled)
-        }
+        Freshness::Stale => Err(Unhandled),
     }
 }
 
-fn driver_died(model: &mut Model, driver: DriverName, now: Moment) -> Cmd {
-    match driver::decided(&mut model.drivers, driver, now) {
+fn driver_died(
+    model: &mut Model,
+    driver: DriverName,
+    now: Moment,
+) -> Result<Cmd, Unhandled> {
+    let (decision, restarted) = driver::decided(&mut model.drivers, driver, now)?;
+    let decided = match decision {
         Decision::Degrade(Announce::Toast) => {
             match &model.drivers.record(driver).status {
                 DriverStatus::Dead(failure) => model.workspace.show(
@@ -436,7 +432,8 @@ fn driver_died(model: &mut Model, driver: DriverName, now: Moment) -> Cmd {
                 .then(startup)
                 .then(resumed)
         }
-    }
+    };
+    Ok(restarted.then(decided))
 }
 
 fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhandled> {
@@ -465,6 +462,7 @@ fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhan
         Message::Queue(queue_request) => browse::queue(
             browse::QueueParts {
                 playlist: &model.playlist,
+                history: &model.history,
                 browse: &mut model.workspace.browse,
                 queue: &mut model.queue,
             },
@@ -486,10 +484,10 @@ fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhan
         Message::Driver { driver, event } => {
             let died = matches!(event, DriverEvent::Died(_));
             let cmd = driver::update(&mut model.drivers, driver, event)?;
-            Ok(match died {
-                true => cmd.then(driver_died(model, driver, now)),
-                false => cmd,
-            })
+            match died {
+                true => Ok(cmd.then(driver_died(model, driver, now)?)),
+                false => Ok(cmd),
+            }
         }
         Message::Key(_) | Message::Viewport { .. } => Ok(Cmd::none()),
         Message::Quit => Ok(quit()),
@@ -606,7 +604,7 @@ mod tests {
 
     #[rstest]
     #[case::window_colors(
-        PaintError::WindowColors(diagnostic()),
+        PaintError::WriteWindowColors(diagnostic()),
         "Window colors failed"
     )]
     #[case::probe(PaintError::Query(diagnostic()), "Terminal probe failed")]

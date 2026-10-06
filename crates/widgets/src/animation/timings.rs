@@ -1,6 +1,6 @@
 use tachyonfx::Interpolation;
 
-const MODAL_IN_MS: u32 = 900;
+const MODAL_REVEAL_MS: u32 = 900;
 const TOAST_SLIDE_IN_MS: u32 = 900;
 const PULSE_MS: u32 = 900;
 const PULSE_HALF_MS: u32 = PULSE_MS / 2;
@@ -11,7 +11,7 @@ const COVER_CROSSFADE_MS: u32 = 900;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnimationTimings {
-    pub modal_in: (u32, Interpolation),
+    pub modal_reveal: (u32, Interpolation),
     pub(crate) modal_transition_width: f32,
     pub toast_slide_in: (u32, Interpolation),
     pub(crate) scatter_seed: u32,
@@ -27,7 +27,7 @@ pub struct AnimationTimings {
 }
 
 pub const TIMINGS: AnimationTimings = AnimationTimings {
-    modal_in: (MODAL_IN_MS, Interpolation::QuadOut),
+    modal_reveal: (MODAL_REVEAL_MS, Interpolation::QuadOut),
     modal_transition_width: 12.0,
     toast_slide_in: (TOAST_SLIDE_IN_MS, Interpolation::QuadOut),
     scatter_seed: 20_260_913,

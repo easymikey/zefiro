@@ -69,10 +69,7 @@ pub(crate) enum Next {
         path: PathBuf,
         gain: Option<kernel::domain::track::Decibels>,
     },
-    Gapless {
-        path: PathBuf,
-        gain: Option<kernel::domain::track::Decibels>,
-    },
+    Gapless(CurrentTrack),
     Crossfading {
         preload: CurrentTrack,
         fade: Fade,

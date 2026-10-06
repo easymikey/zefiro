@@ -1,7 +1,7 @@
 use std::{borrow::Cow, path::Path, sync::Arc};
 
 use kernel::{
-    domain::track::{Decibels, Hertz, Kbps, Track},
+    domain::track::{Decibels, Hertz, Kbps, Track, TrackParts},
     message::LibrarySubject,
 };
 use lofty::{
@@ -54,12 +54,12 @@ pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
             .and_then(parse_replay_gain),
     };
     let tags = tag.map_or_else(kernel::domain::track::Tags::default, tags_from);
-    Ok(Track::builder()
-        .path(path)
-        .duration(duration)
-        .tags(tags)
-        .audio_format(audio_format)
-        .build())
+    Ok(Track::new(TrackParts {
+        path: path.into(),
+        duration,
+        tags,
+        audio_format,
+    }))
 }
 
 fn tags_from(tag: &Tag) -> kernel::domain::track::Tags {
@@ -110,7 +110,7 @@ mod tests {
 
     use crate::{
         tags::{embedded_cover, parse_replay_gain, read_or_list},
-        test_support::temp_dir_filters,
+        test_support::{minimal_flac_with_cover, temp_dir_filters},
     };
 
     #[fixture]
@@ -158,46 +158,6 @@ mod tests {
     fn embedded_cover_of_a_nonexistent_file_is_an_error() {
         let result = embedded_cover(std::path::Path::new("/nonexistent.mp3"));
         assert!(result.is_err(), "{result:?}");
-    }
-
-    fn minimal_flac_with_cover(picture_data: &[u8]) -> Vec<u8> {
-        let length =
-            |bytes: &[u8]| u32::try_from(bytes.len()).unwrap_or(0).to_be_bytes();
-        let mime: &[u8] = b"image/jpeg";
-        let picture_payload = [
-            &3u32.to_be_bytes()[..],
-            &length(mime),
-            mime,
-            &length(b""),
-            &1u32.to_be_bytes(),
-            &1u32.to_be_bytes(),
-            &24u32.to_be_bytes(),
-            &0u32.to_be_bytes(),
-            &length(picture_data),
-            picture_data,
-        ]
-        .concat();
-        let streaminfo_bits: u64 = (44100u64 << 44) | (1u64 << 41) | (15u64 << 36);
-        let streaminfo = [
-            &4096u16.to_be_bytes()[..],
-            &4096u16.to_be_bytes(),
-            &[0, 0, 0],
-            &[0, 0, 0],
-            &streaminfo_bits.to_be_bytes(),
-            &[0u8; 16],
-        ]
-        .concat();
-        let payload_len = picture_payload.len().to_be_bytes();
-        [
-            &b"fLaC"[..],
-            &[0x00],
-            &[0x00, 0x00, 0x22],
-            &streaminfo,
-            &[0x86],
-            &payload_len[payload_len.len() - 3..],
-            &picture_payload,
-        ]
-        .concat()
     }
 
     #[test]

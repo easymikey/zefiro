@@ -1,23 +1,26 @@
 use std::{path::Path, sync::Arc};
 
 use crate::{
-    cmd::{Cmd, Effect, LibraryCmd, ScanMode},
+    cmd::{Cmd, DiskCmd, Effect, LibraryCmd, ScanMode},
     domain::{
         cue::Cue,
         cursor_over::cycled,
         direction::Direction,
         favorites::Favorites,
         geometry::Cells,
+        history::HistoryEntry,
         index::{TrackIndex, ViewIndex},
         library::{Library, sort_indices},
         model::ScanStatus,
+        overlay::Overlay,
         player::Player,
         playlist::{PlayOrder, Playlist, PlaylistSource, index_of},
         time::Moment,
+        toast::Toast,
         track::TrackRef,
-        workspace::Browse,
+        workspace::{Browse, Workspace},
     },
-    message::{BrowseRequest, QueueRequest},
+    message::{BrowseRequest, Message, QueueRequest},
     update::{machine::Unhandled, player::PlaybackParts},
 };
 
@@ -73,10 +76,10 @@ pub(crate) fn update(
         }
         BrowseRequest::FullScan => full_scan(&mut parts),
         BrowseRequest::SavePlaylist(name) => {
-            Ok(Effect::Library(LibraryCmd::SavePlaylist {
+            Ok(Effect::Library(LibraryCmd::Disk(DiskCmd::SavePlaylist {
                 name,
                 tracks: parts.playback.playlist.tracks.clone(),
-            })
+            }))
             .into())
         }
         BrowseRequest::Trash(_) => Err(Unhandled),
@@ -100,6 +103,7 @@ fn refused(message: &BrowseRequest, len: usize, visible_rows: Cells) -> bool {
 
 pub(crate) struct QueueParts<'a> {
     pub(crate) playlist: &'a Playlist,
+    pub(crate) history: &'a [HistoryEntry],
     pub(crate) browse: &'a mut Browse,
     pub(crate) queue: &'a mut Vec<TrackRef>,
 }
@@ -110,6 +114,7 @@ pub(crate) fn queue(
 ) -> Result<Cmd, Unhandled> {
     let QueueParts {
         playlist,
+        history,
         browse,
         queue,
     } = parts;
@@ -118,6 +123,10 @@ pub(crate) fn queue(
         (QueueRequest::EnqueueTrack(index), _) => source_at(playlist, index)
             .map(|source| toggle_queued(queue, source))
             .ok_or(Unhandled),
+        (QueueRequest::EnqueueHistoryEntry(position), _) => {
+            let history_entry = history.get(position).ok_or(Unhandled)?;
+            Ok(enqueue_history_entry(queue, playlist, history_entry))
+        }
         (_, None) => Err(Unhandled),
         (QueueRequest::Enqueue, Some(selected)) => Ok(toggle_queued(queue, selected)),
         (QueueRequest::PlayNext, Some(selected)) => play_next(queue, selected),
@@ -126,6 +135,19 @@ pub(crate) fn queue(
             move_in_queue(queue, &selected, direction)
         }
     }
+}
+
+fn enqueue_history_entry(
+    queue: &mut Vec<TrackRef>,
+    playlist: &Playlist,
+    history_entry: &HistoryEntry,
+) -> Cmd {
+    index_of(&playlist.tracks, &history_entry.track)
+        .and_then(|index| source_at(playlist, ViewIndex::new(index)))
+        .map_or_else(
+            || Cmd::message(Message::Toast(Toast::info("Not in library".to_string()))),
+            |source| toggle_queued(queue, source),
+        )
 }
 
 fn source_at(playlist: &Playlist, index: ViewIndex) -> Option<TrackRef> {
@@ -160,7 +182,9 @@ fn toggle_favorite(parts: &mut BrowseParts<'_>) -> Result<Cmd, Unhandled> {
         .ok_or(Unhandled)?;
     parts.favorites.toggle(track.source().clone());
     Ok(Cmd::from_iter([
-        Effect::Library(LibraryCmd::SaveFavorites(parts.favorites.clone())),
+        Effect::Library(LibraryCmd::Disk(DiskCmd::SaveFavorites(
+            parts.favorites.clone(),
+        ))),
         Effect::Animate(Cue::FavoriteToggled),
     ]))
 }
@@ -223,7 +247,7 @@ fn cycle_sort(parts: &mut BrowseParts<'_>) -> Cmd {
         *parts.playlist_source,
         ResyncParts {
             library,
-            browse: &mut parts.playback.workspace.browse,
+            workspace: &mut *parts.playback.workspace,
             player: parts.playback.player,
             playlist: parts.playback.playlist,
         },
@@ -233,7 +257,7 @@ fn cycle_sort(parts: &mut BrowseParts<'_>) -> Cmd {
 
 pub(crate) struct ResyncParts<'a> {
     pub(crate) library: &'a mut Library,
-    pub(crate) browse: &'a mut Browse,
+    pub(crate) workspace: &'a mut Workspace,
     pub(crate) player: &'a Player,
     pub(crate) playlist: &'a mut Playlist,
 }
@@ -263,13 +287,13 @@ fn trash_track(
         *parts.playlist_source,
         ResyncParts {
             library,
-            browse: &mut playback.workspace.browse,
+            workspace: &mut *playback.workspace,
             player: playback.player,
             playlist: playback.playlist,
         },
     );
     Ok(Cmd::from_iter([
-        Effect::Library(LibraryCmd::Trash(track.path().to_path_buf())),
+        Effect::Library(LibraryCmd::Disk(DiskCmd::Trash(track.path().to_path_buf()))),
         Effect::Animate(Cue::TrackDeleted),
     ]))
 }
@@ -280,7 +304,7 @@ pub(crate) fn resync_playlist(source: PlaylistSource, parts: ResyncParts<'_>) {
     }
     let ResyncParts {
         library,
-        browse,
+        workspace,
         player,
         playlist,
     } = parts;
@@ -295,5 +319,8 @@ pub(crate) fn resync_playlist(source: PlaylistSource, parts: ResyncParts<'_>) {
     playlist.relist(tracks, anchor);
     playlist.play_order =
         std::mem::replace(&mut playlist.play_order, PlayOrder::Linear).without_order();
-    browse.cursor = browse.cursor.resize(playlist.tracks.len());
+    workspace.browse.cursor = workspace.browse.cursor.resize(playlist.tracks.len());
+    if let Some(Overlay::Search(search)) = workspace.overlay.as_mut() {
+        crate::update::overlay::search::rank(search, &playlist.tracks);
+    }
 }

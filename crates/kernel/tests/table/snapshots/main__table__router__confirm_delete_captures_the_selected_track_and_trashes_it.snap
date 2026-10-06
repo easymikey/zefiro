@@ -60,8 +60,10 @@ expression: "walked(model, messages)"
                 OverlayClosed,
             ),
             Library(
-                Trash(
-                    "/m/0.flac",
+                Disk(
+                    Trash(
+                        "/m/0.flac",
+                    ),
                 ),
             ),
             Animate(

@@ -25,7 +25,7 @@ impl Workspace {
         let result = self
             .keymap
             .diagnostic()
-            .map_or(Ok(()), |diagnostic| Err(ConfigError::Invalid(diagnostic)));
+            .map_or(Ok(()), |diagnostic| Err(ConfigError::Parse(diagnostic)));
         let cmd = self.config_reloaded(
             ConfigReload {
                 name: ConfigName::Config,

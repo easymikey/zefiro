@@ -6,26 +6,37 @@ use ratatui::{
 };
 
 use crate::{
-    overlay::modal::placement::{ModalScrollAreas, scroll_areas},
     playlist::{
         chrome::{pane_block, pane_title},
         row::{self, PlaylistRows, WindowFit, cursor_band, visible_rows},
         view::{LibraryLoad, PlaylistView},
     },
-    primitive::list_chrome::{Scrollbar, paint_scrollbar},
+    primitive::list_chrome::{ScrollAreas, Scrollbar, paint_scrollbar, scroll_areas},
     theme::active_theme::ActiveTheme,
 };
 
+const EMPTY_PLAYLIST_TEXT: &str = "Empty playlist";
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PlaylistWidget<'a> {
-    pub(crate) view: PlaylistView<'a>,
-    pub(crate) theme: ActiveTheme<'a>,
+    view: PlaylistView<'a>,
+    theme: ActiveTheme<'a>,
+}
+
+impl<'a> PlaylistWidget<'a> {
+    #[must_use]
+    pub(crate) fn new(view: PlaylistView<'a>, active_theme: ActiveTheme<'a>) -> Self {
+        Self {
+            view,
+            theme: active_theme,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlaylistAreas {
     pub pane: Rect,
-    pub scroll_areas: ModalScrollAreas,
+    pub scroll_areas: ScrollAreas,
     pub selected: Option<Rect>,
 }
 
@@ -81,7 +92,7 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistWidget<'
     if view.playlist.tracks.is_empty() {
         let text: &str = match view.library_loading {
             LibraryLoad::Loading => theme.scanning_label.as_str(),
-            LibraryLoad::Ready => "Empty playlist",
+            LibraryLoad::Ready => EMPTY_PLAYLIST_TEXT,
         };
         Paragraph::new(text)
             .style(Style::default().fg(colors.text))
@@ -130,7 +141,7 @@ mod tests {
             playlist::Playlist,
             startup::Shuffle,
             time::Moment,
-            track::Track,
+            track::{Track, TrackParts},
         },
         message::{Message, PlaybackRequest},
         update::update,
@@ -149,17 +160,15 @@ mod tests {
     };
 
     fn titled_track(title: &str) -> Arc<Track> {
-        Arc::new(
-            Track::builder()
-                .path(format!("{title}.mp3"))
-                .duration(std::time::Duration::from_secs(120))
-                .tags(kernel::domain::track::Tags {
-                    title: Some(title.to_string()),
-                    ..kernel::domain::track::Tags::default()
-                })
-                .audio_format(kernel::domain::track::AudioFormat::default())
-                .build(),
-        )
+        Arc::new(Track::new(TrackParts {
+            path: format!("{title}.mp3").into(),
+            duration: std::time::Duration::from_secs(120),
+            tags: kernel::domain::track::Tags {
+                title: Some(title.to_string()),
+                ..kernel::domain::track::Tags::default()
+            },
+            audio_format: kernel::domain::track::AudioFormat::default(),
+        }))
     }
 
     fn library(count: usize) -> Playlist {
@@ -218,10 +227,10 @@ mod tests {
         std::sync::LazyLock::new(Favorites::default);
 
     fn pane<'a>(playlist: &'a Playlist, theme: &'a Theme) -> PlaylistWidget<'a> {
-        PlaylistWidget {
-            view: view(playlist, theme),
-            theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
-        }
+        PlaylistWidget::new(
+            view(playlist, theme),
+            ActiveTheme::new(theme, ColorDepth::TrueColor),
+        )
     }
 
     #[test]
@@ -245,8 +254,8 @@ mod tests {
         if let Some(first) = playlist.tracks.first() {
             favorites.toggle(first.source().clone());
         }
-        let widget = PlaylistWidget {
-            view: PlaylistView {
+        let widget = PlaylistWidget::new(
+            PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &favorites,
@@ -255,8 +264,8 @@ mod tests {
                 library_loading: LibraryLoad::Ready,
                 status: status(&playlist, &queue, &theme),
             },
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        };
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         insta::assert_snapshot!(
             rendered(60, 8, |frame| frame.render_widget(&widget, frame.area()))
                 .to_string()
@@ -268,8 +277,8 @@ mod tests {
         let playlist = library(14);
         let theme = noir();
         let queue = queued(&playlist, &(1..13).collect::<Vec<_>>());
-        let widget = PlaylistWidget {
-            view: PlaylistView {
+        let widget = PlaylistWidget::new(
+            PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
@@ -278,8 +287,8 @@ mod tests {
                 library_loading: LibraryLoad::Ready,
                 status: status(&playlist, &queue, &theme),
             },
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        };
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         insta::assert_snapshot!(
             rendered(60, 14, |frame| frame.render_widget(&widget, frame.area()))
                 .to_string()
@@ -291,8 +300,8 @@ mod tests {
         let playlist = library(3);
         let theme = noir();
         let queue = queued(&playlist, &[1, 2]);
-        let widget = PlaylistWidget {
-            view: PlaylistView {
+        let widget = PlaylistWidget::new(
+            PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
@@ -301,8 +310,8 @@ mod tests {
                 library_loading: LibraryLoad::Ready,
                 status: status(&playlist, &queue, &theme),
             },
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        };
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         insta::assert_snapshot!(
             rendered(24, 8, |frame| frame.render_widget(&widget, frame.area()))
                 .to_string()
@@ -314,8 +323,8 @@ mod tests {
         let playlist = library(3);
         let theme = noir();
         let queue = queued(&playlist, &[1, 2]);
-        let widget = PlaylistWidget {
-            view: PlaylistView {
+        let widget = PlaylistWidget::new(
+            PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
@@ -324,8 +333,8 @@ mod tests {
                 library_loading: LibraryLoad::Ready,
                 status: status(&playlist, &queue, &theme),
             },
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        };
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         insta::assert_snapshot!(
             rendered(12, 8, |frame| frame.render_widget(&widget, frame.area()))
                 .to_string()
@@ -343,8 +352,8 @@ mod tests {
         };
         let theme = noir();
         let queue = queued(&playlist, &[0]);
-        let widget = PlaylistWidget {
-            view: PlaylistView {
+        let widget = PlaylistWidget::new(
+            PlaylistView {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
@@ -353,8 +362,8 @@ mod tests {
                 library_loading: LibraryLoad::Ready,
                 status: status(&playlist, &queue, &theme),
             },
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        };
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         insta::assert_snapshot!(
             rendered(40, 8, |frame| frame.render_widget(&widget, frame.area()))
                 .to_string()
@@ -371,8 +380,8 @@ mod tests {
             ..Playlist::default()
         };
         let theme = noir();
-        let widget = PlaylistWidget {
-            view: PlaylistView {
+        let widget = PlaylistWidget::new(
+            PlaylistView {
                 playlist: &playlist,
                 queue: &[],
                 favorites: &EMPTY_FAVORITES,
@@ -384,8 +393,8 @@ mod tests {
                     ..status(&playlist, &[], &theme)
                 },
             },
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        };
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         let text = rendered(80, 8, |frame| frame.render_widget(&widget, frame.area()))
             .to_string();
         assert!(text.contains("tagging 1/3"), "got {text:?}");
@@ -442,8 +451,8 @@ mod tests {
         let selection_text = colors.selection_foreground;
         let selection_background = colors.selection_background;
 
-        let widget = PlaylistWidget {
-            view: PlaylistView {
+        let widget = PlaylistWidget::new(
+            PlaylistView {
                 playlist: &playlist,
                 queue: &[],
                 favorites: &EMPTY_FAVORITES,
@@ -455,8 +464,8 @@ mod tests {
                     ..status(&playlist, &[], &theme)
                 },
             },
-            theme: active,
-        };
+            active,
+        );
         let buffer =
             rendered(60, 24, |frame| frame.render_widget(&widget, frame.area()))
                 .buffer()
@@ -488,8 +497,8 @@ mod tests {
                 .colors()
                 .selection_background;
 
-        let widget = PlaylistWidget {
-            view: PlaylistView {
+        let widget = PlaylistWidget::new(
+            PlaylistView {
                 playlist: &playlist,
                 queue: &[],
                 favorites: &EMPTY_FAVORITES,
@@ -501,8 +510,8 @@ mod tests {
                     ..status(&playlist, &[], &theme)
                 },
             },
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        };
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         let buffer =
             rendered(60, 24, |frame| frame.render_widget(&widget, frame.area()))
                 .buffer()
@@ -538,8 +547,8 @@ mod tests {
             ..Playlist::default()
         };
         let theme = noir();
-        let widget = PlaylistWidget {
-            view: PlaylistView {
+        let widget = PlaylistWidget::new(
+            PlaylistView {
                 playlist: &playlist,
                 queue: &[],
                 favorites: &EMPTY_FAVORITES,
@@ -551,8 +560,8 @@ mod tests {
                     ..status(&playlist, &[], &theme)
                 },
             },
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        };
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         let buffer =
             rendered(50, 30, |frame| frame.render_widget(&widget, frame.area()))
                 .buffer()
@@ -609,8 +618,8 @@ mod tests {
             Cursor::at(model.playlist.tracks.len(), playing.get());
 
         let theme = noir();
-        let widget = PlaylistWidget {
-            view: PlaylistView {
+        let widget = PlaylistWidget::new(
+            PlaylistView {
                 playlist: &model.playlist,
                 queue: &model.queue,
                 favorites: &model.favorites,
@@ -622,8 +631,8 @@ mod tests {
                     ..status(&model.playlist, &model.queue, &theme)
                 },
             },
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        };
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
         let text = rendered(60, 28, |frame| frame.render_widget(&widget, frame.area()))
             .to_string();
         assert!(text.contains("▶ song39"), "got {text:?}");

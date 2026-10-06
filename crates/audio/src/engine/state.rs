@@ -14,7 +14,7 @@ use crate::{
     engine::{
         crossfade::replay_gain_factor,
         effect::{AudioLoopCmd, EngineEffect},
-        message::DeviceChoice,
+        message::{DeviceChoice, DeviceOpened},
         phase::Phase,
         revisions::JobRevisions,
     },
@@ -33,7 +33,7 @@ pub(crate) enum EngineState {
     Live(Live),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Closed {
     pub(crate) settings: AudioSettings,
     pub(crate) pending: Option<TrackLoad>,
@@ -52,6 +52,27 @@ pub(crate) struct Live {
 pub(crate) struct ExecutedRevisions {
     pub(crate) load: Revision,
     pub(crate) incoming: Revision,
+}
+
+impl EngineState {
+    pub(crate) fn opened(
+        &mut self,
+        job_revisions: &mut JobRevisions,
+        device_opened: DeviceOpened,
+    ) -> AudioLoopCmd {
+        match std::mem::replace(self, EngineState::Closed(Closed::default())) {
+            EngineState::Closed(closed) => {
+                let (live, effect) = closed.reopened(job_revisions, device_opened);
+                *self = EngineState::Live(live);
+                effect
+            }
+            EngineState::Live(mut live) => {
+                let effect = live.opened(job_revisions, device_opened);
+                *self = EngineState::Live(live);
+                effect
+            }
+        }
+    }
 }
 
 impl Live {

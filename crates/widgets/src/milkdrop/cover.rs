@@ -14,6 +14,8 @@ use crate::{
     scene::Scene,
 };
 
+const STEP: Duration = Duration::from_millis(33);
+
 type MilkdropResetKey = (u64, usize, usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,9 +41,14 @@ fn plan_milkdrop(
     let Some(installed) = installed else {
         return MilkdropPlan::Rebuild;
     };
-    if installed.reset_key != desired.reset_key || installed.theme != desired.theme {
+    if installed.reset_key != desired.reset_key
+        || installed.theme != desired.theme
+        || desired.clock < installed.clock
+    {
         MilkdropPlan::Rebuild
-    } else if installed.clock != desired.clock && desired.playing == Playback::Playing {
+    } else if desired.clock - installed.clock >= STEP
+        && desired.playing == Playback::Playing
+    {
         MilkdropPlan::Advance
     } else {
         MilkdropPlan::Reuse
@@ -85,22 +92,42 @@ impl MilkdropCover {
             clock: scene.presentation.clock,
             playing,
         };
-        let plan =
-            plan_milkdrop(self.installed.as_ref().map(|(_, tick)| *tick), desired);
+        let installed = self.installed.as_ref().map(|(_, tick)| *tick);
+        let plan = plan_milkdrop(installed, desired);
+        let whole = installed.map_or(0, |tick| {
+            let elapsed = desired.clock.saturating_sub(tick.clock);
+            u32::try_from(elapsed.as_millis() / STEP.as_millis()).unwrap_or(u32::MAX)
+        });
+        let steps = match plan {
+            MilkdropPlan::Rebuild => 1,
+            MilkdropPlan::Advance => whole.min(4),
+            MilkdropPlan::Reuse => 0,
+        };
+        let stamp = match installed {
+            Some(tick) if plan == MilkdropPlan::Advance && whole <= 4 => {
+                tick.clock + STEP * steps
+            }
+            Some(_) | None => desired.clock,
+        };
         if plan == MilkdropPlan::Rebuild {
             self.installed = Some((MilkdropField::new(width, height), desired));
         }
         if plan != MilkdropPlan::Reuse
             && let Some((field, tick)) = self.installed.as_mut()
         {
-            field.advance(&MilkdropAdvance {
-                bands: scene.presentation.spectrum,
-                playing,
-                seed,
-                tick: u64::try_from(scene.presentation.clock.as_millis())
-                    .unwrap_or(u64::MAX),
-            });
-            *tick = desired;
+            for _ in 0..steps {
+                field.advance(&MilkdropAdvance {
+                    bands: scene.presentation.spectrum,
+                    playing,
+                    seed,
+                    tick: u64::try_from(scene.presentation.clock.as_millis())
+                        .unwrap_or(u64::MAX),
+                });
+            }
+            *tick = MilkdropTick {
+                clock: stamp,
+                ..desired
+            };
             let style = MilkdropStyle::from_theme(&scene.active_theme());
             self.lines = lines(field, &style);
         }
@@ -110,13 +137,26 @@ impl MilkdropCover {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::Duration};
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+        time::Duration,
+    };
 
     use kernel::{
         cmd::Playback,
-        domain::{appearance::Rgb, revision::Revision, theme::ThemeName},
+        domain::{
+            appearance::Rgb,
+            player::Player,
+            playhead::Playhead,
+            revision::Revision,
+            speed::Speed,
+            theme::ThemeName,
+            time::Moment,
+            track::Track,
+        },
     };
-    use ratatui::layout::Rect;
+    use ratatui::{layout::Rect, text::Line};
     use rstest::rstest;
 
     use crate::{
@@ -157,9 +197,11 @@ mod tests {
 
     #[rstest]
     #[case::same_reset_key_and_clock(Some(tick((1, 20, 8), 100)), tick((1, 20, 8), 100), MilkdropPlan::Reuse)]
-    #[case::a_new_clock_advances(Some(tick((1, 20, 8), 100)), tick((1, 20, 8), 116), MilkdropPlan::Advance)]
-    #[case::paused_clock_movement_reuses(Some(tick((1, 20, 8), 100)), paused((1, 20, 8), 116), MilkdropPlan::Reuse)]
-    #[case::paused_reset_key_change_rebuilds(Some(tick((2, 20, 8), 100)), paused((1, 20, 8), 116), MilkdropPlan::Rebuild)]
+    #[case::a_new_clock_advances(Some(tick((1, 20, 8), 100)), tick((1, 20, 8), 133), MilkdropPlan::Advance)]
+    #[case::less_than_a_step_reuses(Some(tick((1, 20, 8), 100)), tick((1, 20, 8), 132), MilkdropPlan::Reuse)]
+    #[case::a_clock_gone_backwards_rebuilds(Some(tick((1, 20, 8), 100)), tick((1, 20, 8), 50), MilkdropPlan::Rebuild)]
+    #[case::paused_clock_movement_reuses(Some(tick((1, 20, 8), 100)), paused((1, 20, 8), 133), MilkdropPlan::Reuse)]
+    #[case::paused_reset_key_change_rebuilds(Some(tick((2, 20, 8), 100)), paused((1, 20, 8), 133), MilkdropPlan::Rebuild)]
     #[case::a_different_reset_key_rebuilds(Some(tick((2, 20, 8), 100)), tick((1, 20, 8), 100), MilkdropPlan::Rebuild)]
     #[case::a_new_theme_rebuilds_even_when_paused(Some(tick((1, 20, 8), 100)), themed(paused((1, 20, 8), 100)), MilkdropPlan::Rebuild)]
     #[case::nothing_installed_rebuilds(None, tick((1, 20, 8), 100), MilkdropPlan::Rebuild)]
@@ -214,5 +256,41 @@ mod tests {
             panic!("milkdrop paints text lines");
         };
         assert_ne!(before, after);
+    }
+
+    fn text(cover: CardCover) -> Arc<[Line<'static>]> {
+        let CardCover::Text(lines) = cover else {
+            panic!("milkdrop paints text lines");
+        };
+        lines
+    }
+
+    #[test]
+    fn paints_between_steps_advance_as_much_as_one_paint_later() {
+        let mut sources = SceneSources::new(model_with_tracks(1));
+        sources.model.player = Player::Playing {
+            track: Arc::new(Track::listed(Path::new("/music/a.flac"))),
+            playhead: Playhead::anchored(
+                Duration::ZERO,
+                Moment::default(),
+                Speed::default(),
+            ),
+            preloaded: None,
+        };
+        let area = Some(Rect::new(0, 0, 12, 6));
+        let mut once_cover = MilkdropCover::default();
+        let mut twice_cover = MilkdropCover::default();
+        let mut scene = sources.scene();
+        let start = text(once_cover.refresh(&scene, area));
+        twice_cover.refresh(&scene, area);
+        scene.presentation.clock = Duration::from_millis(10);
+        twice_cover.refresh(&scene, area);
+        scene.presentation.clock = Duration::from_millis(20);
+        let once_lines = text(once_cover.refresh(&scene, area));
+        let twice_lines = text(twice_cover.refresh(&scene, area));
+        assert_eq!(once_lines, twice_lines);
+        assert_eq!(once_lines, start);
+        scene.presentation.clock = Duration::from_millis(40);
+        assert_ne!(text(once_cover.refresh(&scene, area)), start);
     }
 }

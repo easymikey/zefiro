@@ -65,7 +65,7 @@ Hardware drivers are injected: the binary passes the real spawners to `Runtime::
 
 **Playback.** `update` returns `Effect::Audio(AudioCmd::Load(..))` → audio port → `DriverLoop` delivers `AudioMessage::Cmds { cmds, at }` → `AudioDriver::transition` → `execute` opens the file → `AudioEvent`s → `DriverLoop` → `inbox` → `update`.
 
-**Volume.** `update` returns `MacosCmd::Volume` → macOS driver → CoreAudio write; the driver machine swallows the listener echo of its own write. A change made outside sifr arrives as `MacosEvent::Volume`.
+**Volume.** `update` returns `MacosCmd::SetVolume` → macOS driver → CoreAudio write; the driver machine swallows the listener echo of its own write. A change made outside sifr arrives as `MacosEvent::Volume`.
 
 **In-app setting.** a `Step` key → `update` → `Effect::Config(ConfigCmd::SetAppearance { .. })` → the config driver patches its appearance, schedules the save (coalesced, format-preserving) and publishes the appearance into its cell → the next paint installs it. The driver marks its own write as seen, so it never comes back as a reload.
 

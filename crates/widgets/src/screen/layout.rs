@@ -40,12 +40,9 @@ impl FrameLayout {
             return body;
         }
         Self {
-            overlay: OverlayWidget::placed(
-                OverlayView::from_scene(scene),
-                &body,
-                scene.cover_mode(),
-            )
-            .areas(screen),
+            overlay: OverlayWidget::new(OverlayView::from_scene(scene), &body)
+                .avoid(body.cover_exclusion(scene.cover_mode()))
+                .areas(screen),
             toast: ToastWidget::from_scene(scene)
                 .and_then(|toaster| toaster.area(screen, body.breakpoint)),
             ..body
@@ -209,10 +206,8 @@ fn playlist(scene: &Scene<'_>, pane: Rect) -> Option<PlaylistAreas> {
     ) {
         return None;
     }
-    let playlist = PlaylistWidget {
-        view: PlaylistView::from_scene(scene),
-        theme: scene.active_theme(),
-    };
+    let playlist =
+        PlaylistWidget::new(PlaylistView::from_scene(scene), scene.active_theme());
     Some(playlist.areas(pane))
 }
 

@@ -14,7 +14,7 @@ use runtime::{runtime::Runtime, spawn::Spawners};
 use shell::{painter::Painter, shell_input::ShellInput};
 use startup::Launch;
 use terminal::{
-    capabilities::{Capabilities, QueryAnswer, TerminalApp, TerminalEnvironment},
+    capabilities::{Capabilities, TerminalApp, TerminalEnvironment},
     session::TerminalSession,
 };
 
@@ -49,13 +49,14 @@ fn run_shell(
 ) -> Result<(), Error> {
     terminal::session::install_panic_hook();
     let mut session = TerminalSession::enter()?;
-    let app = TerminalApp::detect(&TerminalEnvironment::current());
+    let environment = TerminalEnvironment::current();
+    let app = TerminalApp::detect(&environment);
     let (input_sender, input_receiver) = bounded(256);
-    let probe_answer = probed(app, &input_sender)?;
+    let environment_capabilities = Capabilities::from_environment(&environment);
+    let detected = probed(app, environment_capabilities, &input_sender)?;
     let signal_thread = termination::install(input_sender.clone())?;
-    let mut painter =
-        Painter::new(session.terminal_mut(), theme, capabilities(probe_answer))
-            .with_appearance(appearance);
+    let mut painter = Painter::new(session.terminal_mut(), theme, detected)
+        .with_appearance(appearance);
     shell::input::spawn_input(input_sender);
 
     let run_result = runtime::event_loop::run(runtime, &mut painter, &input_receiver);
@@ -67,30 +68,23 @@ fn run_shell(
 
 fn probed(
     app: TerminalApp,
+    capabilities: Capabilities,
     input_sender: &Sender<ShellInput>,
-) -> Result<Option<QueryAnswer>, Error> {
+) -> Result<Capabilities, Error> {
     match terminal::capabilities::query(app) {
-        Ok(answer) => Ok(answer),
+        Ok(Some(picker)) => Ok(Capabilities {
+            picker,
+            color_depth: capabilities.color_depth,
+        }),
+        Ok(None) => Ok(capabilities),
         Err(error) => {
             input_sender
                 .send(ShellInput::Error(PaintError::Query(
                     Diagnostic::from_error(&error),
                 )))
                 .map_err(|_closed| runtime::error::Error::InputClosed)?;
-            Ok(None)
+            Ok(capabilities)
         }
-    }
-}
-
-fn capabilities(probe_answer: Option<QueryAnswer>) -> Capabilities {
-    let found = Capabilities::from_environment(&TerminalEnvironment::current());
-    match probe_answer {
-        Some(answer) => Capabilities {
-            picker: answer.picker,
-            pixel_path: widgets::scene::PixelPath::Protocol,
-            ..found
-        },
-        None => found,
     }
 }
 

@@ -13,17 +13,13 @@ const MIN_WIDTH: Cells = Cells(40);
 
 pub(crate) fn prompt<'a>(
     text_entry: &'a TextEntry<MusicDirError>,
-    theme: ActiveTheme<'a>,
+    active_theme: ActiveTheme<'a>,
 ) -> PromptWidget<'a> {
-    PromptWidget {
-        title: glyphs::music_dir::TITLE_WORD,
-        hint: glyphs::music_dir::HINT,
-        min_width: MIN_WIDTH,
-        body: PromptBody::Entry(&text_entry.input),
-        error: text_entry.error.as_ref().map(ToString::to_string),
-        avoid: &[],
-        theme,
-    }
+    PromptWidget::new(PromptBody::Entry(&text_entry.input), active_theme)
+        .title(glyphs::music_dir::TITLE_WORD)
+        .hint(glyphs::music_dir::HINT)
+        .min_width(MIN_WIDTH)
+        .error(text_entry.error.as_ref())
 }
 
 #[cfg(test)]

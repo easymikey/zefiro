@@ -5,7 +5,6 @@ use kernel::domain::{
 use ratatui::layout::Rect;
 use rstest::rstest;
 use widgets::{
-    card::CardCover,
     scene::{PixelPath, Scene},
     screen::{frame_layout::FrameLayout, root::ScreenWidget},
 };
@@ -19,14 +18,7 @@ fn painted_frame(scene: Scene<'_>, size: (u16, u16)) -> (FrameLayout, String) {
     let (width, height) = size;
     let layout = FrameLayout::from_scene(&scene, Rect::new(0, 0, width, height));
     let text = rendered(width, height, |frame| {
-        frame.render_widget(
-            &ScreenWidget {
-                scene,
-                layout: &layout,
-                cover_art: &CardCover::Missing,
-            },
-            frame.area(),
-        );
+        frame.render_widget(&ScreenWidget::new(scene, &layout), frame.area());
     })
     .to_string();
     (layout, text)

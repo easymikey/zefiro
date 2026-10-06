@@ -68,9 +68,10 @@ fn theme_picked(themes: &mut Themes, direction: Direction) -> Result<Cmd, Unhand
     let next = themes.stepped(direction).ok_or(Unhandled)?;
     themes.selected = ThemeChoice::Named(next.clone());
     Ok(Cmd::from_iter([
-        Effect::Config(ConfigCmd::Save(
-            ConfigPatch::builder().theme(next.clone()).build(),
-        )),
+        Effect::Config(ConfigCmd::Save(ConfigPatch {
+            theme: Some(next.clone()),
+            ..ConfigPatch::default()
+        })),
         Effect::Config(ConfigCmd::SelectTheme(ThemeChoice::Named(next))),
     ]))
 }
@@ -81,11 +82,10 @@ fn step_replay_gain(settings: &mut Settings) -> Cmd {
         ReplayGain::Off => ReplayGain::On,
     };
     Cmd::from_iter([
-        Effect::Config(ConfigCmd::Save(
-            ConfigPatch::builder()
-                .replay_gain(settings.audio.replay_gain)
-                .build(),
-        )),
+        Effect::Config(ConfigCmd::Save(ConfigPatch {
+            replay_gain: Some(settings.audio.replay_gain),
+            ..ConfigPatch::default()
+        })),
         Effect::Audio(AudioCmd::SetReplayGain(settings.audio.replay_gain)),
     ])
 }
@@ -93,11 +93,10 @@ fn step_replay_gain(settings: &mut Settings) -> Cmd {
 fn step_crossfade(settings: &mut Settings, direction: Direction) -> Cmd {
     settings.audio.crossfade = settings.audio.crossfade.step(direction);
     Cmd::from_iter([
-        Effect::Config(ConfigCmd::Save(
-            ConfigPatch::builder()
-                .crossfade(settings.audio.crossfade)
-                .build(),
-        )),
+        Effect::Config(ConfigCmd::Save(ConfigPatch {
+            crossfade: Some(settings.audio.crossfade),
+            ..ConfigPatch::default()
+        })),
         Effect::Audio(AudioCmd::SetCrossfade(settings.audio.crossfade)),
     ])
 }
@@ -126,9 +125,10 @@ fn step_output_device(
         });
     settings.audio.device = next.clone();
     Ok(Cmd::from_iter([
-        Effect::Config(ConfigCmd::Save(
-            ConfigPatch::builder().device(next.clone()).build(),
-        )),
+        Effect::Config(ConfigCmd::Save(ConfigPatch {
+            device: Some(next.clone()),
+            ..ConfigPatch::default()
+        })),
         Effect::Audio(AudioCmd::SetDevice(next)),
     ]))
 }
@@ -143,8 +143,9 @@ fn step_sleep_presets(
     let next_index = direction.wrapped(current, SleepPresets::BUNDLES.len());
     let next = SleepPresets::bundle(next_index).ok_or(Unhandled)?;
     settings.audio.sleep_presets = next.clone();
-    Ok(Effect::Config(ConfigCmd::Save(
-        ConfigPatch::builder().sleep_presets(next).build(),
-    ))
+    Ok(Effect::Config(ConfigCmd::Save(ConfigPatch {
+        sleep_presets: Some(next),
+        ..ConfigPatch::default()
+    }))
     .into())
 }

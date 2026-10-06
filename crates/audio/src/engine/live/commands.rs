@@ -188,9 +188,7 @@ impl Live {
                     gain: preload.gain,
                 };
                 Cmd::effect(LoopEffect::Execute(EngineEffect::Arm(None)))
-                    .then(Cmd::effect(LoopEffect::Execute(
-                        EngineEffect::RestartGapless,
-                    )))
+                    .then(Cmd::effect(LoopEffect::Execute(EngineEffect::ClearStaged)))
                     .then(Cmd::effect(LoopEffect::Run(revisions.preload(path))))
             }
             (Fade::Running, false) => Cmd::none(),
@@ -401,7 +399,7 @@ mod tests {
         set_crossfade(0),
         EngineRow {
             next: EngineState::Live(awaiting(playing(), "/b")),
-            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Arm(None))).then(Cmd::effect(LoopEffect::Execute(EngineEffect::RestartGapless))).then(preloading("/b"))),
+            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Arm(None))).then(Cmd::effect(LoopEffect::Execute(EngineEffect::ClearStaged))).then(preloading("/b"))),
         }
     )]
     #[case::replay_gain_reapplies_the_gain(

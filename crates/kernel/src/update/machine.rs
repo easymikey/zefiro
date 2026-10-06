@@ -41,11 +41,31 @@ pub enum LoopEffect<E, J, M> {
 
 pub type LoopCmd<E, J, M, V> = Cmd<LoopEffect<E, J, M>, V>;
 
+pub fn each_handled<T, E, M>(
+    asked: Vec<T>,
+    mut run: impl FnMut(T) -> Result<Cmd<E, M>, Unhandled>,
+) -> Result<Cmd<E, M>, Unhandled> {
+    asked
+        .into_iter()
+        .map(&mut run)
+        .reduce(|joined, each| match (joined, each) {
+            (Ok(first), Ok(second)) => Ok(first.then(second)),
+            (Ok(handled), Err(Unhandled)) | (Err(Unhandled), Ok(handled)) => {
+                Ok(handled)
+            }
+            (Err(Unhandled), Err(Unhandled)) => Err(Unhandled),
+        })
+        .unwrap_or(Err(Unhandled))
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
-    use crate::update::machine::{Machine, Unhandled};
+    use crate::{
+        cmd::Cmd,
+        update::machine::{Machine, Unhandled, each_handled},
+    };
 
     #[derive(Debug, PartialEq)]
     enum Latch {
@@ -120,6 +140,44 @@ mod tests {
         let mut slot = row.start;
         let result = slot.transition(row.message);
         assert_eq!(slot, row.next);
+        assert_eq!(result, row.result);
+    }
+
+    struct EachRow {
+        asked: Vec<u32>,
+        accepted: Vec<u32>,
+        result: Result<Cmd<u32, u32>, Unhandled>,
+    }
+
+    #[rstest]
+    #[case::all_rejected_is_unhandled(EachRow {
+        asked: vec![1, 2],
+        accepted: Vec::new(),
+        result: Err(Unhandled),
+    })]
+    #[case::one_accepted_keeps_its_cmd(EachRow {
+        asked: vec![1, 2],
+        accepted: vec![2],
+        result: Ok(Cmd::effect(2)),
+    })]
+    #[case::all_accepted_keep_their_order(EachRow {
+        asked: vec![1, 2],
+        accepted: vec![1, 2],
+        result: Ok(Cmd::effect(1).then(Cmd::effect(2))),
+    })]
+    #[case::an_empty_batch_is_unhandled(EachRow {
+        asked: Vec::new(),
+        accepted: vec![1],
+        result: Err(Unhandled),
+    })]
+    fn each_handled_fails_only_when_every_item_is_rejected(#[case] row: EachRow) {
+        let result = each_handled(row.asked, |each| {
+            if row.accepted.contains(&each) {
+                Ok(Cmd::effect(each))
+            } else {
+                Err(Unhandled)
+            }
+        });
         assert_eq!(result, row.result);
     }
 }

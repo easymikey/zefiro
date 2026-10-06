@@ -17,7 +17,7 @@ use kernel::{
         revision::Revision,
         speed::Speed,
         time::Moment,
-        track::{AudioFormat, Tags, Track},
+        track::{AudioFormat, Tags, Track, TrackParts},
     },
     message::{
         AudioEvent,
@@ -89,10 +89,6 @@ pub(crate) fn history_enqueue() -> Message {
     Message::Overlay(OverlayRequest::History(HistoryRequest::Enqueue))
 }
 
-pub(crate) fn jump_char(character: char) -> Message {
-    Message::Overlay(OverlayRequest::Jump(TextRequest::Char(character)))
-}
-
 pub(crate) fn text_char(character: char) -> Message {
     Message::Overlay(OverlayRequest::Text(TextRequest::Char(character)))
 }
@@ -137,13 +133,13 @@ pub(crate) fn logged(log: &[&str], playlist: &[&str]) -> Model {
 pub(crate) fn playing_nothing_selected(duration: Duration) -> Model {
     Model {
         player: Player::Playing {
-            track: Track::builder()
-                .path("/m/0.flac")
-                .duration(duration)
-                .tags(Tags::default())
-                .audio_format(AudioFormat::default())
-                .build()
-                .into(),
+            track: Track::new(TrackParts {
+                path: "/m/0.flac".into(),
+                duration,
+                tags: Tags::default(),
+                audio_format: AudioFormat::default(),
+            })
+            .into(),
             playhead: Playhead::anchored(
                 Duration::ZERO,
                 Moment::default(),

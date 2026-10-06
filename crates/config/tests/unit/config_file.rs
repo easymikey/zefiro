@@ -26,13 +26,14 @@ fn the_commented_fixture_parses_into_every_table() {
 
 #[test]
 fn a_patch_round_trips_through_the_public_parser() {
-    let patch = ConfigPatch::builder()
-        .theme(ThemeName::from_static("noir"))
-        .volume(Percent::clamped(42))
-        .device(OutputDevice::Named(
+    let patch = ConfigPatch {
+        theme: Some(ThemeName::from_static("noir")),
+        volume: Some(Percent::clamped(42)),
+        device: Some(OutputDevice::Named(
             DeviceName::new("Speakers".to_string()).unwrap(),
-        ))
-        .build();
+        )),
+        ..ConfigPatch::default()
+    };
     let written = patched_config_text(COMMENTED_CONFIG, patch).unwrap();
     let round_tripped = parse_config(&written).unwrap();
     assert_eq!(

@@ -43,8 +43,8 @@ pub(crate) mod corner {
 }
 
 pub(crate) mod chip {
-    pub(crate) const OPEN: char = '[';
-    pub(crate) const CLOSE: char = ']';
+    pub(crate) const OPEN: &str = "[";
+    pub(crate) const CLOSE: &str = "]";
     pub(crate) const PAD: char = ' ';
 }
 
@@ -105,8 +105,8 @@ pub(crate) mod audio_format {
 pub(crate) mod confirm_delete {
     pub(crate) const TITLE_WORD: &str = "MOVE TO TRASH?";
     pub(crate) const HINT: &str = "[y] yes   [n] no";
-    pub(crate) const QUOTE_OPEN: char = '"';
-    pub(crate) const QUOTE_CLOSE: char = '"';
+    pub(crate) const QUOTE_OPEN: &str = "\"";
+    pub(crate) const QUOTE_CLOSE: &str = "\"";
     pub(crate) const ARTIST_SEPARATOR: &str = " — ";
 }
 

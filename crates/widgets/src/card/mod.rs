@@ -4,7 +4,7 @@ pub(crate) mod headings;
 mod meters;
 pub mod metrics;
 
-use std::{borrow::Cow, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use kernel::domain::{
     appearance::{AppearanceSettings, CoverBrackets},
@@ -26,7 +26,7 @@ use ratatui::{
 };
 
 use crate::{
-    geometry::CoverSizing,
+    geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
     pixels::numeric::{small_count_u16, unit_fraction},
     primitive::{
         canvas::Canvas,
@@ -48,8 +48,8 @@ pub(crate) struct CardView<'a> {
     pub(crate) repeat: RepeatMode,
     pub(crate) play_order: &'a PlayOrder,
     pub(crate) displayed_track: Option<&'a Arc<Track>>,
-    pub output: &'a Output,
-    pub now: Moment,
+    pub(crate) output: &'a Output,
+    pub(crate) now: Moment,
 }
 
 #[derive(Debug, Clone)]
@@ -61,15 +61,16 @@ pub enum CardCover {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CardWidget<'a> {
-    pub(crate) view: CardView<'a>,
-    pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) cell_aspect: f32,
-    pub(crate) cover_sizing: CoverSizing,
-    pub(crate) appearance: AppearanceSettings,
-    pub(crate) cover_art: &'a CardCover,
+    view: CardView<'a>,
+    theme: ActiveTheme<'a>,
+    cell_aspect: f32,
+    cover_sizing: CoverSizing,
+    appearance_settings: AppearanceSettings,
+    card_cover: &'a CardCover,
 }
 
 const NO_TRACK_TITLE: &str = "No track";
+const NO_COVER_TEXT: &str = "No cover";
 const CARD_TITLE: &str = " Sifr ";
 
 pub(crate) fn card_frame(color: Color) -> Block<'static> {
@@ -82,11 +83,9 @@ pub(crate) fn card_frame(color: Color) -> Block<'static> {
 }
 
 impl<'a> CardView<'a> {
-    pub(crate) fn title(&self) -> Cow<'static, str> {
+    pub(crate) fn title(&self) -> &'a str {
         self.displayed_track
-            .map_or(Cow::Borrowed(NO_TRACK_TITLE), |track| {
-                track.song_title().into()
-            })
+            .map_or(NO_TRACK_TITLE, |track| track.song_title())
     }
 
     pub(crate) fn artist(&self) -> &'a str {
@@ -119,6 +118,47 @@ impl<'a> CardView<'a> {
     }
 }
 
+impl<'a> CardWidget<'a> {
+    #[must_use]
+    pub(crate) fn new(view: CardView<'a>, active_theme: ActiveTheme<'a>) -> Self {
+        Self {
+            view,
+            theme: active_theme,
+            cell_aspect: DEFAULT_CELL_ASPECT,
+            cover_sizing: CoverSizing::default(),
+            appearance_settings: AppearanceSettings::default(),
+            card_cover: &CardCover::Missing,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn cell_aspect(mut self, cell_aspect: f32) -> Self {
+        self.cell_aspect = cell_aspect;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn cover_sizing(mut self, cover_sizing: CoverSizing) -> Self {
+        self.cover_sizing = cover_sizing;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn appearance_settings(
+        mut self,
+        appearance_settings: AppearanceSettings,
+    ) -> Self {
+        self.appearance_settings = appearance_settings;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn card_cover(mut self, card_cover: &'a CardCover) -> Self {
+        self.card_cover = card_cover;
+        self
+    }
+}
+
 impl CardWidget<'_> {
     pub(crate) fn paint(&self, metrics: &CardMetrics, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
@@ -135,7 +175,7 @@ impl CardWidget<'_> {
         headings::paint(buffer, self, metrics);
         meters::paint(buffer, self, metrics);
         if let Some(color) = self.bracket_color() {
-            (&CornerBracketsWidget { color }).render(
+            (&CornerBracketsWidget::new(color)).render(
                 corner_brackets::expand(content_rect(metrics), BRACKET_MARGIN),
                 buffer,
             );
@@ -143,13 +183,16 @@ impl CardWidget<'_> {
     }
 
     fn bracket_color(&self) -> Option<Color> {
-        matches!(self.appearance.cover_brackets, CoverBrackets::Shown)
-            .then(|| self.theme.colors().accent)
+        matches!(
+            self.appearance_settings.cover_brackets,
+            CoverBrackets::Shown
+        )
+        .then(|| self.theme.colors().accent)
     }
 
     fn paint_cover(&self, buffer: &mut Buffer, area: Rect) {
-        match self.cover_art {
-            CardCover::Missing => Paragraph::new("No cover")
+        match self.card_cover {
+            CardCover::Missing => Paragraph::new(NO_COVER_TEXT)
                 .style(Style::default().fg(self.theme.colors().muted_foreground))
                 .alignment(Alignment::Center)
                 .render(area, buffer),
@@ -163,7 +206,7 @@ impl CardWidget<'_> {
             }
         }
         if let Some(color) = self.bracket_color() {
-            (&CornerBracketsWidget { color })
+            (&CornerBracketsWidget::new(color))
                 .render(corner_brackets::expand(area, BRACKET_MARGIN), buffer);
         }
     }
@@ -201,19 +244,13 @@ mod tests {
         playlist::PlayOrder,
         speed::Speed,
         time::Moment,
-        track::{AudioFormat, Hertz, Kbps, Tags, Track},
+        track::{AudioFormat, Hertz, Kbps, Tags, Track, TrackParts},
         transport::{Output, StreamError},
     };
 
     use crate::{
-        card::{
-            CardCover,
-            CardView,
-            CardWidget,
-            clock_frame_due,
-            metrics::card_height,
-        },
-        geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
+        card::{CardView, CardWidget, clock_frame_due, metrics::card_height},
+        geometry::CoverSizing,
         primitive::relative_time::format_time,
         repaint::Presence,
         spectrum::{SPECTRUM_BANDS, Spectrum},
@@ -222,23 +259,21 @@ mod tests {
     };
 
     fn full_format_track() -> Arc<Track> {
-        Arc::new(
-            Track::builder()
-                .path("/music/moon-river.mp3")
-                .duration(Duration::from_secs(245))
-                .tags(Tags {
-                    title: Some("Moon River".to_string()),
-                    artist: Some("Audrey Hepburn".to_string()),
-                    ..Tags::default()
-                })
-                .audio_format(AudioFormat {
-                    format: Some("mp3".to_string()),
-                    bitrate: Some(Kbps(320)),
-                    sample_rate: Some(Hertz(44_100)),
-                    ..AudioFormat::default()
-                })
-                .build(),
-        )
+        Arc::new(Track::new(TrackParts {
+            path: "/music/moon-river.mp3".into(),
+            duration: Duration::from_secs(245),
+            tags: Tags {
+                title: Some("Moon River".to_string()),
+                artist: Some("Audrey Hepburn".to_string()),
+                ..Tags::default()
+            },
+            audio_format: AudioFormat {
+                format: Some("mp3".to_string()),
+                bitrate: Some(Kbps(320)),
+                sample_rate: Some(Hertz(44_100)),
+                ..AudioFormat::default()
+            },
+        }))
     }
 
     struct Fixture {
@@ -308,14 +343,8 @@ mod tests {
         theme: &'a Theme,
         appearance: AppearanceSettings,
     ) -> CardWidget<'a> {
-        CardWidget {
-            view,
-            theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
-            cell_aspect: DEFAULT_CELL_ASPECT,
-            cover_sizing: CoverSizing::default(),
-            appearance,
-            cover_art: &CardCover::Missing,
-        }
+        CardWidget::new(view, ActiveTheme::new(theme, ColorDepth::TrueColor))
+            .appearance_settings(appearance)
     }
 
     #[test]
@@ -406,8 +435,8 @@ mod tests {
     fn cover_off_omits_the_no_cover_placeholder() {
         let theme = noir();
         let fixture = Fixture::playing(track("Moon River"));
-        let mut widget = card(fixture.view(), &theme, AppearanceSettings::default());
-        widget.cover_sizing = CoverSizing::Off;
+        let widget = card(fixture.view(), &theme, AppearanceSettings::default())
+            .cover_sizing(CoverSizing::Off);
         let text = rendered(60, card_height(), |frame| {
             frame.render_widget(&widget, frame.area());
         })

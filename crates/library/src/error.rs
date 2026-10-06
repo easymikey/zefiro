@@ -101,32 +101,32 @@ impl From<&Error> for LibraryError {
                 subject,
                 path,
                 source,
-            } => LibraryError::File {
+            } => LibraryError::Disk {
                 subject: *subject,
                 path: path.clone(),
-                kind: source.kind().into(),
+                source: source.kind().into(),
             },
-            Error::Json { subject, path, .. } => LibraryError::File {
+            Error::Json { subject, path, .. } => LibraryError::Disk {
                 subject: *subject,
                 path: path.clone(),
-                kind: IoError::Malformed,
+                source: IoError::Malformed,
             },
             Error::Encode { path, .. } | Error::Decode { path, .. } => {
-                LibraryError::File {
+                LibraryError::Disk {
                     subject: LibrarySubject::Cache,
                     path: path.clone(),
-                    kind: IoError::Malformed,
+                    source: IoError::Malformed,
                 }
             }
-            Error::Tags { path, .. } => LibraryError::File {
+            Error::Tags { path, .. } => LibraryError::Disk {
                 subject: LibrarySubject::Scan,
                 path: path.clone(),
-                kind: IoError::Malformed,
+                source: IoError::Malformed,
             },
-            Error::Trash { path, source } => LibraryError::File {
+            Error::Trash { path, source } => LibraryError::Disk {
                 subject: LibrarySubject::Trash,
                 path: path.clone(),
-                kind: trash_error(source),
+                source: trash_error(source),
             },
             Error::NoUserDirs => LibraryError::NoUserDirs,
         }
@@ -143,11 +143,11 @@ mod tests {
 
     use crate::error::Error;
 
-    fn file(subject: LibrarySubject, path: &str, kind: IoError) -> LibraryError {
-        LibraryError::File {
+    fn file(subject: LibrarySubject, path: &str, source: IoError) -> LibraryError {
+        LibraryError::Disk {
             subject,
             path: path.into(),
-            kind,
+            source,
         }
     }
 

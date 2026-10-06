@@ -22,22 +22,21 @@ impl std::fmt::Display for ConfigName {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
-    #[error("{file} is unreadable: {kind}")]
-    Unreadable { file: ConfigName, kind: IoError },
+    #[error("{name} is unreadable: {source}")]
+    Read { name: ConfigName, source: IoError },
     #[error("the themes folder is unreadable: {0}")]
-    ThemesUnreadable(IoError),
+    ListThemes(IoError),
     #[error("{file} could not be saved: {kind}")]
     Save { file: ConfigName, kind: IoError },
     #[error("Config watch failed: {0}")]
     Watch(IoError),
     #[error("{0}")]
-    Invalid(Diagnostic),
+    Parse(Diagnostic),
 }
 
-impl ConfigError {
-    #[must_use]
-    pub fn invalid(error: &impl std::error::Error) -> Self {
-        Self::Invalid(Diagnostic::from_error(error))
+impl From<Diagnostic> for ConfigError {
+    fn from(diagnostic: Diagnostic) -> Self {
+        Self::Parse(diagnostic)
     }
 }
 

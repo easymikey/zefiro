@@ -6,7 +6,7 @@ use kernel::domain::{
     geometry::{Cells, Pixels},
 };
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
-use ratatui_image::picker::Picker;
+use ratatui_image::picker::{Picker, ProtocolType};
 use rstest::{fixture, rstest};
 use terminal::pixels::CoverPainter;
 use widgets::{
@@ -92,15 +92,25 @@ fn painted(buffer: &Buffer, rect: Rect) -> bool {
         .any(|cell| cell.symbol() != " " || cell.bg != Color::Reset)
 }
 
-#[fixture]
-fn painter() -> CoverPainter {
-    let picker = Picker::halfblocks();
+fn painter_for(picker: Picker) -> CoverPainter {
     let font_size = picker.font_size();
     let cell = CellPixels {
         width: Pixels(u32::from(font_size.width)),
         height: Pixels(u32::from(font_size.height)),
     };
     CoverPainter::new(picker, cell)
+}
+
+#[fixture]
+fn painter() -> CoverPainter {
+    painter_for(Picker::halfblocks())
+}
+
+#[fixture]
+fn protocol_painter() -> CoverPainter {
+    let mut picker = Picker::halfblocks();
+    picker.set_protocol_type(ProtocolType::Kitty);
+    painter_for(picker)
 }
 
 #[fixture]
@@ -312,6 +322,34 @@ fn an_allowed_track_change_crossfades_over_time(
     let mut buffer = Buffer::empty(cover_rect());
     painter.paint(&mut buffer, &layout);
     assert!(painted(&buffer, cover_rect()));
+}
+
+#[rstest]
+fn a_protocol_track_change_repaints_once_without_a_crossfade(
+    mut scenery: Scenery,
+    mut protocol_painter: CoverPainter,
+) {
+    scenery.model.settings.appearance.animations = Animations::On;
+    let layout = layout_with_cover(Some(cover_rect()));
+
+    protocol_painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
+    protocol_painter.refresh(
+        &scenery.scene_at(Duration::ZERO),
+        cover_refresh(layout, CrossfadePermit::Withheld),
+    );
+
+    scenery.model.player = playing_model("second", 200, 50).player;
+    protocol_painter.set_cover(cover("second", Rgba([10, 10, 200, 255])));
+    let swapped = protocol_painter.refresh(
+        &scenery.scene_at(Duration::from_millis(1)),
+        cover_refresh(layout, CrossfadePermit::Allowed),
+    );
+
+    assert!(matches!(swapped, CardCover::Image));
+    assert_eq!(
+        protocol_painter.cover_motion(Duration::from_millis(1)),
+        CoverMotion::Still
+    );
 }
 
 #[rstest]

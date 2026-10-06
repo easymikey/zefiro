@@ -92,7 +92,7 @@ expression: "walked(model, messages)"
     ),
     (
         Overlay(
-            Jump(
+            Text(
                 Char(
                     '1',
                 ),
@@ -176,7 +176,7 @@ expression: "walked(model, messages)"
     ),
     (
         Overlay(
-            Jump(
+            Text(
                 Char(
                     '0',
                 ),
@@ -260,7 +260,7 @@ expression: "walked(model, messages)"
     ),
     (
         Overlay(
-            Jump(
+            Text(
                 Char(
                     ':',
                 ),
@@ -344,7 +344,7 @@ expression: "walked(model, messages)"
     ),
     (
         Overlay(
-            Jump(
+            Text(
                 Char(
                     '0',
                 ),
@@ -428,7 +428,7 @@ expression: "walked(model, messages)"
     ),
     (
         Overlay(
-            Jump(
+            Text(
                 Char(
                     '0',
                 ),

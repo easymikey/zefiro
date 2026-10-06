@@ -89,7 +89,7 @@ pub(crate) fn paint(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMe
         .render(metrics.status_row, buffer);
 
     let title_span: Span<'_> =
-        text(truncate(&title, usize::from(metrics.title_row.width)))
+        text(truncate(title, usize::from(metrics.title_row.width)))
             .fg(colors.text)
             .bold()
             .into();

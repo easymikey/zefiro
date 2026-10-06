@@ -15,6 +15,7 @@ num-traits = { workspace = true }
 palette = { workspace = true }
 ratatui = { workspace = true }
 strum = { workspace = true }
+thiserror = { workspace = true }
 tiny-skia = { workspace = true }
 tachyonfx = { workspace = true }
 unicode-width = { workspace = true }

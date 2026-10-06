@@ -133,11 +133,8 @@ fn overlay_input() -> impl Strategy<Value = OverlayRequest> {
             SettingsRowRequest::Step(direction)
         )),
         Just(OverlayRequest::Settings(SettingsRowRequest::Activate)),
-        typed
-            .clone()
-            .prop_map(|character| OverlayRequest::Text(TextRequest::Char(character))),
+        typed.prop_map(|character| OverlayRequest::Text(TextRequest::Char(character))),
         Just(OverlayRequest::Text(TextRequest::Backspace)),
-        typed.prop_map(|character| OverlayRequest::Jump(TextRequest::Char(character))),
     ]
 }
 
@@ -147,7 +144,6 @@ fn overlay() -> impl Strategy<Value = OverlayRequest> {
         Just(OverlayRequest::Close),
         Just(OverlayRequest::Confirm),
         overlay_input(),
-        Just(OverlayRequest::Jump(TextRequest::Backspace)),
         select(vec![
             HistoryRequest::Top,
             HistoryRequest::Bottom,
@@ -223,13 +219,10 @@ fn queue() -> impl Strategy<Value = QueueRequest> {
 }
 
 fn audio() -> impl Strategy<Value = AudioEvent> {
-    let failure = prop_oneof![
-        Just(AudioError::Decode {
-            path: "/tmp/track0.flac".into(),
-            kind: DecodeError::Corrupt,
-        }),
-        Just(AudioError::OutputLost(StreamError::DeviceGone)),
-    ];
+    let failure = prop_oneof![Just(AudioError::Decode {
+        path: "/tmp/track0.flac".into(),
+        kind: DecodeError::Corrupt,
+    }),];
     prop_oneof![
         (0u64..200).prop_map(|secs| AudioEvent::Playhead(Duration::from_secs(secs))),
         select(vec![
@@ -238,6 +231,7 @@ fn audio() -> impl Strategy<Value = AudioEvent> {
             AudioEvent::DeviceFellBack(OutputDevice::SystemDefault),
             AudioEvent::DevicesListed(Vec::new()),
             AudioEvent::Loaded(None),
+            AudioEvent::OutputLost(StreamError::DeviceGone),
         ]),
         failure.prop_map(AudioEvent::Error),
     ]
@@ -257,7 +251,10 @@ fn library() -> impl Strategy<Value = LibraryEvent> {
 
 fn config() -> impl Strategy<Value = ConfigEvent> {
     select(vec![
-        ConfigEvent::ThemesLoaded(vec![ThemeName::from_static("dusk")]),
+        ConfigEvent::ThemesLoaded {
+            theme_names: vec![ThemeName::from_static("dusk")],
+            refused: Vec::new(),
+        },
         ConfigEvent::MusicDirReloaded("/tmp".into()),
         ConfigEvent::ThemeReloaded(ThemeName::from_static("dusk")),
     ])

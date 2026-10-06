@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use kernel::{
     domain::{
-        appearance::CoverMode,
         history::HistoryEntry,
         index::RowIndex,
         overlay::{Overlay, TextEntry},
@@ -52,7 +51,7 @@ pub(crate) struct OverlayView<'a> {
 #[derive(Debug)]
 pub(crate) struct OverlayWidget<'a> {
     view: OverlayView<'a>,
-    layout: &'a FrameLayout,
+    frame_layout: &'a FrameLayout,
     avoid: Option<Rect>,
 }
 
@@ -73,7 +72,7 @@ impl ActiveOverlay<'_> {
             Self::Search(overlay) => overlay.areas(screen),
             Self::History(overlay) => overlay.areas(screen),
             Self::Settings(overlay) => overlay.areas(screen),
-            Self::Prompt(overlay) => overlay.areas(screen),
+            Self::Prompt(overlay) => OverlayAreas::Dialog(overlay.areas(screen)),
             Self::TrackDetails(overlay) => overlay.areas(screen),
         }
     }
@@ -85,7 +84,10 @@ impl ActiveOverlay<'_> {
             Self::Settings(widget) => widget.paint(areas, canvas),
             Self::History(widget) => widget.paint(areas, canvas),
             Self::TrackDetails(widget) => widget.paint(areas, canvas),
-            Self::Prompt(widget) => widget.paint(areas, canvas),
+            Self::Prompt(widget) => match areas {
+                OverlayAreas::Dialog(dialog) => widget.paint(dialog, canvas),
+                OverlayAreas::List(_) | OverlayAreas::Banner(_) => {}
+            },
         }
     }
 }
@@ -149,56 +151,50 @@ fn accent(theme: &ActiveTheme<'_>, phase: SavePhase) -> ratatui::style::Color {
 
 impl<'a> OverlayWidget<'a> {
     #[must_use]
-    pub(crate) fn placed(
-        view: OverlayView<'a>,
-        layout: &'a FrameLayout,
-        cover_mode: CoverMode,
-    ) -> Self {
+    pub(crate) fn new(view: OverlayView<'a>, frame_layout: &'a FrameLayout) -> Self {
         Self {
             view,
-            layout,
-            avoid: layout.cover_exclusion(cover_mode),
+            frame_layout,
+            avoid: None,
         }
     }
 
+    #[must_use]
+    pub(crate) fn avoid(mut self, avoid: Option<Rect>) -> Self {
+        self.avoid = avoid;
+        self
+    }
+
     fn container(&self, avoid: &'a [Rect]) -> ModalContainer<'a> {
-        if self.layout.playlist_pane.is_empty() {
+        if self.frame_layout.playlist_pane.is_empty() {
             ModalContainer::Modal(avoid)
         } else {
-            ModalContainer::Playlist(self.layout.playlist_pane)
+            ModalContainer::Playlist(self.frame_layout.playlist_pane)
         }
     }
 
     fn active(&'a self) -> Option<ActiveOverlay<'a>> {
         let avoid = self.avoid.as_slice();
         match self.view.overlay? {
-            Overlay::Help => Some(ActiveOverlay::Help(HelpWidget {
-                theme: self.view.theme,
-                bindings: self.view.bindings,
-                avoid,
-            })),
-            Overlay::Search(search) => Some(ActiveOverlay::Search(SearchWidget {
-                theme: self.view.theme,
-                tracks: self.view.tracks,
-                search,
-                bounds: self.layout.search_bounds,
-                container: self.container(avoid),
-            })),
-            Overlay::History(cursor) => Some(ActiveOverlay::History(HistoryWidget {
-                theme: self.view.theme,
-                entries: self.view.history,
-                now: self.view.now,
-                selected: RowIndex::new(usize::from(cursor.selected())),
-                container: self.container(avoid),
-            })),
-            Overlay::Settings(current) => {
-                Some(ActiveOverlay::Settings(SettingsWidget {
-                    theme: self.view.theme,
-                    view: self.view.settings_view,
-                    current: *current,
-                    avoid,
-                }))
-            }
+            Overlay::Help => Some(ActiveOverlay::Help(
+                HelpWidget::new(self.view.bindings, self.view.theme).avoid(avoid),
+            )),
+            Overlay::Search(search) => Some(ActiveOverlay::Search(
+                SearchWidget::new(search, self.view.theme)
+                    .tracks(self.view.tracks)
+                    .bounds(self.frame_layout.search_bounds)
+                    .container(self.container(avoid)),
+            )),
+            Overlay::History(cursor) => Some(ActiveOverlay::History(
+                HistoryWidget::new(self.view.history, self.view.theme)
+                    .now(self.view.now)
+                    .selected(RowIndex::new(usize::from(cursor.selected())))
+                    .container(self.container(avoid)),
+            )),
+            Overlay::Settings(current) => Some(ActiveOverlay::Settings(
+                SettingsWidget::new(self.view.settings_view, *current, self.view.theme)
+                    .avoid(avoid),
+            )),
             overlay @ (Overlay::ConfirmDelete(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_)
@@ -214,20 +210,16 @@ impl<'a> OverlayWidget<'a> {
     ) -> Option<ActiveOverlay<'a>> {
         match overlay {
             Overlay::ConfirmDelete(candidate) => Some(ActiveOverlay::Prompt(
-                confirm_delete::prompt(candidate, self.view.theme).avoiding(avoid),
+                confirm_delete::prompt(candidate, self.view.theme).avoid(avoid),
             )),
             Overlay::JumpToTime(entry) => Some(ActiveOverlay::Prompt(
-                jump_to_time::prompt(entry, self.view.theme).avoiding(avoid),
+                jump_to_time::prompt(entry, self.view.theme).avoid(avoid),
             )),
-            Overlay::TrackDetails(track) => {
-                Some(ActiveOverlay::TrackDetails(TrackDetailsWidget {
-                    track: track.as_ref(),
-                    colors: self.view.theme.colors(),
-                    avoid,
-                }))
-            }
+            Overlay::TrackDetails(track) => Some(ActiveOverlay::TrackDetails(
+                TrackDetailsWidget::new(track.as_ref(), self.view.theme).avoid(avoid),
+            )),
             Overlay::MusicDir(entry) => Some(ActiveOverlay::Prompt(
-                music_dir::prompt(entry, self.view.theme).avoiding(avoid),
+                music_dir::prompt(entry, self.view.theme).avoid(avoid),
             )),
             Overlay::Help
             | Overlay::Search(_)
@@ -237,13 +229,10 @@ impl<'a> OverlayWidget<'a> {
         }
     }
 
-    fn save_line(&self) -> Option<SaveLine> {
-        self.view.overlay.and_then(SaveLine::from_overlay)
-    }
-
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> Option<OverlayAreas> {
-        if self.save_line().is_some() {
+        let overlay = self.view.overlay?;
+        if let Overlay::SavePlaylist(_) = overlay {
             return banner_area(screen).map(OverlayAreas::Banner);
         }
         Some(self.active()?.areas(screen))
@@ -259,18 +248,23 @@ impl<'a> OverlayWidget<'a> {
 
 impl OverlayWidget<'_> {
     pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
-        match (self.save_line(), areas) {
-            (Some(save_line), OverlayAreas::Banner(banner)) => self.paint_banner(
-                save_line,
-                Canvas {
-                    area: banner,
-                    buffer: canvas.buffer,
-                },
-            ),
-            (Some(_), OverlayAreas::List(_) | OverlayAreas::Dialog(_)) => {}
-            (None, _) => {
-                if let Some(overlay) = self.active() {
-                    overlay.paint(areas, canvas);
+        let Some(overlay) = self.view.overlay else {
+            return;
+        };
+        match SaveLine::from_overlay(overlay) {
+            Some(save_line) => match areas {
+                OverlayAreas::Banner(banner) => self.paint_banner(
+                    save_line,
+                    Canvas {
+                        area: banner,
+                        buffer: canvas.buffer,
+                    },
+                ),
+                OverlayAreas::List(_) | OverlayAreas::Dialog(_) => {}
+            },
+            None => {
+                if let Some(active) = self.active() {
+                    active.paint(areas, canvas);
                 }
             }
         }
@@ -328,7 +322,7 @@ mod tests {
         model: &'a Model,
         layout: &'a FrameLayout,
     ) -> OverlayWidget<'a> {
-        OverlayWidget::placed(
+        OverlayWidget::new(
             OverlayView {
                 overlay: model.workspace.overlay.as_ref(),
                 tracks: &model.playlist.tracks,
@@ -339,8 +333,8 @@ mod tests {
                 now: Moment::default(),
             },
             layout,
-            CoverMode::Vinyl,
         )
+        .avoid(layout.cover_exclusion(CoverMode::Vinyl))
     }
 
     #[test]
@@ -437,14 +431,14 @@ mod tests {
     #[test]
     fn track_details_overlay_shows_the_dialog() {
         let theme = noir();
-        let track = std::sync::Arc::new(
-            kernel::domain::track::Track::builder()
-                .path("/music/moon_river.mp3")
-                .duration(std::time::Duration::from_secs(245))
-                .tags(kernel::domain::track::Tags::default())
-                .audio_format(kernel::domain::track::AudioFormat::default())
-                .build(),
-        );
+        let track = std::sync::Arc::new(kernel::domain::track::Track::new(
+            kernel::domain::track::TrackParts {
+                path: "/music/moon_river.mp3".into(),
+                duration: std::time::Duration::from_secs(245),
+                tags: kernel::domain::track::Tags::default(),
+                audio_format: kernel::domain::track::AudioFormat::default(),
+            },
+        ));
         let model = model_with(Overlay::TrackDetails(track));
         let layout = layout(Rect::default());
         let overlay = layer(&theme, &model, &layout);

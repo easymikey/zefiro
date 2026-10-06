@@ -132,8 +132,15 @@ pub(crate) struct KeyHintsView<'a> {
 
 #[derive(Debug)]
 pub(crate) struct KeyHintsWidget<'a> {
-    pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) view: KeyHintsView<'a>,
+    theme: ActiveTheme<'a>,
+    view: KeyHintsView<'a>,
+}
+
+impl<'a> KeyHintsWidget<'a> {
+    #[must_use]
+    pub(crate) fn new(view: KeyHintsView<'a>, theme: ActiveTheme<'a>) -> Self {
+        Self { theme, view }
+    }
 }
 
 impl Widget for &KeyHintsWidget<'_> {
@@ -231,10 +238,8 @@ mod tests {
 
     fn hints_text_at(view: KeyHintsView<'_>, width: u16) -> String {
         let theme = noir();
-        let widget = KeyHintsWidget {
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            view,
-        };
+        let widget =
+            KeyHintsWidget::new(view, ActiveTheme::new(&theme, ColorDepth::TrueColor));
         rendered(width, 1, |frame| frame.render_widget(&widget, frame.area()))
             .to_string()
     }

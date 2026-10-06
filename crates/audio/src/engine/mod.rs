@@ -118,7 +118,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn error() -> AudioError {
-        AudioError::Stream {
+        AudioError::OpenStream {
             reason: kernel::domain::config::Diagnostic::from_error(
                 &std::io::Error::other("no output device available"),
             ),
@@ -140,17 +140,13 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn device_error() -> AudioError {
-        AudioError::Device {
+        AudioError::OpenDevice {
             requested: OutputDevice::SystemDefault,
         }
     }
 
-    pub(crate) fn output_lost() -> AudioError {
-        AudioError::OutputLost(StreamError::DeviceGone)
-    }
-
     pub(crate) fn failed() -> EngineMessage {
-        EngineMessage::Error(output_lost())
+        EngineMessage::OutputLost(StreamError::DeviceGone)
     }
 
     pub(crate) fn closed() -> EngineState {
@@ -375,8 +371,12 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn installed(preload: &CurrentTrack) -> EngineMessage {
+    pub(crate) fn installed(
+        preload: &CurrentTrack,
+        revision: Revision,
+    ) -> EngineMessage {
         EngineMessage::Attached {
+            revision,
             preload_mode: PreloadMode::Crossfade(Speed::default()),
             duration: preload.total,
         }

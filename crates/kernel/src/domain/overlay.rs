@@ -62,10 +62,33 @@ impl<E> Default for TextEntry<E> {
     }
 }
 
+pub trait Accepts {
+    const MAX_LEN: usize;
+
+    #[must_use]
+    fn accepts(character: char) -> bool;
+}
+
+impl Accepts for PlaylistNameError {
+    const MAX_LEN: usize = usize::MAX;
+
+    fn accepts(_character: char) -> bool {
+        true
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum MusicDirError {
     #[error("enter a folder path")]
     Empty,
+}
+
+impl Accepts for MusicDirError {
+    const MAX_LEN: usize = usize::MAX;
+
+    fn accepts(_character: char) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -79,12 +102,4 @@ pub struct DeleteCandidate {
     pub source: TrackRef,
     pub title: String,
     pub artist: String,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct JumpDigits;
-
-impl JumpDigits {
-    pub(crate) const SEPARATOR: char = ':';
-    pub(crate) const MAX_LEN: usize = 8;
 }

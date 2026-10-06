@@ -22,7 +22,6 @@ pub(crate) struct Fader {
 }
 
 pub(crate) struct Output {
-    _stream: Box<dyn std::any::Any>,
     mix: rodio::mixer::Mixer,
     pub(crate) primary: rodio::Sink,
     pub(crate) control: Option<EnvelopeControl>,
@@ -70,7 +69,7 @@ fn fresh_sink(mix: &rodio::mixer::Mixer, speed: Speed) -> rodio::Sink {
 
 impl Output {
     pub(crate) fn with_stream(
-        stream: rodio::OutputStream,
+        stream: &rodio::OutputStream,
         speed: Speed,
         spectrum: &Handoff,
     ) -> Self {
@@ -81,7 +80,6 @@ impl Output {
         mix.add(Zero::new(channels, rate));
         let primary = fresh_sink(&mix, speed);
         Self {
-            _stream: Box::new(stream),
             mix,
             primary,
             control: None,
@@ -120,24 +118,21 @@ impl Output {
         }
     }
 
-    pub(crate) fn append<S>(&self, source: Envelope<S>)
+    pub(crate) fn append<S>(&self, envelope: Envelope<S>)
     where
         S: Source + Send + 'static,
     {
-        self.primary.append(source);
+        self.primary.append(envelope);
     }
 
-    pub(crate) fn stage<S>(
-        &mut self,
-        (source, control): (Envelope<S>, EnvelopeControl),
-        speed: Speed,
-    ) where
+    pub(crate) fn stage<S>(&self, envelope: Envelope<S>, speed: Speed) -> rodio::Sink
+    where
         S: Source + Send + 'static,
     {
         let sink = fresh_sink(&self.mix, speed);
         sink.set_volume(Gain::SILENCE.amplitude());
-        sink.append(source);
-        self.incoming_fader = Some(Fader { sink, control });
+        sink.append(envelope);
+        sink
     }
 
     pub(crate) fn sinks(&self) -> impl Iterator<Item = &rodio::Sink> {
@@ -147,38 +142,27 @@ impl Output {
     }
 
     #[must_use]
-    pub(crate) fn holding(&self, revision: Revision) -> Option<&EnvelopeControl> {
+    pub(crate) fn holder(
+        &self,
+        revision: Revision,
+    ) -> Option<(SinkRole, &EnvelopeControl)> {
         [
-            self.control.as_ref(),
-            self.queued_control.as_ref(),
-            self.incoming_fader.as_ref().map(|fader| &fader.control),
-            self.outgoing_fader.as_ref().map(|fader| &fader.control),
+            (SinkRole::Primary, self.control.as_ref()),
+            (
+                SinkRole::Incoming,
+                self.incoming_fader.as_ref().map(|fader| &fader.control),
+            ),
+            (
+                SinkRole::Outgoing,
+                self.outgoing_fader.as_ref().map(|fader| &fader.control),
+            ),
         ]
         .into_iter()
-        .flatten()
-        .find(|control| control.revision() == revision)
-    }
-
-    #[must_use]
-    pub(crate) fn role(&self, revision: Revision) -> Option<SinkRole> {
-        let holds = |control: &EnvelopeControl| control.revision() == revision;
-        if self.control.as_ref().is_some_and(holds) {
-            Some(SinkRole::Primary)
-        } else if self
-            .incoming_fader
-            .as_ref()
-            .is_some_and(|fader| holds(&fader.control))
-        {
-            Some(SinkRole::Incoming)
-        } else if self
-            .outgoing_fader
-            .as_ref()
-            .is_some_and(|fader| holds(&fader.control))
-        {
-            Some(SinkRole::Outgoing)
-        } else {
-            None
-        }
+        .find_map(|(role, control)| {
+            control
+                .filter(|control| control.revision() == revision)
+                .map(|control| (role, control))
+        })
     }
 }
 
@@ -192,7 +176,6 @@ pub(crate) mod tests {
         let (mix, _mix_source) = rodio::mixer::mixer(1, 44_100);
         let primary = fresh_sink(&mix, Speed::default());
         Output {
-            _stream: Box::new(()),
             mix,
             primary,
             control: None,

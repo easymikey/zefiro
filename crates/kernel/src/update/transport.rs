@@ -40,58 +40,68 @@ impl Machine for Transport {
     type Effect = Cmd;
 
     fn transition(&mut self, message: TransportMessage) -> Result<Cmd, Unhandled> {
-        Ok(match message {
+        match message {
             TransportMessage::StepVolume(direction) => {
-                self.volume = self.volume.step(direction);
-                Effect::Macos(MacosCmd::SetVolume(self.volume)).into()
-            }
-            TransportMessage::SetVolume(volume) if volume == self.volume => {
-                return Err(Unhandled);
+                let volume = self.volume.step(direction);
+                replace(&mut self.volume, volume)?;
+                Ok(Effect::Macos(MacosCmd::SetVolume(self.volume)).into())
             }
             TransportMessage::SetVolume(volume) => {
-                self.volume = volume;
-                Cue::VolumeChanged.into()
+                replace(&mut self.volume, volume)?;
+                Ok(Cue::VolumeChanged.into())
             }
             TransportMessage::StepSpeed(direction) => {
-                self.speed = self.speed.step(direction);
-                Effect::Audio(AudioCmd::SetSpeed(self.speed)).into()
+                let speed = self.speed.step(direction);
+                replace(&mut self.speed, speed)?;
+                Ok(Effect::Audio(AudioCmd::SetSpeed(self.speed)).into())
             }
             TransportMessage::CycleSleep {
                 presets,
                 revision,
                 now,
             } => {
-                self.sleep = next_sleep(self.sleep, presets.as_slice(), now);
-                self.sleep.map_or(Cmd::none(), |timer| {
+                let sleep = next_sleep(self.sleep, presets.as_slice(), now);
+                replace(&mut self.sleep, sleep)?;
+                Ok(self.sleep.map_or(Cmd::none(), |timer| {
                     Effect::After {
                         delay: timer.delay,
                         timer: Timer::Sleep(revision),
                     }
                     .into()
-                })
+                }))
             }
-            TransportMessage::AbMark(None) => return Err(Unhandled),
+            TransportMessage::AbMark(None) => Err(Unhandled),
             TransportMessage::AbMark(Some(position)) => {
-                self.ab_loop = AbLoop::mark(self.ab_loop, position);
-                Cmd::none()
+                let ab_loop = AbLoop::mark(self.ab_loop, position);
+                replace(&mut self.ab_loop, ab_loop)?;
+                Ok(Cmd::none())
             }
             TransportMessage::OutputLost(error) => {
                 self.output = Output::Lost(error);
-                Cmd::none()
+                Ok(Cmd::none())
             }
             TransportMessage::OutputReady => {
                 self.output = Output::Ready;
-                Cmd::none()
+                Ok(Cmd::none())
             }
             TransportMessage::TrackChanged => {
-                self.ab_loop = None;
-                Cmd::none()
+                replace(&mut self.ab_loop, None)?;
+                Ok(Cmd::none())
             }
             TransportMessage::SleepFired => {
-                self.sleep = None;
-                Cmd::none()
+                replace(&mut self.sleep, None)?;
+                Ok(Cmd::none())
             }
-        })
+        }
+    }
+}
+
+fn replace<T: PartialEq>(field: &mut T, next: T) -> Result<(), Unhandled> {
+    if *field == next {
+        Err(Unhandled)
+    } else {
+        *field = next;
+        Ok(())
     }
 }
 
@@ -200,8 +210,12 @@ mod tests {
     }
 
     fn cycle_sleep() -> TransportMessage {
+        cycle_sleep_with(SleepPresets::default())
+    }
+
+    fn cycle_sleep_with(presets: SleepPresets) -> TransportMessage {
         TransportMessage::CycleSleep {
-            presets: SleepPresets::default(),
+            presets,
             revision: revision(),
             now: Moment::new(NOW),
         }
@@ -249,16 +263,6 @@ mod tests {
         TransportMessage::StepVolume(Direction::Previous),
         (at_volume(45), system_volume(45))
     )]
-    #[case::step_volume_at_the_ceiling(
-        at_volume(100),
-        TransportMessage::StepVolume(Direction::Next),
-        (at_volume(100), system_volume(100))
-    )]
-    #[case::step_volume_at_the_floor(
-        at_volume(0),
-        TransportMessage::StepVolume(Direction::Previous),
-        (at_volume(0), system_volume(0))
-    )]
     #[case::set_volume_to_a_new_level(
         at_volume(50),
         TransportMessage::SetVolume(Percent::clamped(70)),
@@ -273,16 +277,6 @@ mod tests {
         at_speed(1.0),
         TransportMessage::StepSpeed(Direction::Previous),
         (at_speed(0.75), audio_speed(0.75))
-    )]
-    #[case::step_speed_at_the_ceiling(
-        at_speed(4.0),
-        TransportMessage::StepSpeed(Direction::Next),
-        (at_speed(4.0), audio_speed(4.0))
-    )]
-    #[case::step_speed_at_the_floor(
-        at_speed(0.25),
-        TransportMessage::StepSpeed(Direction::Previous),
-        (at_speed(0.25), audio_speed(0.25))
     )]
     #[case::cycle_sleep_starts_at_the_first_preset(
         sleeping(None),
@@ -313,6 +307,16 @@ mod tests {
         Transport::default(),
         TransportMessage::OutputLost(StreamError::Backend),
         (output_lost(), Cmd::none())
+    )]
+    #[case::output_lost_with_the_same_error_records_it_again(
+        output_lost(),
+        TransportMessage::OutputLost(StreamError::Backend),
+        (output_lost(), Cmd::none())
+    )]
+    #[case::output_ready_while_ready_stays_ready(
+        Transport::default(),
+        TransportMessage::OutputReady,
+        (Transport::default(), Cmd::none())
     )]
     #[case::output_ready_clears_the_loss(
         output_lost(),
@@ -349,6 +353,30 @@ mod tests {
         looping(a_only(10)),
         TransportMessage::AbMark(None)
     )]
+    #[case::step_volume_at_the_ceiling(
+        at_volume(100),
+        TransportMessage::StepVolume(Direction::Next)
+    )]
+    #[case::step_volume_at_the_floor(
+        at_volume(0),
+        TransportMessage::StepVolume(Direction::Previous)
+    )]
+    #[case::step_speed_at_the_ceiling(
+        at_speed(4.0),
+        TransportMessage::StepSpeed(Direction::Next)
+    )]
+    #[case::step_speed_at_the_floor(
+        at_speed(0.25),
+        TransportMessage::StepSpeed(Direction::Previous)
+    )]
+    #[case::cycle_sleep_without_presets_and_without_a_timer(
+        sleeping(None),
+        cycle_sleep_with(SleepPresets::from_minutes(&[]).unwrap())
+    )]
+    #[case::ab_mark_at_the_a_point(looping(a_only(10)), mark(10))]
+    #[case::ab_mark_before_the_a_point(looping(a_only(10)), mark(5))]
+    #[case::track_changed_without_a_loop(looping(None), TransportMessage::TrackChanged)]
+    #[case::sleep_fired_without_a_timer(sleeping(None), TransportMessage::SleepFired)]
     fn a_transport_message_that_changes_nothing_is_refused(
         #[case] mut transport: Transport,
         #[case] message: TransportMessage,

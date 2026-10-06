@@ -217,17 +217,19 @@ expression: "walked(model, messages)"
         ),
         [
             Library(
-                AppendHistory(
-                    HistoryEntry {
-                        track: Local(
-                            "/tmp/track1.flac",
-                        ),
-                        title: "track1",
-                        artist: None,
-                        at: Moment(
-                            0ns,
-                        ),
-                    },
+                Disk(
+                    AppendHistory(
+                        HistoryEntry {
+                            track: Local(
+                                "/tmp/track1.flac",
+                            ),
+                            title: "track1",
+                            artist: None,
+                            at: Moment(
+                                0ns,
+                            ),
+                        },
+                    ),
                 ),
             ),
             Macos(

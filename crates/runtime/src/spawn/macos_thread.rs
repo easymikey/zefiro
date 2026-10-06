@@ -14,11 +14,7 @@ use crate::{
 
 fn macos_loop(setup: &SpawnSetup<'_>) -> DriverLoop<MacosDriver, MacosJob> {
     let jobs = Jobs {
-        run: |job: MacosJob| {
-            job.run(|path| {
-                library::tags::embedded_cover(path).map_err(std::io::Error::other)
-            })
-        },
+        run: |job: MacosJob| job.run(library::cover::cover_bytes),
     };
     DriverLoop::<MacosDriver, MacosJob> {
         row: registry::row(DriverName::Macos),

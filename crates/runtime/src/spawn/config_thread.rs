@@ -194,10 +194,11 @@ mod tests {
     }
 
     fn themes_loaded(message: Message) -> Option<Vec<ThemeName>> {
-        let Message::Config(ConfigEvent::ThemesLoaded(themes)) = message else {
+        let Message::Config(ConfigEvent::ThemesLoaded { theme_names, .. }) = message
+        else {
             return None;
         };
-        Some(themes)
+        Some(theme_names)
     }
 
     #[test]
@@ -252,16 +253,14 @@ mod tests {
         drain(&run.messages);
         run.doorbell.try_iter().for_each(drop);
 
-        run.send(ConfigCmd::Save(
-            ConfigPatch::builder()
-                .theme(ThemeName::from_static("noir"))
-                .build(),
-        ));
-        run.send(ConfigCmd::SetAppearance(
-            AppearancePatch::builder()
-                .format_chips(FormatChips::Shown)
-                .build(),
-        ));
+        run.send(ConfigCmd::Save(ConfigPatch {
+            theme: Some(ThemeName::from_static("noir")),
+            ..ConfigPatch::default()
+        }));
+        run.send(ConfigCmd::SetAppearance(AppearancePatch {
+            format_chips: Some(FormatChips::Shown),
+            ..AppearancePatch::default()
+        }));
 
         let config_path = directory.path().join("config.toml");
         let appearance_path = directory.path().join("sifr-ui.toml");
@@ -283,11 +282,10 @@ mod tests {
         let run = ConfigRun::start(directory.path());
         drain(&run.messages);
 
-        run.send(ConfigCmd::SetAppearance(
-            AppearancePatch::builder()
-                .key_hints(KeyHints::Hidden)
-                .build(),
-        ));
+        run.send(ConfigCmd::SetAppearance(AppearancePatch {
+            key_hints: Some(KeyHints::Hidden),
+            ..AppearancePatch::default()
+        }));
         run.send(ConfigCmd::Flush);
         run.stop();
 

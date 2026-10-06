@@ -18,7 +18,7 @@ impl HistoryEntry {
     pub fn from_track(track: &Track, at: Moment) -> Self {
         Self {
             track: track.source().clone(),
-            title: track.song_title(),
+            title: track.song_title().to_owned(),
             artist: track.tags().artist.clone(),
             at,
         }

@@ -4,7 +4,17 @@ use std::{
 };
 
 use kernel::{
-    cmd::{AudioCmd, Cmd, Effect, LibraryCmd, MacosCmd, Playback, ScanMode, TrackLoad},
+    cmd::{
+        AudioCmd,
+        Cmd,
+        DiskCmd,
+        Effect,
+        LibraryCmd,
+        MacosCmd,
+        Playback,
+        ScanMode,
+        TrackLoad,
+    },
     domain::{
         cue::{Cue, PlaybackChange},
         cursor::Cursor,
@@ -78,7 +88,7 @@ fn favorites_saved(paths: &[&str]) -> Cmd {
         .map(|path| kernel::domain::track::TrackRef::Local(PathBuf::from(path)))
         .collect();
     Cmd::from_iter([
-        Effect::Library(LibraryCmd::SaveFavorites(saved)),
+        Effect::Library(LibraryCmd::Disk(DiskCmd::SaveFavorites(saved))),
         Effect::Animate(Cue::FavoriteToggled),
     ])
 }
@@ -475,9 +485,8 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
                 gain: None,
                 revision: Revision::default().next(),
             })),
-            Effect::Library(LibraryCmd::AppendHistory(HistoryEntry::from_track(
-                &track,
-                Moment::default(),
+            Effect::Library(LibraryCmd::Disk(DiskCmd::AppendHistory(
+                HistoryEntry::from_track(&track, Moment::default()),
             ))),
             Effect::Macos(MacosCmd::NowPlaying(Some(track))),
             Effect::Audio(AudioCmd::SetPlayback(Playback::Playing)),
@@ -590,7 +599,9 @@ fn trash_removes_the_track_everywhere_and_asks_for_the_file_to_go() {
     assert_eq!(
         effects,
         Cmd::from_iter([
-            Effect::Library(LibraryCmd::Trash(PathBuf::from("/music/a.flac"))),
+            Effect::Library(LibraryCmd::Disk(DiskCmd::Trash(PathBuf::from(
+                "/music/a.flac"
+            )))),
             Effect::Animate(Cue::TrackDeleted),
         ])
     );
@@ -680,7 +691,9 @@ fn a_rescan_under_the_confirm_overlay_trashes_the_same_file() {
     .unwrap();
 
     assert!(confirmed.effects().any(|effect| *effect
-        == Effect::Library(LibraryCmd::Trash(PathBuf::from("/music/b.flac")))));
+        == Effect::Library(LibraryCmd::Disk(DiskCmd::Trash(PathBuf::from(
+            "/music/b.flac"
+        ))))));
     assert_eq!(
         paths(&model.playlist.tracks),
         [

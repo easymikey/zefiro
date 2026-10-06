@@ -7,6 +7,7 @@ use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
     cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd},
     domain::driver::{DriverName, DriverStatus, Drivers},
+    message::DriverEvent,
 };
 
 use crate::driver_thread::{Congestion, DriverThread, SendError};
@@ -18,11 +19,19 @@ pub(crate) enum DropReason {
     Closed,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Episode {
+    #[default]
+    Clear,
+    Reported,
+}
+
 #[derive(Debug)]
 pub(crate) enum Port<C> {
     Open {
         driver: DriverName,
         full: Congestion,
+        episode: Episode,
         sender: Sender<C>,
         thread: JoinHandle<Result<(), SendError>>,
     },
@@ -31,29 +40,30 @@ pub(crate) enum Port<C> {
 }
 
 impl<C> Port<C> {
-    #[cfg(test)]
-    pub(crate) fn new(driver: DriverName, sender: Sender<C>, full: Congestion) -> Self {
-        Self::Open {
-            driver,
-            full,
-            sender,
-            thread: thread::spawn(|| Ok(())),
-        }
-    }
-
     pub(crate) fn spawned(driver: DriverName, thread: DriverThread<C>) -> Self {
         Self::Open {
             driver,
             full: thread.full,
+            episode: Episode::Clear,
             sender: thread.commands,
             thread: thread.handle,
         }
     }
 
-    pub(crate) fn full(&self) -> Option<&Congestion> {
-        match self {
-            Self::Open { full, .. } => Some(full),
-            Self::HungUp(_) | Self::Closed => None,
+    pub(crate) fn full(&mut self) -> Option<DriverEvent> {
+        let Self::Open { full, episode, .. } = self else {
+            return None;
+        };
+        match (full.take(), *episode) {
+            (true, Episode::Clear) => {
+                *episode = Episode::Reported;
+                Some(DriverEvent::Full)
+            }
+            (true, Episode::Reported) => None,
+            (false, _) => {
+                *episode = Episode::Clear;
+                None
+            }
         }
     }
 
@@ -106,7 +116,7 @@ pub(crate) struct Ports {
 }
 
 impl Ports {
-    pub(crate) fn full(&self, driver: DriverName) -> Option<&Congestion> {
+    pub(crate) fn full(&mut self, driver: DriverName) -> Option<DriverEvent> {
         match driver {
             DriverName::Audio => self.audio.full(),
             DriverName::Library => self.library.full(),
@@ -139,7 +149,9 @@ impl Ports {
 
 #[cfg(test)]
 mod tests {
-    use crossbeam_channel::{bounded, unbounded};
+    use std::thread;
+
+    use crossbeam_channel::{Sender, bounded, unbounded};
     use kernel::{
         cmd::AudioCmd,
         domain::driver::{DriverName, DriverStatus, Drivers},
@@ -148,8 +160,24 @@ mod tests {
 
     use crate::{
         driver_thread::Congestion,
-        port::{DropReason, Port},
+        port::{DropReason, Episode, Port},
     };
+
+    impl<C> Port<C> {
+        pub(crate) fn new(
+            driver: DriverName,
+            sender: Sender<C>,
+            full: Congestion,
+        ) -> Self {
+            Self::Open {
+                driver,
+                full,
+                episode: Episode::Clear,
+                sender,
+                thread: thread::spawn(|| Ok(())),
+            }
+        }
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Inbox {
@@ -268,7 +296,9 @@ mod tests {
         let (sender, _receiver) = unbounded();
         let mut drivers = Drivers::default();
         drivers.record_mut(DriverName::Audio).status = DriverStatus::Running;
-        let mut port = Port::new(DriverName::Audio, sender, Congestion::default());
+        let congestion = Congestion::default();
+        let mut port = Port::new(DriverName::Audio, sender, congestion.clone());
+        congestion.raise();
 
         port.hang_up();
 

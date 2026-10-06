@@ -19,7 +19,7 @@ use kernel::{
         speed::Speed,
         time::Moment,
         toast::TOAST_LIFETIME,
-        track::{AudioFormat, Tags, Track},
+        track::{AudioFormat, Tags, Track, TrackParts},
     },
     message::Timer,
 };
@@ -39,14 +39,12 @@ pub(crate) fn track_at(path: &str) -> Arc<Track> {
 }
 
 pub(crate) fn track_with_duration(path: &str, duration: Duration) -> Arc<Track> {
-    Arc::new(
-        Track::builder()
-            .path(path)
-            .duration(duration)
-            .tags(Tags::default())
-            .audio_format(AudioFormat::default())
-            .build(),
-    )
+    Arc::new(Track::new(TrackParts {
+        path: path.into(),
+        duration,
+        tags: Tags::default(),
+        audio_format: AudioFormat::default(),
+    }))
 }
 
 pub(crate) fn dated_track(number: usize) -> Arc<Track> {
@@ -55,29 +53,25 @@ pub(crate) fn dated_track(number: usize) -> Arc<Track> {
 
 pub(crate) fn titled_track(path: &str, title: &str, artist: &str) -> Arc<Track> {
     let artist = (!artist.is_empty()).then(|| artist.to_string());
-    Arc::new(
-        Track::builder()
-            .path(path)
-            .duration(FIXTURE_LENGTH)
-            .tags(Tags {
-                title: Some(title.to_string()),
-                artist,
-                ..Tags::default()
-            })
-            .audio_format(AudioFormat::default())
-            .build(),
-    )
+    Arc::new(Track::new(TrackParts {
+        path: path.into(),
+        duration: FIXTURE_LENGTH,
+        tags: Tags {
+            title: Some(title.to_string()),
+            artist,
+            ..Tags::default()
+        },
+        audio_format: AudioFormat::default(),
+    }))
 }
 
 pub(crate) fn track_with_tags(path: &str, tags: Tags) -> Arc<Track> {
-    Arc::new(
-        Track::builder()
-            .path(path)
-            .duration(FIXTURE_LENGTH)
-            .tags(tags)
-            .audio_format(AudioFormat::default())
-            .build(),
-    )
+    Arc::new(Track::new(TrackParts {
+        path: path.into(),
+        duration: FIXTURE_LENGTH,
+        tags,
+        audio_format: AudioFormat::default(),
+    }))
 }
 
 pub(crate) fn listed_model(playlist_tracks: Vec<Arc<Track>>) -> Model {

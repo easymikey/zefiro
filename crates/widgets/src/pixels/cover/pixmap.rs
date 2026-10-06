@@ -1,15 +1,21 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use image::{RgbaImage, imageops::FilterType};
+use fast_image_resize::CropBox;
+use image::RgbaImage;
 use kernel::domain::geometry::Pixels;
 use ratatui::layout::Rect;
 
-use crate::{
-    pixels::{
-        cover::CoverImage,
-        vinyl::{VinylCache, VinylCacheKey, VinylStyle},
+use crate::pixels::{
+    cover::CoverImage,
+    vinyl::{
+        VinylCache,
+        VinylCacheKey,
+        VinylStyle,
+        art::{ResampleError, resample},
     },
-    scene::Scene,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,13 +25,39 @@ pub(crate) enum Identity {
 }
 
 impl Identity {
-    pub(crate) fn changed_only_by_theme(&self, desired: &Self) -> bool {
-        match (self, desired) {
-            (Self::Vinyl(old), Self::Vinyl(new)) => {
-                old.colors != new.colors && old.path == new.path && old.size == new.size
+    pub(crate) fn is(&self, wanted: &Wanted<'_>) -> bool {
+        match self {
+            Self::Plain(path) => wanted.path() == Some(path.as_path()),
+            Self::Vinyl(key) => {
+                key.path.as_deref() == wanted.path()
+                    && key.size == wanted.pixels
+                    && key.colors == wanted.vinyl_style
             }
-            (Self::Plain(_), _) | (Self::Vinyl(_), Self::Plain(_)) => false,
         }
+    }
+
+    pub(crate) fn changed_only_by_theme(&self, wanted: &Wanted<'_>) -> bool {
+        match self {
+            Self::Vinyl(key) => {
+                key.colors != wanted.vinyl_style
+                    && key.path.as_deref() == wanted.path()
+                    && key.size == wanted.pixels
+            }
+            Self::Plain(_) => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Wanted<'a> {
+    pub cover_image: Option<&'a CoverImage>,
+    pub pixels: Pixels,
+    pub vinyl_style: VinylStyle,
+}
+
+impl Wanted<'_> {
+    fn path(&self) -> Option<&Path> {
+        self.cover_image.map(|cover| cover.path.as_path())
     }
 }
 
@@ -55,13 +87,30 @@ pub(crate) fn translucent(image: &RgbaImage) -> bool {
 }
 
 #[must_use]
-pub(crate) fn fit_to_rect(image: RgbaImage, rect: Rect, cell: CellPixels) -> RgbaImage {
+pub(crate) fn fit_to_rect(
+    image: Arc<RgbaImage>,
+    rect: Rect,
+    cell: CellPixels,
+) -> Arc<RgbaImage> {
     let width = u32::from(rect.width).saturating_mul(cell.width.0).max(1);
     let height = u32::from(rect.height).saturating_mul(cell.height.0).max(1);
-    if image.width() == width && image.height() == height {
+    if image.dimensions() == (width, height) {
         return image;
     }
-    image::imageops::resize(&image, width, height, FilterType::Lanczos3)
+    let whole = CropBox {
+        left: 0.0,
+        top: 0.0,
+        width: f64::from(image.width()),
+        height: f64::from(image.height()),
+    };
+    match resample(&image, whole, (width, height)) {
+        Ok(fitted) => Arc::new(fitted),
+        Err(
+            ResampleError::SourceBuffer(_)
+            | ResampleError::Resize(_)
+            | ResampleError::TargetBuffer { .. },
+        ) => image,
+    }
 }
 
 #[must_use]
@@ -70,15 +119,11 @@ pub(crate) fn vinyl_size(rect: Rect, cell: CellPixels) -> Pixels {
 }
 
 #[must_use]
-pub(crate) fn vinyl_key(
-    scene: &Scene<'_>,
-    decoded: Option<&CoverImage>,
-    size: Pixels,
-) -> VinylCacheKey {
+pub(crate) fn vinyl_key(wanted: &Wanted<'_>) -> VinylCacheKey {
     VinylCacheKey {
-        path: decoded.map(|cover| cover.path.clone()),
-        size,
-        colors: VinylStyle::from_theme(&scene.active_theme()),
+        path: wanted.path().map(Path::to_path_buf),
+        size: wanted.pixels,
+        colors: wanted.vinyl_style,
     }
 }
 
@@ -94,6 +139,8 @@ pub(crate) fn compose_vinyl(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use image::{Rgba, RgbaImage};
     use kernel::domain::geometry::Pixels;
     use ratatui::layout::Rect;
@@ -101,8 +148,21 @@ mod tests {
 
     use crate::pixels::cover::pixmap::{CellPixels, fit_to_rect};
 
-    fn source_pixmap() -> RgbaImage {
-        RgbaImage::from_pixel(4, 4, Rgba([200, 100, 50, 255]))
+    fn source_pixmap() -> Arc<RgbaImage> {
+        Arc::new(RgbaImage::from_pixel(4, 4, Rgba([200, 100, 50, 255])))
+    }
+
+    #[test]
+    fn an_already_fitted_pixmap_is_shared_instead_of_resized() {
+        let rect = Rect::new(0, 0, 2, 1);
+        let cell_pixels = CellPixels {
+            width: Pixels(4),
+            height: Pixels(8),
+        };
+        let fitted = fit_to_rect(source_pixmap(), rect, cell_pixels);
+        let refitted = fit_to_rect(Arc::clone(&fitted), rect, cell_pixels);
+        assert_eq!(fitted.dimensions(), (8, 8));
+        assert!(Arc::ptr_eq(&fitted, &refitted));
     }
 
     #[rstest]

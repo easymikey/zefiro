@@ -3,7 +3,11 @@ use std::time::Duration;
 use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
     cmd::{AudioCmd, Cmds, Playback},
-    domain::device::{ListedDevice, OutputDevice},
+    domain::{
+        device::{ListedDevice, OutputDevice},
+        revision::Revision,
+        transport::StreamError,
+    },
     message::AudioError,
 };
 
@@ -56,9 +60,11 @@ pub enum EngineMessage {
     Cmds(Cmds<AudioCmd>),
     Reported(Option<Duration>),
     Error(AudioError),
+    OutputLost(StreamError),
     Opened(DeviceOpened),
     Decoded(Option<Duration>),
     Attached {
+        revision: Revision,
         preload_mode: PreloadMode,
         duration: Option<Duration>,
     },

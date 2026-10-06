@@ -203,7 +203,7 @@ pub fn preset_of(appearance: AppearanceSettings) -> Option<AppearancePreset> {
 }
 
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, bon::Builder)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AppearancePatch {
     pub cover_mode: Option<CoverMode>,
     pub cover_brackets: Option<CoverBrackets>,
@@ -335,16 +335,18 @@ mod tests {
 
     #[test]
     fn then_folds_disjoint_fields_and_the_later_field_wins() {
-        let earlier = AppearancePatch::builder()
-            .format_chips(FormatChips::Hidden)
-            .cover_mode(CoverMode::Vinyl)
-            .build();
-        let later = AppearancePatch::builder()
-            .cover_mode(CoverMode::Off)
-            .key_hints(KeyHints::Hidden)
-            .build();
+        let earlier_patch = AppearancePatch {
+            format_chips: Some(FormatChips::Hidden),
+            cover_mode: Some(CoverMode::Vinyl),
+            ..AppearancePatch::default()
+        };
+        let later = AppearancePatch {
+            cover_mode: Some(CoverMode::Off),
+            key_hints: Some(KeyHints::Hidden),
+            ..AppearancePatch::default()
+        };
 
-        let merged = earlier.then(later);
+        let merged = earlier_patch.then(later);
 
         assert_eq!(merged.format_chips, Some(FormatChips::Hidden));
         assert_eq!(merged.key_hints, Some(KeyHints::Hidden));

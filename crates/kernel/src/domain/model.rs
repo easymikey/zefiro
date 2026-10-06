@@ -67,17 +67,15 @@ impl Model {
 
 #[cfg(test)]
 fn titled_track(title: &str) -> Arc<Track> {
-    Arc::new(
-        Track::builder()
-            .path(format!("{title}.mp3"))
-            .duration(std::time::Duration::from_secs(1))
-            .tags(crate::domain::track::Tags {
-                title: Some(title.to_string()),
-                ..crate::domain::track::Tags::default()
-            })
-            .audio_format(crate::domain::track::AudioFormat::default())
-            .build(),
-    )
+    Arc::new(Track::new(crate::domain::track::TrackParts {
+        path: format!("{title}.mp3").into(),
+        duration: std::time::Duration::from_secs(1),
+        tags: crate::domain::track::Tags {
+            title: Some(title.to_string()),
+            ..crate::domain::track::Tags::default()
+        },
+        audio_format: crate::domain::track::AudioFormat::default(),
+    }))
 }
 
 #[cfg(test)]

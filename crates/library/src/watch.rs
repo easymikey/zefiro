@@ -3,24 +3,17 @@ use std::path::PathBuf;
 use kernel::{
     cmd::Cmd,
     domain::{io_error::IoError, revision::Revision},
-    message::LibrarySubject,
+    message::{LibraryError, LibraryEvent, LibrarySubject},
     update::machine::{Machine, Unhandled},
 };
 
-use crate::{error::Error, message::LibraryMessage};
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct LibraryWatch {
-    pub(crate) registered: Registered,
-    pub(crate) last_scan: Revision,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) enum Registered {
+pub(crate) enum LibraryWatch {
     #[default]
     Unrooted,
-    On {
+    Rooted {
         music_dir: PathBuf,
+        revision: Revision,
         burst: Burst,
     },
 }
@@ -54,12 +47,12 @@ pub(crate) enum WatchEffect {
 
 impl Machine for LibraryWatch {
     type Message = LibraryWatchMessage;
-    type Effect = Cmd<WatchEffect, LibraryMessage>;
+    type Effect = Cmd<WatchEffect, LibraryEvent>;
 
     fn transition(
         &mut self,
         message: LibraryWatchMessage,
-    ) -> Result<Cmd<WatchEffect, LibraryMessage>, Unhandled> {
+    ) -> Result<Cmd<WatchEffect, LibraryEvent>, Unhandled> {
         match message {
             LibraryWatchMessage::Rescan {
                 music_dir,
@@ -73,14 +66,14 @@ impl Machine for LibraryWatch {
 }
 
 impl LibraryWatch {
-    fn changed(&mut self) -> Result<Cmd<WatchEffect, LibraryMessage>, Unhandled> {
-        match &mut self.registered {
-            Registered::Unrooted => Err(Unhandled),
-            Registered::On {
+    fn changed(&mut self) -> Result<Cmd<WatchEffect, LibraryEvent>, Unhandled> {
+        match self {
+            LibraryWatch::Unrooted
+            | LibraryWatch::Rooted {
                 burst: Burst::Armed,
                 ..
-            } => Ok(Cmd::none()),
-            Registered::On { burst, .. } => {
+            } => Err(Unhandled),
+            LibraryWatch::Rooted { burst, .. } => {
                 *burst = Burst::Armed;
                 Ok(Cmd::effect(WatchEffect::Arm))
             }
@@ -89,32 +82,36 @@ impl LibraryWatch {
 
     fn failed(
         &self,
-        kind: IoError,
-    ) -> Result<Cmd<WatchEffect, LibraryMessage>, Unhandled> {
-        match &self.registered {
-            Registered::Unrooted => Err(Unhandled),
-            Registered::On { music_dir, .. } => {
-                Ok(Cmd::message(LibraryMessage::Error(Error::Io {
+        source: IoError,
+    ) -> Result<Cmd<WatchEffect, LibraryEvent>, Unhandled> {
+        match self {
+            LibraryWatch::Unrooted => Err(Unhandled),
+            LibraryWatch::Rooted { music_dir, .. } => {
+                Ok(Cmd::message(LibraryEvent::Error(LibraryError::Disk {
                     subject: LibrarySubject::Watch,
                     path: music_dir.clone(),
-                    source: std::io::Error::from(io_kind(kind)),
+                    source,
                 })))
             }
         }
     }
 
-    fn elapsed(&mut self) -> Result<Cmd<WatchEffect, LibraryMessage>, Unhandled> {
-        match &mut self.registered {
-            Registered::Unrooted
-            | Registered::On {
+    fn elapsed(&mut self) -> Result<Cmd<WatchEffect, LibraryEvent>, Unhandled> {
+        match self {
+            LibraryWatch::Unrooted
+            | LibraryWatch::Rooted {
                 burst: Burst::Quiet,
                 ..
             } => Err(Unhandled),
-            Registered::On { music_dir, burst } => {
+            LibraryWatch::Rooted {
+                music_dir,
+                revision,
+                burst,
+            } => {
                 *burst = Burst::Quiet;
                 Ok(Cmd::effect(WatchEffect::Scan {
                     music_dir: music_dir.clone(),
-                    revision: self.last_scan,
+                    revision: *revision,
                 }))
             }
         }
@@ -124,36 +121,28 @@ impl LibraryWatch {
         &mut self,
         target: PathBuf,
         revision: Revision,
-    ) -> Cmd<WatchEffect, LibraryMessage> {
+    ) -> Cmd<WatchEffect, LibraryEvent> {
         let scan = WatchEffect::Scan {
             music_dir: target.clone(),
             revision,
         };
-        let effects = match &self.registered {
-            Registered::Unrooted => vec![WatchEffect::Watch(target.clone()), scan],
-            Registered::On { music_dir, .. } if *music_dir == target => vec![scan],
-            Registered::On { music_dir, .. } => vec![
+        let effects = match &*self {
+            LibraryWatch::Unrooted => vec![WatchEffect::Watch(target.clone()), scan],
+            LibraryWatch::Rooted { music_dir, .. } if *music_dir == target => {
+                vec![scan]
+            }
+            LibraryWatch::Rooted { music_dir, .. } => vec![
                 WatchEffect::Unwatch(music_dir.clone()),
                 WatchEffect::Watch(target.clone()),
                 scan,
             ],
         };
-        self.registered = Registered::On {
+        *self = LibraryWatch::Rooted {
             music_dir: target,
+            revision,
             burst: Burst::Quiet,
         };
-        self.last_scan = revision;
         effects.into_iter().collect()
-    }
-}
-
-fn io_kind(kind: IoError) -> std::io::ErrorKind {
-    match kind {
-        IoError::Missing => std::io::ErrorKind::NotFound,
-        IoError::Denied => std::io::ErrorKind::PermissionDenied,
-        IoError::Malformed => std::io::ErrorKind::InvalidData,
-        IoError::Full => std::io::ErrorKind::StorageFull,
-        IoError::Other => std::io::ErrorKind::Other,
     }
 }
 
@@ -164,15 +153,12 @@ mod tests {
     use kernel::{
         cmd::Cmd,
         domain::{io_error::IoError, revision::Revision},
-        message::{LibraryError, LibrarySubject},
+        message::{LibraryError, LibraryEvent, LibrarySubject},
         update::machine::{Machine, Unhandled},
     };
     use rstest::rstest;
 
-    use crate::{
-        message::LibraryMessage,
-        watch::{Burst, LibraryWatch, LibraryWatchMessage, Registered, WatchEffect},
-    };
+    use crate::watch::{Burst, LibraryWatch, LibraryWatchMessage, WatchEffect};
 
     fn music_dir() -> PathBuf {
         PathBuf::from("/music")
@@ -186,40 +172,24 @@ mod tests {
         (0..bumps).fold(Revision::default(), |revision, _| revision.next())
     }
 
-    fn watch(registered: Registered) -> LibraryWatch {
-        LibraryWatch {
-            registered,
-            last_scan: Revision::default(),
-        }
-    }
-
-    fn unrooted() -> LibraryWatch {
-        watch(Registered::Unrooted)
-    }
-
-    fn quiet_at(music_dir: PathBuf) -> LibraryWatch {
-        watch(Registered::On {
+    fn rooted(music_dir: PathBuf, bumps: u64, burst: Burst) -> LibraryWatch {
+        LibraryWatch::Rooted {
             music_dir,
-            burst: Burst::Quiet,
-        })
-    }
-
-    fn quiet() -> LibraryWatch {
-        quiet_at(music_dir())
-    }
-
-    fn armed() -> LibraryWatch {
-        watch(Registered::On {
-            music_dir: music_dir(),
-            burst: Burst::Armed,
-        })
-    }
-
-    fn scanned(state: LibraryWatch, bumps: u64) -> LibraryWatch {
-        LibraryWatch {
-            last_scan: revision(bumps),
-            ..state
+            revision: revision(bumps),
+            burst,
         }
+    }
+
+    fn quiet_at(music_dir: PathBuf, bumps: u64) -> LibraryWatch {
+        rooted(music_dir, bumps, Burst::Quiet)
+    }
+
+    fn quiet(bumps: u64) -> LibraryWatch {
+        quiet_at(music_dir(), bumps)
+    }
+
+    fn armed(bumps: u64) -> LibraryWatch {
+        rooted(music_dir(), bumps, Burst::Armed)
     }
 
     fn rescan(music_dir: PathBuf, bumps: u64) -> LibraryWatchMessage {
@@ -241,7 +211,7 @@ mod tests {
         }
     }
 
-    fn describe(cmd: Cmd<WatchEffect, LibraryMessage>) -> String {
+    fn describe(cmd: Cmd<WatchEffect, LibraryEvent>) -> String {
         let (effects, messages) = cmd.into_parts();
         assert!(messages.is_empty(), "the watch tells nothing: {messages:?}");
         let described: Vec<String> = effects.iter().map(describe_effect).collect();
@@ -252,106 +222,109 @@ mod tests {
         }
     }
 
-    struct WatchRow {
-        start: LibraryWatch,
+    struct LibraryWatchRow {
+        library_watch: LibraryWatch,
         message: LibraryWatchMessage,
-        next: LibraryWatch,
+        next_library_watch: LibraryWatch,
         effects: &'static str,
     }
 
     #[rstest]
-    #[case::unrooted_watches_and_scans_on_the_first_scan(WatchRow {
-        start: unrooted(),
+    #[case::library_watch_unrooted_watches_and_scans_on_the_first_scan(LibraryWatchRow {
+        library_watch: LibraryWatch::Unrooted,
         message: rescan(music_dir(), 1),
-        next: scanned(quiet(), 1),
+        next_library_watch: quiet(1),
         effects: "watch /music; scan /music @ 1",
     })]
-    #[case::on_rescans_its_root(WatchRow {
-        start: quiet(),
+    #[case::library_watch_rooted_rescans_its_root(LibraryWatchRow {
+        library_watch: quiet(0),
         message: rescan(music_dir(), 1),
-        next: scanned(quiet(), 1),
+        next_library_watch: quiet(1),
         effects: "scan /music @ 1",
     })]
-    #[case::armed_rescan_drops_the_burst(WatchRow {
-        start: armed(),
+    #[case::armed_rescan_drops_the_burst(LibraryWatchRow {
+        library_watch: armed(0),
         message: rescan(music_dir(), 1),
-        next: scanned(quiet(), 1),
+        next_library_watch: quiet(1),
         effects: "scan /music @ 1",
     })]
-    #[case::on_moves_to_another_root(WatchRow {
-        start: quiet(),
+    #[case::rooted_moves_to_another_root(LibraryWatchRow {
+        library_watch: quiet(0),
         message: rescan(other(), 1),
-        next: scanned(quiet_at(other()), 1),
+        next_library_watch: quiet_at(other(), 1),
         effects: "unwatch /music; watch /more-music; scan /more-music @ 1",
     })]
-    #[case::armed_move_drops_the_burst(WatchRow {
-        start: armed(),
+    #[case::armed_move_drops_the_burst(LibraryWatchRow {
+        library_watch: armed(0),
         message: rescan(other(), 1),
-        next: scanned(quiet_at(other()), 1),
+        next_library_watch: quiet_at(other(), 1),
         effects: "unwatch /music; watch /more-music; scan /more-music @ 1",
     })]
-    #[case::quiet_change_arms(WatchRow {
-        start: quiet(),
+    #[case::quiet_change_arms(LibraryWatchRow {
+        library_watch: quiet(0),
         message: LibraryWatchMessage::Changed(Ok(())),
-        next: armed(),
+        next_library_watch: armed(0),
         effects: "arm",
     })]
-    #[case::armed_change_waits_for_the_armed_timer(WatchRow {
-        start: armed(),
-        message: LibraryWatchMessage::Changed(Ok(())),
-        next: armed(),
-        effects: "nothing",
-    })]
-    #[case::armed_elapse_rescans_at_the_last_seen_revision(WatchRow {
-        start: scanned(armed(), 3),
+    #[case::library_watch_rooted_elapse_rescans_at_its_revision(LibraryWatchRow {
+        library_watch: armed(3),
         message: LibraryWatchMessage::Elapsed,
-        next: scanned(quiet(), 3),
+        next_library_watch: quiet(3),
         effects: "scan /music @ 3",
     })]
-    fn a_row_moves_the_watch_and_names_its_effects(#[case] row: WatchRow) {
-        let mut state = row.start;
-        let cmd = state.transition(row.message).unwrap();
-        assert_eq!(state, row.next);
+    fn a_library_watch_row_moves_the_watch_and_names_its_effects(
+        #[case] row: LibraryWatchRow,
+    ) {
+        let mut library_watch = row.library_watch;
+        let cmd = library_watch.transition(row.message).unwrap();
+        assert_eq!(library_watch, row.next_library_watch);
         assert_eq!(describe(cmd), row.effects);
     }
 
     #[test]
     fn a_failure_under_a_root_reports_a_watch_error_for_that_root() {
-        let mut state = quiet();
-        let cmd = state
+        let mut library_watch = quiet(0);
+        let cmd = library_watch
             .transition(LibraryWatchMessage::Changed(Err(IoError::Missing)))
             .unwrap();
         let (effects, messages) = cmd.into_parts();
         assert!(effects.is_empty());
-        let [LibraryMessage::Error(error)] = messages.as_slice() else {
+        let [LibraryEvent::Error(error)] = messages.as_slice() else {
             panic!("expected one error message: {messages:?}");
         };
         assert_eq!(
-            LibraryError::from(error),
-            LibraryError::File {
+            *error,
+            LibraryError::Disk {
                 subject: LibrarySubject::Watch,
                 path: music_dir(),
-                kind: IoError::Missing,
+                source: IoError::Missing,
             }
         );
     }
 
     #[rstest]
-    #[case::unrooted_refuses_a_change(unrooted(), LibraryWatchMessage::Changed(Ok(())))]
+    #[case::unrooted_refuses_a_change(
+        LibraryWatch::Unrooted,
+        LibraryWatchMessage::Changed(Ok(()))
+    )]
     #[case::unrooted_refuses_a_failure(
-        unrooted(),
+        LibraryWatch::Unrooted,
         LibraryWatchMessage::Changed(Err(IoError::Other))
     )]
-    #[case::unrooted_refuses_an_elapse(unrooted(), LibraryWatchMessage::Elapsed)]
-    #[case::quiet_refuses_an_elapse(quiet(), LibraryWatchMessage::Elapsed)]
-    fn a_refused_row_hands_the_state_back(
-        #[case] start: LibraryWatch,
+    #[case::unrooted_refuses_an_elapse(
+        LibraryWatch::Unrooted,
+        LibraryWatchMessage::Elapsed
+    )]
+    #[case::armed_change_is_refused(armed(0), LibraryWatchMessage::Changed(Ok(())))]
+    #[case::quiet_refuses_an_elapse(quiet(0), LibraryWatchMessage::Elapsed)]
+    fn a_refused_row_hands_the_library_watch_back(
+        #[case] library_watch: LibraryWatch,
         #[case] message: LibraryWatchMessage,
     ) {
-        let expected = start.clone();
-        let mut state = start;
-        let refused = state.transition(message).err().unwrap();
-        assert_eq!(state, expected);
+        let expected = library_watch.clone();
+        let mut handed = library_watch;
+        let refused = handed.transition(message).err().unwrap();
+        assert_eq!(handed, expected);
         assert_eq!(refused, Unhandled);
     }
 }

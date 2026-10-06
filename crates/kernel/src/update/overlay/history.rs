@@ -1,33 +1,16 @@
 use crate::{
     cmd::Cmd,
-    domain::{
-        cursor_over::CursorOver,
-        direction::Direction,
-        history::HistoryEntry,
-        index::ViewIndex,
-        overlay::Overlay,
-        playlist::{Playlist, index_of},
-        toast::Toast,
-        track::TrackRef,
-        workspace::Workspace,
-    },
+    domain::{cursor_over::CursorOver, direction::Direction},
     message::{Message, QueueRequest},
     update::machine::{Machine, Unhandled},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HistoryPick {
-    Queued(ViewIndex),
-    Missing,
-    Nothing,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryMessage {
     Navigate { direction: Direction, len: usize },
     Top,
     Bottom(usize),
-    Enqueue(HistoryPick),
+    Enqueue(usize),
 }
 
 impl Machine for CursorOver<()> {
@@ -50,47 +33,16 @@ impl Machine for CursorOver<()> {
                 self.cursor = self.cursor.last();
                 Ok(Cmd::none())
             }
-            HistoryMessage::Enqueue(HistoryPick::Queued(index)) => Ok(Cmd::message(
-                Message::Queue(QueueRequest::EnqueueTrack(index)),
-            )),
-            HistoryMessage::Enqueue(HistoryPick::Missing) => Ok(Cmd::message(
-                Message::Toast(Toast::info("Not in library".to_string())),
-            )),
-            HistoryMessage::Enqueue(HistoryPick::Nothing) => Err(Unhandled),
+            HistoryMessage::Enqueue(len) => {
+                let selected = self.selected().get();
+                (selected < len)
+                    .then(|| {
+                        Cmd::message(Message::Queue(QueueRequest::EnqueueHistoryEntry(
+                            selected,
+                        )))
+                    })
+                    .ok_or(Unhandled)
+            }
         }
-    }
-}
-
-pub(crate) fn pick(
-    workspace: &Workspace,
-    history: &[HistoryEntry],
-    playlist: &Playlist,
-) -> HistoryPick {
-    selected_track(workspace, history).map_or(HistoryPick::Nothing, |source| {
-        index_of(&playlist.tracks, source).map_or(HistoryPick::Missing, |index| {
-            HistoryPick::Queued(ViewIndex::new(index))
-        })
-    })
-}
-
-fn selected_track<'a>(
-    workspace: &Workspace,
-    history: &'a [HistoryEntry],
-) -> Option<&'a TrackRef> {
-    match &workspace.overlay {
-        Some(Overlay::History(cursor)) => history
-            .get(cursor.selected().get())
-            .map(|entry| &entry.track),
-        Some(
-            Overlay::Help
-            | Overlay::Search(_)
-            | Overlay::SavePlaylist(_)
-            | Overlay::Settings(..)
-            | Overlay::ConfirmDelete(_)
-            | Overlay::JumpToTime(_)
-            | Overlay::TrackDetails(_)
-            | Overlay::MusicDir(_),
-        )
-        | None => None,
     }
 }

@@ -21,18 +21,18 @@ mod watch;
 mod test_support {
     use std::{sync::Arc, time::Duration};
 
-    use kernel::domain::track::{AudioFormat, Tags, Track};
+    use kernel::domain::track::{AudioFormat, Tags, Track, TrackParts};
 
     const FIXTURE_LENGTH: Duration = Duration::from_secs(180);
 
     #[must_use]
     pub(crate) fn track_lasting(path: &str, length: Duration, tags: Tags) -> Track {
-        Track::builder()
-            .path(path)
-            .duration(length)
-            .tags(tags)
-            .audio_format(AudioFormat::default())
-            .build()
+        Track::new(TrackParts {
+            path: path.into(),
+            duration: length,
+            tags,
+            audio_format: AudioFormat::default(),
+        })
     }
 
     #[must_use]
@@ -49,6 +49,47 @@ mod test_support {
                 ..Tags::default()
             },
         ))
+    }
+
+    #[must_use]
+    pub(crate) fn minimal_flac_with_cover(picture_data: &[u8]) -> Vec<u8> {
+        let length =
+            |bytes: &[u8]| u32::try_from(bytes.len()).unwrap_or(0).to_be_bytes();
+        let mime: &[u8] = b"image/jpeg";
+        let picture_payload = [
+            &3u32.to_be_bytes()[..],
+            &length(mime),
+            mime,
+            &length(b""),
+            &1u32.to_be_bytes(),
+            &1u32.to_be_bytes(),
+            &24u32.to_be_bytes(),
+            &0u32.to_be_bytes(),
+            &length(picture_data),
+            picture_data,
+        ]
+        .concat();
+        let streaminfo_bits: u64 = (44100u64 << 44) | (1u64 << 41) | (15u64 << 36);
+        let streaminfo = [
+            &4096u16.to_be_bytes()[..],
+            &4096u16.to_be_bytes(),
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &streaminfo_bits.to_be_bytes(),
+            &[0u8; 16],
+        ]
+        .concat();
+        let payload_len = picture_payload.len().to_be_bytes();
+        [
+            &b"fLaC"[..],
+            &[0x00],
+            &[0x00, 0x00, 0x22],
+            &streaminfo,
+            &[0x86],
+            &payload_len[payload_len.len() - 3..],
+            &picture_payload,
+        ]
+        .concat()
     }
 
     #[must_use]

@@ -6,7 +6,16 @@ use std::{
 
 use bincode::config::Config;
 use kernel::{
-    domain::track::{AudioFormat, Decibels, Hertz, Kbps, Tagging, Tags, Track},
+    domain::track::{
+        AudioFormat,
+        Decibels,
+        Hertz,
+        Kbps,
+        Tagging,
+        Tags,
+        Track,
+        TrackParts,
+    },
     message::LibrarySubject,
 };
 use serde::{Deserialize, Serialize};
@@ -131,12 +140,12 @@ impl From<&Track> for TrackRecord {
 impl TrackRecord {
     fn into_track(self) -> Track {
         match self.duration {
-            Some(duration) => Track::builder()
-                .path(self.path)
-                .duration(duration)
-                .tags(self.tags)
-                .audio_format(self.audio_format)
-                .build(),
+            Some(duration) => Track::new(TrackParts {
+                path: self.path,
+                duration,
+                tags: self.tags,
+                audio_format: self.audio_format,
+            }),
             None => Track::listed(&self.path),
         }
     }
@@ -146,8 +155,8 @@ fn bincode_config() -> impl Config {
     bincode::config::standard().with_limit::<CACHE_LIMIT>()
 }
 
-fn cache_file(dirs: &LibraryDirs, extension: &str) -> PathBuf {
-    dirs.cache_dir.join(format!("library.{extension}"))
+fn cache_file(dirs: &LibraryDirs) -> PathBuf {
+    dirs.cache_dir.join("library.bin")
 }
 
 pub(crate) fn encode(tracks: &[&Track], path: &Path) -> Result<Vec<u8>, Error> {
@@ -162,11 +171,14 @@ pub(crate) fn encode(tracks: &[&Track], path: &Path) -> Result<Vec<u8>, Error> {
     Ok(std::iter::once(CACHE_VERSION).chain(payload).collect())
 }
 
-pub(crate) fn decode(bytes: &[u8], path: &Path) -> Result<Vec<Arc<Track>>, Error> {
+pub(crate) fn decode<'bytes>(
+    bytes: &'bytes [u8],
+    path: &Path,
+) -> Result<(Vec<Arc<Track>>, &'bytes [u8]), Error> {
     let Some((&CACHE_VERSION, rest)) = bytes.split_first() else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), &[]));
     };
-    let (records, _) = bincode::serde::decode_from_slice::<Vec<TrackRecord>, _>(
+    let (records, read) = bincode::serde::decode_from_slice::<Vec<TrackRecord>, _>(
         rest,
         bincode_config(),
     )
@@ -174,28 +186,34 @@ pub(crate) fn decode(bytes: &[u8], path: &Path) -> Result<Vec<Arc<Track>>, Error
         path: path.to_path_buf(),
         source,
     })?;
-    Ok(records
+    let tracks = records
         .into_iter()
         .map(|record| Arc::new(record.into_track()))
-        .collect())
+        .collect();
+    let Some(saved_dir) = rest.get(read..) else {
+        return Ok((Vec::new(), &[]));
+    };
+    Ok((tracks, saved_dir))
 }
 
 pub(crate) fn load(
     dirs: &LibraryDirs,
     music_dir: &Path,
 ) -> Result<Vec<Arc<Track>>, Error> {
-    let dir_path = cache_file(dirs, "dir");
-    let saved_dir = crate::files::read_if_present(&dir_path)
-        .map_err(Error::io(LibrarySubject::Cache, &dir_path))?;
-    if saved_dir.is_none_or(|saved| saved.trim() != music_dir.to_string_lossy()) {
-        return Ok(Vec::new());
-    }
-    let cache_path = cache_file(dirs, "bin");
-    match std::fs::read(&cache_path) {
-        Ok(bytes) => decode(&bytes, &cache_path),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(Error::io(LibrarySubject::Cache, &cache_path)(error)),
-    }
+    let cache_path = cache_file(dirs);
+    let bytes = match std::fs::read(&cache_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(Error::io(LibrarySubject::Cache, &cache_path)(error)),
+    };
+    let (tracks, saved_dir) = decode(&bytes, &cache_path)?;
+    Ok(if saved_dir == music_dir.to_string_lossy().as_bytes() {
+        tracks
+    } else {
+        Vec::new()
+    })
 }
 
 pub(crate) fn save(
@@ -211,14 +229,13 @@ pub(crate) fn save(
     if read.is_empty() {
         return Ok(());
     }
-    let cache_path = cache_file(dirs, "bin");
-    let dir_path = cache_file(dirs, "dir");
+    let cache_path = cache_file(dirs);
     crate::files::create_parent_dir(&cache_path)
         .map_err(Error::io(LibrarySubject::Cache, &dirs.cache_dir))?;
-    crate::files::write_atomic(&cache_path, &encode(&read, &cache_path)?)
-        .map_err(Error::io(LibrarySubject::Cache, &cache_path))?;
-    crate::files::write_atomic(&dir_path, music_dir.to_string_lossy().as_bytes())
-        .map_err(Error::io(LibrarySubject::Cache, &dir_path))
+    let mut bytes = encode(&read, &cache_path)?;
+    bytes.extend_from_slice(music_dir.to_string_lossy().as_bytes());
+    crate::files::write_atomic(&cache_path, &bytes)
+        .map_err(Error::io(LibrarySubject::Cache, &cache_path))
 }
 
 #[cfg(test)]
@@ -259,6 +276,46 @@ mod tests {
         let loaded = cache::load(&dirs, &music_dir).unwrap();
 
         insta::assert_debug_snapshot!(loaded);
+    }
+
+    #[test]
+    fn a_cache_save_leaves_a_single_file_so_one_rename_commits_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
+        let tracks = vec![test_support::titled("/music/one.flac", "Moon River")];
+
+        cache::save(&dirs, Path::new("/music"), &tracks).unwrap();
+
+        let mut names: Vec<_> = std::fs::read_dir(&dirs.cache_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec![std::ffi::OsString::from("library.bin")]);
+    }
+
+    #[test]
+    fn a_cache_belongs_to_the_music_dir_it_was_saved_for_whatever_else_sits_beside_it()
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
+        let tracks = vec![test_support::titled("/music/one.flac", "Moon River")];
+        cache::save(&dirs, Path::new("/music"), &tracks).unwrap();
+        std::fs::write(dirs.cache_dir.join("library.dir"), b"/other").unwrap();
+
+        let own = cache::load(&dirs, Path::new("/music")).unwrap();
+        let other = cache::load(&dirs, Path::new("/other")).unwrap();
+
+        assert_eq!(own, tracks);
+        assert!(other.is_empty());
     }
 
     #[test]
@@ -335,7 +392,9 @@ mod tests {
         let tracks: Vec<Arc<Track>> = Vec::new();
         let bytes = encoded(&tracks);
         assert_eq!(
-            cache::decode(&bytes, Path::new("/data/library.bin")).unwrap(),
+            cache::decode(&bytes, Path::new("/data/library.bin"))
+                .unwrap()
+                .0,
             tracks
         );
     }
@@ -347,7 +406,9 @@ mod tests {
             Arc::new(test_support::track("/music/two.flac", Tags::default())),
         ];
         let bytes = encoded(&tracks);
-        let decoded = cache::decode(&bytes, Path::new("/data/library.bin")).unwrap();
+        let (decoded, rest) =
+            cache::decode(&bytes, Path::new("/data/library.bin")).unwrap();
+        assert!(rest.is_empty());
         assert_eq!(decoded, tracks);
         insta::assert_debug_snapshot!(decoded);
     }
@@ -363,7 +424,9 @@ mod tests {
             },
         ))];
         let bytes = encoded(&tracks);
-        let decoded = cache::decode(&bytes, Path::new("/data/library.bin")).unwrap();
+        let (decoded, rest) =
+            cache::decode(&bytes, Path::new("/data/library.bin")).unwrap();
+        assert!(rest.is_empty());
         assert_eq!(decoded, tracks);
         insta::assert_debug_snapshot!(decoded);
     }

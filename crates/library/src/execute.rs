@@ -1,9 +1,9 @@
-use kernel::{message::LibraryEvent, update::machine::Driver};
+use kernel::{cmd::DiskCmd, update::machine::Driver};
 
 use crate::{
     cover::CoverDecoded,
     dirs::LibraryDirs,
-    driver::{DiskEffect, LibraryDriver, LibraryEffect},
+    driver::{LibraryDriver, LibraryEffect},
     error::Error,
     favorites,
     history,
@@ -18,42 +18,36 @@ impl<P: FnMut(CoverDecoded)> Driver for LibraryDriver<P> {
     fn execute(&mut self, effect: LibraryEffect) -> Option<LibraryMessage> {
         match effect {
             LibraryEffect::PublishCover(decoded) => {
-                (self.publish)(decoded);
+                (self.publish_cover)(decoded);
                 None
             }
-            LibraryEffect::Execute(disk) => on_disk(disk, &self.dirs)
+            LibraryEffect::Execute(disk_cmd) => on_disk(disk_cmd, &self.dirs)
                 .unwrap_or_else(|error| Some(LibraryMessage::Error(error))),
         }
     }
 }
 
 fn on_disk(
-    disk: DiskEffect,
+    disk_cmd: DiskCmd,
     dirs: &LibraryDirs,
 ) -> Result<Option<LibraryMessage>, Error> {
-    match disk {
-        DiskEffect::AppendHistory(entry) => {
-            history::append(dirs, &entry).map(|()| None)
-        }
-        DiskEffect::SaveFavorites(favorites) => {
+    match disk_cmd {
+        DiskCmd::AppendHistory(entry) => history::append(dirs, &entry).map(|()| None),
+        DiskCmd::SaveFavorites(favorites) => {
             favorites::save(dirs, &favorites).map(|()| None)
         }
-        DiskEffect::LoadFavorites => favorites::load(dirs)
-            .map(|loaded| executed(LibraryEvent::FavoritesLoaded(loaded), None)),
-        DiskEffect::Trash(path) => trash::move_to_trash(&path).map(|()| None),
-        DiskEffect::LoadHistory(limit) => history::load(dirs, limit).map(
+        DiskCmd::LoadFavorites => favorites::load(dirs)
+            .map(|favorites| Some(LibraryMessage::FavoritesLoaded(favorites))),
+        DiskCmd::Trash(path) => trash::move_to_trash(&path).map(|()| None),
+        DiskCmd::LoadHistory(limit) => history::load(dirs, limit).map(
             |history::HistoryRead { entries, skipped }| {
-                executed(LibraryEvent::HistoryLoaded(entries), skipped)
+                Some(LibraryMessage::HistoryLoaded { entries, skipped })
             },
         ),
-        DiskEffect::SavePlaylist { name, tracks } => {
+        DiskCmd::SavePlaylist { name, tracks } => {
             playlists::save(dirs, &name, &tracks).map(|()| None)
         }
     }
-}
-
-fn executed(event: LibraryEvent, skipped: Option<Error>) -> Option<LibraryMessage> {
-    Some(LibraryMessage::Executed { event, skipped })
 }
 
 #[cfg(test)]
@@ -61,7 +55,7 @@ mod tests {
     use std::{path::PathBuf, sync::Arc};
 
     use kernel::{
-        cmd::{CoverJob, ScanMode},
+        cmd::{CoverJob, DiskCmd, ScanMode},
         domain::{
             favorites::Favorites,
             geometry::Pixels,
@@ -80,7 +74,7 @@ mod tests {
     use crate::{
         cover::{CoverArt, CoverDecoded},
         dirs::LibraryDirs,
-        driver::{DiskEffect, LibraryDriver, LibraryEffect},
+        driver::{LibraryDriver, LibraryEffect},
         job::LibraryJob,
         message::LibraryMessage,
         test_support::{self, temp_dir_filters},
@@ -104,22 +98,28 @@ mod tests {
         panic!("nothing is published here: {path:?}");
     }
 
-    fn told(message: Option<LibraryMessage>) -> Option<LibraryEvent> {
-        match message {
-            None => None,
-            Some(
-                LibraryMessage::Executed { event, .. }
-                | LibraryMessage::Scanned { event, .. }
-                | LibraryMessage::Tagged { event, .. },
-            ) => Some(event),
-            Some(other) => panic!("expected an event, got {other:?}"),
-        }
+    fn told(
+        message: Option<LibraryMessage>,
+        library_driver: &mut LibraryDriver<fn(CoverDecoded)>,
+    ) -> Option<LibraryEvent> {
+        message.and_then(|message| {
+            library_driver
+                .transition(message)
+                .unwrap()
+                .into_parts()
+                .1
+                .into_iter()
+                .next()
+        })
     }
 
-    fn execute(disk: DiskEffect, paths: &LibraryDirs) -> Option<LibraryEvent> {
+    fn execute(disk_cmd: DiskCmd, paths: &LibraryDirs) -> Option<LibraryEvent> {
         let mut driver: LibraryDriver<fn(CoverDecoded)> =
             LibraryDriver::new(paths.clone(), DECODABLE, unpublished);
-        told(driver.execute(LibraryEffect::Execute(disk)))
+        told(
+            driver.execute(LibraryEffect::Execute(disk_cmd)),
+            &mut driver,
+        )
     }
 
     fn scanned(
@@ -129,12 +129,18 @@ mod tests {
     ) -> Vec<LibraryEvent> {
         let mut driver: LibraryDriver<fn(CoverDecoded)> =
             LibraryDriver::new(paths.clone(), DECODABLE, unpublished);
-        let message = LibraryJob::Scan {
-            music_dir,
-            revision,
-            mode,
-            dirs: Arc::new(paths.clone()),
-            decodable: DECODABLE,
+        let message = match mode {
+            ScanMode::Full => LibraryJob::Scan {
+                music_dir,
+                revision,
+                dirs: Arc::new(paths.clone()),
+                decodable: DECODABLE,
+            },
+            ScanMode::Cached => LibraryJob::ReadCache {
+                music_dir,
+                revision,
+                dirs: Arc::new(paths.clone()),
+            },
         }
         .run();
         let (effects, events) = driver.transition(message).unwrap().into_parts();
@@ -168,7 +174,7 @@ mod tests {
         let (_directory, paths) = dirs;
 
         let event = execute(
-            DiskEffect::AppendHistory(HistoryEntry::from_track(
+            DiskCmd::AppendHistory(HistoryEntry::from_track(
                 &test_support::titled("/music/song.flac", "Song"),
                 Moment::default(),
             )),
@@ -188,7 +194,7 @@ mod tests {
             .into_iter()
             .collect();
 
-        let event = execute(DiskEffect::SaveFavorites(saved), &paths);
+        let event = execute(DiskCmd::SaveFavorites(saved), &paths);
 
         assert_eq!(event, None);
         assert!(paths.data_dir.join("favorites.json").is_file());
@@ -200,9 +206,9 @@ mod tests {
         let saved: Favorites = [TrackRef::Local("/music/a.flac".into())]
             .into_iter()
             .collect();
-        assert_eq!(execute(DiskEffect::SaveFavorites(saved), &paths), None);
+        assert_eq!(execute(DiskCmd::SaveFavorites(saved), &paths), None);
 
-        let event = execute(DiskEffect::LoadFavorites, &paths);
+        let event = execute(DiskCmd::LoadFavorites, &paths);
 
         insta::assert_debug_snapshot!(event);
     }
@@ -212,7 +218,7 @@ mod tests {
         let (directory, paths) = dirs;
         let missing = directory.path().join("never-existed.flac");
 
-        let event = execute(DiskEffect::Trash(missing), &paths);
+        let event = execute(DiskCmd::Trash(missing), &paths);
 
         assert_eq!(event, None);
     }
@@ -221,7 +227,7 @@ mod tests {
     fn load_history_replies_with_the_appended_entry(dirs: (TempDir, LibraryDirs)) {
         let (_directory, paths) = dirs;
         let appended = execute(
-            DiskEffect::AppendHistory(HistoryEntry::from_track(
+            DiskCmd::AppendHistory(HistoryEntry::from_track(
                 &test_support::titled("/music/song.flac", "Song"),
                 Moment::default(),
             )),
@@ -229,7 +235,7 @@ mod tests {
         );
         assert_eq!(appended, None);
 
-        let event = execute(DiskEffect::LoadHistory(10), &paths);
+        let event = execute(DiskCmd::LoadHistory(10), &paths);
 
         match event {
             Some(LibraryEvent::HistoryLoaded(entries)) => {
@@ -248,7 +254,7 @@ mod tests {
         let (_directory, paths) = dirs;
 
         let event = execute(
-            DiskEffect::SavePlaylist {
+            DiskCmd::SavePlaylist {
                 name: PlaylistFileName::new("My Mix").unwrap(),
                 tracks: vec![test_support::titled("/music/song.flac", "Song")],
             },
@@ -320,7 +326,6 @@ mod tests {
             LibraryJob::Scan {
                 music_dir: PathBuf::from("/music"),
                 revision: Revision::default(),
-                mode: ScanMode::Full,
                 dirs: Arc::clone(&dirs),
                 decodable: DECODABLE,
             },
@@ -407,15 +412,20 @@ mod tests {
             TrackRef::Local(music_dir.join("never-existed.flac")),
         ];
 
-        let event = told(Some(
-            LibraryJob::Tag {
-                music_dir,
-                tracks: listed,
-                revision: Revision::default().next(),
-                dirs: Arc::new(paths),
-            }
-            .run(),
-        ));
+        let mut library_driver: LibraryDriver<fn(CoverDecoded)> =
+            LibraryDriver::new(paths.clone(), DECODABLE, unpublished);
+        let event = told(
+            Some(
+                LibraryJob::Tag {
+                    music_dir,
+                    tracks: listed,
+                    revision: Revision::default().next(),
+                    dirs: Arc::new(paths),
+                }
+                .run(),
+            ),
+            &mut library_driver,
+        );
 
         insta::with_settings!({ filters => temp_dir_filters() }, {
             insta::assert_debug_snapshot!(event);
@@ -454,11 +464,6 @@ mod tests {
         let music_dir = scanned_music_dir(&directory);
         std::fs::create_dir_all(&paths.cache_dir).unwrap();
         std::fs::write(
-            paths.cache_dir.join("library.dir"),
-            music_dir.to_string_lossy().as_bytes(),
-        )
-        .unwrap();
-        std::fs::write(
             paths.cache_dir.join("library.bin"),
             [6u8, 0xDE, 0xAD, 0xBE, 0xEF],
         )
@@ -483,7 +488,6 @@ mod tests {
         let message = LibraryJob::Scan {
             music_dir: directory.path().join("absent"),
             revision: Revision::default(),
-            mode: ScanMode::Full,
             dirs: Arc::new(paths),
             decodable: DECODABLE,
         }

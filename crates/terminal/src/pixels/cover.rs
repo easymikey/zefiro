@@ -11,6 +11,8 @@ use widgets::{
         CoverImage,
         CoverMotion,
         CoverRefresh,
+        CoverWash,
+        CrossfadePermit,
         lifecycle::{CoverFrame, CoverLifecycle, PixmapSource},
         pixmap::CellPixels,
     },
@@ -52,6 +54,16 @@ impl Cover {
         scene: &Scene<'_>,
         refresh: CoverRefresh,
     ) -> CardCover {
+        let refresh = match self.picker.protocol_type() {
+            ProtocolType::Halfblocks => refresh,
+            ProtocolType::Sixel | ProtocolType::Kitty | ProtocolType::Iterm2 => {
+                CoverRefresh {
+                    crossfade: CrossfadePermit::Withheld,
+                    wash: CoverWash::Idle,
+                    ..refresh
+                }
+            }
+        };
         let update = self.lifecycle.refresh(scene, refresh);
         match update.frame {
             CoverFrame::Keep => {}

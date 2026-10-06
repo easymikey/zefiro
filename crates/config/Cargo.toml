@@ -8,7 +8,6 @@ license.workspace = true
 publish = false
 
 [dependencies]
-bon = { workspace = true }
 kernel = { workspace = true }
 num-traits = { workspace = true }
 serde = { workspace = true }

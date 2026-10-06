@@ -167,11 +167,10 @@ fn stepping_a_row_with_a_cue_emits_the_setting_then_the_cue() {
     assert_eq!(
         effects,
         vec![
-            &Effect::Config(ConfigCmd::SetAppearance(
-                AppearancePatch::builder()
-                    .layout_mode(LayoutMode::Full)
-                    .build()
-            )),
+            &Effect::Config(ConfigCmd::SetAppearance(AppearancePatch {
+                layout_mode: Some(LayoutMode::Full),
+                ..AppearancePatch::default()
+            })),
             &Effect::Animate(Cue::LayoutChanged),
         ]
     );
@@ -190,11 +189,10 @@ fn stepping_a_row_without_a_cue_emits_only_the_setting() {
     let effects: Vec<&Effect> = cmd.effects().collect();
     assert_eq!(
         effects,
-        vec![&Effect::Config(ConfigCmd::SetAppearance(
-            AppearancePatch::builder()
-                .key_hints(KeyHints::Hidden)
-                .build()
-        ))]
+        vec![&Effect::Config(ConfigCmd::SetAppearance(AppearancePatch {
+            key_hints: Some(KeyHints::Hidden),
+            ..AppearancePatch::default()
+        }))]
     );
 }
 

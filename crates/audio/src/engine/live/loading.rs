@@ -15,9 +15,9 @@ use crate::engine::{
 };
 
 impl Live {
-    pub(crate) fn failed(&mut self) -> Closed {
+    pub(crate) fn failed(self) -> Closed {
         Closed {
-            settings: std::mem::take(&mut self.settings),
+            settings: self.settings,
             pending: None,
             speed: self.speed,
         }

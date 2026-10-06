@@ -1,7 +1,7 @@
 use kernel::{
     cmd::{Cmd, Effect},
     domain::{
-        config::{ConfigError, ConfigName},
+        config::{ConfigError, ConfigName, Diagnostic},
         cue::Cue,
         io_error::IoError,
         keymap::{Action, KeyOverride, KeymapOverrides},
@@ -28,9 +28,9 @@ fn theme() -> ConfigName {
 fn fail(source: ConfigName, text: &str) -> ConfigEvent {
     ConfigEvent::Reloaded(ConfigReload {
         name: source,
-        result: Err(ConfigError::invalid(&std::io::Error::other(
-            text.to_string(),
-        ))),
+        result: Err(
+            Diagnostic::from_error(&std::io::Error::other(text.to_string())).into(),
+        ),
     })
 }
 
@@ -168,9 +168,9 @@ fn a_config_failure_shows_the_kernels_own_words() {
 
     let cmd = reduce(
         &mut model,
-        Message::Config(ConfigEvent::Error(ConfigError::Unreadable {
-            file: ConfigName::Appearance,
-            kind: IoError::Denied,
+        Message::Config(ConfigEvent::Error(ConfigError::Read {
+            name: ConfigName::Appearance,
+            source: IoError::Denied,
         })),
     );
 
@@ -208,7 +208,7 @@ fn a_repeated_config_failure_still_raises_its_own_toast() {
 
 #[test]
 fn config_failures_word_each_kind_distinctly() {
-    let unreadable = ConfigError::ThemesUnreadable(IoError::Other);
+    let unreadable = ConfigError::ListThemes(IoError::Other);
     let save = ConfigError::Save {
         file: theme(),
         kind: IoError::Full,

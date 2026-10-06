@@ -10,9 +10,8 @@ use rstest::rstest;
 use tachyonfx::{CellFilter, Effect as Animation};
 use widgets::animation::{
     catalogue::{
-        VolumeShades,
         chip_pulse,
-        modal_in,
+        modal_reveal,
         row_flash,
         scatter_burst,
         screen_wash,
@@ -84,7 +83,7 @@ fn modal_open_storyboard() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::OverlayOpened], &overlay_backdrop(Some(MODAL)));
 
-    insta::assert_snapshot!(storyboard(&mut stage, slice(|t| t.modal_in, 2)));
+    insta::assert_snapshot!(storyboard(&mut stage, slice(|t| t.modal_reveal, 2)));
 }
 
 #[test]
@@ -93,7 +92,7 @@ fn modal_close_storyboard() {
     stage.play(Vec::new(), &overlay_backdrop(Some(MODAL)));
     stage.play(vec![Cue::OverlayClosed], &overlay_backdrop(None));
 
-    insta::assert_snapshot!(storyboard(&mut stage, slice(|t| t.modal_in, 2)));
+    insta::assert_snapshot!(storyboard(&mut stage, slice(|t| t.modal_reveal, 2)));
 }
 
 #[test]
@@ -149,19 +148,13 @@ fn delete_burst_storyboard() {
 
 fn every_animation() -> Vec<(String, Animation)> {
     vec![
-        ("modal_in".to_string(), modal_in()),
+        ("modal_reveal".to_string(), modal_reveal()),
         ("toast_slide_in".to_string(), toast_slide_in(BACKGROUND)),
         ("chip_pulse".to_string(), chip_pulse(ACCENT)),
         ("row_flash".to_string(), row_flash(ACCENT)),
         (
             "volume_pulse".to_string(),
-            volume_pulse(
-                VolumeShades {
-                    fill: volume_fill(),
-                    lifted: volume_lifted(),
-                },
-                CellFilter::All,
-            ),
+            volume_pulse(volume_fill(), volume_lifted(), CellFilter::All),
         ),
         ("screen_wash".to_string(), screen_wash(BACKGROUND)),
         (

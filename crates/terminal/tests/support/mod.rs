@@ -8,7 +8,7 @@ use kernel::domain::{
     speed::Speed,
     theme::ThemeName,
     time::Moment,
-    track::{AudioFormat, Tags, Track},
+    track::{AudioFormat, Tags, Track, TrackParts},
 };
 use widgets::{
     geometry::DEFAULT_CELL_ASPECT,
@@ -40,17 +40,15 @@ pub(crate) fn noir_theme() -> Theme {
 }
 
 pub(crate) fn track(title: &str, duration_secs: u64) -> Arc<Track> {
-    Arc::new(
-        Track::builder()
-            .path(format!("/music/{title}.mp3"))
-            .duration(Duration::from_secs(duration_secs))
-            .tags(Tags {
-                title: Some(title.to_string()),
-                ..Tags::default()
-            })
-            .audio_format(AudioFormat::default())
-            .build(),
-    )
+    Arc::new(Track::new(TrackParts {
+        path: format!("/music/{title}.mp3").into(),
+        duration: Duration::from_secs(duration_secs),
+        tags: Tags {
+            title: Some(title.to_string()),
+            ..Tags::default()
+        },
+        audio_format: AudioFormat::default(),
+    }))
 }
 
 pub(crate) fn playing_model(

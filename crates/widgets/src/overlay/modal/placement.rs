@@ -8,14 +8,11 @@ use ratatui::{
 };
 
 use crate::{
-    overlay::modal::{
-        frame::{Modal, ModalAreas, ModalSize},
-        metrics::SCROLLBAR_INSET,
-    },
+    overlay::modal::frame::{Modal, ModalAreas, ModalSize},
     playlist::chrome::pane_block,
     primitive::{
         canvas::Canvas,
-        list_chrome::{row_band, scrollbar_column},
+        list_chrome::{ScrollAreas, scroll_areas},
         text::truncate,
     },
     theme::active_theme::ActiveTheme,
@@ -27,38 +24,17 @@ pub(crate) enum ModalContainer<'a> {
     Modal(&'a [Rect]),
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct ModalScrollAreas {
-    pub(crate) outer: Rect,
-    pub rows: Rect,
-    pub(crate) content: Rect,
-    pub(crate) scrollbar: Rect,
-    pub(crate) hint_row: Rect,
-}
-
-impl ModalScrollAreas {
-    fn empty(outer: Rect) -> Self {
-        Self {
-            outer,
-            rows: Rect::default(),
-            content: Rect::default(),
-            scrollbar: Rect::default(),
-            hint_row: Rect::default(),
-        }
-    }
-
-    fn frame(self) -> ModalAreas {
-        ModalAreas {
-            outer: self.outer,
-            body: self.content,
-            hint_row: self.hint_row,
-        }
+fn frame(areas: ScrollAreas) -> ModalAreas {
+    ModalAreas {
+        outer: areas.outer,
+        body: areas.content,
+        hint_row: areas.hint_row,
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayAreas {
-    List(ModalScrollAreas),
+    List(ScrollAreas),
     Dialog(ModalAreas),
     Banner(Rect),
 }
@@ -90,10 +66,10 @@ impl ModalBorder<'_> {
     }
 
     #[must_use]
-    pub(crate) fn areas(&self) -> ModalScrollAreas {
+    pub(crate) fn areas(&self) -> ScrollAreas {
         let inner = self.block().inner(self.area);
         if inner.width == 0 || inner.height == 0 {
-            return ModalScrollAreas::empty(self.area);
+            return ScrollAreas::empty(self.area);
         }
         scroll_areas(self.area, inner)
     }
@@ -147,12 +123,12 @@ impl<'a> ModalPlacement<'a> {
     }
 
     #[must_use]
-    pub(crate) fn areas(&self, screen: Rect) -> ModalScrollAreas {
+    pub(crate) fn areas(&self, screen: Rect) -> ScrollAreas {
         match self.container {
             ModalContainer::Playlist(pane) => self.border(pane).areas(),
             ModalContainer::Modal(avoid) => {
                 let modal_frame = self.modal().areas(screen, avoid);
-                ModalScrollAreas {
+                ScrollAreas {
                     hint_row: modal_frame.hint_row,
                     ..scroll_areas(modal_frame.outer, modal_frame.body)
                 }
@@ -160,39 +136,27 @@ impl<'a> ModalPlacement<'a> {
         }
     }
 
-    pub(crate) fn paint(&self, areas: ModalScrollAreas, canvas: Canvas<'_>) {
+    pub(crate) fn paint(&self, areas: ScrollAreas, canvas: Canvas<'_>) {
         let buffer = canvas.buffer;
         match self.container {
             ModalContainer::Playlist(pane) => self.border(pane).paint(buffer),
-            ModalContainer::Modal(_) => self.modal().paint(areas.frame(), buffer),
+            ModalContainer::Modal(_) => self.modal().paint(frame(areas), buffer),
         }
     }
 }
 
 #[must_use]
-pub(crate) fn scroll_areas(outer: Rect, inner: Rect) -> ModalScrollAreas {
-    let scrollbar = scrollbar_column(outer, inner, SCROLLBAR_INSET);
-    ModalScrollAreas {
-        outer,
-        rows: row_band(outer, inner, scrollbar),
-        content: inner,
-        scrollbar,
-        hint_row: Rect::default(),
-    }
-}
-
-#[must_use]
-pub(crate) fn leading_cells(areas: &ModalScrollAreas) -> Cells {
+pub(crate) fn leading_cells(areas: &ScrollAreas) -> Cells {
     Cells(areas.content.x.saturating_sub(areas.rows.x))
 }
 
 #[must_use]
-fn trailing_cells(areas: &ModalScrollAreas) -> u16 {
+fn trailing_cells(areas: &ScrollAreas) -> u16 {
     areas.rows.right().saturating_sub(areas.content.right())
 }
 
 #[must_use]
-pub(crate) fn column_width(areas: &ModalScrollAreas) -> Cells {
+pub(crate) fn column_width(areas: &ScrollAreas) -> Cells {
     Cells(areas.rows.width.saturating_sub(trailing_cells(areas)))
 }
 

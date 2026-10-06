@@ -45,8 +45,8 @@ fn icon(kind: ToastLevel) -> &'static str {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ToastWidget<'a> {
-    pub(crate) toasts: &'a [Toast],
-    pub(crate) theme: ActiveTheme<'a>,
+    toasts: &'a [Toast],
+    theme: ActiveTheme<'a>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +122,14 @@ fn title_line(toast: &Toast, room: usize) -> String {
 }
 
 impl<'a> ToastWidget<'a> {
+    #[must_use]
+    pub(crate) fn new(toasts: &'a [Toast], active_theme: ActiveTheme<'a>) -> Self {
+        Self {
+            toasts,
+            theme: active_theme,
+        }
+    }
+
     fn placed(&self, screen: Rect, form: Form) -> Vec<Placed<'a>> {
         match form {
             Form::Stack => self.stacked(screen),
@@ -260,10 +268,7 @@ mod tests {
     };
 
     fn toaster<'a>(toasts: &'a [Toast], theme: &'a Theme) -> ToastWidget<'a> {
-        ToastWidget {
-            toasts,
-            theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
-        }
+        ToastWidget::new(toasts, ActiveTheme::new(theme, ColorDepth::TrueColor))
     }
 
     fn painted(toasts: &[Toast], size: (u16, u16)) -> String {

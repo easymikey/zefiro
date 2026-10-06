@@ -19,17 +19,19 @@ expression: effects(cmd)
         ),
     ),
     Library(
-        AppendHistory(
-            HistoryEntry {
-                track: Local(
-                    "/tmp/track0.flac",
-                ),
-                title: "track0",
-                artist: None,
-                at: Moment(
-                    0ns,
-                ),
-            },
+        Disk(
+            AppendHistory(
+                HistoryEntry {
+                    track: Local(
+                        "/tmp/track0.flac",
+                    ),
+                    title: "track0",
+                    artist: None,
+                    at: Moment(
+                        0ns,
+                    ),
+                },
+            ),
         ),
     ),
     Macos(

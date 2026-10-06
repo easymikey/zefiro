@@ -2,7 +2,7 @@ use std::{mem, path::Path};
 
 use crossbeam_channel::{Receiver, RecvError, TrySendError};
 use kernel::domain::io_error::IoError;
-use notify::{RecommendedWatcher, RecursiveMode};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 
 fn io_error(error: &notify::Error) -> IoError {
     match &error.kind {
@@ -12,35 +12,6 @@ fn io_error(error: &notify::Error) -> IoError {
         | notify::ErrorKind::WatchNotFound
         | notify::ErrorKind::InvalidConfig(_)
         | notify::ErrorKind::MaxFilesWatch => IoError::Other,
-    }
-}
-
-pub(crate) trait Watcher {
-    fn watch(&mut self, path: &Path) -> Result<(), notify::Error>;
-    fn unwatch(&mut self, path: &Path) -> Result<(), notify::Error>;
-}
-
-impl Watcher for RecommendedWatcher {
-    fn watch(&mut self, path: &Path) -> Result<(), notify::Error> {
-        notify::Watcher::watch(self, path, RecursiveMode::Recursive)
-    }
-
-    fn unwatch(&mut self, path: &Path) -> Result<(), notify::Error> {
-        notify::Watcher::unwatch(self, path)
-    }
-}
-
-impl<W: Watcher> Watcher for Option<W> {
-    fn watch(&mut self, path: &Path) -> Result<(), notify::Error> {
-        self.as_mut().map_or_else(
-            || Err(notify::Error::generic("no watcher")),
-            |watcher| watcher.watch(path),
-        )
-    }
-
-    fn unwatch(&mut self, path: &Path) -> Result<(), notify::Error> {
-        self.as_mut()
-            .map_or(Ok(()), |watcher| watcher.unwatch(path))
     }
 }
 
@@ -89,7 +60,10 @@ impl<M> FileStream<M> {
             },
         };
         let failure = if path.exists() {
-            watcher.watch(path).err().map(|error| io_error(&error))
+            watcher
+                .watch(path, RecursiveMode::Recursive)
+                .err()
+                .map(|error| io_error(&error))
         } else {
             Some(IoError::Missing)
         };
@@ -128,10 +102,13 @@ impl<M> FileStream<M> {
         ))
     }
 
-    pub(crate) fn lose(&mut self) {
-        if let Self::Watching { changed, .. } = self {
-            *self = Self::Lost(*changed);
-        }
+    pub(crate) fn lose(&mut self) -> Option<M> {
+        let Self::Watching { changed, .. } = self else {
+            return None;
+        };
+        let changed = *changed;
+        *self = Self::Lost(changed);
+        Some(changed(Err(IoError::Other)))
     }
 }
 
@@ -141,23 +118,12 @@ mod tests {
 
     use crossbeam_channel::RecvError;
     use kernel::domain::io_error::IoError;
-    use notify::RecommendedWatcher;
     use rstest::rstest;
 
-    use crate::watcher::{FileStream, Watcher, io_error};
+    use crate::watcher::{FileStream, io_error};
 
     fn as_outcome(changed: Result<(), IoError>) -> Result<(), IoError> {
         changed
-    }
-
-    #[test]
-    fn watching_without_a_watcher_reports_an_error() {
-        let mut watcher: Option<RecommendedWatcher> = None;
-        let directory = std::env::temp_dir();
-
-        let outcome = watcher.watch(&directory);
-
-        assert!(outcome.is_err());
     }
 
     #[test]
@@ -168,13 +134,6 @@ mod tests {
         let outcome = file_stream.watch(&missing, as_outcome);
 
         assert_eq!(outcome, Some(Err(IoError::Missing)));
-    }
-
-    #[test]
-    fn unwatching_without_a_watcher_is_a_no_op() {
-        let mut watcher: Option<RecommendedWatcher> = None;
-
-        assert!(watcher.unwatch(Path::new("/music")).is_ok());
     }
 
     #[rstest]
@@ -280,13 +239,32 @@ mod tests {
 
         for step in steps {
             match step {
-                Step::Watch => drop(file_stream.watch(directory.path(), as_outcome)),
-                Step::WatchMissing => drop(file_stream.watch(&missing, as_outcome)),
-                Step::Lose => file_stream.lose(),
+                Step::Watch => {
+                    assert_eq!(file_stream.watch(directory.path(), as_outcome), None);
+                }
+                Step::WatchMissing => {
+                    assert_eq!(
+                        file_stream.watch(&missing, as_outcome),
+                        Some(Err(IoError::Missing))
+                    );
+                }
+                Step::Lose => {
+                    file_stream.lose();
+                }
             }
         }
 
         assert_eq!(stage(&file_stream), expected);
+    }
+
+    #[test]
+    fn a_lost_watch_is_reported_as_an_unknown_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut file_stream = FileStream::Idle;
+        assert_eq!(file_stream.watch(directory.path(), as_outcome), None);
+
+        assert_eq!(file_stream.lose(), Some(Err(IoError::Other)));
+        assert_eq!(file_stream.lose(), None);
     }
 
     #[test]

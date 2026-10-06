@@ -32,7 +32,7 @@ pub(crate) fn now_playing_info(
     now: Instant,
 ) -> Retained<NSDictionary<NSString, AnyObject>> {
     let (title, artist, album, duration) = shown.track.map_or_else(
-        || (PLACEHOLDER_TITLE.to_owned(), None, None, Duration::ZERO),
+        || (PLACEHOLDER_TITLE, None, None, Duration::ZERO),
         |track| {
             (
                 track.song_title(),
@@ -42,7 +42,7 @@ pub(crate) fn now_playing_info(
             )
         },
     );
-    let title = NSString::from_str(&title);
+    let title = NSString::from_str(title);
     let artist = artist.map(NSString::from_str);
     let album = album.map(NSString::from_str);
     let duration = NSNumber::new_f64(duration.as_secs_f64());
@@ -91,7 +91,7 @@ mod tests {
 
     use kernel::{
         cmd::Playback,
-        domain::track::{AudioFormat, Tags, Track},
+        domain::track::{AudioFormat, Tags, Track, TrackParts},
     };
     use objc2::runtime::AnyObject;
     use objc2_foundation::{NSDictionary, NSNumber, NSString};
@@ -133,16 +133,16 @@ mod tests {
 
     #[test]
     fn a_track_carries_the_tags_it_has_and_where_the_clock_is() {
-        let track = Track::builder()
-            .path("/tmp/tuonela.flac")
-            .duration(Duration::from_secs(42))
-            .tags(Tags {
+        let track = Track::new(TrackParts {
+            path: "/tmp/tuonela.flac".into(),
+            duration: Duration::from_secs(42),
+            tags: Tags {
                 title: Some("Tuonela".to_owned()),
                 artist: Some("Amorphis".to_owned()),
                 ..Tags::default()
-            })
-            .audio_format(AudioFormat::default())
-            .build();
+            },
+            audio_format: AudioFormat::default(),
+        });
         let start = Instant::now();
         let shown = NowPlaying {
             track: Some(&track),

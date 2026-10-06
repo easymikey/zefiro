@@ -9,17 +9,20 @@ use kernel::{
     update::machine::{Machine, Unhandled},
 };
 
-use crate::{driver::paths::ConfigPaths, file_name::theme_file_name};
+use crate::{driver::paths::ConfigPaths, file_name::theme_file_path};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConfigChange {
+pub(crate) enum ConfigChange {
     Appearance(Option<String>),
     Keymap(Option<String>),
     Theme {
         name: ThemeName,
         text: Option<String>,
     },
-    Themes(Vec<ThemeName>),
+    Themes {
+        theme_names: Vec<ThemeName>,
+        refused: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,10 +111,6 @@ impl ConfigWatch {
             theme_list: Seen::Unread,
         }
     }
-
-    fn theme_path(&self, name: &ThemeName) -> PathBuf {
-        self.themes.join(theme_file_name(name.as_str()))
-    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -124,7 +123,10 @@ pub enum ConfigWatchMessage {
         name: ConfigName,
         text: Option<String>,
     },
-    Listed(Vec<ThemeName>),
+    Listed {
+        theme_names: Vec<ThemeName>,
+        refused: Vec<String>,
+    },
     SelectTheme(ThemeName),
     Saved {
         name: ConfigName,
@@ -177,7 +179,10 @@ impl Machine for ConfigWatch {
                 name: ConfigName::Theme(_),
                 text,
             } => self.theme_observed(text),
-            ConfigWatchMessage::Listed(names) => Ok(self.themes_listed(names)),
+            ConfigWatchMessage::Listed {
+                theme_names,
+                refused,
+            } => Ok(self.themes_listed(theme_names, refused)),
             ConfigWatchMessage::SelectTheme(name) => self.select_theme(name),
             ConfigWatchMessage::Saved {
                 name: ConfigName::Appearance,
@@ -199,11 +204,9 @@ impl Machine for ConfigWatch {
 
 impl ConfigWatch {
     fn poll_theme(&self) -> Result<Cmd<WatchEffect, ConfigChange>, Unhandled> {
-        let theme = self.theme.as_ref().ok_or(Unhandled)?;
-        Ok(read(
-            ConfigName::Theme(theme.name.clone()),
-            &self.theme_path(&theme.name),
-        ))
+        let name = self.theme.as_ref().ok_or(Unhandled)?.name.clone();
+        let path = theme_file_path(&self.themes, &name);
+        Ok(read(ConfigName::Theme(name), &path))
     }
 
     fn theme_observed(
@@ -224,28 +227,33 @@ impl ConfigWatch {
         if self.theme.as_ref().is_some_and(|theme| theme.name == name) {
             return Err(Unhandled);
         }
-        let reading = read(ConfigName::Theme(name.clone()), &self.theme_path(&name));
         self.theme = Some(SelectedTheme {
             name,
             seen: Seen::Unread,
         });
-        Ok(reading)
+        self.poll_theme()
     }
 
     fn themes_listed(
         &mut self,
-        names: Vec<ThemeName>,
+        theme_names: Vec<ThemeName>,
+        refused: Vec<String>,
     ) -> Cmd<WatchEffect, ConfigChange> {
-        let listing = names
+        let listing = theme_names
             .iter()
             .map(ThemeName::as_str)
+            .chain(std::iter::once("\0"))
+            .chain(refused.iter().map(String::as_str))
             .collect::<Vec<_>>()
             .join("\n");
         if !self.theme_list.changed_by(Some(&listing)) {
             return Cmd::none();
         }
         self.theme_list = Seen::of(Some(&listing));
-        Cmd::message(ConfigChange::Themes(names))
+        Cmd::message(ConfigChange::Themes {
+            theme_names,
+            refused,
+        })
     }
 }
 
@@ -354,6 +362,13 @@ mod tests {
     #[case::absent_config_at_start(ConfigWatchMessage::ReadDone { name: ConfigName::Config, text: None }, Cmd::none())]
     #[case::config_appears(ConfigWatchMessage::ReadDone { name: ConfigName::Config, text: Some("x".to_string()) }, Cmd::message(ConfigChange::Keymap(Some("x".to_string()))))]
     #[case::own_write(ConfigWatchMessage::Saved { name: ConfigName::Config, text: "x".to_string() }, Cmd::none())]
+    #[case::absent_theme(
+        ConfigWatchMessage::ReadDone { name: noir(), text: None },
+        Cmd::message(ConfigChange::Theme {
+            name: ThemeName::from_static("noir"),
+            text: None,
+        })
+    )]
     #[case::other_theme(
         ConfigWatchMessage::SelectTheme(ThemeName::from_static("ink")),
         reads(
@@ -379,6 +394,25 @@ mod tests {
 
         assert_eq!(unselected.transition(message), Err(Unhandled));
         assert_eq!(unselected, watch(None));
+    }
+
+    #[test]
+    fn an_absent_theme_is_reported_once() {
+        let mut absent_theme = watch(Some("noir"));
+        let absent = Cmd::message(ConfigChange::Theme {
+            name: ThemeName::from_static("noir"),
+            text: None,
+        });
+        let done = || ConfigWatchMessage::ReadDone {
+            name: noir(),
+            text: None,
+        };
+
+        let first = absent_theme.transition(done());
+        let second = absent_theme.transition(done());
+
+        assert_eq!(first, Ok(absent));
+        assert_eq!(second, Ok(Cmd::none()));
     }
 
     #[test]
@@ -413,15 +447,20 @@ mod tests {
     #[test]
     fn a_theme_listing_is_reported_once() {
         let mut watch = watch(None);
-        let listed =
-            || ConfigWatchMessage::Listed(vec![ThemeName::from_static("mine")]);
+        let listed = || ConfigWatchMessage::Listed {
+            theme_names: vec![ThemeName::from_static("mine")],
+            refused: Vec::new(),
+        };
 
         let first = watch.transition(listed()).unwrap();
         let second = watch.transition(listed()).unwrap();
 
         assert_eq!(
             first,
-            Cmd::message(ConfigChange::Themes(vec![ThemeName::from_static("mine")]))
+            Cmd::message(ConfigChange::Themes {
+                theme_names: vec![ThemeName::from_static("mine")],
+                refused: Vec::new()
+            })
         );
         assert_eq!(second, Cmd::none());
     }

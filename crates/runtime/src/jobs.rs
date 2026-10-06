@@ -1,8 +1,9 @@
 use std::{
+    any::Any,
     fmt,
     mem,
-    panic,
-    thread::{self, JoinHandle},
+    panic::{AssertUnwindSafe, catch_unwind},
+    thread,
 };
 
 use crossbeam_channel::{Receiver, Sender};
@@ -19,56 +20,36 @@ impl<J, M> fmt::Debug for Jobs<J, M> {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct JobThread<J> {
-    pub(crate) jobs: Sender<J>,
-    handle: JoinHandle<()>,
-}
-
-impl<J> JobThread<J> {
-    pub(crate) fn stop(self) {
-        drop(self.jobs);
-        if let Err(payload) = self.handle.join() {
-            panic::resume_unwind(payload);
-        }
-    }
-}
-
 const JOB_SLOTS: usize = 4;
 
 pub(crate) fn spawn_jobs<J, M>(
     row: &DriverRow,
-    results: Sender<M>,
+    results: Sender<Result<M, Box<dyn Any + Send>>>,
     run: fn(J) -> M,
-) -> Result<JobThread<J>, Error>
+) -> Result<Sender<J>, Error>
 where
-    J: Ord + Send + 'static,
+    J: Send + 'static,
     M: Send + 'static,
 {
     let (jobs, inbox) = crossbeam_channel::bounded(JOB_SLOTS);
     let driver = row.driver;
-    let handle = thread::Builder::new()
+    thread::Builder::new()
         .name(format!("{}-jobs", row.thread_name))
         .spawn(move || serve(&inbox, &results, run))
         .map_err(|source| Error::Spawn { driver, source })?;
-    Ok(JobThread { jobs, handle })
+    Ok(jobs)
 }
 
-fn serve<J: Ord, M>(inbox: &Receiver<J>, results: &Sender<M>, run: fn(J) -> M) {
-    let mut pending: Vec<J> = Vec::new();
-    loop {
-        if pending.is_empty() {
-            match inbox.recv() {
-                Ok(job) => stash(&mut pending, job),
-                Err(_) => return,
-            }
-        }
-        for job in inbox.try_iter() {
-            stash(&mut pending, job);
-        }
-        pending.sort();
-        let job = pending.remove(0);
-        if results.send(run(job)).is_err() {
+fn serve<J, M>(
+    inbox: &Receiver<J>,
+    results: &Sender<Result<M, Box<dyn Any + Send>>>,
+    run: fn(J) -> M,
+) {
+    while let Ok(first) = inbox.recv() {
+        let job = inbox.try_iter().last().unwrap_or(first);
+        let answer = catch_unwind(AssertUnwindSafe(|| run(job)));
+        let panicked = answer.is_err();
+        if results.send(answer).is_err() || panicked {
             return;
         }
     }
@@ -90,7 +71,7 @@ mod tests {
         registry,
     };
 
-    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Debug, PartialEq, Eq)]
     enum Job {
         First(u8),
         Second(u8),
@@ -100,27 +81,32 @@ mod tests {
         job
     }
 
+    fn explode(job: Job) -> Job {
+        match job {
+            Job::First(_) => panic!("the job panics"),
+            Job::Second(_) => job,
+        }
+    }
+
     #[test]
     fn a_newer_job_of_the_same_kind_replaces_the_older() {
         let mut pending = Vec::new();
         stash(&mut pending, Job::Second(1));
         stash(&mut pending, Job::First(1));
         stash(&mut pending, Job::Second(2));
-        pending.sort();
         assert_eq!(pending, vec![Job::First(1), Job::Second(2)]);
     }
 
     #[test]
-    fn the_worker_runs_the_earlier_kind_first_and_ends_when_senders_drop() {
+    fn the_worker_runs_the_newest_queued_job_and_ends_when_senders_drop() {
         let (jobs, inbox) = crossbeam_channel::bounded(JOB_SLOTS);
         let (results, heard) = crossbeam_channel::unbounded();
-        jobs.send(Job::Second(1)).unwrap();
         jobs.send(Job::First(1)).unwrap();
         jobs.send(Job::First(2)).unwrap();
         drop(jobs);
         serve(&inbox, &results, label);
-        let ran: Vec<Job> = heard.try_iter().collect();
-        assert_eq!(ran, vec![Job::First(2), Job::Second(1)]);
+        let ran: Vec<Job> = heard.try_iter().map(Result::unwrap).collect();
+        assert_eq!(ran, vec![Job::First(2)]);
     }
 
     #[test]
@@ -129,9 +115,40 @@ mod tests {
         let thread =
             crate::jobs::spawn_jobs(registry::row(DriverName::Audio), results, label)
                 .unwrap();
-        thread.jobs.send(Job::First(7)).unwrap();
-        let answer = heard.recv_timeout(Duration::from_secs(2)).unwrap();
+        thread.send(Job::First(7)).unwrap();
+        let answer = heard.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
         assert_eq!(answer, Job::First(7));
-        thread.stop();
+        drop(thread);
+    }
+
+    #[test]
+    fn a_panicking_job_is_reported_and_ends_its_worker() {
+        let (jobs, inbox) = crossbeam_channel::bounded(JOB_SLOTS);
+        let (results, heard) = crossbeam_channel::unbounded();
+        jobs.send(Job::First(1)).unwrap();
+        serve(&inbox, &results, explode);
+        let answers: Vec<_> = heard.try_iter().collect();
+        assert_eq!(answers.len(), 1);
+        assert!(answers[0].is_err());
+    }
+
+    #[test]
+    fn a_panicking_job_leaves_another_worker_answering() {
+        let (results, heard) = crossbeam_channel::unbounded();
+        let (spare, spare_heard) = crossbeam_channel::unbounded();
+        let doomed =
+            crate::jobs::spawn_jobs(registry::row(DriverName::Audio), results, explode)
+                .unwrap();
+        let other =
+            crate::jobs::spawn_jobs(registry::row(DriverName::Config), spare, explode)
+                .unwrap();
+        doomed.send(Job::First(1)).unwrap();
+        other.send(Job::Second(2)).unwrap();
+        assert!(heard.recv_timeout(Duration::from_secs(2)).unwrap().is_err());
+        let answer = spare_heard
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        assert_eq!(answer, Job::Second(2));
     }
 }

@@ -8,7 +8,7 @@ mod text_entry;
 use std::{path::Path, sync::Arc};
 
 use crate::{
-    cmd::{Cmd, Effect, LibraryCmd},
+    cmd::{Cmd, DiskCmd, Effect, LibraryCmd},
     domain::{
         cursor_over::CursorOver,
         history::{HISTORY_LIMIT, HistoryEntry},
@@ -19,7 +19,7 @@ use crate::{
         track::Track,
         workspace::Workspace,
     },
-    message::{HistoryRequest, OverlayRequest, SearchRequest, TextRequest},
+    message::{HistoryRequest, OverlayRequest, SearchEdit, SearchRequest, TextRequest},
     update::{
         machine::{Machine, Unhandled},
         overlay::{history::HistoryMessage, settings::SettingRowMessage},
@@ -39,7 +39,6 @@ pub enum OverlayContentMessage {
     Search(SearchRequest),
     Settings(SettingRowMessage),
     Text(TextRequest),
-    Jump(TextRequest),
     History(HistoryMessage),
 }
 
@@ -77,10 +76,6 @@ pub(crate) fn update(
             parts.workspace,
             OverlayMessage::Inner(OverlayContentMessage::Text(message)),
         ),
-        OverlayRequest::Jump(message) => update_overlay(
-            parts.workspace,
-            OverlayMessage::Inner(OverlayContentMessage::Jump(message)),
-        ),
         OverlayRequest::History(request) => {
             let len = parts.history.len();
             let message = match request {
@@ -89,11 +84,7 @@ pub(crate) fn update(
                 }
                 HistoryRequest::Top => HistoryMessage::Top,
                 HistoryRequest::Bottom => HistoryMessage::Bottom(len),
-                HistoryRequest::Enqueue => HistoryMessage::Enqueue(history::pick(
-                    parts.workspace,
-                    parts.history,
-                    parts.playlist,
-                )),
+                HistoryRequest::Enqueue => HistoryMessage::Enqueue(len),
             };
             update_overlay(
                 parts.workspace,
@@ -108,7 +99,7 @@ fn open_request(
     name: OverlayName,
 ) -> Result<Cmd, Unhandled> {
     let load_history = if matches!(name, OverlayName::History) {
-        Effect::Library(LibraryCmd::LoadHistory(HISTORY_LIMIT)).into()
+        Effect::Library(LibraryCmd::Disk(DiskCmd::LoadHistory(HISTORY_LIMIT))).into()
     } else {
         Cmd::none()
     };
@@ -124,10 +115,16 @@ fn search_request(
     tracks: &[Arc<Track>],
     message: SearchRequest,
 ) -> Result<Cmd, Unhandled> {
-    let edited = matches!(message, SearchRequest::Edit(_));
     let cmd = update_overlay(workspace, inner_search(message))?;
-    if edited && let Some(Overlay::Search(search)) = workspace.overlay.as_mut() {
-        search::rank(search, tracks);
+    if let SearchRequest::Edit(edit) = message
+        && let Some(Overlay::Search(search)) = workspace.overlay.as_mut()
+    {
+        match edit {
+            SearchEdit::Char(_) => search::narrow(search, tracks),
+            SearchEdit::Backspace | SearchEdit::DeleteWord | SearchEdit::Clear => {
+                search::rank(search, tracks);
+            }
+        }
     }
     Ok(cmd)
 }
@@ -164,7 +161,7 @@ fn overlay_for(
                 .ok_or(Unhandled)?;
             Ok(Overlay::ConfirmDelete(DeleteCandidate {
                 source: track.source().clone(),
-                title: track.song_title(),
+                title: track.song_title().to_owned(),
                 artist: track.tags().artist.clone().unwrap_or_else(String::new),
             }))
         }
@@ -178,7 +175,10 @@ fn overlay_for(
             .ok_or(Unhandled),
         OverlayName::JumpToTime => Ok(Overlay::JumpToTime(TextEntry::default())),
         OverlayName::MusicDir => Ok(Overlay::MusicDir(TextEntry {
-            input: parts.music_dir.display().to_string(),
+            input: parts
+                .music_dir
+                .to_str()
+                .map_or_else(String::new, str::to_owned),
             error: None,
         })),
     }

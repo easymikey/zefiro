@@ -1,16 +1,10 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use kernel::{
-    cmd::{Cmd, Cmds, CoverJob, LibraryCmd, ScanMode},
-    domain::{
-        favorites::Favorites,
-        history::HistoryEntry,
-        playlist::PlaylistFileName,
-        revision::Revision,
-        track::Track,
-    },
+    cmd::{Cmd, Cmds, CoverJob, DiskCmd, LibraryCmd, ScanMode},
+    domain::{revision::Revision, track::Track},
     message::LibraryEvent,
-    update::machine::{LoopCmd, LoopEffect, Machine, Unhandled},
+    update::machine::{LoopCmd, LoopEffect, Machine, Unhandled, each_handled},
 };
 
 mod cover_requests;
@@ -29,19 +23,19 @@ const DEBOUNCE: Duration = Duration::from_millis(500);
 pub struct LibraryDriver<P> {
     pub(crate) dirs: Arc<LibraryDirs>,
     decodable: &'static [&'static str],
-    watch: LibraryWatch,
+    library_watch: LibraryWatch,
     decoding: CoverDecoding,
     covers: CoverCache,
     asked: Option<CoverJob>,
     cover_revision: Revision,
-    pub(crate) publish: P,
+    pub(crate) publish_cover: P,
 }
 
 impl<P> std::fmt::Debug for LibraryDriver<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LibraryDriver")
             .field("dirs", &self.dirs)
-            .field("watch", &self.watch)
+            .field("library_watch", &self.library_watch)
             .field("decoding", &self.decoding)
             .finish_non_exhaustive()
     }
@@ -53,20 +47,7 @@ pub(crate) type LibraryLoopCmd =
 #[derive(Debug)]
 pub enum LibraryEffect {
     PublishCover(CoverDecoded),
-    Execute(DiskEffect),
-}
-
-#[derive(Debug)]
-pub enum DiskEffect {
-    AppendHistory(HistoryEntry),
-    SaveFavorites(Favorites),
-    LoadFavorites,
-    Trash(PathBuf),
-    LoadHistory(usize),
-    SavePlaylist {
-        name: PlaylistFileName,
-        tracks: Vec<Arc<Track>>,
-    },
+    Execute(DiskCmd),
 }
 
 impl<P> LibraryDriver<P> {
@@ -74,65 +55,49 @@ impl<P> LibraryDriver<P> {
     pub fn new(
         dirs: LibraryDirs,
         decodable: &'static [&'static str],
-        publish: P,
+        publish_cover: P,
     ) -> Self {
         Self {
             dirs: Arc::new(dirs),
             decodable,
-            watch: LibraryWatch::default(),
+            library_watch: LibraryWatch::default(),
             decoding: CoverDecoding::default(),
             covers: CoverCache::default(),
             asked: None,
             cover_revision: Revision::default(),
-            publish,
+            publish_cover,
         }
     }
 
-    fn command(&mut self, command: LibraryCmd) -> LibraryLoopCmd {
-        let disk = match command {
+    fn command(&mut self, command: LibraryCmd) -> Result<LibraryLoopCmd, Unhandled> {
+        match command {
             LibraryCmd::Scan {
                 music_dir,
                 revision,
                 mode,
-            } => {
-                return self
-                    .watched(
-                        LibraryWatchMessage::Rescan {
-                            music_dir,
-                            revision,
-                        },
-                        mode,
-                    )
-                    .unwrap_or_else(|Unhandled| Cmd::none());
-            }
-            LibraryCmd::DecodeCover(job) => {
-                return self.ask(job).unwrap_or_else(|Unhandled| Cmd::none());
-            }
-            LibraryCmd::PrefetchCover(job) => return self.prefetch(job.path),
+            } => self.watched(
+                LibraryWatchMessage::Rescan {
+                    music_dir,
+                    revision,
+                },
+                mode,
+            ),
+            LibraryCmd::DecodeCover(job) => self.ask(job),
+            LibraryCmd::PrefetchCover(job) => self.prefetch(job.path),
             LibraryCmd::TagTracks {
                 music_dir,
                 tracks,
                 revision,
-            } => {
-                return Cmd::effect(LoopEffect::Run(LibraryJob::Tag {
-                    music_dir,
-                    tracks,
-                    revision,
-                    dirs: Arc::clone(&self.dirs),
-                }));
-            }
-            LibraryCmd::AppendHistory(entry) => DiskEffect::AppendHistory(entry),
-            LibraryCmd::SaveFavorites(favorites) => {
-                DiskEffect::SaveFavorites(favorites)
-            }
-            LibraryCmd::LoadFavorites => DiskEffect::LoadFavorites,
-            LibraryCmd::Trash(path) => DiskEffect::Trash(path),
-            LibraryCmd::LoadHistory(limit) => DiskEffect::LoadHistory(limit),
-            LibraryCmd::SavePlaylist { name, tracks } => {
-                DiskEffect::SavePlaylist { name, tracks }
-            }
-        };
-        Cmd::effect(LoopEffect::Execute(LibraryEffect::Execute(disk)))
+            } => Ok(Cmd::effect(LoopEffect::Run(LibraryJob::Tag {
+                music_dir,
+                tracks,
+                revision,
+                dirs: Arc::clone(&self.dirs),
+            }))),
+            LibraryCmd::Disk(disk) => Ok(Cmd::effect(LoopEffect::Execute(
+                LibraryEffect::Execute(disk),
+            ))),
+        }
     }
 
     fn watched(
@@ -140,17 +105,12 @@ impl<P> LibraryDriver<P> {
         message: LibraryWatchMessage,
         mode: ScanMode,
     ) -> Result<LibraryLoopCmd, Unhandled> {
-        let (effects, messages) = self.watch.transition(message)?.into_parts();
+        let (effects, events) = self.library_watch.transition(message)?.into_parts();
         let lifted: LibraryLoopCmd = effects
             .into_iter()
             .map(|effect| self.lift(effect, mode))
             .collect();
-        Ok(messages.into_iter().fold(lifted, |cmd, told| {
-            cmd.then(
-                self.transition(told)
-                    .unwrap_or_else(|Unhandled| Cmd::none()),
-            )
-        }))
+        Ok(drained(lifted, events))
     }
 
     fn lift(
@@ -171,15 +131,30 @@ impl<P> LibraryDriver<P> {
             WatchEffect::Scan {
                 music_dir,
                 revision,
-            } => LoopEffect::Run(LibraryJob::Scan {
-                music_dir,
-                revision,
-                mode,
-                dirs: Arc::clone(&self.dirs),
-                decodable: self.decodable,
+            } => LoopEffect::Run(match mode {
+                ScanMode::Full => LibraryJob::Scan {
+                    music_dir,
+                    revision,
+                    dirs: Arc::clone(&self.dirs),
+                    decodable: self.decodable,
+                },
+                ScanMode::Cached => LibraryJob::ReadCache {
+                    music_dir,
+                    revision,
+                    dirs: Arc::clone(&self.dirs),
+                },
             }),
         }
     }
+}
+
+fn drained(
+    library_loop_cmd: LibraryLoopCmd,
+    events: Vec<LibraryEvent>,
+) -> LibraryLoopCmd {
+    events
+        .into_iter()
+        .fold(library_loop_cmd, |cmd, event| cmd.then(Cmd::message(event)))
 }
 
 fn cached(
@@ -214,9 +189,9 @@ impl<P> Machine for LibraryDriver<P> {
         message: LibraryMessage,
     ) -> Result<LibraryLoopCmd, Unhandled> {
         match message {
-            LibraryMessage::Cmds(Cmds { cmds, .. }) => Ok(cmds
-                .into_iter()
-                .fold(Cmd::none(), |cmd, command| cmd.then(self.command(command)))),
+            LibraryMessage::Cmds(Cmds { cmds, .. }) => {
+                each_handled(cmds, |command| self.command(command))
+            }
             LibraryMessage::Changed(result) => {
                 self.watched(LibraryWatchMessage::Changed(result), ScanMode::Full)
             }
@@ -239,10 +214,26 @@ impl<P> Machine for LibraryDriver<P> {
                 revision,
                 tracks,
             )),
-            LibraryMessage::Scanned { event, skipped }
-            | LibraryMessage::Tagged { event, skipped }
-            | LibraryMessage::Executed { event, skipped } => {
-                Ok(reported(event, skipped))
+            LibraryMessage::Scanned {
+                tracks,
+                revision,
+                skipped,
+            } => Ok(reported(LibraryEvent::Loaded { tracks, revision }, skipped)),
+            LibraryMessage::Tagged {
+                tracks,
+                revision,
+                skipped,
+            } => Ok(reported(LibraryEvent::Tagged { tracks, revision }, skipped)),
+            LibraryMessage::Listed {
+                tracks,
+                revision,
+                skipped,
+            } => Ok(reported(LibraryEvent::Listed { tracks, revision }, skipped)),
+            LibraryMessage::FavoritesLoaded(favorites) => {
+                Ok(Cmd::message(LibraryEvent::FavoritesLoaded(favorites)))
+            }
+            LibraryMessage::HistoryLoaded { entries, skipped } => {
+                Ok(reported(LibraryEvent::HistoryLoaded(entries), skipped))
             }
             LibraryMessage::Error(error) => {
                 Ok(Cmd::message(LibraryEvent::Error((&error).into())))
@@ -259,9 +250,13 @@ mod tests {
     };
 
     use kernel::{
-        cmd::{Cmds, LibraryCmd, ScanMode},
-        domain::{geometry::Pixels, io_error::IoError, revision::Revision},
-        message::LibraryEvent,
+        cmd::{Cmds, DiskCmd, LibraryCmd, ScanMode},
+        domain::{
+            favorites::Favorites,
+            geometry::Pixels,
+            io_error::IoError,
+            revision::Revision,
+        },
         update::machine::{LoopEffect, Machine, Unhandled},
     };
     use rstest::rstest;
@@ -269,7 +264,7 @@ mod tests {
     use crate::{
         cover::{CoverArt, CoverDecoded, CoverError},
         dirs::LibraryDirs,
-        driver::{DiskEffect, LibraryDriver, LibraryEffect, LibraryLoopCmd},
+        driver::{LibraryDriver, LibraryEffect, LibraryLoopCmd},
         error::Error,
         job::LibraryJob,
         message::{LibraryMessage, LibraryTimer},
@@ -351,19 +346,12 @@ mod tests {
     fn cover_state(driver: &LibraryDriver<fn(CoverDecoded)>) -> String {
         format!(
             "{:?} {:?} {:?} {:?} {:?}",
-            driver.watch,
+            driver.library_watch,
             driver.decoding,
             driver.covers,
             driver.asked,
             driver.cover_revision
         )
-    }
-
-    fn loaded() -> LibraryEvent {
-        LibraryEvent::Loaded {
-            tracks: Vec::new(),
-            revision: Revision::default(),
-        }
     }
 
     fn describe_job(job: &LibraryJob) -> String {
@@ -379,9 +367,13 @@ mod tests {
             LibraryJob::Scan {
                 music_dir,
                 revision,
-                mode,
                 ..
-            } => format!("scan {mode:?} {} @ {}", music_dir.display(), revision.get()),
+            } => format!("scan {} @ {}", music_dir.display(), revision.get()),
+            LibraryJob::ReadCache {
+                music_dir,
+                revision,
+                ..
+            } => format!("read cache {} @ {}", music_dir.display(), revision.get()),
             LibraryJob::List {
                 music_dir,
                 revision,
@@ -421,14 +413,14 @@ mod tests {
         }
     }
 
-    fn describe_disk(disk: &DiskEffect) -> &'static str {
-        match disk {
-            DiskEffect::AppendHistory(_) => "append_history",
-            DiskEffect::SaveFavorites(_) => "save_favorites",
-            DiskEffect::LoadFavorites => "load_favorites",
-            DiskEffect::Trash(_) => "trash",
-            DiskEffect::LoadHistory(_) => "load_history",
-            DiskEffect::SavePlaylist { .. } => "save_playlist",
+    fn describe_disk(disk_cmd: &DiskCmd) -> &'static str {
+        match disk_cmd {
+            DiskCmd::AppendHistory(_) => "append_history",
+            DiskCmd::SaveFavorites(_) => "save_favorites",
+            DiskCmd::LoadFavorites => "load_favorites",
+            DiskCmd::Trash(_) => "trash",
+            DiskCmd::LoadHistory(_) => "load_history",
+            DiskCmd::SavePlaylist { .. } => "save_playlist",
         }
     }
 
@@ -460,27 +452,22 @@ mod tests {
     #[case::a_full_scan_watches_and_scans(LibraryRow {
         setup: Vec::new(),
         message: scan("/music", ScanMode::Full),
-        cmd: "watch /music; scan Full /music @ 1",
+        cmd: "watch /music; scan /music @ 1",
     })]
     #[case::a_cached_scan_watches_and_scans_from_the_cache(LibraryRow {
         setup: Vec::new(),
         message: scan("/music", ScanMode::Cached),
-        cmd: "watch /music; scan Cached /music @ 1",
+        cmd: "watch /music; read cache /music @ 1",
     })]
     #[case::a_scan_of_another_folder_moves_the_watch(LibraryRow {
         setup: vec![scan("/music", ScanMode::Cached)],
         message: scan("/more", ScanMode::Full),
-        cmd: "unwatch /music; watch /more; scan Full /more @ 1",
+        cmd: "unwatch /music; watch /more; scan /more @ 1",
     })]
     #[case::a_change_arms_the_debounce(LibraryRow {
         setup: vec![scan("/music", ScanMode::Cached)],
         message: LibraryMessage::Changed(Ok(())),
         cmd: "after 500ms Elapsed(Debounce)",
-    })]
-    #[case::a_second_change_waits_for_the_armed_debounce(LibraryRow {
-        setup: vec![scan("/music", ScanMode::Cached), LibraryMessage::Changed(Ok(()))],
-        message: LibraryMessage::Changed(Ok(())),
-        cmd: "nothing",
     })]
     #[case::a_watch_failure_tells_an_error(LibraryRow {
         setup: vec![scan("/music", ScanMode::Cached)],
@@ -490,11 +477,11 @@ mod tests {
     #[case::the_elapsed_debounce_rescans_in_full(LibraryRow {
         setup: vec![scan("/music", ScanMode::Cached), LibraryMessage::Changed(Ok(()))],
         message: LibraryMessage::Elapsed(LibraryTimer::Debounce),
-        cmd: "scan Full /music @ 1",
+        cmd: "scan /music @ 1",
     })]
     #[case::a_disk_command_executes(LibraryRow {
         setup: Vec::new(),
-        message: cmds(vec![LibraryCmd::LoadFavorites]),
+        message: cmds(vec![LibraryCmd::Disk(DiskCmd::LoadFavorites)]),
         cmd: "execute load_favorites",
     })]
     #[case::tag_tracks_runs_a_tag_job(LibraryRow {
@@ -509,39 +496,64 @@ mod tests {
     #[case::a_batch_keeps_its_command_order(LibraryRow {
         setup: Vec::new(),
         message: cmds(vec![
-            LibraryCmd::LoadFavorites,
+            LibraryCmd::Disk(DiskCmd::LoadFavorites),
             LibraryCmd::Scan {
                 music_dir: PathBuf::from("/music"),
                 revision: Revision::default().next(),
                 mode: ScanMode::Full,
             },
-            LibraryCmd::LoadHistory(10),
+            LibraryCmd::Disk(DiskCmd::LoadHistory(10)),
         ]),
-        cmd: "execute load_favorites; watch /music; scan Full /music @ 1; execute load_history",
+        cmd: "execute load_favorites; watch /music; scan /music @ 1; execute load_history",
     })]
-    #[case::a_scanned_event_is_told(LibraryRow {
+    #[case::a_scanned_answer_tells_loaded(LibraryRow {
         setup: Vec::new(),
         message: LibraryMessage::Scanned {
-            event: loaded(),
+            tracks: Vec::new(),
+            revision: Revision::default(),
             skipped: None,
         },
         cmd: "tell loaded",
     })]
-    #[case::a_tagged_event_is_told(LibraryRow {
+    #[case::a_scanned_answer_with_a_skipped_file_tells_loaded_then_the_error(LibraryRow {
+        setup: Vec::new(),
+        message: LibraryMessage::Scanned {
+            tracks: Vec::new(),
+            revision: Revision::default(),
+            skipped: Some(Error::NoUserDirs),
+        },
+        cmd: "tell loaded; tell error",
+    })]
+    #[case::a_tagged_answer_tells_tagged(LibraryRow {
         setup: Vec::new(),
         message: LibraryMessage::Tagged {
-            event: loaded(),
+            tracks: Vec::new(),
+            revision: Revision::default(),
             skipped: None,
         },
-        cmd: "tell loaded",
+        cmd: "tell tagged",
     })]
-    #[case::an_executed_event_is_told(LibraryRow {
+    #[case::a_listed_answer_tells_listed(LibraryRow {
         setup: Vec::new(),
-        message: LibraryMessage::Executed {
-            event: loaded(),
+        message: LibraryMessage::Listed {
+            tracks: Vec::new(),
+            revision: Revision::default(),
             skipped: None,
         },
-        cmd: "tell loaded",
+        cmd: "tell listed",
+    })]
+    #[case::a_favorites_answer_tells_favorites_loaded(LibraryRow {
+        setup: Vec::new(),
+        message: LibraryMessage::FavoritesLoaded(Favorites::default()),
+        cmd: "tell favorites_loaded",
+    })]
+    #[case::a_history_answer_tells_history_loaded_then_the_error(LibraryRow {
+        setup: Vec::new(),
+        message: LibraryMessage::HistoryLoaded {
+            entries: Vec::new(),
+            skipped: Some(Error::NoUserDirs),
+        },
+        cmd: "tell history_loaded; tell error",
     })]
     #[case::an_error_tells_a_library_failure(LibraryRow {
         setup: Vec::new(),
@@ -582,9 +594,24 @@ mod tests {
         message: cover("/music/one.flac"),
         cmd: "publish /music/one.flac @ 64 missing",
     })]
-    #[case::a_prefetch_before_any_cover_does_nothing(LibraryRow {
+    #[case::a_batch_keeps_its_handled_commands_when_a_prefetch_is_refused(LibraryRow {
         setup: Vec::new(),
-        message: prefetch("/music/two.flac"),
+        message: cmds(vec![
+            LibraryCmd::PrefetchCover(kernel::cmd::CoverJob {
+                path: PathBuf::from("/music/two.flac"),
+                side: Pixels(64),
+            }),
+            LibraryCmd::Disk(DiskCmd::LoadFavorites),
+        ]),
+        cmd: "execute load_favorites",
+    })]
+    #[case::a_cover_asked_while_its_prefetch_decodes_waits_for_it(LibraryRow {
+        setup: vec![
+            cover("/music/one.flac"),
+            decoded("/music/one.flac", 1),
+            prefetch("/music/two.flac"),
+        ],
+        message: cover("/music/two.flac"),
         cmd: "nothing",
     })]
     #[case::a_prefetch_uses_the_remembered_side(LibraryRow {
@@ -602,35 +629,10 @@ mod tests {
         message: prefetch("/music/two.flac"),
         cmd: "decode /music/two.flac @ 96",
     })]
-    #[case::the_same_cover_while_it_decodes_does_nothing(LibraryRow {
-        setup: vec![cover("/music/one.flac")],
-        message: cover("/music/one.flac"),
-        cmd: "nothing",
-    })]
-    #[case::a_duplicate_cover_after_its_decode_does_nothing(LibraryRow {
-        setup: vec![cover("/music/one.flac"), decoded("/music/one.flac", 1)],
-        message: cover("/music/one.flac"),
-        cmd: "nothing",
-    })]
-    #[case::a_duplicate_cover_after_a_prefetch_does_nothing(LibraryRow {
-        setup: vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            prefetch("/music/two.flac"),
-            decoded("/music/two.flac", 2),
-        ],
-        message: cover("/music/one.flac"),
-        cmd: "nothing",
-    })]
     #[case::a_cover_at_a_new_side_while_it_decodes_restarts(LibraryRow {
         setup: vec![cover_sized("/music/one.flac", 64)],
         message: cover_sized("/music/one.flac", 96),
         cmd: "decode /music/one.flac @ 96",
-    })]
-    #[case::a_prefetch_while_a_cover_decodes_does_nothing(LibraryRow {
-        setup: vec![cover("/music/one.flac")],
-        message: prefetch("/music/two.flac"),
-        cmd: "nothing",
     })]
     #[case::a_decoded_prefetch_is_remembered_not_published(LibraryRow {
         setup: vec![
@@ -639,16 +641,6 @@ mod tests {
             prefetch("/music/two.flac"),
         ],
         message: decoded("/music/two.flac", 2),
-        cmd: "nothing",
-    })]
-    #[case::a_remembered_prefetch_is_not_published(LibraryRow {
-        setup: vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            prefetch("/music/two.flac"),
-            decoded("/music/two.flac", 2),
-        ],
-        message: prefetch("/music/two.flac"),
         cmd: "nothing",
     })]
     #[case::a_cover_asked_while_its_prefetch_decodes_is_published(LibraryRow {
@@ -688,9 +680,69 @@ mod tests {
         vec![scan("/music", ScanMode::Full)],
         LibraryMessage::Elapsed(LibraryTimer::Debounce)
     )]
+    #[case::a_second_change_while_armed_is_refused(
+        vec![scan("/music", ScanMode::Cached), LibraryMessage::Changed(Ok(()))],
+        LibraryMessage::Changed(Ok(()))
+    )]
+    #[case::a_prefetch_before_any_cover_is_refused(
+        Vec::new(),
+        prefetch("/music/two.flac")
+    )]
+    #[case::a_prefetch_while_a_cover_decodes_is_refused(
+        vec![cover("/music/one.flac")],
+        prefetch("/music/two.flac")
+    )]
+    #[case::a_prefetch_of_a_remembered_cover_is_refused(
+        vec![
+            cover("/music/one.flac"),
+            decoded("/music/one.flac", 1),
+            prefetch("/music/two.flac"),
+            decoded("/music/two.flac", 2),
+        ],
+        prefetch("/music/two.flac")
+    )]
+    #[case::a_prefetch_of_the_oldest_remembered_cover_is_refused(
+        vec![
+            cover("/music/one.flac"),
+            decoded("/music/one.flac", 1),
+            prefetch("/music/two.flac"),
+            decoded("/music/two.flac", 2),
+        ],
+        prefetch("/music/one.flac")
+    )]
     #[case::a_stale_decoded_cover(
         vec![cover("/music/one.flac"), cover("/music/two.flac")],
         decoded("/music/one.flac", 1)
+    )]
+    #[case::the_same_cover_while_it_decodes(
+        vec![cover("/music/one.flac")],
+        cover("/music/one.flac")
+    )]
+    #[case::a_duplicate_cover_after_its_decode(
+        vec![cover("/music/one.flac"), decoded("/music/one.flac", 1)],
+        cover("/music/one.flac")
+    )]
+    #[case::a_duplicate_cover_after_a_prefetch(
+        vec![
+            cover("/music/one.flac"),
+            decoded("/music/one.flac", 1),
+            prefetch("/music/two.flac"),
+            decoded("/music/two.flac", 2),
+        ],
+        cover("/music/one.flac")
+    )]
+    #[case::a_batch_whose_commands_are_all_rejected(
+        vec![cover("/music/one.flac")],
+        cmds(vec![
+            LibraryCmd::DecodeCover(kernel::cmd::CoverJob {
+                path: PathBuf::from("/music/one.flac"),
+                side: Pixels(64),
+            }),
+            LibraryCmd::DecodeCover(kernel::cmd::CoverJob {
+                path: PathBuf::from("/music/one.flac"),
+                side: Pixels(64),
+            }),
+        ])
     )]
     fn a_refused_row_is_unhandled(
         #[case] setup: Vec<LibraryMessage>,

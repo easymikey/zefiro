@@ -1,4 +1,6 @@
-use kernel::domain::config::ConfigName;
+use std::path::{Path, PathBuf};
+
+use kernel::domain::{config::ConfigName, theme::ThemeName};
 
 pub const CONFIG_FILE_NAME: &str = "config.toml";
 
@@ -7,6 +9,11 @@ pub const APPEARANCE_FILE_NAME: &str = "sifr-ui.toml";
 #[must_use]
 pub fn theme_file_name(name: &str) -> String {
     format!("{name}.toml")
+}
+
+#[must_use]
+pub(crate) fn theme_file_path(themes_dir: &Path, name: &ThemeName) -> PathBuf {
+    themes_dir.join(theme_file_name(name.as_str()))
 }
 
 #[must_use]

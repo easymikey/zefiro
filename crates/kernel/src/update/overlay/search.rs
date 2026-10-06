@@ -20,7 +20,7 @@ impl Machine for CursorOver<SearchQuery> {
     fn transition(&mut self, message: SearchRequest) -> Result<Cmd, Unhandled> {
         match message {
             SearchRequest::Edit(edit) => {
-                edit_query(&mut self.content.input, edit);
+                edit_query(&mut self.content.input, edit)?;
                 Ok(Cmd::none())
             }
             SearchRequest::Navigate(direction) => {
@@ -41,8 +41,25 @@ pub(crate) fn rank(search: &mut CursorOver<SearchQuery>, tracks: &[Arc<Track>]) 
     search.cursor = Cursor::new(search.content.matches.len());
 }
 
-fn edit_query(input: &mut String, edit: SearchEdit) {
+pub(crate) fn narrow(
+    search_query: &mut CursorOver<SearchQuery>,
+    tracks: &[Arc<Track>],
+) {
+    crate::search::narrow_into(
+        tracks,
+        &search_query.content.input,
+        &mut search_query.content.matches,
+    );
+    search_query.cursor = Cursor::new(search_query.content.matches.len());
+}
+
+fn edit_query(input: &mut String, edit: SearchEdit) -> Result<(), Unhandled> {
     match edit {
+        SearchEdit::Backspace | SearchEdit::DeleteWord | SearchEdit::Clear
+            if input.is_empty() =>
+        {
+            return Err(Unhandled);
+        }
         SearchEdit::Char(character) => input.push(character),
         SearchEdit::Backspace => {
             input.pop();
@@ -50,6 +67,7 @@ fn edit_query(input: &mut String, edit: SearchEdit) {
         SearchEdit::DeleteWord => delete_trailing_word(input),
         SearchEdit::Clear => input.clear(),
     }
+    Ok(())
 }
 
 impl CursorOver<SearchQuery> {

@@ -10,7 +10,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crossbeam_channel::{Sender, TrySendError};
+use crossbeam_channel::{SendError, Sender};
 
 use crate::{error::Error, shell::shell_input::ShellInput};
 
@@ -115,8 +115,8 @@ fn forward(signals: impl IntoIterator<Item = std::ffi::c_int>) {
 
 fn terminate_if_listening() {
     if let Some(sender) = TERMINATE_SENDER.get() {
-        match sender.try_send(ShellInput::Terminate) {
-            Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
+        match sender.send(ShellInput::Terminate) {
+            Ok(()) | Err(SendError(_)) => {}
         }
     }
 }
@@ -165,6 +165,7 @@ mod tests {
             remember_worker_panic,
             take_input_error,
             take_worker_panic,
+            terminate_if_listening,
         },
     };
 
@@ -173,8 +174,13 @@ mod tests {
             .unwrap()
     }
 
+    static TERMINATE_SENDER_IN_USE: Mutex<()> = Mutex::new(());
+
     #[test]
     fn a_worker_panic_is_reported_once() {
+        let _in_use = TERMINATE_SENDER_IN_USE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         remember_worker_panic();
         remember_worker_panic();
 
@@ -184,6 +190,9 @@ mod tests {
 
     #[test]
     fn the_first_input_error_is_reported_once() {
+        let _in_use = TERMINATE_SENDER_IN_USE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         remember_input_error(io::Error::other("first"));
         remember_input_error(io::Error::other("second"));
 
@@ -196,6 +205,9 @@ mod tests {
 
     #[test]
     fn a_signal_terminates_and_a_second_install_is_refused() {
+        let _in_use = TERMINATE_SENDER_IN_USE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let (first, first_receiver) = bounded(1);
         let (second, _second_receiver) = bounded(1);
 
@@ -206,6 +218,11 @@ mod tests {
             first_receiver.try_recv(),
             Ok(ShellInput::Terminate)
         ));
+        terminate_if_listening();
+        let blocked = thread::spawn(terminate_if_listening);
+        assert!(matches!(first_receiver.recv(), Ok(ShellInput::Terminate)));
+        assert!(matches!(first_receiver.recv(), Ok(ShellInput::Terminate)));
+        blocked.join().unwrap();
         assert!(matches!(
             install_with(second, no_signals()),
             Err(Error::SignalHandlerInstalled)

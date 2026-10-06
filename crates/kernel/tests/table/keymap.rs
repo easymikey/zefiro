@@ -2,8 +2,10 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use insta::assert_snapshot;
 use kernel::{
+    cmd::Effect,
     domain::{
         chord::{Chord, ChordPrefix},
+        cue::Cue,
         cursor_over::CursorOver,
         direction::Direction,
         geometry::Cells,
@@ -152,6 +154,7 @@ fn confirm() -> Option<Message> {
 )]
 #[case::help_swallows_a_hotkey(help(), character('n'), None)]
 #[case::help_esc_closes(help(), plain(KeyCode::Esc), close())]
+#[case::help_q_closes_instead_of_quitting(help(), character('q'), close())]
 #[case::search_types_a_letter_that_is_a_hotkey(
     searching(),
     character('a'),
@@ -222,6 +225,7 @@ fn confirm() -> Option<Message> {
     history_request(HistoryRequest::Enqueue)
 )]
 #[case::history_esc_closes(history(), plain(KeyCode::Esc), close())]
+#[case::history_q_closes(history(), character('q'), close())]
 #[case::history_g_arms_the_chord(
     history(),
     character('g'),
@@ -283,6 +287,7 @@ fn confirm() -> Option<Message> {
     plain(KeyCode::Esc),
     close()
 )]
+#[case::settings_q_closes(settings_on(SettingRow::Theme), character('q'), close())]
 #[case::settings_enter_on_a_duration_row_still_activates(
     settings_on(SettingRow::Crossfade),
     plain(KeyCode::Enter),
@@ -331,6 +336,7 @@ fn confirm() -> Option<Message> {
 )]
 #[case::confirm_delete_n_cancels(confirming_delete(), character('n'), close())]
 #[case::confirm_delete_esc_cancels(confirming_delete(), plain(KeyCode::Esc), close())]
+#[case::confirm_delete_q_closes(confirming_delete(), character('q'), close())]
 #[case::confirm_delete_swallows_a_nav_key(confirming_delete(), character('j'), None)]
 #[case::confirm_delete_swallows_its_own_hotkey(
     confirming_delete(),
@@ -345,22 +351,31 @@ fn confirm() -> Option<Message> {
 #[case::jump_types_a_digit(
     jumping(),
     character('4'),
-    Some(Message::Overlay(OverlayRequest::Jump(TextRequest::Char('4'))))
+    Some(Message::Overlay(OverlayRequest::Text(TextRequest::Char('4'))))
 )]
 #[case::jump_types_a_colon(
     jumping(),
     character(':'),
-    Some(Message::Overlay(OverlayRequest::Jump(TextRequest::Char(':'))))
+    Some(Message::Overlay(OverlayRequest::Text(TextRequest::Char(':'))))
 )]
 #[case::jump_backspace_erases(
     jumping(),
     plain(KeyCode::Backspace),
-    Some(Message::Overlay(OverlayRequest::Jump(TextRequest::Backspace)))
+    Some(Message::Overlay(OverlayRequest::Text(TextRequest::Backspace)))
 )]
 #[case::jump_enter_confirms(jumping(), plain(KeyCode::Enter), confirm())]
 #[case::jump_esc_cancels(jumping(), plain(KeyCode::Esc), close())]
-#[case::jump_swallows_a_letter(jumping(), character('a'), None)]
-#[case::jump_swallows_a_nav_key(jumping(), character('j'), None)]
+#[case::jump_q_closes(jumping(), character('q'), close())]
+#[case::jump_sends_a_letter_to_the_entry(
+    jumping(),
+    character('a'),
+    typed_text(TextRequest::Char('a'))
+)]
+#[case::jump_sends_a_nav_key_to_the_entry(
+    jumping(),
+    character('j'),
+    typed_text(TextRequest::Char('j'))
+)]
 #[case::jump_swallows_an_arrow(jumping(), plain(KeyCode::Down), None)]
 #[case::track_details_esc_closes(showing_track_details(), plain(KeyCode::Esc), close())]
 #[case::track_details_its_own_hotkey_closes(
@@ -516,6 +531,22 @@ fn cancelling_a_chord_handles_the_key(
     assert_eq!(model.workspace.chord_prefix, None);
     assert_eq!(model.workspace.toasts, vec![Toast::info("hello")]);
     assert_eq!(format!("{model:?}"), before);
+}
+
+#[test]
+fn q_in_help_closes_the_overlay_and_does_not_quit() {
+    let mut model = kernel::domain::model::Model::default();
+    model.workspace.overlay = Some(Overlay::Help);
+    let key = character('q');
+
+    let routed = update(
+        &mut model,
+        Message::Key(KeyPress { key, typed: key }),
+        Moment::default(),
+    );
+
+    assert_eq!(model.workspace.overlay, None);
+    assert_eq!(routed, Ok(vec![Effect::Animate(Cue::OverlayClosed)]));
 }
 
 #[rstest]

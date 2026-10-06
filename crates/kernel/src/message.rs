@@ -113,7 +113,6 @@ pub enum OverlayRequest {
     Search(SearchRequest),
     Settings(SettingsRowRequest),
     Text(TextRequest),
-    Jump(TextRequest),
     History(HistoryRequest),
 }
 
@@ -160,7 +159,10 @@ pub enum ConfigEvent {
     KeymapReloaded(Box<KeymapOverrides>),
     ThemeReloaded(ThemeName),
     AppearanceReloaded(AppearanceSettings),
-    ThemesLoaded(Vec<ThemeName>),
+    ThemesLoaded {
+        theme_names: Vec<ThemeName>,
+        refused: Vec<String>,
+    },
     MusicDirReloaded(PathBuf),
     Reloaded(ConfigReload),
     Error(ConfigError),
@@ -238,6 +240,7 @@ pub enum BrowseRequest {
 pub enum QueueRequest {
     Enqueue,
     EnqueueTrack(ViewIndex),
+    EnqueueHistoryEntry(usize),
     PlayNext,
     Dequeue,
     MoveInQueue(Direction),
@@ -291,14 +294,14 @@ impl std::fmt::Display for LibrarySubject {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LibraryError {
-    #[error("Could not read {subject} ({}): {kind}", path.display())]
-    File {
+    #[error("Could not read {subject} ({}): {source}", path.display())]
+    Disk {
         subject: LibrarySubject,
         path: PathBuf,
-        kind: IoError,
+        source: IoError,
     },
     #[error("Could not read the cover of {}: {diagnostic}", path.display())]
-    Cover {
+    DecodeCover {
         path: PathBuf,
         diagnostic: Diagnostic,
     },
@@ -314,6 +317,7 @@ pub enum AudioEvent {
     Ended,
     Loaded(Option<Duration>),
     Error(AudioError),
+    OutputLost(StreamError),
     DevicesListed(Vec<ListedDevice>),
     DeviceFellBack(OutputDevice),
 }
@@ -330,7 +334,7 @@ pub enum MacosEvent {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PaintError {
     #[error("Window colors failed")]
-    WindowColors(Diagnostic),
+    WriteWindowColors(Diagnostic),
     #[error("Terminal probe failed")]
     Query(Diagnostic),
 }
@@ -339,7 +343,7 @@ impl PaintError {
     #[must_use]
     pub(crate) fn diagnostic(&self) -> &Diagnostic {
         match self {
-            Self::WindowColors(diagnostic) | Self::Query(diagnostic) => diagnostic,
+            Self::WriteWindowColors(diagnostic) | Self::Query(diagnostic) => diagnostic,
         }
     }
 }
@@ -359,13 +363,13 @@ pub enum DecodeError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum MacosError {
     #[error("Audio device watch failed (CoreAudio status {0})")]
-    HardwareWatch(OsStatus),
+    Listen(OsStatus),
     #[error("Cannot follow the new audio device (CoreAudio status {0})")]
     Rebind(OsStatus),
     #[error("Cannot set the system volume (CoreAudio status {0})")]
-    Volume(OsStatus),
+    SetVolume(OsStatus),
     #[error("Cannot read the cover file: {0}")]
-    Cover(IoError),
+    ReadArtwork(IoError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -382,13 +386,11 @@ pub enum AudioError {
     #[error("Cannot decode {}: {kind}", path.display())]
     Decode { path: PathBuf, kind: DecodeError },
     #[error("output device unavailable: {requested}")]
-    Device { requested: OutputDevice },
+    OpenDevice { requested: OutputDevice },
     #[error("cannot list output devices: {reason}")]
     ListDevices { reason: Diagnostic },
     #[error("audio output stream: {reason}")]
-    Stream { reason: Diagnostic },
-    #[error("Audio output lost: {0}")]
-    OutputLost(StreamError),
+    OpenStream { reason: Diagnostic },
     #[error("Cannot preload {}: {kind}", path.display())]
     Preload { path: PathBuf, kind: DecodeError },
     #[error("cannot seek: {reason}")]
@@ -403,9 +405,9 @@ mod tests {
         domain::{
             bounded::Bounded,
             config::Diagnostic,
+            device::OutputDevice,
             io_error::IoError,
             theme::ThemeName,
-            transport::StreamError,
         },
         message::{
             AudioError,
@@ -448,26 +450,26 @@ mod tests {
 
     #[rstest::rstest]
     #[case::missing_history(
-        LibraryError::File {
+        LibraryError::Disk {
             subject: LibrarySubject::History,
             path: PathBuf::from("/data/history.jsonl"),
-            kind: IoError::Missing,
+            source: IoError::Missing,
         },
         "Could not read the history file (/data/history.jsonl): not found"
     )]
     #[case::denied_playlist(
-        LibraryError::File {
+        LibraryError::Disk {
             subject: LibrarySubject::Playlist,
             path: PathBuf::from("/playlists/My Mix.m3u8"),
-            kind: IoError::Denied,
+            source: IoError::Denied,
         },
         "Could not read the playlist file (/playlists/My Mix.m3u8): permission denied"
     )]
     #[case::malformed_cache(
-        LibraryError::File {
+        LibraryError::Disk {
             subject: LibrarySubject::Cache,
             path: PathBuf::from("/data/cache.bin"),
-            kind: IoError::Malformed,
+            source: IoError::Malformed,
         },
         "Could not read the cache (/data/cache.bin): corrupt data"
     )]
@@ -494,9 +496,11 @@ mod tests {
         },
         "Cannot preload song.flac: the decoder panicked"
     )]
-    #[case::output_device_gone(
-        AudioError::OutputLost(StreamError::DeviceGone),
-        "Audio output lost: the device is gone"
+    #[case::open_device(
+        AudioError::OpenDevice {
+            requested: OutputDevice::SystemDefault,
+        },
+        "output device unavailable: default"
     )]
     fn an_audio_failure_renders_its_cause(
         #[case] failure: AudioError,
@@ -507,7 +511,7 @@ mod tests {
 
     #[rstest::rstest]
     #[case::hardware_watch(
-        MacosError::HardwareWatch(OsStatus(-50)),
+        MacosError::Listen(OsStatus(-50)),
         "Audio device watch failed (CoreAudio status -50)"
     )]
     #[case::rebind(
@@ -515,11 +519,11 @@ mod tests {
         "Cannot follow the new audio device (CoreAudio status 560227702)"
     )]
     #[case::volume(
-        MacosError::Volume(OsStatus(0)),
+        MacosError::SetVolume(OsStatus(0)),
         "Cannot set the system volume (CoreAudio status 0)"
     )]
     #[case::cover(
-        MacosError::Cover(IoError::Denied),
+        MacosError::ReadArtwork(IoError::Denied),
         "Cannot read the cover file: permission denied"
     )]
     fn a_macos_failure_renders_its_cause(
@@ -551,7 +555,7 @@ mod tests {
 
     #[rstest::rstest]
     #[case::window_colors(
-        PaintError::WindowColors(Diagnostic::from_error(&IoError::Full)),
+        PaintError::WriteWindowColors(Diagnostic::from_error(&IoError::Full)),
         "Window colors failed",
         "disk full"
     )]

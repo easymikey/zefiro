@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use kernel::domain::{
-    config::{ConfigError, ConfigName},
-    io_error::IoError,
+    config::{ConfigError, ConfigName, Diagnostic},
     theme::ThemeName,
 };
 
@@ -10,12 +9,12 @@ use crate::{
     appearance_file::{TomlAppearance, parse_appearance},
     config_file::{TomlSettings, parse_config},
     driver::{
-        files::read_if_present,
+        files::{read_if_present, unreadable},
         paths::{ConfigPaths, SeenTexts},
     },
     embedded_theme::{embedded_theme, resolve_theme},
     error::Error,
-    file_name::theme_file_name,
+    file_name::theme_file_path,
     theme_file::{TomlTheme, parse_theme},
 };
 
@@ -70,21 +69,13 @@ pub(crate) fn theme_parsed(
 ) -> Result<TomlTheme, ConfigError> {
     let source = text
         .or_else(|| embedded_theme(name.as_str()))
-        .ok_or_else(|| ConfigError::invalid(&Error::UnknownTheme(name.clone())))?;
-    parse_theme(source, name.as_str()).map_err(|error| ConfigError::invalid(&error))
-}
-
-fn unreadable(
-    config_name: ConfigName,
-    source: &std::io::Error,
-) -> (ConfigName, ConfigError) {
-    (
-        config_name.clone(),
-        ConfigError::Unreadable {
-            file: config_name,
-            kind: IoError::from(source.kind()),
-        },
-    )
+        .ok_or_else(|| {
+            ConfigError::from(Diagnostic::from_error(&Error::UnknownTheme(
+                name.clone(),
+            )))
+        })?;
+    parse_theme(source, name.as_str())
+        .map_err(|error| Diagnostic::from_error(&error).into())
 }
 
 fn read_parsed<T: Default>(
@@ -105,7 +96,7 @@ fn read_parsed<T: Default>(
             return Parsed {
                 value: T::default(),
                 text: None,
-                error: Some(unreadable(name, &source)),
+                error: Some((name.clone(), unreadable(name, &source))),
             };
         }
     };
@@ -118,19 +109,23 @@ fn read_parsed<T: Default>(
         Err(error) => Parsed {
             value: T::default(),
             text: Some(text),
-            error: Some((name, ConfigError::invalid(&error))),
+            error: Some((name, Diagnostic::from_error(&error).into())),
         },
     }
 }
 
 fn read_theme(
     name: &ThemeName,
-    themes_path: &Path,
+    themes_dir: &Path,
 ) -> Result<TomlTheme, (ConfigName, ConfigError)> {
     let config_name = ConfigName::Theme(name.clone());
-    let path = themes_path.join(theme_file_name(name.as_str()));
-    let text = read_if_present(&path)
-        .map_err(|source| unreadable(config_name.clone(), &source))?;
+    let text =
+        read_if_present(&theme_file_path(themes_dir, name)).map_err(|source| {
+            (
+                config_name.clone(),
+                unreadable(config_name.clone(), &source),
+            )
+        })?;
     theme_parsed(name, text.as_deref()).map_err(|error| (config_name, error))
 }
 
@@ -142,7 +137,7 @@ mod tests {
         config::{ConfigError, ConfigName},
         io_error::IoError,
         keymap::{Action, KeyOverride, KeymapOverrides},
-        theme::{ThemeChoice, ThemeName},
+        theme::{ThemeChoice, ThemeName, ThemeNameError},
     };
     use rstest::rstest;
 
@@ -251,7 +246,7 @@ mod tests {
         assert_eq!(loaded.texts.config.as_deref(), Some("volume = \"loud\"\n"));
         assert!(matches!(
             loaded.errors.as_slice(),
-            [(ConfigName::Config, ConfigError::Invalid(_))]
+            [(ConfigName::Config, ConfigError::Parse(_))]
         ));
     }
 
@@ -299,7 +294,7 @@ mod tests {
         assert_eq!(loaded.toml_theme, None);
         assert!(matches!(
             loaded.errors.as_slice(),
-            [(name, ConfigError::Invalid(_))] if *name == mine()
+            [(name, ConfigError::Parse(_))] if *name == mine()
         ));
     }
 
@@ -314,12 +309,19 @@ mod tests {
             loaded.errors,
             [(
                 mine(),
-                ConfigError::Unreadable {
-                    file: mine(),
-                    kind: IoError::from(std::io::ErrorKind::IsADirectory),
+                ConfigError::Read {
+                    name: mine(),
+                    source: IoError::from(std::io::ErrorKind::IsADirectory),
                 }
             )]
         );
+    }
+
+    #[rstest]
+    #[case::parent("../x")]
+    #[case::nested("a/b")]
+    fn a_theme_name_with_a_path_in_it_cannot_be_built(#[case] name: &str) {
+        assert_eq!(ThemeName::new(name.to_owned()), Err(ThemeNameError::Path));
     }
 
     #[test]
@@ -332,7 +334,7 @@ mod tests {
         assert_eq!(loaded.theme_name.as_str(), "ghost");
         assert!(matches!(
             loaded.errors.as_slice(),
-            [(ConfigName::Theme(_), ConfigError::Invalid(_))]
+            [(ConfigName::Theme(_), ConfigError::Parse(_))]
         ));
     }
 }

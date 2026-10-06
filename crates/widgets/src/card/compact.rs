@@ -37,9 +37,26 @@ pub(crate) fn compact_height() -> u16 {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CompactCardWidget<'a> {
-    pub(crate) view: CardView<'a>,
-    pub(crate) theme: ActiveTheme<'a>,
-    pub(crate) speed_chip: SpeedChip,
+    view: CardView<'a>,
+    theme: ActiveTheme<'a>,
+    speed_chip: SpeedChip,
+}
+
+impl<'a> CompactCardWidget<'a> {
+    #[must_use]
+    pub(crate) fn new(view: CardView<'a>, theme: ActiveTheme<'a>) -> Self {
+        Self {
+            view,
+            theme,
+            speed_chip: SpeedChip::default(),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn speed_chip(mut self, speed_chip: SpeedChip) -> Self {
+        self.speed_chip = speed_chip;
+        self
+    }
 }
 
 struct CompactParts<'a> {
@@ -122,7 +139,7 @@ fn paint_header_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         width: row_width,
         height: 1,
     });
-    Paragraph::new(line([text(truncate(&title, usize::from(row_width)))
+    Paragraph::new(line([text(truncate(title, usize::from(row_width)))
         .fg(colors.text)
         .bold()]))
     .render(title_row, buffer);
@@ -143,8 +160,6 @@ fn paint_progress_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     let inner = context.inner;
     let clamp = |rect: Rect| rect.intersection(inner);
     let row_width = inner.width;
-    let colors = context.theme.colors();
-
     let progress_y = inner.y + TITLE_ROWS;
     let progress_row = clamp(Rect {
         x: inner.x,
@@ -154,8 +169,8 @@ fn paint_progress_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
     });
     Paragraph::new(fill(
         &BarFill::progress(context.view.progress_fraction(), Cells(row_width)),
-        colors.accent,
-        colors.muted_foreground,
+        context.theme.progress_fill(),
+        context.theme.progress_groove(),
     ))
     .render(progress_row, buffer);
 }
@@ -208,11 +223,10 @@ fn paint_meter_row(buffer: &mut Buffer, context: &CompactParts<'_>) {
         width: volume_width.0,
         height: 1,
     });
-    let colors = context.theme.colors();
     Paragraph::new(fill(
         &BarFill::volume(context.view.volume.ratio(), Cells(bar_area.width)),
-        colors.accent,
-        colors.bar_groove,
+        context.theme.colors().accent,
+        context.theme.colors().bar_groove,
     ))
     .render(bar_area, buffer);
 }
@@ -222,7 +236,7 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use kernel::domain::{
-        appearance::SpeedChip,
+        appearance::{ProgressBar, Rgb, SpeedChip},
         bounded::Bounded,
         percent::Percent,
         player::Player,
@@ -270,11 +284,11 @@ mod tests {
             output: &output,
             now: Moment::default(),
         };
-        let widget = CompactCardWidget {
+        let widget = CompactCardWidget::new(
             view,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            speed_chip: SpeedChip::Always,
-        };
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        )
+        .speed_chip(SpeedChip::Always);
         let text = rendered(40, compact_height(), |frame| {
             frame.render_widget(&widget, frame.area());
         })
@@ -301,16 +315,51 @@ mod tests {
             output: &output,
             now: Moment::default(),
         };
-        let widget = CompactCardWidget {
+        let widget = CompactCardWidget::new(
             view,
-            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            speed_chip: SpeedChip::Always,
-        };
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        )
+        .speed_chip(SpeedChip::Always);
         let text = rendered(40, compact_height(), |frame| {
             frame.render_widget(&widget, frame.area());
         })
         .to_string();
         assert!(text.contains("No track"), "got {text:?}");
         assert!(text.contains("Stopped"), "got {text:?}");
+    }
+
+    #[test]
+    fn compact_volume_bar_uses_the_bar_groove() {
+        let theme = noir();
+        let player = Player::Stopped;
+        let spectrum: Spectrum = [0.0; SPECTRUM_BANDS];
+        let output = Output::Ready;
+        let play_order = PlayOrder::default();
+        let view = CardView {
+            player: &player,
+            speed: Speed::default(),
+            volume: Percent::clamped(0),
+            spectrum: &spectrum,
+            repeat: Default::default(),
+            play_order: &play_order,
+            displayed_track: None,
+            output: &output,
+            now: Moment::default(),
+        };
+        let bar = ProgressBar {
+            groove: Some(Rgb([0, 255, 0])),
+            ..ProgressBar::default()
+        };
+        let widget = CompactCardWidget::new(
+            view,
+            ActiveTheme::new(&theme, ColorDepth::TrueColor).with_progress(bar),
+        )
+        .speed_chip(SpeedChip::Always);
+        let backend = rendered(40, compact_height(), |frame| {
+            frame.render_widget(&widget, frame.area());
+        });
+        let colors = ActiveTheme::new(&theme, ColorDepth::TrueColor).colors();
+        let cell = &backend.buffer()[(22, 4)];
+        assert_eq!(cell.fg, colors.bar_groove);
     }
 }

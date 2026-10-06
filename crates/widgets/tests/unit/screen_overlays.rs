@@ -4,10 +4,7 @@ use kernel::domain::{
     setting_row::SettingRow,
 };
 use ratatui::layout::Rect;
-use widgets::{
-    card::CardCover,
-    screen::{frame_layout::FrameLayout, root::ScreenWidget},
-};
+use widgets::screen::{frame_layout::FrameLayout, root::ScreenWidget};
 
 use crate::unit::support::fixtures::{
     SceneSources,
@@ -27,14 +24,7 @@ fn frame_with_overlay(overlay: Overlay) -> String {
         "an active overlay must claim a rect in the full frame's layout"
     );
     rendered(80, 24, |frame| {
-        frame.render_widget(
-            &ScreenWidget {
-                scene,
-                layout: &layout,
-                cover_art: &CardCover::Missing,
-            },
-            frame.area(),
-        );
+        frame.render_widget(&ScreenWidget::new(scene, &layout), frame.area());
     })
     .to_string()
 }
@@ -103,14 +93,7 @@ fn the_save_playlist_banner_is_painted_over_the_full_frame() {
     let area = Rect::new(0, 0, 80, 24);
     let layout = FrameLayout::from_scene(&scene, area);
     let text = rendered(80, 24, |frame| {
-        frame.render_widget(
-            &ScreenWidget {
-                scene,
-                layout: &layout,
-                cover_art: &CardCover::Missing,
-            },
-            frame.area(),
-        );
+        frame.render_widget(&ScreenWidget::new(scene, &layout), frame.area());
     })
     .to_string();
     assert!(text.contains("mixtape"), "got {text:?}");

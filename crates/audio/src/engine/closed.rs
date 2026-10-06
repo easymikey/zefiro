@@ -23,17 +23,17 @@ impl Closed {
     ) -> Result<AudioLoopCmd, Unhandled> {
         match message {
             EngineMessage::Cmds(batch) => batched(batch, |cmd| self.command(cmd)),
-            EngineMessage::Error(error @ AudioError::Device { .. }) => {
+            EngineMessage::Error(error @ AudioError::OpenDevice { .. }) => {
                 Ok(self.stays_silent(error))
             }
             EngineMessage::Error(
                 AudioError::Decode { .. }
                 | AudioError::Preload { .. }
                 | AudioError::ListDevices { .. }
-                | AudioError::Stream { .. }
-                | AudioError::OutputLost(_)
+                | AudioError::OpenStream { .. }
                 | AudioError::Seek { .. },
             )
+            | EngineMessage::OutputLost(_)
             | EngineMessage::Opened(_)
             | EngineMessage::Reported(_)
             | EngineMessage::DevicesListed(_)
@@ -93,7 +93,7 @@ impl Closed {
     }
 
     pub(crate) fn reopened(
-        &mut self,
+        self,
         revisions: &mut JobRevisions,
         reopened: DeviceOpened,
     ) -> (Live, AudioLoopCmd) {
@@ -101,13 +101,12 @@ impl Closed {
         let mut live = Live::new(
             AudioSettings {
                 device: device.clone(),
-                ..std::mem::take(&mut self.settings)
+                ..self.settings
             },
             self.speed,
         );
         let cmd = self
             .pending
-            .take()
             .map_or_else(Cmd::none, |pending| live.load(revisions, pending));
         (live, announce(opened, device, cmd))
     }
@@ -122,10 +121,12 @@ mod tests {
         domain::{
             bounded::Bounded,
             device::{DeviceName, OutputDevice},
+            revision::Revision,
             settings::{AudioSettings, ReplayGain},
             speed::Speed,
+            transport::StreamError,
         },
-        message::{AudioError, AudioEvent},
+        message::AudioEvent,
         update::machine::{LoopEffect, Unhandled},
     };
     use rstest::rstest;
@@ -155,7 +156,6 @@ mod tests {
                 loaded_at,
                 loading,
                 opened,
-                output_lost,
                 playing,
                 preload,
                 seconds,
@@ -320,7 +320,7 @@ mod tests {
 
     #[rstest]
     #[case::closed_ignores_a_decode(closed(), EngineMessage::Decoded(None))]
-    #[case::closed_ignores_a_preload_answer(closed(), installed(&track_b()))]
+    #[case::closed_ignores_a_preload_answer(closed(), installed(&track_b(), Revision::default()))]
     #[case::closed_ignores_a_second_stream_error(closed(), failed())]
     fn a_stale_cell_leaves_the_closed_engine_alone(
         #[case] start: EngineState,
@@ -348,21 +348,24 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_stream_error_while_live(failed(), output_lost())]
+    #[case::a_stream_error_while_live(
+        failed(),
+        AudioEvent::OutputLost(StreamError::DeviceGone)
+    )]
     #[case::a_reopen_error_while_live(
         EngineMessage::Error(device_error()),
-        device_error()
+        AudioEvent::Error(device_error())
     )]
     fn an_error_mutes_the_engine_once(
         #[case] message: EngineMessage,
-        #[case] expected: AudioError,
+        #[case] expected: AudioEvent,
     ) {
         let (engine, log) = trace(EngineState::Live(playing()), vec![message]).unwrap();
         assert_same(
             log,
             vec![
                 Cmd::effect(LoopEffect::Execute(EngineEffect::Silence))
-                    .then(Cmd::message(AudioEvent::Error(expected))),
+                    .then(Cmd::message(expected)),
             ],
         );
 
