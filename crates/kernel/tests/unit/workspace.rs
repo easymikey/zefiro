@@ -25,18 +25,18 @@ fn theme() -> ConfigName {
     ConfigName::Theme(ThemeName::from_static("noir"))
 }
 
-fn fail(source: ConfigName, text: &str) -> ConfigEvent {
+fn fail(config_name: ConfigName, text: &str) -> ConfigEvent {
     ConfigEvent::Reloaded(ConfigReload {
-        name: source,
+        name: config_name,
         result: Err(
             Diagnostic::from_error(&std::io::Error::other(text.to_string())).into(),
         ),
     })
 }
 
-fn recovered(source: ConfigName) -> ConfigEvent {
+fn recovered(config_name: ConfigName) -> ConfigEvent {
     ConfigEvent::Reloaded(ConfigReload {
-        name: source,
+        name: config_name,
         result: Ok(()),
     })
 }
@@ -143,12 +143,12 @@ fn keys_reloaded_installs_the_merged_table() {
     None
 )]
 fn config_errors_decide_which_toast_is_on_screen(
-    #[case] requests: &[Message],
+    #[case] messages: &[Message],
     #[case] expected: Option<&str>,
 ) {
     let mut model = Model::default();
 
-    for request in requests {
+    for request in messages {
         let _cmd = reduce(&mut model, request.clone());
     }
 
@@ -163,14 +163,14 @@ fn config_errors_decide_which_toast_is_on_screen(
 }
 
 #[test]
-fn a_config_failure_shows_the_kernels_own_words() {
+fn a_config_error_shows_the_kernels_own_words() {
     let mut model = Model::default();
 
     let cmd = reduce(
         &mut model,
         Message::Config(ConfigEvent::Error(ConfigError::Read {
             name: ConfigName::Appearance,
-            source: IoError::Denied,
+            error: IoError::Denied,
         })),
     );
 
@@ -186,19 +186,19 @@ fn a_config_failure_shows_the_kernels_own_words() {
 }
 
 #[test]
-fn a_repeated_config_failure_still_raises_its_own_toast() {
+fn a_repeated_config_error_still_raises_its_own_toast() {
     let mut model = Model::default();
-    let failure = ConfigError::Save {
-        file: ConfigName::Config,
-        kind: IoError::Full,
+    let error = ConfigError::Save {
+        name: ConfigName::Config,
+        error: IoError::Full,
     };
 
     let _first = reduce(
         &mut model,
-        Message::Config(ConfigEvent::Error(failure.clone())),
+        Message::Config(ConfigEvent::Error(error.clone())),
     );
     model.workspace.toasts.clear();
-    let second = reduce(&mut model, Message::Config(ConfigEvent::Error(failure)));
+    let second = reduce(&mut model, Message::Config(ConfigEvent::Error(error)));
 
     assert!(
         has_raised_a_toast(&second),
@@ -207,14 +207,17 @@ fn a_repeated_config_failure_still_raises_its_own_toast() {
 }
 
 #[test]
-fn config_failures_word_each_kind_distinctly() {
-    let unreadable = ConfigError::ListThemes(IoError::Other);
-    let save = ConfigError::Save {
-        file: theme(),
-        kind: IoError::Full,
+fn config_errors_word_each_error_distinctly() {
+    let unreadable_error = ConfigError::ListThemes(IoError::Other);
+    let save_error = ConfigError::Save {
+        name: theme(),
+        error: IoError::Full,
     };
 
-    insta::assert_debug_snapshot!((unreadable.to_string(), save.to_string()));
+    insta::assert_debug_snapshot!((
+        unreadable_error.to_string(),
+        save_error.to_string()
+    ));
 }
 
 #[test]

@@ -8,7 +8,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BindingSource {
+pub(crate) enum BindingOrigin {
     Configured,
     Default,
 }
@@ -19,7 +19,7 @@ pub struct KeyBinding {
     pub message: Message,
     pub action: Option<Action>,
     pub key_context: KeyContext,
-    pub(crate) source: BindingSource,
+    pub(crate) origin: BindingOrigin,
 }
 
 pub(crate) fn key(character: char) -> Chord {

@@ -1,6 +1,9 @@
 use std::{path::PathBuf, time::Duration};
 
-use crate::{cmd::Cmd, domain::io_error::IoError};
+use crate::{
+    cmd::Cmd,
+    domain::{cursor::Cursor, io_error::IoError},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Unhandled;
@@ -34,9 +37,20 @@ pub enum LoopEffect<E, J, M> {
     },
     Watch {
         path: PathBuf,
-        item: fn(Result<(), IoError>) -> M,
+        changed: fn(Result<(), IoError>) -> M,
     },
     Unwatch(PathBuf),
+}
+
+pub(crate) fn move_cursor(
+    cursor: &mut Cursor,
+    moved_cursor: Cursor,
+) -> Result<Cmd, Unhandled> {
+    if moved_cursor == *cursor {
+        return Err(Unhandled);
+    }
+    *cursor = moved_cursor;
+    Ok(Cmd::none())
 }
 
 pub type LoopCmd<E, J, M, V> = Cmd<LoopEffect<E, J, M>, V>;
@@ -88,8 +102,11 @@ mod tests {
         type Message = LatchMessage;
         type Effect = Click;
 
-        fn transition(&mut self, message: LatchMessage) -> Result<Click, Unhandled> {
-            match (&*self, message) {
+        fn transition(
+            &mut self,
+            latch_message: LatchMessage,
+        ) -> Result<Click, Unhandled> {
+            match (&*self, latch_message) {
                 (Latch::Open, LatchMessage::Close) => {
                     *self = Latch::Closed;
                     Ok(Click::Clicked)
@@ -105,7 +122,7 @@ mod tests {
     }
 
     struct LatchRow {
-        start: Latch,
+        latch: Latch,
         message: LatchMessage,
         next: Latch,
         result: Result<Click, Unhandled>,
@@ -113,31 +130,31 @@ mod tests {
 
     #[rstest]
     #[case::open_closes(LatchRow {
-        start: Latch::Open,
+        latch: Latch::Open,
         message: LatchMessage::Close,
         next: Latch::Closed,
         result: Ok(Click::Clicked),
     })]
     #[case::closed_opens(LatchRow {
-        start: Latch::Closed,
+        latch: Latch::Closed,
         message: LatchMessage::Open,
         next: Latch::Open,
         result: Ok(Click::Clicked),
     })]
     #[case::open_refuses_open(LatchRow {
-        start: Latch::Open,
+        latch: Latch::Open,
         message: LatchMessage::Open,
         next: Latch::Open,
         result: Err(Unhandled),
     })]
     #[case::closed_refuses_close(LatchRow {
-        start: Latch::Closed,
+        latch: Latch::Closed,
         message: LatchMessage::Close,
         next: Latch::Closed,
         result: Err(Unhandled),
     })]
     fn transition_writes_only_on_success(#[case] row: LatchRow) {
-        let mut slot = row.start;
+        let mut slot = row.latch;
         let result = slot.transition(row.message);
         assert_eq!(slot, row.next);
         assert_eq!(result, row.result);

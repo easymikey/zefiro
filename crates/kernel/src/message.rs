@@ -24,8 +24,8 @@ use crate::domain::{
     setting_row::SettingRow,
     theme::ThemeName,
     toast::Toast,
-    track::{Track, TrackRef},
-    transport::StreamError,
+    track::{Track, TrackSource},
+    transport::OutputError,
 };
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
@@ -38,6 +38,7 @@ pub enum Message {
     },
     Toast(Toast),
     Playback(PlaybackRequest),
+    ChordPrefix(ChordPrefix),
     Browse(BrowseRequest),
     Queue(QueueRequest),
     ShuffleRolled(Vec<ViewIndex>),
@@ -48,7 +49,7 @@ pub enum Message {
     Paint(PaintError),
     Elapsed(Timer),
     Driver {
-        driver: DriverName,
+        driver_name: DriverName,
         event: DriverEvent,
     },
     Key(KeyPress),
@@ -111,7 +112,7 @@ pub enum OverlayRequest {
     Close,
     Confirm,
     Search(SearchRequest),
-    Settings(SettingsRowRequest),
+    Settings(SettingRowRequest),
     Text(TextRequest),
     History(HistoryRequest),
 }
@@ -133,7 +134,7 @@ pub enum SearchEdit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingsRowRequest {
+pub enum SettingRowRequest {
     Navigate(Direction),
     Step(Direction),
     Activate,
@@ -148,8 +149,8 @@ pub enum TextRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryRequest {
     Navigate(Direction),
-    Top,
-    Bottom,
+    SelectFirst,
+    SelectLast,
     Enqueue,
 }
 
@@ -222,15 +223,14 @@ impl Bounded for SeekTenths {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowseRequest {
-    Trash(TrackRef),
+    Trash(TrackSource),
     SavePlaylist(PlaylistFileName),
-    ChordPrefix(ChordPrefix),
     CursorBy { rows: isize },
-    Top,
-    Bottom,
+    SelectFirst,
+    SelectLast,
     PlaySelected,
     CycleSort,
-    FullScan,
+    Rescan,
     ToggleFavorite,
     PageBy(Direction),
 }
@@ -238,12 +238,12 @@ pub enum BrowseRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum QueueRequest {
-    Enqueue,
-    EnqueueTrack(ViewIndex),
-    EnqueueHistoryEntry(usize),
+    Toggle,
+    ToggleAt(ViewIndex),
+    ToggleHistoryEntry(usize),
     PlayNext,
     Dequeue,
-    MoveInQueue(Direction),
+    Move(Direction),
 }
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
@@ -292,13 +292,26 @@ impl std::fmt::Display for LibrarySubject {
     }
 }
 
+impl LibrarySubject {
+    fn operation(self) -> &'static str {
+        match self {
+            LibrarySubject::Scan | LibrarySubject::Watch => "read",
+            LibrarySubject::Trash => "write to",
+            LibrarySubject::Playlist
+            | LibrarySubject::History
+            | LibrarySubject::Favorites
+            | LibrarySubject::Cache => "read or write",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LibraryError {
-    #[error("Could not read {subject} ({}): {source}", path.display())]
+    #[error("Could not {} {subject} ({}): {error}", subject.operation(), path.display())]
     Disk {
         subject: LibrarySubject,
         path: PathBuf,
-        source: IoError,
+        error: IoError,
     },
     #[error("Could not read the cover of {}: {diagnostic}", path.display())]
     DecodeCover {
@@ -312,12 +325,12 @@ pub enum LibraryError {
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum AudioEvent {
-    Playhead(Duration),
+    PositionReported(Duration),
     TrackChanged,
     Ended,
     Loaded(Option<Duration>),
     Error(AudioError),
-    OutputLost(StreamError),
+    OutputLost(OutputError),
     DevicesListed(Vec<ListedDevice>),
     DeviceFellBack(OutputDevice),
 }
@@ -325,10 +338,10 @@ pub enum AudioEvent {
 #[derive(Debug, Clone, Copy, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum MacosEvent {
-    Volume(Percent),
+    VolumeChanged(Percent),
     OutputRouteChanged,
     Error(MacosError),
-    MediaKey(PlaybackRequest),
+    MediaKeyPressed(PlaybackRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -383,18 +396,19 @@ impl std::fmt::Display for OsStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AudioError {
-    #[error("Cannot decode {}: {kind}", path.display())]
-    Decode { path: PathBuf, kind: DecodeError },
-    #[error("output device unavailable: {requested}")]
-    OpenDevice { requested: OutputDevice },
-    #[error("cannot list output devices: {reason}")]
-    ListDevices { reason: Diagnostic },
-    #[error("audio output stream: {reason}")]
-    OpenStream { reason: Diagnostic },
-    #[error("Cannot preload {}: {kind}", path.display())]
-    Preload { path: PathBuf, kind: DecodeError },
-    #[error("cannot seek: {reason}")]
-    Seek { reason: Diagnostic },
+    #[error("Cannot decode {}: {error}", path.display())]
+    Decode { path: PathBuf, error: DecodeError },
+    #[error("output device unavailable: {requested_device} ({diagnostic})")]
+    OpenDevice {
+        requested_device: OutputDevice,
+        diagnostic: Diagnostic,
+    },
+    #[error("cannot list output devices: {diagnostic}")]
+    ListDevices { diagnostic: Diagnostic },
+    #[error("Cannot preload {}: {error}", path.display())]
+    Preload { path: PathBuf, error: DecodeError },
+    #[error("cannot seek: {diagnostic}")]
+    Seek { diagnostic: Diagnostic },
 }
 
 #[cfg(test)]
@@ -442,10 +456,10 @@ mod tests {
         Message::Config(ConfigEvent::ThemeReloaded(ThemeName::from_static("noir")))
     )]
     fn an_event_converts_into_its_message(
-        #[case] converted: Message,
+        #[case] message: Message,
         #[case] expected: Message,
     ) {
-        assert_eq!(converted, expected);
+        assert_eq!(message, expected);
     }
 
     #[rstest::rstest]
@@ -453,60 +467,74 @@ mod tests {
         LibraryError::Disk {
             subject: LibrarySubject::History,
             path: PathBuf::from("/data/history.jsonl"),
-            source: IoError::Missing,
+            error: IoError::Missing,
         },
-        "Could not read the history file (/data/history.jsonl): not found"
+        "Could not read or write the history file (/data/history.jsonl): not found"
     )]
     #[case::denied_playlist(
         LibraryError::Disk {
             subject: LibrarySubject::Playlist,
             path: PathBuf::from("/playlists/My Mix.m3u8"),
-            source: IoError::Denied,
+            error: IoError::Denied,
         },
-        "Could not read the playlist file (/playlists/My Mix.m3u8): permission denied"
+        "Could not read or write the playlist file (/playlists/My Mix.m3u8): permission denied"
     )]
     #[case::malformed_cache(
         LibraryError::Disk {
             subject: LibrarySubject::Cache,
             path: PathBuf::from("/data/cache.bin"),
-            source: IoError::Malformed,
+            error: IoError::Malformed,
         },
-        "Could not read the cache (/data/cache.bin): corrupt data"
+        "Could not read or write the cache (/data/cache.bin): corrupt data"
     )]
     #[case::no_directory(LibraryError::NoUserDirs, "no library directory")]
     fn a_library_failure_renders_its_cause(
-        #[case] failure: LibraryError,
+        #[case] error: LibraryError,
         #[case] expected: &str,
     ) {
-        assert_eq!(failure.to_string(), expected);
+        assert_eq!(error.to_string(), expected);
+    }
+
+    #[test]
+    fn a_write_side_disk_error_says_it_could_not_write() {
+        let error = LibraryError::Disk {
+            subject: LibrarySubject::Trash,
+            path: PathBuf::from("/music/gone.flac"),
+            error: IoError::Denied,
+        };
+        assert_eq!(
+            error.to_string(),
+            "Could not write to the trash (/music/gone.flac): permission denied"
+        );
     }
 
     #[rstest::rstest]
     #[case::decode_unsupported(
         AudioError::Decode {
             path: PathBuf::from("song.flac"),
-            kind: DecodeError::Unsupported,
+            error: DecodeError::Unsupported,
         },
         "Cannot decode song.flac: unsupported format"
     )]
     #[case::preload_panicked(
         AudioError::Preload {
             path: PathBuf::from("song.flac"),
-            kind: DecodeError::Panicked,
+            error: DecodeError::Panicked,
         },
         "Cannot preload song.flac: the decoder panicked"
     )]
     #[case::open_device(
         AudioError::OpenDevice {
-            requested: OutputDevice::SystemDefault,
+            requested_device: OutputDevice::SystemDefault,
+            diagnostic: Diagnostic::from_error(&IoError::Missing),
         },
-        "output device unavailable: default"
+        "output device unavailable: default (not found)"
     )]
     fn an_audio_failure_renders_its_cause(
-        #[case] failure: AudioError,
+        #[case] error: AudioError,
         #[case] expected: &str,
     ) {
-        assert_eq!(failure.to_string(), expected);
+        assert_eq!(error.to_string(), expected);
     }
 
     #[rstest::rstest]
@@ -546,7 +574,7 @@ mod tests {
     #[case::corrupt(DecodeError::Corrupt, "corrupt data")]
     #[case::unreadable(DecodeError::Unreadable(IoError::Missing), "not found")]
     #[case::panicked(DecodeError::Panicked, "the decoder panicked")]
-    fn a_decode_failure_renders_its_cause(
+    fn a_decode_error_renders_its_cause(
         #[case] decode_error: DecodeError,
         #[case] expected: &str,
     ) {

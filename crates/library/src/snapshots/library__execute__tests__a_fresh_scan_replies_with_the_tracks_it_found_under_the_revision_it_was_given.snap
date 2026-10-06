@@ -16,7 +16,7 @@ Some(
                     album_artist: None,
                     date: None,
                     genre: None,
-                    track: None,
+                    track_number: None,
                     track_total: None,
                     disc: None,
                     composer: None,
@@ -43,10 +43,10 @@ Some(
                     channels: Some(
                         1,
                     ),
-                    replay_gain: None,
+                    decibels: None,
                 },
                 display: "a.wav",
-                tagging: Read(
+                tagging: Tagged(
                     100ms,
                 ),
             },

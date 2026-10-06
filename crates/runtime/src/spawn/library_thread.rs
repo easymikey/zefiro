@@ -1,4 +1,4 @@
-use audio::DECODABLE_EXTENSIONS;
+use audio::AUDIO_EXTENSIONS;
 use kernel::{cmd::LibraryCmd, domain::driver::DriverName};
 use library::{driver::LibraryDriver, job::LibraryJob};
 
@@ -6,8 +6,7 @@ use library::{driver::LibraryDriver, job::LibraryJob};
 use crate::{
     driver::DriverLoop,
     driver_thread::DriverThread,
-    error::Error,
-    jobs::Jobs,
+    error::SpawnError,
     registry,
     spawn_setup::SpawnSetup,
 };
@@ -15,28 +14,26 @@ use crate::{
 #[cfg(test)]
 pub(crate) fn idle_library(
     setup: &SpawnSetup<'_>,
-) -> Result<DriverThread<LibraryCmd>, Error> {
+) -> Result<DriverThread<LibraryCmd>, SpawnError> {
     spawn_idle(registry::row(DriverName::Library), setup.inbox)
 }
 
 pub(crate) fn spawn_library(
     setup: &SpawnSetup<'_>,
-) -> Result<DriverThread<LibraryCmd>, Error> {
-    let dirs = setup.paths.library.clone();
-    let cover = setup.writers.cover.clone();
-    let jobs = Jobs {
-        run: LibraryJob::run,
-    };
+) -> Result<DriverThread<LibraryCmd>, SpawnError> {
+    let library_dirs = setup.paths.library_dirs.clone();
+    let cover_sender = setup.latest_senders.cover_sender.clone();
+    let run_job = LibraryJob::run;
     DriverLoop::<LibraryDriver<_>, LibraryJob> {
         row: registry::row(DriverName::Library),
         inbox: setup.inbox.clone(),
-        heard: crossbeam_channel::never(),
-        seed: None,
-        jobs,
+        callback_receiver: crossbeam_channel::never(),
+        message: None,
+        run_job,
     }
     .spawn(move || {
-        LibraryDriver::new(dirs, DECODABLE_EXTENSIONS, move |decoded| {
-            cover.publish(decoded);
+        LibraryDriver::new(library_dirs, AUDIO_EXTENSIONS, move |cover_decoded| {
+            cover_sender.publish(cover_decoded);
         })
     })
 }
@@ -56,7 +53,7 @@ mod tests {
         },
         message::{LibraryEvent, Message},
     };
-    use library::cover::{CoverArt, CoverDecoded};
+    use library::cover::{CoverDecoded, CoverLookup};
 
     use crate::{
         driver_thread::DriverThread,
@@ -72,37 +69,38 @@ mod tests {
 
     struct LibraryRun {
         thread: DriverThread<LibraryCmd>,
-        messages: Receiver<Message>,
-        cells: LatestReceivers,
+        inbox_receiver: Receiver<Message>,
+        latest_receivers: LatestReceivers,
         doorbell: Receiver<()>,
     }
 
     impl LibraryRun {
-        fn start(directory: &Path) -> Self {
-            let paths = stub_paths(directory);
-            let (inbox, messages) = unbounded();
+        fn start(dir: &Path) -> Self {
+            let paths = stub_paths(dir);
+            let (inbox, inbox_receiver) = unbounded();
             let (model, _cmd) = kernel::update::startup::startup(Startup::default());
-            let (writers, cells, doorbell) = crate::latest::latest_channels();
+            let (latest_senders, latest_receivers, doorbell) =
+                crate::latest::latest_channels();
             let thread = spawn_library(&SpawnSetup {
-                audio: &model.settings.audio,
+                audio_settings: &model.settings.audio_settings,
                 paths: &paths,
                 inbox: &inbox,
-                writers: &writers,
+                latest_senders: &latest_senders,
                 #[cfg(target_os = "macos")]
-                macos: &crate::spawn_setup::MacosChannel::new(),
+                macos_channel: &crate::spawn_setup::MacosChannel::new(),
             })
             .unwrap();
             Self {
                 thread,
-                messages,
-                cells,
+                inbox_receiver,
+                latest_receivers,
                 doorbell,
             }
         }
 
         fn scan(&self, music_dir: &Path) {
             self.thread
-                .commands
+                .cmd_sender
                 .send(LibraryCmd::Scan {
                     music_dir: music_dir.to_path_buf(),
                     revision: Revision::default(),
@@ -111,9 +109,9 @@ mod tests {
                 .unwrap();
         }
 
-        fn ask(&self, path: &Path) {
+        fn decode_cover(&self, path: &Path) {
             self.thread
-                .commands
+                .cmd_sender
                 .send(LibraryCmd::DecodeCover(CoverJob {
                     path: path.to_path_buf(),
                     side: kernel::domain::geometry::Pixels(64),
@@ -122,15 +120,15 @@ mod tests {
         }
 
         fn cover(&self, path: &Path) -> Arc<CoverDecoded> {
-            self.ask(path);
+            self.decode_cover(path);
             self.doorbell.recv_timeout(RECV_TIMEOUT).unwrap();
-            self.cells.cover.take().unwrap()
+            self.latest_receivers.cover_receiver.take().unwrap()
         }
 
         fn stop(self) -> Receiver<Message> {
-            drop(self.thread.commands);
+            drop(self.thread.cmd_sender);
             self.thread.handle.join().unwrap().unwrap();
-            self.messages
+            self.inbox_receiver
         }
     }
 
@@ -152,15 +150,17 @@ mod tests {
     #[test]
     fn a_scan_of_a_music_dir_lists_its_tracks() {
         let directory = tempfile::tempdir().unwrap();
-        let music = directory.path().join("music");
-        std::fs::create_dir_all(&music).unwrap();
-        std::fs::write(music.join("one.mp3"), b"stub").unwrap();
-        std::fs::write(music.join("two.flac"), b"stub").unwrap();
+        let music_dir = directory.path().join("music");
+        std::fs::create_dir_all(&music_dir).unwrap();
+        std::fs::write(music_dir.join("one.mp3"), b"stub").unwrap();
+        std::fs::write(music_dir.join("two.flac"), b"stub").unwrap();
         let run = LibraryRun::start(directory.path());
 
-        run.scan(&music);
+        run.scan(&music_dir);
 
-        let listed = drain(&run.messages).into_iter().find_map(listed_tracks);
+        let listed = drain(&run.inbox_receiver)
+            .into_iter()
+            .find_map(listed_tracks);
         assert_eq!(listed.map(|tracks| tracks.len()), Some(2));
         run.stop();
     }
@@ -172,10 +172,13 @@ mod tests {
 
         run.scan(&directory.path().join("missing"));
 
-        let failed = drain(&run.messages)
+        let has_library_error = drain(&run.inbox_receiver)
             .into_iter()
             .any(|message| matches!(message, Message::Library(LibraryEvent::Error(_))));
-        assert!(failed, "a missing music dir must report a library error");
+        assert!(
+            has_library_error,
+            "a missing music dir must report a library error"
+        );
         run.stop();
     }
 
@@ -184,13 +187,13 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let run = LibraryRun::start(directory.path());
 
-        let messages = run.stop();
+        let inbox_receiver = run.stop();
 
-        let reported = drain(&messages).into_iter().any(|message| {
+        let reported = drain(&inbox_receiver).into_iter().any(|message| {
             matches!(
                 message,
                 Message::Driver {
-                    driver: DriverName::Library,
+                    driver_name: DriverName::Library,
                     ..
                 }
             )
@@ -204,15 +207,15 @@ mod tests {
     #[test]
     fn a_cover_request_publishes_once_and_a_repeat_is_dropped() {
         let directory = tempfile::tempdir().unwrap();
-        let track = directory.path().join("untagged.mp3");
-        std::fs::write(&track, b"stub").unwrap();
+        let path = directory.path().join("untagged.mp3");
+        std::fs::write(&path, b"stub").unwrap();
         let run = LibraryRun::start(directory.path());
 
-        let decoded = run.cover(&track);
-        run.ask(&track);
+        let decoded = run.cover(&path);
+        run.decode_cover(&path);
 
-        assert_eq!(decoded.path, track);
-        assert!(matches!(decoded.art, CoverArt::Missing));
+        assert_eq!(decoded.path, path);
+        assert!(matches!(decoded.cover_lookup, CoverLookup::Missing));
         assert!(
             run.doorbell.recv_timeout(SETTLE_TIMEOUT).is_err(),
             "a repeated request must not publish again"

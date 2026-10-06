@@ -10,7 +10,7 @@ use crate::{
         track::Track,
     },
     message::{Message, QueueRequest, SearchEdit, SearchRequest},
-    update::machine::{Machine, Unhandled},
+    update::machine::{Machine, Unhandled, move_cursor},
 };
 
 impl Machine for CursorOver<SearchQuery> {
@@ -24,21 +24,24 @@ impl Machine for CursorOver<SearchQuery> {
                 Ok(Cmd::none())
             }
             SearchRequest::Navigate(direction) => {
-                self.navigate(direction);
-                Ok(Cmd::none())
+                let moved = self.cursor.step(direction.sign());
+                move_cursor(&mut self.cursor, moved)
             }
             SearchRequest::Enqueue => enqueue(self),
         }
     }
 }
 
-pub(crate) fn rank(search: &mut CursorOver<SearchQuery>, tracks: &[Arc<Track>]) {
+pub(crate) fn rerank(
+    search_query: &mut CursorOver<SearchQuery>,
+    tracks: &[Arc<Track>],
+) {
     crate::search::rank_into(
         tracks,
-        &search.content.input,
-        &mut search.content.matches,
+        &search_query.content.input,
+        &mut search_query.content.matches,
     );
-    search.cursor = Cursor::new(search.content.matches.len());
+    search_query.cursor = Cursor::new(search_query.content.matches.len());
 }
 
 pub(crate) fn narrow(
@@ -77,11 +80,9 @@ impl CursorOver<SearchQuery> {
     }
 }
 
-fn enqueue(search: &CursorOver<SearchQuery>) -> Result<Cmd, Unhandled> {
-    let index = search.selected_match().ok_or(Unhandled)?;
-    Ok(Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(
-        index,
-    ))))
+fn enqueue(search_query: &CursorOver<SearchQuery>) -> Result<Cmd, Unhandled> {
+    let index = search_query.selected_match().ok_or(Unhandled)?;
+    Ok(Cmd::message(Message::Queue(QueueRequest::ToggleAt(index))))
 }
 
 fn delete_trailing_word(input: &mut String) {

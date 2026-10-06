@@ -37,10 +37,10 @@ pub(crate) fn noir() -> Theme {
     )
 }
 
-pub(crate) fn stock_theme(name: ThemeName, palette: &ThemeBase) -> Theme {
+pub(crate) fn stock_theme(name: ThemeName, theme_base: &ThemeBase) -> Theme {
     Theme {
         name,
-        colors: Colors::derive(palette),
+        colors: Colors::from_theme_base(theme_base),
         scanning_label: "scanning…".to_owned(),
     }
 }
@@ -109,9 +109,9 @@ impl SceneSources {
                 spectrum: &self.spectrum,
                 pixel_path: self.pixel_path,
                 cell_aspect: DEFAULT_CELL_ASPECT,
-                clock: Duration::ZERO,
+                since_first_paint: Duration::ZERO,
                 now: Moment::default(),
-                home: None,
+                home_dir: None,
                 key_hint_chords: &self.key_hint_chords,
             },
         )

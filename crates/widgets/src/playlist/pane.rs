@@ -8,8 +8,8 @@ use ratatui::{
 use crate::{
     playlist::{
         chrome::{pane_block, pane_title},
-        row::{self, PlaylistRows, WindowFit, cursor_band, visible_rows},
-        view::{LibraryLoad, PlaylistView},
+        row::{self, PlaylistRows, WindowFit, cursor_band, row_window},
+        view::{LibraryStatus, PlaylistView},
     },
     primitive::list_chrome::{ScrollAreas, Scrollbar, paint_scrollbar, scroll_areas},
     theme::active_theme::ActiveTheme,
@@ -20,16 +20,13 @@ const EMPTY_PLAYLIST_TEXT: &str = "Empty playlist";
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PlaylistWidget<'a> {
     view: PlaylistView<'a>,
-    theme: ActiveTheme<'a>,
+    active_theme: ActiveTheme<'a>,
 }
 
 impl<'a> PlaylistWidget<'a> {
     #[must_use]
     pub(crate) fn new(view: PlaylistView<'a>, active_theme: ActiveTheme<'a>) -> Self {
-        Self {
-            view,
-            theme: active_theme,
-        }
+        Self { view, active_theme }
     }
 }
 
@@ -37,7 +34,7 @@ impl<'a> PlaylistWidget<'a> {
 pub struct PlaylistAreas {
     pub pane: Rect,
     pub scroll_areas: ScrollAreas,
-    pub selected: Option<Rect>,
+    pub selected_area: Option<Rect>,
 }
 
 impl PlaylistWidget<'_> {
@@ -45,16 +42,16 @@ impl PlaylistWidget<'_> {
     pub(crate) fn areas(&self, pane: Rect) -> PlaylistAreas {
         let body = pane_block(None, Color::Reset).inner(pane);
         let scroll_areas = scroll_areas(pane, body);
-        let window = visible_rows(&WindowFit {
+        let window = row_window(&WindowFit {
             view: self.view,
             height: body.height,
         });
-        let selected =
-            cursor_band(scroll_areas.rows, &window, self.view.browse_selected);
+        let selected_area =
+            cursor_band(scroll_areas.rows, &window, self.view.selected.get());
         PlaylistAreas {
             pane,
             scroll_areas,
-            selected,
+            selected_area,
         }
     }
 
@@ -64,8 +61,12 @@ impl PlaylistWidget<'_> {
             return;
         }
         pane_block(
-            Some(pane_title(pane, self.view.status, &self.theme)),
-            self.theme.colors().muted_foreground,
+            Some(pane_title(
+                pane,
+                self.view.status_line_view,
+                &self.active_theme,
+            )),
+            self.active_theme.colors().muted_foreground,
         )
         .render(pane, buffer);
         if areas.scroll_areas.content.width == 0
@@ -83,24 +84,28 @@ impl Widget for &PlaylistWidget<'_> {
     }
 }
 
-fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistWidget<'_>) {
+fn paint_body(
+    buffer: &mut Buffer,
+    areas: &PlaylistAreas,
+    playlist_widget: PlaylistWidget<'_>,
+) {
     let inner = areas.scroll_areas.content;
-    let view = pane.view;
-    let theme = pane.theme;
+    let view = playlist_widget.view;
+    let theme = playlist_widget.active_theme;
     let colors = theme.colors();
 
     if view.playlist.tracks.is_empty() {
-        let text: &str = match view.library_loading {
-            LibraryLoad::Loading => theme.scanning_label.as_str(),
-            LibraryLoad::Ready => EMPTY_PLAYLIST_TEXT,
+        let text: &str = match view.library_status {
+            LibraryStatus::Loading => theme.scanning_label.as_str(),
+            LibraryStatus::Ready => EMPTY_PLAYLIST_TEXT,
         };
         Paragraph::new(text)
-            .style(Style::default().fg(colors.text))
+            .style(Style::default().fg(colors.foreground))
             .render(inner, buffer);
         return;
     }
 
-    let window = visible_rows(&WindowFit {
+    let window = row_window(&WindowFit {
         view,
         height: inner.height,
     });
@@ -118,7 +123,7 @@ fn paint_body(buffer: &mut Buffer, areas: &PlaylistAreas, pane: PlaylistWidget<'
     paint_scrollbar(
         areas.scroll_areas.scrollbar,
         Scrollbar {
-            total: window.total,
+            total: window.playlist_len,
             offset: usize::from(window.offset),
             viewport: usize::from(areas.scroll_areas.scrollbar.height),
             thumb: colors.muted_foreground,
@@ -151,7 +156,7 @@ mod tests {
     use crate::{
         playlist::{
             pane::PlaylistWidget,
-            view::{LibraryLoad, PlaylistView},
+            view::{LibraryStatus, PlaylistView},
         },
         primitive::canvas::find_text,
         status_line::StatusLineView,
@@ -182,23 +187,23 @@ mod tests {
 
     fn status<'a>(
         playlist: &'a Playlist,
-        queue: &[kernel::domain::track::TrackRef],
+        queue: &[kernel::domain::track::TrackSource],
         theme: &'a Theme,
     ) -> StatusLineView<'a> {
         StatusLineView {
             shuffle: if playlist.play_order.is_shuffle() {
-                Shuffle::Enabled
+                Shuffle::On
             } else {
-                Shuffle::Disabled
+                Shuffle::Off
             },
-            repeat_mode: playlist.repeat,
+            repeat_mode: playlist.repeat_mode,
             queue_len: queue.len(),
-            position: ViewIndex::new(0),
-            total: playlist.tracks.len(),
+            selected: ViewIndex::new(0),
+            playlist_len: playlist.tracks.len(),
             scan_status: ScanStatus::Idle,
             scanning_label: theme.scanning_label.as_str(),
             theme_name: theme.name.as_str(),
-            sleep_left: None,
+            remaining: None,
         }
     }
 
@@ -207,17 +212,17 @@ mod tests {
             playlist,
             queue: &[],
             favorites: &EMPTY_FAVORITES,
-            browse_selected: 0,
-            playing: None,
-            library_loading: LibraryLoad::Ready,
-            status: status(playlist, &[], theme),
+            selected: ViewIndex::new(0),
+            playing_index: None,
+            library_status: LibraryStatus::Ready,
+            status_line_view: status(playlist, &[], theme),
         }
     }
 
     fn queued(
         playlist: &Playlist,
         rows: &[usize],
-    ) -> Vec<kernel::domain::track::TrackRef> {
+    ) -> Vec<kernel::domain::track::TrackSource> {
         rows.iter()
             .map(|&row| playlist.tracks[row].source().clone())
             .collect()
@@ -259,10 +264,10 @@ mod tests {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &favorites,
-                browse_selected: 0,
-                playing: Some(ViewIndex::new(1)),
-                library_loading: LibraryLoad::Ready,
-                status: status(&playlist, &queue, &theme),
+                selected: ViewIndex::new(0),
+                playing_index: Some(ViewIndex::new(1)),
+                library_status: LibraryStatus::Ready,
+                status_line_view: status(&playlist, &queue, &theme),
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
@@ -273,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn every_queued_row_ends_with_its_position_chip() {
+    fn every_queued_row_ends_with_its_queue_number_chip() {
         let playlist = library(14);
         let theme = noir();
         let queue = queued(&playlist, &(1..13).collect::<Vec<_>>());
@@ -282,10 +287,10 @@ mod tests {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
-                browse_selected: 0,
-                playing: Some(ViewIndex::new(0)),
-                library_loading: LibraryLoad::Ready,
-                status: status(&playlist, &queue, &theme),
+                selected: ViewIndex::new(0),
+                playing_index: Some(ViewIndex::new(0)),
+                library_status: LibraryStatus::Ready,
+                status_line_view: status(&playlist, &queue, &theme),
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
@@ -305,10 +310,10 @@ mod tests {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
-                browse_selected: 0,
-                playing: Some(ViewIndex::new(0)),
-                library_loading: LibraryLoad::Ready,
-                status: status(&playlist, &queue, &theme),
+                selected: ViewIndex::new(0),
+                playing_index: Some(ViewIndex::new(0)),
+                library_status: LibraryStatus::Ready,
+                status_line_view: status(&playlist, &queue, &theme),
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
@@ -328,10 +333,10 @@ mod tests {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
-                browse_selected: 0,
-                playing: Some(ViewIndex::new(0)),
-                library_loading: LibraryLoad::Ready,
-                status: status(&playlist, &queue, &theme),
+                selected: ViewIndex::new(0),
+                playing_index: Some(ViewIndex::new(0)),
+                library_status: LibraryStatus::Ready,
+                status_line_view: status(&playlist, &queue, &theme),
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
@@ -357,10 +362,10 @@ mod tests {
                 playlist: &playlist,
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
-                browse_selected: 0,
-                playing: None,
-                library_loading: LibraryLoad::Ready,
-                status: status(&playlist, &queue, &theme),
+                selected: ViewIndex::new(0),
+                playing_index: None,
+                library_status: LibraryStatus::Ready,
+                status_line_view: status(&playlist, &queue, &theme),
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
@@ -385,10 +390,10 @@ mod tests {
                 playlist: &playlist,
                 queue: &[],
                 favorites: &EMPTY_FAVORITES,
-                browse_selected: 0,
-                playing: None,
-                library_loading: LibraryLoad::Ready,
-                status: StatusLineView {
+                selected: ViewIndex::new(0),
+                playing_index: None,
+                library_status: LibraryStatus::Ready,
+                status_line_view: StatusLineView {
                     scan_status: ScanStatus::Tagging { done: 1, total: 3 },
                     ..status(&playlist, &[], &theme)
                 },
@@ -421,15 +426,15 @@ mod tests {
 
         let (_, y) =
             find_text(&buffer, "Brooke Valentine").expect("the row is painted");
-        let row: Vec<char> = (0..buffer.area.width)
+        let row_chars: Vec<char> = (0..buffer.area.width)
             .filter_map(|x| buffer.cell((x, y)))
             .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
             .collect();
-        let cut = row
+        let cut = row_chars
             .iter()
             .position(|&character| character == '…')
             .expect("an over-long title truncates with an ellipsis");
-        let tail: String = row
+        let tail: String = row_chars
             .iter()
             .skip(cut + 1)
             .take(SCROLLBAR_COLUMN + 1)
@@ -445,8 +450,8 @@ mod tests {
     fn the_cursor_row_wears_the_band_and_the_playing_row_wears_the_marker() {
         let playlist = library(3);
         let theme = noir();
-        let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        let colors = active.colors();
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let colors = active_theme.colors();
         let highlight = colors.highlight;
         let selection_text = colors.selection_foreground;
         let selection_background = colors.selection_background;
@@ -456,15 +461,15 @@ mod tests {
                 playlist: &playlist,
                 queue: &[],
                 favorites: &EMPTY_FAVORITES,
-                browse_selected: 2,
-                playing: Some(ViewIndex::new(1)),
-                library_loading: LibraryLoad::Ready,
-                status: StatusLineView {
-                    position: ViewIndex::new(2),
+                selected: ViewIndex::new(2),
+                playing_index: Some(ViewIndex::new(1)),
+                library_status: LibraryStatus::Ready,
+                status_line_view: StatusLineView {
+                    selected: ViewIndex::new(2),
                     ..status(&playlist, &[], &theme)
                 },
             },
-            active,
+            active_theme,
         );
         let buffer =
             rendered(60, 24, |frame| frame.render_widget(&widget, frame.area()))
@@ -502,11 +507,11 @@ mod tests {
                 playlist: &playlist,
                 queue: &[],
                 favorites: &EMPTY_FAVORITES,
-                browse_selected: 2,
-                playing: Some(ViewIndex::new(0)),
-                library_loading: LibraryLoad::Ready,
-                status: StatusLineView {
-                    position: ViewIndex::new(2),
+                selected: ViewIndex::new(2),
+                playing_index: Some(ViewIndex::new(0)),
+                library_status: LibraryStatus::Ready,
+                status_line_view: StatusLineView {
+                    selected: ViewIndex::new(2),
                     ..status(&playlist, &[], &theme)
                 },
             },
@@ -552,11 +557,11 @@ mod tests {
                 playlist: &playlist,
                 queue: &[],
                 favorites: &EMPTY_FAVORITES,
-                browse_selected: 9_999,
-                playing: None,
-                library_loading: LibraryLoad::Ready,
-                status: StatusLineView {
-                    position: ViewIndex::new(9_999),
+                selected: ViewIndex::new(9_999),
+                playing_index: None,
+                library_status: LibraryStatus::Ready,
+                status_line_view: StatusLineView {
+                    selected: ViewIndex::new(9_999),
                     ..status(&playlist, &[], &theme)
                 },
             },
@@ -623,11 +628,11 @@ mod tests {
                 playlist: &model.playlist,
                 queue: &model.queue,
                 favorites: &model.favorites,
-                browse_selected: model.workspace.browse.selected().get(),
-                playing: model.playing_index(),
-                library_loading: LibraryLoad::Ready,
-                status: StatusLineView {
-                    position: ViewIndex::new(model.workspace.browse.selected().get()),
+                selected: ViewIndex::new(model.workspace.browse.selected().get()),
+                playing_index: model.playing_index(),
+                library_status: LibraryStatus::Ready,
+                status_line_view: StatusLineView {
+                    selected: ViewIndex::new(model.workspace.browse.selected().get()),
                     ..status(&model.playlist, &model.queue, &theme)
                 },
             },

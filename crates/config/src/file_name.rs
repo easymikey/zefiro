@@ -37,9 +37,9 @@ mod tests {
     #[case::appearance(ConfigName::Appearance, "sifr-ui.toml")]
     #[case::theme(ConfigName::Theme(ThemeName::from_static("noir")), "noir.toml")]
     fn toml_file_names_the_file_on_disk(
-        #[case] file: ConfigName,
+        #[case] config_name: ConfigName,
         #[case] expected: &str,
     ) {
-        assert_eq!(config_file_name(&file), expected);
+        assert_eq!(config_file_name(&config_name), expected);
     }
 }

@@ -65,10 +65,10 @@ impl Stage {
 #[derive(Debug, Default)]
 pub struct AnimationStage {
     stage: Stage,
-    last_clock: Duration,
+    advanced_to: Duration,
     wash: Option<(Animation, Rect)>,
-    pub(crate) vacated: VacatedAreas,
-    cover: RefRect,
+    pub(crate) vacated_areas: VacatedAreas,
+    cover_area: RefRect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,9 +87,9 @@ pub struct Backdrop {
 }
 
 impl AnimationStage {
-    pub fn advance_clock(&mut self, clock: Duration) -> Duration {
-        let elapsed = clock.saturating_sub(self.last_clock);
-        self.last_clock = clock;
+    pub fn advance_to(&mut self, since_first_paint: Duration) -> Duration {
+        let elapsed = since_first_paint.saturating_sub(self.advanced_to);
+        self.advanced_to = since_first_paint;
         if !self.stage.is_running() && self.wash.is_none() {
             return Duration::ZERO;
         }
@@ -132,7 +132,7 @@ impl AnimationStage {
     }
 
     pub(crate) fn remember_protected(&self, layout: FrameLayout) {
-        self.cover.set(layout.cover.unwrap_or(Rect::ZERO));
+        self.cover_area.set(layout.cover_area.unwrap_or(Rect::ZERO));
     }
 
     pub fn stage(&mut self, animation: Animation, area: Rect) {
@@ -152,7 +152,7 @@ impl AnimationStage {
 
     #[must_use]
     pub(crate) fn cell_filter(&self) -> CellFilter {
-        CellFilter::NoneOf(vec![CellFilter::RefArea(self.cover.clone())])
+        CellFilter::NoneOf(vec![CellFilter::RefArea(self.cover_area.clone())])
     }
 
     pub fn advance(&mut self, buffer: &mut Buffer, elapsed: Duration) {
@@ -171,12 +171,12 @@ impl AnimationStage {
 
 #[must_use]
 pub fn animation_frame_due(
-    stage: &AnimationStage,
+    animation_stage: &AnimationStage,
     cover_motion: CoverMotion,
-    next_frame: Moment,
+    next_frame_at: Moment,
 ) -> Option<Moment> {
-    (stage.is_animating() || cover_motion == CoverMotion::Animating)
-        .then_some(next_frame)
+    (animation_stage.is_animating() || cover_motion == CoverMotion::Moving)
+        .then_some(next_frame_at)
 }
 
 #[cfg(test)]
@@ -206,11 +206,11 @@ mod tests {
         height: 1,
     };
 
-    fn fade(duration: u32) -> tachyonfx::Effect {
+    fn fade(duration_ms: u32) -> tachyonfx::Effect {
         fx::fade_from(
             Color::Black,
             Color::Black,
-            (duration, Interpolation::Linear),
+            (duration_ms, Interpolation::Linear),
         )
     }
 
@@ -294,22 +294,22 @@ mod tests {
 
     #[test]
     fn a_running_crossfade_wants_the_next_frame() {
-        let stage = AnimationStage::default();
-        let next_frame = Moment::new(Duration::from_millis(1_033));
+        let animation_stage = AnimationStage::default();
+        let next_frame_at = Moment::new(Duration::from_millis(1_033));
 
         assert_eq!(
-            animation_frame_due(&stage, CoverMotion::Animating, next_frame),
-            Some(next_frame)
+            animation_frame_due(&animation_stage, CoverMotion::Moving, next_frame_at),
+            Some(next_frame_at)
         );
     }
 
     #[test]
     fn a_settled_crossfade_wants_no_frame() {
-        let stage = AnimationStage::default();
-        let next_frame = Moment::new(Duration::from_millis(1_033));
+        let animation_stage = AnimationStage::default();
+        let next_frame_at = Moment::new(Duration::from_millis(1_033));
 
         assert_eq!(
-            animation_frame_due(&stage, CoverMotion::Still, next_frame),
+            animation_frame_due(&animation_stage, CoverMotion::Still, next_frame_at),
             None
         );
     }

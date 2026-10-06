@@ -132,7 +132,7 @@ impl fmt::Display for ThemeChoice {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Themes {
     pub names: Vec<ThemeName>,
-    pub selected: ThemeChoice,
+    pub theme_choice: ThemeChoice,
 }
 
 impl Themes {
@@ -141,7 +141,7 @@ impl Themes {
         if self.names.is_empty() {
             return None;
         }
-        let current = match &self.selected {
+        let current = match &self.theme_choice {
             ThemeChoice::Named(name) => {
                 self.names.iter().position(|candidate| candidate == name)
             }
@@ -179,42 +179,42 @@ mod tests {
 
     #[rstest]
     #[case::next(StepRow {
-        themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("a")) },
+        themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Named(ThemeName::from_static("a")) },
         direction: Direction::Next,
         expected: Some("b"),
     })]
     #[case::wraps_at_end(StepRow {
-        themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("c")) },
+        themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Named(ThemeName::from_static("c")) },
         direction: Direction::Next,
         expected: Some("a"),
     })]
     #[case::previous_wraps_at_start(StepRow {
-        themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("a")) },
+        themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Named(ThemeName::from_static("a")) },
         direction: Direction::Previous,
         expected: Some("c"),
     })]
     #[case::selected_missing_from_list_up(StepRow {
-        themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("gone")) },
+        themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Named(ThemeName::from_static("gone")) },
         direction: Direction::Next,
         expected: Some("a"),
     })]
     #[case::selected_missing_from_list_down(StepRow {
-        themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Named(ThemeName::from_static("gone")) },
+        themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Named(ThemeName::from_static("gone")) },
         direction: Direction::Previous,
         expected: Some("c"),
     })]
     #[case::auto_up(StepRow {
-        themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Auto },
+        themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Auto },
         direction: Direction::Next,
         expected: Some("a"),
     })]
     #[case::auto_down(StepRow {
-        themes: Themes { names: names(&["a", "b", "c"]), selected: ThemeChoice::Auto },
+        themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Auto },
         direction: Direction::Previous,
         expected: Some("c"),
     })]
     #[case::empty_list_gives_none(StepRow {
-        themes: Themes { names: Vec::new(), selected: ThemeChoice::Auto },
+        themes: Themes { names: Vec::new(), theme_choice: ThemeChoice::Auto },
         direction: Direction::Next,
         expected: None,
     })]

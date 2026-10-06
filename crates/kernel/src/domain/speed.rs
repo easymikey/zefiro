@@ -83,11 +83,11 @@ mod tests {
     #[case::next_from_default(Speed::default(), Direction::Next, 1.25)]
     #[case::previous_from_default(Speed::default(), Direction::Previous, 0.75)]
     fn step_saturates_at_bounds(
-        #[case] start: Speed,
+        #[case] speed: Speed,
         #[case] direction: Direction,
         #[case] expected: f32,
     ) {
-        assert_eq!(start.step(direction).get(), expected);
+        assert_eq!(speed.step(direction).get(), expected);
     }
 
     #[test]

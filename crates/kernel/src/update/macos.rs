@@ -11,33 +11,35 @@ use crate::{
 };
 
 pub(crate) fn update(
-    playback: &mut PlaybackParts<'_>,
+    playback_parts: &mut PlaybackParts<'_>,
     event: MacosEvent,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
     match event {
-        MacosEvent::Volume(volume) => playback
+        MacosEvent::VolumeChanged(volume) => playback_parts
             .transport
             .transition(TransportMessage::SetVolume(volume)),
-        MacosEvent::OutputRouteChanged => route_changed(playback, now),
-        MacosEvent::Error(error) => Ok(playback
+        MacosEvent::OutputRouteChanged => route_changed(playback_parts, now),
+        MacosEvent::Error(error) => Ok(playback_parts
             .workspace
-            .show(Toast::error(error.to_string()), playback.revisions)),
-        MacosEvent::MediaKey(request) => playback::update(playback, request, now),
+            .show(Toast::error(error.to_string()), playback_parts.revisions)),
+        MacosEvent::MediaKeyPressed(request) => {
+            playback::update(playback_parts, request, now)
+        }
     }
 }
 
 fn route_changed(
-    playback: &mut PlaybackParts<'_>,
+    playback_parts: &mut PlaybackParts<'_>,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    if !playback.player.is_playing() {
+    if !playback_parts.player.is_playing() {
         return Err(Unhandled);
     }
-    let paused = playback::update(playback, PlaybackRequest::Pause, now)?;
-    let raised = playback.workspace.show(
+    let paused = playback::update(playback_parts, PlaybackRequest::Pause, now)?;
+    let raised = playback_parts.workspace.show(
         Toast::info("Output changed — paused".to_string()),
-        playback.revisions,
+        playback_parts.revisions,
     );
     Ok(raised.then(paused))
 }
@@ -90,7 +92,7 @@ mod tests {
         let volume = Percent::clamped(30);
         let cmd = update(
             &mut playback_parts(&mut model),
-            MacosEvent::Volume(volume),
+            MacosEvent::VolumeChanged(volume),
             Moment::default(),
         )
         .unwrap();
@@ -131,7 +133,7 @@ mod tests {
         let now = Moment::default();
         let system_cmd = update(
             &mut playback_parts(&mut via_system),
-            MacosEvent::MediaKey(PlaybackRequest::Toggle),
+            MacosEvent::MediaKeyPressed(PlaybackRequest::Toggle),
             now,
         )
         .unwrap();

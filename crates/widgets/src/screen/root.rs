@@ -53,7 +53,7 @@ impl Widget for &ScreenWidget<'_> {
             .style(
                 Style::default()
                     .bg(colors.window_background)
-                    .fg(colors.text),
+                    .fg(colors.foreground),
             )
             .render(area, buffer);
         let layout = self.frame_layout;
@@ -69,14 +69,14 @@ impl Widget for &ScreenWidget<'_> {
             }
             Breakpoint::Minimal => {
                 (&MinimalScreenWidget::new(CardView::from_scene(&self.scene), theme)
-                    .speed_chip(self.scene.settings.appearance.speed_chip))
+                    .speed_chip(self.scene.settings.appearance_settings.speed_chip))
                     .render(layout.screen, buffer);
             }
             Breakpoint::Full => self.paint_card(buffer),
             Breakpoint::Compact => {
                 let card =
                     CompactCardWidget::new(CardView::from_scene(&self.scene), theme)
-                        .speed_chip(self.scene.settings.appearance.speed_chip);
+                        .speed_chip(self.scene.settings.appearance_settings.speed_chip);
                 (&card).render(layout.header, buffer);
             }
         }
@@ -87,14 +87,14 @@ impl Widget for &ScreenWidget<'_> {
 
 impl ScreenWidget<'_> {
     fn paint_card(&self, buffer: &mut Buffer) {
-        let Some(metrics) = self.frame_layout.card else {
+        let Some(metrics) = self.frame_layout.card_metrics else {
             return;
         };
         let scene = self.scene;
         CardWidget::new(CardView::from_scene(&scene), scene.active_theme())
             .cell_aspect(scene.presentation.cell_aspect)
             .cover_sizing(scene.cover_sizing())
-            .appearance_settings(scene.settings.appearance)
+            .appearance_settings(scene.settings.appearance_settings)
             .card_cover(self.card_cover)
             .paint(
                 &metrics,
@@ -108,7 +108,7 @@ impl ScreenWidget<'_> {
     fn paint_lists(&self, buffer: &mut Buffer) {
         let scene = self.scene;
         let theme = scene.active_theme();
-        if let Some(areas) = self.frame_layout.playlist {
+        if let Some(areas) = self.frame_layout.playlist_areas {
             PlaylistWidget::new(PlaylistView::from_scene(&scene), theme)
                 .paint(&areas, buffer);
         }
@@ -120,7 +120,7 @@ impl ScreenWidget<'_> {
 
     fn paint_layers(&self, buffer: &mut Buffer) {
         let screen = self.frame_layout.screen;
-        if let Some(areas) = self.frame_layout.overlay {
+        if let Some(areas) = self.frame_layout.overlay_areas {
             OverlayWidget::new(OverlayView::from_scene(&self.scene), self.frame_layout)
                 .avoid(self.frame_layout.cover_exclusion(self.scene.cover_mode()))
                 .paint(
@@ -157,12 +157,12 @@ mod tests {
         test_support::{SceneSources, model_with_tracks, rendered},
     };
 
-    fn frame(scene: Scene<'_>, cover_art: &CardCover, size: (u16, u16)) -> String {
+    fn frame(scene: Scene<'_>, card_cover: &CardCover, size: (u16, u16)) -> String {
         let (width, height) = size;
         let layout = FrameLayout::from_scene(&scene, Rect::new(0, 0, width, height));
         rendered(width, height, |frame| {
             frame.render_widget(
-                &ScreenWidget::new(scene, &layout).card_cover(cover_art),
+                &ScreenWidget::new(scene, &layout).card_cover(card_cover),
                 frame.area(),
             );
         })
@@ -176,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn the_cover_art_decides_whether_the_placeholder_is_painted() {
+    fn the_card_cover_decides_whether_the_placeholder_is_painted() {
         let mut sources = SceneSources::new(model_with_tracks(3));
         sources.pixel_path = PixelPath::Protocol;
         let scene = sources.scene();

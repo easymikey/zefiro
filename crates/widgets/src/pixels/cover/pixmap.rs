@@ -10,12 +10,8 @@ use ratatui::layout::Rect;
 
 use crate::pixels::{
     cover::CoverImage,
-    vinyl::{
-        VinylCache,
-        VinylCacheKey,
-        VinylStyle,
-        art::{ResampleError, resample},
-    },
+    resample::{ResampleError, resample},
+    vinyl::{VinylCache, VinylCacheKey, VinylStyle},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,23 +21,23 @@ pub(crate) enum Identity {
 }
 
 impl Identity {
-    pub(crate) fn is(&self, wanted: &Wanted<'_>) -> bool {
+    pub(crate) fn is_wanted(&self, wanted: &Wanted<'_>) -> bool {
         match self {
             Self::Plain(path) => wanted.path() == Some(path.as_path()),
             Self::Vinyl(key) => {
                 key.path.as_deref() == wanted.path()
-                    && key.size == wanted.pixels
-                    && key.colors == wanted.vinyl_style
+                    && key.side == wanted.side
+                    && key.vinyl_style == wanted.vinyl_style
             }
         }
     }
 
-    pub(crate) fn changed_only_by_theme(&self, wanted: &Wanted<'_>) -> bool {
+    pub(crate) fn is_changed_only_by_theme(&self, wanted: &Wanted<'_>) -> bool {
         match self {
             Self::Vinyl(key) => {
-                key.colors != wanted.vinyl_style
+                key.vinyl_style != wanted.vinyl_style
                     && key.path.as_deref() == wanted.path()
-                    && key.size == wanted.pixels
+                    && key.side == wanted.side
             }
             Self::Plain(_) => false,
         }
@@ -51,13 +47,14 @@ impl Identity {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Wanted<'a> {
     pub cover_image: Option<&'a CoverImage>,
-    pub pixels: Pixels,
+    pub side: Pixels,
     pub vinyl_style: VinylStyle,
 }
 
 impl Wanted<'_> {
     fn path(&self) -> Option<&Path> {
-        self.cover_image.map(|cover| cover.path.as_path())
+        self.cover_image
+            .map(|cover_image| cover_image.path.as_path())
     }
 }
 
@@ -73,16 +70,16 @@ pub struct CellPixels {
 }
 
 #[must_use]
-pub(crate) fn plain_pixmap(decoded: Option<&CoverImage>) -> Option<BuiltPixmap> {
-    let decoded = decoded?;
+pub(crate) fn plain_pixmap(cover_image: Option<&CoverImage>) -> Option<BuiltPixmap> {
+    let cover_image = cover_image?;
     Some(BuiltPixmap {
-        pixmap: Arc::clone(&decoded.image),
-        identity: Identity::Plain(decoded.path.clone()),
+        pixmap: Arc::clone(&cover_image.image),
+        identity: Identity::Plain(cover_image.path.clone()),
     })
 }
 
 #[must_use]
-pub(crate) fn translucent(image: &RgbaImage) -> bool {
+pub(crate) fn is_translucent(image: &RgbaImage) -> bool {
     image.pixels().any(|pixel| pixel.0[3] < 255)
 }
 
@@ -90,10 +87,14 @@ pub(crate) fn translucent(image: &RgbaImage) -> bool {
 pub(crate) fn fit_to_rect(
     image: Arc<RgbaImage>,
     rect: Rect,
-    cell: CellPixels,
+    cell_pixels: CellPixels,
 ) -> Arc<RgbaImage> {
-    let width = u32::from(rect.width).saturating_mul(cell.width.0).max(1);
-    let height = u32::from(rect.height).saturating_mul(cell.height.0).max(1);
+    let width = u32::from(rect.width)
+        .saturating_mul(cell_pixels.width.0)
+        .max(1);
+    let height = u32::from(rect.height)
+        .saturating_mul(cell_pixels.height.0)
+        .max(1);
     if image.dimensions() == (width, height) {
         return image;
     }
@@ -114,16 +115,16 @@ pub(crate) fn fit_to_rect(
 }
 
 #[must_use]
-pub(crate) fn vinyl_size(rect: Rect, cell: CellPixels) -> Pixels {
-    Pixels(u32::from(rect.height).saturating_mul(cell.height.0))
+pub fn cover_side(rect: Rect, cell_pixels: CellPixels) -> Pixels {
+    Pixels(u32::from(rect.height).saturating_mul(cell_pixels.height.0))
 }
 
 #[must_use]
 pub(crate) fn vinyl_key(wanted: &Wanted<'_>) -> VinylCacheKey {
     VinylCacheKey {
         path: wanted.path().map(Path::to_path_buf),
-        size: wanted.pixels,
-        colors: wanted.vinyl_style,
+        side: wanted.side,
+        vinyl_style: wanted.vinyl_style,
     }
 }
 
@@ -131,10 +132,10 @@ pub(crate) fn vinyl_key(wanted: &Wanted<'_>) -> VinylCacheKey {
 pub(crate) fn compose_vinyl(
     cache: &mut VinylCache,
     key: &VinylCacheKey,
-    decoded: Option<&CoverImage>,
+    cover_image: Option<&CoverImage>,
 ) -> Arc<RgbaImage> {
-    let art = decoded.map(|cover| cover.image.as_ref());
-    Arc::new(cache.compose(key, art))
+    let image = cover_image.map(|cover_image| cover_image.image.as_ref());
+    Arc::new(cache.compose(key, image))
 }
 
 #[cfg(test)]
@@ -171,17 +172,17 @@ mod tests {
     #[case::a_tall_cell_font(Rect::new(0, 0, 30, 15), CellPixels { width: Pixels(10), height: Pixels(20) })]
     fn a_plain_cover_is_fit_to_exactly_the_cover_squares_own_pixel_size(
         #[case] rect: Rect,
-        #[case] cell: CellPixels,
+        #[case] cell_pixels: CellPixels,
     ) {
-        let fitted = fit_to_rect(source_pixmap(), rect, cell);
+        let fitted = fit_to_rect(source_pixmap(), rect, cell_pixels);
         assert_eq!(
             fitted.width(),
-            u32::from(rect.width) * cell.width.0,
+            u32::from(rect.width) * cell_pixels.width.0,
             "the fitted width must match the cover square converted to pixels"
         );
         assert_eq!(
             fitted.height(),
-            u32::from(rect.height) * cell.height.0,
+            u32::from(rect.height) * cell_pixels.height.0,
             "the fitted height must match the cover square converted to pixels"
         );
     }
@@ -189,7 +190,7 @@ mod tests {
     #[test]
     fn a_square_cover_cell_rect_stays_square_in_pixels() {
         let cell_aspect: u16 = 2;
-        let cell = CellPixels {
+        let cell_pixels = CellPixels {
             width: Pixels(9),
             height: Pixels(9 * u32::from(cell_aspect)),
         };
@@ -197,7 +198,7 @@ mod tests {
         let width = height * cell_aspect;
         let rect = Rect::new(0, 0, width, height);
 
-        let fitted = fit_to_rect(source_pixmap(), rect, cell);
+        let fitted = fit_to_rect(source_pixmap(), rect, cell_pixels);
         assert_eq!(
             fitted.width(),
             fitted.height(),

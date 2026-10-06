@@ -14,9 +14,9 @@ use crate::{
         Appearance,
         ConfigDriver,
         effect::ConfigEffect,
-        files::{read_if_present, store, unreadable},
+        files::{read_error, read_if_present, store},
         message::ConfigMessage,
-        watch::{ConfigWatchMessage, WatchEffect},
+        watch::{ConfigWatchEffect, ConfigWatchMessage},
     },
     patch::{patched_appearance_text, patched_config_text},
     theme_file::TomlTheme,
@@ -29,20 +29,20 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> Driver for ConfigDriver<P, A> {
 
     fn execute(&mut self, effect: ConfigEffect) -> Option<ConfigMessage> {
         match effect {
-            ConfigEffect::Watch(WatchEffect::Read { file, path }) => {
-                Some(read(file, &path))
+            ConfigEffect::Watch(ConfigWatchEffect::Read { name, path }) => {
+                Some(read(name, &path))
             }
-            ConfigEffect::Watch(WatchEffect::List(dir)) => Some(list(&dir)),
+            ConfigEffect::Watch(ConfigWatchEffect::List(dir)) => Some(list(&dir)),
             ConfigEffect::SaveConfig(patch) => {
-                Some(save(ConfigName::Config, &self.config, |existing| {
-                    patched_config_text(existing, patch)
+                Some(save(ConfigName::Config, &self.config_path, |text| {
+                    patched_config_text(text, patch)
                 }))
             }
-            ConfigEffect::SaveAppearance(patch) => {
-                Some(save(ConfigName::Appearance, &self.appearance, |existing| {
-                    patched_appearance_text(existing, patch)
-                }))
-            }
+            ConfigEffect::SaveAppearance(patch) => Some(save(
+                ConfigName::Appearance,
+                &self.appearance_path,
+                |text| patched_appearance_text(text, patch),
+            )),
             ConfigEffect::PublishTheme(theme) => {
                 (self.publish_theme)(theme);
                 None
@@ -55,12 +55,13 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> Driver for ConfigDriver<P, A> {
     }
 }
 
-fn read(file: ConfigName, path: &Path) -> ConfigMessage {
+fn read(config_name: ConfigName, path: &Path) -> ConfigMessage {
     match read_if_present(path) {
-        Ok(text) => {
-            ConfigMessage::Watch(ConfigWatchMessage::ReadDone { name: file, text })
-        }
-        Err(error) => ConfigMessage::Error(unreadable(file, &error)),
+        Ok(text) => ConfigMessage::Watch(ConfigWatchMessage::ReadDone {
+            name: config_name,
+            text,
+        }),
+        Err(error) => ConfigMessage::Error(read_error(config_name, &error)),
     }
 }
 
@@ -111,28 +112,34 @@ fn listed(stems: Vec<String>) -> ConfigMessage {
 }
 
 fn save(
-    file: ConfigName,
+    config_name: ConfigName,
     path: &Path,
     produce: impl FnOnce(&str) -> Result<String, crate::error::Error>,
 ) -> ConfigMessage {
-    let existing = match read_if_present(path) {
-        Ok(existing) => existing,
-        Err(error) => return save_failed(file, IoError::from(error.kind())),
+    let old_text = match read_if_present(path) {
+        Ok(old_text) => old_text,
+        Err(error) => return save_failed(config_name, IoError::from(error.kind())),
     };
-    let text = match produce(existing.as_deref().unwrap_or("")) {
+    let text = match produce(old_text.as_deref().unwrap_or("")) {
         Ok(text) => text,
         Err(error) => {
             return ConfigMessage::Error(Diagnostic::from_error(&error).into());
         }
     };
     match store(path, text.as_bytes()) {
-        Ok(()) => ConfigMessage::Saved { file, text },
-        Err(kind) => save_failed(file, kind),
+        Ok(()) => ConfigMessage::Saved {
+            name: config_name,
+            text,
+        },
+        Err(error) => save_failed(config_name, error),
     }
 }
 
-fn save_failed(file: ConfigName, kind: IoError) -> ConfigMessage {
-    ConfigMessage::Error(ConfigError::Save { file, kind })
+fn save_failed(config_name: ConfigName, error: IoError) -> ConfigMessage {
+    ConfigMessage::Error(ConfigError::Save {
+        name: config_name,
+        error,
+    })
 }
 
 #[cfg(test)]
@@ -151,7 +158,7 @@ mod tests {
             setting_row::{AppearanceField, OptionIndex},
             theme::ThemeName,
         },
-        update::machine::Driver,
+        update::machine::Driver as _,
     };
     use rstest::{fixture, rstest};
 
@@ -162,31 +169,31 @@ mod tests {
             effect::ConfigEffect,
             message::ConfigMessage,
             paths::{ConfigPaths, SeenTexts},
-            watch::{ConfigWatchMessage, WatchEffect},
+            watch::{ConfigWatchEffect, ConfigWatchMessage},
         },
         theme_file::TomlTheme,
     };
 
-    type Sink = ConfigDriver<fn(TomlTheme), fn(Appearance)>;
+    type Driver = ConfigDriver<fn(TomlTheme), fn(Appearance)>;
 
     struct Disk {
         directory: tempfile::TempDir,
         paths: ConfigPaths,
-        driver: Sink,
+        driver: Driver,
     }
 
     #[fixture]
     fn disk() -> Disk {
         let directory = tempfile::tempdir().unwrap();
         let paths = ConfigPaths {
-            config: directory.path().join("config.toml"),
-            appearance: directory.path().join("sifr-ui.toml"),
-            themes: directory.path().join("themes"),
+            config_path: directory.path().join("config.toml"),
+            appearance_path: directory.path().join("sifr-ui.toml"),
+            themes_dir: directory.path().join("themes"),
             default_music_dir: None,
-            theme: None,
-            seen: SeenTexts::default(),
+            theme_name: None,
+            seen_texts: SeenTexts::default(),
         };
-        let driver: Sink = ConfigDriver::new(&paths, drop, drop);
+        let driver: Driver = ConfigDriver::new(&paths, drop, drop);
         Disk {
             directory,
             paths,
@@ -200,12 +207,14 @@ mod tests {
 
     #[rstest]
     fn a_missing_file_reads_as_no_text(mut disk: Disk) {
-        let path = disk.paths.themes.join("noir.toml");
+        let path = disk.paths.themes_dir.join("noir.toml");
 
-        let message = disk.driver.execute(ConfigEffect::Watch(WatchEffect::Read {
-            file: noir(),
-            path,
-        }));
+        let message =
+            disk.driver
+                .execute(ConfigEffect::Watch(ConfigWatchEffect::Read {
+                    name: noir(),
+                    path,
+                }));
 
         assert_eq!(
             message,
@@ -224,7 +233,7 @@ mod tests {
 
         let listed = disk
             .driver
-            .execute(ConfigEffect::Watch(WatchEffect::List(themes)));
+            .execute(ConfigEffect::Watch(ConfigWatchEffect::List(themes)));
 
         assert_eq!(
             listed,
@@ -243,7 +252,7 @@ mod tests {
 
         let listed = disk
             .driver
-            .execute(ConfigEffect::Watch(WatchEffect::List(themes)));
+            .execute(ConfigEffect::Watch(ConfigWatchEffect::List(themes)));
 
         assert_eq!(
             listed,
@@ -256,11 +265,11 @@ mod tests {
 
     #[rstest]
     fn a_missing_directory_lists_as_empty(mut disk: Disk) {
-        let missing = disk.paths.themes.clone();
+        let missing = disk.paths.themes_dir.clone();
 
         let listed = disk
             .driver
-            .execute(ConfigEffect::Watch(WatchEffect::List(missing)));
+            .execute(ConfigEffect::Watch(ConfigWatchEffect::List(missing)));
 
         assert_eq!(
             listed,
@@ -273,12 +282,14 @@ mod tests {
 
     #[rstest]
     fn a_directory_that_is_actually_a_file_is_unreadable(mut disk: Disk) {
-        let not_a_directory = disk.paths.themes.clone();
+        let not_a_directory = disk.paths.themes_dir.clone();
         std::fs::write(&not_a_directory, "").unwrap();
 
         let listed = disk
             .driver
-            .execute(ConfigEffect::Watch(WatchEffect::List(not_a_directory)));
+            .execute(ConfigEffect::Watch(ConfigWatchEffect::List(
+                not_a_directory,
+            )));
 
         assert!(matches!(
             listed,
@@ -304,7 +315,7 @@ mod tests {
 
     fn save_theme() -> ConfigEffect {
         ConfigEffect::SaveConfig(ConfigPatch {
-            theme: Some(ThemeName::from_static("dark")),
+            theme_name: Some(ThemeName::from_static("dark")),
             ..ConfigPatch::default()
         })
     }
@@ -316,54 +327,54 @@ mod tests {
         })
     }
 
-    struct InstallParts {
+    struct SaveRow {
         name: &'static str,
-        existing: &'static str,
+        text: &'static str,
         save: fn() -> ConfigEffect,
-        file: ConfigName,
+        config_name: ConfigName,
     }
 
     #[rstest]
-    #[case::appearance_creates_a_minimal_file(InstallParts {
+    #[case::appearance_creates_a_minimal_file(SaveRow {
         name: "appearance_missing",
-        existing: "",
+        text: "",
         save: save_cover_brackets,
-        file: ConfigName::Appearance,
+        config_name: ConfigName::Appearance,
     })]
-    #[case::appearance_updates_one_key_of_an_existing_file(InstallParts {
+    #[case::appearance_updates_one_key_of_an_existing_file(SaveRow {
         name: "appearance_existing",
-        existing: EXISTING_UI,
+        text: EXISTING_UI,
         save: save_cover_brackets,
-        file: ConfigName::Appearance,
+        config_name: ConfigName::Appearance,
     })]
-    #[case::config_creates_a_minimal_file(InstallParts {
+    #[case::config_creates_a_minimal_file(SaveRow {
         name: "config_missing",
-        existing: "",
+        text: "",
         save: save_theme,
-        file: ConfigName::Config,
+        config_name: ConfigName::Config,
     })]
-    #[case::config_updates_one_key_of_an_existing_file(InstallParts {
+    #[case::config_updates_one_key_of_an_existing_file(SaveRow {
         name: "config_existing",
-        existing: EXISTING_CONFIG,
+        text: EXISTING_CONFIG,
         save: save_crossfade,
-        file: ConfigName::Config,
+        config_name: ConfigName::Config,
     })]
-    fn a_save_lands_on_disk(#[case] landing: InstallParts, mut disk: Disk) {
-        let path = match landing.file {
-            ConfigName::Appearance => disk.paths.appearance.clone(),
-            ConfigName::Config | ConfigName::Theme(_) => disk.paths.config.clone(),
+    fn a_save_lands_on_disk(#[case] save_row: SaveRow, mut disk: Disk) {
+        let path = match save_row.config_name {
+            ConfigName::Appearance => disk.paths.appearance_path.clone(),
+            ConfigName::Config | ConfigName::Theme(_) => disk.paths.config_path.clone(),
         };
-        if !landing.existing.is_empty() {
-            std::fs::write(&path, landing.existing).unwrap();
+        if !save_row.text.is_empty() {
+            std::fs::write(&path, save_row.text).unwrap();
         }
 
-        let saved = disk.driver.execute((landing.save)());
+        let saved = disk.driver.execute((save_row.save)());
 
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
             saved,
             Some(ConfigMessage::Saved {
-                file: landing.file,
+                name: save_row.config_name,
                 text: text.clone()
             }),
             "the reported text is the text on disk"
@@ -371,7 +382,7 @@ mod tests {
         assert!(toml::from_str::<toml::Value>(&text).is_ok());
         let entries = std::fs::read_dir(disk.directory.path()).unwrap().count();
         assert_eq!(entries, 1, "an atomic write leaves no tmp file behind");
-        insta::with_settings!({ snapshot_suffix => landing.name }, {
+        insta::with_settings!({ snapshot_suffix => save_row.name }, {
             insta::assert_snapshot!(text);
         });
     }
@@ -380,10 +391,10 @@ mod tests {
     #[case::not_a_table("audio = 1\n")]
     #[case::malformed("audio = [\n")]
     fn a_refused_patch_reports_invalid_and_leaves_the_file_unchanged(
-        #[case] existing: &str,
+        #[case] text: &str,
         mut disk: Disk,
     ) {
-        std::fs::write(&disk.paths.config, existing).unwrap();
+        std::fs::write(&disk.paths.config_path, text).unwrap();
 
         let refused = disk.driver.execute(save_crossfade());
 
@@ -392,21 +403,21 @@ mod tests {
             "{refused:?}"
         );
         assert_eq!(
-            std::fs::read_to_string(&disk.paths.config).unwrap(),
-            existing,
+            std::fs::read_to_string(&disk.paths.config_path).unwrap(),
+            text,
             "a failed save must leave the file untouched"
         );
     }
 
     #[rstest]
     fn a_theme_list_reports_a_reserved_name_as_refused(mut disk: Disk) {
-        let themes = disk.paths.themes.clone();
+        let themes = disk.paths.themes_dir.clone();
         std::fs::create_dir_all(&themes).unwrap();
         std::fs::write(themes.join("auto.toml"), "").unwrap();
 
         let listed = disk
             .driver
-            .execute(ConfigEffect::Watch(WatchEffect::List(themes)));
+            .execute(ConfigEffect::Watch(ConfigWatchEffect::List(themes)));
 
         assert_eq!(
             listed,
@@ -420,22 +431,22 @@ mod tests {
     #[test]
     fn a_save_to_a_path_without_a_parent_reports_missing() {
         let paths = ConfigPaths {
-            config: "config.toml".into(),
-            appearance: "sifr-ui.toml".into(),
-            themes: "themes".into(),
+            config_path: "config.toml".into(),
+            appearance_path: "sifr-ui.toml".into(),
+            themes_dir: "themes".into(),
             default_music_dir: None,
-            theme: None,
-            seen: SeenTexts::default(),
+            theme_name: None,
+            seen_texts: SeenTexts::default(),
         };
-        let mut driver: Sink = ConfigDriver::new(&paths, drop, drop);
+        let mut driver: Driver = ConfigDriver::new(&paths, drop, drop);
 
         let refused = driver.execute(save_crossfade());
 
         assert_eq!(
             refused,
             Some(ConfigMessage::Error(ConfigError::Save {
-                file: ConfigName::Config,
-                kind: IoError::Missing,
+                name: ConfigName::Config,
+                error: IoError::Missing,
             }))
         );
     }
@@ -451,14 +462,14 @@ format_chips = true
 speed_chip = "always"
 "#;
 
-    fn option_at(id: AppearanceField, position: usize) -> OptionIndex {
+    fn option_at(field: AppearanceField, option_index: usize) -> OptionIndex {
         APPEARANCE_ROWS
             .iter()
-            .find(|row| row.field == id)
+            .find(|row| row.field == field)
             .unwrap()
             .control
             .count()
-            .index(position)
+            .index(option_index)
             .unwrap()
     }
 
@@ -467,7 +478,7 @@ speed_chip = "always"
             (AppearanceField::CoverMode, 3),
             (AppearanceField::CoverBrackets, 1),
             (AppearanceField::FormatChips, 0),
-            (AppearanceField::ProgressRemaining, 1),
+            (AppearanceField::ProgressTime, 1),
             (AppearanceField::KeyHints, 1),
             (AppearanceField::LayoutMode, 2),
         ]
@@ -493,17 +504,17 @@ speed_chip = "always"
     fn save_appearance_round_trips_a_full_patch_onto_an_existing_commented_file(
         mut disk: Disk,
     ) {
-        std::fs::write(&disk.paths.appearance, COMMENTED_APPEARANCE).unwrap();
+        std::fs::write(&disk.paths.appearance_path, COMMENTED_APPEARANCE).unwrap();
 
         let saved = disk
             .driver
             .execute(ConfigEffect::SaveAppearance(full_patch()));
 
-        let text = std::fs::read_to_string(&disk.paths.appearance).unwrap();
+        let text = std::fs::read_to_string(&disk.paths.appearance_path).unwrap();
         assert_eq!(
             saved,
             Some(ConfigMessage::Saved {
-                file: ConfigName::Appearance,
+                name: ConfigName::Appearance,
                 text: text.clone()
             })
         );

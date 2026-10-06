@@ -4,7 +4,7 @@ use rstest::rstest;
 use widgets::animation::stage::{AnimationStage, Backdrop};
 
 use crate::unit::{
-    animation_stage::{moved, run_out_over, step_over},
+    animation_stage::{has_moved, run_out_over, step_over},
     support::{
         CARD_TITLE,
         PANE_ROW,
@@ -25,22 +25,22 @@ fn animated(cues: &[Cue], backdrop: &Backdrop, watched: &[Rect]) -> (bool, Vec<R
     run_out_over(&mut stage, volume_bar_frame);
 
     stage.play(cues.to_vec(), backdrop);
-    let staged = stage.is_animating();
+    let is_animating = stage.is_animating();
     let painted = volume_bar_frame();
     let opened = step_over(&mut stage, volume_bar_frame, slice(|t| t.screen_wash, 4));
     let moved_rects = watched
         .iter()
-        .filter(|rect| moved(&painted, &opened, **rect))
+        .filter(|rect| has_moved(&painted, &opened, **rect))
         .copied()
         .collect();
-    if staged {
+    if is_animating {
         assert_eq!(
             run_out_over(&mut stage, volume_bar_frame),
             painted,
             "every animation ends on exactly the frame underneath it"
         );
     }
-    (staged, moved_rects)
+    (is_animating, moved_rects)
 }
 
 struct AnimationRow<'a> {
@@ -94,7 +94,7 @@ struct AnimationRow<'a> {
     still: &[PANE_STATUS],
 })]
 #[case::a_deleted_row(AnimationRow {
-    cues: &[Cue::TrackDeleted],
+    cues: &[Cue::TrackTrashed],
     backdrop: pane_backdrop(),
     expected: &[PANE_ROW],
     still: &[],
@@ -120,10 +120,10 @@ fn an_action_animates_its_own_rect(#[case] row: AnimationRow<'_>) {
         CARD_TITLE,
         SCREEN,
     ];
-    let (staged, moved_rects) = animated(cues, &backdrop, &watched);
+    let (is_animating, moved_rects) = animated(cues, &backdrop, &watched);
 
     assert_eq!(
-        staged,
+        is_animating,
         !expected.is_empty(),
         "a cue stages exactly when it has a rect to move"
     );

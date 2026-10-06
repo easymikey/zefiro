@@ -17,6 +17,9 @@ fn a_patch_round_trips_through_the_public_parser() {
     };
     let written = patched_appearance_text(COMMENTED_UI, patch).unwrap();
     let round_tripped = parse_appearance(&written).unwrap();
-    assert_eq!(round_tripped.settings().cover_mode, CoverMode::Milkdrop);
+    assert_eq!(
+        round_tripped.to_appearance_settings().cover_mode,
+        CoverMode::Milkdrop
+    );
     insta::assert_debug_snapshot!(round_tripped);
 }

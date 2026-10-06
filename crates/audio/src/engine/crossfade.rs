@@ -5,33 +5,33 @@ use kernel::domain::settings::ReplayGain;
 use crate::gain::Gain;
 
 #[must_use]
-pub(crate) fn gain_in(fraction: f32) -> f32 {
+pub(crate) fn equal_power_in(fraction: f32) -> f32 {
     (fraction.clamp(0.0, 1.0) * FRAC_PI_2).sin()
 }
 
 #[must_use]
-pub(crate) fn gain_out(fraction: f32) -> f32 {
+pub(crate) fn equal_power_out(fraction: f32) -> f32 {
     (fraction.clamp(0.0, 1.0) * FRAC_PI_2).cos()
 }
 
 #[must_use]
 pub(crate) fn replay_gain_factor(
     replay_gain: ReplayGain,
-    gain: Option<kernel::domain::track::Decibels>,
+    decibels: Option<kernel::domain::track::Decibels>,
 ) -> Gain {
     if matches!(replay_gain, ReplayGain::On) {
-        gain.map_or(Gain::UNITY, Gain::from_decibels)
+        decibels.map_or(Gain::UNITY, Gain::from_decibels)
     } else {
         Gain::UNITY
     }
 }
 
 #[must_use]
-pub(crate) fn arm_cue(
-    total: Option<Duration>,
+pub(crate) fn fade_start(
+    duration: Option<Duration>,
     crossfade: Duration,
 ) -> Option<Duration> {
-    total.map(|total| total.saturating_sub(crossfade))
+    duration.map(|duration| duration.saturating_sub(crossfade))
 }
 
 #[cfg(test)]
@@ -42,34 +42,39 @@ mod tests {
     use proptest::prelude::{prop_assert, proptest};
     use rstest::rstest;
 
-    use crate::engine::crossfade::{arm_cue, gain_in, gain_out, replay_gain_factor};
+    use crate::engine::crossfade::{
+        equal_power_in,
+        equal_power_out,
+        fade_start,
+        replay_gain_factor,
+    };
 
     struct ReplayGainRow {
         replay_gain: ReplayGain,
-        gain: Option<kernel::domain::track::Decibels>,
+        decibels: Option<kernel::domain::track::Decibels>,
         expected: f32,
     }
 
     #[rstest]
     #[case::no_cached_gain(ReplayGainRow {
         replay_gain: ReplayGain::On,
-        gain: None,
+        decibels: None,
         expected: 1.0,
     })]
     #[case::replay_gain_disabled_ignores_the_gain(ReplayGainRow {
         replay_gain: ReplayGain::Off,
-        gain: Some(kernel::domain::track::Decibels(-6.0)),
+        decibels: Some(kernel::domain::track::Decibels(-6.0)),
         expected: 1.0,
     })]
     #[case::replay_gain_applies_decibels_as_a_linear_factor(ReplayGainRow {
         replay_gain: ReplayGain::On,
-        gain: Some(kernel::domain::track::Decibels(-6.0)),
+        decibels: Some(kernel::domain::track::Decibels(-6.0)),
         expected: 0.501_187,
     })]
     fn replay_gain_factor_turns_decibels_into_a_linear_factor(
         #[case] row: ReplayGainRow,
     ) {
-        let factor = replay_gain_factor(row.replay_gain, row.gain).amplitude();
+        let factor = replay_gain_factor(row.replay_gain, row.decibels).amplitude();
         let expected = row.expected;
         assert!(
             (factor - expected).abs() < 1e-4,
@@ -86,10 +91,12 @@ mod tests {
         #[case] incoming: f32,
         #[case] outgoing: f32,
     ) {
-        assert!((gain_in(fraction) - incoming).abs() < 1e-5);
-        assert!((gain_out(fraction) - outgoing).abs() < 1e-5);
-        let power = gain_in(fraction)
-            .mul_add(gain_in(fraction), gain_out(fraction) * gain_out(fraction));
+        assert!((equal_power_in(fraction) - incoming).abs() < 1e-5);
+        assert!((equal_power_out(fraction) - outgoing).abs() < 1e-5);
+        let power = equal_power_in(fraction).mul_add(
+            equal_power_in(fraction),
+            equal_power_out(fraction) * equal_power_out(fraction),
+        );
         assert!((power - 1.0).abs() < 1e-5, "equal power, got {power}");
     }
 
@@ -105,19 +112,19 @@ mod tests {
         Duration::from_secs(10),
         Some(Duration::ZERO)
     )]
-    fn the_cue_sits_a_crossfade_before_the_end(
-        #[case] total: Option<Duration>,
+    fn the_fade_start_sits_a_crossfade_before_the_end(
+        #[case] duration: Option<Duration>,
         #[case] crossfade: Duration,
         #[case] expected: Option<Duration>,
     ) {
-        assert_eq!(arm_cue(total, crossfade), expected);
+        assert_eq!(fade_start(duration, crossfade), expected);
     }
 
     proptest! {
         #[test]
         fn equal_power_gains_sum_of_squares_to_one_across_the_fade(fraction in 0f32..=1f32) {
-            let power = gain_in(fraction)
-                .mul_add(gain_in(fraction), gain_out(fraction) * gain_out(fraction));
+            let power = equal_power_in(fraction)
+                .mul_add(equal_power_in(fraction), equal_power_out(fraction) * equal_power_out(fraction));
             prop_assert!((power - 1.0).abs() < 1e-4, "expected equal power, got {power}");
         }
     }

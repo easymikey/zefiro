@@ -13,14 +13,14 @@ pub(crate) const DIALOG_SCREEN_MARGIN: Cells = Cells(4);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Hint {
-    Present,
-    Absent,
+    Shown,
+    Hidden,
 }
 
 fn hint_rows_for(hint: Hint) -> Cells {
     match hint {
-        Hint::Present => HINT_ROWS,
-        Hint::Absent => Cells(0),
+        Hint::Shown => HINT_ROWS,
+        Hint::Hidden => Cells(0),
     }
 }
 
@@ -30,10 +30,10 @@ pub(crate) struct ContentSize {
     pub(crate) content_width: Cells,
     pub(crate) content_rows: Cells,
     pub(crate) hint: Hint,
-    pub(crate) screen_margin: Cells,
+    pub(crate) screen_margin_width: Cells,
 }
 
-pub(crate) fn content_size(area: Rect, size: ContentSize) -> PlacedSize {
+pub(crate) fn frame_size(area: Rect, size: ContentSize) -> CellSize {
     let height = framed_rows(size.content_rows, size.hint);
     let width = size
         .content_width
@@ -42,9 +42,9 @@ pub(crate) fn content_size(area: Rect, size: ContentSize) -> PlacedSize {
         .saturating_add(PADDING_X.0 * 2)
         .saturating_add(BORDER_CELLS.0);
 
-    let max_width = area.width.saturating_sub(size.screen_margin.0);
-    let max_height = area.height.saturating_sub(size.screen_margin.0);
-    PlacedSize {
+    let max_width = area.width.saturating_sub(size.screen_margin_width.0);
+    let max_height = area.height.saturating_sub(size.screen_margin_width.0);
+    CellSize {
         width: Cells(width.min(max_width).min(area.width)),
         height: Cells(height.0.min(max_height).min(area.height)),
     }
@@ -61,25 +61,27 @@ fn framed_rows(content_rows: Cells, hint: Hint) -> Cells {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct FrameWidth {
+pub(crate) struct FullWidth {
     pub(crate) bounds: Rect,
     pub(crate) content_rows: Cells,
 }
 
-pub(crate) fn width(hint: Hint, spec: FrameWidth) -> Rect {
-    let height = framed_rows(spec.content_rows, hint)
-        .0
-        .min(spec.bounds.height);
-    Rect {
-        x: spec.bounds.x,
-        y: spec.bounds.y,
-        width: spec.bounds.width,
-        height,
+impl FullWidth {
+    pub(crate) fn outer(self, hint: Hint) -> Rect {
+        let height = framed_rows(self.content_rows, hint)
+            .0
+            .min(self.bounds.height);
+        Rect {
+            x: self.bounds.x,
+            y: self.bounds.y,
+            width: self.bounds.width,
+            height,
+        }
     }
 }
 
 #[must_use]
-pub(crate) fn list_capacity(area: Rect, hint: Hint) -> PlacedSize {
+pub(crate) fn list_capacity(area: Rect, hint: Hint) -> CellSize {
     let max_width = area.width.saturating_sub(LIST_SCREEN_MARGIN.0);
     let max_height = area.height.saturating_sub(LIST_SCREEN_MARGIN.0);
     let content_width = max_width
@@ -89,19 +91,19 @@ pub(crate) fn list_capacity(area: Rect, hint: Hint) -> PlacedSize {
         .saturating_sub(PADDING_TOP.0)
         .saturating_sub(hint_rows_for(hint).0)
         .saturating_sub(BORDER_CELLS.0);
-    PlacedSize {
+    CellSize {
         width: Cells(content_width),
         height: Cells(content_rows),
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PlacedSize {
+pub(crate) struct CellSize {
     pub(crate) width: Cells,
     pub(crate) height: Cells,
 }
 
-fn centered(area: Rect, size: PlacedSize) -> Rect {
+fn centered(area: Rect, size: CellSize) -> Rect {
     area.centered(
         Constraint::Length(size.width.0),
         Constraint::Length(size.height.0),
@@ -112,7 +114,7 @@ pub(crate) fn intersects_any(rect: Rect, avoid: &[Rect]) -> bool {
     avoid.iter().any(|region| rect.intersects(*region))
 }
 
-pub(crate) fn place(area: Rect, size: PlacedSize, avoid: &[Rect]) -> Rect {
+pub(crate) fn place(area: Rect, size: CellSize, avoid: &[Rect]) -> Rect {
     let candidate = centered(area, size);
     if !intersects_any(candidate, avoid) {
         return candidate;
@@ -156,7 +158,7 @@ pub(crate) fn padded_content(outer: Rect) -> Rect {
 }
 
 pub(crate) fn split_hint_row(content: Rect, hint: Hint) -> (Rect, Rect) {
-    if matches!(hint, Hint::Absent) || content.height == 0 {
+    if matches!(hint, Hint::Hidden) || content.height == 0 {
         let hint_row = Rect {
             y: content.y + content.height,
             height: 0,

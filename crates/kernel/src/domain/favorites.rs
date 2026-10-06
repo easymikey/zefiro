@@ -1,20 +1,20 @@
 use std::{collections::HashSet, sync::Arc};
 
-use crate::domain::track::TrackRef;
+use crate::domain::track::TrackSource;
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Favorites(Arc<HashSet<TrackRef>>);
+pub struct Favorites(Arc<HashSet<TrackSource>>);
 
 impl Favorites {
     #[must_use]
-    pub fn is_favorite(&self, track: &TrackRef) -> bool {
-        self.0.contains(track)
+    pub fn is_favorite(&self, track_source: &TrackSource) -> bool {
+        self.0.contains(track_source)
     }
 
-    pub fn toggle(&mut self, track: TrackRef) {
+    pub fn toggle(&mut self, track_source: TrackSource) {
         let set = Arc::make_mut(&mut self.0);
-        if !set.remove(&track) {
-            set.insert(track);
+        if !set.remove(&track_source) {
+            set.insert(track_source);
         }
     }
 
@@ -23,23 +23,23 @@ impl Favorites {
         self.0.is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &TrackRef> {
+    pub fn iter(&self) -> impl Iterator<Item = &TrackSource> {
         self.0.iter()
     }
 }
 
-impl FromIterator<TrackRef> for Favorites {
-    fn from_iter<I: IntoIterator<Item = TrackRef>>(tracks: I) -> Self {
+impl FromIterator<TrackSource> for Favorites {
+    fn from_iter<I: IntoIterator<Item = TrackSource>>(tracks: I) -> Self {
         Self(Arc::new(tracks.into_iter().collect()))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::{favorites::Favorites, track::TrackRef};
+    use crate::domain::{favorites::Favorites, track::TrackSource};
 
-    fn path(text: &str) -> TrackRef {
-        TrackRef::Local(text.into())
+    fn path(text: &str) -> TrackSource {
+        TrackSource::Local(text.into())
     }
 
     #[test]

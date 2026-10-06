@@ -81,8 +81,8 @@ impl Error {
     }
 }
 
-fn trash_error(source: &trash::Error) -> IoError {
-    match source {
+fn trash_error(error: &trash::Error) -> IoError {
+    match error {
         #[cfg(all(
             unix,
             not(target_os = "macos"),
@@ -104,29 +104,29 @@ impl From<&Error> for LibraryError {
             } => LibraryError::Disk {
                 subject: *subject,
                 path: path.clone(),
-                source: source.kind().into(),
+                error: source.kind().into(),
             },
             Error::Json { subject, path, .. } => LibraryError::Disk {
                 subject: *subject,
                 path: path.clone(),
-                source: IoError::Malformed,
+                error: IoError::Malformed,
             },
             Error::Encode { path, .. } | Error::Decode { path, .. } => {
                 LibraryError::Disk {
                     subject: LibrarySubject::Cache,
                     path: path.clone(),
-                    source: IoError::Malformed,
+                    error: IoError::Malformed,
                 }
             }
             Error::Tags { path, .. } => LibraryError::Disk {
                 subject: LibrarySubject::Scan,
                 path: path.clone(),
-                source: IoError::Malformed,
+                error: IoError::Malformed,
             },
             Error::Trash { path, source } => LibraryError::Disk {
                 subject: LibrarySubject::Trash,
                 path: path.clone(),
-                source: trash_error(source),
+                error: trash_error(source),
             },
             Error::NoUserDirs => LibraryError::NoUserDirs,
         }
@@ -143,11 +143,11 @@ mod tests {
 
     use crate::error::Error;
 
-    fn file(subject: LibrarySubject, path: &str, source: IoError) -> LibraryError {
+    fn file(subject: LibrarySubject, path: &str, error: IoError) -> LibraryError {
         LibraryError::Disk {
             subject,
             path: path.into(),
-            source,
+            error,
         }
     }
 
@@ -206,10 +206,10 @@ mod tests {
     fn errors_render_messages_and_structured_errors(
         #[case] error: Error,
         #[case] message: &str,
-        #[case] failure: LibraryError,
+        #[case] library_error: LibraryError,
     ) {
         assert_eq!(error.to_string(), message);
-        assert_eq!(LibraryError::from(&error), failure);
+        assert_eq!(LibraryError::from(&error), library_error);
     }
 
     #[rstest]

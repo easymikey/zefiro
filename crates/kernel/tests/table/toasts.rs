@@ -36,8 +36,8 @@ fn first_timer(millis: u64) -> Step {
 fn titles_after(steps: Vec<Step>) -> Vec<String> {
     let mut model = Model::default();
     for (millis, message) in steps {
-        let at = Moment::new(Duration::from_millis(millis));
-        let _cmd = update(&mut model, message, at).unwrap();
+        let raised_at = Moment::new(Duration::from_millis(millis));
+        let _cmd = update(&mut model, message, raised_at).unwrap();
     }
     model
         .workspace

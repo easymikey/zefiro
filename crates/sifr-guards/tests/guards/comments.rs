@@ -30,11 +30,6 @@ const ALLOW: &[Allow] = &[
         "one line saying why this guard exists",
     ),
     Allow::new(
-        "sifr-guards/tests/guards/config_doc_config.rs",
-        "GUARD:",
-        "one line saying why this guard exists",
-    ),
-    Allow::new(
         "sifr-guards/tests/guards/config_doc_appearance.rs",
         "GUARD:",
         "one line saying why this guard exists",

@@ -37,7 +37,7 @@ pub(crate) fn format_chip_values(audio_format: &AudioFormat) -> Vec<String> {
 }
 
 #[must_use]
-pub(crate) fn fit_format_chips(
+pub(crate) fn format_chips_line(
     audio_format: &AudioFormat,
     colors: &Colors<Color>,
     max_width: usize,
@@ -68,12 +68,12 @@ mod tests {
     use ratatui::style::Color;
     use rstest::rstest;
 
-    use crate::{primitive::format_chips::fit_format_chips, theme::colors::Colors};
+    use crate::{primitive::format_chips::format_chips_line, theme::colors::Colors};
 
     fn colors() -> Colors<Color> {
         Colors {
             muted_foreground: Color::Gray,
-            text: Color::White,
+            foreground: Color::White,
             ..Colors::default()
         }
     }
@@ -109,12 +109,12 @@ mod tests {
         Some("[ MP3 ]")
     )]
     #[case::no_room_at_all(full_audio_format(), 2, None)]
-    fn build_fit_drops_whole_chips_from_the_right(
+    fn format_chips_line_drops_whole_chips_from_the_right(
         #[case] audio_format: AudioFormat,
         #[case] width: usize,
         #[case] expected: Option<&str>,
     ) {
-        let line = fit_format_chips(&audio_format, &colors(), width);
+        let line = format_chips_line(&audio_format, &colors(), width);
         assert_eq!(line.as_ref().map(ToString::to_string).as_deref(), expected);
     }
 }

@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt};
 
 use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 
-use crate::domain::chord::{Chord, ChordParseError};
+use crate::domain::chord::{Chord, ChordError};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, EnumString)]
 #[strum(serialize_all = "snake_case")]
@@ -15,7 +15,8 @@ pub enum KeyContext {
     Help,
     History,
     Settings,
-    ConfirmDelete,
+    #[strum(serialize = "confirm_delete")]
+    ConfirmTrash,
     JumpToTime,
     TrackDetails,
 }
@@ -142,9 +143,9 @@ impl fmt::Debug for KeymapOverrides {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum KeyValidationError {
+pub enum KeymapError {
     #[error(transparent)]
-    InvalidChord(#[from] ChordParseError),
+    InvalidChord(#[from] ChordError),
     #[error("key collision on `{0}`")]
     ChordCollision(Chord),
     #[error("key collision left `{0}` unbound")]
@@ -156,21 +157,21 @@ mod validation_error_tests {
     use rstest::rstest;
 
     use crate::domain::{
-        chord::{Chord, ChordParseError},
+        chord::{Chord, ChordError},
         key::{Key, KeyCode, Modifiers},
-        keymap::{Action, KeyValidationError},
+        keymap::{Action, KeymapError},
     };
 
     #[rstest]
     #[case::an_invalid_chord_names_its_spelling(
-        KeyValidationError::InvalidChord(ChordParseError {
+        KeymapError::InvalidChord(ChordError {
             spelling: "not-a-key".into(),
         })
         .to_string(),
         "invalid key chord `not-a-key`"
     )]
     #[case::a_chord_collision_names_the_chord(
-        KeyValidationError::ChordCollision(Chord::Key(Key {
+        KeymapError::ChordCollision(Chord::Key(Key {
             code: KeyCode::Char('x'),
             modifiers: Modifiers::NONE,
         }))
@@ -178,7 +179,7 @@ mod validation_error_tests {
         "key collision on `x`"
     )]
     #[case::an_unbound_action_names_the_action(
-        KeyValidationError::ActionUnbound(Action::Previous)
+        KeymapError::ActionUnbound(Action::Previous)
         .to_string(),
         "key collision left `Previous` unbound"
     )]

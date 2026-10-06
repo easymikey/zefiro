@@ -22,12 +22,12 @@ impl std::fmt::Display for ConfigName {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
-    #[error("{name} is unreadable: {source}")]
-    Read { name: ConfigName, source: IoError },
+    #[error("{name} is unreadable: {error}")]
+    Read { name: ConfigName, error: IoError },
     #[error("the themes folder is unreadable: {0}")]
     ListThemes(IoError),
-    #[error("{file} could not be saved: {kind}")]
-    Save { file: ConfigName, kind: IoError },
+    #[error("{name} could not be saved: {error}")]
+    Save { name: ConfigName, error: IoError },
     #[error("Config watch failed: {0}")]
     Watch(IoError),
     #[error("{0}")]
@@ -70,9 +70,9 @@ impl ConfigErrors {
         name: ConfigName,
         error: ConfigError,
     ) -> bool {
-        let unchanged = self.0.get(&name) == Some(&error);
+        let is_unchanged = self.0.get(&name) == Some(&error);
         self.0.insert(name, error);
-        !unchanged
+        !is_unchanged
     }
 
     pub(crate) fn clear(&mut self, name: &ConfigName) -> Option<ConfigError> {

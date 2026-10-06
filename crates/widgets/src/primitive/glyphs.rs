@@ -102,7 +102,7 @@ pub(crate) mod audio_format {
     pub(crate) const SAMPLE_RATE_UNIT: &str = " kHz";
 }
 
-pub(crate) mod confirm_delete {
+pub(crate) mod confirm_trash {
     pub(crate) const TITLE_WORD: &str = "MOVE TO TRASH?";
     pub(crate) const HINT: &str = "[y] yes   [n] no";
     pub(crate) const QUOTE_OPEN: &str = "\"";

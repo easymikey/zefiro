@@ -2,6 +2,7 @@ pub mod crossfade;
 pub mod gate;
 pub mod lifecycle;
 pub mod pixmap;
+pub mod plan;
 pub mod wash;
 
 use std::{path::PathBuf, sync::Arc};
@@ -18,7 +19,7 @@ pub struct CoverImage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoverMotion {
-    Animating,
+    Moving,
     Still,
 }
 
@@ -36,7 +37,7 @@ pub enum CoverWash {
 
 #[derive(Debug, Clone, Copy)]
 pub struct CoverRefresh {
-    pub cover: Option<Rect>,
-    pub crossfade: CrossfadePermit,
+    pub cover_area: Option<Rect>,
+    pub crossfade_permit: CrossfadePermit,
     pub wash: CoverWash,
 }

@@ -13,6 +13,5 @@ pub(crate) fn allow_rows(rule: &str) -> Vec<Allow> {
 }
 
 const ALLOW: &str = "\
-fn_words runtime/src/event_loop.rs dispatch_arrival
 loop kernel/src/domain/player.rs AbLoop
 ";

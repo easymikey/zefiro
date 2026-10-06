@@ -23,9 +23,9 @@ use crate::support::{
     update::update,
 };
 
-fn died(driver: DriverName) -> Message {
+fn died(driver_name: DriverName) -> Message {
     Message::Driver {
-        driver,
+        driver_name,
         event: DriverEvent::Died(DriverError::Panicked),
     }
 }
@@ -47,7 +47,7 @@ fn a_driver_death_is_recorded_and_told_as_an_error() {
     );
     assert_eq!(
         model.workspace.toasts.first().map(|toast| (
-            toast.kind,
+            toast.level,
             toast.title.as_str(),
             toast.text.as_deref()
         )),
@@ -60,7 +60,7 @@ fn a_driver_death_is_recorded_and_told_as_an_error() {
 }
 
 struct StrategyRow {
-    driver: DriverName,
+    driver_name: DriverName,
     prior_restarts: usize,
     expected_status: fn() -> DriverStatus,
     check: fn(&Cmd),
@@ -107,43 +107,46 @@ fn restarts_and_rescans_library(cmd: &Cmd) {
 
 #[rstest::rstest]
 #[case::restart_emits_restart_and_startup(StrategyRow {
-    driver: DriverName::Audio,
+    driver_name: DriverName::Audio,
     prior_restarts: 0,
     expected_status: || DriverStatus::Running,
     check: starts_with_restart_and_starts_audio,
 })]
 #[case::restart_budget_spent_degrades_with_a_toast(StrategyRow {
-    driver: DriverName::Audio,
+    driver_name: DriverName::Audio,
     prior_restarts: 3,
     expected_status: || DriverStatus::Dead(DriverError::Panicked),
     check: degrades_audio_with_a_toast,
 })]
 #[case::degrade_silent_changes_nothing_but_status(StrategyRow {
-    driver: DriverName::Macos,
+    driver_name: DriverName::Macos,
     prior_restarts: 0,
     expected_status: || DriverStatus::Dead(DriverError::Panicked),
     check: changes_nothing,
 })]
 #[case::library_restart_rescans(StrategyRow {
-    driver: DriverName::Library,
+    driver_name: DriverName::Library,
     prior_restarts: 0,
     expected_status: || DriverStatus::Running,
     check: restarts_and_rescans_library,
 })]
-fn a_death_follows_the_strategy(#[case] row: StrategyRow) {
+fn a_death_follows_the_supervision(#[case] row: StrategyRow) {
     let mut model = Model::default();
     let now = Moment::new(Duration::from_secs(100));
     for _ in 0..row.prior_restarts {
         model
             .drivers
-            .record_mut(row.driver)
+            .record_mut(row.driver_name)
             .restarts
             .record(Moment::new(Duration::from_secs(90)));
     }
 
-    let cmd = update(&mut model, died(row.driver), now).unwrap();
+    let cmd = update(&mut model, died(row.driver_name), now).unwrap();
 
-    assert_eq!(model.drivers.status(row.driver), &(row.expected_status)());
+    assert_eq!(
+        model.drivers.status(row.driver_name),
+        &(row.expected_status)()
+    );
     (row.check)(&cmd);
 }
 
@@ -154,7 +157,7 @@ fn congestion_raises_one_toast_naming_the_driver() {
     let cmd = update(
         &mut model,
         Message::Driver {
-            driver: DriverName::Library,
+            driver_name: DriverName::Library,
             event: DriverEvent::Full,
         },
         Moment::default(),
@@ -170,7 +173,7 @@ fn congestion_raises_one_toast_naming_the_driver() {
             .workspace
             .toasts
             .first()
-            .map(|toast| (toast.kind, toast.title.as_str())),
+            .map(|toast| (toast.level, toast.title.as_str())),
         Some((ToastLevel::Info, "The library driver is falling behind"))
     );
     assert_eq!(
@@ -181,22 +184,22 @@ fn congestion_raises_one_toast_naming_the_driver() {
 
 struct ResumeRow {
     player: fn() -> Player,
-    at: Duration,
+    position: Duration,
     playback: Playback,
 }
 
-fn playing_at(at: Duration) -> Player {
+fn playing_at(position: Duration) -> Player {
     Player::Playing {
         track: dated_track(0),
-        playhead: Playhead::anchored(at, Moment::default(), Speed::default()),
+        playhead: Playhead::anchored(position, Moment::default(), Speed::default()),
         preloaded: None,
     }
 }
 
-fn paused_at(at: Duration) -> Player {
+fn paused_at(position: Duration) -> Player {
     Player::Paused {
         track: bare_track(0),
-        position: at,
+        position,
         by: PausedBy::Listener,
     }
 }
@@ -204,12 +207,12 @@ fn paused_at(at: Duration) -> Player {
 #[rstest::rstest]
 #[case::playing(ResumeRow {
     player: || playing_at(Duration::from_secs(30)),
-    at: Duration::from_secs(30),
+    position: Duration::from_secs(30),
     playback: Playback::Playing,
 })]
 #[case::paused(ResumeRow {
     player: || paused_at(Duration::from_secs(45)),
-    at: Duration::from_secs(45),
+    position: Duration::from_secs(45),
     playback: Playback::Paused,
 })]
 fn an_audio_restart_resumes_from_the_same_place(#[case] row: ResumeRow) {
@@ -232,7 +235,7 @@ fn an_audio_restart_resumes_from_the_same_place(#[case] row: ResumeRow) {
     )));
     assert!(effects.iter().any(|effect| matches!(
         effect,
-        Effect::Audio(AudioCmd::Seek(seek)) if *seek == row.at
+        Effect::Audio(AudioCmd::Seek(seek)) if *seek == row.position
     )));
     assert!(effects.iter().any(|effect| matches!(
         effect,

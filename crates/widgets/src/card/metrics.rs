@@ -20,8 +20,8 @@ pub(crate) const BRACKET_MARGIN: u16 = 1;
 const STATUS_WIDTH: u16 = 11;
 
 #[must_use]
-pub(crate) fn card_height() -> u16 {
-    CARD_HEIGHT
+pub(crate) fn card_height() -> Cells {
+    Cells(CARD_HEIGHT)
 }
 
 pub(crate) fn inner(area: Rect) -> Rect {
@@ -31,19 +31,19 @@ pub(crate) fn inner(area: Rect) -> Rect {
         .inner(area)
 }
 
-fn cover_width_for_height(height: u16, cell_aspect: f32, cover_aspect: f32) -> u16 {
-    crate::pixels::numeric::floor(
-        (f32::from(height) * cell_aspect * cover_aspect).ceil(),
-    )
+fn cover_width_for_height(height: Cells, cell_aspect: f32, cover_aspect: f32) -> Cells {
+    Cells(crate::pixels::numeric::floor(
+        (f32::from(height.0) * cell_aspect * cover_aspect).ceil(),
+    ))
 }
 
 #[must_use]
-pub(crate) fn cover_cell_height(area: Rect, sizing: CoverSizing) -> u16 {
-    let available = inner(area).height;
+pub(crate) fn cover_cell_height(area: Rect, sizing: CoverSizing) -> Cells {
+    let available = Cells(inner(area).height);
     match sizing {
-        CoverSizing::Fixed { height, .. } => height.0.min(available),
+        CoverSizing::Fixed { height, .. } => height.min(available),
         CoverSizing::Auto(_) => available,
-        CoverSizing::Off => 0,
+        CoverSizing::Off => Cells(0),
     }
 }
 
@@ -52,10 +52,10 @@ pub(crate) fn cover_cell_width(
     area: Rect,
     cell_aspect: f32,
     sizing: CoverSizing,
-) -> u16 {
+) -> Cells {
     match sizing {
-        CoverSizing::Fixed { width, .. } => width.0,
-        CoverSizing::Off => 0,
+        CoverSizing::Fixed { width, .. } => width,
+        CoverSizing::Off => Cells(0),
         CoverSizing::Auto(cover_aspect) => cover_width_for_height(
             cover_cell_height(area, sizing),
             cell_aspect,
@@ -64,21 +64,13 @@ pub(crate) fn cover_cell_width(
     }
 }
 
-fn cover_column_span(area: Rect, cell_aspect: f32, sizing: CoverSizing) -> u16 {
+fn cover_column_span(area: Rect, cell_aspect: f32, sizing: CoverSizing) -> Cells {
     match sizing {
-        CoverSizing::Off => 0,
+        CoverSizing::Off => Cells(0),
         CoverSizing::Fixed { .. } | CoverSizing::Auto(_) => {
-            cover_cell_width(area, cell_aspect, sizing) + COLUMN_GAP
+            Cells(cover_cell_width(area, cell_aspect, sizing).0 + COLUMN_GAP)
         }
     }
-}
-
-#[cfg(test)]
-#[must_use]
-pub(crate) fn text_width(area: Rect, cell_aspect: f32, sizing: CoverSizing) -> u16 {
-    inner(area)
-        .width
-        .saturating_sub(cover_column_span(area, cell_aspect, sizing))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,51 +115,53 @@ fn meter_and_volume(band: Rect) -> (Rect, Rect) {
     (spectrum_row, volume_row)
 }
 
-#[must_use]
-pub(crate) fn card_metrics(
-    area: Rect,
-    cell_aspect: f32,
-    sizing: CoverSizing,
-) -> CardMetrics {
-    let [cover_column, content_column] = inner(area).layout(&Layout::horizontal([
-        Constraint::Length(cover_column_span(area, cell_aspect, sizing)),
-        Constraint::Min(0),
-    ]));
-    let cover_square = Rect {
-        x: cover_column.x,
-        y: cover_column.y,
-        width: cover_cell_width(area, cell_aspect, sizing),
-        height: cover_cell_height(area, sizing),
-    };
+impl CardMetrics {
+    #[must_use]
+    pub(crate) fn new(
+        area: Rect,
+        cell_aspect: f32,
+        sizing: CoverSizing,
+    ) -> CardMetrics {
+        let [cover_column, content_column] = inner(area).layout(&Layout::horizontal([
+            Constraint::Length(cover_column_span(area, cell_aspect, sizing).0),
+            Constraint::Min(0),
+        ]));
+        let cover_square = Rect {
+            x: cover_column.x,
+            y: cover_column.y,
+            width: cover_cell_width(area, cell_aspect, sizing).0,
+            height: cover_cell_height(area, sizing).0,
+        };
 
-    let row_width = content_column.width;
-    let [
-        title_band,
-        _,
-        artist_row,
-        _,
-        time_row,
-        _,
-        progress_row,
-        spectrum_band,
-    ] = row_bands(content_column);
-    let [title_row, status_row] = title_band.layout(&Layout::horizontal([
-        Constraint::Min(0),
-        Constraint::Length(STATUS_WIDTH.min(row_width)),
-    ]));
-    let (spectrum_row, volume_row) = meter_and_volume(spectrum_band);
+        let row_width = content_column.width;
+        let [
+            title_band,
+            _,
+            artist_row,
+            _,
+            time_row,
+            _,
+            progress_row,
+            spectrum_band,
+        ] = row_bands(content_column);
+        let [title_row, status_row] = title_band.layout(&Layout::horizontal([
+            Constraint::Min(0),
+            Constraint::Length(STATUS_WIDTH.min(row_width)),
+        ]));
+        let (spectrum_row, volume_row) = meter_and_volume(spectrum_band);
 
-    CardMetrics {
-        cover_square,
-        content_column,
-        row_width: Cells(row_width),
-        status_row,
-        title_row,
-        artist_row,
-        time_row,
-        progress_row,
-        spectrum_row,
-        volume_row,
+        CardMetrics {
+            cover_square,
+            content_column,
+            row_width: Cells(row_width),
+            status_row,
+            title_row,
+            artist_row,
+            time_row,
+            progress_row,
+            spectrum_row,
+            volume_row,
+        }
     }
 }
 
@@ -183,29 +177,23 @@ pub(crate) fn content_rect(metrics: &CardMetrics) -> Rect {
 }
 
 #[cfg(test)]
-#[must_use]
-pub(crate) fn text_rect(area: Rect, cell_aspect: f32, sizing: CoverSizing) -> Rect {
-    content_rect(&card_metrics(area, cell_aspect, sizing))
-}
-
-#[cfg(test)]
 mod tests {
+    use kernel::domain::geometry::Cells;
     use ratatui::layout::Rect;
 
     use crate::{
         card::metrics::{
             COLUMN_GAP,
+            CardMetrics,
             PROGRESS_HEIGHT,
             SPECTRUM_VOLUME_GAP,
             VOLUME_BAR_WIDTH,
             VOLUME_HEIGHT,
-            card_metrics,
+            content_rect,
             cover_cell_height,
             cover_cell_width,
             cover_column_span,
             inner,
-            text_rect,
-            text_width,
         },
         geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
         pixels::vinyl::geometry::canvas_aspect_ratio,
@@ -222,12 +210,12 @@ mod tests {
             height: 12,
         };
         let sizing = CoverSizing::Auto(cover_aspect);
-        assert_eq!(cover_cell_height(area, sizing), 8);
+        assert_eq!(cover_cell_height(area, sizing), Cells(8));
         let width = cover_cell_width(area, cell_aspect, sizing);
         assert!(
-            width >= 20,
+            width >= Cells(20),
             "8 rows at 1.21:1 on a 2:1 cell needs >= 20 cell-widths to \
-             avoid clipping the peeking disc, got {width}"
+             avoid clipping the peeking disc, got {width:?}"
         );
     }
 
@@ -240,22 +228,27 @@ mod tests {
             height: 12,
         };
         let cell_aspect = DEFAULT_CELL_ASPECT;
-        let vinyl = CoverSizing::Auto(canvas_aspect_ratio());
-        let plain = CoverSizing::Auto(1.0);
+        let vinyl_sizing = CoverSizing::Auto(canvas_aspect_ratio());
+        let plain_sizing = CoverSizing::Auto(1.0);
 
         assert!(
-            card_metrics(area, cell_aspect, plain).content_column.x
-                < card_metrics(area, cell_aspect, vinyl).content_column.x,
+            CardMetrics::new(area, cell_aspect, plain_sizing)
+                .content_column
+                .x
+                < CardMetrics::new(area, cell_aspect, vinyl_sizing)
+                    .content_column
+                    .x,
             "a square cover column must start the text column further left \
              than the vinyl's wider one"
         );
         assert!(
-            text_width(area, cell_aspect, plain) > text_width(area, cell_aspect, vinyl)
+            CardMetrics::new(area, cell_aspect, plain_sizing).row_width
+                > CardMetrics::new(area, cell_aspect, vinyl_sizing).row_width
         );
-        for sizing in [plain, vinyl] {
+        for sizing in [plain_sizing, vinyl_sizing] {
             assert_eq!(
                 cover_column_span(area, cell_aspect, sizing),
-                cover_cell_width(area, cell_aspect, sizing) + COLUMN_GAP,
+                Cells(cover_cell_width(area, cell_aspect, sizing).0 + COLUMN_GAP),
                 "the column is the cell plus exactly one gap, nothing more"
             );
         }
@@ -271,13 +264,16 @@ mod tests {
         };
         let cell_aspect = DEFAULT_CELL_ASPECT;
 
-        assert_eq!(cover_column_span(area, cell_aspect, CoverSizing::Off), 0);
         assert_eq!(
-            text_width(area, cell_aspect, CoverSizing::Off),
-            inner(area).width
+            cover_column_span(area, cell_aspect, CoverSizing::Off),
+            Cells(0)
+        );
+        assert_eq!(
+            CardMetrics::new(area, cell_aspect, CoverSizing::Off).row_width,
+            Cells(inner(area).width)
         );
         assert!(
-            card_metrics(area, cell_aspect, CoverSizing::Off)
+            CardMetrics::new(area, cell_aspect, CoverSizing::Off)
                 .cover_square
                 .is_empty()
         );
@@ -291,7 +287,7 @@ mod tests {
             width: 80,
             height: 12,
         };
-        insta::assert_debug_snapshot!(card_metrics(
+        insta::assert_debug_snapshot!(CardMetrics::new(
             area,
             DEFAULT_CELL_ASPECT,
             CoverSizing::default()
@@ -308,7 +304,7 @@ mod tests {
         };
         let cell_aspect = DEFAULT_CELL_ASPECT;
         let sizing = CoverSizing::default();
-        let card_metrics = card_metrics(area, cell_aspect, sizing);
+        let card_metrics = CardMetrics::new(area, cell_aspect, sizing);
         let column = card_metrics.content_column;
 
         assert_eq!(
@@ -336,7 +332,7 @@ mod tests {
             "one spectrum_volume_gap separates the meter from the bar"
         );
 
-        let rect = text_rect(area, cell_aspect, sizing);
+        let rect = content_rect(&card_metrics);
         assert_eq!(rect.x, column.x);
         assert_eq!(rect.y, card_metrics.title_row.y, "starts at the title row");
         assert_eq!(rect.width, card_metrics.row_width.0);

@@ -9,7 +9,7 @@ use crate::domain::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum StreamError {
+pub enum OutputError {
     #[error("the device is gone")]
     DeviceGone,
     #[error("an audio backend error")]
@@ -17,10 +17,10 @@ pub enum StreamError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum Output {
+pub enum OutputStatus {
     #[default]
     Ready,
-    Lost(StreamError),
+    Lost(OutputError),
 }
 
 pub const PRELOAD_LEAD: Duration = Duration::from_secs(10);
@@ -29,9 +29,9 @@ pub const PRELOAD_LEAD: Duration = Duration::from_secs(10);
 pub struct Transport {
     pub volume: Percent,
     pub speed: Speed,
-    pub sleep: Option<SleepTimer>,
+    pub sleep_timer: Option<SleepTimer>,
     pub ab_loop: Option<AbLoop>,
-    pub output: Output,
+    pub output_status: OutputStatus,
 }
 
 impl Default for Transport {
@@ -39,9 +39,9 @@ impl Default for Transport {
         Self {
             volume: Percent::clamped(50),
             speed: Speed::default(),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: None,
-            output: Output::Ready,
+            output_status: OutputStatus::Ready,
         }
     }
 }

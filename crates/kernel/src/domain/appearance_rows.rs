@@ -19,7 +19,7 @@ use crate::domain::{
         AppearanceControl,
         AppearanceField,
         AppearanceRow,
-        AppearanceSetting,
+        AppearanceRowChoice,
         Choice,
         OptionCount,
         OptionIndex,
@@ -57,7 +57,7 @@ pub const FORMAT_CHIPS: [FormatChips; 2] = [FormatChips::Hidden, FormatChips::Sh
 pub const SPEED_CHIPS: [SpeedChip; 3] =
     [SpeedChip::Always, SpeedChip::Changed, SpeedChip::Never];
 
-pub const PROGRESS_STYLES: [ProgressTime; 2] =
+pub const PROGRESS_TIMES: [ProgressTime; 2] =
     [ProgressTime::Elapsed, ProgressTime::Remaining];
 
 pub const KEY_HINTS: [KeyHints; 2] = [KeyHints::Shown, KeyHints::Hidden];
@@ -72,74 +72,76 @@ pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
         field: AppearanceField::Preset,
         control: AppearanceControl::Cycle(option_count(PRESETS.len())),
         cue: Some(Cue::LayoutChanged),
-        themes: &PRESET_THEMES,
+        theme_names: &PRESET_THEMES,
     },
     AppearanceRow {
         field: AppearanceField::CoverMode,
         control: AppearanceControl::Cycle(option_count(COVER_MODES.len())),
         cue: None,
-        themes: &[],
+        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::CoverBrackets,
         control: AppearanceControl::Toggle,
         cue: None,
-        themes: &[],
+        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::FormatChips,
         control: AppearanceControl::Toggle,
         cue: None,
-        themes: &[],
+        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::SpeedChip,
         control: AppearanceControl::Cycle(option_count(SPEED_CHIPS.len())),
         cue: None,
-        themes: &[],
+        theme_names: &[],
     },
     AppearanceRow {
-        field: AppearanceField::ProgressRemaining,
+        field: AppearanceField::ProgressTime,
         control: AppearanceControl::Toggle,
         cue: None,
-        themes: &[],
+        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::KeyHints,
         control: AppearanceControl::Toggle,
         cue: None,
-        themes: &[],
+        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::Animations,
         control: AppearanceControl::Toggle,
         cue: None,
-        themes: &[],
+        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::LayoutMode,
         control: AppearanceControl::Cycle(option_count(LAYOUT_MODES.len())),
         cue: Some(Cue::LayoutChanged),
-        themes: &[],
+        theme_names: &[],
     },
 ];
 
 #[must_use]
-pub fn appearance_rows(appearance: AppearanceSettings) -> Vec<AppearanceSetting> {
+pub fn appearance_row_choices(
+    appearance_settings: AppearanceSettings,
+) -> Vec<AppearanceRowChoice> {
     APPEARANCE_ROWS
         .iter()
-        .map(|row| AppearanceSetting {
+        .map(|row| AppearanceRowChoice {
             row,
-            choice: field_choice(row.field, appearance),
+            choice: field_choice(row.field, appearance_settings),
         })
         .collect()
 }
 
 fn option_at<Choices: Copy, const N: usize>(
     choices: [Choices; N],
-    option: OptionIndex,
+    option_index: OptionIndex,
 ) -> Option<Choices> {
-    choices.get(option.get()).copied()
+    choices.get(option_index.get()).copied()
 }
 
 fn option_choice<Choices: Copy + PartialEq, const N: usize>(
@@ -149,32 +151,44 @@ fn option_choice<Choices: Copy + PartialEq, const N: usize>(
     choices
         .into_iter()
         .position(|candidate| candidate == current)
-        .and_then(|at| option_count(choices.len()).index(at))
+        .and_then(|current_index| option_count(choices.len()).index(current_index))
         .map_or(Choice::Mixed, Choice::Option)
 }
 
-fn preset_choice(appearance: AppearanceSettings) -> Choice {
-    preset_of(appearance).map_or(Choice::Mixed, |preset| option_choice(PRESETS, preset))
+fn preset_choice(appearance_settings: AppearanceSettings) -> Choice {
+    preset_of(appearance_settings)
+        .map_or(Choice::Mixed, |preset| option_choice(PRESETS, preset))
 }
 
-fn field_choice(field: AppearanceField, appearance: AppearanceSettings) -> Choice {
+fn field_choice(
+    field: AppearanceField,
+    appearance_settings: AppearanceSettings,
+) -> Choice {
     match field {
-        AppearanceField::Preset => preset_choice(appearance),
-        AppearanceField::CoverMode => option_choice(COVER_MODES, appearance.cover_mode),
+        AppearanceField::Preset => preset_choice(appearance_settings),
+        AppearanceField::CoverMode => {
+            option_choice(COVER_MODES, appearance_settings.cover_mode)
+        }
         AppearanceField::CoverBrackets => {
-            option_choice(COVER_BRACKETS, appearance.cover_brackets)
+            option_choice(COVER_BRACKETS, appearance_settings.cover_brackets)
         }
         AppearanceField::FormatChips => {
-            option_choice(FORMAT_CHIPS, appearance.format_chips)
+            option_choice(FORMAT_CHIPS, appearance_settings.format_chips)
         }
-        AppearanceField::SpeedChip => option_choice(SPEED_CHIPS, appearance.speed_chip),
-        AppearanceField::ProgressRemaining => {
-            option_choice(PROGRESS_STYLES, appearance.progress_time)
+        AppearanceField::SpeedChip => {
+            option_choice(SPEED_CHIPS, appearance_settings.speed_chip)
         }
-        AppearanceField::KeyHints => option_choice(KEY_HINTS, appearance.key_hints),
-        AppearanceField::Animations => option_choice(ANIMATIONS, appearance.animations),
+        AppearanceField::ProgressTime => {
+            option_choice(PROGRESS_TIMES, appearance_settings.progress_time)
+        }
+        AppearanceField::KeyHints => {
+            option_choice(KEY_HINTS, appearance_settings.key_hints)
+        }
+        AppearanceField::Animations => {
+            option_choice(ANIMATIONS, appearance_settings.animations)
+        }
         AppearanceField::LayoutMode => {
-            option_choice(LAYOUT_MODES, appearance.layout_mode)
+            option_choice(LAYOUT_MODES, appearance_settings.layout_mode)
         }
     }
 }
@@ -182,42 +196,42 @@ fn field_choice(field: AppearanceField, appearance: AppearanceSettings) -> Choic
 #[must_use]
 pub fn appearance_patch(
     field: AppearanceField,
-    option: OptionIndex,
+    option_index: OptionIndex,
 ) -> Option<AppearancePatch> {
     Some(match field {
         AppearanceField::Preset => {
-            AppearancePatch::from(preset_appearance(*PRESETS.get(option.get())?))
+            AppearancePatch::from(preset_appearance(*PRESETS.get(option_index.get())?))
         }
         AppearanceField::CoverMode => AppearancePatch {
-            cover_mode: Some(option_at(COVER_MODES, option)?),
+            cover_mode: Some(option_at(COVER_MODES, option_index)?),
             ..AppearancePatch::default()
         },
         AppearanceField::CoverBrackets => AppearancePatch {
-            cover_brackets: Some(option_at(COVER_BRACKETS, option)?),
+            cover_brackets: Some(option_at(COVER_BRACKETS, option_index)?),
             ..AppearancePatch::default()
         },
         AppearanceField::FormatChips => AppearancePatch {
-            format_chips: Some(option_at(FORMAT_CHIPS, option)?),
+            format_chips: Some(option_at(FORMAT_CHIPS, option_index)?),
             ..AppearancePatch::default()
         },
         AppearanceField::SpeedChip => AppearancePatch {
-            speed_chip: Some(option_at(SPEED_CHIPS, option)?),
+            speed_chip: Some(option_at(SPEED_CHIPS, option_index)?),
             ..AppearancePatch::default()
         },
-        AppearanceField::ProgressRemaining => AppearancePatch {
-            progress_time: Some(option_at(PROGRESS_STYLES, option)?),
+        AppearanceField::ProgressTime => AppearancePatch {
+            progress_time: Some(option_at(PROGRESS_TIMES, option_index)?),
             ..AppearancePatch::default()
         },
         AppearanceField::KeyHints => AppearancePatch {
-            key_hints: Some(option_at(KEY_HINTS, option)?),
+            key_hints: Some(option_at(KEY_HINTS, option_index)?),
             ..AppearancePatch::default()
         },
         AppearanceField::Animations => AppearancePatch {
-            animations: Some(option_at(ANIMATIONS, option)?),
+            animations: Some(option_at(ANIMATIONS, option_index)?),
             ..AppearancePatch::default()
         },
         AppearanceField::LayoutMode => AppearancePatch {
-            layout_mode: Some(option_at(LAYOUT_MODES, option)?),
+            layout_mode: Some(option_at(LAYOUT_MODES, option_index)?),
             ..AppearancePatch::default()
         },
     })
@@ -237,20 +251,20 @@ mod tests {
             FormatChips,
             preset_appearance,
         },
-        appearance_rows::{APPEARANCE_ROWS, appearance_patch, appearance_rows},
+        appearance_rows::{APPEARANCE_ROWS, appearance_patch, appearance_row_choices},
         cue::Cue,
         setting_row::{AppearanceField, Choice, OptionCount, OptionIndex},
         theme::ThemeName,
     };
 
-    fn option_at_row(id: AppearanceField, position: usize) -> OptionIndex {
+    fn option_at_row(field: AppearanceField, option_index: usize) -> OptionIndex {
         APPEARANCE_ROWS
             .iter()
-            .find(|row| row.field == id)
+            .find(|row| row.field == field)
             .unwrap()
             .control
             .count()
-            .index(position)
+            .index(option_index)
             .unwrap()
     }
 
@@ -268,18 +282,20 @@ mod tests {
     }
 
     #[test]
-    fn appearance_rows_copies_the_cue_from_its_appearance_row() {
-        let rows = appearance_rows(AppearanceSettings::default());
+    fn appearance_row_choices_copies_the_cue_from_its_appearance_row() {
+        let rows = appearance_row_choices(AppearanceSettings::default());
         let layout_row = APPEARANCE_ROWS
             .into_iter()
             .find(|row| row.field == AppearanceField::LayoutMode)
             .unwrap();
-        let slot = rows
+        let appearance_row_choice = rows
             .into_iter()
-            .find(|slot| slot.row.field == layout_row.field)
+            .find(|appearance_row_choice| {
+                appearance_row_choice.row.field == layout_row.field
+            })
             .unwrap();
 
-        assert_eq!(slot.row.cue, Some(Cue::LayoutChanged));
+        assert_eq!(appearance_row_choice.row.cue, Some(Cue::LayoutChanged));
     }
 
     #[test]
@@ -312,11 +328,14 @@ mod tests {
     }
 
     #[test]
-    fn appearance_rows_reads_the_stock_appearance_as_position_zero_for_every_row() {
-        let rows = appearance_rows(AppearanceSettings::default());
+    fn appearance_row_choices_reads_the_stock_appearance_as_position_zero_for_every_row()
+     {
+        let rows = appearance_row_choices(AppearanceSettings::default());
         let zero = OptionCount::new(1).unwrap().index(0).unwrap();
         assert!(
-            rows.iter().all(|slot| slot.choice == Choice::Option(zero)),
+            rows.iter()
+                .all(|appearance_row_choice| appearance_row_choice.choice
+                    == Choice::Option(zero)),
             "{rows:?}"
         );
     }
@@ -327,29 +346,29 @@ mod tests {
     #[case::cover_brackets(AppearanceField::CoverBrackets, 1)]
     #[case::format_chips(AppearanceField::FormatChips, 1)]
     #[case::speed_chip(AppearanceField::SpeedChip, 2)]
-    #[case::progress_time(AppearanceField::ProgressRemaining, 1)]
+    #[case::progress_time(AppearanceField::ProgressTime, 1)]
     #[case::key_hints(AppearanceField::KeyHints, 1)]
     #[case::animations(AppearanceField::Animations, 1)]
     #[case::layout_mode(AppearanceField::LayoutMode, 2)]
-    fn appearance_rows_is_the_inverse_of_appearance_patch(
+    fn appearance_row_choices_is_the_inverse_of_appearance_patch(
         #[case] field: AppearanceField,
-        #[case] position: usize,
+        #[case] option_index: usize,
     ) {
         let row = APPEARANCE_ROWS
             .into_iter()
             .find(|row| row.field == field)
             .unwrap();
-        let option = row.control.count().index(position).unwrap();
+        let option = row.control.count().index(option_index).unwrap();
         let patch = appearance_patch(row.field, option).unwrap();
-        let appearance = AppearanceSettings::default().patched(patch);
+        let appearance_settings = AppearanceSettings::default().patched(patch);
 
-        let rows = appearance_rows(appearance);
-        let slot = rows
+        let rows = appearance_row_choices(appearance_settings);
+        let appearance_row_choice = rows
             .into_iter()
-            .find(|slot| slot.row.field == row.field)
+            .find(|appearance_row_choice| appearance_row_choice.row.field == row.field)
             .unwrap();
 
-        assert_eq!(slot.choice, Choice::Option(option));
+        assert_eq!(appearance_row_choice.choice, Choice::Option(option));
     }
 
     #[test]
@@ -380,15 +399,17 @@ mod tests {
     fn a_noir_file_puts_preset_at_the_noir_index() {
         let option = option_at_row(AppearanceField::Preset, 1);
         let patch = appearance_patch(AppearanceField::Preset, option).unwrap();
-        let appearance = AppearanceSettings::default().patched(patch);
+        let appearance_settings = AppearanceSettings::default().patched(patch);
 
-        let rows = appearance_rows(appearance);
-        let slot = rows
+        let rows = appearance_row_choices(appearance_settings);
+        let appearance_row_choice = rows
             .into_iter()
-            .find(|slot| slot.row.field == AppearanceField::Preset)
+            .find(|appearance_row_choice| {
+                appearance_row_choice.row.field == AppearanceField::Preset
+            })
             .unwrap();
 
-        assert_eq!(slot.choice, Choice::Option(option));
+        assert_eq!(appearance_row_choice.choice, Choice::Option(option));
     }
 
     #[test]
@@ -397,15 +418,17 @@ mod tests {
             format_chips: Some(FormatChips::Shown),
             ..AppearancePatch::default()
         };
-        let appearance = AppearanceSettings::default().patched(patch);
+        let appearance_settings = AppearanceSettings::default().patched(patch);
 
-        let rows = appearance_rows(appearance);
-        let slot = rows
+        let rows = appearance_row_choices(appearance_settings);
+        let appearance_row_choice = rows
             .into_iter()
-            .find(|slot| slot.row.field == AppearanceField::Preset)
+            .find(|appearance_row_choice| {
+                appearance_row_choice.row.field == AppearanceField::Preset
+            })
             .unwrap();
 
-        assert_eq!(slot.choice, Choice::Mixed);
+        assert_eq!(appearance_row_choice.choice, Choice::Mixed);
     }
 
     #[test]
@@ -415,6 +438,9 @@ mod tests {
             .find(|row| row.field == AppearanceField::Preset)
             .unwrap();
 
-        assert_eq!(row.themes, &[None, Some(ThemeName::from_static("noir"))]);
+        assert_eq!(
+            row.theme_names,
+            &[None, Some(ThemeName::from_static("noir"))]
+        );
     }
 }

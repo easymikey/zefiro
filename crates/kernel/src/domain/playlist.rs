@@ -6,7 +6,7 @@ use crate::domain::{
     cursor::Cursor,
     direction::Direction,
     index::ViewIndex,
-    track::{Track, TrackRef},
+    track::{Track, TrackSource},
 };
 
 const ILLEGAL_NAME_CHARS: [char; 9] = ['/', '\\', '?', '<', '>', ':', '*', '|', '"'];
@@ -17,16 +17,16 @@ const MAX_NAME_BYTES: usize = 255;
 pub struct PlaylistFileName(String);
 
 impl PlaylistFileName {
-    pub fn new(name: &str) -> Result<Self, PlaylistNameError> {
+    pub fn new(name: &str) -> Result<Self, PlaylistFileNameError> {
         let filtered: String = name
             .chars()
             .filter(|ch| !ILLEGAL_NAME_CHARS.contains(ch) && !ch.is_control())
             .collect();
         if filtered.is_empty() {
-            return Err(PlaylistNameError::Empty);
+            return Err(PlaylistFileNameError::Empty);
         }
         if filtered.chars().all(|ch| ch == '.') {
-            return Err(PlaylistNameError::AllDots);
+            return Err(PlaylistFileNameError::AllDots);
         }
         Ok(Self(truncated_to_bytes(&filtered, MAX_NAME_BYTES)))
     }
@@ -48,7 +48,7 @@ fn truncated_to_bytes(input: &str, max_bytes: usize) -> String {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum PlaylistNameError {
+pub enum PlaylistFileNameError {
     #[error("enter a playlist name")]
     Empty,
     #[error("a playlist name cannot be only dots")]
@@ -76,7 +76,7 @@ pub enum PlayOrder {
     #[default]
     Linear,
     ShufflePending,
-    Shuffle(Vec<ViewIndex>),
+    Shuffled(Vec<ViewIndex>),
 }
 
 impl PlayOrder {
@@ -84,22 +84,22 @@ impl PlayOrder {
     pub fn is_shuffle(&self) -> bool {
         match self {
             PlayOrder::Linear => false,
-            PlayOrder::ShufflePending | PlayOrder::Shuffle(_) => true,
+            PlayOrder::ShufflePending | PlayOrder::Shuffled(_) => true,
         }
     }
 
     fn order(&self) -> Option<&[ViewIndex]> {
         match self {
             PlayOrder::Linear | PlayOrder::ShufflePending => None,
-            PlayOrder::Shuffle(order) if order.is_empty() => None,
-            PlayOrder::Shuffle(order) => Some(order),
+            PlayOrder::Shuffled(order) if order.is_empty() => None,
+            PlayOrder::Shuffled(order) => Some(order),
         }
     }
 
     pub(crate) fn without_order(self) -> Self {
         match self {
             PlayOrder::Linear => PlayOrder::Linear,
-            PlayOrder::ShufflePending | PlayOrder::Shuffle(_) => {
+            PlayOrder::ShufflePending | PlayOrder::Shuffled(_) => {
                 PlayOrder::ShufflePending
             }
         }
@@ -111,7 +111,7 @@ pub struct Playlist {
     pub tracks: Vec<Arc<Track>>,
     pub cursor: Cursor,
     pub play_order: PlayOrder,
-    pub repeat: RepeatMode,
+    pub repeat_mode: RepeatMode,
 }
 
 impl Playlist {
@@ -137,9 +137,9 @@ impl Playlist {
     pub(crate) fn relist(
         &mut self,
         tracks: Vec<Arc<Track>>,
-        anchor: Option<ViewIndex>,
+        anchor_index: Option<ViewIndex>,
     ) {
-        let index = anchor.map_or_else(|| self.cursor.index(), ViewIndex::get);
+        let index = anchor_index.map_or_else(|| self.cursor.index(), ViewIndex::get);
         self.cursor = Cursor::at(tracks.len(), index);
         self.tracks = tracks;
     }
@@ -160,7 +160,7 @@ impl Playlist {
         let len = isize::try_from(self.cursor.len()).ok()?;
         let current = isize::try_from(self.cursor.index()).ok()?;
         let delta = direction.sign();
-        match self.repeat {
+        match self.repeat_mode {
             RepeatMode::All => usize::try_from((current + delta).rem_euclid(len)).ok(),
             RepeatMode::Off | RepeatMode::One => {
                 let next = current + delta;
@@ -204,7 +204,7 @@ impl Playlist {
     }
 }
 
-pub(crate) fn index_of(tracks: &[Arc<Track>], source: &TrackRef) -> Option<usize> {
+pub(crate) fn index_of(tracks: &[Arc<Track>], source: &TrackSource) -> Option<usize> {
     tracks.iter().position(|track| track.source() == source)
 }
 
@@ -212,15 +212,15 @@ pub(crate) fn index_of(tracks: &[Arc<Track>], source: &TrackRef) -> Option<usize
 mod playlist_file_name_tests {
     use rstest::rstest;
 
-    use crate::domain::playlist::{PlaylistFileName, PlaylistNameError};
+    use crate::domain::playlist::{PlaylistFileName, PlaylistFileNameError};
 
     #[rstest]
-    #[case::empty("", PlaylistNameError::Empty)]
-    #[case::whitespace_only_control_chars("\u{0}\u{1}", PlaylistNameError::Empty)]
-    #[case::only_illegal_characters("???", PlaylistNameError::Empty)]
-    #[case::all_dots("...", PlaylistNameError::AllDots)]
-    #[case::single_dot(".", PlaylistNameError::AllDots)]
-    fn rejects(#[case] input: &str, #[case] expected: PlaylistNameError) {
+    #[case::empty("", PlaylistFileNameError::Empty)]
+    #[case::whitespace_only_control_chars("\u{0}\u{1}", PlaylistFileNameError::Empty)]
+    #[case::only_illegal_characters("???", PlaylistFileNameError::Empty)]
+    #[case::all_dots("...", PlaylistFileNameError::AllDots)]
+    #[case::single_dot(".", PlaylistFileNameError::AllDots)]
+    fn rejects(#[case] input: &str, #[case] expected: PlaylistFileNameError) {
         assert_eq!(PlaylistFileName::new(input), Err(expected));
     }
 

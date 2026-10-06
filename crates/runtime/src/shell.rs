@@ -16,7 +16,7 @@ pub trait Shell {
     type Input;
     type Error: std::error::Error + 'static;
 
-    fn input(&mut self, event: Self::Input) -> Reaction;
+    fn input(&mut self, input: Self::Input) -> Reaction;
     fn effect(&mut self, effect: ShellEffect);
     fn frame_due(&self, frame: &Frame<'_>) -> FrameDue;
     fn paint(&mut self, frame: Frame<'_>) -> Result<Painted, Self::Error>;
@@ -46,8 +46,8 @@ pub enum FrameDue {
 #[derive(Debug, Clone, Copy)]
 pub struct Frame<'a> {
     pub model: &'a Model,
-    pub spectrum: &'a SpectrumTap,
-    pub latest: &'a LatestReceivers,
+    pub spectrum_tap: &'a SpectrumTap,
+    pub latest_receivers: &'a LatestReceivers,
     pub now: Moment,
 }
 

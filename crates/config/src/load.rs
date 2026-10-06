@@ -9,10 +9,10 @@ use crate::{
     appearance_file::{TomlAppearance, parse_appearance},
     config_file::{TomlSettings, parse_config},
     driver::{
-        files::{read_if_present, unreadable},
+        files::{read_error, read_if_present},
         paths::{ConfigPaths, SeenTexts},
     },
-    embedded_theme::{embedded_theme, resolve_theme},
+    embedded_theme::{embedded_theme, theme_name},
     error::Error,
     file_name::theme_file_path,
     theme_file::{TomlTheme, parse_theme},
@@ -21,7 +21,7 @@ use crate::{
 #[must_use]
 #[derive(Debug, Clone)]
 pub struct Loaded {
-    pub settings: TomlSettings,
+    pub toml_settings: TomlSettings,
     pub toml_appearance: TomlAppearance,
     pub theme_name: ThemeName,
     pub toml_theme: Option<TomlTheme>,
@@ -36,14 +36,17 @@ struct Parsed<T> {
 }
 
 pub fn load(paths: &ConfigPaths) -> Loaded {
-    let config = read_parsed(&paths.config, ConfigName::Config, parse_config);
-    let appearance =
-        read_parsed(&paths.appearance, ConfigName::Appearance, parse_appearance);
+    let config = read_parsed(&paths.config_path, ConfigName::Config, parse_config);
+    let appearance = read_parsed(
+        &paths.appearance_path,
+        ConfigName::Appearance,
+        parse_appearance,
+    );
     let theme_name = paths
-        .theme
+        .theme_name
         .clone()
-        .unwrap_or_else(|| resolve_theme(&config.value.theme));
-    let (theme, theme_error) = match read_theme(&theme_name, &paths.themes) {
+        .unwrap_or_else(|| theme_name(&config.value.theme_choice));
+    let (theme, theme_error) = match read_theme(&theme_name, &paths.themes_dir) {
         Ok(theme) => (Some(theme), None),
         Err(error) => (None, Some(error)),
     };
@@ -56,7 +59,7 @@ pub fn load(paths: &ConfigPaths) -> Loaded {
             .into_iter()
             .flatten()
             .collect(),
-        settings: config.value,
+        toml_settings: config.value,
         toml_appearance: appearance.value,
         theme_name,
         toml_theme: theme,
@@ -67,14 +70,14 @@ pub(crate) fn theme_parsed(
     name: &ThemeName,
     text: Option<&str>,
 ) -> Result<TomlTheme, ConfigError> {
-    let source = text
+    let text = text
         .or_else(|| embedded_theme(name.as_str()))
         .ok_or_else(|| {
             ConfigError::from(Diagnostic::from_error(&Error::UnknownTheme(
                 name.clone(),
             )))
         })?;
-    parse_theme(source, name.as_str())
+    parse_theme(text, name.as_str())
         .map_err(|error| Diagnostic::from_error(&error).into())
 }
 
@@ -92,11 +95,11 @@ fn read_parsed<T: Default>(
                 error: None,
             };
         }
-        Err(source) => {
+        Err(error) => {
             return Parsed {
                 value: T::default(),
                 text: None,
-                error: Some((name.clone(), unreadable(name, &source))),
+                error: Some((name.clone(), read_error(name, &error))),
             };
         }
     };
@@ -120,11 +123,8 @@ fn read_theme(
 ) -> Result<TomlTheme, (ConfigName, ConfigError)> {
     let config_name = ConfigName::Theme(name.clone());
     let text =
-        read_if_present(&theme_file_path(themes_dir, name)).map_err(|source| {
-            (
-                config_name.clone(),
-                unreadable(config_name.clone(), &source),
-            )
+        read_if_present(&theme_file_path(themes_dir, name)).map_err(|error| {
+            (config_name.clone(), read_error(config_name.clone(), &error))
         })?;
     theme_parsed(name, text.as_deref()).map_err(|error| (config_name, error))
 }
@@ -154,12 +154,12 @@ mod tests {
 
     fn paths(directory_path: &Path, theme: Option<&'static str>) -> ConfigPaths {
         ConfigPaths {
-            config: directory_path.join("config.toml"),
-            appearance: directory_path.join("sifr-ui.toml"),
-            themes: directory_path.join("themes"),
+            config_path: directory_path.join("config.toml"),
+            appearance_path: directory_path.join("sifr-ui.toml"),
+            themes_dir: directory_path.join("themes"),
             default_music_dir: None,
-            theme: theme.map(ThemeName::from_static),
-            seen: SeenTexts::default(),
+            theme_name: theme.map(ThemeName::from_static),
+            seen_texts: SeenTexts::default(),
         }
     }
 
@@ -190,7 +190,7 @@ mod tests {
 
         let loaded = loaded(directory.path(), None);
 
-        assert_eq!(loaded.settings, TomlSettings::default());
+        assert_eq!(loaded.toml_settings, TomlSettings::default());
         assert_eq!(loaded.toml_appearance, TomlAppearance::default());
         assert_eq!(loaded.theme_name.as_str(), STOCK_THEME);
         assert_eq!(
@@ -211,7 +211,7 @@ mod tests {
         let from_paths = loaded(directory.path(), Some("noir"));
 
         assert_eq!(
-            from_config.settings.theme,
+            from_config.toml_settings.theme_choice,
             ThemeChoice::Named(ThemeName::from_static("ghost"))
         );
         assert_eq!(from_config.theme_name.as_str(), "ghost");
@@ -228,7 +228,7 @@ mod tests {
         let loaded = loaded(directory.path(), None);
 
         assert_eq!(
-            loaded.settings.keymap(),
+            loaded.toml_settings.to_keymap_overrides(),
             KeymapOverrides::from([(Action::Quit, KeyOverride::from("q"))])
         );
         assert_eq!(loaded.texts.config.as_deref(), Some(text));
@@ -242,7 +242,7 @@ mod tests {
 
         let loaded = loaded(directory.path(), None);
 
-        assert_eq!(loaded.settings, TomlSettings::default());
+        assert_eq!(loaded.toml_settings, TomlSettings::default());
         assert_eq!(loaded.texts.config.as_deref(), Some("volume = \"loud\"\n"));
         assert!(matches!(
             loaded.errors.as_slice(),
@@ -311,7 +311,7 @@ mod tests {
                 mine(),
                 ConfigError::Read {
                     name: mine(),
-                    source: IoError::from(std::io::ErrorKind::IsADirectory),
+                    error: IoError::from(std::io::ErrorKind::IsADirectory),
                 }
             )]
         );

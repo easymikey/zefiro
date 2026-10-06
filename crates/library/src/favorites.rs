@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, path::PathBuf};
 
 use kernel::{
-    domain::{favorites::Favorites, track::TrackRef},
+    domain::{favorites::Favorites, track::TrackSource},
     message::LibrarySubject,
 };
 
@@ -13,14 +13,14 @@ pub(crate) fn save(dirs: &LibraryDirs, favorites: &Favorites) -> Result<(), Erro
     let path = dirs.data_dir.join(FAVORITES_FILE_NAME);
     crate::files::create_parent_dir(&path)
         .map_err(Error::io(LibrarySubject::Favorites, &path))?;
-    let list: BTreeSet<&PathBuf> = favorites
+    let paths: BTreeSet<&PathBuf> = favorites
         .iter()
-        .map(|track| {
-            let TrackRef::Local(track_path) = track;
+        .map(|track_source| {
+            let TrackSource::Local(track_path) = track_source;
             track_path
         })
         .collect();
-    let json = serde_json::to_string(&list)
+    let json = serde_json::to_string(&paths)
         .map_err(Error::json(LibrarySubject::Favorites, &path))?;
     crate::files::write_atomic(&path, json.as_bytes())
         .map_err(Error::io(LibrarySubject::Favorites, &path))
@@ -33,16 +33,16 @@ pub(crate) fn load(dirs: &LibraryDirs) -> Result<Favorites, Error> {
     else {
         return Ok(Favorites::default());
     };
-    let list: Vec<PathBuf> = serde_json::from_str(&content)
+    let paths: Vec<PathBuf> = serde_json::from_str(&content)
         .map_err(Error::json(LibrarySubject::Favorites, &path))?;
-    Ok(list.into_iter().map(TrackRef::Local).collect())
+    Ok(paths.into_iter().map(TrackSource::Local).collect())
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use kernel::domain::{favorites::Favorites, track::TrackRef};
+    use kernel::domain::{favorites::Favorites, track::TrackSource};
 
     use crate::{dirs::LibraryDirs, favorites};
 
@@ -59,7 +59,7 @@ mod tests {
 
         let first: Favorites = ["/music/a.flac", "/music/b.flac"]
             .map(PathBuf::from)
-            .map(TrackRef::Local)
+            .map(TrackSource::Local)
             .into_iter()
             .collect();
         favorites::save(&dirs, &first).unwrap();
@@ -69,12 +69,12 @@ mod tests {
                 .unwrap();
         insta::assert_snapshot!(raw);
 
-        let second: Favorites = [TrackRef::Local("/music/c.flac".into())]
+        let second: Favorites = [TrackSource::Local("/music/c.flac".into())]
             .into_iter()
             .collect();
         favorites::save(&dirs, &second).unwrap();
         let loaded = favorites::load(&dirs).unwrap();
         assert_eq!(loaded, second);
-        assert!(!loaded.is_favorite(&TrackRef::Local("/music/a.flac".into())));
+        assert!(!loaded.is_favorite(&TrackSource::Local("/music/a.flac".into())));
     }
 }

@@ -11,13 +11,13 @@ pub enum Breakpoint {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fit {
-    Fits,
+    Enough,
     Short,
 }
 
 fn fit(size: Size, width: u16, height: u16) -> Fit {
     if size.width >= width && size.height >= height {
-        Fit::Fits
+        Fit::Enough
     } else {
         Fit::Short
     }
@@ -25,24 +25,28 @@ fn fit(size: Size, width: u16, height: u16) -> Fit {
 
 impl Breakpoint {
     #[must_use]
-    pub fn new(size: Size, layout: &Breakpoints, mode: LayoutMode) -> Self {
-        if fit(size, layout.min_width.0, layout.min_height.0) == Fit::Short {
+    pub fn new(size: Size, breakpoints: &Breakpoints, layout_mode: LayoutMode) -> Self {
+        if fit(size, breakpoints.min_width.0, breakpoints.min_height.0) == Fit::Short {
             return Self::TooSmall;
         }
-        let full = fit(size, layout.full_min_width.0, layout.full_min_height.0);
+        let full = fit(
+            size,
+            breakpoints.full_min_width.0,
+            breakpoints.full_min_height.0,
+        );
         let compact = fit(
             size,
-            layout.compact_min_width.0,
-            layout.compact_min_height.0,
+            breakpoints.compact_min_width.0,
+            breakpoints.compact_min_height.0,
         );
-        match (mode, full, compact) {
-            (LayoutMode::Compact, _, Fit::Fits) => Self::Compact,
+        match (layout_mode, full, compact) {
+            (LayoutMode::Compact, _, Fit::Enough) => Self::Compact,
             (
                 LayoutMode::Auto | LayoutMode::Full | LayoutMode::Compact,
-                Fit::Fits,
+                Fit::Enough,
                 _,
             ) => Self::Full,
-            (LayoutMode::Auto | LayoutMode::Full, Fit::Short, Fit::Fits) => {
+            (LayoutMode::Auto | LayoutMode::Full, Fit::Short, Fit::Enough) => {
                 Self::Compact
             }
             (
@@ -88,25 +92,25 @@ mod tests {
         Breakpoint::TooSmall
     )]
     fn the_terminal_size_picks_the_breakpoint(
-        #[case] mode: LayoutMode,
+        #[case] layout_mode: LayoutMode,
         #[case] size: Size,
         #[case] expected: Breakpoint,
     ) {
         assert_eq!(
-            Breakpoint::new(size, &Breakpoints::default(), mode),
+            Breakpoint::new(size, &Breakpoints::default(), layout_mode),
             expected
         );
     }
 
     #[test]
     fn a_lowered_minimum_lets_the_minimal_breakpoint_through() {
-        let layout = Breakpoints {
+        let breakpoints = Breakpoints {
             min_width: Cells(10),
             min_height: Cells(3),
             ..Breakpoints::default()
         };
         assert_eq!(
-            Breakpoint::new(Size::new(20, 5), &layout, LayoutMode::Auto),
+            Breakpoint::new(Size::new(20, 5), &breakpoints, LayoutMode::Auto),
             Breakpoint::Minimal
         );
     }

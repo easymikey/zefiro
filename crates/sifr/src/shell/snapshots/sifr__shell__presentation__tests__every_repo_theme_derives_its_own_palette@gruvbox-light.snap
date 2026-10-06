@@ -17,7 +17,7 @@ Colors {
             188,
         ],
     ),
-    text: Rgb(
+    foreground: Rgb(
         [
             60,
             56,
@@ -31,7 +31,7 @@ Colors {
             3,
         ],
     ),
-    accent2: Rgb(
+    favorite: Rgb(
         [
             181,
             118,

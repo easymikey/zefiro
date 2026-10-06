@@ -49,8 +49,8 @@ pub(crate) fn cover_side_unknown() -> Message {
     }
 }
 
-pub(crate) fn open(kind: OverlayName) -> Message {
-    Message::Overlay(OverlayRequest::Open(kind))
+pub(crate) fn open(overlay_name: OverlayName) -> Message {
+    Message::Overlay(OverlayRequest::Open(overlay_name))
 }
 
 pub(crate) fn close() -> Message {
@@ -101,9 +101,9 @@ pub(crate) fn moon_library() -> Model {
     ])
 }
 
-pub(crate) fn moon_library_selecting(row: usize) -> Model {
+pub(crate) fn moon_library_selecting(selected_index: usize) -> Model {
     let mut model = moon_library();
-    model.workspace.browse.cursor = Cursor::at(3, row);
+    model.workspace.browse.cursor = Cursor::at(3, selected_index);
     model
 }
 
@@ -117,10 +117,10 @@ pub(crate) fn logged(log: &[&str], playlist: &[&str]) -> Model {
     model.history = log
         .iter()
         .map(|path| HistoryEntry {
-            track: kernel::domain::track::TrackRef::Local((*path).into()),
+            track_source: kernel::domain::track::TrackSource::Local((*path).into()),
             title: (*path).to_string(),
             artist: None,
-            at: Moment::default(),
+            played_at: Moment::default(),
         })
         .collect();
     model.workspace.overlay = Some(Overlay::History(CursorOver {
@@ -155,20 +155,20 @@ pub(crate) fn moon_library_scanned() -> Model {
     let mut model = moon_library();
     model.library = Some(Library {
         tracks: model.playlist.tracks.clone(),
-        view: (0..model.playlist.tracks.len())
+        track_indexes: (0..model.playlist.tracks.len())
             .map(TrackIndex::new)
             .collect(),
     });
     model
 }
 
-pub(crate) fn repeating(mut model: Model, repeat: RepeatMode) -> Model {
-    model.playlist.repeat = repeat;
+pub(crate) fn repeating(mut model: Model, repeat_mode: RepeatMode) -> Model {
+    model.playlist.repeat_mode = repeat_mode;
     model
 }
 
-pub(crate) fn queued(mut model: Model, queue: &[usize]) -> Model {
-    model.queue = queue
+pub(crate) fn queued(mut model: Model, rows: &[usize]) -> Model {
+    model.queue = rows
         .iter()
         .map(|&row| model.playlist.tracks[row].source().clone())
         .collect();
@@ -176,7 +176,7 @@ pub(crate) fn queued(mut model: Model, queue: &[usize]) -> Model {
 }
 
 pub(crate) fn near_the_end() -> Message {
-    Message::Audio(AudioEvent::Playhead(Duration::from_secs(95)))
+    Message::Audio(AudioEvent::PositionReported(Duration::from_secs(95)))
 }
 
 pub(crate) fn handed_off() -> Message {
@@ -195,8 +195,8 @@ pub(crate) fn skip() -> Message {
     Message::Playback(PlaybackRequest::Next)
 }
 
-pub(crate) fn enqueue(track: usize) -> Message {
-    Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(track)))
+pub(crate) fn enqueue(view_index: usize) -> Message {
+    Message::Queue(QueueRequest::ToggleAt(ViewIndex::new(view_index)))
 }
 
 pub(crate) fn shuffle() -> Message {
@@ -233,9 +233,9 @@ pub(crate) fn toasted() -> Model {
     model
 }
 
-pub(crate) fn search_moon(then: Vec<Message>) -> Vec<Message> {
-    let mut messages = vec![open(OverlayName::Search)];
-    messages.extend(typed("moon", search_char));
-    messages.extend(then);
-    messages
+pub(crate) fn search_moon(messages: Vec<Message>) -> Vec<Message> {
+    let mut all = vec![open(OverlayName::Search)];
+    all.extend(typed("moon", search_char));
+    all.extend(messages);
+    all
 }

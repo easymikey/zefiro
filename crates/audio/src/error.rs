@@ -5,7 +5,7 @@ use kernel::{
         config::Diagnostic,
         device::{DeviceName, OutputDevice},
         io_error::IoError,
-        transport::StreamError,
+        transport::OutputError,
     },
     message::{AudioError, DecodeError},
 };
@@ -13,16 +13,20 @@ use rodio::cpal;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DeviceError {
-    #[error("audio device '{0}' not found, using default")]
+    #[error("audio device '{0}' not found")]
     NotFound(DeviceName),
     #[error("no output device available: {source}")]
     NoDevice {
-        name: OutputDevice,
+        requested_device: OutputDevice,
         #[source]
         source: rodio::StreamError,
     },
-    #[error("cannot list output devices: {0}")]
-    ListDevices(#[source] cpal::DevicesError),
+    #[error("cannot look up output device {requested_device}: {source}")]
+    Lookup {
+        requested_device: OutputDevice,
+        #[source]
+        source: cpal::DevicesError,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -61,57 +65,67 @@ impl From<&Error> for AudioError {
         match error {
             Error::Open { path, source } => AudioError::Decode {
                 path: path.clone(),
-                kind: DecodeError::Unreadable(source.kind().into()),
+                error: DecodeError::Unreadable(source.kind().into()),
             },
             Error::Decode { path, source } => AudioError::Decode {
                 path: path.clone(),
-                kind: decode_error(source),
+                error: decode_error(source),
             },
             Error::WorkerPanicked(path) => AudioError::Decode {
                 path: path.clone(),
-                kind: DecodeError::Panicked,
+                error: DecodeError::Panicked,
             },
         }
     }
 }
 
-pub(crate) fn device_error(error: DeviceError) -> AudioError {
+pub(crate) fn device_error(error: &DeviceError) -> AudioError {
     match error {
         DeviceError::NotFound(name) => AudioError::OpenDevice {
-            requested: OutputDevice::Named(name),
+            requested_device: OutputDevice::Named(name.clone()),
+            diagnostic: Diagnostic::from_error(error),
         },
-        DeviceError::NoDevice { name, .. } => {
-            AudioError::OpenDevice { requested: name }
-        }
-        DeviceError::ListDevices(source) => list_devices_error(&source),
+        DeviceError::NoDevice {
+            requested_device,
+            source,
+        } => AudioError::OpenDevice {
+            requested_device: requested_device.clone(),
+            diagnostic: Diagnostic::from_error(source),
+        },
+        DeviceError::Lookup {
+            requested_device,
+            source,
+        } => AudioError::OpenDevice {
+            requested_device: requested_device.clone(),
+            diagnostic: Diagnostic::from_error(source),
+        },
     }
 }
 
 pub(crate) fn list_devices_error(error: &cpal::DevicesError) -> AudioError {
     AudioError::ListDevices {
-        reason: Diagnostic::from_error(error),
+        diagnostic: Diagnostic::from_error(error),
     }
 }
 
-pub(crate) fn stream_error(error: &cpal::StreamError) -> StreamError {
+pub(crate) fn output_error(error: &cpal::StreamError) -> OutputError {
     match error {
-        cpal::StreamError::DeviceNotAvailable => StreamError::DeviceGone,
-        cpal::StreamError::BackendSpecific { .. } => StreamError::Backend,
+        cpal::StreamError::DeviceNotAvailable => OutputError::DeviceGone,
+        cpal::StreamError::BackendSpecific { .. } => OutputError::Backend,
     }
 }
 
 pub(crate) fn seek_error(error: &rodio::source::SeekError) -> AudioError {
     AudioError::Seek {
-        reason: Diagnostic::from_error(error),
+        diagnostic: Diagnostic::from_error(error),
     }
 }
 
 pub(crate) fn preload_error(error: &Error) -> AudioError {
     match AudioError::from(error) {
-        AudioError::Decode { path, kind } => AudioError::Preload { path, kind },
+        AudioError::Decode { path, error } => AudioError::Preload { path, error },
         other @ (AudioError::OpenDevice { .. }
         | AudioError::ListDevices { .. }
-        | AudioError::OpenStream { .. }
         | AudioError::Preload { .. }
         | AudioError::Seek { .. }) => other,
     }
@@ -126,13 +140,13 @@ mod tests {
             config::Diagnostic,
             device::{DeviceName, OutputDevice},
             io_error::IoError,
-            transport::StreamError,
+            transport::OutputError,
         },
         message::{AudioError, DecodeError},
     };
     use rstest::rstest;
 
-    use crate::error::{DeviceError, Error, device_error, preload_error, stream_error};
+    use crate::error::{DeviceError, Error, device_error, output_error, preload_error};
 
     fn device_name(name: &str) -> DeviceName {
         DeviceName::new(name.to_string()).unwrap()
@@ -157,7 +171,7 @@ mod tests {
         Error::WorkerPanicked(PathBuf::from("/music/track.flac")),
         "the decode worker panicked on /music/track.flac"
     )]
-    fn audio_error_display_carries_its_source(
+    fn an_error_display_carries_its_source(
         #[case] error: Error,
         #[case] expected: &str,
     ) {
@@ -194,12 +208,12 @@ mod tests {
             path: PathBuf::from("/music/track.flac"),
             source,
         };
-        let failure = AudioError::from(&error);
+        let error = AudioError::from(&error);
         assert_eq!(
-            failure,
+            error,
             AudioError::Decode {
                 path: PathBuf::from("/music/track.flac"),
-                kind: expected,
+                error: expected,
             }
         );
     }
@@ -212,12 +226,12 @@ mod tests {
         },
         AudioError::Decode {
             path: PathBuf::from("/a"),
-            kind: DecodeError::Unreadable(IoError::Missing),
+            error: DecodeError::Unreadable(IoError::Missing),
         }
     )]
     #[case::worker_panicked(
         Error::WorkerPanicked(PathBuf::from("/a")),
-        AudioError::Decode { path: PathBuf::from("/a"), kind: DecodeError::Panicked }
+        AudioError::Decode { path: PathBuf::from("/a"), error: DecodeError::Panicked }
     )]
     fn an_error_becomes_an_audio_error_with_its_path(
         #[case] error: Error,
@@ -230,49 +244,78 @@ mod tests {
     fn a_device_error_names_the_requested_device() {
         let error = DeviceError::NotFound(device_name("usb"));
         assert_eq!(
-            device_error(error),
+            device_error(&error),
             AudioError::OpenDevice {
-                requested: OutputDevice::Named(device_name("usb"))
+                requested_device: OutputDevice::Named(device_name("usb")),
+                diagnostic: Diagnostic::from_error(&DeviceError::NotFound(
+                    device_name("usb")
+                )),
             }
         );
     }
 
-    fn backend_failure() -> rodio::cpal::BackendSpecificError {
+    #[test]
+    fn an_open_failure_keeps_its_cause() {
+        let source = rodio::StreamError::NoDevice;
+        let cause = source.to_string();
+        let error = device_error(&DeviceError::NoDevice {
+            requested_device: OutputDevice::SystemDefault,
+            source,
+        });
+        assert!(error.to_string().contains(&cause));
+    }
+
+    fn backend_error() -> rodio::cpal::BackendSpecificError {
         rodio::cpal::BackendSpecificError {
             description: "host gone".to_owned(),
         }
     }
 
+    #[test]
+    fn a_lookup_failure_while_opening_maps_to_an_open_failure() {
+        let source = rodio::cpal::DevicesError::BackendSpecific {
+            err: backend_error(),
+        };
+        let diagnostic = Diagnostic::from_error(&source);
+        let error = DeviceError::Lookup {
+            requested_device: OutputDevice::Named(device_name("usb")),
+            source,
+        };
+        assert_eq!(
+            device_error(&error),
+            AudioError::OpenDevice {
+                requested_device: OutputDevice::Named(device_name("usb")),
+                diagnostic,
+            }
+        );
+    }
+
     #[rstest]
     #[case::no_named_device(
         DeviceError::NoDevice {
-            name: OutputDevice::Named(device_name("usb")),
+            requested_device: OutputDevice::Named(device_name("usb")),
             source: rodio::StreamError::NoDevice,
         },
-        AudioError::OpenDevice { requested: OutputDevice::Named(device_name("usb")) }
+        AudioError::OpenDevice {
+            requested_device: OutputDevice::Named(device_name("usb")),
+            diagnostic: Diagnostic::from_error(&rodio::StreamError::NoDevice),
+        }
     )]
     #[case::no_default_device(
         DeviceError::NoDevice {
-            name: OutputDevice::SystemDefault,
+            requested_device: OutputDevice::SystemDefault,
             source: rodio::StreamError::NoDevice,
         },
-        AudioError::OpenDevice { requested: OutputDevice::SystemDefault }
-    )]
-    #[case::list_devices(
-        DeviceError::ListDevices(rodio::cpal::DevicesError::BackendSpecific {
-            err: backend_failure(),
-        }),
-        AudioError::ListDevices {
-            reason: Diagnostic::from_error(&rodio::cpal::DevicesError::BackendSpecific {
-                err: backend_failure(),
-            }),
+        AudioError::OpenDevice {
+            requested_device: OutputDevice::SystemDefault,
+            diagnostic: Diagnostic::from_error(&rodio::StreamError::NoDevice),
         }
     )]
     fn every_device_error_maps_to_its_audio_error(
         #[case] error: DeviceError,
         #[case] expected: AudioError,
     ) {
-        assert_eq!(device_error(error), expected);
+        assert_eq!(device_error(&error), expected);
     }
 
     #[rstest]
@@ -283,7 +326,7 @@ mod tests {
         },
         AudioError::Preload {
             path: PathBuf::from("/a"),
-            kind: DecodeError::Unreadable(IoError::Denied),
+            error: DecodeError::Unreadable(IoError::Denied),
         }
     )]
     #[case::decode_unsupported(
@@ -291,13 +334,13 @@ mod tests {
             path: PathBuf::from("/a"),
             source: rodio::decoder::DecoderError::UnrecognizedFormat,
         },
-        AudioError::Preload { path: PathBuf::from("/a"), kind: DecodeError::Unsupported }
+        AudioError::Preload { path: PathBuf::from("/a"), error: DecodeError::Unsupported }
     )]
     #[case::worker_panicked(
         Error::WorkerPanicked(PathBuf::from("/a")),
-        AudioError::Preload { path: PathBuf::from("/a"), kind: DecodeError::Panicked }
+        AudioError::Preload { path: PathBuf::from("/a"), error: DecodeError::Panicked }
     )]
-    fn a_preload_error_keeps_its_kind_under_preload(
+    fn a_preload_error_maps_to_its_audio_error(
         #[case] error: Error,
         #[case] expected: AudioError,
     ) {
@@ -307,7 +350,7 @@ mod tests {
     #[rstest]
     #[case::device_not_available(
         rodio::cpal::StreamError::DeviceNotAvailable,
-        StreamError::DeviceGone
+        OutputError::DeviceGone
     )]
     #[case::backend_specific(
         rodio::cpal::StreamError::BackendSpecific {
@@ -315,12 +358,12 @@ mod tests {
                 description: "underrun".to_string(),
             },
         },
-        StreamError::Backend
+        OutputError::Backend
     )]
-    fn a_stream_error_maps_to_its_kind(
+    fn a_stream_error_maps_to_its_output_error(
         #[case] error: rodio::cpal::StreamError,
-        #[case] expected: StreamError,
+        #[case] expected: OutputError,
     ) {
-        assert_eq!(stream_error(&error), expected);
+        assert_eq!(output_error(&error), expected);
     }
 }

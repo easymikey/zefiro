@@ -15,28 +15,28 @@ impl Runtime {
         effects
             .into_iter()
             .filter_map(|effect| match effect {
-                Effect::Audio(command) => {
-                    match self.wiring.ports.audio.send(&self.model.drivers, command) {
+                Effect::Audio(cmd) => {
+                    match self.wiring.ports.audio.send(&self.model.drivers, cmd) {
                         Ok(()) | Err(_) => None,
                     }
                 }
-                Effect::Library(command) => {
-                    match self.wiring.ports.library.send(&self.model.drivers, command) {
+                Effect::Library(cmd) => {
+                    match self.wiring.ports.library.send(&self.model.drivers, cmd) {
                         Ok(()) | Err(_) => None,
                     }
                 }
-                Effect::Macos(command) => {
-                    match self.wiring.ports.macos.send(&self.model.drivers, command) {
+                Effect::Macos(cmd) => {
+                    match self.wiring.ports.macos.send(&self.model.drivers, cmd) {
                         Ok(()) | Err(_) => None,
                     }
                 }
-                Effect::Config(command) => {
-                    match self.wiring.ports.config.send(&self.model.drivers, command) {
+                Effect::Config(cmd) => {
+                    match self.wiring.ports.config.send(&self.model.drivers, cmd) {
                         Ok(()) | Err(_) => None,
                     }
                 }
-                Effect::WindowColors(command) => {
-                    self.shell_effects.push(ShellEffect::WindowColors(command));
+                Effect::WindowColors(cmd) => {
+                    self.shell_effects.push(ShellEffect::WindowColors(cmd));
                     None
                 }
                 Effect::Animate(cue) => {
@@ -103,18 +103,18 @@ mod tests {
 
     struct Fixture {
         runtime: Runtime,
-        audio_rx: Receiver<AudioCmd>,
-        library_rx: Receiver<LibraryCmd>,
-        config_rx: Receiver<ConfigCmd>,
-        macos_rx: Receiver<MacosCmd>,
+        audio_receiver: Receiver<AudioCmd>,
+        library_receiver: Receiver<LibraryCmd>,
+        config_receiver: Receiver<ConfigCmd>,
+        macos_receiver: Receiver<MacosCmd>,
     }
 
     impl Fixture {
         fn new() -> Self {
-            let (audio_tx, audio_rx) = unbounded();
-            let (library_tx, library_rx) = unbounded();
-            let (config_tx, config_rx) = unbounded();
-            let (macos_tx, macos_rx) = unbounded();
+            let (audio_tx, audio_receiver) = unbounded();
+            let (library_tx, library_receiver) = unbounded();
+            let (config_tx, config_receiver) = unbounded();
+            let (macos_tx, macos_receiver) = unbounded();
             let (mut wiring, ..) = Wiring::idle();
             wiring.ports = Ports {
                 audio: Port::new(DriverName::Audio, audio_tx, Congestion::default()),
@@ -129,10 +129,10 @@ mod tests {
             Self {
                 runtime: Runtime::assemble((Model::default(), Vec::new()), wiring)
                     .unwrap(),
-                audio_rx,
-                library_rx,
-                config_rx,
-                macos_rx,
+                audio_receiver,
+                library_receiver,
+                config_receiver,
+                macos_receiver,
             }
         }
     }
@@ -142,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn a_command_to_a_running_driver_is_routed() {
+    fn a_cmd_to_a_running_driver_is_routed() {
         let mut fixture = Fixture::new();
 
         run(
@@ -150,7 +150,7 @@ mod tests {
             &mut fixture.runtime,
         );
 
-        assert_eq!(fixture.audio_rx.try_recv(), Ok(AudioCmd::Stop));
+        assert_eq!(fixture.audio_receiver.try_recv(), Ok(AudioCmd::Stop));
     }
 
     #[test]
@@ -165,11 +165,14 @@ mod tests {
         let answers = run(cmd, &mut fixture.runtime);
 
         assert_eq!(answers, Vec::new());
-        assert_eq!(fixture.audio_rx.try_recv(), Err(TryRecvError::Disconnected));
+        assert_eq!(
+            fixture.audio_receiver.try_recv(),
+            Err(TryRecvError::Disconnected)
+        );
     }
 
     #[test]
-    fn a_command_to_a_dead_driver_is_dropped() {
+    fn a_cmd_to_a_dead_driver_is_dropped() {
         let mut fixture = Fixture::new();
         fixture
             .runtime
@@ -183,13 +186,13 @@ mod tests {
             &mut fixture.runtime,
         );
 
-        assert!(fixture.audio_rx.try_recv().is_err());
+        assert!(fixture.audio_receiver.try_recv().is_err());
     }
 
     #[test]
-    fn a_send_onto_a_lost_inbox_is_dropped() {
+    fn a_send_onto_a_lost_cmd_receiver_is_dropped() {
         let mut fixture = Fixture::new();
-        fixture.audio_rx = never();
+        fixture.audio_receiver = never();
 
         let answers = run(
             Cmd::effect(Effect::Audio(AudioCmd::Stop)),
@@ -202,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn a_macos_command_to_a_stopped_macos_driver_is_dropped() {
+    fn a_macos_cmd_to_a_stopped_macos_driver_is_dropped() {
         let mut fixture = Fixture::new();
         fixture
             .runtime
@@ -218,13 +221,13 @@ mod tests {
             &mut fixture.runtime,
         );
 
-        assert!(fixture.macos_rx.try_recv().is_err());
+        assert!(fixture.macos_receiver.try_recv().is_err());
     }
 
     #[test]
-    fn a_macos_send_onto_a_lost_macos_inbox_is_dropped() {
+    fn a_macos_send_onto_a_lost_macos_cmd_receiver_is_dropped() {
         let mut fixture = Fixture::new();
-        fixture.macos_rx = never();
+        fixture.macos_receiver = never();
 
         let answers = run(
             Cmd::effect(Effect::Macos(MacosCmd::SetVolume(
@@ -239,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn a_library_command_is_routed() {
+    fn a_library_cmd_is_routed() {
         let mut fixture = Fixture::new();
 
         run(
@@ -248,7 +251,7 @@ mod tests {
         );
 
         assert!(matches!(
-            fixture.library_rx.try_recv(),
+            fixture.library_receiver.try_recv(),
             Ok(LibraryCmd::Disk(DiskCmd::LoadFavorites))
         ));
     }
@@ -271,7 +274,7 @@ mod tests {
         run(cmd, &mut fixture.runtime);
 
         assert_eq!(
-            fixture.library_rx.try_iter().collect::<Vec<_>>(),
+            fixture.library_receiver.try_iter().collect::<Vec<_>>(),
             [
                 LibraryCmd::DecodeCover(cover_job()),
                 LibraryCmd::PrefetchCover(cover_job()),
@@ -294,7 +297,7 @@ mod tests {
             &mut fixture.runtime,
         );
 
-        assert!(fixture.library_rx.try_recv().is_err());
+        assert!(fixture.library_receiver.try_recv().is_err());
     }
 
     #[test]
@@ -303,16 +306,16 @@ mod tests {
 
         run(
             Cmd::effect(Effect::Config(ConfigCmd::Save(ConfigPatch {
-                theme: Some(kernel::domain::theme::ThemeName::from_static("dark")),
+                theme_name: Some(kernel::domain::theme::ThemeName::from_static("dark")),
                 ..ConfigPatch::default()
             }))),
             &mut fixture.runtime,
         );
 
         assert!(matches!(
-            fixture.config_rx.try_recv(),
+            fixture.config_receiver.try_recv(),
             Ok(ConfigCmd::Save(patch))
-                if patch.theme.as_ref().map(kernel::domain::theme::ThemeName::as_str) == Some("dark")
+                if patch.theme_name.as_ref().map(kernel::domain::theme::ThemeName::as_str) == Some("dark")
         ));
     }
 
@@ -347,7 +350,7 @@ mod tests {
         );
 
         assert_eq!(fixture.runtime.flow(), ControlFlow::Break(()));
-        assert_eq!(fixture.audio_rx.try_recv(), Ok(AudioCmd::Stop));
+        assert_eq!(fixture.audio_receiver.try_recv(), Ok(AudioCmd::Stop));
     }
 
     #[test]
@@ -384,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn a_setting_effect_reaches_the_config_inbox_as_a_setting_command() {
+    fn a_setting_effect_reaches_the_config_cmd_receiver_as_a_setting_cmd() {
         let mut fixture = Fixture::new();
         let patch = AppearancePatch {
             cover_brackets: Some(CoverBrackets::Hidden),
@@ -397,7 +400,7 @@ mod tests {
         );
 
         assert_eq!(
-            fixture.config_rx.try_recv(),
+            fixture.config_receiver.try_recv(),
             Ok(ConfigCmd::SetAppearance(patch))
         );
         assert_eq!(fixture.runtime.take_shell_effects(), Vec::new());

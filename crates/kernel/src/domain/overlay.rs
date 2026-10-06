@@ -5,10 +5,10 @@ use strum::{EnumDiscriminants, EnumIter, IntoStaticStr};
 use crate::domain::{
     cursor_over::CursorOver,
     index::ViewIndex,
-    playlist::PlaylistNameError,
+    playlist::PlaylistFileNameError,
     setting_row::SettingRow,
     time::TimecodeError,
-    track::{Track, TrackRef},
+    track::{Track, TrackSource},
 };
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr, EnumDiscriminants)]
@@ -21,10 +21,10 @@ use crate::domain::{
 pub enum Overlay {
     Help,
     Search(CursorOver<SearchQuery>),
-    SavePlaylist(TextEntry<PlaylistNameError>),
+    SavePlaylist(TextEntry<PlaylistFileNameError>),
     History(CursorOver<()>),
     Settings(SettingRow),
-    ConfirmDelete(DeleteCandidate),
+    ConfirmTrash(TrashCandidate),
     JumpToTime(TextEntry<TimecodeError>),
     TrackDetails(Arc<Track>),
     MusicDir(TextEntry<MusicDirError>),
@@ -40,7 +40,7 @@ impl Overlay {
             Overlay::Help
             | Overlay::History(_)
             | Overlay::Settings(..)
-            | Overlay::ConfirmDelete(_)
+            | Overlay::ConfirmTrash(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_) => false,
         }
@@ -69,7 +69,7 @@ pub trait Accepts {
     fn accepts(character: char) -> bool;
 }
 
-impl Accepts for PlaylistNameError {
+impl Accepts for PlaylistFileNameError {
     const MAX_LEN: usize = usize::MAX;
 
     fn accepts(_character: char) -> bool {
@@ -98,8 +98,8 @@ pub struct SearchQuery {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeleteCandidate {
-    pub source: TrackRef,
+pub struct TrashCandidate {
+    pub source: TrackSource,
     pub title: String,
     pub artist: String,
 }

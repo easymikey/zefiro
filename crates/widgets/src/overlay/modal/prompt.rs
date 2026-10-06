@@ -18,7 +18,7 @@ use crate::{
     primitive::{
         canvas::Canvas,
         span::{line, text},
-        text::truncate,
+        truncate::truncate,
     },
     theme::active_theme::ActiveTheme,
 };
@@ -96,7 +96,7 @@ impl PromptWidget<'_> {
                 content_width: self
                     .min_width
                     .max(u16::try_from(widest).map_or(self.min_width, Cells)),
-                content_lines: Cells(1 + u16::from(self.error.is_some())),
+                content_rows: Cells(1 + u16::from(self.error.is_some())),
             },
             hint: Some(line([text(self.hint).fg(colors.muted_foreground)])),
             border: colors.muted_foreground,
@@ -105,7 +105,7 @@ impl PromptWidget<'_> {
     }
 
     fn lines(&self, width: usize) -> Vec<Line<'static>> {
-        let mut lines = vec![self.body.line(width, self.theme.colors().text)];
+        let mut lines = vec![self.body.line(width, self.theme.colors().foreground)];
         if let Some(error) = self.error {
             lines.push(line([text(
                 truncate(&error.to_string(), width).into_owned(),

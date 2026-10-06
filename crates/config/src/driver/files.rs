@@ -5,10 +5,10 @@ use kernel::domain::{
     io_error::IoError,
 };
 
-pub(crate) fn unreadable(name: ConfigName, error: &io::Error) -> ConfigError {
+pub(crate) fn read_error(name: ConfigName, error: &io::Error) -> ConfigError {
     ConfigError::Read {
         name,
-        source: IoError::from(error.kind()),
+        error: IoError::from(error.kind()),
     }
 }
 
@@ -29,8 +29,8 @@ pub(crate) fn read_if_present(path: &Path) -> io::Result<Option<String>> {
     }
 }
 
-fn write_atomic(parent: &Path, path: &Path, contents: &[u8]) -> io::Result<()> {
-    let mut staging = tempfile::NamedTempFile::new_in(parent)?;
+fn write_atomic(parent_dir: &Path, path: &Path, contents: &[u8]) -> io::Result<()> {
+    let mut staging = tempfile::NamedTempFile::new_in(parent_dir)?;
     staging.write_all(contents)?;
     staging.as_file().sync_all()?;
     staging.persist(path).map_err(|error| error.error)?;

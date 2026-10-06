@@ -22,7 +22,11 @@ use toml_edit::{Array, DocumentMut, Item, Table, value};
 
 use crate::error::Error;
 
-type TomlEdit = (&'static str, &'static str, Option<Item>);
+struct FieldEdit {
+    table: &'static str,
+    key: &'static str,
+    item: Option<Item>,
+}
 
 fn ensure_table<'doc>(
     doc: &'doc mut DocumentMut,
@@ -36,11 +40,11 @@ fn ensure_table<'doc>(
 
 fn write_edits<const N: usize>(
     doc: &mut DocumentMut,
-    fields: [TomlEdit; N],
+    field_edits: [FieldEdit; N],
 ) -> Result<(), Error> {
-    fields
+    field_edits
         .into_iter()
-        .filter_map(|(table, key, item)| item.map(|item| (table, key, item)))
+        .filter_map(|edit| edit.item.map(|item| (edit.table, edit.key, item)))
         .try_for_each(|(table, key, item)| {
             let target = if table.is_empty() {
                 doc.as_table_mut()
@@ -69,38 +73,47 @@ fn patch_appearance(
     write_edits(
         doc,
         [
-            ("cover", "mode", cover_mode.map(|s| value(s.to_string()))),
-            (
-                "cover",
-                "brackets",
-                cover_brackets.map(|b| value(matches!(b, CoverBrackets::Shown))),
-            ),
-            (
-                "card",
-                "format_chips",
-                format_chips.map(|c| value(matches!(c, FormatChips::Shown))),
-            ),
-            (
-                "card",
-                "speed_chip",
-                speed_chip.map(|s| value(s.to_string())),
-            ),
-            (
-                "progress",
-                "remaining",
-                progress_time.map(|t| value(matches!(t, ProgressTime::Remaining))),
-            ),
-            (
-                "window",
-                "key_hints",
-                key_hints.map(|h| value(matches!(h, KeyHints::Shown))),
-            ),
-            (
-                "window",
-                "animations",
-                animations.map(|a| value(matches!(a, Animations::On))),
-            ),
-            ("layout", "mode", layout_mode.map(|m| value(m.to_string()))),
+            FieldEdit {
+                table: "cover",
+                key: "mode",
+                item: cover_mode.map(|s| value(s.to_string())),
+            },
+            FieldEdit {
+                table: "cover",
+                key: "brackets",
+                item: cover_brackets.map(|b| value(matches!(b, CoverBrackets::Shown))),
+            },
+            FieldEdit {
+                table: "card",
+                key: "format_chips",
+                item: format_chips.map(|c| value(matches!(c, FormatChips::Shown))),
+            },
+            FieldEdit {
+                table: "card",
+                key: "speed_chip",
+                item: speed_chip.map(|s| value(s.to_string())),
+            },
+            FieldEdit {
+                table: "progress",
+                key: "remaining",
+                item: progress_time
+                    .map(|t| value(matches!(t, ProgressTime::Remaining))),
+            },
+            FieldEdit {
+                table: "window",
+                key: "key_hints",
+                item: key_hints.map(|h| value(matches!(h, KeyHints::Shown))),
+            },
+            FieldEdit {
+                table: "window",
+                key: "animations",
+                item: animations.map(|a| value(matches!(a, Animations::On))),
+            },
+            FieldEdit {
+                table: "layout",
+                key: "mode",
+                item: layout_mode.map(|m| value(m.to_string())),
+            },
         ],
     )
 }
@@ -123,35 +136,14 @@ fn format_crossfade(crossfade: Crossfade) -> String {
     }
 }
 
-fn to_minutes(duration: Duration) -> i64 {
+fn minutes(duration: Duration) -> i64 {
     i64::try_from(duration.as_secs() / SECONDS_PER_MINUTE).unwrap_or(i64::MAX)
 }
 
-fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> {
-    let ConfigPatch {
-        crossfade,
-        device,
-        replay_gain,
-        theme,
-        volume,
-        sleep_presets,
-        music_dir,
-    } = patch;
-    write_edits(
-        doc,
-        [
-            (
-                "audio",
-                "crossfade",
-                crossfade.map(|c| value(format_crossfade(c))),
-            ),
-            (
-                "audio",
-                "replay_gain",
-                replay_gain.map(|r| value(matches!(r, ReplayGain::On))),
-            ),
-        ],
-    )?;
+fn write_device(
+    doc: &mut DocumentMut,
+    device: Option<OutputDevice>,
+) -> Result<(), Error> {
     match device {
         None => {}
         Some(OutputDevice::Named(name)) => {
@@ -161,30 +153,67 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> 
             ensure_table(doc, "audio")?.remove("device");
         }
     }
+    Ok(())
+}
+
+fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> {
+    let ConfigPatch {
+        crossfade,
+        device,
+        replay_gain,
+        theme_name,
+        volume,
+        sleep_presets,
+        music_dir,
+    } = patch;
     write_edits(
         doc,
         [
-            (
-                "audio",
-                "sleep_presets",
-                sleep_presets.map(|presets| {
+            FieldEdit {
+                table: "audio",
+                key: "crossfade",
+                item: crossfade.map(|c| value(format_crossfade(c))),
+            },
+            FieldEdit {
+                table: "audio",
+                key: "replay_gain",
+                item: replay_gain.map(|r| value(matches!(r, ReplayGain::On))),
+            },
+        ],
+    )?;
+    write_device(doc, device)?;
+    write_edits(
+        doc,
+        [
+            FieldEdit {
+                table: "audio",
+                key: "sleep_presets",
+                item: sleep_presets.map(|presets| {
                     value(
                         presets
                             .as_slice()
                             .iter()
                             .copied()
-                            .map(to_minutes)
+                            .map(minutes)
                             .collect::<Array>(),
                     )
                 }),
-            ),
-            ("", "theme", theme.map(|t| value(ThemeName::as_str(&t)))),
-            ("", "volume", volume.map(|v| value(i64::from(v.get())))),
-            (
-                "",
-                "music_dir",
-                music_dir.map(|dir| value(dir.to_string_lossy().into_owned())),
-            ),
+            },
+            FieldEdit {
+                table: "",
+                key: "theme",
+                item: theme_name.map(|t| value(ThemeName::as_str(&t))),
+            },
+            FieldEdit {
+                table: "",
+                key: "volume",
+                item: volume.map(|v| value(i64::from(v.get()))),
+            },
+            FieldEdit {
+                table: "",
+                key: "music_dir",
+                item: music_dir.map(|dir| value(dir.to_string_lossy().into_owned())),
+            },
         ],
     )
 }
@@ -220,7 +249,7 @@ mod tests {
                 FORMAT_CHIPS,
                 KEY_HINTS,
                 LAYOUT_MODES,
-                PROGRESS_STYLES,
+                PROGRESS_TIMES,
                 SPEED_CHIPS,
             },
             bounded::Bounded,
@@ -249,9 +278,9 @@ mod tests {
         error::Error,
         patch::{
             format_crossfade,
+            minutes,
             patched_appearance_text,
             patched_config_text,
-            to_minutes,
         },
     };
 
@@ -349,14 +378,14 @@ mod tests {
     #[case::layout_mode("layout_mode", AppearanceField::LayoutMode, 2)]
     fn an_effect_lands_in_the_file_it_belongs_to(
         #[case] name: &str,
-        #[case] id: AppearanceField,
-        #[case] position: usize,
+        #[case] field: AppearanceField,
+        #[case] option_index: usize,
     ) {
-        let option = OptionCount::new(position + 1)
-            .and_then(|count| count.index(position))
+        let option = OptionCount::new(option_index + 1)
+            .and_then(|count| count.index(option_index))
             .unwrap();
         let patch =
-            kernel::domain::appearance_rows::appearance_patch(id, option).unwrap();
+            kernel::domain::appearance_rows::appearance_patch(field, option).unwrap();
         let written = patched_appearance_text("", patch).unwrap();
 
         insta::with_settings!({ snapshot_suffix => name }, {
@@ -386,7 +415,7 @@ mod tests {
             option_of(select(COVER_BRACKETS.to_vec())),
             option_of(select(FORMAT_CHIPS.to_vec())),
             option_of(select(SPEED_CHIPS.to_vec())),
-            option_of(select(PROGRESS_STYLES.to_vec())),
+            option_of(select(PROGRESS_TIMES.to_vec())),
             option_of(select(KEY_HINTS.to_vec())),
             option_of(select(ANIMATIONS.to_vec())),
             option_of(select(LAYOUT_MODES.to_vec())),
@@ -430,9 +459,9 @@ mod tests {
             text in base_appearance_texts(),
             patch in appearance_patch(),
         ) {
-            let base = parse_appearance(text).unwrap().settings();
+            let base = parse_appearance(text).unwrap().to_appearance_settings();
             let written = patched_appearance_text(text, patch).unwrap();
-            let parsed = parse_appearance(&written).unwrap().settings();
+            let parsed = parse_appearance(&written).unwrap().to_appearance_settings();
 
             prop_assert_eq!(parsed.cover_mode, patch.cover_mode.unwrap_or(base.cover_mode));
             prop_assert_eq!(
@@ -475,7 +504,7 @@ mod tests {
             device: Some(OutputDevice::Named(
                 DeviceName::new("Speakers".to_string()).unwrap(),
             )),
-            theme: Some(ThemeName::from_static("oreo")),
+            theme_name: Some(ThemeName::from_static("oreo")),
             volume: Some(Percent::clamped(80)),
             sleep_presets: Some(SleepPresets::from_minutes(&[10, 20]).unwrap()),
             music_dir: Some("/new/music".into()),
@@ -495,7 +524,7 @@ mod tests {
         "",
         ConfigPatch {
             crossfade: Some(crossfade_seconds(3)),
-            theme: Some(ThemeName::from_static("dark")),
+            theme_name: Some(ThemeName::from_static("dark")),
             ..ConfigPatch::default()
         }
     )]
@@ -541,8 +570,11 @@ mod tests {
     #[rstest]
     #[case(90, 1)]
     #[case(15 * 60, 15)]
-    fn to_minutes_drops_sub_minute_remainder(#[case] secs: u64, #[case] minutes: i64) {
-        assert_eq!(to_minutes(Duration::from_secs(secs)), minutes);
+    fn minutes_drops_sub_minute_remainder(
+        #[case] secs: u64,
+        #[case] whole_minutes: i64,
+    ) {
+        assert_eq!(minutes(Duration::from_secs(secs)), whole_minutes);
     }
 
     #[test]
@@ -611,7 +643,7 @@ mod tests {
                         crossfade,
                         device,
                         replay_gain,
-                        theme,
+                        theme_name: theme,
                         volume,
                         sleep_presets,
                         music_dir,
@@ -643,8 +675,8 @@ mod tests {
     patch.device.unwrap_or(base.audio.device)
                 );
                 prop_assert_eq!(
-                    parsed.theme,
-                    patch.theme.map_or(base.theme, ThemeChoice::Named)
+                    parsed.theme_choice,
+                    patch.theme_name.map_or(base.theme_choice, ThemeChoice::Named)
                 );
                 prop_assert_eq!(parsed.volume, patch.volume.unwrap_or(base.volume));
                 prop_assert_eq!(

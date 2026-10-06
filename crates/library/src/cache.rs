@@ -34,7 +34,7 @@ struct TagsRecord {
     album_artist: Option<String>,
     date: Option<String>,
     genre: Option<String>,
-    track: Option<u32>,
+    track_number: Option<u32>,
     track_total: Option<u32>,
     disc: Option<u32>,
     composer: Option<String>,
@@ -53,7 +53,7 @@ struct AudioFormatRecord {
     bits_per_sample: Option<u8>,
     channels: Option<u8>,
     #[serde(with = "decibels_record")]
-    replay_gain: Option<Decibels>,
+    decibels: Option<Decibels>,
 }
 
 mod decibels_record {
@@ -61,10 +61,11 @@ mod decibels_record {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub(crate) fn serialize<G: std::borrow::Borrow<Option<Decibels>>, S: Serializer>(
-        gain: &G,
+        decibels: &G,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
-        gain.borrow()
+        decibels
+            .borrow()
             .map(|decibels| decibels.0)
             .serialize(serializer)
     }
@@ -72,7 +73,7 @@ mod decibels_record {
     pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Decibels>, D::Error> {
-        Option::<f32>::deserialize(deserializer).map(|gain| gain.map(Decibels))
+        Option::<f32>::deserialize(deserializer).map(|decibels| decibels.map(Decibels))
     }
 }
 
@@ -221,18 +222,18 @@ pub(crate) fn save(
     music_dir: &Path,
     tracks: &[Arc<Track>],
 ) -> Result<(), Error> {
-    let read: Vec<&Track> = tracks
+    let tagged_tracks: Vec<&Track> = tracks
         .iter()
         .map(Arc::as_ref)
-        .filter(|track| matches!(track.tagging(), Tagging::Read(_)))
+        .filter(|track| matches!(track.tagging(), Tagging::Tagged(_)))
         .collect();
-    if read.is_empty() {
+    if tagged_tracks.is_empty() {
         return Ok(());
     }
     let cache_path = cache_file(dirs);
     crate::files::create_parent_dir(&cache_path)
         .map_err(Error::io(LibrarySubject::Cache, &dirs.cache_dir))?;
-    let mut bytes = encode(&read, &cache_path)?;
+    let mut bytes = encode(&tagged_tracks, &cache_path)?;
     bytes.extend_from_slice(music_dir.to_string_lossy().as_bytes());
     crate::files::write_atomic(&cache_path, &bytes)
         .map_err(Error::io(LibrarySubject::Cache, &cache_path))
@@ -319,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn save_skips_tracks_that_were_only_listed_not_read() {
+    fn save_skips_tracks_that_were_only_listed_not_tagged() {
         let directory = tempfile::tempdir().unwrap();
         let dirs = LibraryDirs {
             cache_dir: directory.path().join("cache"),

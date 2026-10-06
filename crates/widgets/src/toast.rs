@@ -8,7 +8,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    primitive::{canvas::Canvas, inset::Inset, text::truncate},
+    primitive::{canvas::Canvas, inset::Inset, truncate::truncate},
     screen::breakpoint::Breakpoint,
     theme::active_theme::ActiveTheme,
 };
@@ -29,15 +29,15 @@ const CARD_INSET: Inset = Inset {
 };
 
 #[must_use]
-pub(crate) fn accent(theme: &ActiveTheme<'_>, kind: ToastLevel) -> Color {
-    match kind {
-        ToastLevel::Info => theme.colors().accent,
-        ToastLevel::Error => theme.alert(),
+pub(crate) fn accent(active_theme: &ActiveTheme<'_>, level: ToastLevel) -> Color {
+    match level {
+        ToastLevel::Info => active_theme.colors().accent,
+        ToastLevel::Error => active_theme.alert(),
     }
 }
 
-fn icon(kind: ToastLevel) -> &'static str {
-    match kind {
+fn icon(level: ToastLevel) -> &'static str {
+    match level {
         ToastLevel::Info => "i",
         ToastLevel::Error => "\u{2717}",
     }
@@ -46,7 +46,7 @@ fn icon(kind: ToastLevel) -> &'static str {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ToastWidget<'a> {
     toasts: &'a [Toast],
-    theme: ActiveTheme<'a>,
+    active_theme: ActiveTheme<'a>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,7 +72,7 @@ impl Form {
     }
 }
 
-struct Placed<'a> {
+struct PlacedToast<'a> {
     toast: &'a Toast,
     rect: Rect,
     lines: Vec<String>,
@@ -116,8 +116,8 @@ fn fitted(text: &str, width: usize, rows: usize) -> Vec<String> {
         .collect()
 }
 
-fn title_line(toast: &Toast, room: usize) -> String {
-    let line = format!("{} {}", icon(toast.kind), toast.title);
+fn title_text(toast: &Toast, room: usize) -> String {
+    let line = format!("{} {}", icon(toast.level), toast.title);
     truncate(&line, room).into_owned()
 }
 
@@ -126,24 +126,24 @@ impl<'a> ToastWidget<'a> {
     pub(crate) fn new(toasts: &'a [Toast], active_theme: ActiveTheme<'a>) -> Self {
         Self {
             toasts,
-            theme: active_theme,
+            active_theme,
         }
     }
 
-    fn placed(&self, screen: Rect, form: Form) -> Vec<Placed<'a>> {
+    fn placed(&self, screen: Rect, form: Form) -> Vec<PlacedToast<'a>> {
         match form {
             Form::Stack => self.stacked(screen),
             Form::Line => self.line(screen),
         }
     }
 
-    fn line(&self, screen: Rect) -> Vec<Placed<'a>> {
+    fn line(&self, screen: Rect) -> Vec<PlacedToast<'a>> {
         self.toasts
             .first()
             .map(|toast| {
-                let title = title_line(toast, usize::from(screen.width));
+                let title = title_text(toast, usize::from(screen.width));
                 let width = u16::try_from(title.width()).unwrap_or(screen.width);
-                Placed {
+                PlacedToast {
                     toast,
                     rect: Rect {
                         x: screen.right().saturating_sub(width),
@@ -158,7 +158,7 @@ impl<'a> ToastWidget<'a> {
             .collect()
     }
 
-    fn stacked(&self, screen: Rect) -> Vec<Placed<'a>> {
+    fn stacked(&self, screen: Rect) -> Vec<PlacedToast<'a>> {
         let width = TOAST_WIDTH.min(screen.width.saturating_sub(INSET_CELLS * 2));
         let Some(room) = width.checked_sub(CHROME_CELLS).filter(|room| *room > 0)
         else {
@@ -178,10 +178,10 @@ impl<'a> ToastWidget<'a> {
                 (top.saturating_add(height) <= screen.bottom()).then(|| {
                     let rect = Rect::new(x, *top, width, height);
                     *top = top.saturating_add(height + GAP);
-                    Placed {
+                    PlacedToast {
                         toast,
                         rect,
-                        lines: std::iter::once(title_line(toast, usize::from(room)))
+                        lines: std::iter::once(title_text(toast, usize::from(room)))
                             .chain(text)
                             .collect(),
                     }
@@ -205,19 +205,19 @@ impl<'a> ToastWidget<'a> {
         }
     }
 
-    fn paint_toast(&self, placed: &Placed<'_>, buffer: &mut Buffer) {
-        let accent = accent(&self.theme, placed.toast.kind);
-        let colors = self.theme.colors();
-        let rect = placed.rect;
+    fn paint_toast(&self, placed_toast: &PlacedToast<'_>, buffer: &mut Buffer) {
+        let accent = accent(&self.active_theme, placed_toast.toast.level);
+        let colors = self.active_theme.colors();
+        let rect = placed_toast.rect;
         Clear.render(rect, buffer);
         Block::new()
             .style(
                 Style::default()
                     .bg(colors.window_background)
-                    .fg(colors.text),
+                    .fg(colors.foreground),
             )
             .render(rect, buffer);
-        let (title_text, body_lines) = placed
+        let (title_text, body_lines) = placed_toast
             .lines
             .split_first()
             .map_or(("", &[][..]), |(title, rest)| (title.as_str(), rest));
@@ -242,7 +242,7 @@ impl<'a> ToastWidget<'a> {
             ..inner
         };
         Paragraph::new(body)
-            .style(Style::default().fg(colors.text))
+            .style(Style::default().fg(colors.foreground))
             .render(below, buffer);
     }
 }
@@ -267,14 +267,14 @@ mod tests {
         toast::{ToastWidget, accent, icon},
     };
 
-    fn toaster<'a>(toasts: &'a [Toast], theme: &'a Theme) -> ToastWidget<'a> {
+    fn toast_widget<'a>(toasts: &'a [Toast], theme: &'a Theme) -> ToastWidget<'a> {
         ToastWidget::new(toasts, ActiveTheme::new(theme, ColorDepth::TrueColor))
     }
 
     fn painted(toasts: &[Toast], size: (u16, u16)) -> String {
         let theme = noir();
         rendered(size.0, size.1, |frame| {
-            frame.render_widget(toaster(toasts, &theme), frame.area());
+            frame.render_widget(toast_widget(toasts, &theme), frame.area());
         })
         .to_string()
     }
@@ -298,12 +298,12 @@ mod tests {
     }
 
     #[test]
-    fn each_kind_has_its_own_accent_and_icon() {
+    fn each_level_has_its_own_accent_and_icon() {
         let theme = noir();
-        let theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         assert_ne!(
-            accent(&theme, ToastLevel::Info),
-            accent(&theme, ToastLevel::Error)
+            accent(&active_theme, ToastLevel::Info),
+            accent(&active_theme, ToastLevel::Error)
         );
         assert_ne!(icon(ToastLevel::Info), icon(ToastLevel::Error));
     }
@@ -312,7 +312,7 @@ mod tests {
     fn a_minimal_screen_gets_one_plain_line_for_the_newest() {
         let toasts = [Toast::info("new"), Toast::info("old")];
         let theme = noir();
-        let area = toaster(&toasts, &theme)
+        let area = toast_widget(&toasts, &theme)
             .area(Rect::new(0, 0, 30, 6), Breakpoint::Minimal)
             .unwrap();
         assert_eq!((area.y, area.height), (0, 1));

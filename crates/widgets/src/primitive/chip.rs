@@ -14,7 +14,7 @@ pub(crate) fn spans(label: &str, colors: &Colors<Color>) -> Vec<Span<'static>> {
         text(format!("{}{}", glyphs::chip::OPEN, glyphs::chip::PAD))
             .fg(colors.muted_foreground)
             .into(),
-        text(label.to_uppercase()).fg(colors.text).into(),
+        text(label.to_uppercase()).fg(colors.foreground).into(),
         text(format!("{}{}", glyphs::chip::PAD, glyphs::chip::CLOSE))
             .fg(colors.muted_foreground)
             .into(),
@@ -34,8 +34,8 @@ pub(crate) fn width(label: &str) -> Cells {
     Cells(small_count_u16(cells))
 }
 
-fn speed_chip_text(speed: Speed, mode: SpeedChip) -> Option<String> {
-    let label = match mode {
+fn speed_chip_text(speed: Speed, speed_chip: SpeedChip) -> Option<String> {
+    let label = match speed_chip {
         SpeedChip::Never => None,
         SpeedChip::Changed => (speed != Speed::default()).then(|| speed.to_string()),
         SpeedChip::Always => Some(speed.to_string()),
@@ -44,8 +44,8 @@ fn speed_chip_text(speed: Speed, mode: SpeedChip) -> Option<String> {
 }
 
 #[must_use]
-pub(crate) fn speed_chip_width(speed: Speed, mode: SpeedChip) -> Cells {
-    let Some(label) = speed_chip_text(speed, mode) else {
+pub(crate) fn speed_chip_width(speed: Speed, speed_chip: SpeedChip) -> Cells {
+    let Some(label) = speed_chip_text(speed, speed_chip) else {
         return Cells(0);
     };
     let width = glyphs::speed_chip::GAP.width()
@@ -57,10 +57,10 @@ pub(crate) fn speed_chip_width(speed: Speed, mode: SpeedChip) -> Cells {
 #[must_use]
 pub(crate) fn speed_chip_spans(
     speed: Speed,
-    mode: SpeedChip,
+    speed_chip: SpeedChip,
     colors: &Colors<Color>,
 ) -> Vec<Span<'static>> {
-    let Some(label) = speed_chip_text(speed, mode) else {
+    let Some(label) = speed_chip_text(speed, speed_chip) else {
         return Vec::new();
     };
     vec![
@@ -109,10 +109,10 @@ mod tests {
     #[case::never_after_a_change(Speed::clamped(1.25), SpeedChip::Never, None)]
     fn the_speed_chip_reads_its_mode(
         #[case] speed: Speed,
-        #[case] mode: SpeedChip,
+        #[case] speed_chip: SpeedChip,
         #[case] expected: Option<&str>,
     ) {
-        let spans = speed_chip_spans(speed, mode, &colors());
+        let spans = speed_chip_spans(speed, speed_chip, &colors());
         let text = (!spans.is_empty()).then(|| {
             spans
                 .iter()
@@ -123,7 +123,7 @@ mod tests {
 
         let rendered: usize = spans.iter().map(|span| span.content.width()).sum();
         assert_eq!(
-            speed_chip_width(speed, mode).count(),
+            speed_chip_width(speed, speed_chip).count(),
             rendered,
             "the reserved width must match what is painted"
         );
@@ -153,7 +153,7 @@ mod tests {
     fn joined_generic(text: &str) -> String {
         let colors = Colors {
             muted_foreground: Color::White,
-            text: Color::Red,
+            foreground: Color::Red,
             ..Colors::default()
         };
         spans(text, &colors)

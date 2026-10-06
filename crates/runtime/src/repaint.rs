@@ -15,8 +15,8 @@ pub(crate) enum RepaintCause {
     Event,
 }
 
-pub(crate) fn repaint_after(current: Repaint, source: RepaintCause) -> Repaint {
-    match (current, source) {
+pub(crate) fn repaint_after(current: Repaint, cause: RepaintCause) -> Repaint {
+    match (current, cause) {
         (_, RepaintCause::Input) | (Repaint::Now, RepaintCause::Event) => Repaint::Now,
         (Repaint::Settled | Repaint::NextFrame, RepaintCause::Event) => {
             Repaint::NextFrame
@@ -46,9 +46,9 @@ mod tests {
     )]
     fn repaint_after_escalates_by_source_and_current(
         #[case] current: Repaint,
-        #[case] source: RepaintCause,
+        #[case] cause: RepaintCause,
         #[case] expected: Repaint,
     ) {
-        assert_eq!(repaint_after(current, source), expected);
+        assert_eq!(repaint_after(current, cause), expected);
     }
 }

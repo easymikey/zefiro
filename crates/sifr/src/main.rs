@@ -50,12 +50,12 @@ fn run_shell(
     terminal::session::install_panic_hook();
     let mut session = TerminalSession::enter()?;
     let environment = TerminalEnvironment::current();
-    let app = TerminalApp::detect(&environment);
+    let app = TerminalApp::from_environment(&environment);
     let (input_sender, input_receiver) = bounded(256);
     let environment_capabilities = Capabilities::from_environment(&environment);
-    let detected = probed(app, environment_capabilities, &input_sender)?;
+    let capabilities = queried(app, environment_capabilities, &input_sender)?;
     let signal_thread = termination::install(input_sender.clone())?;
-    let mut painter = Painter::new(session.terminal_mut(), theme, detected)
+    let mut painter = Painter::new(session.terminal_mut(), theme, capabilities)
         .with_appearance(appearance);
     shell::input::spawn_input(input_sender);
 
@@ -66,7 +66,7 @@ fn run_shell(
     with_thread_failures(merge_exit_errors(run_result, teardown))
 }
 
-fn probed(
+fn queried(
     app: TerminalApp,
     capabilities: Capabilities,
     input_sender: &Sender<ShellInput>,
@@ -110,6 +110,9 @@ fn merge_exit_errors(
             Err(terminal::error::Error::Teardown(teardown_error).into())
         }
         (Err(run_error), Ok(())) => Err(run_error.into()),
-        (Err(run), Err(teardown)) => Err(Error::RunAndTeardown { run, teardown }),
+        (Err(run_error), Err(teardown_error)) => Err(Error::RunAndTeardown {
+            run_error,
+            teardown_error,
+        }),
     }
 }

@@ -7,7 +7,7 @@ TomlSettings {
     music_dir: Some(
         "/music",
     ),
-    theme: Named(
+    theme_choice: Named(
         ThemeName(
             "noir",
         ),

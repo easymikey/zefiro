@@ -30,9 +30,9 @@ use crate::{
         canvas::Canvas,
         glyphs,
         list_chrome::{ScrollAreas, Scrollbar, paint_scrollbar, scroll_offset},
-        relative_time::relative_time,
         span::{line, text},
-        text::truncate,
+        time_text::relative_time_text,
+        truncate::truncate,
     },
     theme::{active_theme::ActiveTheme, colors::Colors},
 };
@@ -57,7 +57,7 @@ impl<'a> HistoryWidget<'a> {
             entries,
             now: Moment::default(),
             selected: RowIndex::new(0),
-            container: ModalContainer::Modal(&[]),
+            container: ModalContainer::Floating(&[]),
         }
     }
 
@@ -140,28 +140,31 @@ impl HistoryWidget<'_> {
         }
     }
 
-    fn paint_rows(&self, rows: LabeledRows<'_>, buffer: &mut Buffer) {
-        let LabeledRows { areas, labels } = rows;
+    fn paint_rows(&self, labeled_rows: LabeledRows<'_>, buffer: &mut Buffer) {
+        let LabeledRows { areas, labels } = labeled_rows;
         let colors = self.theme.colors();
         let table_area = areas.rows;
         let lead = leading_cells(&areas).0;
-        let total = self.entries.len();
+        let entries_len = self.entries.len();
         let height = usize::from(table_area.height);
         let columns = HistoryColumns::for_width(column_width(&areas), COLUMN_SPACING);
-        let offset = scroll_offset(self.selected.get(), total, height);
+        let offset = scroll_offset(self.selected, entries_len, height);
         let table = Table::new(
-            self.entries.iter().zip(labels).map(|(played, label)| {
-                entry_row(
-                    &EntryRow {
-                        played,
-                        label,
-                        columns,
-                        lead,
-                    },
-                    colors,
-                    self.now,
-                )
-            }),
+            self.entries
+                .iter()
+                .zip(labels)
+                .map(|(history_entry, label)| {
+                    entry_row(
+                        &EntryRow {
+                            history_entry,
+                            label,
+                            columns,
+                            lead,
+                        },
+                        colors,
+                        self.now,
+                    )
+                }),
             columns.constraints(),
         )
         .column_spacing(columns.spacing)
@@ -170,15 +173,15 @@ impl HistoryWidget<'_> {
                 .fg(colors.selection_foreground)
                 .bg(colors.selection_background),
         );
-        let mut table_rows = TableState::new()
+        let mut table_state = TableState::new()
             .with_offset(offset)
             .with_selected(Some(self.selected.get()));
-        StatefulWidget::render(table, table_area, buffer, &mut table_rows);
+        StatefulWidget::render(table, table_area, buffer, &mut table_state);
 
         paint_scrollbar(
             areas.scrollbar,
             Scrollbar {
-                total,
+                total: entries_len,
                 offset,
                 viewport: height,
                 thumb: colors.muted_foreground,
@@ -204,18 +207,18 @@ fn track_count_text(tracks: usize) -> String {
     format!("{tracks} {noun}")
 }
 
-fn played_label(played: &HistoryEntry) -> String {
-    played
+fn played_label(history_entry: &HistoryEntry) -> String {
+    history_entry
         .artist
         .as_deref()
         .filter(|artist| !artist.is_empty())
         .map_or_else(
-            || played.title.clone(),
+            || history_entry.title.clone(),
             |artist| {
                 format!(
                     "{artist}{}{}",
                     glyphs::history::LABEL_SEPARATOR,
-                    played.title
+                    history_entry.title
                 )
             },
         )
@@ -225,25 +228,25 @@ const WHEN_COLUMN_CELLS: Cells = Cells(8);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct HistoryMeasures {
-    label: Cells,
+    label_width: Cells,
 }
 
 impl HistoryMeasures {
     fn of(labels: &[String]) -> Self {
         let widest = labels.iter().map(|label| label.width()).max().unwrap_or(0);
         Self {
-            label: Cells(small_count_u16(widest)),
+            label_width: Cells(small_count_u16(widest)),
         }
     }
 
     fn natural_width(self, spacing: u16) -> Cells {
-        if self.label == Cells(0) {
+        if self.label_width == Cells(0) {
             let placeholder = glyphs::history::EMPTY_PLACEHOLDER.width();
             return Cells(small_count_u16(placeholder));
         }
         HistoryColumns {
-            label: self.label,
-            when: WHEN_COLUMN_CELLS,
+            label_width: self.label_width,
+            when_width: WHEN_COLUMN_CELLS,
             spacing,
         }
         .total()
@@ -252,8 +255,8 @@ impl HistoryMeasures {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct HistoryColumns {
-    label: Cells,
-    when: Cells,
+    label_width: Cells,
+    when_width: Cells,
     spacing: u16,
 }
 
@@ -261,25 +264,25 @@ impl HistoryColumns {
     fn for_width(width: Cells, spacing: u16) -> Self {
         let when = WHEN_COLUMN_CELLS;
         Self {
-            label: Cells(width.0.saturating_sub(when.0.saturating_add(spacing))),
-            when,
+            label_width: Cells(width.0.saturating_sub(when.0.saturating_add(spacing))),
+            when_width: when,
             spacing,
         }
     }
 
     fn total(self) -> Cells {
         Cells(
-            self.label
+            self.label_width
                 .0
-                .saturating_add(self.when.0)
+                .saturating_add(self.when_width.0)
                 .saturating_add(self.spacing),
         )
     }
 
     fn constraints(self) -> [Constraint; 2] {
         [
-            Constraint::Length(self.label.0),
-            Constraint::Length(self.when.0),
+            Constraint::Length(self.label_width.0),
+            Constraint::Length(self.when_width.0),
         ]
     }
 }
@@ -291,32 +294,39 @@ struct LabeledRows<'a> {
 }
 
 struct EntryRow<'a> {
-    played: &'a HistoryEntry,
+    history_entry: &'a HistoryEntry,
     label: &'a str,
     columns: HistoryColumns,
     lead: u16,
 }
 
-fn when_label(played: &HistoryEntry, now: Moment) -> String {
-    relative_time(now, played.at)
+fn when_label(history_entry: &HistoryEntry, now: Moment) -> String {
+    relative_time_text(now, history_entry.played_at)
 }
 
-fn entry_row(row: &EntryRow<'_>, colors: Colors<Color>, now: Moment) -> Row<'static> {
-    let [label, when] = entry_cells(row, now);
+fn entry_row(
+    entry_row: &EntryRow<'_>,
+    colors: Colors<Color>,
+    now: Moment,
+) -> Row<'static> {
+    let [label, when] = entry_cells(entry_row, now);
     Row::new(vec![
-        Line::from(label).style(Style::default().fg(colors.text)),
+        Line::from(label).style(Style::default().fg(colors.foreground)),
         Line::from(when)
             .right_aligned()
             .style(Style::default().fg(colors.muted_foreground)),
     ])
 }
 
-fn entry_cells(row: &EntryRow<'_>, now: Moment) -> [String; 2] {
-    let columns = row.columns;
+fn entry_cells(entry_row: &EntryRow<'_>, now: Moment) -> [String; 2] {
+    let columns = entry_row.columns;
     let cell = |value: &str, width: Cells| truncate(value, width.count()).into_owned();
     [
-        indented(row.label, Cells(row.lead), columns.label),
-        cell(&when_label(row.played, now), columns.when),
+        indented(entry_row.label, Cells(entry_row.lead), columns.label_width),
+        cell(
+            &when_label(entry_row.history_entry, now),
+            columns.when_width,
+        ),
     ]
 }
 
@@ -340,10 +350,10 @@ mod tests {
 
     fn entry(path: &str, title: &str, artist: Option<&str>) -> HistoryEntry {
         HistoryEntry {
-            track: kernel::domain::track::TrackRef::Local(path.into()),
+            track_source: kernel::domain::track::TrackSource::Local(path.into()),
             title: title.to_string(),
             artist: artist.map(str::to_string),
-            at: now(),
+            played_at: now(),
         }
     }
 
@@ -372,7 +382,7 @@ mod tests {
         )
         .now(now())
         .selected(RowIndex::new(1))
-        .container(ModalContainer::Modal(&[]));
+        .container(ModalContainer::Floating(&[]));
         insta::assert_snapshot!(
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .to_string()
@@ -382,20 +392,20 @@ mod tests {
     #[test]
     fn history_overlay_highlights_the_selected_row_and_aligns_its_label_column() {
         let theme = noir();
-        let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let entries = [
             entry("/m/a.flac", "Alpha", Some("Artist A")),
             entry("/m/b.flac", "Beta", None),
         ];
-        let overlay = HistoryWidget::new(&entries, active)
+        let overlay = HistoryWidget::new(&entries, active_theme)
             .now(now())
             .selected(RowIndex::new(1))
-            .container(ModalContainer::Modal(&[]));
+            .container(ModalContainer::Floating(&[]));
         let buffer =
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
                 .clone();
-        let selection_background = active.colors().selection_background;
+        let selection_background = active_theme.colors().selection_background;
         let (alpha_x, alpha_y) = find_text(&buffer, "Artist A — Alpha").unwrap();
         let (beta_x, beta_y) = find_text(&buffer, "Beta").unwrap();
         assert_eq!(
@@ -458,7 +468,7 @@ mod tests {
         )
         .now(now())
         .selected(RowIndex::new(0))
-        .container(ModalContainer::Modal(&[]));
+        .container(ModalContainer::Floating(&[]));
         insta::assert_snapshot!(
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .to_string()
@@ -475,7 +485,7 @@ mod tests {
         )
         .now(now())
         .selected(RowIndex::new(0))
-        .container(ModalContainer::Modal(&[]));
+        .container(ModalContainer::Floating(&[]));
         assert_eq!(
             rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()

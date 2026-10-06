@@ -5,48 +5,49 @@ use kernel::{cmd::AudioCmd, domain::driver::DriverName};
 use crate::{
     driver::DriverLoop,
     driver_thread::DriverThread,
-    error::Error,
-    jobs::Jobs,
+    error::SpawnError,
     registry,
-    spawn_setup::SpawnSetup,
+    spawn_setup::{CALLBACK_SLOTS, SpawnSetup},
 };
 
 #[cfg(test)]
 pub(crate) fn idle_audio(
     setup: &SpawnSetup<'_>,
-) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
+) -> Result<(DriverThread<AudioCmd>, SpectrumTap), SpawnError> {
     let thread = spawn_idle(registry::row(DriverName::Audio), setup.inbox)?;
     Ok((thread, SpectrumTap::silent()))
 }
 
 pub(crate) fn spawn_audio(
     setup: &SpawnSetup<'_>,
-) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
-    let settings = setup.audio.clone();
-    let (tap_sender, tap_receiver) = crossbeam_channel::bounded(1);
-    let (deck_sender, heard) = crossbeam_channel::bounded(64);
+) -> Result<(DriverThread<AudioCmd>, SpectrumTap), SpawnError> {
+    let settings = setup.audio_settings.clone();
+    let (spectrum_sender, spectrum_receiver) = crossbeam_channel::bounded(1);
+    let (callback_sender, callback_receiver) =
+        crossbeam_channel::bounded(CALLBACK_SLOTS);
     let row = registry::row(DriverName::Audio);
-    let jobs = Jobs {
-        run: audio::deck::job::AudioJob::run,
-    };
+    let run_job = audio::deck::job::AudioJob::run;
     let thread = DriverLoop::<audio::AudioDriver, _> {
         row,
         inbox: setup.inbox.clone(),
-        heard,
-        seed: None,
-        jobs,
+        callback_receiver,
+        message: None,
+        run_job,
     }
     .spawn(move || {
-        let (driver, spectrum) = audio::AudioDriver::new(settings, deck_sender);
-        if let Err(unclaimed) = tap_sender.send(spectrum) {
+        let (driver, spectrum_tap) = audio::AudioDriver::new(settings, callback_sender);
+        if let Err(unclaimed) = spectrum_sender.send(spectrum_tap) {
             drop(unclaimed.into_inner());
         }
         driver
     })?;
-    let spectrum = tap_receiver
-        .recv()
-        .map_err(|_disconnected| Error::TapLost { driver: row.driver })?;
-    Ok((thread, spectrum))
+    let spectrum_tap =
+        spectrum_receiver
+            .recv()
+            .map_err(|_disconnected| SpawnError::TapLost {
+                driver_name: row.driver_name,
+            })?;
+    Ok((thread, spectrum_tap))
 }
 
 #[cfg(test)]
@@ -71,7 +72,7 @@ mod tests {
 
     use crate::{
         driver_thread::{Congestion, DriverThread},
-        error::Error,
+        error::SpawnError,
         runtime::Runtime,
         spawn::{
             SpawnSetup,
@@ -86,34 +87,41 @@ mod tests {
             direction: Direction::Next,
         });
         assert_eq!(stepped, Ok(()));
-        runtime.wiring.mailbox.recv_timeout(RECV_TIMEOUT).unwrap()
+        runtime
+            .wiring
+            .inbox_receiver
+            .recv_timeout(RECV_TIMEOUT)
+            .unwrap()
     }
 
     static AUDIO_RESTART_SPAWNS: AtomicUsize = AtomicUsize::new(0);
 
     thread_local! {
-        static AUDIO_RESTART_FORWARD: RefCell<Option<Sender<AudioCmd>>> =
+        static AUDIO_RESTART_CMD_SENDER: RefCell<Option<Sender<AudioCmd>>> =
             const { RefCell::new(None) };
     }
 
     fn panic_once_then_record_audio(
         setup: &SpawnSetup<'_>,
-    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
-        let forward = AUDIO_RESTART_FORWARD
-            .with(|slot| slot.borrow().clone())
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), SpawnError> {
+        let cmd_sender = AUDIO_RESTART_CMD_SENDER
+            .with(|cmd_sender_cell| cmd_sender_cell.borrow().clone())
             .unwrap();
         spawn_audio_loop(
-            move |inbox: &Receiver<AudioCmd>, _: &Sender<Message>, _: &Congestion| {
+            move |cmd_receiver: &Receiver<AudioCmd>,
+                  _: &Sender<Message>,
+                  _: &Congestion| {
                 if AUDIO_RESTART_SPAWNS.fetch_add(1, Ordering::SeqCst) == 0 {
-                    inbox
+                    cmd_receiver
                         .recv()
-                        .map_or_else(|_closed| boom(), |_command| boom());
+                        .map_or_else(|_closed| boom(), |_cmd| boom());
                 }
-                while let Ok(command) = inbox.recv() {
-                    if forward.send(command).is_err() {
-                        return;
+                while let Ok(cmd) = cmd_receiver.recv() {
+                    if cmd_sender.send(cmd).is_err() {
+                        return Ok(());
                     }
                 }
+                Ok(())
             },
             setup,
         )
@@ -122,8 +130,9 @@ mod tests {
     #[test]
     fn a_panicking_audio_driver_is_restarted_and_started() {
         AUDIO_RESTART_SPAWNS.store(0, Ordering::SeqCst);
-        let (forward, commands) = unbounded();
-        AUDIO_RESTART_FORWARD.with(|slot| *slot.borrow_mut() = Some(forward));
+        let (cmd_sender, cmd_receiver) = unbounded();
+        AUDIO_RESTART_CMD_SENDER
+            .with(|cmd_sender_cell| *cmd_sender_cell.borrow_mut() = Some(cmd_sender));
         let directory = tempfile::tempdir().unwrap();
         let spawners = Spawners {
             audio: panic_once_then_record_audio,
@@ -139,13 +148,13 @@ mod tests {
         let died = died_from_replay_gain_step(&mut runtime);
         runtime.deliver(died).unwrap();
 
-        let received: Vec<AudioCmd> = (0..4)
-            .map(|_| commands.recv_timeout(RECV_TIMEOUT).unwrap())
+        let audio_cmds: Vec<AudioCmd> = (0..4)
+            .map(|_| cmd_receiver.recv_timeout(RECV_TIMEOUT).unwrap())
             .collect();
-        assert!(matches!(received[0], AudioCmd::ListDevices));
-        assert!(matches!(received[1], AudioCmd::SetDevice(_)));
-        assert!(matches!(received[2], AudioCmd::SetCrossfade(_)));
-        assert!(matches!(received[3], AudioCmd::SetReplayGain(_)));
+        assert!(matches!(audio_cmds[0], AudioCmd::ListDevices));
+        assert!(matches!(audio_cmds[1], AudioCmd::SetDevice(_)));
+        assert!(matches!(audio_cmds[2], AudioCmd::SetCrossfade(_)));
+        assert!(matches!(audio_cmds[3], AudioCmd::SetReplayGain(_)));
         assert_eq!(
             *runtime.model.drivers.status(DriverName::Audio),
             DriverStatus::Running
@@ -169,17 +178,17 @@ mod tests {
 
     fn sequenced_audio(
         setup: &SpawnSetup<'_>,
-    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), SpawnError> {
         if SEQUENCED_SPAWNS.fetch_add(1, Ordering::SeqCst) == 1 {
             let order = DROP_SPAWN_SEQUENCE.fetch_add(1, Ordering::SeqCst);
             SECOND_SPAWN_ORDER.store(order, Ordering::SeqCst);
         }
         spawn_audio_loop(
-            |inbox: &Receiver<AudioCmd>, _: &Sender<Message>, _: &Congestion| {
+            |cmd_receiver: &Receiver<AudioCmd>, _: &Sender<Message>, _: &Congestion| {
                 let _sequenced = SequencedAudio;
-                inbox
+                cmd_receiver
                     .recv()
-                    .map_or_else(|_closed| boom(), |_command| boom());
+                    .map_or_else(|_closed| boom(), |_cmd| boom())
             },
             setup,
         )

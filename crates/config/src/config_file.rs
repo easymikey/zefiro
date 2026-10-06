@@ -26,7 +26,7 @@ fn parse_crossfade(raw: &str) -> Result<Crossfade, CrossfadeTextError> {
             .trim()
             .parse::<u64>()
             .map(Duration::from_millis)
-            .map_err(CrossfadeTextError::Number)?
+            .map_err(CrossfadeTextError::NotANumber)?
     } else {
         let Some(seconds) = trimmed.strip_suffix('s') else {
             return Err(CrossfadeTextError::MissingSuffix);
@@ -35,7 +35,7 @@ fn parse_crossfade(raw: &str) -> Result<Crossfade, CrossfadeTextError> {
             .trim()
             .parse::<u64>()
             .map(Duration::from_secs)
-            .map_err(CrossfadeTextError::Number)?
+            .map_err(CrossfadeTextError::NotANumber)?
     };
     Ok(Crossfade::try_from(duration)?)
 }
@@ -121,8 +121,8 @@ impl From<TomlAudio> for AudioSettings {
 #[serde(default, deny_unknown_fields, expecting = "the config.toml file")]
 pub struct TomlSettings {
     pub music_dir: Option<PathBuf>,
-    #[serde(deserialize_with = "theme")]
-    pub theme: ThemeChoice,
+    #[serde(rename = "theme", deserialize_with = "theme")]
+    pub theme_choice: ThemeChoice,
     #[serde(deserialize_with = "volume")]
     pub volume: Percent,
     pub audio: TomlAudio,
@@ -133,7 +133,7 @@ impl Default for TomlSettings {
     fn default() -> Self {
         Self {
             music_dir: None,
-            theme: ThemeChoice::default(),
+            theme_choice: ThemeChoice::default(),
             volume: Transport::default().volume,
             audio: TomlAudio::default(),
             keymap: TomlKeymap::default(),
@@ -143,11 +143,11 @@ impl Default for TomlSettings {
 
 impl TomlSettings {
     #[must_use]
-    pub fn keymap(&self) -> KeymapOverrides {
+    pub fn to_keymap_overrides(&self) -> KeymapOverrides {
         self.keymap
             .0
             .iter()
-            .map(|(action, binding)| (*action, binding.0.clone()))
+            .map(|(action, key_override)| (*action, key_override.0.clone()))
             .collect()
     }
 }
@@ -159,13 +159,13 @@ pub fn parse_config(text: &str) -> Result<TomlSettings, Error> {
 #[must_use]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigSettings {
-    pub keymap: KeymapOverrides,
+    pub keymap_overrides: KeymapOverrides,
     pub(crate) music_dir: Option<PathBuf>,
 }
 
-pub fn parse_config_reload(text: &str) -> Result<ConfigSettings, Error> {
+pub fn parse_config_settings(text: &str) -> Result<ConfigSettings, Error> {
     parse_config(text).map(|config| ConfigSettings {
-        keymap: config.keymap(),
+        keymap_overrides: config.to_keymap_overrides(),
         music_dir: config.music_dir,
     })
 }
@@ -183,7 +183,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        config_file::{ConfigSettings, parse_config, parse_config_reload},
+        config_file::{ConfigSettings, parse_config, parse_config_settings},
         error::Error,
     };
 
@@ -294,14 +294,14 @@ mod tests {
     fn a_named_theme_is_parsed_case_sensitively() {
         let config = parse_config("theme = \"AUTO\"\n").unwrap();
         assert_eq!(
-            config.theme,
+            config.theme_choice,
             ThemeChoice::Named(ThemeName::from_static("AUTO"))
         );
     }
 
     #[test]
     fn keymap_error_names_the_file_and_the_line() {
-        let Err(error) = parse_config_reload("[keymap]\nnext = \"x\"\n[keymap]\n")
+        let Err(error) = parse_config_settings("[keymap]\nnext = \"x\"\n[keymap]\n")
         else {
             panic!("a broken config file must not parse");
         };
@@ -311,13 +311,16 @@ mod tests {
 
     #[test]
     fn a_config_file_yields_its_keymap_and_its_music_dir_and_ignores_other_tables() {
-        let parsed = parse_config_reload(
+        let parsed = parse_config_settings(
             "music_dir = \"/tmp\"\ntheme = \"dark\"\n\n[audio]\ncrossfade = \"3s\"\n\n[keymap]\nnext = \"x\"\n",
         );
         assert_eq!(
             parsed.ok(),
             Some(ConfigSettings {
-                keymap: KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]),
+                keymap_overrides: KeymapOverrides::from([(
+                    Action::Next,
+                    KeyOverride::from("x")
+                )]),
                 music_dir: Some(PathBuf::from("/tmp")),
             })
         );
@@ -326,7 +329,7 @@ mod tests {
     #[test]
     fn a_broken_config_file_reports_a_parse_error() {
         assert!(matches!(
-            parse_config_reload("[keymap\nnot toml"),
+            parse_config_settings("[keymap\nnot toml"),
             Err(Error::Parse { .. })
         ));
     }

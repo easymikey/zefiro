@@ -38,17 +38,17 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: Some(
+            sleep_timer: Some(
                 SleepTimer {
                     preset_index: Index(0),
                     delay: 900s,
-                    deadline: Moment(
+                    deadline_at: Moment(
                         900s,
                     ),
                 },
             ),
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),
@@ -86,17 +86,17 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: Some(
+            sleep_timer: Some(
                 SleepTimer {
                     preset_index: Index(1),
                     delay: 1800s,
-                    deadline: Moment(
+                    deadline_at: Moment(
                         1800s,
                     ),
                 },
             ),
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),
@@ -134,17 +134,17 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: Some(
+            sleep_timer: Some(
                 SleepTimer {
                     preset_index: Index(2),
                     delay: 3600s,
-                    deadline: Moment(
+                    deadline_at: Moment(
                         3600s,
                     ),
                 },
             ),
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),
@@ -173,9 +173,9 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),

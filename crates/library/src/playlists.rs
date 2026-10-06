@@ -58,13 +58,13 @@ fn entry_line(track: &Track) -> String {
 }
 
 #[must_use]
-fn parse(text: &str, base: &Path) -> Vec<PathBuf> {
+fn parse(text: &str, base_dir: &Path) -> Vec<PathBuf> {
     text.trim_start_matches('\u{FEFF}')
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .filter(|line| !line.starts_with('#'))
-        .map(|line| base.join(line))
+        .map(|line| base_dir.join(line))
         .collect()
 }
 

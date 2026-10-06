@@ -6,5 +6,5 @@ use crate::domain::{index::PresetIndex, time::Moment};
 pub struct SleepTimer {
     pub preset_index: PresetIndex,
     pub delay: Duration,
-    pub deadline: Moment,
+    pub deadline_at: Moment,
 }

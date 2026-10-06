@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use runtime::shell::Frame;
 use widgets::scene::{Scene, ScenePresentation};
 
@@ -19,11 +17,9 @@ pub(crate) fn scene<'a>(
             spectrum: &presentation.spectrum,
             pixel_path: presentation.pixel_path,
             cell_aspect: presentation.cell_aspect,
-            clock: motion
-                .first_paint
-                .map_or(Duration::ZERO, |first| frame.now.elapsed_since(first)),
+            since_first_paint: motion.paint_clock.elapsed(frame.now),
             now: frame.now,
-            home: presentation.home.as_deref(),
+            home_dir: presentation.home_dir.as_deref(),
             key_hint_chords: &presentation.key_hint_chords,
         },
     )
@@ -44,8 +40,9 @@ mod tests {
     #[test]
     fn a_view_of_a_stock_model_lays_out_the_whole_frame() {
         let model = Model::default();
-        let (_senders, latest, _doorbell) = runtime::latest::latest_channels();
-        let spectrum = SpectrumTap::silent();
+        let (_senders, latest_receivers, _doorbell) =
+            runtime::latest::latest_channels();
+        let spectrum_tap = SpectrumTap::silent();
         let area = Rect::new(0, 0, 80, 24);
         let presentation = test_presentation();
         let motion = Motion {
@@ -54,8 +51,8 @@ mod tests {
         };
         let frame = Frame {
             model: &model,
-            spectrum: &spectrum,
-            latest: &latest,
+            spectrum_tap: &spectrum_tap,
+            latest_receivers: &latest_receivers,
             now: Moment::new(Duration::from_secs(5)),
         };
 

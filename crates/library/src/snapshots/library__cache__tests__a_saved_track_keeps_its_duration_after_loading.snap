@@ -16,7 +16,7 @@ expression: decoded
             album_artist: None,
             date: None,
             genre: None,
-            track: None,
+            track_number: None,
             track_total: None,
             disc: None,
             composer: None,
@@ -29,10 +29,10 @@ expression: decoded
             sample_rate: None,
             bits_per_sample: None,
             channels: None,
-            replay_gain: None,
+            decibels: None,
         },
         display: "Moon River",
-        tagging: Read(
+        tagging: Tagged(
             259s,
         ),
     },

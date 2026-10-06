@@ -28,7 +28,7 @@ expression: "walked(model, messages)"
                     album_artist: None,
                     date: None,
                     genre: None,
-                    track: None,
+                    track_number: None,
                     track_total: None,
                     disc: None,
                     composer: None,
@@ -41,16 +41,16 @@ expression: "walked(model, messages)"
                     sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
-                    replay_gain: None,
+                    decibels: None,
                 },
                 display: "track0.flac",
-                tagging: Read(
+                tagging: Tagged(
                     100s,
                 ),
             },
             playhead: Playhead {
                 offset: 0ns,
-                since: Moment(
+                started_at: Moment(
                     0ns,
                 ),
                 speed: Speed(
@@ -78,9 +78,9 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),
@@ -106,7 +106,7 @@ expression: "walked(model, messages)"
                     album_artist: None,
                     date: None,
                     genre: None,
-                    track: None,
+                    track_number: None,
                     track_total: None,
                     disc: None,
                     composer: None,
@@ -119,16 +119,16 @@ expression: "walked(model, messages)"
                     sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
-                    replay_gain: None,
+                    decibels: None,
                 },
                 display: "track0.flac",
-                tagging: Read(
+                tagging: Tagged(
                     100s,
                 ),
             },
             playhead: Playhead {
                 offset: 0ns,
-                since: Moment(
+                started_at: Moment(
                     0ns,
                 ),
                 speed: Speed(
@@ -148,7 +148,7 @@ expression: "walked(model, messages)"
         },
         [],
         Off,
-        Shuffle(
+        Shuffled(
             [
                 Index(2),
                 Index(0),
@@ -163,9 +163,9 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),
@@ -178,7 +178,7 @@ expression: "walked(model, messages)"
                 Load(
                     TrackLoad {
                         path: "/tmp/track3.flac",
-                        gain: None,
+                        decibels: None,
                         revision: Revision(
                             1,
                         ),
@@ -189,12 +189,12 @@ expression: "walked(model, messages)"
                 Disk(
                     AppendHistory(
                         HistoryEntry {
-                            track: Local(
+                            track_source: Local(
                                 "/tmp/track3.flac",
                             ),
                             title: "track3",
                             artist: None,
-                            at: Moment(
+                            played_at: Moment(
                                 0ns,
                             ),
                         },
@@ -215,7 +215,7 @@ expression: "walked(model, messages)"
                                 album_artist: None,
                                 date: None,
                                 genre: None,
-                                track: None,
+                                track_number: None,
                                 track_total: None,
                                 disc: None,
                                 composer: None,
@@ -228,10 +228,10 @@ expression: "walked(model, messages)"
                                 sample_rate: None,
                                 bits_per_sample: None,
                                 channels: None,
-                                replay_gain: None,
+                                decibels: None,
                             },
                             display: "track3.flac",
-                            tagging: Read(
+                            tagging: Tagged(
                                 100s,
                             ),
                         },
@@ -269,7 +269,7 @@ expression: "walked(model, messages)"
                     album_artist: None,
                     date: None,
                     genre: None,
-                    track: None,
+                    track_number: None,
                     track_total: None,
                     disc: None,
                     composer: None,
@@ -282,10 +282,10 @@ expression: "walked(model, messages)"
                     sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
-                    replay_gain: None,
+                    decibels: None,
                 },
                 display: "track3.flac",
-                tagging: Read(
+                tagging: Tagged(
                     100s,
                 ),
             },
@@ -301,7 +301,7 @@ expression: "walked(model, messages)"
         },
         [],
         Off,
-        Shuffle(
+        Shuffled(
             [
                 Index(2),
                 Index(0),
@@ -316,9 +316,9 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),
@@ -355,7 +355,7 @@ expression: "walked(model, messages)"
                     album_artist: None,
                     date: None,
                     genre: None,
-                    track: None,
+                    track_number: None,
                     track_total: None,
                     disc: None,
                     composer: None,
@@ -368,16 +368,16 @@ expression: "walked(model, messages)"
                     sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
-                    replay_gain: None,
+                    decibels: None,
                 },
                 display: "track3.flac",
-                tagging: Read(
+                tagging: Tagged(
                     100s,
                 ),
             },
             playhead: Playhead {
                 offset: 0ns,
-                since: Moment(
+                started_at: Moment(
                     0ns,
                 ),
                 speed: Speed(
@@ -397,7 +397,7 @@ expression: "walked(model, messages)"
         },
         [],
         Off,
-        Shuffle(
+        Shuffled(
             [
                 Index(2),
                 Index(0),
@@ -412,9 +412,9 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),
@@ -427,7 +427,7 @@ expression: "walked(model, messages)"
                 Load(
                     TrackLoad {
                         path: "/tmp/track1.flac",
-                        gain: None,
+                        decibels: None,
                         revision: Revision(
                             4,
                         ),
@@ -438,12 +438,12 @@ expression: "walked(model, messages)"
                 Disk(
                     AppendHistory(
                         HistoryEntry {
-                            track: Local(
+                            track_source: Local(
                                 "/tmp/track1.flac",
                             ),
                             title: "track1",
                             artist: None,
-                            at: Moment(
+                            played_at: Moment(
                                 0ns,
                             ),
                         },
@@ -464,7 +464,7 @@ expression: "walked(model, messages)"
                                 album_artist: None,
                                 date: None,
                                 genre: None,
-                                track: None,
+                                track_number: None,
                                 track_total: None,
                                 disc: None,
                                 composer: None,
@@ -477,10 +477,10 @@ expression: "walked(model, messages)"
                                 sample_rate: None,
                                 bits_per_sample: None,
                                 channels: None,
-                                replay_gain: None,
+                                decibels: None,
                             },
                             display: "track1.flac",
-                            tagging: Read(
+                            tagging: Tagged(
                                 100s,
                             ),
                         },
@@ -518,7 +518,7 @@ expression: "walked(model, messages)"
                     album_artist: None,
                     date: None,
                     genre: None,
-                    track: None,
+                    track_number: None,
                     track_total: None,
                     disc: None,
                     composer: None,
@@ -531,10 +531,10 @@ expression: "walked(model, messages)"
                     sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
-                    replay_gain: None,
+                    decibels: None,
                 },
                 display: "track1.flac",
-                tagging: Read(
+                tagging: Tagged(
                     100s,
                 ),
             },
@@ -550,7 +550,7 @@ expression: "walked(model, messages)"
         },
         [],
         Off,
-        Shuffle(
+        Shuffled(
             [
                 Index(2),
                 Index(0),
@@ -565,9 +565,9 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),

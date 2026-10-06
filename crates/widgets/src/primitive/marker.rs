@@ -23,12 +23,12 @@ pub(crate) enum Favorite {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct QueuePosition(usize);
+pub(crate) struct QueueNumber(usize);
 
-impl QueuePosition {
+impl QueueNumber {
     #[must_use]
-    pub(crate) const fn new(position: usize) -> Self {
-        Self(position)
+    pub(crate) const fn new(queue_number: usize) -> Self {
+        Self(queue_number)
     }
 
     pub(crate) fn chip(self) -> impl Iterator<Item = &'static str> + Clone {
@@ -56,7 +56,7 @@ pub(crate) fn column_padding(glyph: &str, width: usize) -> usize {
 mod tests {
     use rstest::rstest;
 
-    use crate::primitive::marker::QueuePosition;
+    use crate::primitive::marker::QueueNumber;
 
     #[rstest]
     #[case::single(1, "1")]
@@ -66,7 +66,7 @@ mod tests {
         #[case] number: usize,
         #[case] text: &str,
     ) {
-        let digits: String = QueuePosition::new(number).digits().collect();
+        let digits: String = QueueNumber::new(number).digits().collect();
         assert_eq!(digits, text);
     }
 }

@@ -32,10 +32,10 @@ impl<'a> ActiveTheme<'a> {
     }
 
     #[must_use]
-    pub(crate) fn with_progress(self, progress: ProgressBar) -> Self {
+    pub(crate) fn with_progress_bar(self, progress_bar: ProgressBar) -> Self {
         Self {
-            fill: progress.fill,
-            groove: progress.groove,
+            fill: progress_bar.fill,
+            groove: progress_bar.groove,
             ..self
         }
     }
@@ -70,12 +70,12 @@ impl<'a> ActiveTheme<'a> {
 
     #[must_use]
     pub(crate) fn lifted(&self, rgb: Rgb, toward_text: f32) -> Color {
-        self.color(lerp_rgb(rgb, self.theme.colors.text, toward_text))
+        self.color(lerp_rgb(rgb, self.theme.colors.foreground, toward_text))
     }
 
     #[must_use]
-    pub(crate) fn spectrum_color_at(&self, t: f32) -> Color {
-        self.color(self.theme.colors.spectrum_color_at(t))
+    pub(crate) fn spectrum_color_at(&self, fraction: f32) -> Color {
+        self.color(self.theme.colors.spectrum_color_at(fraction))
     }
 
     #[must_use]
@@ -87,7 +87,7 @@ impl<'a> ActiveTheme<'a> {
     #[must_use]
     pub(crate) fn favorite(&self) -> Color {
         self.color(raise_contrast(
-            self.theme.colors.accent2,
+            self.theme.colors.favorite,
             &[
                 self.theme.colors.window_background,
                 self.theme.colors.selection_background,
@@ -127,47 +127,48 @@ mod tests {
     #[test]
     fn theme_color_resolves_at_its_own_depth() {
         let theme: Theme = noir();
-        let theme = ActiveTheme::new(&theme, ColorDepth::Indexed256);
-        let accent = theme.colors.accent;
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::Indexed256);
+        let accent = active_theme.colors.accent;
         assert_eq!(
-            theme.color(accent),
+            active_theme.color(accent),
             color_at_depth(accent, ColorDepth::Indexed256)
         );
-        assert!(matches!(theme.color(accent), Color::Indexed(_)));
+        assert!(matches!(active_theme.color(accent), Color::Indexed(_)));
     }
 
     #[test]
     fn theme_derefs_to_theme_fields() {
         let theme: Theme = noir();
-        let theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        assert_eq!(theme.name, theme.name);
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        assert_eq!(active_theme.name, active_theme.name);
         assert_eq!(
-            theme.colors.muted_foreground,
-            theme.theme.colors.muted_foreground
+            active_theme.colors.muted_foreground,
+            active_theme.theme.colors.muted_foreground
         );
     }
 
     #[test]
-    fn an_unset_progress_config_is_the_themes_accent_and_groove() {
+    fn an_unset_progress_bar_config_is_the_themes_accent_and_groove() {
         let theme = noir();
-        let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        let colors = active.colors();
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let colors = active_theme.colors();
         assert_eq!(
-            (active.progress_fill(), active.progress_groove()),
+            (active_theme.progress_fill(), active_theme.progress_groove()),
             (colors.accent, colors.bar_groove)
         );
     }
 
     #[test]
-    fn a_set_progress_config_wins_over_the_theme() {
+    fn a_set_progress_bar_config_wins_over_the_theme() {
         let theme = noir();
         let bar = ProgressBar {
             fill: Some(Rgb([255, 0, 0])),
             groove: Some(Rgb([0, 255, 0])),
             ..ProgressBar::default()
         };
-        let active = ActiveTheme::new(&theme, ColorDepth::TrueColor).with_progress(bar);
-        assert_eq!(active.progress_fill(), Color::Rgb(255, 0, 0));
-        assert_eq!(active.progress_groove(), Color::Rgb(0, 255, 0));
+        let active_theme =
+            ActiveTheme::new(&theme, ColorDepth::TrueColor).with_progress_bar(bar);
+        assert_eq!(active_theme.progress_fill(), Color::Rgb(255, 0, 0));
+        assert_eq!(active_theme.progress_groove(), Color::Rgb(0, 255, 0));
     }
 }

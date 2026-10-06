@@ -3,14 +3,14 @@ use std::sync::Arc;
 use crate::domain::{
     index::ViewIndex,
     playlist::{Playlist, RepeatMode, index_of},
-    track::{Track, TrackRef},
+    track::{Track, TrackSource},
 };
 
 pub(crate) enum Successor {
     Preloaded(Arc<Track>),
     Repeating(Arc<Track>),
     Queued {
-        position: usize,
+        queue_index: usize,
         index: ViewIndex,
         track: Arc<Track>,
     },
@@ -30,16 +30,16 @@ impl Successor {
     }
 }
 
-pub(crate) fn successor(playlist: &Playlist, queue: &[TrackRef]) -> Successor {
-    if matches!(playlist.repeat, RepeatMode::One) {
+pub(crate) fn successor(playlist: &Playlist, queue: &[TrackSource]) -> Successor {
+    if matches!(playlist.repeat_mode, RepeatMode::One) {
         return playlist
             .current()
             .cloned()
             .map_or(Successor::Nothing, Successor::Repeating);
     }
-    if let Some((position, index, track)) = first_queued(playlist, queue) {
+    if let Some((queue_index, index, track)) = first_queued(playlist, queue) {
         return Successor::Queued {
-            position,
+            queue_index,
             index,
             track: Arc::clone(track),
         };
@@ -52,11 +52,11 @@ pub(crate) fn successor(playlist: &Playlist, queue: &[TrackRef]) -> Successor {
 
 pub(crate) fn first_queued<'a>(
     playlist: &'a Playlist,
-    queue: &[TrackRef],
+    queue: &[TrackSource],
 ) -> Option<(usize, ViewIndex, &'a Arc<Track>)> {
-    queue.iter().enumerate().find_map(|(position, source)| {
+    queue.iter().enumerate().find_map(|(queue_index, source)| {
         let index = index_of(&playlist.tracks, source)?;
         let track = playlist.tracks.get(index)?;
-        Some((position, ViewIndex::new(index), track))
+        Some((queue_index, ViewIndex::new(index), track))
     })
 }

@@ -10,12 +10,12 @@ impl Modifiers {
     pub const SHIFT: Modifiers = Modifiers(1 << 3);
 
     #[must_use]
-    pub fn contains(self, other: Modifiers) -> bool {
-        self.0 & other.0 == other.0
+    pub fn contains(self, modifiers: Modifiers) -> bool {
+        self.0 & modifiers.0 == modifiers.0
     }
 
-    pub fn with(self, other: Modifiers) -> Self {
-        Modifiers(self.0 | other.0)
+    pub fn with(self, modifiers: Modifiers) -> Self {
+        Modifiers(self.0 | modifiers.0)
     }
 }
 

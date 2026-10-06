@@ -13,7 +13,7 @@ use crate::{
     primitive::{
         canvas::Canvas,
         list_chrome::{ScrollAreas, scroll_areas},
-        text::truncate,
+        truncate::truncate,
     },
     theme::active_theme::ActiveTheme,
 };
@@ -21,14 +21,16 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ModalContainer<'a> {
     Playlist(Rect),
-    Modal(&'a [Rect]),
+    Floating(&'a [Rect]),
 }
 
-fn frame(areas: ScrollAreas) -> ModalAreas {
-    ModalAreas {
-        outer: areas.outer,
-        body: areas.content,
-        hint_row: areas.hint_row,
+impl From<ScrollAreas> for ModalAreas {
+    fn from(areas: ScrollAreas) -> Self {
+        Self {
+            outer: areas.outer,
+            body: areas.content,
+            hint_row: areas.hint_row,
+        }
     }
 }
 
@@ -81,7 +83,7 @@ impl ModalBorder<'_> {
             .style(
                 Style::default()
                     .bg(colors.window_background)
-                    .fg(colors.text),
+                    .fg(colors.foreground),
             )
             .render(self.area, buffer);
         self.block().render(self.area, buffer);
@@ -126,11 +128,11 @@ impl<'a> ModalPlacement<'a> {
     pub(crate) fn areas(&self, screen: Rect) -> ScrollAreas {
         match self.container {
             ModalContainer::Playlist(pane) => self.border(pane).areas(),
-            ModalContainer::Modal(avoid) => {
-                let modal_frame = self.modal().areas(screen, avoid);
+            ModalContainer::Floating(avoid) => {
+                let areas = self.modal().areas(screen, avoid);
                 ScrollAreas {
-                    hint_row: modal_frame.hint_row,
-                    ..scroll_areas(modal_frame.outer, modal_frame.body)
+                    hint_row: areas.hint_row,
+                    ..scroll_areas(areas.outer, areas.body)
                 }
             }
         }
@@ -140,7 +142,9 @@ impl<'a> ModalPlacement<'a> {
         let buffer = canvas.buffer;
         match self.container {
             ModalContainer::Playlist(pane) => self.border(pane).paint(buffer),
-            ModalContainer::Modal(_) => self.modal().paint(frame(areas), buffer),
+            ModalContainer::Floating(_) => {
+                self.modal().paint(ModalAreas::from(areas), buffer);
+            }
         }
     }
 }
@@ -161,8 +165,8 @@ pub(crate) fn column_width(areas: &ScrollAreas) -> Cells {
 }
 
 #[must_use]
-pub(crate) fn indented(text: &str, lead: Cells, width: Cells) -> String {
-    let lead = lead.count();
+pub(crate) fn indented(text: &str, lead_width: Cells, width: Cells) -> String {
+    let lead = lead_width.count();
     let budget = width.count().saturating_sub(lead);
     let fitted = truncate(text, budget);
     format!("{:lead$}{fitted}", "")

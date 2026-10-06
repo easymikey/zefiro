@@ -6,22 +6,22 @@ use crate::domain::{speed::Speed, time::Moment};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Playhead {
     pub offset: Duration,
-    pub since: Moment,
+    pub started_at: Moment,
     pub speed: Speed,
 }
 
 impl Playhead {
-    pub fn anchored(offset: Duration, since: Moment, speed: Speed) -> Self {
+    pub fn anchored(offset: Duration, started_at: Moment, speed: Speed) -> Self {
         Self {
             offset,
-            since,
+            started_at,
             speed,
         }
     }
 
     #[must_use]
     pub fn position_at(self, now: Moment) -> Duration {
-        let elapsed = now.elapsed_since(self.since);
+        let elapsed = now.elapsed_since(self.started_at);
         self.offset + elapsed.mul_f32(self.speed.get())
     }
 }
@@ -45,18 +45,18 @@ mod tests {
     #[case::a_second_at_double_speed_advances_two_seconds(2.0, 1, 12_000)]
     #[case::a_second_at_half_speed_advances_half_a_second(0.5, 1, 10_500)]
     fn position_at_scales_elapsed_time_by_speed(
-        #[case] speed: f32,
+        #[case] speed_factor: f32,
         #[case] elapsed_secs: u64,
         #[case] expected_millis: u64,
     ) {
-        let head = Playhead::anchored(
+        let playhead = Playhead::anchored(
             Duration::from_secs(10),
             Moment::new(Duration::ZERO),
-            Speed::clamped(speed),
+            Speed::clamped(speed_factor),
         );
         let now = Moment::new(Duration::from_secs(elapsed_secs));
         assert_eq!(
-            head.position_at(now),
+            playhead.position_at(now),
             Duration::from_millis(expected_millis)
         );
     }

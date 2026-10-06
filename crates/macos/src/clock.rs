@@ -7,7 +7,10 @@ use kernel::cmd::Playback;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NowPlayingClock {
     Paused(Duration),
-    Playing { anchor: Duration, since: Instant },
+    Playing {
+        offset: Duration,
+        started_at: Instant,
+    },
 }
 
 impl Default for NowPlayingClock {
@@ -27,8 +30,8 @@ impl NowPlayingClock {
     pub(crate) fn elapsed(self, now: Instant) -> Duration {
         match self {
             Self::Paused(position) => position,
-            Self::Playing { anchor, since } => {
-                anchor.saturating_add(now.saturating_duration_since(since))
+            Self::Playing { offset, started_at } => {
+                offset.saturating_add(now.saturating_duration_since(started_at))
             }
         }
     }
@@ -45,8 +48,8 @@ impl NowPlayingClock {
         match playback {
             Playback::Paused => Self::Paused(position),
             Playback::Playing => Self::Playing {
-                anchor: position,
-                since: now,
+                offset: position,
+                started_at: now,
             },
         }
     }

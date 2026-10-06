@@ -12,10 +12,10 @@ pub struct MainLoop {
 
 impl MainLoop {
     #[must_use]
-    pub fn attach(heard: &Sender<MacosMessage>) -> Option<Self> {
+    pub fn attach(callback_sender: &Sender<MacosMessage>) -> Option<Self> {
         let main_thread = MainThreadMarker::new()?;
         Some(Self {
-            _controls: Controls::attach(main_thread, heard),
+            _controls: Controls::attach(main_thread, callback_sender),
         })
     }
 

@@ -1,4 +1,4 @@
-use config::config_file::parse_config_reload;
+use config::config_file::parse_config_settings;
 use kernel::domain::keymap::{Action, KeyContext, KeyOverride};
 use rstest::rstest;
 
@@ -19,8 +19,8 @@ fn a_key_binding_reads_as_a_chord_with_its_context(
     #[case] spelling: &str,
     #[case] expected: KeyOverride,
 ) {
-    let reload = parse_config_reload(&format!("[keymap]\n{spelling}\n")).unwrap();
-    assert_eq!(reload.keymap.get(Action::Next), Some(&expected));
+    let settings = parse_config_settings(&format!("[keymap]\n{spelling}\n")).unwrap();
+    assert_eq!(settings.keymap_overrides.get(Action::Next), Some(&expected));
 }
 
 #[rstest]
@@ -31,5 +31,5 @@ fn a_key_binding_reads_as_a_chord_with_its_context(
 #[case::a_table_without_a_chord_does_not_parse("next = { context = \"search\" }")]
 #[case::an_unknown_action_does_not_parse("nekst = \"y\"")]
 fn a_bad_key_binding_does_not_parse(#[case] spelling: &str) {
-    assert!(parse_config_reload(&format!("[keymap]\n{spelling}\n")).is_err());
+    assert!(parse_config_settings(&format!("[keymap]\n{spelling}\n")).is_err());
 }

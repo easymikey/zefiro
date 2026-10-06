@@ -11,7 +11,7 @@ expression: effs
         Load(
             TrackLoad {
                 path: "/tmp/track0.flac",
-                gain: None,
+                decibels: None,
                 revision: Revision(
                     1,
                 ),
@@ -22,14 +22,14 @@ expression: effs
         Disk(
             AppendHistory(
                 HistoryEntry {
-                    track: Local(
+                    track_source: Local(
                         "/tmp/track0.flac",
                     ),
                     title: "Song",
                     artist: Some(
                         "Artist",
                     ),
-                    at: Moment(
+                    played_at: Moment(
                         0ns,
                     ),
                 },
@@ -54,7 +54,7 @@ expression: effs
                         album_artist: None,
                         date: None,
                         genre: None,
-                        track: None,
+                        track_number: None,
                         track_total: None,
                         disc: None,
                         composer: None,
@@ -67,10 +67,10 @@ expression: effs
                         sample_rate: None,
                         bits_per_sample: None,
                         channels: None,
-                        replay_gain: None,
+                        decibels: None,
                     },
                     display: "Artist — Song",
-                    tagging: Read(
+                    tagging: Tagged(
                         200s,
                     ),
                 },

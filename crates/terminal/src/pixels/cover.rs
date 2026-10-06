@@ -37,16 +37,20 @@ impl fmt::Debug for Cover {
 }
 
 impl Cover {
-    pub(crate) fn new(source: PixmapSource, picker: Picker, cell: CellPixels) -> Self {
+    pub(crate) fn new(
+        pixmap_source: PixmapSource,
+        picker: Picker,
+        cell_pixels: CellPixels,
+    ) -> Self {
         Self {
-            lifecycle: CoverLifecycle::new(source, cell),
+            lifecycle: CoverLifecycle::new(pixmap_source, cell_pixels),
             picker,
             protocol: None,
         }
     }
 
-    pub(crate) fn set_cover(&mut self, decoded: CoverImage) {
-        self.lifecycle.set_cover(decoded);
+    pub(crate) fn set_cover(&mut self, cover_image: CoverImage) {
+        self.lifecycle.set_cover(cover_image);
     }
 
     pub(crate) fn refresh(
@@ -58,7 +62,7 @@ impl Cover {
             ProtocolType::Halfblocks => refresh,
             ProtocolType::Sixel | ProtocolType::Kitty | ProtocolType::Iterm2 => {
                 CoverRefresh {
-                    crossfade: CrossfadePermit::Withheld,
+                    crossfade_permit: CrossfadePermit::Withheld,
                     wash: CoverWash::Idle,
                     ..refresh
                 }
@@ -75,15 +79,15 @@ impl Cover {
                 ));
             }
         }
-        update.art
+        update.card_cover
     }
 
     pub(crate) fn protocol_mut(&mut self) -> Option<&mut StatefulProtocol> {
         self.protocol.as_mut()
     }
 
-    pub(crate) fn motion(&self, now: Duration) -> CoverMotion {
-        self.lifecycle.motion(now)
+    pub(crate) fn motion(&self, since_first_paint: Duration) -> CoverMotion {
+        self.lifecycle.motion(since_first_paint)
     }
 }
 

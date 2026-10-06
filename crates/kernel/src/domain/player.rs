@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use strum::IntoStaticStr;
 
-use crate::domain::{playhead::Playhead, speed::Speed, time::Moment, track::Track};
+use crate::domain::{playhead::Playhead, time::Moment, track::Track};
 
 #[derive(Debug, Clone, Default, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -60,38 +60,28 @@ impl Player {
             Self::Stopped | Self::Loading(..) | Self::Paused { .. } => None,
         }
     }
-
-    #[must_use]
-    pub(crate) fn reanchored(self, now: Moment, speed: Speed) -> Self {
-        match self {
-            Self::Playing {
-                track,
-                playhead,
-                preloaded,
-            } => Self::Playing {
-                track,
-                playhead: Playhead::anchored(playhead.position_at(now), now, speed),
-                preloaded,
-            },
-            other @ (Self::Stopped | Self::Loading(..) | Self::Paused { .. }) => other,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AbLoop {
-    AOnly(Duration),
-    Full { a: Duration, b: Duration },
+    StartMarked(Duration),
+    BothMarked {
+        loop_start: Duration,
+        loop_end: Duration,
+    },
 }
 
 impl AbLoop {
     #[must_use]
     pub fn mark(current: Option<Self>, position: Duration) -> Option<Self> {
         match current {
-            None => Some(Self::AOnly(position)),
-            Some(Self::AOnly(a)) if position > a => Some(Self::Full { a, b: position }),
-            Some(loop_ @ Self::AOnly(_)) => Some(loop_),
-            Some(Self::Full { .. }) => None,
+            None => Some(Self::StartMarked(position)),
+            Some(Self::StartMarked(a)) if position > a => Some(Self::BothMarked {
+                loop_start: a,
+                loop_end: position,
+            }),
+            Some(loop_ @ Self::StartMarked(_)) => Some(loop_),
+            Some(Self::BothMarked { .. }) => None,
         }
     }
 }
@@ -104,16 +94,19 @@ mod ab_loop_tests {
 
     #[test]
     fn ab_loop_mark_sets_b_only_after_a() {
-        let a = Duration::from_secs(10);
-        let marked_a = AbLoop::mark(None, a);
+        let loop_start = Duration::from_secs(10);
+        let marked_loop = AbLoop::mark(None, loop_start);
 
-        assert_eq!(AbLoop::mark(marked_a, a), marked_a);
-        assert_eq!(AbLoop::mark(marked_a, Duration::from_secs(9)), marked_a);
+        assert_eq!(AbLoop::mark(marked_loop, loop_start), marked_loop);
         assert_eq!(
-            AbLoop::mark(marked_a, Duration::from_secs(11)),
-            Some(AbLoop::Full {
-                a,
-                b: Duration::from_secs(11),
+            AbLoop::mark(marked_loop, Duration::from_secs(9)),
+            marked_loop
+        );
+        assert_eq!(
+            AbLoop::mark(marked_loop, Duration::from_secs(11)),
+            Some(AbLoop::BothMarked {
+                loop_start,
+                loop_end: Duration::from_secs(11),
             })
         );
     }

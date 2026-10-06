@@ -30,9 +30,9 @@ pub struct ThemeBase {
 pub struct Colors<C = Rgb> {
     pub(crate) background: C,
     pub window_background: C,
-    pub text: C,
+    pub foreground: C,
     pub(crate) accent: C,
-    pub(crate) accent2: C,
+    pub(crate) favorite: C,
     pub(crate) selection_foreground: C,
     pub(crate) selection_background: C,
     pub(crate) highlight: C,
@@ -47,9 +47,9 @@ impl<C: Copy> Colors<C> {
         Colors {
             background: resolve(self.background),
             window_background: resolve(self.window_background),
-            text: resolve(self.text),
+            foreground: resolve(self.foreground),
             accent: resolve(self.accent),
-            accent2: resolve(self.accent2),
+            favorite: resolve(self.favorite),
             selection_foreground: resolve(self.selection_foreground),
             selection_background: resolve(self.selection_background),
             highlight: resolve(self.highlight),
@@ -61,45 +61,48 @@ impl<C: Copy> Colors<C> {
 }
 
 impl Colors {
-    pub fn spectrum_color_at(&self, t: f32) -> Rgb {
-        gradient_at(&self.spectrum, t).unwrap_or(self.spectrum[1])
+    pub fn spectrum_color_at(&self, fraction: f32) -> Rgb {
+        gradient_at(&self.spectrum, fraction).unwrap_or(self.spectrum[1])
     }
 
     #[must_use]
-    pub fn derive(base: &ThemeBase) -> Colors {
-        let window_background = base.window_background.unwrap_or_else(|| {
+    pub fn from_theme_base(theme_base: &ThemeBase) -> Colors {
+        let window_background = theme_base.window_background.unwrap_or_else(|| {
             lerp_rgb(
-                base.background,
-                base.muted_foreground,
+                theme_base.background,
+                theme_base.muted_foreground,
                 WINDOW_BACKGROUND_MIX,
             )
         });
-        let selection_background =
-            visible_band(window_background, base.foreground, SELECTION_BACKGROUND_MIX);
-        Colors {
-            background: base.background,
+        let selection_background = visible_band(
             window_background,
-            text: base.foreground,
-            accent: base.accent,
-            accent2: base.yellow,
+            theme_base.foreground,
+            SELECTION_BACKGROUND_MIX,
+        );
+        Colors {
+            background: theme_base.background,
+            window_background,
+            foreground: theme_base.foreground,
+            accent: theme_base.accent,
+            favorite: theme_base.yellow,
             selection_foreground: raise_contrast(
-                base.foreground,
+                theme_base.foreground,
                 &[selection_background],
                 MIN_SELECTION_TEXT_CONTRAST,
             ),
             selection_background,
             highlight: raise_contrast(
-                base.accent,
+                theme_base.accent,
                 &[window_background, selection_background],
                 MIN_MARKER_CONTRAST,
             ),
-            muted_foreground: base.muted_foreground,
+            muted_foreground: theme_base.muted_foreground,
             bar_groove: visible_band(
                 window_background,
-                base.foreground,
+                theme_base.foreground,
                 BAR_GROOVE_MIX,
             ),
-            spectrum: [base.green, base.yellow, base.red],
+            spectrum: [theme_base.green, theme_base.yellow, theme_base.red],
         }
     }
 }
@@ -133,27 +136,27 @@ mod tests {
 
     #[test]
     fn the_derivation_table_maps_every_role() {
-        insta::assert_debug_snapshot!(Colors::derive(&test_base()));
+        insta::assert_debug_snapshot!(Colors::from_theme_base(&test_base()));
     }
 
     #[test]
     fn every_field_reads_back_the_hex_the_derivation_table_wrote() {
-        let colors = Colors::derive(&test_base());
+        let colors = Colors::from_theme_base(&test_base());
         assert_eq!(colors.background, Rgb([0x10, 0x20, 0x30]));
-        assert_eq!(colors.accent2, Rgb([0xff, 0xff, 0]));
+        assert_eq!(colors.favorite, Rgb([0xff, 0xff, 0]));
     }
 
     #[test]
     fn a_theme_whose_accent_is_its_text_still_derives_a_visible_band() {
         let cream = Rgb([0xf3, 0xe9, 0xd2]);
-        let base = ThemeBase {
+        let theme_base = ThemeBase {
             background: Rgb([0x0b, 0x0b, 0x0b]),
             muted_foreground: Rgb([0x8f, 0x8a, 0x80]),
             foreground: cream,
             accent: cream,
             ..test_base()
         };
-        let colors = Colors::derive(&base);
+        let colors = Colors::from_theme_base(&theme_base);
         let window_background = colors.window_background;
         let selection_background = colors.selection_background;
         assert!(
@@ -179,23 +182,23 @@ mod tests {
 
     #[test]
     fn window_background_lightens_toward_muted_foreground_on_a_dark_theme() {
-        let base = ThemeBase {
+        let theme_base = ThemeBase {
             background: Rgb([0x10, 0x10, 0x10]),
             muted_foreground: Rgb([0xe0, 0xe0, 0xe0]),
             ..test_base()
         };
-        let colors = Colors::derive(&base);
+        let colors = Colors::from_theme_base(&theme_base);
         assert!(luma(colors.window_background) > luma(colors.background));
     }
 
     #[test]
     fn window_background_darkens_toward_muted_foreground_on_a_light_theme() {
-        let base = ThemeBase {
+        let theme_base = ThemeBase {
             background: Rgb([0xe0, 0xe0, 0xe0]),
             muted_foreground: Rgb([0x10, 0x10, 0x10]),
             ..test_base()
         };
-        let colors = Colors::derive(&base);
+        let colors = Colors::from_theme_base(&theme_base);
         assert!(luma(colors.window_background) < luma(colors.background));
     }
 }

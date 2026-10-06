@@ -9,9 +9,9 @@ use kernel::{
 
 use crate::{
     cover::{
-        CoverArt,
         CoverDecoded,
         CoverError,
+        CoverLookup,
         decoding::{CoverDecoding, CoverDecodingMessage},
     },
     driver::{LibraryDriver, LibraryEffect, LibraryLoopCmd, drained},
@@ -19,19 +19,22 @@ use crate::{
 };
 
 impl<P> LibraryDriver<P> {
-    pub(crate) fn ask(&mut self, job: CoverJob) -> Result<LibraryLoopCmd, Unhandled> {
-        if self.asked.as_ref() == Some(&job) {
+    pub(crate) fn decode_cover(
+        &mut self,
+        cover_job: CoverJob,
+    ) -> Result<LibraryLoopCmd, Unhandled> {
+        if self.wanted_cover_job.as_ref() == Some(&cover_job) {
             return Err(Unhandled);
         }
-        let cmd = match self.covers.answer(&job).cloned() {
+        let cmd = match self.cover_cache.cached(&cover_job).cloned() {
             Some(decoded) => {
-                self.covers.remember(&decoded);
+                self.cover_cache.remember(&decoded);
                 Cmd::effect(LoopEffect::Execute(LibraryEffect::PublishCover(decoded)))
             }
-            None if self.decoding.busy() == Some(&job) => Cmd::none(),
-            None => self.decode(job.clone())?,
+            None if self.decoding.busy() == Some(&cover_job) => Cmd::none(),
+            None => self.decode(cover_job.clone())?,
         };
-        self.asked = Some(job);
+        self.wanted_cover_job = Some(cover_job);
         Ok(cmd)
     }
 
@@ -40,22 +43,25 @@ impl<P> LibraryDriver<P> {
         path: PathBuf,
     ) -> Result<LibraryLoopCmd, Unhandled> {
         let side = self
-            .asked
+            .wanted_cover_job
             .as_ref()
-            .map(|asked| asked.side)
+            .map(|wanted| wanted.side)
             .ok_or(Unhandled)?;
-        let job = CoverJob { path, side };
-        if self.decoding != CoverDecoding::Idle || self.covers.answer(&job).is_some() {
+        let cover_job = CoverJob { path, side };
+        if self.decoding != CoverDecoding::Idle
+            || self.cover_cache.cached(&cover_job).is_some()
+        {
             return Err(Unhandled);
         }
-        self.decode(job)
+        self.decode(cover_job)
     }
 
-    fn decode(&mut self, job: CoverJob) -> Result<LibraryLoopCmd, Unhandled> {
+    fn decode(&mut self, cover_job: CoverJob) -> Result<LibraryLoopCmd, Unhandled> {
         let revision = self.cover_revision.next();
-        let started = self
-            .decoding
-            .transition(CoverDecodingMessage::Request { job, revision })?;
+        let started = self.decoding.transition(CoverDecodingMessage::Decode {
+            job: cover_job,
+            revision,
+        })?;
         self.cover_revision = revision;
         Ok(lift_decoding(started))
     }
@@ -69,7 +75,7 @@ impl<P> LibraryDriver<P> {
             .decoding
             .transition(CoverDecodingMessage::Decoded(revision))?;
         if let Ok(decoded) = &decoded {
-            self.covers.remember(decoded);
+            self.cover_cache.remember(decoded);
         }
         let settled = lift_decoding(settled);
         let answer = match decoded {
@@ -80,11 +86,10 @@ impl<P> LibraryDriver<P> {
     }
 
     fn published(&self, decoded: CoverDecoded) -> LibraryLoopCmd {
-        let asked = self
-            .asked
-            .as_ref()
-            .is_some_and(|job| job.path == decoded.path && job.side == decoded.side);
-        if asked {
+        let is_wanted = self.wanted_cover_job.as_ref().is_some_and(|cover_job| {
+            cover_job.path == decoded.path && cover_job.side == decoded.side
+        });
+        if is_wanted {
             Cmd::effect(LoopEffect::Execute(LibraryEffect::PublishCover(decoded)))
         } else {
             Cmd::none()
@@ -92,14 +97,18 @@ impl<P> LibraryDriver<P> {
     }
 
     fn failed(&self, error: &CoverError) -> LibraryLoopCmd {
-        let Some(job) = self.asked.as_ref().filter(|job| job.path == error.path) else {
+        let Some(cover_job) = self
+            .wanted_cover_job
+            .as_ref()
+            .filter(|cover_job| cover_job.path == error.path)
+        else {
             return Cmd::none();
         };
         Cmd::effect(LoopEffect::Execute(LibraryEffect::PublishCover(
             CoverDecoded {
-                path: job.path.clone(),
-                side: job.side,
-                art: CoverArt::Missing,
+                path: cover_job.path.clone(),
+                side: cover_job.side,
+                cover_lookup: CoverLookup::Missing,
             },
         )))
         .then(Cmd::message(LibraryEvent::Error(
@@ -111,11 +120,16 @@ impl<P> LibraryDriver<P> {
     }
 }
 
-fn lift_decoding(decoding: Cmd<(CoverJob, Revision), LibraryEvent>) -> LibraryLoopCmd {
-    let (jobs, events) = decoding.into_parts();
-    let started: LibraryLoopCmd = jobs
+fn lift_decoding(cmd: Cmd<(CoverJob, Revision), LibraryEvent>) -> LibraryLoopCmd {
+    let (jobs, events) = cmd.into_parts();
+    let library_loop_cmd: LibraryLoopCmd = jobs
         .into_iter()
-        .map(|(job, revision)| LoopEffect::Run(LibraryJob::Cover { job, revision }))
+        .map(|(cover_job, revision)| {
+            LoopEffect::Run(LibraryJob::DecodeCover {
+                cover_job,
+                revision,
+            })
+        })
         .collect();
-    drained(started, events)
+    drained(library_loop_cmd, events)
 }

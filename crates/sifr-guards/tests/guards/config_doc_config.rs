@@ -1,5 +1,3 @@
-// GUARD: the `defaults:config` doc block parses into `Config::default()`.
-
 use config::config_file::{TomlSettings, parse_config};
 
 use crate::guards::{fault::GuardError, support};
@@ -52,7 +50,7 @@ fn config_defaults_block_matches_config_default() -> Result<(), GuardError> {
         parsed,
         TomlSettings::default(),
         "docs/config.md's `config.toml` defaults block has drifted from \
-         Config::default() — update the TOML between the <!-- defaults:config --> \
+         TomlSettings::default() — update the TOML between the <!-- defaults:config --> \
          / <!-- /defaults:config --> markers in docs/config.md to match the new \
          default (see that file's \"Regenerating the default blocks\" section)"
     );

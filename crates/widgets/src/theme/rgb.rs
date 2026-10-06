@@ -15,34 +15,34 @@ pub(crate) fn shade(color: Rgb, factor: f32) -> Rgb {
     ])
 }
 
-fn lerp_channel(a: u8, b: u8, t: f32) -> u8 {
-    channel_byte(f32::from(a) + (f32::from(b) - f32::from(a)) * t)
+fn lerp_channel(from: u8, to: u8, fraction: f32) -> u8 {
+    channel_byte(f32::from(from) + (f32::from(to) - f32::from(from)) * fraction)
 }
 
-pub fn lerp_rgb(a: Rgb, b: Rgb, t: f32) -> Rgb {
-    let t = t.clamp(0.0, 1.0);
+pub fn lerp_rgb(from: Rgb, to: Rgb, fraction: f32) -> Rgb {
+    let fraction = fraction.clamp(0.0, 1.0);
     Rgb([
-        lerp_channel(a.0[0], b.0[0], t),
-        lerp_channel(a.0[1], b.0[1], t),
-        lerp_channel(a.0[2], b.0[2], t),
+        lerp_channel(from.0[0], to.0[0], fraction),
+        lerp_channel(from.0[1], to.0[1], fraction),
+        lerp_channel(from.0[2], to.0[2], fraction),
     ])
 }
 
 #[must_use]
-pub(crate) fn gradient_at(stops: &[Rgb], t: f32) -> Option<Rgb> {
+pub(crate) fn gradient_at(stops: &[Rgb], fraction: f32) -> Option<Rgb> {
     match stops.len() {
         0 => None,
         1 => stops.first().copied(),
         count => {
-            let t = t.clamp(0.0, 1.0);
+            let fraction = fraction.clamp(0.0, 1.0);
             let segments = dimension_f32(count - 1);
-            let scaled = t * segments;
+            let scaled = fraction * segments;
             let index = floor::<usize>(scaled).min(count - 2);
             let local_t = scaled - dimension_f32(index);
             stops
                 .get(index)
                 .zip(stops.get(index + 1))
-                .map(|(&a, &b)| lerp_rgb(a, b, local_t))
+                .map(|(&from, &to)| lerp_rgb(from, to, local_t))
         }
     }
 }
@@ -55,7 +55,7 @@ pub enum ColorDepth {
 
 impl ColorDepth {
     #[must_use]
-    pub fn detect(term_program: Option<&str>) -> Self {
+    pub fn from_term_program(term_program: Option<&str>) -> Self {
         if term_program == Some("Apple_Terminal") {
             ColorDepth::Indexed256
         } else {
@@ -72,7 +72,7 @@ pub fn color_at_depth(rgb: Rgb, depth: ColorDepth) -> Color {
     }
 }
 
-fn channel_sq_err(sample: Rgb, target: Rgb) -> i32 {
+fn squared_error(sample: Rgb, target: Rgb) -> i32 {
     let [sample_r, sample_g, sample_b] = sample.0;
     let [target_r, target_g, target_b] = target.0;
     (i32::from(sample_r) - i32::from(target_r)).pow(2)
@@ -80,8 +80,8 @@ fn channel_sq_err(sample: Rgb, target: Rgb) -> i32 {
         + (i32::from(sample_b) - i32::from(target_b)).pow(2)
 }
 
-fn index_u8(v: i32) -> u8 {
-    u8::try_from(v).unwrap_or(u8::MAX)
+fn index_u8(channel: i32) -> u8 {
+    u8::try_from(channel).unwrap_or(u8::MAX)
 }
 
 fn small_index_i32(step: usize) -> i32 {
@@ -113,14 +113,14 @@ fn nearest_xterm256(rgb: Rgb) -> u8 {
         + CUBE_R_STRIDE * small_index_i32(ri)
         + CUBE_G_STRIDE * small_index_i32(gi)
         + small_index_i32(bi);
-    let cube_err = channel_sq_err(rgb, Rgb([rv, gv, bv]));
+    let cube_err = squared_error(rgb, Rgb([rv, gv, bv]));
 
     let avg = (i32::from(r) + i32::from(g) + i32::from(b)) / 3;
     let gray_step = ((avg - GRAY_OFFSET).max(0) / GRAY_STEP).min(GRAY_MAX_STEP);
     let gray_level = GRAY_OFFSET + GRAY_STEP * gray_step;
     let gray_index = GRAY_BASE + gray_step;
     let gray_channel = u8::try_from(gray_level).unwrap_or(u8::MAX);
-    let gray_err = channel_sq_err(rgb, Rgb([gray_channel, gray_channel, gray_channel]));
+    let gray_err = squared_error(rgb, Rgb([gray_channel, gray_channel, gray_channel]));
 
     if gray_err < cube_err {
         index_u8(gray_index)
@@ -150,11 +150,11 @@ mod tests {
     #[case::ghostty(Some("ghostty"), ColorDepth::TrueColor)]
     #[case::iterm2(Some("iTerm.app"), ColorDepth::TrueColor)]
     #[case::nothing_set(None, ColorDepth::TrueColor)]
-    fn detect_reads_the_terminals_identity_first(
+    fn from_term_program_reads_the_terminals_identity_first(
         #[case] program: Option<&str>,
         #[case] depth: ColorDepth,
     ) {
-        assert_eq!(ColorDepth::detect(program), depth);
+        assert_eq!(ColorDepth::from_term_program(program), depth);
     }
 
     #[rstest]
@@ -164,9 +164,9 @@ mod tests {
     #[case::mid_grey([128, 128, 128], 244)]
     fn nearest_xterm256_picks_the_closest_index(
         #[case] rgb: [u8; 3],
-        #[case] index: u8,
+        #[case] xterm_index: u8,
     ) {
-        assert_eq!(nearest_xterm256(Rgb(rgb)), index);
+        assert_eq!(nearest_xterm256(Rgb(rgb)), xterm_index);
     }
 
     #[rstest]
@@ -185,10 +185,13 @@ mod tests {
     #[case::at_the_end(1.0, [100, 200, 255])]
     #[case::before_the_start(-1.0, [0, 0, 0])]
     #[case::past_the_end(2.0, [100, 200, 255])]
-    fn lerp_rgb_walks_between_two_colours(#[case] t: f32, #[case] expected: [u8; 3]) {
+    fn lerp_rgb_walks_between_two_colours(
+        #[case] fraction: f32,
+        #[case] expected: [u8; 3],
+    ) {
         let start = Rgb([0, 0, 0]);
         let end = Rgb([100, 200, 255]);
-        assert_eq!(lerp_rgb(start, end, t), Rgb(expected));
+        assert_eq!(lerp_rgb(start, end, fraction), Rgb(expected));
     }
 
     #[rstest]
@@ -204,9 +207,9 @@ mod tests {
     #[case::past_the_end(RAMP, 2.0, Some(Rgb([255, 255, 255])))]
     fn palette_at_samples_the_segment_t_falls_in(
         #[case] stops: &[Rgb],
-        #[case] t: f32,
+        #[case] fraction: f32,
         #[case] expected: Option<Rgb>,
     ) {
-        assert_eq!(gradient_at(stops, t), expected);
+        assert_eq!(gradient_at(stops, fraction), expected);
     }
 }

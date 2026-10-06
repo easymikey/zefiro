@@ -1,6 +1,6 @@
 use config::{
     appearance_file::parse_appearance,
-    config_file::{parse_config, parse_config_reload},
+    config_file::{parse_config, parse_config_settings},
     patch::patched_config_text,
     theme_file::parse_theme,
 };
@@ -27,7 +27,7 @@ fn the_commented_fixture_parses_into_every_table() {
 #[test]
 fn a_patch_round_trips_through_the_public_parser() {
     let patch = ConfigPatch {
-        theme: Some(ThemeName::from_static("noir")),
+        theme_name: Some(ThemeName::from_static("noir")),
         volume: Some(Percent::clamped(42)),
         device: Some(OutputDevice::Named(
             DeviceName::new("Speakers".to_string()).unwrap(),
@@ -37,7 +37,7 @@ fn a_patch_round_trips_through_the_public_parser() {
     let written = patched_config_text(COMMENTED_CONFIG, patch).unwrap();
     let round_tripped = parse_config(&written).unwrap();
     assert_eq!(
-        round_tripped.theme,
+        round_tripped.theme_choice,
         ThemeChoice::Named(ThemeName::from_static("noir"))
     );
     assert_eq!(round_tripped.volume, Percent::clamped(42));
@@ -49,8 +49,8 @@ fn a_patch_round_trips_through_the_public_parser() {
 }
 
 #[test]
-fn parse_config_reload_reads_the_keymap_and_the_music_dir() {
-    let parsed = parse_config_reload(
+fn parse_config_settings_reads_the_keymap_and_the_music_dir() {
+    let parsed = parse_config_settings(
         "music_dir = \"/tmp/music\"\ntheme = \"dark\"\n\n[keymap]\nnext = \"x\"\n",
     )
     .unwrap();
@@ -76,16 +76,16 @@ fn theme_with(new_key: &str, key: &str) -> String {
     format!("name = \"mine\"\n[colors]\n{colors}{key} = \"#a0b0c0\"\n")
 }
 
-fn parsed_config(source: &str) -> String {
-    format!("{:?}", parse_config(source))
+fn parsed_config(text: &str) -> String {
+    format!("{:?}", parse_config(text))
 }
 
-fn parsed_appearance(source: &str) -> String {
-    format!("{:?}", parse_appearance(source))
+fn parsed_appearance(text: &str) -> String {
+    format!("{:?}", parse_appearance(text))
 }
 
-fn parsed_theme(source: &str) -> String {
-    format!("{:?}", parse_theme(source, "mine"))
+fn parsed_theme(text: &str) -> String {
+    format!("{:?}", parse_theme(text, "mine"))
 }
 
 #[rstest]
@@ -130,12 +130,12 @@ fn parsed_theme(source: &str) -> String {
     parsed_theme
 )]
 fn an_old_key_parses_like_its_new_name(
-    #[case] old_source: String,
-    #[case] new_source: String,
+    #[case] old_text: String,
+    #[case] new_text: String,
     #[case] parsed: fn(&str) -> String,
 ) {
-    let new_parsed = parsed(&new_source);
+    let new_parsed = parsed(&new_text);
 
     assert!(new_parsed.starts_with("Ok("), "{new_parsed}");
-    assert_eq!(parsed(&old_source), new_parsed);
+    assert_eq!(parsed(&old_text), new_parsed);
 }

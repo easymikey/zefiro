@@ -7,7 +7,7 @@ TomlSettings {
     music_dir: Some(
         "/music",
     ),
-    theme: Auto,
+    theme_choice: Auto,
     volume: Percent(
         50,
     ),

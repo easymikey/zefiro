@@ -25,8 +25,8 @@ pub type RowIndex = Index<RowSpace>;
 
 impl<Space> Index<Space> {
     #[must_use]
-    pub const fn new(position: usize) -> Self {
-        Self(position, PhantomData)
+    pub const fn new(index: usize) -> Self {
+        Self(index, PhantomData)
     }
 
     #[must_use]

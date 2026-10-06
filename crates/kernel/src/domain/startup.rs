@@ -15,8 +15,8 @@ use crate::domain::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Shuffle {
     #[default]
-    Disabled,
-    Enabled,
+    Off,
+    On,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -26,11 +26,11 @@ pub struct Startup {
     pub playlist_index: Option<ViewIndex>,
     pub playlist_source: PlaylistSource,
     pub shuffle: Shuffle,
-    pub audio: AudioSettings,
-    pub appearance: AppearanceSettings,
-    pub theme: ThemeChoice,
+    pub audio_settings: AudioSettings,
+    pub appearance_settings: AppearanceSettings,
+    pub theme_choice: ThemeChoice,
     pub volume: Percent,
-    pub keymap: KeymapOverrides,
-    pub themes: Vec<ThemeName>,
+    pub keymap_overrides: KeymapOverrides,
+    pub theme_names: Vec<ThemeName>,
     pub errors: Vec<(ConfigName, ConfigError)>,
 }

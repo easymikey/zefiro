@@ -53,13 +53,13 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [
             Toast {
-                kind: Info,
+                level: Info,
                 title: "Not in library",
                 text: None,
                 raised_at: Moment(

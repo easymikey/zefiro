@@ -7,26 +7,26 @@ use crate::error::Error;
 
 pub(crate) type TrackDecoder = rodio::Decoder<BufReader<File>>;
 
-pub struct TrackSource {
+pub struct DecodedTrack {
     pub(crate) revision: Revision,
-    pub(crate) source: TrackDecoder,
+    pub(crate) decoder: TrackDecoder,
 }
 
-impl TrackSource {
-    pub(crate) fn total(&self) -> Option<Duration> {
-        self.source.total_duration()
+impl DecodedTrack {
+    pub(crate) fn duration(&self) -> Option<Duration> {
+        self.decoder.total_duration()
     }
 }
 
-impl PartialEq for TrackSource {
+impl PartialEq for DecodedTrack {
     fn eq(&self, other: &Self) -> bool {
         self.revision == other.revision
     }
 }
 
-impl std::fmt::Debug for TrackSource {
+impl std::fmt::Debug for DecodedTrack {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TrackSource")
+        f.debug_struct("DecodedTrack")
             .field("revision", &self.revision)
             .finish_non_exhaustive()
     }

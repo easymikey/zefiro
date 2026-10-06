@@ -9,10 +9,10 @@ use kernel::{
 use crate::{
     deck::source::PreloadMode,
     engine::{
-        crossfade::{arm_cue, replay_gain_factor},
+        crossfade::{fade_start, replay_gain_factor},
         effect::{AudioLoopCmd, EngineEffect},
         message::SinkRole,
-        phase::{CurrentTrack, Fade, Incoming, Next, Phase, Playing},
+        phase::{Fade, Incoming, LoadedTrack, NextTrack, Phase, Playing},
         state::{Live, then_report},
     },
 };
@@ -22,35 +22,35 @@ impl Live {
         &mut self,
         role: SinkRole,
     ) -> Result<AudioLoopCmd, Unhandled> {
-        self.settled(role, Live::finished_primary)
+        self.settled(role, Live::finished_current)
     }
 
     pub(crate) fn ramped(&mut self, role: SinkRole) -> Result<AudioLoopCmd, Unhandled> {
-        self.settled(role, Live::ramped_primary)
+        self.settled(role, Live::ramped_current)
     }
 
     fn settled<F>(
         &mut self,
         role: SinkRole,
-        primary: F,
+        current: F,
     ) -> Result<AudioLoopCmd, Unhandled>
     where
         F: FnOnce(&mut Live) -> Result<AudioLoopCmd, Unhandled>,
     {
         match role {
-            SinkRole::Primary => primary(self),
+            SinkRole::Current => current(self),
             SinkRole::Outgoing => self.handover_settled(),
             SinkRole::Incoming => Err(Unhandled),
         }
     }
 
-    fn finished_primary(&mut self) -> Result<AudioLoopCmd, Unhandled> {
+    fn finished_current(&mut self) -> Result<AudioLoopCmd, Unhandled> {
         let Phase::Playing(playing) = &mut self.phase else {
             return Err(Unhandled);
         };
-        match std::mem::replace(&mut playing.next, Next::None) {
-            Next::Gapless(current_track) => {
-                playing.current = current_track;
+        match std::mem::replace(&mut playing.next, NextTrack::None) {
+            NextTrack::Gapless(incoming) => {
+                playing.current = incoming;
                 Ok(then_report(
                     Cmd::effect(LoopEffect::Execute(EngineEffect::Advance(
                         self.gain(),
@@ -58,20 +58,20 @@ impl Live {
                     .then(Cmd::message(AudioEvent::TrackChanged)),
                 ))
             }
-            Next::None | Next::Preloading { .. } => {
+            NextTrack::None | NextTrack::Preloading { .. } => {
                 self.phase = Phase::Idle;
                 Ok(then_report(Cmd::message(AudioEvent::Ended)))
             }
-            Next::Crossfading { preload, .. } => {
-                playing.current = preload;
+            NextTrack::Crossfading { incoming, .. } => {
+                playing.current = incoming;
                 Ok(self.promoted())
             }
         }
     }
 
-    pub(crate) fn cued(&mut self) -> Result<AudioLoopCmd, Unhandled> {
+    pub(crate) fn fade_start_reached(&mut self) -> Result<AudioLoopCmd, Unhandled> {
         let Phase::Playing(Playing {
-            next: Next::Crossfading { preload, fade },
+            next: NextTrack::Crossfading { incoming, fade },
             ..
         }) = &mut self.phase
         else {
@@ -82,16 +82,16 @@ impl Live {
         }
         *fade = Fade::Running;
         Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Crossfade {
-            length: self.settings.crossfade.get(),
-            incoming: replay_gain_factor(self.settings.replay_gain, preload.gain),
+            duration: self.settings.crossfade.get(),
+            incoming: replay_gain_factor(self.settings.replay_gain, incoming.decibels),
         })))
     }
 
-    fn ramped_primary(&mut self) -> Result<AudioLoopCmd, Unhandled> {
+    fn ramped_current(&mut self) -> Result<AudioLoopCmd, Unhandled> {
         let Phase::Playing(playing) = &mut self.phase else {
             return Err(Unhandled);
         };
-        let Next::Crossfading {
+        let NextTrack::Crossfading {
             fade: Fade::Running,
             ..
         } = playing.next
@@ -120,7 +120,7 @@ impl Live {
 
     pub(crate) fn preload_mode(&self) -> Option<PreloadMode> {
         let Phase::Playing(Playing {
-            next: Next::Preloading { .. },
+            next: NextTrack::Preloading { .. },
             ..
         }) = &self.phase
         else {
@@ -141,29 +141,26 @@ impl Live {
         let Phase::Playing(playing) = &mut self.phase else {
             return Err(Unhandled);
         };
-        let Next::Preloading { path, gain } = &playing.next else {
+        let NextTrack::Preloading { path, decibels } = &playing.next else {
             return Err(Unhandled);
         };
-        let current_track = CurrentTrack {
-            total: duration,
-            gain: *gain,
+        let incoming = LoadedTrack {
+            duration,
+            decibels: *decibels,
             path: path.clone(),
         };
         let (next, cmd) = match preload_mode {
-            PreloadMode::Gapless => (Next::Gapless(current_track), Cmd::none()),
+            PreloadMode::Gapless => (NextTrack::Gapless(incoming), Cmd::none()),
             PreloadMode::Crossfade(_) => {
-                let cue = arm_cue(playing.current.total, self.settings.crossfade.get());
-                let armed = cue.map_or_else(Cmd::none, |cue| {
-                    Cmd::effect(LoopEffect::Execute(EngineEffect::Arm(Some(cue))))
+                let fade_start =
+                    fade_start(playing.current.duration, self.settings.crossfade.get());
+                let fade_start_cmd = fade_start.map_or_else(Cmd::none, |fade_start| {
+                    Cmd::effect(LoopEffect::Execute(EngineEffect::SetFadeStart(Some(
+                        fade_start,
+                    ))))
                 });
                 let fade = Fade::Armed;
-                (
-                    Next::Crossfading {
-                        preload: current_track,
-                        fade,
-                    },
-                    armed,
-                )
+                (NextTrack::Crossfading { incoming, fade }, fade_start_cmd)
             }
         };
         playing.next = next;
@@ -175,13 +172,13 @@ impl Live {
         error: AudioError,
     ) -> Result<AudioLoopCmd, Unhandled> {
         let Phase::Playing(Playing {
-            next: next @ Next::Preloading { .. },
+            next: next @ NextTrack::Preloading { .. },
             ..
         }) = &mut self.phase
         else {
             return Err(Unhandled);
         };
-        *next = Next::None;
+        *next = NextTrack::None;
         Ok(Cmd::message(AudioEvent::Error(error)))
     }
 }
@@ -209,15 +206,15 @@ mod tests {
             crossfade::replay_gain_factor,
             effect::{AudioLoopCmd, EngineEffect},
             message::{AudioMessage, EngineMessage, SinkRole},
-            phase::{CurrentTrack, Incoming, Next, Phase, Playing},
-            revisions::JobRevisions,
+            phase::{Incoming, LoadedTrack, NextTrack, Phase, Playing},
             state::{Engine, EngineState, Live},
             tests::{
                 CROSSFADE_SECONDS,
                 EngineRow,
-                PRELOAD_TOTAL,
+                TRACK_B_DURATION,
                 assert_cell,
                 assert_same,
+                attached,
                 awaiting,
                 closed,
                 cmd,
@@ -226,7 +223,6 @@ mod tests {
                 first,
                 handed_over_to_b,
                 handing_over,
-                installed,
                 live,
                 loading,
                 loading_track,
@@ -234,9 +230,8 @@ mod tests {
                 playing_track,
                 playing_with_crossfade,
                 preload,
-                preload_at,
                 preload_error,
-                preloaded_at,
+                preload_with_revision,
                 promoted,
                 second,
                 seconds,
@@ -247,20 +242,21 @@ mod tests {
                 track_a,
                 track_b,
                 unhandled,
+                with_preload_revision,
             },
         },
     };
 
     struct DeckEventRow {
-        start: EngineState,
+        engine_state: EngineState,
         expected: EngineState,
-        effect: AudioLoopCmd,
+        audio_loop_cmd: AudioLoopCmd,
     }
 
-    fn gapless_queued() -> EngineState {
+    fn gapless_next() -> EngineState {
         EngineState::Live(Live {
             phase: Phase::Playing(Playing {
-                next: Next::Gapless(track_b()),
+                next: NextTrack::Gapless(track_b()),
                 ..Playing::new(track_a())
             }),
             ..live()
@@ -268,32 +264,32 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_primary_moves_the_track() {
+    fn a_finished_current_moves_the_track() {
         let rows = vec![
             DeckEventRow {
-                start: gapless_queued(),
+                engine_state: gapless_next(),
                 expected: EngineState::Live(Live {
                     phase: Phase::Playing(Playing::new(track_b())),
                     ..live()
                 }),
-                effect: Cmd::effect(LoopEffect::Execute(EngineEffect::Advance(
-                    crate::gain::Gain::UNITY,
-                )))
+                audio_loop_cmd: Cmd::effect(LoopEffect::Execute(
+                    EngineEffect::Advance(crate::gain::Gain::UNITY),
+                ))
                 .then(Cmd::message(AudioEvent::TrackChanged))
                 .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report))),
             },
             DeckEventRow {
-                start: EngineState::Live(playing()),
+                engine_state: EngineState::Live(playing()),
                 expected: EngineState::Live(live()),
-                effect: Cmd::message(AudioEvent::Ended)
+                audio_loop_cmd: Cmd::message(AudioEvent::Ended)
                     .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report))),
             },
         ];
         for row in rows {
-            let mut state = row.start;
+            let mut state = row.engine_state;
             let effect =
-                step(&mut state, EngineMessage::Finished(SinkRole::Primary)).unwrap();
-            assert_same(effect, row.effect);
+                step(&mut state, EngineMessage::Finished(SinkRole::Current)).unwrap();
+            assert_same(effect, row.audio_loop_cmd);
             assert_eq!(state, row.expected);
         }
     }
@@ -302,11 +298,11 @@ mod tests {
     #[case::idle(EngineState::Live(live()))]
     #[case::loading(EngineState::Live(loading()))]
     #[case::closed(closed())]
-    fn a_finished_outside_a_track_is_ignored(#[case] start: EngineState) {
-        let expected = start.clone();
-        let mut state = start;
+    fn a_finished_outside_a_track_is_ignored(#[case] engine_state: EngineState) {
+        let expected = engine_state.clone();
+        let mut state = engine_state;
         assert_same(
-            step(&mut state, EngineMessage::Finished(SinkRole::Primary)),
+            step(&mut state, EngineMessage::Finished(SinkRole::Current)),
             Err(Unhandled),
         );
         assert_eq!(state, expected);
@@ -329,7 +325,7 @@ mod tests {
     fn a_finish_mid_crossfade_promotes() {
         let mut state = EngineState::Live(crossfading_mid_ramp());
         let effect =
-            step(&mut state, EngineMessage::Finished(SinkRole::Primary)).unwrap();
+            step(&mut state, EngineMessage::Finished(SinkRole::Current)).unwrap();
         assert_same(
             effect,
             Cmd::effect(LoopEffect::Execute(EngineEffect::Promote(
@@ -345,13 +341,13 @@ mod tests {
     }
 
     #[test]
-    fn a_cued_track_fades_in_and_out() {
+    fn a_track_at_its_fade_start_fades_in_and_out() {
         let mut state = EngineState::Live(crossfading_idle());
-        let effect = step(&mut state, EngineMessage::Cued).unwrap();
+        let effect = step(&mut state, EngineMessage::FadeStartReached).unwrap();
         assert_same(
             effect,
             Cmd::effect(LoopEffect::Execute(EngineEffect::Crossfade {
-                length: seconds(10),
+                duration: seconds(10),
                 incoming: crate::gain::Gain::UNITY,
             })),
         );
@@ -359,19 +355,27 @@ mod tests {
     }
 
     #[test]
-    fn a_second_cue_is_ignored() {
+    fn a_second_fade_start_is_ignored() {
         let mut state = EngineState::Live(crossfading_mid_ramp());
-        assert_same(step(&mut state, EngineMessage::Cued), Err(Unhandled));
+        assert_same(
+            step(&mut state, EngineMessage::FadeStartReached),
+            Err(Unhandled),
+        );
         assert_eq!(state, EngineState::Live(crossfading_mid_ramp()));
     }
 
     #[rstest]
     #[case::idle(EngineState::Live(live()))]
     #[case::loading(EngineState::Live(loading()))]
-    fn a_cue_while_idle_or_loading_is_ignored(#[case] start: EngineState) {
-        let expected = start.clone();
-        let mut state = start;
-        assert_same(step(&mut state, EngineMessage::Cued), Err(Unhandled));
+    fn a_fade_start_while_idle_or_loading_is_ignored(
+        #[case] engine_state: EngineState,
+    ) {
+        let expected = engine_state.clone();
+        let mut state = engine_state;
+        assert_same(
+            step(&mut state, EngineMessage::FadeStartReached),
+            Err(Unhandled),
+        );
         assert_eq!(state, expected);
     }
 
@@ -380,7 +384,7 @@ mod tests {
         let mut state = EngineState::Live(crossfading_mid_ramp());
         assert!(step(&mut state, cmd(AudioCmd::Seek(seconds(50)))).is_ok());
         assert_same(
-            step(&mut state, EngineMessage::Ramped(SinkRole::Primary)),
+            step(&mut state, EngineMessage::Ramped(SinkRole::Current)),
             Err(Unhandled),
         );
         assert_eq!(state, EngineState::Live(crossfading_idle()));
@@ -390,7 +394,7 @@ mod tests {
     fn a_finished_ramp_promotes_the_incoming_track() {
         let mut state = EngineState::Live(crossfading_mid_ramp());
         let effect =
-            step(&mut state, EngineMessage::Ramped(SinkRole::Primary)).unwrap();
+            step(&mut state, EngineMessage::Ramped(SinkRole::Current)).unwrap();
         assert_same(
             effect,
             Cmd::effect(LoopEffect::Execute(EngineEffect::Promote(
@@ -433,20 +437,20 @@ mod tests {
             effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::DropOutgoing))),
         }
     )]
-    #[case::ramped_primary_in_handover_ignored(
+    #[case::ramped_current_in_handover_ignored(
         EngineState::Live(handing_over(Incoming::Loading(loading_track("/b")))),
-        EngineMessage::Ramped(SinkRole::Primary),
+        EngineMessage::Ramped(SinkRole::Current),
         EngineRow {
             next: EngineState::Live(handing_over(Incoming::Loading(loading_track("/b")))),
             effect: Err(Unhandled),
         }
     )]
     fn a_handover_follows_its_ramps(
-        #[case] start: EngineState,
+        #[case] engine_state: EngineState,
         #[case] message: EngineMessage,
-        #[case] moved: EngineRow,
+        #[case] moved_row: EngineRow,
     ) {
-        assert_cell(start, message, moved);
+        assert_cell(engine_state, message, moved_row);
     }
 
     #[rstest]
@@ -455,10 +459,10 @@ mod tests {
             playing_with_crossfade(),
             "/b",
         )),
-        installed(&track_b(), Revision::default()),
+        attached(&track_b(), Revision::default()),
         EngineRow {
             next: EngineState::Live(crossfading_idle()),
-            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Arm(Some(seconds(90)))))),
+            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::SetFadeStart(Some(seconds(90)))))),
         }
     )]
     #[case::a_failed_preload_is_reported(
@@ -469,17 +473,17 @@ mod tests {
             effect: Ok(Cmd::message(AudioEvent::Error(preload_error()))),
         }
     )]
-    #[case::an_install_nobody_awaits_is_ignored(
+    #[case::an_attach_nobody_awaits_is_ignored(
         EngineState::Live(playing()),
-        installed(&track_b(), Revision::default()),
+        attached(&track_b(), Revision::default()),
         EngineRow { next: EngineState::Live(playing()), effect: Err(Unhandled)}
     )]
     fn a_cell_moves_the_engine_and_names_its_io(
-        #[case] start: EngineState,
+        #[case] engine_state: EngineState,
         #[case] message: EngineMessage,
-        #[case] moved: EngineRow,
+        #[case] moved_row: EngineRow,
     ) {
-        assert_cell(start, message, moved);
+        assert_cell(engine_state, message, moved_row);
     }
 
     fn still_live(state: EngineState) -> Live {
@@ -504,14 +508,14 @@ mod tests {
     }
 
     #[test]
-    fn a_preload_install_after_a_stop_is_ignored() {
+    fn a_preload_attach_after_a_stop_is_ignored() {
         let (mut state, log) = trace(
             EngineState::Live(playing_with_crossfade()),
             vec![preload("/b"), cmd(AudioCmd::Stop)],
         )
         .unwrap();
         assert_same(
-            step(&mut state, installed(&track_b(), first())),
+            step(&mut state, attached(&track_b(), first())),
             Err(Unhandled),
         );
         insta::assert_debug_snapshot!(log);
@@ -522,12 +526,13 @@ mod tests {
 
     #[test]
     fn an_attached_after_the_engine_moved_on_is_refused() {
-        let mut engine = Engine {
-            state: EngineState::Live(playing()),
-            job_revisions: JobRevisions::default(),
-        };
+        let mut engine = Engine::new(EngineState::Live(playing()));
         assert!(engine.transition(preload("/b")).is_ok());
-        assert!(engine.transition(preload_at("/c", second())).is_ok());
+        assert!(
+            engine
+                .transition(preload_with_revision("/c", second()))
+                .is_ok()
+        );
         let attached = |revision| EngineMessage::Attached {
             revision,
             preload_mode: PreloadMode::Gapless,
@@ -536,7 +541,10 @@ mod tests {
         assert_same(engine.transition(attached(first())), Err(Unhandled));
         assert_eq!(
             engine.state,
-            EngineState::Live(awaiting(preloaded_at(playing(), second()), "/c"))
+            EngineState::Live(awaiting(
+                with_preload_revision(playing(), second()),
+                "/c"
+            ))
         );
         assert!(engine.transition(attached(second())).is_ok());
     }
@@ -552,7 +560,7 @@ mod tests {
                     preload_mode: PreloadMode::Gapless,
                     duration: None,
                 },
-                EngineMessage::Finished(SinkRole::Primary),
+                EngineMessage::Finished(SinkRole::Current),
             ],
         )
         .unwrap();
@@ -562,7 +570,7 @@ mod tests {
     #[test]
     fn a_gapless_advance_applies_the_next_track_gain() {
         let gain = Some(Decibels(-6.0));
-        let start = Live {
+        let live = Live {
             settings: AudioSettings {
                 replay_gain: ReplayGain::On,
                 ..settings()
@@ -570,11 +578,11 @@ mod tests {
             ..playing()
         };
         let (state, log) = trace(
-            EngineState::Live(start),
+            EngineState::Live(live),
             vec![
                 cmd(AudioCmd::Preload(TrackLoad {
                     path: "/b".into(),
-                    gain,
+                    decibels: gain,
                     revision: first(),
                 })),
                 EngineMessage::Attached {
@@ -582,7 +590,7 @@ mod tests {
                     preload_mode: PreloadMode::Gapless,
                     duration: None,
                 },
-                EngineMessage::Finished(SinkRole::Primary),
+                EngineMessage::Finished(SinkRole::Current),
             ],
         )
         .unwrap();
@@ -592,7 +600,10 @@ mod tests {
         .then(Cmd::message(AudioEvent::TrackChanged))
         .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)));
         assert_same(log.last(), Some(&advanced));
-        assert_eq!(still_live(state).phase.current().and_then(|c| c.gain), gain);
+        assert_eq!(
+            still_live(state).phase.current().and_then(|c| c.decibels),
+            gain
+        );
     }
 
     #[test]
@@ -604,20 +615,22 @@ mod tests {
                 EngineMessage::Attached {
                     revision: first(),
                     preload_mode: PreloadMode::Gapless,
-                    duration: Some(PRELOAD_TOTAL),
+                    duration: Some(TRACK_B_DURATION),
                 },
-                EngineMessage::Finished(SinkRole::Primary),
+                EngineMessage::Finished(SinkRole::Current),
                 set_crossfade(CROSSFADE_SECONDS),
-                preload_at("/c", second()),
-                installed(&track_b(), second()),
+                preload_with_revision("/c", second()),
+                attached(&track_b(), second()),
             ],
         )
         .unwrap();
         assert_same(
             log.last(),
-            Some(&Cmd::effect(LoopEffect::Execute(EngineEffect::Arm(Some(
-                PRELOAD_TOTAL - seconds(CROSSFADE_SECONDS),
-            ))))),
+            Some(&Cmd::effect(LoopEffect::Execute(
+                EngineEffect::SetFadeStart(Some(
+                    TRACK_B_DURATION - seconds(CROSSFADE_SECONDS),
+                )),
+            ))),
         );
     }
 
@@ -625,14 +638,14 @@ mod tests {
     fn a_landed_crossfade_preload_still_hands_over() {
         let (state, log) = trace(
             EngineState::Live(playing_with_crossfade()),
-            vec![preload("/b"), installed(&track_b(), first())],
+            vec![preload("/b"), attached(&track_b(), first())],
         )
         .unwrap();
         let live = still_live(state);
         assert!(matches!(
             live.phase,
             Phase::Playing(Playing {
-                next: Next::Crossfading { .. },
+                next: NextTrack::Crossfading { .. },
                 ..
             })
         ));
@@ -663,10 +676,10 @@ mod tests {
             prop_assert_eq!(
                 live.phase,
                 Phase::Playing(Playing {
-                    next: Next::Gapless(CurrentTrack {
+                    next: NextTrack::Gapless(LoadedTrack {
                         path: requested.into(),
-                        gain: None,
-                        total: None,
+                        decibels: None,
+                        duration: None,
                     }),
                     ..Playing::new(track_a())
                 })

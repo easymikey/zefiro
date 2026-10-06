@@ -5,40 +5,40 @@ use kernel::cmd::Cmds;
 
 use crate::watcher::FileStream;
 
-pub(crate) struct Inboxes<'a, C, M> {
-    pub(crate) commands: &'a Receiver<C>,
-    pub(crate) heard: Receiver<M>,
-    pub(crate) finished: Receiver<Result<M, Box<dyn Any + Send>>>,
+pub(crate) struct WaitSources<'a, C, M> {
+    pub(crate) cmd_receiver: &'a Receiver<C>,
+    pub(crate) callback_receiver: Receiver<M>,
+    pub(crate) finished_receiver: Receiver<Result<M, Box<dyn Any + Send>>>,
 }
 
 pub(crate) enum WaitSource {
-    Heard,
+    Callback,
     Finished,
     Files,
 }
 
 pub(crate) enum LoopInput<M> {
-    Heard(M),
+    Message(M),
     Panicked(Box<dyn Any + Send>),
     Lost(WaitSource),
     Due,
     Closed,
 }
 
-impl<C, M: From<Cmds<C>>> Inboxes<'_, C, M> {
+impl<C, M: From<Cmds<C>>> WaitSources<'_, C, M> {
     pub(crate) fn wait(
         &self,
-        files: &FileStream<M>,
-        deadline: Option<Instant>,
+        file_stream: &FileStream<M>,
+        deadline_at: Option<Instant>,
     ) -> LoopInput<M> {
         let mut select = Select::new();
-        let commands = select.recv(self.commands);
-        let heard = select.recv(&self.heard);
-        let finished = select.recv(&self.finished);
+        let cmd_index = select.recv(self.cmd_receiver);
+        let callback_index = select.recv(&self.callback_receiver);
+        let finished = select.recv(&self.finished_receiver);
         let silent = never();
-        let events = files.events().unwrap_or(&silent);
+        let events = file_stream.events().unwrap_or(&silent);
         let changes = select.recv(events);
-        let selected = match deadline {
+        let selected = match deadline_at {
             Some(deadline) => select.select_deadline(deadline),
             None => Ok(select.select()),
         };
@@ -46,29 +46,29 @@ impl<C, M: From<Cmds<C>>> Inboxes<'_, C, M> {
             return LoopInput::Due;
         };
         let index = operation.index();
-        if index == commands {
+        if index == cmd_index {
             return operation
-                .recv(self.commands)
+                .recv(self.cmd_receiver)
                 .map_or(LoopInput::Closed, |first| {
-                    LoopInput::Heard(M::from(gather(first, self.commands)))
+                    LoopInput::Message(M::from(gather(first, self.cmd_receiver)))
                 });
         }
-        if index == heard {
+        if index == callback_index {
             return operation
-                .recv(&self.heard)
-                .map_or(LoopInput::Lost(WaitSource::Heard), LoopInput::Heard);
+                .recv(&self.callback_receiver)
+                .map_or(LoopInput::Lost(WaitSource::Callback), LoopInput::Message);
         }
         if index == finished {
-            return match operation.recv(&self.finished) {
-                Ok(Ok(message)) => LoopInput::Heard(message),
+            return match operation.recv(&self.finished_receiver) {
+                Ok(Ok(message)) => LoopInput::Message(message),
                 Ok(Err(payload)) => LoopInput::Panicked(payload),
                 Err(_) => LoopInput::Lost(WaitSource::Finished),
             };
         }
         if index == changes {
-            return files
-                .heard(operation.recv(events))
-                .map_or(LoopInput::Lost(WaitSource::Files), LoopInput::Heard);
+            return file_stream
+                .changed(operation.recv(events))
+                .map_or(LoopInput::Lost(WaitSource::Files), LoopInput::Message);
         }
         LoopInput::Closed
     }
@@ -76,25 +76,25 @@ impl<C, M: From<Cmds<C>>> Inboxes<'_, C, M> {
     pub(crate) fn lose(
         &mut self,
         source: &WaitSource,
-        files: &mut FileStream<M>,
+        file_stream: &mut FileStream<M>,
     ) -> Option<M> {
         match source {
-            WaitSource::Heard => {
-                self.heard = never();
+            WaitSource::Callback => {
+                self.callback_receiver = never();
                 None
             }
             WaitSource::Finished => {
-                self.finished = never();
+                self.finished_receiver = never();
                 None
             }
-            WaitSource::Files => files.lose(),
+            WaitSource::Files => file_stream.lose(),
         }
     }
 }
 
-fn gather<C>(first: C, commands: &Receiver<C>) -> Cmds<C> {
+fn gather<C>(first: C, cmd_receiver: &Receiver<C>) -> Cmds<C> {
     let mut cmds = vec![first];
-    cmds.extend(commands.try_iter());
+    cmds.extend(cmd_receiver.try_iter());
     Cmds {
         cmds,
         at: Instant::now(),

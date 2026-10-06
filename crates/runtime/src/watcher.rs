@@ -59,7 +59,7 @@ impl<M> FileStream<M> {
                 }
             },
         };
-        let failure = if path.exists() {
+        let error = if path.exists() {
             watcher
                 .watch(path, RecursiveMode::Recursive)
                 .err()
@@ -72,7 +72,7 @@ impl<M> FileStream<M> {
             events,
             changed,
         };
-        failure.map(|error| changed(Err(error)))
+        error.map(|error| changed(Err(error)))
     }
 
     pub(crate) fn unwatch(&mut self, path: &Path) -> Option<M> {
@@ -89,7 +89,7 @@ impl<M> FileStream<M> {
             .map(|error| changed(Err(io_error(&error))))
     }
 
-    pub(crate) fn heard(
+    pub(crate) fn changed(
         &self,
         received: Result<notify::Result<notify::Event>, RecvError>,
     ) -> Option<M> {
@@ -122,7 +122,7 @@ mod tests {
 
     use crate::watcher::{FileStream, io_error};
 
-    fn as_outcome(changed: Result<(), IoError>) -> Result<(), IoError> {
+    fn as_change(changed: Result<(), IoError>) -> Result<(), IoError> {
         changed
     }
 
@@ -131,9 +131,9 @@ mod tests {
         let mut file_stream = FileStream::Idle;
         let missing = std::env::temp_dir().join("does-not-exist-config-watcher-test");
 
-        let outcome = file_stream.watch(&missing, as_outcome);
+        let changed = file_stream.watch(&missing, as_change);
 
-        assert_eq!(outcome, Some(Err(IoError::Missing)));
+        assert_eq!(changed, Some(Err(IoError::Missing)));
     }
 
     #[rstest]
@@ -168,16 +168,16 @@ mod tests {
     ) {
         let directory = tempfile::tempdir().unwrap();
         let mut file_stream = FileStream::Idle;
-        assert_eq!(file_stream.watch(directory.path(), as_outcome), None);
+        assert_eq!(file_stream.watch(directory.path(), as_change), None);
 
-        assert_eq!(file_stream.heard(received), expected);
+        assert_eq!(file_stream.changed(received), expected);
     }
 
     #[test]
     fn an_idle_stream_hears_nothing() {
         let file_stream: FileStream<Result<(), IoError>> = FileStream::Idle;
 
-        assert_eq!(file_stream.heard(Ok(Ok(notify::Event::default()))), None);
+        assert_eq!(file_stream.changed(Ok(Ok(notify::Event::default()))), None);
     }
 
     #[test]
@@ -185,7 +185,7 @@ mod tests {
     fn a_changed_file_in_a_watched_directory_produces_its_message() {
         let directory = tempfile::tempdir().unwrap();
         let mut file_stream = FileStream::Idle;
-        assert_eq!(file_stream.watch(directory.path(), as_outcome), None);
+        assert_eq!(file_stream.watch(directory.path(), as_change), None);
 
         std::fs::write(directory.path().join("config.toml"), "volume = 1").unwrap();
         let received = file_stream
@@ -194,7 +194,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .map_err(|_timeout| RecvError);
 
-        assert_eq!(file_stream.heard(received), Some(Ok(())));
+        assert_eq!(file_stream.changed(received), Some(Ok(())));
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,11 +240,11 @@ mod tests {
         for step in steps {
             match step {
                 Step::Watch => {
-                    assert_eq!(file_stream.watch(directory.path(), as_outcome), None);
+                    assert_eq!(file_stream.watch(directory.path(), as_change), None);
                 }
                 Step::WatchMissing => {
                     assert_eq!(
-                        file_stream.watch(&missing, as_outcome),
+                        file_stream.watch(&missing, as_change),
                         Some(Err(IoError::Missing))
                     );
                 }
@@ -261,7 +261,7 @@ mod tests {
     fn a_lost_watch_is_reported_as_an_unknown_error() {
         let directory = tempfile::tempdir().unwrap();
         let mut file_stream = FileStream::Idle;
-        assert_eq!(file_stream.watch(directory.path(), as_outcome), None);
+        assert_eq!(file_stream.watch(directory.path(), as_change), None);
 
         assert_eq!(file_stream.lose(), Some(Err(IoError::Other)));
         assert_eq!(file_stream.lose(), None);
@@ -270,10 +270,10 @@ mod tests {
     #[test]
     fn a_lost_stream_still_hears_but_watches_no_directory() {
         let mut file_stream: FileStream<Result<(), IoError>> =
-            FileStream::Lost(as_outcome);
+            FileStream::Lost(as_change);
 
         assert_eq!(
-            file_stream.heard(Ok(Ok(notify::Event::default()))),
+            file_stream.changed(Ok(Ok(notify::Event::default()))),
             Some(Ok(()))
         );
         assert_eq!(file_stream.unwatch(Path::new("/music")), None);

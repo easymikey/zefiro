@@ -40,7 +40,7 @@ pub fn startup(startup: Startup) -> (Model, Vec<Effect>) {
 }
 
 pub(crate) fn startup_model(model: &mut Model, startup: Startup) -> Cmd {
-    let keymap = Keymap::new(startup.keymap);
+    let keymap = Keymap::new(startup.keymap_overrides);
     let errors = startup
         .errors
         .into_iter()
@@ -52,9 +52,9 @@ pub(crate) fn startup_model(model: &mut Model, startup: Startup) -> Cmd {
         .collect();
     model.workspace.keymap = keymap;
     model.settings = Settings {
-        audio: startup.audio,
+        audio_settings: startup.audio_settings,
         output_devices: Vec::new(),
-        appearance: startup.appearance,
+        appearance_settings: startup.appearance_settings,
     };
     model.transport.volume = startup.volume;
 
@@ -62,8 +62,8 @@ pub(crate) fn startup_model(model: &mut Model, startup: Startup) -> Cmd {
     model.music_dir = startup.music_dir;
     model.playlist_source = startup.playlist_source;
     model.themes = Themes {
-        names: startup.themes,
-        selected: startup.theme,
+        names: startup.theme_names,
+        theme_choice: startup.theme_choice,
     };
     model
         .playlist
@@ -71,8 +71,8 @@ pub(crate) fn startup_model(model: &mut Model, startup: Startup) -> Cmd {
     let browse = &mut model.workspace.browse;
     browse.cursor = browse.cursor.resize(model.playlist.tracks.len());
     model.playlist.play_order = match startup.shuffle {
-        Shuffle::Enabled => PlayOrder::ShufflePending,
-        Shuffle::Disabled => PlayOrder::Linear,
+        Shuffle::On => PlayOrder::ShufflePending,
+        Shuffle::Off => PlayOrder::Linear,
     };
 
     let toasts = startup_toasts(model, errors);
@@ -83,13 +83,19 @@ pub(crate) fn startup_model(model: &mut Model, startup: Startup) -> Cmd {
         .then(toasts)
 }
 
-pub(crate) fn startup_cmd(model: &mut Model, driver: DriverName) -> Cmd {
-    match driver {
+pub(crate) fn startup_cmd(model: &mut Model, driver_name: DriverName) -> Cmd {
+    match driver_name {
         DriverName::Audio => Cmd::from_iter([
             Effect::Audio(AudioCmd::ListDevices),
-            Effect::Audio(AudioCmd::SetDevice(model.settings.audio.device.clone())),
-            Effect::Audio(AudioCmd::SetCrossfade(model.settings.audio.crossfade)),
-            Effect::Audio(AudioCmd::SetReplayGain(model.settings.audio.replay_gain)),
+            Effect::Audio(AudioCmd::SetDevice(
+                model.settings.audio_settings.device.clone(),
+            )),
+            Effect::Audio(AudioCmd::SetCrossfade(
+                model.settings.audio_settings.crossfade,
+            )),
+            Effect::Audio(AudioCmd::SetReplayGain(
+                model.settings.audio_settings.replay_gain,
+            )),
         ]),
         DriverName::Library => Cmd::from_iter([
             Effect::Library(LibraryCmd::Disk(DiskCmd::LoadFavorites)),
@@ -100,7 +106,8 @@ pub(crate) fn startup_cmd(model: &mut Model, driver: DriverName) -> Cmd {
             }),
         ]),
         DriverName::Config => {
-            Effect::Config(ConfigCmd::SelectTheme(model.themes.selected.clone())).into()
+            Effect::Config(ConfigCmd::SelectTheme(model.themes.theme_choice.clone()))
+                .into()
         }
         DriverName::Macos => Cmd::from_iter([
             Effect::Macos(MacosCmd::NowPlaying(None)),
@@ -154,7 +161,7 @@ mod tests {
             sleep_presets::SleepPresets,
             startup::{Shuffle, Startup},
             theme::{ThemeChoice, ThemeName},
-            track::{Track, TrackRef},
+            track::{Track, TrackSource},
         },
         update::startup::startup_model,
     };
@@ -170,8 +177,8 @@ mod tests {
             playlist_tracks: tracks,
             playlist_index: Some(ViewIndex::new(0)),
             playlist_source: PlaylistSource::Named,
-            shuffle: Shuffle::Enabled,
-            audio: AudioSettings {
+            shuffle: Shuffle::On,
+            audio_settings: AudioSettings {
                 crossfade: Crossfade::clamped(Duration::from_secs(3)),
                 replay_gain: ReplayGain::On,
                 device: OutputDevice::Named(
@@ -179,11 +186,12 @@ mod tests {
                 ),
                 sleep_presets: SleepPresets::from_minutes(&[15, 30]).unwrap(),
             },
-            appearance: crate::domain::appearance::AppearanceSettings::default(),
-            theme: ThemeChoice::Named(ThemeName::from_static("dark")),
+            appearance_settings: crate::domain::appearance::AppearanceSettings::default(
+            ),
+            theme_choice: ThemeChoice::Named(ThemeName::from_static("dark")),
             volume: Percent::clamped(42),
-            keymap: KeymapOverrides::default(),
-            themes: vec![
+            keymap_overrides: KeymapOverrides::default(),
+            theme_names: vec![
                 ThemeName::from_static("noir"),
                 ThemeName::from_static("solar"),
             ],
@@ -194,14 +202,14 @@ mod tests {
     #[test]
     fn startup_errors_raise_one_toast_with_the_first_error() {
         let mut model = Model::default();
-        let broken = crate::domain::config::ConfigError::from(
+        let broken_error = crate::domain::config::ConfigError::from(
             crate::domain::config::Diagnostic::from_error(&std::io::Error::other(
                 "broken",
             )),
         );
-        let unreadable = crate::domain::config::ConfigError::Read {
+        let unreadable_error = crate::domain::config::ConfigError::Read {
             name: crate::domain::config::ConfigName::Appearance,
-            source: crate::domain::io_error::IoError::Other,
+            error: crate::domain::io_error::IoError::Other,
         };
         let startup = Startup {
             errors: vec![
@@ -209,11 +217,11 @@ mod tests {
                     crate::domain::config::ConfigName::Theme(ThemeName::from_static(
                         "ghost",
                     )),
-                    broken.clone(),
+                    broken_error.clone(),
                 ),
                 (
                     crate::domain::config::ConfigName::Appearance,
-                    unreadable.clone(),
+                    unreadable_error.clone(),
                 ),
             ],
             ..stock_startup()
@@ -225,37 +233,38 @@ mod tests {
             .workspace
             .toasts
             .iter()
-            .map(|toast| (toast.kind, toast.text.clone()))
+            .map(|toast| (toast.level, toast.text.clone()))
             .collect();
         assert_eq!(
             texts,
             [(
                 crate::domain::toast::ToastLevel::Error,
-                Some(broken.to_string())
+                Some(broken_error.to_string())
             )]
         );
         assert!(!model.workspace.config_errors.insert_if_changed(
             crate::domain::config::ConfigName::Appearance,
-            unreadable
+            unreadable_error
         ));
         assert!(!model.workspace.config_errors.insert_if_changed(
             crate::domain::config::ConfigName::Theme(ThemeName::from_static("ghost")),
-            broken
+            broken_error
         ));
     }
 
     #[test]
     fn startup_applies_the_keymap_overrides() {
         let mut model = Model::default();
-        let keys = KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]);
+        let keymap_overrides =
+            KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]);
         let startup = Startup {
-            keymap: keys.clone(),
+            keymap_overrides: keymap_overrides.clone(),
             ..stock_startup()
         };
 
         drop(startup_model(&mut model, startup));
 
-        assert_eq!(model.workspace.keymap.overrides(), &keys);
+        assert_eq!(model.workspace.keymap.overrides(), &keymap_overrides);
         assert!(model.workspace.toasts.is_empty());
     }
 
@@ -315,7 +324,7 @@ mod tests {
         assert!(
             !model
                 .favorites
-                .is_favorite(&TrackRef::Local("/music/a.flac".into()))
+                .is_favorite(&TrackSource::Local("/music/a.flac".into()))
         );
         assert_eq!(
             model.themes.names,
@@ -338,7 +347,7 @@ mod tests {
 
     fn idempotence_fields(model: &Model) -> impl std::fmt::Debug + PartialEq {
         (
-            model.settings.audio.clone(),
+            model.settings.audio_settings.clone(),
             model.transport.volume,
             model.favorites.clone(),
             model.library.is_none(),

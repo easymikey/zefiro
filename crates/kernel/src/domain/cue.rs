@@ -22,7 +22,7 @@ pub enum Cue {
     FavoriteToggled,
     PlayOrderChanged,
     VolumeChanged,
-    TrackDeleted,
+    TrackTrashed,
     ThemeChanged,
     LibraryOpened,
     LayoutChanged,

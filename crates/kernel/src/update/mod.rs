@@ -20,7 +20,7 @@ use crate::{
     cmd::{AudioCmd, Cmd, CoverJob, Effect, LibraryCmd, WindowColorsCmd},
     domain::{
         appearance::CoverMode,
-        appearance_rows::appearance_rows,
+        appearance_rows::appearance_row_choices,
         cue::Cue,
         driver::{DriverName, DriverStatus},
         geometry::Pixels,
@@ -28,12 +28,20 @@ use crate::{
         playlist::{PlayOrder, Playlist},
         revision::{Freshness, Revision},
         settings::Settings,
-        supervision::{Announce, Decision},
+        supervision::{Announcement, Decision},
         time::Moment,
         toast::Toast,
         workspace::Workspace,
     },
-    message::{BrowseRequest, DriverEvent, MacosEvent, Message, PaintError, Timer},
+    message::{
+        DriverEvent,
+        MacosEvent,
+        Message,
+        OverlayRequest,
+        PaintError,
+        QueueRequest,
+        Timer,
+    },
     update::machine::{Machine, Unhandled},
 };
 
@@ -80,7 +88,7 @@ fn route(
         match keymap::lookup::route(&model.workspace, press) {
             Some(routed) => routed,
             None => {
-                return released(&mut model.workspace, Input::Key)
+                return release_chord_prefix(&mut model.workspace, Input::Request)
                     .then(Vec::new)
                     .ok_or(Unhandled);
             }
@@ -94,7 +102,7 @@ fn route(
 }
 
 pub(crate) fn cover_side(workspace: &Workspace, settings: &Settings) -> Option<Pixels> {
-    match settings.appearance.cover_mode {
+    match settings.appearance_settings.cover_mode {
         CoverMode::Plain | CoverMode::Vinyl => workspace.cover_side,
         CoverMode::Milkdrop | CoverMode::Off => None,
     }
@@ -165,7 +173,7 @@ pub(crate) fn quit() -> Cmd {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Input {
-    Key,
+    Request,
     ChordPrefix,
     Event,
 }
@@ -173,15 +181,15 @@ enum Input {
 impl Input {
     fn of(message: &Message) -> Self {
         match message {
-            Message::Browse(BrowseRequest::ChordPrefix(_)) => Input::ChordPrefix,
-            Message::Macos(MacosEvent::MediaKey(_))
+            Message::ChordPrefix(_) => Input::ChordPrefix,
+            Message::Macos(MacosEvent::MediaKeyPressed(_))
             | Message::Overlay(_)
             | Message::Step { .. }
             | Message::Playback(_)
             | Message::Browse(_)
-            | Message::Queue(_) => Input::Key,
+            | Message::Queue(_) => Input::Request,
             Message::Macos(
-                MacosEvent::Volume(_)
+                MacosEvent::VolumeChanged(_)
                 | MacosEvent::OutputRouteChanged
                 | MacosEvent::Error(_),
             )
@@ -203,7 +211,7 @@ impl Input {
 fn roll_pending(playlist: &Playlist) -> Option<Effect> {
     match playlist.play_order {
         PlayOrder::ShufflePending => Some(Effect::RollShuffle(playlist.tracks.len())),
-        PlayOrder::Linear | PlayOrder::Shuffle(_) => None,
+        PlayOrder::Linear | PlayOrder::Shuffled(_) => None,
     }
 }
 
@@ -221,34 +229,34 @@ fn update_model(
         Err(refusal) => {
             restore(&mut model.workspace, dismissed);
             model.workspace.clock = previous;
-            return if released(&mut model.workspace, input) {
+            return if release_chord_prefix(&mut model.workspace, input) {
                 Ok(Vec::new())
             } else {
                 Err(refusal)
             };
         }
     };
-    released(&mut model.workspace, input);
+    release_chord_prefix(&mut model.workspace, input);
     let cue = dismissed.map(|_| Effect::Animate(Cue::ToastDismissed));
     Ok(cue.into_iter().chain(effects).collect())
 }
 
 fn dismissal(workspace: &mut Workspace, input: Input) -> Option<Toast> {
     match input {
-        Input::Key | Input::ChordPrefix => workspace.dismiss_newest(),
+        Input::Request | Input::ChordPrefix => workspace.dismiss_newest(),
         Input::Event => None,
     }
 }
 
-fn restore(workspace: &mut Workspace, dismissed: Option<Toast>) {
-    if let Some(toast) = dismissed {
+fn restore(workspace: &mut Workspace, dismissed_toast: Option<Toast>) {
+    if let Some(toast) = dismissed_toast {
         workspace.toasts.insert(0, toast);
     }
 }
 
-fn released(workspace: &mut Workspace, input: Input) -> bool {
+fn release_chord_prefix(workspace: &mut Workspace, input: Input) -> bool {
     match input {
-        Input::Key => workspace.chord_prefix.take().is_some(),
+        Input::Request => workspace.chord_prefix.take().is_some(),
         Input::ChordPrefix | Input::Event => false,
     }
 }
@@ -310,7 +318,7 @@ fn browse_parts(model: &mut Model) -> browse::BrowseParts<'_> {
         ..
     } = model;
     browse::BrowseParts {
-        playback: player::PlaybackParts {
+        playback_parts: player::PlaybackParts {
             player,
             transport,
             playlist,
@@ -374,27 +382,32 @@ fn elapsed(model: &mut Model, timer: Timer, now: Moment) -> Result<Cmd, Unhandle
 fn toast_expired(
     workspace: &mut Workspace,
     revision: Revision,
-    reply: Freshness,
+    freshness: Freshness,
 ) -> Result<Cmd, Unhandled> {
-    match reply {
-        Freshness::Awaited => Ok(workspace.expire(revision)),
+    match freshness {
+        Freshness::Awaited => Ok(workspace.expire_toasts(revision)),
         Freshness::Stale => Err(Unhandled),
     }
 }
 
 fn sleep_fired(
-    playback: &mut player::PlaybackParts<'_>,
+    playback_parts: &mut player::PlaybackParts<'_>,
     revision: Revision,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    match revision.freshness(playback.revisions.sleep) {
+    match revision.freshness(playback_parts.revisions.sleep) {
         Freshness::Awaited => {
-            let cleared = playback
+            let cleared = playback_parts
                 .transport
                 .transition(transport::TransportMessage::SleepFired)?;
-            let paused =
-                player::record(playback, player::PlayerMessage::SleepFired(now), now)?;
-            Ok(paused.then(cleared))
+            match player::update_player(
+                playback_parts,
+                player::PlayerMessage::SleepFired(now),
+                now,
+            ) {
+                Ok(paused) => Ok(paused.then(cleared)),
+                Err(Unhandled) => Ok(cleared),
+            }
         }
         Freshness::Stale => Err(Unhandled),
     }
@@ -402,33 +415,34 @@ fn sleep_fired(
 
 fn driver_died(
     model: &mut Model,
-    driver: DriverName,
+    driver_name: DriverName,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let (decision, restarted) = driver::decided(&mut model.drivers, driver, now)?;
+    let (decision, restarted) =
+        driver::restart_if_allowed(&mut model.drivers, driver_name, now)?;
     let decided = match decision {
-        Decision::Degrade(Announce::Toast) => {
-            match &model.drivers.record(driver).status {
-                DriverStatus::Dead(failure) => model.workspace.show(
-                    Toast::error(format!("The {driver} driver stopped"))
-                        .with_text(failure.to_string()),
+        Decision::Degrade(Announcement::Toast) => {
+            match &model.drivers.record(driver_name).status {
+                DriverStatus::Dead(error) => model.workspace.show(
+                    Toast::error(format!("The {driver_name} driver stopped"))
+                        .with_text(error.to_string()),
                     &mut model.revisions,
                 ),
                 DriverStatus::Running | DriverStatus::Stopped => Cmd::none(),
             }
         }
-        Decision::Degrade(Announce::Silent) => Cmd::none(),
+        Decision::Degrade(Announcement::Silent) => Cmd::none(),
         Decision::Restart => {
-            let startup = startup::startup_cmd(model, driver);
+            let startup = startup::startup_cmd(model, driver_name);
             let resumed = driver::resume_driver(
                 driver::ResumeParts {
                     player: &model.player,
                     revisions: &mut model.revisions,
                 },
-                driver,
+                driver_name,
                 now,
             );
-            Cmd::from(Effect::Restart(driver))
+            Cmd::from(Effect::Restart(driver_name))
                 .then(startup)
                 .then(resumed)
         }
@@ -436,19 +450,43 @@ fn driver_died(
     Ok(restarted.then(decided))
 }
 
+fn update_overlay(
+    model: &mut Model,
+    request: OverlayRequest,
+) -> Result<Cmd, Unhandled> {
+    let appearance_row_choices =
+        appearance_row_choices(model.settings.appearance_settings);
+    overlay::update(
+        overlay::OverlayParts {
+            workspace: &mut model.workspace,
+            playlist: &model.playlist,
+            player: &model.player,
+            history: &model.history,
+            appearance_row_choices: &appearance_row_choices,
+            music_dir: &model.music_dir,
+        },
+        request,
+    )
+}
+
+fn update_queue(
+    model: &mut Model,
+    queue_request: QueueRequest,
+) -> Result<Cmd, Unhandled> {
+    browse::queue(
+        browse::QueueParts {
+            playlist: &model.playlist,
+            history: &model.history,
+            browse: &mut model.workspace.browse,
+            queue: &mut model.queue,
+        },
+        queue_request,
+    )
+}
+
 fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhandled> {
     match message {
-        Message::Overlay(request) => overlay::update(
-            overlay::OverlayParts {
-                workspace: &mut model.workspace,
-                playlist: &model.playlist,
-                player: &model.player,
-                history: &model.history,
-                appearance_rows: &appearance_rows(model.settings.appearance),
-                music_dir: &model.music_dir,
-            },
-            request,
-        ),
+        Message::Overlay(request) => update_overlay(model, request),
         Message::Step { row, direction } => {
             settings::step_setting(config_parts(model), row, direction)
         }
@@ -456,18 +494,14 @@ fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhan
         Message::Playback(playback_request) => {
             playback::update(&mut playback_parts(model), playback_request, now)
         }
+        Message::ChordPrefix(prefix) => {
+            model.workspace.chord_prefix = Some(prefix);
+            Ok(Cmd::none())
+        }
         Message::Browse(browse_request) => {
             browse::update(browse_parts(model), browse_request, now)
         }
-        Message::Queue(queue_request) => browse::queue(
-            browse::QueueParts {
-                playlist: &model.playlist,
-                history: &model.history,
-                browse: &mut model.workspace.browse,
-                queue: &mut model.queue,
-            },
-            queue_request,
-        ),
+        Message::Queue(queue_request) => update_queue(model, queue_request),
         Message::ShuffleRolled(order) => model
             .playlist
             .transition(playlist::PlaylistMessage::ShuffleRolled(order)),
@@ -481,11 +515,11 @@ fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhan
             .workspace
             .show(paint_toast(&error), &mut model.revisions)),
         Message::Elapsed(timer) => elapsed(model, timer, now),
-        Message::Driver { driver, event } => {
-            let died = matches!(event, DriverEvent::Died(_));
-            let cmd = driver::update(&mut model.drivers, driver, event)?;
-            match died {
-                true => Ok(cmd.then(driver_died(model, driver, now)?)),
+        Message::Driver { driver_name, event } => {
+            let has_died = matches!(event, DriverEvent::Died(_));
+            let cmd = driver::update(&mut model.drivers, driver_name, event)?;
+            match has_died {
+                true => Ok(cmd.then(driver_died(model, driver_name, now)?)),
                 false => Ok(cmd),
             }
         }
@@ -522,12 +556,12 @@ mod tests {
     #[test]
     fn a_queued_follow_up_message_adds_its_effects() {
         let mut model = Model::default();
-        let full = Message::Driver {
-            driver: DriverName::Audio,
+        let full_message = Message::Driver {
+            driver_name: DriverName::Audio,
             event: DriverEvent::Full,
         };
 
-        let effects = update(&mut model, full, Moment::default()).unwrap();
+        let effects = update(&mut model, full_message, Moment::default()).unwrap();
 
         assert_eq!(
             effects,
@@ -591,9 +625,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case::enabled_rolls(Shuffle::Enabled, Some(2))]
-    #[case::disabled_rolls_nothing(Shuffle::Disabled, None)]
-    fn startup_rolls_shuffle_only_when_enabled(
+    #[case::on_rolls(Shuffle::On, Some(2))]
+    #[case::off_rolls_nothing(Shuffle::Off, None)]
+    fn startup_rolls_shuffle_only_when_on(
         #[case] shuffle: Shuffle,
         #[case] expected: Option<usize>,
     ) {
@@ -634,12 +668,12 @@ mod tests {
         #[case] expected: Result<Vec<Effect>, Unhandled>,
     ) {
         let mut model = Model::default();
-        let viewport = Message::Viewport {
+        let viewport_message = Message::Viewport {
             visible_rows,
             cover_side,
         };
 
-        let effects = update(&mut model, viewport, Moment::default());
+        let effects = update(&mut model, viewport_message, Moment::default());
 
         assert_eq!(effects, expected);
         assert_eq!(model.workspace.visible_rows, visible_rows);

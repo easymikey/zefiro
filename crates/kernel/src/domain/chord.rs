@@ -4,7 +4,7 @@ use crate::domain::key::{Key, KeyCode, Modifiers};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid key chord `{spelling}`")]
-pub struct ChordParseError {
+pub struct ChordError {
     pub spelling: String,
 }
 
@@ -48,8 +48,8 @@ impl fmt::Display for Chord {
                 Self::Key(*key).fmt(formatter)
             }
             Self::Key(Key { code, modifiers }) => {
-                let ctrl = modifiers.contains(Modifiers::CTRL);
-                if ctrl {
+                let has_ctrl = modifiers.contains(Modifiers::CTRL);
+                if has_ctrl {
                     formatter.write_str("Ctrl+")?;
                 }
                 if modifiers.contains(Modifiers::ALT) {
@@ -63,7 +63,7 @@ impl fmt::Display for Chord {
                 }
                 match code {
                     KeyCode::Char(' ') => formatter.write_str("Space"),
-                    KeyCode::Char(character) if ctrl => {
+                    KeyCode::Char(character) if has_ctrl => {
                         write!(formatter, "{}", character.to_ascii_uppercase())
                     }
                     KeyCode::Char(character) => write!(formatter, "{character}"),
@@ -86,16 +86,16 @@ impl fmt::Display for Chord {
 }
 
 impl std::str::FromStr for Chord {
-    type Err = ChordParseError;
+    type Err = ChordError;
 
-    fn from_str(spelling: &str) -> Result<Self, ChordParseError> {
-        let (ctrl, spelling) = spelling
+    fn from_str(spelling: &str) -> Result<Self, ChordError> {
+        let (has_ctrl, spelling) = spelling
             .strip_prefix("ctrl+")
             .map_or((false, spelling), |rest| (true, rest));
-        let (shift, spelling) = spelling
+        let (has_shift, spelling) = spelling
             .strip_prefix("shift+")
             .map_or((false, spelling), |rest| (true, rest));
-        if spelling == "gg" && !ctrl && !shift {
+        if spelling == "gg" && !has_ctrl && !has_shift {
             return Ok(Self::Sequence {
                 prefix: ChordPrefix::G,
                 key: ChordPrefix::G.key(),
@@ -115,13 +115,11 @@ impl std::str::FromStr for Chord {
             "tab" | "Tab" => KeyCode::Tab,
             "pageup" | "pgup" | "PgUp" => KeyCode::PageUp,
             "pagedown" | "pgdn" | "PgDn" => KeyCode::PageDown,
-            other => {
-                KeyCode::Char(other.parse::<char>().map_err(|_| ChordParseError {
-                    spelling: spelling.to_string(),
-                })?)
-            }
+            other => KeyCode::Char(other.parse::<char>().map_err(|_| ChordError {
+                spelling: spelling.to_string(),
+            })?),
         };
-        let modifiers = [(ctrl, Modifiers::CTRL), (shift, Modifiers::SHIFT)]
+        let modifiers = [(has_ctrl, Modifiers::CTRL), (has_shift, Modifiers::SHIFT)]
             .into_iter()
             .filter(|&(held, _)| held)
             .fold(Modifiers::NONE, |all, (_, flag)| all.with(flag));

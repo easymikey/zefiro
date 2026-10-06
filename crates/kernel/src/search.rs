@@ -239,8 +239,8 @@ mod tests {
             query in title(),
             haystack in title(),
         ) {
-            let matched = is_subsequence(&lower(&query), &lower(&haystack));
-            prop_assert_eq!(score(&query, &haystack).is_some(), matched);
+            let is_match = is_subsequence(&lower(&query), &lower(&haystack));
+            prop_assert_eq!(score(&query, &haystack).is_some(), is_match);
         }
 
         #[test]

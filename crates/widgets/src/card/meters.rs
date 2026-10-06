@@ -15,42 +15,53 @@ use crate::{
         metrics::{CardMetrics, SPECTRUM_MAX_DOTS},
     },
     primitive::{
-        bar::{BarFill, HudProgressRow, fill, hud_progress_line},
+        bar::{BarFill, HudProgress, hud_progress_line},
         chip,
-        relative_time::elapsed_of,
         spectrum_meter,
-        text::truncate,
+        time_text::elapsed_text,
+        truncate::truncate,
     },
 };
 
-pub(crate) fn paint(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetrics) {
-    paint_time_row(buffer, card, metrics);
-    paint_progress_text(buffer, card, metrics);
-    paint_volume_row(buffer, card, metrics);
+pub(crate) fn paint(
+    buffer: &mut Buffer,
+    card_widget: &CardWidget<'_>,
+    metrics: &CardMetrics,
+) {
+    paint_time_row(buffer, card_widget, metrics);
+    paint_progress_row(buffer, card_widget, metrics);
+    paint_volume_row(buffer, card_widget, metrics);
 }
 
-fn paint_time_row(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetrics) {
+fn paint_time_row(
+    buffer: &mut Buffer,
+    card_widget: &CardWidget<'_>,
+    metrics: &CardMetrics,
+) {
     let row_width = metrics.row_width;
-    let colors = card.theme.colors();
+    let colors = card_widget.active_theme.colors();
     let dim_color: Color = colors.muted_foreground;
 
-    let current = card.view.displayed_track;
-    let elapsed_total = elapsed_of(card.view.position(), card.view.duration());
+    let displayed_track = card_widget.view.displayed_track;
+    let elapsed_total =
+        elapsed_text(card_widget.view.position(), card_widget.view.duration());
     let time_row = metrics.time_row;
     let elapsed_width = elapsed_total.chars().count();
     let speed_spans = chip::speed_chip_spans(
-        card.view.speed,
-        card.appearance_settings.speed_chip,
+        card_widget.view.speed,
+        card_widget.appearance_settings.speed_chip,
         &colors,
     );
-    let speed_width =
-        chip::speed_chip_width(card.view.speed, card.appearance_settings.speed_chip)
-            .count();
+    let speed_width = chip::speed_chip_width(
+        card_widget.view.speed,
+        card_widget.appearance_settings.speed_chip,
+    )
+    .count();
     let left_width = elapsed_width + speed_width;
-    let fit = chips::format_chip_fit(
+    let fit = chips::FormatChipFit::new(
         &FormatChipsInput {
-            current,
-            visibility: card.appearance_settings.format_chips,
+            displayed_track,
+            format_chips: card_widget.appearance_settings.format_chips,
             colors: &colors,
         },
         &ChipBudget {
@@ -86,44 +97,48 @@ fn paint_format_chips_row(buffer: &mut Buffer, time_row: Rect, line: Line<'stati
         .render(time_row, buffer);
 }
 
-fn paint_progress_text(
+fn paint_progress_row(
     buffer: &mut Buffer,
-    card: &CardWidget<'_>,
+    card_widget: &CardWidget<'_>,
     metrics: &CardMetrics,
 ) {
     let row_width = metrics.row_width;
-    let bar_colors = (card.theme.progress_fill(), card.theme.progress_groove());
+    let bar_colors = (
+        card_widget.active_theme.progress_fill(),
+        card_widget.active_theme.progress_groove(),
+    );
 
-    let fraction = card.view.progress_fraction();
+    let fraction = card_widget.view.progress_fraction();
     let progress_row = metrics.progress_row;
-    match card.appearance_settings.progress_time {
+    match card_widget.appearance_settings.progress_time {
         ProgressTime::Remaining => Paragraph::new(hud_progress_line(
-            &HudProgressRow {
+            &HudProgress {
                 fraction,
                 row_width,
-                remaining: card.view.remaining(),
+                remaining: card_widget.view.remaining(),
             },
             bar_colors,
-            &card.theme.colors(),
+            &card_widget.active_theme.colors(),
         ))
         .render(progress_row, buffer),
-        ProgressTime::Elapsed => Paragraph::new(fill(
-            &BarFill::progress(fraction, row_width),
-            bar_colors.0,
-            bar_colors.1,
-        ))
+        ProgressTime::Elapsed => Paragraph::new(
+            BarFill::progress(fraction, row_width).line(bar_colors.0, bar_colors.1),
+        )
         .render(progress_row, buffer),
     }
 }
 
-fn paint_volume_row(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMetrics) {
+fn paint_volume_row(
+    buffer: &mut Buffer,
+    card_widget: &CardWidget<'_>,
+    metrics: &CardMetrics,
+) {
     let bar_area = metrics.volume_row;
-    let colors = card.theme.colors();
-    Paragraph::new(fill(
-        &BarFill::volume(card.view.volume.ratio(), Cells(bar_area.width)),
-        colors.accent,
-        colors.bar_groove,
-    ))
+    let colors = card_widget.active_theme.colors();
+    Paragraph::new(
+        BarFill::volume(card_widget.view.volume.ratio(), Cells(bar_area.width))
+            .line(colors.accent, colors.bar_groove),
+    )
     .render(bar_area, buffer);
 
     let spectrum_area = metrics.spectrum_row;
@@ -133,10 +148,10 @@ fn paint_volume_row(buffer: &mut Buffer, card: &CardWidget<'_>, metrics: &CardMe
                 width: spectrum_area.width,
                 height: spectrum_area.height,
             },
-            levels: card.view.spectrum,
+            levels: card_widget.view.spectrum,
             max_dots: SPECTRUM_MAX_DOTS,
         },
-        |t| card.theme.spectrum_color_at(t),
+        |fraction| card_widget.active_theme.spectrum_color_at(fraction),
     );
     Paragraph::new(spectrum_lines).render(spectrum_area, buffer);
 }
@@ -154,12 +169,12 @@ mod tests {
         speed::Speed,
         time::Moment,
         track::{AudioFormat, Tags, Track, TrackParts},
-        transport::Output,
+        transport::OutputStatus,
     };
     use ratatui::{buffer::Buffer, layout::Rect};
 
     use crate::{
-        card::{CardView, CardWidget, meters::paint_time_row, metrics::card_metrics},
+        card::{CardView, CardWidget, meters::paint_time_row, metrics::CardMetrics},
         geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
         primitive::canvas::find_text,
         spectrum::{SPECTRUM_BANDS, Spectrum},
@@ -186,26 +201,26 @@ mod tests {
             preloaded: None,
         };
         let spectrum: Spectrum = [0.0; SPECTRUM_BANDS];
-        let output = Output::Ready;
+        let output_status = OutputStatus::Ready;
         let play_order = PlayOrder::default();
         let view = CardView {
             player: &player,
             speed: Speed::default(),
             volume: Percent::clamped(50),
             spectrum: &spectrum,
-            repeat: Default::default(),
+            repeat_mode: Default::default(),
             play_order: &play_order,
             displayed_track: Some(&track),
-            output: &output,
+            output_status: &output_status,
             now: Moment::new(Duration::from_secs(5)),
         };
         let area = Rect::new(0, 0, 60, 12);
         let card_metrics =
-            card_metrics(area, DEFAULT_CELL_ASPECT, CoverSizing::default());
-        let card =
+            CardMetrics::new(area, DEFAULT_CELL_ASPECT, CoverSizing::default());
+        let card_widget =
             CardWidget::new(view, ActiveTheme::new(&theme, ColorDepth::TrueColor));
         let mut buffer = Buffer::empty(area);
-        paint_time_row(&mut buffer, &card, &card_metrics);
+        paint_time_row(&mut buffer, &card_widget, &card_metrics);
         assert!(
             find_text(&buffer, "0:15").is_some(),
             "expected the elapsed time to read 0:15, offset by the view's now"

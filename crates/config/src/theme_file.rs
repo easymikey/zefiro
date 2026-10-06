@@ -54,9 +54,9 @@ pub struct TomlTheme {
     pub scanning_label: String,
 }
 
-pub fn parse_theme(source: &str, name: &str) -> Result<TomlTheme, Error> {
+pub fn parse_theme(text: &str, name: &str) -> Result<TomlTheme, Error> {
     let theme = ThemeName::new(name.to_owned())?;
-    parse_toml(source, ConfigName::Theme(theme))
+    parse_toml(text, ConfigName::Theme(theme))
 }
 
 #[cfg(test)]
@@ -72,9 +72,9 @@ mod tests {
 
     #[test]
     fn every_repo_theme_parses() {
-        for &(name, source) in EMBEDDED_THEMES {
+        for &(name, text) in EMBEDDED_THEMES {
             insta::with_settings!({ snapshot_suffix => name }, {
-                insta::assert_debug_snapshot!(parse_theme(source, name).unwrap());
+                insta::assert_debug_snapshot!(parse_theme(text, name).unwrap());
             });
         }
     }
@@ -100,9 +100,9 @@ mod tests {
     )]
     fn a_strict_parse_rejects_what_it_does_not_recognise(
         #[case] name: &str,
-        #[case] source: &str,
+        #[case] text: &str,
     ) {
-        let error = parse_theme(source, "noir").unwrap_err();
+        let error = parse_theme(text, "noir").unwrap_err();
         assert!(matches!(error, Error::Parse { .. }));
         insta::with_settings!({ snapshot_suffix => name }, {
             insta::assert_snapshot!(error.to_string());

@@ -22,7 +22,7 @@ proptest! {
     ) {
         let tracks = (0..len).map(bare_track).collect::<Vec<_>>();
         let play_order = if shuffled && len > 0 {
-            PlayOrder::Shuffle((0..len).map(ViewIndex::new).collect())
+            PlayOrder::Shuffled((0..len).map(ViewIndex::new).collect())
         } else {
             PlayOrder::Linear
         };
@@ -30,7 +30,7 @@ proptest! {
             tracks,
             cursor: Cursor::at(len, start),
             play_order,
-            repeat,
+            repeat_mode: repeat,
         };
         playlist.skip(direction);
         if len == 0 {
@@ -38,7 +38,7 @@ proptest! {
         } else {
             prop_assert!(playlist.cursor.index() < len);
         }
-        if let PlayOrder::Shuffle(order) = &playlist.play_order {
+        if let PlayOrder::Shuffled(order) = &playlist.play_order {
             let mut sorted = order.clone();
             sorted.sort_unstable();
             prop_assert_eq!(sorted, (0..len).map(ViewIndex::new).collect::<Vec<_>>());
@@ -52,8 +52,8 @@ proptest! {
         let mut state: Option<AbLoop> = None;
         for millis in positions {
             state = AbLoop::mark(state, Duration::from_millis(millis));
-            if let Some(AbLoop::Full { a, b }) = state {
-                prop_assert!(b > a);
+            if let Some(AbLoop::BothMarked { loop_start, loop_end }) = state {
+                prop_assert!(loop_end > loop_start);
             }
         }
     }

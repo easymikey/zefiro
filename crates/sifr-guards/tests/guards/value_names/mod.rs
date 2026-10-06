@@ -43,6 +43,9 @@ use tables::{
     ROLE_NAMED,
     ROLE_WORDS,
     WRAPPERS,
+    ends_in,
+    listed,
+    reserved_clash,
 };
 
 const BASELINE: &str = include_str!("../value_names_baseline.txt");
@@ -288,32 +291,12 @@ fn without_owner_words(word: &str, owner: &[String]) -> Option<String> {
     (kept > 0).then(|| parts[kept..].join("_"))
 }
 
-fn listed(
-    table: &'static [(&'static str, &'static [&'static str])],
-    key: &str,
-) -> impl Iterator<Item = &'static str> {
-    table
-        .iter()
-        .filter(move |(name, _)| *name == key)
-        .flat_map(|(_, words)| words.iter().copied())
-}
-
 fn role_words(key: &str) -> Vec<&'static str> {
     let mut words: Vec<&'static str> = listed(ROLE_WORDS, key).collect();
     if key.ends_with("Error") {
         words.extend(ERROR_WORDS);
     }
     words
-}
-
-fn allows(pattern: &str, name: &str) -> bool {
-    if let Some(suffix) = pattern.strip_prefix('*') {
-        name.ends_with(suffix)
-    } else if let Some(prefix) = pattern.strip_suffix('*') {
-        name.starts_with(prefix)
-    } else {
-        name == pattern
-    }
 }
 
 fn tails(word: &str, mentions: &BTreeSet<String>) -> Vec<String> {
@@ -342,10 +325,6 @@ fn accepted(
     words
 }
 
-fn ends_in(name: &str, word: &str) -> bool {
-    name == word || name.ends_with(&format!("_{word}"))
-}
-
 fn matches_any(name: &str, words: &[String]) -> bool {
     words.iter().any(|word| ends_in(name, word))
 }
@@ -366,8 +345,14 @@ fn first_type_argument(arguments: &PathArguments) -> Option<&Type> {
 impl Scan<'_> {
     fn collection(&self, element: &Type) -> Option<Resolved> {
         let inner = self.resolve(element)?;
+        let nested = matches!(element, Type::Path(path) if path.path.segments.last()
+            .is_some_and(|last| COLLECTIONS.contains(&last.ident.to_string().as_str())));
         Some(Resolved {
-            word: plural(&inner.word),
+            word: if nested {
+                inner.word
+            } else {
+                plural(&inner.word)
+            },
             role_key: None,
             element: inner.role_key,
             display: inner.display,
@@ -402,17 +387,14 @@ impl Scan<'_> {
         let Some(base) = self.base_name(slot.ty) else {
             return;
         };
-        let clash = RESERVED.iter().find(|(word, allowed)| {
-            ends_in(name, word) && !allowed.iter().any(|pattern| allows(pattern, &base))
-        });
-        if let Some((word, _)) = clash {
+        if let Some(word) = reserved_clash(self.path, name, &base) {
             self.findings.push(Finding {
                 path: self.path.to_owned(),
                 line: slot.ident.span().start().line,
                 kind: Kind::Reserved,
                 name: name.to_owned(),
                 display: base,
-                word: (*word).to_owned(),
+                word: word.to_owned(),
             });
         }
     }
@@ -471,7 +453,9 @@ impl Scan<'_> {
         let Some(resolved) = self.resolve(slot.ty) else {
             return;
         };
-        if matches_any(name, &accepted(&resolved, slot.owner, &self.mentions)) {
+        if slot.owner.join("_") == resolved.word
+            || matches_any(name, &accepted(&resolved, slot.owner, &self.mentions))
+        {
             return;
         }
         self.findings.push(Finding {
@@ -542,6 +526,10 @@ impl Scan<'_> {
     }
 
     fn variant_type(&self, path: &syn::Path) -> Option<Type> {
+        let last = path.segments.last()?.ident.to_string();
+        if !last.starts_with(char::is_uppercase) {
+            return None;
+        }
         let owner_at = path.segments.len().checked_sub(2)?;
         let owner = path.segments.iter().nth(owner_at)?;
         if self.catalog.enums.contains(&owner.ident.to_string()) {

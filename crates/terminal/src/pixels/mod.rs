@@ -24,58 +24,64 @@ use crate::pixels::cover::Cover;
 
 #[derive(Debug)]
 pub struct CoverPainter {
-    active: CoverMode,
-    plain: Cover,
-    vinyl: Cover,
-    milkdrop: MilkdropCover,
+    cover_mode: CoverMode,
+    plain_cover: Cover,
+    vinyl_cover: Cover,
+    milkdrop_cover: MilkdropCover,
 }
 
 impl CoverPainter {
     #[must_use]
-    pub fn new(picker: Picker, cell: CellPixels) -> Self {
+    pub fn new(picker: Picker, cell_pixels: CellPixels) -> Self {
         Self {
-            active: CoverMode::Off,
-            plain: Cover::new(PixmapSource::Plain, picker.clone(), cell),
-            vinyl: Cover::new(PixmapSource::Vinyl(Box::default()), picker, cell),
-            milkdrop: MilkdropCover::default(),
+            cover_mode: CoverMode::Off,
+            plain_cover: Cover::new(PixmapSource::Plain, picker.clone(), cell_pixels),
+            vinyl_cover: Cover::new(
+                PixmapSource::Vinyl(Box::default()),
+                picker,
+                cell_pixels,
+            ),
+            milkdrop_cover: MilkdropCover::default(),
         }
     }
 
-    pub fn set_cover(&mut self, cover: CoverImage) {
-        self.plain.set_cover(cover.clone());
-        self.vinyl.set_cover(cover);
+    pub fn set_cover(&mut self, cover_image: CoverImage) {
+        self.plain_cover.set_cover(cover_image.clone());
+        self.vinyl_cover.set_cover(cover_image);
     }
 
     pub fn refresh(&mut self, scene: &Scene<'_>, refresh: CoverRefresh) -> CardCover {
-        let mode = scene.cover_mode();
-        self.active = mode;
-        match mode {
+        let cover_mode = scene.cover_mode();
+        self.cover_mode = cover_mode;
+        match cover_mode {
             CoverMode::Off => CardCover::Missing,
-            CoverMode::Plain => self.plain.refresh(scene, refresh),
-            CoverMode::Vinyl => self.vinyl.refresh(scene, refresh),
-            CoverMode::Milkdrop => self.milkdrop.refresh(scene, refresh.cover),
+            CoverMode::Plain => self.plain_cover.refresh(scene, refresh),
+            CoverMode::Vinyl => self.vinyl_cover.refresh(scene, refresh),
+            CoverMode::Milkdrop => {
+                self.milkdrop_cover.refresh(scene, refresh.cover_area)
+            }
         }
     }
 
     #[must_use]
-    pub fn cover_motion(&self, now: Duration) -> CoverMotion {
-        match self.active {
-            CoverMode::Plain => self.plain.motion(now),
-            CoverMode::Vinyl => self.vinyl.motion(now),
+    pub fn motion(&self, since_first_paint: Duration) -> CoverMotion {
+        match self.cover_mode {
+            CoverMode::Plain => self.plain_cover.motion(since_first_paint),
+            CoverMode::Vinyl => self.vinyl_cover.motion(since_first_paint),
             CoverMode::Milkdrop | CoverMode::Off => CoverMotion::Still,
         }
     }
 
     pub fn paint(&mut self, buffer: &mut Buffer, layout: &FrameLayout) {
-        let Some(rect) = layout.cover else {
+        let Some(rect) = layout.cover_area else {
             return;
         };
-        if hidden_by_overlay(rect, layout) {
+        if is_hidden_by_overlay(rect, layout) {
             return;
         }
-        let protocol = match self.active {
-            CoverMode::Plain => self.plain.protocol_mut(),
-            CoverMode::Vinyl => self.vinyl.protocol_mut(),
+        let protocol = match self.cover_mode {
+            CoverMode::Plain => self.plain_cover.protocol_mut(),
+            CoverMode::Vinyl => self.vinyl_cover.protocol_mut(),
             CoverMode::Milkdrop | CoverMode::Off => None,
         };
         let Some(protocol) = protocol else {
@@ -85,8 +91,8 @@ impl CoverPainter {
     }
 }
 
-fn hidden_by_overlay(rect: Rect, layout: &FrameLayout) -> bool {
-    let overlay = layout.overlay.map(OverlayAreas::outer);
+fn is_hidden_by_overlay(rect: Rect, layout: &FrameLayout) -> bool {
+    let overlay = layout.overlay_areas.map(OverlayAreas::outer);
     let toast = layout.toast;
     [overlay, toast]
         .into_iter()

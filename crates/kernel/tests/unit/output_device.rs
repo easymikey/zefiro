@@ -13,11 +13,11 @@ use crate::support::{device, first_toast_expiry, update::update};
 
 #[test]
 fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
-    let mut m = Model::default();
-    m.settings.audio.device = OutputDevice::Named(device("usb-dac"));
+    let mut model = Model::default();
+    model.settings.audio_settings.device = OutputDevice::Named(device("usb-dac"));
 
     let cmd = update(
-        &mut m,
+        &mut model,
         Message::Audio(kernel::message::AudioEvent::DeviceFellBack(
             OutputDevice::SystemDefault,
         )),
@@ -25,12 +25,15 @@ fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
     )
     .unwrap();
 
-    assert_eq!(m.settings.audio.device, OutputDevice::SystemDefault);
+    assert_eq!(
+        model.settings.audio_settings.device,
+        OutputDevice::SystemDefault
+    );
     assert_eq!(
         cmd,
         Cmd::from_iter([Effect::Animate(Cue::ToastRaised), first_toast_expiry()])
     );
-    let toast = m
+    let toast = model
         .workspace
         .toasts
         .first()
@@ -43,11 +46,11 @@ fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
 
 #[test]
 fn a_device_that_opened_as_asked_leaves_the_toast_alone() {
-    let mut m = Model::default();
-    m.settings.audio.device = OutputDevice::Named(device("usb-dac"));
+    let mut model = Model::default();
+    model.settings.audio_settings.device = OutputDevice::Named(device("usb-dac"));
 
     let cmd = update(
-        &mut m,
+        &mut model,
         Message::Audio(kernel::message::AudioEvent::DeviceFellBack(
             OutputDevice::Named(device("usb-dac")),
         )),
@@ -56,35 +59,35 @@ fn a_device_that_opened_as_asked_leaves_the_toast_alone() {
     .unwrap();
 
     assert_eq!(
-        m.settings.audio.device,
+        model.settings.audio_settings.device,
         OutputDevice::Named(device("usb-dac"))
     );
     assert_eq!(cmd, Cmd::none());
-    assert!(m.workspace.toasts.is_empty());
+    assert!(model.workspace.toasts.is_empty());
 }
 
 #[test]
 fn devices_loaded_replaces_output_devices_and_emits_nothing() {
-    let mut m = Model::default();
-    assert!(m.settings.output_devices.is_empty());
+    let mut model = Model::default();
+    assert!(model.settings.output_devices.is_empty());
 
     let devices = vec![
         ListedDevice {
             name: device("Speakers"),
-            default: DeviceDefault::Default,
+            default: DeviceDefault::Yes,
         },
         ListedDevice {
             name: device("Headphones"),
-            default: DeviceDefault::Named,
+            default: DeviceDefault::No,
         },
     ];
     let cmd = update(
-        &mut m,
+        &mut model,
         Message::Audio(kernel::message::AudioEvent::DevicesListed(devices.clone())),
         Moment::default(),
     )
     .unwrap();
 
-    assert_eq!(m.settings.output_devices, devices);
+    assert_eq!(model.settings.output_devices, devices);
     assert_eq!(cmd, Cmd::none());
 }

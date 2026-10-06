@@ -21,13 +21,13 @@ impl<P: FnMut(CoverDecoded)> Driver for LibraryDriver<P> {
                 (self.publish_cover)(decoded);
                 None
             }
-            LibraryEffect::Execute(disk_cmd) => on_disk(disk_cmd, &self.dirs)
+            LibraryEffect::Execute(disk_cmd) => execute_disk(disk_cmd, &self.dirs)
                 .unwrap_or_else(|error| Some(LibraryMessage::Error(error))),
         }
     }
 }
 
-fn on_disk(
+fn execute_disk(
     disk_cmd: DiskCmd,
     dirs: &LibraryDirs,
 ) -> Result<Option<LibraryMessage>, Error> {
@@ -63,7 +63,7 @@ mod tests {
             playlist::PlaylistFileName,
             revision::Revision,
             time::Moment,
-            track::TrackRef,
+            track::TrackSource,
         },
         message::LibraryEvent,
         update::machine::{Driver, LoopEffect, Machine},
@@ -72,7 +72,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::{
-        cover::{CoverArt, CoverDecoded},
+        cover::{CoverDecoded, CoverLookup},
         dirs::LibraryDirs,
         driver::{LibraryDriver, LibraryEffect},
         job::LibraryJob,
@@ -80,17 +80,17 @@ mod tests {
         test_support::{self, temp_dir_filters},
     };
 
-    const DECODABLE: &[&str] = &["flac", "wav"];
+    const AUDIO_EXTENSIONS: &[&str] = &["flac", "wav"];
 
     #[fixture]
     fn dirs() -> (TempDir, LibraryDirs) {
         let directory = tempfile::tempdir().unwrap();
-        let paths = LibraryDirs {
+        let library_dirs = LibraryDirs {
             cache_dir: directory.path().join("cache"),
             data_dir: directory.path().join("data"),
             playlists_dir: directory.path().join("playlists"),
         };
-        (directory, paths)
+        (directory, library_dirs)
     }
 
     fn unpublished(decoded: CoverDecoded) {
@@ -98,7 +98,7 @@ mod tests {
         panic!("nothing is published here: {path:?}");
     }
 
-    fn told(
+    fn transitioned_event(
         message: Option<LibraryMessage>,
         library_driver: &mut LibraryDriver<fn(CoverDecoded)>,
     ) -> Option<LibraryEvent> {
@@ -113,55 +113,57 @@ mod tests {
         })
     }
 
-    fn execute(disk_cmd: DiskCmd, paths: &LibraryDirs) -> Option<LibraryEvent> {
-        let mut driver: LibraryDriver<fn(CoverDecoded)> =
-            LibraryDriver::new(paths.clone(), DECODABLE, unpublished);
-        told(
-            driver.execute(LibraryEffect::Execute(disk_cmd)),
-            &mut driver,
+    fn execute(disk_cmd: DiskCmd, library_dirs: &LibraryDirs) -> Option<LibraryEvent> {
+        let mut library_driver: LibraryDriver<fn(CoverDecoded)> =
+            LibraryDriver::new(library_dirs.clone(), AUDIO_EXTENSIONS, unpublished);
+        transitioned_event(
+            library_driver.execute(LibraryEffect::Execute(disk_cmd)),
+            &mut library_driver,
         )
     }
 
     fn scanned(
         music_dir: PathBuf,
         (revision, mode): (Revision, ScanMode),
-        paths: &LibraryDirs,
+        library_dirs: &LibraryDirs,
     ) -> Vec<LibraryEvent> {
-        let mut driver: LibraryDriver<fn(CoverDecoded)> =
-            LibraryDriver::new(paths.clone(), DECODABLE, unpublished);
+        let mut library_driver: LibraryDriver<fn(CoverDecoded)> =
+            LibraryDriver::new(library_dirs.clone(), AUDIO_EXTENSIONS, unpublished);
         let message = match mode {
-            ScanMode::Full => LibraryJob::Scan {
+            ScanMode::Fresh => LibraryJob::Scan {
                 music_dir,
                 revision,
-                dirs: Arc::new(paths.clone()),
-                decodable: DECODABLE,
+                dirs: Arc::new(library_dirs.clone()),
+                audio_extensions: AUDIO_EXTENSIONS,
             },
             ScanMode::Cached => LibraryJob::ReadCache {
                 music_dir,
                 revision,
-                dirs: Arc::new(paths.clone()),
+                dirs: Arc::new(library_dirs.clone()),
             },
         }
         .run();
-        let (effects, events) = driver.transition(message).unwrap().into_parts();
-        let listed: Vec<LibraryEvent> = effects
+        let (effects, events) =
+            library_driver.transition(message).unwrap().into_parts();
+        let listed_events: Vec<LibraryEvent> = effects
             .into_iter()
             .flat_map(|effect| {
                 let LoopEffect::Run(job) = effect else {
                     panic!("expected a job, got {effect:?}");
                 };
-                driver.transition(job.run()).unwrap().into_parts().1
+                library_driver.transition(job.run()).unwrap().into_parts().1
             })
             .collect();
-        events.into_iter().chain(listed).collect()
+        events.into_iter().chain(listed_events).collect()
     }
 
     fn scan(
         music_dir: PathBuf,
         scanning: (Revision, ScanMode),
-        paths: &LibraryDirs,
+        library_dirs: &LibraryDirs,
     ) -> Option<LibraryEvent> {
-        match <[LibraryEvent; 1]>::try_from(scanned(music_dir, scanning, paths)) {
+        match <[LibraryEvent; 1]>::try_from(scanned(music_dir, scanning, library_dirs))
+        {
             Ok([event]) => Some(event),
             Err(events) => panic!("expected one event, got {events:?}"),
         }
@@ -171,79 +173,85 @@ mod tests {
     fn append_history_writes_an_entry_and_replies_with_nothing(
         dirs: (TempDir, LibraryDirs),
     ) {
-        let (_directory, paths) = dirs;
+        let (_directory, library_dirs) = dirs;
 
         let event = execute(
             DiskCmd::AppendHistory(HistoryEntry::from_track(
                 &test_support::titled("/music/song.flac", "Song"),
                 Moment::default(),
             )),
-            &paths,
+            &library_dirs,
         );
 
         assert_eq!(event, None);
-        assert!(paths.data_dir.join("history.jsonl").is_file());
+        assert!(library_dirs.data_dir.join("history.jsonl").is_file());
     }
 
     #[rstest]
     fn save_favorites_writes_the_file_and_replies_with_nothing(
         dirs: (TempDir, LibraryDirs),
     ) {
-        let (_directory, paths) = dirs;
-        let saved: Favorites = [TrackRef::Local("/music/a.flac".into())]
+        let (_directory, library_dirs) = dirs;
+        let saved_favorites: Favorites = [TrackSource::Local("/music/a.flac".into())]
             .into_iter()
             .collect();
 
-        let event = execute(DiskCmd::SaveFavorites(saved), &paths);
+        let event = execute(DiskCmd::SaveFavorites(saved_favorites), &library_dirs);
 
         assert_eq!(event, None);
-        assert!(paths.data_dir.join("favorites.json").is_file());
+        assert!(library_dirs.data_dir.join("favorites.json").is_file());
     }
 
     #[rstest]
     fn load_favorites_replies_with_the_saved_set(dirs: (TempDir, LibraryDirs)) {
-        let (_directory, paths) = dirs;
-        let saved: Favorites = [TrackRef::Local("/music/a.flac".into())]
+        let (_directory, library_dirs) = dirs;
+        let saved_favorites: Favorites = [TrackSource::Local("/music/a.flac".into())]
             .into_iter()
             .collect();
-        assert_eq!(execute(DiskCmd::SaveFavorites(saved), &paths), None);
+        assert_eq!(
+            execute(DiskCmd::SaveFavorites(saved_favorites), &library_dirs),
+            None
+        );
 
-        let event = execute(DiskCmd::LoadFavorites, &paths);
+        let event = execute(DiskCmd::LoadFavorites, &library_dirs);
 
         insta::assert_debug_snapshot!(event);
     }
 
     #[rstest]
     fn trash_of_a_missing_file_replies_with_nothing(dirs: (TempDir, LibraryDirs)) {
-        let (directory, paths) = dirs;
+        let (directory, library_dirs) = dirs;
         let missing = directory.path().join("never-existed.flac");
 
-        let event = execute(DiskCmd::Trash(missing), &paths);
+        let event = execute(DiskCmd::Trash(missing), &library_dirs);
 
         assert_eq!(event, None);
     }
 
     #[rstest]
     fn load_history_replies_with_the_appended_entry(dirs: (TempDir, LibraryDirs)) {
-        let (_directory, paths) = dirs;
+        let (_directory, library_dirs) = dirs;
         let appended = execute(
             DiskCmd::AppendHistory(HistoryEntry::from_track(
                 &test_support::titled("/music/song.flac", "Song"),
                 Moment::default(),
             )),
-            &paths,
+            &library_dirs,
         );
         assert_eq!(appended, None);
 
-        let event = execute(DiskCmd::LoadHistory(10), &paths);
+        let event = execute(DiskCmd::LoadHistory(10), &library_dirs);
 
         match event {
             Some(LibraryEvent::HistoryLoaded(entries)) => {
-                let listed: Vec<TrackRef> = entries
+                let listed_sources: Vec<TrackSource> = entries
                     .iter()
-                    .map(|entry: &HistoryEntry| entry.track.clone())
+                    .map(|entry: &HistoryEntry| entry.track_source.clone())
                     .collect();
-                assert_eq!(listed, vec![TrackRef::Local("/music/song.flac".into())]);
+                assert_eq!(
+                    listed_sources,
+                    vec![TrackSource::Local("/music/song.flac".into())]
+                );
             }
             other => panic!("expected HistoryLoaded, got {other:?}"),
         }
@@ -251,34 +259,38 @@ mod tests {
 
     #[rstest]
     fn save_playlist_writes_under_the_sanitised_name(dirs: (TempDir, LibraryDirs)) {
-        let (_directory, paths) = dirs;
+        let (_directory, library_dirs) = dirs;
 
         let event = execute(
             DiskCmd::SavePlaylist {
                 name: PlaylistFileName::new("My Mix").unwrap(),
                 tracks: vec![test_support::titled("/music/song.flac", "Song")],
             },
-            &paths,
+            &library_dirs,
         );
 
         assert_eq!(event, None);
-        assert!(paths.playlists_dir.join("My Mix.m3u8").is_file());
+        assert!(library_dirs.playlists_dir.join("My Mix.m3u8").is_file());
     }
 
     #[rstest]
     fn a_published_cover_reaches_the_sink(dirs: (TempDir, LibraryDirs)) {
-        let (_directory, paths) = dirs;
+        let (_directory, library_dirs) = dirs;
         let mut published = Vec::new();
         {
-            let mut driver =
-                LibraryDriver::new(paths, DECODABLE, |decoded: CoverDecoded| {
+            let mut library_driver = LibraryDriver::new(
+                library_dirs,
+                AUDIO_EXTENSIONS,
+                |decoded: CoverDecoded| {
                     published.push((decoded.path, decoded.side));
-                });
-            let answer = driver.execute(LibraryEffect::PublishCover(CoverDecoded {
-                path: PathBuf::from("/music/one.flac"),
-                side: Pixels(64),
-                art: CoverArt::Missing,
-            }));
+                },
+            );
+            let answer =
+                library_driver.execute(LibraryEffect::PublishCover(CoverDecoded {
+                    path: PathBuf::from("/music/one.flac"),
+                    side: Pixels(64),
+                    cover_lookup: CoverLookup::Missing,
+                }));
             assert!(answer.is_none());
         }
 
@@ -290,12 +302,12 @@ mod tests {
 
     #[rstest]
     fn a_cover_job_runs_into_a_decoded_cover(dirs: (TempDir, LibraryDirs)) {
-        let (directory, _paths) = dirs;
+        let (directory, _library_dirs) = dirs;
         let path = directory.path().join("untagged.wav");
         std::fs::write(&path, include_bytes!("../tests/fixtures/tone.wav")).unwrap();
 
-        let message = LibraryJob::Cover {
-            job: CoverJob {
+        let message = LibraryJob::DecodeCover {
+            cover_job: CoverJob {
                 path,
                 side: Pixels(64),
             },
@@ -307,7 +319,7 @@ mod tests {
             message,
             LibraryMessage::CoverDecoded {
                 decoded: Ok(CoverDecoded {
-                    art: CoverArt::Missing,
+                    cover_lookup: CoverLookup::Missing,
                     ..
                 }),
                 ..
@@ -327,16 +339,16 @@ mod tests {
                 music_dir: PathBuf::from("/music"),
                 revision: Revision::default(),
                 dirs: Arc::clone(&dirs),
-                decodable: DECODABLE,
+                audio_extensions: AUDIO_EXTENSIONS,
             },
             LibraryJob::Tag {
                 music_dir: PathBuf::from("/music"),
-                tracks: Vec::new(),
+                track_sources: Vec::new(),
                 revision: Revision::default(),
                 dirs,
             },
-            LibraryJob::Cover {
-                job: CoverJob {
+            LibraryJob::DecodeCover {
+                cover_job: CoverJob {
                     path: PathBuf::from("/music/one.flac"),
                     side: Pixels(64),
                 },
@@ -349,7 +361,7 @@ mod tests {
         assert!(matches!(
             jobs.as_slice(),
             [
-                LibraryJob::Cover { .. },
+                LibraryJob::DecodeCover { .. },
                 LibraryJob::Tag { .. },
                 LibraryJob::Scan { .. }
             ]
@@ -366,16 +378,16 @@ mod tests {
     }
 
     #[rstest]
-    fn a_full_scan_replies_with_the_tracks_it_found_under_the_revision_it_was_given(
+    fn a_fresh_scan_replies_with_the_tracks_it_found_under_the_revision_it_was_given(
         dirs: (TempDir, LibraryDirs),
     ) {
-        let (directory, paths) = dirs;
+        let (directory, library_dirs) = dirs;
         let music_dir = scanned_music_dir(&directory);
 
         let event = scan(
             music_dir,
-            (Revision::default().next(), ScanMode::Full),
-            &paths,
+            (Revision::default().next(), ScanMode::Fresh),
+            &library_dirs,
         );
 
         insta::with_settings!({ filters => temp_dir_filters() }, {
@@ -387,13 +399,13 @@ mod tests {
     fn a_cached_scan_without_a_cache_lists_untagged_tracks_under_the_revision_it_was_given(
         dirs: (TempDir, LibraryDirs),
     ) {
-        let (directory, paths) = dirs;
+        let (directory, library_dirs) = dirs;
         let music_dir = scanned_music_dir(&directory);
 
         let event = scan(
             music_dir,
             (Revision::default().next().next(), ScanMode::Cached),
-            &paths,
+            &library_dirs,
         );
 
         insta::with_settings!({ filters => temp_dir_filters() }, {
@@ -405,22 +417,22 @@ mod tests {
     fn tag_tracks_answers_every_listed_path_under_the_revision_it_was_given(
         dirs: (TempDir, LibraryDirs),
     ) {
-        let (directory, paths) = dirs;
+        let (directory, library_dirs) = dirs;
         let music_dir = scanned_music_dir(&directory);
         let listed = vec![
-            TrackRef::Local(music_dir.join("a.wav")),
-            TrackRef::Local(music_dir.join("never-existed.flac")),
+            TrackSource::Local(music_dir.join("a.wav")),
+            TrackSource::Local(music_dir.join("never-existed.flac")),
         ];
 
         let mut library_driver: LibraryDriver<fn(CoverDecoded)> =
-            LibraryDriver::new(paths.clone(), DECODABLE, unpublished);
-        let event = told(
+            LibraryDriver::new(library_dirs.clone(), AUDIO_EXTENSIONS, unpublished);
+        let event = transitioned_event(
             Some(
                 LibraryJob::Tag {
                     music_dir,
-                    tracks: listed,
+                    track_sources: listed,
                     revision: Revision::default().next(),
-                    dirs: Arc::new(paths),
+                    dirs: Arc::new(library_dirs),
                 }
                 .run(),
             ),
@@ -433,22 +445,22 @@ mod tests {
     }
 
     #[rstest]
-    fn a_cached_scan_after_a_full_scan_answers_from_the_cache(
+    fn a_cached_scan_after_a_fresh_scan_answers_from_the_cache(
         dirs: (TempDir, LibraryDirs),
     ) {
-        let (directory, paths) = dirs;
+        let (directory, library_dirs) = dirs;
         let music_dir = scanned_music_dir(&directory);
         let first = scan(
             music_dir.clone(),
-            (Revision::default().next(), ScanMode::Full),
-            &paths,
+            (Revision::default().next(), ScanMode::Fresh),
+            &library_dirs,
         );
         assert!(matches!(first, Some(LibraryEvent::Loaded { .. })));
 
         let event = scan(
             music_dir,
             (Revision::default().next().next(), ScanMode::Cached),
-            &paths,
+            &library_dirs,
         );
 
         insta::with_settings!({ filters => temp_dir_filters() }, {
@@ -460,11 +472,11 @@ mod tests {
     fn a_corrupt_cache_is_passed_over_and_the_scan_lists_instead(
         dirs: (TempDir, LibraryDirs),
     ) {
-        let (directory, paths) = dirs;
+        let (directory, library_dirs) = dirs;
         let music_dir = scanned_music_dir(&directory);
-        std::fs::create_dir_all(&paths.cache_dir).unwrap();
+        std::fs::create_dir_all(&library_dirs.cache_dir).unwrap();
         std::fs::write(
-            paths.cache_dir.join("library.bin"),
+            library_dirs.cache_dir.join("library.bin"),
             [6u8, 0xDE, 0xAD, 0xBE, 0xEF],
         )
         .unwrap();
@@ -472,7 +484,7 @@ mod tests {
         let events = scanned(
             music_dir,
             (Revision::default().next(), ScanMode::Cached),
-            &paths,
+            &library_dirs,
         );
 
         assert!(matches!(
@@ -483,13 +495,13 @@ mod tests {
 
     #[rstest]
     fn a_scan_of_a_missing_folder_answers_an_error(dirs: (TempDir, LibraryDirs)) {
-        let (directory, paths) = dirs;
+        let (directory, library_dirs) = dirs;
 
         let message = LibraryJob::Scan {
             music_dir: directory.path().join("absent"),
             revision: Revision::default(),
-            dirs: Arc::new(paths),
-            decodable: DECODABLE,
+            dirs: Arc::new(library_dirs),
+            audio_extensions: AUDIO_EXTENSIONS,
         }
         .run();
 

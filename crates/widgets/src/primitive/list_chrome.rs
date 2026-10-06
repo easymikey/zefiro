@@ -1,5 +1,6 @@
 use std::iter::once;
 
+use kernel::domain::index::RowIndex;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -89,11 +90,11 @@ pub(crate) struct Scrollbar {
     pub(crate) groove: Color,
 }
 
-pub(crate) fn paint_scrollbar(column: Rect, bar: Scrollbar, buffer: &mut Buffer) {
-    if bar.total <= bar.viewport {
+pub(crate) fn paint_scrollbar(column: Rect, scrollbar: Scrollbar, buffer: &mut Buffer) {
+    if scrollbar.total <= scrollbar.viewport {
         return;
     }
-    let thumb = Style::default().fg(bar.thumb);
+    let thumb = Style::default().fg(scrollbar.thumb);
     let widget = widgets::Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(Some(glyphs::scrollbar::UP))
         .end_symbol(Some(glyphs::scrollbar::DOWN))
@@ -102,18 +103,18 @@ pub(crate) fn paint_scrollbar(column: Rect, bar: Scrollbar, buffer: &mut Buffer)
         .begin_style(thumb)
         .end_style(thumb)
         .thumb_style(thumb)
-        .track_style(Style::default().fg(bar.groove));
-    let mut position = ScrollbarState::new(bar.total)
-        .position(bar.offset)
-        .viewport_content_length(bar.viewport);
+        .track_style(Style::default().fg(scrollbar.groove));
+    let mut position = ScrollbarState::new(scrollbar.total)
+        .position(scrollbar.offset)
+        .viewport_content_length(scrollbar.viewport);
     StatefulWidget::render(widget, column, buffer, &mut position);
 }
 
 #[must_use]
-pub(crate) fn scroll_offset(selected: usize, total: usize, height: usize) -> usize {
+pub(crate) fn scroll_offset(selected: RowIndex, total: usize, height: usize) -> usize {
     if height == 0 || total <= height {
         return 0;
     }
     let max_offset = total - height;
-    selected.saturating_sub(height - 1).min(max_offset)
+    selected.get().saturating_sub(height - 1).min(max_offset)
 }

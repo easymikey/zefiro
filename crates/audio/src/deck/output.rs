@@ -1,19 +1,16 @@
 use std::time::Duration;
 
-use crossbeam_channel::Sender;
 use kernel::{
     cmd::Playback,
-    domain::{device::OutputDevice, revision::Revision, speed::Speed},
+    domain::{revision::Revision, speed::Speed},
 };
 use rodio::{Source, source::Zero};
 
 use crate::{
     deck::envelope::{Envelope, EnvelopeControl},
-    device::{OutputLoss, open_stream},
-    engine::message::{AudioMessage, DeviceChoice, SinkRole},
-    error::DeviceError,
+    engine::message::SinkRole,
     gain::Gain,
-    tap::{Handoff, Tap},
+    tap::{SpectrumBuffers, TappedSource},
 };
 
 pub(crate) struct Fader {
@@ -23,41 +20,11 @@ pub(crate) struct Fader {
 
 pub(crate) struct Output {
     mix: rodio::mixer::Mixer,
-    pub(crate) primary: rodio::Sink,
-    pub(crate) control: Option<EnvelopeControl>,
-    pub(crate) queued_control: Option<EnvelopeControl>,
+    pub(crate) current: rodio::Sink,
+    pub(crate) current_control: Option<EnvelopeControl>,
+    pub(crate) incoming_control: Option<EnvelopeControl>,
     pub(crate) incoming_fader: Option<Fader>,
     pub(crate) outgoing_fader: Option<Fader>,
-}
-
-pub(crate) struct OpenedOutput {
-    pub(crate) stream: rodio::OutputStream,
-    pub(crate) device: OutputDevice,
-    pub(crate) opened: DeviceChoice,
-}
-
-pub(crate) fn open_output_stream(
-    device: OutputDevice,
-    sender: &Sender<AudioMessage>,
-    lost: &OutputLoss,
-) -> Result<OpenedOutput, DeviceError> {
-    match open_stream(&device, sender, lost) {
-        Ok(stream) => Ok(OpenedOutput {
-            stream,
-            device,
-            opened: DeviceChoice::Requested,
-        }),
-        Err(DeviceError::NotFound(_)) => {
-            open_stream(&OutputDevice::SystemDefault, sender, lost).map(|stream| {
-                OpenedOutput {
-                    stream,
-                    device: OutputDevice::SystemDefault,
-                    opened: DeviceChoice::FellBack,
-                }
-            })
-        }
-        Err(error) => Err(error),
-    }
 }
 
 fn fresh_sink(mix: &rodio::mixer::Mixer, speed: Speed) -> rodio::Sink {
@@ -71,50 +38,54 @@ impl Output {
     pub(crate) fn with_stream(
         stream: &rodio::OutputStream,
         speed: Speed,
-        spectrum: &Handoff,
+        spectrum_buffers: &SpectrumBuffers,
     ) -> Self {
         let channels = stream.config().channel_count();
         let rate = stream.config().sample_rate();
         let (mix, mix_source) = rodio::mixer::mixer(channels, rate);
-        stream.mixer().add(Tap::new(mix_source, spectrum));
+        stream
+            .mixer()
+            .add(TappedSource::new(mix_source, spectrum_buffers));
         mix.add(Zero::new(channels, rate));
-        let primary = fresh_sink(&mix, speed);
+        let current = fresh_sink(&mix, speed);
         Self {
             mix,
-            primary,
-            control: None,
-            queued_control: None,
+            current,
+            current_control: None,
+            incoming_control: None,
             incoming_fader: None,
             outgoing_fader: None,
         }
     }
 
-    pub(crate) fn swap_sink(&mut self, speed: Speed) {
+    pub(crate) fn swap_current(&mut self, speed: Speed) {
         self.outgoing_fader = None;
-        self.primary = fresh_sink(&self.mix, speed);
-        self.control = None;
+        self.current = fresh_sink(&self.mix, speed);
+        self.current_control = None;
     }
 
-    pub(crate) fn retire_sink(&mut self, speed: Speed) {
-        let primary = fresh_sink(&self.mix, speed);
-        let sink = std::mem::replace(&mut self.primary, primary);
-        self.outgoing_fader =
-            self.control.take().map(|control| Fader { sink, control });
+    pub(crate) fn retire_current(&mut self, speed: Speed) {
+        let current = fresh_sink(&self.mix, speed);
+        let sink = std::mem::replace(&mut self.current, current);
+        self.outgoing_fader = self
+            .current_control
+            .take()
+            .map(|control| Fader { sink, control });
     }
 
-    pub(crate) fn at(&self) -> (Duration, Playback) {
-        let playback = if self.primary.is_paused() {
+    pub(crate) fn position(&self) -> (Duration, Playback) {
+        let playback = if self.current.is_paused() {
             Playback::Paused
         } else {
             Playback::Playing
         };
-        (self.primary.get_pos(), playback)
+        (self.current.get_pos(), playback)
     }
 
     pub(crate) fn promote(&mut self) {
         if let Some(Fader { sink, control }) = self.incoming_fader.take() {
-            self.primary = sink;
-            self.control = Some(control);
+            self.current = sink;
+            self.current_control = Some(control);
         }
     }
 
@@ -122,10 +93,14 @@ impl Output {
     where
         S: Source + Send + 'static,
     {
-        self.primary.append(envelope);
+        self.current.append(envelope);
     }
 
-    pub(crate) fn stage<S>(&self, envelope: Envelope<S>, speed: Speed) -> rodio::Sink
+    pub(crate) fn attach_incoming<S>(
+        &self,
+        envelope: Envelope<S>,
+        speed: Speed,
+    ) -> rodio::Sink
     where
         S: Source + Send + 'static,
     {
@@ -136,7 +111,7 @@ impl Output {
     }
 
     pub(crate) fn sinks(&self) -> impl Iterator<Item = &rodio::Sink> {
-        std::iter::once(&self.primary)
+        std::iter::once(&self.current)
             .chain(self.incoming_fader.as_ref().map(|fader| &fader.sink))
             .chain(self.outgoing_fader.as_ref().map(|fader| &fader.sink))
     }
@@ -147,7 +122,7 @@ impl Output {
         revision: Revision,
     ) -> Option<(SinkRole, &EnvelopeControl)> {
         [
-            (SinkRole::Primary, self.control.as_ref()),
+            (SinkRole::Current, self.current_control.as_ref()),
             (
                 SinkRole::Incoming,
                 self.incoming_fader.as_ref().map(|fader| &fader.control),
@@ -174,12 +149,12 @@ pub(crate) mod tests {
 
     pub(crate) fn detached_output() -> Output {
         let (mix, _mix_source) = rodio::mixer::mixer(1, 44_100);
-        let primary = fresh_sink(&mix, Speed::default());
+        let current = fresh_sink(&mix, Speed::default());
         Output {
             mix,
-            primary,
-            control: None,
-            queued_control: None,
+            current,
+            current_control: None,
+            incoming_control: None,
             incoming_fader: None,
             outgoing_fader: None,
         }

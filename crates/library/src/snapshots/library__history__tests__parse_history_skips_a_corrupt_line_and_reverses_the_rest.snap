@@ -5,34 +5,34 @@ expression: "parse_history(HISTORY_LOG, 10)"
 ---
 [
     HistoryEntry {
-        track: Local(
+        track_source: Local(
             "/music/third.flac",
         ),
         title: "Third",
         artist: None,
-        at: Moment(
+        played_at: Moment(
             7000s,
         ),
     },
     HistoryEntry {
-        track: Local(
+        track_source: Local(
             "/music/also-good.flac",
         ),
         title: "Also Good",
         artist: Some(
             "Artist",
         ),
-        at: Moment(
+        played_at: Moment(
             6000s,
         ),
     },
     HistoryEntry {
-        track: Local(
+        track_source: Local(
             "/music/good.flac",
         ),
         title: "Good",
         artist: None,
-        at: Moment(
+        played_at: Moment(
             5000s,
         ),
     },

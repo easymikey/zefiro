@@ -5,7 +5,7 @@ expression: "(model.settings, model.transport.volume, model.themes,)"
 ---
 (
     Settings {
-        audio: AudioSettings {
+        audio_settings: AudioSettings {
             crossfade: Crossfade(
                 3s,
             ),
@@ -23,7 +23,7 @@ expression: "(model.settings, model.transport.volume, model.themes,)"
             ),
         },
         output_devices: [],
-        appearance: AppearanceSettings {
+        appearance_settings: AppearanceSettings {
             cover_mode: Vinyl,
             cover_brackets: Hidden,
             format_chips: Hidden,
@@ -46,7 +46,7 @@ expression: "(model.settings, model.transport.volume, model.themes,)"
                 "solar",
             ),
         ],
-        selected: Named(
+        theme_choice: Named(
             ThemeName(
                 "dark",
             ),

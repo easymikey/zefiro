@@ -15,13 +15,13 @@ use crate::{
 impl Workspace {
     pub(crate) fn keymap_reloaded(
         &mut self,
-        keys: KeymapOverrides,
+        keymap_overrides: KeymapOverrides,
         revisions: &mut Revisions,
     ) -> Cmd {
-        if self.keymap.overrides() == &keys {
+        if self.keymap.overrides() == &keymap_overrides {
             return Cmd::none();
         }
-        self.keymap = Keymap::new(keys);
+        self.keymap = Keymap::new(keymap_overrides);
         let result = self
             .keymap
             .diagnostic()
@@ -38,7 +38,7 @@ impl Workspace {
     }
 
     pub(crate) fn show(&mut self, toast: Toast, revisions: &mut Revisions) -> Cmd {
-        let first = self.toasts.is_empty();
+        let was_empty = self.toasts.is_empty();
         self.toasts.insert(
             0,
             Toast {
@@ -48,7 +48,7 @@ impl Workspace {
         );
         self.toasts.truncate(TOAST_STACK);
         let raised = Cmd::from(Cue::ToastRaised);
-        if first {
+        if was_empty {
             raised.then(
                 Effect::After {
                     delay: TOAST_LIFETIME,
@@ -69,7 +69,7 @@ impl Workspace {
         }
     }
 
-    pub(crate) fn expire(&mut self, revision: Revision) -> Cmd {
+    pub(crate) fn expire_toasts(&mut self, revision: Revision) -> Cmd {
         let now = self.clock;
         let before = self.toasts.len();
         self.toasts
@@ -106,11 +106,11 @@ impl Workspace {
                     Cmd::none()
                 }
             }
-            Ok(()) => self.source_recovered(&name),
+            Ok(()) => self.config_recovered(&name),
         }
     }
 
-    fn source_recovered(&mut self, name: &ConfigName) -> Cmd {
+    fn config_recovered(&mut self, name: &ConfigName) -> Cmd {
         let cleared = self
             .config_errors
             .clear(name)

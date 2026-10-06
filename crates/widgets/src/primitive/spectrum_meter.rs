@@ -6,11 +6,11 @@ use crate::{
     primitive::span::{line, text},
 };
 
-fn spectrum_row_fraction(row: u16, total_rows: u16) -> f32 {
+fn spectrum_row_fraction(y: u16, total_rows: u16) -> f32 {
     if total_rows <= 1 {
         return 1.0;
     }
-    1.0 - f32::from(row) / f32::from(total_rows - 1)
+    1.0 - f32::from(y) / f32::from(total_rows - 1)
 }
 
 #[must_use]
@@ -24,8 +24,9 @@ pub(crate) fn lines(
         .into_iter()
         .enumerate()
         .map(|(row, glyphs)| {
-            let t = spectrum_row_fraction(small_count_u16(row), spectrum_total_rows);
-            let color = color_at(t);
+            let fraction =
+                spectrum_row_fraction(small_count_u16(row), spectrum_total_rows);
+            let color = color_at(fraction);
             line([text(glyphs).fg(color)])
         })
         .collect()
@@ -44,10 +45,10 @@ mod tests {
     #[case::the_only_row(0, 1, 1.0)]
     #[case::no_rows_at_all(0, 0, 1.0)]
     fn spectrum_row_fraction_runs_high_at_the_top(
-        #[case] row: u16,
+        #[case] y: u16,
         #[case] rows: u16,
         #[case] expected: f32,
     ) {
-        assert_eq!(spectrum_row_fraction(row, rows), expected);
+        assert_eq!(spectrum_row_fraction(y, rows), expected);
     }
 }

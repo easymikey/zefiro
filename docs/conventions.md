@@ -17,7 +17,7 @@ XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► inbox �
 1. Layer map: kernel: nothing; audio, library, macos, config: kernel; runtime: drivers, kernel, config; widgets: kernel; terminal: kernel, widgets; sifr: anything. `guard` (`layering.rs`)
 2. kernel and widgets are pure: no IO, clock, threads, env, channels. `guard` (`purity.rs`)
 3. Only the roots see a whole `Model`: the kernel router inside `update`, `startup`, `Scene::from_model`. Below them a function takes its slice or an `XParts`. `guard` (`demeter.rs`, `demeter_views.rs`)
-4. One entry each: `update` has one call site in runtime, there is one key router, one `startup`; the paint path never calls `update`. `guard` (`dispatch.rs`)
+4. One entry each: `update` has one call site in runtime, there is one key router, one `startup`; the paint path never calls `update`. `guard` (`dispatch.rs`) for the `update` call site and the paint path, `review` for the one key router and the one `startup`
 5. Effects are data with one interpreter: the kernel returns `Effect`s, runtime runs each as a lookup with no decision, the shell does only terminal IO; no second place matches on `Effect`. `review`
 6. Calc and effect are split: every decision is a pure function with tests; the action beside it holds no logic. `review`
 7. No loop through IO for our own changes: a value a message changes is changed in the `Model` in that `update`; persisting it is an effect; a watcher exists only for external edits and never re-applies what the app just wrote. `review`
@@ -38,14 +38,14 @@ XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► inbox �
 | Request | kernel | what the shell asks the core; always a branch of `Message` | `XRequest` | guard |
 | Message | kernel | the only input of `update`: `X(XRequest)`, `X(XEvent)`, answers, `Elapsed(Timer)`, `Driver { driver, event }`, `Key(KeyPress)`, … | `Message` | review |
 | Driver | audio, macos, library, config | the top machine of one external source (§4) | `AudioDriver`, `MacosDriver`, `LibraryDriver`, `ConfigDriver` | guard |
-| DriverLoop | runtime | one generic loop, one thread per driver (§4); a driver effect reaches it through `LoopEffect { Execute, Run, After, Watch, Unwatch }` (decided 2026-10-04); runtime seeds `XMessage::Started` into the inbox at spawn through the `DriverLoop` field `seed: Option<D::Message>`; the loop's private next-input enum is `LoopInput` (not `Wake`, reserved for the realtime wake-up); the inputs `Spawners` hands each driver thread are `SpawnSetup`, the audio start closure `SpawnAudio`; an audio driver that stops before handing over its tap is `Error::TapLost { driver }`; a value the driver publishes goes out through a closure sink `P: Fn(T)` the runtime passes in | `DriverLoop` | guard |
+| DriverLoop | runtime | one generic loop, one thread per driver (§4); a driver effect reaches it through `LoopEffect { Execute, Run, After, Watch, Unwatch }` (decided 2026-10-04); runtime seeds `XMessage::Started` into the inbox at spawn through the `DriverLoop` field `message: Option<D::Message>`; the loop's private next-input enum is `LoopInput` (not `Wake`, reserved for the realtime wake-up); the inputs `Spawners` hands each driver thread are `SpawnSetup`, the audio start closure `SpawnAudio`; an audio driver that stops before handing over its tap is `SpawnError::TapLost { driver_name }`; a value the driver publishes goes out through a closure sink `P: Fn(T)` the runtime passes in | `DriverLoop` | guard |
 | Stream | runtime | a repeated input started by a driver effect (`Watch(PathBuf)`, as Crux `stream_from_shell`); runtime owns it and feeds its items back as `XMessage`s. The word `Subscription` is not used | `FileStream` | guard |
 | Job | driver crate (type), runtime (thread) | slow blocking work a driver hands to the runtime worker as `XEffect::Run(XJob)`; the result returns as an `XMessage`; stale by `Revision` (§4.7) | `AudioJob`, `LibraryJob`, `MacosJob` | review |
 | Error | every crate that can fail | §6 | `Error`, `<Type>Error` | guard |
 | Scene | widgets | `Scene::from_model(&Model, ScenePresentation)`; the only widget code that sees `&Model`; no `*_view()` or `layout_parts()` getters | `Scene` | guard |
 | View | widgets | read-model holding fields from two or more `Model` slices; borrowed fields, no state, no `&Model`; built only by `XView::from_scene(&Scene)` | `XView<'a>` | review |
 | Widget | widgets | every type with `impl Widget`, overlays included; every widget type ends in `Widget` (`ToastWidget`, `CardWidget`, `TooSmallWidget`); built as in ratatui and ratcn: `XWidget::new(..)` takes what the widget cannot paint without (its `input`, then the `ActiveTheme` when it paints in theme colours), every optional knob is a consuming setter named after the field (`style(XStyle)`, `speed_chip(SpeedChip)`, …); fields are private, so there is never a struct literal outside its module and never a `builder()`; `input` is `&` one Model slice or one `XView` | `XWidget`, never `*Overlay` | guard |
-| Style | widgets | a component's look; built only by `XStyle::from_theme(&ActiveTheme)`; an input beyond the theme rides on `ActiveTheme` through a builder (`with_progress`, `with_volume_pulse`); fields are semantic colours (`foreground`, `muted_foreground`, `background`, `border`, `accent`, …) | `XStyle` | review |
+| Style | widgets | a component's look; built only by `XStyle::from_theme(&ActiveTheme)`; an input beyond the theme rides on `ActiveTheme` through a builder (`with_progress_bar`, `with_volume_pulse`); fields are semantic colours (`foreground`, `muted_foreground`, `background`, `border`, `accent`, …) | `XStyle` | review |
 | Colors | widgets | only the theme palette | `Colors` | guard |
 | raw TOML | config | every serde shape of a file or a section; each carries `#[serde(expecting = "…")]` in user words (`"a [cover] table"`), so a Rust name never reaches a toast | `Toml*` (`TomlTheme`, `TomlAppearance`, `TomlKeymap`, `TomlCard`, `TomlColors`, `TomlAudio`) | guard |
 | parsed value | kernel, widgets | what inner code uses; parsed once at the boundary, never re-checked | bare noun (`Theme`, `Keymap`, `Appearance`) | review |
@@ -57,7 +57,7 @@ XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► inbox �
 ## 3. Machines
 
 1. Every part that reacts to messages is `impl Machine` with `transition` (Crux: every part is `update`). There is no second form; the word `apply` is not used. `review`
-2. `transition` returns `Result<Cmd, Unhandled>` (the `Cmd` type as above), never `Option`, `Vec`, a bare effect enum or an `*Outcome`. `pub struct Unhandled;` (kernel, one for the whole workspace, no reason inside, as statig/XState "unhandled" and rust-fsm `TransitionImpossibleError`): a message with no transition in the current state returns `Err(Unhandled)` and leaves `self` untouched; `Ok(Cmd::none())` means handled with nothing to do outside. Runtime reads it: `Ok` repaints, `Err` does not repaint and restores the toast the key dismissed; a driver loop drops `Err(Unhandled)` silently (nothing to repaint); so do the kernel drain for a refused follow-up `Cmd` message and the runtime for a refused startup or answer delivery, the envelope frame loop and the painter (the whole sanctioned list). No per-machine error enums. `review`
+2. `transition` returns `Result<Cmd, Unhandled>` (the `Cmd` type as above), never `Option`, `Vec`, a bare effect enum or an `*Outcome`. `pub struct Unhandled;` (kernel, one for the whole workspace, no reason inside, as statig/XState "unhandled" and rust-fsm `TransitionImpossibleError`): a message with no transition in the current state returns `Err(Unhandled)` and leaves `self` untouched; `Ok(Cmd::none())` means handled with nothing to do outside. Runtime reads it: `Ok` repaints, `Err` does not repaint; the kernel `update` restores the dismissed toast and the clock before it answers `Err`, and a refused key that released a chord prefix answers `Ok`; a driver loop drops `Err(Unhandled)` silently (nothing to repaint); so do the kernel drain for a refused follow-up `Cmd` message and the runtime for a refused startup or answer delivery, the envelope frame loop and the painter. A kernel handler that also asks the player (an audio error, a lost output, a fired sleep timer, a speed step) answers the player's refusal with what it still did, the toast or the transport change (`Err(Unhandled) => Ok(raised)`), never with `Cmd::none()`. `machine::each_handled` answers a driver's `Cmds` batch as handled when one item is and refuses it only when every item is. That is the whole sanctioned list. No per-machine error enums. `review`
 3. The input is an enum `XMessage` where X is the machine's type name (for an impl on `Option<T>` or `CursorOver<T>`, the noun of `T`; for a top driver machine, the subsystem: `AudioMessage`, `MacosMessage`, `LibraryMessage`, `ConfigMessage`), even with one variant, so a new input source is one new variant. Exception (Crux: no parallel enum that maps 1:1): when the machine's input would be identical to a shell `XRequest` enum, the machine takes that `XRequest` as its `Machine::Message` (`CursorOver<SearchQuery>` takes `SearchRequest`, `TextEntry<E>` takes `TextRequest`). The parameter is always `message`. `guard`
 4. A message to self or parent is `Cmd::message(m)`; no follow-up or out-message types. DECIDED 2026-10-03 (as Crux `process_event`): kernel `update` drains every `Cmd` message itself, depth-first, in order, inside the same call, and returns only the collected effects, so a step and its follow-ups are atomic, no frame sees a half-applied model, and kernel tests see the final state through the production `update`. Depth over 8 is a programmer error: `debug_assert!`, and release stops the chain. `review`
 5. The match is exhaustive, no `_ =>`. A variant move uses one `mem::replace`; `mem::take` on machine state is banned. `guard` (`_ =>`), `review` (`mem::take`)
@@ -95,7 +95,7 @@ Why `Driver`: same roles as OS drivers (request in, interrupt-driven events out,
 
 1. Every crate that can fail has one boundary `Error`. Machines and `update` return `Unhandled` (§3.2), not an error type. `guard`
 2. An error of parsing or validating one value is `<Type>Error` (`ThemeNameError`, `TimecodeError`, `RemoteInputError`); its out-of-range case is the variant `OutOfRange { value, max }` (plus `min` when the floor is not zero). A panic payload is not carried: `DriverError::Panicked` is a unit variant; the payload text is dropped until runtime devtools exist (§6.4). `guard`
-3. `thiserror` enum, `#[error]` user text on every variant, `#[source]` chains, context fields, no `String` payloads (config reload: §8; `ConfigError: PartialEq` so a toast shows only for a new error; user text comes from `Display` when the toast is built), no `Box<dyn Error>`, no `anyhow`, `From` only along a real crate edge. No `let _ =` anywhere, tests included (a value is handled, propagated, asserted or turned into an event), no `unwrap_or_default` hiding an error. `guard` (`errors.rs`)
+3. `thiserror` enum, `#[error]` user text on every variant, `#[source]` chains, context fields, no `String` payloads (config reload: §8; `ConfigError: PartialEq` so a toast shows only for a new error; user text comes from `Display` when the toast is built), no `Box<dyn Error>`, no `anyhow`, `From` only along a real crate edge. No `let _ =` anywhere, tests included (a value is handled, propagated, asserted or turned into an event), no `unwrap_or_default` hiding an error. `guard` (`conventions.rs` `let_underscore` and `ok_discard`, clippy `disallowed-methods`)
 4. IO failures travel as data inside an `XEvent` into the Model and a toast, never as a panic. A message or event enum carries an error in one `Error(XError)` variant (`AudioMessage::Error(AudioError)`, `LibraryEvent::Error`); no per-operation `*Failed` variants — the machine branches on the error variant (decided 2026-10-04). Debugging is later devtools in runtime recording `Message` → `Cmd` and the model before/after (Elm debugger style). `review`
 
 ## 7. Suffixes and prefixes
@@ -131,75 +131,171 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 
 | concept | the word | not |
 |---|---|---|
-| track identity everywhere (queue, favorites, history, m3u) | `TrackRef` (`enum TrackRef { Local(PathBuf) }`, `Remote { source, id }` with Navidrome; as MPD songid, Subsonic id); `Local` keeps today's path behaviour: no normalisation, same path text on disk, lookup through a `TrackRef` to index map, a dangling ref is skipped on load, field `Track.source: TrackRef` | a path or an index as identity |
-| track position in the library / the shown list (rows and cursor only) | `TrackIndex`, `ViewIndex` | `PlaylistIndex`, `QueueIndex` |
-| audio load order | `TrackLoad` | — |
-| audio's preload variant (gapless or crossfade) | `PreloadMode` (decided 2026-10-04) | `PreloadKind`, `Preload` |
+| track | `Track`, `Arc<Track>`; value `track` | `song`, `song_title` |
+| track identity everywhere (queue, favorites, history, m3u) | `TrackSource` (`enum TrackSource { Local(PathBuf) }`, `Remote { source, id }` with Navidrome); value `track_source`; field `Track.source` (the type takes the word its field already has); `Local` keeps today's path behaviour: no normalisation, same path text on disk, lookup through a `TrackSource` to index map, a dangling ref is skipped on load | `TrackRef`, `track_ref`, `track` for it, `source` alone outside `Track`, a path or an index as identity |
+| track number tag | `Tags.track_number` | `track` for it |
+| time into the track | `Duration`; value `position`; `offset` only for a position at an anchor (`Playhead.offset`), `target` for a seek destination, `by` for a relative step | `at`, `offset` for anything else |
+| track length | `Duration`; value `duration` | `total`, `decoded` for a length |
+| playhead anchor | `Playhead`; value `playhead` | `head` |
+| preloaded next track (kernel record) | `Option<Arc<Track>>` in `Player::Playing`; value `preloaded` | `Preload`, `Requested`, `seek_reset` |
+| player state | `Player`; value `player` | — |
+| play queue | `Model.queue: Vec<TrackSource>`; value `queue` | `queued` for anything else |
+| queue number on a row | `QueueNumber`; value `queue_number` | `QueuePosition`, `position` |
+| track position in the library, the shown list | `TrackIndex`, `ViewIndex`; value `index` (`view_index`, `track_index` when both are in scope) | `PlaylistIndex`, `QueueIndex`, `row` for a `ViewIndex`, `browse_selected`, `selected_line`, `cursor_index`, bare `usize` |
+| row of a settings or history overlay | `RowIndex`, `SettingRow`; value `row`; cursor `selected` | `current`, `selected: usize` |
+| repeat | `RepeatMode`; value `repeat_mode` | `repeat` |
+| shuffle, play order | `PlayOrder`, `Shuffle`; values `play_order`, `shuffle` | `PlayOrder::Shuffle`, `Disabled`, `Enabled` |
+| switch, visibility and flag enums | `On`, `Off`; `Shown`, `Hidden`; `Yes`, `No` (`Playing`, `Selected`, `Favorite`, `DeviceDefault`); value the type word | `Enabled`, `Disabled`, `Marked`, `Unmarked`, `Default`, `Named`, `Other` |
+| volume | `Percent`; value `volume` | — |
+| speed | `Speed`; value `speed` | — |
+| trash a file | `Overlay::ConfirmTrash`, `OverlayName::ConfirmTrash`, `TrashCandidate`, `Cue::TrackTrashed`, `KeyContext::ConfirmTrash`, `LibraryCmd::Trash`; `Action::Delete` is the keymap key `delete` and keeps its word | `ConfirmDelete`, `DeleteCandidate`, `TrackDeleted` |
+| replay-gain tag value | `Decibels`; value `decibels` | `gain` for a `Decibels`, `replay_gain` for it |
+| linear gain factor in audio | `Gain`; value `gain`; a replay-gain tag value is `Decibels` in kernel, converted to `Gain` in audio | bare `f32` |
+| listed device default flag | `ListedDevice { name, default: DeviceDefault }`; `DeviceDefault { Yes, No }` | `Default`, `Named`, `Other` |
+| device that opened | `DeviceChoice`, `DeviceOpened`; values `device_choice`, `device_opened`; field `choice` only in `Device*` owners | `opened`, `reopened` |
+| output loss error | `OutputError`; value `error` | `StreamError`, `Stream*`, `kind` |
+| appearance row with its choice | `AppearanceRowChoice`; value `appearance_row_choice` | `AppearanceSetting`, `slot` |
+| progress time setting | `ProgressTime`, `AppearanceField::ProgressTime`, `PROGRESS_TIMES`; value `progress_time` | `ProgressRemaining`, `PROGRESS_STYLES` |
+| progress bar look | `ProgressBar`; value `progress_bar` | `progress` for it |
+| theme choice | `ThemeChoice`; value `choice` in `Themes`, `theme_choice` elsewhere | `selected` for it |
+| theme input colours before derivation | `ThemeBase`; value `theme_base` | `ThemeSeed`, `seed` (`Seed` = DriverLoop seed), `base`, `raw` |
+| toast and level | `Toast`, `ToastLevel`; values `toast`, `level` | `Notice`, `kind` |
+| staleness of a timer or job answer | `Revision`, `Freshness`; values `revision`, `freshness` | `Reply`, `reply` |
+| config file id | `ConfigName`; value `name` | `file` |
+| text typed into a prompt | `TextEntry`, `SearchQuery`; value `text_entry` | `typed`, `entry` |
+| history entry | `HistoryEntry { track_source, played_at }`; value `history_entry` | `played`, `entry` as a parameter, `at` |
+| sort key | `SortKey`; value `sort_key` | `sort`, `key` |
+| key bindings | `Keymap`, `KeyBinding`, `KeymapOverrides`, `KeyOverride`, `BindingOrigin`, `Chord`, `KeyContext`; values `binding`, `keymap_overrides`, `key_override`, `origin`; a binding maps to a `Message`; an unbound `Char` in a text `KeyContext` is typed input in lookup (Zed) | `Keys`, `keys`, `Focus`, `KeyEffect`, `KeyOutcome`, `CharSink`, `AnyChar`, `overrides`, `slot`, `rebind`, `BindingSource`, `source` |
+| chord prefix | `ChordPrefix`; value `chord_prefix` | `prefix` alone |
+| scan state | `ScanStatus`; values `scan_status`, `scanning_label` | `ScanProgress`, `scan`, `status` |
+| tag pass | `Tagging`; value `tagging` | `Tagging::Read` |
+| driver restart policy | `Supervision`; value `supervision` | `strategy` |
+| driver status | `DriverStatus`, `DriverStatusMessage`; value `error` | `failure` |
+| error inside an error | `IoError`, `DecodeError`; value `source` as a field of an error type, `error` everywhere else | `kind`, `err`, `failure` |
+| parser text shown to the user | `Diagnostic`, built only by `Diagnostic::from_error(&impl Error)` in the crate that owns the parser; kernel `ConfigError::Parse(Diagnostic)`; value `diagnostic` where named | `reason`, `detail: String` |
+| music dir | `PathBuf`; value `music_dir` | `target`, `source_dir` |
+| config paths | `PathBuf`; values `config_path`, `appearance_path`, `themes_dir` | `config`, `appearance`, `themes` for paths |
+| raw TOML text | `String`; value `text` | `source`, `raw`, `existing` |
+| laid-out cover side | `Pixels`; value `side` (`cover_side`) | `size`, `vinyl_size` |
+| shell to core: what the user asks | `*Request`; value `request` | `playback_request`, `browse_request`, private `Input::Key` |
+| driver fact | `*Event`; value `event` | `event` for `KeyEvent` and `ShellInput` |
+| machine input | `*Message`; value `message` | `told` |
+| driver order and a batch of them | `*Cmd`, `Cmds`; values `cmd`, `cmds`, `cmd_sender`, `cmd_receiver` | `command`, `commands`, `batch` |
+| track load order | `TrackLoad`; value `track_load` | `load`, `pending`, `requested`, `request` |
+| engine track record | `LoadedTrack`; roles `current`, `incoming`, `outgoing` | `CurrentTrack`, `preload`, `track` for the incoming one, `primary` |
+| decoded audio | `DecodedTrack { revision, decoder }`; value `decoded_track` | `TrackSource` for it, `source` |
+| next-track preparation | `PreloadMode`; value `preload_mode` | `PreloadKind`, `Preload`, `mode` outside `Deck` |
+| crossfade start | `EngineEffect::SetFadeStart`, `EngineMessage::FadeStartReached`, `Signals::FADE_START`; value `fade_start` | `cue` for it, `Cued`, `CUED`, `Arm`, `arm_cue`, `armed`, `rearm` |
+| job results of audio | `AudioMessage::Decoded`, `AudioMessage::Preloaded`, `AudioMessage::DevicesListed` | `DeckEvent::Decoded`, `DeckEvent::Preloaded`, `DeckEvent::DevicesListed` |
+| job staleness | `JobRevisions`, `ExecutedRevisions`; value `revisions` | `ExecutedRevisions.incoming` |
+| callback channel | `callback_sender`, `callback_receiver`, `WaitSource::Callback` | `heard`, `Heard`, `HEARD`, `callbacks`, `deck_sender`, `MacosChannel.sender`, `MacosChannel.receiver` |
+| kernel inbox | `inbox` (send), `inbox_receiver` (receive) | `mailbox`, `messages`, `arrivals`, `sender_index`, `sender`, `report_sender`, `receiver`, `queued`, `inbox` for the 3 other queues |
+| driver command queue | `cmd_sender`, `cmd_receiver` | `commands`, `command_inbox`, `inbox` |
+| job queue | `job_sender`, `job_receiver` | `jobs`, `inbox`, `Jobs` |
+| job runner | `run_job` | `Jobs { run }` |
+| loop input | `LoopInput::Message` | `LoopInput::Heard` |
+| full-inbox flag of a port | `Congestion`; value `congestion`; the event stays `DriverEvent::Full` | `full`, `Congested` |
+| latest-value cells | `LatestSenders`, `LatestReceivers`, `LatestSender`, `LatestReceiver`, built by `latest_channels`; values `latest_senders`, `latest_receivers`, `theme_sender`, `appearance_sender` | `writers`, `cells`, `latest` |
+| doorbell of the cells | `doorbell`, `Arrival::Doorbell` | `notified`, `Notified`, `notify`, `notifier`, `notices` |
+| spectrum feed | `SpectrumTap`; values `spectrum_tap`, `bins`; names `spectrum_*` | `tap`, `eq_*` |
+| file stream item | `Changed`; value `changed` | `item` |
+| input the shell feeds runtime | `ShellInput`; value `input` | `ShellEvent`, `event` |
+| repaint cause | `RepaintCause`; value `cause` | `source` |
+| cover job | `CoverJob`; value `cover_job`; field `job` only in `Cover*` owners | `job` in `LibraryJob::Cover`, `cover` |
+| wanted cover | `Option<CoverJob>`; value `wanted` | `asked`, `ask` |
+| passed-over error | `Option<Error>`; value `skipped` | `first_error` |
+| macOS hardware listeners | `HardwareListeners`, `Listener`, `MacosEffect::Listen`, `MacosMessage::Listened`, `MacosError::Listen`; values `listeners`, `listener` | `HardwareWatch`, `Watched`, `notify` |
+| now playing panel | `NowPlaying`, `MacosEffect::ShowNowPlaying`; value `now_playing` | `Publish`, `shown` |
+| crossterm key event | `KeyEvent`; value `key_event` | `event` for it |
+| terminal query result | `Option<Picker>` from `query`; value `picker` | `QueryAnswer`, `probe_answer`, `probed`, `query_answer` |
+| terminal teardown | `Restoration`; value `restoration` | `RawMode`, `RawModeDisabled` |
+| terminal app | `TerminalApp`; value `app` | `detect`, `Brand` |
+| window colours order | `WindowColorsCmd`; value `cmd` | `command` |
+| paint clock | `PaintClock`; value `paint_clock` | `first_paint`, `last_paint` |
+| card cover | `CardCover`; value `card_cover` | `CoverArt` (library's), `cover_art`, `art` |
+| cover image | `CoverImage`; value `cover_image` | `DecodedCover`, `decoded`, `cover` |
+| cover mode | `CoverMode`; value `cover_mode` (key `cover_mode`) | `CoverStyle`, `style`, `active`, `mode` |
+| pixel path | `PixelPath`; value `pixel_path` | `detected` |
+| time since first paint | `Duration`; value `since_first_paint` (`Workspace.clock` keeps its word) | `clock` for the shell clock |
+| cover refresh | `CoverRefresh`; value `cover_refresh` | `CoverRefreshParts`, `parts` |
+| crossfade permit | `CrossfadePermit`; value `crossfade_permit` | `crossfade` for it |
+| vinyl style | `VinylStyle`; value `style` in `Vinyl*`, `vinyl_style` elsewhere | `colors` for it |
+| playback flag | kernel `Playback`; value `playback` | `playing` for it |
+| playing row | `Option<ViewIndex>`; value `playing_index` | `playing` for it |
+| appearance settings in widgets | `AppearanceSettings`; value `appearance_settings` | `appearance`, `settings` for it |
+| status line read-model | `StatusLineView`; value `status_line` | `status`, `scan`, `position`, `total` |
+| library loading state | `LibraryStatus` | `LibraryLoad`, `library_loading` |
+| toast widget | `ToastWidget` | `toaster` |
+| table cursor | `TableState` | `table_rows` |
+| key-hint chips | `KeyHintChords`, `Chip`; value `chip` | `keys`, `Chip.key` |
+| speed chip | `SpeedChip`; value `speed_chip` | `mode`, `indicator_*` |
+| format chips | `FormatChips`; value `format_chips` | `visibility`, `time_chip_*` |
+| displayed track | `Option<&Arc<Track>>`; value `displayed_track` | `current` for it |
+| scrollbar | `Scrollbar`; value `scrollbar` | `bar` |
+| bar fill | `BarFill`; value `bar_fill` | `spec` |
+| HUD progress | `HudProgress`; value `hud_progress` | `HudProgressRow`, `input`, `Row` suffix |
+| breakpoints | `Breakpoints`; value `breakpoints` | `layout` for it |
+| layout mode | `LayoutMode`; value `layout_mode` | `mode` for it |
+| theme colours | `Colors`; value `colors` | `text` for a colour, `accent2` |
+| modal geometry | `ScrollAreas`, `CellSize`, `ModalSize::FullWidth`; values `areas`, `body`, `content_rows` | `content_lines`, `content`, `PlacedSize`, `FrameWidth`, `modal_frame` |
+| help rows | `HelpRow`; value `rows` | `bindings` for it |
+| time text | module `time_text`; values `duration_text`, `elapsed_text`, `relative_time_text` | `format_time`, `elapsed_of`, `relative_time`, `clock_text`, module `clock`, `time`, `elapsed_total` |
+| minimal progress line | `MinimalProgress`; value `minimal_progress` | `ProgressParts`, `ProgressLine` |
+| milkdrop stamp | `MilkdropStamp`; value `stamp` | `MilkdropTick`, `tick` |
+| screen wash | `screen_wash` | `THEME_WASH_*` |
+| scatter animation | `scatter_burst` | `delete_*` |
+| animation inputs | `CellFilter`; value `cell_filter` | `guard`, `duration` for them |
 | who paused playback | `PausedBy` | — |
 | modal surface in the core | `Overlay`, `OverlayName`; render frame and geometry `Modal*` | `OverlayKind`, `OverlayScreen`, `Pane*` (only the `playlist::pane` module) |
-| short-lived message | `Toast` | `Notice` |
 | bottom key line | `KeyHints` (`key_hints`) | `Footer` |
 | small label | chip (`format_chips`, `speed_chip`) | badge, `tech_chips` |
 | preload-due / A-B-end timer | `Lookahead` (`Timer::Lookahead`) | `Mark` |
-| A-B point | `Mark` (`AbLoop::mark`) | — |
-| render part of `sifr-ui.toml` | kernel `domain::appearance::Appearance` (`CoverCells`, `Breakpoints`, `ProgressBar`; built by `TomlAppearance::appearance`) | `Look`, `Custom*`, `UiOptions`, `[ui]` |
+| A-B point | `AbMark` (`AbLoop::mark`) | — |
+| render part of `sifr-ui.toml` | kernel `domain::appearance::Appearance` (`CoverCells`, `Breakpoints`, `ProgressBar`; built by `TomlAppearance::to_appearance`) | `Look`, `Custom*`, `UiOptions`, `[ui]` |
 | choices the settings overlay edits | kernel `AppearanceSettings` (field `Settings.appearance`) | — |
-| how the cover is shown | `CoverMode` (key `cover_mode`) | `CoverStyle` |
 | step a setting / volume / speed | `Step` + `Direction { Next, Previous }` (`Message::Step { row, direction }`, `StepVolume(Direction)`); size is a constant beside the value (`VOLUME_STEP = 5`) | `Adjust`, `Nudge`, `steps: i8` |
 | absolute input (remote, IPC, macOS) | `Set*(value)` (`SetVolume`, as cliamp) | — |
 | colour scheme / palette | `Theme`, `Colors` | `Palette`, `Skin` |
 | terminal window bg/fg | `WindowColors` | `WindowTint` |
-| keys | `Keymap`, `KeyBinding`, `Chord`, `KeyContext`; a binding maps to a `Message`; an unbound `Char` in a text `KeyContext` is typed input in lookup (Zed) | `Keys`, `Focus`, `KeyEffect`, `KeyOutcome`, `CharSink`, `AnyChar` |
 | replay gain | `ReplayGain` | `Replaygain` |
 | seek by tenths | `SeekTenths` | `SeekFraction` |
-| timer staleness | `Revision`, `Freshness` | `Reply` |
-| driver mailbox overflow | `DriverEvent::Full` | `Congested` |
 | realtime wake-up of a driver | `Wake { Sent, Pending }`, fn `wake`; job staleness is a `Revision`, as timers | `Unsent`, `ring`, `Ticket` |
-| frame pipeline | `prepaint` → `FrameLayout`, `Scene`, `XWidget::render` (ratatui trait methods only), `paint*` (own fns writing into `Buffer`/`Canvas`/`Pixmap`) | `draw`, `render` for own fns or for building |
+| frame pipeline | `FrameLayout`, `Scene`, `XWidget::render` (ratatui trait methods only), `paint*` (own fns writing into `Buffer`/`Canvas`/`Pixmap`) | `draw`, `render` for own fns or for building |
 | values `Scene` takes beside the `Model` (theme, colour depth, bindings, …) | `ScenePresentation` | — |
 | time passed into the kernel | `Moment` | — |
 | first model | `startup`, `Startup` | init, `boot`, `Boot` |
 | everything the binary reads before the runtime starts (first model, paths, theme) | `Launch { startup, paths, theme }`, `launch()` (decided 2026-10-04) | `Boot`, `Look` |
-| terminal input for one cover refresh (layout, crossfade, wash) | `CoverRefresh` (decided 2026-10-04) | `CoverRefreshParts` |
-| a parser's message shown to the user (TOML error text crossing into the pure kernel) | `Diagnostic(String)`, built only by `Diagnostic::from_error(&impl Error)` in the crate that owns the parser; kernel `ConfigError::Invalid(Diagnostic)` (decided 2026-10-04) | `detail: String` |
-| linear amplitude factor in audio | `Gain(f32)` (decided 2026-10-04); a replay-gain tag value is `Decibels(f32)` in kernel, converted to `Gain` in audio | bare `f32` volume or gain |
 | terminal geometry unit | kernel `domain::geometry::{Cells(u16), Pixels(u32)}` (columns and rows alike; pixel sizes), imported by widgets, library and sifr (decided 2026-10-04, moved from widgets/library so `Appearance` and `visible_rows` can use them); ratatui `Rect`/`u16` stay at the ratatui boundary only | bare `u16`/`usize`/`u32` sizes |
 | index into the sleep presets | `PresetIndex` (`Index` row) | `preset_index: usize` |
-| row position in a settings or history overlay | `RowIndex` (`Index` row; decided 2026-10-04) | `selected: usize`, `ViewIndex` (shown track list only) |
 | macOS `OSStatus` code | `OsStatus(i32)` | bare `i32` |
-| progress bar's unfilled part | `groove` (as `Role::BarGroove`) | `track` (collides with `Track`) |
+| progress bar's unfilled part | `groove` | `track` (collides with `Track`) |
 | bad colour text in appearance | `ColorError::Malformed(Diagnostic)` | `input: String` |
 | overlay content messages inside `OverlayMessage` | `OverlayContentMessage` | `InnerMessage` |
 | default key bindings | Rust tables in kernel `update/keymap` (data in code by decision 2026-10-04) | embedded TOML |
 | a child module's message handler | `update` (Elm), beside the root `update` | `step`, `handle` |
 | audio engine with no device open | `Engine::Closed` | `Muted` (reads as volume mute) |
 | deck's realtime wake-up signal | `DeckEvent::Woke(Revision)`, fn `wake` | `Track(Revision)`, `notify` |
-| macOS main-loop parts | `MainLoopStop`, `NowPlaying`, `NowPlayingClock`; `HardwarePoll`, `CoverReader` keep their names | `LoopStopper`, `Panel`, `PanelClock` |
-| terminal app identity, pixel protocol | `TerminalApp`; `PixelProtocol { Kitty, Iterm2, Sixel, Query }`; `Capabilities::from_environment`; `CoverPainter` | `Brand`, `Protocol { Kgp, Iip, Probe }`, `before_probe`, `CoverRenderer` |
-| the kernel mailbox sender, everywhere | `inbox` | `sender`, `report_sender`, `receiver` |
+| macOS main-loop parts | `MainLoopStop`, `NowPlaying`, `NowPlayingClock`; `HardwarePoll`, `ArtworkReader` keep their names | `LoopStopper`, `Panel`, `PanelClock` |
+| terminal app identity, pixel protocol | `TerminalApp`; the pixel protocol is ratatui-image's `ProtocolType`; `Capabilities::from_environment`; `CoverPainter` | `Brand`, `Protocol { Kgp, Iip, Probe }`, `before_probe`, `CoverRenderer` |
 | config watch sub-machine step inside `ConfigDriver` | `drive_watch`; never-read file state `Seen::Unread` | `drive`, `Seen::Never` |
 | job coalescing in `DriverLoop` (keep the newest job per kind, run in `Ord` order) | allowed `DriverLoop` duty (scheduling, not a decision about the result; staleness stays `Revision` in the machine) (decided 2026-10-04) | — |
 | discarding an `io::Result` | allowed only inside `Drop` and the panic hook, as `drop(result)` (nowhere to report) | anywhere else; `.ok();` |
-| card cover state in widgets; decoded cover pixels in widgets | `CardCover`; `CoverImage` | `CoverArt` (library's), `DecodedCover` |
-| library disk orders inside `LibraryEffect::Execute` | `DiskEffect` (as `WatchEffect`) | `LibraryCmd` reused |
-| input the shell feeds runtime (keys, resize, paint failures) | `ShellInput` | `ShellEvent` (Event = driver fact) |
-| named `Rect`s of one `FrameLayout` part | suffix `Areas` (`ModalAreas`, `PlaylistAreas`, `ToastAreas`) | `Rects`, `Regions` |
+| library disk orders inside `LibraryEffect::Execute` | `DiskCmd` | `LibraryCmd` reused |
+| named `Rect`s of one `FrameLayout` part | suffix `*Areas` (`ModalAreas`, `PlaylistAreas`, `OverlayAreas`) | `Rects`, `Regions` |
 | read-models `KeyHintsContent`, `OverlayContent` | `KeyHintsView`, `OverlayView` (View row) | `Content` suffix |
-| theme input colours before derivation | `ThemeBase` | `ThemeSeed` (`Seed` = DriverLoop seed) |
 | sifr's values beside the Model for `ScenePresentation` | `ShellPresentation` | `Presentation` |
-| the cover-crossfade state machine (widgets `pixels::cover::gate`) | `CrossfadeGate`, `CrossfadeGateMessage`; `CoverArrival`; `Motion`, library `JobPriority` keep their names | `PendingCrossfade`, `Advance` |
+| the cover-crossfade state machine (widgets `pixels::cover::gate`) | `CrossfadeGate`, `CrossfadeGateMessage`; `CoverArrival`; `Motion` keeps its name | `PendingCrossfade`, `Advance` |
 | CPU-parallel work inside one job (tag reading) | allowed: `thread::scope` inside a job body, joined before the job returns (decided 2026-10-04) | detached threads in jobs |
 | turning the raw `TomlTheme` into the widgets `Theme` | the shell (sifr) does it: `Theme` is a widgets type and config sits below widgets; config publishes `TomlTheme` (decided 2026-10-04) | config depending on widgets |
 | which cover to decode and at what size | the kernel decides: the shell reports the laid-out cover side through `Message::Viewport` (`Pixels`), kernel emits `Effect::Library(LibraryCmd::DecodeCover(CoverJob))` on track or side change; no shell→driver side channel (decided 2026-10-04) | paint path sending `LibraryMessage::Cover` |
 | config reloaded | kernel `ConfigReload { name: ConfigName, result: Result<(), ConfigError> }` (§6.3), `config_reloaded`; the per-file errors held by the workspace are `ConfigErrors`, field `config_errors`; startup shows one toast with the first error and records the rest; the live values parsed from `config.toml` are `ConfigSettings { keymap, music_dir }` | `SourceOutcome`, `source_result` |
 | applying a patch | `patched` (`TomlAppearance::patched`, kernel `AppearanceSettings::patched(patch)`) | `apply` |
-| verbs, one meaning each | `transition` = machine step (message → `Cmd`); `execute` = driver runs an effect (IO); `Set*` = absolute command variant (`WindowColorsCmd::Set(ThemeName)`); `set_*` = method replacing one held value (`Painter::set_window_colors`); `patched` = value + patch → new value; `paint` = drawing into a buffer. Today's `apply_*` machines become `transition` (`ConfigDriver::apply_save_result` → `ConfigMessage::Saved`) | `apply` |
-| spectrum | `spectrum_*` | `eq_*` |
+| verbs, one meaning each | `transition` = machine step (message → `Cmd`); `execute` = driver runs an effect (IO); `Set*` = absolute command variant (`WindowColorsCmd::Set(ThemeName)`); `set_*` = method replacing one held value (`Painter::set_window_colors`); `patched` = value + patch → new value; `paint` = drawing into a buffer. Today's `apply_*` machines became `transition` | `apply` |
 | animation | `Animation`, `Cue`, `AnimationStage` | `Effect*` for animation |
 | the subsystem only | `Config` (crate, `ConfigCmd`, `ConfigDriver`, `config.toml`) | `Config` / `File` as suffix of a raw or parsed shape |
 | kernel scope | kernel holds domain state, messages, decisions and the `Machine`/`Driver` contract; formatting helpers used only by the view live in widgets; toast text and error text stay kernel data | view formatting in kernel |
-| value a driver publishes to a cell | effect variant `Publish<Value>` (`PublishTheme`, `PublishAppearance`, `PublishCover`), sink field `publish_<value>` (decided 2026-10-04) | — |
-| latest-value cell | `LatestSender`, `LatestReceiver`, built by `latest_channels` (frozen 2026-10-04) | — |
+| value a driver publishes to a cell | effect variant `Publish<Value>` (`PublishTheme`, `PublishAppearance`), sink fields `publish_theme`, `publish_appearance`, `publish_cover` (decided 2026-10-04) | — |
+
 ## 9. Banned words and patterns
 
 | banned | source | check |
@@ -277,7 +373,7 @@ A review cites rules as `§section.rule` and outputs one file of rows ranked H/M
 
 Frozen as today (2026-10-04), not reopened on this route:
 
-- S4: `PlaybackRequest` carried inside driver data (`RemoteInput`, `MacosEvent::MediaKey`).
+- S4: `PlaybackRequest` carried inside driver data (`RemoteInput`, `MacosEvent::MediaKeyPressed`).
 - S13: owner of volume (macOS vs app) and which effects stay relative.
 
 Navidrome (not in this route):

@@ -20,10 +20,10 @@ use crate::support::{
     update::update,
 };
 
-fn reports_an_error(config: &KeymapOverrides) -> bool {
+fn reports_an_error(keymap_overrides: &KeymapOverrides) -> bool {
     let mut model = Model::default();
-    let reload = ConfigEvent::KeymapReloaded(Box::new(config.clone()));
-    update(&mut model, Message::Config(reload), Moment::default())
+    let reload_event = ConfigEvent::KeymapReloaded(Box::new(keymap_overrides.clone()));
+    update(&mut model, Message::Config(reload_event), Moment::default())
         .unwrap()
         .effects()
         .any(|effect| *effect == Effect::Animate(Cue::ToastRaised))
@@ -36,9 +36,9 @@ fn config_with(next: Option<&str>, prev: Option<&str>) -> KeymapOverrides {
         .collect()
 }
 
-fn compiled(config: KeymapOverrides) -> Workspace {
+fn compiled(keymap_overrides: KeymapOverrides) -> Workspace {
     let mut workspace = Workspace::default();
-    workspace.keymap = Keymap::new(config);
+    workspace.keymap = Keymap::new(keymap_overrides);
     workspace
 }
 

@@ -13,10 +13,10 @@ pub enum MacosMessage {
     Started,
     Cmds(Cmds<MacosCmd>),
     HardwareChanged,
-    Watched,
+    Listened,
     Hardware(HardwareMessage),
     Error(MacosError),
-    CoverRead(CoverBytes),
+    ArtworkRead(ArtworkBytes),
     Remote(RemoteInput),
 }
 
@@ -27,7 +27,7 @@ impl From<Cmds<MacosCmd>> for MacosMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CoverBytes {
+pub struct ArtworkBytes {
     pub(crate) revision: Revision,
     pub(crate) bytes: Result<Vec<u8>, MacosError>,
 }

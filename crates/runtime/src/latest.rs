@@ -9,13 +9,13 @@ use library::cover::CoverDecoded;
 #[derive(Debug)]
 pub(crate) struct LatestSender<T> {
     value: Arc<ArcSwapOption<T>>,
-    notify: Sender<()>,
+    doorbell_sender: Sender<()>,
 }
 
 impl<T> LatestSender<T> {
     pub(crate) fn publish(&self, latest: T) {
         self.value.store(Some(Arc::new(latest)));
-        match self.notify.try_send(()) {
+        match self.doorbell_sender.try_send(()) {
             Ok(()) | Err(TrySendError::Full(()) | TrySendError::Disconnected(())) => {}
         }
     }
@@ -25,7 +25,7 @@ impl<T> Clone for LatestSender<T> {
     fn clone(&self) -> Self {
         Self {
             value: Arc::clone(&self.value),
-            notify: self.notify.clone(),
+            doorbell_sender: self.doorbell_sender.clone(),
         }
     }
 }
@@ -44,50 +44,50 @@ impl<T> LatestReceiver<T> {
 
 #[derive(Debug)]
 pub struct LatestReceivers {
-    pub theme: LatestReceiver<TomlTheme>,
-    pub appearance: LatestReceiver<Appearance>,
-    pub cover: LatestReceiver<CoverDecoded>,
+    pub theme_receiver: LatestReceiver<TomlTheme>,
+    pub appearance_receiver: LatestReceiver<Appearance>,
+    pub cover_receiver: LatestReceiver<CoverDecoded>,
 }
 
 #[derive(Debug, Clone)]
 pub struct LatestSenders {
-    pub(crate) theme: LatestSender<TomlTheme>,
-    pub(crate) appearance: LatestSender<Appearance>,
-    pub(crate) cover: LatestSender<CoverDecoded>,
+    pub(crate) theme_sender: LatestSender<TomlTheme>,
+    pub(crate) appearance_sender: LatestSender<Appearance>,
+    pub(crate) cover_sender: LatestSender<CoverDecoded>,
 }
 
 #[must_use]
 pub fn latest_channels() -> (LatestSenders, LatestReceivers, Receiver<()>) {
-    let (notifier, notified) = bounded(1);
+    let (doorbell_sender, doorbell) = bounded(1);
     let theme = Arc::new(ArcSwapOption::empty());
     let appearance = Arc::new(ArcSwapOption::empty());
     let cover = Arc::new(ArcSwapOption::empty());
-    let writers = LatestSenders {
-        theme: LatestSender {
+    let latest_senders = LatestSenders {
+        theme_sender: LatestSender {
             value: Arc::clone(&theme),
-            notify: notifier.clone(),
+            doorbell_sender: doorbell_sender.clone(),
         },
-        appearance: LatestSender {
+        appearance_sender: LatestSender {
             value: Arc::clone(&appearance),
-            notify: notifier.clone(),
+            doorbell_sender: doorbell_sender.clone(),
         },
-        cover: LatestSender {
+        cover_sender: LatestSender {
             value: Arc::clone(&cover),
-            notify: notifier,
+            doorbell_sender,
         },
     };
-    let cells = LatestReceivers {
-        theme: LatestReceiver { value: theme },
-        appearance: LatestReceiver { value: appearance },
-        cover: LatestReceiver { value: cover },
+    let latest_receivers = LatestReceivers {
+        theme_receiver: LatestReceiver { value: theme },
+        appearance_receiver: LatestReceiver { value: appearance },
+        cover_receiver: LatestReceiver { value: cover },
     };
-    (writers, cells, notified)
+    (latest_senders, latest_receivers, doorbell)
 }
 
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::bounded;
-    use library::cover::{CoverArt, CoverDecoded};
+    use library::cover::{CoverDecoded, CoverLookup};
 
     use crate::latest::{LatestReceiver, LatestSender};
 
@@ -96,24 +96,24 @@ mod tests {
         LatestReceiver<T>,
         crossbeam_channel::Receiver<()>,
     ) {
-        let (notifier, notified) = bounded(1);
+        let (doorbell_sender, doorbell) = bounded(1);
         let value = std::sync::Arc::new(arc_swap::ArcSwapOption::empty());
         (
             LatestSender {
                 value: std::sync::Arc::clone(&value),
-                notify: notifier,
+                doorbell_sender,
             },
             LatestReceiver { value },
-            notified,
+            doorbell,
         )
     }
 
     #[test]
     fn a_reading_sees_only_the_latest_value() {
-        let (latest, reading, _doorbell) = pair::<i32>();
-        latest.publish(1);
-        latest.publish(2);
-        latest.publish(3);
+        let (latest_sender, reading, _doorbell) = pair::<i32>();
+        latest_sender.publish(1);
+        latest_sender.publish(2);
+        latest_sender.publish(3);
         assert_eq!(reading.take().map(|value| *value), Some(3));
         assert!(reading.take().is_none());
     }
@@ -122,25 +122,25 @@ mod tests {
         CoverDecoded {
             path: std::path::PathBuf::from(path),
             side: kernel::domain::geometry::Pixels(64),
-            art: CoverArt::Missing,
+            cover_lookup: CoverLookup::Missing,
         }
     }
 
     #[test]
     fn a_cover_cell_keeps_the_latest_decode() {
-        let (latest, reading, _doorbell) = pair::<CoverDecoded>();
-        latest.publish(stub_decoded("first.mp3"));
-        latest.publish(stub_decoded("second.mp3"));
+        let (latest_sender, reading, _doorbell) = pair::<CoverDecoded>();
+        latest_sender.publish(stub_decoded("first.mp3"));
+        latest_sender.publish(stub_decoded("second.mp3"));
         let installed = reading.take().unwrap();
         assert_eq!(installed.path, std::path::PathBuf::from("second.mp3"));
         assert!(reading.take().is_none());
     }
 
     #[test]
-    fn a_full_notify_is_success() {
-        let (latest, _reading, notified) = pair::<i32>();
-        latest.publish(1);
-        latest.publish(2);
-        assert_eq!(notified.try_iter().count(), 1);
+    fn a_full_doorbell_is_success() {
+        let (latest_sender, _reading, doorbell) = pair::<i32>();
+        latest_sender.publish(1);
+        latest_sender.publish(2);
+        assert_eq!(doorbell.try_iter().count(), 1);
     }
 }

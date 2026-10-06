@@ -54,7 +54,7 @@ pub(crate) fn run_out_over(
     last
 }
 
-pub(crate) fn moved(before: &Buffer, after: &Buffer, rect: Rect) -> bool {
+pub(crate) fn has_moved(before: &Buffer, after: &Buffer, rect: Rect) -> bool {
     (rect.y..rect.bottom()).any(|row| {
         (rect.x..rect.right())
             .any(|column| before.cell((column, row)) != after.cell((column, row)))
@@ -142,29 +142,26 @@ fn elapsed_is_the_clock_delta_while_an_animation_is_running() {
     assert!(stage.is_animating(), "sanity: something needs the delta");
 
     assert_eq!(
-        stage.advance_clock(Duration::from_millis(100)),
+        stage.advance_to(Duration::from_millis(100)),
         Duration::from_millis(100)
     );
     assert_eq!(
-        stage.advance_clock(Duration::from_millis(133)),
+        stage.advance_to(Duration::from_millis(133)),
         Duration::from_millis(33)
     );
-    assert_eq!(
-        stage.advance_clock(Duration::from_millis(100)),
-        Duration::ZERO
-    );
+    assert_eq!(stage.advance_to(Duration::from_millis(100)), Duration::ZERO);
 }
 
 #[test]
 fn an_idle_gap_is_not_charged_to_the_animation_the_next_frame_stages() {
     let mut stage = AnimationStage::default();
-    let first = stage.advance_clock(Duration::ZERO);
+    let first = stage.advance_to(Duration::ZERO);
     stage.play(Vec::new(), &overlay_backdrop(None));
     let mut buffer = animation_frame();
     stage.advance(&mut buffer, first);
     assert!(!stage.is_animating(), "sanity: an idle, empty stage");
 
-    let gap = stage.advance_clock(Duration::from_secs(4));
+    let gap = stage.advance_to(Duration::from_secs(4));
     stage.play(vec![Cue::OverlayOpened], &overlay_backdrop(Some(AREA)));
     assert_eq!(gap, Duration::ZERO, "nothing was running to step");
 
@@ -186,19 +183,19 @@ fn a_track_change_stages_nothing_over_the_card() {
 
 #[test]
 fn the_same_cue_twice_in_one_frame_stages_it_once() {
-    let mut doubled = AnimationStage::default();
-    doubled.play(
+    let mut doubled_stage = AnimationStage::default();
+    doubled_stage.play(
         vec![Cue::FavoriteToggled, Cue::FavoriteToggled],
         &pane_backdrop(),
     );
 
-    let mut single = AnimationStage::default();
-    single.play(vec![Cue::FavoriteToggled], &pane_backdrop());
+    let mut single_stage = AnimationStage::default();
+    single_stage.play(vec![Cue::FavoriteToggled], &pane_backdrop());
 
     let mid = Duration::from_millis(60);
     assert_eq!(
-        step(&mut doubled, mid),
-        step(&mut single, mid),
+        step(&mut doubled_stage, mid),
+        step(&mut single_stage, mid),
         "one batch of identical cues is one visible change"
     );
 }
@@ -207,15 +204,15 @@ fn the_same_cue_twice_in_one_frame_stages_it_once() {
 fn a_frame_with_no_cues_leaves_a_running_animation_alone() {
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::FavoriteToggled], &pane_backdrop());
-    let mut untouched = AnimationStage::default();
-    untouched.play(vec![Cue::FavoriteToggled], &pane_backdrop());
+    let mut untouched_stage = AnimationStage::default();
+    untouched_stage.play(vec![Cue::FavoriteToggled], &pane_backdrop());
 
     stage.play(Vec::new(), &pane_backdrop());
 
     let mid = Duration::from_millis(60);
     assert_eq!(
         step(&mut stage, mid),
-        step(&mut untouched, mid),
+        step(&mut untouched_stage, mid),
         "nothing was cued, nothing changes"
     );
 }
@@ -233,20 +230,20 @@ fn a_cue_with_no_painted_rect_stages_nothing() {
 
 #[test]
 fn a_protocol_cover_rect_is_subtracted_from_the_fade() {
-    let cover = Rect {
+    let cover_area = Rect {
         x: 0,
         y: 0,
         width: 4,
         height: 1,
     };
     let mut opened = overlay_backdrop(Some(AREA));
-    opened.layout.cover = Some(cover);
+    opened.layout.cover_area = Some(cover_area);
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::OverlayOpened], &opened);
 
     let faded = step(&mut stage, Duration::ZERO);
     let original = animation_frame();
-    for column in 0..cover.width {
+    for column in 0..cover_area.width {
         assert_eq!(
             faded.cell((column, 0)),
             original.cell((column, 0)),
@@ -254,15 +251,15 @@ fn a_protocol_cover_rect_is_subtracted_from_the_fade() {
         );
     }
     assert_ne!(
-        faded.cell((cover.width, 0)),
-        original.cell((cover.width, 0))
+        faded.cell((cover_area.width, 0)),
+        original.cell((cover_area.width, 0))
     );
 }
 
 #[test]
 fn only_the_cover_rect_survives_a_whole_screen_animation() {
     let mut opened = overlay_backdrop(Some(crate::unit::support::SCREEN));
-    opened.layout.cover = Some(COVER);
+    opened.layout.cover_area = Some(COVER);
 
     let mut stage = AnimationStage::default();
     stage.play(vec![Cue::OverlayOpened], &opened);
@@ -281,7 +278,7 @@ fn only_the_cover_rect_survives_a_whole_screen_animation() {
         }
     }
     assert!(
-        moved(&original, &buffer, PROGRESS_LINE),
+        has_moved(&original, &buffer, PROGRESS_LINE),
         "the progress rect now takes part in the wash"
     );
     assert_ne!(buffer, original, "everything else still animates");
@@ -314,7 +311,7 @@ fn a_cover_arriving_mid_animation_is_still_protected() {
         Vec::new(),
         &Backdrop {
             layout: FrameLayout {
-                cover: Some(COVER),
+                cover_area: Some(COVER),
                 ..screen_backdrop().layout
             },
             ..screen_backdrop()
@@ -324,7 +321,7 @@ fn a_cover_arriving_mid_animation_is_still_protected() {
     let original = screen_frame();
     let frame = step_over(&mut stage, screen_frame, slice(|t| t.screen_wash, 4));
     assert!(
-        !moved(&original, &frame, COVER),
+        !has_moved(&original, &frame, COVER),
         "the cover arrived mid-animation and must be left alone from that frame on"
     );
     assert_ne!(
@@ -446,7 +443,7 @@ fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
     };
 
     let mut stage = AnimationStage::default();
-    let start = stage.advance_clock(scene.presentation.clock);
+    let start = stage.advance_to(scene.presentation.since_first_paint);
     stage.play(vec![Cue::ThemeChanged], &backdrop);
     assert!(
         stage.is_animating(),
@@ -455,15 +452,15 @@ fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
 
     let mut buffer = Buffer::empty(crate::unit::support::SCREEN);
     stage.advance(&mut buffer, start);
-    let mid = scene.presentation.clock + slice(|t| t.screen_wash, 4);
-    let elapsed = stage.advance_clock(mid);
+    let mid = scene.presentation.since_first_paint + slice(|t| t.screen_wash, 4);
+    let elapsed = stage.advance_to(mid);
     stage.advance(&mut buffer, elapsed);
     assert!(
         stage.is_animating(),
         "the wash is still under way midway through, driven only by the scene's clock"
     );
 
-    let same_reading = stage.advance_clock(mid);
+    let same_reading = stage.advance_to(mid);
     assert_eq!(
         same_reading,
         Duration::ZERO,

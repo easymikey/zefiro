@@ -39,9 +39,9 @@ expression: "walked(model, messages)"
             speed: Speed(
                 0.75,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),

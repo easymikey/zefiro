@@ -6,7 +6,7 @@ use crate::{
         cue::Cue,
         cursor_over::CursorOver,
         overlay::{MusicDirError, Overlay, SearchQuery, TextEntry},
-        playlist::{PlaylistFileName, PlaylistNameError},
+        playlist::{PlaylistFileName, PlaylistFileNameError},
         time::{TimecodeError, parse_timecode},
     },
     message::{BrowseRequest, Message, PlaybackRequest},
@@ -20,8 +20,11 @@ impl Machine for Option<Overlay> {
     type Message = OverlayMessage;
     type Effect = Cmd;
 
-    fn transition(&mut self, message: OverlayMessage) -> Result<Cmd, Unhandled> {
-        match message {
+    fn transition(
+        &mut self,
+        overlay_message: OverlayMessage,
+    ) -> Result<Cmd, Unhandled> {
+        match overlay_message {
             OverlayMessage::Open(opened) => {
                 let playback = opened_playback(self.as_ref(), &opened);
                 *self = Some(opened);
@@ -32,7 +35,7 @@ impl Machine for Option<Overlay> {
                 Ok(cued_close(closed_playback(&open)))
             }
             OverlayMessage::Confirm => confirm(self),
-            OverlayMessage::Inner(inner) => inner_transition(self, inner),
+            OverlayMessage::Content(inner) => content_transition(self, inner),
         }
     }
 }
@@ -45,8 +48,8 @@ fn release() -> Cmd {
     Cmd::message(Message::Playback(PlaybackRequest::Release))
 }
 
-fn opened_playback(previous: Option<&Overlay>, opened: &Overlay) -> Cmd {
-    match (previous, opened) {
+fn opened_playback(previous: Option<&Overlay>, overlay: &Overlay) -> Cmd {
+    match (previous, overlay) {
         (_, Overlay::Settings(..)) => {
             Cmd::message(Message::Playback(PlaybackRequest::HoldForOverlay))
         }
@@ -55,37 +58,37 @@ fn opened_playback(previous: Option<&Overlay>, opened: &Overlay) -> Cmd {
     }
 }
 
-fn closed_playback(open: &Overlay) -> Cmd {
-    match open {
+fn closed_playback(overlay: &Overlay) -> Cmd {
+    match overlay {
         Overlay::Settings(..) => release(),
         Overlay::Help
         | Overlay::Search(_)
         | Overlay::SavePlaylist(_)
         | Overlay::History(_)
-        | Overlay::ConfirmDelete(_)
+        | Overlay::ConfirmTrash(_)
         | Overlay::TrackDetails(_)
         | Overlay::JumpToTime(_)
         | Overlay::MusicDir(_) => Cmd::none(),
     }
 }
 
-fn confirm(state: &mut Option<Overlay>) -> Result<Cmd, Unhandled> {
-    let open = state.as_mut().ok_or(Unhandled)?;
-    let cmd = confirmed(open)?;
+fn confirm(overlay: &mut Option<Overlay>) -> Result<Cmd, Unhandled> {
+    let open = overlay.as_mut().ok_or(Unhandled)?;
+    let cmd = confirm_cmd(open)?;
     if has_error(open) {
         return Ok(Cmd::none());
     }
-    *state = None;
+    *overlay = None;
     Ok(cued_close(cmd))
 }
 
-fn has_error(open: &Overlay) -> bool {
-    match open {
+fn has_error(overlay: &Overlay) -> bool {
+    match overlay {
         Overlay::SavePlaylist(text_entry) => text_entry.error.is_some(),
         Overlay::MusicDir(text_entry) => text_entry.error.is_some(),
         Overlay::JumpToTime(text_entry) => text_entry.error.is_some(),
         Overlay::Search(_)
-        | Overlay::ConfirmDelete(_)
+        | Overlay::ConfirmTrash(_)
         | Overlay::Settings(..)
         | Overlay::Help
         | Overlay::TrackDetails(_)
@@ -93,11 +96,11 @@ fn has_error(open: &Overlay) -> bool {
     }
 }
 
-fn confirmed(open: &mut Overlay) -> Result<Cmd, Unhandled> {
-    match open {
+fn confirm_cmd(overlay: &mut Overlay) -> Result<Cmd, Unhandled> {
+    match overlay {
         Overlay::Search(search) => confirm_search(search),
         Overlay::SavePlaylist(text_entry) => confirm_save_playlist(text_entry),
-        Overlay::ConfirmDelete(candidate) => Ok(Cmd::message(Message::Browse(
+        Overlay::ConfirmTrash(candidate) => Ok(Cmd::message(Message::Browse(
             BrowseRequest::Trash(candidate.source.clone()),
         ))),
         Overlay::JumpToTime(text_entry) => confirm_jump(text_entry),
@@ -109,8 +112,8 @@ fn confirmed(open: &mut Overlay) -> Result<Cmd, Unhandled> {
     }
 }
 
-fn confirm_search(search: &CursorOver<SearchQuery>) -> Result<Cmd, Unhandled> {
-    let index = search.selected_match().ok_or(Unhandled)?;
+fn confirm_search(search_query: &CursorOver<SearchQuery>) -> Result<Cmd, Unhandled> {
+    let index = search_query.selected_match().ok_or(Unhandled)?;
     Ok(Cmd::message(Message::Playback(PlaybackRequest::JumpTo(
         index,
     ))))
@@ -134,7 +137,7 @@ fn confirm_jump(text_entry: &mut TextEntry<TimecodeError>) -> Result<Cmd, Unhand
 }
 
 fn confirm_save_playlist(
-    text_entry: &mut TextEntry<PlaylistNameError>,
+    text_entry: &mut TextEntry<PlaylistFileNameError>,
 ) -> Result<Cmd, Unhandled> {
     match PlaylistFileName::new(&text_entry.input) {
         Ok(name) => {
@@ -169,12 +172,12 @@ fn confirm_music_dir(
     }))))
 }
 
-fn inner_transition(
-    state: &mut Option<Overlay>,
-    inner: OverlayContentMessage,
+fn content_transition(
+    overlay: &mut Option<Overlay>,
+    content_message: OverlayContentMessage,
 ) -> Result<Cmd, Unhandled> {
-    let open = state.as_mut().ok_or(Unhandled)?;
-    match (open, inner) {
+    let open = overlay.as_mut().ok_or(Unhandled)?;
+    match (open, content_message) {
         (Overlay::Search(search), OverlayContentMessage::Search(message)) => {
             search.transition(message)
         }

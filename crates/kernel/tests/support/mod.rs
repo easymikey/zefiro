@@ -101,20 +101,24 @@ pub(crate) fn model_with_dated_tracks(count: usize) -> Model {
     listed_model((0..count).map(dated_track).collect())
 }
 
-pub(crate) fn model_playing_at(count: usize, k: usize, at: Duration) -> Model {
-    let mut m = model_with_dated_tracks(count);
-    m.playlist.cursor = Cursor::at(count, k);
-    m.player = Player::Playing {
-        track: dated_track(k),
-        playhead: Playhead::anchored(at, Moment::default(), Speed::default()),
+pub(crate) fn model_playing_at(
+    count: usize,
+    playing_index: usize,
+    position: Duration,
+) -> Model {
+    let mut model = model_with_dated_tracks(count);
+    model.playlist.cursor = Cursor::at(count, playing_index);
+    model.player = Player::Playing {
+        track: dated_track(playing_index),
+        playhead: Playhead::anchored(position, Moment::default(), Speed::default()),
         preloaded: None,
     };
-    m
+    model
 }
 
 pub(crate) fn playing_model(count: usize) -> Model {
-    let mut m = model_with_dated_tracks(count);
-    m.player = Player::Playing {
+    let mut model = model_with_dated_tracks(count);
+    model.player = Player::Playing {
         track: dated_track(0),
         playhead: Playhead::anchored(
             Duration::ZERO,
@@ -123,7 +127,7 @@ pub(crate) fn playing_model(count: usize) -> Model {
         ),
         preloaded: None,
     };
-    m
+    model
 }
 
 pub(crate) fn effects(cmd: Cmd) -> Vec<Effect> {

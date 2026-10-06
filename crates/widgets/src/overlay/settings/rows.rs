@@ -11,37 +11,41 @@ use crate::{
         modal::placement::indented,
         settings::view::{SettingsView, settings_label, value_text},
     },
-    primitive::text::truncate,
+    primitive::truncate::truncate,
     theme::colors::Colors,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SettingsColumns {
-    label: Cells,
-    value: Cells,
-    lead: Cells,
+    label_width: Cells,
+    value_width: Cells,
+    lead_width: Cells,
 }
 
 impl SettingsColumns {
-    pub(crate) fn for_width(width: Cells, lead: Cells, label_width: Cells) -> Self {
-        let label = Cells(label_width.0.saturating_add(lead.0));
+    pub(crate) fn for_width(
+        width: Cells,
+        lead_width: Cells,
+        label_width: Cells,
+    ) -> Self {
+        let label = Cells(label_width.0.saturating_add(lead_width.0));
         Self {
-            label,
-            value: Cells(width.0.saturating_sub(label.0)),
-            lead,
+            label_width: label,
+            value_width: Cells(width.0.saturating_sub(label.0)),
+            lead_width,
         }
     }
 
     pub(crate) fn constraints(self) -> [Constraint; 2] {
         [
-            Constraint::Length(self.label.0),
-            Constraint::Length(self.value.0),
+            Constraint::Length(self.label_width.0),
+            Constraint::Length(self.value_width.0),
         ]
     }
 }
 
 pub(crate) struct SettingsTableRow<'a> {
-    pub(crate) row: SettingRow,
+    pub(crate) setting_row: SettingRow,
     pub(crate) view: &'a SettingsView<'a>,
     pub(crate) columns: SettingsColumns,
 }
@@ -52,8 +56,8 @@ pub(crate) fn settings_row(
 ) -> Row<'static> {
     let [label, value] = settings_cells(table_row);
     Row::new(vec![
-        Line::from(label).style(Style::default().fg(colors.text)),
-        Line::from(value).style(Style::default().fg(colors.text)),
+        Line::from(label).style(Style::default().fg(colors.foreground)),
+        Line::from(value).style(Style::default().fg(colors.foreground)),
     ])
 }
 
@@ -61,8 +65,15 @@ fn settings_cells(table_row: &SettingsTableRow<'_>) -> [String; 2] {
     let columns = table_row.columns;
     let cell = |value: &str, width: Cells| truncate(value, width.count()).into_owned();
     [
-        indented(settings_label(table_row.row), columns.lead, columns.label),
-        cell(&value_text(table_row.row, table_row.view), columns.value),
+        indented(
+            settings_label(table_row.setting_row),
+            columns.lead_width,
+            columns.label_width,
+        ),
+        cell(
+            &value_text(table_row.setting_row, table_row.view),
+            columns.value_width,
+        ),
     ]
 }
 
@@ -70,36 +81,36 @@ fn settings_cells(table_row: &SettingsTableRow<'_>) -> [String; 2] {
 mod tests {
     use kernel::domain::{
         geometry::Cells,
-        setting_row::{AppearanceSetting, SettingRow},
+        setting_row::{AppearanceRowChoice, SettingRow},
     };
     use unicode_width::UnicodeWidthStr;
 
     use crate::overlay::settings::{
         rows::{SettingsColumns, SettingsTableRow, settings_cells},
-        test_support::{appearance_rows, settings_values},
+        test_support::{appearance_row_choices, settings_values},
     };
 
-    fn all_rows(appearance_rows: &[AppearanceSetting]) -> Vec<SettingRow> {
-        SettingRow::all(appearance_rows)
+    fn all_rows(appearance_row_choices: &[AppearanceRowChoice]) -> Vec<SettingRow> {
+        SettingRow::all(appearance_row_choices)
     }
 
     #[test]
     fn every_row_fits_its_columns() {
-        let custom = appearance_rows();
+        let custom = appearance_row_choices();
         let view = settings_values();
         let columns = SettingsColumns::for_width(Cells(60), Cells(0), Cells(20));
         for row in all_rows(&custom) {
             let [label, value] = settings_cells(&SettingsTableRow {
-                row,
+                setting_row: row,
                 view: &view,
                 columns,
             });
             assert!(
-                label.width() <= columns.label.count(),
+                label.width() <= columns.label_width.count(),
                 "row {row:?} label {label:?} overflows its column"
             );
             assert!(
-                value.width() <= columns.value.count(),
+                value.width() <= columns.value_width.count(),
                 "row {row:?} value {value:?} overflows its column"
             );
         }

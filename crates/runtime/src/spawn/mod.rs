@@ -5,7 +5,7 @@ use kernel::cmd::{AudioCmd, ConfigCmd, LibraryCmd};
 
 use crate::{
     driver_thread::DriverThread,
-    error::Error,
+    error::SpawnError,
     spawn::{
         audio_thread::spawn_audio,
         config_thread::spawn_config,
@@ -25,18 +25,18 @@ pub(crate) mod config_thread;
 mod library_thread;
 pub(crate) mod macos_thread;
 
-pub(crate) type Spawn<C> = fn(&SpawnSetup<'_>) -> Result<DriverThread<C>, Error>;
+pub(crate) type Spawner<C> = fn(&SpawnSetup<'_>) -> Result<DriverThread<C>, SpawnError>;
 
 pub(crate) type SpawnAudio =
-    fn(&SpawnSetup<'_>) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error>;
+    fn(&SpawnSetup<'_>) -> Result<(DriverThread<AudioCmd>, SpectrumTap), SpawnError>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Spawners {
     pub(crate) audio: SpawnAudio,
-    pub(crate) library: Spawn<LibraryCmd>,
-    pub(crate) config: Spawn<ConfigCmd>,
+    pub(crate) library: Spawner<LibraryCmd>,
+    pub(crate) config: Spawner<ConfigCmd>,
     #[cfg(target_os = "macos")]
-    pub(crate) macos: Spawn<MacosCmd>,
+    pub(crate) macos: Spawner<MacosCmd>,
 }
 
 impl Spawners {
@@ -59,7 +59,7 @@ impl Spawners {
             library: spawn_library,
             config: spawn_config,
             #[cfg(target_os = "macos")]
-            macos: macos_thread::spawn,
+            macos: macos_thread::spawn_macos,
         }
     }
 }
@@ -76,7 +76,10 @@ pub(crate) mod tests {
     use crossbeam_channel::{Receiver, Sender};
     use kernel::{
         cmd::AudioCmd,
-        domain::{driver::DriverName, startup::Startup},
+        domain::{
+            driver::{DriverError, DriverName},
+            startup::Startup,
+        },
         message::Message,
     };
     use library::dirs::LibraryDirs;
@@ -84,7 +87,7 @@ pub(crate) mod tests {
 
     use crate::{
         driver_thread::{Congestion, DriverThread, spawn_driver},
-        error::Error,
+        error::SpawnError,
         runtime::Runtime,
         spawn::{ConfigCmd, LibraryCmd, Spawners, audio_thread::idle_audio},
         spawn_setup::{SpawnSetup, StartupPaths},
@@ -93,9 +96,15 @@ pub(crate) mod tests {
     pub(crate) fn spawn_audio_loop<R>(
         run: R,
         setup: &SpawnSetup<'_>,
-    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error>
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), SpawnError>
     where
-        R: FnOnce(&Receiver<AudioCmd>, &Sender<Message>, &Congestion) + Send + 'static,
+        R: FnOnce(
+                &Receiver<AudioCmd>,
+                &Sender<Message>,
+                &Congestion,
+            ) -> Result<(), DriverError>
+            + Send
+            + 'static,
     {
         let thread =
             spawn_driver(crate::registry::row(DriverName::Audio), run, setup.inbox)?;
@@ -108,17 +117,17 @@ pub(crate) mod tests {
 
     pub(crate) const RECV_TIMEOUT: Duration = Duration::from_secs(1);
 
-    pub(crate) fn stub_paths(directory: &Path) -> StartupPaths {
+    pub(crate) fn stub_paths(dir: &Path) -> StartupPaths {
         StartupPaths {
-            config: ConfigPaths {
-                config: directory.join("config.toml"),
-                appearance: directory.join("sifr-ui.toml"),
-                themes: directory.join("themes"),
+            config_paths: ConfigPaths {
+                config_path: dir.join("config.toml"),
+                appearance_path: dir.join("sifr-ui.toml"),
+                themes_dir: dir.join("themes"),
                 default_music_dir: None,
-                theme: None,
-                seen: SeenTexts::default(),
+                theme_name: None,
+                seen_texts: SeenTexts::default(),
             },
-            library: LibraryDirs::under(directory),
+            library_dirs: LibraryDirs::under(dir),
         }
     }
 
@@ -130,21 +139,21 @@ pub(crate) mod tests {
 
     fn counting_audio(
         setup: &SpawnSetup<'_>,
-    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), SpawnError> {
         AUDIO_CALLS.fetch_add(1, Ordering::SeqCst);
         idle_audio(setup)
     }
 
     fn counting_library(
         setup: &SpawnSetup<'_>,
-    ) -> Result<DriverThread<LibraryCmd>, Error> {
+    ) -> Result<DriverThread<LibraryCmd>, SpawnError> {
         LIBRARY_CALLS.fetch_add(1, Ordering::SeqCst);
         (Spawners::idle().library)(setup)
     }
 
     fn counting_config(
         setup: &SpawnSetup<'_>,
-    ) -> Result<DriverThread<ConfigCmd>, Error> {
+    ) -> Result<DriverThread<ConfigCmd>, SpawnError> {
         CONFIG_CALLS.fetch_add(1, Ordering::SeqCst);
         (Spawners::idle().config)(setup)
     }
@@ -152,7 +161,7 @@ pub(crate) mod tests {
     #[cfg(target_os = "macos")]
     fn counting_macos(
         setup: &SpawnSetup<'_>,
-    ) -> Result<DriverThread<kernel::cmd::MacosCmd>, Error> {
+    ) -> Result<DriverThread<kernel::cmd::MacosCmd>, SpawnError> {
         MACOS_CALLS.fetch_add(1, Ordering::SeqCst);
         (Spawners::idle().macos)(setup)
     }
@@ -192,20 +201,21 @@ pub(crate) mod tests {
     fn an_idle_spawner_never_opens_hardware() {
         let directory = tempfile::tempdir().unwrap();
         let paths = stub_paths(directory.path());
-        let (inbox, _arrivals) = crossbeam_channel::bounded(4);
+        let (inbox, _inbox_receiver) = crossbeam_channel::bounded(4);
         let (model, _cmd) = kernel::update::startup::startup(Startup::default());
-        let (writers, _cells, _notified) = crate::latest::latest_channels();
+        let (latest_senders, _latest_receivers, _doorbell) =
+            crate::latest::latest_channels();
         let setup = SpawnSetup {
-            audio: &model.settings.audio,
+            audio_settings: &model.settings.audio_settings,
             paths: &paths,
             inbox: &inbox,
-            writers: &writers,
+            latest_senders: &latest_senders,
             #[cfg(target_os = "macos")]
-            macos: &crate::spawn_setup::MacosChannel::new(),
+            macos_channel: &crate::spawn_setup::MacosChannel::new(),
         };
-        let (audio, _tap) = idle_audio(&setup).unwrap();
+        let (audio, _spectrum) = idle_audio(&setup).unwrap();
 
-        drop(audio.commands);
+        drop(audio.cmd_sender);
         audio.handle.join().unwrap().unwrap();
     }
 
@@ -214,7 +224,7 @@ pub(crate) mod tests {
 
     fn panicking_library(
         setup: &SpawnSetup<'_>,
-    ) -> Result<DriverThread<LibraryCmd>, Error> {
+    ) -> Result<DriverThread<LibraryCmd>, SpawnError> {
         RESTART_LIBRARY_CALLS.fetch_add(1, Ordering::SeqCst);
         spawn_driver(
             crate::registry::row(DriverName::Library),
@@ -225,7 +235,7 @@ pub(crate) mod tests {
 
     fn panicking_config(
         setup: &SpawnSetup<'_>,
-    ) -> Result<DriverThread<ConfigCmd>, Error> {
+    ) -> Result<DriverThread<ConfigCmd>, SpawnError> {
         RESTART_CONFIG_CALLS.fetch_add(1, Ordering::SeqCst);
         spawn_driver(
             crate::registry::row(DriverName::Config),
@@ -235,14 +245,14 @@ pub(crate) mod tests {
     }
 
     struct RestartRow {
-        driver: DriverName,
+        driver_name: DriverName,
         deaths: usize,
         spawns: usize,
         calls: &'static AtomicUsize,
     }
 
-    fn spawners_for(driver: DriverName) -> Spawners {
-        if driver == DriverName::Library {
+    fn spawners_for(driver_name: DriverName) -> Spawners {
+        if driver_name == DriverName::Library {
             Spawners {
                 library: panicking_library,
                 ..Spawners::idle()
@@ -257,13 +267,13 @@ pub(crate) mod tests {
 
     #[rstest]
     #[case::config_degrades_without_a_restart(RestartRow {
-        driver: DriverName::Config,
+        driver_name: DriverName::Config,
         deaths: 1,
         spawns: 1,
         calls: &RESTART_CONFIG_CALLS,
     })]
     #[case::library_restarts_once_then_degrades(RestartRow {
-        driver: DriverName::Library,
+        driver_name: DriverName::Library,
         deaths: 2,
         spawns: 2,
         calls: &RESTART_LIBRARY_CALLS,
@@ -271,7 +281,7 @@ pub(crate) mod tests {
     fn restart_follows_the_row(#[case] row: RestartRow) {
         row.calls.store(0, Ordering::SeqCst);
         let directory = tempfile::tempdir().unwrap();
-        let spawners = spawners_for(row.driver);
+        let spawners = spawners_for(row.driver_name);
         let mut runtime = Runtime::start(
             Startup::default(),
             &stub_paths(directory.path()),
@@ -280,7 +290,11 @@ pub(crate) mod tests {
         .unwrap();
 
         for _ in 0..row.deaths {
-            let died = runtime.wiring.mailbox.recv_timeout(RECV_TIMEOUT).unwrap();
+            let died = runtime
+                .wiring
+                .inbox_receiver
+                .recv_timeout(RECV_TIMEOUT)
+                .unwrap();
             runtime.deliver(died).unwrap();
         }
 

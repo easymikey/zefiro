@@ -139,7 +139,7 @@ fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
         Some((
             "Alpha".to_owned(),
             Some(Duration::from_secs(200)),
-            Tagging::Read(Duration::from_secs(200))
+            Tagging::Tagged(Duration::from_secs(200))
         ))
     );
     assert_eq!(model.scan_status, ScanStatus::Tagging { done: 1, total: 2 });
@@ -267,7 +267,7 @@ fn rescanning_model() -> Model {
     };
     let cmd = update(
         &mut model,
-        Message::Browse(BrowseRequest::FullScan),
+        Message::Browse(BrowseRequest::Rescan),
         Moment::default(),
     )
     .unwrap();

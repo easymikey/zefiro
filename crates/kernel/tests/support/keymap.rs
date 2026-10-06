@@ -6,8 +6,8 @@ use kernel::{
     update::keymap::{bindings::Keymap, chord::KeyBinding},
 };
 
-pub(crate) fn bindings(config: &KeymapOverrides) -> Vec<KeyBinding> {
-    Keymap::new(config.clone()).bindings().to_vec()
+pub(crate) fn bindings(keymap_overrides: &KeymapOverrides) -> Vec<KeyBinding> {
+    Keymap::new(keymap_overrides.clone()).bindings().to_vec()
 }
 
 pub(crate) fn character(letter: char) -> Key {

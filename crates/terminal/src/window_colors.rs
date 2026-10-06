@@ -53,7 +53,8 @@ pub(crate) fn reset_on_panic() -> Result<(), io::Error> {
 }
 
 pub fn write_window_colors(theme: &Theme) -> Result<(), Error> {
-    let sequence = set_sequence(theme.colors.window_background, theme.colors.text);
+    let sequence =
+        set_sequence(theme.colors.window_background, theme.colors.foreground);
     write_to_stdout(&sequence).map_err(Error::WriteWindowColors)
 }
 

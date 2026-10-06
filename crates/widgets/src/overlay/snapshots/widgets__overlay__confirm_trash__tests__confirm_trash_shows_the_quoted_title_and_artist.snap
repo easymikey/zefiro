@@ -1,5 +1,5 @@
 ---
-source: crates/widgets/src/overlay/confirm_delete.rs
+source: crates/widgets/src/overlay/confirm_trash.rs
 assertion_line: 97
 expression: "painted(&overlay, 60, 12)"
 ---

@@ -7,7 +7,7 @@ expression: "walked(model, messages)"
     (
         Overlay(
             Open(
-                ConfirmDelete,
+                ConfirmTrash,
             ),
         ),
         [
@@ -17,8 +17,8 @@ expression: "walked(model, messages)"
         ],
         Stopped,
         Some(
-            ConfirmDelete(
-                DeleteCandidate {
+            ConfirmTrash(
+                TrashCandidate {
                     source: Local(
                         "/m/0.flac",
                     ),
@@ -45,9 +45,9 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),
@@ -80,9 +80,9 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: None,
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),

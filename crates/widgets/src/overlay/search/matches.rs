@@ -1,6 +1,11 @@
 use std::sync::Arc;
 
-use kernel::domain::{cursor_over::CursorOver, overlay::SearchQuery, track::Track};
+use kernel::domain::{
+    cursor_over::CursorOver,
+    index::RowIndex,
+    overlay::SearchQuery,
+    track::Track,
+};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -15,8 +20,8 @@ use crate::{
         glyphs,
         list_chrome::scroll_offset,
         span::{line, text},
-        text::{blanks, truncate},
         track_row::Selected,
+        truncate::{blanks, truncate},
     },
     theme::colors::Colors,
 };
@@ -24,12 +29,12 @@ use crate::{
 pub(crate) struct SearchMatchList<'a> {
     pub(crate) area: Rect,
     pub(crate) tracks: &'a [Arc<Track>],
-    pub(crate) search: &'a CursorOver<SearchQuery>,
+    pub(crate) search_query: &'a CursorOver<SearchQuery>,
     pub(crate) colors: Colors<Color>,
     pub(crate) lead: u16,
 }
 
-fn match_count_line(count: usize, dim: Color) -> Option<Line<'static>> {
+fn no_matches_line(count: usize, dim: Color) -> Option<Line<'static>> {
     (count == 0).then(|| line([text(glyphs::search::NO_MATCHES).fg(dim)]))
 }
 
@@ -37,10 +42,10 @@ fn visible_matches<'a>(
     list: &SearchMatchList<'a>,
 ) -> impl Iterator<Item = (Selected, &'a Track)> {
     let tracks = list.tracks;
-    let matches = &list.search.content.matches;
-    let selected = usize::from(list.search.selected());
+    let matches = &list.search_query.content.matches;
+    let selected = usize::from(list.search_query.selected());
     let height = usize::from(list.area.height);
-    let offset = scroll_offset(selected, matches.len(), height);
+    let offset = scroll_offset(RowIndex::new(selected), matches.len(), height);
     matches
         .iter()
         .enumerate()
@@ -61,12 +66,12 @@ fn visible_matches<'a>(
 pub(crate) fn paint_match_pane(list: &SearchMatchList<'_>, buffer: &mut Buffer) {
     let SearchMatchList {
         area,
-        search,
+        search_query,
         colors,
         ..
     } = *list;
     if let Some(line) =
-        match_count_line(search.content.matches.len(), colors.muted_foreground)
+        no_matches_line(search_query.content.matches.len(), colors.muted_foreground)
     {
         Paragraph::new(line).render(area, buffer);
         return;
@@ -90,7 +95,7 @@ pub(crate) fn paint_match_pane(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
         })
         .collect();
     Paragraph::new(lines)
-        .style(Style::default().fg(colors.text))
+        .style(Style::default().fg(colors.foreground))
         .render(area, buffer);
 }
 
@@ -103,7 +108,7 @@ struct MatchRow<'a> {
 pub(crate) fn paint_match_rows(list: &SearchMatchList<'_>, buffer: &mut Buffer) {
     let SearchMatchList {
         area,
-        search,
+        search_query,
         colors,
         ..
     } = *list;
@@ -111,7 +116,7 @@ pub(crate) fn paint_match_rows(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
         return;
     }
     if let Some(line) =
-        match_count_line(search.content.matches.len(), colors.muted_foreground)
+        no_matches_line(search_query.content.matches.len(), colors.muted_foreground)
     {
         Paragraph::new(line).render(area, buffer);
         return;
@@ -120,35 +125,35 @@ pub(crate) fn paint_match_rows(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
     let row_width = usize::from(area.width);
     let lines: Vec<Line<'_>> = visible_matches(list)
         .map(|(selected, track)| {
-            let row_props = MatchRow {
+            let match_row = MatchRow {
                 title: track.display(),
                 selected,
                 row_width,
             };
-            match_line(&row_props, colors)
+            match_line(&match_row, colors)
         })
         .collect();
     Paragraph::new(lines).render(area, buffer);
 }
 
-fn match_line<'a>(hit: &MatchRow<'a>, colors: Colors<Color>) -> Line<'a> {
-    let base_text = match hit.selected {
+fn match_line<'a>(match_row: &MatchRow<'a>, colors: Colors<Color>) -> Line<'a> {
+    let base_text = match match_row.selected {
         Selected::Yes => colors.selection_foreground,
-        Selected::No => colors.text,
+        Selected::No => colors.foreground,
     };
-    let marker = match hit.selected {
+    let marker = match match_row.selected {
         Selected::Yes => glyphs::search::SELECTED_MARKER,
         Selected::No => glyphs::search::UNSELECTED_MARKER,
     };
 
-    let title_width = hit.row_width.saturating_sub(marker.width());
-    let content = truncate(hit.title, title_width);
+    let title_width = match_row.row_width.saturating_sub(marker.width());
+    let content = truncate(match_row.title, title_width);
 
-    let marker_piece = match hit.selected {
+    let marker_piece = match match_row.selected {
         Selected::Yes => text(marker).fg(base_text).bg(colors.selection_background),
         Selected::No => text(marker).fg(colors.muted_foreground),
     };
-    let content_piece = match hit.selected {
+    let content_piece = match match_row.selected {
         Selected::Yes => text(content).fg(base_text).bg(colors.selection_background),
         Selected::No => text(content).fg(base_text),
     };

@@ -9,31 +9,31 @@ use kernel::{domain::track::Track, message::LibrarySubject};
 use crate::{error::Error, tags::read_track};
 
 #[must_use]
-fn is_decodable(path: &Path, decodable: &[&str]) -> bool {
+fn is_audio_file(path: &Path, audio_extensions: &[&str]) -> bool {
     path.extension()
         .and_then(OsStr::to_str)
         .map(str::to_ascii_lowercase)
-        .is_some_and(|extension| decodable.contains(&extension.as_str()))
+        .is_some_and(|extension| audio_extensions.contains(&extension.as_str()))
 }
 
 #[must_use]
 #[derive(Debug, Default)]
 pub(crate) struct Listing {
     pub(crate) paths: Vec<PathBuf>,
-    pub(crate) first_error: Option<Error>,
+    pub(crate) skipped: Option<Error>,
 }
 
 impl Listing {
-    fn keeping(mut self, walked: walkdir::DirEntry, decodable: &[&str]) -> Self {
-        if is_decodable(walked.path(), decodable) {
+    fn keeping(mut self, walked: walkdir::DirEntry, audio_extensions: &[&str]) -> Self {
+        if is_audio_file(walked.path(), audio_extensions) {
             self.paths.push(walked.into_path());
         }
         self
     }
 
     fn skipping(mut self, error: walkdir::Error, music_dir: &Path) -> Self {
-        if self.first_error.is_none() {
-            self.first_error = Some(walk_error(error, music_dir));
+        if self.skipped.is_none() {
+            self.skipped = Some(walk_error(error, music_dir));
         }
         self
     }
@@ -44,13 +44,13 @@ fn walk_error(error: walkdir::Error, music_dir: &Path) -> Error {
         .path()
         .map_or_else(|| music_dir.to_path_buf(), Path::to_path_buf);
     let text = error.to_string();
-    let source = error
+    let io_error = error
         .into_io_error()
         .unwrap_or_else(|| std::io::Error::other(text));
-    Error::io(LibrarySubject::Scan, &path)(source)
+    Error::io(LibrarySubject::Scan, &path)(io_error)
 }
 
-pub(crate) fn list_dir(music_dir: &Path, decodable: &[&str]) -> Listing {
+pub(crate) fn list_dir(music_dir: &Path, audio_extensions: &[&str]) -> Listing {
     if !music_dir.is_dir() {
         let kind = if music_dir.exists() {
             std::io::ErrorKind::NotADirectory
@@ -59,7 +59,7 @@ pub(crate) fn list_dir(music_dir: &Path, decodable: &[&str]) -> Listing {
         };
         return Listing {
             paths: Vec::new(),
-            first_error: Some(Error::io(LibrarySubject::Scan, music_dir)(
+            skipped: Some(Error::io(LibrarySubject::Scan, music_dir)(
                 std::io::Error::from(kind),
             )),
         };
@@ -68,15 +68,15 @@ pub(crate) fn list_dir(music_dir: &Path, decodable: &[&str]) -> Listing {
         .sort_by_file_name()
         .into_iter()
         .fold(Listing::default(), |listing, entry| match entry {
-            Ok(entry) => listing.keeping(entry, decodable),
-            Err(err) => listing.skipping(err, music_dir),
+            Ok(entry) => listing.keeping(entry, audio_extensions),
+            Err(error) => listing.skipping(error, music_dir),
         })
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct TagsRead {
     pub(crate) tracks: Vec<Arc<Track>>,
-    pub(crate) first_error: Option<Error>,
+    pub(crate) skipped: Option<Error>,
 }
 
 impl TagsRead {
@@ -85,21 +85,21 @@ impl TagsRead {
             Ok(track) => self.tracks.push(Arc::new(track)),
             Err(error) => {
                 self.tracks.push(Arc::new(Track::listed(path)));
-                self.first_error = self.first_error.or(Some(error));
+                self.skipped = self.skipped.or(Some(error));
             }
         }
         self
     }
 
-    fn joined(mut self, other: TagsRead) -> Self {
-        self.tracks.extend(other.tracks);
-        self.first_error = self.first_error.or(other.first_error);
+    fn joined(mut self, tags_read: TagsRead) -> Self {
+        self.tracks.extend(tags_read.tracks);
+        self.skipped = self.skipped.or(tags_read.skipped);
         self
     }
 }
 
-fn read_chunk(chunk: &[PathBuf]) -> TagsRead {
-    chunk
+fn read_chunk(chunk_paths: &[PathBuf]) -> TagsRead {
+    chunk_paths
         .iter()
         .fold(TagsRead::default(), |read, path| read.adding(path))
 }
@@ -123,15 +123,18 @@ pub(crate) fn read_tags(paths: &[PathBuf]) -> TagsRead {
     })
 }
 
-fn chunk_read(chunk: &[PathBuf], joined: std::thread::Result<TagsRead>) -> TagsRead {
+fn chunk_read(
+    chunk_paths: &[PathBuf],
+    joined: std::thread::Result<TagsRead>,
+) -> TagsRead {
     joined.unwrap_or_else(|_panicked| TagsRead {
-        tracks: chunk
+        tracks: chunk_paths
             .iter()
             .map(|path| Arc::new(Track::listed(path)))
             .collect(),
-        first_error: Some(Error::io(
+        skipped: Some(Error::io(
             LibrarySubject::Scan,
-            chunk.first().map_or(Path::new(""), PathBuf::as_path),
+            chunk_paths.first().map_or(Path::new(""), PathBuf::as_path),
         )(std::io::Error::other("tag reader panicked"))),
     })
 }
@@ -148,11 +151,11 @@ mod tests {
 
     use crate::{
         error::Error,
-        scan::{chunk_read, is_decodable, list_dir, read_tags},
+        scan::{chunk_read, is_audio_file, list_dir, read_tags},
         test_support::temp_dir_filters,
     };
 
-    const DECODABLE: &[&str] =
+    const AUDIO_EXTENSIONS: &[&str] =
         &["flac", "mp3", "mp4", "m4a", "m4b", "ogg", "wav", "mkv"];
 
     #[rstest]
@@ -160,9 +163,9 @@ mod tests {
     #[case("song.m4b")]
     #[case("song.MP3")]
     #[case("song.mkv")]
-    fn a_decodable_extension_counts_as_audio(#[case] name: &str) {
+    fn an_audio_extension_counts_as_audio(#[case] name: &str) {
         assert!(
-            is_decodable(Path::new(name), DECODABLE),
+            is_audio_file(Path::new(name), AUDIO_EXTENSIONS),
             "{name} should count as audio"
         );
     }
@@ -175,9 +178,9 @@ mod tests {
     #[case("song.opus")]
     #[case("clip.webm")]
     #[case("clip.WEBM")]
-    fn an_undecodable_extension_is_not_audio(#[case] name: &str) {
+    fn an_unlisted_extension_is_not_audio(#[case] name: &str) {
         assert!(
-            !is_decodable(Path::new(name), DECODABLE),
+            !is_audio_file(Path::new(name), AUDIO_EXTENSIONS),
             "{name} cannot be decoded, so it must not count as audio"
         );
     }
@@ -188,13 +191,13 @@ mod tests {
     #[case("README")]
     fn anything_else_is_passed_over(#[case] name: &str) {
         assert!(
-            !is_decodable(Path::new(name), DECODABLE),
+            !is_audio_file(Path::new(name), AUDIO_EXTENSIONS),
             "{name} is not audio"
         );
     }
 
     fn scanned(dir: &Path) -> Vec<Arc<Track>> {
-        read_tags(&list_dir(dir, DECODABLE).paths).tracks
+        read_tags(&list_dir(dir, AUDIO_EXTENSIONS).paths).tracks
     }
 
     #[test]
@@ -207,7 +210,7 @@ mod tests {
         let read = chunk_read(&chunk, Err(Box::new("tag reader panicked")));
 
         assert_eq!(read.tracks.len(), 2);
-        assert!(read.first_error.is_some(), "the panic is reported");
+        assert!(read.skipped.is_some(), "the panic is reported");
     }
 
     #[fixture]
@@ -216,9 +219,7 @@ mod tests {
     }
 
     #[rstest]
-    fn listing_keeps_decodable_files_sorted_and_skips_others(
-        temp_dir: tempfile::TempDir,
-    ) {
+    fn listing_keeps_audio_files_sorted_and_skips_others(temp_dir: tempfile::TempDir) {
         for name in ["b.mp3", "a.flac", "x.txt", "c.mkv"] {
             std::fs::write(temp_dir.path().join(name), b"stub").unwrap();
         }
@@ -235,8 +236,8 @@ mod tests {
         for name in ["b.mp3", "a.flac", "notes.txt"] {
             std::fs::write(temp_dir.path().join(name), b"stub").unwrap();
         }
-        let listing = list_dir(temp_dir.path(), DECODABLE);
-        assert!(listing.first_error.is_none());
+        let listing = list_dir(temp_dir.path(), AUDIO_EXTENSIONS);
+        assert!(listing.skipped.is_none());
         insta::with_settings!({ filters => temp_dir_filters() }, {
             insta::assert_debug_snapshot!(listing.paths);
         });
@@ -249,7 +250,7 @@ mod tests {
         for name in ["a.flac", "b.mp3", "c.mkv"] {
             std::fs::write(temp_dir.path().join(name), b"stub").unwrap();
         }
-        let listing = list_dir(temp_dir.path(), DECODABLE);
+        let listing = list_dir(temp_dir.path(), AUDIO_EXTENSIONS);
         let chunk = &listing.paths[..2];
 
         let tracks = read_tags(chunk).tracks;
@@ -286,11 +287,11 @@ mod tests {
             std::fs::write(&music_dir, b"stub").unwrap();
         }
 
-        let listing = list_dir(&music_dir, DECODABLE);
+        let listing = list_dir(&music_dir, AUDIO_EXTENSIONS);
 
         assert!(listing.paths.is_empty());
         insta::with_settings!({ filters => temp_dir_filters(), snapshot_suffix => name.unwrap_or("gone") }, {
-            insta::assert_debug_snapshot!(listing.first_error);
+            insta::assert_debug_snapshot!(listing.skipped);
         });
     }
 
@@ -308,22 +309,22 @@ mod tests {
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
             .unwrap();
 
-        let listing = list_dir(temp_dir.path(), DECODABLE);
+        let listing = list_dir(temp_dir.path(), AUDIO_EXTENSIONS);
 
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755))
             .unwrap();
 
         assert_eq!(listing.paths.len(), 1);
-        let first_error = listing.first_error.as_ref();
+        let skipped = listing.skipped.as_ref();
         assert!(
-            first_error.is_some_and(|error| matches!(
+            skipped.is_some_and(|error| matches!(
                 error,
                 Error::Io { path, .. } if path.as_os_str() != ""
             )),
             "the walk error must keep a non-empty path"
         );
         insta::with_settings!({ filters => temp_dir_filters() }, {
-            insta::assert_debug_snapshot!(listing.first_error);
+            insta::assert_debug_snapshot!(listing.skipped);
         });
     }
 

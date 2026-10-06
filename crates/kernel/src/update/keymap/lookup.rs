@@ -6,14 +6,7 @@ use crate::{
         overlay::Overlay,
         workspace::Workspace,
     },
-    message::{
-        BrowseRequest,
-        Message,
-        OverlayRequest,
-        SearchEdit,
-        SearchRequest,
-        TextRequest,
-    },
+    message::{Message, OverlayRequest, SearchEdit, SearchRequest, TextRequest},
     update::keymap::{chord::KeyBinding, key_context::key_context_of},
 };
 
@@ -56,29 +49,33 @@ struct BindingScope {
 
 fn in_key_context(
     bindings: &[KeyBinding],
-    lookup: &BindingScope,
+    binding_scope: &BindingScope,
     key: Key,
 ) -> Option<Message> {
-    if let Some(prefix) = lookup.prefix
-        && let Some(message) = looked_up(
+    if let Some(chord_prefix) = binding_scope.prefix
+        && let Some(message) = exact_match(
             bindings,
-            lookup.key_context,
-            KeyPattern::Chord(Chord::Sequence { prefix, key }),
+            binding_scope.key_context,
+            KeyPattern::Chord(Chord::Sequence {
+                prefix: chord_prefix,
+                key,
+            }),
         )
     {
         return Some(message);
     }
-    if let Some(prefix) = armable_prefix(bindings, lookup.key_context, key) {
-        return Some(Message::Browse(BrowseRequest::ChordPrefix(prefix)));
+    if let Some(chord_prefix) = armable_prefix(bindings, binding_scope.key_context, key)
+    {
+        return Some(Message::ChordPrefix(chord_prefix));
     }
     bindings
         .iter()
-        .filter(|binding| binding.key_context == lookup.key_context)
-        .find(|binding| matched(binding.pattern, key))
+        .filter(|binding| binding.key_context == binding_scope.key_context)
+        .find(|binding| is_match(binding.pattern, key))
         .map(|binding| binding.message.clone())
 }
 
-fn looked_up(
+fn exact_match(
     bindings: &[KeyBinding],
     key_context: KeyContext,
     pattern: KeyPattern,
@@ -95,22 +92,24 @@ fn armable_prefix(
     key_context: KeyContext,
     key: Key,
 ) -> Option<ChordPrefix> {
-    let prefix = ChordPrefix::from_key(key)?;
+    let chord_prefix = ChordPrefix::from_key(key)?;
     bindings
         .iter()
         .filter(|binding| binding.key_context == key_context)
-        .any(|binding| starts_with(binding.pattern, prefix))
-        .then_some(prefix)
+        .any(|binding| starts_with(binding.pattern, chord_prefix))
+        .then_some(chord_prefix)
 }
 
-fn starts_with(pattern: KeyPattern, prefix: ChordPrefix) -> bool {
+fn starts_with(pattern: KeyPattern, chord_prefix: ChordPrefix) -> bool {
     match pattern {
-        KeyPattern::Chord(Chord::Sequence { prefix: armed, .. }) => armed == prefix,
+        KeyPattern::Chord(Chord::Sequence { prefix: armed, .. }) => {
+            armed == chord_prefix
+        }
         KeyPattern::Chord(Chord::Key(_)) | KeyPattern::AnyKey => false,
     }
 }
 
-fn matched(pattern: KeyPattern, key: Key) -> bool {
+fn is_match(pattern: KeyPattern, key: Key) -> bool {
     match pattern {
         KeyPattern::Chord(Chord::Key(bound)) => bound == key,
         KeyPattern::Chord(Chord::Sequence { .. }) => false,
@@ -134,7 +133,7 @@ fn typed_input(key_context: KeyContext, key: Key) -> Option<Message> {
         | KeyContext::Help
         | KeyContext::History
         | KeyContext::Settings
-        | KeyContext::ConfirmDelete
+        | KeyContext::ConfirmTrash
         | KeyContext::TrackDetails => None,
     }
 }

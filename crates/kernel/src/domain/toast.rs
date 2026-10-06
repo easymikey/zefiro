@@ -14,16 +14,16 @@ pub enum ToastLevel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Toast {
-    pub kind: ToastLevel,
+    pub level: ToastLevel,
     pub title: String,
     pub text: Option<String>,
     pub raised_at: Moment,
 }
 
 impl Toast {
-    fn of(kind: ToastLevel, title: impl Into<String>) -> Self {
+    fn of(level: ToastLevel, title: impl Into<String>) -> Self {
         Self {
-            kind,
+            level,
             title: title.into(),
             text: None,
             raised_at: Moment::default(),

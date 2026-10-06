@@ -17,9 +17,9 @@ use crate::{
         canvas::Canvas,
         format_chips::format_chip_values,
         glyphs,
-        relative_time::format_time,
         span::{line, text},
-        text::{truncate, truncate_from_left},
+        time_text::duration_text,
+        truncate::{truncate, truncate_head},
     },
     theme::active_theme::ActiveTheme,
 };
@@ -53,7 +53,7 @@ impl<'a> TrackDetailsWidget<'a> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
         OverlayAreas::Dialog(
-            self.modal(&value_rows(self.track))
+            self.modal(&TrackDetailsRow::all(self.track))
                 .areas(screen, self.avoid),
         )
     }
@@ -63,7 +63,7 @@ impl<'a> TrackDetailsWidget<'a> {
             return;
         };
         let buffer = canvas.buffer;
-        let rows = value_rows(self.track);
+        let rows = TrackDetailsRow::all(self.track);
         self.modal(&rows).paint(areas, buffer);
         if areas.body.width == 0 || areas.body.height == 0 {
             return;
@@ -88,7 +88,7 @@ impl<'a> TrackDetailsWidget<'a> {
             size: ModalSize::Dialog {
                 min_width: Cells(MIN_WIDTH),
                 content_width: Cells(content_width),
-                content_lines: Cells(small_count_u16(rows.len())),
+                content_rows: Cells(small_count_u16(rows.len())),
             },
             hint: Some(line([
                 text(glyphs::track_details::HINT).fg(colors.muted_foreground)
@@ -104,13 +104,13 @@ impl<'a> TrackDetailsWidget<'a> {
             .map(|detail_row| {
                 let budget = width.saturating_sub(detail_row.prefix.width());
                 let value = match detail_row.truncation {
-                    Truncation::Head => truncate_from_left(&detail_row.value, budget),
+                    Truncation::Head => truncate_head(&detail_row.value, budget),
                     Truncation::Tail => truncate(&detail_row.value, budget),
                 }
                 .into_owned();
                 line([
                     text(detail_row.prefix).fg(colors.muted_foreground),
-                    text(value).fg(colors.text),
+                    text(value).fg(colors.foreground),
                 ])
             })
             .collect()
@@ -135,21 +135,23 @@ struct TrackDetailsRow {
     truncation: Truncation,
 }
 
-fn value_rows(track: &Track) -> Vec<TrackDetailsRow> {
-    let path = TrackDetailsRow {
-        prefix: RowPrefix::Plain.prefix(glyphs::track_details::PATH_LABEL),
-        value: track.path().display().to_string(),
-        truncation: Truncation::Head,
-    };
-    tag_rows(track)
-        .into_iter()
-        .map(|(label, shape, value)| TrackDetailsRow {
-            prefix: shape.prefix(label),
-            value,
-            truncation: Truncation::Tail,
-        })
-        .chain(std::iter::once(path))
-        .collect()
+impl TrackDetailsRow {
+    fn all(track: &Track) -> Vec<TrackDetailsRow> {
+        let path_row = TrackDetailsRow {
+            prefix: RowPrefix::Plain.text(glyphs::track_details::PATH_LABEL),
+            value: track.path().display().to_string(),
+            truncation: Truncation::Head,
+        };
+        tag_rows(track)
+            .into_iter()
+            .map(|(label, shape, value)| TrackDetailsRow {
+                prefix: shape.text(label),
+                value,
+                truncation: Truncation::Tail,
+            })
+            .chain(std::iter::once(path_row))
+            .collect()
+    }
 }
 
 fn tag_rows(track: &Track) -> [(&'static str, RowPrefix, String); 7] {
@@ -185,7 +187,7 @@ fn tag_rows(track: &Track) -> [(&'static str, RowPrefix, String); 7] {
             RowPrefix::Plain,
             track.duration().map_or_else(
                 || glyphs::track_details::MISSING.to_string(),
-                format_time,
+                duration_text,
             ),
         ),
         (
@@ -203,7 +205,7 @@ enum RowPrefix {
 }
 
 impl RowPrefix {
-    fn prefix(self, label: &str) -> String {
+    fn text(self, label: &str) -> String {
         match self {
             Self::Leader => leader_prefix(label),
             Self::Plain => plain_prefix(label),
@@ -230,7 +232,7 @@ fn plain_prefix(label: &str) -> String {
 }
 
 fn track_number(track: &Track) -> String {
-    match (track.tags().track, track.tags().track_total) {
+    match (track.tags().track_number, track.tags().track_total) {
         (Some(number), Some(total)) => {
             format!("{number}{}{total}", glyphs::track_details::TRACK_OF)
         }
@@ -279,7 +281,7 @@ mod tests {
                 artist: Some("Audrey Hepburn".to_string()),
                 album: Some("Breakfast at Tiffany's".to_string()),
                 date: Some("1961".to_string()),
-                track: Some(3),
+                track_number: Some(3),
                 track_total: Some(12),
                 ..Tags::default()
             },
@@ -295,13 +297,14 @@ mod tests {
     #[rstest]
     fn track_details_overlay_shows_every_row_at_80x24(theme: Theme) {
         let track = full_track();
-        let overlay = TrackDetailsWidget::new(
+        let overlay_widget = TrackDetailsWidget::new(
             &track,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
         insta::assert_snapshot!(
-            rendered(80, 24, |frame| frame.render_widget(&overlay, frame.area()))
-                .to_string()
+            rendered(80, 24, |frame| frame
+                .render_widget(&overlay_widget, frame.area()))
+            .to_string()
         );
     }
 
@@ -318,28 +321,30 @@ mod tests {
             },
             audio_format: AudioFormat::default(),
         });
-        let overlay = TrackDetailsWidget::new(
+        let overlay_widget = TrackDetailsWidget::new(
             &track,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
         insta::assert_snapshot!(
-            rendered(48, 16, |frame| frame.render_widget(&overlay, frame.area()))
-                .to_string()
+            rendered(48, 16, |frame| frame
+                .render_widget(&overlay_widget, frame.area()))
+            .to_string()
         );
     }
 
     #[rstest]
     fn track_details_overlay_does_not_panic_on_a_tiny_terminal(theme: Theme) {
         let track = full_track();
-        let overlay = TrackDetailsWidget::new(
+        let overlay_widget = TrackDetailsWidget::new(
             &track,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
         assert_eq!(
-            rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()))
-                .buffer()
-                .area
-                .height,
+            rendered(4, 3, |frame| frame
+                .render_widget(&overlay_widget, frame.area()))
+            .buffer()
+            .area
+            .height,
             3
         );
     }

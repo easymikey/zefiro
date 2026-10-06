@@ -21,9 +21,9 @@ use crate::support::{effects, model_with_tracks, playing_model, update::update};
 
 #[test]
 fn toggling_from_stopped_starts_the_track() {
-    let mut m = model_with_tracks(3);
+    let mut model = model_with_tracks(3);
     let cmd = update(
-        &mut m,
+        &mut model,
         Message::Playback(PlaybackRequest::Toggle),
         Moment::default(),
     )
@@ -33,9 +33,9 @@ fn toggling_from_stopped_starts_the_track() {
 
 #[test]
 fn play_selected_emits_its_effects() {
-    let mut m = model_with_tracks(3);
+    let mut model = model_with_tracks(3);
     let cmd = update(
-        &mut m,
+        &mut model,
         Message::Browse(BrowseRequest::PlaySelected),
         Moment::default(),
     )
@@ -45,12 +45,12 @@ fn play_selected_emits_its_effects() {
 
 #[test]
 fn stepping_an_appearance_row_emits_its_effect() {
-    let mut m = Model::default();
-    let id = AppearanceField::SpeedChip;
+    let mut model = Model::default();
+    let field = AppearanceField::SpeedChip;
     let cmd = update(
-        &mut m,
+        &mut model,
         Message::Step {
-            row: SettingRow::Appearance(id),
+            row: SettingRow::Appearance(field),
             direction: Direction::Next,
         },
         Moment::default(),
@@ -61,9 +61,9 @@ fn stepping_an_appearance_row_emits_its_effect() {
 
 #[test]
 fn theme_reloaded_emits_its_effect() {
-    let mut m = Model::default();
+    let mut model = Model::default();
     let cmd = update(
-        &mut m,
+        &mut model,
         Message::Config(ConfigEvent::ThemeReloaded(ThemeName::from_static("noir"))),
         Moment::default(),
     )
@@ -73,9 +73,9 @@ fn theme_reloaded_emits_its_effect() {
 
 #[test]
 fn library_loaded_emits_its_effects() {
-    let mut m = Model::default();
+    let mut model = Model::default();
     let cmd = update(
-        &mut m,
+        &mut model,
         Message::Library(LibraryEvent::Loaded {
             tracks: vec![],
             revision: Revision::default(),
@@ -88,8 +88,12 @@ fn library_loaded_emits_its_effects() {
 
 #[test]
 fn a_track_ending_auto_advances_to_the_next_one() {
-    let mut m = playing_model(3);
-    let cmd =
-        update(&mut m, Message::Audio(AudioEvent::Ended), Moment::default()).unwrap();
+    let mut model = playing_model(3);
+    let cmd = update(
+        &mut model,
+        Message::Audio(AudioEvent::Ended),
+        Moment::default(),
+    )
+    .unwrap();
     insta::assert_debug_snapshot!(effects(cmd));
 }

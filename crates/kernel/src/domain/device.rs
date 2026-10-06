@@ -31,8 +31,8 @@ pub enum DeviceNameError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceDefault {
-    Default,
-    Named,
+    Yes,
+    No,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

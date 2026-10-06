@@ -41,7 +41,7 @@ expression: projected
                 "solar",
             ),
         ],
-        selected: Named(
+        theme_choice: Named(
             ThemeName(
                 "dark",
             ),

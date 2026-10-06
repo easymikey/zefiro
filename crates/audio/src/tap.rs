@@ -22,18 +22,18 @@ impl Writer {
     }
 }
 
-pub(crate) struct Handoff {
+pub(crate) struct SpectrumBuffers {
     sender: Sender<Input<[f32; WINDOW]>>,
     receiver: Receiver<Input<[f32; WINDOW]>>,
 }
 
-impl fmt::Debug for Handoff {
+impl fmt::Debug for SpectrumBuffers {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Handoff").finish_non_exhaustive()
+        f.debug_struct("SpectrumBuffers").finish_non_exhaustive()
     }
 }
 
-impl Handoff {
+impl SpectrumBuffers {
     fn take(&self) -> Option<Input<[f32; WINDOW]>> {
         self.receiver.try_recv().ok()
     }
@@ -52,7 +52,7 @@ impl fmt::Debug for SpectrumTap {
 impl SpectrumTap {
     #[must_use]
     pub fn silent() -> Self {
-        new_tap().1
+        spectrum_channel().1
     }
 
     pub(crate) fn latest(&self, out: &mut [f32; WINDOW]) {
@@ -60,43 +60,43 @@ impl SpectrumTap {
     }
 }
 
-pub(crate) fn new_tap() -> (Handoff, SpectrumTap) {
+pub(crate) fn spectrum_channel() -> (SpectrumBuffers, SpectrumTap) {
     let (input, output) = triple_buffer(&[0.0_f32; WINDOW]);
     let (sender, receiver) = crossbeam_channel::bounded(1);
     match sender.try_send(input) {
         Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
     }
     (
-        Handoff { sender, receiver },
+        SpectrumBuffers { sender, receiver },
         SpectrumTap {
             output: RefCell::new(output),
         },
     )
 }
 
-pub(crate) struct Tap<S> {
+pub(crate) struct TappedSource<S> {
     inner: S,
     writer: Option<Writer>,
-    give_back: Sender<Input<[f32; WINDOW]>>,
+    return_sender: Sender<Input<[f32; WINDOW]>>,
     frame: f32,
     channel: u16,
     hop: [f32; HOP],
     filled: usize,
 }
 
-impl<S> Tap<S>
+impl<S> TappedSource<S>
 where
     S: Source,
 {
-    pub(crate) fn new(inner: S, spectrum: &Handoff) -> Self {
-        let writer = spectrum.take().map(|input| Writer {
+    pub(crate) fn new(inner: S, spectrum_buffers: &SpectrumBuffers) -> Self {
+        let writer = spectrum_buffers.take().map(|input| Writer {
             scratch: [0.0; WINDOW],
             input,
         });
         Self {
             inner,
             writer,
-            give_back: spectrum.sender.clone(),
+            return_sender: spectrum_buffers.sender.clone(),
             frame: 0.0,
             channel: 0,
             hop: [0.0; HOP],
@@ -105,10 +105,10 @@ where
     }
 }
 
-impl<S> Drop for Tap<S> {
+impl<S> Drop for TappedSource<S> {
     fn drop(&mut self) {
         if let Some(writer) = self.writer.take() {
-            match self.give_back.try_send(writer.input) {
+            match self.return_sender.try_send(writer.input) {
                 Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
                 }
             }
@@ -116,7 +116,7 @@ impl<S> Drop for Tap<S> {
     }
 }
 
-impl<S> Iterator for Tap<S>
+impl<S> Iterator for TappedSource<S>
 where
     S: Source,
 {
@@ -150,7 +150,7 @@ where
     }
 }
 
-impl<S> Source for Tap<S>
+impl<S> Source for TappedSource<S>
 where
     S: Source,
 {
@@ -182,7 +182,7 @@ mod tests {
     use rodio::Source;
     use rstest::rstest;
 
-    use crate::tap::{HOP, SpectrumTap, Tap, WINDOW, new_tap};
+    use crate::tap::{HOP, SpectrumTap, TappedSource, WINDOW, spectrum_channel};
 
     struct Synthetic {
         samples: std::vec::IntoIter<f32>,
@@ -219,21 +219,23 @@ mod tests {
     #[case::a_partial_hop_stays_unpublished(HOP - 1)]
     #[case::a_single_hop_publishes_its_tail(HOP)]
     #[case::wrapping_past_the_window(WINDOW + HOP)]
-    fn the_tap_batches_by_hop_and_publishes_the_newest_window(#[case] count: usize) {
+    fn a_tapped_source_batches_by_hop_and_publishes_the_newest_window(
+        #[case] count: usize,
+    ) {
         let data = samples(count);
-        let (spectrum, tap) = new_tap();
-        let mut wrapped = Tap::new(
+        let (spectrum_buffers, spectrum_tap) = spectrum_channel();
+        let mut wrapped_source = TappedSource::new(
             Synthetic {
                 samples: data.clone().into_iter(),
             },
-            &spectrum,
+            &spectrum_buffers,
         );
 
-        let collected: Vec<f32> = wrapped.by_ref().collect();
+        let collected: Vec<f32> = wrapped_source.by_ref().collect();
         assert_eq!(collected, data);
 
         let mut out = [0.0f32; WINDOW];
-        tap.latest(&mut out);
+        spectrum_tap.latest(&mut out);
 
         let flushed = count - (count % HOP);
         let kept = flushed.min(out.len());
@@ -249,62 +251,62 @@ mod tests {
 
     #[test]
     fn a_reopened_stream_gets_the_writer_back() {
-        let (spectrum, tap) = new_tap();
+        let (spectrum_buffers, spectrum_tap) = spectrum_channel();
         let first_batch = samples(HOP);
-        let first = Tap::new(
+        let first = TappedSource::new(
             Synthetic {
                 samples: first_batch.clone().into_iter(),
             },
-            &spectrum,
+            &spectrum_buffers,
         );
         first.for_each(drop);
 
         let mut out = [0.0f32; WINDOW];
-        tap.latest(&mut out);
+        spectrum_tap.latest(&mut out);
         assert_eq!(out.get(out.len() - HOP..), Some(first_batch.as_slice()));
 
         let second_batch = samples(HOP);
-        let second = Tap::new(
+        let second = TappedSource::new(
             Synthetic {
                 samples: second_batch.clone().into_iter(),
             },
-            &spectrum,
+            &spectrum_buffers,
         );
         second.for_each(drop);
 
-        tap.latest(&mut out);
+        spectrum_tap.latest(&mut out);
         assert_eq!(out.get(out.len() - HOP..), Some(second_batch.as_slice()));
     }
 
     #[test]
-    fn a_second_tap_without_a_returned_writer_stays_silent() {
-        let (spectrum, tap) = new_tap();
-        let held = Tap::new(
+    fn a_second_tapped_source_without_a_returned_writer_stays_silent() {
+        let (spectrum_buffers, spectrum_tap) = spectrum_channel();
+        let held_source = TappedSource::new(
             Synthetic {
                 samples: Vec::new().into_iter(),
             },
-            &spectrum,
+            &spectrum_buffers,
         );
         let unlucky_batch = samples(HOP);
-        let unlucky = Tap::new(
+        let unlucky_source = TappedSource::new(
             Synthetic {
                 samples: unlucky_batch.into_iter(),
             },
-            &spectrum,
+            &spectrum_buffers,
         );
-        unlucky.for_each(drop);
+        unlucky_source.for_each(drop);
 
         let mut out = [0.0f32; WINDOW];
-        tap.latest(&mut out);
+        spectrum_tap.latest(&mut out);
         assert!(out.iter().all(|&sample| sample == 0.0));
-        drop(held);
+        drop(held_source);
     }
 
     #[test]
-    fn a_handoff_lends_its_writer_only_once() {
-        let (spectrum, _tap) = new_tap();
-        assert!(spectrum.take().is_some());
-        assert!(spectrum.take().is_none());
+    fn spectrum_buffers_lend_their_writer_only_once() {
+        let (spectrum_buffers, _spectrum_tap) = spectrum_channel();
+        assert!(spectrum_buffers.take().is_some());
+        assert!(spectrum_buffers.take().is_none());
     }
 
     #[test]

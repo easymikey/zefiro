@@ -31,7 +31,7 @@ impl Player {
             }
             Player::Loading(..) => Err(Unhandled),
             Player::Playing { .. } => {
-                self.pause(stamp.anchor.since, PausedBy::Listener)
+                self.pause(stamp.anchor.started_at, PausedBy::Listener)
             }
             Player::Paused { .. } => self.resume(stamp.anchor),
         }
@@ -101,7 +101,11 @@ impl Player {
             } => {
                 *self = Player::Playing {
                     track,
-                    playhead: Playhead::anchored(position, anchor.since, anchor.speed),
+                    playhead: Playhead::anchored(
+                        position,
+                        anchor.started_at,
+                        anchor.speed,
+                    ),
                     preloaded: None,
                 };
                 Ok(PlaybackChange::Play.cued())

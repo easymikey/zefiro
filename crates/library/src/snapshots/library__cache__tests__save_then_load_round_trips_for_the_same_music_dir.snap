@@ -16,7 +16,7 @@ expression: loaded
             album_artist: None,
             date: None,
             genre: None,
-            track: None,
+            track_number: None,
             track_total: None,
             disc: None,
             composer: None,
@@ -29,10 +29,10 @@ expression: loaded
             sample_rate: None,
             bits_per_sample: None,
             channels: None,
-            replay_gain: None,
+            decibels: None,
         },
         display: "Moon River",
-        tagging: Read(
+        tagging: Tagged(
             180s,
         ),
     },
@@ -49,7 +49,7 @@ expression: loaded
             album_artist: None,
             date: None,
             genre: None,
-            track: None,
+            track_number: None,
             track_total: None,
             disc: None,
             composer: None,
@@ -62,10 +62,10 @@ expression: loaded
             sample_rate: None,
             bits_per_sample: None,
             channels: None,
-            replay_gain: None,
+            decibels: None,
         },
         display: "Clair de Lune",
-        tagging: Read(
+        tagging: Tagged(
             180s,
         ),
     },

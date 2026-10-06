@@ -101,7 +101,7 @@ fn toasted() -> Message {
 )]
 #[case::queuing_a_track_raises_a_cue(
     model_with_tracks(3),
-    vec![Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(1)))],
+    vec![Message::Queue(QueueRequest::ToggleAt(ViewIndex::new(1)))],
     Cue::QueueChanged
 )]
 #[case::favoriting_raises_a_cue(
@@ -126,13 +126,13 @@ fn toasted() -> Message {
 )]
 #[case::the_system_raising_the_volume_raises_a_cue(
     model_with_tracks(3),
-    vec![Message::Macos(MacosEvent::Volume(Percent::clamped(60)))],
+    vec![Message::Macos(MacosEvent::VolumeChanged(Percent::clamped(60)))],
     Cue::VolumeChanged
 )]
 #[case::trashing_a_track_raises_a_cue(
     moon_library_scanned(),
-    vec![open(OverlayName::ConfirmDelete), Message::Overlay(OverlayRequest::Confirm)],
-    Cue::TrackDeleted
+    vec![open(OverlayName::ConfirmTrash), Message::Overlay(OverlayRequest::Confirm)],
+    Cue::TrackTrashed
 )]
 #[case::reloading_the_theme_raises_a_cue(
     model_with_tracks(3),
@@ -162,7 +162,7 @@ fn a_transition_raises_its_cue(
 #[test]
 fn the_system_echoing_a_volume_is_refused() {
     let mut model = model_with_tracks(3);
-    let message = Message::Macos(MacosEvent::Volume(model.transport.volume));
+    let message = Message::Macos(MacosEvent::VolumeChanged(model.transport.volume));
 
     let result = update(&mut model, message, Moment::default());
 
@@ -186,17 +186,17 @@ fn a_non_transition_stays_silent(
 #[case::the_next_key(vec![
     Message::Playback(PlaybackRequest::Next),
     Message::Audio(AudioEvent::Loaded(None)),
-    Message::Audio(AudioEvent::Playhead(Duration::from_millis(100))),
+    Message::Audio(AudioEvent::PositionReported(Duration::from_millis(100))),
 ])]
 #[case::a_gapless_handoff(vec![
-    Message::Audio(AudioEvent::Playhead(Duration::from_millis(100))),
+    Message::Audio(AudioEvent::PositionReported(Duration::from_millis(100))),
     Message::Audio(AudioEvent::TrackChanged),
-    Message::Audio(AudioEvent::Playhead(Duration::from_millis(10))),
+    Message::Audio(AudioEvent::PositionReported(Duration::from_millis(10))),
 ])]
 #[case::the_track_running_out(vec![
     Message::Audio(AudioEvent::Ended),
     Message::Audio(AudioEvent::Loaded(None)),
-    Message::Audio(AudioEvent::Playhead(Duration::from_millis(10))),
+    Message::Audio(AudioEvent::PositionReported(Duration::from_millis(10))),
 ])]
 fn one_track_change_cues_one_sweep_and_one_chip_pulse(#[case] messages: Vec<Message>) {
     let seen = cues(&mut playing_model(3), messages);
@@ -232,8 +232,8 @@ fn favoriting_twice_raises_two_cues_where_the_diff_saw_none() {
 #[test]
 fn enqueuing_the_same_track_twice_empties_the_queue_and_raises_a_cue_each_time() {
     let mut model = model_with_tracks(3);
-    let queued = Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(1)));
-    let seen = cues(&mut model, vec![queued.clone(), queued]);
+    let queued_message = Message::Queue(QueueRequest::ToggleAt(ViewIndex::new(1)));
+    let seen = cues(&mut model, vec![queued_message.clone(), queued_message]);
 
     assert!(model.queue.is_empty());
     assert_eq!(seen, vec![Cue::QueueChanged, Cue::QueueChanged]);

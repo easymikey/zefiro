@@ -10,12 +10,12 @@ use kernel::{
         direction::Direction,
         index::ViewIndex,
         model::Model,
-        overlay::{DeleteCandidate, Overlay, OverlayName},
+        overlay::{Overlay, OverlayName, TrashCandidate},
         player::{AbLoop, PausedBy, Player},
         playlist::{PlayOrder, RepeatMode},
         revision::Revision,
         time::Moment,
-        transport::{StreamError, Transport},
+        transport::{OutputError, Transport},
     },
     message::{AudioError, AudioEvent, Message, PlaybackRequest, Timer},
     update::{machine::Unhandled, update},
@@ -71,7 +71,7 @@ type Step = (
     Option<Overlay>,
     Cursor,
     Cursor,
-    Vec<kernel::domain::track::TrackRef>,
+    Vec<kernel::domain::track::TrackSource>,
     RepeatMode,
     PlayOrder,
     Transport,
@@ -94,7 +94,7 @@ fn walked(mut model: Model, messages: Vec<Message>) -> Vec<Step> {
                 model.workspace.browse.cursor,
                 model.playlist.cursor,
                 model.queue.clone(),
-                model.playlist.repeat,
+                model.playlist.repeat_mode,
                 model.playlist.play_order.clone(),
                 model.transport.clone(),
                 model.workspace.toasts.clone(),
@@ -133,13 +133,13 @@ fn resolved(message: Message, model: &Model) -> Message {
     moon_library_selecting(2),
     vec![open(OverlayName::Help), close()]
 )]
-#[case::confirm_delete_captures_the_selected_track_and_trashes_it(
+#[case::confirm_trash_captures_the_selected_track_and_trashes_it(
     moon_library_scanned(),
-    vec![open(OverlayName::ConfirmDelete), confirm()]
+    vec![open(OverlayName::ConfirmTrash), confirm()]
 )]
-#[case::confirm_delete_cancelled_trashes_nothing(
+#[case::confirm_trash_cancelled_trashes_nothing(
     moon_library_scanned(),
-    vec![open(OverlayName::ConfirmDelete), close()]
+    vec![open(OverlayName::ConfirmTrash), close()]
 )]
 #[case::track_details_shows_the_selected_playlist_track(
     moon_library_selecting(1),
@@ -275,7 +275,7 @@ fn resolved(message: Message, model: &Model) -> Message {
 #[case::shuffle_wraps_at_the_end_of_its_order_with_repeat_off(
     {
         let mut model = model_playing_at(4, 1, Duration::ZERO);
-        model.playlist.play_order = PlayOrder::Shuffle([2, 0, 3, 1].map(ViewIndex::new).to_vec());
+        model.playlist.play_order = PlayOrder::Shuffled([2, 0, 3, 1].map(ViewIndex::new).to_vec());
         model
     },
     vec![skip()]
@@ -283,7 +283,7 @@ fn resolved(message: Message, model: &Model) -> Message {
 #[case::toggling_shuffle_leaves_a_pin_the_engine_already_committed_to(
     {
         let mut model = model_playing_at(4, 0, Duration::ZERO);
-        model.playlist.play_order = PlayOrder::Shuffle([0, 2, 1, 3].map(ViewIndex::new).to_vec());
+        model.playlist.play_order = PlayOrder::Shuffled([0, 2, 1, 3].map(ViewIndex::new).to_vec());
         model
     },
     vec![near_the_end(), mark_fires(), shuffle(), handed_off()]
@@ -318,17 +318,17 @@ fn resolved(message: Message, model: &Model) -> Message {
 )]
 #[case::a_second_ab_press_past_the_start_closes_the_loop(
     model_playing_at(1, 0, Duration::from_secs(10)),
-    vec![mark_ab(), Message::Audio(AudioEvent::Playhead(Duration::from_secs(20))), mark_ab()]
+    vec![mark_ab(), Message::Audio(AudioEvent::PositionReported(Duration::from_secs(20))), mark_ab()]
 )]
 #[case::a_second_ab_press_before_the_start_waits(
     model_playing_at(1, 0, Duration::from_secs(10)),
-    vec![mark_ab(), Message::Audio(AudioEvent::Playhead(Duration::from_secs(5))), mark_ab()]
+    vec![mark_ab(), Message::Audio(AudioEvent::PositionReported(Duration::from_secs(5))), mark_ab()]
 )]
 #[case::a_third_ab_press_clears_the_loop(
     model_playing_at(1, 0, Duration::from_secs(10)),
     vec![
         mark_ab(),
-        Message::Audio(AudioEvent::Playhead(Duration::from_secs(20))),
+        Message::Audio(AudioEvent::PositionReported(Duration::from_secs(20))),
         mark_ab(),
         mark_ab(),
     ]
@@ -336,9 +336,9 @@ fn resolved(message: Message, model: &Model) -> Message {
 #[case::a_track_change_clears_the_loop_it_was_marked_on(
     {
         let mut model = model_playing_at(3, 0, Duration::ZERO);
-        model.transport.ab_loop = Some(AbLoop::Full {
-            a: Duration::from_secs(5),
-            b: Duration::from_secs(15),
+        model.transport.ab_loop = Some(AbLoop::BothMarked {
+            loop_start: Duration::from_secs(5),
+            loop_end: Duration::from_secs(15),
         });
         model
     },
@@ -379,9 +379,9 @@ fn router_trace(
 }
 
 #[rstest]
-#[case::confirm_delete_on_an_empty_playlist_never_opens(
+#[case::confirm_trash_on_an_empty_playlist_never_opens(
     Model::default(),
-    open(OverlayName::ConfirmDelete),
+    open(OverlayName::ConfirmTrash),
     Unhandled
 )]
 #[case::track_details_with_nothing_selected_and_nothing_playing_never_opens(
@@ -451,7 +451,7 @@ fn router_trace(
 #[case::an_ab_press_that_marks_nothing_new_is_refused(
     {
         let mut model = model_playing_at(1, 0, Duration::from_secs(10));
-        model.transport.ab_loop = Some(AbLoop::AOnly(Duration::from_secs(10)));
+        model.transport.ab_loop = Some(AbLoop::StartMarked(Duration::from_secs(10)));
         model
     },
     mark_ab(),
@@ -460,12 +460,12 @@ fn router_trace(
 fn a_refused_message_leaves_the_model_alone(
     #[case] mut model: Model,
     #[case] message: Message,
-    #[case] rejection: Unhandled,
+    #[case] unhandled: Unhandled,
 ) {
     let before = format!("{model:?}");
     assert_eq!(
         update(&mut model, message, Moment::default()).err(),
-        Some(rejection)
+        Some(unhandled)
     );
     assert_eq!(format!("{model:?}"), before);
 }
@@ -504,7 +504,7 @@ fn awaited(message: Message, model: &Model) -> Message {
 
 fn seek_failed() -> Message {
     Message::Audio(AudioEvent::Error(AudioError::Seek {
-        reason: Diagnostic::from_error(&std::io::Error::other(
+        diagnostic: Diagnostic::from_error(&std::io::Error::other(
             "the source cannot seek",
         )),
     }))
@@ -517,7 +517,7 @@ fn seek_failed() -> Message {
 )]
 #[case::a_lost_output_that_leaves_a_paused_player_alone(
     paused_model(),
-    Message::Audio(AudioEvent::OutputLost(StreamError::DeviceGone))
+    Message::Audio(AudioEvent::OutputLost(OutputError::DeviceGone))
 )]
 #[case::a_fired_sleep_that_leaves_a_paused_player_alone(
     sleeping_paused_model(),
@@ -559,8 +559,8 @@ fn a_self_loop_sleep_keeps_the_revisions() {
 #[test]
 fn a_refused_follow_up_keeps_the_parents_effects() {
     let mut model = Model::default();
-    model.workspace.overlay = Some(Overlay::ConfirmDelete(DeleteCandidate {
-        source: kernel::domain::track::TrackRef::Local("/music/gone.flac".into()),
+    model.workspace.overlay = Some(Overlay::ConfirmTrash(TrashCandidate {
+        source: kernel::domain::track::TrackSource::Local("/music/gone.flac".into()),
         title: "Gone".to_string(),
         artist: String::new(),
     }));

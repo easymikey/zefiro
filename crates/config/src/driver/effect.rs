@@ -8,7 +8,7 @@ use kernel::{
 };
 
 use crate::{
-    driver::{message::ConfigMessage, watch::WatchEffect},
+    driver::{message::ConfigMessage, watch::ConfigWatchEffect},
     theme_file::TomlTheme,
 };
 
@@ -17,7 +17,7 @@ pub(crate) type ConfigLoopCmd =
 
 #[derive(Debug, PartialEq)]
 pub enum ConfigEffect {
-    Watch(WatchEffect),
+    Watch(ConfigWatchEffect),
     SaveConfig(ConfigPatch),
     SaveAppearance(AppearancePatch),
     PublishTheme(TomlTheme),

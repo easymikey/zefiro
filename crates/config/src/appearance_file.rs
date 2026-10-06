@@ -94,8 +94,8 @@ pub struct TomlProgress {
     pub fill: Option<Rgb>,
     #[serde(deserialize_with = "from_str_option")]
     pub groove: Option<Rgb>,
-    #[serde(deserialize_with = "crate::appearance::flag")]
-    pub(crate) remaining: ProgressTime,
+    #[serde(rename = "remaining", deserialize_with = "crate::appearance::flag")]
+    pub(crate) progress_time: ProgressTime,
 }
 
 impl Default for TomlProgress {
@@ -105,7 +105,7 @@ impl Default for TomlProgress {
             radius: None,
             fill: None,
             groove: None,
-            remaining: ProgressTime::default(),
+            progress_time: ProgressTime::default(),
         }
     }
 }
@@ -160,20 +160,20 @@ pub struct TomlAppearance {
 }
 
 impl TomlAppearance {
-    pub fn settings(&self) -> AppearanceSettings {
+    pub fn to_appearance_settings(&self) -> AppearanceSettings {
         AppearanceSettings {
             cover_mode: self.cover.mode,
             cover_brackets: self.cover.brackets,
             format_chips: self.card.format_chips,
             speed_chip: self.card.speed_chip,
-            progress_time: self.progress.remaining,
+            progress_time: self.progress.progress_time,
             key_hints: self.window.key_hints,
             animations: self.window.animations,
             layout_mode: self.layout.mode,
         }
     }
 
-    pub fn appearance(&self) -> Appearance {
+    pub fn to_appearance(&self) -> Appearance {
         let TomlCoverCells { width, height } = self.cover.cover_cells;
         let layout = &self.layout;
         let progress = &self.progress;
@@ -190,7 +190,7 @@ impl TomlAppearance {
                 min_width: Cells(layout.min_width),
                 min_height: Cells(layout.min_height),
             },
-            progress: ProgressBar {
+            progress_bar: ProgressBar {
                 height: progress.height,
                 radius: progress.radius,
                 fill: progress.fill,
@@ -200,8 +200,8 @@ impl TomlAppearance {
     }
 }
 
-pub fn parse_appearance(source: &str) -> Result<TomlAppearance, Error> {
-    parse_toml(source, ConfigName::Appearance)
+pub fn parse_appearance(text: &str) -> Result<TomlAppearance, Error> {
+    parse_toml(text, ConfigName::Appearance)
 }
 
 #[cfg(test)]
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn the_stock_file_offers_the_stock_appearance() {
         assert_eq!(
-            TomlAppearance::default().settings(),
+            TomlAppearance::default().to_appearance_settings(),
             AppearanceSettings::default()
         );
     }
@@ -288,9 +288,9 @@ mod tests {
 
     #[test]
     fn a_duplicate_table_names_the_ui_file_and_its_line() {
-        let source = "[cover]\nmode = \"plain\"\n[card]\n[card]\n";
+        let text = "[cover]\nmode = \"plain\"\n[card]\n[card]\n";
 
-        let broken = parse_appearance(source)
+        let broken = parse_appearance(text)
             .expect_err("a duplicate table must not parse")
             .to_string();
 
@@ -330,7 +330,7 @@ mod tests {
             assert_eq!(c.cover.brackets, CoverBrackets::Shown);
             assert_eq!(c.card.format_chips, FormatChips::Shown);
             assert_eq!(c.card.speed_chip, SpeedChip::Changed);
-            assert_eq!(c.progress.remaining, ProgressTime::Remaining);
+            assert_eq!(c.progress.progress_time, ProgressTime::Remaining);
         }
     )]
     #[case::the_window_flags("[window]\nkey_hints = false\n", |c: &TomlAppearance| {

@@ -6,10 +6,7 @@ use std::{
 use kernel::domain::revision::Revision;
 
 use crate::{
-    deck::{
-        event::DeckEvent,
-        source::{TrackDecoder, decode},
-    },
+    deck::source::{TrackDecoder, decode},
     device::list_output_devices,
     engine::message::AudioMessage,
     error::{Error, list_devices_error},
@@ -28,15 +25,15 @@ impl AudioJob {
         match self {
             AudioJob::Decode { path, revision } => {
                 let result = decode_caught(path);
-                AudioMessage::Deck(DeckEvent::Decoded { revision, result })
+                AudioMessage::Decoded { revision, result }
             }
             AudioJob::Preload { path, revision } => {
                 let result = decode_caught(path);
-                AudioMessage::Deck(DeckEvent::Preloaded { revision, result })
+                AudioMessage::Preloaded { revision, result }
             }
-            AudioJob::ListDevices => AudioMessage::Deck(DeckEvent::DevicesListed(
+            AudioJob::ListDevices => AudioMessage::DevicesListed(
                 list_output_devices().map_err(|error| list_devices_error(&error)),
-            )),
+            ),
         }
     }
 }

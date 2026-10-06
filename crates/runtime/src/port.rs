@@ -29,10 +29,10 @@ pub(crate) enum Episode {
 #[derive(Debug)]
 pub(crate) enum Port<C> {
     Open {
-        driver: DriverName,
-        full: Congestion,
+        driver_name: DriverName,
+        congestion: Congestion,
         episode: Episode,
-        sender: Sender<C>,
+        cmd_sender: Sender<C>,
         thread: JoinHandle<Result<(), SendError>>,
     },
     HungUp(JoinHandle<Result<(), SendError>>),
@@ -40,21 +40,26 @@ pub(crate) enum Port<C> {
 }
 
 impl<C> Port<C> {
-    pub(crate) fn spawned(driver: DriverName, thread: DriverThread<C>) -> Self {
+    pub(crate) fn spawned(driver_name: DriverName, thread: DriverThread<C>) -> Self {
         Self::Open {
-            driver,
-            full: thread.full,
+            driver_name,
+            congestion: thread.congestion,
             episode: Episode::Clear,
-            sender: thread.commands,
+            cmd_sender: thread.cmd_sender,
             thread: thread.handle,
         }
     }
 
-    pub(crate) fn full(&mut self) -> Option<DriverEvent> {
-        let Self::Open { full, episode, .. } = self else {
+    pub(crate) fn congestion(&mut self) -> Option<DriverEvent> {
+        let Self::Open {
+            congestion,
+            episode,
+            ..
+        } = self
+        else {
             return None;
         };
-        match (full.take(), *episode) {
+        match (congestion.take(), *episode) {
             (true, Episode::Clear) => {
                 *episode = Episode::Reported;
                 Some(DriverEvent::Full)
@@ -84,22 +89,22 @@ impl<C> Port<C> {
         }
     }
 
-    pub(crate) fn send(&self, drivers: &Drivers, command: C) -> Result<(), DropReason> {
+    pub(crate) fn send(&self, drivers: &Drivers, cmd: C) -> Result<(), DropReason> {
         let Self::Open {
-            driver,
-            full,
-            sender,
+            driver_name,
+            congestion,
+            cmd_sender,
             ..
         } = self
         else {
             return Err(DropReason::Closed);
         };
-        if !matches!(drivers.status(*driver), DriverStatus::Running) {
+        if !matches!(drivers.status(*driver_name), DriverStatus::Running) {
             return Err(DropReason::NotRunning);
         }
-        sender.try_send(command).map_err(|error| match error {
+        cmd_sender.try_send(cmd).map_err(|error| match error {
             TrySendError::Full(_) => {
-                full.raise();
+                congestion.raise();
                 DropReason::Full
             }
             TrySendError::Disconnected(_) => DropReason::Closed,
@@ -116,17 +121,20 @@ pub(crate) struct Ports {
 }
 
 impl Ports {
-    pub(crate) fn full(&mut self, driver: DriverName) -> Option<DriverEvent> {
-        match driver {
-            DriverName::Audio => self.audio.full(),
-            DriverName::Library => self.library.full(),
-            DriverName::Config => self.config.full(),
-            DriverName::Macos => self.macos.full(),
+    pub(crate) fn congestion(
+        &mut self,
+        driver_name: DriverName,
+    ) -> Option<DriverEvent> {
+        match driver_name {
+            DriverName::Audio => self.audio.congestion(),
+            DriverName::Library => self.library.congestion(),
+            DriverName::Config => self.config.congestion(),
+            DriverName::Macos => self.macos.congestion(),
         }
     }
 
-    pub(crate) fn hang_up(&mut self, driver: DriverName) {
-        match driver {
+    pub(crate) fn hang_up(&mut self, driver_name: DriverName) {
+        match driver_name {
             DriverName::Audio => self.audio.hang_up(),
             DriverName::Library => self.library.hang_up(),
             DriverName::Config => self.config.hang_up(),
@@ -136,9 +144,9 @@ impl Ports {
 
     pub(crate) fn join(
         &mut self,
-        driver: DriverName,
+        driver_name: DriverName,
     ) -> Option<thread::Result<Result<(), SendError>>> {
-        match driver {
+        match driver_name {
             DriverName::Audio => self.audio.join(),
             DriverName::Library => self.library.join(),
             DriverName::Config => self.config.join(),
@@ -165,15 +173,15 @@ mod tests {
 
     impl<C> Port<C> {
         pub(crate) fn new(
-            driver: DriverName,
-            sender: Sender<C>,
-            full: Congestion,
+            driver_name: DriverName,
+            cmd_sender: Sender<C>,
+            congestion: Congestion,
         ) -> Self {
             Self::Open {
-                driver,
-                full,
+                driver_name,
+                congestion,
                 episode: Episode::Clear,
-                sender,
+                cmd_sender,
                 thread: thread::spawn(|| Ok(())),
             }
         }
@@ -207,13 +215,13 @@ mod tests {
         #[case] inbox: Inbox,
         #[case] expected: Result<(), DropReason>,
     ) {
-        let (sender, receiver) = unbounded();
+        let (cmd_sender, cmd_receiver) = unbounded();
         if let Inbox::Dropped = inbox {
-            drop(receiver);
+            drop(cmd_receiver);
         }
         let mut drivers = Drivers::default();
         drivers.record_mut(DriverName::Audio).status = status;
-        let port = Port::new(DriverName::Audio, sender, Congestion::default());
+        let port = Port::new(DriverName::Audio, cmd_sender, Congestion::default());
 
         let sent = port.send(&drivers, AudioCmd::Stop);
 
@@ -221,18 +229,18 @@ mod tests {
     }
 
     #[test]
-    fn a_full_inbox_is_dropped_and_raises_the_flag() {
-        let (sender, _receiver) = bounded(1);
+    fn a_full_cmd_receiver_is_dropped_and_raises_the_flag() {
+        let (cmd_sender, _cmd_receiver) = bounded(1);
         let mut drivers = Drivers::default();
         drivers.record_mut(DriverName::Audio).status = DriverStatus::Running;
-        let full = Congestion::default();
-        let port = Port::new(DriverName::Audio, sender, full.clone());
+        let congestion = Congestion::default();
+        let port = Port::new(DriverName::Audio, cmd_sender, congestion.clone());
 
         port.send(&drivers, AudioCmd::Stop).unwrap();
         let second = port.send(&drivers, AudioCmd::Stop);
 
         assert_eq!(second, Err(DropReason::Full));
-        assert!(full.take());
+        assert!(congestion.take());
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,8 +283,8 @@ mod tests {
         #[case] expected: Stage,
         #[case] joined_last: bool,
     ) {
-        let (sender, receiver) = unbounded::<AudioCmd>();
-        let mut port = Port::new(DriverName::Audio, sender, Congestion::default());
+        let (cmd_sender, cmd_receiver) = unbounded::<AudioCmd>();
+        let mut port = Port::new(DriverName::Audio, cmd_sender, Congestion::default());
         let mut last_join = None;
 
         for step in steps {
@@ -288,21 +296,21 @@ mod tests {
 
         assert_eq!(stage(&port), expected);
         assert_eq!(last_join.is_some_and(|exit| exit.is_some()), joined_last);
-        drop(receiver);
+        drop(cmd_receiver);
     }
 
     #[test]
-    fn a_hung_up_port_refuses_every_command() {
-        let (sender, _receiver) = unbounded();
+    fn a_hung_up_port_refuses_every_cmd() {
+        let (cmd_sender, _cmd_receiver) = unbounded();
         let mut drivers = Drivers::default();
         drivers.record_mut(DriverName::Audio).status = DriverStatus::Running;
         let congestion = Congestion::default();
-        let mut port = Port::new(DriverName::Audio, sender, congestion.clone());
+        let mut port = Port::new(DriverName::Audio, cmd_sender, congestion.clone());
         congestion.raise();
 
         port.hang_up();
 
         assert_eq!(port.send(&drivers, AudioCmd::Stop), Err(DropReason::Closed));
-        assert!(port.full().is_none());
+        assert!(port.congestion().is_none());
     }
 }

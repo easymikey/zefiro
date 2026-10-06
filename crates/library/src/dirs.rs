@@ -25,11 +25,11 @@ impl LibraryDirs {
         })
     }
 
-    pub fn under(root: &std::path::Path) -> Self {
+    pub fn under(root_dir: &std::path::Path) -> Self {
         Self {
-            cache_dir: root.join("cache"),
-            data_dir: root.join("data"),
-            playlists_dir: root.join("playlists"),
+            cache_dir: root_dir.join("cache"),
+            data_dir: root_dir.join("data"),
+            playlists_dir: root_dir.join("playlists"),
         }
     }
 }

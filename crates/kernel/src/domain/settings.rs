@@ -15,9 +15,9 @@ pub struct AudioSettings {
 
 #[derive(Debug, Clone, Default)]
 pub struct Settings {
-    pub audio: AudioSettings,
+    pub audio_settings: AudioSettings,
     pub output_devices: Vec<ListedDevice>,
-    pub appearance: AppearanceSettings,
+    pub appearance_settings: AppearanceSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

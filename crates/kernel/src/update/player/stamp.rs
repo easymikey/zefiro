@@ -10,14 +10,14 @@ use crate::{
 
 #[derive(Debug, Clone, Copy)]
 pub struct Anchor {
-    pub since: Moment,
+    pub started_at: Moment,
     pub speed: Speed,
 }
 
 impl Anchor {
     pub(crate) fn at(transport: &Transport, now: Moment) -> Self {
         Anchor {
-            since: now,
+            started_at: now,
             speed: transport.speed,
         }
     }

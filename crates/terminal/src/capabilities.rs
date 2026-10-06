@@ -48,7 +48,7 @@ pub enum TerminalApp {
 
 impl TerminalApp {
     #[must_use]
-    pub fn detect(environment: &TerminalEnvironment) -> Self {
+    pub fn from_environment(environment: &TerminalEnvironment) -> Self {
         let program = environment.term_program.as_deref().unwrap_or("");
         let term = environment.term.as_deref().unwrap_or("");
         if environment.kitty_window_id.is_some() || term.contains("kitty") {
@@ -109,7 +109,9 @@ impl Capabilities {
     pub fn from_environment(environment: &TerminalEnvironment) -> Self {
         Capabilities {
             picker: Picker::halfblocks(),
-            color_depth: ColorDepth::detect(environment.term_program.as_deref()),
+            color_depth: ColorDepth::from_term_program(
+                environment.term_program.as_deref(),
+            ),
         }
     }
 
@@ -224,11 +226,11 @@ mod tests {
         TerminalApp::Apple
     )]
     #[case::nothing_named(TerminalEnvironment::default(), TerminalApp::Unknown)]
-    fn detect_names_the_terminal(
+    fn from_environment_names_the_terminal(
         #[case] environment: TerminalEnvironment,
         #[case] expected: TerminalApp,
     ) {
-        assert_eq!(TerminalApp::detect(&environment), expected);
+        assert_eq!(TerminalApp::from_environment(&environment), expected);
     }
 
     #[rstest]
@@ -343,7 +345,7 @@ mod tests {
         assert_eq!(capabilities.pixel_path(), PixelPath::Halfblocks);
         assert_eq!(
             capabilities.color_depth,
-            ColorDepth::detect(environment.term_program.as_deref())
+            ColorDepth::from_term_program(environment.term_program.as_deref())
         );
     }
 
@@ -360,7 +362,7 @@ mod tests {
         picker.set_protocol_type(protocol_type);
         let capabilities = Capabilities {
             picker,
-            color_depth: ColorDepth::detect(None),
+            color_depth: ColorDepth::from_term_program(None),
         };
         assert_eq!(capabilities.pixel_path(), expected);
     }

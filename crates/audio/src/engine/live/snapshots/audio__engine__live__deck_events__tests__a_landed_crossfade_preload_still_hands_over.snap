@@ -19,7 +19,7 @@ expression: log
     Cmd {
         effects: [
             Execute(
-                Arm(
+                SetFadeStart(
                     Some(
                         90s,
                     ),

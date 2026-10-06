@@ -25,7 +25,7 @@ impl Machine for Playlist {
             PlaylistMessage::ToggleShuffle => {
                 self.play_order = match &self.play_order {
                     PlayOrder::Linear => PlayOrder::ShufflePending,
-                    PlayOrder::ShufflePending | PlayOrder::Shuffle(_) => {
+                    PlayOrder::ShufflePending | PlayOrder::Shuffled(_) => {
                         PlayOrder::Linear
                     }
                 };
@@ -33,13 +33,13 @@ impl Machine for Playlist {
             }
             PlaylistMessage::ShuffleRolled(order) => match &self.play_order {
                 PlayOrder::Linear => return Err(Unhandled),
-                PlayOrder::ShufflePending | PlayOrder::Shuffle(_) => {
-                    self.play_order = PlayOrder::Shuffle(order);
+                PlayOrder::ShufflePending | PlayOrder::Shuffled(_) => {
+                    self.play_order = PlayOrder::Shuffled(order);
                     Cmd::none()
                 }
             },
             PlaylistMessage::CycleRepeat => {
-                self.repeat = cycled(self.repeat, Direction::Next);
+                self.repeat_mode = cycled(self.repeat_mode, Direction::Next);
                 Cmd::none()
             }
         })
@@ -65,13 +65,13 @@ mod tests {
     fn ordered(play_order: PlayOrder, repeat_mode: RepeatMode) -> Playlist {
         Playlist {
             play_order,
-            repeat: repeat_mode,
+            repeat_mode,
             ..Playlist::default()
         }
     }
 
     fn shuffled(positions: &[usize]) -> PlayOrder {
-        PlayOrder::Shuffle(positions.iter().copied().map(ViewIndex::new).collect())
+        PlayOrder::Shuffled(positions.iter().copied().map(ViewIndex::new).collect())
     }
 
     fn rolled(positions: &[usize]) -> PlaylistMessage {
@@ -109,15 +109,15 @@ mod tests {
         PlaylistMessage::CycleRepeat,
         ordered(PlayOrder::Linear, RepeatMode::Off)
     )]
-    fn a_playlist_message_updates_the_play_order_and_repeat(
+    fn a_playlist_message_updates_the_play_order_and_repeat_mode(
         #[case] mut playlist: Playlist,
         #[case] message: PlaylistMessage,
         #[case] after: Playlist,
     ) {
         assert_eq!(playlist.transition(message), Ok(Cmd::none()));
         assert_eq!(
-            (playlist.play_order, playlist.repeat),
-            (after.play_order, after.repeat)
+            (playlist.play_order, playlist.repeat_mode),
+            (after.play_order, after.repeat_mode)
         );
     }
 

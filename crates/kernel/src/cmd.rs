@@ -21,7 +21,7 @@ use crate::{
         sleep_presets::SleepPresets,
         speed::Speed,
         theme::{ThemeChoice, ThemeName},
-        track::{Track, TrackRef},
+        track::{Track, TrackSource},
     },
     message::{Message, Timer},
 };
@@ -29,7 +29,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ScanMode {
     #[default]
-    Full,
+    Fresh,
     Cached,
 }
 
@@ -38,7 +38,7 @@ pub struct ConfigPatch {
     pub crossfade: Option<Crossfade>,
     pub device: Option<OutputDevice>,
     pub replay_gain: Option<ReplayGain>,
-    pub theme: Option<ThemeName>,
+    pub theme_name: Option<ThemeName>,
     pub volume: Option<Percent>,
     pub sleep_presets: Option<SleepPresets>,
     pub music_dir: Option<PathBuf>,
@@ -51,7 +51,7 @@ impl ConfigPatch {
             crossfade: later.crossfade.or(self.crossfade),
             device: later.device.or(self.device),
             replay_gain: later.replay_gain.or(self.replay_gain),
-            theme: later.theme.or(self.theme),
+            theme_name: later.theme_name.or(self.theme_name),
             volume: later.volume.or(self.volume),
             sleep_presets: later.sleep_presets.or(self.sleep_presets),
             music_dir: later.music_dir.or(self.music_dir),
@@ -76,7 +76,7 @@ pub enum ConfigCmd {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackLoad {
     pub path: PathBuf,
-    pub gain: Option<crate::domain::track::Decibels>,
+    pub decibels: Option<crate::domain::track::Decibels>,
     pub revision: Revision,
 }
 
@@ -85,7 +85,7 @@ impl TrackLoad {
     pub fn for_track(track: &Track, revision: Revision) -> Self {
         Self {
             path: track.path().to_path_buf(),
-            gain: track.audio_format().replay_gain,
+            decibels: track.audio_format().decibels,
             revision,
         }
     }
@@ -128,7 +128,7 @@ pub enum LibraryCmd {
     },
     TagTracks {
         music_dir: PathBuf,
-        tracks: Vec<TrackRef>,
+        track_sources: Vec<TrackSource>,
         revision: Revision,
     },
     DecodeCover(CoverJob),
@@ -245,9 +245,9 @@ impl<E, M> Cmd<E, M> {
         (self.effects, self.messages)
     }
 
-    pub fn then(mut self, other: Cmd<E, M>) -> Cmd<E, M> {
-        self.effects.extend(other.effects);
-        self.messages.extend(other.messages);
+    pub fn then(mut self, cmd: Cmd<E, M>) -> Cmd<E, M> {
+        self.effects.extend(cmd.effects);
+        self.messages.extend(cmd.messages);
         self
     }
 
@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn config_patch_then_folds_disjoint_fields_and_the_later_field_wins() {
         let earlier_patch = ConfigPatch {
-            theme: Some(ThemeName::from_static("dark")),
+            theme_name: Some(ThemeName::from_static("dark")),
             crossfade: Some(crossfade(1)),
             ..ConfigPatch::default()
         };
@@ -321,7 +321,10 @@ mod tests {
 
         let merged = earlier_patch.then(later);
 
-        assert_eq!(merged.theme.as_ref().map(ThemeName::as_str), Some("dark"));
+        assert_eq!(
+            merged.theme_name.as_ref().map(ThemeName::as_str),
+            Some("dark")
+        );
         assert_eq!(merged.crossfade, Some(crossfade(3)));
     }
 
@@ -343,10 +346,9 @@ mod tests {
 
     #[test]
     fn then_with_none_keeps_the_other_cmd() {
-        let leading: Cmd = Cmd::effect(Effect::Audio(AudioCmd::Stop));
-        assert_eq!(Cmd::none().then(leading.clone()), leading);
-        let trailing: Cmd = Cmd::effect(Effect::Audio(AudioCmd::Stop));
-        assert_eq!(trailing.clone().then(Cmd::none()), trailing);
+        let cmd: Cmd = Cmd::effect(Effect::Audio(AudioCmd::Stop));
+        assert_eq!(Cmd::none().then(cmd.clone()), cmd);
+        assert_eq!(cmd.clone().then(Cmd::none()), cmd);
     }
 
     #[test]
@@ -379,17 +381,19 @@ mod tests {
             Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
             Effect::Audio(AudioCmd::Stop),
         ]);
-        let borrowed: Vec<&Effect> = cmd.effects().collect();
+        {
+            let effects: Vec<&Effect> = cmd.effects().collect();
+            assert!(matches!(
+                effects.as_slice(),
+                [
+                    Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
+                    Effect::Audio(AudioCmd::Stop)
+                ]
+            ));
+        }
+        let effects: Vec<Effect> = cmd.into_iter().collect();
         assert!(matches!(
-            borrowed.as_slice(),
-            [
-                Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
-                Effect::Audio(AudioCmd::Stop)
-            ]
-        ));
-        let owned: Vec<Effect> = cmd.into_iter().collect();
-        assert!(matches!(
-            owned.as_slice(),
+            effects.as_slice(),
             [
                 Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
                 Effect::Audio(AudioCmd::Stop)

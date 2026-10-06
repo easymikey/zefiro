@@ -21,6 +21,7 @@ use crate::{
         modal::{
             frame::{Modal, ModalAreas, ModalSize},
             metrics::{QUERY_ROWS, modal_title},
+            place::FullWidth,
             placement::{ModalBorder, ModalContainer, OverlayAreas, leading_cells},
         },
         search::matches::{SearchMatchList, paint_match_pane, paint_match_rows},
@@ -39,7 +40,7 @@ use crate::{
 pub(crate) struct SearchWidget<'a> {
     theme: ActiveTheme<'a>,
     tracks: &'a [Arc<Track>],
-    search: &'a CursorOver<SearchQuery>,
+    search_query: &'a CursorOver<SearchQuery>,
     bounds: Rect,
     container: ModalContainer<'a>,
 }
@@ -53,9 +54,9 @@ impl<'a> SearchWidget<'a> {
         Self {
             theme: active_theme,
             tracks: &[],
-            search: query,
+            search_query: query,
             bounds: Rect::default(),
-            container: ModalContainer::Modal(&[]),
+            container: ModalContainer::Floating(&[]),
         }
     }
 
@@ -81,14 +82,14 @@ impl<'a> SearchWidget<'a> {
 struct SearchHeader<'a> {
     query: &'a str,
     matches: usize,
-    total: usize,
+    tracks_len: usize,
 }
 
 impl SearchWidget<'_> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
         match self.container {
-            ModalContainer::Modal(avoid) => {
+            ModalContainer::Floating(avoid) => {
                 OverlayAreas::Dialog(self.modal().areas(screen, avoid))
             }
             ModalContainer::Playlist(pane) => {
@@ -108,9 +109,9 @@ impl SearchWidget<'_> {
 
     fn header(&self) -> SearchHeader<'_> {
         SearchHeader {
-            query: &self.search.content.input,
-            matches: self.search.content.matches.len(),
-            total: self.tracks.len(),
+            query: &self.search_query.content.input,
+            matches: self.search_query.content.matches.len(),
+            tracks_len: self.tracks.len(),
         }
     }
 
@@ -127,10 +128,10 @@ impl SearchWidget<'_> {
         let colors = self.theme.colors();
         Modal {
             title: glyphs::search::TITLE_WORD,
-            size: ModalSize::FrameWidth {
+            size: ModalSize::FullWidth(FullWidth {
                 bounds: self.bounds,
-                content_rows: Cells(content_rows(self.search)),
-            },
+                content_rows: Cells(content_rows(self.search_query)),
+            }),
             hint: None,
             border: colors.muted_foreground,
             window_background: colors.window_background,
@@ -205,7 +206,7 @@ impl SearchWidget<'_> {
         SearchMatchList {
             area,
             tracks: self.tracks,
-            search: self.search,
+            search_query: self.search_query,
             colors: self.theme.colors(),
             lead,
         }
@@ -221,7 +222,12 @@ impl Widget for &SearchWidget<'_> {
 fn search_title(header: &SearchHeader<'_>, theme: ActiveTheme<'_>) -> Line<'static> {
     modal_title(
         glyphs::search::TITLE_WORD,
-        format!("{} {} {}", header.matches, glyphs::search::OF, header.total),
+        format!(
+            "{} {} {}",
+            header.matches,
+            glyphs::search::OF,
+            header.tracks_len
+        ),
         theme.colors(),
     )
 }
@@ -229,40 +235,40 @@ fn search_title(header: &SearchHeader<'_>, theme: ActiveTheme<'_>) -> Line<'stat
 fn query_line(header: &SearchHeader<'_>, colors: Colors<Color>) -> Line<'static> {
     line([
         text(glyphs::search::HEADER_PREFIX).fg(colors.accent),
-        text(header.query.to_string()).fg(colors.text),
+        text(header.query.to_string()).fg(colors.foreground),
         text(glyphs::search::CURSOR).fg(colors.accent),
     ])
 }
 
 fn header_line(header: &SearchHeader<'_>, colors: Colors<Color>) -> Line<'static> {
-    let summary = match_count_text(header.matches, header.total);
+    let summary = match_count_text(header.matches, header.tracks_len);
     line([
         text(glyphs::search::HEADER_PREFIX).fg(colors.accent),
-        text(header.query.to_string()).fg(colors.text),
+        text(header.query.to_string()).fg(colors.foreground),
         text(glyphs::search::CURSOR).fg(colors.accent),
-        text(glyphs::search::HEADER_GAP).fg(colors.text),
+        text(glyphs::search::HEADER_GAP).fg(colors.foreground),
         text(summary).fg(colors.muted_foreground),
     ])
 }
 
-fn match_count_text(matches: usize, total: usize) -> String {
+fn match_count_text(matches: usize, tracks_len: usize) -> String {
     let noun = if matches == 1 {
         glyphs::search::MATCH_SINGULAR
     } else {
         glyphs::search::MATCH_PLURAL
     };
     format!(
-        "{matches} {noun} {} {total} {}",
+        "{matches} {noun} {} {tracks_len} {}",
         glyphs::search::OF,
         glyphs::search::TOTAL
     )
 }
 
-fn content_rows(search: &CursorOver<SearchQuery>) -> u16 {
-    let match_rows = if search.content.matches.is_empty() {
+fn content_rows(search_query: &CursorOver<SearchQuery>) -> u16 {
+    let match_rows = if search_query.content.matches.is_empty() {
         1
     } else {
-        small_count_u16(search.content.matches.len())
+        small_count_u16(search_query.content.matches.len())
     };
     1u16.saturating_add(match_rows)
 }
@@ -303,11 +309,11 @@ mod tests {
     fn query(
         input: &str,
         matches: Vec<usize>,
-        selected: usize,
+        selected_index: usize,
     ) -> CursorOver<SearchQuery> {
         let length = matches.len();
         CursorOver {
-            cursor: Cursor::at(length, selected),
+            cursor: Cursor::at(length, selected_index),
             content: SearchQuery {
                 input: input.to_string(),
                 matches: matches.into_iter().map(ViewIndex::new).collect(),
@@ -377,16 +383,16 @@ mod tests {
     fn search_overlay_modal_mode_reports_the_match_count(
         #[case] label: &str,
         #[case] matches: Vec<usize>,
-        #[case] selected: usize,
+        #[case] selected_index: usize,
     ) {
         let theme = noir();
         let tracks = [titled_track("Alpha"), titled_track("Beta")];
-        let search = query("a", matches, selected);
+        let search = query("a", matches, selected_index);
         let overlay =
             SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
                 .tracks(&tracks)
                 .bounds(Rect::new(0, 0, 80, 28))
-                .container(ModalContainer::Modal(&[]));
+                .container(ModalContainer::Floating(&[]));
         insta::with_settings!({ snapshot_suffix => label }, {
             insta::assert_snapshot!(rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area())).to_string());
         });
@@ -395,10 +401,10 @@ mod tests {
     #[test]
     fn search_overlay_highlights_the_selected_match() {
         let theme = noir();
-        let active = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let tracks = [titled_track("Alpha"), titled_track("Beta")];
         let search = query("a", vec![0, 1], 1);
-        let overlay = SearchWidget::new(&search, active)
+        let overlay = SearchWidget::new(&search, active_theme)
             .tracks(&tracks)
             .bounds(Rect::new(0, 0, 80, 28))
             .container(pane_container(Rect::new(0, 0, 80, 28)));
@@ -406,7 +412,7 @@ mod tests {
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .buffer()
                 .clone();
-        let selection_background = active.colors().selection_background;
+        let selection_background = active_theme.colors().selection_background;
         let (alpha_x, alpha_y) = find_text(&buffer, "Alpha").unwrap();
         let (beta_x, beta_y) = find_text(&buffer, "Beta").unwrap();
         assert_eq!(
@@ -453,7 +459,7 @@ mod tests {
             SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
                 .tracks(&tracks)
                 .bounds(Rect::new(0, 0, 80, 28))
-                .container(ModalContainer::Modal(&[]));
+                .container(ModalContainer::Floating(&[]));
         let backend =
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()));
         assert_eq!(backend.to_string().lines().count(), 28);
@@ -471,7 +477,7 @@ mod tests {
         let container = if pane {
             pane_container(Rect::new(0, 0, 80, 28))
         } else {
-            ModalContainer::Modal(&[])
+            ModalContainer::Floating(&[])
         };
         let overlay =
             SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
@@ -493,7 +499,7 @@ mod tests {
         let theme = noir();
         let tracks: [Arc<Track>; 0] = [];
         let search = CursorOver::default();
-        let container = pane.map_or(ModalContainer::Modal(&[]), pane_container);
+        let container = pane.map_or(ModalContainer::Floating(&[]), pane_container);
         let overlay =
             SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
                 .tracks(&tracks)

@@ -28,14 +28,14 @@ fn rate(playback: Playback) -> f64 {
 }
 
 pub(crate) fn now_playing_info(
-    shown: NowPlaying<'_>,
+    now_playing: NowPlaying<'_>,
     now: Instant,
 ) -> Retained<NSDictionary<NSString, AnyObject>> {
-    let (title, artist, album, duration) = shown.track.map_or_else(
+    let (title, artist, album, duration) = now_playing.track.map_or_else(
         || (PLACEHOLDER_TITLE, None, None, Duration::ZERO),
         |track| {
             (
-                track.song_title(),
+                track.title(),
                 track.tags().artist.as_deref(),
                 track.tags().album.as_deref(),
                 track.duration().unwrap_or(Duration::ZERO),
@@ -46,8 +46,8 @@ pub(crate) fn now_playing_info(
     let artist = artist.map(NSString::from_str);
     let album = album.map(NSString::from_str);
     let duration = NSNumber::new_f64(duration.as_secs_f64());
-    let elapsed = NSNumber::new_f64(shown.clock.elapsed(now).as_secs_f64());
-    let rate = NSNumber::new_f64(rate(shown.clock.playback()));
+    let elapsed = NSNumber::new_f64(now_playing.clock.elapsed(now).as_secs_f64());
+    let rate = NSNumber::new_f64(rate(now_playing.clock.playback()));
     let keys = [
         ffi::title_key(),
         ffi::duration_key(),
@@ -64,7 +64,7 @@ pub(crate) fn now_playing_info(
         Some(&rate),
         artist.as_deref().map(AsRef::as_ref),
         album.as_deref().map(AsRef::as_ref),
-        shown.artwork.map(AsRef::as_ref),
+        now_playing.artwork.map(AsRef::as_ref),
     ];
     let (names, objects): (Vec<&NSString>, Vec<&AnyObject>) = keys
         .into_iter()
@@ -74,9 +74,9 @@ pub(crate) fn now_playing_info(
     NSDictionary::from_slices(&names, &objects)
 }
 
-pub(crate) fn publish(shown: NowPlaying<'_>, now: Instant) {
-    let info = now_playing_info(shown, now);
-    let state = match shown.clock.playback() {
+pub(crate) fn show(now_playing: NowPlaying<'_>, now: Instant) {
+    let info = now_playing_info(now_playing, now);
+    let state = match now_playing.clock.playback() {
         Playback::Playing => MPNowPlayingPlaybackState::Playing,
         Playback::Paused => MPNowPlayingPlaybackState::Paused,
     };
@@ -121,12 +121,12 @@ mod tests {
     #[test]
     fn a_cleared_now_playing_still_carries_a_title() {
         let start = Instant::now();
-        let shown = NowPlaying {
+        let now_playing = NowPlaying {
             track: None,
             clock: NowPlayingClock::default(),
             artwork: None,
         };
-        let info = now_playing_info(shown, start);
+        let info = now_playing_info(now_playing, start);
         let title = ffi::title_key();
         assert_eq!(text(&info, title).as_deref(), Some(PLACEHOLDER_TITLE));
     }
@@ -144,14 +144,14 @@ mod tests {
             audio_format: AudioFormat::default(),
         });
         let start = Instant::now();
-        let shown = NowPlaying {
+        let now_playing = NowPlaying {
             track: Some(&track),
             clock: NowPlayingClock::default()
                 .seek(Duration::from_secs(7), start)
                 .change_playback(Playback::Playing, start),
             artwork: None,
         };
-        let info = now_playing_info(shown, start + Duration::from_secs(3));
+        let info = now_playing_info(now_playing, start + Duration::from_secs(3));
         let (title, artist, album, elapsed, rate) = (
             ffi::title_key(),
             ffi::artist_key(),

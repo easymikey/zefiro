@@ -1,9 +1,9 @@
 #![cfg(target_os = "macos")]
 
+pub mod artwork;
 mod clock;
 pub(crate) mod controls;
 pub(crate) mod core_audio;
-pub mod cover;
 pub mod driver;
 pub mod effect;
 mod ffi;

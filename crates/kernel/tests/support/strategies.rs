@@ -20,7 +20,7 @@ use kernel::{
         theme::ThemeName,
         time::Moment,
         toast::Toast,
-        transport::StreamError,
+        transport::OutputError,
     },
     message::{
         AudioError,
@@ -40,7 +40,7 @@ use kernel::{
         SearchEdit,
         SearchRequest,
         SeekTenths,
-        SettingsRowRequest,
+        SettingRowRequest,
         TextRequest,
         Timer,
     },
@@ -127,12 +127,12 @@ fn overlay_input() -> impl Strategy<Value = OverlayRequest> {
         )),
         Just(OverlayRequest::Search(SearchRequest::Enqueue)),
         direction().prop_map(|direction| {
-            OverlayRequest::Settings(SettingsRowRequest::Navigate(direction))
+            OverlayRequest::Settings(SettingRowRequest::Navigate(direction))
         }),
         direction().prop_map(|direction| OverlayRequest::Settings(
-            SettingsRowRequest::Step(direction)
+            SettingRowRequest::Step(direction)
         )),
-        Just(OverlayRequest::Settings(SettingsRowRequest::Activate)),
+        Just(OverlayRequest::Settings(SettingRowRequest::Activate)),
         typed.prop_map(|character| OverlayRequest::Text(TextRequest::Char(character))),
         Just(OverlayRequest::Text(TextRequest::Backspace)),
     ]
@@ -145,8 +145,8 @@ fn overlay() -> impl Strategy<Value = OverlayRequest> {
         Just(OverlayRequest::Confirm),
         overlay_input(),
         select(vec![
-            HistoryRequest::Top,
-            HistoryRequest::Bottom,
+            HistoryRequest::SelectFirst,
+            HistoryRequest::SelectLast,
             HistoryRequest::Enqueue,
             HistoryRequest::Navigate(Direction::Previous),
             HistoryRequest::Navigate(Direction::Next),
@@ -187,17 +187,16 @@ fn playback() -> impl Strategy<Value = PlaybackRequest> {
 fn browse() -> impl Strategy<Value = BrowseRequest> {
     prop_oneof![
         select(vec![
-            BrowseRequest::ChordPrefix(ChordPrefix::G),
-            BrowseRequest::Top,
-            BrowseRequest::Bottom,
+            BrowseRequest::SelectFirst,
+            BrowseRequest::SelectLast,
             BrowseRequest::PlaySelected,
             BrowseRequest::CycleSort,
-            BrowseRequest::FullScan,
+            BrowseRequest::Rescan,
             BrowseRequest::ToggleFavorite,
             BrowseRequest::SavePlaylist(PlaylistFileName::new("mix").unwrap()),
         ]),
         (0usize..4).prop_map(|row| {
-            BrowseRequest::Trash(kernel::domain::track::TrackRef::Local(
+            BrowseRequest::Trash(kernel::domain::track::TrackSource::Local(
                 format!("/tmp/track{row}.flac").into(),
             ))
         }),
@@ -209,31 +208,32 @@ fn browse() -> impl Strategy<Value = BrowseRequest> {
 fn queue() -> impl Strategy<Value = QueueRequest> {
     prop_oneof![
         select(vec![
-            QueueRequest::Enqueue,
+            QueueRequest::Toggle,
             QueueRequest::PlayNext,
             QueueRequest::Dequeue,
         ]),
-        playlist_index().prop_map(QueueRequest::EnqueueTrack),
-        direction().prop_map(QueueRequest::MoveInQueue),
+        playlist_index().prop_map(QueueRequest::ToggleAt),
+        direction().prop_map(QueueRequest::Move),
     ]
 }
 
 fn audio() -> impl Strategy<Value = AudioEvent> {
-    let failure = prop_oneof![Just(AudioError::Decode {
+    let error = prop_oneof![Just(AudioError::Decode {
         path: "/tmp/track0.flac".into(),
-        kind: DecodeError::Corrupt,
+        error: DecodeError::Corrupt,
     }),];
     prop_oneof![
-        (0u64..200).prop_map(|secs| AudioEvent::Playhead(Duration::from_secs(secs))),
+        (0u64..200)
+            .prop_map(|secs| AudioEvent::PositionReported(Duration::from_secs(secs))),
         select(vec![
             AudioEvent::TrackChanged,
             AudioEvent::Ended,
             AudioEvent::DeviceFellBack(OutputDevice::SystemDefault),
             AudioEvent::DevicesListed(Vec::new()),
             AudioEvent::Loaded(None),
-            AudioEvent::OutputLost(StreamError::DeviceGone),
+            AudioEvent::OutputLost(OutputError::DeviceGone),
         ]),
-        failure.prop_map(AudioEvent::Error),
+        error.prop_map(AudioEvent::Error),
     ]
 }
 
@@ -261,14 +261,14 @@ fn config() -> impl Strategy<Value = ConfigEvent> {
 }
 
 fn driver() -> impl Strategy<Value = Message> {
-    let driver = select(DriverName::ALL.to_vec());
+    let driver_name = select(DriverName::ALL.to_vec());
     let change = prop_oneof![
         Just(DriverEvent::Died(DriverError::Panicked)),
         Just(DriverEvent::Stopped),
         Just(DriverEvent::Full),
     ];
-    (driver, change).prop_map(|(driver, change)| Message::Driver {
-        driver,
+    (driver_name, change).prop_map(|(driver_name, change)| Message::Driver {
+        driver_name,
         event: change,
     })
 }
@@ -299,7 +299,8 @@ fn event() -> impl Strategy<Value = Message> {
 
 fn system() -> impl Strategy<Value = MacosEvent> {
     prop_oneof![
-        (0u8..=100).prop_map(|volume| MacosEvent::Volume(Percent::clamped(volume))),
+        (0u8..=100)
+            .prop_map(|volume| MacosEvent::VolumeChanged(Percent::clamped(volume))),
         Just(MacosEvent::OutputRouteChanged),
         select(vec![
             PlaybackRequest::Play,
@@ -317,10 +318,10 @@ fn system() -> impl Strategy<Value = MacosEvent> {
                 by: Duration::from_secs(10),
             },
         ])
-        .prop_map(MacosEvent::MediaKey),
-        (0u64..200).prop_map(|secs| MacosEvent::MediaKey(PlaybackRequest::SeekTo(
-            Duration::from_secs(secs)
-        ))),
+        .prop_map(MacosEvent::MediaKeyPressed),
+        (0u64..200).prop_map(|secs| MacosEvent::MediaKeyPressed(
+            PlaybackRequest::SeekTo(Duration::from_secs(secs))
+        )),
     ]
 }
 
@@ -329,6 +330,7 @@ pub(crate) fn message() -> impl Strategy<Value = Message> {
         overlay().prop_map(Message::Overlay),
         playback().prop_map(Message::Playback),
         browse().prop_map(Message::Browse),
+        Just(Message::ChordPrefix(ChordPrefix::G)),
         queue().prop_map(Message::Queue),
         audio().prop_map(Message::Audio),
         loaded().prop_map(Message::Playback),

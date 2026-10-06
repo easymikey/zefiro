@@ -49,9 +49,9 @@ pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
         bitrate: properties.audio_bitrate().map(Kbps),
         bits_per_sample: properties.bit_depth(),
         channels: properties.channels(),
-        replay_gain: tag
+        decibels: tag
             .and_then(|tag| tag.get_string(ItemKey::ReplayGainTrackGain))
-            .and_then(parse_replay_gain),
+            .and_then(parse_decibels),
     };
     let tags = tag.map_or_else(kernel::domain::track::Tags::default, tags_from);
     Ok(Track::new(TrackParts {
@@ -77,7 +77,7 @@ fn tags_from(tag: &Tag) -> kernel::domain::track::Tags {
             .or_else(|| tag.get_string(ItemKey::OriginalReleaseDate))
             .or_else(|| tag.get_string(ItemKey::ReleaseDate))
             .map(str::to_owned),
-        track: tag.track(),
+        track_number: tag.track(),
         track_total: tag.track_total(),
         disc: tag.disk(),
     }
@@ -87,8 +87,9 @@ fn main_tag(tagged: &TaggedFile) -> Option<&Tag> {
     tagged.primary_tag().or_else(|| tagged.first_tag())
 }
 
-fn parse_replay_gain(raw: &str) -> Option<Decibels> {
-    raw.trim()
+fn parse_decibels(tag_text: &str) -> Option<Decibels> {
+    tag_text
+        .trim()
         .trim_end_matches(|ch: char| ch.is_ascii_alphabetic())
         .trim()
         .parse()
@@ -109,7 +110,7 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use crate::{
-        tags::{embedded_cover, parse_replay_gain, read_or_list},
+        tags::{embedded_cover, parse_decibels, read_or_list},
         test_support::{minimal_flac_with_cover, temp_dir_filters},
     };
 
@@ -132,10 +133,10 @@ mod tests {
     }
 
     #[rstest]
-    fn unparseable_file_has_no_replay_gain(unparseable_media: tempfile::TempDir) {
+    fn unparseable_file_has_no_decibels(unparseable_media: tempfile::TempDir) {
         let path = unparseable_media.path().join("clip.mkv");
         let track = read_or_list(&path);
-        assert_eq!(track.audio_format().replay_gain, None);
+        assert_eq!(track.audio_format().decibels, None);
     }
 
     #[rstest]
@@ -147,11 +148,11 @@ mod tests {
     #[case::empty("", None)]
     #[case::unit_only("dB", None)]
     #[case::non_numeric("not a number dB", None)]
-    fn replay_gain_reads_the_number_before_the_db_unit(
-        #[case] raw: &str,
+    fn decibels_read_the_number_before_the_db_unit(
+        #[case] tag_text: &str,
         #[case] expected: Option<f32>,
     ) {
-        assert_eq!(parse_replay_gain(raw), expected.map(Decibels));
+        assert_eq!(parse_decibels(tag_text), expected.map(Decibels));
     }
 
     #[test]

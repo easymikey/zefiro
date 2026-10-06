@@ -27,9 +27,9 @@ pub(crate) fn dot_coord(columns: u32) -> u16 {
 
 const HALF_STEP_BIAS: f32 = 0.001;
 
-fn scaled_dots(level: f32, max_dots: u32) -> u32 {
+fn scaled_dots(fraction: f32, max_dots: u32) -> u32 {
     let max_dots = dimension_f32(max_dots);
-    floor::<u32>(level * max_dots + 0.5 - HALF_STEP_BIAS)
+    floor::<u32>(fraction * max_dots + 0.5 - HALF_STEP_BIAS)
 }
 
 #[cfg(test)]
@@ -180,30 +180,33 @@ mod tests {
 
     #[test]
     fn single_dot_maps_to_correct_cell_bit() {
-        let mut top_left = BrailleCanvas::new(Cells(1), Cells(1));
-        top_left.set(0, 0);
+        let mut top_left_canvas = BrailleCanvas::new(Cells(1), Cells(1));
+        top_left_canvas.set(0, 0);
         assert_eq!(
-            top_left.rows().first().map(String::as_str),
+            top_left_canvas.rows().first().map(String::as_str),
             Some("\u{2801}")
         );
 
-        let mut bottom_right_column = BrailleCanvas::new(Cells(1), Cells(1));
-        bottom_right_column.set(1, 3);
+        let mut bottom_right_column_canvas = BrailleCanvas::new(Cells(1), Cells(1));
+        bottom_right_column_canvas.set(1, 3);
         assert_eq!(
-            bottom_right_column.rows().first().map(String::as_str),
+            bottom_right_column_canvas
+                .rows()
+                .first()
+                .map(String::as_str),
             Some("\u{2880}")
         );
 
-        let mut bottom_left_column = BrailleCanvas::new(Cells(1), Cells(1));
-        bottom_left_column.set(0, 3);
+        let mut bottom_left_column_canvas = BrailleCanvas::new(Cells(1), Cells(1));
+        bottom_left_column_canvas.set(0, 3);
         assert_eq!(
-            bottom_left_column.rows().first().map(String::as_str),
+            bottom_left_column_canvas.rows().first().map(String::as_str),
             Some("\u{2840}")
         );
 
-        bottom_left_column.set(100, 100);
+        bottom_left_column_canvas.set(100, 100);
         assert_eq!(
-            bottom_left_column.rows().first().map(String::as_str),
+            bottom_left_column_canvas.rows().first().map(String::as_str),
             Some("\u{2840}")
         );
     }

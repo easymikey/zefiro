@@ -12,8 +12,8 @@ use crate::{
     primitive::{
         chip,
         glyphs,
-        relative_time::format_time,
         span::{line, text},
+        time_text::duration_text,
     },
     theme::colors::Colors,
 };
@@ -59,6 +59,34 @@ impl BarFill {
             groove_run: VOLUME_RUN,
         }
     }
+
+    #[must_use]
+    pub(crate) fn line(&self, fill_color: Color, groove: Color) -> Line<'static> {
+        let width = self.width.count();
+        let width_f32 = dimension_f32(width);
+        let exact = self.fraction.clamp(0.0, 1.0) * width_f32;
+        let whole = floor::<usize>(exact);
+        let whole_f32 = dimension_f32(whole);
+        let rounds_up = exact - whole_f32 >= 0.5 && whole < width;
+        let used = whole + usize::from(rounds_up);
+        let partial = rounds_up.then_some(self.partial).flatten();
+        let solid = used.saturating_sub(usize::from(partial.is_some()));
+        let filled = repeat_glyph(self.filled_glyph, self.filled_run, solid);
+        let empty = repeat_glyph(
+            self.groove_glyph,
+            self.groove_run,
+            width.saturating_sub(used),
+        );
+        line(
+            [
+                Some(text(filled).fg(fill_color)),
+                partial.map(|glyph| text(glyph).fg(fill_color)),
+                Some(text(empty).fg(groove)),
+            ]
+            .into_iter()
+            .flatten(),
+        )
+    }
 }
 
 fn repeat_glyph(
@@ -71,44 +99,16 @@ fn repeat_glyph(
         .map_or_else(|| Cow::Owned(glyph.repeat(cells)), Cow::Borrowed)
 }
 
-#[must_use]
-pub(crate) fn fill(spec: &BarFill, fill: Color, groove: Color) -> Line<'static> {
-    let width = spec.width.count();
-    let width_f32 = dimension_f32(width);
-    let exact = spec.fraction.clamp(0.0, 1.0) * width_f32;
-    let whole = floor::<usize>(exact);
-    let whole_f32 = dimension_f32(whole);
-    let rounds_up = exact - whole_f32 >= 0.5 && whole < width;
-    let used = whole + usize::from(rounds_up);
-    let partial = rounds_up.then_some(spec.partial).flatten();
-    let solid = used.saturating_sub(usize::from(partial.is_some()));
-    let filled = repeat_glyph(spec.filled_glyph, spec.filled_run, solid);
-    let empty = repeat_glyph(
-        spec.groove_glyph,
-        spec.groove_run,
-        width.saturating_sub(used),
-    );
-    line(
-        [
-            Some(text(filled).fg(fill)),
-            partial.map(|glyph| text(glyph).fg(fill)),
-            Some(text(empty).fg(groove)),
-        ]
-        .into_iter()
-        .flatten(),
-    )
-}
-
 const REMAINING_SIGN: char = '-';
 const HUD_GAP: &str = "  ";
 
 #[must_use]
 pub(crate) fn remaining_label(remaining: Duration) -> String {
-    format!("{REMAINING_SIGN}{}", format_time(remaining))
+    format!("{REMAINING_SIGN}{}", duration_text(remaining))
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct HudProgressRow {
+pub(crate) struct HudProgress {
     pub(crate) fraction: f32,
     pub(crate) row_width: Cells,
     pub(crate) remaining: Duration,
@@ -129,24 +129,19 @@ pub(crate) fn hud_progress_bar_width(row_width: Cells, remaining: Duration) -> C
 
 #[must_use]
 pub(crate) fn hud_progress_line(
-    input: &HudProgressRow,
+    hud_progress: &HudProgress,
     (fill_color, groove): (Color, Color),
     colors: &Colors<Color>,
 ) -> Line<'static> {
-    let chip_spans = chip::spans(&remaining_label(input.remaining), colors);
-    let bar_width = hud_progress_bar_width(input.row_width, input.remaining);
-    if bar_width == input.row_width {
-        return fill(
-            &BarFill::progress(input.fraction, input.row_width),
-            fill_color,
-            groove,
-        );
+    let chip_spans = chip::spans(&remaining_label(hud_progress.remaining), colors);
+    let bar_width =
+        hud_progress_bar_width(hud_progress.row_width, hud_progress.remaining);
+    if bar_width == hud_progress.row_width {
+        return BarFill::progress(hud_progress.fraction, hud_progress.row_width)
+            .line(fill_color, groove);
     }
-    let bar = fill(
-        &BarFill::progress(input.fraction, bar_width),
-        fill_color,
-        groove,
-    );
+    let bar =
+        BarFill::progress(hud_progress.fraction, bar_width).line(fill_color, groove);
     Line::from_iter(
         bar.spans
             .into_iter()
@@ -165,14 +160,14 @@ mod tests {
 
     use crate::{
         primitive::{
-            bar::{BarFill, HudProgressRow, fill, hud_progress_line},
+            bar::{BarFill, HudProgress, hud_progress_line},
             glyphs,
         },
         theme::colors::Colors,
     };
 
-    fn painted(spec: &BarFill) -> Line<'static> {
-        fill(spec, Color::Green, Color::Black)
+    fn painted(bar_fill: &BarFill) -> Line<'static> {
+        bar_fill.line(Color::Green, Color::Black)
     }
 
     fn progress_text(fraction: f32, width: u16) -> String {
@@ -220,7 +215,7 @@ mod tests {
 
     fn hud_progress_text(fraction: f32, row_width: u16, remaining: Duration) -> String {
         let line = hud_progress_line(
-            &HudProgressRow {
+            &HudProgress {
                 fraction,
                 row_width: Cells(row_width),
                 remaining,
@@ -228,7 +223,7 @@ mod tests {
             (Color::Red, Color::Black),
             &Colors {
                 muted_foreground: Color::Black,
-                text: Color::White,
+                foreground: Color::White,
                 ..Colors::default()
             },
         );
@@ -247,7 +242,7 @@ mod tests {
     #[case::half_way(BarRow { name: "half", fraction: 0.5, row_width: 30, remaining_secs: 30 })]
     #[case::at_the_end(BarRow { name: "end", fraction: 1.0, row_width: 30, remaining_secs: 0 })]
     #[case::too_narrow_for_a_chip(BarRow { name: "narrow", fraction: 0.5, row_width: 4, remaining_secs: 45 })]
-    fn the_hud_row_paints_a_bar_and_its_remaining_chip(#[case] row: BarRow) {
+    fn the_hud_progress_paints_a_bar_and_its_remaining_chip(#[case] row: BarRow) {
         let text = hud_progress_text(
             row.fraction,
             row.row_width,

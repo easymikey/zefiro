@@ -15,9 +15,9 @@ fn first_line(error: &toml::de::Error) -> &str {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("{}\n{}:{line}", first_line(.source), config_file_name(.file))]
+    #[error("{}\n{}:{line}", first_line(.source), config_file_name(.name))]
     Parse {
-        file: ConfigName,
+        name: ConfigName,
         line: usize,
         #[source]
         source: Box<toml::de::Error>,
@@ -35,30 +35,29 @@ pub enum Error {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum CrossfadeTextError {
     #[error("invalid crossfade: {0}")]
-    Number(#[source] ParseIntError),
+    NotANumber(#[source] ParseIntError),
     #[error("invalid crossfade: expected an integer with an 's' or 'ms' suffix")]
     MissingSuffix,
     #[error(transparent)]
     OutOfRange(#[from] kernel::domain::crossfade::CrossfadeError),
 }
 
-fn line_at(source: &str, offset: usize) -> usize {
-    source
-        .get(..offset)
-        .unwrap_or(source)
+fn line_at(text: &str, offset: usize) -> usize {
+    text.get(..offset)
+        .unwrap_or(text)
         .bytes()
         .filter(|byte| *byte == b'\n')
         .count()
         + 1
 }
 
-pub(crate) fn parse_toml<T>(source: &str, file: ConfigName) -> Result<T, Error>
+pub(crate) fn parse_toml<T>(text: &str, config_name: ConfigName) -> Result<T, Error>
 where
     T: DeserializeOwned,
 {
-    toml::from_str(source).map_err(|error| Error::Parse {
-        file,
-        line: line_at(source, error.span().map_or(0, |span| span.start)),
+    toml::from_str(text).map_err(|error| Error::Parse {
+        name: config_name,
+        line: line_at(text, error.span().map_or(0, |span| span.start)),
         source: Box::new(error),
     })
 }
@@ -73,8 +72,8 @@ mod tests {
         file_name::config_file_name,
     };
 
-    fn error_text(source: &str, file: ConfigName) -> String {
-        let parsed: Result<toml::Table, Error> = parse_toml(source, file);
+    fn error_text(text: &str, config_name: ConfigName) -> String {
+        let parsed: Result<toml::Table, Error> = parse_toml(text, config_name);
         parsed
             .err()
             .map_or_else(String::new, |error| error.to_string())
@@ -82,20 +81,28 @@ mod tests {
 
     #[test]
     fn an_error_puts_the_message_first_and_the_place_below_it() {
-        let text =
+        let error_text =
             error_text("a = 1\n\n[card]\nb = 2\n[card]\n", ConfigName::Appearance);
 
-        let place = text.lines().nth(1);
+        let place = error_text.lines().nth(1);
 
-        assert_eq!(place, Some("sifr-ui.toml:5"), "whole text was {text:?}");
+        assert_eq!(
+            place,
+            Some("sifr-ui.toml:5"),
+            "whole text was {error_text:?}"
+        );
     }
 
     #[test]
     fn an_error_on_the_first_line_reports_line_one_in_exactly_two_lines() {
-        let text = error_text("[card\n", ConfigName::Config);
+        let error_text = error_text("[card\n", ConfigName::Config);
 
-        assert_eq!(text.lines().nth(1), Some("config.toml:1"));
-        assert_eq!(text.lines().count(), 2, "whole text was {text:?}");
+        assert_eq!(error_text.lines().nth(1), Some("config.toml:1"));
+        assert_eq!(
+            error_text.lines().count(),
+            2,
+            "whole text was {error_text:?}"
+        );
     }
 
     #[rstest]
@@ -105,16 +112,19 @@ mod tests {
         ConfigName::Theme(ThemeName::from_static("noir")),
         "[colors]\n[colors]\n"
     )]
-    fn a_parse_error_keeps_its_cause(#[case] file: ConfigName, #[case] source: &str) {
-        let parsed: Result<toml::Table, Error> = parse_toml(source, file.clone());
+    fn a_parse_error_keeps_its_cause(
+        #[case] config_name: ConfigName,
+        #[case] text: &str,
+    ) {
+        let parsed: Result<toml::Table, Error> = parse_toml(text, config_name.clone());
         let error = parsed.expect_err("duplicate tables must not parse");
 
         assert!(std::error::Error::source(&error).is_some());
-        let text = error.to_string();
-        let place = text.lines().last().unwrap();
+        let error_text = error.to_string();
+        let place = error_text.lines().last().unwrap();
         assert!(
-            place.starts_with(&format!("{}:", config_file_name(&file))),
-            "whole text was {text:?}"
+            place.starts_with(&format!("{}:", config_file_name(&config_name))),
+            "whole text was {error_text:?}"
         );
     }
 }

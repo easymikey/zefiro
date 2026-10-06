@@ -17,19 +17,19 @@ pub(crate) struct BandLevels {
     pub(crate) treble: f32,
 }
 
-pub(crate) fn band_mean(bands: &Spectrum, range: BandRange) -> f32 {
-    let slice = bands.get(range.start..range.end).unwrap_or(&[]);
+pub(crate) fn band_mean(spectrum: &Spectrum, range: BandRange) -> f32 {
+    let slice = spectrum.get(range.start..range.end).unwrap_or(&[]);
     if slice.is_empty() {
         return 0.0;
     }
     slice.iter().sum::<f32>() / dimension_f32(slice.len())
 }
 
-pub(crate) fn band_levels(bands: &Spectrum) -> BandLevels {
+pub(crate) fn band_levels(spectrum: &Spectrum) -> BandLevels {
     BandLevels {
-        bass: band_mean(bands, LOW_BAND),
-        mid: band_mean(bands, MID_BAND),
-        treble: band_mean(bands, HIGH_BAND),
+        bass: band_mean(spectrum, LOW_BAND),
+        mid: band_mean(spectrum, MID_BAND),
+        treble: band_mean(spectrum, HIGH_BAND),
     }
 }
 
@@ -41,13 +41,13 @@ pub(crate) enum Mirror {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Preset {
+pub(crate) struct MilkdropPreset {
     pub(crate) base_zoom: f32,
     pub(crate) base_rotation: f32,
     pub(crate) mirror: Mirror,
 }
 
-impl Default for Preset {
+impl Default for MilkdropPreset {
     fn default() -> Self {
         Self {
             base_zoom: 1.0,
@@ -57,28 +57,31 @@ impl Default for Preset {
     }
 }
 
-const PRESETS: [Preset; 3] = [
-    Preset {
+const PRESETS: [MilkdropPreset; 3] = [
+    MilkdropPreset {
         base_zoom: 1.12,
         base_rotation: 0.04,
         mirror: Mirror::None,
     },
-    Preset {
+    MilkdropPreset {
         base_zoom: 0.94,
         base_rotation: -0.05,
         mirror: Mirror::Horizontal,
     },
-    Preset {
+    MilkdropPreset {
         base_zoom: 1.18,
         base_rotation: 0.07,
         mirror: Mirror::Kaleido4,
     },
 ];
 
-pub(crate) fn preset_for_seed(seed: u64) -> Preset {
+pub(crate) fn preset_for_seed(seed: u64) -> MilkdropPreset {
     let index = u64::try_from(PRESETS.len()).map_or(0, |len| seed % len);
     let index = usize::try_from(index).unwrap_or(0);
-    PRESETS.get(index).copied().unwrap_or_else(Preset::default)
+    PRESETS
+        .get(index)
+        .copied()
+        .unwrap_or_else(MilkdropPreset::default)
 }
 
 pub(crate) const DECAY: f32 = 0.85;
@@ -110,20 +113,20 @@ pub(crate) struct FieldSize {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct FieldCenter {
     pub(crate) column: f32,
-    pub(crate) row: f32,
+    pub(crate) y: f32,
 }
 
 pub(crate) fn field_center(size: FieldSize) -> FieldCenter {
     FieldCenter {
         column: dimension_f32(size.width.saturating_sub(1)) / 2.0,
-        row: dimension_f32(size.height.saturating_sub(1)) / 2.0,
+        y: dimension_f32(size.height.saturating_sub(1)) / 2.0,
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PlaneOffset {
     pub(crate) column: f32,
-    pub(crate) row: f32,
+    pub(crate) y: f32,
 }
 
 pub(crate) fn physical_offset(
@@ -133,7 +136,7 @@ pub(crate) fn physical_offset(
 ) -> PlaneOffset {
     PlaneOffset {
         column: (dimension_f32(position.column) - center.column) * aspect_x,
-        row: dimension_f32(position.row) - center.row,
+        y: dimension_f32(position.row) - center.y,
     }
 }
 
@@ -147,55 +150,55 @@ pub(crate) struct Warp {
 
 pub(crate) fn warp_source(position: CellPosition, warp: &Warp) -> PlaneOffset {
     let offset = physical_offset(position, warp.center, warp.aspect_x);
-    let scaled = PlaneOffset {
+    let scaled_offset = PlaneOffset {
         column: offset.column / warp.zoom,
-        row: offset.row / warp.zoom,
+        y: offset.y / warp.zoom,
     };
     let angle = -warp.rotation;
     let (sin, cos) = angle.sin_cos();
-    let rotated = PlaneOffset {
-        column: scaled.column * cos - scaled.row * sin,
-        row: scaled.column * sin + scaled.row * cos,
+    let rotated_offset = PlaneOffset {
+        column: scaled_offset.column * cos - scaled_offset.y * sin,
+        y: scaled_offset.column * sin + scaled_offset.y * cos,
     };
     PlaneOffset {
-        column: warp.center.column + rotated.column / warp.aspect_x,
-        row: warp.center.row + rotated.row,
+        column: warp.center.column + rotated_offset.column / warp.aspect_x,
+        y: warp.center.y + rotated_offset.y,
     }
 }
 
 pub(crate) fn bilinear_sample(
     cells: &[f32],
     size: FieldSize,
-    source: PlaneOffset,
+    plane_offset: PlaneOffset,
 ) -> f32 {
     let last_column = dimension_f32(size.width.saturating_sub(1));
     let last_row = dimension_f32(size.height.saturating_sub(1));
-    let out_of_bounds = source.column < 0.0
-        || source.row < 0.0
-        || source.column > last_column
-        || source.row > last_row;
-    if out_of_bounds {
+    let is_out_of_bounds = plane_offset.column < 0.0
+        || plane_offset.y < 0.0
+        || plane_offset.column > last_column
+        || plane_offset.y > last_row;
+    if is_out_of_bounds {
         return 0.0;
     }
 
-    let column_low = crate::pixels::numeric::floor::<usize>(source.column);
-    let row_low = crate::pixels::numeric::floor::<usize>(source.row);
+    let column_low = crate::pixels::numeric::floor::<usize>(plane_offset.column);
+    let row_low = crate::pixels::numeric::floor::<usize>(plane_offset.y);
     let column_high = (column_low + 1).min(size.width.saturating_sub(1));
     let row_high = (row_low + 1).min(size.height.saturating_sub(1));
-    let column_fraction = source.column - dimension_f32(column_low);
-    let row_fraction = source.row - dimension_f32(row_low);
+    let column_fraction = plane_offset.column - dimension_f32(column_low);
+    let row_fraction = plane_offset.y - dimension_f32(row_low);
 
-    let at = |row: usize, column: usize| {
+    let sample = |row: usize, column: usize| {
         cells.get(row * size.width + column).copied().unwrap_or(0.0)
     };
     let top = lerp(
-        at(row_low, column_low),
-        at(row_low, column_high),
+        sample(row_low, column_low),
+        sample(row_low, column_high),
         column_fraction,
     );
     let bottom = lerp(
-        at(row_high, column_low),
-        at(row_high, column_high),
+        sample(row_high, column_low),
+        sample(row_high, column_high),
         column_fraction,
     );
     lerp(top, bottom, row_fraction)
@@ -228,8 +231,7 @@ pub(crate) fn inject(cells: &mut [f32], size: FieldSize, injection: &Injection) 
             let position = CellPosition { column, row };
             let offset =
                 physical_offset(position, injection.center, injection.aspect_x);
-            let distance =
-                (offset.column * offset.column + offset.row * offset.row).sqrt();
+            let distance = (offset.column * offset.column + offset.y * offset.y).sqrt();
             if distance <= injection.core_radius {
                 *cell = cell.max(1.0);
             }
@@ -256,19 +258,19 @@ pub(crate) fn mirror_horizontal_into(
     dest: &mut [f32],
     size: FieldSize,
 ) {
-    for (dest_row, source_row) in
+    for (mirrored_row, source_row) in
         row_chunks_mut(dest, size).zip(row_chunks(source, size))
     {
-        write_mirrored_row(dest_row, source_row, size.width);
+        write_mirrored_row(mirrored_row, source_row, size.width);
     }
 }
 
 pub(crate) fn write_mirrored_row(
-    dest_row: &mut [f32],
+    mirrored_row: &mut [f32],
     source_row: &[f32],
     width: usize,
 ) {
-    for (column, cell) in dest_row.iter_mut().enumerate() {
+    for (column, cell) in mirrored_row.iter_mut().enumerate() {
         *cell = source_row
             .get(mirrored(column, width))
             .copied()
@@ -276,11 +278,11 @@ pub(crate) fn write_mirrored_row(
     }
 }
 
-pub(crate) fn mirrored(position: usize, extent: usize) -> usize {
-    if position < extent / 2 {
-        position
+pub(crate) fn mirrored(coordinate: usize, extent: usize) -> usize {
+    if coordinate < extent / 2 {
+        coordinate
     } else {
-        extent.saturating_sub(1).saturating_sub(position)
+        extent.saturating_sub(1).saturating_sub(coordinate)
     }
 }
 
@@ -303,10 +305,10 @@ pub(crate) fn kaleidoscope_quadrants_into(
     dest: &mut [f32],
     size: FieldSize,
 ) {
-    for (row, dest_row) in row_chunks_mut(dest, size).enumerate() {
+    for (row, mirrored_row) in row_chunks_mut(dest, size).enumerate() {
         let source_row = row_chunks(source, size)
             .nth(mirrored(row, size.height))
             .unwrap_or(&[]);
-        write_mirrored_row(dest_row, source_row, size.width);
+        write_mirrored_row(mirrored_row, source_row, size.width);
     }
 }

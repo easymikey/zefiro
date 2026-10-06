@@ -13,12 +13,30 @@ use kernel::{
     message::{DriverEvent, Message},
 };
 
-use crate::{error::Error, registry::DriverRow};
+use crate::{error::SpawnError, registry::DriverRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum SendError {
     #[error("the inbox is closed")]
     Closed,
+}
+
+#[derive(Debug)]
+pub(crate) enum Halt {
+    Inbox(SendError),
+    Spawn(SpawnError),
+}
+
+impl From<SendError> for Halt {
+    fn from(error: SendError) -> Self {
+        Halt::Inbox(error)
+    }
+}
+
+impl From<SpawnError> for Halt {
+    fn from(error: SpawnError) -> Self {
+        Halt::Spawn(error)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -37,22 +55,22 @@ impl Congestion {
 
 #[derive(Debug)]
 pub(crate) struct DriverThread<C> {
-    pub(crate) commands: Sender<C>,
+    pub(crate) cmd_sender: Sender<C>,
     pub(crate) handle: JoinHandle<Result<(), SendError>>,
-    pub(crate) full: Congestion,
+    pub(crate) congestion: Congestion,
 }
 
 const INBOX: usize = 64;
 
 pub(crate) fn send(
     inbox: &Sender<Message>,
-    full: &Congestion,
+    congestion: &Congestion,
     message: Message,
 ) -> Result<(), SendError> {
     match inbox.try_send(message) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(message)) => {
-            full.raise();
+            congestion.raise();
             match inbox.send(message) {
                 Ok(()) => Ok(()),
                 Err(_) => Err(SendError::Closed),
@@ -66,11 +84,12 @@ pub(crate) fn send(
 pub(crate) fn spawn_idle<C: Send + 'static>(
     row: &DriverRow,
     inbox: &Sender<Message>,
-) -> Result<DriverThread<C>, Error> {
+) -> Result<DriverThread<C>, SpawnError> {
     spawn_driver(
         row,
-        |inbox: &Receiver<C>, _: &Sender<Message>, _: &Congestion| {
-            while inbox.recv().is_ok() {}
+        |cmd_receiver: &Receiver<C>, _: &Sender<Message>, _: &Congestion| {
+            while cmd_receiver.recv().is_ok() {}
+            Ok(())
         },
         inbox,
     )
@@ -80,42 +99,48 @@ pub(crate) fn spawn_driver<C, R>(
     row: &DriverRow,
     run: R,
     inbox: &Sender<Message>,
-) -> Result<DriverThread<C>, Error>
+) -> Result<DriverThread<C>, SpawnError>
 where
     C: Send + 'static,
-    R: FnOnce(&Receiver<C>, &Sender<Message>, &Congestion) + Send + 'static,
+    R: FnOnce(&Receiver<C>, &Sender<Message>, &Congestion) -> Result<(), DriverError>
+        + Send
+        + 'static,
 {
-    let (commands, command_inbox): (Sender<C>, Receiver<C>) = bounded(INBOX);
-    let full = Congestion::default();
+    let (cmd_sender, cmd_receiver): (Sender<C>, Receiver<C>) = bounded(INBOX);
+    let congestion = Congestion::default();
     let inbox = inbox.clone();
-    let driver = row.driver;
+    let driver = row.driver_name;
     let handle = thread::Builder::new()
         .name(row.thread_name.to_owned())
         .spawn({
-            let full = full.clone();
+            let congestion = congestion.clone();
             move || -> Result<(), SendError> {
                 let result = catch_unwind(AssertUnwindSafe(|| {
-                    run(&command_inbox, &inbox, &full);
+                    run(&cmd_receiver, &inbox, &congestion)
                 }));
                 let report = match result {
-                    Ok(()) => DriverEvent::Stopped,
+                    Ok(Ok(())) => DriverEvent::Stopped,
+                    Ok(Err(error)) => DriverEvent::Died(error),
                     Err(_payload) => DriverEvent::Died(DriverError::Panicked),
                 };
                 send(
                     &inbox,
-                    &full,
+                    &congestion,
                     Message::Driver {
-                        driver,
+                        driver_name: driver,
                         event: report,
                     },
                 )
             }
         })
-        .map_err(|source| Error::Spawn { driver, source })?;
+        .map_err(|error| SpawnError::Thread {
+            driver_name: driver,
+            error,
+        })?;
     Ok(DriverThread {
-        commands,
+        cmd_sender,
         handle,
-        full,
+        congestion,
     })
 }
 
@@ -148,12 +173,12 @@ mod tests {
     #[case::room(Scenario::Room, Ok(()))]
     #[case::receiver_dropped(Scenario::ReceiverDropped, Err(SendError::Closed))]
     #[case::full(Scenario::Full, Ok(()))]
-    fn a_send_reports_its_outcome(
+    fn a_send_reports_its_result(
         #[case] scenario: Scenario,
         #[case] expected: Result<(), SendError>,
     ) {
         let (inbox, receiver) = bounded(1);
-        let full = Congestion::default();
+        let congestion = Congestion::default();
         let drainer = match scenario {
             Scenario::Room => None,
             Scenario::ReceiverDropped => {
@@ -162,7 +187,7 @@ mod tests {
             }
             Scenario::Full => {
                 assert_eq!(
-                    send(&inbox, &full, AudioEvent::TrackChanged.into()),
+                    send(&inbox, &congestion, AudioEvent::TrackChanged.into()),
                     Ok(())
                 );
                 Some(thread::spawn(move || {
@@ -173,10 +198,10 @@ mod tests {
             }
         };
 
-        let delivery = send(&inbox, &full, AudioEvent::TrackChanged.into());
+        let delivery = send(&inbox, &congestion, AudioEvent::TrackChanged.into());
 
         assert_eq!(delivery, expected);
-        assert_eq!(full.take(), matches!(scenario, Scenario::Full));
+        assert_eq!(congestion.take(), matches!(scenario, Scenario::Full));
         if let Some(drainer) = drainer {
             drainer.join().unwrap();
         }
@@ -187,7 +212,9 @@ mod tests {
         let (inbox, reports) = unbounded();
         let thread = spawn_driver(
             registry::row(DriverName::Audio),
-            |_inbox: &Receiver<()>, _: &Sender<Message>, _: &Congestion| panic!("boom"),
+            |_cmd_receiver: &Receiver<()>, _: &Sender<Message>, _: &Congestion| {
+                panic!("boom")
+            },
             &inbox,
         )
         .unwrap();
@@ -198,7 +225,7 @@ mod tests {
         assert_eq!(
             message,
             Message::Driver {
-                driver: DriverName::Audio,
+                driver_name: DriverName::Audio,
                 event: DriverEvent::Died(DriverError::Panicked)
             }
         );
@@ -209,7 +236,7 @@ mod tests {
         let (inbox, reports) = unbounded();
         let thread = spawn_driver(
             registry::row(DriverName::Library),
-            |_inbox: &Receiver<()>, _: &Sender<Message>, _: &Congestion| {},
+            |_cmd_receiver: &Receiver<()>, _: &Sender<Message>, _: &Congestion| Ok(()),
             &inbox,
         )
         .unwrap();
@@ -220,24 +247,25 @@ mod tests {
         assert_eq!(
             message,
             Message::Driver {
-                driver: DriverName::Library,
+                driver_name: DriverName::Library,
                 event: DriverEvent::Stopped
             }
         );
     }
 
     #[test]
-    fn a_closed_inbox_stops_the_driver() {
+    fn a_closed_cmd_receiver_stops_the_driver() {
         let (inbox, reports) = unbounded();
         let thread = spawn_driver(
             registry::row(DriverName::Macos),
-            |inbox: &Receiver<()>, _: &Sender<Message>, _: &Congestion| {
-                assert!(inbox.recv().is_err());
+            |cmd_receiver: &Receiver<()>, _: &Sender<Message>, _: &Congestion| {
+                assert!(cmd_receiver.recv().is_err());
+                Ok(())
             },
             &inbox,
         )
         .unwrap();
-        drop(thread.commands);
+        drop(thread.cmd_sender);
 
         thread.handle.join().unwrap().unwrap();
         let message = reports.recv_timeout(RECV_TIMEOUT).unwrap();
@@ -245,18 +273,18 @@ mod tests {
         assert_eq!(
             message,
             Message::Driver {
-                driver: DriverName::Macos,
+                driver_name: DriverName::Macos,
                 event: DriverEvent::Stopped
             }
         );
     }
 
     #[test]
-    fn an_idle_driver_stops_once_its_inbox_closes() {
+    fn an_idle_driver_stops_once_its_cmd_receiver_closes() {
         let (inbox, reports) = unbounded();
         let thread =
             spawn_idle::<()>(registry::row(DriverName::Audio), &inbox).unwrap();
-        drop(thread.commands);
+        drop(thread.cmd_sender);
 
         thread.handle.join().unwrap().unwrap();
         let message = reports.recv_timeout(RECV_TIMEOUT).unwrap();
@@ -264,7 +292,7 @@ mod tests {
         assert_eq!(
             message,
             Message::Driver {
-                driver: DriverName::Audio,
+                driver_name: DriverName::Audio,
                 event: DriverEvent::Stopped
             }
         );

@@ -25,7 +25,7 @@ use widgets::{
 pub(crate) fn noir_theme() -> Theme {
     Theme {
         name: ThemeName::from_static("noir"),
-        colors: Colors::derive(&ThemeBase {
+        colors: Colors::from_theme_base(&ThemeBase {
             background: Rgb([0x0a, 0x0c, 0x10]),
             muted_foreground: Rgb([0x6b, 0x72, 0x80]),
             foreground: Rgb([0xd8, 0xdd, 0xe6]),
@@ -92,7 +92,7 @@ impl Scenery {
         }
     }
 
-    pub(crate) fn scene_at(&self, clock: Duration) -> Scene<'_> {
+    pub(crate) fn scene_at(&self, since_first_paint: Duration) -> Scene<'_> {
         Scene::from_model(
             &self.model,
             ScenePresentation {
@@ -102,9 +102,9 @@ impl Scenery {
                 spectrum: &self.spectrum,
                 pixel_path: PixelPath::Protocol,
                 cell_aspect: DEFAULT_CELL_ASPECT,
-                clock,
+                since_first_paint,
                 now: Moment::default(),
-                home: None,
+                home_dir: None,
                 key_hint_chords: &self.key_hint_chords,
             },
         )

@@ -5,24 +5,24 @@ expression: entries
 ---
 [
     HistoryEntry {
-        track: Local(
+        track_source: Local(
             "/music/second.flac",
         ),
         title: "Second",
         artist: None,
-        at: Moment(
+        played_at: Moment(
             2000s,
         ),
     },
     HistoryEntry {
-        track: Local(
+        track_source: Local(
             "/music/first.flac",
         ),
         title: "First",
         artist: Some(
             "Artist A",
         ),
-        at: Moment(
+        played_at: Moment(
             1000s,
         ),
     },

@@ -17,7 +17,7 @@ pub enum ConfigMessage {
     Changed(Result<(), IoError>),
     Watch(ConfigWatchMessage),
     Elapsed(Revision),
-    Saved { file: ConfigName, text: String },
+    Saved { name: ConfigName, text: String },
     Error(ConfigError),
 }
 

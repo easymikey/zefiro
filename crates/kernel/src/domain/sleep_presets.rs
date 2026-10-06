@@ -28,32 +28,34 @@ impl SleepPresets {
 
     #[must_use]
     pub fn nearest_bundle(current: &[Duration]) -> usize {
-        let current_total: Duration = current.iter().sum();
+        let current_duration: Duration = current.iter().sum();
         Self::BUNDLES
             .iter()
             .enumerate()
             .min_by_key(|(_, bundle)| {
-                let total: Duration = bundle.iter().sum();
-                total.abs_diff(current_total)
+                let duration: Duration = bundle.iter().sum();
+                duration.abs_diff(current_duration)
             })
             .map_or(0, |(index, _)| index)
     }
 
-    pub fn from_minutes(minutes: &[u64]) -> Result<Self, SleepPresetError> {
+    pub fn from_minutes(minutes: &[u64]) -> Result<Self, SleepPresetsError> {
         if minutes.len() > MAX_PRESETS {
-            return Err(SleepPresetError::TooMany(minutes.len()));
+            return Err(SleepPresetsError::TooMany(minutes.len()));
         }
         let mut previous = 0;
         for &value in minutes {
             if value == 0 || value > MAX_MINUTES {
-                return Err(SleepPresetError::OutOfRange {
-                    value: Duration::from_mins(value),
+                return Err(SleepPresetsError::OutOfRange {
+                    duration: Duration::from_mins(value),
                     min: Duration::from_mins(1),
                     max: Duration::from_mins(MAX_MINUTES),
                 });
             }
             if value <= previous {
-                return Err(SleepPresetError::NotAscending(Duration::from_mins(value)));
+                return Err(SleepPresetsError::NotAscending(Duration::from_mins(
+                    value,
+                )));
             }
             previous = value;
         }
@@ -63,9 +65,9 @@ impl SleepPresets {
     }
 
     #[must_use]
-    pub fn bundle(index: usize) -> Option<Self> {
+    pub fn bundle(bundle_index: usize) -> Option<Self> {
         SleepPresets::BUNDLES
-            .get(index)
+            .get(bundle_index)
             .map(|&bundle| Self(bundle.into()))
     }
 
@@ -82,10 +84,10 @@ impl Default for SleepPresets {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum SleepPresetError {
-    #[error("sleep preset of {} minutes is out of range (must be {}..={})", value.as_secs() / SECONDS_PER_MINUTE, min.as_secs() / SECONDS_PER_MINUTE, max.as_secs() / SECONDS_PER_MINUTE)]
+pub enum SleepPresetsError {
+    #[error("sleep preset of {} minutes is out of range (must be {}..={})", duration.as_secs() / SECONDS_PER_MINUTE, min.as_secs() / SECONDS_PER_MINUTE, max.as_secs() / SECONDS_PER_MINUTE)]
     OutOfRange {
-        value: Duration,
+        duration: Duration,
         min: Duration,
         max: Duration,
     },
@@ -102,7 +104,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::domain::{
-        sleep_presets::{SleepPresetError, SleepPresets},
+        sleep_presets::{SleepPresets, SleepPresetsError},
         time::SECONDS_PER_MINUTE,
     };
 
@@ -159,14 +161,14 @@ mod tests {
     }
 
     #[rstest]
-    #[case::zero_minutes(&[0], SleepPresetError::OutOfRange { value: Duration::ZERO, min: Duration::from_mins(1), max: Duration::from_mins(720) })]
-    #[case::over_the_ceiling(&[721], SleepPresetError::OutOfRange { value: Duration::from_mins(721), min: Duration::from_mins(1), max: Duration::from_mins(720) })]
-    #[case::not_ascending(&[30, 20], SleepPresetError::NotAscending(Duration::from_mins(20)))]
-    #[case::repeated(&[30, 30], SleepPresetError::NotAscending(Duration::from_mins(30)))]
-    #[case::too_many(&[1, 2, 3, 4, 5, 6], SleepPresetError::TooMany(6))]
+    #[case::zero_minutes(&[0], SleepPresetsError::OutOfRange { duration: Duration::ZERO, min: Duration::from_mins(1), max: Duration::from_mins(720) })]
+    #[case::over_the_ceiling(&[721], SleepPresetsError::OutOfRange { duration: Duration::from_mins(721), min: Duration::from_mins(1), max: Duration::from_mins(720) })]
+    #[case::not_ascending(&[30, 20], SleepPresetsError::NotAscending(Duration::from_mins(20)))]
+    #[case::repeated(&[30, 30], SleepPresetsError::NotAscending(Duration::from_mins(30)))]
+    #[case::too_many(&[1, 2, 3, 4, 5, 6], SleepPresetsError::TooMany(6))]
     fn sleep_presets_from_minutes_rejects_what_it_cannot_place(
         #[case] minutes: &[u64],
-        #[case] expected: SleepPresetError,
+        #[case] expected: SleepPresetsError,
     ) {
         assert_eq!(SleepPresets::from_minutes(minutes), Err(expected));
     }

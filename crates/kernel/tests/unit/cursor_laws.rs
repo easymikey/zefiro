@@ -13,17 +13,17 @@ fn invariant_holds(cursor: Cursor) -> bool {
 proptest! {
     #[test]
     fn step_forward_then_backward_is_identity_away_from_edges(
-        (len, index) in (3usize..12usize)
+        (len, start_index) in (3usize..12usize)
             .prop_flat_map(|len| (Just(len), 1usize..(len - 1))),
     ) {
-        let cursor = Cursor::at(len, index);
+        let cursor = Cursor::at(len, start_index);
         let round_trip = cursor.step(1).step(-1);
         prop_assert_eq!(round_trip, cursor);
     }
 
     #[test]
-    fn resize_to_zero_is_empty(len in 0usize..12, index in 0usize..12) {
-        let cursor = Cursor::at(len, index).resize(0);
+    fn resize_to_zero_is_empty(len in 0usize..12, start_index in 0usize..12) {
+        let cursor = Cursor::at(len, start_index).resize(0);
         prop_assert!(cursor.is_empty());
     }
 
@@ -49,17 +49,17 @@ proptest! {
 }
 
 struct StepRow {
-    index: usize,
+    start_index: usize,
     len: usize,
     delta: isize,
     expected_index: usize,
 }
 
 #[rstest]
-#[case(StepRow { index: 0, len: 5, delta: -1, expected_index: 0 })]
-#[case(StepRow { index: 4, len: 5, delta: 1, expected_index: 4 })]
+#[case(StepRow { start_index: 0, len: 5, delta: -1, expected_index: 0 })]
+#[case(StepRow { start_index: 4, len: 5, delta: 1, expected_index: 4 })]
 fn step_clamps_at_both_ends(#[case] row: StepRow) {
-    let cursor = Cursor::at(row.len, row.index).step(row.delta);
+    let cursor = Cursor::at(row.len, row.start_index).step(row.delta);
     assert_eq!(cursor.index(), row.expected_index);
 }
 

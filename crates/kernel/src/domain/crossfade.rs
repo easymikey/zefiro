@@ -12,8 +12,8 @@ impl Bounded for Crossfade {
     const MIN: Duration = Duration::ZERO;
     const MAX: Duration = Duration::from_secs(10);
 
-    fn within_bounds(length: Duration) -> Self {
-        Self(length)
+    fn within_bounds(duration: Duration) -> Self {
+        Self(duration)
     }
 }
 
@@ -41,8 +41,8 @@ impl fmt::Display for Crossfade {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CrossfadeError {
-    #[error("crossfade {value:?} is above {max:?}")]
-    OutOfRange { value: Duration, max: Duration },
+    #[error("crossfade {duration:?} is above {max:?}")]
+    OutOfRange { duration: Duration, max: Duration },
 }
 
 impl TryFrom<Duration> for Crossfade {
@@ -51,7 +51,7 @@ impl TryFrom<Duration> for Crossfade {
     fn try_from(length: Duration) -> Result<Self, Self::Error> {
         (length <= Self::MAX).then_some(Self(length)).ok_or(
             CrossfadeError::OutOfRange {
-                value: length,
+                duration: length,
                 max: Self::MAX,
             },
         )
@@ -70,10 +70,10 @@ mod tests {
     #[case::saturates_above_the_ceiling(Duration::from_secs(20), Crossfade::MAX)]
     #[case::saturates_below_the_floor(Duration::ZERO, Duration::ZERO)]
     fn clamped_saturates_both_directions(
-        #[case] raw: Duration,
+        #[case] duration: Duration,
         #[case] expected: Duration,
     ) {
-        assert_eq!(Crossfade::clamped(raw).get(), expected);
+        assert_eq!(Crossfade::clamped(duration).get(), expected);
     }
 
     #[rstest]
@@ -93,11 +93,11 @@ mod tests {
         Crossfade::MAX
     )]
     fn step_follows_the_direction(
-        #[case] start: Crossfade,
+        #[case] crossfade: Crossfade,
         #[case] direction: Direction,
         #[case] expected: Duration,
     ) {
-        assert_eq!(start.step(direction).get(), expected);
+        assert_eq!(crossfade.step(direction).get(), expected);
     }
 
     #[test]
@@ -110,9 +110,12 @@ mod tests {
     #[case::within_range(Duration::from_secs(3), Some(Duration::from_secs(3)))]
     #[case::out_of_range(Duration::from_secs(11), None)]
     fn try_from_duration_round_trips_through_the_valid_range(
-        #[case] raw: Duration,
+        #[case] duration: Duration,
         #[case] expected: Option<Duration>,
     ) {
-        assert_eq!(Crossfade::try_from(raw).map(Crossfade::get).ok(), expected);
+        assert_eq!(
+            Crossfade::try_from(duration).map(Crossfade::get).ok(),
+            expected
+        );
     }
 }

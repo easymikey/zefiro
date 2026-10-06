@@ -6,7 +6,7 @@ use std::sync::{
 use crossbeam_channel::{Sender, TrySendError};
 use kernel::domain::{
     device::{DeviceDefault, DeviceName, ListedDevice, OutputDevice},
-    transport::StreamError,
+    transport::OutputError,
 };
 use rodio::{
     cpal,
@@ -16,7 +16,7 @@ use rodio::{
 use crate::{
     deck::event::DeckEvent,
     engine::message::AudioMessage,
-    error::{DeviceError, stream_error},
+    error::{DeviceError, output_error},
 };
 
 const CLEAR: u8 = 0;
@@ -27,33 +27,38 @@ const BACKEND: u8 = 2;
 pub(crate) struct OutputLoss(Arc<AtomicU8>);
 
 impl OutputLoss {
-    pub(crate) fn report(&self, kind: StreamError, sender: &Sender<AudioMessage>) {
-        match sender.try_send(AudioMessage::Deck(DeckEvent::OutputLost(kind))) {
+    pub(crate) fn report(
+        &self,
+        error: OutputError,
+        callback_sender: &Sender<AudioMessage>,
+    ) {
+        match callback_sender.try_send(AudioMessage::Deck(DeckEvent::OutputLost(error)))
+        {
             Ok(()) | Err(TrySendError::Disconnected(_)) => {}
             Err(TrySendError::Full(_)) => {
-                self.0.store(loss_code(kind), Ordering::Release);
+                self.0.store(loss_code(error), Ordering::Release);
             }
         }
     }
 
-    pub(crate) fn resend(&self, sender: &Sender<AudioMessage>) {
-        if let Some(kind) = latched(self.0.swap(CLEAR, Ordering::AcqRel)) {
-            self.report(kind, sender);
+    pub(crate) fn resend(&self, callback_sender: &Sender<AudioMessage>) {
+        if let Some(error) = latched(self.0.swap(CLEAR, Ordering::AcqRel)) {
+            self.report(error, callback_sender);
         }
     }
 }
 
-fn loss_code(kind: StreamError) -> u8 {
-    match kind {
-        StreamError::DeviceGone => DEVICE_GONE,
-        StreamError::Backend => BACKEND,
+fn loss_code(error: OutputError) -> u8 {
+    match error {
+        OutputError::DeviceGone => DEVICE_GONE,
+        OutputError::Backend => BACKEND,
     }
 }
 
-fn latched(code: u8) -> Option<StreamError> {
+fn latched(code: u8) -> Option<OutputError> {
     match code {
-        DEVICE_GONE => Some(StreamError::DeviceGone),
-        BACKEND => Some(StreamError::Backend),
+        DEVICE_GONE => Some(OutputError::DeviceGone),
+        BACKEND => Some(OutputError::Backend),
         _ => None,
     }
 }
@@ -75,9 +80,9 @@ fn listed(
         .filter_map(readable)
         .map(|name| {
             let default = if default_name == Some(&name) {
-                DeviceDefault::Default
+                DeviceDefault::Yes
             } else {
-                DeviceDefault::Named
+                DeviceDefault::No
             };
             ListedDevice { name, default }
         })
@@ -91,20 +96,22 @@ fn readable(name: Result<String, cpal::DeviceNameError>) -> Option<DeviceName> {
     }
 }
 
-fn stream_error_callback(
-    sender: &Sender<AudioMessage>,
-    lost: &OutputLoss,
+fn output_loss_callback(
+    callback_sender: &Sender<AudioMessage>,
+    output_loss: &OutputLoss,
 ) -> impl FnMut(cpal::StreamError) + Clone + Send + 'static {
-    let (sender, lost) = (sender.clone(), lost.clone());
-    move |error: cpal::StreamError| lost.report(stream_error(&error), &sender)
+    let (callback_sender, output_loss) = (callback_sender.clone(), output_loss.clone());
+    move |error: cpal::StreamError| {
+        output_loss.report(output_error(&error), &callback_sender);
+    }
 }
 
 pub(crate) fn open_stream(
     device: &OutputDevice,
-    sender: &Sender<AudioMessage>,
-    lost: &OutputLoss,
+    callback_sender: &Sender<AudioMessage>,
+    output_loss: &OutputLoss,
 ) -> Result<rodio::OutputStream, DeviceError> {
-    let callback = stream_error_callback(sender, lost);
+    let callback = output_loss_callback(callback_sender, output_loss);
     match device {
         OutputDevice::Named(name) => open_named(name, callback),
         OutputDevice::SystemDefault => open_default(callback),
@@ -116,14 +123,17 @@ fn open_named(
     callback: impl FnMut(cpal::StreamError) + Clone + Send + 'static,
 ) -> Result<rodio::OutputStream, DeviceError> {
     let device = find_by_name(name)
-        .map_err(DeviceError::ListDevices)?
+        .map_err(|source| DeviceError::Lookup {
+            requested_device: OutputDevice::Named(name.clone()),
+            source,
+        })?
         .ok_or_else(|| DeviceError::NotFound(name.clone()))?;
     rodio::OutputStreamBuilder::from_device(device)
         .map(|builder| builder.with_error_callback(callback))
         .and_then(rodio::OutputStreamBuilder::open_stream)
         .map(silence_drop_log)
         .map_err(|source| DeviceError::NoDevice {
-            name: OutputDevice::Named(name.clone()),
+            requested_device: OutputDevice::Named(name.clone()),
             source,
         })
 }
@@ -136,7 +146,7 @@ fn open_default(
         .and_then(|builder| builder.open_stream_or_fallback())
         .map(silence_drop_log)
         .map_err(|source| DeviceError::NoDevice {
-            name: OutputDevice::SystemDefault,
+            requested_device: OutputDevice::SystemDefault,
             source,
         })
 }
@@ -157,7 +167,7 @@ mod tests {
     use crossbeam_channel::TryRecvError;
     use kernel::domain::{
         device::{DeviceDefault, DeviceName, ListedDevice, OutputDevice},
-        transport::StreamError,
+        transport::OutputError,
     };
     use rodio::{cpal, cpal::traits::HostTrait};
     use rstest::rstest;
@@ -196,11 +206,11 @@ mod tests {
     #[rstest]
     #[case::unreadable_names_are_skipped(
         vec![Ok("A".to_owned()), unreadable(), Ok("B".to_owned())],
-        vec![("A", DeviceDefault::Named), ("B", DeviceDefault::Default)]
+        vec![("A", DeviceDefault::No), ("B", DeviceDefault::Yes)]
     )]
     #[case::empty_names_are_skipped(
         vec![Ok(String::new()), Ok("B".to_owned())],
-        vec![("B", DeviceDefault::Default)]
+        vec![("B", DeviceDefault::Yes)]
     )]
     fn listing_keeps_only_readable_names(
         #[case] names: Vec<Result<String, cpal::DeviceNameError>>,
@@ -217,10 +227,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::device_gone(StreamError::DeviceGone)]
-    #[case::backend(StreamError::Backend)]
-    fn a_latched_loss_code_reads_back_as_its_kind(#[case] stream_error: StreamError) {
-        assert_eq!(latched(loss_code(stream_error)), Some(stream_error));
+    #[case::device_gone(OutputError::DeviceGone)]
+    #[case::backend(OutputError::Backend)]
+    fn a_latched_loss_code_reads_back_as_its_output_error(#[case] error: OutputError) {
+        assert_eq!(latched(loss_code(error)), Some(error));
     }
 
     #[rstest]
@@ -242,52 +252,62 @@ mod tests {
     }
 
     #[test]
-    fn a_loss_on_an_open_inbox_is_sent_at_once_and_not_latched() {
-        let (sender, heard) = crossbeam_channel::bounded(1);
-        let lost = OutputLoss::default();
-        lost.report(StreamError::Backend, &sender);
+    fn a_loss_on_an_open_callback_channel_is_sent_at_once_and_not_latched() {
+        let (callback_sender, callback_receiver) = crossbeam_channel::bounded(1);
+        let output_loss = OutputLoss::default();
+        output_loss.report(OutputError::Backend, &callback_sender);
         assert!(matches!(
-            heard.try_recv(),
+            callback_receiver.try_recv(),
             Ok(AudioMessage::Deck(DeckEvent::OutputLost(
-                StreamError::Backend
+                OutputError::Backend
             )))
         ));
-        lost.resend(&sender);
-        assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)));
+        output_loss.resend(&callback_sender);
+        assert!(matches!(
+            callback_receiver.try_recv(),
+            Err(TryRecvError::Empty)
+        ));
     }
 
     #[test]
-    fn a_loss_on_a_closed_inbox_is_not_latched() {
-        let (closed, gone) = crossbeam_channel::bounded(1);
-        drop(gone);
-        let lost = OutputLoss::default();
-        lost.report(StreamError::DeviceGone, &closed);
-        let (sender, heard) = crossbeam_channel::bounded(1);
-        lost.resend(&sender);
-        assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)));
+    fn a_loss_on_a_closed_callback_channel_is_not_latched() {
+        let (closed_callback_sender, closed_callback_receiver) =
+            crossbeam_channel::bounded(1);
+        drop(closed_callback_receiver);
+        let output_loss = OutputLoss::default();
+        output_loss.report(OutputError::DeviceGone, &closed_callback_sender);
+        let (callback_sender, callback_receiver) = crossbeam_channel::bounded(1);
+        output_loss.resend(&callback_sender);
+        assert!(matches!(
+            callback_receiver.try_recv(),
+            Err(TryRecvError::Empty)
+        ));
     }
 
     #[test]
-    fn a_loss_dropped_on_a_full_inbox_is_resent_later() {
-        let (sender, heard) = crossbeam_channel::bounded(1);
-        let lost = OutputLoss::default();
-        lost.report(StreamError::DeviceGone, &sender);
-        lost.report(StreamError::Backend, &sender);
+    fn a_loss_dropped_on_a_full_callback_channel_is_resent_later() {
+        let (callback_sender, callback_receiver) = crossbeam_channel::bounded(1);
+        let output_loss = OutputLoss::default();
+        output_loss.report(OutputError::DeviceGone, &callback_sender);
+        output_loss.report(OutputError::Backend, &callback_sender);
         assert!(matches!(
-            heard.try_recv(),
+            callback_receiver.try_recv(),
             Ok(AudioMessage::Deck(DeckEvent::OutputLost(
-                StreamError::DeviceGone
+                OutputError::DeviceGone
             )))
         ));
-        lost.resend(&sender);
+        output_loss.resend(&callback_sender);
         assert!(matches!(
-            heard.try_recv(),
+            callback_receiver.try_recv(),
             Ok(AudioMessage::Deck(DeckEvent::OutputLost(
-                StreamError::Backend
+                OutputError::Backend
             )))
         ));
-        lost.resend(&sender);
-        assert!(matches!(heard.try_recv(), Err(TryRecvError::Empty)));
+        output_loss.resend(&callback_sender);
+        assert!(matches!(
+            callback_receiver.try_recv(),
+            Err(TryRecvError::Empty)
+        ));
     }
 
     #[test]
@@ -296,7 +316,7 @@ mod tests {
         let devices = list_output_devices().unwrap();
         let default_count = devices
             .iter()
-            .filter(|device| matches!(device.default, DeviceDefault::Default))
+            .filter(|device| matches!(device.default, DeviceDefault::Yes))
             .count();
         assert!(default_count <= 1);
     }
@@ -309,18 +329,20 @@ mod tests {
             return;
         }
 
-        let (sender, _heard) = crossbeam_channel::bounded(1);
-        let lost = OutputLoss::default();
-        let unknown = OutputDevice::Named(name("no-such-device-xyz"));
-        let refusal = open_stream(&unknown, &sender, &lost).err();
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(1);
+        let output_loss = OutputLoss::default();
+        let unknown_device = OutputDevice::Named(name("no-such-device-xyz"));
+        let refusal =
+            open_stream(&unknown_device, &callback_sender, &output_loss).err();
         assert!(matches!(refusal, Some(DeviceError::NotFound(_))));
         assert_eq!(
             refusal.map(|refusal| refusal.to_string()),
-            Some(
-                "audio device 'no-such-device-xyz' not found, using default".to_owned()
-            )
+            Some("audio device 'no-such-device-xyz' not found".to_owned())
         );
 
-        assert!(open_stream(&OutputDevice::SystemDefault, &sender, &lost).is_ok());
+        assert!(
+            open_stream(&OutputDevice::SystemDefault, &callback_sender, &output_loss)
+                .is_ok()
+        );
     }
 }

@@ -4,7 +4,7 @@ use kernel::{
     cmd::{AudioCmd, Cmd, ConfigCmd, Effect},
     domain::{
         appearance::AppearanceSettings,
-        appearance_rows::appearance_rows,
+        appearance_rows::appearance_row_choices,
         crossfade::Crossfade,
         device::{DeviceDefault, ListedDevice, OutputDevice},
         direction::Direction,
@@ -21,7 +21,7 @@ use kernel::{
         Message,
         OverlayRequest,
         PlaybackRequest,
-        SettingsRowRequest,
+        SettingRowRequest,
     },
     update::machine::Unhandled,
 };
@@ -33,7 +33,7 @@ use crate::support::{
 };
 
 fn all_rows() -> Vec<SettingRow> {
-    SettingRow::all(&appearance_rows(AppearanceSettings::default()))
+    SettingRow::all(&appearance_row_choices(AppearanceSettings::default()))
 }
 
 fn row_index(row: SettingRow) -> usize {
@@ -42,7 +42,7 @@ fn row_index(row: SettingRow) -> usize {
 }
 
 fn navigate(model: &mut Model, direction: Direction) -> Cmd {
-    let request = SettingsRowRequest::Navigate(direction);
+    let request = SettingRowRequest::Navigate(direction);
     let message = Message::Overlay(OverlayRequest::Settings(request));
     update(model, message, Moment::default()).unwrap()
 }
@@ -56,9 +56,9 @@ fn opened_settings() -> Model {
     model
 }
 
-fn navigated_to(index: usize) -> Model {
+fn navigated_to(row_index: usize) -> Model {
     let mut model = opened_settings();
-    for _ in 0..index {
+    for _ in 0..row_index {
         navigate_down(&mut model);
     }
     model
@@ -99,7 +99,7 @@ fn step_resolves_the_row_under_the_cursor(
     let mut model = navigated_to(row_index(row));
     assert_eq!(selected_row(&model), Some(row));
 
-    let request = SettingsRowRequest::Step(direction);
+    let request = SettingRowRequest::Step(direction);
     let cmd = update(
         &mut model,
         Message::Overlay(OverlayRequest::Settings(request)),
@@ -119,18 +119,18 @@ fn seeded() -> Model {
                 ThemeName::from_static("solar"),
                 ThemeName::from_static("mono"),
             ],
-            selected: ThemeChoice::Named(ThemeName::from_static("noir")),
+            theme_choice: ThemeChoice::Named(ThemeName::from_static("noir")),
         },
         ..Model::default()
     };
     model.settings.output_devices = vec![
         ListedDevice {
             name: device("Speakers"),
-            default: DeviceDefault::Default,
+            default: DeviceDefault::Yes,
         },
         ListedDevice {
             name: device("Headphones"),
-            default: DeviceDefault::Named,
+            default: DeviceDefault::No,
         },
     ];
     model
@@ -158,7 +158,7 @@ fn step(model: &mut Model, row: SettingRow, direction: Direction) -> Cmd {
 
 #[test]
 fn step_row_toggles_a_config_row() {
-    fn saved(cmd: &Cmd) -> bool {
+    fn saves(cmd: &Cmd) -> bool {
         cmd.effects()
             .any(|effect| matches!(effect, Effect::Config(ConfigCmd::Save(_))))
     }
@@ -182,8 +182,8 @@ fn step_row_toggles_a_config_row() {
     let mut model = seeded();
     let cmd = step(&mut model, SettingRow::ReplayGain, Direction::Next);
 
-    assert_eq!(model.settings.audio.replay_gain, ReplayGain::On);
-    assert!(saved(&cmd));
+    assert_eq!(model.settings.audio_settings.replay_gain, ReplayGain::On);
+    assert!(saves(&cmd));
     assert!(
         live_effects(&cmd)
             .iter()
@@ -191,8 +191,8 @@ fn step_row_toggles_a_config_row() {
     );
 
     let toggled_back = step(&mut model, SettingRow::ReplayGain, Direction::Previous);
-    assert_eq!(model.settings.audio.replay_gain, ReplayGain::Off);
-    assert!(saved(&toggled_back));
+    assert_eq!(model.settings.audio_settings.replay_gain, ReplayGain::Off);
+    assert!(saves(&toggled_back));
 }
 
 #[test]
@@ -210,11 +210,14 @@ fn step_row_crossfade_steps_by_500ms_and_clamps_both_ends() {
     let half_second = Crossfade::try_from(Duration::from_millis(500)).unwrap();
 
     let cmd = step(&mut model, SettingRow::Crossfade, Direction::Previous);
-    assert_eq!(model.settings.audio.crossfade, Crossfade::default());
+    assert_eq!(
+        model.settings.audio_settings.crossfade,
+        Crossfade::default()
+    );
     assert_eq!(crossfade_patch(&cmd), Some(Crossfade::default()));
 
     let stepped_up = step(&mut model, SettingRow::Crossfade, Direction::Next);
-    assert_eq!(model.settings.audio.crossfade, half_second);
+    assert_eq!(model.settings.audio_settings.crossfade, half_second);
     assert!(
         stepped_up
             .effects()
@@ -225,7 +228,7 @@ fn step_row_crossfade_steps_by_500ms_and_clamps_both_ends() {
         press(&mut model, SettingRow::Crossfade, Direction::Next);
     }
     let ceiling = Crossfade::try_from(Duration::from_secs(10)).unwrap();
-    assert_eq!(model.settings.audio.crossfade, ceiling);
+    assert_eq!(model.settings.audio_settings.crossfade, ceiling);
 }
 
 #[test]
@@ -257,28 +260,28 @@ fn step_row_theme_cycles_model_themes_and_wraps(
             let Effect::Config(ConfigCmd::Save(patch)) = effect else {
                 return None;
             };
-            patch.theme.as_ref().map(ThemeName::to_string)
+            patch.theme_name.as_ref().map(ThemeName::to_string)
         })
     }
 
     let mut model = seeded();
     for expected in walk {
         let cmd = step(&mut model, SettingRow::Theme, direction);
-        assert_eq!(model.themes.selected.to_string(), *expected);
+        assert_eq!(model.themes.theme_choice.to_string(), *expected);
         assert_eq!(theme_patch(&cmd).as_deref(), Some(*expected));
     }
 }
 
 #[rstest]
-#[case::theme(SettingRow::Theme, |model: &Model| model.themes.selected == ThemeChoice::Auto)]
+#[case::theme(SettingRow::Theme, |model: &Model| model.themes.theme_choice == ThemeChoice::Auto)]
 #[case::output_device(SettingRow::OutputDevice, |model: &Model| model
     .settings
-    .audio
+    .audio_settings
     .device
     == OutputDevice::SystemDefault)]
 fn step_row_does_nothing_until_the_shell_delivers_a_list(
     #[case] row: SettingRow,
-    #[case] unchanged: fn(&Model) -> bool,
+    #[case] is_unchanged: fn(&Model) -> bool,
 ) {
     let mut model = Model::default();
 
@@ -291,7 +294,7 @@ fn step_row_does_nothing_until_the_shell_delivers_a_list(
         Moment::default(),
     );
 
-    assert!(unchanged(&model));
+    assert!(is_unchanged(&model));
     assert_eq!(result, Err(Unhandled));
 }
 
@@ -307,11 +310,14 @@ fn step_row_output_device_cycles_system_default_and_devices_and_wraps() {
     }
 
     let mut model = seeded();
-    assert_eq!(model.settings.audio.device, OutputDevice::SystemDefault);
+    assert_eq!(
+        model.settings.audio_settings.device,
+        OutputDevice::SystemDefault
+    );
 
     let cmd = step(&mut model, SettingRow::OutputDevice, Direction::Next);
     assert_eq!(
-        model.settings.audio.device,
+        model.settings.audio_settings.device,
         OutputDevice::Named(device("Speakers"))
     );
     assert_eq!(
@@ -325,16 +331,19 @@ fn step_row_output_device_cycles_system_default_and_devices_and_wraps() {
 
     press(&mut model, SettingRow::OutputDevice, Direction::Next);
     assert_eq!(
-        model.settings.audio.device,
+        model.settings.audio_settings.device,
         OutputDevice::Named(device("Headphones"))
     );
 
     press(&mut model, SettingRow::OutputDevice, Direction::Next);
-    assert_eq!(model.settings.audio.device, OutputDevice::SystemDefault);
+    assert_eq!(
+        model.settings.audio_settings.device,
+        OutputDevice::SystemDefault
+    );
 
     press(&mut model, SettingRow::OutputDevice, Direction::Previous);
     assert_eq!(
-        model.settings.audio.device,
+        model.settings.audio_settings.device,
         OutputDevice::Named(device("Headphones"))
     );
 }
@@ -352,32 +361,40 @@ fn step_row_sleep_presets_cycles_and_wraps_and_persists() {
 
     let mut model = seeded();
     assert_eq!(
-        Some(model.settings.audio.sleep_presets.as_slice()),
+        Some(model.settings.audio_settings.sleep_presets.as_slice()),
         SleepPresets::BUNDLES.first().copied()
     );
 
     let cmd = step(&mut model, SettingRow::SleepPresets, Direction::Next);
     assert_eq!(
-        Some(model.settings.audio.sleep_presets.as_slice()),
+        Some(model.settings.audio_settings.sleep_presets.as_slice()),
         SleepPresets::BUNDLES.get(1).copied()
     );
     assert_eq!(sleep_presets_patch(&cmd), SleepPresets::bundle(1));
 
     press(&mut model, SettingRow::SleepPresets, Direction::Previous);
     let wrapped = step(&mut model, SettingRow::SleepPresets, Direction::Previous);
-    assert!(model.settings.audio.sleep_presets.as_slice().is_empty());
+    assert!(
+        model
+            .settings
+            .audio_settings
+            .sleep_presets
+            .as_slice()
+            .is_empty()
+    );
     assert_eq!(sleep_presets_patch(&wrapped), SleepPresets::bundle(4));
 }
 
 #[test]
 fn step_row_sleep_presets_snaps_a_custom_value_to_the_nearest_bundle() {
     let mut model = seeded();
-    model.settings.audio.sleep_presets = SleepPresets::from_minutes(&[100]).unwrap();
+    model.settings.audio_settings.sleep_presets =
+        SleepPresets::from_minutes(&[100]).unwrap();
 
     press(&mut model, SettingRow::SleepPresets, Direction::Next);
 
     assert_eq!(
-        Some(model.settings.audio.sleep_presets.as_slice()),
+        Some(model.settings.audio_settings.sleep_presets.as_slice()),
         SleepPresets::BUNDLES.get(1).copied()
     );
 }
@@ -385,18 +402,21 @@ fn step_row_sleep_presets_snaps_a_custom_value_to_the_nearest_bundle() {
 #[test]
 fn step_row_sleep_presets_leaves_the_clamp_to_the_next_cycle() {
     let mut model = seeded();
-    model.transport.sleep = Some(kernel::domain::sleep::SleepTimer {
+    model.transport.sleep_timer = Some(kernel::domain::sleep::SleepTimer {
         preset_index: kernel::domain::index::PresetIndex::new(2),
         delay: Duration::from_secs(60),
-        deadline: Moment::new(Duration::from_secs(60)),
+        deadline_at: Moment::new(Duration::from_secs(60)),
     });
 
     press(&mut model, SettingRow::SleepPresets, Direction::Previous);
-    let armed = model.transport.sleep.map(|timer| timer.preset_index.get());
+    let armed = model
+        .transport
+        .sleep_timer
+        .map(|timer| timer.preset_index.get());
     send(&mut model, Message::Playback(PlaybackRequest::CycleSleep));
 
     assert_eq!(armed, Some(2));
-    assert!(model.transport.sleep.is_none());
+    assert!(model.transport.sleep_timer.is_none());
 }
 
 #[test]
@@ -450,7 +470,7 @@ fn navigate_down(model: &mut Model) {
 #[test]
 fn the_highlighted_row_is_the_row_that_changes_across_steps() {
     let mut model = Model::default();
-    let cover_mode = AppearanceField::CoverMode;
+    let cover_mode_field = AppearanceField::CoverMode;
 
     send(
         &mut model,
@@ -460,13 +480,13 @@ fn the_highlighted_row_is_the_row_that_changes_across_steps() {
     navigate_down(&mut model);
     assert_eq!(
         selected_row(&model),
-        Some(SettingRow::Appearance(cover_mode))
+        Some(SettingRow::Appearance(cover_mode_field))
     );
 
     for _ in 0..3 {
         let cmd = update(
             &mut model,
-            Message::Overlay(OverlayRequest::Settings(SettingsRowRequest::Step(
+            Message::Overlay(OverlayRequest::Settings(SettingRowRequest::Step(
                 Direction::Next,
             ))),
             Moment::default(),
@@ -481,7 +501,7 @@ fn the_highlighted_row_is_the_row_that_changes_across_steps() {
         assert_eq!(patched_cover_mode, Some(true));
         assert_eq!(
             selected_row(&model),
-            Some(SettingRow::Appearance(cover_mode))
+            Some(SettingRow::Appearance(cover_mode_field))
         );
     }
 }
@@ -489,7 +509,7 @@ fn the_highlighted_row_is_the_row_that_changes_across_steps() {
 #[test]
 fn an_appearance_reload_while_open_keeps_the_selection_on_the_same_row() {
     let mut model = Model::default();
-    let cover_mode = AppearanceField::CoverMode;
+    let cover_mode_field = AppearanceField::CoverMode;
 
     send(
         &mut model,
@@ -499,7 +519,7 @@ fn an_appearance_reload_while_open_keeps_the_selection_on_the_same_row() {
     navigate_down(&mut model);
     assert_eq!(
         selected_row(&model),
-        Some(SettingRow::Appearance(cover_mode))
+        Some(SettingRow::Appearance(cover_mode_field))
     );
 
     send(
@@ -511,6 +531,6 @@ fn an_appearance_reload_while_open_keeps_the_selection_on_the_same_row() {
 
     assert_eq!(
         selected_row(&model),
-        Some(SettingRow::Appearance(cover_mode))
+        Some(SettingRow::Appearance(cover_mode_field))
     );
 }

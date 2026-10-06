@@ -7,7 +7,7 @@ use kernel::{
         revision::Revision,
         time::Moment,
         toast::TOAST_LIFETIME,
-        transport::{Output, StreamError},
+        transport::{OutputError, OutputStatus},
     },
     message::{AudioEvent, Message, PlaybackRequest, Timer},
     update::machine::Unhandled,
@@ -31,7 +31,7 @@ fn second_toast_expiry() -> Effect {
 }
 
 fn output_lost() -> Message {
-    Message::Audio(AudioEvent::OutputLost(StreamError::DeviceGone))
+    Message::Audio(AudioEvent::OutputLost(OutputError::DeviceGone))
 }
 
 fn lost_while_playing(count: usize) -> Model {
@@ -69,7 +69,10 @@ fn a_lost_output_is_mirrored_in_the_model(
     let cmd = update(&mut model, output_lost(), Moment::default()).unwrap();
 
     assert_eq!(cmd, expected);
-    assert!(matches!(model.transport.output, Output::Lost(..)));
+    assert!(matches!(
+        model.transport.output_status,
+        OutputStatus::Lost(..)
+    ));
     assert_eq!(
         model
             .workspace
@@ -99,8 +102,8 @@ fn a_lost_output_under_a_paused_player_leaves_it_paused_and_says_so() {
     assert_eq!(model.player, paused);
     assert!(matches!(model.player, Player::Paused { .. }));
     assert_eq!(
-        model.transport.output,
-        Output::Lost(StreamError::DeviceGone)
+        model.transport.output_status,
+        OutputStatus::Lost(OutputError::DeviceGone)
     );
     assert!(
         cmd.effects()
@@ -135,6 +138,40 @@ fn play_while_the_output_is_lost_loads_again_so_the_engine_reopens() {
     assert!(matches!(model.player, Player::Loading(..)));
 }
 
+#[test]
+fn releasing_an_overlay_hold_after_the_output_was_lost_restarts_the_track() {
+    let mut model = playing_model(3);
+    let _held = update(
+        &mut model,
+        Message::Playback(PlaybackRequest::HoldForOverlay),
+        Moment::default(),
+    )
+    .unwrap();
+    let _lost = update(&mut model, output_lost(), Moment::default()).unwrap();
+
+    let cmd = update(
+        &mut model,
+        Message::Playback(PlaybackRequest::Release),
+        Moment::default(),
+    )
+    .unwrap();
+
+    let loaded_at = cmd
+        .effects()
+        .position(|effect| matches!(effect, Effect::Audio(AudioCmd::Load(_))));
+    let resumed_at = cmd.effects().position(|effect| {
+        matches!(
+            effect,
+            Effect::Audio(AudioCmd::SetPlayback(Playback::Playing))
+        )
+    });
+    assert!(
+        loaded_at.is_some() && loaded_at < resumed_at,
+        "expected a load before any resume among {cmd:?}"
+    );
+    assert!(matches!(model.player, Player::Loading(..)));
+}
+
 #[rstest]
 #[case::toggle(PlaybackRequest::Toggle)]
 #[case::play(PlaybackRequest::Play)]
@@ -142,15 +179,15 @@ fn playing_while_the_output_is_lost_with_no_track_is_refused(
     #[case] request: PlaybackRequest,
 ) {
     let mut model = model_with_tracks(0);
-    model.transport.output = Output::Lost(StreamError::DeviceGone);
+    model.transport.output_status = OutputStatus::Lost(OutputError::DeviceGone);
 
     let result = update(&mut model, Message::Playback(request), Moment::default());
 
     assert_eq!(result, Err(Unhandled));
     assert_eq!(model.player, Player::Stopped);
     assert_eq!(
-        model.transport.output,
-        Output::Lost(StreamError::DeviceGone)
+        model.transport.output_status,
+        OutputStatus::Lost(OutputError::DeviceGone)
     );
 }
 
@@ -171,7 +208,7 @@ fn a_track_that_loads_after_the_reopen_clears_the_lost_output() {
     )
     .unwrap();
 
-    assert_eq!(model.transport.output, Output::Ready);
+    assert_eq!(model.transport.output_status, OutputStatus::Ready);
     assert!(matches!(model.player, Player::Playing { .. }));
 }
 
@@ -189,8 +226,8 @@ fn a_loss_repeated_after_the_retry_stops_the_player_again() {
 
     assert_eq!(model.player, Player::Stopped);
     assert_eq!(
-        model.transport.output,
-        Output::Lost(StreamError::DeviceGone)
+        model.transport.output_status,
+        OutputStatus::Lost(OutputError::DeviceGone)
     );
     assert!(
         cmd.effects()

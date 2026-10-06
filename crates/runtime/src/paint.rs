@@ -14,7 +14,7 @@ where
     S::Error: std::error::Error + 'static,
 {
     pub(crate) fn frame_deadline(&self, now: Instant) -> Instant {
-        self.last_paint.map_or(now, |last| last + FRAME_INTERVAL)
+        self.last_paint_at.map_or(now, |last| last + FRAME_INTERVAL)
     }
 
     pub(crate) fn deadline(
@@ -44,12 +44,12 @@ where
     ) -> Result<(), Error<S::Error>> {
         let frame_passed =
             matches!(frame_due, FrameDue::At(at) if self.runtime.instant_of(at) <= now);
-        let should_paint = match self.repaint {
+        let is_due = match self.repaint {
             Repaint::Now => true,
             Repaint::NextFrame => frame_passed || self.frame_deadline(now) <= now,
             Repaint::Settled => frame_passed,
         };
-        if !should_paint {
+        if !is_due {
             return Ok(());
         }
         let painted = self
@@ -57,12 +57,12 @@ where
             .paint(self.runtime.frame(now))
             .map_err(Error::Paint)?;
         self.repaint = Repaint::Settled;
-        self.last_paint = Some(now);
-        let viewport = Message::Viewport {
+        self.last_paint_at = Some(now);
+        let viewport_message = Message::Viewport {
             visible_rows: painted.visible_rows,
             cover_side: painted.cover_side,
         };
-        self.step_and_repaint(viewport, RepaintCause::Event);
+        self.step_and_repaint(viewport_message, RepaintCause::Event);
         for error in painted.errors {
             self.step_and_repaint(Message::Paint(error), RepaintCause::Event);
         }
@@ -94,11 +94,12 @@ mod tests {
     fn a_moment_deadline_wakes_the_loop_at_its_instant() {
         let mut fixture = fixture();
         let (keys, input) = unbounded();
-        let mut shell = Scripted::new(keys, usize::MAX);
+        let mut shell_scripted = Scripted::new(keys, usize::MAX);
         let now = Instant::now();
         let frame = fixture.runtime.frame(now);
         let moment = Moment::new(frame.now.since_epoch() + Duration::from_millis(10));
-        let mut event_loop = EventLoop::new(&mut fixture.runtime, &mut shell, &input);
+        let mut event_loop =
+            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input);
         event_loop.repaint = Repaint::Settled;
 
         let deadline = event_loop.deadline(now, FrameDue::At(moment));
@@ -111,12 +112,13 @@ mod tests {
     fn painted_errors_are_stepped_in_the_batch() {
         let mut fixture = fixture();
         let (keys, input) = bounded(1);
-        let mut shell = Scripted::new(keys, 1);
-        shell.pending_failures = vec![PaintError::Query(Diagnostic::from_error(
-            &std::io::Error::other("no answer"),
-        ))];
+        let mut shell_scripted = Scripted::new(keys, 1);
+        shell_scripted.pending_errors = vec![PaintError::Query(
+            Diagnostic::from_error(&std::io::Error::other("no answer")),
+        )];
 
-        let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
+        let ended =
+            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input).drive();
 
         assert!(matches!(ended, Ok(())));
         let toast = fixture.runtime.model.workspace.toasts.first().unwrap();
@@ -132,15 +134,16 @@ mod tests {
     ) {
         let mut fixture = fixture();
         let (keys, input) = unbounded();
-        let mut shell = Scripted::new(keys, usize::MAX);
-        let mut event_loop = EventLoop::new(&mut fixture.runtime, &mut shell, &input);
+        let mut shell_scripted = Scripted::new(keys, usize::MAX);
+        let mut event_loop =
+            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input);
         let now = Instant::now();
-        event_loop.last_paint = Some(now - Duration::from_millis(5));
+        event_loop.last_paint_at = Some(now - Duration::from_millis(5));
         event_loop.repaint = repaint;
 
         event_loop.paint_if_due(now, FrameDue::Settled).unwrap();
 
-        assert_eq!(shell.toasts.len(), painted);
+        assert_eq!(shell_scripted.toasts.len(), painted);
         fixture.runtime.drain();
     }
 }

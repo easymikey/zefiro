@@ -23,7 +23,7 @@ FrameLayout {
         width: 78,
         height: 12,
     },
-    card: Some(
+    card_metrics: Some(
         CardMetrics {
             cover_square: Rect {
                 x: 4,
@@ -84,14 +84,14 @@ FrameLayout {
             },
         },
     ),
-    cover: None,
+    cover_area: None,
     playlist_pane: Rect {
         x: 1,
         y: 13,
         width: 78,
         height: 9,
     },
-    playlist: Some(
+    playlist_areas: Some(
         PlaylistAreas {
             pane: Rect {
                 x: 1,
@@ -131,7 +131,7 @@ FrameLayout {
                     height: 0,
                 },
             },
-            selected: None,
+            selected_area: None,
         },
     ),
     key_hints: Some(
@@ -148,6 +148,6 @@ FrameLayout {
         width: 78,
         height: 9,
     },
-    overlay: None,
+    overlay_areas: None,
     toast: None,
 }

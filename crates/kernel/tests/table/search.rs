@@ -14,10 +14,14 @@ use rstest::rstest;
 
 use crate::support::table::cell;
 
-fn query(input: &str, matches: Vec<usize>, selected: usize) -> CursorOver<SearchQuery> {
+fn query(
+    input: &str,
+    matches: Vec<usize>,
+    selected_index: usize,
+) -> CursorOver<SearchQuery> {
     let len = matches.len();
     CursorOver {
-        cursor: Cursor::at(len, selected),
+        cursor: Cursor::at(len, selected_index),
         content: SearchQuery {
             input: input.to_string(),
             matches: matches.into_iter().map(ViewIndex::new).collect(),
@@ -41,14 +45,14 @@ fn edit(edit: SearchEdit) -> SearchRequest {
 #[case::delete_word_on_one_word_empties_the_query(query("foo", vec![], 0), edit(SearchEdit::DeleteWord), Ok((query("", vec![], 0), Cmd::none())))]
 #[case::clear_empties_the_query(query("foo bar", vec![], 0), edit(SearchEdit::Clear), Ok((query("", vec![], 0), Cmd::none())))]
 #[case::nav_down_steps(query("mo", vec![0, 2], 0), SearchRequest::Navigate(Direction::Next), Ok((query("mo", vec![0, 2], 1), Cmd::none())))]
-#[case::nav_up_clamps_at_the_top(query("mo", vec![0, 2], 0), SearchRequest::Navigate(Direction::Previous), Ok((query("mo", vec![0, 2], 0), Cmd::none())))]
-#[case::nav_down_clamps_at_the_bottom(query("mo", vec![0, 2], 1), SearchRequest::Navigate(Direction::Next), Ok((query("mo", vec![0, 2], 1), Cmd::none())))]
+#[case::nav_up_at_the_top_is_refused(query("mo", vec![0, 2], 0), SearchRequest::Navigate(Direction::Previous), Err(Unhandled))]
+#[case::nav_down_at_the_bottom_is_refused(query("mo", vec![0, 2], 1), SearchRequest::Navigate(Direction::Next), Err(Unhandled))]
 #[case::enqueue_hands_the_router_the_selected_match(
     query("mo", vec![0, 2], 1),
     SearchRequest::Enqueue,
     Ok((
         query("mo", vec![0, 2], 1),
-        Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(2))))
+        Cmd::message(Message::Queue(QueueRequest::ToggleAt(ViewIndex::new(2))))
     ))
 )]
 #[case::enqueue_without_a_match_is_refused(
@@ -57,7 +61,7 @@ fn edit(edit: SearchEdit) -> SearchRequest {
     Err(Unhandled)
 )]
 fn search_cell(
-    #[case] start: CursorOver<SearchQuery>,
+    #[case] search_query: CursorOver<SearchQuery>,
     #[case] message: SearchRequest,
     #[case] expected: Result<
         (
@@ -67,5 +71,5 @@ fn search_cell(
         Unhandled,
     >,
 ) {
-    cell(start, message, expected);
+    cell(search_query, message, expected);
 }

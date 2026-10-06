@@ -15,7 +15,7 @@ pub(crate) enum Error {
     #[error("music directory not found: {path}")]
     MusicDirMissing { path: PathBuf },
     #[error("--playlist: {0}")]
-    PlaylistName(#[source] kernel::domain::playlist::PlaylistNameError),
+    PlaylistName(#[source] kernel::domain::playlist::PlaylistFileNameError),
     #[error("--theme: {0}")]
     ThemeName(#[source] kernel::domain::theme::ThemeNameError),
     #[error("the embedded stock theme: {0}")]
@@ -28,11 +28,11 @@ pub(crate) enum Error {
     Input(#[source] io::Error),
     #[error("a background thread panicked")]
     WorkerPanicked,
-    #[error("{run} (teardown after also failed: {teardown})")]
+    #[error("{run_error} (teardown after also failed: {teardown_error})")]
     RunAndTeardown {
         #[source]
-        run: runtime::error::Error,
-        teardown: io::Error,
+        run_error: runtime::error::Error,
+        teardown_error: io::Error,
     },
 }
 
@@ -55,8 +55,8 @@ mod tests {
     #[test]
     fn run_and_teardown_message_names_both_errors() {
         let error = Error::RunAndTeardown {
-            run: runtime::error::Error::InputClosed,
-            teardown: io::Error::other("broken pipe"),
+            run_error: runtime::error::Error::InputClosed,
+            teardown_error: io::Error::other("broken pipe"),
         };
 
         assert_eq!(

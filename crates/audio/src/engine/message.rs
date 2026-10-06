@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
@@ -6,16 +6,22 @@ use kernel::{
     domain::{
         device::{ListedDevice, OutputDevice},
         revision::Revision,
-        transport::StreamError,
+        transport::OutputError,
     },
     message::AudioError,
 };
 
-use crate::deck::{event::DeckEvent, source::PreloadMode};
+use crate::{
+    deck::{
+        event::DeckEvent,
+        source::{PreloadMode, TrackDecoder},
+    },
+    error::Error,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SinkRole {
-    Primary,
+    Current,
     Outgoing,
     Incoming,
 }
@@ -25,13 +31,6 @@ pub struct DeviceOpened {
     pub(crate) device: OutputDevice,
     pub(crate) position: Duration,
     pub(crate) playback: Playback,
-    pub(crate) opened: DeviceChoice,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DeviceChoice {
-    FellBack,
-    Requested,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -39,7 +38,7 @@ pub struct Signals(pub(crate) u8);
 
 impl Signals {
     pub(crate) const FINISHED: Self = Self(1);
-    pub(crate) const CUED: Self = Self(2);
+    pub(crate) const FADE_START: Self = Self(2);
     pub(crate) const RAMPED: Self = Self(4);
 
     #[must_use]
@@ -48,11 +47,49 @@ impl Signals {
     }
 }
 
-#[derive(Debug)]
 pub enum AudioMessage {
     Deck(DeckEvent),
-    SignalsTaken { role: SinkRole, signals: Signals },
+    Decoded {
+        revision: Revision,
+        result: Result<TrackDecoder, Error>,
+    },
+    Preloaded {
+        revision: Revision,
+        result: Result<TrackDecoder, Error>,
+    },
+    DevicesListed(Result<Vec<ListedDevice>, AudioError>),
+    SignalsTaken {
+        role: SinkRole,
+        signals: Signals,
+    },
     Engine(EngineMessage),
+}
+
+impl fmt::Debug for AudioMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AudioMessage::Deck(event) => f.debug_tuple("Deck").field(event).finish(),
+            AudioMessage::Decoded { revision, .. } => f
+                .debug_struct("Decoded")
+                .field("revision", revision)
+                .finish_non_exhaustive(),
+            AudioMessage::Preloaded { revision, .. } => f
+                .debug_struct("Preloaded")
+                .field("revision", revision)
+                .finish_non_exhaustive(),
+            AudioMessage::DevicesListed(listed) => {
+                f.debug_tuple("DevicesListed").field(listed).finish()
+            }
+            AudioMessage::SignalsTaken { role, signals } => f
+                .debug_struct("SignalsTaken")
+                .field("role", role)
+                .field("signals", signals)
+                .finish(),
+            AudioMessage::Engine(message) => {
+                f.debug_tuple("Engine").field(message).finish()
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -60,8 +97,9 @@ pub enum EngineMessage {
     Cmds(Cmds<AudioCmd>),
     Reported(Option<Duration>),
     Error(AudioError),
-    OutputLost(StreamError),
+    OutputLost(OutputError),
     Opened(DeviceOpened),
+    NotFound,
     Decoded(Option<Duration>),
     Attached {
         revision: Revision,
@@ -69,7 +107,7 @@ pub enum EngineMessage {
         duration: Option<Duration>,
     },
     Finished(SinkRole),
-    Cued,
+    FadeStartReached,
     Ramped(SinkRole),
     DevicesListed(Vec<ListedDevice>),
 }
@@ -89,11 +127,27 @@ impl From<EngineMessage> for AudioMessage {
 impl DeckEvent {
     pub(crate) fn wake(
         self,
-        sender: &Sender<AudioMessage>,
+        callback_sender: &Sender<AudioMessage>,
     ) -> Result<(), TrySendError<AudioMessage>> {
-        match sender.try_send(AudioMessage::Deck(self)) {
+        match callback_sender.try_send(AudioMessage::Deck(self)) {
             Err(TrySendError::Disconnected(_)) => Ok(()),
             sent => sent,
         }
     }
+}
+
+pub(crate) fn signalled(role: SinkRole, signals: Signals) -> Vec<EngineMessage> {
+    [
+        (signals.contains(Signals::FADE_START) && role == SinkRole::Current)
+            .then_some(EngineMessage::FadeStartReached),
+        signals
+            .contains(Signals::RAMPED)
+            .then_some(EngineMessage::Ramped(role)),
+        signals
+            .contains(Signals::FINISHED)
+            .then_some(EngineMessage::Finished(role)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }

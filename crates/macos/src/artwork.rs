@@ -24,7 +24,7 @@ use crate::{
     effect::MacosEffect,
     ffi,
     job::{MacosJob, MacosLoopCmd},
-    message::CoverBytes,
+    message::ArtworkBytes,
 };
 
 pub(crate) fn artwork(bytes: &[u8]) -> Option<Retained<MPMediaItemArtwork>> {
@@ -38,60 +38,70 @@ pub(crate) fn artwork(bytes: &[u8]) -> Option<Retained<MPMediaItemArtwork>> {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct Cover {
-    track: Option<PathBuf>,
+pub(crate) struct Artwork {
+    track_path: Option<PathBuf>,
     revision: Revision,
 }
 
-impl Cover {
+impl Artwork {
     pub(crate) fn shows(&self, path: Option<&Path>) -> bool {
-        self.track.as_deref() == path
+        self.track_path.as_deref() == path
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CoverMessage {
+pub(crate) enum ArtworkMessage {
     TrackShown(Option<PathBuf>),
-    Read(CoverBytes),
+    ReadDone(ArtworkBytes),
 }
 
-impl Machine for Cover {
-    type Message = CoverMessage;
+impl Machine for Artwork {
+    type Message = ArtworkMessage;
     type Effect = MacosLoopCmd;
 
-    fn transition(&mut self, message: CoverMessage) -> Result<Self::Effect, Unhandled> {
+    fn transition(
+        &mut self,
+        message: ArtworkMessage,
+    ) -> Result<Self::Effect, Unhandled> {
         match message {
-            CoverMessage::TrackShown(track) if self.track == track => Err(Unhandled),
-            CoverMessage::TrackShown(track) => {
-                self.track.clone_from(&track);
+            ArtworkMessage::TrackShown(track_path) if self.track_path == track_path => {
+                Err(Unhandled)
+            }
+            ArtworkMessage::TrackShown(track_path) => {
+                self.track_path.clone_from(&track_path);
                 self.revision = self.revision.next();
                 let revision = self.revision;
-                let read = track.map(|track| {
-                    LoopEffect::Run(MacosJob::ReadCover { track, revision })
+                let read = track_path.map(|track_path| {
+                    LoopEffect::Run(MacosJob::ReadArtwork {
+                        track_path,
+                        revision,
+                    })
                 });
                 Ok(iter::once(LoopEffect::Execute(MacosEffect::ClearArtwork))
                     .chain(read)
                     .collect())
             }
-            CoverMessage::Read(CoverBytes { revision, .. })
+            ArtworkMessage::ReadDone(ArtworkBytes { revision, .. })
                 if revision != self.revision =>
             {
                 Err(Unhandled)
             }
-            CoverMessage::Read(CoverBytes {
+            ArtworkMessage::ReadDone(ArtworkBytes {
                 bytes: Ok(bytes), ..
             }) if bytes.is_empty() => Err(Unhandled),
-            CoverMessage::Read(CoverBytes {
+            ArtworkMessage::ReadDone(ArtworkBytes {
                 bytes: Err(MacosError::ReadArtwork(error)),
                 ..
             }) if error == io::ErrorKind::NotFound.into() => Err(Unhandled),
-            CoverMessage::Read(CoverBytes {
+            ArtworkMessage::ReadDone(ArtworkBytes {
                 bytes: Ok(bytes), ..
-            }) => Ok([MacosEffect::ShowArtwork(bytes), MacosEffect::Publish]
-                .into_iter()
-                .map(LoopEffect::Execute)
-                .collect()),
-            CoverMessage::Read(CoverBytes {
+            }) => Ok(
+                [MacosEffect::ShowArtwork(bytes), MacosEffect::ShowNowPlaying]
+                    .into_iter()
+                    .map(LoopEffect::Execute)
+                    .collect(),
+            ),
+            ArtworkMessage::ReadDone(ArtworkBytes {
                 bytes: Err(error), ..
             }) => Ok(Cmd::message(MacosEvent::Error(error))),
         }
@@ -111,14 +121,14 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        cover::{Cover, CoverMessage, artwork},
+        artwork::{Artwork, ArtworkMessage, artwork},
         effect::MacosEffect,
         job::{MacosJob, MacosLoopCmd},
-        message::CoverBytes,
+        message::ArtworkBytes,
     };
 
     #[test]
-    fn undecodable_cover_bytes_give_no_artwork() {
+    fn undecodable_artwork_bytes_give_no_artwork() {
         assert!(artwork(b"not an image").is_none());
         assert!(artwork(b"").is_none());
     }
@@ -131,16 +141,16 @@ mod tests {
         (0..count).fold(Revision::default(), |revision, _| revision.next())
     }
 
-    fn holding(name: Option<&str>, count: u8) -> Cover {
-        Cover {
-            track: name.map(track),
+    fn holding(name: Option<&str>, count: u8) -> Artwork {
+        Artwork {
+            track_path: name.map(track),
             revision: revision(count),
         }
     }
 
     fn read(name: &str, count: u8) -> MacosJob {
-        MacosJob::ReadCover {
-            track: track(name),
+        MacosJob::ReadArtwork {
+            track_path: track(name),
             revision: revision(count),
         }
     }
@@ -164,8 +174,8 @@ mod tests {
         (executed, jobs, events)
     }
 
-    fn bytes_of(count: u8, bytes: &[u8]) -> CoverMessage {
-        CoverMessage::Read(CoverBytes {
+    fn bytes_of(count: u8, bytes: &[u8]) -> ArtworkMessage {
+        ArtworkMessage::ReadDone(ArtworkBytes {
             revision: revision(count),
             bytes: Ok(bytes.to_vec()),
         })
@@ -175,76 +185,76 @@ mod tests {
         MacosError::ReadArtwork(io::ErrorKind::PermissionDenied.into())
     }
 
-    fn failed(count: u8) -> CoverMessage {
-        CoverMessage::Read(CoverBytes {
+    fn failed(count: u8) -> ArtworkMessage {
+        ArtworkMessage::ReadDone(ArtworkBytes {
             revision: revision(count),
             bytes: Err(unreadable()),
         })
     }
 
     struct Row {
-        cover: Cover,
-        message: CoverMessage,
-        next: Cover,
+        artwork: Artwork,
+        message: ArtworkMessage,
+        next: Artwork,
         cmd: Result<Cmd<MacosEffect, MacosEvent>, Unhandled>,
         jobs: Vec<MacosJob>,
     }
 
     #[rstest]
-    #[case::first_track_reads_its_cover(Row {
-        cover: Cover::default(),
-        message: CoverMessage::TrackShown(Some(track("a.flac"))),
+    #[case::first_track_reads_its_artwork(Row {
+        artwork: Artwork::default(),
+        message: ArtworkMessage::TrackShown(Some(track("a.flac"))),
         next: holding(Some("a.flac"), 1),
         cmd: Ok(Cmd::effect(MacosEffect::ClearArtwork)),
         jobs: vec![read("a.flac", 1)],
     })]
     #[case::the_same_track_is_refused(Row {
-        cover: holding(Some("a.flac"), 1),
-        message: CoverMessage::TrackShown(Some(track("a.flac"))),
+        artwork: holding(Some("a.flac"), 1),
+        message: ArtworkMessage::TrackShown(Some(track("a.flac"))),
         next: holding(Some("a.flac"), 1),
         cmd: Err(Unhandled),
         jobs: vec![],
     })]
     #[case::a_new_track_clears_and_reads(Row {
-        cover: holding(Some("a.flac"), 1),
-        message: CoverMessage::TrackShown(Some(track("b.flac"))),
+        artwork: holding(Some("a.flac"), 1),
+        message: ArtworkMessage::TrackShown(Some(track("b.flac"))),
         next: holding(Some("b.flac"), 2),
         cmd: Ok(Cmd::effect(MacosEffect::ClearArtwork)),
         jobs: vec![read("b.flac", 2)],
     })]
-    #[case::the_cover_read_shows_it(Row {
-        cover: holding(Some("a.flac"), 1),
+    #[case::the_artwork_read_shows_it(Row {
+        artwork: holding(Some("a.flac"), 1),
         message: bytes_of(1, b"art"),
         next: holding(Some("a.flac"), 1),
-        cmd: Ok([MacosEffect::ShowArtwork(b"art".to_vec()), MacosEffect::Publish]
+        cmd: Ok([MacosEffect::ShowArtwork(b"art".to_vec()), MacosEffect::ShowNowPlaying]
             .into_iter()
             .collect()),
         jobs: vec![],
     })]
-    #[case::a_stale_cover_read_is_refused(Row {
-        cover: holding(Some("b.flac"), 2),
+    #[case::a_stale_artwork_read_is_refused(Row {
+        artwork: holding(Some("b.flac"), 2),
         message: bytes_of(1, b"art"),
         next: holding(Some("b.flac"), 2),
         cmd: Err(Unhandled),
         jobs: vec![],
     })]
     #[case::a_failed_read_is_reported(Row {
-        cover: holding(Some("a.flac"), 1),
+        artwork: holding(Some("a.flac"), 1),
         message: failed(1),
         next: holding(Some("a.flac"), 1),
         cmd: Ok(Cmd::message(MacosEvent::Error(unreadable()))),
         jobs: vec![],
     })]
     #[case::a_stale_failed_read_is_refused(Row {
-        cover: holding(Some("b.flac"), 2),
+        artwork: holding(Some("b.flac"), 2),
         message: failed(1),
         next: holding(Some("b.flac"), 2),
         cmd: Err(Unhandled),
         jobs: vec![],
     })]
-    #[case::a_track_with_no_cover_found_shows_nothing(Row {
-        cover: holding(Some("a.flac"), 1),
-        message: CoverMessage::Read(CoverBytes {
+    #[case::a_track_with_no_artwork_found_shows_nothing(Row {
+        artwork: holding(Some("a.flac"), 1),
+        message: ArtworkMessage::ReadDone(ArtworkBytes {
             revision: revision(1),
             bytes: Err(MacosError::ReadArtwork(io::ErrorKind::NotFound.into())),
         }),
@@ -253,22 +263,24 @@ mod tests {
         jobs: vec![],
     })]
     #[case::cleared_clears(Row {
-        cover: holding(Some("a.flac"), 1),
-        message: CoverMessage::TrackShown(None),
+        artwork: holding(Some("a.flac"), 1),
+        message: ArtworkMessage::TrackShown(None),
         next: holding(None, 2),
         cmd: Ok(Cmd::effect(MacosEffect::ClearArtwork)),
         jobs: vec![],
     })]
-    #[case::a_track_without_cover_shows_nothing(Row {
-        cover: holding(Some("a.flac"), 1),
+    #[case::a_track_without_artwork_shows_nothing(Row {
+        artwork: holding(Some("a.flac"), 1),
         message: bytes_of(1, b""),
         next: holding(Some("a.flac"), 1),
         cmd: Err(Unhandled),
         jobs: vec![],
     })]
-    fn the_cover_slot_reads_clears_or_shows_by_the_revision_it_holds(#[case] row: Row) {
+    fn the_artwork_slot_reads_clears_or_shows_by_the_revision_it_holds(
+        #[case] row: Row,
+    ) {
         let Row {
-            mut cover,
+            mut artwork,
             message,
             next,
             cmd,
@@ -278,7 +290,7 @@ mod tests {
             let (effects, events) = cmd.into_parts();
             (effects, jobs, events)
         });
-        assert_eq!(cover.transition(message).map(placed), expected);
-        assert_eq!(cover, next);
+        assert_eq!(artwork.transition(message).map(placed), expected);
+        assert_eq!(artwork, next);
     }
 }

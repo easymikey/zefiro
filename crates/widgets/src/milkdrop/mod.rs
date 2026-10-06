@@ -81,16 +81,16 @@ impl MilkdropField {
 
 #[derive(Debug)]
 pub(crate) struct MilkdropAdvance<'a> {
-    pub(crate) bands: &'a Spectrum,
-    pub(crate) playing: Playback,
+    pub(crate) spectrum: &'a Spectrum,
+    pub(crate) playback: Playback,
     pub(crate) seed: u64,
     pub(crate) tick: u64,
 }
 
 impl MilkdropField {
-    pub(crate) fn advance(&mut self, input: &MilkdropAdvance<'_>) {
-        let levels = band_levels(input.bands);
-        let preset = preset_for_seed(input.seed);
+    pub(crate) fn advance(&mut self, milkdrop_advance: &MilkdropAdvance<'_>) {
+        let levels = band_levels(milkdrop_advance.spectrum);
+        let preset = preset_for_seed(milkdrop_advance.seed);
 
         let size = FieldSize {
             width: self.width,
@@ -115,7 +115,7 @@ impl MilkdropField {
             }
         }
 
-        if input.playing == Playback::Playing {
+        if milkdrop_advance.playback == Playback::Playing {
             inject(
                 &mut self.scratch,
                 size,
@@ -125,8 +125,8 @@ impl MilkdropField {
                     core_radius: CORE_RADIUS + levels.bass * CORE_GAIN,
                     treble: levels.treble,
                     spark_count: SPARK_COUNT,
-                    seed: input.seed,
-                    tick: input.tick,
+                    seed: milkdrop_advance.seed,
+                    tick: milkdrop_advance.tick,
                 },
             );
         }
@@ -149,7 +149,7 @@ impl MilkdropStyle {
         Self {
             muted_foreground: colors.muted_foreground,
             accent: colors.accent,
-            foreground: colors.text,
+            foreground: colors.foreground,
         }
     }
 
@@ -210,13 +210,13 @@ mod tests {
     const SILENT_BANDS: [f32; 16] = [0.0; 16];
 
     fn input(
-        bands: &Spectrum,
-        playing: Playback,
+        spectrum: &Spectrum,
+        playback: Playback,
         beat: (u64, u64),
     ) -> MilkdropAdvance<'_> {
         MilkdropAdvance {
-            bands,
-            playing,
+            spectrum,
+            playback,
             seed: beat.0,
             tick: beat.1,
         }
@@ -256,31 +256,31 @@ mod tests {
 
     #[test]
     fn step_is_deterministic_for_the_same_seed_and_tick() {
-        let mut a = MilkdropField::new(9, 9);
-        let mut b = a.clone();
-        a.advance(&input(&SILENT_BANDS, Playback::Playing, (7, 3)));
-        b.advance(&input(&SILENT_BANDS, Playback::Playing, (7, 3)));
-        assert_eq!(a, b);
+        let mut first_field = MilkdropField::new(9, 9);
+        let mut second_field = first_field.clone();
+        first_field.advance(&input(&SILENT_BANDS, Playback::Playing, (7, 3)));
+        second_field.advance(&input(&SILENT_BANDS, Playback::Playing, (7, 3)));
+        assert_eq!(first_field, second_field);
     }
 
     #[test]
     fn different_seeds_produce_different_fields() {
         let loud_treble = [1.0; 16];
-        let mut a = MilkdropField::new(9, 9);
-        let mut b = a.clone();
-        a.advance(&input(&loud_treble, Playback::Playing, (0, 5)));
-        b.advance(&input(&loud_treble, Playback::Playing, (1, 5)));
-        assert_ne!(a, b);
+        let mut first_field = MilkdropField::new(9, 9);
+        let mut second_field = first_field.clone();
+        first_field.advance(&input(&loud_treble, Playback::Playing, (0, 5)));
+        second_field.advance(&input(&loud_treble, Playback::Playing, (1, 5)));
+        assert_ne!(first_field, second_field);
     }
 
     #[test]
     fn same_seed_scatters_sparks_at_the_same_positions_across_independent_fields() {
         let loud_treble = [1.0; 16];
-        let mut field_a = MilkdropField::new(9, 9);
-        let mut field_b = MilkdropField::new(9, 9);
-        field_a.advance(&input(&loud_treble, Playback::Playing, (42, 11)));
-        field_b.advance(&input(&loud_treble, Playback::Playing, (42, 11)));
-        assert_eq!(field_a, field_b);
+        let mut first_field = MilkdropField::new(9, 9);
+        let mut second_field = MilkdropField::new(9, 9);
+        first_field.advance(&input(&loud_treble, Playback::Playing, (42, 11)));
+        second_field.advance(&input(&loud_treble, Playback::Playing, (42, 11)));
+        assert_eq!(first_field, second_field);
     }
 
     #[test]
@@ -301,19 +301,19 @@ mod tests {
     fn ambient_zoom_above_one_spreads_the_core_outward_over_a_few_steps() {
         let (width, height) = (9, 9);
         let mut field = MilkdropField::new(width, height);
-        let probe = CellPosition {
+        let probe_position = CellPosition {
             column: width / 2 + 4,
             row: height / 2,
         };
 
         field.advance(&input(&SILENT_BANDS, Playback::Playing, (0, 0)));
-        let initial = field.cell(probe);
+        let initial = field.cell(probe_position);
         assert_eq!(initial, 0.0, "probe must start outside the injected core");
 
         for tick in 1..3 {
             field.advance(&input(&SILENT_BANDS, Playback::Playing, (0, tick)));
         }
-        let spread = field.cell(probe);
+        let spread = field.cell(probe_position);
         assert!(
             spread > initial,
             "expected the core to have spread out to the probe cell by the third step, got {spread}"
@@ -323,17 +323,17 @@ mod tests {
     #[test]
     fn kaleido_preset_output_is_four_way_symmetric() {
         let loud = [1.0; 16];
-        let mut stepped = MilkdropField::new(10, 8);
-        stepped.advance(&input(&loud, Playback::Playing, (2, 9)));
+        let mut stepped_field = MilkdropField::new(10, 8);
+        stepped_field.advance(&input(&loud, Playback::Playing, (2, 9)));
 
-        for row in 0..stepped.height {
-            for column in 0..stepped.width {
-                let cell = stepped.cell(CellPosition { column, row });
-                let mirrored_column = stepped.width - 1 - column;
-                let mirrored_row = stepped.height - 1 - row;
+        for row in 0..stepped_field.height {
+            for column in 0..stepped_field.width {
+                let cell = stepped_field.cell(CellPosition { column, row });
+                let mirrored_column = stepped_field.width - 1 - column;
+                let mirrored_row = stepped_field.height - 1 - row;
                 assert_eq!(
                     cell,
-                    stepped.cell(CellPosition {
+                    stepped_field.cell(CellPosition {
                         column: mirrored_column,
                         row
                     }),
@@ -341,7 +341,7 @@ mod tests {
                 );
                 assert_eq!(
                     cell,
-                    stepped.cell(CellPosition {
+                    stepped_field.cell(CellPosition {
                         column,
                         row: mirrored_row
                     }),

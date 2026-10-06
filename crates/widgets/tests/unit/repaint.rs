@@ -10,18 +10,18 @@ use kernel::domain::{
 use rstest::rstest;
 use widgets::repaint::{ProgressScale, next_clock_second, next_progress_step};
 
-fn playhead(offset_secs: f64, speed: f32) -> Playhead {
+fn playhead(offset_secs: f64, speed_factor: f32) -> Playhead {
     Playhead::anchored(
         Duration::from_secs_f64(offset_secs),
         Moment::default(),
-        Speed::clamped(speed),
+        Speed::clamped(speed_factor),
     )
 }
 
 fn hundred_steps() -> ProgressScale {
     ProgressScale {
         steps: NonZeroU32::new(100).unwrap_or(NonZeroU32::MIN),
-        length: Duration::from_secs(100),
+        duration: Duration::from_secs(100),
     }
 }
 
@@ -34,12 +34,12 @@ fn hundred_steps() -> ProgressScale {
 #[case::past_the_end(100.0, 1.0, None)]
 fn next_progress_step_lands_on_the_next_boundary(
     #[case] offset_secs: f64,
-    #[case] speed: f32,
+    #[case] speed_factor: f32,
     #[case] expected_millis: Option<u64>,
 ) {
-    let head = playhead(offset_secs, speed);
+    let playhead = playhead(offset_secs, speed_factor);
     let now = Moment::default();
-    let result = next_progress_step(hundred_steps(), head, now);
+    let result = next_progress_step(hundred_steps(), playhead, now);
     let millis = result.map(|moment| {
         u64::try_from(moment.since_epoch().as_millis()).unwrap_or(u64::MAX)
     });
@@ -53,14 +53,14 @@ fn next_progress_step_lands_on_the_next_boundary(
 #[case::one_and_a_half_speed(1.5)]
 #[case::double_speed(2.0)]
 #[case::quadruple_speed(4.0)]
-fn the_returned_moment_really_crosses(#[case] speed: f32) {
+fn the_returned_moment_really_crosses(#[case] speed_factor: f32) {
     let scale = hundred_steps();
-    let head = playhead(7.37, speed);
+    let playhead = playhead(7.37, speed_factor);
     let now = Moment::default();
-    let step_before = head.position_at(now).as_secs();
-    let result = next_progress_step(scale, head, now).unwrap_or(now);
+    let step_before = playhead.position_at(now).as_secs();
+    let result = next_progress_step(scale, playhead, now).unwrap_or(now);
     assert!(result > now, "expected a moment strictly after now");
-    let step_after = head.position_at(result).as_secs();
+    let step_after = playhead.position_at(result).as_secs();
     assert_eq!(step_after, step_before + 1);
 }
 
@@ -71,12 +71,12 @@ fn the_returned_moment_really_crosses(#[case] speed: f32) {
 #[case::quarter_speed(10.4, 0.25, 2401)]
 fn the_next_clock_second_lands_on_the_following_whole_second_at_any_speed(
     #[case] offset_secs: f64,
-    #[case] speed: f32,
+    #[case] speed_factor: f32,
     #[case] expected_millis: u64,
 ) {
-    let head = playhead(offset_secs, speed);
+    let playhead = playhead(offset_secs, speed_factor);
     let now = Moment::default();
-    let result = next_clock_second(head, now);
+    let result = next_clock_second(playhead, now);
     let millis = u64::try_from(result.since_epoch().as_millis()).unwrap_or(u64::MAX);
     assert_eq!(millis, expected_millis);
 }

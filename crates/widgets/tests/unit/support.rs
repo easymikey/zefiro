@@ -176,14 +176,14 @@ pub(crate) fn card_metrics(
     }
 }
 
-pub(crate) fn playlist_areas(selected: Option<Rect>) -> PlaylistAreas {
+pub(crate) fn playlist_areas(selected_area: Option<Rect>) -> PlaylistAreas {
     let sources = fixtures::SceneSources::new(fixtures::model_with_tracks(1));
     let layout = FrameLayout::from_scene(&sources.scene(), Rect::new(0, 0, 120, 40));
     PlaylistAreas {
         pane: Rect::default(),
-        selected,
+        selected_area,
         ..layout
-            .playlist
+            .playlist_areas
             .expect("a stock scene lays out the playlist")
     }
 }
@@ -212,8 +212,8 @@ pub(crate) fn screen_backdrop() -> Backdrop {
 pub(crate) fn pane_backdrop() -> Backdrop {
     Backdrop {
         layout: FrameLayout {
-            card: Some(card_metrics(PANE_STATUS, CARD_TITLE, VOLUME_LABEL)),
-            playlist: Some(playlist_areas(Some(PANE_ROW))),
+            card_metrics: Some(card_metrics(PANE_STATUS, CARD_TITLE, VOLUME_LABEL)),
+            playlist_areas: Some(playlist_areas(Some(PANE_ROW))),
             ..FrameLayout::empty(Rect::default(), Breakpoint::Full)
         },
         ..quiet_backdrop()
@@ -223,7 +223,7 @@ pub(crate) fn pane_backdrop() -> Backdrop {
 pub(crate) fn chip_backdrop() -> Backdrop {
     Backdrop {
         layout: FrameLayout {
-            card: Some(card_metrics(AREA, Rect::default(), Rect::default())),
+            card_metrics: Some(card_metrics(AREA, Rect::default(), Rect::default())),
             ..FrameLayout::empty(Rect::default(), Breakpoint::Full)
         },
         ..quiet_backdrop()
@@ -233,7 +233,7 @@ pub(crate) fn chip_backdrop() -> Backdrop {
 pub(crate) fn overlay_backdrop(overlay: Option<Rect>) -> Backdrop {
     Backdrop {
         layout: FrameLayout {
-            overlay: overlay
+            overlay_areas: overlay
                 .map(widgets::overlay::modal::placement::OverlayAreas::Banner),
             ..FrameLayout::empty(Rect::default(), Breakpoint::Full)
         },

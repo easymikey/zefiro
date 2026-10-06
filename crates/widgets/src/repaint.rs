@@ -17,7 +17,7 @@ pub enum Presence {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OnScreen {
-    pub progress_bar: Option<Cells>,
+    pub progress_bar_width: Option<Cells>,
     pub clock: Presence,
     pub sleep_label: Presence,
     pub spectrum: Presence,
@@ -26,17 +26,17 @@ pub struct OnScreen {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProgressScale {
     pub steps: NonZeroU32,
-    pub length: Duration,
+    pub duration: Duration,
 }
 
 impl ProgressScale {
     #[must_use]
-    pub fn text_bar(width: Cells, length: Duration) -> Option<Self> {
-        if width == Cells(0) || length.is_zero() {
+    pub fn text_bar(width: Cells, duration: Duration) -> Option<Self> {
+        if width == Cells(0) || duration.is_zero() {
             return None;
         }
         let steps = NonZeroU32::new(2 * u32::from(width.0))?;
-        Some(Self { steps, length })
+        Some(Self { steps, duration })
     }
 }
 
@@ -46,17 +46,17 @@ pub fn next_progress_step(
     playhead: Playhead,
     now: Moment,
 ) -> Option<Moment> {
-    let step_length = scale.length / scale.steps.get();
+    let step_length = scale.duration / scale.steps.get();
     if step_length.is_zero() {
         return None;
     }
     let position = playhead.position_at(now);
     let step_index = duration_steps(position, step_length);
-    let boundary = step_length.saturating_mul(step_index.saturating_add(1));
-    if boundary > scale.length {
+    let next_position = step_length.saturating_mul(step_index.saturating_add(1));
+    if next_position > scale.duration {
         return None;
     }
-    Some(wall_moment(playhead, boundary))
+    Some(wall_moment(playhead, next_position))
 }
 
 #[must_use]
@@ -78,19 +78,21 @@ pub fn progress_frame_due(
 #[must_use]
 pub fn next_clock_second(playhead: Playhead, now: Moment) -> Moment {
     let position = playhead.position_at(now);
-    let boundary = Duration::from_secs(position.as_secs() + 1);
-    wall_moment(playhead, boundary)
+    let next_position = Duration::from_secs(position.as_secs() + 1);
+    wall_moment(playhead, next_position)
 }
 
 #[must_use]
-pub(crate) fn next_sleep_minute(deadline: Moment, now: Moment) -> Option<Moment> {
-    if now >= deadline {
+pub(crate) fn next_sleep_minute(deadline_at: Moment, now: Moment) -> Option<Moment> {
+    if now >= deadline_at {
         return None;
     }
-    let left = deadline.elapsed_since(now);
+    let left = deadline_at.elapsed_since(now);
     let minutes = ceil_minutes(left);
-    let boundary = Duration::from_secs((minutes - 1) * SECONDS_PER_MINUTE);
-    Some(Moment::new(deadline.since_epoch().saturating_sub(boundary)))
+    let next_position = Duration::from_secs((minutes - 1) * SECONDS_PER_MINUTE);
+    Some(Moment::new(
+        deadline_at.since_epoch().saturating_sub(next_position),
+    ))
 }
 
 pub(crate) fn ceil_minutes(duration: Duration) -> u64 {
@@ -98,15 +100,15 @@ pub(crate) fn ceil_minutes(duration: Duration) -> u64 {
     seconds.div_ceil(SECONDS_PER_MINUTE)
 }
 
-fn duration_steps(position: Duration, step_length: Duration) -> u32 {
-    let steps = position.as_nanos() / step_length.as_nanos();
+fn duration_steps(position: Duration, step: Duration) -> u32 {
+    let steps = position.as_nanos() / step.as_nanos();
     u32::try_from(steps).unwrap_or(u32::MAX)
 }
 
 fn wall_moment(playhead: Playhead, target_position: Duration) -> Moment {
     let delta = target_position.saturating_sub(playhead.offset);
     let wall_delta = delta.div_f32(playhead.speed.get()) + STEP_CORRECTION;
-    Moment::new(playhead.since.since_epoch() + wall_delta)
+    Moment::new(playhead.started_at.since_epoch() + wall_delta)
 }
 
 #[cfg(test)]
@@ -135,18 +137,22 @@ mod tests {
         }))
     }
 
-    fn playing(offset: Duration, since: Moment, speed: f32) -> Player {
+    fn playing(offset: Duration, started_at: Moment, speed_factor: f32) -> Player {
         Player::Playing {
             track: track(Duration::from_secs(100)),
-            playhead: Playhead::anchored(offset, since, Speed::clamped(speed)),
+            playhead: Playhead::anchored(
+                offset,
+                started_at,
+                Speed::clamped(speed_factor),
+            ),
             preloaded: None,
         }
     }
 
-    fn paused(at: Duration, duration: Duration) -> Player {
+    fn paused(position: Duration, duration: Duration) -> Player {
         Player::Paused {
             track: track(duration),
-            position: at,
+            position,
             by: PausedBy::Listener,
         }
     }
@@ -203,13 +209,13 @@ mod tests {
     #[case::exact_quarter_hour(Duration::from_secs(15 * 60), Duration::from_secs(60))]
     #[case::deadline_itself(Duration::from_secs(30), Duration::from_secs(30))]
     fn the_next_sleep_wake_is_the_nearest_minute_boundary_or_the_deadline(
-        #[case] left: Duration,
+        #[case] remaining: Duration,
         #[case] until_next: Duration,
     ) {
         let now = Moment::new(Duration::from_secs(1_000));
-        let deadline = Moment::new(now.since_epoch() + left);
+        let deadline_at = Moment::new(now.since_epoch() + remaining);
         assert_eq!(
-            next_sleep_minute(deadline, now),
+            next_sleep_minute(deadline_at, now),
             Some(Moment::new(now.since_epoch() + until_next))
         );
     }

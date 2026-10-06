@@ -2,14 +2,14 @@ use crate::{
     cmd::Cmd,
     domain::{cursor_over::CursorOver, direction::Direction},
     message::{Message, QueueRequest},
-    update::machine::{Machine, Unhandled},
+    update::machine::{Machine, Unhandled, move_cursor},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryMessage {
     Navigate { direction: Direction, len: usize },
-    Top,
-    Bottom(usize),
+    SelectFirst,
+    SelectLast { rows: usize },
     Enqueue(usize),
 }
 
@@ -17,27 +17,28 @@ impl Machine for CursorOver<()> {
     type Message = HistoryMessage;
     type Effect = Cmd;
 
-    fn transition(&mut self, message: HistoryMessage) -> Result<Cmd, Unhandled> {
-        match message {
+    fn transition(
+        &mut self,
+        history_message: HistoryMessage,
+    ) -> Result<Cmd, Unhandled> {
+        match history_message {
             HistoryMessage::Navigate { direction, len } => {
-                self.resize(len);
-                self.navigate(direction);
-                Ok(Cmd::none())
+                let moved = self.cursor.resize(len).step(direction.sign());
+                move_cursor(&mut self.cursor, moved)
             }
-            HistoryMessage::Top => {
-                self.cursor = self.cursor.first();
-                Ok(Cmd::none())
+            HistoryMessage::SelectFirst => {
+                let moved = self.cursor.first();
+                move_cursor(&mut self.cursor, moved)
             }
-            HistoryMessage::Bottom(len) => {
-                self.resize(len);
-                self.cursor = self.cursor.last();
-                Ok(Cmd::none())
+            HistoryMessage::SelectLast { rows } => {
+                let moved = self.cursor.resize(rows).last();
+                move_cursor(&mut self.cursor, moved)
             }
             HistoryMessage::Enqueue(len) => {
                 let selected = self.selected().get();
                 (selected < len)
                     .then(|| {
-                        Cmd::message(Message::Queue(QueueRequest::EnqueueHistoryEntry(
+                        Cmd::message(Message::Queue(QueueRequest::ToggleHistoryEntry(
                             selected,
                         )))
                     })

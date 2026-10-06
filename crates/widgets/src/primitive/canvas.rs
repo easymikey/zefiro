@@ -22,12 +22,12 @@ pub(crate) fn find_text(buffer: &Buffer, needle: &str) -> Option<(u16, u16)> {
             continue;
         }
         for start in 0..=symbols.len() - width {
-            let matched = wanted.iter().enumerate().all(|(offset, glyph)| {
+            let is_match = wanted.iter().enumerate().all(|(offset, glyph)| {
                 symbols
                     .get(start + offset)
                     .is_some_and(|symbol| *symbol == glyph.to_string())
             });
-            if matched {
+            if is_match {
                 return u16::try_from(start).ok().map(|x| (x, y));
             }
         }

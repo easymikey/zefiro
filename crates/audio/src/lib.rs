@@ -15,12 +15,11 @@ use crate::{
     deck::Deck,
     engine::{
         message::AudioMessage,
-        revisions::JobRevisions,
         state::{Closed, Engine, EngineState},
     },
 };
 
-pub const DECODABLE_EXTENSIONS: &[&str] =
+pub const AUDIO_EXTENSIONS: &[&str] =
     &["flac", "mp3", "mp4", "m4a", "m4b", "ogg", "wav", "mkv"];
 
 pub struct AudioDriver {
@@ -40,20 +39,17 @@ impl AudioDriver {
     #[must_use]
     pub fn new(
         settings: AudioSettings,
-        sender: Sender<AudioMessage>,
+        callback_sender: Sender<AudioMessage>,
     ) -> (Self, tap::SpectrumTap) {
-        let (spectrum, tap) = tap::new_tap();
+        let (spectrum_buffers, spectrum_tap) = tap::spectrum_channel();
         let driver = Self {
-            engine: Engine {
-                state: EngineState::Closed(Closed {
-                    settings,
-                    pending: None,
-                    speed: Speed::default(),
-                }),
-                job_revisions: JobRevisions::default(),
-            },
-            deck: Deck::new(spectrum, sender),
+            engine: Engine::new(EngineState::Closed(Closed {
+                settings,
+                track_load: None,
+                speed: Speed::default(),
+            })),
+            deck: Deck::new(spectrum_buffers, callback_sender),
         };
-        (driver, tap)
+        (driver, spectrum_tap)
     }
 }

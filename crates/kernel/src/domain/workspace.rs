@@ -29,7 +29,7 @@ pub struct Workspace {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Browse {
     pub cursor: Cursor,
-    pub sort: SortKey,
+    pub sort_key: SortKey,
 }
 
 impl Browse {

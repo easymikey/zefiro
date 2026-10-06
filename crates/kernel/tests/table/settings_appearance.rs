@@ -10,7 +10,7 @@ use kernel::{
             LayoutMode,
             preset_appearance,
         },
-        appearance_rows::appearance_rows,
+        appearance_rows::appearance_row_choices,
         cue::Cue,
         direction::Direction,
         model::Model,
@@ -18,7 +18,7 @@ use kernel::{
             AppearanceControl,
             AppearanceField,
             AppearanceRow,
-            AppearanceSetting,
+            AppearanceRowChoice,
             Choice,
             OptionCount,
             SettingRow,
@@ -35,30 +35,31 @@ fn step(model: &mut Model, row: SettingRow, direction: Direction) -> Cmd {
     update(model, Message::Step { row, direction }, Moment::default()).unwrap()
 }
 
-fn chosen(model: &Model, id: AppearanceField) -> Option<usize> {
-    let slot = appearance_rows(model.settings.appearance)
-        .into_iter()
-        .find(|slot| slot.row.field == id)?;
-    let Choice::Option(option) = slot.choice else {
+fn chosen(model: &Model, field: AppearanceField) -> Option<usize> {
+    let appearance_row_choice =
+        appearance_row_choices(model.settings.appearance_settings)
+            .into_iter()
+            .find(|appearance_row_choice| appearance_row_choice.row.field == field)?;
+    let Choice::Option(option) = appearance_row_choice.choice else {
         return None;
     };
     Some(option.get())
 }
 
-fn leaked(custom: AppearanceRow) -> &'static AppearanceRow {
-    Box::leak(Box::new(custom))
+fn leaked(custom_row: AppearanceRow) -> &'static AppearanceRow {
+    Box::leak(Box::new(custom_row))
 }
 
 fn custom_setting(
     field: AppearanceField,
     control: AppearanceControl,
-) -> AppearanceSetting {
-    AppearanceSetting {
+) -> AppearanceRowChoice {
+    AppearanceRowChoice {
         row: leaked(AppearanceRow {
             field,
             control,
             cue: None,
-            themes: &[],
+            theme_names: &[],
         }),
         choice: Choice::Option(control.count().index(0).unwrap()),
     }
@@ -68,17 +69,17 @@ fn custom_setting(
 #[case::up_then_up_wraps(vec![Direction::Next, Direction::Next], vec![1, 0])]
 #[case::down_wraps_backward(vec![Direction::Previous], vec![1])]
 fn a_toggle_row_wraps_mod_two(
-    #[case] steps: Vec<Direction>,
+    #[case] directions: Vec<Direction>,
     #[case] expected_options: Vec<usize>,
 ) {
     let mut model = Model::default();
-    let id = AppearanceField::KeyHints;
+    let field = AppearanceField::KeyHints;
 
-    let seen: Vec<usize> = steps
+    let seen: Vec<usize> = directions
         .into_iter()
         .map(|direction| {
-            drop(step(&mut model, SettingRow::Appearance(id), direction));
-            chosen(&model, id).unwrap_or(usize::MAX)
+            drop(step(&mut model, SettingRow::Appearance(field), direction));
+            chosen(&model, field).unwrap_or(usize::MAX)
         })
         .collect();
 
@@ -88,16 +89,16 @@ fn a_toggle_row_wraps_mod_two(
 #[test]
 fn a_cycle_row_wraps_at_its_own_ring_size() {
     let mut model = Model::default();
-    let id = AppearanceField::LayoutMode;
+    let field = AppearanceField::LayoutMode;
 
     let walked: Vec<usize> = (0..4)
         .map(|_| {
             drop(step(
                 &mut model,
-                SettingRow::Appearance(id),
+                SettingRow::Appearance(field),
                 Direction::Next,
             ));
-            chosen(&model, id).unwrap_or(usize::MAX)
+            chosen(&model, field).unwrap_or(usize::MAX)
         })
         .collect();
 
@@ -112,10 +113,10 @@ fn all_places_the_leading_custom_row_before_theme_then_the_rest_after() {
         custom_setting(AppearanceField::SpeedChip, AppearanceControl::Toggle),
     ];
 
-    let all = SettingRow::all(&custom);
+    let all_row = SettingRow::all(&custom);
 
     assert_eq!(
-        all,
+        all_row,
         vec![
             SettingRow::Appearance(AppearanceField::CoverBrackets),
             SettingRow::Theme,
@@ -130,24 +131,27 @@ fn all_places_the_leading_custom_row_before_theme_then_the_rest_after() {
 }
 
 #[rstest]
-#[case::toggle(AppearanceField::ProgressRemaining, 2)]
+#[case::toggle(AppearanceField::ProgressTime, 2)]
 #[case::cycle(AppearanceField::LayoutMode, 3)]
 #[case::four_options(AppearanceField::CoverMode, 4)]
 fn stepping_every_option_of_a_row_never_reorders_settings_row_all(
-    #[case] id: AppearanceField,
+    #[case] field: AppearanceField,
     #[case] option_count: usize,
 ) {
     let mut model = Model::default();
-    let before = SettingRow::all(&appearance_rows(model.settings.appearance));
+    let before =
+        SettingRow::all(&appearance_row_choices(model.settings.appearance_settings));
 
     for _ in 0..option_count {
         drop(step(
             &mut model,
-            SettingRow::Appearance(id),
+            SettingRow::Appearance(field),
             Direction::Next,
         ));
         assert_eq!(
-            SettingRow::all(&appearance_rows(model.settings.appearance)),
+            SettingRow::all(&appearance_row_choices(
+                model.settings.appearance_settings
+            )),
             before
         );
     }
@@ -206,12 +210,18 @@ fn stepping_a_row_changes_the_appearance_at_once() {
         Direction::Next,
     ));
 
-    assert_eq!(model.settings.appearance.key_hints, KeyHints::Hidden);
-    assert_eq!(model.settings.appearance.cover_mode, CoverMode::Vinyl);
+    assert_eq!(
+        model.settings.appearance_settings.key_hints,
+        KeyHints::Hidden
+    );
+    assert_eq!(
+        model.settings.appearance_settings.cover_mode,
+        CoverMode::Vinyl
+    );
 }
 
 #[test]
-fn control_reads_the_matching_slot_for_a_custom_row() {
+fn control_reads_the_matching_appearance_row_choice_for_a_custom_row() {
     let count = OptionCount::new(5).unwrap();
     let custom = vec![custom_setting(
         AppearanceField::CoverMode,
@@ -242,18 +252,18 @@ fn edited_appearance() -> AppearanceSettings {
 #[case::default_steps_to_noir(AppearanceSettings::default(), Direction::Next, (1, Some("noir")))]
 #[case::noir_steps_to_default(preset_appearance(AppearancePreset::Noir), Direction::Previous, (0, None))]
 fn stepping_the_preset_row_selects_its_options_theme(
-    #[case] start: AppearanceSettings,
+    #[case] appearance_settings: AppearanceSettings,
     #[case] direction: Direction,
     #[case] expected: (usize, Option<&str>),
 ) {
     let (expected_option, expected_theme) = expected;
-    let id = AppearanceField::Preset;
+    let field = AppearanceField::Preset;
     let mut model = Model::default();
-    model.settings.appearance = start;
+    model.settings.appearance_settings = appearance_settings;
 
-    let cmd = step(&mut model, SettingRow::Appearance(id), direction);
+    let cmd = step(&mut model, SettingRow::Appearance(field), direction);
 
-    assert_eq!(chosen(&model, id), Some(expected_option));
+    assert_eq!(chosen(&model, field), Some(expected_option));
     let theme = cmd.effects().find_map(|effect| {
         let Effect::Config(ConfigCmd::SelectTheme(choice)) = effect else {
             return None;

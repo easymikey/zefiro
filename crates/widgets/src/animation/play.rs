@@ -24,29 +24,36 @@ use crate::{
 impl AnimationStage {
     pub fn play(&mut self, cues: Vec<Cue>, backdrop: &Backdrop) {
         self.remember_protected(backdrop.layout);
-        if backdrop.animations == Animations::On {
-            let running = self.take_running();
-            for cue in once_each(cues) {
-                self.stage_cue(cue, backdrop);
+        match backdrop.animations {
+            Animations::On if cues.is_empty() => {}
+            Animations::On => {
+                let running = self.take_running();
+                for cue in once_each(cues) {
+                    self.stage_cue(cue, backdrop);
+                }
+                self.restore_running(running);
             }
-            self.restore_running(running);
-        } else {
-            self.clear();
+            Animations::Off => self.clear(),
         }
         let layout = backdrop.layout;
-        self.vacated = VacatedAreas {
-            overlay: layout.overlay.map(OverlayAreas::outer),
+        self.vacated_areas = VacatedAreas {
+            overlay: layout.overlay_areas.map(OverlayAreas::outer),
             toast: layout.toast,
-            selected_row: layout.playlist.and_then(|playlist| playlist.selected),
+            selected_row: layout
+                .playlist_areas
+                .and_then(|playlist| playlist.selected_area),
         };
     }
 
     fn stage_cue(&mut self, cue: Cue, backdrop: &Backdrop) {
-        let vacated = self.vacated;
+        let vacated = self.vacated_areas;
         let layout = backdrop.layout;
         match cue {
             Cue::OverlayOpened => {
-                self.stage_at(modal_reveal(), layout.overlay.map(OverlayAreas::outer));
+                self.stage_at(
+                    modal_reveal(),
+                    layout.overlay_areas.map(OverlayAreas::outer),
+                );
             }
             Cue::OverlayClosed => self.stage_at(modal_reveal(), vacated.overlay),
             Cue::ToastRaised => {
@@ -61,12 +68,12 @@ impl AnimationStage {
             Cue::PlaybackChanged(change) => {
                 self.stage_at(
                     chip_pulse(pulsed(change, backdrop)),
-                    layout.card.map(|metrics| metrics.status_row),
+                    layout.card_metrics.map(|metrics| metrics.status_row),
                 );
             }
             Cue::FavoriteToggled => self.stage_favorite_toggled(backdrop),
             Cue::VolumeChanged => self.stage_volume_changed(backdrop),
-            Cue::TrackDeleted => self.stage_at(
+            Cue::TrackTrashed => self.stage_at(
                 scatter_burst(backdrop.style.background, self.cell_filter()),
                 vacated.selected_row,
             ),
@@ -82,14 +89,16 @@ impl AnimationStage {
 
     fn stage_favorite_toggled(&mut self, backdrop: &Backdrop) {
         let layout = backdrop.layout;
-        let selected = layout.playlist.and_then(|playlist| playlist.selected);
+        let selected = layout
+            .playlist_areas
+            .and_then(|playlist| playlist.selected_area);
         self.stage_at(
             row_flash(backdrop.style.accent),
             selected.map(favorite_cell),
         );
         self.stage_at(
             chip_pulse(backdrop.style.accent),
-            layout.card.map(|metrics| metrics.title_row),
+            layout.card_metrics.map(|metrics| metrics.title_row),
         );
     }
 
@@ -100,7 +109,7 @@ impl AnimationStage {
             backdrop.style.volume_lifted,
             self.cell_filter(),
         );
-        self.stage_at(pulse, layout.card.map(|metrics| metrics.volume_row));
+        self.stage_at(pulse, layout.card_metrics.map(|metrics| metrics.volume_row));
     }
 }
 
@@ -130,6 +139,7 @@ mod tests {
 
     use crate::{
         animation::{
+            catalogue::chip_pulse,
             play::{once_each, pulsed},
             stage::{AnimationStage, Backdrop},
         },
@@ -201,5 +211,31 @@ mod tests {
 
         assert!(stage.wash_progress().is_some());
         assert!(stage.take_running().is_empty());
+    }
+
+    fn staged_progress(stage: &mut AnimationStage) -> Vec<(Rect, Option<f32>)> {
+        let running = stage.take_running();
+        let staged = running
+            .iter()
+            .map(|(animation, rect)| {
+                (*rect, animation.timer().map(|timer| timer.alpha()))
+            })
+            .collect();
+        stage.restore_running(running);
+        staged
+    }
+
+    #[test]
+    fn a_running_animation_stays_staged_without_cues() {
+        let mut stage = AnimationStage::default();
+        let area = Rect::new(2, 3, 10, 1);
+        stage.stage(chip_pulse(Color::Rgb(240, 120, 40)), area);
+        let before = staged_progress(&mut stage);
+
+        stage.play(Vec::new(), &empty_backdrop());
+
+        assert_eq!(before.len(), 1);
+        assert_eq!(before[0].0, area);
+        assert_eq!(staged_progress(&mut stage), before);
     }
 }

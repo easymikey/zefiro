@@ -86,8 +86,8 @@ pub(crate) struct VinylGeometry {
 }
 
 impl VinylGeometry {
-    pub(crate) fn new(size_px: u32) -> Self {
-        let height = size_px.max(1);
+    pub(crate) fn new(canvas_side: Pixels) -> Self {
+        let height = canvas_side.0.max(1);
         let size = dimension_f32(height);
         let record_radius = VINYL_LAYOUT.disc_fraction * size / 2.0;
         let peek = VINYL_LAYOUT.slide_fraction * (record_radius * 2.0);
@@ -135,17 +135,17 @@ pub(crate) fn rounded_rect_path(rect: RoundedRect) -> Option<Path> {
     if width <= 0.0 || height <= 0.0 {
         return None;
     }
-    let r = radius.max(0.0).min(width / 2.0).min(height / 2.0);
+    let corner_radius = radius.max(0.0).min(width / 2.0).min(height / 2.0);
     let mut path_builder = PathBuilder::new();
-    path_builder.move_to(x + r, y);
-    path_builder.line_to(x + width - r, y);
-    path_builder.quad_to(x + width, y, x + width, y + r);
-    path_builder.line_to(x + width, y + height - r);
-    path_builder.quad_to(x + width, y + height, x + width - r, y + height);
-    path_builder.line_to(x + r, y + height);
-    path_builder.quad_to(x, y + height, x, y + height - r);
-    path_builder.line_to(x, y + r);
-    path_builder.quad_to(x, y, x + r, y);
+    path_builder.move_to(x + corner_radius, y);
+    path_builder.line_to(x + width - corner_radius, y);
+    path_builder.quad_to(x + width, y, x + width, y + corner_radius);
+    path_builder.line_to(x + width, y + height - corner_radius);
+    path_builder.quad_to(x + width, y + height, x + width - corner_radius, y + height);
+    path_builder.line_to(x + corner_radius, y + height);
+    path_builder.quad_to(x, y + height, x, y + height - corner_radius);
+    path_builder.line_to(x, y + corner_radius);
+    path_builder.quad_to(x, y, x + corner_radius, y);
     path_builder.close();
     path_builder.finish()
 }
@@ -161,6 +161,8 @@ pub(crate) fn circle_path(disc: Disc) -> Option<Path> {
 
 #[cfg(test)]
 mod tests {
+    use kernel::domain::geometry::Pixels;
+
     use crate::pixels::{
         numeric::dimension_f32,
         vinyl::geometry::{
@@ -172,18 +174,19 @@ mod tests {
 
     #[test]
     fn disc_and_shadow_fit_inside_the_canvas() {
-        for size_px in [96_u32, 160_u32] {
-            let geometry = VinylGeometry::new(size_px);
+        for canvas_side in [Pixels(96), Pixels(160)] {
+            let geometry = VinylGeometry::new(canvas_side);
             let disc = geometry.record();
-            let shadow_offset_px = VINYL_LAYOUT.shadow_offset * geometry.size();
-            let shadow_right_edge_px = disc.center_x
+            let shadow_offset = VINYL_LAYOUT.shadow_offset * geometry.size();
+            let shadow_right_edge = disc.center_x
                 + disc.radius
-                + shadow_offset_px * shadow_horizontal_reach_fraction();
-            let canvas_width_px = dimension_f32(geometry.width.0);
+                + shadow_offset * shadow_horizontal_reach_fraction();
+            let canvas_width = dimension_f32(geometry.width.0);
             assert!(
-                shadow_right_edge_px <= canvas_width_px,
-                "disc+shadow right edge {shadow_right_edge_px} exceeds canvas width \
-                 {canvas_width_px} at size_px={size_px}"
+                shadow_right_edge <= canvas_width,
+                "disc+shadow right edge {shadow_right_edge} exceeds canvas width \
+                 {canvas_width} at canvas_side={}",
+                canvas_side.0
             );
         }
     }

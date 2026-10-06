@@ -6,28 +6,27 @@ use kernel::{cmd::MacosCmd, domain::driver::DriverName};
 use crate::{
     driver::DriverLoop,
     driver_thread::DriverThread,
-    error::Error,
-    jobs::Jobs,
+    error::SpawnError,
     registry,
     spawn_setup::SpawnSetup,
 };
 
 fn macos_loop(setup: &SpawnSetup<'_>) -> DriverLoop<MacosDriver, MacosJob> {
-    let jobs = Jobs {
-        run: |job: MacosJob| job.run(library::cover::cover_bytes),
-    };
+    let run_job = |job: MacosJob| job.run(library::cover::cover_bytes);
     DriverLoop::<MacosDriver, MacosJob> {
         row: registry::row(DriverName::Macos),
         inbox: setup.inbox.clone(),
-        heard: setup.macos.receiver.clone(),
-        seed: Some(MacosMessage::Started),
-        jobs,
+        callback_receiver: setup.macos_channel.callback_receiver.clone(),
+        message: Some(MacosMessage::Started),
+        run_job,
     }
 }
 
-pub(crate) fn spawn(setup: &SpawnSetup<'_>) -> Result<DriverThread<MacosCmd>, Error> {
-    let heard_sender = setup.macos.sender.clone();
-    macos_loop(setup).spawn(move || MacosDriver::new(heard_sender))
+pub(crate) fn spawn_macos(
+    setup: &SpawnSetup<'_>,
+) -> Result<DriverThread<MacosCmd>, SpawnError> {
+    let callback_sender = setup.macos_channel.callback_sender.clone();
+    macos_loop(setup).spawn(move || MacosDriver::new(callback_sender))
 }
 
 #[cfg(test)]
@@ -38,7 +37,7 @@ mod tests {
     use kernel::{domain::startup::Startup, message::Message};
 
     use crate::{
-        spawn::macos_thread::{MacosMessage, macos_loop, spawn},
+        spawn::macos_thread::{MacosMessage, macos_loop, spawn_macos},
         spawn_setup::{MacosChannel, SpawnSetup, StartupPaths},
     };
 
@@ -48,13 +47,14 @@ mod tests {
         inbox: &Sender<Message>,
     ) -> crate::driver_thread::DriverThread<kernel::cmd::MacosCmd> {
         let (model, _cmd) = kernel::update::startup::startup(Startup::default());
-        let (writers, _cells, _notified) = crate::latest::latest_channels();
-        spawn(&SpawnSetup {
-            audio: &model.settings.audio,
+        let (latest_senders, _latest_receivers, _doorbell) =
+            crate::latest::latest_channels();
+        spawn_macos(&SpawnSetup {
+            audio_settings: &model.settings.audio_settings,
             paths,
             inbox,
-            writers: &writers,
-            macos: channel,
+            latest_senders: &latest_senders,
+            macos_channel: channel,
         })
         .unwrap()
     }
@@ -63,19 +63,20 @@ mod tests {
     fn the_loop_is_seeded_with_started_and_the_shared_channel_stays_empty() {
         let paths = crate::wiring::tests::stub_paths();
         let channel = MacosChannel::new();
-        let (inbox, _arrivals) = crossbeam_channel::unbounded::<Message>();
+        let (inbox, _inbox_receiver) = crossbeam_channel::unbounded::<Message>();
         let (model, _cmd) = kernel::update::startup::startup(Startup::default());
-        let (writers, _cells, _notified) = crate::latest::latest_channels();
+        let (latest_senders, _latest_receivers, _doorbell) =
+            crate::latest::latest_channels();
         let driver_loop = macos_loop(&SpawnSetup {
-            audio: &model.settings.audio,
+            audio_settings: &model.settings.audio_settings,
             paths: &paths,
             inbox: &inbox,
-            writers: &writers,
-            macos: &channel,
+            latest_senders: &latest_senders,
+            macos_channel: &channel,
         });
 
-        assert!(matches!(driver_loop.seed, Some(MacosMessage::Started)));
-        assert!(channel.receiver.is_empty());
+        assert!(matches!(driver_loop.message, Some(MacosMessage::Started)));
+        assert!(channel.callback_receiver.is_empty());
     }
 
     #[test]
@@ -83,17 +84,20 @@ mod tests {
     fn the_kept_sender_reaches_a_restarted_driver() {
         let paths = crate::wiring::tests::stub_paths();
         let channel = MacosChannel::new();
-        let (inbox, arrivals) = crossbeam_channel::unbounded::<Message>();
+        let (inbox, inbox_receiver) = crossbeam_channel::unbounded::<Message>();
         let first = spawn_on(&channel, &paths, &inbox);
-        drop(first.commands);
+        drop(first.cmd_sender);
         first.handle.join().unwrap().unwrap();
 
         let second = spawn_on(&channel, &paths, &inbox);
-        channel.sender.send(MacosMessage::HardwareChanged).unwrap();
+        channel
+            .callback_sender
+            .send(MacosMessage::HardwareChanged)
+            .unwrap();
         std::thread::sleep(Duration::from_millis(50));
         assert!(!second.handle.is_finished());
-        drop(second.commands);
+        drop(second.cmd_sender);
         second.handle.join().unwrap().unwrap();
-        drop(arrivals);
+        drop(inbox_receiver);
     }
 }

@@ -13,29 +13,33 @@ use kernel::{
 
 use crate::{
     effect::MacosEffect,
-    message::{CoverBytes, MacosMessage},
+    message::{ArtworkBytes, MacosMessage},
 };
 
 pub(crate) type MacosLoopCmd = LoopCmd<MacosEffect, MacosJob, MacosMessage, MacosEvent>;
 
-pub(crate) type CoverReader = fn(&Path) -> io::Result<Vec<u8>>;
+pub(crate) type ArtworkReader = fn(&Path) -> io::Result<Vec<u8>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MacosJob {
-    ReadCover { track: PathBuf, revision: Revision },
+    ReadArtwork {
+        track_path: PathBuf,
+        revision: Revision,
+    },
 }
 
 impl MacosJob {
     #[must_use]
-    pub fn run(self, read: CoverReader) -> MacosMessage {
+    pub fn run(self, artwork_reader: ArtworkReader) -> MacosMessage {
         match self {
-            MacosJob::ReadCover { track, revision } => {
-                MacosMessage::CoverRead(CoverBytes {
-                    revision,
-                    bytes: read(&track)
-                        .map_err(|error| MacosError::ReadArtwork(error.kind().into())),
-                })
-            }
+            MacosJob::ReadArtwork {
+                track_path,
+                revision,
+            } => MacosMessage::ArtworkRead(ArtworkBytes {
+                revision,
+                bytes: artwork_reader(&track_path)
+                    .map_err(|error| MacosError::ReadArtwork(error.kind().into())),
+            }),
         }
     }
 }
@@ -51,7 +55,7 @@ mod tests {
 
     use crate::{
         job::MacosJob,
-        message::{CoverBytes, MacosMessage},
+        message::{ArtworkBytes, MacosMessage},
     };
 
     fn revision(count: u8) -> Revision {
@@ -68,13 +72,13 @@ mod tests {
 
     #[test]
     fn an_unreadable_tag_is_reported() {
-        let job = MacosJob::ReadCover {
-            track: PathBuf::from("a.flac"),
+        let job = MacosJob::ReadArtwork {
+            track_path: PathBuf::from("a.flac"),
             revision: revision(1),
         };
         assert!(matches!(
             job.run(unreadable_tags),
-            MacosMessage::CoverRead(CoverBytes {
+            MacosMessage::ArtworkRead(ArtworkBytes {
                 bytes: Err(MacosError::ReadArtwork(_)),
                 ..
             })
@@ -82,17 +86,17 @@ mod tests {
     }
 
     #[test]
-    fn the_cover_job_answers_with_its_revision() {
-        let job = MacosJob::ReadCover {
-            track: PathBuf::from("a.flac"),
+    fn the_artwork_job_answers_with_its_revision() {
+        let job = MacosJob::ReadArtwork {
+            track_path: PathBuf::from("a.flac"),
             revision: revision(3),
         };
-        let MacosMessage::CoverRead(read) = job.run(embedded) else {
-            panic!("a cover job answers with CoverRead");
+        let MacosMessage::ArtworkRead(read) = job.run(embedded) else {
+            panic!("an artwork job answers with ArtworkRead");
         };
         assert_eq!(
             read,
-            CoverBytes {
+            ArtworkBytes {
                 revision: revision(3),
                 bytes: Ok(b"embedded".to_vec()),
             }

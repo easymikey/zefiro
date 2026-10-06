@@ -35,38 +35,38 @@ pub(crate) enum LibraryWatchMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum WatchEffect {
+pub(crate) enum LibraryWatchEffect {
     Watch(PathBuf),
     Unwatch(PathBuf),
     Scan {
         music_dir: PathBuf,
         revision: Revision,
     },
-    Arm,
+    StartDebounce,
 }
 
 impl Machine for LibraryWatch {
     type Message = LibraryWatchMessage;
-    type Effect = Cmd<WatchEffect, LibraryEvent>;
+    type Effect = Cmd<LibraryWatchEffect, LibraryEvent>;
 
     fn transition(
         &mut self,
         message: LibraryWatchMessage,
-    ) -> Result<Cmd<WatchEffect, LibraryEvent>, Unhandled> {
+    ) -> Result<Cmd<LibraryWatchEffect, LibraryEvent>, Unhandled> {
         match message {
             LibraryWatchMessage::Rescan {
                 music_dir,
                 revision,
             } => Ok(self.rescan(music_dir, revision)),
             LibraryWatchMessage::Changed(Ok(())) => self.changed(),
-            LibraryWatchMessage::Changed(Err(kind)) => self.failed(kind),
+            LibraryWatchMessage::Changed(Err(error)) => self.failed(error),
             LibraryWatchMessage::Elapsed => self.elapsed(),
         }
     }
 }
 
 impl LibraryWatch {
-    fn changed(&mut self) -> Result<Cmd<WatchEffect, LibraryEvent>, Unhandled> {
+    fn changed(&mut self) -> Result<Cmd<LibraryWatchEffect, LibraryEvent>, Unhandled> {
         match self {
             LibraryWatch::Unrooted
             | LibraryWatch::Rooted {
@@ -75,28 +75,28 @@ impl LibraryWatch {
             } => Err(Unhandled),
             LibraryWatch::Rooted { burst, .. } => {
                 *burst = Burst::Armed;
-                Ok(Cmd::effect(WatchEffect::Arm))
+                Ok(Cmd::effect(LibraryWatchEffect::StartDebounce))
             }
         }
     }
 
     fn failed(
         &self,
-        source: IoError,
-    ) -> Result<Cmd<WatchEffect, LibraryEvent>, Unhandled> {
+        error: IoError,
+    ) -> Result<Cmd<LibraryWatchEffect, LibraryEvent>, Unhandled> {
         match self {
             LibraryWatch::Unrooted => Err(Unhandled),
             LibraryWatch::Rooted { music_dir, .. } => {
                 Ok(Cmd::message(LibraryEvent::Error(LibraryError::Disk {
                     subject: LibrarySubject::Watch,
                     path: music_dir.clone(),
-                    source,
+                    error,
                 })))
             }
         }
     }
 
-    fn elapsed(&mut self) -> Result<Cmd<WatchEffect, LibraryEvent>, Unhandled> {
+    fn elapsed(&mut self) -> Result<Cmd<LibraryWatchEffect, LibraryEvent>, Unhandled> {
         match self {
             LibraryWatch::Unrooted
             | LibraryWatch::Rooted {
@@ -109,7 +109,7 @@ impl LibraryWatch {
                 burst,
             } => {
                 *burst = Burst::Quiet;
-                Ok(Cmd::effect(WatchEffect::Scan {
+                Ok(Cmd::effect(LibraryWatchEffect::Scan {
                     music_dir: music_dir.clone(),
                     revision: *revision,
                 }))
@@ -119,26 +119,31 @@ impl LibraryWatch {
 
     fn rescan(
         &mut self,
-        target: PathBuf,
+        next_music_dir: PathBuf,
         revision: Revision,
-    ) -> Cmd<WatchEffect, LibraryEvent> {
-        let scan = WatchEffect::Scan {
-            music_dir: target.clone(),
+    ) -> Cmd<LibraryWatchEffect, LibraryEvent> {
+        let scan_effect = LibraryWatchEffect::Scan {
+            music_dir: next_music_dir.clone(),
             revision,
         };
         let effects = match &*self {
-            LibraryWatch::Unrooted => vec![WatchEffect::Watch(target.clone()), scan],
-            LibraryWatch::Rooted { music_dir, .. } if *music_dir == target => {
-                vec![scan]
+            LibraryWatch::Unrooted => {
+                vec![
+                    LibraryWatchEffect::Watch(next_music_dir.clone()),
+                    scan_effect,
+                ]
+            }
+            LibraryWatch::Rooted { music_dir, .. } if *music_dir == next_music_dir => {
+                vec![scan_effect]
             }
             LibraryWatch::Rooted { music_dir, .. } => vec![
-                WatchEffect::Unwatch(music_dir.clone()),
-                WatchEffect::Watch(target.clone()),
-                scan,
+                LibraryWatchEffect::Unwatch(music_dir.clone()),
+                LibraryWatchEffect::Watch(next_music_dir.clone()),
+                scan_effect,
             ],
         };
         *self = LibraryWatch::Rooted {
-            music_dir: target,
+            music_dir: next_music_dir,
             revision,
             burst: Burst::Quiet,
         };
@@ -158,7 +163,7 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::watch::{Burst, LibraryWatch, LibraryWatchMessage, WatchEffect};
+    use crate::watch::{Burst, LibraryWatch, LibraryWatchEffect, LibraryWatchMessage};
 
     fn music_dir() -> PathBuf {
         PathBuf::from("/music")
@@ -199,19 +204,19 @@ mod tests {
         }
     }
 
-    fn describe_effect(effect: &WatchEffect) -> String {
+    fn describe_effect(effect: &LibraryWatchEffect) -> String {
         match effect {
-            WatchEffect::Watch(dir) => format!("watch {}", dir.display()),
-            WatchEffect::Unwatch(dir) => format!("unwatch {}", dir.display()),
-            WatchEffect::Scan {
+            LibraryWatchEffect::Watch(dir) => format!("watch {}", dir.display()),
+            LibraryWatchEffect::Unwatch(dir) => format!("unwatch {}", dir.display()),
+            LibraryWatchEffect::Scan {
                 music_dir,
                 revision,
             } => format!("scan {} @ {}", music_dir.display(), revision.get()),
-            WatchEffect::Arm => "arm".to_string(),
+            LibraryWatchEffect::StartDebounce => "arm".to_string(),
         }
     }
 
-    fn describe(cmd: Cmd<WatchEffect, LibraryEvent>) -> String {
+    fn describe(cmd: Cmd<LibraryWatchEffect, LibraryEvent>) -> String {
         let (effects, messages) = cmd.into_parts();
         assert!(messages.is_empty(), "the watch tells nothing: {messages:?}");
         let described: Vec<String> = effects.iter().map(describe_effect).collect();
@@ -297,7 +302,7 @@ mod tests {
             LibraryError::Disk {
                 subject: LibrarySubject::Watch,
                 path: music_dir(),
-                source: IoError::Missing,
+                error: IoError::Missing,
             }
         );
     }

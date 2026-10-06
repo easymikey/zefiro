@@ -4,7 +4,7 @@ use clap::Parser;
 use config::{
     config_file::TomlSettings,
     driver::paths::{ConfigPaths, SeenTexts},
-    embedded_theme::{STOCK_THEME, resolve_theme},
+    embedded_theme::{STOCK_THEME, theme_name},
     file_name::{APPEARANCE_FILE_NAME, CONFIG_FILE_NAME},
     load::{Loaded, load},
     theme_file::{DEFAULT_SCANNING_LABEL, TomlColors, TomlTheme},
@@ -58,11 +58,7 @@ struct Cli {
 }
 
 fn shuffle_requested(count: u8) -> Shuffle {
-    if count > 0 {
-        Shuffle::Enabled
-    } else {
-        Shuffle::Disabled
-    }
+    if count > 0 { Shuffle::On } else { Shuffle::Off }
 }
 
 fn user_config_dir() -> Result<PathBuf, Error> {
@@ -79,14 +75,14 @@ fn cli_theme(cli: &Cli) -> Result<Option<ThemeChoice>, Error> {
         .map_err(Error::ThemeName)
 }
 
-fn config_paths(config_dir: &Path, choice: Option<&ThemeChoice>) -> ConfigPaths {
+fn config_paths(config_dir: &Path, theme_choice: Option<&ThemeChoice>) -> ConfigPaths {
     ConfigPaths {
-        config: config_dir.join(CONFIG_FILE_NAME),
-        appearance: config_dir.join(APPEARANCE_FILE_NAME),
-        themes: config_dir.join("themes"),
+        config_path: config_dir.join(CONFIG_FILE_NAME),
+        appearance_path: config_dir.join(APPEARANCE_FILE_NAME),
+        themes_dir: config_dir.join("themes"),
         default_music_dir: dirs::audio_dir(),
-        theme: choice.map(resolve_theme),
-        seen: SeenTexts::default(),
+        theme_name: theme_choice.map(theme_name),
+        seen_texts: SeenTexts::default(),
     }
 }
 
@@ -101,19 +97,19 @@ pub(crate) fn fallback_theme() -> TomlTheme {
 fn stock_theme() -> Result<TomlTheme, Error> {
     config::embedded_theme::embedded_theme(STOCK_THEME).map_or_else(
         || Ok(fallback_theme()),
-        |source| {
-            config::theme_file::parse_theme(source, STOCK_THEME)
+        |text| {
+            config::theme_file::parse_theme(text, STOCK_THEME)
                 .map_err(Error::StockTheme)
         },
     )
 }
 
 fn resolved_music_dir(
-    config_toml: &TomlSettings,
+    toml_settings: &TomlSettings,
     cli_path: Option<PathBuf>,
 ) -> Result<PathBuf, Error> {
     let music_dir = cli_path
-        .or_else(|| config_toml.music_dir.clone())
+        .or_else(|| toml_settings.music_dir.clone())
         .or_else(dirs::audio_dir)
         .ok_or(Error::MusicDirUnset)?;
     if music_dir.is_dir() {
@@ -125,11 +121,11 @@ fn resolved_music_dir(
 
 fn load_named_playlist(
     startup: Startup,
-    library: &LibraryDirs,
+    library_dirs: &LibraryDirs,
     name: &str,
 ) -> Result<Startup, Error> {
     let file_name = PlaylistFileName::new(name).map_err(Error::PlaylistName)?;
-    let playlist = library::playlists::load(library, &file_name)?;
+    let playlist = library::playlists::load(library_dirs, &file_name)?;
     Ok(Startup {
         playlist_index: playlist.playing_index(),
         playlist_tracks: playlist.tracks,
@@ -138,14 +134,18 @@ fn load_named_playlist(
     })
 }
 
-fn merged_startup(config_toml: TomlSettings, music_dir: PathBuf, cli: &Cli) -> Startup {
+fn merged_startup(
+    toml_settings: TomlSettings,
+    music_dir: PathBuf,
+    cli: &Cli,
+) -> Startup {
     Startup {
         music_dir,
         shuffle: shuffle_requested(cli.shuffle),
-        keymap: config_toml.keymap(),
-        audio: config_toml.audio.into(),
-        theme: config_toml.theme,
-        volume: cli.volume.map_or(config_toml.volume, Percent::clamped),
+        keymap_overrides: toml_settings.to_keymap_overrides(),
+        audio_settings: toml_settings.audio.into(),
+        theme_choice: toml_settings.theme_choice,
+        volume: cli.volume.map_or(toml_settings.volume, Percent::clamped),
         ..Startup::default()
     }
 }
@@ -155,20 +155,20 @@ fn start(
     config_dir: &Path,
     library_dirs: LibraryDirs,
 ) -> Result<Launch, Error> {
-    let choice = cli_theme(cli)?;
-    let paths = config_paths(config_dir, choice.as_ref());
+    let theme_choice = cli_theme(cli)?;
+    let paths = config_paths(config_dir, theme_choice.as_ref());
     let Loaded {
-        settings,
+        toml_settings,
         toml_appearance,
         theme_name,
         toml_theme,
         texts,
         errors,
     } = load(&paths);
-    let music_dir = resolved_music_dir(&settings, cli.path.clone())?;
-    let merged = merged_startup(settings, music_dir, cli);
+    let music_dir = resolved_music_dir(&toml_settings, cli.path.clone())?;
+    let merged = merged_startup(toml_settings, music_dir, cli);
     let themed_startup = Startup {
-        theme: choice.unwrap_or(merged.theme),
+        theme_choice: theme_choice.unwrap_or(merged.theme_choice),
         ..merged
     };
     let startup = match cli.playlist.as_deref() {
@@ -181,20 +181,20 @@ fn start(
     };
     Ok(Launch {
         startup: Startup {
-            appearance: toml_appearance.settings(),
+            appearance_settings: toml_appearance.to_appearance_settings(),
             errors,
             ..startup
         },
         paths: runtime::spawn_setup::StartupPaths {
-            config: ConfigPaths {
-                theme: Some(theme_name),
-                seen: texts,
+            config_paths: ConfigPaths {
+                theme_name: Some(theme_name),
+                seen_texts: texts,
                 ..paths
             },
-            library: library_dirs,
+            library_dirs,
         },
         theme,
-        appearance: toml_appearance.appearance(),
+        appearance: toml_appearance.to_appearance(),
     })
 }
 
@@ -237,15 +237,15 @@ mod tests {
     const COMPACT: &str = "[layout]\nmode = \"compact\"\n";
     const BROKEN: &str = "[volume]\nmode = \"text\"\n";
 
-    fn launched(directory: &Path, theme: Option<&str>) -> Launch {
+    fn launched(dir: &Path, theme: Option<&str>) -> Launch {
         let cli = Cli {
-            path: Some(directory.to_path_buf()),
+            path: Some(dir.to_path_buf()),
             theme: theme.map(str::to_owned),
             volume: None,
             shuffle: 0,
             playlist: None,
         };
-        start(&cli, directory, LibraryDirs::under(directory)).unwrap()
+        start(&cli, dir, LibraryDirs::under(dir)).unwrap()
     }
 
     #[rstest]
@@ -260,7 +260,7 @@ mod tests {
     fn a_broken_appearance_or_missing_theme_falls_back_and_reports_why(
         #[case] appearance: Option<&str>,
         #[case] theme: &str,
-        #[case] failed: Vec<ConfigName>,
+        #[case] failed_config_names: Vec<ConfigName>,
     ) {
         let directory = tempfile::tempdir().unwrap();
         if let Some(text) = appearance {
@@ -274,8 +274,11 @@ mod tests {
         } else {
             TomlAppearance::default()
         };
-        assert_eq!(launched.startup.appearance, expected.settings());
-        assert_eq!(launched.appearance, expected.appearance());
+        assert_eq!(
+            launched.startup.appearance_settings,
+            expected.to_appearance_settings()
+        );
+        assert_eq!(launched.appearance, expected.to_appearance());
         let names: Vec<_> = launched
             .startup
             .errors
@@ -285,7 +288,7 @@ mod tests {
                 name.clone()
             })
             .collect();
-        assert_eq!(names, failed);
+        assert_eq!(names, failed_config_names);
         assert!(!launched.theme.name.as_str().is_empty());
     }
 
@@ -297,7 +300,12 @@ mod tests {
 
         assert_eq!(launched.theme.name.as_str(), "noir");
         assert_eq!(
-            launched.paths.config.theme.as_ref().map(ThemeName::as_str),
+            launched
+                .paths
+                .config_paths
+                .theme_name
+                .as_ref()
+                .map(ThemeName::as_str),
             Some("noir")
         );
     }
@@ -309,7 +317,12 @@ mod tests {
         let launched = launched(directory.path(), Some("ghost"));
 
         assert_eq!(
-            launched.paths.config.theme.as_ref().map(ThemeName::as_str),
+            launched
+                .paths
+                .config_paths
+                .theme_name
+                .as_ref()
+                .map(ThemeName::as_str),
             Some("ghost")
         );
     }
@@ -324,7 +337,7 @@ mod tests {
 
         let launched = launched(directory.path(), Some("mine"));
 
-        let seen = launched.paths.config.seen;
+        let seen = launched.paths.config_paths.seen_texts;
         assert_eq!(seen.appearance.as_deref(), Some(COMPACT));
     }
 
@@ -336,14 +349,14 @@ mod tests {
         let launched = launched(directory.path(), None);
 
         assert_eq!(
-            launched.startup.appearance,
+            launched.startup.appearance_settings,
             config::appearance_file::parse_appearance(COMPACT)
                 .unwrap()
-                .settings()
+                .to_appearance_settings()
         );
         assert_ne!(
-            launched.startup.appearance,
-            TomlAppearance::default().settings()
+            launched.startup.appearance_settings,
+            TomlAppearance::default().to_appearance_settings()
         );
     }
 
@@ -359,7 +372,7 @@ mod tests {
         let launched = launched(directory.path(), None);
 
         assert_eq!(
-            launched.startup.keymap,
+            launched.startup.keymap_overrides,
             KeymapOverrides::from([(Action::Quit, KeyOverride::from("q"))])
         );
     }
@@ -408,10 +421,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::absent(0, Shuffle::Disabled)]
-    #[case::present(1, Shuffle::Enabled)]
-    #[case::repeated(2, Shuffle::Enabled)]
-    fn shuffle_requested_treats_any_count_above_zero_as_enabled(
+    #[case::absent(0, Shuffle::Off)]
+    #[case::present(1, Shuffle::On)]
+    #[case::repeated(2, Shuffle::On)]
+    fn shuffle_requested_treats_any_count_above_zero_as_on(
         #[case] count: u8,
         #[case] expected: Shuffle,
     ) {

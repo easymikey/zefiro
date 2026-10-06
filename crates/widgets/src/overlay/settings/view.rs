@@ -30,13 +30,13 @@ pub(crate) struct SettingsView<'a> {
     pub(crate) crossfade: Crossfade,
     pub(crate) replay_gain: ReplayGain,
     pub(crate) theme: &'a str,
-    pub(crate) themes: &'a [ThemeName],
+    pub(crate) theme_names: &'a [ThemeName],
     pub(crate) sleep_presets: &'a [Duration],
     pub(crate) music_dir: &'a Path,
-    pub(crate) home: Option<&'a Path>,
-    pub(crate) output_device: Option<&'a str>,
+    pub(crate) home_dir: Option<&'a Path>,
+    pub(crate) output_device_name: Option<&'a str>,
     pub(crate) output_devices: &'a [ListedDevice],
-    pub(crate) appearance: AppearanceSettings,
+    pub(crate) appearance_settings: AppearanceSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +117,7 @@ fn appearance_label(field: AppearanceField) -> &'static str {
         AppearanceField::CoverBrackets => "Cover brackets",
         AppearanceField::FormatChips => "Format chips",
         AppearanceField::SpeedChip => "Speed chip",
-        AppearanceField::ProgressRemaining => "Progress remaining",
+        AppearanceField::ProgressTime => "Progress remaining",
         AppearanceField::KeyHints => "Key hints",
         AppearanceField::Animations => "Animations",
         AppearanceField::LayoutMode => "Layout",
@@ -126,44 +126,54 @@ fn appearance_label(field: AppearanceField) -> &'static str {
 
 pub(crate) fn value_text(row: SettingRow, view: &SettingsView<'_>) -> String {
     match row {
-        SettingRow::Theme => format_pick(view.theme),
-        SettingRow::Crossfade => format_duration_step(view.crossfade.get()),
-        SettingRow::ReplayGain => format_toggle(Toggle::from(view.replay_gain)),
+        SettingRow::Theme => pick_text(view.theme),
+        SettingRow::Crossfade => duration_step_text(view.crossfade.get()),
+        SettingRow::ReplayGain => toggle_text(Toggle::from(view.replay_gain)),
         SettingRow::OutputDevice => {
             let name = view
-                .output_device
+                .output_device_name
                 .unwrap_or(glyphs::settings::OUTPUT_DEVICE_DEFAULT);
-            format_pick(name)
+            pick_text(name)
         }
-        SettingRow::SleepPresets => {
-            format_pick(&format_sleep_presets_label(view.sleep_presets))
+        SettingRow::SleepPresets => pick_text(&sleep_presets_text(view.sleep_presets)),
+        SettingRow::Appearance(field) => {
+            appearance_value_text(field, view.appearance_settings)
         }
-        SettingRow::Appearance(field) => appearance_value_text(field, view.appearance),
     }
 }
 
 fn appearance_value_text(
     field: AppearanceField,
-    appearance: AppearanceSettings,
+    appearance_settings: AppearanceSettings,
 ) -> String {
     match field {
-        AppearanceField::Preset => format_pick(preset_label(preset_of(appearance))),
-        AppearanceField::CoverMode => format_pick(&appearance.cover_mode.to_string()),
+        AppearanceField::Preset => {
+            pick_text(preset_label(preset_of(appearance_settings)))
+        }
+        AppearanceField::CoverMode => {
+            pick_text(&appearance_settings.cover_mode.to_string())
+        }
         AppearanceField::CoverBrackets => {
-            format_toggle(Toggle::from(appearance.cover_brackets))
+            toggle_text(Toggle::from(appearance_settings.cover_brackets))
         }
         AppearanceField::FormatChips => {
-            format_toggle(Toggle::from(appearance.format_chips))
+            toggle_text(Toggle::from(appearance_settings.format_chips))
         }
-        AppearanceField::SpeedChip => format_pick(&appearance.speed_chip.to_string()),
-        AppearanceField::ProgressRemaining => {
-            format_toggle(Toggle::from(appearance.progress_time))
+        AppearanceField::SpeedChip => {
+            pick_text(&appearance_settings.speed_chip.to_string())
         }
-        AppearanceField::KeyHints => format_toggle(Toggle::from(appearance.key_hints)),
+        AppearanceField::ProgressTime => {
+            toggle_text(Toggle::from(appearance_settings.progress_time))
+        }
+        AppearanceField::KeyHints => {
+            toggle_text(Toggle::from(appearance_settings.key_hints))
+        }
         AppearanceField::Animations => {
-            format_toggle(Toggle::from(appearance.animations))
+            toggle_text(Toggle::from(appearance_settings.animations))
         }
-        AppearanceField::LayoutMode => format_pick(&appearance.layout_mode.to_string()),
+        AppearanceField::LayoutMode => {
+            pick_text(&appearance_settings.layout_mode.to_string())
+        }
     }
 }
 
@@ -175,10 +185,12 @@ fn preset_label(preset: Option<AppearancePreset>) -> &'static str {
     }
 }
 
-pub(crate) fn max_value_width(row: SettingRow, view: &SettingsView<'_>) -> usize {
+pub(crate) fn widest_value(row: SettingRow, view: &SettingsView<'_>) -> usize {
     match row {
-        SettingRow::Theme => widest_pick(view.themes.iter().map(ThemeName::to_string)),
-        SettingRow::Crossfade => format_duration_step(Crossfade::MAX).width(),
+        SettingRow::Theme => {
+            widest_pick(view.theme_names.iter().map(ThemeName::to_string))
+        }
+        SettingRow::Crossfade => duration_step_text(Crossfade::MAX).width(),
         SettingRow::ReplayGain => widest_toggle(),
         SettingRow::OutputDevice => widest_pick(
             view.output_devices
@@ -191,21 +203,21 @@ pub(crate) fn max_value_width(row: SettingRow, view: &SettingsView<'_>) -> usize
         SettingRow::SleepPresets => widest_pick(
             SleepPresets::BUNDLES
                 .iter()
-                .map(|bundle| format_sleep_presets_label(bundle)),
+                .map(|bundle| sleep_presets_text(bundle)),
         ),
         SettingRow::Appearance(field) => appearance_value_width(field),
     }
 }
 
 fn widest_toggle() -> usize {
-    format_toggle(Toggle::On)
+    toggle_text(Toggle::On)
         .width()
-        .max(format_toggle(Toggle::Off).width())
+        .max(toggle_text(Toggle::Off).width())
 }
 
 fn widest_pick(labels: impl Iterator<Item = String>) -> usize {
     labels
-        .map(|label| format_pick(&label).width())
+        .map(|label| pick_text(&label).width())
         .max()
         .unwrap_or(0)
 }
@@ -232,20 +244,20 @@ fn appearance_value_width(field: AppearanceField) -> usize {
         }
         AppearanceField::CoverBrackets
         | AppearanceField::FormatChips
-        | AppearanceField::ProgressRemaining
+        | AppearanceField::ProgressTime
         | AppearanceField::KeyHints
         | AppearanceField::Animations => widest_toggle(),
     }
 }
 
-fn format_toggle(toggle: Toggle) -> String {
+fn toggle_text(toggle: Toggle) -> String {
     match toggle {
         Toggle::On => glyphs::settings::TOGGLE_ON.to_string(),
         Toggle::Off => glyphs::settings::TOGGLE_OFF.to_string(),
     }
 }
 
-fn format_duration_step(duration: Duration) -> String {
+fn duration_step_text(duration: Duration) -> String {
     format!(
         "{:.1}{}",
         duration.as_secs_f64(),
@@ -253,7 +265,7 @@ fn format_duration_step(duration: Duration) -> String {
     )
 }
 
-fn format_sleep_presets_label(presets: &[Duration]) -> String {
+fn sleep_presets_text(presets: &[Duration]) -> String {
     if presets.is_empty() {
         return glyphs::settings::SLEEP_OFF.to_string();
     }
@@ -270,7 +282,7 @@ fn format_sleep_presets_label(presets: &[Duration]) -> String {
         .join(", ")
 }
 
-fn format_pick(current: &str) -> String {
+fn pick_text(current: &str) -> String {
     format!(
         "{}{current}{}",
         glyphs::settings::PICK_LEFT,
@@ -281,7 +293,7 @@ fn format_pick(current: &str) -> String {
 impl<'a> SettingsView<'a> {
     #[must_use]
     pub(crate) fn music_dir_label(&self) -> String {
-        self.home.map_or_else(
+        self.home_dir.map_or_else(
             || self.music_dir.display().to_string(),
             |home| abbreviate_home(self.music_dir, home),
         )
@@ -289,8 +301,8 @@ impl<'a> SettingsView<'a> {
 }
 
 #[must_use]
-fn abbreviate_home(path: &Path, home: &Path) -> String {
-    match path.strip_prefix(home) {
+fn abbreviate_home(path: &Path, home_dir: &Path) -> String {
+    match path.strip_prefix(home_dir) {
         Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
         Ok(rest) => format!("~/{}", rest.display()),
         Err(_) => path.display().to_string(),
@@ -323,8 +335,8 @@ mod tests {
             SettingsView,
             abbreviate_home,
             appearance_value_text,
-            format_sleep_presets_label,
             settings_label,
+            sleep_presets_text,
             value_text,
         },
     };
@@ -346,28 +358,28 @@ mod tests {
     }
 
     #[test]
-    fn sleep_presets_label_renders_minutes_or_off() {
+    fn sleep_presets_text_renders_minutes_or_off() {
         assert_eq!(
-            format_sleep_presets_label(&[
+            sleep_presets_text(&[
                 Duration::from_secs(15 * 60),
                 Duration::from_secs(30 * 60),
                 Duration::from_secs(60 * 60),
             ]),
             "15m, 30m, 60m"
         );
-        assert_eq!(format_sleep_presets_label(&[]), "off");
+        assert_eq!(sleep_presets_text(&[]), "off");
     }
 
     #[test]
     fn toggle_on_off_render_distinct_glyphs() {
         let on = settings_values();
-        let off = SettingsView {
+        let off_view = SettingsView {
             replay_gain: ReplayGain::Off,
             ..on
         };
         assert_ne!(
             value_text(SettingRow::ReplayGain, &on),
-            value_text(SettingRow::ReplayGain, &off)
+            value_text(SettingRow::ReplayGain, &off_view)
         );
     }
 
@@ -392,7 +404,7 @@ mod tests {
         for field in [
             AppearanceField::CoverBrackets,
             AppearanceField::FormatChips,
-            AppearanceField::ProgressRemaining,
+            AppearanceField::ProgressTime,
             AppearanceField::KeyHints,
             AppearanceField::Animations,
         ] {

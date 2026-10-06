@@ -5,7 +5,7 @@ use kernel::{
         cursor_over::CursorOver,
         direction::Direction,
         time::Moment,
-        track::TrackRef,
+        track::TrackSource,
     },
     message::{Message, QueueRequest},
     update::{machine::Unhandled, overlay::history::HistoryMessage},
@@ -18,9 +18,9 @@ use crate::support::{
     update::{send, update},
 };
 
-fn cursor(selected: usize, len: usize) -> CursorOver<()> {
+fn cursor(selected_index: usize, len: usize) -> CursorOver<()> {
     CursorOver {
-        cursor: Cursor::at(len, selected),
+        cursor: Cursor::at(len, selected_index),
         content: (),
     }
 }
@@ -31,14 +31,36 @@ fn nav(direction: Direction, len: usize) -> HistoryMessage {
 
 #[rstest]
 #[case::nav_down_steps(cursor(0, 3), nav(Direction::Next, 3), Ok((cursor(1, 3), Cmd::none())))]
-#[case::nav_up_clamps_at_the_top(cursor(0, 3), nav(Direction::Previous, 3), Ok((cursor(0, 3), Cmd::none())))]
-#[case::nav_down_clamps_at_the_bottom(cursor(2, 3), nav(Direction::Next, 3), Ok((cursor(2, 3), Cmd::none())))]
-#[case::nav_resizes_to_a_shorter_log_first(cursor(5, 6), nav(Direction::Next, 2), Ok((cursor(1, 2), Cmd::none())))]
-#[case::nav_on_an_empty_log_stays_put(cursor(0, 0), nav(Direction::Next, 0), Ok((cursor(0, 0), Cmd::none())))]
-#[case::top_jumps_to_the_first_entry(cursor(2, 3), HistoryMessage::Top, Ok((cursor(0, 3), Cmd::none())))]
-#[case::bottom_resizes_then_jumps_to_the_last(
+#[case::nav_up_at_the_top_is_refused(
     cursor(0, 3),
-    HistoryMessage::Bottom(4),
+    nav(Direction::Previous, 3),
+    Err(Unhandled)
+)]
+#[case::nav_down_at_the_bottom_is_refused(
+    cursor(2, 3),
+    nav(Direction::Next, 3),
+    Err(Unhandled)
+)]
+#[case::nav_resizes_to_a_shorter_log_first(cursor(5, 6), nav(Direction::Next, 2), Ok((cursor(1, 2), Cmd::none())))]
+#[case::nav_on_an_empty_log_is_refused(
+    cursor(0, 0),
+    nav(Direction::Next, 0),
+    Err(Unhandled)
+)]
+#[case::select_first_jumps_to_the_first_entry(cursor(2, 3), HistoryMessage::SelectFirst, Ok((cursor(0, 3), Cmd::none())))]
+#[case::select_first_on_the_first_entry_is_refused(
+    cursor(0, 3),
+    HistoryMessage::SelectFirst,
+    Err(Unhandled)
+)]
+#[case::select_last_on_the_last_entry_is_refused(
+    cursor(2, 3),
+    HistoryMessage::SelectLast { rows: 3 },
+    Err(Unhandled)
+)]
+#[case::select_last_resizes_then_jumps_to_the_last(
+    cursor(0, 3),
+    HistoryMessage::SelectLast { rows: 4 },
     Ok((cursor(3, 4), Cmd::none()))
 )]
 #[case::enqueue_names_the_entry_under_the_cursor(
@@ -46,7 +68,7 @@ fn nav(direction: Direction, len: usize) -> HistoryMessage {
     HistoryMessage::Enqueue(2),
     Ok((
         cursor(1, 2),
-        Cmd::message(Message::Queue(QueueRequest::EnqueueHistoryEntry(1)))
+        Cmd::message(Message::Queue(QueueRequest::ToggleHistoryEntry(1)))
     ))
 )]
 #[case::enqueue_names_the_cursor_not_the_first_entry(
@@ -54,7 +76,7 @@ fn nav(direction: Direction, len: usize) -> HistoryMessage {
     HistoryMessage::Enqueue(3),
     Ok((
         cursor(2, 3),
-        Cmd::message(Message::Queue(QueueRequest::EnqueueHistoryEntry(2)))
+        Cmd::message(Message::Queue(QueueRequest::ToggleHistoryEntry(2)))
     ))
 )]
 #[case::enqueue_with_the_cursor_past_the_end_is_refused(
@@ -86,7 +108,7 @@ fn history_enter_on_a_queued_entry_enqueues_its_library_track() {
     let mut model = logged(&["/m/a.flac", "/m/b.flac"], &["/m/a.flac", "/m/b.flac"]);
     send(&mut model, history_enqueue());
 
-    assert_eq!(model.queue, vec![TrackRef::Local("/m/b.flac".into())]);
+    assert_eq!(model.queue, vec![TrackSource::Local("/m/b.flac".into())]);
     assert!(model.workspace.toasts.is_empty());
 }
 

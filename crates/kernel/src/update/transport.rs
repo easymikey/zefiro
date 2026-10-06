@@ -12,7 +12,7 @@ use crate::{
         sleep::SleepTimer,
         sleep_presets::SleepPresets,
         time::Moment,
-        transport::{Output, StreamError, Transport},
+        transport::{OutputError, OutputStatus, Transport},
     },
     message::Timer,
     update::machine::{Machine, Unhandled},
@@ -29,7 +29,7 @@ pub enum TransportMessage {
         now: Moment,
     },
     AbMark(Option<Duration>),
-    OutputLost(StreamError),
+    OutputLost(OutputError),
     OutputReady,
     TrackChanged,
     SleepFired,
@@ -60,9 +60,9 @@ impl Machine for Transport {
                 revision,
                 now,
             } => {
-                let sleep = next_sleep(self.sleep, presets.as_slice(), now);
-                replace(&mut self.sleep, sleep)?;
-                Ok(self.sleep.map_or(Cmd::none(), |timer| {
+                let sleep = next_sleep(self.sleep_timer, presets.as_slice(), now);
+                replace(&mut self.sleep_timer, sleep)?;
+                Ok(self.sleep_timer.map_or(Cmd::none(), |timer| {
                     Effect::After {
                         delay: timer.delay,
                         timer: Timer::Sleep(revision),
@@ -77,11 +77,11 @@ impl Machine for Transport {
                 Ok(Cmd::none())
             }
             TransportMessage::OutputLost(error) => {
-                self.output = Output::Lost(error);
+                replace(&mut self.output_status, OutputStatus::Lost(error))?;
                 Ok(Cmd::none())
             }
             TransportMessage::OutputReady => {
-                self.output = Output::Ready;
+                replace(&mut self.output_status, OutputStatus::Ready)?;
                 Ok(Cmd::none())
             }
             TransportMessage::TrackChanged => {
@@ -89,7 +89,7 @@ impl Machine for Transport {
                 Ok(Cmd::none())
             }
             TransportMessage::SleepFired => {
-                replace(&mut self.sleep, None)?;
+                replace(&mut self.sleep_timer, None)?;
                 Ok(Cmd::none())
             }
         }
@@ -114,7 +114,7 @@ fn next_sleep(
     sleep_presets.get(position).map(|&delay| SleepTimer {
         preset_index: PresetIndex::new(position),
         delay,
-        deadline: Moment::new(now.since_epoch() + delay),
+        deadline_at: Moment::new(now.since_epoch() + delay),
     })
 }
 
@@ -138,7 +138,7 @@ mod tests {
             sleep_presets::SleepPresets,
             speed::Speed,
             time::Moment,
-            transport::{Output, StreamError, Transport},
+            transport::{OutputError, OutputStatus, Transport},
         },
         message::Timer,
         update::{
@@ -149,15 +149,21 @@ mod tests {
 
     const NOW: Duration = Duration::from_secs(1_000);
 
-    type State = (Percent, Speed, Option<SleepTimer>, Option<AbLoop>, Output);
+    type State = (
+        Percent,
+        Speed,
+        Option<SleepTimer>,
+        Option<AbLoop>,
+        OutputStatus,
+    );
 
     fn state(transport: &Transport) -> State {
         (
             transport.volume,
             transport.speed,
-            transport.sleep,
+            transport.sleep_timer,
             transport.ab_loop,
-            transport.output.clone(),
+            transport.output_status.clone(),
         )
     }
 
@@ -167,7 +173,7 @@ mod tests {
 
     fn output_lost() -> Transport {
         Transport {
-            output: Output::Lost(StreamError::Backend),
+            output_status: OutputStatus::Lost(OutputError::Backend),
             ..Transport::default()
         }
     }
@@ -188,7 +194,7 @@ mod tests {
 
     fn sleeping(preset: Option<(usize, u64)>) -> Transport {
         Transport {
-            sleep: preset.map(|(position, minutes)| timer(position, minutes)),
+            sleep_timer: preset.map(|(position, minutes)| timer(position, minutes)),
             ..Transport::default()
         }
     }
@@ -205,7 +211,7 @@ mod tests {
         SleepTimer {
             preset_index: PresetIndex::new(preset),
             delay,
-            deadline: Moment::new(NOW + delay),
+            deadline_at: Moment::new(NOW + delay),
         }
     }
 
@@ -241,14 +247,14 @@ mod tests {
         TransportMessage::AbMark(Some(Duration::from_secs(seconds)))
     }
 
-    fn a_only(seconds: u64) -> Option<AbLoop> {
-        Some(AbLoop::AOnly(Duration::from_secs(seconds)))
+    fn start_marked(seconds: u64) -> Option<AbLoop> {
+        Some(AbLoop::StartMarked(Duration::from_secs(seconds)))
     }
 
-    fn a_to_b(a: u64, b: u64) -> Option<AbLoop> {
-        Some(AbLoop::Full {
-            a: Duration::from_secs(a),
-            b: Duration::from_secs(b),
+    fn both_marked(start_secs: u64, end_secs: u64) -> Option<AbLoop> {
+        Some(AbLoop::BothMarked {
+            loop_start: Duration::from_secs(start_secs),
+            loop_end: Duration::from_secs(end_secs),
         })
     }
 
@@ -296,27 +302,17 @@ mod tests {
     #[case::ab_mark_sets_a(
         looping(None),
         mark(10),
-        (looping(a_only(10)), Cmd::none())
+        (looping(start_marked(10)), Cmd::none())
     )]
     #[case::ab_mark_sets_b_after_a(
-        looping(a_only(10)),
+        looping(start_marked(10)),
         mark(20),
-        (looping(a_to_b(10, 20)), Cmd::none())
+        (looping(both_marked(10, 20)), Cmd::none())
     )]
     #[case::output_lost_records_the_error(
         Transport::default(),
-        TransportMessage::OutputLost(StreamError::Backend),
+        TransportMessage::OutputLost(OutputError::Backend),
         (output_lost(), Cmd::none())
-    )]
-    #[case::output_lost_with_the_same_error_records_it_again(
-        output_lost(),
-        TransportMessage::OutputLost(StreamError::Backend),
-        (output_lost(), Cmd::none())
-    )]
-    #[case::output_ready_while_ready_stays_ready(
-        Transport::default(),
-        TransportMessage::OutputReady,
-        (Transport::default(), Cmd::none())
     )]
     #[case::output_ready_clears_the_loss(
         output_lost(),
@@ -324,7 +320,7 @@ mod tests {
         (Transport::default(), Cmd::none())
     )]
     #[case::track_changed_clears_the_loop(
-        looping(a_to_b(10, 20)),
+        looping(both_marked(10, 20)),
         TransportMessage::TrackChanged,
         (looping(None), Cmd::none())
     )]
@@ -350,7 +346,7 @@ mod tests {
         TransportMessage::SetVolume(Percent::clamped(50))
     )]
     #[case::ab_mark_without_a_position(
-        looping(a_only(10)),
+        looping(start_marked(10)),
         TransportMessage::AbMark(None)
     )]
     #[case::step_volume_at_the_ceiling(
@@ -373,8 +369,8 @@ mod tests {
         sleeping(None),
         cycle_sleep_with(SleepPresets::from_minutes(&[]).unwrap())
     )]
-    #[case::ab_mark_at_the_a_point(looping(a_only(10)), mark(10))]
-    #[case::ab_mark_before_the_a_point(looping(a_only(10)), mark(5))]
+    #[case::ab_mark_at_the_a_point(looping(start_marked(10)), mark(10))]
+    #[case::ab_mark_before_the_a_point(looping(start_marked(10)), mark(5))]
     #[case::track_changed_without_a_loop(looping(None), TransportMessage::TrackChanged)]
     #[case::sleep_fired_without_a_timer(sleeping(None), TransportMessage::SleepFired)]
     fn a_transport_message_that_changes_nothing_is_refused(
@@ -385,5 +381,26 @@ mod tests {
 
         assert_eq!(transport.transition(message), Err(Unhandled));
         assert_eq!(state(&transport), before);
+    }
+
+    #[test]
+    fn an_output_status_that_does_not_change_is_refused() {
+        let mut ready_transport = Transport::default();
+        let mut lost_transport = output_lost();
+
+        assert_eq!(
+            ready_transport.transition(TransportMessage::OutputReady),
+            Err(Unhandled)
+        );
+        assert_eq!(
+            lost_transport
+                .transition(TransportMessage::OutputLost(OutputError::Backend)),
+            Err(Unhandled)
+        );
+        assert_eq!(ready_transport.output_status, OutputStatus::Ready);
+        assert_eq!(
+            lost_transport.output_status,
+            OutputStatus::Lost(OutputError::Backend)
+        );
     }
 }

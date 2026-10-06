@@ -39,7 +39,7 @@ pub(crate) fn blanks(width: usize) -> Cow<'static, str> {
 }
 
 #[must_use]
-pub(crate) fn truncate_from_left(text: &str, width: usize) -> Cow<'_, str> {
+pub(crate) fn truncate_head(text: &str, width: usize) -> Cow<'_, str> {
     if width == 0 {
         return Cow::Borrowed("");
     }
@@ -60,7 +60,7 @@ pub(crate) fn truncate_from_left(text: &str, width: usize) -> Cow<'_, str> {
 }
 
 #[must_use]
-pub(crate) fn truncate_line_to_width<'a>(line: Line<'a>, width: usize) -> Line<'a> {
+pub(crate) fn truncate_line<'a>(line: Line<'a>, width: usize) -> Line<'a> {
     if line.width() <= width {
         return line;
     }
@@ -98,7 +98,7 @@ mod tests {
     use crate::primitive::{
         glyphs::ELLIPSIS,
         span::{line, text},
-        text::{truncate, truncate_line_to_width},
+        truncate::{truncate, truncate_line},
     };
 
     proptest! {
@@ -159,11 +159,11 @@ mod tests {
         let line = styled_line();
         let whole = line.width();
 
-        let untouched = truncate_line_to_width(line.clone(), whole);
+        let untouched = truncate_line(line.clone(), whole);
         assert_eq!(untouched.spans.len(), line.spans.len());
         assert_eq!(untouched.width(), whole);
 
-        let cut = truncate_line_to_width(line, 20);
+        let cut = truncate_line(line, 20);
         assert!(cut.width() <= 20);
         let text: String = cut.spans.iter().map(|span| span.content.as_ref()).collect();
         assert!(text.starts_with("[Shuffle: on] "));
@@ -173,7 +173,7 @@ mod tests {
             "spans past the truncation point must be dropped, got:\n{text}"
         );
 
-        let empty = truncate_line_to_width(styled_line(), 0);
+        let empty = truncate_line(styled_line(), 0);
         assert_eq!(empty.width(), 0);
     }
 }

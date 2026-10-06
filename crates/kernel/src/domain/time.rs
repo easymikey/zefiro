@@ -56,8 +56,8 @@ pub struct Moment(Duration);
 
 impl Moment {
     #[must_use]
-    pub fn new(since_epoch: Duration) -> Self {
-        Self(since_epoch)
+    pub fn new(elapsed: Duration) -> Self {
+        Self(elapsed)
     }
 
     #[must_use]
@@ -116,15 +116,15 @@ mod tests {
 
     #[test]
     fn elapsed_since_is_the_gap_between_two_moments() {
-        let earlier = Moment::new(Duration::from_secs(3));
-        let later = Moment::new(Duration::from_secs(5));
-        assert_eq!(later.elapsed_since(earlier), Duration::from_secs(2));
+        let earlier_at = Moment::new(Duration::from_secs(3));
+        let later_at = Moment::new(Duration::from_secs(5));
+        assert_eq!(later_at.elapsed_since(earlier_at), Duration::from_secs(2));
     }
 
     #[test]
     fn elapsed_since_saturates_when_the_other_moment_is_later() {
-        let earlier = Moment::new(Duration::from_secs(3));
-        let later = Moment::new(Duration::from_secs(5));
-        assert_eq!(earlier.elapsed_since(later), Duration::ZERO);
+        let earlier_at = Moment::new(Duration::from_secs(3));
+        let later_at = Moment::new(Duration::from_secs(5));
+        assert_eq!(earlier_at.elapsed_since(later_at), Duration::ZERO);
     }
 }

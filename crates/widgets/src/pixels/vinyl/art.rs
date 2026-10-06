@@ -1,18 +1,10 @@
-use fast_image_resize::{
-    CropBox,
-    ImageBufferError,
-    PixelType,
-    ResizeError,
-    ResizeOptions,
-    Resizer,
-    images::{Image, ImageRef},
-};
 use image::RgbaImage;
-use thiserror::Error;
+use kernel::domain::geometry::Pixels;
 use tiny_skia::{FillRule, IntSize, Mask, Path, Pixmap, PixmapPaint, Transform};
 
 use crate::pixels::{
     numeric::{dimension_f32, floor},
+    resample::cover_crop_resize,
     vinyl::geometry::{
         Disc,
         RoundedRect,
@@ -24,14 +16,14 @@ use crate::pixels::{
 };
 
 #[must_use]
-pub(crate) fn sleeve_inset_side_px(size_px: u32) -> u32 {
-    let size = dimension_f32(size_px.max(1));
+pub(crate) fn sleeve_inset_side(canvas_side: Pixels) -> u32 {
+    let size = dimension_f32(canvas_side.0.max(1));
     let pad = VINYL_LAYOUT.sleeve_padding * size;
     floor::<u32>((size - pad * 2.0).round()).max(1)
 }
 
-fn label_diameter_px(size_px: u32) -> u32 {
-    floor::<u32>((VinylGeometry::new(size_px).label_radius * 2.0).round()).max(1)
+fn label_diameter(canvas_side: Pixels) -> u32 {
+    floor::<u32>((VinylGeometry::new(canvas_side).label_radius * 2.0).round()).max(1)
 }
 
 #[derive(Debug)]
@@ -41,12 +33,12 @@ pub(crate) struct VinylArt {
 }
 
 #[must_use]
-pub(crate) fn prepare_art(art: &RgbaImage, size_px: u32) -> VinylArt {
-    let sleeve_side = sleeve_inset_side_px(size_px);
-    let label_side = label_diameter_px(size_px);
+pub(crate) fn prepare_art(image: &RgbaImage, canvas_side: Pixels) -> VinylArt {
+    let sleeve_side = sleeve_inset_side(canvas_side);
+    let label_side = label_diameter(canvas_side);
     VinylArt {
-        sleeve: cover_crop_resize(art, sleeve_side, sleeve_side),
-        label: cover_crop_resize(art, label_side, label_side),
+        sleeve: cover_crop_resize(image, sleeve_side, sleeve_side),
+        label: cover_crop_resize(image, label_side, label_side),
     }
 }
 
@@ -85,7 +77,7 @@ pub(crate) fn paint_art_clipped(pixmap: &mut Pixmap, art: &RgbaImage, clip: &Art
     let target_width = floor::<u32>(clip.width.round()).max(1);
     let target_height = floor::<u32>(clip.height.round()).max(1);
     let sized = sized_or_resized(art, target_width, target_height);
-    let Some(source) = rgba_to_pixmap(&sized) else {
+    let Some(source) = pixmap_from(&sized) else {
         return;
     };
     let Some(mut mask) = Mask::new(pixmap.width(), pixmap.height()) else {
@@ -102,86 +94,6 @@ pub(crate) fn paint_art_clipped(pixmap: &mut Pixmap, art: &RgbaImage, clip: &Art
     );
 }
 
-fn cover_crop_resize(
-    image: &RgbaImage,
-    target_width: u32,
-    target_height: u32,
-) -> RgbaImage {
-    let (source_width, source_height) = image.dimensions();
-    let (target_width, target_height) = (target_width.max(1), target_height.max(1));
-    if (source_width, source_height) == (target_width, target_height) {
-        return image.clone();
-    }
-    if source_width == 0 || source_height == 0 {
-        return RgbaImage::new(target_width, target_height);
-    }
-
-    let target_aspect = dimension_f32(target_width) / dimension_f32(target_height);
-    let source_aspect = dimension_f32(source_width) / dimension_f32(source_height);
-    let (crop_width, crop_height) = if source_aspect > target_aspect {
-        let crop_height = source_height;
-        let crop_width =
-            floor::<u32>((dimension_f32(source_height) * target_aspect).round())
-                .clamp(1, source_width);
-        (crop_width, crop_height)
-    } else {
-        let crop_width = source_width;
-        let crop_height =
-            floor::<u32>((dimension_f32(source_width) / target_aspect).round())
-                .clamp(1, source_height);
-        (crop_width, crop_height)
-    };
-    let crop = CropBox {
-        left: f64::from((source_width - crop_width) / 2),
-        top: f64::from((source_height - crop_height) / 2),
-        width: f64::from(crop_width),
-        height: f64::from(crop_height),
-    };
-    match resample(image, crop, (target_width, target_height)) {
-        Ok(resized) => resized,
-        Err(
-            ResampleError::SourceBuffer(_)
-            | ResampleError::Resize(_)
-            | ResampleError::TargetBuffer { .. },
-        ) => RgbaImage::new(target_width, target_height),
-    }
-}
-
-#[derive(Debug, Error)]
-pub(crate) enum ResampleError {
-    #[error("the source pixels do not fill their stated size")]
-    SourceBuffer(#[source] ImageBufferError),
-    #[error("the resizer refused the crop or the sizes")]
-    Resize(#[source] ResizeError),
-    #[error("the resized pixels do not fill the {width}x{height} target")]
-    TargetBuffer { width: u32, height: u32 },
-}
-
-pub(crate) fn resample(
-    image: &RgbaImage,
-    crop: CropBox,
-    target: (u32, u32),
-) -> Result<RgbaImage, ResampleError> {
-    let (source_width, source_height) = image.dimensions();
-    let (target_width, target_height) = target;
-    let source =
-        ImageRef::new(source_width, source_height, image.as_raw(), PixelType::U8x4)
-            .map_err(ResampleError::SourceBuffer)?;
-    let mut resized = Image::new(target_width, target_height, PixelType::U8x4);
-    let options = ResizeOptions::new()
-        .crop(crop.left, crop.top, crop.width, crop.height)
-        .use_alpha(false);
-    Resizer::new()
-        .resize(&source, &mut resized, &options)
-        .map_err(ResampleError::Resize)?;
-    RgbaImage::from_raw(target_width, target_height, resized.into_vec()).ok_or(
-        ResampleError::TargetBuffer {
-            width: target_width,
-            height: target_height,
-        },
-    )
-}
-
 fn sized_or_resized(
     image: &RgbaImage,
     target_width: u32,
@@ -194,7 +106,7 @@ fn sized_or_resized(
     }
 }
 
-fn rgba_to_pixmap(image: &RgbaImage) -> Option<Pixmap> {
+fn pixmap_from(image: &RgbaImage) -> Option<Pixmap> {
     let (width, height) = image.dimensions();
     let size = IntSize::from_wh(width, height)?;
     Pixmap::from_vec(image.as_raw().clone(), size)
@@ -202,8 +114,6 @@ fn rgba_to_pixmap(image: &RgbaImage) -> Option<Pixmap> {
 
 #[cfg(test)]
 mod tests {
-    use fast_image_resize::CropBox;
-    use image::RgbaImage;
     use kernel::domain::geometry::Pixels;
 
     use crate::pixels::{
@@ -212,20 +122,14 @@ mod tests {
             VinylCache,
             VinylCacheKey,
             VinylStyle,
-            art::{
-                ResampleError,
-                label_diameter_px,
-                prepare_art,
-                resample,
-                sleeve_inset_side_px,
-            },
+            art::{label_diameter, prepare_art, sleeve_inset_side},
             geometry::{VINYL_LAYOUT, shadow_horizontal_reach_fraction},
             test_support::synthetic_art,
         },
     };
 
-    fn expected_peek_px(size_px: u32) -> u32 {
-        let size = dimension_f32(size_px);
+    fn expected_peek(canvas_side: Pixels) -> u32 {
+        let size = dimension_f32(canvas_side.0);
         let disc_diameter = VINYL_LAYOUT.disc_fraction * size;
         let peek = VINYL_LAYOUT.slide_fraction * disc_diameter;
         let shadow_margin =
@@ -234,12 +138,12 @@ mod tests {
     }
 
     #[test]
-    fn prepare_art_sizes_match_render_targets() {
+    fn prepared_art_matches_the_sleeve_and_label_sides() {
         let art = synthetic_art(400);
-        let size_px = 272;
-        let prepared = prepare_art(&art, size_px);
-        let sleeve_side = sleeve_inset_side_px(size_px);
-        let label_side = label_diameter_px(size_px);
+        let canvas_side = Pixels(272);
+        let prepared = prepare_art(&art, canvas_side);
+        let sleeve_side = sleeve_inset_side(canvas_side);
+        let label_side = label_diameter(canvas_side);
         assert_eq!(prepared.sleeve.dimensions(), (sleeve_side, sleeve_side));
         assert_eq!(prepared.label.dimensions(), (label_side, label_side));
     }
@@ -247,36 +151,21 @@ mod tests {
     #[test]
     fn art_of_the_wrong_size_is_resized_to_fit() {
         let art = synthetic_art(8);
-        let size_px = 96;
+        let canvas_side = Pixels(96);
         let key = VinylCacheKey {
             path: None,
-            size: Pixels(size_px),
-            colors: VinylStyle::fixture(),
+            side: canvas_side,
+            vinyl_style: VinylStyle::fixture(),
         };
         let mut cache = VinylCache::default();
 
         let image = cache.compose(&key, Some(&art));
-        let peek = expected_peek_px(size_px);
-        assert_eq!(image.dimensions(), (size_px + peek, size_px));
-        let center = (size_px / 2, size_px / 2);
+        let peek = expected_peek(canvas_side);
+        assert_eq!(image.dimensions(), (canvas_side.0 + peek, canvas_side.0));
+        let center = (canvas_side.0 / 2, canvas_side.0 / 2);
         assert_ne!(
             *image.get_pixel(center.0, center.1),
             image::Rgba([0, 0, 0, 0])
         );
-    }
-
-    #[test]
-    fn resample_of_a_crop_beyond_the_source_answers_the_resize_error() {
-        let source = RgbaImage::new(4, 4);
-        let beyond = CropBox {
-            left: 2.0,
-            top: 0.0,
-            width: 8.0,
-            height: 4.0,
-        };
-
-        let outcome = resample(&source, beyond, (4, 4));
-
-        assert!(matches!(outcome, Err(ResampleError::Resize(_))));
     }
 }

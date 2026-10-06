@@ -24,7 +24,9 @@ fn track(path: &str, artist: Option<&str>, album: Option<&str>) -> Arc<Track> {
 fn favorited(paths: &[&str]) -> Favorites {
     let mut favorites = Favorites::default();
     for path in paths {
-        favorites.toggle(kernel::domain::track::TrackRef::Local(PathBuf::from(*path)));
+        favorites.toggle(kernel::domain::track::TrackSource::Local(PathBuf::from(
+            *path,
+        )));
     }
     favorites
 }
@@ -64,10 +66,11 @@ struct SortRow {
     favorites: Favorites::default(),
     expected: vec![0, 1],
 })]
-fn sort_indices_orders_tracks(#[case] case: SortRow) {
-    let result = library::sort_indices(&case.tracks, case.key, &case.favorites);
+fn sort_indices_orders_tracks(#[case] sort_row: SortRow) {
+    let result =
+        library::sort_indices(&sort_row.tracks, sort_row.key, &sort_row.favorites);
     assert_eq!(
         result.into_iter().map(usize::from).collect::<Vec<_>>(),
-        case.expected
+        sort_row.expected
     );
 }

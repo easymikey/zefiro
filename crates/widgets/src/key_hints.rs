@@ -13,7 +13,7 @@ use crate::{
     primitive::{
         glyphs,
         span::{line, text},
-        text::truncate_line_to_width,
+        truncate::truncate_line,
     },
     theme::active_theme::ActiveTheme,
 };
@@ -36,14 +36,14 @@ const KEY_HINTS_COMPACT: &[Action] = &[
 
 const CHORDS_PER_ACTION: usize = 2;
 
-fn chord_for_action(bindings: &[KeyBinding], action: Action) -> String {
+pub(crate) fn chords_for_action(
+    bindings: &[KeyBinding],
+    action: Action,
+) -> impl Iterator<Item = String> {
     bindings
         .iter()
-        .filter(|binding| binding.action == Some(action))
-        .take(CHORDS_PER_ACTION)
+        .filter(move |binding| binding.action == Some(action))
         .map(|binding| binding.pattern.to_string())
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 #[derive(Debug, Clone)]
@@ -63,30 +63,30 @@ impl Chip {
 
 #[derive(Debug, Clone, Copy)]
 struct SettingsHint {
-    primary: Action,
-    secondary: Option<Action>,
+    action: Action,
+    fallback_action: Option<Action>,
     label: &'static str,
 }
 
 const SETTINGS_HINTS: [SettingsHint; 4] = [
     SettingsHint {
-        primary: Action::SettingsNavigateDown,
-        secondary: Some(Action::SettingsNavigateUp),
+        action: Action::SettingsNavigateDown,
+        fallback_action: Some(Action::SettingsNavigateUp),
         label: "move",
     },
     SettingsHint {
-        primary: Action::SettingsStepDown,
-        secondary: Some(Action::SettingsStepUp),
+        action: Action::SettingsStepDown,
+        fallback_action: Some(Action::SettingsStepUp),
         label: "step",
     },
     SettingsHint {
-        primary: Action::SettingsActivate,
-        secondary: None,
+        action: Action::SettingsActivate,
+        fallback_action: None,
         label: "select",
     },
     SettingsHint {
-        primary: Action::SettingsClose,
-        secondary: None,
+        action: Action::SettingsClose,
+        fallback_action: None,
         label: "close",
     },
 ];
@@ -94,9 +94,9 @@ const SETTINGS_HINTS: [SettingsHint; 4] = [
 #[derive(Debug, Clone, Default)]
 pub struct KeyHintChords {
     revision: Option<Revision>,
-    pub(crate) keys: Vec<Chip>,
-    pub(crate) compact: Vec<Chip>,
-    pub(crate) settings: Vec<Chip>,
+    pub(crate) chips: Vec<Chip>,
+    pub(crate) compact_chips: Vec<Chip>,
+    pub(crate) settings_chips: Vec<Chip>,
 }
 
 impl KeyHintChords {
@@ -104,9 +104,11 @@ impl KeyHintChords {
     pub fn from_bindings(bindings: &[KeyBinding]) -> Self {
         Self {
             revision: None,
-            keys: key_chips(bindings, |_| true),
-            compact: key_chips(bindings, |action| KEY_HINTS_COMPACT.contains(&action)),
-            settings: SETTINGS_HINTS
+            chips: key_chips(bindings, |_| true),
+            compact_chips: key_chips(bindings, |action| {
+                KEY_HINTS_COMPACT.contains(&action)
+            }),
+            settings_chips: SETTINGS_HINTS
                 .iter()
                 .filter_map(|hint| settings_chip(bindings, *hint))
                 .collect(),
@@ -126,8 +128,8 @@ impl KeyHintChords {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct KeyHintsView<'a> {
-    pub(crate) full: &'a [Chip],
-    pub(crate) compact: &'a [Chip],
+    pub(crate) full_chips: &'a [Chip],
+    pub(crate) compact_chips: &'a [Chip],
 }
 
 #[derive(Debug)]
@@ -154,11 +156,10 @@ impl Widget for &KeyHintsWidget<'_> {
 }
 
 fn settings_chip(bindings: &[KeyBinding], hint: SettingsHint) -> Option<Chip> {
-    let key = [Some(hint.primary), hint.secondary]
+    let key = [Some(hint.action), hint.fallback_action]
         .into_iter()
         .flatten()
-        .map(|action| chord_for_action(bindings, action))
-        .filter(|chord| !chord.is_empty())
+        .flat_map(|action| chords_for_action(bindings, action).take(CHORDS_PER_ACTION))
         .collect::<Vec<_>>()
         .join("/");
     (!key.is_empty()).then(|| Chip::new(&key, hint.label))
@@ -168,7 +169,13 @@ fn key_chips(bindings: &[KeyBinding], keep: impl Fn(Action) -> bool) -> Vec<Chip
     KEY_HINTS
         .iter()
         .filter(|(action, _)| keep(*action))
-        .map(|(action, label)| (chord_for_action(bindings, *action), *label))
+        .map(|(action, label)| {
+            let chord = chords_for_action(bindings, *action)
+                .take(CHORDS_PER_ACTION)
+                .collect::<Vec<_>>()
+                .join("/");
+            (chord, *label)
+        })
         .filter(|(chord, _)| !chord.is_empty())
         .map(|(chord, label)| Chip::new(&chord, label))
         .collect()
@@ -184,8 +191,8 @@ fn chips_line<'a>(theme: &ActiveTheme<'_>, chips: &'a [Chip]) -> Line<'a> {
             text(chip.key.as_str())
                 .fg(colors.window_background)
                 .bg(chip_background),
-            text(glyphs::key_hints::LABEL_GAP).fg(colors.text),
-            text(chip.label).fg(colors.text),
+            text(glyphs::key_hints::LABEL_GAP).fg(colors.foreground),
+            text(chip.label).fg(colors.foreground),
         ])
     }))
 }
@@ -195,13 +202,13 @@ fn key_hints_line<'a>(
     view: KeyHintsView<'a>,
     width: u16,
 ) -> Line<'a> {
-    let full = chips_line(theme, view.full);
+    let full = chips_line(theme, view.full_chips);
     let line = if full.width() <= usize::from(width) {
         full
     } else {
-        chips_line(theme, view.compact)
+        chips_line(theme, view.compact_chips)
     };
-    truncate_line_to_width(line, usize::from(width))
+    truncate_line(line, usize::from(width))
 }
 
 #[cfg(test)]
@@ -213,7 +220,13 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        key_hints::{KeyHintChords, KeyHintsView, KeyHintsWidget, chord_for_action},
+        key_hints::{
+            CHORDS_PER_ACTION,
+            KeyHintChords,
+            KeyHintsView,
+            KeyHintsWidget,
+            chords_for_action,
+        },
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
@@ -224,15 +237,15 @@ mod tests {
 
     fn keys_view(chords: &KeyHintChords) -> KeyHintsView<'_> {
         KeyHintsView {
-            full: &chords.keys,
-            compact: &chords.compact,
+            full_chips: &chords.chips,
+            compact_chips: &chords.compact_chips,
         }
     }
 
     fn settings_view(chords: &KeyHintChords) -> KeyHintsView<'_> {
         KeyHintsView {
-            full: &chords.settings,
-            compact: &chords.settings,
+            full_chips: &chords.settings_chips,
+            compact_chips: &chords.settings_chips,
         }
     }
 
@@ -262,22 +275,22 @@ mod tests {
 
     #[test]
     fn an_action_bound_to_two_chords_joins_them_with_a_slash() {
-        let keymap = Keymap::default();
-        let bindings = keymap.bindings();
-        assert_eq!(chord_for_action(bindings, Action::Help), "?/Ctrl+K");
+        let chords = stock_chords();
+        let help = chords.chips.iter().find(|chip| chip.label == "Help");
+        assert_eq!(help.map(|chip| chip.key.as_str()), Some(" ?/Ctrl+K "));
     }
 
     #[test]
     fn an_action_bound_to_one_chord_shows_it_bare() {
-        let keymap = Keymap::default();
-        let bindings = keymap.bindings();
-        assert_eq!(chord_for_action(bindings, Action::Quit), "q");
+        let chords = stock_chords();
+        let quit = chords.chips.iter().find(|chip| chip.label == "Quit");
+        assert_eq!(quit.map(|chip| chip.key.as_str()), Some(" q "));
     }
 
     #[test]
     fn an_unbound_action_shows_an_empty_chord() {
         let bindings: Vec<KeyBinding> = Vec::new();
-        assert_eq!(chord_for_action(&bindings, Action::Help), "");
+        assert_eq!(chords_for_action(&bindings, Action::Help).next(), None);
     }
 
     #[test]
@@ -289,9 +302,9 @@ mod tests {
 
     #[test]
     fn chords_rebuild_only_when_the_config_revision_moves() {
-        let stock = Keymap::default();
+        let stock_keymap = Keymap::default();
         let mut chords = KeyHintChords::default();
-        chords.follow(stock.bindings(), Revision::default());
+        chords.follow(stock_keymap.bindings(), Revision::default());
         chords.follow(&without(Action::Search), Revision::default());
         assert!(hints_text(keys_view(&chords)).contains("Find"));
         chords.follow(&without(Action::Search), Revision::default().next());
@@ -318,7 +331,10 @@ mod tests {
     #[test]
     fn a_half_bound_settings_pair_shows_only_its_bound_chord() {
         let bindings = without(Action::SettingsNavigateUp);
-        let down = chord_for_action(&bindings, Action::SettingsNavigateDown);
+        let down = chords_for_action(&bindings, Action::SettingsNavigateDown)
+            .take(CHORDS_PER_ACTION)
+            .collect::<Vec<_>>()
+            .join("/");
         let chords = KeyHintChords::from_bindings(&bindings);
         let text = hints_text(settings_view(&chords));
         assert!(text.contains(&format!(" {down}  move")), "got {text:?}");

@@ -10,11 +10,11 @@ use rstest::rstest;
 
 use crate::support::update::update;
 
-fn reloaded(appearance: AppearanceSettings) -> Model {
+fn reloaded(appearance_settings: AppearanceSettings) -> Model {
     let mut model = Model::default();
     let cmd = update(
         &mut model,
-        Message::Config(ConfigEvent::AppearanceReloaded(appearance)),
+        Message::Config(ConfigEvent::AppearanceReloaded(appearance_settings)),
         Moment::default(),
     )
     .unwrap();
@@ -29,7 +29,10 @@ fn reloaded(appearance: AppearanceSettings) -> Model {
     ..AppearanceSettings::default()
 })]
 fn a_reloaded_appearance_replaces_the_appearance(
-    #[case] appearance: AppearanceSettings,
+    #[case] appearance_settings: AppearanceSettings,
 ) {
-    assert_eq!(reloaded(appearance).settings.appearance, appearance);
+    assert_eq!(
+        reloaded(appearance_settings).settings.appearance_settings,
+        appearance_settings
+    );
 }

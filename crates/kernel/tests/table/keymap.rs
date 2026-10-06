@@ -11,7 +11,7 @@ use kernel::{
         geometry::Cells,
         key::{Key, KeyCode, KeyPress, Modifiers},
         keymap::{KeyContext, KeymapOverrides},
-        overlay::{DeleteCandidate, Overlay, OverlayName, TextEntry},
+        overlay::{Overlay, OverlayName, TextEntry, TrashCandidate},
         setting_row::SettingRow,
         time::Moment,
         toast::Toast,
@@ -26,7 +26,7 @@ use kernel::{
         PlaybackRequest,
         SearchEdit,
         SearchRequest,
-        SettingsRowRequest,
+        SettingRowRequest,
         TextRequest,
     },
     update::{keymap::lookup::route, machine::Unhandled, update},
@@ -69,9 +69,9 @@ fn settings_on(row: SettingRow) -> Workspace {
     with_overlay(Overlay::Settings(row))
 }
 
-fn confirming_delete() -> Workspace {
-    with_overlay(Overlay::ConfirmDelete(DeleteCandidate {
-        source: kernel::domain::track::TrackRef::Local("/music/moon.flac".into()),
+fn confirming_trash() -> Workspace {
+    with_overlay(Overlay::ConfirmTrash(TrashCandidate {
+        source: kernel::domain::track::TrackSource::Local("/music/moon.flac".into()),
         title: "Moon River".to_string(),
         artist: "Audrey Hepburn".to_string(),
     }))
@@ -117,8 +117,10 @@ fn history_request(request: HistoryRequest) -> Option<Message> {
     Some(Message::Overlay(OverlayRequest::History(request)))
 }
 
-fn settings_row(message: SettingsRowRequest) -> Option<Message> {
-    Some(Message::Overlay(OverlayRequest::Settings(message)))
+fn settings_row(setting_row_request: SettingRowRequest) -> Option<Message> {
+    Some(Message::Overlay(OverlayRequest::Settings(
+        setting_row_request,
+    )))
 }
 
 fn close() -> Option<Message> {
@@ -217,7 +219,7 @@ fn confirm() -> Option<Message> {
 #[case::history_capital_g_jumps_to_the_bottom(
     history(),
     character('G'),
-    history_request(HistoryRequest::Bottom)
+    history_request(HistoryRequest::SelectLast)
 )]
 #[case::history_enter_enqueues(
     history(),
@@ -229,58 +231,58 @@ fn confirm() -> Option<Message> {
 #[case::history_g_arms_the_chord(
     history(),
     character('g'),
-    Some(Message::Browse(BrowseRequest::ChordPrefix(ChordPrefix::G)))
+    Some(Message::ChordPrefix(ChordPrefix::G))
 )]
 #[case::history_gg_jumps_to_the_top(
     history_after_g(),
     character('g'),
-    history_request(HistoryRequest::Top)
+    history_request(HistoryRequest::SelectFirst)
 )]
 #[case::history_swallows_a_hotkey(history(), character('n'), None)]
 #[case::settings_j_navigates_down(
     settings_on(SettingRow::Theme),
     character('j'),
-    settings_row(SettingsRowRequest::Navigate(Direction::Next))
+    settings_row(SettingRowRequest::Navigate(Direction::Next))
 )]
 #[case::settings_down_navigates_down(
     settings_on(SettingRow::Theme),
     plain(KeyCode::Down),
-    settings_row(SettingsRowRequest::Navigate(Direction::Next))
+    settings_row(SettingRowRequest::Navigate(Direction::Next))
 )]
 #[case::settings_k_navigates_up(
     settings_on(SettingRow::Theme),
     character('k'),
-    settings_row(SettingsRowRequest::Navigate(Direction::Previous))
+    settings_row(SettingRowRequest::Navigate(Direction::Previous))
 )]
 #[case::settings_up_navigates_up(
     settings_on(SettingRow::Theme),
     plain(KeyCode::Up),
-    settings_row(SettingsRowRequest::Navigate(Direction::Previous))
+    settings_row(SettingRowRequest::Navigate(Direction::Previous))
 )]
 #[case::settings_l_steps_up(
     settings_on(SettingRow::Theme),
     character('l'),
-    settings_row(SettingsRowRequest::Step(Direction::Next))
+    settings_row(SettingRowRequest::Step(Direction::Next))
 )]
 #[case::settings_right_steps_up(
     settings_on(SettingRow::Theme),
     plain(KeyCode::Right),
-    settings_row(SettingsRowRequest::Step(Direction::Next))
+    settings_row(SettingRowRequest::Step(Direction::Next))
 )]
 #[case::settings_h_steps_down(
     settings_on(SettingRow::Theme),
     character('h'),
-    settings_row(SettingsRowRequest::Step(Direction::Previous))
+    settings_row(SettingRowRequest::Step(Direction::Previous))
 )]
 #[case::settings_left_steps_down(
     settings_on(SettingRow::Theme),
     plain(KeyCode::Left),
-    settings_row(SettingsRowRequest::Step(Direction::Previous))
+    settings_row(SettingRowRequest::Step(Direction::Previous))
 )]
 #[case::settings_space_activates_a_pick_row(
     settings_on(SettingRow::Theme),
     character(' '),
-    settings_row(SettingsRowRequest::Activate)
+    settings_row(SettingRowRequest::Activate)
 )]
 #[case::settings_esc_closes(
     settings_on(SettingRow::Theme),
@@ -291,63 +293,55 @@ fn confirm() -> Option<Message> {
 #[case::settings_enter_on_a_duration_row_still_activates(
     settings_on(SettingRow::Crossfade),
     plain(KeyCode::Enter),
-    settings_row(SettingsRowRequest::Activate)
+    settings_row(SettingRowRequest::Activate)
 )]
 #[case::settings_space_on_a_duration_row_still_activates(
     settings_on(SettingRow::Crossfade),
     character(' '),
-    settings_row(SettingsRowRequest::Activate)
+    settings_row(SettingRowRequest::Activate)
 )]
 #[case::settings_h_on_a_toggle_row_steps_never_seeks(
     settings_on(SettingRow::ReplayGain),
     character('h'),
-    settings_row(SettingsRowRequest::Step(Direction::Previous))
+    settings_row(SettingRowRequest::Step(Direction::Previous))
 )]
 #[case::settings_left_on_a_toggle_row_steps_never_seeks(
     settings_on(SettingRow::ReplayGain),
     plain(KeyCode::Left),
-    settings_row(SettingsRowRequest::Step(Direction::Previous))
+    settings_row(SettingRowRequest::Step(Direction::Previous))
 )]
 #[case::settings_l_on_a_toggle_row_steps_never_seeks(
     settings_on(SettingRow::ReplayGain),
     character('l'),
-    settings_row(SettingsRowRequest::Step(Direction::Next))
+    settings_row(SettingRowRequest::Step(Direction::Next))
 )]
 #[case::settings_right_on_a_toggle_row_steps_never_seeks(
     settings_on(SettingRow::ReplayGain),
     plain(KeyCode::Right),
-    settings_row(SettingsRowRequest::Step(Direction::Next))
+    settings_row(SettingRowRequest::Step(Direction::Next))
 )]
 #[case::settings_enter_on_a_toggle_row_activates_it(
     settings_on(SettingRow::ReplayGain),
     plain(KeyCode::Enter),
-    settings_row(SettingsRowRequest::Activate)
+    settings_row(SettingRowRequest::Activate)
 )]
 #[case::settings_swallows_a_hotkey(
     settings_on(SettingRow::Theme),
     character('n'),
     None
 )]
-#[case::confirm_delete_y_accepts(confirming_delete(), character('y'), confirm())]
-#[case::confirm_delete_enter_accepts(
-    confirming_delete(),
+#[case::confirm_trash_y_accepts(confirming_trash(), character('y'), confirm())]
+#[case::confirm_trash_enter_accepts(
+    confirming_trash(),
     plain(KeyCode::Enter),
     confirm()
 )]
-#[case::confirm_delete_n_cancels(confirming_delete(), character('n'), close())]
-#[case::confirm_delete_esc_cancels(confirming_delete(), plain(KeyCode::Esc), close())]
-#[case::confirm_delete_q_closes(confirming_delete(), character('q'), close())]
-#[case::confirm_delete_swallows_a_nav_key(confirming_delete(), character('j'), None)]
-#[case::confirm_delete_swallows_its_own_hotkey(
-    confirming_delete(),
-    character('d'),
-    None
-)]
-#[case::confirm_delete_swallows_an_arrow(
-    confirming_delete(),
-    plain(KeyCode::Down),
-    None
-)]
+#[case::confirm_trash_n_cancels(confirming_trash(), character('n'), close())]
+#[case::confirm_trash_esc_cancels(confirming_trash(), plain(KeyCode::Esc), close())]
+#[case::confirm_trash_q_closes(confirming_trash(), character('q'), close())]
+#[case::confirm_trash_swallows_a_nav_key(confirming_trash(), character('j'), None)]
+#[case::confirm_trash_swallows_its_own_hotkey(confirming_trash(), character('d'), None)]
+#[case::confirm_trash_swallows_an_arrow(confirming_trash(), plain(KeyCode::Down), None)]
 #[case::jump_types_a_digit(
     jumping(),
     character('4'),
@@ -587,8 +581,8 @@ fn the_default_keymap_compiles_to_this_table() {
 
 #[test]
 fn every_compiled_binding_is_what_its_chord_routes_to() {
-    let config = KeymapOverrides::default();
-    let browsable = bindings(&config)
+    let keymap_overrides = KeymapOverrides::default();
+    let browsable = bindings(&keymap_overrides)
         .into_iter()
         .filter(|binding| {
             matches!(

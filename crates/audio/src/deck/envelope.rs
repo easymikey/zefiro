@@ -17,7 +17,7 @@ use triple_buffer::{Input, Output, triple_buffer};
 use crate::{
     deck::event::DeckEvent,
     engine::{
-        crossfade::{gain_in, gain_out},
+        crossfade::{equal_power_in, equal_power_out},
         message::{AudioMessage, Signals},
     },
     gain::Gain,
@@ -57,10 +57,10 @@ impl Ramp {
         }
     }
 
-    pub(crate) fn hold(level: Gain) -> Self {
+    pub(crate) fn hold(gain: Gain) -> Self {
         Self {
-            from: level,
-            to: level,
+            from: gain,
+            to: gain,
             curve: Curve::Hold,
             length: Frames::ZERO,
         }
@@ -71,20 +71,20 @@ impl Ramp {
 pub(crate) struct Order {
     pub(crate) ramp_serial: u32,
     pub(crate) ramp: Option<Ramp>,
-    pub(crate) cue_serial: u32,
-    pub(crate) cue: Option<Duration>,
+    pub(crate) fade_start_serial: u32,
+    pub(crate) fade_start: Option<Duration>,
 }
 
-struct Published {
+struct EnvelopeReadout {
     flags: AtomicU8,
-    position: AtomicU64,
+    position_bits: AtomicU64,
 }
 
-impl Published {
-    fn fresh() -> Self {
+impl EnvelopeReadout {
+    fn new() -> Self {
         Self {
             flags: AtomicU8::new(0),
-            position: AtomicU64::new(0),
+            position_bits: AtomicU64::new(0),
         }
     }
 }
@@ -107,29 +107,29 @@ impl Frames {
         Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
     }
 
-    fn of(duration: Duration, rate: u32) -> Self {
+    fn from_duration(duration: Duration, rate: u32) -> Self {
         let frames = duration.as_nanos() * u128::from(rate) / 1_000_000_000u128;
         Self(u64::try_from(frames).unwrap_or(u64::MAX))
     }
 }
 
 pub(crate) struct EnvelopeControl {
-    orders: Input<Order>,
-    published: Arc<Published>,
+    input: Input<Order>,
+    envelope_readout: Arc<EnvelopeReadout>,
     revision: Revision,
-    pending: Order,
+    pending_order: Order,
     rate: u32,
 }
 
 impl EnvelopeControl {
     #[must_use]
     pub(crate) fn frames(&self, duration: Duration) -> Frames {
-        Frames::of(duration, self.rate)
+        Frames::from_duration(duration, self.rate)
     }
 
     fn order(&mut self, edit: impl FnOnce(&mut Order)) {
-        edit(&mut self.pending);
-        self.orders.write(self.pending);
+        edit(&mut self.pending_order);
+        self.input.write(self.pending_order);
     }
 
     pub(crate) fn ramp(&mut self, ramp: Ramp) {
@@ -139,21 +139,23 @@ impl EnvelopeControl {
         });
     }
 
-    pub(crate) fn cue(&mut self, at: Option<Duration>) {
+    pub(crate) fn set_fade_start(&mut self, fade_start: Option<Duration>) {
         self.order(|order| {
-            order.cue = at;
-            order.cue_serial += 1;
+            order.fade_start = fade_start;
+            order.fade_start_serial += 1;
         });
     }
 
     #[must_use]
     pub(crate) fn take_signals(&self) -> Signals {
-        Signals(self.published.flags.swap(0, Ordering::Acquire))
+        Signals(self.envelope_readout.flags.swap(0, Ordering::Acquire))
     }
 
     #[must_use]
     pub(crate) fn position(&self) -> Duration {
-        Duration::from_nanos(self.published.position.load(Ordering::Relaxed))
+        Duration::from_nanos(
+            self.envelope_readout.position_bits.load(Ordering::Relaxed),
+        )
     }
 
     pub(crate) fn revision(&self) -> Revision {
@@ -164,7 +166,7 @@ impl EnvelopeControl {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Running {
     ramp: Ramp,
-    elapsed: Frames,
+    elapsed_frames: Frames,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,17 +183,17 @@ enum Ending {
 
 pub(crate) struct Envelope<S> {
     inner: S,
-    orders: Output<Order>,
-    published: Arc<Published>,
-    sender: Sender<AudioMessage>,
+    output: Output<Order>,
+    envelope_readout: Arc<EnvelopeReadout>,
+    callback_sender: Sender<AudioMessage>,
     revision: Revision,
     frames: Frames,
     rate: u32,
-    base: Duration,
+    offset: Duration,
     channel: u16,
     gain: Gain,
     running: Option<Running>,
-    cue: Option<Duration>,
+    fade_start: Option<Duration>,
     previous: Order,
     wake: Wake,
     ending: Ending,
@@ -200,33 +202,33 @@ pub(crate) struct Envelope<S> {
 pub(crate) fn envelope<S: Source>(
     inner: S,
     revision: Revision,
-    sender: Sender<AudioMessage>,
+    callback_sender: Sender<AudioMessage>,
 ) -> (Envelope<S>, EnvelopeControl) {
     let rate = inner.sample_rate();
-    let published = Arc::new(Published::fresh());
+    let envelope_readout = Arc::new(EnvelopeReadout::new());
     let (orders_input, orders_output) = triple_buffer(&Order::default());
     let envelope = Envelope {
         inner,
-        orders: orders_output,
-        published: Arc::clone(&published),
-        sender,
+        output: orders_output,
+        envelope_readout: Arc::clone(&envelope_readout),
+        callback_sender,
         revision,
         frames: Frames::ZERO,
         rate,
-        base: Duration::ZERO,
+        offset: Duration::ZERO,
         channel: 0,
         gain: Gain::UNITY,
         running: None,
-        cue: None,
+        fade_start: None,
         previous: Order::default(),
         wake: Wake::Sent,
         ending: Ending::Playing,
     };
     let control = EnvelopeControl {
-        orders: orders_input,
-        published,
+        input: orders_input,
+        envelope_readout,
         revision,
-        pending: Order::default(),
+        pending_order: Order::default(),
         rate,
     };
     (envelope, control)
@@ -235,22 +237,25 @@ pub(crate) fn envelope<S: Source>(
 fn curved_gain(ramp: Ramp, fraction: f32) -> Gain {
     let (from, to) = (ramp.from.amplitude(), ramp.to.amplitude());
     Gain::from_amplitude(match ramp.curve {
-        Curve::EqualPowerIn => from + (to - from) * gain_in(fraction),
-        Curve::EqualPowerOut => to + (from - to) * gain_out(fraction),
+        Curve::EqualPowerIn => from + (to - from) * equal_power_in(fraction),
+        Curve::EqualPowerOut => to + (from - to) * equal_power_out(fraction),
         Curve::Hold => to,
     })
 }
 
 impl<S: Source> Envelope<S> {
-    fn raise(&mut self, flag: Signals) {
-        let previous = self.published.flags.fetch_or(flag.0, Ordering::Release);
-        if previous & flag.0 == 0 {
+    fn raise(&mut self, signals: Signals) {
+        let previous = self
+            .envelope_readout
+            .flags
+            .fetch_or(signals.0, Ordering::Release);
+        if previous & signals.0 == 0 {
             self.wake();
         }
     }
 
     fn wake(&mut self) {
-        self.wake = match DeckEvent::Woke(self.revision).wake(&self.sender) {
+        self.wake = match DeckEvent::Woke(self.revision).wake(&self.callback_sender) {
             Ok(()) => Wake::Sent,
             Err(_) => Wake::Pending,
         };
@@ -281,19 +286,19 @@ impl<S: Source> Envelope<S> {
     fn reconcile_rate(&mut self) {
         let rate = self.inner.sample_rate();
         if rate != self.rate {
-            self.base += self.frames.duration(self.rate);
+            self.offset += self.frames.duration(self.rate);
             self.frames = Frames::ZERO;
             self.rate = rate;
         }
     }
 
-    fn advance_cue(&mut self) {
-        let Some(target) = self.cue else {
+    fn advance_fade_start(&mut self) {
+        let Some(fade_start) = self.fade_start else {
             return;
         };
-        if self.base + self.frames.duration(self.rate) >= target {
-            self.raise(Signals::CUED);
-            self.cue = None;
+        if self.offset + self.frames.duration(self.rate) >= fade_start {
+            self.raise(Signals::FADE_START);
+            self.fade_start = None;
         }
     }
 
@@ -301,8 +306,8 @@ impl<S: Source> Envelope<S> {
         let Some(mut running) = self.running else {
             return;
         };
-        running.elapsed.advance();
-        if running.elapsed >= running.ramp.length {
+        running.elapsed_frames.advance();
+        if running.elapsed_frames >= running.ramp.length {
             self.gain = running.ramp.to;
             self.running = None;
             if running.ramp.curve != Curve::Hold {
@@ -310,7 +315,7 @@ impl<S: Source> Envelope<S> {
             }
             return;
         }
-        let elapsed = running.elapsed.duration(self.rate);
+        let elapsed = running.elapsed_frames.duration(self.rate);
         let total = running.ramp.length.duration(self.rate);
         let fraction = if total.is_zero() {
             1.0
@@ -322,22 +327,24 @@ impl<S: Source> Envelope<S> {
     }
 
     fn publish(&self) {
-        let position = self.base + self.frames.duration(self.rate);
+        let position = self.offset + self.frames.duration(self.rate);
         let nanos = u64::try_from(position.as_nanos()).unwrap_or(u64::MAX);
-        self.published.position.store(nanos, Ordering::Relaxed);
+        self.envelope_readout
+            .position_bits
+            .store(nanos, Ordering::Relaxed);
     }
 
     fn advance_frame(&mut self) {
         self.frames.advance();
         self.retry_wake();
         self.reconcile_rate();
-        if self.orders.update() {
-            let order = *self.orders.output_buffer();
+        if self.output.update() {
+            let order = *self.output.output_buffer();
             match self.transition(EnvelopeMessage::Order(order)) {
                 Ok(()) | Err(Unhandled) => {}
             }
         }
-        self.advance_cue();
+        self.advance_fade_start();
         self.advance_ramp();
         self.publish();
     }
@@ -355,8 +362,9 @@ impl<S: Source> Machine for Envelope<S> {
     fn transition(&mut self, message: EnvelopeMessage) -> Result<(), Unhandled> {
         let EnvelopeMessage::Order(order) = message;
         let ramped = order.ramp_serial != self.previous.ramp_serial;
-        let cued = order.cue_serial != self.previous.cue_serial;
-        if !ramped && !cued {
+        let fade_start_ordered =
+            order.fade_start_serial != self.previous.fade_start_serial;
+        if !ramped && !fade_start_ordered {
             return Err(Unhandled);
         }
         if ramped && let Some(ramp) = order.ramp {
@@ -367,11 +375,11 @@ impl<S: Source> Machine for Envelope<S> {
             };
             self.running = Some(Running {
                 ramp: Ramp { from, ..ramp },
-                elapsed: Frames::ZERO,
+                elapsed_frames: Frames::ZERO,
             });
         }
-        if cued {
-            self.cue = order.cue;
+        if fade_start_ordered {
+            self.fade_start = order.fade_start;
         }
         self.previous = order;
         Ok(())
@@ -418,7 +426,7 @@ impl<S: Source> Source for Envelope<S> {
 
     fn try_seek(&mut self, position: Duration) -> Result<(), rodio::source::SeekError> {
         self.inner.try_seek(position)?;
-        self.base = position;
+        self.offset = position;
         self.frames = Frames::ZERO;
         self.rate = self.inner.sample_rate();
         self.ending = Ending::Playing;
@@ -457,28 +465,31 @@ mod tests {
 
     #[rstest]
     fn an_envelope_raises_finished_when_the_source_ends() {
-        let (wake, heard) = crossbeam_channel::bounded(4);
-        let (source, control) = envelope(tone(100), Revision::default(), wake);
+        let (callback_sender, callback_receiver) = crossbeam_channel::bounded(4);
+        let (source, control) =
+            envelope(tone(100), Revision::default(), callback_sender);
         drain(source);
         assert_eq!(control.take_signals(), Signals::FINISHED);
-        assert_eq!(heard.len(), 1);
+        assert_eq!(callback_receiver.len(), 1);
     }
 
     #[rstest]
-    fn an_envelope_raises_cued_at_its_cue_point() {
-        let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (source, mut control) = envelope(tone(100), Revision::default(), wake);
-        control.cue(Some(Duration::from_millis(50)));
+    fn an_envelope_raises_fade_start_at_its_fade_start() {
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
+        let (source, mut control) =
+            envelope(tone(100), Revision::default(), callback_sender);
+        control.set_fade_start(Some(Duration::from_millis(50)));
         drain(source);
         let flags = control.take_signals();
-        assert!(flags.contains(Signals::CUED));
+        assert!(flags.contains(Signals::FADE_START));
         assert!(flags.contains(Signals::FINISHED));
     }
 
     #[rstest]
     fn an_envelope_raises_ramped_and_ends_at_the_target_gain() {
-        let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (source, mut control) = envelope(tone(100), Revision::default(), wake);
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
+        let (source, mut control) =
+            envelope(tone(100), Revision::default(), callback_sender);
         control.ramp(Ramp::fade_out(Frames(441)));
         let samples = drain(source);
         let flags = control.take_signals();
@@ -489,8 +500,9 @@ mod tests {
 
     #[rstest]
     fn an_envelope_with_no_order_stays_at_unity_gain() {
-        let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (source, control) = envelope(tone(100), Revision::default(), wake);
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
+        let (source, control) =
+            envelope(tone(100), Revision::default(), callback_sender);
         let samples = drain(source);
         assert_eq!(control.take_signals(), Signals::FINISHED);
         assert_eq!(samples, drain(tone(100)));
@@ -498,38 +510,49 @@ mod tests {
 
     #[rstest]
     fn a_wake_up_that_does_not_fit_is_delivered_on_the_next_callback() {
-        let (wake, heard) = crossbeam_channel::bounded(1);
-        assert!(DeckEvent::Woke(Revision::default()).wake(&wake).is_ok());
-        let (mut source, control) = envelope(tone(10), Revision::default(), wake);
+        let (callback_sender, callback_receiver) = crossbeam_channel::bounded(1);
+        assert!(
+            DeckEvent::Woke(Revision::default())
+                .wake(&callback_sender)
+                .is_ok()
+        );
+        let (mut source, control) =
+            envelope(tone(10), Revision::default(), callback_sender);
         assert_eq!(source.by_ref().take(4096).count(), 4096);
         assert!(control.take_signals().contains(Signals::FINISHED));
-        assert!(heard.try_recv().is_ok());
-        assert!(heard.is_empty());
+        assert!(callback_receiver.try_recv().is_ok());
+        assert!(callback_receiver.is_empty());
         assert_eq!(source.next(), None);
-        assert_eq!(heard.len(), 1);
+        assert_eq!(callback_receiver.len(), 1);
         assert_eq!(source.next(), None);
-        assert_eq!(heard.len(), 1);
+        assert_eq!(callback_receiver.len(), 1);
     }
 
     #[rstest]
     fn a_deck_wakes_once_per_frame_after_its_source_ends() {
-        let (wake, heard) = crossbeam_channel::bounded(1);
-        assert!(DeckEvent::Woke(Revision::default()).wake(&wake).is_ok());
+        let (callback_sender, callback_receiver) = crossbeam_channel::bounded(1);
+        assert!(
+            DeckEvent::Woke(Revision::default())
+                .wake(&callback_sender)
+                .is_ok()
+        );
         let samples = SamplesBuffer::new(3, 44_100, vec![0.0; 3]);
-        let (mut source, _control) = envelope(samples, Revision::default(), wake);
+        let (mut source, _control) =
+            envelope(samples, Revision::default(), callback_sender);
         assert_eq!(source.by_ref().take(3).count(), 3);
         assert_eq!(source.next(), Some(0.0));
-        assert!(heard.try_recv().is_ok());
+        assert!(callback_receiver.try_recv().is_ok());
         assert_eq!(source.next(), Some(0.0));
-        assert!(heard.is_empty());
+        assert!(callback_receiver.is_empty());
         assert_eq!(source.next(), None);
-        assert_eq!(heard.len(), 1);
+        assert_eq!(callback_receiver.len(), 1);
     }
 
     #[rstest]
     fn a_seek_rebases_the_published_position() {
-        let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (mut source, control) = envelope(tone(200), Revision::default(), wake);
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
+        let (mut source, control) =
+            envelope(tone(200), Revision::default(), callback_sender);
         for _ in 0..100 {
             source.next();
         }
@@ -540,40 +563,43 @@ mod tests {
     }
 
     #[rstest]
-    fn a_cue_after_a_seek_fires_at_the_track_position() {
-        let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (mut source, mut control) = envelope(tone(1000), Revision::default(), wake);
-        control.cue(Some(Duration::from_millis(500)));
+    fn a_fade_start_after_a_seek_fires_at_the_track_position() {
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
+        let (mut source, mut control) =
+            envelope(tone(1000), Revision::default(), callback_sender);
+        control.set_fade_start(Some(Duration::from_millis(500)));
         source.next();
         source.try_seek(Duration::from_millis(400)).unwrap();
         while control.position() < Duration::from_millis(550) {
             source.next();
         }
-        assert!(control.take_signals().contains(Signals::CUED));
+        assert!(control.take_signals().contains(Signals::FADE_START));
     }
 
     #[rstest]
-    fn a_cue_armed_again_at_the_same_time_fires_again() {
-        let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (mut source, mut control) = envelope(tone(1000), Revision::default(), wake);
-        control.cue(Some(Duration::from_millis(500)));
+    fn a_fade_start_set_again_at_the_same_time_fires_again() {
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
+        let (mut source, mut control) =
+            envelope(tone(1000), Revision::default(), callback_sender);
+        control.set_fade_start(Some(Duration::from_millis(500)));
         while control.position() < Duration::from_millis(600) {
             source.next();
         }
-        assert!(control.take_signals().contains(Signals::CUED));
+        assert!(control.take_signals().contains(Signals::FADE_START));
         source.try_seek(Duration::from_millis(400)).unwrap();
-        control.cue(Some(Duration::from_millis(500)));
+        control.set_fade_start(Some(Duration::from_millis(500)));
         source.next();
         while control.position() < Duration::from_millis(600) {
             source.next();
         }
-        assert!(control.take_signals().contains(Signals::CUED));
+        assert!(control.take_signals().contains(Signals::FADE_START));
     }
 
     #[rstest]
     fn a_crossfade_cancelled_by_a_hold_raises_no_ramped() {
-        let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (source, mut control) = envelope(tone(100), Revision::default(), wake);
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
+        let (source, mut control) =
+            envelope(tone(100), Revision::default(), callback_sender);
         control.ramp(Ramp::hold(Gain::UNITY));
         drain(source);
         assert_eq!(control.take_signals(), Signals::FINISHED);
@@ -581,8 +607,9 @@ mod tests {
 
     #[rstest]
     fn a_newer_order_retargets_the_ramp() {
-        let (wake, _heard) = crossbeam_channel::bounded(4);
-        let (mut source, mut control) = envelope(tone(100), Revision::default(), wake);
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
+        let (mut source, mut control) =
+            envelope(tone(100), Revision::default(), callback_sender);
         control.ramp(Ramp::fade_out(Frames(4410)));
         let faded: Vec<f32> = source.by_ref().take(441).collect();
         control.ramp(Ramp {
@@ -602,7 +629,7 @@ mod tests {
         assert!(
             rest.iter()
                 .zip(&plain[882..])
-                .all(|(heard, unity)| (heard - unity).abs() < 1e-4)
+                .all(|(sample, unity)| (sample - unity).abs() < 1e-4)
         );
     }
 }

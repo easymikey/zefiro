@@ -8,7 +8,7 @@ expression: effects(cmd)
         Load(
             TrackLoad {
                 path: "/tmp/track1.flac",
-                gain: None,
+                decibels: None,
                 revision: Revision(
                     1,
                 ),
@@ -19,12 +19,12 @@ expression: effects(cmd)
         Disk(
             AppendHistory(
                 HistoryEntry {
-                    track: Local(
+                    track_source: Local(
                         "/tmp/track1.flac",
                     ),
                     title: "track1",
                     artist: None,
-                    at: Moment(
+                    played_at: Moment(
                         0ns,
                     ),
                 },
@@ -45,7 +45,7 @@ expression: effects(cmd)
                         album_artist: None,
                         date: None,
                         genre: None,
-                        track: None,
+                        track_number: None,
                         track_total: None,
                         disc: None,
                         composer: None,
@@ -58,10 +58,10 @@ expression: effects(cmd)
                         sample_rate: None,
                         bits_per_sample: None,
                         channels: None,
-                        replay_gain: None,
+                        decibels: None,
                     },
                     display: "track1.flac",
-                    tagging: Read(
+                    tagging: Tagged(
                         100s,
                     ),
                 },

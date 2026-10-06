@@ -27,7 +27,7 @@ pub struct Runtime {
     pub(crate) model: Model,
     pub(crate) wiring: Wiring,
     pub(crate) timers: Timers<Timer>,
-    epoch: Instant,
+    started_at: Instant,
     unix_offset: Duration,
     pub(crate) flow: ControlFlow<()>,
     pub(crate) shell_effects: Vec<ShellEffect>,
@@ -55,7 +55,7 @@ impl Runtime {
             model,
             wiring,
             timers: Timers::default(),
-            epoch: Instant::now(),
+            started_at: Instant::now(),
             unix_offset: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_err(ClockError)?,
@@ -64,9 +64,9 @@ impl Runtime {
         };
         let stopped = registry::REGISTRY
             .iter()
-            .filter(|row| !row.platform.present())
+            .filter(|row| !row.platform.is_present())
             .map(|row| Message::Driver {
-                driver: row.driver,
+                driver_name: row.driver_name,
                 event: DriverEvent::Stopped,
             });
         for message in runtime.interpret(effects).into_iter().chain(stopped) {
@@ -102,8 +102,8 @@ impl Runtime {
     pub(crate) fn frame(&self, now: Instant) -> Frame<'_> {
         Frame {
             model: &self.model,
-            spectrum: &self.wiring.spectrum,
-            latest: &self.wiring.cells,
+            spectrum_tap: &self.wiring.spectrum_tap,
+            latest_receivers: &self.wiring.latest_receivers,
             now: self.moment_of(now),
         }
     }
@@ -113,22 +113,26 @@ impl Runtime {
     }
 
     fn moment_of(&self, instant: Instant) -> Moment {
-        Moment::new(self.unix_offset + instant.saturating_duration_since(self.epoch))
+        Moment::new(
+            self.unix_offset + instant.saturating_duration_since(self.started_at),
+        )
     }
 
     pub(crate) fn instant_of(&self, moment: Moment) -> Instant {
-        self.epoch + moment.since_epoch().saturating_sub(self.unix_offset)
+        self.started_at + moment.since_epoch().saturating_sub(self.unix_offset)
     }
 
     pub(crate) fn drain(self) {
         let Self { model, wiring, .. } = self;
         let Wiring {
-            mailbox, mut ports, ..
+            inbox_receiver,
+            mut ports,
+            ..
         } = wiring;
         for row in registry::REGISTRY {
-            ports.hang_up(row.driver);
+            ports.hang_up(row.driver_name);
         }
-        let reported = await_exits(&model, &mailbox, Self::DRAIN);
+        let reported = await_exits(&model, &inbox_receiver, Self::DRAIN);
         join_exited(&mut ports, &reported);
     }
 
@@ -170,7 +174,7 @@ mod tests {
 
     use crate::{
         driver_thread::{Congestion, DriverThread},
-        error::Error,
+        error::SpawnError,
         event_loop::run,
         runtime::Runtime,
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
@@ -187,17 +191,17 @@ mod tests {
         Startup::default()
     }
 
-    fn start_paths(directory: &Path) -> StartupPaths {
+    fn start_paths(dir: &Path) -> StartupPaths {
         StartupPaths {
-            config: ConfigPaths {
-                config: directory.join("config.toml"),
-                appearance: directory.join("sifr-ui.toml"),
-                themes: directory.join("themes"),
+            config_paths: ConfigPaths {
+                config_path: dir.join("config.toml"),
+                appearance_path: dir.join("sifr-ui.toml"),
+                themes_dir: dir.join("themes"),
                 default_music_dir: None,
-                theme: None,
-                seen: SeenTexts::default(),
+                theme_name: None,
+                seen_texts: SeenTexts::default(),
             },
-            library: LibraryDirs::under(directory),
+            library_dirs: LibraryDirs::under(dir),
         }
     }
 
@@ -223,43 +227,49 @@ mod tests {
     }
 
     thread_local! {
-        static AUDIO_TAP: RefCell<Option<Sender<AudioCmd>>> = const { RefCell::new(None) };
+        static AUDIO_CMD_SENDER: RefCell<Option<Sender<AudioCmd>>> = const { RefCell::new(None) };
     }
 
     fn recording_audio(
-        spawn_parts: &SpawnSetup<'_>,
-    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
-        let forward = AUDIO_TAP.with(|tap| tap.borrow().clone()).unwrap();
+        spawn_setup: &SpawnSetup<'_>,
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), SpawnError> {
+        let cmd_sender = AUDIO_CMD_SENDER
+            .with(|cmd_sender_cell| cmd_sender_cell.borrow().clone())
+            .unwrap();
         spawn_audio_loop(
-            move |inbox: &Receiver<AudioCmd>, _: &Sender<Message>, _: &Congestion| {
-                while let Ok(command) = inbox.recv() {
-                    if forward.send(command).is_err() {
-                        return;
+            move |cmd_receiver: &Receiver<AudioCmd>,
+                  _: &Sender<Message>,
+                  _: &Congestion| {
+                while let Ok(cmd) = cmd_receiver.recv() {
+                    if cmd_sender.send(cmd).is_err() {
+                        return Ok(());
                     }
                 }
+                Ok(())
             },
-            spawn_parts,
+            spawn_setup,
         )
     }
 
     fn recording_spawners() -> (Spawners, Receiver<AudioCmd>) {
-        let (forward, commands) = unbounded();
-        AUDIO_TAP.with(|tap| *tap.borrow_mut() = Some(forward));
+        let (cmd_sender, cmd_receiver) = unbounded();
+        AUDIO_CMD_SENDER
+            .with(|cmd_sender_cell| *cmd_sender_cell.borrow_mut() = Some(cmd_sender));
         (
             Spawners {
                 audio: recording_audio,
                 ..Spawners::idle()
             },
-            commands,
+            cmd_receiver,
         )
     }
 
     fn panicking_audio(
-        spawn_parts: &SpawnSetup<'_>,
-    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
+        spawn_setup: &SpawnSetup<'_>,
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), SpawnError> {
         spawn_audio_loop(
             |_: &Receiver<AudioCmd>, _: &Sender<Message>, _: &Congestion| boom(),
-            spawn_parts,
+            spawn_setup,
         )
     }
 
@@ -271,10 +281,10 @@ mod tests {
     }
 
     #[test]
-    fn start_sends_the_startup_stop_and_list_devices_to_the_stub_audio_inbox() {
+    fn start_sends_the_startup_stop_and_list_devices_to_the_stub_audio_cmd_receiver() {
         let directory = tempfile::tempdir().unwrap();
         let startup = stock_startup();
-        let (spawners, commands) = recording_spawners();
+        let (spawners, cmd_receiver) = recording_spawners();
         let runtime =
             Runtime::start(startup, &start_paths(directory.path()), &spawners).unwrap();
         let (keys, input) = unbounded();
@@ -284,8 +294,8 @@ mod tests {
         let ended = run(runtime, &mut shell, &input);
 
         assert!(matches!(ended, Ok(())));
-        assert_eq!(commands.recv().unwrap(), AudioCmd::Stop);
-        assert_eq!(commands.recv().unwrap(), AudioCmd::ListDevices);
+        assert_eq!(cmd_receiver.recv().unwrap(), AudioCmd::Stop);
+        assert_eq!(cmd_receiver.recv().unwrap(), AudioCmd::ListDevices);
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -300,8 +310,8 @@ mod tests {
         type Input = SaveStep;
         type Error = Infallible;
 
-        fn input(&mut self, event: SaveStep) -> Reaction {
-            match event {
+        fn input(&mut self, save_step: SaveStep) -> Reaction {
+            match save_step {
                 SaveStep::Step => Reaction::Message(Message::Step {
                     row: SettingRow::ReplayGain,
                     direction: Direction::Next,
@@ -325,7 +335,7 @@ mod tests {
     fn drain_on_stop_writes_the_pending_config_save() {
         let directory = tempfile::tempdir().unwrap();
         let paths = start_paths(directory.path());
-        let config_path = paths.config.config.clone();
+        let config_path = paths.config_paths.config_path.clone();
         let startup = stock_startup();
         let spawners = Spawners {
             config: spawn_config,
@@ -355,7 +365,7 @@ mod tests {
     }
 
     struct ObserveDeadThenQuit {
-        steps: Sender<LifeStep>,
+        step_sender: Sender<LifeStep>,
         paints: usize,
         restarts: Restarts,
     }
@@ -364,8 +374,8 @@ mod tests {
         type Input = LifeStep;
         type Error = Infallible;
 
-        fn input(&mut self, event: LifeStep) -> Reaction {
-            match event {
+        fn input(&mut self, life_step: LifeStep) -> Reaction {
+            match life_step {
                 LifeStep::Paint => Reaction::Ignored,
                 LifeStep::Quit => Reaction::Message(Message::Quit),
             }
@@ -390,7 +400,7 @@ mod tests {
             } else {
                 LifeStep::Paint
             };
-            self.steps
+            self.step_sender
                 .send(next)
                 .expect("the step receiver outlives the shell");
             Ok(Painted::default())
@@ -410,17 +420,17 @@ mod tests {
 
         let (steps, input) = unbounded();
         steps.send(LifeStep::Paint).unwrap();
-        let mut shell = ObserveDeadThenQuit {
-            steps,
+        let mut shell_quit = ObserveDeadThenQuit {
+            step_sender: steps,
             paints: 0,
             restarts: Restarts::default(),
         };
 
-        let ended = run(runtime, &mut shell, &input);
+        let ended = run(runtime, &mut shell_quit, &input);
 
         assert!(matches!(ended, Ok(())));
         assert_ne!(
-            shell.restarts,
+            shell_quit.restarts,
             Restarts::default(),
             "audio's standard supervision restarts a panicked driver"
         );
@@ -430,13 +440,13 @@ mod tests {
 
     fn audio_that_cannot_restart(
         setup: &SpawnSetup<'_>,
-    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), Error> {
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), SpawnError> {
         if AUDIO_SPAWNS.fetch_add(1, Ordering::SeqCst) == 0 {
             panicking_audio(setup)
         } else {
-            Err(Error::Spawn {
-                driver: DriverName::Audio,
-                source: io::Error::other("no threads left"),
+            Err(SpawnError::Thread {
+                driver_name: DriverName::Audio,
+                error: io::Error::other("no threads left"),
             })
         }
     }
@@ -455,29 +465,31 @@ mod tests {
 
         let died = runtime
             .wiring
-            .mailbox
+            .inbox_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
         runtime.deliver(died).unwrap();
 
         assert_eq!(
             runtime.model.drivers.status(DriverName::Audio),
-            &DriverStatus::Dead(DriverError::Panicked)
+            &DriverStatus::Dead(DriverError::Spawn {
+                error: kernel::domain::io_error::IoError::Other
+            })
         );
         runtime.drain();
     }
 
-    fn start(library: DriverStatus) -> (Runtime, Receiver<LibraryCmd>) {
-        let (wiring, library_inbox, _writers) = Wiring::idle();
+    fn start(driver_status: DriverStatus) -> (Runtime, Receiver<LibraryCmd>) {
+        let (wiring, library_cmd_receiver, _latest_senders) = Wiring::idle();
         let started = kernel::update::startup::startup(stock_startup());
         let mut runtime = Runtime::assemble(started, wiring).unwrap();
-        runtime.model.drivers.record_mut(DriverName::Library).status = library;
-        (runtime, library_inbox)
+        runtime.model.drivers.record_mut(DriverName::Library).status = driver_status;
+        (runtime, library_cmd_receiver)
     }
 
     #[test]
     fn now_is_anchored_to_the_wall_clock_and_round_trips_through_instant_of() {
-        let (runtime, _library_inbox) = start(DriverStatus::Running);
+        let (runtime, _library_cmd_receiver) = start(DriverStatus::Running);
 
         let now = runtime.now();
 
@@ -500,15 +512,15 @@ mod tests {
     )]
     #[case::a_rejected_message_is_refused(
         DriverStatus::Stopped,
-        Message::Driver { driver: DriverName::Library, event: DriverEvent::Stopped },
+        Message::Driver { driver_name: DriverName::Library, event: DriverEvent::Stopped },
         Err(Unhandled)
     )]
     fn step_reports_whether_the_message_changed_the_model(
-        #[case] library: DriverStatus,
+        #[case] driver_status: DriverStatus,
         #[case] message: Message,
         #[case] expected: Result<(), Unhandled>,
     ) {
-        let (mut runtime, _library_inbox) = start(library);
+        let (mut runtime, _library_cmd_receiver) = start(driver_status);
 
         let change = runtime.deliver(message);
 

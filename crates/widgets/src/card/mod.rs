@@ -6,6 +6,7 @@ pub mod metrics;
 
 use std::{sync::Arc, time::Duration};
 
+use headings::CardStatus;
 use kernel::domain::{
     appearance::{AppearanceSettings, CoverBrackets},
     percent::Percent,
@@ -14,9 +15,9 @@ use kernel::domain::{
     speed::Speed,
     time::Moment,
     track::Track,
-    transport::Output,
+    transport::OutputStatus,
 };
-use metrics::{BRACKET_MARGIN, CardMetrics, card_metrics, content_rect};
+use metrics::{BRACKET_MARGIN, CardMetrics, content_rect};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Rect},
@@ -45,10 +46,10 @@ pub(crate) struct CardView<'a> {
     pub(crate) speed: Speed,
     pub(crate) volume: Percent,
     pub(crate) spectrum: &'a Spectrum,
-    pub(crate) repeat: RepeatMode,
+    pub(crate) repeat_mode: RepeatMode,
     pub(crate) play_order: &'a PlayOrder,
     pub(crate) displayed_track: Option<&'a Arc<Track>>,
-    pub(crate) output: &'a Output,
+    pub(crate) output_status: &'a OutputStatus,
     pub(crate) now: Moment,
 }
 
@@ -62,7 +63,7 @@ pub enum CardCover {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CardWidget<'a> {
     view: CardView<'a>,
-    theme: ActiveTheme<'a>,
+    active_theme: ActiveTheme<'a>,
     cell_aspect: f32,
     cover_sizing: CoverSizing,
     appearance_settings: AppearanceSettings,
@@ -85,7 +86,7 @@ pub(crate) fn card_frame(color: Color) -> Block<'static> {
 impl<'a> CardView<'a> {
     pub(crate) fn title(&self) -> &'a str {
         self.displayed_track
-            .map_or(NO_TRACK_TITLE, |track| track.song_title())
+            .map_or(NO_TRACK_TITLE, |track| track.title())
     }
 
     pub(crate) fn artist(&self) -> &'a str {
@@ -116,6 +117,10 @@ impl<'a> CardView<'a> {
     pub(crate) fn remaining(&self) -> Duration {
         self.duration().saturating_sub(self.position())
     }
+
+    pub(crate) fn status(&self) -> CardStatus {
+        CardStatus::new(self.output_status, self.player)
+    }
 }
 
 impl<'a> CardWidget<'a> {
@@ -123,7 +128,7 @@ impl<'a> CardWidget<'a> {
     pub(crate) fn new(view: CardView<'a>, active_theme: ActiveTheme<'a>) -> Self {
         Self {
             view,
-            theme: active_theme,
+            active_theme,
             cell_aspect: DEFAULT_CELL_ASPECT,
             cover_sizing: CoverSizing::default(),
             appearance_settings: AppearanceSettings::default(),
@@ -162,7 +167,7 @@ impl<'a> CardWidget<'a> {
 impl CardWidget<'_> {
     pub(crate) fn paint(&self, metrics: &CardMetrics, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
-        let colors = self.theme.colors();
+        let colors = self.active_theme.colors();
         let frame_color: Color = colors.muted_foreground;
 
         card_frame(frame_color)
@@ -187,13 +192,13 @@ impl CardWidget<'_> {
             self.appearance_settings.cover_brackets,
             CoverBrackets::Shown
         )
-        .then(|| self.theme.colors().accent)
+        .then(|| self.active_theme.colors().accent)
     }
 
     fn paint_cover(&self, buffer: &mut Buffer, area: Rect) {
         match self.card_cover {
             CardCover::Missing => Paragraph::new(NO_COVER_TEXT)
-                .style(Style::default().fg(self.theme.colors().muted_foreground))
+                .style(Style::default().fg(self.active_theme.colors().muted_foreground))
                 .alignment(Alignment::Center)
                 .render(area, buffer),
             CardCover::Image => {}
@@ -214,7 +219,7 @@ impl CardWidget<'_> {
 
 impl Widget for &CardWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        let metrics = card_metrics(area, self.cell_aspect, self.cover_sizing);
+        let metrics = CardMetrics::new(area, self.cell_aspect, self.cover_sizing);
         self.paint(&metrics, Canvas { area, buffer });
     }
 }
@@ -245,13 +250,13 @@ mod tests {
         speed::Speed,
         time::Moment,
         track::{AudioFormat, Hertz, Kbps, Tags, Track, TrackParts},
-        transport::{Output, StreamError},
+        transport::{OutputError, OutputStatus},
     };
 
     use crate::{
         card::{CardView, CardWidget, clock_frame_due, metrics::card_height},
         geometry::CoverSizing,
-        primitive::relative_time::format_time,
+        primitive::time_text::duration_text,
         repaint::Presence,
         spectrum::{SPECTRUM_BANDS, Spectrum},
         test_support::{noir, rendered, track},
@@ -279,7 +284,7 @@ mod tests {
     struct Fixture {
         player: Player,
         spectrum: Spectrum,
-        output: Output,
+        output_status: OutputStatus,
         play_order: PlayOrder,
         track: Option<Arc<Track>>,
     }
@@ -297,7 +302,7 @@ mod tests {
                     preloaded: None,
                 },
                 spectrum: [0.5; SPECTRUM_BANDS],
-                output: Output::Ready,
+                output_status: OutputStatus::Ready,
                 play_order: PlayOrder::default(),
                 track: Some(track),
             }
@@ -307,7 +312,7 @@ mod tests {
             Self {
                 player: Player::Stopped,
                 spectrum: [0.0; SPECTRUM_BANDS],
-                output: Output::Ready,
+                output_status: OutputStatus::Ready,
                 play_order: PlayOrder::default(),
                 track: None,
             }
@@ -317,7 +322,7 @@ mod tests {
             Self {
                 player: Player::Stopped,
                 spectrum: [0.2; SPECTRUM_BANDS],
-                output: Output::Lost(StreamError::DeviceGone),
+                output_status: OutputStatus::Lost(OutputError::DeviceGone),
                 play_order: PlayOrder::default(),
                 track: Some(track),
             }
@@ -329,10 +334,10 @@ mod tests {
                 speed: Speed::default(),
                 volume: Percent::clamped(70),
                 spectrum: &self.spectrum,
-                repeat: Default::default(),
+                repeat_mode: Default::default(),
                 play_order: &self.play_order,
                 displayed_track: self.track.as_ref(),
-                output: &self.output,
+                output_status: &self.output_status,
                 now: Moment::default(),
             }
         }
@@ -341,10 +346,10 @@ mod tests {
     fn card<'a>(
         view: CardView<'a>,
         theme: &'a Theme,
-        appearance: AppearanceSettings,
+        appearance_settings: AppearanceSettings,
     ) -> CardWidget<'a> {
         CardWidget::new(view, ActiveTheme::new(theme, ColorDepth::TrueColor))
-            .appearance_settings(appearance)
+            .appearance_settings(appearance_settings)
     }
 
     #[test]
@@ -353,7 +358,7 @@ mod tests {
         let fixture = Fixture::playing(track("Moon River"));
         let widget = card(fixture.view(), &theme, AppearanceSettings::default());
         insta::assert_snapshot!(
-            rendered(60, card_height(), |frame| frame
+            rendered(60, card_height().0, |frame| frame
                 .render_widget(&widget, frame.area()))
             .to_string()
         );
@@ -364,7 +369,7 @@ mod tests {
         let theme = noir();
         let fixture = Fixture::stopped();
         let widget = card(fixture.view(), &theme, AppearanceSettings::default());
-        let text = rendered(60, card_height(), |frame| {
+        let text = rendered(60, card_height().0, |frame| {
             frame.render_widget(&widget, frame.area());
         })
         .to_string();
@@ -377,7 +382,7 @@ mod tests {
         let theme = noir();
         let fixture = Fixture::output_lost(track("Moon River"));
         let widget = card(fixture.view(), &theme, AppearanceSettings::default());
-        let text = rendered(60, card_height(), |frame| {
+        let text = rendered(60, card_height().0, |frame| {
             frame.render_widget(&widget, frame.area());
         })
         .to_string();
@@ -389,7 +394,7 @@ mod tests {
         let theme = noir();
         let fixture = Fixture::playing(full_format_track());
         let widget = card(fixture.view(), &theme, AppearanceSettings::default());
-        let text = rendered(30, card_height(), |frame| {
+        let text = rendered(30, card_height().0, |frame| {
             frame.render_widget(&widget, frame.area());
         })
         .to_string();
@@ -398,36 +403,36 @@ mod tests {
     }
 
     #[test]
-    fn progress_style_remaining_shows_a_countdown_chip() {
+    fn progress_time_remaining_shows_a_countdown_chip() {
         let theme = noir();
         let fixture = Fixture::playing(track("Moon River"));
-        let appearance = AppearanceSettings {
+        let appearance_settings = AppearanceSettings {
             progress_time: ProgressTime::Remaining,
             ..AppearanceSettings::default()
         };
-        let widget = card(fixture.view(), &theme, appearance);
-        let text = rendered(60, card_height(), |frame| {
+        let widget = card(fixture.view(), &theme, appearance_settings);
+        let text = rendered(60, card_height().0, |frame| {
             frame.render_widget(&widget, frame.area());
         })
         .to_string();
-        let remaining = format!("-{}", format_time(Duration::from_secs(245 - 30)));
+        let remaining = format!("-{}", duration_text(Duration::from_secs(245 - 30)));
         assert!(text.contains(&remaining), "got {text:?}");
     }
 
     #[test]
-    fn progress_style_elapsed_shows_a_plain_fill_bar_without_a_countdown_chip() {
+    fn progress_time_elapsed_shows_a_plain_fill_bar_without_a_countdown_chip() {
         let theme = noir();
         let fixture = Fixture::playing(track("Moon River"));
-        let appearance = AppearanceSettings {
+        let appearance_settings = AppearanceSettings {
             progress_time: ProgressTime::Elapsed,
             ..AppearanceSettings::default()
         };
-        let widget = card(fixture.view(), &theme, appearance);
-        let text = rendered(60, card_height(), |frame| {
+        let widget = card(fixture.view(), &theme, appearance_settings);
+        let text = rendered(60, card_height().0, |frame| {
             frame.render_widget(&widget, frame.area());
         })
         .to_string();
-        let remaining = format!("-{}", format_time(Duration::from_secs(245 - 30)));
+        let remaining = format!("-{}", duration_text(Duration::from_secs(245 - 30)));
         assert!(!text.contains(&remaining), "got {text:?}");
     }
 
@@ -437,17 +442,17 @@ mod tests {
         let fixture = Fixture::playing(track("Moon River"));
         let widget = card(fixture.view(), &theme, AppearanceSettings::default())
             .cover_sizing(CoverSizing::Off);
-        let text = rendered(60, card_height(), |frame| {
+        let text = rendered(60, card_height().0, |frame| {
             frame.render_widget(&widget, frame.area());
         })
         .to_string();
         assert!(!text.contains("No cover"), "got {text:?}");
     }
 
-    fn clock_player(offset: Duration, since: Moment) -> Player {
+    fn clock_player(offset: Duration, started_at: Moment) -> Player {
         Player::Playing {
             track: track("Moon River"),
-            playhead: Playhead::anchored(offset, since, Speed::clamped(1.0)),
+            playhead: Playhead::anchored(offset, started_at, Speed::clamped(1.0)),
             preloaded: None,
         }
     }

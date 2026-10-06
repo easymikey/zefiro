@@ -26,10 +26,10 @@ mod test_support {
     const FIXTURE_LENGTH: Duration = Duration::from_secs(180);
 
     #[must_use]
-    pub(crate) fn track_lasting(path: &str, length: Duration, tags: Tags) -> Track {
+    pub(crate) fn track_lasting(path: &str, duration: Duration, tags: Tags) -> Track {
         Track::new(TrackParts {
             path: path.into(),
-            duration: length,
+            duration,
             tags,
             audio_format: AudioFormat::default(),
         })

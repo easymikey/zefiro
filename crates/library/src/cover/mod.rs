@@ -20,13 +20,13 @@ use crate::tags::embedded_cover;
 pub(crate) mod decoding;
 
 #[derive(Debug, Clone)]
-pub enum CoverArt {
-    Image(Arc<RgbaImage>),
+pub enum CoverLookup {
+    Found(Arc<RgbaImage>),
     Missing,
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("cannot decode embedded art: {source}")]
+#[error("cannot decode embedded cover: {source}")]
 pub struct CoverError {
     pub path: PathBuf,
     #[source]
@@ -37,7 +37,7 @@ pub struct CoverError {
 pub struct CoverDecoded {
     pub path: PathBuf,
     pub side: Pixels,
-    pub art: CoverArt,
+    pub cover_lookup: CoverLookup,
 }
 
 pub(crate) const CACHE_CAPACITY: usize = 8;
@@ -48,10 +48,10 @@ pub(crate) struct CoverCache {
 }
 
 impl CoverCache {
-    pub(crate) fn answer(&self, job: &CoverJob) -> Option<&CoverDecoded> {
+    pub(crate) fn cached(&self, cover_job: &CoverJob) -> Option<&CoverDecoded> {
         self.decodeds
             .iter()
-            .find(|entry| entry.path == job.path && entry.side == job.side)
+            .find(|entry| entry.path == cover_job.path && entry.side == cover_job.side)
     }
 
     pub(crate) fn remember(&mut self, decoded: &CoverDecoded) {
@@ -89,28 +89,32 @@ fn folder_cover(path: &Path) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-pub(crate) fn decode(job: CoverJob) -> Result<CoverDecoded, CoverError> {
-    let art = match cover_bytes(&job.path) {
-        Ok(bytes) => decode_bytes(&bytes, job.side),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(CoverArt::Missing),
+pub(crate) fn decode(cover_job: CoverJob) -> Result<CoverDecoded, CoverError> {
+    let cover_lookup = match cover_bytes(&cover_job.path) {
+        Ok(bytes) => decode_bytes(&bytes, cover_job.side),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Ok(CoverLookup::Missing)
+        }
         Err(error) => Err(image::ImageError::IoError(error)),
     };
-    match art {
-        Ok(art) => Ok(CoverDecoded {
-            path: job.path,
-            side: job.side,
-            art,
+    match cover_lookup {
+        Ok(cover_lookup) => Ok(CoverDecoded {
+            path: cover_job.path,
+            side: cover_job.side,
+            cover_lookup,
         }),
         Err(source) => Err(CoverError {
-            path: job.path,
+            path: cover_job.path,
             source,
         }),
     }
 }
 
-fn decode_bytes(bytes: &[u8], side: Pixels) -> Result<CoverArt, image::ImageError> {
-    let fitted = fit_square(image::load_from_memory(bytes)?, side.0)?;
-    Ok(fitted.map_or(CoverArt::Missing, |image| CoverArt::Image(Arc::new(image))))
+fn decode_bytes(bytes: &[u8], side: Pixels) -> Result<CoverLookup, image::ImageError> {
+    let fitted = fit_square(image::load_from_memory(bytes)?, side)?;
+    Ok(fitted.map_or(CoverLookup::Missing, |image| {
+        CoverLookup::Found(Arc::new(image))
+    }))
 }
 
 fn resize_failed(error: &impl std::fmt::Display) -> image::ImageError {
@@ -121,14 +125,14 @@ fn resize_failed(error: &impl std::fmt::Display) -> image::ImageError {
 
 pub(crate) fn fit_square(
     image: DynamicImage,
-    side: u32,
+    side: Pixels,
 ) -> Result<Option<RgbaImage>, image::ImageError> {
     let source = image.into_rgba8();
     let (source_width, source_height) = source.dimensions();
     if source_width == 0 || source_height == 0 {
         return Ok(None);
     }
-    let side = side.max(1);
+    let side = side.0.max(1);
     let crop = source_width.min(source_height);
     let crop_x = (source_width - crop) / 2;
     let crop_y = (source_height - crop) / 2;
@@ -171,9 +175,9 @@ mod tests {
     use crate::{
         cover::{
             CACHE_CAPACITY,
-            CoverArt,
             CoverCache,
             CoverDecoded,
+            CoverLookup,
             cover_bytes,
             decode,
             fit_square,
@@ -198,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn the_folder_cover_is_used_when_the_track_has_no_embedded_art() {
+    fn the_folder_cover_is_used_when_the_track_has_no_embedded_cover() {
         let directory = tempfile::tempdir().unwrap();
         fs::write(directory.path().join("folder.png"), b"png").unwrap();
         let path = untagged_track(&directory);
@@ -222,13 +226,13 @@ mod tests {
     }
 
     #[test]
-    fn an_unparseable_track_without_a_folder_cover_decodes_as_missing_art() {
+    fn an_unparseable_track_without_a_folder_cover_decodes_as_missing_cover() {
         let directory = tempfile::tempdir().unwrap();
         let path = unparseable_track(&directory);
 
-        let decoded = decode(job(path.to_str().unwrap(), 64)).unwrap();
+        let decoded = decode(cover_job(path.to_str().unwrap(), 64)).unwrap();
 
-        assert!(matches!(decoded.art, CoverArt::Missing));
+        assert!(matches!(decoded.cover_lookup, CoverLookup::Missing));
     }
 
     #[test]
@@ -264,12 +268,12 @@ mod tests {
         fs::write(directory.path().join("cover.png"), png).unwrap();
         let path = untagged_track(&directory);
 
-        let decoded = decode(job(path.to_str().unwrap(), 4)).unwrap();
+        let decoded = decode(cover_job(path.to_str().unwrap(), 4)).unwrap();
 
-        assert!(matches!(decoded.art, CoverArt::Image(_)));
+        assert!(matches!(decoded.cover_lookup, CoverLookup::Found(_)));
     }
 
-    fn job(path: &str, side: u32) -> CoverJob {
+    fn cover_job(path: &str, side: u32) -> CoverJob {
         CoverJob {
             path: PathBuf::from(path),
             side: Pixels(side),
@@ -279,74 +283,74 @@ mod tests {
     #[test]
     fn fit_square_center_crops_and_resizes_to_the_requested_side() {
         let wide = DynamicImage::ImageRgba8(RgbaImage::new(300, 200));
-        let side = 48;
+        let side = Pixels(48);
 
         let fitted = fit_square(wide, side).unwrap();
 
         assert_eq!(
             fitted.map(|image| (image.width(), image.height())),
-            Some((side, side))
+            Some((side.0, side.0))
         );
     }
 
     #[test]
-    fn fit_square_treats_an_empty_decode_as_missing_art() {
+    fn fit_square_treats_an_empty_decode_as_missing_cover() {
         let empty = DynamicImage::ImageRgba8(RgbaImage::new(0, 0));
 
-        assert!(fit_square(empty, 48).unwrap().is_none());
+        assert!(fit_square(empty, Pixels(48)).unwrap().is_none());
     }
 
     #[test]
-    fn a_job_for_a_file_without_a_tag_decodes_as_missing_art() {
+    fn a_job_for_a_file_without_a_tag_decodes_as_missing_cover() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("untagged.wav");
         fs::write(&path, include_bytes!("../../tests/fixtures/tone.wav")).unwrap();
 
-        let decoded = decode(job(path.to_str().unwrap(), 64)).unwrap();
+        let decoded = decode(cover_job(path.to_str().unwrap(), 64)).unwrap();
 
-        assert!(matches!(decoded.art, CoverArt::Missing));
+        assert!(matches!(decoded.cover_lookup, CoverLookup::Missing));
     }
 
-    fn decoded(path: &str, art: CoverArt) -> CoverDecoded {
+    fn decoded(path: &str, cover_lookup: CoverLookup) -> CoverDecoded {
         CoverDecoded {
             path: PathBuf::from(path),
             side: Pixels(64),
-            art,
+            cover_lookup,
         }
     }
 
-    fn image() -> CoverArt {
-        CoverArt::Image(Arc::new(RgbaImage::new(64, 64)))
+    fn image() -> CoverLookup {
+        CoverLookup::Found(Arc::new(RgbaImage::new(64, 64)))
     }
 
     #[test]
-    fn a_remembered_cover_answers_the_same_job() {
+    fn a_remembered_cover_is_cached_for_its_path_and_side() {
         let mut cache = CoverCache::default();
         cache.remember(&decoded("/music/one.flac", image()));
 
-        let answer = cache.answer(&job("/music/one.flac", 64));
+        let cover_decoded = cache.cached(&cover_job("/music/one.flac", 64));
 
         assert!(matches!(
-            answer,
+            cover_decoded,
             Some(CoverDecoded {
-                art: CoverArt::Image(_),
+                cover_lookup: CoverLookup::Found(_),
                 ..
             })
         ));
-        assert!(cache.answer(&job("/music/one.flac", 32)).is_none());
+        assert!(cache.cached(&cover_job("/music/one.flac", 32)).is_none());
     }
 
     #[test]
-    fn a_remembered_missing_cover_answers_missing() {
+    fn a_remembered_missing_cover_is_cached_as_missing() {
         let mut cache = CoverCache::default();
-        cache.remember(&decoded("/music/one.flac", CoverArt::Missing));
+        cache.remember(&decoded("/music/one.flac", CoverLookup::Missing));
 
-        let answer = cache.answer(&job("/music/one.flac", 64));
+        let cover_decoded = cache.cached(&cover_job("/music/one.flac", 64));
 
         assert!(matches!(
-            answer,
+            cover_decoded,
             Some(CoverDecoded {
-                art: CoverArt::Missing,
+                cover_lookup: CoverLookup::Missing,
                 ..
             })
         ));
@@ -362,8 +366,12 @@ mod tests {
             cache.remember(&decoded(path, image()));
         }
 
-        assert!(cache.answer(&job(&paths[0], 64)).is_none());
-        assert!(cache.answer(&job(&paths[1], 64)).is_some());
-        assert!(cache.answer(&job(&paths[CACHE_CAPACITY], 64)).is_some());
+        assert!(cache.cached(&cover_job(&paths[0], 64)).is_none());
+        assert!(cache.cached(&cover_job(&paths[1], 64)).is_some());
+        assert!(
+            cache
+                .cached(&cover_job(&paths[CACHE_CAPACITY], 64))
+                .is_some()
+        );
     }
 }

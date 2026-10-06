@@ -13,7 +13,7 @@ use ratatui::{style::Color, text::Line};
 use crate::{
     primitive::{
         span::{StyledText, line, text},
-        text::truncate_line_to_width,
+        truncate::truncate_line,
     },
     repaint::{Presence, ceil_minutes, next_sleep_minute},
     theme::colors::Colors,
@@ -30,47 +30,47 @@ pub(crate) struct StatusLineView<'a> {
     pub(crate) shuffle: Shuffle,
     pub(crate) repeat_mode: RepeatMode,
     pub(crate) queue_len: usize,
-    pub(crate) position: ViewIndex,
-    pub(crate) total: usize,
+    pub(crate) selected: ViewIndex,
+    pub(crate) playlist_len: usize,
     pub(crate) scan_status: ScanStatus,
     pub(crate) scanning_label: &'a str,
     pub(crate) theme_name: &'a str,
-    pub(crate) sleep_left: Option<Duration>,
+    pub(crate) remaining: Option<Duration>,
 }
 
 const NAME: &str = "Playlist";
 
-fn counts(status: StatusLineView<'_>) -> String {
-    match status.scan_status {
+fn counts(status_line_view: StatusLineView<'_>) -> String {
+    match status_line_view.scan_status {
         ScanStatus::Idle => format!(
             "{}/{}",
-            (status.position.get() + 1).min(status.total),
-            status.total
+            (status_line_view.selected.get() + 1).min(status_line_view.playlist_len),
+            status_line_view.playlist_len
         ),
-        ScanStatus::Scanning => status.scanning_label.to_string(),
+        ScanStatus::Scanning => status_line_view.scanning_label.to_string(),
         ScanStatus::Tagging { done, total } => {
             format!("{total} tracks · tagging {done}/{total}")
         }
     }
 }
 
-fn sleep_label(left: Duration) -> String {
-    format!("{}m", ceil_minutes(left))
+fn sleep_label(remaining: Duration) -> String {
+    format!("{}m", ceil_minutes(remaining))
 }
 
 #[must_use]
 pub(crate) fn status_line<'a>(
-    status: StatusLineView<'a>,
+    status_line_view: StatusLineView<'a>,
     colors: &Colors<Color>,
     row_width: Cells,
 ) -> Line<'a> {
-    let pos_total = counts(status);
+    let pos_total = counts(status_line_view);
 
-    let shuffle: &'static str = match status.shuffle {
-        Shuffle::Enabled => "on",
-        Shuffle::Disabled => "off",
+    let shuffle: &'static str = match status_line_view.shuffle {
+        Shuffle::On => "on",
+        Shuffle::Off => "off",
     };
-    let repeat: &'static str = <&'static str>::from(status.repeat_mode);
+    let repeat: &'static str = <&'static str>::from(status_line_view.repeat_mode);
 
     let flag = |label: &'static str, value: Cow<'a, str>| -> Vec<StyledText<'a>> {
         vec![
@@ -90,11 +90,14 @@ pub(crate) fn status_line<'a>(
     let flags: [(&'static str, Cow<'a, str>); 4] = [
         (SHUFFLE_LABEL, Cow::Borrowed(shuffle)),
         (REPEAT_LABEL, Cow::Borrowed(repeat)),
-        (QUEUE_LABEL, Cow::Owned(status.queue_len.to_string())),
-        (THEME_LABEL, Cow::Borrowed(status.theme_name)),
+        (
+            QUEUE_LABEL,
+            Cow::Owned(status_line_view.queue_len.to_string()),
+        ),
+        (THEME_LABEL, Cow::Borrowed(status_line_view.theme_name)),
     ];
-    let sleep = status
-        .sleep_left
+    let sleep = status_line_view
+        .remaining
         .map(|sleep_left| (SLEEP_LABEL, Cow::Owned(sleep_label(sleep_left))));
     let pieces =
         head.into_iter()
@@ -107,19 +110,19 @@ pub(crate) fn status_line<'a>(
                 },
             ));
 
-    truncate_line_to_width(line(pieces), row_width.count())
+    truncate_line(line(pieces), row_width.count())
 }
 
 #[must_use]
 pub fn sleep_frame_due(
-    deadline: Option<Moment>,
+    deadline_at: Option<Moment>,
     label: Presence,
     now: Moment,
 ) -> Option<Moment> {
     if label != Presence::Shown {
         return None;
     }
-    next_sleep_minute(deadline?, now)
+    next_sleep_minute(deadline_at?, now)
 }
 
 #[cfg(test)]
@@ -151,37 +154,41 @@ mod tests {
 
     fn view() -> StatusLineView<'static> {
         StatusLineView {
-            shuffle: Shuffle::Enabled,
+            shuffle: Shuffle::On,
             repeat_mode: RepeatMode::All,
             queue_len: 7,
-            position: ViewIndex::new(2),
-            total: 12,
+            selected: ViewIndex::new(2),
+            playlist_len: 12,
             scan_status: ScanStatus::Idle,
             scanning_label: "Scanning…",
             theme_name: "rose-pine",
-            sleep_left: None,
+            remaining: None,
         }
     }
 
     #[test]
     fn tagging_counts_the_tracks_whose_tags_are_already_read() {
-        let status = StatusLineView {
+        let status_line_view = StatusLineView {
             scan_status: ScanStatus::Tagging {
                 done: 64,
                 total: 128,
             },
             ..view()
         };
-        insta::assert_snapshot!(status_line(status, &colors(), Cells(80)).to_string());
+        insta::assert_snapshot!(
+            status_line(status_line_view, &colors(), Cells(80)).to_string()
+        );
     }
 
     #[test]
     fn a_scan_in_flight_wears_the_theme_word() {
-        let status = StatusLineView {
+        let status_line_view = StatusLineView {
             scan_status: ScanStatus::Scanning,
             ..view()
         };
-        insta::assert_snapshot!(status_line(status, &colors(), Cells(80)).to_string());
+        insta::assert_snapshot!(
+            status_line(status_line_view, &colors(), Cells(80)).to_string()
+        );
     }
 
     #[test]
@@ -210,11 +217,11 @@ mod tests {
 
     #[test]
     fn an_armed_sleep_timer_adds_a_countdown_flag() {
-        let status = StatusLineView {
-            sleep_left: Some(Duration::from_secs(14 * 60 + 59)),
+        let status_line_view = StatusLineView {
+            remaining: Some(Duration::from_secs(14 * 60 + 59)),
             ..view()
         };
-        let text: String = status_line(status, &colors(), Cells(100))
+        let text: String = status_line(status_line_view, &colors(), Cells(100))
             .spans
             .iter()
             .map(|span| span.content.as_ref())
@@ -229,10 +236,10 @@ mod tests {
     #[case::last_minute(Duration::from_secs(1), "1m")]
     #[case::no_time_left(Duration::ZERO, "0m")]
     fn the_sleep_label_rounds_minutes_up(
-        #[case] left: Duration,
+        #[case] remaining: Duration,
         #[case] expected: &str,
     ) {
-        assert_eq!(sleep_label(left), expected);
+        assert_eq!(sleep_label(remaining), expected);
     }
 
     #[test]
@@ -251,11 +258,11 @@ mod tests {
     #[test]
     fn a_sleep_timer_wakes_once_a_minute() {
         let now = Moment::new(Duration::from_secs(1_000));
-        let deadline =
+        let deadline_at =
             Moment::new(now.since_epoch() + Duration::from_secs(14 * 60 + 59));
 
         assert_eq!(
-            sleep_frame_due(Some(deadline), Presence::Shown, now),
+            sleep_frame_due(Some(deadline_at), Presence::Shown, now),
             Some(Moment::new(now.since_epoch() + Duration::from_secs(59)))
         );
     }
@@ -263,9 +270,12 @@ mod tests {
     #[test]
     fn a_hidden_sleep_label_wants_no_frame() {
         let now = Moment::new(Duration::from_secs(1_000));
-        let deadline = Moment::new(now.since_epoch() + Duration::from_secs(60));
+        let deadline_at = Moment::new(now.since_epoch() + Duration::from_secs(60));
 
-        assert_eq!(sleep_frame_due(Some(deadline), Presence::Hidden, now), None);
+        assert_eq!(
+            sleep_frame_due(Some(deadline_at), Presence::Hidden, now),
+            None
+        );
     }
 
     #[test]

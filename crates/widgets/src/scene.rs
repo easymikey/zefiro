@@ -17,7 +17,7 @@ use kernel::{
         theme::{ThemeChoice, Themes},
         time::Moment,
         toast::Toast,
-        track::{Track, TrackRef},
+        track::{Track, TrackSource},
         transport::Transport,
     },
     update::keymap::chord::KeyBinding,
@@ -28,7 +28,7 @@ use crate::{
     geometry::{CoverSizing, cover_sizing},
     key_hints::{KeyHintChords, KeyHintsView},
     overlay::{layer::OverlayView, settings::view::SettingsView},
-    playlist::view::{LibraryLoad, PlaylistView},
+    playlist::view::{LibraryStatus, PlaylistView},
     spectrum::Spectrum,
     status_line::StatusLineView,
     theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
@@ -49,9 +49,9 @@ pub struct ScenePresentation<'a> {
     pub spectrum: &'a Spectrum,
     pub pixel_path: PixelPath,
     pub cell_aspect: f32,
-    pub clock: Duration,
+    pub since_first_paint: Duration,
     pub now: Moment,
-    pub home: Option<&'a Path>,
+    pub home_dir: Option<&'a Path>,
     pub key_hint_chords: &'a KeyHintChords,
 }
 
@@ -60,7 +60,7 @@ pub struct Scene<'a> {
     pub player: &'a Player,
     pub transport: &'a Transport,
     pub playlist: &'a Playlist,
-    pub queue: &'a [TrackRef],
+    pub queue: &'a [TrackSource],
     pub favorites: &'a Favorites,
     pub themes: &'a Themes,
     pub settings: &'a Settings,
@@ -68,11 +68,11 @@ pub struct Scene<'a> {
     pub overlay: Option<&'a Overlay>,
     pub history: &'a [HistoryEntry],
     pub toasts: &'a [Toast],
-    pub browse_selected: ViewIndex,
-    pub playing: Option<ViewIndex>,
+    pub selected: ViewIndex,
+    pub playing_index: Option<ViewIndex>,
     pub displayed_track: Option<&'a Arc<Track>>,
-    pub library_loading: LibraryLoad,
-    pub scan: ScanStatus,
+    pub library_status: LibraryStatus,
+    pub scan_status: ScanStatus,
     pub bindings: &'a [KeyBinding],
     pub music_dir: &'a Path,
     pub presentation: ScenePresentation<'a>,
@@ -93,15 +93,15 @@ impl<'a> Scene<'a> {
             overlay: model.workspace.overlay.as_ref(),
             history: &model.history,
             toasts: &model.workspace.toasts,
-            browse_selected: ViewIndex::new(model.workspace.browse.selected().get()),
-            playing: model.playing_index(),
+            selected: ViewIndex::new(model.workspace.browse.selected().get()),
+            playing_index: model.playing_index(),
             displayed_track: model.displayed_track(),
-            library_loading: if model.library.is_none() {
-                LibraryLoad::Loading
+            library_status: if model.library.is_none() {
+                LibraryStatus::Loading
             } else {
-                LibraryLoad::Ready
+                LibraryStatus::Ready
             },
-            scan: model.scan_status,
+            scan_status: model.scan_status,
             bindings: model.workspace.keymap.bindings(),
             music_dir: &model.music_dir,
             presentation,
@@ -116,13 +116,13 @@ impl<'a> Scene<'a> {
     #[must_use]
     pub(crate) fn active_theme(&self) -> ActiveTheme<'a> {
         ActiveTheme::new(self.presentation.theme, self.presentation.color_depth)
-            .with_progress(self.presentation.appearance.progress)
+            .with_progress_bar(self.presentation.appearance.progress_bar)
     }
 
     #[must_use]
     pub fn cover_mode(&self) -> CoverMode {
         painted_cover_mode(
-            self.settings.appearance.cover_mode,
+            self.settings.appearance_settings.cover_mode,
             self.presentation.pixel_path,
         )
     }
@@ -139,8 +139,8 @@ impl<'a> KeyHintsView<'a> {
         let chords = scene.presentation.key_hint_chords;
         match scene.overlay {
             Some(Overlay::Settings(..)) => Self {
-                full: &chords.settings,
-                compact: &chords.settings,
+                full_chips: &chords.settings_chips,
+                compact_chips: &chords.settings_chips,
             },
             None
             | Some(
@@ -148,13 +148,13 @@ impl<'a> KeyHintsView<'a> {
                 | Overlay::Search(_)
                 | Overlay::SavePlaylist(_)
                 | Overlay::History(_)
-                | Overlay::ConfirmDelete(_)
+                | Overlay::ConfirmTrash(_)
                 | Overlay::JumpToTime(_)
                 | Overlay::TrackDetails(_)
                 | Overlay::MusicDir(_),
             ) => Self {
-                full: &chords.keys,
-                compact: &chords.compact,
+                full_chips: &chords.chips,
+                compact_chips: &chords.compact_chips,
             },
         }
     }
@@ -168,10 +168,10 @@ impl<'a> CardView<'a> {
             speed: scene.transport.speed,
             volume: scene.transport.volume,
             spectrum: scene.presentation.spectrum,
-            repeat: scene.playlist.repeat,
+            repeat_mode: scene.playlist.repeat_mode,
             play_order: &scene.playlist.play_order,
             displayed_track: scene.displayed_track,
-            output: &scene.transport.output,
+            output_status: &scene.transport.output_status,
             now: scene.presentation.now,
         }
     }
@@ -181,23 +181,23 @@ impl<'a> StatusLineView<'a> {
     #[must_use]
     pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
         let shuffle = if scene.playlist.play_order.is_shuffle() {
-            Shuffle::Enabled
+            Shuffle::On
         } else {
-            Shuffle::Disabled
+            Shuffle::Off
         };
         Self {
             shuffle,
-            repeat_mode: scene.playlist.repeat,
+            repeat_mode: scene.playlist.repeat_mode,
             queue_len: scene.queue.len(),
-            position: scene.browse_selected,
-            total: scene.playlist.tracks.len(),
-            scan_status: scene.scan,
+            selected: scene.selected,
+            playlist_len: scene.playlist.tracks.len(),
+            scan_status: scene.scan_status,
             scanning_label: scene.presentation.theme.scanning_label.as_str(),
             theme_name: scene.presentation.theme.name.as_str(),
-            sleep_left: scene
+            remaining: scene
                 .transport
-                .sleep
-                .map(|timer| timer.deadline.elapsed_since(scene.presentation.now)),
+                .sleep_timer
+                .map(|timer| timer.deadline_at.elapsed_since(scene.presentation.now)),
         }
     }
 }
@@ -209,10 +209,10 @@ impl<'a> PlaylistView<'a> {
             playlist: scene.playlist,
             queue: scene.queue,
             favorites: scene.favorites,
-            browse_selected: scene.browse_selected.get(),
-            playing: scene.playing,
-            library_loading: scene.library_loading,
-            status: StatusLineView::from_scene(scene),
+            selected: scene.selected,
+            playing_index: scene.playing_index,
+            library_status: scene.library_status,
+            status_line_view: StatusLineView::from_scene(scene),
         }
     }
 }
@@ -220,18 +220,18 @@ impl<'a> PlaylistView<'a> {
 impl<'a> SettingsView<'a> {
     #[must_use]
     pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
-        let audio = &scene.settings.audio;
+        let audio = &scene.settings.audio_settings;
         Self {
             crossfade: audio.crossfade,
             replay_gain: audio.replay_gain,
-            theme: theme_label(&scene.themes.selected),
-            themes: &scene.themes.names,
+            theme: theme_label(&scene.themes.theme_choice),
+            theme_names: &scene.themes.names,
             sleep_presets: audio.sleep_presets.as_slice(),
             music_dir: scene.music_dir,
-            home: scene.presentation.home,
-            output_device: audio.device.named().map(DeviceName::as_str),
+            home_dir: scene.presentation.home_dir,
+            output_device_name: audio.device.named().map(DeviceName::as_str),
             output_devices: &scene.settings.output_devices,
-            appearance: scene.settings.appearance,
+            appearance_settings: scene.settings.appearance_settings,
         }
     }
 }
@@ -243,7 +243,7 @@ impl<'a> OverlayView<'a> {
             overlay: scene.overlay,
             tracks: &scene.playlist.tracks,
             history: scene.history,
-            theme: scene.active_theme(),
+            active_theme: scene.active_theme(),
             settings_view: SettingsView::from_scene(scene),
             bindings: scene.bindings,
             now: scene.presentation.now,
@@ -266,14 +266,16 @@ fn theme_label(choice: &ThemeChoice) -> &str {
     }
 }
 
-fn painted_cover_mode(style: CoverMode, detected: PixelPath) -> CoverMode {
-    match (style, detected) {
+fn painted_cover_mode(cover_mode: CoverMode, pixel_path: PixelPath) -> CoverMode {
+    match (cover_mode, pixel_path) {
         (CoverMode::Vinyl | CoverMode::Plain, PixelPath::Halfblocks)
         | (CoverMode::Off, PixelPath::Protocol | PixelPath::Halfblocks) => {
             CoverMode::Off
         }
         (CoverMode::Vinyl | CoverMode::Plain, PixelPath::Protocol)
-        | (CoverMode::Milkdrop, PixelPath::Protocol | PixelPath::Halfblocks) => style,
+        | (CoverMode::Milkdrop, PixelPath::Protocol | PixelPath::Halfblocks) => {
+            cover_mode
+        }
     }
 }
 
@@ -318,10 +320,10 @@ mod tests {
         CoverMode::Milkdrop
     )]
     fn the_painted_cover_mode_reads_the_style_and_the_terminal(
-        #[case] style: CoverMode,
-        #[case] detected: PixelPath,
+        #[case] cover_mode: CoverMode,
+        #[case] pixel_path: PixelPath,
         #[case] expected: CoverMode,
     ) {
-        assert_eq!(painted_cover_mode(style, detected), expected);
+        assert_eq!(painted_cover_mode(cover_mode, pixel_path), expected);
     }
 }

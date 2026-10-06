@@ -40,11 +40,11 @@ impl FrameLayout {
             return body;
         }
         Self {
-            overlay: OverlayWidget::new(OverlayView::from_scene(scene), &body)
+            overlay_areas: OverlayWidget::new(OverlayView::from_scene(scene), &body)
                 .avoid(body.cover_exclusion(scene.cover_mode()))
                 .areas(screen),
             toast: ToastWidget::from_scene(scene)
-                .and_then(|toaster| toaster.area(screen, body.breakpoint)),
+                .and_then(|toast_widget| toast_widget.area(screen, body.breakpoint)),
             ..body
         }
     }
@@ -52,18 +52,20 @@ impl FrameLayout {
     #[must_use]
     pub fn on_screen(&self, scene: &Scene<'_>) -> OnScreen {
         OnScreen {
-            progress_bar: self.progress_bar_width(scene).map(Cells),
-            clock: if self.card_shown() {
+            progress_bar_width: self.progress_bar_width(scene),
+            clock: if self.is_card_shown() {
                 Presence::Shown
             } else {
                 Presence::Hidden
             },
-            sleep_label: if self.playlist.is_some() && scene.transport.sleep.is_some() {
+            sleep_label: if self.playlist_areas.is_some()
+                && scene.transport.sleep_timer.is_some()
+            {
                 Presence::Shown
             } else {
                 Presence::Hidden
             },
-            spectrum: if self.spectrum_shown(scene) {
+            spectrum: if self.is_spectrum_shown(scene) {
                 Presence::Shown
             } else {
                 Presence::Hidden
@@ -71,51 +73,44 @@ impl FrameLayout {
         }
     }
 
-    fn card_shown(&self) -> bool {
+    fn is_card_shown(&self) -> bool {
         match self.breakpoint {
-            Breakpoint::Full => self.card.is_some(),
+            Breakpoint::Full => self.card_metrics.is_some(),
             Breakpoint::Compact | Breakpoint::Minimal => true,
             Breakpoint::TooSmall => false,
         }
     }
 
-    fn spectrum_shown(&self, scene: &Scene<'_>) -> bool {
+    fn is_spectrum_shown(&self, scene: &Scene<'_>) -> bool {
         let card_spectrum = self
-            .card
+            .card_metrics
             .is_some_and(|metrics| !metrics.spectrum_row.is_empty());
         let milkdrop_spectrum =
-            scene.cover_mode() == CoverMode::Milkdrop && self.cover.is_some();
+            scene.cover_mode() == CoverMode::Milkdrop && self.cover_area.is_some();
         card_spectrum || milkdrop_spectrum
     }
 
-    fn progress_bar_width(&self, scene: &Scene<'_>) -> Option<u16> {
+    fn progress_bar_width(&self, scene: &Scene<'_>) -> Option<Cells> {
         match self.breakpoint {
             Breakpoint::Full => self
-                .card
+                .card_metrics
                 .map(|metrics| full_progress_bar_width(scene, &metrics)),
             Breakpoint::Compact => Some(compact_progress_bar_width(self.header)),
-            Breakpoint::Minimal => Some(
-                minimal_progress_bar_width(
-                    CardView::from_scene(scene),
-                    scene.settings.appearance.speed_chip,
-                    Cells(self.screen.width),
-                )
-                .0,
-            ),
+            Breakpoint::Minimal => Some(minimal_progress_bar_width(
+                CardView::from_scene(scene),
+                scene.settings.appearance_settings.speed_chip,
+                Cells(self.screen.width),
+            )),
             Breakpoint::TooSmall => None,
         }
     }
 }
 
-fn full_progress_bar_width(scene: &Scene<'_>, metrics: &CardMetrics) -> u16 {
-    let row_width = metrics.progress_row.width;
-    match scene.settings.appearance.progress_time {
+fn full_progress_bar_width(scene: &Scene<'_>, metrics: &CardMetrics) -> Cells {
+    let row_width = Cells(metrics.progress_row.width);
+    match scene.settings.appearance_settings.progress_time {
         ProgressTime::Remaining => {
-            hud_progress_bar_width(
-                Cells(row_width),
-                CardView::from_scene(scene).remaining(),
-            )
-            .0
+            hud_progress_bar_width(row_width, CardView::from_scene(scene).remaining())
         }
         ProgressTime::Elapsed => row_width,
     }
@@ -140,22 +135,22 @@ fn key_hint_rows(key_hints: KeyHints) -> u16 {
 
 fn header_rows(breakpoint: Breakpoint) -> u16 {
     match breakpoint {
-        Breakpoint::Full => card::metrics::card_height(),
+        Breakpoint::Full => card::metrics::card_height().0,
         Breakpoint::Compact => compact_height(),
         Breakpoint::Minimal | Breakpoint::TooSmall => 0,
     }
 }
 
 fn body(scene: &Scene<'_>, screen: Rect) -> FrameLayout {
-    let settings = scene.settings.appearance;
+    let appearance_settings = scene.settings.appearance_settings;
     let breakpoint = Breakpoint::new(
         screen.as_size(),
         &scene.presentation.appearance.breakpoints,
-        settings.layout_mode,
+        appearance_settings.layout_mode,
     );
     let content = content_area(screen);
     let header_rows = header_rows(breakpoint);
-    let hint_rows = key_hint_rows(settings.key_hints);
+    let hint_rows = key_hint_rows(appearance_settings.key_hints);
     let [header, pane, hints] = content.layout(&Layout::vertical([
         Constraint::Length(header_rows),
         Constraint::Min(0),
@@ -172,7 +167,7 @@ fn body(scene: &Scene<'_>, screen: Rect) -> FrameLayout {
             content,
             header,
             playlist_pane: pane,
-            playlist: playlist(scene, pane),
+            playlist_areas: playlist(scene, pane),
             key_hints: (hint_rows > 0).then_some(hints),
             search_bounds: pane,
             ..card_areas(scene, header, FrameLayout::empty(screen, breakpoint))
@@ -184,14 +179,11 @@ fn card_areas(scene: &Scene<'_>, header: Rect, layout: FrameLayout) -> FrameLayo
     if layout.breakpoint != Breakpoint::Full {
         return layout;
     }
-    let metrics = card::metrics::card_metrics(
-        header,
-        scene.presentation.cell_aspect,
-        scene.cover_sizing(),
-    );
+    let metrics =
+        CardMetrics::new(header, scene.presentation.cell_aspect, scene.cover_sizing());
     FrameLayout {
-        card: Some(metrics),
-        cover: Some(metrics.cover_square).filter(|cover| !cover.is_empty()),
+        card_metrics: Some(metrics),
+        cover_area: Some(metrics.cover_square).filter(|cover| !cover.is_empty()),
         ..layout
     }
 }
@@ -206,9 +198,9 @@ fn playlist(scene: &Scene<'_>, pane: Rect) -> Option<PlaylistAreas> {
     ) {
         return None;
     }
-    let playlist =
+    let playlist_widget =
         PlaylistWidget::new(PlaylistView::from_scene(scene), scene.active_theme());
-    Some(playlist.areas(pane))
+    Some(playlist_widget.areas(pane))
 }
 
 #[cfg(test)]
@@ -253,11 +245,14 @@ mod tests {
         let sources = SceneSources::new(model_with_tracks(3));
         let scene = with_pixels(sources.scene());
         let layout = FrameLayout::from_scene(&scene, screen());
-        let card = layout.card.unwrap();
+        let card = layout.card_metrics.unwrap();
         assert_eq!(layout.breakpoint, Breakpoint::Full);
-        assert_eq!(layout.cover, Some(card.cover_square));
-        assert_eq!(layout.cover_exclusion(scene.cover_mode()), layout.cover);
-        assert!(layout.playlist.is_some());
+        assert_eq!(layout.cover_area, Some(card.cover_square));
+        assert_eq!(
+            layout.cover_exclusion(scene.cover_mode()),
+            layout.cover_area
+        );
+        assert!(layout.playlist_areas.is_some());
         assert!(layout.key_hints.is_some());
     }
 
@@ -265,17 +260,17 @@ mod tests {
     fn without_pixels_there_is_no_cover() {
         let sources = SceneSources::new(model_with_tracks(3));
         let layout = FrameLayout::from_scene(&sources.scene(), screen());
-        assert!(layout.card.is_some());
-        assert_eq!(layout.cover, None);
+        assert!(layout.card_metrics.is_some());
+        assert_eq!(layout.cover_area, None);
     }
 
     #[test]
     fn a_text_art_cover_is_not_avoided_by_overlays() {
         let mut sources = SceneSources::new(model_with_tracks(3));
-        sources.model.settings.appearance.cover_mode = CoverMode::Milkdrop;
+        sources.model.settings.appearance_settings.cover_mode = CoverMode::Milkdrop;
         let scene = sources.scene();
         let layout = FrameLayout::from_scene(&scene, screen());
-        assert!(layout.cover.is_some());
+        assert!(layout.cover_area.is_some());
         assert_eq!(layout.cover_exclusion(scene.cover_mode()), None);
     }
 
@@ -286,9 +281,9 @@ mod tests {
             Some(Overlay::Search(CursorOver::new(SearchQuery::default(), 0)));
         let sources = SceneSources::new(model);
         let layout = FrameLayout::from_scene(&sources.scene(), screen());
-        assert_eq!(layout.playlist, None);
+        assert_eq!(layout.playlist_areas, None);
         assert_eq!(
-            layout.overlay.map(OverlayAreas::outer),
+            layout.overlay_areas.map(OverlayAreas::outer),
             Some(layout.playlist_pane)
         );
     }
@@ -327,8 +322,8 @@ mod tests {
         let sources = SceneSources::new(model);
         let layout = FrameLayout::from_scene(&sources.scene(), Rect::new(0, 0, 40, 10));
         assert_eq!(layout.breakpoint, Breakpoint::TooSmall);
-        assert_eq!(layout.card, None);
-        assert_eq!(layout.playlist, None);
+        assert_eq!(layout.card_metrics, None);
+        assert_eq!(layout.playlist_areas, None);
         assert_eq!(layout.toast, None);
     }
 
@@ -359,15 +354,15 @@ mod tests {
     fn layout_inputs_hide_the_playlist_under_a_taking_overlay(
         #[case] overlay: Option<Overlay>,
         #[case] area: Rect,
-        #[case] presence: PlaylistPresence,
+        #[case] playlist_presence: PlaylistPresence,
     ) {
         let mut model = model_with_tracks(3);
         model.workspace.overlay = overlay;
         let sources = SceneSources::new(model);
         let layout = FrameLayout::from_scene(&sources.scene(), area);
-        match presence {
-            PlaylistPresence::Shown => assert!(layout.playlist.is_some()),
-            PlaylistPresence::Hidden => assert!(layout.playlist.is_none()),
+        match playlist_presence {
+            PlaylistPresence::Shown => assert!(layout.playlist_areas.is_some()),
+            PlaylistPresence::Hidden => assert!(layout.playlist_areas.is_none()),
         }
     }
 
@@ -383,21 +378,21 @@ mod tests {
     #[case::milkdrop(CoverMode::Milkdrop, CoverAvoidance::Ignored)]
     #[case::off(CoverMode::Off, CoverAvoidance::Ignored)]
     fn avoid_follows_the_cover_mode(
-        #[case] style: CoverMode,
+        #[case] cover_mode: CoverMode,
         #[case] avoidance: CoverAvoidance,
     ) {
         let mut sources = SceneSources::new(model_with_tracks(3));
-        sources.model.settings.appearance.cover_mode = style;
+        sources.model.settings.appearance_settings.cover_mode = cover_mode;
         let scene = with_pixels(sources.scene());
         let layout = FrameLayout::from_scene(&scene, screen());
         let expected = match avoidance {
             CoverAvoidance::Avoided => {
-                assert!(layout.cover.is_some());
-                layout.cover
+                assert!(layout.cover_area.is_some());
+                layout.cover_area
             }
             CoverAvoidance::Ignored => None,
         };
-        assert_eq!(layout.cover_exclusion(style), expected);
+        assert_eq!(layout.cover_exclusion(cover_mode), expected);
     }
 
     #[rstest]
@@ -417,14 +412,14 @@ mod tests {
     fn the_breakpoint_picks_the_screen_for_the_size_and_minimums(
         #[case] size: Size,
         #[case] minimums: (u16, u16),
-        #[case] style: Option<ProgressTime>,
+        #[case] progress_time: Option<ProgressTime>,
     ) {
         let (min_width, min_height) = minimums;
         let mut sources = SceneSources::new(model_with_tracks(1));
         sources.appearance_mut().breakpoints.min_width = Cells(min_width);
         sources.appearance_mut().breakpoints.min_height = Cells(min_height);
-        if let Some(style) = style {
-            sources.model.settings.appearance.progress_time = style;
+        if let Some(progress_time) = progress_time {
+            sources.model.settings.appearance_settings.progress_time = progress_time;
         }
         let scene = sources.scene();
         let layout =
@@ -433,31 +428,31 @@ mod tests {
 
         match layout.breakpoint {
             Breakpoint::Full => {
-                let metrics = layout.card.unwrap();
+                let metrics = layout.card_metrics.unwrap();
                 let row_width = metrics.progress_row.width;
-                let expected = match style.unwrap() {
+                let expected = match progress_time.unwrap() {
                     ProgressTime::Remaining => hud_progress_bar_width(
                         Cells(row_width),
                         CardView::from_scene(&scene).remaining(),
                     ),
                     ProgressTime::Elapsed => Cells(row_width),
                 };
-                assert_eq!(on_screen.progress_bar, Some(expected));
+                assert_eq!(on_screen.progress_bar_width, Some(expected));
                 assert_eq!(on_screen.clock, Presence::Shown);
             }
             Breakpoint::Compact => {
                 assert_eq!(
-                    on_screen.progress_bar,
-                    Some(Cells(compact_progress_bar_width(layout.header)))
+                    on_screen.progress_bar_width,
+                    Some(compact_progress_bar_width(layout.header))
                 );
                 assert_eq!(on_screen.clock, Presence::Shown);
             }
             Breakpoint::Minimal => {
-                assert!(on_screen.progress_bar.is_some());
+                assert!(on_screen.progress_bar_width.is_some());
                 assert_eq!(on_screen.clock, Presence::Shown);
             }
             Breakpoint::TooSmall => {
-                assert_eq!(on_screen.progress_bar, None);
+                assert_eq!(on_screen.progress_bar_width, None);
                 assert_eq!(on_screen.clock, Presence::Hidden);
             }
         }

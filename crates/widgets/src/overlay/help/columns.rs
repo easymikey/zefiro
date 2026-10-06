@@ -38,12 +38,56 @@ impl HelpColumn {
     pub(crate) fn constraints(&self) -> [Constraint; 2] {
         [Constraint::Length(self.chord_width.0), Constraint::Min(0)]
     }
+
+    pub(crate) fn new(groups: &[&HelpGroup], theme: &ActiveTheme<'_>) -> HelpColumn {
+        let colors = theme.colors();
+        let chord_width = widest_chord(groups);
+        let max_width = groups
+            .iter()
+            .flat_map(|group| {
+                std::iter::once(group.title.width()).chain(group.help_rows.iter().map(
+                    |row| chord_width + usize::from(CHORD_GAP) + row.label.width(),
+                ))
+            })
+            .max()
+            .unwrap_or(0);
+        let rows: Vec<Row<'static>> = groups
+            .iter()
+            .enumerate()
+            .flat_map(|(group_index, group)| {
+                (group_index > 0)
+                    .then(Row::default)
+                    .into_iter()
+                    .chain(std::iter::once(full_width_row(line([text(group.title)
+                        .fg(colors.muted_foreground)
+                        .bold()]))))
+                    .chain(group.help_rows.iter().map(|HelpRow { chord, label }| {
+                        Row::new(vec![
+                            Cell::from(
+                                line([text(chord.clone()).fg(theme.muted_accent())])
+                                    .right_aligned(),
+                            ),
+                            Cell::from(line([
+                                text(label.clone()).fg(colors.foreground)
+                            ])),
+                        ])
+                    }))
+            })
+            .collect();
+        let height = Cells(small_count_u16(rows.len()));
+        Self {
+            rows,
+            chord_width: Cells(small_count_u16(chord_width)),
+            width: Cells(small_count_u16(max_width)),
+            height,
+        }
+    }
 }
 
 fn widest_chord(groups: &[&HelpGroup]) -> usize {
     groups
         .iter()
-        .flat_map(|group| group.bindings.iter())
+        .flat_map(|group| group.help_rows.iter())
         .map(|row| row.chord.width())
         .max()
         .unwrap_or(0)
@@ -53,51 +97,15 @@ fn full_width_row(line: Line<'static>) -> Row<'static> {
     Row::new(vec![Cell::from(line).column_span(2)])
 }
 
-fn column_lines(groups: &[&HelpGroup], theme: &ActiveTheme<'_>) -> HelpColumn {
-    let colors = theme.colors();
-    let chord_width = widest_chord(groups);
-    let max_width =
-        groups
-            .iter()
-            .flat_map(|group| {
-                std::iter::once(group.title.width()).chain(group.bindings.iter().map(
-                    |row| chord_width + usize::from(CHORD_GAP) + row.label.width(),
-                ))
-            })
-            .max()
-            .unwrap_or(0);
-    let rows: Vec<Row<'static>> = groups
-        .iter()
-        .enumerate()
-        .flat_map(|(group_index, group)| {
-            (group_index > 0)
-                .then(Row::default)
-                .into_iter()
-                .chain(std::iter::once(full_width_row(line([text(group.title)
-                    .fg(colors.muted_foreground)
-                    .bold()]))))
-                .chain(group.bindings.iter().map(|HelpRow { chord, label }| {
-                    Row::new(vec![
-                        Cell::from(
-                            line([text(chord.clone()).fg(theme.muted_accent())])
-                                .right_aligned(),
-                        ),
-                        Cell::from(line([text(label.clone()).fg(colors.text)])),
-                    ])
-                }))
-        })
-        .collect();
-    let height = Cells(small_count_u16(rows.len()));
-    HelpColumn {
-        rows,
-        chord_width: Cells(small_count_u16(chord_width)),
-        width: Cells(small_count_u16(max_width)),
-        height,
-    }
-}
-
-fn height_spread(first: Cells, second: Cells, third: Cells) -> Cells {
-    Cells(first.max(second).max(third).0 - first.min(second).min(third).0)
+fn height_spread(
+    first_height: Cells,
+    second_height: Cells,
+    third_height: Cells,
+) -> Cells {
+    Cells(
+        first_height.max(second_height).max(third_height).0
+            - first_height.min(second_height).min(third_height).0,
+    )
 }
 
 fn three_columns(
@@ -105,46 +113,55 @@ fn three_columns(
     theme: &ActiveTheme<'_>,
 ) -> (HelpColumn, HelpColumn, HelpColumn) {
     let [playback, general, navigation, playlist] = groups;
-    let playback_column = column_lines(&[playback], theme);
-    let general_and_navigation = column_lines(&[general, navigation], theme);
-    let playlist_alone = column_lines(&[playlist], theme);
-    let general_alone = column_lines(&[general], theme);
-    let navigation_and_playlist = column_lines(&[navigation, playlist], theme);
+    let playback_column = HelpColumn::new(&[playback], theme);
+    let general_and_navigation_column = HelpColumn::new(&[general, navigation], theme);
+    let playlist_column = HelpColumn::new(&[playlist], theme);
+    let general_column = HelpColumn::new(&[general], theme);
+    let navigation_and_playlist_column =
+        HelpColumn::new(&[navigation, playlist], theme);
 
     let navigation_after_general = height_spread(
         playback_column.height,
-        general_and_navigation.height,
-        playlist_alone.height,
+        general_and_navigation_column.height,
+        playlist_column.height,
     );
     let navigation_after_navigation = height_spread(
         playback_column.height,
-        general_alone.height,
-        navigation_and_playlist.height,
+        general_column.height,
+        navigation_and_playlist_column.height,
     );
 
     if navigation_after_general <= navigation_after_navigation {
-        (playback_column, general_and_navigation, playlist_alone)
+        (
+            playback_column,
+            general_and_navigation_column,
+            playlist_column,
+        )
     } else {
-        (playback_column, general_alone, navigation_and_playlist)
+        (
+            playback_column,
+            general_column,
+            navigation_and_playlist_column,
+        )
     }
 }
 
 fn fit_column(
     column: HelpColumn,
     available_height: Cells,
-    hint: StyledText<'static>,
+    styled_text: StyledText<'static>,
 ) -> HelpColumn {
     if available_height == Cells(0) || column.height <= available_height {
         return column;
     }
     let keep = usize::from(available_height.0.saturating_sub(1));
-    let hint_width = Cells(small_count_u16(Span::from(hint.clone()).width()));
+    let hint_width = Cells(small_count_u16(Span::from(styled_text.clone()).width()));
     HelpColumn {
         rows: column
             .rows
             .into_iter()
             .take(keep)
-            .chain(std::iter::once(full_width_row(line([hint]))))
+            .chain(std::iter::once(full_width_row(line([styled_text]))))
             .collect(),
         chord_width: column.chord_width,
         width: column.width.max(hint_width),
@@ -153,16 +170,16 @@ fn fit_column(
 }
 
 fn available_width(full: Rect) -> Cells {
-    list_capacity(full, Hint::Absent).width
+    list_capacity(full, Hint::Hidden).width
 }
 
-fn columns_width(columns: &[HelpColumn], column_gap: Cells) -> Cells {
+fn columns_width(columns: &[HelpColumn], column_gap_width: Cells) -> Cells {
     let content = columns
         .iter()
         .fold(0u16, |total, column| total.saturating_add(column.width.0));
     Cells(
         content.saturating_add(
-            column_gap
+            column_gap_width
                 .0
                 .saturating_mul(small_count_u16(columns.len().saturating_sub(1))),
         ),
@@ -184,19 +201,22 @@ fn squeezed_width(columns: &[HelpColumn]) -> Cells {
     ))
 }
 
-fn columns_that_fit(candidates: Vec<Vec<HelpColumn>>, inner: Cells) -> Vec<HelpColumn> {
-    let last = candidates.len().saturating_sub(1);
-    let natural = candidates
+fn columns_that_fit(
+    candidate_columns: Vec<Vec<HelpColumn>>,
+    inner_width: Cells,
+) -> Vec<HelpColumn> {
+    let last = candidate_columns.len().saturating_sub(1);
+    let natural = candidate_columns.iter().position(|candidate| {
+        columns_width(candidate, Cells(COLUMN_GAP)) <= inner_width
+    });
+    let squeezed = candidate_columns
         .iter()
-        .position(|candidate| columns_width(candidate, Cells(COLUMN_GAP)) <= inner);
-    let squeezed = candidates
-        .iter()
-        .position(|candidate| squeezed_width(candidate) <= inner);
+        .position(|candidate| squeezed_width(candidate) <= inner_width);
     let picked = match natural {
         Some(index) if index < last => Some(index),
         Some(_) | None => squeezed.or(natural),
     };
-    candidates
+    candidate_columns
         .into_iter()
         .nth(picked.unwrap_or(last))
         .unwrap_or_else(Vec::new)
@@ -208,17 +228,18 @@ pub(crate) fn select_help_columns(
     full: Rect,
 ) -> Vec<HelpColumn> {
     let HelpGroups {
-        playback,
-        navigation,
-        playlist,
-        general,
+        playback_group: playback,
+        navigation_group: navigation,
+        playlist_group: playlist,
+        general_group: general,
     } = groups;
 
-    let available_height = list_capacity(full, Hint::Absent).height;
+    let available_height = list_capacity(full, Hint::Hidden).height;
 
-    let single = column_lines(&[playback, navigation, playlist, general], theme);
-    let columns: Vec<HelpColumn> = if single.height <= available_height {
-        vec![single]
+    let single_column =
+        HelpColumn::new(&[playback, navigation, playlist, general], theme);
+    let columns: Vec<HelpColumn> = if single_column.height <= available_height {
+        vec![single_column]
     } else {
         let (left, middle, right) =
             three_columns([playback, general, navigation, playlist], theme);
@@ -226,10 +247,10 @@ pub(crate) fn select_help_columns(
             vec![
                 vec![left, middle, right],
                 vec![
-                    column_lines(&[playback], theme),
-                    column_lines(&[general, navigation, playlist], theme),
+                    HelpColumn::new(&[playback], theme),
+                    HelpColumn::new(&[general, navigation, playlist], theme),
                 ],
-                vec![single],
+                vec![single_column],
             ],
             available_width(full),
         )
@@ -274,7 +295,7 @@ mod tests {
     fn synthetic_group(title: &'static str, row_count: usize) -> HelpGroup {
         HelpGroup {
             title,
-            bindings: (0..row_count)
+            help_rows: (0..row_count)
                 .map(|index| HelpRow {
                     chord: format!("k{index}"),
                     label: Cow::Owned(format!("Do thing {index}")),
@@ -292,10 +313,10 @@ mod tests {
     #[case::navigation_joins_the_middle(Balance { group_rows: [18, 8, 2, 16], heights: (Cells(19), Cells(13), Cells(17)) })]
     #[case::navigation_joins_the_last(Balance { group_rows: [19, 14, 7, 2], heights: (Cells(20), Cells(15), Cells(12)) })]
     fn three_columns_moves_navigation_to_the_column_that_balances_better(
-        #[case] row: Balance,
+        #[case] balance: Balance,
     ) {
         let [playback_rows, general_rows, navigation_rows, playlist_rows] =
-            row.group_rows;
+            balance.group_rows;
         let playback = synthetic_group("Playback", playback_rows);
         let general = synthetic_group("General", general_rows);
         let navigation = synthetic_group("Navigation", navigation_rows);
@@ -304,7 +325,7 @@ mod tests {
             [&playback, &general, &navigation, &playlist],
             &ActiveTheme::new(&noir(), ColorDepth::TrueColor),
         );
-        assert_eq!((left.height, middle.height, right.height), row.heights);
+        assert_eq!((left.height, middle.height, right.height), balance.heights);
     }
 
     fn column(width: u16) -> HelpColumn {

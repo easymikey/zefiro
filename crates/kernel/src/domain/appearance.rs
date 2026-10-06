@@ -21,7 +21,7 @@ pub const DEFAULT_MIN_HEIGHT: Cells = Cells(16);
 pub struct Appearance {
     pub cover_cells: CoverCells,
     pub breakpoints: Breakpoints,
-    pub progress: ProgressBar,
+    pub progress_bar: ProgressBar,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,8 +198,9 @@ pub fn preset_appearance(preset: AppearancePreset) -> AppearanceSettings {
 }
 
 #[must_use]
-pub fn preset_of(appearance: AppearanceSettings) -> Option<AppearancePreset> {
-    AppearancePreset::iter().find(|&preset| preset_appearance(preset) == appearance)
+pub fn preset_of(appearance_settings: AppearanceSettings) -> Option<AppearancePreset> {
+    AppearancePreset::iter()
+        .find(|&preset| preset_appearance(preset) == appearance_settings)
 }
 
 #[must_use]
@@ -216,16 +217,16 @@ pub struct AppearancePatch {
 }
 
 impl From<AppearanceSettings> for AppearancePatch {
-    fn from(appearance: AppearanceSettings) -> Self {
+    fn from(appearance_settings: AppearanceSettings) -> Self {
         Self {
-            cover_mode: Some(appearance.cover_mode),
-            cover_brackets: Some(appearance.cover_brackets),
-            format_chips: Some(appearance.format_chips),
-            speed_chip: Some(appearance.speed_chip),
-            progress_time: Some(appearance.progress_time),
-            key_hints: Some(appearance.key_hints),
-            animations: Some(appearance.animations),
-            layout_mode: Some(appearance.layout_mode),
+            cover_mode: Some(appearance_settings.cover_mode),
+            cover_brackets: Some(appearance_settings.cover_brackets),
+            format_chips: Some(appearance_settings.format_chips),
+            speed_chip: Some(appearance_settings.speed_chip),
+            progress_time: Some(appearance_settings.progress_time),
+            key_hints: Some(appearance_settings.key_hints),
+            animations: Some(appearance_settings.animations),
+            layout_mode: Some(appearance_settings.layout_mode),
         }
     }
 }
@@ -262,7 +263,7 @@ impl AppearancePatch {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid color `{0}`: expected 6 hex digits as #rrggbb")]
-struct MalformedHex(String);
+struct HexError(String);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ColorError {
@@ -302,7 +303,7 @@ impl FromStr for Rgb {
             })
             .ok_or_else(|| {
                 ColorError::Malformed(crate::domain::config::Diagnostic::from_error(
-                    &MalformedHex(spelling.to_string()),
+                    &HexError(spelling.into()),
                 ))
             })
     }
@@ -392,10 +393,10 @@ mod tests {
         None
     )]
     fn preset_of_names_the_preset_an_appearance_came_from(
-        #[case] appearance: AppearanceSettings,
+        #[case] appearance_settings: AppearanceSettings,
         #[case] preset: Option<AppearancePreset>,
     ) {
-        assert_eq!(preset_of(appearance), preset);
+        assert_eq!(preset_of(appearance_settings), preset);
     }
 
     #[rstest]

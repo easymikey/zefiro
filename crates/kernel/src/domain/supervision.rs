@@ -9,14 +9,14 @@ use crate::domain::{
 pub(crate) enum Supervision {
     Restart {
         attempts: u8,
-        within: Duration,
-        then: Announce,
+        window: Duration,
+        announcement: Announcement,
     },
-    Degrade(Announce),
+    Degrade(Announcement),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Announce {
+pub(crate) enum Announcement {
     Toast,
     Silent,
 }
@@ -24,45 +24,45 @@ pub(crate) enum Announce {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Decision {
     Restart,
-    Degrade(Announce),
+    Degrade(Announcement),
 }
 
 impl Supervision {
     #[must_use]
-    pub(crate) const fn standard(driver: DriverName) -> Self {
-        match driver {
+    pub(crate) const fn standard(driver_name: DriverName) -> Self {
+        match driver_name {
             DriverName::Audio => Supervision::Restart {
                 attempts: 3,
-                within: Duration::from_secs(60),
-                then: Announce::Toast,
+                window: Duration::from_secs(60),
+                announcement: Announcement::Toast,
             },
             DriverName::Library => Supervision::Restart {
                 attempts: 1,
-                within: Duration::from_secs(60),
-                then: Announce::Toast,
+                window: Duration::from_secs(60),
+                announcement: Announcement::Toast,
             },
-            DriverName::Config => Supervision::Degrade(Announce::Toast),
-            DriverName::Macos => Supervision::Degrade(Announce::Silent),
+            DriverName::Config => Supervision::Degrade(Announcement::Toast),
+            DriverName::Macos => Supervision::Degrade(Announcement::Silent),
         }
     }
 }
 
 #[must_use]
 pub(crate) fn decide_restart(
-    strategy: Supervision,
+    supervision: Supervision,
     restarts: &Restarts,
     now: Moment,
 ) -> Decision {
-    match strategy {
+    match supervision {
         Supervision::Restart {
             attempts,
-            within,
-            then,
+            window,
+            announcement,
         } => {
-            if restarts.within(within, now) < usize::from(attempts) {
+            if restarts.within(window, now) < usize::from(attempts) {
                 Decision::Restart
             } else {
-                Decision::Degrade(then)
+                Decision::Degrade(announcement)
             }
         }
         Supervision::Degrade(announce) => Decision::Degrade(announce),
@@ -75,7 +75,7 @@ mod tests {
 
     use crate::domain::{
         driver::{DriverName, Restarts},
-        supervision::{Announce, Decision, Supervision, decide_restart},
+        supervision::{Announcement, Decision, Supervision, decide_restart},
         time::Moment,
     };
 
@@ -93,47 +93,50 @@ mod tests {
 
     #[rstest]
     #[case::restart_with_no_history(
-        Supervision::Restart { attempts: 3, within: std::time::Duration::from_secs(60), then: Announce::Toast },
+        Supervision::Restart { attempts: 3, window: std::time::Duration::from_secs(60), announcement: Announcement::Toast },
         &[],
         Decision::Restart
     )]
     #[case::restart_under_budget(
-        Supervision::Restart { attempts: 3, within: std::time::Duration::from_secs(60), then: Announce::Toast },
+        Supervision::Restart { attempts: 3, window: std::time::Duration::from_secs(60), announcement: Announcement::Toast },
         &[50, 90],
         Decision::Restart
     )]
     #[case::restart_budget_spent_falls_back(
-        Supervision::Restart { attempts: 3, within: std::time::Duration::from_secs(60), then: Announce::Toast },
+        Supervision::Restart { attempts: 3, window: std::time::Duration::from_secs(60), announcement: Announcement::Toast },
         &[50, 70, 90],
-        Decision::Degrade(Announce::Toast)
+        Decision::Degrade(Announcement::Toast)
     )]
     #[case::restart_old_history_ages_out(
-        Supervision::Restart { attempts: 3, within: std::time::Duration::from_secs(60), then: Announce::Toast },
+        Supervision::Restart { attempts: 3, window: std::time::Duration::from_secs(60), announcement: Announcement::Toast },
         &[10, 70, 90],
         Decision::Restart
     )]
     #[case::restart_zero_attempts_falls_back(
-        Supervision::Restart { attempts: 0, within: std::time::Duration::from_secs(60), then: Announce::Silent },
+        Supervision::Restart { attempts: 0, window: std::time::Duration::from_secs(60), announcement: Announcement::Silent },
         &[],
-        Decision::Degrade(Announce::Silent)
+        Decision::Degrade(Announcement::Silent)
     )]
     #[case::degrade_toast(
-        Supervision::Degrade(Announce::Toast),
+        Supervision::Degrade(Announcement::Toast),
         &[],
-        Decision::Degrade(Announce::Toast)
+        Decision::Degrade(Announcement::Toast)
     )]
     #[case::degrade_silent(
-        Supervision::Degrade(Announce::Silent),
+        Supervision::Degrade(Announcement::Silent),
         &[],
-        Decision::Degrade(Announce::Silent)
+        Decision::Degrade(Announcement::Silent)
     )]
     fn decide_restart_decides_by_strategy(
-        #[case] strategy: Supervision,
+        #[case] supervision: Supervision,
         #[case] moments: &[u64],
         #[case] expected: Decision,
     ) {
         let now = t(100);
-        assert_eq!(decide_restart(strategy, &history(moments), now), expected);
+        assert_eq!(
+            decide_restart(supervision, &history(moments), now),
+            expected
+        );
     }
 
     #[test]
@@ -142,25 +145,25 @@ mod tests {
             Supervision::standard(DriverName::Audio),
             Supervision::Restart {
                 attempts: 3,
-                within: std::time::Duration::from_secs(60),
-                then: Announce::Toast,
+                window: std::time::Duration::from_secs(60),
+                announcement: Announcement::Toast,
             }
         );
         assert_eq!(
             Supervision::standard(DriverName::Library),
             Supervision::Restart {
                 attempts: 1,
-                within: std::time::Duration::from_secs(60),
-                then: Announce::Toast,
+                window: std::time::Duration::from_secs(60),
+                announcement: Announcement::Toast,
             }
         );
         assert_eq!(
             Supervision::standard(DriverName::Config),
-            Supervision::Degrade(Announce::Toast)
+            Supervision::Degrade(Announcement::Toast)
         );
         assert_eq!(
             Supervision::standard(DriverName::Macos),
-            Supervision::Degrade(Announce::Silent)
+            Supervision::Degrade(Announcement::Silent)
         );
     }
 

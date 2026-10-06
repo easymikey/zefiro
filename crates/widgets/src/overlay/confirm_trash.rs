@@ -1,4 +1,4 @@
-use kernel::domain::{geometry::Cells, overlay::DeleteCandidate};
+use kernel::domain::{geometry::Cells, overlay::TrashCandidate};
 
 use crate::{
     overlay::modal::prompt::{PromptBody, PromptWidget},
@@ -9,41 +9,43 @@ use crate::{
 const MIN_WIDTH: Cells = Cells(24);
 
 #[must_use]
-fn sentence(candidate: &DeleteCandidate) -> [&str; 5] {
+fn sentence(candidate: &TrashCandidate) -> [&str; 5] {
     [
-        glyphs::confirm_delete::QUOTE_OPEN,
+        glyphs::confirm_trash::QUOTE_OPEN,
         &candidate.title,
-        glyphs::confirm_delete::QUOTE_CLOSE,
-        glyphs::confirm_delete::ARTIST_SEPARATOR,
+        glyphs::confirm_trash::QUOTE_CLOSE,
+        glyphs::confirm_trash::ARTIST_SEPARATOR,
         &candidate.artist,
     ]
 }
 
 pub(crate) fn prompt<'a>(
-    candidate: &'a DeleteCandidate,
+    candidate: &'a TrashCandidate,
     active_theme: ActiveTheme<'a>,
 ) -> PromptWidget<'a> {
     PromptWidget::new(PromptBody::Sentence(sentence(candidate)), active_theme)
-        .title(glyphs::confirm_delete::TITLE_WORD)
-        .hint(glyphs::confirm_delete::HINT)
+        .title(glyphs::confirm_trash::TITLE_WORD)
+        .hint(glyphs::confirm_trash::HINT)
         .min_width(MIN_WIDTH)
 }
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::overlay::DeleteCandidate;
+    use kernel::domain::overlay::TrashCandidate;
     use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
     use crate::{
-        overlay::confirm_delete::{prompt, sentence},
+        overlay::confirm_trash::{prompt, sentence},
         primitive::canvas::Canvas,
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
-    fn candidate() -> DeleteCandidate {
-        DeleteCandidate {
-            source: kernel::domain::track::TrackRef::Local("/music/moon.flac".into()),
+    fn candidate() -> TrashCandidate {
+        TrashCandidate {
+            source: kernel::domain::track::TrackSource::Local(
+                "/music/moon.flac".into(),
+            ),
             title: "Moon River".to_string(),
             artist: "Audrey Hepburn".to_string(),
         }
@@ -69,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn confirm_delete_shows_the_quoted_title_and_artist() {
+    fn confirm_trash_shows_the_quoted_title_and_artist() {
         insta::assert_snapshot!(frame(60, 12));
     }
 
@@ -95,7 +97,7 @@ mod tests {
     }
 
     #[test]
-    fn confirm_delete_does_not_panic_on_a_tiny_terminal() {
+    fn confirm_trash_does_not_panic_on_a_tiny_terminal() {
         assert_eq!(frame(4, 3).lines().count(), 3);
     }
 }

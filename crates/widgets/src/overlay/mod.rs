@@ -1,4 +1,4 @@
-pub(crate) mod confirm_delete;
+pub(crate) mod confirm_trash;
 pub(crate) mod help;
 pub(crate) mod history;
 pub mod jump_to_time;

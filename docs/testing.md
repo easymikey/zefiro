@@ -6,7 +6,7 @@ Tests use `rstest` (fixtures and `#[case]` tables) and `insta` (snapshot asserti
 
 ## One integration binary per crate
 
-Each crate with integration tests has one: `tests/main.rs`. The one exception is `macos`, which also has `tests/main_loop.rs`, declared in its `Cargo.toml` with `harness = false` because it must own the main thread. `tests/main.rs` declares the tiers as top-level modules: `mod support;` (shared fixtures, no tests), `mod unit;`, `mod table;` (`rstest` `#[case]` tables of (state, message) rows) and, in `kernel`, `mod compile_fail;` (see below). A test file is a module under its tier directory (`tests/unit/timers.rs`), so its tests are named by tier and module (`unit::timers::…`) and the tier is the filter:
+Each crate with integration tests has one: `tests/main.rs`. The one exception is `macos`, which has only `tests/main_loop.rs`, declared in its `Cargo.toml` with `harness = false` because it must own the main thread. `tests/main.rs` declares the tiers as top-level modules: `mod support;` (shared fixtures, no tests), `mod unit;`, `mod table;` (`rstest` `#[case]` tables of (state, message) rows) and, in `kernel`, `mod compile_fail;` (see below). A test file is a module under its tier directory (`tests/unit/timers.rs`), so its tests are named by tier and module (`unit::timers::…`) and the tier is the filter:
 
 ```
 cargo test -p kernel --test main unit::timers::    # one module
@@ -22,12 +22,13 @@ Every guard that reads source text lives in `crates/sifr-guards/tests/guards/`, 
 | guard | holds (rule in conventions) |
 |---|---|
 | `comments.rs` | only the listed `SAFETY:` / `PROTOCOL:` / `GUARD:` one-liners (§9) |
-| `conventions.rs` | banned words and loop names from the conventions vocabulary (§9) |
-| `config_doc_cli.rs`, `config_doc_render.rs` | `docs/config.md`'s default blocks still parse into the config defaults |
+| `builders.rs` | no generated `builder()`, no `maybe_` setter; setters are named after their fields (§2) |
+| `conventions.rs` | banned words and loop names from the conventions vocabulary (§9); item rules: `mem::take` (§3.5), part names (§3.7), one-field variants (§5.1), no `Result` alias (§5.5), `let _` and `.ok();` discards (§6.3) |
+| `config_doc_config.rs`, `config_doc_appearance.rs` | `docs/config.md`'s default blocks still parse into the config defaults |
 | `demeter.rs` | kernel `update` handlers take slices, not a whole `Model` (§1.3) |
 | `demeter_views.rs` | widgets below `screen` never hold a whole `Model` (§1.3) |
 | `dispatch.rs` | `update` has one call site; the paint path never calls it (§1.4) |
-| `errors.rs` | error enum shape and `From` along real crate edges (§6) |
+| `errors.rs` | error enum shape, `From` along real crate edges and no swallowed write call (§6) |
 | `forbidden_names.rs` | verb module files, `get_`, `should_`/`wants_`/`needs_`, mechanism constructors (§9) |
 | `hardware.rs` | every test that touches hardware is `#[ignore]` (§13.4) |
 | `imports.rs` | every `use` is absolute, no glob, no `pub use` of any visibility (§9); the clippy `pub_use` lint stays off because `bon` builders expand to `pub use` |
@@ -39,7 +40,9 @@ Every guard that reads source text lives in `crates/sifr-guards/tests/guards/`, 
 | `public_types.rs` | one public type name lives in one crate (`Error` exempt) |
 | `test_files.rs` | no source file exists only for `#[cfg(test)]` (§13) |
 | `purity.rs` | `kernel` and `widgets` touch no IO, clock, thread or environment (§1.2) |
-| `wildcard_arms.rs` | no wildcard arm over an enum of another crate (helper `lexer.rs`) |
+| `value_names/` | value names follow the domain words (§8); the baseline `value_names_baseline.txt` is empty |
+| `wildcard_arms.rs` | no wildcard arm over an enum of another crate |
+| `lexer.rs` | the shared tokenizer of `conventions.rs` and `wildcard_arms.rs` |
 
 `fault.rs` holds the error type the `config_doc` guards fail through. A guard that would repeat a denied clippy lint (`bool` parameters, panics, indexing) does not exist: the lint is the guard; wildcard arms get a guard only where clippy cannot see the enum's crate.
 

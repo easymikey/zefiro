@@ -19,8 +19,8 @@ fn sent(model: &mut Model, message: Message) -> Cmd {
     update(model, message, Moment::default()).unwrap()
 }
 
-fn sent_at(model: &mut Model, message: Message, at: Moment) -> Cmd {
-    update(model, message, at).unwrap()
+fn sent_at(model: &mut Model, message: Message, now: Moment) -> Cmd {
+    update(model, message, now).unwrap()
 }
 
 fn scheduled(cmd: &Cmd) -> Vec<Timer> {
@@ -50,8 +50,8 @@ fn secs(seconds: u64) -> Duration {
     Duration::from_secs(seconds)
 }
 
-fn position(at: Duration) -> Message {
-    Message::Audio(AudioEvent::Playhead(at))
+fn position(position: Duration) -> Message {
+    Message::Audio(AudioEvent::PositionReported(position))
 }
 
 fn moment(millis: u64) -> Moment {
@@ -138,7 +138,7 @@ fn a_stale_toast_timer_changes_nothing() {
 #[test]
 fn arming_the_sleep_timer_schedules_the_first_preset() {
     let mut model = playing_model(3);
-    let first_preset = model.settings.audio.sleep_presets.as_slice()[0];
+    let first_preset = model.settings.audio_settings.sleep_presets.as_slice()[0];
 
     let cmd = sleep_cycled(&mut model);
 
@@ -161,7 +161,7 @@ fn an_elapsed_sleep_timer_pauses_in_place_and_disarms() {
 
     assert_eq!(cmd, PlaybackChange::Pause.cued());
     assert!(matches!(model.player, Player::Paused { .. }));
-    assert_eq!(model.transport.sleep, None);
+    assert_eq!(model.transport.sleep_timer, None);
     assert_eq!(again, Err(Unhandled));
 }
 
@@ -177,7 +177,7 @@ fn an_elapsed_sleep_timer_over_a_paused_player_only_disarms() {
     assert_eq!(cmd, Ok(Cmd::none()));
     assert_eq!(model.player, paused);
     assert!(matches!(model.player, Player::Paused { .. }));
-    assert_eq!(model.transport.sleep, None);
+    assert_eq!(model.transport.sleep_timer, None);
 }
 
 #[test]
@@ -191,7 +191,10 @@ fn a_rearmed_sleep_timer_ignores_the_first_one() {
     assert_eq!(cmd, Err(Unhandled));
     assert!(model.player.is_playing());
     assert_eq!(
-        model.transport.sleep.map(|timer| timer.preset_index.get()),
+        model
+            .transport
+            .sleep_timer
+            .map(|timer| timer.preset_index.get()),
         Some(1)
     );
 }
@@ -199,19 +202,19 @@ fn a_rearmed_sleep_timer_ignores_the_first_one() {
 #[test]
 fn a_cancelled_sleep_timer_changes_nothing() {
     let mut model = playing_model(3);
-    let presets = model.settings.audio.sleep_presets.as_slice().len();
-    let armed: Vec<Timer> = (0..presets)
+    let presets = model.settings.audio_settings.sleep_presets.as_slice().len();
+    let armed_timers: Vec<Timer> = (0..presets)
         .flat_map(|_| scheduled(&sleep_cycled(&mut model)))
         .collect();
     let cancelled = sleep_cycled(&mut model);
 
-    let last = armed.last().copied().unwrap();
+    let last = armed_timers.last().copied().unwrap();
     let cmd = update(&mut model, Message::Elapsed(last), Moment::default());
 
     assert_eq!(cancelled, Cmd::none());
     assert_eq!(cmd, Err(Unhandled));
     assert!(model.player.is_playing());
-    assert_eq!(model.transport.sleep, None);
+    assert_eq!(model.transport.sleep_timer, None);
 }
 
 #[test]

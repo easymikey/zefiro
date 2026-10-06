@@ -8,43 +8,43 @@ use crate::{animation::timings::TIMINGS, pixels::numeric::channel_byte};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CrossfadeStage {
     Running,
-    Over,
+    Ended,
 }
 
 #[derive(Debug)]
 pub(crate) struct CoverCrossfade {
     outgoing: Arc<RgbaImage>,
-    started: Duration,
+    start: Duration,
     duration: Duration,
     interpolation: Interpolation,
 }
 
 impl CoverCrossfade {
-    pub(crate) fn begin(outgoing: Arc<RgbaImage>, now: Duration) -> Self {
+    pub(crate) fn begin(outgoing: Arc<RgbaImage>, since_first_paint: Duration) -> Self {
         let (millis, interpolation) = TIMINGS.cover_crossfade;
         Self {
             outgoing,
-            started: now,
+            start: since_first_paint,
             duration: Duration::from_millis(u64::from(millis)),
             interpolation,
         }
     }
 
-    fn alpha(&self, now: Duration) -> f32 {
+    fn alpha(&self, since_first_paint: Duration) -> f32 {
         let whole = self.duration.as_secs_f32();
         if whole <= 0.0 {
             return 1.0;
         }
-        let elapsed = now.saturating_sub(self.started).as_secs_f32();
+        let elapsed = since_first_paint.saturating_sub(self.start).as_secs_f32();
         self.interpolation.alpha((elapsed / whole).clamp(0.0, 1.0))
     }
 
     #[must_use]
-    pub(crate) fn stage(&self, now: Duration) -> CrossfadeStage {
-        if self.alpha(now) < 1.0 {
+    pub(crate) fn stage(&self, since_first_paint: Duration) -> CrossfadeStage {
+        if self.alpha(since_first_paint) < 1.0 {
             CrossfadeStage::Running
         } else {
-            CrossfadeStage::Over
+            CrossfadeStage::Ended
         }
     }
 
@@ -52,9 +52,9 @@ impl CoverCrossfade {
     pub(crate) fn crossfade_at(
         &self,
         incoming: &RgbaImage,
-        now: Duration,
+        since_first_paint: Duration,
     ) -> RgbaImage {
-        let alpha = self.alpha(now);
+        let alpha = self.alpha(since_first_paint);
         blend_by_column(&self.outgoing, incoming, |_| alpha)
     }
 }
@@ -117,8 +117,10 @@ mod tests {
         CoverCrossfade::begin(Arc::new(filled_cover(OLD_COVER_PIXEL)), Duration::ZERO)
     }
 
-    fn shown(crossfade: &CoverCrossfade, now: Duration) -> Rgba<u8> {
-        sample(&crossfade.crossfade_at(&filled_cover(NEW_COVER_PIXEL), now))
+    fn shown(crossfade: &CoverCrossfade, since_first_paint: Duration) -> Rgba<u8> {
+        sample(
+            &crossfade.crossfade_at(&filled_cover(NEW_COVER_PIXEL), since_first_paint),
+        )
     }
 
     #[test]
@@ -150,6 +152,6 @@ mod tests {
     fn a_crossfade_is_over_once_it_is_played_out() {
         let crossfade = running();
         assert_eq!(crossfade.stage(whole() / 2), CrossfadeStage::Running);
-        assert_eq!(crossfade.stage(whole()), CrossfadeStage::Over);
+        assert_eq!(crossfade.stage(whole()), CrossfadeStage::Ended);
     }
 }

@@ -19,14 +19,6 @@ impl<T> CursorOver<T> {
     pub fn selected(&self) -> ViewIndex {
         ViewIndex::new(self.cursor.index())
     }
-
-    pub(crate) fn resize(&mut self, len: usize) {
-        self.cursor = self.cursor.resize(len);
-    }
-
-    pub(crate) fn navigate(&mut self, direction: Direction) {
-        self.cursor = self.cursor.step(direction.sign());
-    }
 }
 
 pub(crate) fn cycled<T>(current: T, direction: Direction) -> T

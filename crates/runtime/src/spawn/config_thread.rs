@@ -6,33 +6,30 @@ use kernel::{cmd::ConfigCmd, domain::driver::DriverName};
 use crate::{
     driver::DriverLoop,
     driver_thread::DriverThread,
-    error::Error,
-    jobs::Jobs,
+    error::SpawnError,
     registry,
     spawn_setup::SpawnSetup,
 };
 
 pub(crate) fn spawn_config(
     setup: &SpawnSetup<'_>,
-) -> Result<DriverThread<ConfigCmd>, Error> {
-    let paths = setup.paths.config.clone();
-    let theme_writer = setup.writers.theme.clone();
-    let appearance_writer = setup.writers.appearance.clone();
-    let jobs = Jobs {
-        run: |job: Infallible| match job {},
-    };
+) -> Result<DriverThread<ConfigCmd>, SpawnError> {
+    let paths = setup.paths.config_paths.clone();
+    let theme_sender = setup.latest_senders.theme_sender.clone();
+    let appearance_sender = setup.latest_senders.appearance_sender.clone();
+    let run_job = |job: Infallible| match job {};
     DriverLoop::<ConfigDriver<_, _>, Infallible> {
         row: registry::row(DriverName::Config),
         inbox: setup.inbox.clone(),
-        heard: crossbeam_channel::never(),
-        seed: Some(ConfigMessage::Started),
-        jobs,
+        callback_receiver: crossbeam_channel::never(),
+        message: Some(ConfigMessage::Started),
+        run_job,
     }
     .spawn(move || {
         ConfigDriver::new(
             &paths,
-            move |theme| theme_writer.publish(theme),
-            move |appearance| appearance_writer.publish(appearance),
+            move |theme| theme_sender.publish(theme),
+            move |appearance| appearance_sender.publish(appearance),
         )
     })
 }
@@ -73,41 +70,42 @@ mod tests {
 
     struct ConfigRun {
         thread: DriverThread<ConfigCmd>,
-        messages: Receiver<Message>,
+        inbox_receiver: Receiver<Message>,
         doorbell: Receiver<()>,
     }
 
     impl ConfigRun {
-        fn start(directory: &Path) -> Self {
-            Self::start_with(&stub_paths(directory))
+        fn start(dir: &Path) -> Self {
+            Self::start_with(&stub_paths(dir))
         }
 
         fn start_with(paths: &StartupPaths) -> Self {
-            let (inbox, messages) = unbounded();
+            let (inbox, inbox_receiver) = unbounded();
             let (model, _cmd) = kernel::update::startup::startup(Startup::default());
-            let (writers, _cells, doorbell) = crate::latest::latest_channels();
+            let (latest_senders, _latest_receivers, doorbell) =
+                crate::latest::latest_channels();
             let thread = spawn_config(&SpawnSetup {
-                audio: &model.settings.audio,
+                audio_settings: &model.settings.audio_settings,
                 paths,
                 inbox: &inbox,
-                writers: &writers,
+                latest_senders: &latest_senders,
                 #[cfg(target_os = "macos")]
-                macos: &crate::spawn_setup::MacosChannel::new(),
+                macos_channel: &crate::spawn_setup::MacosChannel::new(),
             })
             .unwrap();
             Self {
                 thread,
-                messages,
+                inbox_receiver,
                 doorbell,
             }
         }
 
         fn send(&self, cmd: ConfigCmd) {
-            self.thread.commands.send(cmd).unwrap();
+            self.thread.cmd_sender.send(cmd).unwrap();
         }
 
         fn stop(self) {
-            drop(self.thread.commands);
+            drop(self.thread.cmd_sender);
             self.thread.handle.join().unwrap().unwrap();
         }
     }
@@ -138,7 +136,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let run = ConfigRun::start(directory.path());
         run.doorbell.try_iter().for_each(drop);
-        drain(&run.messages);
+        drain(&run.inbox_receiver);
 
         std::fs::write(
             directory.path().join("sifr-ui.toml"),
@@ -147,14 +145,13 @@ mod tests {
         .unwrap();
 
         let reloaded =
-            std::iter::from_fn(|| run.messages.recv_timeout(DISK_TIMEOUT).ok()).any(
-                |message| {
+            std::iter::from_fn(|| run.inbox_receiver.recv_timeout(DISK_TIMEOUT).ok())
+                .any(|message| {
                     matches!(
                         message,
                         Message::Config(ConfigEvent::AppearanceReloaded(_))
                     )
-                },
-            );
+                });
         assert!(reloaded, "a hand edit after spawn must reach the shell");
         run.stop();
     }
@@ -165,14 +162,14 @@ mod tests {
         std::fs::create_dir_all(directory.path().join("themes")).unwrap();
         let stub = stub_paths(directory.path());
         let paths = StartupPaths {
-            config: ConfigPaths {
-                theme: Some(ThemeName::from_static("noir")),
-                ..stub.config
+            config_paths: ConfigPaths {
+                theme_name: Some(ThemeName::from_static("noir")),
+                ..stub.config_paths
             },
             ..stub
         };
         let run = ConfigRun::start_with(&paths);
-        drain(&run.messages);
+        drain(&run.inbox_receiver);
 
         std::fs::write(
             directory.path().join("themes/noir.toml"),
@@ -181,11 +178,10 @@ mod tests {
         .unwrap();
 
         let reloaded =
-            std::iter::from_fn(|| run.messages.recv_timeout(DISK_TIMEOUT).ok()).any(
-                |message| {
+            std::iter::from_fn(|| run.inbox_receiver.recv_timeout(DISK_TIMEOUT).ok())
+                .any(|message| {
                     matches!(message, Message::Config(ConfigEvent::ThemeReloaded(_)))
-                },
-            );
+                });
         assert!(
             reloaded,
             "a hand edit of the watched theme must reach the shell"
@@ -208,7 +204,7 @@ mod tests {
         std::fs::write(directory.path().join("themes/mine.toml"), "").unwrap();
         let run = ConfigRun::start(directory.path());
 
-        let themes = drain(&run.messages)
+        let themes = drain(&run.inbox_receiver)
             .into_iter()
             .find_map(themes_loaded)
             .unwrap();
@@ -222,7 +218,7 @@ mod tests {
     fn a_preset_write_lands_on_disk_and_never_selects_a_theme() {
         let directory = tempfile::tempdir().unwrap();
         let run = ConfigRun::start(directory.path());
-        drain(&run.messages);
+        drain(&run.inbox_receiver);
         run.doorbell.try_iter().for_each(drop);
 
         run.send(ConfigCmd::SetAppearance(AppearancePatch::from(
@@ -250,11 +246,11 @@ mod tests {
     fn writers_never_create_files_in_the_repo_root() {
         let directory = tempfile::tempdir().unwrap();
         let run = ConfigRun::start(directory.path());
-        drain(&run.messages);
+        drain(&run.inbox_receiver);
         run.doorbell.try_iter().for_each(drop);
 
         run.send(ConfigCmd::Save(ConfigPatch {
-            theme: Some(ThemeName::from_static("noir")),
+            theme_name: Some(ThemeName::from_static("noir")),
             ..ConfigPatch::default()
         }));
         run.send(ConfigCmd::SetAppearance(AppearancePatch {
@@ -280,7 +276,7 @@ mod tests {
     fn flush_then_a_closed_inbox_leaves_the_pending_save_on_disk() {
         let directory = tempfile::tempdir().unwrap();
         let run = ConfigRun::start(directory.path());
-        drain(&run.messages);
+        drain(&run.inbox_receiver);
 
         run.send(ConfigCmd::SetAppearance(AppearancePatch {
             key_hints: Some(KeyHints::Hidden),

@@ -16,45 +16,45 @@ use objc2::rc::{Retained, autoreleasepool};
 use objc2_media_player::MPMediaItemArtwork;
 
 use crate::{
+    artwork::{Artwork, ArtworkMessage, artwork},
     clock::NowPlayingClock,
     core_audio::{
         self,
-        HardwareWatch,
+        HardwareListeners,
         default_output_device,
         read_volume,
         write_volume,
     },
-    cover::{Cover, CoverMessage, artwork},
     effect::MacosEffect,
     hardware::{Hardware, HardwareMessage, HardwarePoll},
     job::MacosLoopCmd,
     message::MacosMessage,
-    now_playing::{NowPlaying, publish},
+    now_playing::{NowPlaying, show},
     remote_input::RemoteInput,
 };
 
 #[derive(Debug)]
 pub struct MacosDriver {
-    heard: Sender<MacosMessage>,
-    now_playing: Option<Arc<Track>>,
+    callback_sender: Sender<MacosMessage>,
+    track: Option<Arc<Track>>,
     clock: NowPlayingClock,
-    cover: Cover,
+    artwork: Artwork,
     hardware: Hardware,
-    artwork: Option<Retained<MPMediaItemArtwork>>,
-    watch: Option<HardwareWatch>,
+    media_item_artwork: Option<Retained<MPMediaItemArtwork>>,
+    listeners: Option<HardwareListeners>,
 }
 
 impl MacosDriver {
     #[must_use]
-    pub fn new(heard: Sender<MacosMessage>) -> Self {
+    pub fn new(callback_sender: Sender<MacosMessage>) -> Self {
         Self {
-            heard,
-            now_playing: None,
+            callback_sender,
+            track: None,
             clock: NowPlayingClock::default(),
-            cover: Cover::default(),
+            artwork: Artwork::default(),
             hardware: Hardware::default(),
-            artwork: None,
-            watch: None,
+            media_item_artwork: None,
+            listeners: None,
         }
     }
 
@@ -64,7 +64,7 @@ impl MacosDriver {
         let publish = cmds
             .iter()
             .any(|cmd| volume_of(cmd).is_none())
-            .then_some(MacosEffect::Publish);
+            .then_some(MacosEffect::ShowNowPlaying);
         let moved = each_handled(cmds, |cmd| self.move_now_playing(cmd, at))?;
         let tail = publish
             .into_iter()
@@ -76,20 +76,20 @@ impl MacosDriver {
 
     fn move_now_playing(
         &mut self,
-        cmd: MacosCmd,
+        macos_cmd: MacosCmd,
         at: Instant,
     ) -> Result<MacosLoopCmd, Unhandled> {
-        match cmd {
+        match macos_cmd {
             MacosCmd::NowPlaying(now_playing) => {
                 let track = now_playing
                     .as_deref()
                     .map(|track| track.path().to_path_buf());
-                let moved = if self.cover.shows(track.as_deref()) {
+                let moved = if self.artwork.shows(track.as_deref()) {
                     Cmd::none()
                 } else {
-                    self.cover.transition(CoverMessage::TrackShown(track))?
+                    self.artwork.transition(ArtworkMessage::TrackShown(track))?
                 };
-                self.now_playing = now_playing;
+                self.track = now_playing;
                 self.clock = self.clock.seek(Duration::ZERO, at);
                 Ok(moved)
             }
@@ -105,55 +105,12 @@ impl MacosDriver {
         }
     }
 
-    fn act(&mut self, effect: MacosEffect) -> Option<MacosMessage> {
-        match effect {
-            MacosEffect::Watch => Some(match HardwareWatch::new(self.heard.clone()) {
-                Ok(watch) => {
-                    self.watch = Some(watch);
-                    MacosMessage::Watched
-                }
-                Err(error) => failed(MacosError::Listen, error),
-            }),
-            MacosEffect::Poll => self.poll(),
-            MacosEffect::Rebind(device) => self
-                .watch
-                .as_mut()
-                .and_then(|watch| watch.rebind_to(device).err())
-                .map(|error| failed(MacosError::Rebind, error)),
-            MacosEffect::SetVolume(volume) => {
-                Some(match write_volume(default_output_device(), volume) {
-                    Ok(()) => {
-                        MacosMessage::Hardware(HardwareMessage::VolumeSet(volume))
-                    }
-                    Err(error) => failed(MacosError::SetVolume, error),
-                })
-            }
-            MacosEffect::Publish => {
-                let shown = NowPlaying {
-                    track: self.now_playing.as_deref(),
-                    clock: self.clock,
-                    artwork: self.artwork.as_deref(),
-                };
-                publish(shown, Instant::now());
-                None
-            }
-            MacosEffect::ClearArtwork => {
-                self.artwork = None;
-                None
-            }
-            MacosEffect::ShowArtwork(bytes) => {
-                self.artwork = artwork(&bytes);
-                None
-            }
-        }
-    }
-
     fn poll(&self) -> Option<MacosMessage> {
-        let watch = self.watch.as_ref()?;
+        let listeners = self.listeners.as_ref()?;
         let current = default_output_device();
         Some(MacosMessage::Hardware(HardwareMessage::Polled(
             HardwarePoll {
-                tracked: watch.tracked_device(),
+                tracked: listeners.tracked_device(),
                 current,
                 volume: read_volume(current),
             },
@@ -167,12 +124,14 @@ impl Machine for MacosDriver {
 
     fn transition(&mut self, message: MacosMessage) -> Result<Self::Effect, Unhandled> {
         match message {
-            MacosMessage::Started => Ok([MacosEffect::Publish, MacosEffect::Watch]
-                .into_iter()
-                .map(LoopEffect::Execute)
-                .collect()),
+            MacosMessage::Started => {
+                Ok([MacosEffect::ShowNowPlaying, MacosEffect::Listen]
+                    .into_iter()
+                    .map(LoopEffect::Execute)
+                    .collect())
+            }
             MacosMessage::Cmds(cmds) => self.take_cmds(cmds),
-            MacosMessage::HardwareChanged | MacosMessage::Watched => {
+            MacosMessage::HardwareChanged | MacosMessage::Listened => {
                 Ok(Cmd::effect(LoopEffect::Execute(MacosEffect::Poll)))
             }
             MacosMessage::Hardware(message) => Ok(self
@@ -180,8 +139,8 @@ impl Machine for MacosDriver {
                 .transition(message)?
                 .map_effect(LoopEffect::Execute)),
             MacosMessage::Error(error) => Ok(Cmd::message(MacosEvent::Error(error))),
-            MacosMessage::CoverRead(bytes) => {
-                self.cover.transition(CoverMessage::Read(bytes))
+            MacosMessage::ArtworkRead(bytes) => {
+                self.artwork.transition(ArtworkMessage::ReadDone(bytes))
             }
             MacosMessage::Remote(input) => {
                 Ok(remote(input).map_effect(LoopEffect::Execute))
@@ -193,16 +152,57 @@ impl Machine for MacosDriver {
 impl Driver for MacosDriver {
     type Effect = MacosEffect;
 
-    fn execute(&mut self, effect: MacosEffect) -> Option<MacosMessage> {
-        if let Some(watch) = &self.watch {
-            watch.resend();
+    fn execute(&mut self, macos_effect: MacosEffect) -> Option<MacosMessage> {
+        if let Some(listeners) = &self.listeners {
+            listeners.resend();
         }
-        autoreleasepool(|_| self.act(effect))
+        autoreleasepool(|_| match macos_effect {
+            MacosEffect::Listen => {
+                Some(match HardwareListeners::new(self.callback_sender.clone()) {
+                    Ok(listeners) => {
+                        self.listeners = Some(listeners);
+                        MacosMessage::Listened
+                    }
+                    Err(error) => failed(MacosError::Listen, error),
+                })
+            }
+            MacosEffect::Poll => self.poll(),
+            MacosEffect::Rebind(device) => self
+                .listeners
+                .as_mut()
+                .and_then(|listeners| listeners.rebind_to(device).err())
+                .map(|error| failed(MacosError::Rebind, error)),
+            MacosEffect::SetVolume(volume) => {
+                Some(match write_volume(default_output_device(), volume) {
+                    Ok(()) => {
+                        MacosMessage::Hardware(HardwareMessage::VolumeSet(volume))
+                    }
+                    Err(error) => failed(MacosError::SetVolume, error),
+                })
+            }
+            MacosEffect::ShowNowPlaying => {
+                let now_playing = NowPlaying {
+                    track: self.track.as_deref(),
+                    clock: self.clock,
+                    artwork: self.media_item_artwork.as_deref(),
+                };
+                show(now_playing, Instant::now());
+                None
+            }
+            MacosEffect::ClearArtwork => {
+                self.media_item_artwork = None;
+                None
+            }
+            MacosEffect::ShowArtwork(bytes) => {
+                self.media_item_artwork = artwork(&bytes);
+                None
+            }
+        })
     }
 }
 
-fn volume_of(cmd: &MacosCmd) -> Option<Percent> {
-    match cmd {
+fn volume_of(macos_cmd: &MacosCmd) -> Option<Percent> {
+    match macos_cmd {
         MacosCmd::SetVolume(volume) => Some(*volume),
         MacosCmd::NowPlaying(_)
         | MacosCmd::SetPlayback(_)
@@ -213,11 +213,11 @@ fn volume_of(cmd: &MacosCmd) -> Option<Percent> {
 fn remote(input: RemoteInput) -> Cmd<MacosEffect, MacosEvent> {
     match input {
         RemoteInput::Press(request) | RemoteInput::HoldBegan(request) => {
-            Cmd::message(MacosEvent::MediaKey(request))
+            Cmd::message(MacosEvent::MediaKeyPressed(request))
         }
         RemoteInput::HoldEnded => Cmd::none(),
-        RemoteInput::Scrub(at) => {
-            Cmd::message(MacosEvent::MediaKey(PlaybackRequest::SeekTo(at)))
+        RemoteInput::Scrub(target) => {
+            Cmd::message(MacosEvent::MediaKeyPressed(PlaybackRequest::SeekTo(target)))
         }
     }
 }
@@ -251,23 +251,23 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
+        artwork::Artwork,
         clock::NowPlayingClock,
-        cover::Cover,
         driver::MacosDriver,
         effect::MacosEffect,
         hardware::{Hardware, HardwareMessage, HardwarePoll},
         job::{MacosJob, MacosLoopCmd},
-        message::{CoverBytes, MacosMessage},
+        message::{ArtworkBytes, MacosMessage},
         remote_input::RemoteInput,
     };
 
-    fn volume(level: u8) -> MacosCmd {
-        MacosCmd::SetVolume(Percent::clamped(level))
+    fn volume(volume_percent: u8) -> MacosCmd {
+        MacosCmd::SetVolume(Percent::clamped(volume_percent))
     }
 
-    fn cmds(cmds: Vec<MacosCmd>) -> MacosMessage {
+    fn cmds(macos_cmds: Vec<MacosCmd>) -> MacosMessage {
         MacosMessage::Cmds(Cmds {
-            cmds,
+            cmds: macos_cmds,
             at: Instant::now(),
         })
     }
@@ -298,14 +298,14 @@ mod tests {
     #[rstest]
     #[case::started_publishes_then_watches(
         MacosMessage::Started,
-        [MacosEffect::Publish, MacosEffect::Watch].into_iter().collect()
+        [MacosEffect::ShowNowPlaying, MacosEffect::Listen].into_iter().collect()
     )]
     #[case::a_hardware_change_polls(
         MacosMessage::HardwareChanged,
         Cmd::effect(MacosEffect::Poll)
     )]
     #[case::a_watch_in_place_polls(
-        MacosMessage::Watched,
+        MacosMessage::Listened,
         Cmd::effect(MacosEffect::Poll)
     )]
     #[case::a_failed_watch_is_reported(
@@ -322,11 +322,11 @@ mod tests {
     )]
     #[case::a_press_is_a_media_key(
         MacosMessage::Remote(RemoteInput::Press(PlaybackRequest::SeekBy { direction: Direction::Next, by: SEEK_MEDIUM })),
-        Cmd::message(MacosEvent::MediaKey(PlaybackRequest::SeekBy { direction: Direction::Next, by: SEEK_MEDIUM }))
+        Cmd::message(MacosEvent::MediaKeyPressed(PlaybackRequest::SeekBy { direction: Direction::Next, by: SEEK_MEDIUM }))
     )]
     #[case::a_hold_start_is_a_media_key(
         MacosMessage::Remote(RemoteInput::HoldBegan(PlaybackRequest::SeekBy { direction: Direction::Previous, by: SEEK_MEDIUM })),
-        Cmd::message(MacosEvent::MediaKey(PlaybackRequest::SeekBy { direction: Direction::Previous, by: SEEK_MEDIUM }))
+        Cmd::message(MacosEvent::MediaKeyPressed(PlaybackRequest::SeekBy { direction: Direction::Previous, by: SEEK_MEDIUM }))
     )]
     #[case::a_hold_end_is_quiet(
         MacosMessage::Remote(RemoteInput::HoldEnded),
@@ -334,7 +334,7 @@ mod tests {
     )]
     #[case::a_scrub_seeks(
         MacosMessage::Remote(RemoteInput::Scrub(Duration::from_secs(3))),
-        Cmd::message(MacosEvent::MediaKey(PlaybackRequest::SeekTo(
+        Cmd::message(MacosEvent::MediaKeyPressed(PlaybackRequest::SeekTo(
             Duration::from_secs(3)
         )))
     )]
@@ -350,33 +350,33 @@ mod tests {
             volume(20),
         ]),
         [
-            MacosEffect::Publish,
+            MacosEffect::ShowNowPlaying,
             MacosEffect::SetVolume(Percent::clamped(20)),
         ].into_iter().collect()
     )]
     #[case::a_volume_with_a_now_playing_publishes_once_and_sets_once(
         cmds(vec![volume(10), MacosCmd::NowPlaying(None), volume(20)]),
         [
-            MacosEffect::Publish,
+            MacosEffect::ShowNowPlaying,
             MacosEffect::SetVolume(Percent::clamped(20)),
         ].into_iter().collect()
     )]
     #[case::no_volume_at_all(
         cmds(vec![MacosCmd::SetPlayback(Playback::Playing)]),
-        Cmd::effect(MacosEffect::Publish)
+        Cmd::effect(MacosEffect::ShowNowPlaying)
     )]
     #[case::nothing_playing_yet_keeps_the_artwork(
         cmds(vec![MacosCmd::NowPlaying(None)]),
-        Cmd::effect(MacosEffect::Publish)
+        Cmd::effect(MacosEffect::ShowNowPlaying)
     )]
     fn the_macos_driver_answers_each_message(
         #[case] message: MacosMessage,
         #[case] cmd: Cmd<MacosEffect, MacosEvent>,
     ) {
-        let (heard, _heard_receiver) = bounded(1);
-        let mut driver = MacosDriver::new(heard);
+        let (callback_sender, _callback_receiver) = bounded(1);
+        let mut macos_driver = MacosDriver::new(callback_sender);
         assert_eq!(
-            driver.transition(message).map(executed),
+            macos_driver.transition(message).map(executed),
             Ok(cmd.into_parts())
         );
     }
@@ -387,17 +387,17 @@ mod tests {
     fn the_now_playing_clock_follows_the_last_playback_command(
         #[case] playback: Playback,
     ) {
-        let (heard, _heard_receiver) = bounded(1);
-        let mut driver = MacosDriver::new(heard);
+        let (callback_sender, _callback_receiver) = bounded(1);
+        let mut macos_driver = MacosDriver::new(callback_sender);
         let message = cmds(vec![
             MacosCmd::SetPlayback(Playback::Playing),
             MacosCmd::SetPlayback(playback),
         ]);
         assert_eq!(
-            driver.transition(message).map(executed),
-            Ok((vec![MacosEffect::Publish], vec![]))
+            macos_driver.transition(message).map(executed),
+            Ok((vec![MacosEffect::ShowNowPlaying], vec![]))
         );
-        assert_eq!(driver.clock.playback(), playback);
+        assert_eq!(macos_driver.clock.playback(), playback);
     }
 
     type Placed = (Vec<MacosEffect>, Vec<MacosJob>, Vec<MacosEvent>);
@@ -428,8 +428,8 @@ mod tests {
         }))
     }
 
-    fn cover_read(bytes: &[u8]) -> MacosMessage {
-        MacosMessage::CoverRead(CoverBytes {
+    fn artwork_read(bytes: &[u8]) -> MacosMessage {
+        MacosMessage::ArtworkRead(ArtworkBytes {
             revision: Revision::default(),
             bytes: Ok(bytes.to_vec()),
         })
@@ -438,7 +438,7 @@ mod tests {
     #[rstest]
     #[case::a_first_poll_reports_the_volume(
         vec![polled((1, 1), Some(Percent::clamped(30)))],
-        (vec![], vec![], vec![MacosEvent::Volume(Percent::clamped(30))])
+        (vec![], vec![], vec![MacosEvent::VolumeChanged(Percent::clamped(30))])
     )]
     #[case::a_poll_on_another_device_rebinds(
         vec![polled((1, 2), None)],
@@ -452,15 +452,15 @@ mod tests {
         vec![MacosMessage::Hardware(HardwareMessage::VolumeSet(Percent::clamped(40))), polled((1, 1), Some(Percent::clamped(40)))],
         (vec![], vec![], vec![])
     )]
-    #[case::cover_bytes_show_the_artwork(
-        vec![cover_read(&[1, 2])],
-        (vec![MacosEffect::ShowArtwork(vec![1, 2]), MacosEffect::Publish], vec![], vec![])
+    #[case::artwork_bytes_show_the_artwork(
+        vec![artwork_read(&[1, 2])],
+        (vec![MacosEffect::ShowArtwork(vec![1, 2]), MacosEffect::ShowNowPlaying], vec![], vec![])
     )]
     #[case::a_new_track_clears_reads_then_publishes(
         vec![cmds(vec![MacosCmd::NowPlaying(Some(Arc::new(Track::listed(Path::new("a.flac")))))])],
         (
-            vec![MacosEffect::ClearArtwork, MacosEffect::Publish],
-            vec![MacosJob::ReadCover { track: PathBuf::from("a.flac"), revision: Revision::default().next() }],
+            vec![MacosEffect::ClearArtwork, MacosEffect::ShowNowPlaying],
+            vec![MacosJob::ReadArtwork { track_path: PathBuf::from("a.flac"), revision: Revision::default().next() }],
             vec![]
         )
     )]
@@ -468,57 +468,57 @@ mod tests {
         #[case] messages: Vec<MacosMessage>,
         #[case] last: Placed,
     ) {
-        let (heard, _heard_receiver) = bounded(1);
-        let mut driver = MacosDriver::new(heard);
+        let (callback_sender, _callback_receiver) = bounded(1);
+        let mut macos_driver = MacosDriver::new(callback_sender);
         let answers: Vec<_> = messages
             .into_iter()
-            .map(|message| driver.transition(message).map(placed))
+            .map(|message| macos_driver.transition(message).map(placed))
             .collect();
         assert_eq!(answers.last(), Some(&Ok(last)));
     }
 
     #[test]
-    fn a_refused_cover_leaves_the_driver_and_the_rest_of_the_batch_intact() {
-        let (heard, _heard_receiver) = bounded(1);
-        let mut macos_driver = MacosDriver::new(heard);
-        let shown = Arc::new(Track::listed(Path::new("a.flac")));
-        let first = cmds(vec![MacosCmd::NowPlaying(Some(Arc::clone(&shown)))]);
+    fn a_refused_artwork_leaves_the_driver_and_the_rest_of_the_batch_intact() {
+        let (callback_sender, _callback_receiver) = bounded(1);
+        let mut macos_driver = MacosDriver::new(callback_sender);
+        let track = Arc::new(Track::listed(Path::new("a.flac")));
+        let first = cmds(vec![MacosCmd::NowPlaying(Some(Arc::clone(&track)))]);
         assert!(macos_driver.transition(first).is_ok());
-        let before = macos_driver.cover.clone();
+        let before = macos_driver.artwork.clone();
         let again = cmds(vec![
-            MacosCmd::NowPlaying(Some(Arc::clone(&shown))),
+            MacosCmd::NowPlaying(Some(Arc::clone(&track))),
             volume(20),
         ]);
         assert_eq!(
             macos_driver.transition(again).map(executed),
             Ok((
                 vec![
-                    MacosEffect::Publish,
+                    MacosEffect::ShowNowPlaying,
                     MacosEffect::SetVolume(Percent::clamped(20)),
                 ],
                 vec![]
             ))
         );
-        assert_eq!(macos_driver.cover, before);
-        assert_eq!(macos_driver.now_playing, Some(shown));
+        assert_eq!(macos_driver.artwork, before);
+        assert_eq!(macos_driver.track, Some(track));
     }
 
     #[test]
-    fn empty_cover_bytes_are_refused() {
-        let (heard, _heard_receiver) = bounded(1);
-        let mut macos_driver = MacosDriver::new(heard);
-        let before = macos_driver.cover.clone();
+    fn empty_artwork_bytes_are_refused() {
+        let (callback_sender, _callback_receiver) = bounded(1);
+        let mut macos_driver = MacosDriver::new(callback_sender);
+        let before = macos_driver.artwork.clone();
         assert_eq!(
-            macos_driver.transition(cover_read(&[])).map(placed),
+            macos_driver.transition(artwork_read(&[])).map(placed),
             Err(Unhandled)
         );
-        assert_eq!(macos_driver.cover, before);
-        assert!(macos_driver.artwork.is_none());
+        assert_eq!(macos_driver.artwork, before);
+        assert!(macos_driver.media_item_artwork.is_none());
     }
 
     #[derive(Debug, PartialEq)]
     struct Held {
-        cover: Cover,
+        artwork: Artwork,
         track: Option<Arc<Track>>,
         clock: NowPlayingClock,
         hardware: Hardware,
@@ -526,8 +526,8 @@ mod tests {
 
     fn held(macos_driver: &MacosDriver) -> Held {
         Held {
-            cover: macos_driver.cover.clone(),
-            track: macos_driver.now_playing.clone(),
+            artwork: macos_driver.artwork.clone(),
+            track: macos_driver.track.clone(),
             clock: macos_driver.clock,
             hardware: macos_driver.hardware,
         }
@@ -539,13 +539,13 @@ mod tests {
         vec![polled((1, 1), None)],
         polled((1, 1), None)
     )]
-    #[case::cover_bytes_of_nothing(vec![], cover_read(&[]))]
+    #[case::artwork_bytes_of_nothing(vec![], artwork_read(&[]))]
     fn the_macos_driver_refuses_what_changes_nothing(
         #[case] earlier_macos_messages: Vec<MacosMessage>,
         #[case] refused_macos_message: MacosMessage,
     ) {
-        let (heard, _heard_receiver) = bounded(1);
-        let mut macos_driver = MacosDriver::new(heard);
+        let (callback_sender, _callback_receiver) = bounded(1);
+        let mut macos_driver = MacosDriver::new(callback_sender);
         for macos_message in earlier_macos_messages {
             assert!(macos_driver.transition(macos_message).is_ok());
         }
@@ -558,11 +558,11 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_cover_read_is_refused_and_leaves_the_cover_alone() {
-        let (heard, _heard_receiver) = bounded(1);
-        let mut macos_driver = MacosDriver::new(heard);
-        let before = macos_driver.cover.clone();
-        let macos_message = MacosMessage::CoverRead(CoverBytes {
+    fn a_stale_artwork_read_is_refused_and_leaves_the_artwork_alone() {
+        let (callback_sender, _callback_receiver) = bounded(1);
+        let mut macos_driver = MacosDriver::new(callback_sender);
+        let before = macos_driver.artwork.clone();
+        let macos_message = MacosMessage::ArtworkRead(ArtworkBytes {
             revision: Revision::default().next(),
             bytes: Ok(vec![1, 2]),
         });
@@ -570,7 +570,7 @@ mod tests {
             macos_driver.transition(macos_message).map(placed),
             Err(Unhandled)
         );
-        assert_eq!(macos_driver.cover, before);
+        assert_eq!(macos_driver.artwork, before);
     }
 
     #[rstest]
@@ -581,9 +581,9 @@ mod tests {
     fn the_driver_answers_nothing_and_holds_no_artwork(
         #[case] macos_effect: MacosEffect,
     ) {
-        let (heard, _heard_receiver) = bounded(1);
-        let mut driver = MacosDriver::new(heard);
-        assert!(driver.execute(macos_effect).is_none());
-        assert!(driver.artwork.is_none());
+        let (callback_sender, _callback_receiver) = bounded(1);
+        let mut macos_driver = MacosDriver::new(callback_sender);
+        assert!(macos_driver.execute(macos_effect).is_none());
+        assert!(macos_driver.media_item_artwork.is_none());
     }
 }

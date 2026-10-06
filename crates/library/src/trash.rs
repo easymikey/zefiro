@@ -29,17 +29,17 @@ mod tests {
     fn move_to_trash_missing_file_is_ok_without_reaching_the_platform() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("never-existed.flac");
-        let mut asked: Vec<PathBuf> = Vec::new();
+        let mut wanted_paths: Vec<PathBuf> = Vec::new();
 
         assert!(!missing.exists());
         assert!(
             move_to_trash_with(&missing, |path: &Path| {
-                asked.push(path.to_path_buf());
+                wanted_paths.push(path.to_path_buf());
                 Ok(())
             })
             .is_ok()
         );
-        assert!(asked.is_empty());
+        assert!(wanted_paths.is_empty());
     }
 
     #[test]
@@ -47,13 +47,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let doomed = dir.path().join("doomed.flac");
         std::fs::write(&doomed, b"stub").unwrap();
-        let mut asked: Vec<PathBuf> = Vec::new();
+        let mut wanted_paths: Vec<PathBuf> = Vec::new();
 
         move_to_trash_with(&doomed, |path: &Path| {
-            asked.push(path.to_path_buf());
+            wanted_paths.push(path.to_path_buf());
             Ok(())
         })
         .unwrap();
-        assert_eq!(asked, vec![doomed]);
+        assert_eq!(wanted_paths, vec![doomed]);
     }
 }

@@ -16,7 +16,7 @@ Some(
                     album_artist: None,
                     date: None,
                     genre: None,
-                    track: None,
+                    track_number: None,
                     track_total: None,
                     disc: None,
                     composer: None,
@@ -29,7 +29,7 @@ Some(
                     sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
-                    replay_gain: None,
+                    decibels: None,
                 },
                 display: "a",
                 tagging: Listed(

@@ -9,16 +9,16 @@ use kernel::{
 use crate::engine::{
     effect::{AudioLoopCmd, EngineEffect},
     message::DeviceOpened,
-    phase::{CurrentTrack, Incoming, Loading, Phase, Playing, Resume},
+    phase::{Incoming, LoadedTrack, Loading, Phase, Playing, Resume},
     revisions::JobRevisions,
-    state::{Closed, Live, announce, then_report},
+    state::{Closed, Live, then_report},
 };
 
 impl Live {
-    pub(crate) fn failed(self) -> Closed {
+    pub(crate) fn closed(self) -> Closed {
         Closed {
             settings: self.settings,
-            pending: None,
+            track_load: None,
             speed: self.speed,
         }
     }
@@ -26,16 +26,15 @@ impl Live {
     pub(crate) fn opened(
         &mut self,
         revisions: &mut JobRevisions,
-        reopened: DeviceOpened,
+        device_opened: DeviceOpened,
     ) -> AudioLoopCmd {
         let DeviceOpened {
             device,
             position,
             playback,
-            opened,
-        } = reopened;
-        self.settings.device = device.clone();
-        let effect = match std::mem::replace(&mut self.phase, Phase::Idle) {
+        } = device_opened;
+        self.settings.device = device;
+        match std::mem::replace(&mut self.phase, Phase::Idle) {
             Phase::Idle => {
                 Cmd::effect(LoopEffect::Execute(EngineEffect::SetGain(self.gain())))
             }
@@ -45,35 +44,38 @@ impl Live {
             }
             Phase::Playing(Playing { current, .. })
             | Phase::Handover(Incoming::Playing(current)) => {
-                let CurrentTrack { total, gain, path } = current;
+                let LoadedTrack {
+                    duration,
+                    decibels,
+                    path,
+                } = current;
                 self.phase = Phase::Loading(Loading {
                     path: path.clone(),
-                    gain,
-                    after_load: Some(Resume {
+                    decibels,
+                    resume: Some(Resume {
                         position,
                         playback,
-                        total,
+                        duration,
                     }),
                 });
-                Cmd::effect(LoopEffect::Execute(EngineEffect::Decode))
-                    .then(Cmd::effect(LoopEffect::Run(revisions.decode(path))))
+                Cmd::effect(LoopEffect::Execute(EngineEffect::ClearStaged))
+                    .then(Cmd::effect(LoopEffect::Run(revisions.decode_job(path))))
             }
-        };
-        announce(opened, device, effect)
+        }
     }
 
     pub(crate) fn decoded(
         &mut self,
-        total: Option<Duration>,
+        duration: Option<Duration>,
     ) -> Result<AudioLoopCmd, Unhandled> {
         match std::mem::replace(&mut self.phase, Phase::Idle) {
             Phase::Loading(loading) => {
-                let (current, after_load) = loading.into_current(total);
+                let (current, after_load) = loading.into_current(duration);
                 self.phase = Phase::Playing(Playing::new(current));
                 Ok(then_report(self.start_effect(after_load.as_ref())))
             }
             Phase::Handover(Incoming::Loading(loading)) => {
-                let (current, after_load) = loading.into_current(total);
+                let (current, after_load) = loading.into_current(duration);
                 self.phase = Phase::Handover(Incoming::Playing(current));
                 Ok(self.handover_started(after_load.as_ref()))
             }
@@ -107,12 +109,12 @@ impl Live {
         Ok(cmd)
     }
 
-    fn start_effect(&self, after_load: Option<&Resume>) -> AudioLoopCmd {
+    fn start_effect(&self, resume: Option<&Resume>) -> AudioLoopCmd {
         let gain = self.gain();
-        match after_load {
+        match resume {
             None => Cmd::effect(LoopEffect::Execute(EngineEffect::Start(gain))).then(
                 Cmd::message(AudioEvent::Loaded(
-                    self.phase.current().and_then(|current| current.total),
+                    self.phase.current().and_then(|current| current.duration),
                 )),
             ),
             Some(Resume {
@@ -125,14 +127,14 @@ impl Live {
         }
     }
 
-    fn handover_started(&self, after_load: Option<&Resume>) -> AudioLoopCmd {
+    fn handover_started(&self, resume: Option<&Resume>) -> AudioLoopCmd {
         let gain = self.gain();
-        let length = self.settings.crossfade.get();
-        let start = self.start_effect(after_load);
+        let duration = self.settings.crossfade.get();
+        let start = self.start_effect(resume);
         start
             .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Ramp {
-                length,
-                playing: gain,
+                duration,
+                current: gain,
             })))
             .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))
     }
@@ -158,16 +160,16 @@ mod tests {
         tests::{
             CROSSFADE_SECONDS,
             EngineRow,
-            PRELOAD_TOTAL,
-            TOTAL,
+            TRACK_A_DURATION,
+            TRACK_B_DURATION,
             assert_cell,
+            assert_fallback,
             assert_same,
             cmd,
             crossfade,
             decode_error,
             decoding,
             error,
-            fell_back,
             handed_over_to_b,
             handing_over,
             live,
@@ -191,21 +193,13 @@ mod tests {
         opened(settings().device, Duration::ZERO, Playback::Playing),
         EngineRow { next: EngineState::Live(live()), effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::SetGain(crate::gain::Gain::UNITY))))}
     )]
-    #[case::a_live_engine_tells_the_world_the_device_fell_back(
-        EngineState::Live(Live { settings: settings_on("usb"), ..live() }),
-        fell_back(Duration::ZERO, Playback::Playing),
-        EngineRow {
-            next: EngineState::Live(live()),
-            effect: Ok(Cmd::message(AudioEvent::DeviceFellBack(kernel::domain::device::OutputDevice::SystemDefault)).then(Cmd::effect(LoopEffect::Execute(EngineEffect::SetGain(crate::gain::Gain::UNITY))))),
-        }
-    )]
     #[case::open_failure_mutes_the_engine(
         EngineState::Live(playing()),
         EngineMessage::Error(error()),
         EngineRow {
             next: EngineState::Closed(Closed {
                 settings: settings(),
-                pending: None,
+                track_load: None,
                 speed: Speed::default(),
             }),
             effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Silence))
@@ -215,7 +209,7 @@ mod tests {
     #[case::reopened_resumes_the_current_track(
         EngineState::Live(playing()),
         opened(settings_on("usb").device, seconds(5), Playback::Paused),
-        EngineRow { next: EngineState::Live(resuming()), effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Decode)).then(decoding("/a")))}
+        EngineRow { next: EngineState::Live(resuming()), effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::ClearStaged)).then(decoding("/a")))}
     )]
     #[case::reopened_keeps_a_pending_load(
         EngineState::Live(loading()),
@@ -232,15 +226,15 @@ mod tests {
     )]
     #[case::decoded_starts_the_track(
         EngineState::Live(loading()),
-        EngineMessage::Decoded(Some(TOTAL)),
+        EngineMessage::Decoded(Some(TRACK_A_DURATION)),
         EngineRow {
             next: EngineState::Live(Live { phase: Phase::Playing(Playing::new(track_a())), ..playing() }),
-            effect: Ok(then_report(Cmd::effect(LoopEffect::Execute(EngineEffect::Start(crate::gain::Gain::UNITY))).then(Cmd::message(AudioEvent::Loaded(Some(TOTAL)))))),
+            effect: Ok(then_report(Cmd::effect(LoopEffect::Execute(EngineEffect::Start(crate::gain::Gain::UNITY))).then(Cmd::message(AudioEvent::Loaded(Some(TRACK_A_DURATION)))))),
         }
     )]
     #[case::decoded_resumes_where_the_old_device_was(
         EngineState::Live(resuming()),
-        EngineMessage::Decoded(Some(PRELOAD_TOTAL)),
+        EngineMessage::Decoded(Some(TRACK_B_DURATION)),
         EngineRow {
             next: EngineState::Live(Live {
                 phase: Phase::Playing(Playing::new(track_a())),
@@ -265,17 +259,17 @@ mod tests {
             next: EngineState::Live(Live {
                 phase: Phase::Loading(Loading {
                     path: "/b".into(),
-                    gain: None,
-                    after_load: Some(Resume {
+                    decibels: None,
+                    resume: Some(Resume {
                         position: seconds(5),
                         playback: Playback::Paused,
-                        total: Some(PRELOAD_TOTAL),
+                        duration: Some(TRACK_B_DURATION),
                     }),
                 }),
                 settings: AudioSettings { crossfade: crossfade(10), ..settings_on("usb") },
                 ..live()
             }),
-            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Decode)).then(decoding("/b"))),
+            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::ClearStaged)).then(decoding("/b"))),
         }
     )]
     #[case::reopened_mid_skip_keeps_the_decoding_track(
@@ -292,10 +286,10 @@ mod tests {
     )]
     #[case::a_decoded_skip_starts_and_ramps_over_the_outgoing_stream(
         EngineState::Live(handing_over(Incoming::Loading(loading_track("/b")))),
-        EngineMessage::Decoded(Some(PRELOAD_TOTAL)),
+        EngineMessage::Decoded(Some(TRACK_B_DURATION)),
         EngineRow {
             next: EngineState::Live(handed_over_to_b()),
-            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Start(crate::gain::Gain::UNITY))).then(Cmd::message(AudioEvent::Loaded(Some(PRELOAD_TOTAL)))).then(Cmd::effect(LoopEffect::Execute(EngineEffect::Ramp { length: seconds(10), playing: crate::gain::Gain::UNITY }))).then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))),
+            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Start(crate::gain::Gain::UNITY))).then(Cmd::message(AudioEvent::Loaded(Some(TRACK_B_DURATION)))).then(Cmd::effect(LoopEffect::Execute(EngineEffect::Ramp { duration: seconds(10), current: crate::gain::Gain::UNITY }))).then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))),
         }
     )]
     #[case::a_failed_skip_drops_the_outgoing_stream_too(
@@ -307,17 +301,36 @@ mod tests {
         }
     )]
     fn a_cell_moves_the_engine_and_names_its_io(
-        #[case] start: EngineState,
+        #[case] engine_state: EngineState,
         #[case] message: EngineMessage,
-        #[case] moved: EngineRow,
+        #[case] moved_row: EngineRow,
     ) {
-        assert_cell(start, message, moved);
+        assert_cell(engine_state, message, moved_row);
+    }
+
+    #[test]
+    fn a_live_engine_tells_the_world_the_device_fell_back() {
+        assert_fallback(
+            EngineState::Live(Live {
+                settings: settings_on("usb"),
+                ..live()
+            }),
+            EngineRow {
+                next: EngineState::Live(live()),
+                effect: Ok(Cmd::message(AudioEvent::DeviceFellBack(
+                    kernel::domain::device::OutputDevice::SystemDefault,
+                ))
+                .then(Cmd::effect(LoopEffect::Execute(
+                    EngineEffect::SetGain(crate::gain::Gain::UNITY),
+                )))),
+            },
+        );
     }
 
     #[rstest]
     #[case::a_decode_after_stop_has_nothing_to_install(
         EngineState::Live(live()),
-        EngineMessage::Decoded(Some(TOTAL))
+        EngineMessage::Decoded(Some(TRACK_A_DURATION))
     )]
     #[case::a_failed_decode_after_stop_is_not_reported(
         EngineState::Live(live()),
@@ -325,15 +338,15 @@ mod tests {
     )]
     #[case::a_decode_after_the_skip_landed_has_nothing_to_install(
         EngineState::Live(handed_over_to_b()),
-        EngineMessage::Decoded(Some(TOTAL))
+        EngineMessage::Decoded(Some(TRACK_A_DURATION))
     )]
     fn a_stale_decode_leaves_the_engine_alone(
-        #[case] start: EngineState,
+        #[case] engine_state: EngineState,
         #[case] message: EngineMessage,
     ) {
-        let mut state = start.clone();
+        let mut state = engine_state.clone();
         assert_same(step(&mut state, message), Err(Unhandled));
-        assert_eq!(state, start);
+        assert_eq!(state, engine_state);
     }
 
     #[test]
@@ -346,7 +359,10 @@ mod tests {
             )))),
         );
         assert_same(
-            step(&mut engine_state, EngineMessage::Decoded(Some(TOTAL))),
+            step(
+                &mut engine_state,
+                EngineMessage::Decoded(Some(TRACK_A_DURATION)),
+            ),
             Err(Unhandled),
         );
     }

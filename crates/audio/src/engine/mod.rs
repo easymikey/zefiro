@@ -22,7 +22,7 @@ pub(crate) mod tests {
             revision::Revision,
             settings::{AudioSettings, ReplayGain},
             speed::Speed,
-            transport::StreamError,
+            transport::OutputError,
         },
         message::{AudioError, DecodeError},
         update::machine::{LoopEffect, Machine, Unhandled},
@@ -34,18 +34,17 @@ pub(crate) mod tests {
         deck::{job::AudioJob, source::PreloadMode},
         engine::{
             effect::AudioLoopCmd,
-            message::{DeviceChoice, DeviceOpened, EngineMessage},
+            message::{DeviceOpened, EngineMessage},
             phase::{
-                CurrentTrack,
                 Fade,
                 Incoming,
+                LoadedTrack,
                 Loading,
-                Next,
+                NextTrack,
                 Phase,
                 Playing,
                 Resume,
             },
-            revisions::JobRevisions,
             state::{Closed, Engine, EngineState, ExecutedRevisions, Live},
         },
     };
@@ -55,18 +54,15 @@ pub(crate) mod tests {
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
     }
 
-    pub(crate) const TOTAL: Duration = Duration::from_secs(100);
-    pub(crate) const PRELOAD_TOTAL: Duration = Duration::from_secs(90);
+    pub(crate) const TRACK_A_DURATION: Duration = Duration::from_secs(100);
+    pub(crate) const TRACK_B_DURATION: Duration = Duration::from_secs(90);
     pub(crate) const CROSSFADE_SECONDS: u64 = 10;
 
     pub(crate) fn step(
         state: &mut EngineState,
         message: EngineMessage,
     ) -> Result<AudioLoopCmd, Unhandled> {
-        let mut engine = Engine {
-            state: state.clone(),
-            job_revisions: JobRevisions::default(),
-        };
+        let mut engine = Engine::new(state.clone());
         let cmd = engine.transition(message);
         *state = engine.state;
         cmd
@@ -76,10 +72,7 @@ pub(crate) mod tests {
         state: EngineState,
         messages: Vec<EngineMessage>,
     ) -> Result<(EngineState, Vec<<AudioDriver as Machine>::Effect>), Unhandled> {
-        let mut engine = Engine {
-            state,
-            job_revisions: JobRevisions::default(),
-        };
+        let mut engine = Engine::new(state);
         let log = messages
             .into_iter()
             .map(|message| engine.transition(message))
@@ -110,16 +103,19 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn settings_on(device: &str) -> AudioSettings {
+    pub(crate) fn settings_on(device_name: &str) -> AudioSettings {
         AudioSettings {
-            device: OutputDevice::Named(DeviceName::new(device.to_string()).unwrap()),
+            device: OutputDevice::Named(
+                DeviceName::new(device_name.to_string()).unwrap(),
+            ),
             ..settings()
         }
     }
 
     pub(crate) fn error() -> AudioError {
-        AudioError::OpenStream {
-            reason: kernel::domain::config::Diagnostic::from_error(
+        AudioError::OpenDevice {
+            requested_device: OutputDevice::SystemDefault,
+            diagnostic: kernel::domain::config::Diagnostic::from_error(
                 &std::io::Error::other("no output device available"),
             ),
         }
@@ -128,40 +124,43 @@ pub(crate) mod tests {
     pub(crate) fn decode_error() -> AudioError {
         AudioError::Decode {
             path: "/a".into(),
-            kind: DecodeError::Unsupported,
+            error: DecodeError::Unsupported,
         }
     }
 
     pub(crate) fn preload_error() -> AudioError {
         AudioError::Preload {
             path: "/b".into(),
-            kind: DecodeError::Unsupported,
+            error: DecodeError::Unsupported,
         }
     }
 
     pub(crate) fn device_error() -> AudioError {
         AudioError::OpenDevice {
-            requested: OutputDevice::SystemDefault,
+            requested_device: OutputDevice::SystemDefault,
+            diagnostic: kernel::domain::config::Diagnostic::from_error(
+                &std::io::Error::other("no output device available"),
+            ),
         }
     }
 
     pub(crate) fn failed() -> EngineMessage {
-        EngineMessage::OutputLost(StreamError::DeviceGone)
+        EngineMessage::OutputLost(OutputError::DeviceGone)
     }
 
     pub(crate) fn closed() -> EngineState {
         EngineState::Closed(Closed {
             settings: settings(),
-            pending: None,
+            track_load: None,
             speed: Speed::default(),
         })
     }
 
     pub(crate) fn waiting_for(path: &str) -> EngineState {
         EngineState::Closed(Closed {
-            pending: Some(TrackLoad {
+            track_load: Some(TrackLoad {
                 path: path.into(),
-                gain: None,
+                decibels: None,
                 revision: first(),
             }),
             settings: settings(),
@@ -173,31 +172,31 @@ pub(crate) mod tests {
         Live::new(settings(), Speed::default())
     }
 
-    pub(crate) fn track_a() -> CurrentTrack {
-        CurrentTrack {
-            total: Some(TOTAL),
-            gain: None,
+    pub(crate) fn track_a() -> LoadedTrack {
+        LoadedTrack {
+            duration: Some(TRACK_A_DURATION),
+            decibels: None,
             path: "/a".into(),
         }
     }
 
-    pub(crate) fn track_b() -> CurrentTrack {
-        CurrentTrack {
-            total: Some(PRELOAD_TOTAL),
-            gain: None,
+    pub(crate) fn track_b() -> LoadedTrack {
+        LoadedTrack {
+            duration: Some(TRACK_B_DURATION),
+            decibels: None,
             path: "/b".into(),
         }
     }
 
-    pub(crate) fn playing_track(current: CurrentTrack) -> Phase {
+    pub(crate) fn playing_track(current: LoadedTrack) -> Phase {
         Phase::Playing(Playing::new(current))
     }
 
     pub(crate) fn loading_track(path: &str) -> Loading {
         Loading {
             path: path.into(),
-            gain: None,
-            after_load: None,
+            decibels: None,
+            resume: None,
         }
     }
 
@@ -219,11 +218,11 @@ pub(crate) mod tests {
         Live {
             phase: Phase::Loading(Loading {
                 path: "/a".into(),
-                gain: None,
-                after_load: Some(Resume {
+                decibels: None,
+                resume: Some(Resume {
                     position: seconds(5),
                     playback: Playback::Paused,
-                    total: Some(TOTAL),
+                    duration: Some(TRACK_A_DURATION),
                 }),
             }),
             settings: settings_on("usb"),
@@ -265,8 +264,8 @@ pub(crate) mod tests {
     pub(crate) fn crossfading_idle() -> Live {
         Live {
             phase: Phase::Playing(Playing {
-                next: Next::Crossfading {
-                    preload: track_b(),
+                next: NextTrack::Crossfading {
+                    incoming: track_b(),
                     fade: Fade::Armed,
                 },
                 ..Playing::new(track_a())
@@ -282,8 +281,8 @@ pub(crate) mod tests {
     pub(crate) fn crossfading_mid_ramp() -> Live {
         Live {
             phase: Phase::Playing(Playing {
-                next: Next::Crossfading {
-                    preload: track_b(),
+                next: NextTrack::Crossfading {
+                    incoming: track_b(),
                     fade: Fade::Running,
                 },
                 ..Playing::new(track_a())
@@ -303,9 +302,9 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn cmd(cmd: AudioCmd) -> EngineMessage {
+    pub(crate) fn cmd(audio_cmd: AudioCmd) -> EngineMessage {
         EngineMessage::Cmds(Cmds {
-            cmds: vec![cmd],
+            cmds: vec![audio_cmd],
             at: Instant::now(),
         })
     }
@@ -318,35 +317,38 @@ pub(crate) mod tests {
         first().next()
     }
 
-    pub(crate) fn load_at(path: &str, revision: Revision) -> EngineMessage {
+    pub(crate) fn load_with_revision(path: &str, revision: Revision) -> EngineMessage {
         cmd(AudioCmd::Load(TrackLoad {
             path: path.into(),
-            gain: None,
+            decibels: None,
             revision,
         }))
     }
 
     pub(crate) fn load(path: &str) -> EngineMessage {
-        load_at(path, first())
+        load_with_revision(path, first())
     }
 
-    pub(crate) fn preload_at(path: &str, revision: Revision) -> EngineMessage {
+    pub(crate) fn preload_with_revision(
+        path: &str,
+        revision: Revision,
+    ) -> EngineMessage {
         cmd(AudioCmd::Preload(TrackLoad {
             path: path.into(),
-            gain: None,
+            decibels: None,
             revision,
         }))
     }
 
     pub(crate) fn preload(path: &str) -> EngineMessage {
-        preload_at(path, first())
+        preload_with_revision(path, first())
     }
 
-    pub(crate) fn loaded_at(live: Live, revision: Revision) -> Live {
+    pub(crate) fn with_load_revision(live: Live, revision: Revision) -> Live {
         Live {
-            executed: ExecutedRevisions {
+            executed_revisions: ExecutedRevisions {
                 load: revision,
-                ..live.executed
+                ..live.executed_revisions
             },
             ..live
         }
@@ -361,9 +363,9 @@ pub(crate) mod tests {
         };
         Live {
             phase: Phase::Playing(Playing {
-                next: Next::Preloading {
+                next: NextTrack::Preloading {
                     path: path.into(),
-                    gain: None,
+                    decibels: None,
                 },
                 ..playing
             }),
@@ -371,14 +373,14 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn installed(
-        preload: &CurrentTrack,
+    pub(crate) fn attached(
+        incoming: &LoadedTrack,
         revision: Revision,
     ) -> EngineMessage {
         EngineMessage::Attached {
             revision,
             preload_mode: PreloadMode::Crossfade(Speed::default()),
-            duration: preload.total,
+            duration: incoming.duration,
         }
     }
 
@@ -396,11 +398,11 @@ pub(crate) mod tests {
         }))
     }
 
-    pub(crate) fn preloaded_at(live: Live, revision: Revision) -> Live {
+    pub(crate) fn with_preload_revision(live: Live, revision: Revision) -> Live {
         Live {
-            executed: ExecutedRevisions {
-                incoming: revision,
-                ..live.executed
+            executed_revisions: ExecutedRevisions {
+                preload: revision,
+                ..live.executed_revisions
             },
             ..live
         }
@@ -419,16 +421,6 @@ pub(crate) mod tests {
             device,
             position,
             playback,
-            opened: DeviceChoice::Requested,
-        })
-    }
-
-    pub(crate) fn fell_back(position: Duration, playback: Playback) -> EngineMessage {
-        EngineMessage::Opened(DeviceOpened {
-            device: OutputDevice::SystemDefault,
-            position,
-            playback,
-            opened: DeviceChoice::FellBack,
         })
     }
 
@@ -437,17 +429,38 @@ pub(crate) mod tests {
         pub(crate) effect: Result<AudioLoopCmd, Unhandled>,
     }
 
+    pub(crate) fn assert_fallback(engine_state: EngineState, moved_row: EngineRow) {
+        let (state, mut log) = trace(
+            engine_state,
+            vec![
+                EngineMessage::NotFound,
+                opened(
+                    OutputDevice::SystemDefault,
+                    Duration::ZERO,
+                    Playback::Playing,
+                ),
+            ],
+        )
+        .unwrap();
+        let EngineRow {
+            next,
+            effect: expected,
+        } = moved_row;
+        assert_eq!(state, next);
+        assert_same(Ok(log.pop().unwrap()), expected);
+    }
+
     pub(crate) fn assert_cell(
-        start: EngineState,
+        engine_state: EngineState,
         message: EngineMessage,
-        moved: EngineRow,
+        moved_row: EngineRow,
     ) {
-        let mut state = start;
+        let mut state = engine_state;
         let effect = step(&mut state, message);
         let EngineRow {
             next,
             effect: expected,
-        } = moved;
+        } = moved_row;
         assert_eq!(state, next);
         assert_same(effect, expected);
     }

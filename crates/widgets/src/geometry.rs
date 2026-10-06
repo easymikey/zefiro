@@ -23,12 +23,15 @@ impl Default for CoverSizing {
 }
 
 #[must_use]
-pub(crate) fn cover_sizing(style: CoverMode, cells: CoverCells) -> CoverSizing {
-    match style {
+pub(crate) fn cover_sizing(
+    cover_mode: CoverMode,
+    cover_cells: CoverCells,
+) -> CoverSizing {
+    match cover_mode {
         CoverMode::Off => CoverSizing::Off,
         CoverMode::Milkdrop => CoverSizing::Fixed {
-            width: cells.width,
-            height: cells.height,
+            width: cover_cells.width,
+            height: cover_cells.height,
         },
         CoverMode::Plain => CoverSizing::Auto(SQUARE_COVER_ASPECT),
         CoverMode::Vinyl => CoverSizing::Auto(canvas_aspect_ratio()),
@@ -47,44 +50,44 @@ mod tests {
 
     #[test]
     fn a_plain_cover_is_square() {
-        let cells = CoverCells {
+        let cover_cells = CoverCells {
             width: Cells(20),
             height: Cells(8),
         };
         assert_eq!(
-            cover_sizing(CoverMode::Plain, cells),
+            cover_sizing(CoverMode::Plain, cover_cells),
             CoverSizing::Auto(1.0)
         );
     }
 
     #[test]
     fn a_vinyl_cover_uses_the_vinyl_canvas_aspect_ratio() {
-        let cells = CoverCells {
+        let cover_cells = CoverCells {
             width: Cells(20),
             height: Cells(8),
         };
         assert_eq!(
-            cover_sizing(CoverMode::Vinyl, cells),
+            cover_sizing(CoverMode::Vinyl, cover_cells),
             CoverSizing::Auto(canvas_aspect_ratio())
         );
     }
 
     #[test]
     fn off_stays_off() {
-        let cells = CoverCells {
+        let cover_cells = CoverCells {
             width: Cells(20),
             height: Cells(8),
         };
-        assert_eq!(cover_sizing(CoverMode::Off, cells), CoverSizing::Off);
+        assert_eq!(cover_sizing(CoverMode::Off, cover_cells), CoverSizing::Off);
     }
 
     #[test]
     fn milkdrop_takes_a_fixed_text_grid() {
-        let cells = CoverCells {
+        let cover_cells = CoverCells {
             width: Cells(24),
             height: Cells(9),
         };
-        let sizing = cover_sizing(CoverMode::Milkdrop, cells);
+        let sizing = cover_sizing(CoverMode::Milkdrop, cover_cells);
         assert_eq!(
             sizing,
             CoverSizing::Fixed {
@@ -98,13 +101,13 @@ mod tests {
     #[case::plain(CoverMode::Plain)]
     #[case::vinyl(CoverMode::Vinyl)]
     fn plain_and_vinyl_size_themselves_from_their_own_aspect_ratio(
-        #[case] style: CoverMode,
+        #[case] cover_mode: CoverMode,
     ) {
-        let cells = CoverCells {
+        let cover_cells = CoverCells {
             width: Cells(20),
             height: Cells(8),
         };
-        let sizing = cover_sizing(style, cells);
+        let sizing = cover_sizing(cover_mode, cover_cells);
         assert!(matches!(sizing, CoverSizing::Auto(_)));
     }
 }

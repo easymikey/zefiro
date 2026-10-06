@@ -30,16 +30,16 @@ use crate::{
         message::ConfigMessage,
         paths::ConfigPaths,
         saves::PendingSaves,
-        watch::{ConfigChange, ConfigWatch, ConfigWatchMessage, WatchEffect},
+        watch::{ConfigChange, ConfigWatch, ConfigWatchEffect, ConfigWatchMessage},
     },
     load::theme_parsed,
     theme_file::TomlTheme,
 };
 
 pub struct ConfigDriver<P: Fn(TomlTheme), A: Fn(Appearance)> {
-    directory: Option<PathBuf>,
-    config: PathBuf,
-    appearance: PathBuf,
+    dir: Option<PathBuf>,
+    config_path: PathBuf,
+    appearance_path: PathBuf,
     default_music_dir: Option<PathBuf>,
     watch: ConfigWatch,
     saves: PendingSaves,
@@ -51,7 +51,7 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> std::fmt::Debug for ConfigDriver<P, A>
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ConfigDriver")
-            .field("directory", &self.directory)
+            .field("directory", &self.dir)
             .field("watch", &self.watch)
             .field("saves", &self.saves)
             .finish_non_exhaustive()
@@ -61,9 +61,9 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> std::fmt::Debug for ConfigDriver<P, A>
 impl<P: Fn(TomlTheme), A: Fn(Appearance)> ConfigDriver<P, A> {
     pub fn new(paths: &ConfigPaths, publish_theme: P, publish_appearance: A) -> Self {
         Self {
-            directory: config_directory(&paths.appearance),
-            config: paths.config.clone(),
-            appearance: paths.appearance.clone(),
+            dir: config_directory(&paths.appearance_path),
+            config_path: paths.config_path.clone(),
+            appearance_path: paths.appearance_path.clone(),
             default_music_dir: paths.default_music_dir.clone(),
             watch: ConfigWatch::new(paths),
             saves: PendingSaves::default(),
@@ -82,9 +82,9 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> Machine for ConfigDriver<P, A> {
         message: ConfigMessage,
     ) -> Result<ConfigLoopCmd, Unhandled> {
         match message {
-            ConfigMessage::Cmds(Cmds { cmds, .. }) => self.commanded(cmds),
+            ConfigMessage::Cmds(Cmds { cmds, .. }) => self.transition_cmds(cmds),
             ConfigMessage::Started => {
-                let watch = self.directory.clone().map_or_else(
+                let watch = self.dir.clone().map_or_else(
                     || {
                         Cmd::message(ConfigEvent::Error(ConfigError::Watch(
                             IoError::Missing,
@@ -93,20 +93,20 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> Machine for ConfigDriver<P, A> {
                     |path| {
                         Cmd::effect(LoopEffect::Watch {
                             path,
-                            item: ConfigMessage::Changed,
+                            changed: ConfigMessage::Changed,
                         })
                     },
                 );
                 Ok(watch.then(self.poll_everything()?))
             }
             ConfigMessage::Changed(Ok(())) => self.poll_everything(),
-            ConfigMessage::Changed(Err(kind)) => {
-                Ok(Cmd::message(ConfigEvent::Error(ConfigError::Watch(kind))))
+            ConfigMessage::Changed(Err(error)) => {
+                Ok(Cmd::message(ConfigEvent::Error(ConfigError::Watch(error))))
             }
             ConfigMessage::Watch(message) => self.drive_watch(message),
             ConfigMessage::Elapsed(revision) => self.saves.elapsed(revision),
-            ConfigMessage::Saved { file, text } => {
-                self.drive_watch(ConfigWatchMessage::Saved { name: file, text })
+            ConfigMessage::Saved { name, text } => {
+                self.drive_watch(ConfigWatchMessage::Saved { name, text })
             }
             ConfigMessage::Error(error) => Ok(Cmd::message(ConfigEvent::Error(error))),
         }
@@ -114,14 +114,20 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> Machine for ConfigDriver<P, A> {
 }
 
 impl<P: Fn(TomlTheme), A: Fn(Appearance)> ConfigDriver<P, A> {
-    fn commanded(&mut self, cmds: Vec<ConfigCmd>) -> Result<ConfigLoopCmd, Unhandled> {
+    fn transition_cmds(
+        &mut self,
+        config_cmds: Vec<ConfigCmd>,
+    ) -> Result<ConfigLoopCmd, Unhandled> {
         let before = self.saves.revision();
-        each_handled(cmds, |each| self.command(each))
+        each_handled(config_cmds, |each| self.transition_cmd(each))
             .map(|cmd| cmd.then(self.saves.wait_since(before)))
     }
 
-    fn command(&mut self, cmd: ConfigCmd) -> Result<ConfigLoopCmd, Unhandled> {
-        match cmd {
+    fn transition_cmd(
+        &mut self,
+        config_cmd: ConfigCmd,
+    ) -> Result<ConfigLoopCmd, Unhandled> {
+        match config_cmd {
             ConfigCmd::Save(patch) => {
                 self.saves.hold_config(patch);
                 Ok(Cmd::none())
@@ -143,12 +149,12 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> ConfigDriver<P, A> {
         message: ConfigWatchMessage,
     ) -> Result<ConfigLoopCmd, Unhandled> {
         let (effects, changes) = self.watch.transition(message)?.into_parts();
-        let lifted: ConfigLoopCmd = effects.into_iter().map(lift).collect();
+        let config_loop_cmd: ConfigLoopCmd = effects.into_iter().map(lift).collect();
         let default_music_dir = self.default_music_dir.as_deref();
         Ok(changes
             .into_iter()
             .map(|change| changed(change, default_music_dir))
-            .fold(lifted, Cmd::then))
+            .fold(config_loop_cmd, Cmd::then))
     }
 
     fn poll_everything(&mut self) -> Result<ConfigLoopCmd, Unhandled> {
@@ -167,8 +173,8 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> ConfigDriver<P, A> {
 fn changed(change: ConfigChange, default_music_dir: Option<&Path>) -> ConfigLoopCmd {
     match change {
         ConfigChange::Appearance(text) => appearance_changed(text.as_deref()),
-        ConfigChange::Keymap(text) => {
-            keymap_changed(text.as_deref(), default_music_dir)
+        ConfigChange::Config(text) => {
+            config_changed(text.as_deref(), default_music_dir)
         }
         ConfigChange::Theme { name, text } => theme_changed(name, text.as_deref()),
         ConfigChange::Themes {
@@ -188,12 +194,12 @@ fn appearance_changed(text: Option<&str>) -> ConfigLoopCmd {
     );
     match parsed {
         Ok(file) => {
-            let settings = file.settings();
+            let appearance_settings = file.to_appearance_settings();
             Cmd::effect(LoopEffect::Execute(ConfigEffect::PublishAppearance(
-                file.appearance(),
+                file.to_appearance(),
             )))
             .then(reports([
-                ConfigEvent::AppearanceReloaded(settings),
+                ConfigEvent::AppearanceReloaded(appearance_settings),
                 reloaded(ConfigName::Appearance, Ok(())),
             ]))
         }
@@ -204,19 +210,20 @@ fn appearance_changed(text: Option<&str>) -> ConfigLoopCmd {
     }
 }
 
-fn keymap_changed(
+fn config_changed(
     text: Option<&str>,
     default_music_dir: Option<&Path>,
 ) -> ConfigLoopCmd {
-    match crate::config_file::parse_config_reload(text.unwrap_or("")) {
+    match crate::config_file::parse_config_settings(text.unwrap_or("")) {
         Ok(parsed) => {
-            let keymap = ConfigEvent::KeymapReloaded(Box::new(parsed.keymap));
+            let keymap_event =
+                ConfigEvent::KeymapReloaded(Box::new(parsed.keymap_overrides));
             let music_dir = parsed
                 .music_dir
                 .or_else(|| default_music_dir.map(Path::to_path_buf))
                 .map(ConfigEvent::MusicDirReloaded);
             reports(
-                std::iter::once(keymap)
+                std::iter::once(keymap_event)
                     .chain(music_dir)
                     .chain([reloaded(ConfigName::Config, Ok(()))]),
             )
@@ -228,7 +235,9 @@ fn keymap_changed(
     }
 }
 
-fn lift(effect: WatchEffect) -> LoopEffect<ConfigEffect, Infallible, ConfigMessage> {
+fn lift(
+    effect: ConfigWatchEffect,
+) -> LoopEffect<ConfigEffect, Infallible, ConfigMessage> {
     LoopEffect::Execute(ConfigEffect::Watch(effect))
 }
 
@@ -254,11 +263,11 @@ fn reports(events: impl IntoIterator<Item = ConfigEvent>) -> ConfigLoopCmd {
         .fold(Cmd::none(), Cmd::then)
 }
 
-fn embedded_and_user(user: Vec<ThemeName>) -> Vec<ThemeName> {
+fn embedded_and_user(user_theme_names: Vec<ThemeName>) -> Vec<ThemeName> {
     crate::embedded_theme::EMBEDDED_THEMES
         .iter()
         .map(|&(name, _)| ThemeName::from_static(name))
-        .chain(user)
+        .chain(user_theme_names)
         .fold(Vec::new(), |mut names, name| {
             if !names.contains(&name) {
                 names.push(name);
@@ -267,8 +276,8 @@ fn embedded_and_user(user: Vec<ThemeName>) -> Vec<ThemeName> {
         })
 }
 
-fn config_directory(appearance: &Path) -> Option<PathBuf> {
-    appearance
+fn config_directory(appearance_path: &Path) -> Option<PathBuf> {
+    appearance_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .map(Path::to_path_buf)
@@ -302,7 +311,7 @@ mod tests {
             message::ConfigMessage,
             paths::{ConfigPaths, SeenTexts},
             saves::SAVE_DEBOUNCE,
-            watch::{ConfigWatchMessage, WatchEffect},
+            watch::{ConfigWatchEffect, ConfigWatchMessage},
         },
         theme_file::TomlTheme,
     };
@@ -314,14 +323,14 @@ mod tests {
 
     type Driver = ConfigDriver<fn(TomlTheme), fn(Appearance)>;
 
-    fn seeded(theme: Option<&'static str>, seen: SeenTexts) -> Driver {
+    fn seeded(theme: Option<&'static str>, seen_texts: SeenTexts) -> Driver {
         let paths = ConfigPaths {
-            config: PathBuf::from("/config/config.toml"),
-            appearance: PathBuf::from("/config/sifr-ui.toml"),
-            themes: PathBuf::from("/config/themes"),
+            config_path: PathBuf::from("/config/config.toml"),
+            appearance_path: PathBuf::from("/config/sifr-ui.toml"),
+            themes_dir: PathBuf::from("/config/themes"),
             default_music_dir: None,
-            theme: theme.map(ThemeName::from_static),
-            seen,
+            theme_name: theme.map(ThemeName::from_static),
+            seen_texts,
         };
         ConfigDriver::new(&paths, drop::<TomlTheme>, drop::<Appearance>)
     }
@@ -334,15 +343,15 @@ mod tests {
         ConfigName::Theme(ThemeName::from_static("noir"))
     }
 
-    fn commanded(cmds: Vec<ConfigCmd>) -> ConfigMessage {
+    fn cmds(config_cmds: Vec<ConfigCmd>) -> ConfigMessage {
         ConfigMessage::Cmds(Cmds {
-            cmds,
+            cmds: config_cmds,
             at: Instant::now(),
         })
     }
 
     fn saving(patch: ConfigPatch) -> ConfigMessage {
-        commanded(vec![ConfigCmd::Save(patch)])
+        cmds(vec![ConfigCmd::Save(patch)])
     }
 
     fn read_done(name: ConfigName, text: Option<&str>) -> ConfigMessage {
@@ -372,18 +381,20 @@ mod tests {
         describe(LoopEffect::Execute(effect))
     }
 
-    fn after(revision: u64) -> Cmd<String, ConfigEvent> {
+    fn issued(count: u64) -> Revision {
+        (0..count).fold(Revision::default(), |at, _| at.next())
+    }
+
+    fn after(revision: Revision) -> Cmd<String, ConfigEvent> {
         Cmd::effect(describe(LoopEffect::After {
             delay: SAVE_DEBOUNCE,
-            message: ConfigMessage::Elapsed(
-                (0..revision).fold(Revision::default(), |at, _| at.next()),
-            ),
+            message: ConfigMessage::Elapsed(revision),
         }))
     }
 
-    fn reading(file: ConfigName, path: &str) -> ConfigEffect {
-        ConfigEffect::Watch(WatchEffect::Read {
-            file,
+    fn reading(config_name: ConfigName, path: &str) -> ConfigEffect {
+        ConfigEffect::Watch(ConfigWatchEffect::Read {
+            name: config_name,
             path: PathBuf::from(path),
         })
     }
@@ -396,7 +407,7 @@ mod tests {
     }
 
     fn setting() -> ConfigMessage {
-        commanded(vec![ConfigCmd::SetAppearance(cover_brackets())])
+        cmds(vec![ConfigCmd::SetAppearance(cover_brackets())])
     }
 
     fn appearance_read(mut driver: Driver) -> Driver {
@@ -414,7 +425,7 @@ mod tests {
         "watch /config".to_string(),
         executed(reading(ConfigName::Appearance, "/config/sifr-ui.toml")),
         executed(reading(ConfigName::Config, "/config/config.toml")),
-        executed(ConfigEffect::Watch(WatchEffect::List(PathBuf::from(
+        executed(ConfigEffect::Watch(ConfigWatchEffect::List(PathBuf::from(
             "/config/themes"
         )))),
     ])))]
@@ -422,19 +433,19 @@ mod tests {
         read_done(ConfigName::Config, None),
         Ok(Cmd::none())
     )]
-    #[case::own_appearance_write(ConfigMessage::Saved { file: ConfigName::Appearance, text: "[window]\n".to_string() }, Ok(Cmd::none()))]
+    #[case::own_appearance_write(ConfigMessage::Saved { name: ConfigName::Appearance, text: "[window]\n".to_string() }, Ok(Cmd::none()))]
     #[case::save_error(
-        ConfigMessage::Error(ConfigError::Save { file: ConfigName::Config, kind: IoError::Other }),
-        Ok(Cmd::message(ConfigEvent::Error(ConfigError::Save { file: ConfigName::Config, kind: IoError::Other }))),
+        ConfigMessage::Error(ConfigError::Save { name: ConfigName::Config, error: IoError::Other }),
+        Ok(Cmd::message(ConfigEvent::Error(ConfigError::Save { name: ConfigName::Config, error: IoError::Other }))),
     )]
     #[case::watch_error(
         ConfigMessage::Changed(Err(IoError::Missing)),
         Ok(Cmd::message(ConfigEvent::Error(ConfigError::Watch(IoError::Missing))))
     )]
-    #[case::select_theme(commanded(vec![ConfigCmd::SelectTheme("noir".parse().unwrap())]), Ok(Cmd::effect(executed(reading(noir(), "/config/themes/noir.toml")))))]
+    #[case::select_theme(cmds(vec![ConfigCmd::SelectTheme("noir".parse().unwrap())]), Ok(Cmd::effect(executed(reading(noir(), "/config/themes/noir.toml")))))]
     #[case::save(saving(ConfigPatch {
         ..ConfigPatch::default()
-    }), Ok(after(1)))]
+    }), Ok(after(issued(1))))]
     fn a_fresh_driver_answers(
         #[case] message: ConfigMessage,
         #[case] expected: Result<Cmd<String, ConfigEvent>, Unhandled>,
@@ -446,7 +457,7 @@ mod tests {
 
     #[rstest]
     #[case::nothing_pending(ConfigMessage::Elapsed(Revision::default()))]
-    #[case::auto_theme(commanded(vec![ConfigCmd::SelectTheme(ThemeChoice::Auto)]))]
+    #[case::auto_theme(cmds(vec![ConfigCmd::SelectTheme(ThemeChoice::Auto)]))]
     fn a_fresh_driver_refuses_and_stays_unchanged(#[case] message: ConfigMessage) {
         let mut fresh = driver(None);
         let before = format!("{fresh:?}");
@@ -457,11 +468,11 @@ mod tests {
 
     #[test]
     fn the_first_external_config_edit_reloads_and_clears_the_error() {
-        let seen = SeenTexts {
+        let seen_texts = SeenTexts {
             config: Some(KEYS_X.to_string()),
             ..SeenTexts::default()
         };
-        let mut settled = seeded(None, seen);
+        let mut settled = seeded(None, seen_texts);
         settled.default_music_dir = Some(PathBuf::from("/music"));
         let startup_read =
             step(&mut settled, read_done(ConfigName::Config, Some(KEYS_X)));
@@ -520,14 +531,14 @@ mod tests {
 
         let (effects, events) = step(
             &mut state,
-            commanded(vec![ConfigCmd::SelectTheme("ghost".parse().unwrap())]),
+            cmds(vec![ConfigCmd::SelectTheme("ghost".parse().unwrap())]),
         )
         .into_parts();
 
         assert!(matches!(
             effects.as_slice(),
             [LoopEffect::Execute(ConfigEffect::Watch(
-                WatchEffect::Read { .. }
+                ConfigWatchEffect::Read { .. }
             ))]
         ));
         assert!(events.is_empty());
@@ -601,11 +612,11 @@ mod tests {
         let first = step(
             &mut current,
             saving(ConfigPatch {
-                theme: Some(ThemeName::from_static("noir")),
+                theme_name: Some(ThemeName::from_static("noir")),
                 ..ConfigPatch::default()
             }),
         );
-        assert_eq!(described(first), after(1));
+        assert_eq!(described(first), after(issued(1)));
         for volume in [10_u8, 20, 30, 40, 50] {
             let patch = ConfigPatch {
                 volume: Some(Percent::clamped(volume)),
@@ -614,7 +625,7 @@ mod tests {
             let queued = step(&mut current, saving(patch));
             assert_eq!(
                 described(queued),
-                after(u64::from(volume / 10) + 1),
+                after(issued(u64::from(volume / 10) + 1)),
                 "every save pushes the trailing edge out"
             );
         }
@@ -623,12 +634,12 @@ mod tests {
         let stale =
             current.transition(ConfigMessage::Elapsed(Revision::default().next()));
         assert_eq!(format!("{current:?}"), before_stale);
-        let elapsed = ConfigMessage::Elapsed(current.saves.revision());
-        let due = step(&mut current, elapsed);
+        let config_message = ConfigMessage::Elapsed(current.saves.revision());
+        let due = step(&mut current, config_message);
 
         assert!(matches!(stale, Err(Unhandled)));
         let expected = ConfigPatch {
-            theme: Some(ThemeName::from_static("noir")),
+            theme_name: Some(ThemeName::from_static("noir")),
             volume: Some(Percent::clamped(50)),
             ..ConfigPatch::default()
         };
@@ -645,13 +656,13 @@ mod tests {
         let (effects, events) = step(&mut next, setting()).into_parts();
 
         assert!(events.is_empty());
-        assert_eq!(described(Cmd::from_iter(effects)), after(1));
+        assert_eq!(described(Cmd::from_iter(effects)), after(issued(1)));
     }
 
     #[test]
     fn one_batch_saves_both_files_together() {
         let mut next = appearance_read(driver(None));
-        let both = commanded(vec![
+        let both = cmds(vec![
             ConfigCmd::Save(ConfigPatch {
                 ..ConfigPatch::default()
             }),
@@ -659,10 +670,10 @@ mod tests {
         ]);
 
         let (effects, _) = step(&mut next, both).into_parts();
-        let elapsed = ConfigMessage::Elapsed(next.saves.revision());
-        let (due, _) = step(&mut next, elapsed).into_parts();
+        let config_message = ConfigMessage::Elapsed(next.saves.revision());
+        let (due, _) = step(&mut next, config_message).into_parts();
 
-        assert_eq!(described(Cmd::from_iter(effects)), after(2));
+        assert_eq!(described(Cmd::from_iter(effects)), after(issued(2)));
         assert!(matches!(
             due.as_slice(),
             [
@@ -682,17 +693,16 @@ mod tests {
     })], &["save_config", "save_appearance"])]
     #[case::nothing(vec![], &[])]
     fn flush_writes_every_pending_save_at_once(
-        #[case] pending: Vec<ConfigCmd>,
+        #[case] pending_config_cmds: Vec<ConfigCmd>,
         #[case] expected: &[&str],
     ) {
         let mut next = appearance_read(driver(None));
-        if !pending.is_empty() {
-            assert!(next.transition(commanded(pending)).is_ok());
+        if !pending_config_cmds.is_empty() {
+            assert!(next.transition(cmds(pending_config_cmds)).is_ok());
         }
         let old = next.saves.revision();
 
-        let (flushed, _) =
-            step(&mut next, commanded(vec![ConfigCmd::Flush])).into_parts();
+        let (flushed, _) = step(&mut next, cmds(vec![ConfigCmd::Flush])).into_parts();
         let names: Vec<&str> = flushed
             .iter()
             .map(|each| {

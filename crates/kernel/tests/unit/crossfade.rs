@@ -55,7 +55,10 @@ fn playing_three() -> Model {
 fn a_tick_near_the_end_arms_the_preload() {
     let mut model = playing_three();
 
-    send(&mut model, Message::Audio(AudioEvent::Playhead(secs(50))));
+    send(
+        &mut model,
+        Message::Audio(AudioEvent::PositionReported(secs(50))),
+    );
     let first_mark = model.revisions.lookahead;
     let early = update(
         &mut model,
@@ -65,7 +68,10 @@ fn a_tick_near_the_end_arms_the_preload() {
     .unwrap();
     assert_eq!(preloaded(&early), None);
 
-    send(&mut model, Message::Audio(AudioEvent::Playhead(secs(95))));
+    send(
+        &mut model,
+        Message::Audio(AudioEvent::PositionReported(secs(95))),
+    );
     let second_mark = model.revisions.lookahead;
     let late = update(
         &mut model,
@@ -86,7 +92,10 @@ fn a_tick_near_the_end_arms_the_preload() {
 #[test]
 fn the_armed_preload_is_stamped_fresh() {
     let mut model = playing_three();
-    send(&mut model, Message::Audio(AudioEvent::Playhead(secs(95))));
+    send(
+        &mut model,
+        Message::Audio(AudioEvent::PositionReported(secs(95))),
+    );
     let mark = model.revisions.lookahead;
     let cmd = update(
         &mut model,
@@ -103,7 +112,10 @@ fn the_armed_preload_is_stamped_fresh() {
 #[test]
 fn the_hand_off_adopts_the_preloaded_track_without_a_second_load() {
     let mut model = playing_three();
-    send(&mut model, Message::Audio(AudioEvent::Playhead(secs(95))));
+    send(
+        &mut model,
+        Message::Audio(AudioEvent::PositionReported(secs(95))),
+    );
     let mark = model.revisions.lookahead;
     send(&mut model, Message::Elapsed(Timer::Lookahead(mark)));
 

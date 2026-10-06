@@ -73,7 +73,7 @@ fn slide_inside_the_card(
             if let Some(cell) = buffer.cell_mut(landing)
                 && allowed
                     .as_ref()
-                    .is_none_or(|guard| guard.is_valid(landing, cell))
+                    .is_none_or(|cell_filter| cell_filter.is_valid(landing, cell))
             {
                 *cell = arriving;
             }
@@ -92,9 +92,11 @@ pub fn row_flash(accent: Color) -> Animation {
 }
 
 #[must_use]
-pub fn volume_pulse(fill: Color, lifted: Color, guard: CellFilter) -> Animation {
-    fx::fade_from_fg(lifted, TIMINGS.volume_pulse)
-        .with_filter(CellFilter::AllOf(vec![guard, CellFilter::FgColor(fill)]))
+pub fn volume_pulse(fill: Color, lifted: Color, cell_filter: CellFilter) -> Animation {
+    fx::fade_from_fg(lifted, TIMINGS.volume_pulse).with_filter(CellFilter::AllOf(vec![
+        cell_filter,
+        CellFilter::FgColor(fill),
+    ]))
 }
 
 #[must_use]
@@ -123,7 +125,7 @@ fn wash_buffer(from: Color, context: &ShaderFnContext<'_>, buffer: &mut Buffer) 
             };
             if allowed
                 .as_ref()
-                .is_some_and(|guard| !guard.is_valid(position, cell))
+                .is_some_and(|cell_filter| !cell_filter.is_valid(position, cell))
             {
                 continue;
             }
@@ -137,7 +139,7 @@ fn wash_buffer(from: Color, context: &ShaderFnContext<'_>, buffer: &mut Buffer) 
 }
 
 #[must_use]
-pub fn scatter_burst(background: Color, guard: CellFilter) -> Animation {
+pub fn scatter_burst(background: Color, cell_filter: CellFilter) -> Animation {
     fx::parallel(&[
         fx::explode(
             TIMINGS.delete_force,
@@ -145,10 +147,10 @@ pub fn scatter_burst(background: Color, guard: CellFilter) -> Animation {
             TIMINGS.delete_burst,
         )
         .with_rng(SimpleRng::new(TIMINGS.scatter_seed))
-        .with_filter(guard.clone())
+        .with_filter(cell_filter.clone())
         .reversed(),
         fx::paint_bg(background, TIMINGS.delete_burst).with_filter(CellFilter::AllOf(
-            vec![CellFilter::BgColor(Color::Black), guard],
+            vec![CellFilter::BgColor(Color::Black), cell_filter],
         )),
     ])
 }

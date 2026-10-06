@@ -8,9 +8,9 @@ use crate::tap::{SpectrumTap, WINDOW};
 pub struct SpectrumAnalyzer {
     transform: Arc<dyn RealToComplex<f32>>,
     window: Box<[f32; WINDOW]>,
-    window_gain: f32,
+    window_scale: f32,
     input: Box<[f32; WINDOW]>,
-    spectrum: Vec<Complex<f32>>,
+    bins: Vec<Complex<f32>>,
     scratch: Vec<Complex<f32>>,
 }
 
@@ -24,29 +24,32 @@ impl SpectrumAnalyzer {
     #[must_use]
     pub fn new() -> Self {
         let transform = RealFftPlanner::<f32>::new().plan_fft_forward(WINDOW);
-        let spectrum = transform.make_output_vec();
+        let bins = transform.make_output_vec();
         let scratch = transform.make_scratch_vec();
         let window = hann_window();
-        let window_gain = window.iter().sum::<f32>() / float_count(WINDOW);
+        let window_scale = window.iter().sum::<f32>() / float_count(WINDOW);
         Self {
             transform,
             window: Box::new(window),
-            window_gain,
+            window_scale,
             input: Box::new([0.0; WINDOW]),
-            spectrum,
+            bins,
             scratch,
         }
     }
 
-    pub fn bands<const BANDS: usize>(&mut self, tap: &SpectrumTap) -> [f32; BANDS] {
-        tap.latest(&mut self.input);
+    pub fn bands<const BANDS: usize>(
+        &mut self,
+        spectrum_tap: &SpectrumTap,
+    ) -> [f32; BANDS] {
+        spectrum_tap.latest(&mut self.input);
         self.input
             .iter_mut()
             .zip(self.window.iter())
             .for_each(|(slot, window)| *slot *= window);
         match self.transform.process_with_scratch(
             &mut self.input[..],
-            &mut self.spectrum,
+            &mut self.bins,
             &mut self.scratch,
         ) {
             Ok(()) => {}
@@ -55,16 +58,16 @@ impl SpectrumAnalyzer {
                 | FftError::OutputBuffer(..)
                 | FftError::ScratchBuffer(..)
                 | FftError::InputValues(..),
-            ) => self.spectrum.fill(Complex::default()),
+            ) => self.bins.fill(Complex::default()),
         }
         let usable = WINDOW / 2;
-        let scale = float_count(usable) * self.window_gain;
+        let scale = float_count(usable) * self.window_scale;
         std::array::from_fn(|band| {
             let start = log_bin_edge(band, BANDS, usable);
             let end = log_bin_edge(band + 1, BANDS, usable)
                 .max(start + 1)
                 .min(usable);
-            band_magnitude(self.spectrum.get(start..end).unwrap_or(&[]), scale)
+            band_magnitude(self.bins.get(start..end).unwrap_or(&[]), scale)
         })
     }
 }
@@ -98,8 +101,8 @@ fn float_count(count: usize) -> f32 {
     f32::from(u16::try_from(count).unwrap_or(u16::MAX))
 }
 
-fn bin_index(position: f32) -> usize {
-    position.to_usize().unwrap_or(0)
+fn bin_index(fractional_bin: f32) -> usize {
+    fractional_bin.to_usize().unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -111,7 +114,7 @@ mod tests {
 
     use crate::{
         spectrum::SpectrumAnalyzer,
-        tap::{Tap, WINDOW, new_tap},
+        tap::{TappedSource, WINDOW, spectrum_channel},
     };
 
     struct Tone {
@@ -155,28 +158,28 @@ mod tests {
 
     #[test]
     fn silence_gives_zero_bands() {
-        let (_spectrum, tap) = new_tap();
+        let (_spectrum_buffers, spectrum_tap) = spectrum_channel();
         let mut analyzer = SpectrumAnalyzer::new();
-        let bands: [f32; 8] = analyzer.bands(&tap);
+        let bands: [f32; 8] = analyzer.bands(&spectrum_tap);
         assert!(bands.iter().all(|&band| band == 0.0));
     }
 
     #[test]
     fn a_failed_transform_gives_zero_bands_instead_of_the_last_spectrum() {
-        let (spectrum, tap) = new_tap();
-        Tap::new(
+        let (spectrum_buffers, spectrum_tap) = spectrum_channel();
+        TappedSource::new(
             Tone {
                 samples: tone(64.0).into_iter(),
             },
-            &spectrum,
+            &spectrum_buffers,
         )
         .for_each(drop);
         let mut analyzer = SpectrumAnalyzer::new();
-        let loud: [f32; 8] = analyzer.bands(&tap);
+        let loud: [f32; 8] = analyzer.bands(&spectrum_tap);
         assert!(loud.iter().any(|&band| band > 0.0));
 
-        analyzer.spectrum.truncate(WINDOW / 4);
-        let failed: [f32; 8] = analyzer.bands(&tap);
+        analyzer.bins.truncate(WINDOW / 4);
+        let failed: [f32; 8] = analyzer.bands(&spectrum_tap);
         assert!(failed.iter().all(|&band| band == 0.0), "{failed:?}");
     }
 
@@ -184,16 +187,16 @@ mod tests {
     #[case::a_few_bands(4)]
     #[case::many_bands(32)]
     fn every_band_stays_within_unit_range(#[case] count: usize) {
-        let (spectrum, tap) = new_tap();
-        let source = Tone {
+        let (spectrum_buffers, spectrum_tap) = spectrum_channel();
+        let source_tone = Tone {
             samples: tone(64.0).into_iter(),
         };
-        Tap::new(source, &spectrum).for_each(drop);
+        TappedSource::new(source_tone, &spectrum_buffers).for_each(drop);
 
         let mut analyzer = SpectrumAnalyzer::new();
         let bands: Vec<f32> = match count {
-            4 => analyzer.bands::<4>(&tap).to_vec(),
-            _ => analyzer.bands::<32>(&tap).to_vec(),
+            4 => analyzer.bands::<4>(&spectrum_tap).to_vec(),
+            _ => analyzer.bands::<32>(&spectrum_tap).to_vec(),
         };
         assert!(bands.iter().all(|&band| (0.0..=1.0).contains(&band)));
     }

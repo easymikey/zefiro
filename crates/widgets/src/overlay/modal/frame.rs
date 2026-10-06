@@ -10,10 +10,10 @@ use ratatui::{
 use crate::overlay::modal::place::{
     ContentSize,
     DIALOG_SCREEN_MARGIN,
-    FrameWidth,
+    FullWidth,
     Hint,
     LIST_SCREEN_MARGIN,
-    content_size,
+    frame_size,
     padded_content,
     place,
     split_hint_row,
@@ -28,12 +28,9 @@ pub(crate) enum ModalSize {
     Dialog {
         min_width: Cells,
         content_width: Cells,
-        content_lines: Cells,
-    },
-    FrameWidth {
-        bounds: Rect,
         content_rows: Cells,
     },
+    FullWidth(FullWidth),
 }
 
 #[derive(Debug)]
@@ -62,9 +59,9 @@ impl<'a> Modal<'a> {
     #[must_use]
     pub(crate) fn areas(&self, area: Rect, avoid: &[Rect]) -> ModalAreas {
         let hint = if self.hint.is_some() {
-            Hint::Present
+            Hint::Shown
         } else {
-            Hint::Absent
+            Hint::Hidden
         };
         let outer = self.outer(ModalBounds { area, avoid }, hint);
         let content = padded_content(outer);
@@ -82,14 +79,14 @@ impl<'a> Modal<'a> {
                 content_width,
                 content_rows,
             } => {
-                let size = content_size(
+                let size = frame_size(
                     bounds.area,
                     ContentSize {
                         min_width: Cells(0),
                         content_width,
                         content_rows,
                         hint,
-                        screen_margin: LIST_SCREEN_MARGIN,
+                        screen_margin_width: LIST_SCREEN_MARGIN,
                     },
                 );
                 place(bounds.area, size, bounds.avoid)
@@ -97,30 +94,21 @@ impl<'a> Modal<'a> {
             ModalSize::Dialog {
                 min_width,
                 content_width,
-                content_lines,
+                content_rows,
             } => {
-                let size = content_size(
+                let size = frame_size(
                     bounds.area,
                     ContentSize {
                         min_width,
                         content_width,
-                        content_rows: content_lines,
+                        content_rows,
                         hint,
-                        screen_margin: DIALOG_SCREEN_MARGIN,
+                        screen_margin_width: DIALOG_SCREEN_MARGIN,
                     },
                 );
                 place(bounds.area, size, bounds.avoid)
             }
-            ModalSize::FrameWidth {
-                bounds: frame_bounds,
-                content_rows,
-            } => crate::overlay::modal::place::width(
-                hint,
-                FrameWidth {
-                    bounds: frame_bounds,
-                    content_rows,
-                },
-            ),
+            ModalSize::FullWidth(full_width) => full_width.outer(hint),
         }
     }
 
@@ -174,8 +162,8 @@ mod tests {
             title: "T",
             size,
             hint: match hint {
-                Hint::Present => Some(Line::from("hint")),
-                Hint::Absent => None,
+                Hint::Shown => Some(Line::from("hint")),
+                Hint::Hidden => None,
             },
             border: Color::Reset,
             window_background: Color::Reset,
@@ -190,26 +178,26 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_list(ModalRow { name: "list", size: list(20, 5), hint: Hint::Absent, screen: area(80, 24) })]
-    #[case::a_list_with_a_hint(ModalRow { name: "list_hint", size: list(20, 5), hint: Hint::Present, screen: area(80, 24) })]
-    #[case::a_list_larger_than_the_screen(ModalRow { name: "list_clamped", size: list(200, 200), hint: Hint::Present, screen: area(80, 24) })]
-    #[case::a_list_on_a_tiny_screen(ModalRow { name: "list_tiny", size: list(200, 200), hint: Hint::Absent, screen: area(30, 10) })]
+    #[case::a_list(ModalRow { name: "list", size: list(20, 5), hint: Hint::Hidden, screen: area(80, 24) })]
+    #[case::a_list_with_a_hint(ModalRow { name: "list_hint", size: list(20, 5), hint: Hint::Shown, screen: area(80, 24) })]
+    #[case::a_list_larger_than_the_screen(ModalRow { name: "list_clamped", size: list(200, 200), hint: Hint::Shown, screen: area(80, 24) })]
+    #[case::a_list_on_a_tiny_screen(ModalRow { name: "list_tiny", size: list(200, 200), hint: Hint::Hidden, screen: area(30, 10) })]
     #[case::a_dialog(ModalRow {
         name: "dialog",
-        size: ModalSize::Dialog { min_width: Cells(24), content_width: Cells(20), content_lines: Cells(3) },
-        hint: Hint::Present,
+        size: ModalSize::Dialog { min_width: Cells(24), content_width: Cells(20), content_rows: Cells(3) },
+        hint: Hint::Shown,
         screen: area(80, 24),
     })]
     #[case::a_dialog_narrower_than_its_minimum(ModalRow {
         name: "dialog_min_width",
-        size: ModalSize::Dialog { min_width: Cells(40), content_width: Cells(5), content_lines: Cells(1) },
-        hint: Hint::Absent,
+        size: ModalSize::Dialog { min_width: Cells(40), content_width: Cells(5), content_rows: Cells(1) },
+        hint: Hint::Hidden,
         screen: area(80, 24),
     })]
     #[case::a_dialog_larger_than_the_screen(ModalRow {
         name: "dialog_clamped",
-        size: ModalSize::Dialog { min_width: Cells(200), content_width: Cells(200), content_lines: Cells(3) },
-        hint: Hint::Present,
+        size: ModalSize::Dialog { min_width: Cells(200), content_width: Cells(200), content_rows: Cells(3) },
+        hint: Hint::Shown,
         screen: area(80, 24),
     })]
     fn a_modal_frames_itself_inside_the_screen(#[case] row: ModalRow) {
@@ -225,9 +213,9 @@ mod tests {
                 < frame.outer.y + frame.outer.height
         );
         let hint_present = if frame.hint_row.height > 0 {
-            Hint::Present
+            Hint::Shown
         } else {
-            Hint::Absent
+            Hint::Hidden
         };
         assert_eq!(hint_present, row.hint);
 
@@ -239,8 +227,8 @@ mod tests {
     #[test]
     fn list_capacity_matches_what_frame_clamps_a_huge_list_to() {
         let screen = area(80, 24);
-        let capacity = list_capacity(screen, Hint::Present);
-        let frame = modal(list(200, 200), Hint::Present).areas(screen, &[]);
+        let capacity = list_capacity(screen, Hint::Shown);
+        let frame = modal(list(200, 200), Hint::Shown).areas(screen, &[]);
         assert_eq!(
             (frame.body.width, frame.body.height),
             (capacity.width.0, capacity.height.0)
@@ -261,24 +249,24 @@ mod tests {
         };
         let screen = area(80, 24);
         let centered_outer = modal.areas(screen, &[]).outer;
-        let cover = Rect {
+        let cover_area = Rect {
             x: 0,
             y: 0,
             width: centered_outer.x + centered_outer.width / 2,
             height: centered_outer.y + centered_outer.height / 2,
         };
-        assert!(cover.intersects(centered_outer));
+        assert!(cover_area.intersects(centered_outer));
 
-        let frame = modal.areas(screen, &[cover]);
+        let frame = modal.areas(screen, &[cover_area]);
         assert!(
-            !frame.outer.intersects(cover),
+            !frame.outer.intersects(cover_area),
             "modal must move clear of the cover rect, got {:?} vs cover {:?}",
             frame.outer,
-            cover
+            cover_area
         );
         assert!(
-            frame.outer.y >= cover.y + cover.height
-                || frame.outer.x >= cover.x + cover.width,
+            frame.outer.y >= cover_area.y + cover_area.height
+                || frame.outer.x >= cover_area.x + cover_area.width,
             "modal must shift below or right of the cover, not sideways past it \
              some other way, got {:?}",
             frame.outer

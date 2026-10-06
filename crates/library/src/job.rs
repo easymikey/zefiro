@@ -7,7 +7,7 @@ use kernel::{
     cmd::CoverJob,
     domain::{
         revision::Revision,
-        track::{Track, TrackRef},
+        track::{Track, TrackSource},
     },
 };
 
@@ -22,13 +22,13 @@ use crate::{
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LibraryJob {
-    Cover {
-        job: CoverJob,
+    DecodeCover {
+        cover_job: CoverJob,
         revision: Revision,
     },
     Tag {
         music_dir: PathBuf,
-        tracks: Vec<TrackRef>,
+        track_sources: Vec<TrackSource>,
         revision: Revision,
         dirs: Arc<LibraryDirs>,
     },
@@ -36,7 +36,7 @@ pub enum LibraryJob {
         music_dir: PathBuf,
         revision: Revision,
         dirs: Arc<LibraryDirs>,
-        decodable: &'static [&'static str],
+        audio_extensions: &'static [&'static str],
     },
     ReadCache {
         music_dir: PathBuf,
@@ -46,7 +46,7 @@ pub enum LibraryJob {
     List {
         music_dir: PathBuf,
         revision: Revision,
-        decodable: &'static [&'static str],
+        audio_extensions: &'static [&'static str],
     },
 }
 
@@ -58,41 +58,40 @@ impl LibraryJob {
 
     fn read(self) -> Result<LibraryMessage, Error> {
         match self {
-            LibraryJob::Cover { job, revision } => Ok(LibraryMessage::CoverDecoded {
+            LibraryJob::DecodeCover {
+                cover_job,
                 revision,
-                decoded: decode(job),
+            } => Ok(LibraryMessage::CoverDecoded {
+                revision,
+                decoded: decode(cover_job),
             }),
             LibraryJob::Tag {
                 music_dir,
-                tracks,
+                track_sources,
                 revision,
                 dirs,
             } => {
-                let scan::TagsRead {
-                    tracks,
-                    first_error,
-                } = tagged(&dirs, &music_dir, &local_paths(tracks));
+                let scan::TagsRead { tracks, skipped } =
+                    tagged(&dirs, &music_dir, &local_paths(track_sources));
                 Ok(LibraryMessage::Tagged {
                     tracks,
                     revision,
-                    skipped: first_error,
+                    skipped,
                 })
             }
             LibraryJob::Scan {
                 music_dir,
                 revision,
                 dirs,
-                decodable,
+                audio_extensions,
             } => {
-                let listing = listing(&music_dir, decodable)?;
-                let scan::TagsRead {
-                    tracks,
-                    first_error,
-                } = tagged(&dirs, &music_dir, &listing.paths);
+                let listing = listing(&music_dir, audio_extensions)?;
+                let scan::TagsRead { tracks, skipped } =
+                    tagged(&dirs, &music_dir, &listing.paths);
                 Ok(LibraryMessage::Scanned {
                     tracks,
                     revision,
-                    skipped: listing.first_error.or(first_error),
+                    skipped: listing.skipped.or(skipped),
                 })
             }
             LibraryJob::ReadCache {
@@ -107,30 +106,29 @@ impl LibraryJob {
             LibraryJob::List {
                 music_dir,
                 revision,
-                decodable,
-            } => {
-                listing(&music_dir, decodable).map(|listing| listed(listing, revision))
-            }
+                audio_extensions,
+            } => listing(&music_dir, audio_extensions)
+                .map(|listing| listed(listing, revision)),
         }
     }
 }
 
 fn listed(listing: scan::Listing, revision: Revision) -> LibraryMessage {
-    let scan::Listing { paths, first_error } = listing;
+    let scan::Listing { paths, skipped } = listing;
     LibraryMessage::Listed {
         tracks: paths
             .iter()
             .map(|path| Arc::new(Track::listed(path)))
             .collect(),
         revision,
-        skipped: first_error,
+        skipped,
     }
 }
 
-fn local_paths(tracks: Vec<TrackRef>) -> Vec<PathBuf> {
-    tracks
+fn local_paths(track_sources: Vec<TrackSource>) -> Vec<PathBuf> {
+    track_sources
         .into_iter()
-        .map(|TrackRef::Local(path)| path)
+        .map(|TrackSource::Local(path)| path)
         .collect()
 }
 
@@ -139,17 +137,20 @@ fn tagged(dirs: &LibraryDirs, music_dir: &Path, paths: &[PathBuf]) -> scan::Tags
     match cache::save(dirs, music_dir, &read.tracks) {
         Ok(()) => read,
         Err(error) => scan::TagsRead {
-            first_error: read.first_error.or(Some(error)),
+            skipped: read.skipped.or(Some(error)),
             tracks: read.tracks,
         },
     }
 }
 
-fn listing(music_dir: &Path, decodable: &[&str]) -> Result<scan::Listing, Error> {
-    match scan::list_dir(music_dir, decodable) {
+fn listing(
+    music_dir: &Path,
+    audio_extensions: &[&str],
+) -> Result<scan::Listing, Error> {
+    match scan::list_dir(music_dir, audio_extensions) {
         scan::Listing {
             paths,
-            first_error: Some(error),
+            skipped: Some(error),
         } if paths.is_empty() => Err(error),
         listing => Ok(listing),
     }
@@ -161,7 +162,7 @@ mod tests {
 
     use kernel::domain::{
         revision::Revision,
-        track::{Tagging, TrackRef},
+        track::{Tagging, TrackSource},
     };
     use tempfile::TempDir;
 
@@ -188,7 +189,7 @@ mod tests {
     fn a_failed_cache_save_keeps_the_tagged_tracks_and_reports_the_error() {
         let (_directory, music_dir, dirs) = unwritable_cache();
         let message = LibraryJob::Tag {
-            tracks: vec![TrackRef::Local(music_dir.join("tone.wav"))],
+            track_sources: vec![TrackSource::Local(music_dir.join("tone.wav"))],
             music_dir,
             revision: Revision::default(),
             dirs: Arc::new(dirs),
@@ -203,7 +204,7 @@ mod tests {
         assert!(
             tracks
                 .iter()
-                .all(|track| matches!(track.tagging(), Tagging::Read(_))),
+                .all(|track| matches!(track.tagging(), Tagging::Tagged(_))),
             "{tracks:?}"
         );
         assert!(skipped.is_some(), "the save error is reported");

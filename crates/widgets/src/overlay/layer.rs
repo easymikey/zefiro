@@ -19,7 +19,7 @@ use ratatui::{
 
 use crate::{
     overlay::{
-        confirm_delete,
+        confirm_trash,
         help::HelpWidget,
         history::HistoryWidget,
         jump_to_time,
@@ -42,7 +42,7 @@ pub(crate) struct OverlayView<'a> {
     pub(crate) overlay: Option<&'a Overlay>,
     pub(crate) tracks: &'a [Arc<Track>],
     pub(crate) history: &'a [HistoryEntry],
-    pub(crate) theme: ActiveTheme<'a>,
+    pub(crate) active_theme: ActiveTheme<'a>,
     pub(crate) settings_view: SettingsView<'a>,
     pub(crate) bindings: &'a [KeyBinding],
     pub(crate) now: Moment,
@@ -105,7 +105,7 @@ fn banner_area(screen: Rect) -> Option<Rect> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SavePhase {
-    Prompt,
+    Typing,
     Failed,
 }
 
@@ -120,7 +120,7 @@ impl SaveLine {
         match overlay {
             Overlay::SavePlaylist(TextEntry { input, error: None }) => Some(Self {
                 text: format!("Save playlist: {input}"),
-                phase: SavePhase::Prompt,
+                phase: SavePhase::Typing,
             }),
             Overlay::SavePlaylist(TextEntry {
                 error: Some(reason),
@@ -133,7 +133,7 @@ impl SaveLine {
             | Overlay::Search(_)
             | Overlay::History(_)
             | Overlay::Settings(..)
-            | Overlay::ConfirmDelete(_)
+            | Overlay::ConfirmTrash(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_)
             | Overlay::MusicDir(_) => None,
@@ -142,10 +142,10 @@ impl SaveLine {
 }
 
 #[must_use]
-fn accent(theme: &ActiveTheme<'_>, phase: SavePhase) -> ratatui::style::Color {
+fn accent(active_theme: &ActiveTheme<'_>, phase: SavePhase) -> ratatui::style::Color {
     match phase {
-        SavePhase::Prompt => theme.colors().accent,
-        SavePhase::Failed => theme.alert(),
+        SavePhase::Typing => active_theme.colors().accent,
+        SavePhase::Failed => active_theme.alert(),
     }
 }
 
@@ -167,7 +167,7 @@ impl<'a> OverlayWidget<'a> {
 
     fn container(&self, avoid: &'a [Rect]) -> ModalContainer<'a> {
         if self.frame_layout.playlist_pane.is_empty() {
-            ModalContainer::Modal(avoid)
+            ModalContainer::Floating(avoid)
         } else {
             ModalContainer::Playlist(self.frame_layout.playlist_pane)
         }
@@ -177,25 +177,30 @@ impl<'a> OverlayWidget<'a> {
         let avoid = self.avoid.as_slice();
         match self.view.overlay? {
             Overlay::Help => Some(ActiveOverlay::Help(
-                HelpWidget::new(self.view.bindings, self.view.theme).avoid(avoid),
+                HelpWidget::new(self.view.bindings, self.view.active_theme)
+                    .avoid(avoid),
             )),
             Overlay::Search(search) => Some(ActiveOverlay::Search(
-                SearchWidget::new(search, self.view.theme)
+                SearchWidget::new(search, self.view.active_theme)
                     .tracks(self.view.tracks)
                     .bounds(self.frame_layout.search_bounds)
                     .container(self.container(avoid)),
             )),
             Overlay::History(cursor) => Some(ActiveOverlay::History(
-                HistoryWidget::new(self.view.history, self.view.theme)
+                HistoryWidget::new(self.view.history, self.view.active_theme)
                     .now(self.view.now)
                     .selected(RowIndex::new(usize::from(cursor.selected())))
                     .container(self.container(avoid)),
             )),
             Overlay::Settings(current) => Some(ActiveOverlay::Settings(
-                SettingsWidget::new(self.view.settings_view, *current, self.view.theme)
-                    .avoid(avoid),
+                SettingsWidget::new(
+                    self.view.settings_view,
+                    *current,
+                    self.view.active_theme,
+                )
+                .avoid(avoid),
             )),
-            overlay @ (Overlay::ConfirmDelete(_)
+            overlay @ (Overlay::ConfirmTrash(_)
             | Overlay::JumpToTime(_)
             | Overlay::TrackDetails(_)
             | Overlay::MusicDir(_)
@@ -209,17 +214,18 @@ impl<'a> OverlayWidget<'a> {
         avoid: &'a [Rect],
     ) -> Option<ActiveOverlay<'a>> {
         match overlay {
-            Overlay::ConfirmDelete(candidate) => Some(ActiveOverlay::Prompt(
-                confirm_delete::prompt(candidate, self.view.theme).avoid(avoid),
+            Overlay::ConfirmTrash(candidate) => Some(ActiveOverlay::Prompt(
+                confirm_trash::prompt(candidate, self.view.active_theme).avoid(avoid),
             )),
             Overlay::JumpToTime(entry) => Some(ActiveOverlay::Prompt(
-                jump_to_time::prompt(entry, self.view.theme).avoid(avoid),
+                jump_to_time::prompt(entry, self.view.active_theme).avoid(avoid),
             )),
             Overlay::TrackDetails(track) => Some(ActiveOverlay::TrackDetails(
-                TrackDetailsWidget::new(track.as_ref(), self.view.theme).avoid(avoid),
+                TrackDetailsWidget::new(track.as_ref(), self.view.active_theme)
+                    .avoid(avoid),
             )),
             Overlay::MusicDir(entry) => Some(ActiveOverlay::Prompt(
-                music_dir::prompt(entry, self.view.theme).avoid(avoid),
+                music_dir::prompt(entry, self.view.active_theme).avoid(avoid),
             )),
             Overlay::Help
             | Overlay::Search(_)
@@ -241,7 +247,9 @@ impl<'a> OverlayWidget<'a> {
     fn paint_banner(&self, save_line: SaveLine, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
         Paragraph::new(save_line.text)
-            .style(Style::default().fg(accent(&self.view.theme, save_line.phase)))
+            .style(
+                Style::default().fg(accent(&self.view.active_theme, save_line.phase)),
+            )
             .render(area, buffer);
     }
 }
@@ -285,7 +293,7 @@ mod tests {
         appearance::CoverMode,
         cursor_over::CursorOver,
         model::Model,
-        overlay::{DeleteCandidate, Overlay, SearchQuery, TextEntry},
+        overlay::{Overlay, SearchQuery, TextEntry, TrashCandidate},
         setting_row::SettingRow,
         time::Moment,
     };
@@ -296,7 +304,7 @@ mod tests {
         overlay::{
             layer::{OverlayView, OverlayWidget, SavePhase, accent},
             modal::placement::OverlayAreas,
-            settings::test_support::{appearance_rows, settings_values},
+            settings::test_support::{appearance_row_choices, settings_values},
         },
         screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
         test_support::{noir, rendered},
@@ -327,7 +335,7 @@ mod tests {
                 overlay: model.workspace.overlay.as_ref(),
                 tracks: &model.playlist.tracks,
                 history: &model.history,
-                theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
+                active_theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
                 settings_view: settings_values(),
                 bindings: &[],
                 now: Moment::default(),
@@ -388,7 +396,7 @@ mod tests {
     #[test]
     fn settings_overlay_lists_the_settings_view() {
         let theme = noir();
-        let custom = appearance_rows();
+        let custom = appearance_row_choices();
         let model = model_with(Overlay::Settings(SettingRow::first(&custom)));
         let layout = layout(Rect::default());
         let mut with_values = layer(&theme, &model, &layout);
@@ -401,10 +409,12 @@ mod tests {
     }
 
     #[test]
-    fn confirm_delete_overlay_shows_the_prompt() {
+    fn confirm_trash_overlay_shows_the_prompt() {
         let theme = noir();
-        let model = model_with(Overlay::ConfirmDelete(DeleteCandidate {
-            source: kernel::domain::track::TrackRef::Local("/music/moon.flac".into()),
+        let model = model_with(Overlay::ConfirmTrash(TrashCandidate {
+            source: kernel::domain::track::TrackSource::Local(
+                "/music/moon.flac".into(),
+            ),
             title: "Moon River".to_string(),
             artist: "Audrey Hepburn".to_string(),
         }));
@@ -461,13 +471,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case::prompt(None, SavePhase::Prompt)]
+    #[case::prompt(None, SavePhase::Typing)]
     #[case::failure(
-        Some(kernel::domain::playlist::PlaylistNameError::Empty),
+        Some(kernel::domain::playlist::PlaylistFileNameError::Empty),
         SavePhase::Failed
     )]
     fn save_playlist_shows_the_bottom_banner(
-        #[case] error: Option<kernel::domain::playlist::PlaylistNameError>,
+        #[case] error: Option<kernel::domain::playlist::PlaylistFileNameError>,
         #[case] phase: SavePhase,
     ) {
         let theme = noir();
@@ -506,16 +516,16 @@ mod tests {
     fn a_dialog_keeps_clear_of_the_cover() {
         let theme = noir();
         let model = model_with(Overlay::JumpToTime(TextEntry::default()));
-        let cover = Rect::new(0, 0, 80, 15);
+        let cover_area = Rect::new(0, 0, 80, 15);
         let layout = FrameLayout {
-            cover: Some(cover),
+            cover_area: Some(cover_area),
             ..layout(Rect::default())
         };
         let overlay = layer(&theme, &model, &layout);
         let dialog = overlay
             .areas(Rect::new(0, 0, 80, 28))
             .map(OverlayAreas::outer);
-        assert!(dialog.is_some_and(|area| !area.intersects(cover)));
+        assert!(dialog.is_some_and(|area| !area.intersects(cover_area)));
     }
 
     #[test]

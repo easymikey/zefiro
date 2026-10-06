@@ -11,18 +11,18 @@ use crate::domain::{
 #[derive(Debug, Clone, Default)]
 pub struct Library {
     pub tracks: Vec<Arc<Track>>,
-    pub view: Vec<TrackIndex>,
+    pub track_indexes: Vec<TrackIndex>,
 }
 
 impl Library {
     #[must_use]
-    pub fn view_track(&self, row: ViewIndex) -> Option<&Arc<Track>> {
-        let index = self.view.get(row.get())?;
+    pub fn view_track(&self, index: ViewIndex) -> Option<&Arc<Track>> {
+        let index = self.track_indexes.get(index.get())?;
         self.tracks.get(index.get())
     }
 
     pub fn view_tracks(&self) -> impl Iterator<Item = (TrackIndex, &Arc<Track>)> {
-        self.view.iter().filter_map(move |&index| {
+        self.track_indexes.iter().filter_map(move |&index| {
             self.tracks.get(index.get()).map(|track| (index, track))
         })
     }
@@ -50,14 +50,14 @@ pub fn sort_indices(
     match key {
         SortKey::Added => (0..tracks.len()).map(TrackIndex::new).collect(),
         SortKey::Favorites => {
-            let mut indices: Vec<TrackIndex> =
+            let mut track_indexes: Vec<TrackIndex> =
                 (0..tracks.len()).map(TrackIndex::new).collect();
-            indices.sort_by_key(|&index| {
+            track_indexes.sort_by_key(|&index| {
                 !tracks
                     .get(index.get())
                     .is_some_and(|found| favorites.is_favorite(found.source()))
             });
-            indices
+            track_indexes
         }
         SortKey::Artist => sort_by_artist(tracks),
         SortKey::Album => sort_by_key(tracks, |found| &found.tags().album),

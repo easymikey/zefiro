@@ -11,7 +11,7 @@ pub struct Tags {
     pub album_artist: Option<String>,
     pub date: Option<String>,
     pub genre: Option<String>,
-    pub track: Option<u32>,
+    pub track_number: Option<u32>,
     pub track_total: Option<u32>,
     pub disc: Option<u32>,
     pub composer: Option<String>,
@@ -35,27 +35,27 @@ pub struct AudioFormat {
     pub sample_rate: Option<Hertz>,
     pub bits_per_sample: Option<u8>,
     pub channels: Option<u8>,
-    pub replay_gain: Option<Decibels>,
+    pub decibels: Option<Decibels>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tagging {
     Listed(Option<Duration>),
-    Read(Duration),
+    Tagged(Duration),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum TrackRef {
+pub enum TrackSource {
     Local(PathBuf),
 }
 
 #[derive(Clone, PartialEq)]
 pub struct Track {
-    source: TrackRef,
+    source: TrackSource,
     tags: Tags,
     audio_format: AudioFormat,
     display: Box<str>,
-    song_title: Box<str>,
+    title: Box<str>,
     tagging: Tagging,
 }
 
@@ -97,15 +97,15 @@ impl Track {
             tags,
             audio_format,
         } = track_parts;
-        let display = Self::compute_display(&path, &tags);
-        let song_title = Self::song_title_from(&path, &tags);
+        let display = Self::display_from(&path, &tags);
+        let title = Self::title_from(&path, &tags);
         Self {
-            source: TrackRef::Local(path),
+            source: TrackSource::Local(path),
             tags,
             audio_format,
             display,
-            song_title,
-            tagging: Tagging::Read(duration),
+            title,
+            tagging: Tagging::Tagged(duration),
         }
     }
 
@@ -113,8 +113,8 @@ impl Track {
     pub fn listed(path: &Path) -> Self {
         Self {
             display: file_stem(path).into_boxed_str(),
-            song_title: file_stem(path).into_boxed_str(),
-            source: TrackRef::Local(path.to_path_buf()),
+            title: file_stem(path).into_boxed_str(),
+            source: TrackSource::Local(path.to_path_buf()),
             tags: Tags::default(),
             audio_format: AudioFormat::default(),
             tagging: Tagging::Listed(None),
@@ -122,8 +122,8 @@ impl Track {
     }
 
     #[must_use]
-    fn compute_display(path: &Path, tags: &Tags) -> Box<str> {
-        let computed = match (&tags.title, &tags.artist) {
+    fn display_from(path: &Path, tags: &Tags) -> Box<str> {
+        let display = match (&tags.title, &tags.artist) {
             (Some(title), Some(artist)) => format!("{artist} — {title}"),
             (Some(title), None) => title.clone(),
             _ => path.file_name().map_or_else(
@@ -131,10 +131,10 @@ impl Track {
                 |name| name.to_string_lossy().into_owned(),
             ),
         };
-        computed.into_boxed_str()
+        display.into_boxed_str()
     }
 
-    fn song_title_from(path: &Path, tags: &Tags) -> Box<str> {
+    fn title_from(path: &Path, tags: &Tags) -> Box<str> {
         tags.title
             .clone()
             .unwrap_or_else(|| file_stem(path))
@@ -142,13 +142,13 @@ impl Track {
     }
 
     #[must_use]
-    pub fn source(&self) -> &TrackRef {
+    pub fn source(&self) -> &TrackSource {
         &self.source
     }
 
     #[must_use]
     pub fn path(&self) -> &Path {
-        let TrackRef::Local(path) = &self.source;
+        let TrackSource::Local(path) = &self.source;
         path
     }
 
@@ -156,7 +156,7 @@ impl Track {
     pub fn duration(&self) -> Option<Duration> {
         match self.tagging {
             Tagging::Listed(duration) => duration,
-            Tagging::Read(duration) => Some(duration),
+            Tagging::Tagged(duration) => Some(duration),
         }
     }
 
@@ -181,15 +181,15 @@ impl Track {
     }
 
     #[must_use]
-    pub fn song_title(&self) -> &str {
-        &self.song_title
+    pub fn title(&self) -> &str {
+        &self.title
     }
 
     #[must_use]
     pub(crate) fn with_duration(&self, duration: Duration) -> Self {
         let tagging = match self.tagging {
             Tagging::Listed(_) => Tagging::Listed(Some(duration)),
-            Tagging::Read(_) => Tagging::Read(duration),
+            Tagging::Tagged(_) => Tagging::Tagged(duration),
         };
         Self {
             tagging,
@@ -212,7 +212,7 @@ mod tests {
     use crate::domain::track::{AudioFormat, Tags, Track, TrackParts};
 
     #[test]
-    fn a_tagged_track_shows_its_tag_title_as_the_song_title() {
+    fn a_tagged_track_shows_its_tag_title_as_the_title() {
         let track = Track::new(TrackParts {
             path: "/music/file-name.mp3".into(),
             duration: Duration::from_secs(1),
@@ -223,11 +223,11 @@ mod tests {
             audio_format: AudioFormat::default(),
         });
 
-        assert_eq!(track.song_title(), "Song");
+        assert_eq!(track.title(), "Song");
     }
 
     #[test]
-    fn an_untagged_track_shows_its_file_stem_as_the_song_title() {
+    fn an_untagged_track_shows_its_file_stem_as_the_title() {
         let built_track = Track::new(TrackParts {
             path: "/music/file-name.mp3".into(),
             duration: Duration::from_secs(1),
@@ -236,7 +236,7 @@ mod tests {
         });
         let listed = Track::listed(Path::new("/music/file-name.mp3"));
 
-        assert_eq!(built_track.song_title(), "file-name");
-        assert_eq!(listed.song_title(), "file-name");
+        assert_eq!(built_track.title(), "file-name");
+        assert_eq!(listed.title(), "file-name");
     }
 }

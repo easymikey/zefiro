@@ -50,8 +50,8 @@ fn storyboard_frame(frame: &Buffer, painted: &Buffer) -> String {
         }
         out.push_str("  |  ");
         for column in 0..SCREEN.width {
-            let same = frame.cell((column, row)) == painted.cell((column, row));
-            out.push(if same { '.' } else { '#' });
+            let is_same = frame.cell((column, row)) == painted.cell((column, row));
+            out.push(if is_same { '.' } else { '#' });
         }
         out.push('\n');
     }
@@ -107,8 +107,8 @@ fn strayed_outside(frame: &Buffer, painted: &Buffer) -> Vec<(u16, u16)> {
     let mut strayed = Vec::new();
     for row in 0..SCREEN.height {
         for column in 0..SCREEN.width {
-            let inside = TOAST_CARD.contains(Position { x: column, y: row });
-            if !inside && frame.cell((column, row)) != painted.cell((column, row)) {
+            let is_inside = TOAST_CARD.contains(Position { x: column, y: row });
+            if !is_inside && frame.cell((column, row)) != painted.cell((column, row)) {
                 strayed.push((column, row));
             }
         }
@@ -141,7 +141,7 @@ fn delete_burst_storyboard() {
     let mut stage = AnimationStage::default();
     let pane = crate::unit::support::pane_backdrop();
     stage.play(Vec::new(), &pane);
-    stage.play(vec![Cue::TrackDeleted], &pane);
+    stage.play(vec![Cue::TrackTrashed], &pane);
 
     insta::assert_snapshot!(storyboard(&mut stage, slice(|t| t.delete_burst, 2)));
 }

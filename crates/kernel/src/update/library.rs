@@ -13,7 +13,7 @@ use crate::{
         playlist::{Playlist, PlaylistSource},
         revision::{Freshness, Revision, Revisions},
         toast::Toast,
-        track::{Track, TrackRef},
+        track::{Track, TrackSource},
         workspace::Workspace,
     },
     message::{LibraryError, LibraryEvent, LibrarySubject},
@@ -58,12 +58,12 @@ pub(crate) fn update(
             *parts.history = entries;
             Ok(Cmd::none())
         }
-        LibraryEvent::Error(failure) => Ok(library_failed(&mut parts, &failure)),
+        LibraryEvent::Error(error) => Ok(library_failed(&mut parts, &error)),
     }
 }
 
-fn library_failed(parts: &mut LibraryParts<'_>, failure: &LibraryError) -> Cmd {
-    match failure {
+fn library_failed(parts: &mut LibraryParts<'_>, error: &LibraryError) -> Cmd {
+    match error {
         LibraryError::NoUserDirs
         | LibraryError::Disk {
             subject: LibrarySubject::Scan,
@@ -72,7 +72,7 @@ fn library_failed(parts: &mut LibraryParts<'_>, failure: &LibraryError) -> Cmd {
         LibraryError::Disk { .. } | LibraryError::DecodeCover { .. } => {}
     }
     parts.workspace.show(
-        Toast::error("Library error").with_text(failure.to_string()),
+        Toast::error("Library error").with_text(error.to_string()),
         parts.revisions,
     )
 }
@@ -89,33 +89,40 @@ fn whole_library(parts: &mut LibraryParts<'_>, tracks: Vec<Arc<Track>>) -> Cmd {
 
 fn listed_library(
     parts: &mut LibraryParts<'_>,
-    listed: Vec<Arc<Track>>,
+    listed_tracks: Vec<Arc<Track>>,
     revision: Revision,
 ) -> Cmd {
     *parts.scan_status = ScanStatus::Tagging {
         done: 0,
-        total: listed.len(),
+        total: listed_tracks.len(),
     };
-    let tagging = tag_request(parts.music_dir, &listed, revision);
-    library_loaded(parts, listed);
+    let tagging = tag_request(parts.music_dir, &listed_tracks, revision);
+    library_loaded(parts, listed_tracks);
     tagging_progress(parts.scan_status, 0).then(tagging)
 }
 
-fn tag_request(music_dir: &Path, listed: &[Arc<Track>], revision: Revision) -> Cmd {
-    if listed.is_empty() {
+fn tag_request(
+    music_dir: &Path,
+    listed_tracks: &[Arc<Track>],
+    revision: Revision,
+) -> Cmd {
+    if listed_tracks.is_empty() {
         return Cmd::none();
     }
     Effect::Library(LibraryCmd::TagTracks {
         music_dir: music_dir.to_path_buf(),
-        tracks: listed.iter().map(|track| track.source().clone()).collect(),
+        track_sources: listed_tracks
+            .iter()
+            .map(|track| track.source().clone())
+            .collect(),
         revision,
     })
     .into()
 }
 
-fn tagged_tracks(parts: &mut LibraryParts<'_>, tagged: Vec<Arc<Track>>) -> Cmd {
-    let read = tagged.len();
-    let tagged: Tagged = tagged
+fn tagged_tracks(parts: &mut LibraryParts<'_>, tagged_tracks: Vec<Arc<Track>>) -> Cmd {
+    let read = tagged_tracks.len();
+    let tagged: Tagged = tagged_tracks
         .into_iter()
         .map(|track| (track.source().clone(), track))
         .collect();
@@ -125,7 +132,7 @@ fn tagged_tracks(parts: &mut LibraryParts<'_>, tagged: Vec<Arc<Track>>) -> Cmd {
     retag_tracks(&mut parts.playlist.tracks, &tagged);
     retag_player(parts.player, &tagged);
     if let Some(Overlay::Search(search)) = parts.workspace.overlay.as_mut() {
-        crate::update::overlay::search::rank(search, &parts.playlist.tracks);
+        crate::update::overlay::search::rerank(search, &parts.playlist.tracks);
     }
     tagging_progress(parts.scan_status, read)
 }
@@ -145,7 +152,7 @@ fn library_loaded(parts: &mut LibraryParts<'_>, tracks: Vec<Arc<Track>>) {
     }
 }
 
-type Tagged = HashMap<TrackRef, Arc<Track>>;
+type Tagged = HashMap<TrackSource, Arc<Track>>;
 
 fn retag_tracks(tracks: &mut [Arc<Track>], tagged: &Tagged) {
     for track in tracks {
@@ -178,9 +185,12 @@ fn tagging_progress(scan_status: &mut ScanStatus, read: usize) -> Cmd {
 }
 
 fn install_library(parts: &mut LibraryParts<'_>, tracks: Vec<Arc<Track>>) {
-    let sort = parts.workspace.browse.sort;
-    let view = sort_indices(&tracks, sort, parts.favorites);
-    *parts.library = Some(Library { tracks, view });
+    let sort_key = parts.workspace.browse.sort_key;
+    let view = sort_indices(&tracks, sort_key, parts.favorites);
+    *parts.library = Some(Library {
+        tracks,
+        track_indexes: view,
+    });
 }
 
 #[cfg(test)]
@@ -203,7 +213,7 @@ mod tests {
             revision::Revision,
             time::Moment,
             toast::{TOAST_LIFETIME, ToastLevel},
-            track::{Track, TrackRef},
+            track::{Track, TrackSource},
         },
         message::{LibraryError, LibraryEvent, LibrarySubject, Timer},
         update::{library::update, machine::Unhandled},
@@ -218,7 +228,7 @@ mod tests {
         let mut model = Model {
             library: Some(Library {
                 tracks: Vec::new(),
-                view: vec![TrackIndex::new(7)],
+                track_indexes: vec![TrackIndex::new(7)],
             }),
             ..Model::default()
         };
@@ -245,7 +255,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            library.map(|ready| ready.view.as_slice()),
+            library.map(|ready| ready.track_indexes.as_slice()),
             Some([TrackIndex::new(0), TrackIndex::new(1)].as_slice())
         );
         assert_eq!(model.playlist.tracks.len(), 2);
@@ -307,7 +317,7 @@ mod tests {
         .unwrap();
 
         let toast = model.workspace.toasts.first().unwrap();
-        assert_eq!(toast.kind, ToastLevel::Error);
+        assert_eq!(toast.level, ToastLevel::Error);
         assert_eq!(
             toast.text.as_deref(),
             Some(LibraryError::NoUserDirs.to_string().as_str())
@@ -328,7 +338,7 @@ mod tests {
         LibraryError::Disk {
             subject,
             path: "/music".into(),
-            source: IoError::Missing,
+            error: IoError::Missing,
         }
     }
 
@@ -350,7 +360,7 @@ mod tests {
         ScanStatus::Scanning
     )]
     fn a_library_error_settles_the_scan(
-        #[case] failure: LibraryError,
+        #[case] error: LibraryError,
         #[case] expected: ScanStatus,
     ) {
         let mut model = Model {
@@ -360,7 +370,7 @@ mod tests {
 
         let cmd = update(
             crate::update::library_parts(&mut model),
-            LibraryEvent::Error(failure),
+            LibraryEvent::Error(error),
         );
 
         assert!(cmd.is_ok());
@@ -371,26 +381,26 @@ mod tests {
     fn a_loaded_history_replaces_the_history_and_emits_nothing() {
         let mut model = Model {
             history: vec![HistoryEntry {
-                track: TrackRef::Local("/music/stale.flac".into()),
+                track_source: TrackSource::Local("/music/stale.flac".into()),
                 title: "Stale".into(),
                 artist: None,
-                at: Moment::new(std::time::Duration::from_secs(1)),
+                played_at: Moment::new(std::time::Duration::from_secs(1)),
             }],
             ..Default::default()
         };
 
         let fresh = vec![
             HistoryEntry {
-                track: TrackRef::Local("/music/b.flac".into()),
+                track_source: TrackSource::Local("/music/b.flac".into()),
                 title: "B".into(),
                 artist: Some("Artist".into()),
-                at: Moment::new(std::time::Duration::from_secs(200)),
+                played_at: Moment::new(std::time::Duration::from_secs(200)),
             },
             HistoryEntry {
-                track: TrackRef::Local("/music/a.flac".into()),
+                track_source: TrackSource::Local("/music/a.flac".into()),
                 title: "A".into(),
                 artist: None,
-                at: Moment::new(std::time::Duration::from_secs(100)),
+                played_at: Moment::new(std::time::Duration::from_secs(100)),
             },
         ];
         let cmd = update(

@@ -8,6 +8,8 @@ use kernel::{
     update::keymap::chord::KeyBinding,
 };
 
+use crate::key_hints::chords_for_action;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HelpRow {
     pub(crate) chord: String,
@@ -16,7 +18,7 @@ pub(crate) struct HelpRow {
 
 pub(crate) struct HelpGroup {
     pub(crate) title: &'static str,
-    pub(crate) bindings: Vec<HelpRow>,
+    pub(crate) help_rows: Vec<HelpRow>,
 }
 
 pub(crate) const COLUMN_GAP: u16 = 3;
@@ -132,15 +134,6 @@ const HELP_GROUPS: [HelpGroupEntry; 4] = [
     },
 ];
 
-fn chords_for_action(bindings: &[KeyBinding], action: Action) -> String {
-    bindings
-        .iter()
-        .filter(|binding| binding.action == Some(action))
-        .map(|binding| binding.pattern.to_string())
-        .collect::<Vec<_>>()
-        .join(" / ")
-}
-
 fn is_digit_chord(chord: &str) -> bool {
     chord.len() == 1 && chord.chars().next().is_some_and(|c| c.is_ascii_digit())
 }
@@ -174,10 +167,10 @@ fn collapse_digit_runs(rows: &[(String, Cow<'static, str>)]) -> Vec<HelpRow> {
 }
 
 pub(crate) struct HelpGroups {
-    pub(crate) playback: HelpGroup,
-    pub(crate) navigation: HelpGroup,
-    pub(crate) playlist: HelpGroup,
-    pub(crate) general: HelpGroup,
+    pub(crate) playback_group: HelpGroup,
+    pub(crate) navigation_group: HelpGroup,
+    pub(crate) playlist_group: HelpGroup,
+    pub(crate) general_group: HelpGroup,
 }
 
 impl HelpGroups {
@@ -187,20 +180,23 @@ impl HelpGroups {
                 .actions
                 .iter()
                 .map(|(action, help)| {
-                    (chords_for_action(bindings, *action), help.text())
+                    let chords = chords_for_action(bindings, *action)
+                        .collect::<Vec<_>>()
+                        .join(" / ");
+                    (chords, help.text())
                 })
                 .collect();
             HelpGroup {
                 title: spec.title,
-                bindings: collapse_digit_runs(&rows),
+                help_rows: collapse_digit_runs(&rows),
             }
         };
         let [playback, navigation, playlist, general] = &HELP_GROUPS;
         Self {
-            playback: make(playback),
-            navigation: make(navigation),
-            playlist: make(playlist),
-            general: make(general),
+            playback_group: make(playback),
+            navigation_group: make(navigation),
+            playlist_group: make(playlist),
+            general_group: make(general),
         }
     }
 }

@@ -2,9 +2,9 @@ use crossterm::event::{KeyCode as CrosstermCode, KeyEvent, KeyModifiers};
 use kernel::domain::key::{Key, KeyCode, KeyPress, Modifiers};
 
 #[must_use]
-pub fn key_press(event: KeyEvent) -> Option<KeyPress> {
-    let typed = to_key(event)?;
-    let key = to_key(normalized(event)).unwrap_or(typed);
+pub fn key_press(key_event: KeyEvent) -> Option<KeyPress> {
+    let typed = key(key_event)?;
+    let key = key(normalized(key_event)).unwrap_or(typed);
     Some(KeyPress { key, typed })
 }
 
@@ -13,14 +13,14 @@ const JCUKEN_LAYOUT: &str =
 const QWERTY_LAYOUT: &str =
     "qwertyuiop[]asdfghjkl;'zxcvbnm,./QWERTYUIOP{}ASDFGHJKL:\"ZXCVBNM<>?";
 
-fn normalized(event: KeyEvent) -> KeyEvent {
-    if let CrosstermCode::Char(character) = event.code {
+fn normalized(key_event: KeyEvent) -> KeyEvent {
+    if let CrosstermCode::Char(character) = key_event.code {
         KeyEvent {
             code: CrosstermCode::Char(qwerty_char(character)),
-            ..event
+            ..key_event
         }
     } else {
-        event
+        key_event
     }
 }
 
@@ -32,8 +32,8 @@ fn qwerty_char(character: char) -> char {
         .unwrap_or(character)
 }
 
-fn to_key(event: KeyEvent) -> Option<Key> {
-    let code = match event.code {
+fn key(key_event: KeyEvent) -> Option<Key> {
+    let code = match key_event.code {
         CrosstermCode::Char(character) => KeyCode::Char(character),
         CrosstermCode::Enter => KeyCode::Enter,
         CrosstermCode::Esc => KeyCode::Esc,
@@ -70,8 +70,8 @@ fn to_key(event: KeyEvent) -> Option<Key> {
     ]
     .into_iter()
     .filter(|(held, _)| {
-        event.modifiers.contains(*held)
-            && (*held != KeyModifiers::SHIFT || reportable_shift(event.code))
+        key_event.modifiers.contains(*held)
+            && (*held != KeyModifiers::SHIFT || is_shift_reportable(key_event.code))
     })
     .fold(Modifiers::NONE, |modifiers, (_, mapped)| {
         modifiers.with(mapped)
@@ -79,7 +79,7 @@ fn to_key(event: KeyEvent) -> Option<Key> {
     Some(Key { code, modifiers })
 }
 
-fn reportable_shift(code: CrosstermCode) -> bool {
+fn is_shift_reportable(code: CrosstermCode) -> bool {
     !matches!(code, CrosstermCode::Char(_))
 }
 
@@ -89,7 +89,7 @@ mod tests {
     use kernel::domain::key::{KeyCode, Modifiers};
     use rstest::rstest;
 
-    use crate::keys::{key_press, to_key};
+    use crate::keys::{key, key_press};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Shift {
@@ -132,8 +132,8 @@ mod tests {
             expected_code,
             expected_shift,
         } = row;
-        let event = KeyEvent::new(code, modifiers);
-        let converted = to_key(event).map(|key| {
+        let key_event = KeyEvent::new(code, modifiers);
+        let converted = key(key_event).map(|key| {
             let shift = if key.modifiers.contains(Modifiers::SHIFT) {
                 Shift::Reported
             } else {
@@ -146,8 +146,9 @@ mod tests {
 
     #[test]
     fn key_press_translates_ru_char_and_types_it_verbatim() {
-        let event = KeyEvent::new(CrosstermCode::Char('й'), KeyModifiers::NONE);
-        let press = key_press(event).map(|press| (press.key.code, press.typed.code));
+        let key_event = KeyEvent::new(CrosstermCode::Char('й'), KeyModifiers::NONE);
+        let press =
+            key_press(key_event).map(|press| (press.key.code, press.typed.code));
         assert_eq!(press, Some((KeyCode::Char('q'), KeyCode::Char('й'))));
     }
 
@@ -169,15 +170,15 @@ mod tests {
         #[case] ru: char,
         #[case] en: char,
     ) {
-        let event = KeyEvent::new(CrosstermCode::Char(ru), KeyModifiers::NONE);
-        let translated = key_press(event).map(|press| press.key.code);
+        let key_event = KeyEvent::new(CrosstermCode::Char(ru), KeyModifiers::NONE);
+        let translated = key_press(key_event).map(|press| press.key.code);
         assert_eq!(translated, Some(KeyCode::Char(en)));
     }
 
     #[test]
     fn conversion_preserves_control_modifier_after_normalization() {
-        let event = KeyEvent::new(CrosstermCode::Char('л'), KeyModifiers::CONTROL);
-        let key = key_press(event).unwrap().key;
+        let key_event = KeyEvent::new(CrosstermCode::Char('л'), KeyModifiers::CONTROL);
+        let key = key_press(key_event).unwrap().key;
         assert_eq!(key.code, KeyCode::Char('k'));
         assert!(key.modifiers.contains(Modifiers::CTRL));
     }

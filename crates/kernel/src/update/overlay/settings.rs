@@ -3,16 +3,16 @@ use crate::{
     domain::{
         direction::Direction,
         overlay::Overlay,
-        setting_row::{AppearanceSetting, SettingRow},
+        setting_row::{AppearanceRowChoice, SettingRow},
         workspace::Workspace,
     },
-    message::{Message, SettingsRowRequest},
+    message::{Message, SettingRowRequest},
     update::machine::{Machine, Unhandled},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingRowMessage {
-    Navigate(SettingRow),
+    Set(SettingRow),
     Step(Direction),
 }
 
@@ -20,9 +20,12 @@ impl Machine for SettingRow {
     type Message = SettingRowMessage;
     type Effect = Cmd;
 
-    fn transition(&mut self, message: SettingRowMessage) -> Result<Cmd, Unhandled> {
-        match message {
-            SettingRowMessage::Navigate(row) => {
+    fn transition(
+        &mut self,
+        setting_row_message: SettingRowMessage,
+    ) -> Result<Cmd, Unhandled> {
+        match setting_row_message {
+            SettingRowMessage::Set(row) => {
                 *self = row;
                 Ok(Cmd::none())
             }
@@ -34,42 +37,42 @@ impl Machine for SettingRow {
     }
 }
 
-pub(crate) fn resolve(
+pub(crate) fn setting_row_message(
     workspace: &Workspace,
-    appearance_rows: &[AppearanceSetting],
-    request: SettingsRowRequest,
+    appearance_row_choices: &[AppearanceRowChoice],
+    request: SettingRowRequest,
 ) -> Result<SettingRowMessage, Unhandled> {
     match request {
-        SettingsRowRequest::Navigate(direction) => {
-            navigate_target(workspace, appearance_rows, direction)
+        SettingRowRequest::Navigate(direction) => {
+            navigate_target(workspace, appearance_row_choices, direction)
         }
-        SettingsRowRequest::Step(direction) => Ok(SettingRowMessage::Step(direction)),
-        SettingsRowRequest::Activate => activate(workspace, appearance_rows),
+        SettingRowRequest::Step(direction) => Ok(SettingRowMessage::Step(direction)),
+        SettingRowRequest::Activate => activate(workspace, appearance_row_choices),
     }
 }
 
 fn navigate_target(
     workspace: &Workspace,
-    appearance_rows: &[AppearanceSetting],
+    appearance_row_choices: &[AppearanceRowChoice],
     direction: Direction,
 ) -> Result<SettingRowMessage, Unhandled> {
     let Some(Overlay::Settings(selected)) = &workspace.overlay else {
         return Err(Unhandled);
     };
-    let rows = SettingRow::all(appearance_rows);
-    Ok(SettingRowMessage::Navigate(
-        selected.moved(&rows, direction),
+    let setting_row = SettingRow::all(appearance_row_choices);
+    Ok(SettingRowMessage::Set(
+        selected.moved(&setting_row, direction),
     ))
 }
 
 fn activate(
     workspace: &Workspace,
-    appearance_rows: &[AppearanceSetting],
+    appearance_row_choices: &[AppearanceRowChoice],
 ) -> Result<SettingRowMessage, Unhandled> {
     let Some(Overlay::Settings(selected)) = &workspace.overlay else {
         return Err(Unhandled);
     };
-    if selected.activates(appearance_rows) {
+    if selected.activates(appearance_row_choices) {
         Ok(SettingRowMessage::Step(Direction::Next))
     } else {
         Err(Unhandled)

@@ -14,7 +14,7 @@ TomlAppearance {
         radius: None,
         fill: None,
         groove: None,
-        remaining: Elapsed,
+        progress_time: Elapsed,
     },
     cover: TomlCover {
         mode: Vinyl,

@@ -1,7 +1,7 @@
 use std::{io::Write, path::PathBuf};
 
 use kernel::{
-    domain::{history::HistoryEntry, time::Moment, track::TrackRef},
+    domain::{history::HistoryEntry, time::Moment, track::TrackSource},
     message::LibrarySubject,
 };
 use serde::{Deserialize, Serialize};
@@ -16,34 +16,38 @@ struct HistoryRecord {
     title: String,
     artist: Option<String>,
     #[serde(rename = "ts")]
-    at: i64,
+    played_at: i64,
 }
 
 impl From<HistoryRecord> for HistoryEntry {
     fn from(record: HistoryRecord) -> Self {
         Self {
-            track: TrackRef::Local(record.path),
+            track_source: TrackSource::Local(record.path),
             title: record.title,
             artist: record.artist,
-            at: Moment::new(std::time::Duration::from_secs(
-                u64::try_from(record.at).unwrap_or(0),
+            played_at: Moment::new(std::time::Duration::from_secs(
+                u64::try_from(record.played_at).unwrap_or(0),
             )),
         }
     }
 }
 
-pub(crate) fn append(dirs: &LibraryDirs, played: &HistoryEntry) -> Result<(), Error> {
+pub(crate) fn append(
+    dirs: &LibraryDirs,
+    history_entry: &HistoryEntry,
+) -> Result<(), Error> {
     let path = dirs.data_dir.join(HISTORY_FILE_NAME);
     crate::files::create_parent_dir(&path)
         .map_err(Error::io(LibrarySubject::History, &path))?;
     let record = HistoryRecord {
         path: {
-            let TrackRef::Local(track_path) = &played.track;
+            let TrackSource::Local(track_path) = &history_entry.track_source;
             track_path.clone()
         },
-        title: played.title.clone(),
-        artist: played.artist.clone(),
-        at: i64::try_from(played.at.since_epoch().as_secs()).unwrap_or(i64::MAX),
+        title: history_entry.title.clone(),
+        artist: history_entry.artist.clone(),
+        played_at: i64::try_from(history_entry.played_at.since_epoch().as_secs())
+            .unwrap_or(i64::MAX),
     };
     let json = serde_json::to_string(&record)
         .map_err(Error::json(LibrarySubject::History, &path))?;
@@ -94,7 +98,7 @@ fn parse_history(
 mod tests {
     use std::path::PathBuf;
 
-    use kernel::domain::{history::HistoryEntry, time::Moment, track::TrackRef};
+    use kernel::domain::{history::HistoryEntry, time::Moment, track::TrackSource};
     use rstest::rstest;
 
     use crate::{
@@ -106,10 +110,10 @@ mod tests {
 
     fn entry(path: &str, title: &str, artist: Option<&str>) -> HistoryEntry {
         HistoryEntry {
-            track: TrackRef::Local(PathBuf::from(path)),
+            track_source: TrackSource::Local(PathBuf::from(path)),
             title: title.to_string(),
             artist: artist.map(str::to_string),
-            at: Moment::default(),
+            played_at: Moment::default(),
         }
     }
 
@@ -122,11 +126,11 @@ mod tests {
             playlists_dir: directory.path().join("playlists"),
         };
 
-        let sample = HistoryEntry {
-            at: Moment::new(std::time::Duration::from_secs(1_700_000_000)),
+        let sample_entry = HistoryEntry {
+            played_at: Moment::new(std::time::Duration::from_secs(1_700_000_000)),
             ..entry("/music/song.flac", "Song", Some("Artist"))
         };
-        history::append(&dirs, &sample).unwrap();
+        history::append(&dirs, &sample_entry).unwrap();
 
         let contents =
             std::fs::read_to_string(dirs.data_dir.join(history::HISTORY_FILE_NAME))
@@ -144,11 +148,11 @@ mod tests {
         };
 
         let first = HistoryEntry {
-            at: Moment::new(std::time::Duration::from_secs(1_000)),
+            played_at: Moment::new(std::time::Duration::from_secs(1_000)),
             ..entry("/music/first.flac", "First", Some("Artist A"))
         };
         let second = HistoryEntry {
-            at: Moment::new(std::time::Duration::from_secs(2_000)),
+            played_at: Moment::new(std::time::Duration::from_secs(2_000)),
             ..entry("/music/second.flac", "Second", None)
         };
         history::append(&dirs, &first).unwrap();
@@ -206,16 +210,16 @@ mod tests {
     #[case::two(2, &["/music/third.flac", "/music/also-good.flac"])]
     #[case::more_than_there_are(9, &["/music/third.flac", "/music/also-good.flac", "/music/good.flac"])]
     fn parse_history_caps_at_limit(#[case] limit: usize, #[case] expected: &[&str]) {
-        let dirs: Vec<TrackRef> = parse_history(HISTORY_LOG, limit)
+        let track_sources: Vec<TrackSource> = parse_history(HISTORY_LOG, limit)
             .0
             .into_iter()
-            .map(|entry| entry.track)
+            .map(|entry| entry.track_source)
             .collect();
         assert_eq!(
-            dirs,
+            track_sources,
             expected
                 .iter()
-                .map(|path| TrackRef::Local(PathBuf::from(path)))
+                .map(|path| TrackSource::Local(PathBuf::from(path)))
                 .collect::<Vec<_>>()
         );
     }

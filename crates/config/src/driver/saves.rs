@@ -15,8 +15,8 @@ pub(crate) const SAVE_DEBOUNCE: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct PendingSaves {
-    config: Option<ConfigPatch>,
-    appearance: Option<AppearancePatch>,
+    config_patch: Option<ConfigPatch>,
+    appearance_patch: Option<AppearancePatch>,
     revision: Revision,
 }
 
@@ -26,17 +26,19 @@ impl PendingSaves {
     }
 
     pub(crate) fn hold_config(&mut self, patch: ConfigPatch) {
-        let merged = match self.config.take() {
+        let merged = match self.config_patch.take() {
             Some(earlier) => earlier.then(patch),
             None => patch,
         };
-        self.config = Some(merged);
+        self.config_patch = Some(merged);
         self.revision.advance();
     }
 
     pub(crate) fn hold_appearance(&mut self, patch: AppearancePatch) {
-        let merged = self.appearance.map_or(patch, |earlier| earlier.then(patch));
-        self.appearance = Some(merged);
+        let merged = self
+            .appearance_patch
+            .map_or(patch, |earlier| earlier.then(patch));
+        self.appearance_patch = Some(merged);
         self.revision.advance();
     }
 
@@ -59,12 +61,15 @@ impl PendingSaves {
     }
 
     fn is_empty(&self) -> bool {
-        self.config.is_none() && self.appearance.is_none()
+        self.config_patch.is_none() && self.appearance_patch.is_none()
     }
 
     fn drain(&mut self) -> ConfigLoopCmd {
-        let config = self.config.take().map(ConfigEffect::SaveConfig);
-        let appearance = self.appearance.take().map(ConfigEffect::SaveAppearance);
+        let config = self.config_patch.take().map(ConfigEffect::SaveConfig);
+        let appearance = self
+            .appearance_patch
+            .take()
+            .map(ConfigEffect::SaveAppearance);
         config
             .into_iter()
             .chain(appearance)

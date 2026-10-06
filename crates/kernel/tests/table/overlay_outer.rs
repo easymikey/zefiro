@@ -10,14 +10,14 @@ use kernel::{
         index::ViewIndex,
         model::Model,
         overlay::{
-            DeleteCandidate,
             MusicDirError,
             Overlay,
             OverlayName,
             SearchQuery,
             TextEntry,
+            TrashCandidate,
         },
-        playlist::{PlaylistFileName, PlaylistNameError},
+        playlist::{PlaylistFileName, PlaylistFileNameError},
         setting_row::SettingRow,
         time::TimecodeError,
     },
@@ -49,9 +49,9 @@ fn help() -> Overlay {
     Overlay::Help
 }
 
-fn search(input: &str, matches: Vec<usize>, selected: usize) -> Overlay {
+fn search(input: &str, matches: Vec<usize>, selected_index: usize) -> Overlay {
     Overlay::Search(CursorOver {
-        cursor: Cursor::at(matches.len(), selected),
+        cursor: Cursor::at(matches.len(), selected_index),
         content: SearchQuery {
             input: input.to_string(),
             matches: matches.into_iter().map(ViewIndex::new).collect(),
@@ -66,7 +66,7 @@ fn entry<E>(input: &str, error: Option<E>) -> TextEntry<E> {
     }
 }
 
-fn save(input: &str, error: Option<PlaylistNameError>) -> Overlay {
+fn save(input: &str, error: Option<PlaylistFileNameError>) -> Overlay {
     Overlay::SavePlaylist(entry(input, error))
 }
 
@@ -74,32 +74,32 @@ fn saved_name(input: &str) -> PlaylistFileName {
     PlaylistFileName::new(input).unwrap()
 }
 
-fn history(selected: usize, len: usize) -> Overlay {
+fn history(selected_index: usize, len: usize) -> Overlay {
     Overlay::History(CursorOver {
-        cursor: Cursor::at(len, selected),
+        cursor: Cursor::at(len, selected_index),
         content: (),
     })
 }
 
-fn settings(selected: usize) -> Overlay {
-    let rows = SettingRow::all(&[]);
-    Overlay::Settings(rows[selected])
+fn settings(selected_index: usize) -> Overlay {
+    let setting_row = SettingRow::all(&[]);
+    Overlay::Settings(setting_row[selected_index])
 }
 
 fn fresh_settings() -> Overlay {
     Overlay::Settings(SettingRow::Theme)
 }
 
-fn candidate() -> DeleteCandidate {
-    DeleteCandidate {
-        source: kernel::domain::track::TrackRef::Local("/music/sun.flac".into()),
+fn candidate() -> TrashCandidate {
+    TrashCandidate {
+        source: kernel::domain::track::TrackSource::Local("/music/sun.flac".into()),
         title: "Sun Song".to_string(),
         artist: "Someone".to_string(),
     }
 }
 
-fn confirm_delete() -> Overlay {
-    Overlay::ConfirmDelete(candidate())
+fn confirm_trash() -> Overlay {
+    Overlay::ConfirmTrash(candidate())
 }
 
 fn track_details() -> Overlay {
@@ -118,20 +118,20 @@ fn open(overlay: Overlay) -> OverlayMessage {
     OverlayMessage::Open(overlay)
 }
 
-fn inner(message: OverlayContentMessage) -> OverlayMessage {
-    OverlayMessage::Inner(message)
+fn inner(overlay_content_message: OverlayContentMessage) -> OverlayMessage {
+    OverlayMessage::Content(overlay_content_message)
 }
 
 fn text(message: TextRequest) -> OverlayMessage {
     inner(OverlayContentMessage::Text(message))
 }
 
-fn opened(follow_up: Cmd) -> Cmd {
-    Cmd::from(Cue::OverlayOpened).then(follow_up)
+fn opened(cmd: Cmd) -> Cmd {
+    Cmd::from(Cue::OverlayOpened).then(cmd)
 }
 
-fn closed(follow_up: Cmd) -> Cmd {
-    Cmd::from(Cue::OverlayClosed).then(follow_up)
+fn closed(cmd: Cmd) -> Cmd {
+    Cmd::from(Cue::OverlayClosed).then(cmd)
 }
 
 fn saved_music_dir(path: &str) -> Cmd {
@@ -166,7 +166,7 @@ fn releases() -> Cmd {
 #[case::help_open_settings_holds_like_any_other_open(Some(help()), open(fresh_settings()), Ok((Some(fresh_settings()), opened(holds()))))]
 #[case::settings_open_help_releases_what_it_held(Some(settings(3)), open(help()), Ok((Some(help()), opened(releases()))))]
 #[case::settings_open_history_releases_what_it_held(Some(settings(3)), open(history(0, 0)), Ok((Some(history(0, 0)), opened(releases()))))]
-#[case::closed_opens_confirm_delete(None, open(confirm_delete()), Ok((Some(confirm_delete()), opened(Cmd::none()))))]
+#[case::closed_opens_confirm_trash(None, open(confirm_trash()), Ok((Some(confirm_trash()), opened(Cmd::none()))))]
 #[case::closed_opens_track_details(None, open(track_details()), Ok((Some(track_details()), opened(Cmd::none()))))]
 #[case::closed_opens_jump(None, open(jump("", None)), Ok((Some(jump("", None)), opened(Cmd::none()))))]
 #[case::jump_reopen_resets_the_digits(Some(jump("5:", Some(TimecodeError::Malformed))), open(jump("", None)), Ok((Some(jump("", None)), opened(Cmd::none()))))]
@@ -178,7 +178,7 @@ fn releases() -> Cmd {
 #[case::save_closes(Some(save("mix", None)), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
 #[case::history_closes(Some(history(1, 3)), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
 #[case::settings_closes_and_releases(Some(settings(3)), OverlayMessage::Close, Ok((None, closed(releases()))))]
-#[case::confirm_delete_closes(Some(confirm_delete()), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
+#[case::confirm_trash_closes(Some(confirm_trash()), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
 #[case::track_details_closes(Some(track_details()), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
 #[case::jump_closes(Some(jump("5", None)), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
 #[case::source_dir_closes(Some(source_dir("/x", None)), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
@@ -198,8 +198,8 @@ fn releases() -> Cmd {
 #[case::search_confirm_plays_the_selected_match(Some(search("mo", vec![0, 2], 1)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Playback(PlaybackRequest::JumpTo(ViewIndex::new(2))))))))]
 #[case::search_confirm_without_a_match_is_refused(Some(search("zzz", vec![], 0)), OverlayMessage::Confirm, Err(Unhandled))]
 #[case::save_confirm_saves_under_the_name(Some(save("mix", None)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::SavePlaylist(saved_name("mix"))))))))]
-#[case::save_confirm_with_an_empty_name_stays_open_with_the_error(Some(save("", None)), OverlayMessage::Confirm, Ok((Some(save("", Some(PlaylistNameError::Empty))), Cmd::none())))]
-#[case::confirm_delete_confirm_trashes_the_candidate(Some(confirm_delete()), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::Trash(candidate().source)))))))]
+#[case::save_confirm_with_an_empty_name_stays_open_with_the_error(Some(save("", None)), OverlayMessage::Confirm, Ok((Some(save("", Some(PlaylistFileNameError::Empty))), Cmd::none())))]
+#[case::confirm_trash_confirm_trashes_the_candidate(Some(confirm_trash()), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::Trash(candidate().source)))))))]
 #[case::jump_confirm_seeks_to_the_parsed_time(Some(jump("1:40", None)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Playback(PlaybackRequest::SeekTo(Duration::from_secs(100))))))))]
 #[case::jump_confirm_malformed_stays_open_with_the_error(Some(jump("5:", None)), OverlayMessage::Confirm, Ok((Some(jump("5:", Some(TimecodeError::Malformed))), Cmd::none())))]
 #[case::jump_confirm_malformed_again_is_refused(
@@ -208,7 +208,7 @@ fn releases() -> Cmd {
     Err(Unhandled)
 )]
 #[case::save_confirm_empty_again_is_refused(
-    Some(save("", Some(PlaylistNameError::Empty))),
+    Some(save("", Some(PlaylistFileNameError::Empty))),
     OverlayMessage::Confirm,
     Err(Unhandled)
 )]
@@ -232,7 +232,7 @@ fn releases() -> Cmd {
     Err(Unhandled)
 )]
 #[case::save_backspace_erases(Some(save("mix", None)), text(TextRequest::Backspace), Ok((Some(save("mi", None)), Cmd::none())))]
-#[case::save_types_a_char_and_clears_the_error(Some(save("", Some(PlaylistNameError::Empty))), text(TextRequest::Char('m')), Ok((Some(save("m", None)), Cmd::none())))]
+#[case::save_types_a_char_and_clears_the_error(Some(save("", Some(PlaylistFileNameError::Empty))), text(TextRequest::Char('m')), Ok((Some(save("m", None)), Cmd::none())))]
 #[case::source_dir_types_a_char_and_clears_the_error(Some(source_dir("", Some(MusicDirError::Empty))), text(TextRequest::Char('/')), Ok((Some(source_dir("/", None)), Cmd::none())))]
 #[case::source_dir_backspace_clears_the_error(Some(source_dir("/x", Some(MusicDirError::Empty))), text(TextRequest::Backspace), Ok((Some(source_dir("/", None)), Cmd::none())))]
 #[case::jump_types_a_digit_and_clears_the_error(Some(jump("5:", Some(TimecodeError::Malformed))), inner(OverlayContentMessage::Text(TextRequest::Char('3'))), Ok((Some(jump("5:3", None)), Cmd::none())))]
@@ -251,22 +251,22 @@ fn releases() -> Cmd {
     inner(OverlayContentMessage::Search(SearchRequest::Edit(SearchEdit::Clear))),
     Err(Unhandled)
 )]
-#[case::search_enqueues_the_selected_match(Some(search("mo", vec![0, 2], 1)), inner(OverlayContentMessage::Search(SearchRequest::Enqueue)), Ok((Some(search("mo", vec![0, 2], 1)), Cmd::message(Message::Queue(QueueRequest::EnqueueTrack(ViewIndex::new(2)))))))]
+#[case::search_enqueues_the_selected_match(Some(search("mo", vec![0, 2], 1)), inner(OverlayContentMessage::Search(SearchRequest::Enqueue)), Ok((Some(search("mo", vec![0, 2], 1)), Cmd::message(Message::Queue(QueueRequest::ToggleAt(ViewIndex::new(2)))))))]
 #[case::search_enqueue_without_a_match_is_refused(
     Some(search("zzz", vec![], 0)),
     inner(OverlayContentMessage::Search(SearchRequest::Enqueue)),
     Err(Unhandled)
 )]
 #[case::history_navigates(Some(history(0, 3)), inner(OverlayContentMessage::History(HistoryMessage::Navigate { direction: Direction::Next, len: 3 })), Ok((Some(history(1, 3)), Cmd::none())))]
-#[case::history_enqueues_the_entry_under_the_cursor(Some(history(1, 2)), inner(OverlayContentMessage::History(HistoryMessage::Enqueue(2))), Ok((Some(history(1, 2)), Cmd::message(Message::Queue(QueueRequest::EnqueueHistoryEntry(1))))))]
+#[case::history_enqueues_the_entry_under_the_cursor(Some(history(1, 2)), inner(OverlayContentMessage::History(HistoryMessage::Enqueue(2))), Ok((Some(history(1, 2)), Cmd::message(Message::Queue(QueueRequest::ToggleHistoryEntry(1))))))]
 #[case::history_enqueue_past_the_end_is_refused(
     Some(history(0, 1)),
     inner(OverlayContentMessage::History(HistoryMessage::Enqueue(0))),
     Err(Unhandled)
 )]
-#[case::closed_inner_is_refused(None, text(TextRequest::Char('a')), Err(Unhandled))]
+#[case::closed_content_is_refused(None, text(TextRequest::Char('a')), Err(Unhandled))]
 #[case::help_refuses_text(Some(help()), text(TextRequest::Char('a')), Err(Unhandled))]
-#[case::search_refuses_history(Some(search("mo", vec![0], 0)), inner(OverlayContentMessage::History(HistoryMessage::Top)), Err(Unhandled))]
+#[case::search_refuses_history(Some(search("mo", vec![0], 0)), inner(OverlayContentMessage::History(HistoryMessage::SelectFirst)), Err(Unhandled))]
 #[case::save_refuses_search(
     Some(save("mix", None)),
     inner(OverlayContentMessage::Search(SearchRequest::Enqueue)),
@@ -284,9 +284,9 @@ fn releases() -> Cmd {
     text(TextRequest::Backspace),
     Err(Unhandled)
 )]
-#[case::confirm_delete_refuses_settings(
-    Some(confirm_delete()),
-    inner(OverlayContentMessage::Settings(SettingRowMessage::Navigate(
+#[case::confirm_trash_refuses_settings(
+    Some(confirm_trash()),
+    inner(OverlayContentMessage::Settings(SettingRowMessage::Set(
         SettingRow::Theme
     ))),
     Err(Unhandled)
@@ -307,8 +307,8 @@ fn releases() -> Cmd {
     Err(Unhandled)
 )]
 fn overlay_cell(
-    #[case] start: Option<Overlay>,
-    #[case] message: OverlayMessage,
+    #[case] overlay: Option<Overlay>,
+    #[case] overlay_message: OverlayMessage,
     #[case] expected: Result<
         (
             Option<Overlay>,
@@ -317,7 +317,7 @@ fn overlay_cell(
         Unhandled,
     >,
 ) {
-    cell(start, message, expected);
+    cell(overlay, overlay_message, expected);
 }
 
 fn opened_music_dir(music_dir: std::path::PathBuf) -> Option<Overlay> {

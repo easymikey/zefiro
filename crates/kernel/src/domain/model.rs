@@ -11,7 +11,7 @@ use crate::domain::{
     revision::Revisions,
     settings::Settings,
     theme::Themes,
-    track::{Track, TrackRef},
+    track::{Track, TrackSource},
     transport::Transport,
     workspace::Workspace,
 };
@@ -35,7 +35,7 @@ pub struct Model {
     pub scan_status: ScanStatus,
     pub playlist: Playlist,
     pub playlist_source: PlaylistSource,
-    pub queue: Vec<TrackRef>,
+    pub queue: Vec<TrackSource>,
     pub player: Player,
     pub transport: Transport,
     pub history: Vec<HistoryEntry>,
@@ -99,7 +99,7 @@ mod displayed_track_tests {
         let mut model = Model {
             library: Some(Library {
                 tracks: vec![titled_track("selected")],
-                view: vec![TrackIndex::new(0)],
+                track_indexes: vec![TrackIndex::new(0)],
             }),
             ..Model::default()
         };
@@ -124,7 +124,7 @@ mod displayed_track_tests {
         let model = Model {
             library: Some(Library {
                 tracks: vec![titled_track("a"), titled_track("b")],
-                view: vec![TrackIndex::new(0), TrackIndex::new(1)],
+                track_indexes: vec![TrackIndex::new(0), TrackIndex::new(1)],
             }),
             workspace: Workspace {
                 browse: Browse {

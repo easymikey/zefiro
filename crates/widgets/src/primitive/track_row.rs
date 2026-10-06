@@ -10,12 +10,12 @@ use crate::{
             Favorite,
             MARKERS_WIDTH,
             PLAYING_COLUMNS,
-            QueuePosition,
+            QueueNumber,
             column_padding,
             favorite_marker,
         },
         span::{line, text},
-        text::{blanks, truncate},
+        truncate::{blanks, truncate},
     },
     theme::active_theme::ActiveTheme,
 };
@@ -48,39 +48,42 @@ pub(crate) struct TrackRow<'a> {
     pub(crate) selected: Selected,
     pub(crate) favorite: Favorite,
     pub(crate) playing: Playing,
-    pub(crate) queued: Option<QueuePosition>,
+    pub(crate) queued_number: Option<QueueNumber>,
     pub(crate) row_width: Cells,
 }
 
 #[must_use]
 pub(crate) fn track_row_line<'a>(
-    view: &TrackRow<'a>,
+    track_row: &TrackRow<'a>,
     theme: &ActiveTheme<'_>,
 ) -> Line<'a> {
     let colors = theme.colors();
     let favorite_width = usize::from(FAVORITE_COLUMNS);
     let playing_width = usize::from(PLAYING_COLUMNS);
-    let fav = favorite_marker(view.favorite);
-    let playing = playing_marker(view.playing);
+    let fav = favorite_marker(track_row.favorite);
+    let playing = playing_marker(track_row.playing);
     let markers_width = usize::from(MARKERS_WIDTH);
-    let body_width = view.row_width.count().saturating_sub(markers_width);
-    let chip = view.queued.into_iter().flat_map(QueuePosition::chip);
+    let body_width = track_row.row_width.count().saturating_sub(markers_width);
+    let chip = track_row
+        .queued_number
+        .into_iter()
+        .flat_map(QueueNumber::chip);
     let chip_width: usize = chip.clone().map(UnicodeWidthStr::width).sum();
-    let title_width = match view.queued {
+    let title_width = match track_row.queued_number {
         Some(_) => body_width
             .saturating_sub(chip_width)
             .saturating_sub(CHIP_GAP),
         None => body_width,
     };
-    let title = truncate(view.title, title_width);
-    let gap = if view.queued.is_none() || title.is_empty() {
+    let title = truncate(track_row.title, title_width);
+    let gap = if track_row.queued_number.is_none() || title.is_empty() {
         0
     } else {
         CHIP_GAP
     };
-    let row_style = match view.selected {
+    let row_style = match track_row.selected {
         Selected::Yes => Style::default().fg(colors.selection_foreground),
-        Selected::No => Style::default().fg(colors.text),
+        Selected::No => Style::default().fg(colors.foreground),
     };
     let fixed = [
         text(fav).fg(theme.favorite()),
@@ -106,7 +109,7 @@ mod tests {
 
     use crate::{
         primitive::{
-            marker::{Favorite, MARKERS_WIDTH, QueuePosition},
+            marker::{Favorite, MARKERS_WIDTH, QueueNumber},
             track_row::{Playing, Selected, TrackRow, track_row_line},
         },
         test_support::noir,
@@ -119,7 +122,7 @@ mod tests {
             selected: Selected::No,
             favorite: Favorite::No,
             playing: Playing::No,
-            queued: None,
+            queued_number: None,
             row_width,
         }
     }
@@ -157,7 +160,7 @@ mod tests {
     #[test]
     fn the_chip_follows_the_title_with_one_space_and_carries_the_position() {
         let mut view = base_props("song", Cells(20));
-        view.queued = Some(QueuePosition::new(12));
+        view.queued_number = Some(QueueNumber::new(12));
         let text =
             track_row_line(&view, &ActiveTheme::new(&noir(), ColorDepth::TrueColor))
                 .to_string();
@@ -168,7 +171,7 @@ mod tests {
     fn a_title_too_long_for_the_row_truncates_so_the_chip_still_follows_it() {
         let row_width = Cells(20);
         let mut view = base_props("a very long track title", row_width);
-        view.queued = Some(QueuePosition::new(1));
+        view.queued_number = Some(QueueNumber::new(1));
         let text =
             track_row_line(&view, &ActiveTheme::new(&noir(), ColorDepth::TrueColor))
                 .to_string();

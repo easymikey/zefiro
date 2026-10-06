@@ -7,7 +7,7 @@ pub(crate) fn key_context_of(overlay: &Overlay) -> KeyContext {
         Overlay::Search(_) => KeyContext::Search,
         Overlay::History(_) => KeyContext::History,
         Overlay::Settings(..) => KeyContext::Settings,
-        Overlay::ConfirmDelete(_) => KeyContext::ConfirmDelete,
+        Overlay::ConfirmTrash(_) => KeyContext::ConfirmTrash,
         Overlay::JumpToTime(_) => KeyContext::JumpToTime,
         Overlay::TrackDetails(_) => KeyContext::TrackDetails,
         Overlay::SavePlaylist(_) | Overlay::MusicDir(_) => KeyContext::TextPrompt,

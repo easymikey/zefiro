@@ -26,14 +26,15 @@ impl Controls {
     #[must_use]
     pub(crate) fn attach(
         _main_thread: MainThreadMarker,
-        heard: &Sender<MacosMessage>,
+        callback_sender: &Sender<MacosMessage>,
     ) -> Self {
         let center = ffi::shared_command_center();
         let commands = ffi::remote_commands(&center);
         let targets = commands
             .into_iter()
             .map(|(command, trigger)| {
-                let handler = RcBlock::new(command_handler(trigger, heard.clone()));
+                let handler =
+                    RcBlock::new(command_handler(trigger, callback_sender.clone()));
                 ffi::enable_command(&command);
                 let target = ffi::add_command_target(&command, &handler);
                 (command, target)
@@ -53,13 +54,13 @@ impl Drop for Controls {
 
 fn command_handler(
     trigger: Trigger,
-    heard: Sender<MacosMessage>,
+    callback_sender: Sender<MacosMessage>,
 ) -> impl Fn(NonNull<MPRemoteCommandEvent>) -> MPRemoteCommandHandlerStatus + 'static {
     move |event| {
         ffi::borrow_command_event(event, |event| {
             RemoteInput::parse(trigger, event)
                 .map_or(MPRemoteCommandHandlerStatus::CommandFailed, |input| {
-                    status(heard.try_send(MacosMessage::Remote(input)))
+                    status(callback_sender.try_send(MacosMessage::Remote(input)))
                 })
         })
     }
@@ -82,26 +83,31 @@ mod tests {
     use crate::{controls::status, message::MacosMessage};
 
     #[derive(Debug, Clone, Copy)]
-    enum Queue {
+    enum ChannelState {
         Room,
         Full,
         Closed,
     }
 
     #[rstest]
-    #[case::room(Queue::Room, MPRemoteCommandHandlerStatus::Success)]
-    #[case::full(Queue::Full, MPRemoteCommandHandlerStatus::CommandFailed)]
-    #[case::closed(Queue::Closed, MPRemoteCommandHandlerStatus::CommandFailed)]
+    #[case::room(ChannelState::Room, MPRemoteCommandHandlerStatus::Success)]
+    #[case::full(ChannelState::Full, MPRemoteCommandHandlerStatus::CommandFailed)]
+    #[case::closed(ChannelState::Closed, MPRemoteCommandHandlerStatus::CommandFailed)]
     fn the_command_status_follows_the_send_result(
-        #[case] queue: Queue,
+        #[case] channel_state: ChannelState,
         #[case] expected: MPRemoteCommandHandlerStatus,
     ) {
-        let (heard, receiver) = bounded(1);
-        match queue {
-            Queue::Room => {}
-            Queue::Full => heard.try_send(MacosMessage::Started).unwrap(),
-            Queue::Closed => drop(receiver),
+        let (callback_sender, receiver) = bounded(1);
+        match channel_state {
+            ChannelState::Room => {}
+            ChannelState::Full => {
+                callback_sender.try_send(MacosMessage::Started).unwrap();
+            }
+            ChannelState::Closed => drop(receiver),
         }
-        assert_eq!(status(heard.try_send(MacosMessage::Started)), expected);
+        assert_eq!(
+            status(callback_sender.try_send(MacosMessage::Started)),
+            expected
+        );
     }
 }

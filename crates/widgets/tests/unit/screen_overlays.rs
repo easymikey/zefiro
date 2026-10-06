@@ -1,6 +1,6 @@
 use kernel::domain::{
     cursor_over::CursorOver,
-    overlay::{DeleteCandidate, Overlay, SearchQuery, TextEntry},
+    overlay::{Overlay, SearchQuery, TextEntry, TrashCandidate},
     setting_row::SettingRow,
 };
 use ratatui::layout::Rect;
@@ -20,7 +20,7 @@ fn frame_with_overlay(overlay: Overlay) -> String {
     let area = Rect::new(0, 0, 80, 24);
     let layout = FrameLayout::from_scene(&scene, area);
     assert!(
-        layout.overlay.is_some(),
+        layout.overlay_areas.is_some(),
         "an active overlay must claim a rect in the full frame's layout"
     );
     rendered(80, 24, |frame| {
@@ -55,9 +55,9 @@ fn the_settings_overlay_is_painted_over_the_full_frame() {
 }
 
 #[test]
-fn the_confirm_delete_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::ConfirmDelete(DeleteCandidate {
-        source: kernel::domain::track::TrackRef::Local("/music/moon.flac".into()),
+fn the_confirm_trash_overlay_is_painted_over_the_full_frame() {
+    let text = frame_with_overlay(Overlay::ConfirmTrash(TrashCandidate {
+        source: kernel::domain::track::TrackSource::Local("/music/moon.flac".into()),
         title: "Moon River".to_string(),
         artist: "Audrey Hepburn".to_string(),
     }));
@@ -77,7 +77,7 @@ fn the_track_details_overlay_is_painted_over_the_full_frame() {
 }
 
 #[test]
-fn the_source_dir_overlay_is_painted_over_the_full_frame() {
+fn the_music_dir_overlay_is_painted_over_the_full_frame() {
     let text = frame_with_overlay(Overlay::MusicDir(TextEntry::default()));
     assert!(text.contains("LIBRARY FOLDER"), "got {text:?}");
 }

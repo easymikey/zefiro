@@ -31,8 +31,8 @@ pub struct Lookahead {
 }
 
 impl Lookahead {
-    fn loop_start(&self, at: Duration) -> Option<Duration> {
-        self.ab_loop.and_then(|(a, b)| (at >= b).then_some(a))
+    fn loop_start(&self, position: Duration) -> Option<Duration> {
+        self.ab_loop.and_then(|(a, b)| (position >= b).then_some(a))
     }
 
     fn preload_due_at(&self) -> Option<Duration> {
@@ -40,14 +40,14 @@ impl Lookahead {
             .then(|| self.duration.saturating_sub(PRELOAD_LEAD))
     }
 
-    fn is_preload_due(&self, at: Duration) -> bool {
-        self.preload_due_at().is_some_and(|due| at >= due)
+    fn is_preload_due(&self, position: Duration) -> bool {
+        self.preload_due_at().is_some_and(|due| position >= due)
     }
 
-    fn preloading(self, at: Duration, preloaded: &mut Option<Arc<Track>>) -> Cmd {
+    fn preloading(self, position: Duration, preloaded: &mut Option<Arc<Track>>) -> Cmd {
         match self.next {
-            Some(next) if self.is_preload_due(at) => {
-                let preload_cmd = Effect::Audio(AudioCmd::Preload(
+            Some(next) if self.is_preload_due(position) => {
+                let preload_cmd_effect = Effect::Audio(AudioCmd::Preload(
                     TrackLoad::for_track(&next, self.revision),
                 ));
                 let prefetch = self.cover_side.map(|side| {
@@ -56,7 +56,8 @@ impl Lookahead {
                         side,
                     }))
                 });
-                let cmd = Cmd::from_iter(std::iter::once(preload_cmd).chain(prefetch));
+                let cmd =
+                    Cmd::from_iter(std::iter::once(preload_cmd_effect).chain(prefetch));
                 *preloaded = Some(next);
                 cmd
             }
@@ -68,20 +69,20 @@ impl Lookahead {
 impl Player {
     pub(crate) fn loaded(
         &mut self,
-        total: Option<Duration>,
+        duration: Option<Duration>,
         anchor: Anchor,
     ) -> Result<Cmd, Unhandled> {
         match mem::replace(self, Player::Stopped) {
             Player::Loading(track) => {
-                let track = match total {
-                    Some(total) => Arc::new(track.with_duration(total)),
+                let track = match duration {
+                    Some(duration) => Arc::new(track.with_duration(duration)),
                     None => track,
                 };
                 *self = Player::Playing {
                     track,
                     playhead: Playhead::anchored(
                         Duration::ZERO,
-                        anchor.since,
+                        anchor.started_at,
                         anchor.speed,
                     ),
                     preloaded: None,
@@ -97,14 +98,13 @@ impl Player {
         }
     }
 
-    pub(crate) fn failed(&mut self, failure: &AudioError) -> Result<Cmd, Unhandled> {
-        match failure {
+    pub(crate) fn failed(&mut self, error: &AudioError) -> Result<Cmd, Unhandled> {
+        match error {
             AudioError::Decode { .. }
             | AudioError::OpenDevice { .. }
             | AudioError::ListDevices { .. }
-            | AudioError::OpenStream { .. }
             | AudioError::Preload { .. } => self.load_failed(),
-            AudioError::Seek { .. } => Ok(Cmd::none()),
+            AudioError::Seek { .. } => Err(Unhandled),
         }
     }
 
@@ -112,7 +112,7 @@ impl Player {
         match self {
             Player::Playing { .. } => self.pause(now, PausedBy::Listener),
             Player::Loading(..) => Ok(self.stop()),
-            Player::Paused { .. } | Player::Stopped => Ok(Cmd::none()),
+            Player::Paused { .. } | Player::Stopped => Err(Unhandled),
         }
     }
 
@@ -120,17 +120,17 @@ impl Player {
         match self {
             Player::Loading(..) => Ok(self.stop()),
             Player::Playing { .. } | Player::Paused { .. } | Player::Stopped => {
-                Ok(Cmd::none())
+                Err(Unhandled)
             }
         }
     }
 
     pub(crate) fn positioned(
         &mut self,
-        offset: Duration,
+        position: Duration,
         lookahead: Lookahead,
     ) -> Result<Cmd, Unhandled> {
-        if let Some(a) = lookahead.loop_start(offset) {
+        if let Some(a) = lookahead.loop_start(position) {
             return self.seek(a, lookahead.now);
         }
         match self {
@@ -139,9 +139,9 @@ impl Player {
                 preloaded,
                 ..
             } => {
-                *playhead = Playhead::anchored(offset, lookahead.now, playhead.speed);
+                *playhead = Playhead::anchored(position, lookahead.now, playhead.speed);
                 Ok(match preloaded {
-                    None => lookahead.preloading(offset, preloaded),
+                    None => lookahead.preloading(position, preloaded),
                     Some(_) => Cmd::none(),
                 })
             }
@@ -153,12 +153,12 @@ impl Player {
 
     pub(crate) fn reported(
         &mut self,
-        offset: Duration,
+        position: Duration,
         now: Moment,
     ) -> Result<Cmd, Unhandled> {
         match self {
             Player::Playing { playhead, .. } => {
-                *playhead = Playhead::anchored(offset, now, playhead.speed);
+                *playhead = Playhead::anchored(position, now, playhead.speed);
                 Ok(Cmd::none())
             }
             Player::Paused { .. } | Player::Loading(..) | Player::Stopped => {
@@ -224,8 +224,11 @@ impl Player {
 }
 
 #[must_use]
-pub(crate) fn next_decision(head: Playhead, lookahead: &Lookahead) -> Option<Duration> {
-    let current = head.position_at(lookahead.now);
+pub(crate) fn next_decision(
+    playhead: Playhead,
+    lookahead: &Lookahead,
+) -> Option<Duration> {
+    let current = playhead.position_at(lookahead.now);
     let target = [
         lookahead.preload_due_at(),
         lookahead.ab_loop.map(|(_, b)| b),
@@ -234,7 +237,7 @@ pub(crate) fn next_decision(head: Playhead, lookahead: &Lookahead) -> Option<Dur
     .flatten()
     .filter(|&point| point > current)
     .min()?;
-    Some((target - current).div_f32(head.speed.get()))
+    Some((target - current).div_f32(playhead.speed.get()))
 }
 
 pub(crate) fn seek_effect(target: Duration) -> Cmd {
@@ -246,7 +249,7 @@ pub(crate) fn seek_effect(target: Duration) -> Cmd {
 
 pub(crate) fn handover_effects(
     track: &Arc<Track>,
-    playback: PlaybackChange,
+    playback_change: PlaybackChange,
     now: Moment,
 ) -> Vec<Effect> {
     [
@@ -256,10 +259,10 @@ pub(crate) fn handover_effects(
         Effect::Macos(MacosCmd::NowPlaying(Some(Arc::clone(track)))),
     ]
     .into_iter()
-    .chain(playback.effects())
+    .chain(playback_change.effects())
     .chain([
         Effect::Animate(Cue::TrackChanged),
-        Effect::Animate(Cue::PlaybackChanged(playback)),
+        Effect::Animate(Cue::PlaybackChanged(playback_change)),
     ])
     .collect()
 }
@@ -282,11 +285,11 @@ mod tests {
         update::player::events::{Lookahead, next_decision},
     };
 
-    fn head_at(offset: u64, speed: f32) -> Playhead {
+    fn head_at(offset: u64, speed_factor: f32) -> Playhead {
         Playhead::anchored(
             Duration::from_secs(offset),
             Moment::new(Duration::ZERO),
-            Speed::clamped(speed),
+            Speed::clamped(speed_factor),
         )
     }
 
@@ -302,7 +305,7 @@ mod tests {
     struct Setup {
         ab_loop: Option<(u64, u64)>,
         next: Option<Arc<Track>>,
-        duration: u64,
+        duration_ms: u64,
     }
 
     fn lookahead(setup: Setup) -> Lookahead {
@@ -311,7 +314,7 @@ mod tests {
                 .ab_loop
                 .map(|(a, b)| (Duration::from_secs(a), Duration::from_secs(b))),
             next: setup.next,
-            duration: Duration::from_secs(setup.duration),
+            duration: Duration::from_secs(setup.duration_ms),
             now: Moment::new(Duration::ZERO),
             revision: Revision::default(),
             cover_side: None,
@@ -321,45 +324,45 @@ mod tests {
     #[rstest]
     #[case::no_decision_ahead_arms_nothing(
         head_at(0, 1.0),
-        lookahead(Setup { ab_loop: None, next: None, duration: 0 }),
+        lookahead(Setup { ab_loop: None, next: None, duration_ms: 0 }),
         None
     )]
     #[case::preload_due_point_arms_at_unity_speed(
         head_at(0, 1.0),
-        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration: 100 }),
+        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_ms: 100 }),
         Some(90)
     )]
     #[case::ab_b_point_arms_when_earlier_than_preload(
         head_at(0, 1.0),
-        lookahead(Setup { ab_loop: Some((5, 20)), next: Some(a_track()), duration: 100 }),
+        lookahead(Setup { ab_loop: Some((5, 20)), next: Some(a_track()), duration_ms: 100 }),
         Some(20)
     )]
     #[case::double_speed_halves_the_wait(
         head_at(0, 2.0),
-        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration: 100 }),
+        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_ms: 100 }),
         Some(45)
     )]
     #[case::half_speed_doubles_the_wait(
         head_at(0, 0.5),
-        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration: 100 }),
+        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_ms: 100 }),
         Some(180)
     )]
     #[case::a_past_decision_is_not_armed(
         head_at(95, 1.0),
-        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration: 100 }),
+        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_ms: 100 }),
         None
     )]
     #[case::no_next_track_skips_the_preload_point(
         head_at(0, 1.0),
-        lookahead(Setup { ab_loop: None, next: None, duration: 100 }),
+        lookahead(Setup { ab_loop: None, next: None, duration_ms: 100 }),
         None
     )]
     fn next_decision_arms_the_earlier_of_preload_or_ab(
-        #[case] head: Playhead,
+        #[case] playhead: Playhead,
         #[case] lookahead: Lookahead,
         #[case] expected_secs: Option<u64>,
     ) {
-        let delay = next_decision(head, &lookahead);
+        let delay = next_decision(playhead, &lookahead);
         assert_eq!(delay, expected_secs.map(Duration::from_secs));
     }
 }

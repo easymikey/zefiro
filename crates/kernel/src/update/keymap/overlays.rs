@@ -11,10 +11,10 @@ use crate::{
         OverlayRequest,
         SearchEdit,
         SearchRequest,
-        SettingsRowRequest,
+        SettingRowRequest,
         TextRequest,
     },
-    update::keymap::chord::{BindingSource, KeyBinding, bare, key},
+    update::keymap::chord::{BindingOrigin, KeyBinding, bare, key},
 };
 
 fn plain(code: KeyCode) -> KeyPattern {
@@ -41,7 +41,7 @@ fn settings_bindings(
             message: message.clone(),
             action: Some(action),
             key_context: KeyContext::Settings,
-            source: BindingSource::Default,
+            origin: BindingOrigin::Default,
         })
         .collect()
 }
@@ -80,7 +80,7 @@ fn rows_in(
             message,
             action: None,
             key_context,
-            source: BindingSource::Default,
+            origin: BindingOrigin::Default,
         })
         .collect()
 }
@@ -155,7 +155,7 @@ fn history_rows() -> Vec<KeyBinding> {
                     prefix: ChordPrefix::G,
                     key: ChordPrefix::G.key(),
                 }),
-                history(HistoryRequest::Top),
+                history(HistoryRequest::SelectFirst),
             ),
             (plain(KeyCode::Esc), close()),
             (letter('q'), close()),
@@ -176,13 +176,13 @@ fn history_rows() -> Vec<KeyBinding> {
                 plain(KeyCode::Up),
                 history(HistoryRequest::Navigate(Direction::Previous)),
             ),
-            (letter('G'), history(HistoryRequest::Bottom)),
+            (letter('G'), history(HistoryRequest::SelectLast)),
         ],
     )
 }
 
 fn settings_rows() -> Vec<KeyBinding> {
-    use SettingsRowRequest::{Activate, Navigate, Step};
+    use SettingRowRequest::{Activate, Navigate, Step};
 
     use crate::domain::keymap::Action::{
         SettingsActivate,
@@ -228,9 +228,9 @@ fn settings_rows() -> Vec<KeyBinding> {
     .concat()
 }
 
-fn confirm_delete_rows() -> Vec<KeyBinding> {
+fn confirm_trash_rows() -> Vec<KeyBinding> {
     rows_in(
-        KeyContext::ConfirmDelete,
+        KeyContext::ConfirmTrash,
         vec![
             (letter('y'), confirm()),
             (plain(KeyCode::Enter), confirm()),
@@ -270,7 +270,7 @@ pub(crate) fn rows() -> Vec<KeyBinding> {
         help_rows(),
         history_rows(),
         settings_rows(),
-        confirm_delete_rows(),
+        confirm_trash_rows(),
         jump_rows(),
         track_details_rows(),
     ]

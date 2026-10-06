@@ -5,7 +5,7 @@ expression: config
 ---
 TomlSettings {
     music_dir: None,
-    theme: Auto,
+    theme_choice: Auto,
     volume: Percent(
         50,
     ),

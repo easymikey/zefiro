@@ -12,7 +12,7 @@ const SILENT_BAND: f32 = 1.0 / 1024.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SpectrumMotion {
     Moving,
-    Settled,
+    Still,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -23,9 +23,9 @@ pub enum SpectrumFeed<'a> {
 
 impl<'a> SpectrumFeed<'a> {
     #[must_use]
-    pub fn of(player: &Player, raw: &'a Spectrum) -> Self {
+    pub fn of(player: &Player, spectrum: &'a Spectrum) -> Self {
         if player.is_playing() {
-            Self::Live(raw)
+            Self::Live(spectrum)
         } else {
             Self::Silent
         }
@@ -36,7 +36,7 @@ impl<'a> SpectrumFeed<'a> {
 pub struct SpectrumSmoothing {
     attack: f32,
     decay: f32,
-    bands: Spectrum,
+    spectrum: Spectrum,
 }
 
 impl Default for SpectrumSmoothing {
@@ -44,7 +44,7 @@ impl Default for SpectrumSmoothing {
         Self {
             attack: 0.85,
             decay: 0.35,
-            bands: [0.0; SPECTRUM_BANDS],
+            spectrum: [0.0; SPECTRUM_BANDS],
         }
     }
 }
@@ -70,21 +70,21 @@ impl SpectrumSmoothing {
     pub fn frame_due(
         &self,
         feed: SpectrumFeed<'_>,
-        next_frame: Moment,
+        next_frame_at: Moment,
     ) -> Option<Moment> {
         let is_due = match feed {
             SpectrumFeed::Live(_) => true,
             SpectrumFeed::Silent => self.motion() == SpectrumMotion::Moving,
         };
-        is_due.then_some(next_frame)
+        is_due.then_some(next_frame_at)
     }
 
     #[must_use]
-    pub fn smooth(&mut self, raw: &Spectrum, elapsed: Duration) -> Spectrum {
+    fn smooth(&mut self, spectrum: &Spectrum, elapsed: Duration) -> Spectrum {
         let elapsed_secs = elapsed.as_secs_f32();
         let attack = effective_coefficient(self.attack, elapsed_secs);
         let decay = effective_coefficient(self.decay, elapsed_secs);
-        for (previous, &level) in self.bands.iter_mut().zip(raw.iter()) {
+        for (previous, &level) in self.spectrum.iter_mut().zip(spectrum.iter()) {
             let coefficient = if level > *previous { attack } else { decay };
             let smoothed = smooth_band(*previous, level, coefficient);
             *previous = if smoothed.abs() < SILENT_BAND {
@@ -93,23 +93,23 @@ impl SpectrumSmoothing {
                 smoothed
             };
         }
-        self.bands
+        self.spectrum
     }
 
     #[must_use]
-    pub fn fade(&mut self, elapsed: Duration) -> Spectrum {
+    fn fade(&mut self, elapsed: Duration) -> Spectrum {
         self.smooth(&[0.0; SPECTRUM_BANDS], elapsed)
     }
 
     #[must_use]
     pub fn bands(&self) -> &Spectrum {
-        &self.bands
+        &self.spectrum
     }
 
     #[must_use]
     pub(crate) fn motion(&self) -> SpectrumMotion {
-        if self.bands.iter().all(|&band| band == 0.0) {
-            SpectrumMotion::Settled
+        if self.spectrum.iter().all(|&band| band == 0.0) {
+            SpectrumMotion::Still
         } else {
             SpectrumMotion::Moving
         }
@@ -168,11 +168,11 @@ mod tests {
 
     #[test]
     fn a_longer_elapsed_time_moves_further_toward_the_raw_value() {
-        let mut short = SpectrumSmoothing::default();
-        let mut long = SpectrumSmoothing::default();
+        let mut short_smoothing = SpectrumSmoothing::default();
+        let mut long_smoothing = SpectrumSmoothing::default();
         let target = [1.0; SPECTRUM_BANDS];
-        let short_bands = short.smooth(&target, Duration::from_millis(8));
-        let long_bands = long.smooth(&target, Duration::from_millis(32));
+        let short_bands = short_smoothing.smooth(&target, Duration::from_millis(8));
+        let long_bands = long_smoothing.smooth(&target, Duration::from_millis(32));
         for (short_band, long_band) in short_bands.iter().zip(long_bands.iter()) {
             assert!(long_band > short_band);
         }
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn fresh_is_settled() {
         let smoothing = SpectrumSmoothing::default();
-        assert_eq!(smoothing.motion(), SpectrumMotion::Settled);
+        assert_eq!(smoothing.motion(), SpectrumMotion::Still);
     }
 
     #[test]
@@ -204,11 +204,11 @@ mod tests {
         let mut smoothing = SpectrumSmoothing::default();
         let bands = smoothing.smooth(&[1.0; SPECTRUM_BANDS], Duration::from_secs(1));
         assert_eq!(bands, *smoothing.bands());
-        let frame = Duration::from_millis(33);
+        let elapsed = Duration::from_millis(33);
         for _ in 0..7 {
-            assert_eq!(smoothing.fade(frame), *smoothing.bands());
+            assert_eq!(smoothing.fade(elapsed), *smoothing.bands());
         }
-        assert_eq!(smoothing.motion(), SpectrumMotion::Settled);
+        assert_eq!(smoothing.motion(), SpectrumMotion::Still);
     }
 
     #[test]
@@ -232,15 +232,15 @@ mod tests {
 
     #[test]
     fn advance_follows_the_feed_and_a_silent_feed_fades() {
-        let mut live = SpectrumSmoothing::default();
+        let mut live_smoothing = SpectrumSmoothing::default();
         let raw = [1.0; SPECTRUM_BANDS];
-        let lifted = live.advance(SpectrumFeed::Live(&raw), FRAME);
-        assert_eq!(lifted, *live.bands());
+        let lifted = live_smoothing.advance(SpectrumFeed::Live(&raw), FRAME);
+        assert_eq!(lifted, *live_smoothing.bands());
         assert!(lifted.iter().all(|&band| band > 0.0));
 
-        let faded = live.advance(SpectrumFeed::Silent, FRAME);
+        let faded = live_smoothing.advance(SpectrumFeed::Silent, FRAME);
 
-        assert_eq!(faded, *live.bands());
+        assert_eq!(faded, *live_smoothing.bands());
         assert!(
             faded
                 .iter()
@@ -251,27 +251,30 @@ mod tests {
 
     #[test]
     fn a_frame_is_due_only_while_bands_can_move() {
-        let next_frame = Moment::new(Duration::from_millis(33));
+        let next_frame_at = Moment::new(Duration::from_millis(33));
         let raw = [0.0; SPECTRUM_BANDS];
-        let settled = SpectrumSmoothing::default();
-        let mut moving = SpectrumSmoothing::default();
-        let lifted = moving.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
-        assert_eq!(lifted, *moving.bands());
+        let settled_smoothing = SpectrumSmoothing::default();
+        let mut moving_smoothing = SpectrumSmoothing::default();
+        let lifted = moving_smoothing.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
+        assert_eq!(lifted, *moving_smoothing.bands());
 
         assert_eq!(
-            settled.frame_due(SpectrumFeed::Live(&raw), next_frame),
-            Some(next_frame)
+            settled_smoothing.frame_due(SpectrumFeed::Live(&raw), next_frame_at),
+            Some(next_frame_at)
         );
         assert_eq!(
-            moving.frame_due(SpectrumFeed::Silent, next_frame),
-            Some(next_frame)
+            moving_smoothing.frame_due(SpectrumFeed::Silent, next_frame_at),
+            Some(next_frame_at)
         );
-        assert_eq!(settled.frame_due(SpectrumFeed::Silent, next_frame), None);
+        assert_eq!(
+            settled_smoothing.frame_due(SpectrumFeed::Silent, next_frame_at),
+            None
+        );
     }
 
     #[test]
     fn a_paused_spectrum_decays_to_settled_and_stops_asking_for_frames() {
-        let next_frame = Moment::new(Duration::from_millis(33));
+        let next_frame_at = Moment::new(Duration::from_millis(33));
         let mut smoothing = SpectrumSmoothing::default();
         let lifted = smoothing.smooth(&[1.0; SPECTRUM_BANDS], Duration::from_secs(10));
         assert!(lifted.iter().all(|&band| band > 0.0));
@@ -284,6 +287,9 @@ mod tests {
         }
 
         assert!(frames < 300);
-        assert_eq!(smoothing.frame_due(SpectrumFeed::Silent, next_frame), None);
+        assert_eq!(
+            smoothing.frame_due(SpectrumFeed::Silent, next_frame_at),
+            None
+        );
     }
 }

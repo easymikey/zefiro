@@ -265,8 +265,8 @@ key_hints = true
 ## Regenerating the default blocks
 
 Two guards in `crates/sifr-guards` lock the blocks above to the code.
-`config_doc_cli.rs` parses the `defaults:config` block with `parse_config` and
-compares it with `TomlSettings::default()`. `config_doc_render.rs` parses the
+`config_doc_config.rs` parses the `defaults:config` block with `parse_config` and
+compares it with `TomlSettings::default()`. `config_doc_appearance.rs` parses the
 `defaults:window` block with `parse_appearance` and compares it with
 `TomlAppearance::default()`. The structs are `Deserialize` only, so the blocks
 are kept by hand. When a default changes:

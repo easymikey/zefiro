@@ -47,8 +47,8 @@ pub fn embedded_theme(name: &str) -> Option<&'static str> {
 }
 
 #[must_use]
-pub fn resolve_theme(choice: &ThemeChoice) -> ThemeName {
-    match choice {
+pub fn theme_name(theme_choice: &ThemeChoice) -> ThemeName {
+    match theme_choice {
         ThemeChoice::Named(name) => name.clone(),
         ThemeChoice::Auto => ThemeName::from_static(STOCK_THEME),
     }
@@ -59,16 +59,16 @@ mod tests {
     use kernel::domain::theme::{ThemeChoice, ThemeName};
     use rstest::rstest;
 
-    use crate::embedded_theme::{EMBEDDED_THEMES, embedded_theme, resolve_theme};
+    use crate::embedded_theme::{EMBEDDED_THEMES, embedded_theme, theme_name};
 
     #[rstest]
     #[case::auto(ThemeChoice::Auto, "noir")]
     #[case::named(ThemeChoice::Named(ThemeName::from_static("ember")), "ember")]
-    fn a_choice_resolves_to_a_named_theme(
-        #[case] choice: ThemeChoice,
+    fn a_theme_choice_gives_its_theme_name(
+        #[case] theme_choice: ThemeChoice,
         #[case] expected: &str,
     ) {
-        assert_eq!(resolve_theme(&choice).as_str(), expected);
+        assert_eq!(theme_name(&theme_choice).as_str(), expected);
     }
 
     #[test]

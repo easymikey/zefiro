@@ -6,7 +6,7 @@ expression: effects(cmd)
     Library(
         TagTracks {
             music_dir: "/music",
-            tracks: [
+            track_sources: [
                 Local(
                     "/music/a.flac",
                 ),

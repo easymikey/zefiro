@@ -17,9 +17,9 @@ use crate::support::{model_playing_at, update::update};
 const SIDE: Pixels = Pixels(240);
 const WIDER: Pixels = Pixels(320);
 
-fn shown(mode: CoverMode, side: Option<Pixels>) -> Model {
+fn shown(cover_mode: CoverMode, side: Option<Pixels>) -> Model {
     let mut model = model_playing_at(3, 0, Duration::ZERO);
-    model.settings.appearance.cover_mode = mode;
+    model.settings.appearance_settings.cover_mode = cover_mode;
     model.workspace.cover_side = side;
     model
 }
@@ -35,16 +35,16 @@ fn next() -> Message {
     Message::Playback(PlaybackRequest::Next)
 }
 
-fn switched_to(mode: CoverMode) -> Message {
+fn switched_to(cover_mode: CoverMode) -> Message {
     Message::Config(ConfigEvent::AppearanceReloaded(AppearanceSettings {
-        cover_mode: mode,
+        cover_mode,
         ..AppearanceSettings::default()
     }))
 }
 
-fn job(track: usize, side: Pixels) -> CoverJob {
+fn job(track_number: usize, side: Pixels) -> CoverJob {
     CoverJob {
-        path: PathBuf::from(format!("/tmp/track{track}.flac")),
+        path: PathBuf::from(format!("/tmp/track{track_number}.flac")),
         side,
     }
 }
@@ -66,7 +66,7 @@ fn the_kernel_decodes_a_cover_when_the_shown_one_changes(
 ) {
     let cmd = update(&mut model, message, Moment::default()).unwrap();
 
-    let decoded: Vec<CoverJob> = cmd
+    let decoded_jobs: Vec<CoverJob> = cmd
         .effects()
         .filter_map(|effect| {
             let Effect::Library(LibraryCmd::DecodeCover(job)) = effect else {
@@ -75,5 +75,5 @@ fn the_kernel_decodes_a_cover_when_the_shown_one_changes(
             Some(job.clone())
         })
         .collect();
-    assert_eq!(decoded, expected);
+    assert_eq!(decoded_jobs, expected);
 }

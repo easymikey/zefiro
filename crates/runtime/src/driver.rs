@@ -9,15 +9,16 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use kernel::{
     cmd::Cmds,
+    domain::driver::DriverError,
     message::Message,
     update::machine::{Driver, LoopCmd, LoopEffect, Machine},
 };
 
 use crate::{
-    driver_thread::{Congestion, DriverThread, SendError, send, spawn_driver},
-    driver_wait::{Inboxes, LoopInput},
-    error::Error,
-    jobs::{Jobs, spawn_jobs, stash},
+    driver_thread::{Congestion, DriverThread, Halt, send, spawn_driver},
+    driver_wait::{LoopInput, WaitSources},
+    error::SpawnError,
+    jobs::{spawn_jobs, stash},
     registry::DriverRow,
     timers::Timers,
     watcher::FileStream,
@@ -29,21 +30,21 @@ const JOB_RESULTS: usize = 8;
 pub(crate) struct DriverLoop<D: Driver, J> {
     pub(crate) row: &'static DriverRow,
     pub(crate) inbox: Sender<Message>,
-    pub(crate) heard: Receiver<D::Message>,
-    pub(crate) seed: Option<D::Message>,
-    pub(crate) jobs: Jobs<J, D::Message>,
+    pub(crate) callback_receiver: Receiver<D::Message>,
+    pub(crate) message: Option<D::Message>,
+    pub(crate) run_job: fn(J) -> D::Message,
 }
 
 struct Outlets<'a, D: Driver, J> {
     inbox: &'a Sender<Message>,
-    full: &'a Congestion,
+    congestion: &'a Congestion,
     row: &'static DriverRow,
-    jobs: Jobs<J, D::Message>,
-    results: Sender<Result<D::Message, Box<dyn Any + Send>>>,
+    run_job: fn(J) -> D::Message,
+    result_sender: Sender<Result<D::Message, Box<dyn Any + Send>>>,
     workers: HashMap<mem::Discriminant<J>, Sender<J>>,
     pending: Vec<J>,
     timers: Timers<D::Message>,
-    files: FileStream<D::Message>,
+    file_stream: FileStream<D::Message>,
 }
 
 impl<D, J> Outlets<'_, D, J>
@@ -52,16 +53,15 @@ where
     D::Message: Send + 'static,
     J: Send + 'static,
 {
-    fn hand_over(&mut self) {
+    fn hand_over(&mut self) -> Result<(), SpawnError> {
         for job in mem::take(&mut self.pending) {
             let worker = match self.workers.entry(mem::discriminant(&job)) {
                 Entry::Occupied(entry) => entry.into_mut(),
-                Entry::Vacant(entry) => entry.insert(
-                    spawn_jobs(self.row, self.results.clone(), self.jobs.run)
-                        .unwrap_or_else(|_spawn| {
-                            resume_unwind(Box::new("a job worker died"))
-                        }),
-                ),
+                Entry::Vacant(entry) => entry.insert(spawn_jobs(
+                    self.row,
+                    self.result_sender.clone(),
+                    self.run_job,
+                )?),
             };
             match worker.try_send(job) {
                 Ok(()) => {}
@@ -71,14 +71,15 @@ where
                 }
             }
         }
+        Ok(())
     }
 
     fn place(
         &mut self,
-        effect: LoopEffect<<D as Driver>::Effect, J, D::Message>,
+        loop_effect: LoopEffect<<D as Driver>::Effect, J, D::Message>,
         driver: &mut D,
     ) -> Option<D::Message> {
-        match effect {
+        match loop_effect {
             LoopEffect::Execute(effect) => driver.execute(effect),
             LoopEffect::Run(job) => {
                 stash(&mut self.pending, job);
@@ -90,8 +91,10 @@ where
                 }
                 None
             }
-            LoopEffect::Watch { path, item } => self.files.watch(&path, item),
-            LoopEffect::Unwatch(path) => self.files.unwatch(&path),
+            LoopEffect::Watch { path, changed } => {
+                self.file_stream.watch(&path, changed)
+            }
+            LoopEffect::Unwatch(path) => self.file_stream.unwatch(&path),
         }
     }
 }
@@ -107,7 +110,7 @@ where
     pub(crate) fn spawn<C>(
         self,
         start: impl FnOnce() -> D + Send + 'static,
-    ) -> Result<DriverThread<C>, Error>
+    ) -> Result<DriverThread<C>, SpawnError>
     where
         C: Send + 'static,
         D::Message: From<Cmds<C>>,
@@ -115,36 +118,41 @@ where
         let Self {
             row,
             inbox,
-            heard,
-            seed,
-            jobs,
+            callback_receiver,
+            message: seed,
+            run_job,
         } = self;
-        let (results, finished) = bounded(JOB_RESULTS);
+        let (result_sender, finished) = bounded(JOB_RESULTS);
         spawn_driver(
             row,
-            move |commands: &Receiver<C>,
+            move |cmd_receiver: &Receiver<C>,
                   inbox: &Sender<Message>,
-                  full: &Congestion| {
+                  congestion: &Congestion| {
                 let mut outlets = Outlets {
                     inbox,
-                    full,
+                    congestion,
                     row,
-                    jobs,
-                    results,
+                    run_job,
+                    result_sender,
                     workers: HashMap::new(),
                     pending: Vec::new(),
                     timers: Timers::default(),
-                    files: FileStream::Idle,
+                    file_stream: FileStream::Idle,
                 };
-                let inboxes = Inboxes {
-                    commands,
-                    heard,
-                    finished,
+                let wait_sources = WaitSources {
+                    cmd_receiver,
+                    callback_receiver,
+                    finished_receiver: finished,
                 };
                 let mut driver = start();
-                let mut fed = |message| Self::feed(&mut driver, message, &mut outlets);
-                if seed.is_none_or(|message| fed(message).is_ok()) {
-                    Self::drive(driver, inboxes, &mut outlets);
+                let seeded = seed.map_or(Ok(()), |message| {
+                    Self::feed(&mut driver, message, &mut outlets)
+                });
+                match seeded
+                    .and_then(|()| Self::drive(driver, wait_sources, &mut outlets))
+                {
+                    Err(Halt::Spawn(error)) => Err(DriverError::from(&error)),
+                    Ok(()) | Err(Halt::Inbox(_)) => Ok(()),
                 }
             },
             &inbox,
@@ -153,35 +161,32 @@ where
 
     fn drive<C>(
         mut driver: D,
-        mut inboxes: Inboxes<'_, C, D::Message>,
+        mut wait_sources: WaitSources<'_, C, D::Message>,
         outlets: &mut Outlets<'_, D, J>,
-    ) where
+    ) -> Result<(), Halt>
+    where
         D::Message: From<Cmds<C>>,
     {
         loop {
-            let fed =
-                match inboxes.wait(&outlets.files, outlets.timers.next_deadline()) {
-                    LoopInput::Heard(message) => {
-                        Self::feed(&mut driver, message, outlets)
-                    }
-                    LoopInput::Due => Ok(()),
-                    LoopInput::Panicked(payload) => resume_unwind(payload),
-                    LoopInput::Lost(source) => inboxes
-                        .lose(&source, &mut outlets.files)
-                        .map_or(Ok(()), |lost| Self::feed(&mut driver, lost, outlets)),
-                    LoopInput::Closed => return,
+            let fed = match wait_sources
+                .wait(&outlets.file_stream, outlets.timers.next_deadline())
+            {
+                LoopInput::Message(message) => {
+                    Self::feed(&mut driver, message, outlets)
                 }
-                .and_then(|()| Self::feed_due(&mut driver, outlets));
-            if fed.is_err() {
-                return;
+                LoopInput::Due => Ok(()),
+                LoopInput::Panicked(payload) => resume_unwind(payload),
+                LoopInput::Lost(source) => wait_sources
+                    .lose(&source, &mut outlets.file_stream)
+                    .map_or(Ok(()), |lost| Self::feed(&mut driver, lost, outlets)),
+                LoopInput::Closed => return Ok(()),
             }
+            .and_then(|()| Self::feed_due(&mut driver, outlets));
+            fed?;
         }
     }
 
-    fn feed_due(
-        driver: &mut D,
-        outlets: &mut Outlets<'_, D, J>,
-    ) -> Result<(), SendError> {
+    fn feed_due(driver: &mut D, outlets: &mut Outlets<'_, D, J>) -> Result<(), Halt> {
         let due = outlets.timers.take_due(Instant::now());
         due.into_iter()
             .try_for_each(|message| Self::feed(driver, message, outlets))
@@ -191,9 +196,9 @@ where
         driver: &mut D,
         message: D::Message,
         outlets: &mut Outlets<'_, D, J>,
-    ) -> Result<(), SendError> {
+    ) -> Result<(), Halt> {
         Self::step(driver, message, outlets)?;
-        outlets.hand_over();
+        outlets.hand_over()?;
         Ok(())
     }
 
@@ -201,13 +206,13 @@ where
         driver: &mut D,
         message: D::Message,
         outlets: &mut Outlets<'_, D, J>,
-    ) -> Result<(), SendError> {
+    ) -> Result<(), Halt> {
         let Ok(cmd) = driver.transition(message) else {
             return Ok(());
         };
         let (effects, messages) = cmd.into_parts();
         for event in messages {
-            send(outlets.inbox, outlets.full, event.into())?;
+            send(outlets.inbox, outlets.congestion, event.into())?;
         }
         for effect in effects {
             if let Some(answer) = outlets.place(effect, driver) {
@@ -245,9 +250,10 @@ mod tests {
     use crate::{
         driver::{DriverLoop, Outlets},
         driver_thread::{Congestion, DriverThread, spawn_idle},
-        jobs::{Jobs, stash},
+        jobs::stash,
         registry,
         runtime::Runtime,
+        spawn_setup::CALLBACK_SLOTS,
         timers::Timers,
         watcher::FileStream,
     };
@@ -291,7 +297,7 @@ mod tests {
     enum NoJob {}
 
     struct Probe {
-        notes: Sender<Note>,
+        doorbell_sender: Sender<Note>,
     }
 
     impl Machine for Probe {
@@ -300,10 +306,10 @@ mod tests {
 
         fn transition(
             &mut self,
-            message: ProbeMessage,
+            probe_message: ProbeMessage,
         ) -> Result<LoopCmd<ProbeEffect, NoJob, ProbeMessage, Message>, Unhandled>
         {
-            Ok(match message {
+            Ok(match probe_message {
                 ProbeMessage::Cmds(cmds) => cmds
                     .cmds
                     .into_iter()
@@ -316,10 +322,10 @@ mod tests {
                         }
                         ProbeCmd::Watch(path) => Cmd::effect(LoopEffect::Watch {
                             path,
-                            item: ProbeMessage::Changed,
+                            changed: ProbeMessage::Changed,
                         }),
                         ProbeCmd::Announce => Cmd::message(Message::Driver {
-                            driver: DriverName::Config,
+                            driver_name: DriverName::Config,
                             event: DriverEvent::Full,
                         }),
                     })
@@ -341,10 +347,10 @@ mod tests {
     impl Driver for Probe {
         type Effect = ProbeEffect;
 
-        fn execute(&mut self, effect: ProbeEffect) -> Option<ProbeMessage> {
-            match effect {
+        fn execute(&mut self, probe_effect: ProbeEffect) -> Option<ProbeMessage> {
+            match probe_effect {
                 ProbeEffect::Report(note) => {
-                    self.notes.send(note).unwrap();
+                    self.doorbell_sender.send(note).unwrap();
                     None
                 }
             }
@@ -353,45 +359,41 @@ mod tests {
 
     struct ProbeRun {
         thread: DriverThread<ProbeCmd>,
-        notes: Receiver<Note>,
-        reports: Receiver<Message>,
+        doorbell: Receiver<Note>,
+        report_receiver: Receiver<Message>,
     }
 
     impl ProbeRun {
-        fn start(heard: Receiver<ProbeMessage>) -> Self {
-            let (inbox, reports) = unbounded();
-            let (notes_sender, notes) = unbounded();
+        fn start(callback_receiver: Receiver<ProbeMessage>) -> Self {
+            let (inbox, report_receiver) = unbounded();
+            let (doorbell_sender, doorbell) = unbounded();
             let thread = DriverLoop::<Probe, NoJob> {
                 row: registry::row(DriverName::Config),
                 inbox,
-                heard,
-                seed: None,
-                jobs: Jobs {
-                    run: |job: NoJob| match job {},
-                },
+                callback_receiver,
+                message: None,
+                run_job: |job: NoJob| match job {},
             }
-            .spawn(move || Probe {
-                notes: notes_sender,
-            })
+            .spawn(move || Probe { doorbell_sender })
             .unwrap();
             Self {
                 thread,
-                notes,
-                reports,
+                doorbell,
+                report_receiver,
             }
         }
 
-        fn send(&self, cmd: ProbeCmd) {
-            self.thread.commands.send(cmd).unwrap();
+        fn send(&self, probe_cmd: ProbeCmd) {
+            self.thread.cmd_sender.send(probe_cmd).unwrap();
         }
 
         fn stop(self) {
-            drop(self.thread.commands);
+            drop(self.thread.cmd_sender);
             self.thread.handle.join().unwrap().unwrap();
             assert_eq!(
-                self.reports.recv_timeout(RECV_TIMEOUT),
+                self.report_receiver.recv_timeout(RECV_TIMEOUT),
                 Ok(Message::Driver {
-                    driver: DriverName::Config,
+                    driver_name: DriverName::Config,
                     event: DriverEvent::Stopped
                 })
             );
@@ -408,26 +410,26 @@ mod tests {
             tag: 1,
         });
 
-        assert_eq!(run.notes.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(1)));
+        assert_eq!(run.doorbell.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(1)));
         assert!(sent_at.elapsed() >= SHORT);
         run.stop();
     }
 
     #[test]
     fn a_due_timer_fires_while_inputs_keep_arriving() {
-        let (ticks, heard) = unbounded();
+        let (ticks, callback_receiver) = unbounded();
         for _ in 0..100 {
             ticks.send(ProbeMessage::Tick).unwrap();
         }
         ticks.send(ProbeMessage::Fired(9)).unwrap();
-        let run = ProbeRun::start(heard);
+        let run = ProbeRun::start(callback_receiver);
 
         run.send(ProbeCmd::After {
             delay: SHORT,
             tag: 1,
         });
 
-        assert_eq!(run.notes.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(1)));
+        assert_eq!(run.doorbell.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(1)));
         run.stop();
     }
 
@@ -444,8 +446,8 @@ mod tests {
             tag: 1,
         });
 
-        assert_eq!(run.notes.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(1)));
-        assert!(run.notes.recv_timeout(SHORT * 4).is_err());
+        assert_eq!(run.doorbell.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(1)));
+        assert!(run.doorbell.recv_timeout(SHORT * 4).is_err());
         run.stop();
     }
 
@@ -458,55 +460,55 @@ mod tests {
             delay: Duration::ZERO,
             tag: 0,
         });
-        assert_eq!(run.notes.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(0)));
+        assert_eq!(run.doorbell.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(0)));
 
         std::fs::write(directory.path().join("probe.txt"), "changed").unwrap();
 
         assert_eq!(
-            run.notes.recv_timeout(Duration::from_secs(5)),
+            run.doorbell.recv_timeout(Duration::from_secs(5)),
             Ok(Note::Changed(Ok(())))
         );
         run.stop();
     }
 
     #[test]
-    fn a_dropped_heard_sender_does_not_end_the_loop() {
-        let (heard_sender, heard) = bounded(1);
-        drop(heard_sender);
-        let run = ProbeRun::start(heard);
+    fn a_dropped_callback_sender_does_not_end_the_loop() {
+        let (callback_sender, callback_receiver) = bounded(1);
+        drop(callback_sender);
+        let run = ProbeRun::start(callback_receiver);
 
         run.send(ProbeCmd::After {
             delay: Duration::ZERO,
             tag: 3,
         });
 
-        assert_eq!(run.notes.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(3)));
+        assert_eq!(run.doorbell.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(3)));
         run.stop();
     }
 
     #[test]
     fn a_final_report_into_a_full_inbox_raises_congestion() {
         let (inbox, reports) = bounded(1);
-        let filler = Message::Driver {
-            driver: DriverName::Library,
+        let filler_message = Message::Driver {
+            driver_name: DriverName::Library,
             event: DriverEvent::Stopped,
         };
-        inbox.send(filler.clone()).unwrap();
+        inbox.send(filler_message.clone()).unwrap();
         let thread =
             spawn_idle::<ProbeCmd>(registry::row(DriverName::Config), &inbox).unwrap();
 
-        drop(thread.commands);
+        drop(thread.cmd_sender);
         let deadline = Instant::now() + RECV_TIMEOUT;
-        let raised = std::iter::repeat_with(|| thread.full.take())
+        let raised = std::iter::repeat_with(|| thread.congestion.take())
             .take_while(|_| Instant::now() < deadline)
             .any(|raised| raised);
 
         assert!(raised);
-        assert_eq!(reports.recv_timeout(RECV_TIMEOUT), Ok(filler));
+        assert_eq!(reports.recv_timeout(RECV_TIMEOUT), Ok(filler_message));
         assert_eq!(
             reports.recv_timeout(RECV_TIMEOUT),
             Ok(Message::Driver {
-                driver: DriverName::Config,
+                driver_name: DriverName::Config,
                 event: DriverEvent::Stopped
             })
         );
@@ -516,23 +518,21 @@ mod tests {
     #[test]
     fn a_driver_without_jobs_starts_no_worker() {
         let (inbox, _reports) = unbounded();
-        let full = Congestion::default();
-        let (results, _finished) = unbounded();
+        let congestion = Congestion::default();
+        let (result_sender, _result_receiver) = unbounded();
         let mut outlets = Outlets::<Probe, NoJob> {
             inbox: &inbox,
-            full: &full,
+            congestion: &congestion,
             row: registry::row(DriverName::Config),
-            jobs: Jobs {
-                run: |job: NoJob| match job {},
-            },
-            results,
+            run_job: |job: NoJob| match job {},
+            result_sender,
             workers: HashMap::new(),
             pending: Vec::new(),
             timers: Timers::default(),
-            files: FileStream::Idle,
+            file_stream: FileStream::Idle,
         };
 
-        outlets.hand_over();
+        outlets.hand_over().unwrap();
         assert!(outlets.workers.is_empty());
     }
 
@@ -587,19 +587,17 @@ mod tests {
     fn a_hand_over_to_a_dead_worker_makes_the_driver_died() {
         let (inbox, _reports) = unbounded();
         let congestion = Congestion::default();
-        let (results, _finished) = unbounded();
+        let (result_sender, _result_receiver) = unbounded();
         let mut outlets = Outlets::<Napper, Nap> {
             inbox: &inbox,
-            full: &congestion,
+            congestion: &congestion,
             row: registry::row(DriverName::Config),
-            jobs: Jobs {
-                run: |_nap: Nap| -> NapperMessage { panic!("the job panics") },
-            },
-            results,
+            run_job: |_nap: Nap| -> NapperMessage { panic!("the job panics") },
+            result_sender,
             workers: HashMap::new(),
             pending: Vec::new(),
             timers: Timers::default(),
-            files: FileStream::Idle,
+            file_stream: FileStream::Idle,
         };
         let deadline = Instant::now() + RECV_TIMEOUT;
 
@@ -617,32 +615,30 @@ mod tests {
     fn a_job_of_one_kind_does_not_wait_behind_a_running_job_of_another() {
         let (inbox, _reports) = unbounded();
         let congestion = Congestion::default();
-        let (results, finished) = unbounded();
+        let (result_sender, result_receiver) = unbounded();
         let mut outlets = Outlets::<Napper, Nap> {
             inbox: &inbox,
-            full: &congestion,
+            congestion: &congestion,
             row: registry::row(DriverName::Config),
-            jobs: Jobs {
-                run: |nap: Nap| {
-                    if nap == Nap::Long {
-                        thread::sleep(LONG_JOB);
-                    }
-                    NapperMessage::Woke(nap)
-                },
+            run_job: |nap: Nap| {
+                if nap == Nap::Long {
+                    thread::sleep(LONG_JOB);
+                }
+                NapperMessage::Woke(nap)
             },
-            results,
+            result_sender,
             workers: HashMap::new(),
             pending: Vec::new(),
             timers: Timers::default(),
-            files: FileStream::Idle,
+            file_stream: FileStream::Idle,
         };
         stash(&mut outlets.pending, Nap::Long);
         stash(&mut outlets.pending, Nap::Brief);
 
-        outlets.hand_over();
+        outlets.hand_over().unwrap();
 
         let Ok(NapperMessage::Woke(first)) =
-            finished.recv_timeout(RECV_TIMEOUT).unwrap()
+            result_receiver.recv_timeout(RECV_TIMEOUT).unwrap()
         else {
             panic!("a job answers with Woke");
         };
@@ -656,32 +652,30 @@ mod tests {
         let thread = DriverLoop::<Napper, Nap> {
             row: registry::row(DriverName::Config),
             inbox,
-            heard: never(),
-            seed: None,
-            jobs: Jobs {
-                run: |nap: Nap| match nap {
-                    Nap::Long => {
-                        thread::sleep(LONG_JOB);
-                        NapperMessage::Woke(Nap::Long)
-                    }
-                    Nap::Brief => NapperMessage::Woke(Nap::Brief),
-                },
+            callback_receiver: never(),
+            message: None,
+            run_job: |nap: Nap| match nap {
+                Nap::Long => {
+                    thread::sleep(LONG_JOB);
+                    NapperMessage::Woke(Nap::Long)
+                }
+                Nap::Brief => NapperMessage::Woke(Nap::Brief),
             },
         }
         .spawn(|| Napper)
         .unwrap();
-        thread.commands.send(Nap::Long).unwrap();
+        thread.cmd_sender.send(Nap::Long).unwrap();
         thread::sleep(SHORT);
 
         let asked = Instant::now();
-        drop(thread.commands);
+        drop(thread.cmd_sender);
         thread.handle.join().unwrap().unwrap();
 
         assert!(asked.elapsed() < Runtime::DRAIN);
         assert_eq!(
             reports.recv_timeout(RECV_TIMEOUT),
             Ok(Message::Driver {
-                driver: DriverName::Config,
+                driver_name: DriverName::Config,
                 event: DriverEvent::Stopped
             })
         );
@@ -693,46 +687,42 @@ mod tests {
         let thread = DriverLoop::<Napper, Nap> {
             row: registry::row(DriverName::Config),
             inbox,
-            heard: never(),
-            seed: None,
-            jobs: Jobs {
-                run: |nap: Nap| match nap {
-                    Nap::Long | Nap::Brief => panic!("the job panics"),
-                },
+            callback_receiver: never(),
+            message: None,
+            run_job: |nap: Nap| match nap {
+                Nap::Long | Nap::Brief => panic!("the job panics"),
             },
         }
         .spawn(|| Napper)
         .unwrap();
 
-        thread.commands.send(Nap::Long).unwrap();
+        thread.cmd_sender.send(Nap::Long).unwrap();
 
         assert_eq!(
             reports.recv_timeout(RECV_TIMEOUT),
             Ok(Message::Driver {
-                driver: DriverName::Config,
+                driver_name: DriverName::Config,
                 event: DriverEvent::Died(DriverError::Panicked)
             })
         );
-        drop(thread.commands);
+        drop(thread.cmd_sender);
         thread.handle.join().unwrap().unwrap();
     }
 
     fn start_audio_driver() -> (DriverThread<AudioCmd>, Receiver<Message>) {
         let (inbox, sent) = unbounded();
-        let (deck_sender, heard) = bounded(64);
+        let (callback_sender, callback_receiver) = bounded(CALLBACK_SLOTS);
         let settings = AudioSettings::default();
         let row = registry::row(DriverName::Audio);
-        let jobs = Jobs {
-            run: audio::deck::job::AudioJob::run,
-        };
+        let run_job = audio::deck::job::AudioJob::run;
         let thread = DriverLoop::<AudioDriver, _> {
             row,
             inbox,
-            heard,
-            seed: None,
-            jobs,
+            callback_receiver,
+            message: None,
+            run_job,
         }
-        .spawn(move || AudioDriver::new(settings, deck_sender).0)
+        .spawn(move || AudioDriver::new(settings, callback_sender).0)
         .unwrap();
         (thread, sent)
     }
@@ -751,50 +741,52 @@ mod tests {
     fn a_listed_devices_answer_comes_back_through_the_deck_inbox() {
         let (thread, sent) = start_audio_driver();
 
-        thread.commands.send(AudioCmd::ListDevices).unwrap();
+        thread.cmd_sender.send(AudioCmd::ListDevices).unwrap();
         assert!(is_devices_answer(
             &sent.recv_timeout(Duration::from_secs(5))
         ));
         assert!(sent.try_recv().is_err());
 
-        drop(thread.commands);
+        drop(thread.cmd_sender);
         thread.handle.join().unwrap().unwrap();
     }
 
     #[test]
     #[ignore = "hardware: opens the output device"]
-    fn a_muted_start_reports_nothing_until_a_command_arrives() {
+    fn a_muted_start_reports_nothing_until_a_cmd_arrives() {
         let (thread, sent) = start_audio_driver();
 
         thread::sleep(Duration::from_millis(250));
         assert!(sent.try_recv().is_err());
 
-        thread.commands.send(AudioCmd::ListDevices).unwrap();
+        thread.cmd_sender.send(AudioCmd::ListDevices).unwrap();
         assert!(is_devices_answer(
             &sent.recv_timeout(Duration::from_secs(5))
         ));
 
-        drop(thread.commands);
+        drop(thread.cmd_sender);
         thread.handle.join().unwrap().unwrap();
     }
 
     #[test]
-    fn a_closed_mailbox_ends_the_driver_loop() {
+    fn a_closed_inbox_ends_the_driver_loop() {
         let ProbeRun {
-            thread, reports, ..
+            thread,
+            report_receiver,
+            ..
         } = ProbeRun::start(never());
-        drop(reports);
+        drop(report_receiver);
 
-        thread.commands.send(ProbeCmd::Announce).unwrap();
+        thread.cmd_sender.send(ProbeCmd::Announce).unwrap();
 
         let (finished, joined) = bounded(1);
         let DriverThread {
-            commands, handle, ..
+            cmd_sender, handle, ..
         } = thread;
         thread::spawn(move || {
             finished.send(handle.join().is_ok()).unwrap();
         });
         assert_eq!(joined.recv_timeout(Duration::from_secs(5)), Ok(true));
-        drop(commands);
+        drop(cmd_sender);
     }
 }

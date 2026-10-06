@@ -14,7 +14,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::{error::Error, window_colors};
 
-fn leave_the_alternate_screen() -> Result<(), io::Error> {
+fn restore_on_panic() -> Result<(), io::Error> {
     let raw_mode = disable_raw_mode();
     let window_colors = window_colors::reset_on_panic();
     let screen = execute!(io::stdout(), LeaveAlternateScreen, Show);
@@ -26,7 +26,7 @@ pub fn install_panic_hook() {
     let painting_thread = std::thread::current().id();
     std::panic::set_hook(Box::new(move |info| {
         if std::thread::current().id() == painting_thread {
-            drop(leave_the_alternate_screen());
+            drop(restore_on_panic());
         }
         original(info);
     }));
@@ -76,12 +76,12 @@ impl TerminalSession<Stdout> {
 fn abandon_setup(
     leave_screen: impl FnOnce() -> Result<(), io::Error>,
     disable_raw: impl FnOnce() -> Result<(), io::Error>,
-    setup: io::Error,
+    error: io::Error,
 ) -> Error {
     let screen = leave_screen();
     let raw_mode = disable_raw();
     match screen.and(raw_mode) {
-        Ok(()) => Error::Setup(setup),
+        Ok(()) => Error::Setup(error),
         Err(teardown) => Error::Teardown(teardown),
     }
 }

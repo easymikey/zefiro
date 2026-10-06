@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use strum::{Display, IntoStaticStr};
 
-use crate::domain::time::Moment;
+use crate::domain::{io_error::IoError, time::Moment};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -26,6 +26,8 @@ impl DriverName {
 pub enum DriverError {
     #[error("panicked")]
     Panicked,
+    #[error("never started: {error}")]
+    Spawn { error: IoError },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -76,14 +78,14 @@ impl Default for Drivers {
 
 impl Drivers {
     #[must_use]
-    pub fn status(&self, driver: DriverName) -> &DriverStatus {
-        &self.record(driver).status
+    pub fn status(&self, driver_name: DriverName) -> &DriverStatus {
+        &self.record(driver_name).status
     }
 
     #[must_use]
-    pub fn record(&self, driver: DriverName) -> &DriverRecord {
+    pub fn record(&self, driver_name: DriverName) -> &DriverRecord {
         let [audio, library, config, macos] = &self.0;
-        match driver {
+        match driver_name {
             DriverName::Audio => audio,
             DriverName::Library => library,
             DriverName::Config => config,
@@ -91,9 +93,9 @@ impl Drivers {
         }
     }
 
-    pub fn record_mut(&mut self, driver: DriverName) -> &mut DriverRecord {
+    pub fn record_mut(&mut self, driver_name: DriverName) -> &mut DriverRecord {
         let [audio, library, config, macos] = &mut self.0;
-        match driver {
+        match driver_name {
             DriverName::Audio => audio,
             DriverName::Library => library,
             DriverName::Config => config,

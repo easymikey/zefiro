@@ -9,7 +9,7 @@ pub enum AppearanceField {
     CoverBrackets,
     FormatChips,
     SpeedChip,
-    ProgressRemaining,
+    ProgressTime,
     KeyHints,
     Animations,
     LayoutMode,
@@ -34,12 +34,13 @@ const FIXED_ROWS: [SettingRow; 4] = [
 
 impl SettingRow {
     #[must_use]
-    pub fn all(appearance: &[AppearanceSetting]) -> Vec<SettingRow> {
-        let appearance_row =
-            |slot: &AppearanceSetting| SettingRow::Appearance(slot.row.field);
-        let (leading, rest) = match appearance.split_first() {
+    pub fn all(appearance_row_choices: &[AppearanceRowChoice]) -> Vec<SettingRow> {
+        let appearance_row = |appearance_row_choice: &AppearanceRowChoice| {
+            SettingRow::Appearance(appearance_row_choice.row.field)
+        };
+        let (leading, rest) = match appearance_row_choices.split_first() {
             Some((leading, rest)) => (Some(appearance_row(leading)), rest),
-            None => (None, appearance),
+            None => (None, appearance_row_choices),
         };
         leading
             .into_iter()
@@ -52,13 +53,13 @@ impl SettingRow {
     #[must_use]
     pub fn control(
         self,
-        appearance: &[AppearanceSetting],
+        appearance_row_choices: &[AppearanceRowChoice],
     ) -> Option<AppearanceControl> {
         match self {
-            SettingRow::Appearance(field) => appearance
+            SettingRow::Appearance(field) => appearance_row_choices
                 .iter()
-                .find(|slot| slot.row.field == field)
-                .map(|slot| slot.row.control),
+                .find(|appearance_row_choice| appearance_row_choice.row.field == field)
+                .map(|appearance_row_choice| appearance_row_choice.row.control),
             SettingRow::Theme
             | SettingRow::Crossfade
             | SettingRow::ReplayGain
@@ -68,10 +69,10 @@ impl SettingRow {
     }
 
     #[must_use]
-    pub fn activates(self, appearance: &[AppearanceSetting]) -> bool {
+    pub fn activates(self, appearance_row_choices: &[AppearanceRowChoice]) -> bool {
         match self {
             SettingRow::Crossfade => false,
-            SettingRow::Appearance(_) => self.control(appearance).is_some(),
+            SettingRow::Appearance(_) => self.control(appearance_row_choices).is_some(),
             SettingRow::Theme
             | SettingRow::ReplayGain
             | SettingRow::OutputDevice
@@ -120,9 +121,9 @@ impl OptionCount {
     }
 
     #[must_use]
-    pub fn index(self, at: usize) -> Option<OptionIndex> {
-        if at < self.get() {
-            Some(OptionIndex(at))
+    pub fn index(self, index: usize) -> Option<OptionIndex> {
+        if index < self.get() {
+            Some(OptionIndex(index))
         } else {
             None
         }
@@ -177,9 +178,9 @@ fn saturated(current: usize, len: usize, direction: Direction) -> usize {
     }
 }
 
-fn clamped(count: OptionCount, position: usize) -> OptionIndex {
+fn clamped(count: OptionCount, requested_index: usize) -> OptionIndex {
     count
-        .index(position.min(count.get() - 1))
+        .index(requested_index.min(count.get() - 1))
         .unwrap_or(OptionIndex(0))
 }
 
@@ -188,19 +189,19 @@ pub struct AppearanceRow {
     pub field: AppearanceField,
     pub control: AppearanceControl,
     pub cue: Option<Cue>,
-    pub themes: &'static [Option<ThemeName>],
+    pub theme_names: &'static [Option<ThemeName>],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AppearanceSetting {
+pub struct AppearanceRowChoice {
     pub row: &'static AppearanceRow,
     pub choice: Choice,
 }
 
 impl SettingRow {
     #[must_use]
-    pub fn first(appearance: &[AppearanceSetting]) -> Self {
-        SettingRow::all(appearance)
+    pub fn first(appearance_row_choices: &[AppearanceRowChoice]) -> Self {
+        SettingRow::all(appearance_row_choices)
             .first()
             .copied()
             .unwrap_or(SettingRow::Theme)
@@ -234,8 +235,8 @@ mod tests {
         setting_row::{AppearanceControl, Choice, OptionCount, OptionIndex},
     };
 
-    fn option(count: usize, at: usize) -> OptionIndex {
-        OptionCount::new(count).unwrap().index(at).unwrap()
+    fn option(count: usize, index: usize) -> OptionIndex {
+        OptionCount::new(count).unwrap().index(index).unwrap()
     }
 
     struct StepRow {

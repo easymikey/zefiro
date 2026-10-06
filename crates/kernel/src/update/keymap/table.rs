@@ -18,7 +18,7 @@ use crate::{
     },
     update::keymap::{
         chord::{
-            BindingSource,
+            BindingOrigin,
             KeyBinding,
             bare,
             ctrl,
@@ -37,7 +37,7 @@ fn row(key_context: KeyContext) -> impl Fn(Action, Chord, Message) -> KeyBinding
         message,
         action: Some(action),
         key_context,
-        source: BindingSource::Default,
+        origin: BindingOrigin::Default,
     }
 }
 
@@ -99,25 +99,25 @@ fn playlist_rows() -> Vec<KeyBinding> {
         row(Down, bare(KeyCode::Down), Message::Browse(B::CursorBy { rows: 1 })),
         row(Up, key('k'), Message::Browse(B::CursorBy { rows: -1 })),
         row(Up, bare(KeyCode::Up), Message::Browse(B::CursorBy { rows: -1 })),
-        row(Top, Chord::Sequence { prefix: ChordPrefix::G, key: ChordPrefix::G.key() }, Message::Browse(B::Top)),
-        row(Top, bare(KeyCode::Home), Message::Browse(B::Top)),
-        row(Bottom, key('G'), Message::Browse(B::Bottom)),
-        row(Bottom, bare(KeyCode::End), Message::Browse(B::Bottom)),
+        row(Top, Chord::Sequence { prefix: ChordPrefix::G, key: ChordPrefix::G.key() }, Message::Browse(B::SelectFirst)),
+        row(Top, bare(KeyCode::Home), Message::Browse(B::SelectFirst)),
+        row(Bottom, key('G'), Message::Browse(B::SelectLast)),
+        row(Bottom, bare(KeyCode::End), Message::Browse(B::SelectLast)),
         row(PageDown, bare(KeyCode::PageDown), Message::Browse(B::PageBy(Direction::Next))),
         row(PageDown, ctrl('d'), Message::Browse(B::PageBy(Direction::Next))),
         row(PageUp, bare(KeyCode::PageUp), Message::Browse(B::PageBy(Direction::Previous))),
         row(PageUp, ctrl('u'), Message::Browse(B::PageBy(Direction::Previous))),
         row(PlaySelected, bare(KeyCode::Enter), Message::Browse(B::PlaySelected)),
-        row(Enqueue, key('a'), Message::Queue(Q::Enqueue)),
+        row(Enqueue, key('a'), Message::Queue(Q::Toggle)),
         row(PlayNext, key('A'), Message::Queue(Q::PlayNext)),
         row(Dequeue, key('x'), Message::Queue(Q::Dequeue)),
-        row(QueueMoveUp, shifted(KeyCode::Up), Message::Queue(Q::MoveInQueue(Direction::Previous))),
-        row(QueueMoveDown, shifted(KeyCode::Down), Message::Queue(Q::MoveInQueue(Direction::Next))),
+        row(QueueMoveUp, shifted(KeyCode::Up), Message::Queue(Q::Move(Direction::Previous))),
+        row(QueueMoveDown, shifted(KeyCode::Down), Message::Queue(Q::Move(Direction::Next))),
         row(CycleSort, key('o'), Message::Browse(B::CycleSort)),
         row(Favorite, key('f'), Message::Browse(B::ToggleFavorite)),
-        row(Delete, key('d'), Message::Overlay(OverlayRequest::Open(OverlayName::ConfirmDelete))),
+        row(Delete, key('d'), Message::Overlay(OverlayRequest::Open(OverlayName::ConfirmTrash))),
         row(SavePlaylist, key('S'), Message::Overlay(OverlayRequest::Open(OverlayName::SavePlaylist))),
-        row(FullScan, key('R'), Message::Browse(B::FullScan)),
+        row(FullScan, key('R'), Message::Browse(B::Rescan)),
         row(TrackDetails, key('i'), Message::Overlay(OverlayRequest::Open(OverlayName::TrackDetails))),
     ]
 }

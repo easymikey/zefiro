@@ -8,7 +8,7 @@ use ratatui::{
 use crate::{
     primitive::{
         span::{line, text},
-        text::truncate,
+        truncate::truncate,
     },
     theme::active_theme::ActiveTheme,
 };
@@ -38,7 +38,7 @@ impl<'a> TooSmallWidget<'a> {
 impl Widget for &TooSmallWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let colors = self.theme.colors();
-        let text_style = Style::default().fg(colors.text);
+        let text_style = Style::default().fg(colors.foreground);
         let dim_style = Style::default().fg(colors.muted_foreground);
         let width = usize::from(area.width);
         let fit = |line: String| truncate(&line, width).into_owned();

@@ -6,8 +6,9 @@ where
     R: Send + 'static,
     F: FnOnce(Runtime) -> R + Send + 'static,
 {
-    let Some(main) = ::macos::main_loop::MainLoop::attach(&runtime.wiring.macos.sender)
-    else {
+    let Some(main) = ::macos::main_loop::MainLoop::attach(
+        &runtime.wiring.macos_channel.callback_sender,
+    ) else {
         return Ok(body(runtime));
     };
     let guard = StopOnDrop(main.stopper());
@@ -57,11 +58,11 @@ mod tests {
     fn off_the_main_thread_the_body_runs_inline() {
         let runtime = idle_runtime();
 
-        let outcome = run_on_main_thread(runtime, |runtime| {
+        let result = run_on_main_thread(runtime, |runtime| {
             runtime.drain();
             42
         });
 
-        assert_eq!(outcome.unwrap(), 42);
+        assert_eq!(result.unwrap(), 42);
     }
 }

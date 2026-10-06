@@ -19,12 +19,12 @@ pub(crate) struct ShellPresentation {
     pub(in crate::shell) pixel_path: PixelPath,
     pub(in crate::shell) color_depth: ColorDepth,
     pub(in crate::shell) cell_aspect: f32,
-    pub(in crate::shell) home: Option<PathBuf>,
+    pub(in crate::shell) home_dir: Option<PathBuf>,
     pub(in crate::shell) spectrum: Spectrum,
     pub(in crate::shell) key_hint_chords: KeyHintChords,
 }
 
-pub(in crate::shell) fn theme(raw: TomlTheme) -> Theme {
+pub(in crate::shell) fn theme(toml_theme: TomlTheme) -> Theme {
     let TomlColors {
         background,
         muted_foreground,
@@ -34,8 +34,8 @@ pub(in crate::shell) fn theme(raw: TomlTheme) -> Theme {
         yellow,
         red,
         window_background,
-    } = raw.colors;
-    let seed = ThemeBase {
+    } = toml_theme.colors;
+    let theme_base = ThemeBase {
         background,
         muted_foreground,
         foreground,
@@ -46,9 +46,9 @@ pub(in crate::shell) fn theme(raw: TomlTheme) -> Theme {
         window_background,
     };
     Theme {
-        name: raw.name,
-        colors: Colors::derive(&seed),
-        scanning_label: raw.scanning_label,
+        name: toml_theme.name,
+        colors: Colors::from_theme_base(&theme_base),
+        scanning_label: toml_theme.scanning_label,
     }
 }
 
@@ -60,7 +60,7 @@ pub(in crate::shell) fn test_presentation() -> ShellPresentation {
         pixel_path: PixelPath::Halfblocks,
         color_depth: ColorDepth::TrueColor,
         cell_aspect: widgets::geometry::DEFAULT_CELL_ASPECT,
-        home: None,
+        home_dir: None,
         spectrum: [0.0; widgets::spectrum::SPECTRUM_BANDS],
         key_hint_chords: KeyHintChords::default(),
     }
@@ -74,8 +74,8 @@ mod tests {
 
     #[test]
     fn every_repo_theme_derives_its_own_palette() {
-        for &(name, source) in EMBEDDED_THEMES {
-            let colors = theme(parse_theme(source, name).unwrap()).colors;
+        for &(name, text) in EMBEDDED_THEMES {
+            let colors = theme(parse_theme(text, name).unwrap()).colors;
             insta::with_settings!({ snapshot_suffix => name }, {
                 insta::assert_debug_snapshot!(colors);
             });

@@ -7,36 +7,38 @@ use library::dirs::LibraryDirs;
 
 use crate::latest::LatestSenders;
 
-#[cfg(target_os = "macos")]
-const HEARD: usize = 64;
+pub(crate) const CALLBACK_SLOTS: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct StartupPaths {
-    pub config: ConfigPaths,
-    pub library: LibraryDirs,
+    pub config_paths: ConfigPaths,
+    pub library_dirs: LibraryDirs,
 }
 
 #[derive(Debug)]
 pub(crate) struct SpawnSetup<'a> {
-    pub(crate) audio: &'a AudioSettings,
+    pub(crate) audio_settings: &'a AudioSettings,
     pub(crate) paths: &'a StartupPaths,
     pub(crate) inbox: &'a Sender<Message>,
-    pub(crate) writers: &'a LatestSenders,
+    pub(crate) latest_senders: &'a LatestSenders,
     #[cfg(target_os = "macos")]
-    pub(crate) macos: &'a MacosChannel,
+    pub(crate) macos_channel: &'a MacosChannel,
 }
 
 #[cfg(target_os = "macos")]
 #[derive(Debug, Clone)]
 pub(crate) struct MacosChannel {
-    pub(crate) sender: Sender<MacosMessage>,
-    pub(crate) receiver: Receiver<MacosMessage>,
+    pub(crate) callback_sender: Sender<MacosMessage>,
+    pub(crate) callback_receiver: Receiver<MacosMessage>,
 }
 
 #[cfg(target_os = "macos")]
 impl MacosChannel {
     pub(crate) fn new() -> Self {
-        let (sender, receiver) = bounded(HEARD);
-        Self { sender, receiver }
+        let (callback_sender, callback_receiver) = bounded(CALLBACK_SLOTS);
+        Self {
+            callback_sender,
+            callback_receiver,
+        }
     }
 }

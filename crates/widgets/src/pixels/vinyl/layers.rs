@@ -37,13 +37,13 @@ fn scale_alpha(peak: u8, fraction: f32) -> u8 {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct VinylFrame {
-    pub(crate) size: Pixels,
+    pub(crate) side: Pixels,
     pub(crate) style: VinylStyle,
 }
 
 #[must_use]
 pub(crate) fn paint_record_layer(frame: VinylFrame) -> Option<Pixmap> {
-    let geometry = VinylGeometry::new(frame.size.0);
+    let geometry = VinylGeometry::new(frame.side);
     let mut pixmap = Pixmap::new(geometry.width.0, geometry.height.0)?;
     pixmap.fill(Color::TRANSPARENT);
     paint_record_and_grooves(&mut pixmap, &frame, &geometry);
@@ -56,10 +56,10 @@ pub(crate) struct SleeveInput<'a> {
 }
 
 #[must_use]
-pub(crate) fn paint_sleeve_layer(parts: &SleeveInput<'_>) -> Option<Pixmap> {
-    let geometry = VinylGeometry::new(parts.frame.size.0);
+pub(crate) fn paint_sleeve_layer(sleeve_input: &SleeveInput<'_>) -> Option<Pixmap> {
+    let geometry = VinylGeometry::new(sleeve_input.frame.side);
     let mut pixmap = Pixmap::new(geometry.width.0, geometry.height.0)?;
-    paint_sleeve(&mut pixmap, parts);
+    paint_sleeve(&mut pixmap, sleeve_input);
     Some(pixmap)
 }
 
@@ -67,11 +67,11 @@ pub(crate) fn paint_sleeve_layer(parts: &SleeveInput<'_>) -> Option<Pixmap> {
 pub(crate) fn compose_vinyl_frame(
     record: &Pixmap,
     sleeve: &Pixmap,
-    parts: &SleeveInput<'_>,
+    sleeve_input: &SleeveInput<'_>,
 ) -> RgbaImage {
     let mut pixmap = record.clone();
-    let geometry = VinylGeometry::new(parts.frame.size.0);
-    paint_label_ring_spindle(&mut pixmap, parts, &geometry);
+    let geometry = VinylGeometry::new(sleeve_input.frame.side);
+    paint_label_ring_spindle(&mut pixmap, sleeve_input, &geometry);
     pixmap.draw_pixmap(
         0,
         0,
@@ -109,11 +109,11 @@ fn paint_record_and_grooves(
 
 fn paint_label_ring_spindle(
     pixmap: &mut Pixmap,
-    parts: &SleeveInput<'_>,
+    sleeve_input: &SleeveInput<'_>,
     geometry: &VinylGeometry,
 ) {
     let label = geometry.label();
-    match parts.art {
+    match sleeve_input.art {
         Some(art) => {
             if let Some(clip) = ArtClip::circle(label) {
                 paint_art_clipped(pixmap, &art.label, &clip);
@@ -122,26 +122,26 @@ fn paint_label_ring_spindle(
         None => fill_path(
             pixmap,
             circle_path(label),
-            skia_color(parts.frame.style.accent),
+            skia_color(sleeve_input.frame.style.accent),
         ),
     }
     stroke_path(
         pixmap,
         circle_path(label),
         Stroke {
-            color: skia_color(parts.frame.style.paper),
+            color: skia_color(sleeve_input.frame.style.paper),
             width: VINYL_LAYOUT.label_border_width * geometry.size(),
         },
     );
 
-    let spindle = Disc {
+    let spindle_disc = Disc {
         radius: VINYL_LAYOUT.spindle_radius_fraction * geometry.size(),
         ..label
     };
     fill_path(
         pixmap,
-        circle_path(spindle),
-        skia_color(parts.frame.style.record),
+        circle_path(spindle_disc),
+        skia_color(sleeve_input.frame.style.record),
     );
 }
 
@@ -171,8 +171,8 @@ fn paint_grooves(pixmap: &mut Pixmap, frame: &VinylFrame, geometry: &VinylGeomet
     }
 }
 
-fn paint_sleeve(pixmap: &mut Pixmap, parts: &SleeveInput<'_>) {
-    let size = dimension_f32(parts.frame.size.0.max(1));
+fn paint_sleeve(pixmap: &mut Pixmap, sleeve_input: &SleeveInput<'_>) {
+    let size = dimension_f32(sleeve_input.frame.side.0.max(1));
     let layout = VINYL_LAYOUT;
     let rect = RoundedRect {
         x: 0.0,
@@ -182,7 +182,7 @@ fn paint_sleeve(pixmap: &mut Pixmap, parts: &SleeveInput<'_>) {
         radius: layout.corner_radius * size,
     };
 
-    paint_drop_shadow(pixmap, &parts.frame, |dx, dy, dr| {
+    paint_drop_shadow(pixmap, &sleeve_input.frame, |dx, dy, dr| {
         rounded_rect_path(RoundedRect {
             x: rect.x + dx - dr / 2.0,
             y: rect.y + dy - dr / 2.0,
@@ -195,25 +195,27 @@ fn paint_sleeve(pixmap: &mut Pixmap, parts: &SleeveInput<'_>) {
     fill_path(
         pixmap,
         rounded_rect_path(rect),
-        skia_color(parts.frame.style.paper),
+        skia_color(sleeve_input.frame.style.paper),
     );
 
     let pad = layout.sleeve_padding * size;
-    let inset = RoundedRect {
+    let inset_rect = RoundedRect {
         x: rect.x + pad,
         y: rect.y + pad,
         width: rect.width - pad * 2.0,
         height: rect.height - pad * 2.0,
         radius: (rect.radius - pad).max(0.0),
     };
-    if let (Some(art), Some(clip)) = (parts.art, ArtClip::rounded_rect(inset)) {
+    if let (Some(art), Some(clip)) =
+        (sleeve_input.art, ArtClip::rounded_rect(inset_rect))
+    {
         paint_art_clipped(pixmap, &art.sleeve, &clip);
     }
     stroke_path(
         pixmap,
         rounded_rect_path(rect),
         Stroke {
-            color: skia_color(parts.frame.style.border),
+            color: skia_color(sleeve_input.frame.style.border),
             width: layout.border_width * size,
         },
     );
@@ -224,7 +226,7 @@ fn paint_drop_shadow(
     frame: &VinylFrame,
     shape: impl Fn(f32, f32, f32) -> Option<Path>,
 ) {
-    let offset = VINYL_LAYOUT.shadow_offset * dimension_f32(frame.size.0.max(1));
+    let offset = VINYL_LAYOUT.shadow_offset * dimension_f32(frame.side.0.max(1));
     let (dx, dy) = (offset * SHADOW_DIRECTION.0, offset * SHADOW_DIRECTION.1);
     for (spread_fraction, alpha_fraction) in SHADOW_BLUR_PASSES {
         let alpha = scale_alpha(VINYL_LAYOUT.shadow_alpha, alpha_fraction);
@@ -252,21 +254,21 @@ fn fill_path(pixmap: &mut Pixmap, path: Option<Path>, fill: Color) {
     );
 }
 
-fn stroke_path(pixmap: &mut Pixmap, path: Option<Path>, style: Stroke) {
+fn stroke_path(pixmap: &mut Pixmap, path: Option<Path>, stroke: Stroke) {
     let Some(path) = path else {
         return;
     };
-    if style.width <= 0.0 {
+    if stroke.width <= 0.0 {
         return;
     }
     let mut paint = Paint::default();
-    paint.set_color(style.color);
+    paint.set_color(stroke.color);
     paint.anti_alias = true;
-    let stroke = tiny_skia::Stroke {
-        width: style.width,
+    let skia_stroke = tiny_skia::Stroke {
+        width: stroke.width,
         ..Default::default()
     };
-    pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    pixmap.stroke_path(&path, &paint, &skia_stroke, Transform::identity(), None);
 }
 
 #[cfg(test)]
@@ -312,26 +314,26 @@ mod tests {
     #[test]
     fn composing_the_layers_matches_the_cache() {
         let art = synthetic_art(64);
-        let size_px = 96;
-        let colors = VinylStyle::fixture();
-        let prepared = prepare_art(&art, size_px);
+        let canvas_side = Pixels(96);
+        let vinyl_style = VinylStyle::fixture();
+        let prepared = prepare_art(&art, canvas_side);
         let frame = VinylFrame {
-            size: Pixels(size_px),
-            style: colors,
+            side: canvas_side,
+            style: vinyl_style,
         };
-        let parts = SleeveInput {
+        let sleeve_input = SleeveInput {
             frame,
             art: Some(&prepared),
         };
         let layered = paint_record_layer(frame)
-            .zip(paint_sleeve_layer(&parts))
+            .zip(paint_sleeve_layer(&sleeve_input))
             .map(|(record, sleeve)| {
-                compose_vinyl_frame(&record, &sleeve, &parts).into_raw()
+                compose_vinyl_frame(&record, &sleeve, &sleeve_input).into_raw()
             });
         let key = VinylCacheKey {
             path: None,
-            size: Pixels(size_px),
-            colors,
+            side: canvas_side,
+            vinyl_style,
         };
         let mut cache = VinylCache::default();
         assert_eq!(

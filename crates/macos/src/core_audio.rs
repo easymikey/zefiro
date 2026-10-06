@@ -51,98 +51,109 @@ enum Muted {
 }
 
 #[derive(Debug)]
-pub(crate) struct HardwareWatch {
-    notify: *mut (Sender<MacosMessage>, AtomicBool),
-    device: AudioObjectID,
+struct Listener {
+    callback_sender: Sender<MacosMessage>,
+    missed: AtomicBool,
+}
+
+#[derive(Debug)]
+pub(crate) struct HardwareListeners {
+    listener: *mut Listener,
+    device_id: AudioObjectID,
     stale: Vec<AudioObjectID>,
 }
 
-impl HardwareWatch {
-    pub(crate) fn new(heard: Sender<MacosMessage>) -> Result<Self, Error> {
-        let notify = Box::into_raw(Box::new((heard, AtomicBool::new(false))));
+impl HardwareListeners {
+    pub(crate) fn new(callback_sender: Sender<MacosMessage>) -> Result<Self, Error> {
+        let listener = Box::into_raw(Box::new(Listener {
+            callback_sender,
+            missed: AtomicBool::new(false),
+        }));
         let device = default_output_device();
-        match add_listeners(notify.cast(), device) {
+        match add_listeners(listener.cast(), device) {
             Ok(()) => Ok(Self {
-                notify,
-                device,
+                listener,
+                device_id: device,
                 stale: Vec::new(),
             }),
             Err(error) => {
                 // SAFETY: `add_listeners` removed every listener it had added.
-                drop(unsafe { Box::from_raw(notify) });
+                drop(unsafe { Box::from_raw(listener) });
                 Err(error)
             }
         }
     }
 
     pub(crate) fn resend(&self) {
-        // SAFETY: `notify` stays boxed until `drop`.
-        resend(unsafe { &*self.notify });
+        // SAFETY: `listener` stays boxed until `drop`.
+        resend(unsafe { &*self.listener });
     }
 
     pub(crate) fn tracked_device(&self) -> AudioObjectID {
-        self.device
+        self.device_id
     }
 
-    pub(crate) fn rebind_to(&mut self, device: AudioObjectID) -> Result<(), Error> {
-        let notify = self.notify.cast::<c_void>();
-        add_device_listeners(device, notify)?;
-        let previous = mem::replace(&mut self.device, device);
-        remove_device_listeners(previous, notify)
+    pub(crate) fn rebind_to(&mut self, device_id: AudioObjectID) -> Result<(), Error> {
+        let listener = self.listener.cast::<c_void>();
+        add_device_listeners(device_id, listener)?;
+        let previous = mem::replace(&mut self.device_id, device_id);
+        remove_device_listeners(previous, listener)
             .inspect_err(|_| self.stale.push(previous))
     }
 }
 
-fn add_listeners(notify: *mut c_void, device: AudioObjectID) -> Result<(), Error> {
-    add_listener(system_object(), &default_output_address(), notify)?;
-    add_device_listeners(device, notify).or_else(|error| {
-        remove_listener(system_object(), &default_output_address(), notify)
+fn add_listeners(listener: *mut c_void, device_id: AudioObjectID) -> Result<(), Error> {
+    add_listener(system_object(), &default_output_address(), listener)?;
+    add_device_listeners(device_id, listener).or_else(|error| {
+        remove_listener(system_object(), &default_output_address(), listener)
             .and(Err(error))
     })
 }
 
 fn add_device_listeners(
-    device: AudioObjectID,
-    notify: *mut c_void,
+    device_id: AudioObjectID,
+    listener: *mut c_void,
 ) -> Result<(), Error> {
-    add_listener(device, &volume_address(), notify)?;
-    add_listener(device, &mute_address(), notify).or_else(|error| {
-        remove_listener(device, &volume_address(), notify).and(Err(error))
+    add_listener(device_id, &volume_address(), listener)?;
+    add_listener(device_id, &mute_address(), listener).or_else(|error| {
+        remove_listener(device_id, &volume_address(), listener).and(Err(error))
     })
 }
 
 fn remove_device_listeners(
-    device: AudioObjectID,
-    notify: *mut c_void,
+    device_id: AudioObjectID,
+    listener: *mut c_void,
 ) -> Result<(), Error> {
-    let volume = remove_listener(device, &volume_address(), notify);
-    let mute = remove_listener(device, &mute_address(), notify);
+    let volume = remove_listener(device_id, &volume_address(), listener);
+    let mute = remove_listener(device_id, &mute_address(), listener);
     volume.and(mute)
 }
 
-pub(crate) fn read_volume(device: AudioObjectID) -> Option<Percent> {
-    let scalar = read_property::<f32>(device, &volume_address())?;
-    Some(match read_mute(device) {
+pub(crate) fn read_volume(device_id: AudioObjectID) -> Option<Percent> {
+    let scalar = read_property::<f32>(device_id, &volume_address())?;
+    Some(match read_mute(device_id) {
         Some(Muted::Yes) => Percent::clamped(0),
         Some(Muted::No) | None => Percent::from_ratio(scalar),
     })
 }
 
-fn read_mute(device: AudioObjectID) -> Option<Muted> {
-    read_property::<u32>(device, &mute_address()).map(|flag| match flag {
+fn read_mute(device_id: AudioObjectID) -> Option<Muted> {
+    read_property::<u32>(device_id, &mute_address()).map(|flag| match flag {
         0 => Muted::No,
         _ => Muted::Yes,
     })
 }
 
 pub(crate) fn write_volume(
-    device: AudioObjectID,
+    device_id: AudioObjectID,
     volume: Percent,
 ) -> Result<(), Error> {
-    write_property(device, &volume_address(), volume.ratio())?;
-    read_mute(device)
+    write_property(device_id, &volume_address(), volume.ratio())?;
+    read_mute(device_id)
         .and_then(|muted| mute_change(volume, muted))
-        .map_or(Ok(()), |flag| write_property(device, &mute_address(), flag))
+        .map_or(Ok(()), |flag| {
+            write_property(device_id, &mute_address(), flag)
+        })
 }
 
 fn mute_change(volume: Percent, muted: Muted) -> Option<u32> {
@@ -178,15 +189,15 @@ fn write_property<Value: Copy>(
     }
 }
 
-impl Drop for HardwareWatch {
+impl Drop for HardwareListeners {
     fn drop(&mut self) {
-        let notify = self.notify.cast::<c_void>();
+        let listener = self.listener.cast::<c_void>();
         let system =
-            remove_listener(system_object(), &default_output_address(), notify);
-        let device = remove_device_listeners(self.device, notify);
+            remove_listener(system_object(), &default_output_address(), listener);
+        let device = remove_device_listeners(self.device_id, listener);
         if system.and(device).is_ok() && self.stale.is_empty() {
             // SAFETY: from `Box::into_raw` in `new`; every listener is removed.
-            drop(unsafe { Box::from_raw(self.notify) });
+            drop(unsafe { Box::from_raw(self.listener) });
         }
     }
 }
@@ -246,16 +257,16 @@ fn read_property<Value: Copy>(
 fn add_listener(
     object: AudioObjectID,
     address: &AudioObjectPropertyAddress,
-    notify: *mut c_void,
+    listener: *mut c_void,
 ) -> Result<(), Error> {
     let address = NonNull::from(address);
-    // SAFETY: `notify` stays valid until the matching `remove_listener` call.
+    // SAFETY: `listener` stays valid until the matching `remove_listener` call.
     let status = unsafe {
         AudioObjectAddPropertyListener(
             object,
             address,
             Some(on_property_changed),
-            notify,
+            listener,
         )
     };
     if status == 0 {
@@ -270,7 +281,7 @@ fn add_listener(
 fn remove_listener(
     object: AudioObjectID,
     address: &AudioObjectPropertyAddress,
-    notify: *mut c_void,
+    listener: *mut c_void,
 ) -> Result<(), Error> {
     let address = NonNull::from(address);
     // SAFETY: same object, address and callback as the matching `add_listener`.
@@ -279,7 +290,7 @@ fn remove_listener(
             object,
             address,
             Some(on_property_changed),
-            notify,
+            listener,
         )
     };
     if status == 0 {
@@ -298,21 +309,24 @@ extern "C-unwind" fn on_property_changed(
     client_data: *mut c_void,
 ) -> i32 {
     // SAFETY: `client_data` is the sender and latch boxed by `new`.
-    hear(unsafe { &*client_data.cast::<(Sender<MacosMessage>, AtomicBool)>() });
+    hear(unsafe { &*client_data.cast::<Listener>() });
     0
 }
 
-fn hear(notify: &(Sender<MacosMessage>, AtomicBool)) {
-    let (heard, missed) = notify;
-    match heard.try_send(MacosMessage::HardwareChanged) {
+fn hear(listener: &Listener) {
+    let Listener {
+        callback_sender,
+        missed,
+    } = listener;
+    match callback_sender.try_send(MacosMessage::HardwareChanged) {
         Ok(()) | Err(TrySendError::Disconnected(_)) => {}
         Err(TrySendError::Full(_)) => missed.store(true, Ordering::Release),
     }
 }
 
-fn resend(notify: &(Sender<MacosMessage>, AtomicBool)) {
-    if notify.1.swap(false, Ordering::AcqRel) {
-        hear(notify);
+fn resend(listener: &Listener) {
+    if listener.missed.swap(false, Ordering::AcqRel) {
+        hear(listener);
     }
 }
 
@@ -325,6 +339,7 @@ mod tests {
 
     use crate::{
         core_audio::{
+            Listener,
             Muted,
             default_output_device,
             hear,
@@ -339,17 +354,23 @@ mod tests {
     #[test]
     fn a_change_heard_while_the_channel_is_full_is_sent_again() {
         let (sender, receiver) = crossbeam_channel::bounded(1);
-        let notify = (sender, AtomicBool::new(false));
-        notify.0.send(MacosMessage::Watched).unwrap();
-        hear(&notify);
-        assert!(matches!(receiver.try_recv(), Ok(MacosMessage::Watched)));
+        let listener = Listener {
+            callback_sender: sender,
+            missed: AtomicBool::new(false),
+        };
+        listener
+            .callback_sender
+            .send(MacosMessage::Listened)
+            .unwrap();
+        hear(&listener);
+        assert!(matches!(receiver.try_recv(), Ok(MacosMessage::Listened)));
         assert!(receiver.is_empty());
-        resend(&notify);
+        resend(&listener);
         assert!(matches!(
             receiver.try_recv(),
             Ok(MacosMessage::HardwareChanged)
         ));
-        resend(&notify);
+        resend(&listener);
         assert!(receiver.is_empty());
     }
 

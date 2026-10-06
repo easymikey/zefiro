@@ -22,7 +22,7 @@ fn digits(input: &str, error: Option<TimecodeError>) -> Option<Overlay> {
 }
 
 fn typed(text_request: TextRequest) -> OverlayMessage {
-    OverlayMessage::Inner(OverlayContentMessage::Text(text_request))
+    OverlayMessage::Content(OverlayContentMessage::Text(text_request))
 }
 
 #[rstest]

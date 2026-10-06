@@ -37,10 +37,10 @@ fn title_budget(area: Rect) -> Cells {
 
 pub(crate) fn pane_title<'a>(
     area: Rect,
-    status: StatusLineView<'a>,
+    status_line_view: StatusLineView<'a>,
     theme: &ActiveTheme<'_>,
 ) -> Line<'a> {
-    status_line::status_line(status, &theme.colors(), title_budget(area))
+    status_line::status_line(status_line_view, &theme.colors(), title_budget(area))
 }
 
 #[cfg(test)]
@@ -57,15 +57,15 @@ mod tests {
 
     fn status() -> StatusLineView<'static> {
         StatusLineView {
-            shuffle: Shuffle::Enabled,
+            shuffle: Shuffle::On,
             repeat_mode: RepeatMode::All,
             queue_len: 0,
-            position: ViewIndex::new(0),
-            total: 0,
+            selected: ViewIndex::new(0),
+            playlist_len: 0,
             scan_status: kernel::domain::model::ScanStatus::Idle,
             scanning_label: "Scanning…",
             theme_name: "noir",
-            sleep_left: None,
+            remaining: None,
         }
     }
 

@@ -22,19 +22,19 @@ use crate::{
     theme::active_theme::ActiveTheme,
 };
 
-fn paint_help_columns(body: Rect, content: &HelpColumns, buffer: &mut Buffer) {
-    let widths: Vec<Constraint> = content
+fn paint_help_columns(body: Rect, help_columns: &HelpColumns, buffer: &mut Buffer) {
+    let widths: Vec<Constraint> = help_columns
         .columns
         .iter()
         .map(|column| Constraint::Length(column.width.0.min(body.width)))
         .collect();
     let rects = Layout::horizontal(widths)
-        .spacing(content.column_gap.0)
+        .spacing(help_columns.column_gap_width.0)
         .flex(Flex::Center)
         .split(body);
     let chord_gap = CHORD_GAP;
 
-    for (&rect, column) in rects.iter().zip(&content.columns) {
+    for (&rect, column) in rects.iter().zip(&help_columns.columns) {
         let constraints = column.constraints();
         Table::new(column.rows.clone(), constraints)
             .column_spacing(chord_gap)
@@ -53,7 +53,7 @@ pub(crate) struct HelpWidget<'a> {
 
 struct HelpColumns {
     columns: Vec<HelpColumn>,
-    column_gap: Cells,
+    column_gap_width: Cells,
 }
 
 impl<'a> HelpWidget<'a> {
@@ -102,33 +102,33 @@ impl<'a> HelpWidget<'a> {
     fn content(&self, screen: Rect) -> HelpColumns {
         let groups = HelpGroups::new(self.bindings);
         let columns = select_help_columns(&groups, &self.theme, screen);
-        let column_gap = if columns.len() > 1 {
+        let column_gap_width = if columns.len() > 1 {
             Cells(COLUMN_GAP)
         } else {
             Cells(0)
         };
         HelpColumns {
             columns,
-            column_gap,
+            column_gap_width,
         }
     }
 
     fn placement<'content>(
         &self,
-        content: &'content HelpColumns,
+        help_columns: &'content HelpColumns,
     ) -> ModalPlacement<'content>
     where
         Self: 'content,
     {
-        let columns = &content.columns;
+        let columns = &help_columns.columns;
         let gaps = small_count_u16(columns.len().saturating_sub(1));
         ModalPlacement {
-            container: ModalContainer::Modal(self.avoid),
+            container: ModalContainer::Floating(self.avoid),
             border_title: Line::default(),
             modal_title: TITLE,
             content_width: Cells(
                 columns.iter().map(|column| column.width.0).sum::<u16>()
-                    + content.column_gap.0 * gaps,
+                    + help_columns.column_gap_width.0 * gaps,
             ),
             content_rows: columns
                 .iter()
@@ -161,10 +161,10 @@ mod tests {
         let theme = noir();
         let keymap = Keymap::default();
         let bindings = keymap.bindings();
-        let overlay =
+        let overlay_widget =
             HelpWidget::new(bindings, ActiveTheme::new(&theme, ColorDepth::TrueColor));
         rendered(width, height, |frame| {
-            frame.render_widget(&overlay, frame.area());
+            frame.render_widget(&overlay_widget, frame.area());
         })
         .to_string()
     }

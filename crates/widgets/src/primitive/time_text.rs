@@ -10,7 +10,7 @@ const DAY_SECONDS: u64 = 86_400;
 const WEEK_SECONDS: u64 = 604_800;
 
 #[must_use]
-pub(crate) fn format_time(duration: Duration) -> String {
+pub(crate) fn duration_text(duration: Duration) -> String {
     let total_secs = duration.as_secs();
     let (hours, minutes, seconds) = (
         total_secs / HOUR_SECONDS,
@@ -25,8 +25,8 @@ pub(crate) fn format_time(duration: Duration) -> String {
 }
 
 #[must_use]
-pub(crate) fn elapsed_of(position: Duration, duration: Duration) -> String {
-    format!("{} / {}", format_time(position), format_time(duration))
+pub(crate) fn elapsed_text(position: Duration, duration: Duration) -> String {
+    format!("{} / {}", duration_text(position), duration_text(duration))
 }
 
 #[must_use]
@@ -45,8 +45,8 @@ pub(crate) fn elapsed_width(position: Duration, duration: Duration) -> u16 {
 }
 
 #[must_use]
-pub(crate) fn relative_time(now: Moment, then: Moment) -> String {
-    let elapsed = now.elapsed_since(then).as_secs();
+pub(crate) fn relative_time_text(now: Moment, then_at: Moment) -> String {
+    let elapsed = now.elapsed_since(then_at).as_secs();
     if elapsed < JUST_NOW_SECONDS {
         return "just now".to_string();
     }
@@ -70,11 +70,11 @@ mod tests {
     use proptest::prelude::{any, prop_assert, proptest};
     use rstest::rstest;
 
-    use crate::primitive::relative_time::{
-        elapsed_of,
+    use crate::primitive::time_text::{
+        duration_text,
+        elapsed_text,
         elapsed_width,
-        format_time,
-        relative_time,
+        relative_time_text,
     };
 
     #[rstest]
@@ -84,11 +84,11 @@ mod tests {
     #[case(3600, "1:00:00")]
     #[case(3661, "1:01:01")]
     #[case(7384, "2:03:04")]
-    fn format_time_grows_an_hours_field_only_when_there_is_one(
+    fn duration_text_grows_an_hours_field_only_when_there_is_one(
         #[case] seconds: u64,
         #[case] expected: &str,
     ) {
-        assert_eq!(format_time(Duration::from_secs(seconds)), expected);
+        assert_eq!(duration_text(Duration::from_secs(seconds)), expected);
     }
 
     #[rstest]
@@ -106,7 +106,7 @@ mod tests {
         let duration = Duration::from_secs(duration_seconds);
         assert_eq!(
             usize::from(elapsed_width(position, duration)),
-            elapsed_of(position, duration).chars().count()
+            elapsed_text(position, duration).chars().count()
         );
     }
 
@@ -123,8 +123,8 @@ mod tests {
         #[case] then: u64,
         #[case] text: &str,
     ) {
-        let at = |seconds| Moment::new(Duration::from_secs(seconds));
-        assert_eq!(relative_time(at(now), at(then)), text);
+        let moment = |seconds| Moment::new(Duration::from_secs(seconds));
+        assert_eq!(relative_time_text(moment(now), moment(then)), text);
     }
 
     fn rank(label: &str) -> (u8, u64) {
@@ -153,11 +153,11 @@ mod tests {
             earlier_offset in 0u64..2_000_000,
             gap in 0u64..2_000_000,
         ) {
-            let at = |seconds| Moment::new(Duration::from_secs(seconds));
+            let moment = |seconds| Moment::new(Duration::from_secs(seconds));
             let then_earlier = now_seconds.saturating_sub(earlier_offset);
             let then_later = then_earlier.saturating_add(gap).min(now_seconds);
-            let earlier_label = relative_time(at(now_seconds), at(then_earlier));
-            let later_label = relative_time(at(now_seconds), at(then_later));
+            let earlier_label = relative_time_text(moment(now_seconds), moment(then_earlier));
+            let later_label = relative_time_text(moment(now_seconds), moment(then_later));
             prop_assert!(rank(&later_label) <= rank(&earlier_label));
         }
     }

@@ -21,7 +21,7 @@ expression: "walked(model, messages)"
                     album_artist: None,
                     date: None,
                     genre: None,
-                    track: None,
+                    track_number: None,
                     track_total: None,
                     disc: None,
                     composer: None,
@@ -34,16 +34,16 @@ expression: "walked(model, messages)"
                     sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
-                    replay_gain: None,
+                    decibels: None,
                 },
                 display: "track0.flac",
-                tagging: Read(
+                tagging: Tagged(
                     100s,
                 ),
             },
             playhead: Playhead {
                 offset: 10s,
-                since: Moment(
+                started_at: Moment(
                     0ns,
                 ),
                 speed: Speed(
@@ -71,19 +71,19 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: Some(
-                AOnly(
+                StartMarked(
                     10s,
                 ),
             ),
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),
     (
         Audio(
-            Playhead(
+            PositionReported(
                 20s,
             ),
         ),
@@ -106,7 +106,7 @@ expression: "walked(model, messages)"
                     album_artist: None,
                     date: None,
                     genre: None,
-                    track: None,
+                    track_number: None,
                     track_total: None,
                     disc: None,
                     composer: None,
@@ -119,16 +119,16 @@ expression: "walked(model, messages)"
                     sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
-                    replay_gain: None,
+                    decibels: None,
                 },
                 display: "track0.flac",
-                tagging: Read(
+                tagging: Tagged(
                     100s,
                 ),
             },
             playhead: Playhead {
                 offset: 20s,
-                since: Moment(
+                started_at: Moment(
                     0ns,
                 ),
                 speed: Speed(
@@ -156,13 +156,13 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: Some(
-                AOnly(
+                StartMarked(
                     10s,
                 ),
             ),
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),
@@ -183,7 +183,7 @@ expression: "walked(model, messages)"
                     album_artist: None,
                     date: None,
                     genre: None,
-                    track: None,
+                    track_number: None,
                     track_total: None,
                     disc: None,
                     composer: None,
@@ -196,16 +196,16 @@ expression: "walked(model, messages)"
                     sample_rate: None,
                     bits_per_sample: None,
                     channels: None,
-                    replay_gain: None,
+                    decibels: None,
                 },
                 display: "track0.flac",
-                tagging: Read(
+                tagging: Tagged(
                     100s,
                 ),
             },
             playhead: Playhead {
                 offset: 20s,
-                since: Moment(
+                started_at: Moment(
                     0ns,
                 ),
                 speed: Speed(
@@ -233,14 +233,14 @@ expression: "walked(model, messages)"
             speed: Speed(
                 1.0,
             ),
-            sleep: None,
+            sleep_timer: None,
             ab_loop: Some(
-                Full {
-                    a: 10s,
-                    b: 20s,
+                BothMarked {
+                    loop_start: 10s,
+                    loop_end: 20s,
                 },
             ),
-            output: Ready,
+            output_status: Ready,
         },
         [],
     ),

@@ -4,11 +4,11 @@ use objc2_core_audio::AudioObjectID;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MacosEffect {
-    Watch,
+    Listen,
     Poll,
     Rebind(AudioObjectID),
     SetVolume(Percent),
-    Publish,
+    ShowNowPlaying,
     ClearArtwork,
     ShowArtwork(Vec<u8>),
 }

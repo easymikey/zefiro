@@ -134,12 +134,12 @@ mod tests {
     )]
     fn a_track_change_awaits_the_cover_of_the_current_track(
         #[case] before: CrossfadeGate,
-        #[case] track: Option<&str>,
+        #[case] track_path: Option<&str>,
         #[case] after: CrossfadeGate,
     ) {
         let mut pending = before;
 
-        let message = CrossfadeGateMessage::TrackChanged(track.map(PathBuf::from));
+        let message = CrossfadeGateMessage::TrackChanged(track_path.map(PathBuf::from));
 
         assert_eq!(pending.transition(message), Ok(CrossfadePermit::Withheld));
         assert_eq!(pending, after);

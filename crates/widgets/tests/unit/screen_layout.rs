@@ -5,20 +5,20 @@ use widgets::screen::frame_layout::FrameLayout;
 
 use crate::unit::support::fixtures::{SceneSources, model_with_tracks};
 
-fn playlist_rows(key_hints: KeyHints, mode: LayoutMode) -> u16 {
+fn playlist_rows(key_hints: KeyHints, layout_mode: LayoutMode) -> u16 {
     let mut sources = SceneSources::new(model_with_tracks(3));
-    sources.model.settings.appearance.key_hints = key_hints;
-    sources.model.settings.appearance.layout_mode = mode;
+    sources.model.settings.appearance_settings.key_hints = key_hints;
+    sources.model.settings.appearance_settings.layout_mode = layout_mode;
     let layout = FrameLayout::from_scene(&sources.scene(), Rect::new(0, 0, 120, 40));
-    layout.playlist.map_or(0, |areas| areas.pane.height)
+    layout.playlist_areas.map_or(0, |areas| areas.pane.height)
 }
 
 #[rstest]
 #[case::auto(LayoutMode::Auto)]
 #[case::compact(LayoutMode::Compact)]
-fn hiding_the_key_hints_gives_its_row_to_the_playlist(#[case] mode: LayoutMode) {
-    let with_hints = playlist_rows(KeyHints::Shown, mode);
-    let without_hints = playlist_rows(KeyHints::Hidden, mode);
+fn hiding_the_key_hints_gives_its_row_to_the_playlist(#[case] layout_mode: LayoutMode) {
+    let with_hints = playlist_rows(KeyHints::Shown, layout_mode);
+    let without_hints = playlist_rows(KeyHints::Hidden, layout_mode);
     assert_eq!(without_hints, with_hints + 1);
 }
 

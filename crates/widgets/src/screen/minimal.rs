@@ -10,16 +10,13 @@ use ratatui::{
 };
 
 use crate::{
-    card::{
-        CardView,
-        headings::{card_status, status_color, status_label},
-    },
+    card::CardView,
     primitive::{
-        bar::{BarFill, fill},
+        bar::BarFill,
         chip::{speed_chip_spans, speed_chip_width},
-        relative_time::{elapsed_of, elapsed_width},
         span::{line, text},
-        text::truncate,
+        time_text::{elapsed_text, elapsed_width},
+        truncate::truncate,
     },
     theme::active_theme::ActiveTheme,
 };
@@ -100,10 +97,10 @@ pub(crate) fn progress_bar_width(
 
 impl MinimalScreenWidget<'_> {
     fn title_line(&self, width: Cells) -> Line<'static> {
-        let status = card_status(self.view.output, self.view.player);
-        let color = status_color(&self.theme, status);
+        let status = self.view.status();
+        let color = status.color(&self.theme);
         let title = self.view.title();
-        let label = format!("{} {title}", status_label(status).glyph);
+        let label = format!("{} {title}", status.label().glyph);
         line([text(truncate(&label, width.count()).into_owned()).fg(color)])
     }
 
@@ -111,22 +108,19 @@ impl MinimalScreenWidget<'_> {
         let colors = self.theme.colors();
         let minimal_progress = MinimalProgress::new(self.view, self.speed_chip, width);
         let bar_width = minimal_progress.bar_width;
-        let mut spans = fill(
-            &BarFill::progress(self.view.progress_fraction(), bar_width),
-            self.theme.progress_fill(),
-            self.theme.progress_groove(),
-        )
-        .spans;
+        let mut spans = BarFill::progress(self.view.progress_fraction(), bar_width)
+            .line(self.theme.progress_fill(), self.theme.progress_groove())
+            .spans;
         if bar_width > Cells(0) && minimal_progress.gap > 0 {
             spans.push(Span::raw(" "));
         }
-        let elapsed = elapsed_of(self.view.position(), self.view.duration());
+        let elapsed = elapsed_text(self.view.position(), self.view.duration());
         let elapsed = match truncate(&elapsed, usize::from(minimal_progress.time_width))
         {
             Cow::Borrowed(_) => elapsed,
             Cow::Owned(cut) => cut,
         };
-        spans.push(text(elapsed).fg(colors.text).into());
+        spans.push(text(elapsed).fg(colors.foreground).into());
         let chip = speed_chip_spans(self.view.speed, self.speed_chip, &colors);
         if minimal_progress.chip_width > Cells(0) {
             spans.extend(chip);
@@ -135,7 +129,7 @@ impl MinimalScreenWidget<'_> {
     }
 
     fn status_line(&self, width: Cells) -> Line<'static> {
-        let repeat = match self.view.repeat {
+        let repeat = match self.view.repeat_mode {
             RepeatMode::Off => "Off",
             RepeatMode::All => "All",
             RepeatMode::One => "One",
@@ -167,13 +161,13 @@ mod tests {
         playlist::{PlayOrder, RepeatMode},
         speed::Speed,
         time::Moment,
-        transport::Output,
+        transport::OutputStatus,
     };
     use rstest::rstest;
 
     use crate::{
         card::CardView,
-        primitive::{chip::speed_chip_width, relative_time::elapsed_of},
+        primitive::{chip::speed_chip_width, time_text::elapsed_text},
         screen::minimal::{MinimalScreenWidget, progress_bar_width},
         spectrum::{SPECTRUM_BANDS, Spectrum},
         test_support::{noir, rendered},
@@ -184,17 +178,17 @@ mod tests {
         let theme = noir();
         let player = Player::Stopped;
         let spectrum: Spectrum = [0.0; SPECTRUM_BANDS];
-        let output = Output::Ready;
+        let output_status = OutputStatus::Ready;
         let play_order = PlayOrder::default();
         let view = CardView {
             player: &player,
             speed: Speed::default(),
             volume: Percent::clamped(50),
             spectrum: &spectrum,
-            repeat: repeat_mode,
+            repeat_mode,
             play_order: &play_order,
             displayed_track: None,
-            output: &output,
+            output_status: &output_status,
             now: Moment::default(),
         };
         let widget = MinimalScreenWidget::new(
@@ -212,20 +206,20 @@ mod tests {
     fn the_bar_leaves_room_for_the_elapsed_text_a_gap_and_the_speed_chip() {
         let player = Player::Stopped;
         let spectrum: Spectrum = [0.0; SPECTRUM_BANDS];
-        let output = Output::Ready;
+        let output_status = OutputStatus::Ready;
         let play_order = PlayOrder::default();
         let view = CardView {
             player: &player,
             speed: Speed::default(),
             volume: Percent::clamped(50),
             spectrum: &spectrum,
-            repeat: RepeatMode::Off,
+            repeat_mode: RepeatMode::Off,
             play_order: &play_order,
             displayed_track: None,
-            output: &output,
+            output_status: &output_status,
             now: Moment::default(),
         };
-        let elapsed = elapsed_of(view.position(), view.duration());
+        let elapsed = elapsed_text(view.position(), view.duration());
         let chip = speed_chip_width(view.speed, SpeedChip::Always);
         let bar = progress_bar_width(view, SpeedChip::Always, Cells(40));
         assert_eq!(
@@ -239,7 +233,7 @@ mod tests {
     #[case::off(RepeatMode::Off, "Shuf Off  Rep Off")]
     #[case::all(RepeatMode::All, "Rep All")]
     #[case::one(RepeatMode::One, "Rep One")]
-    fn minimal_repeat_label_is_capitalised(
+    fn minimal_repeat_mode_label_is_capitalised(
         #[case] repeat_mode: RepeatMode,
         #[case] expected: &str,
     ) {
