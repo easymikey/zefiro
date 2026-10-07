@@ -1,12 +1,14 @@
 use std::{
     io,
     sync::{
-        Arc,
         Mutex,
         OnceLock,
         PoisonError,
         atomic::{AtomicBool, Ordering},
     },
+};
+#[cfg(unix)] use std::{
+    sync::Arc,
     thread::{self, JoinHandle},
 };
 
@@ -27,29 +29,28 @@ const TERMINATING_SIGNALS: [std::ffi::c_int; 3] = [
     signal_hook::consts::SIGINT,
 ];
 
+#[cfg(unix)]
 pub(crate) enum ThreadStop {
-    #[cfg(unix)]
     Signals(signal_hook::iterator::Handle),
-    #[cfg(not(unix))]
-    Flag(Arc<AtomicBool>),
 }
 
+#[cfg(unix)]
 impl ThreadStop {
     fn raise(&self) {
         match self {
-            #[cfg(unix)]
             Self::Signals(handle) => handle.close(),
-            #[cfg(not(unix))]
-            Self::Flag(flag) => flag.store(true, Ordering::Release),
         }
     }
 }
 
 pub(crate) struct JoinOnDrop {
+    #[cfg(unix)]
     pub(crate) stop: ThreadStop,
+    #[cfg(unix)]
     pub(crate) thread: Option<JoinHandle<()>>,
 }
 
+#[cfg(unix)]
 impl Drop for JoinOnDrop {
     fn drop(&mut self) {
         self.stop.raise();
@@ -69,10 +70,7 @@ pub(crate) fn install(sender: Sender<ShellInput>) -> Result<JoinOnDrop, Error> {
     TERMINATE_SENDER
         .set(sender)
         .map_err(|_refused| Error::SignalHandlerInstalled)?;
-    Ok(JoinOnDrop {
-        stop: ThreadStop::Flag(Arc::default()),
-        thread: None,
-    })
+    Ok(JoinOnDrop {})
 }
 
 #[cfg(unix)]

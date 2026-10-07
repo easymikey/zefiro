@@ -301,9 +301,9 @@ mod tests {
     fn a_finished_outside_a_track_is_ignored(#[case] engine_state: EngineState) {
         let expected = engine_state.clone();
         let mut state = engine_state;
-        assert_same(
-            step(&mut state, EngineMessage::Finished(SinkRole::Current)),
-            Err(Unhandled),
+        assert_eq!(
+            step(&mut state, EngineMessage::Finished(SinkRole::Current)).err(),
+            Some(Unhandled)
         );
         assert_eq!(state, expected);
     }
@@ -315,9 +315,9 @@ mod tests {
         #[case] role: SinkRole,
     ) {
         let mut state = EngineState::Live(playing());
-        assert_same(
-            step(&mut state, EngineMessage::Finished(role)),
-            Err(Unhandled),
+        assert_eq!(
+            step(&mut state, EngineMessage::Finished(role)).err(),
+            Some(Unhandled)
         );
     }
 
@@ -357,9 +357,9 @@ mod tests {
     #[test]
     fn a_second_fade_start_is_ignored() {
         let mut state = EngineState::Live(crossfading_mid_ramp());
-        assert_same(
-            step(&mut state, EngineMessage::FadeStartReached),
-            Err(Unhandled),
+        assert_eq!(
+            step(&mut state, EngineMessage::FadeStartReached).err(),
+            Some(Unhandled)
         );
         assert_eq!(state, EngineState::Live(crossfading_mid_ramp()));
     }
@@ -372,9 +372,9 @@ mod tests {
     ) {
         let expected = engine_state.clone();
         let mut state = engine_state;
-        assert_same(
-            step(&mut state, EngineMessage::FadeStartReached),
-            Err(Unhandled),
+        assert_eq!(
+            step(&mut state, EngineMessage::FadeStartReached).err(),
+            Some(Unhandled)
         );
         assert_eq!(state, expected);
     }
@@ -383,9 +383,9 @@ mod tests {
     fn a_seek_back_during_a_running_crossfade_keeps_the_playing_track_audible() {
         let mut state = EngineState::Live(crossfading_mid_ramp());
         assert!(step(&mut state, cmd(AudioCmd::Seek(seconds(50)))).is_ok());
-        assert_same(
-            step(&mut state, EngineMessage::Ramped(SinkRole::Current)),
-            Err(Unhandled),
+        assert_eq!(
+            step(&mut state, EngineMessage::Ramped(SinkRole::Current)).err(),
+            Some(Unhandled)
         );
         assert_eq!(state, EngineState::Live(crossfading_idle()));
     }
@@ -414,9 +414,9 @@ mod tests {
     #[case::incoming(SinkRole::Incoming)]
     fn a_ramped_outgoing_or_incoming_is_ignored(#[case] role: SinkRole) {
         let mut state = EngineState::Live(crossfading_mid_ramp());
-        assert_same(
-            step(&mut state, EngineMessage::Ramped(role)),
-            Err(Unhandled),
+        assert_eq!(
+            step(&mut state, EngineMessage::Ramped(role)).err(),
+            Some(Unhandled)
         );
     }
 
@@ -500,9 +500,9 @@ mod tests {
             vec![preload("/b"), cmd(AudioCmd::SetPlayback(Playback::Paused))],
         )
         .unwrap();
-        assert_same(
-            step(&mut state, EngineMessage::Finished(SinkRole::Incoming)),
-            Err(Unhandled),
+        assert_eq!(
+            step(&mut state, EngineMessage::Finished(SinkRole::Incoming)).err(),
+            Some(Unhandled)
         );
         insta::assert_debug_snapshot!(log);
     }
@@ -514,9 +514,9 @@ mod tests {
             vec![preload("/b"), cmd(AudioCmd::Stop)],
         )
         .unwrap();
-        assert_same(
-            step(&mut state, attached(&track_b(), first())),
-            Err(Unhandled),
+        assert_eq!(
+            step(&mut state, attached(&track_b(), first())).err(),
+            Some(Unhandled)
         );
         insta::assert_debug_snapshot!(log);
 
@@ -538,7 +538,7 @@ mod tests {
             preload_mode: PreloadMode::Gapless,
             duration: None,
         };
-        assert_same(engine.transition(attached(first())), Err(Unhandled));
+        assert_eq!(engine.transition(attached(first())).err(), Some(Unhandled));
         assert_eq!(
             engine.state,
             EngineState::Live(awaiting(

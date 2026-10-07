@@ -13,7 +13,7 @@ pub struct AudioSettings {
     pub sleep_presets: SleepPresets,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Settings {
     pub audio_settings: AudioSettings,
     pub output_devices: Vec<ListedDevice>,

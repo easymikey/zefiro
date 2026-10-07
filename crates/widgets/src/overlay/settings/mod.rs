@@ -1,12 +1,7 @@
 mod rows;
 pub(crate) mod view;
 
-use kernel::domain::{
-    appearance_rows::appearance_row_choices,
-    geometry::Cells,
-    index::RowIndex,
-    setting_row::SettingRow,
-};
+use kernel::domain::{geometry::Cells, index::RowIndex, setting_row::SettingRow};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -74,7 +69,7 @@ impl<'a> SettingsWidget<'a> {
 }
 
 struct SettingsTable {
-    rows: Vec<SettingRow>,
+    rows: &'static [SettingRow],
     title: String,
     width: Cells,
 }
@@ -101,14 +96,13 @@ impl SettingsWidget<'_> {
         if areas.content.width == 0 || areas.content.height == 0 {
             return;
         }
-        let (table, mut table_state) = self.rows_table(&areas, &settings_table.rows);
+        let (table, mut table_state) = self.rows_table(&areas, settings_table.rows);
         StatefulWidget::render(table, areas.rows, buffer, &mut table_state);
     }
 
     fn content(&self) -> SettingsTable {
-        let rows =
-            SettingRow::all(&appearance_row_choices(self.view.appearance_settings));
-        let width = settings_content_width(&rows, &self.view);
+        let rows = &SettingRow::ALL;
+        let width = settings_content_width(rows, &self.view);
         SettingsTable {
             title: modal_title_text(&self.view.music_dir_label(), width),
             rows,
@@ -223,17 +217,10 @@ pub(crate) mod test_support {
     use kernel::domain::{
         appearance::AppearanceSettings,
         crossfade::Crossfade,
-        setting_row::AppearanceRowChoice,
         settings::ReplayGain,
     };
 
     use crate::overlay::settings::view::SettingsView;
-
-    pub(crate) fn appearance_row_choices() -> Vec<AppearanceRowChoice> {
-        kernel::domain::appearance_rows::appearance_row_choices(
-            AppearanceSettings::default(),
-        )
-    }
 
     pub(crate) fn settings_values() -> SettingsView<'static> {
         SettingsView {
@@ -265,10 +252,7 @@ mod tests {
     use crate::{
         overlay::{
             modal::placement::OverlayAreas,
-            settings::{
-                SettingsWidget,
-                test_support::{appearance_row_choices, settings_values},
-            },
+            settings::{SettingsWidget, test_support::settings_values},
         },
         primitive::canvas::find_text,
         test_support::{noir, rendered},
@@ -285,10 +269,9 @@ mod tests {
     #[test]
     fn settings_overlay_lists_every_row_with_its_label_and_value() {
         let theme = noir();
-        let custom = appearance_row_choices();
         let widget = SettingsWidget::new(
             settings_values(),
-            SettingRow::first(&custom),
+            SettingRow::first(),
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
         insta::assert_snapshot!(
@@ -323,10 +306,9 @@ mod tests {
     #[test]
     fn settings_overlay_shows_the_current_theme_and_a_custom_appearance_row() {
         let theme = noir();
-        let custom = appearance_row_choices();
         let widget = SettingsWidget::new(
             settings_values(),
-            SettingRow::first(&custom),
+            SettingRow::first(),
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
         let buffer =
@@ -340,13 +322,12 @@ mod tests {
     #[test]
     fn settings_title_keeps_the_path_tail_visible_at_a_narrow_width() {
         let theme = noir();
-        let custom = appearance_row_choices();
         let mut with_long_path = settings_values();
         with_long_path.music_dir =
             Path::new("/Users/testuser/Music/Library/Deeply/Nested/Folder/apple-music");
         let widget = SettingsWidget::new(
             with_long_path,
-            SettingRow::first(&custom),
+            SettingRow::first(),
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
         let buffer =
@@ -359,7 +340,6 @@ mod tests {
     #[test]
     fn the_modal_outer_rect_stays_put_across_a_theme_and_an_appearance_change() {
         let theme = noir();
-        let custom = appearance_row_choices();
         let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let themes = [
             ThemeName::from_static("noir"),
@@ -371,14 +351,14 @@ mod tests {
         with_noir.theme_names = &themes;
         with_noir.theme = "noir";
         let noir_widget =
-            SettingsWidget::new(with_noir, SettingRow::first(&custom), active_theme);
+            SettingsWidget::new(with_noir, SettingRow::first(), active_theme);
 
         let mut with_gruvbox = settings_values();
         with_gruvbox.theme_names = &themes;
         with_gruvbox.theme = "gruvbox-light";
         with_gruvbox.appearance_settings.cover_mode = CoverMode::Off;
         let gruvbox_widget =
-            SettingsWidget::new(with_gruvbox, SettingRow::first(&custom), active_theme);
+            SettingsWidget::new(with_gruvbox, SettingRow::first(), active_theme);
 
         let outer_noir = outer_rect(&noir_widget, screen);
         let outer_gruvbox = outer_rect(&gruvbox_widget, screen);
@@ -389,10 +369,9 @@ mod tests {
     #[test]
     fn settings_overlay_does_not_panic_on_a_tiny_terminal() {
         let theme = noir();
-        let custom = appearance_row_choices();
         let widget = SettingsWidget::new(
             settings_values(),
-            SettingRow::first(&custom),
+            SettingRow::first(),
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
         let frame = rendered(4, 3, |frame| frame.render_widget(&widget, frame.area()))

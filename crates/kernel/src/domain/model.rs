@@ -27,7 +27,7 @@ pub enum ScanStatus {
     },
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
     pub workspace: Workspace,
     pub library: Option<Library>,

@@ -33,9 +33,20 @@ mod tests {
     use kernel::domain::{model::Model, time::Moment};
     use ratatui::layout::Rect;
     use runtime::shell::Frame;
-    use widgets::screen::frame_layout::FrameLayout;
+    use widgets::{
+        scene::PixelPath,
+        screen::frame_layout::FrameLayout,
+        theme::rgb::ColorDepth,
+    };
 
-    use crate::shell::{motion::Motion, presentation::test_presentation, view::scene};
+    use crate::{
+        shell::{
+            motion::Motion,
+            presentation::{ShellPresentation, theme},
+            view::scene,
+        },
+        startup::fallback_theme,
+    };
 
     #[test]
     fn a_view_of_a_stock_model_lays_out_the_whole_frame() {
@@ -44,7 +55,11 @@ mod tests {
             runtime::latest::latest_channels();
         let spectrum_tap = SpectrumTap::silent();
         let area = Rect::new(0, 0, 80, 24);
-        let presentation = test_presentation();
+        let presentation = ShellPresentation::new(
+            theme(fallback_theme()),
+            PixelPath::Halfblocks,
+            ColorDepth::TrueColor,
+        );
         let motion = Motion {
             area,
             ..Motion::default()

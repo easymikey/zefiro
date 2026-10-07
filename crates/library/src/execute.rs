@@ -38,7 +38,9 @@ fn execute_disk(
         }
         DiskCmd::LoadFavorites => favorites::load(dirs)
             .map(|favorites| Some(LibraryMessage::FavoritesLoaded(favorites))),
-        DiskCmd::Trash(path) => trash::move_to_trash(&path).map(|()| None),
+        DiskCmd::Trash(path) => {
+            trash::move_to_trash(&path).map(|()| Some(LibraryMessage::Trashed(path)))
+        }
         DiskCmd::LoadHistory(limit) => history::load(dirs, limit).map(
             |history::HistoryRead { entries, skipped }| {
                 Some(LibraryMessage::HistoryLoaded { entries, skipped })
@@ -219,13 +221,13 @@ mod tests {
     }
 
     #[rstest]
-    fn trash_of_a_missing_file_replies_with_nothing(dirs: (TempDir, LibraryDirs)) {
+    fn trash_of_a_missing_file_answers_trashed(dirs: (TempDir, LibraryDirs)) {
         let (directory, library_dirs) = dirs;
         let missing = directory.path().join("never-existed.flac");
 
-        let event = execute(DiskCmd::Trash(missing), &library_dirs);
+        let event = execute(DiskCmd::Trash(missing.clone()), &library_dirs);
 
-        assert_eq!(event, None);
+        assert_eq!(event, Some(LibraryEvent::Trashed(missing)));
     }
 
     #[rstest]

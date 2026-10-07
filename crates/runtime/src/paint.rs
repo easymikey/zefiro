@@ -40,8 +40,8 @@ where
     pub(crate) fn paint_if_due(
         &mut self,
         now: Instant,
-        frame_due: FrameDue,
-    ) -> Result<(), Error<S::Error>> {
+    ) -> Result<FrameDue, Error<S::Error>> {
+        let frame_due = self.shell.frame_due(&self.runtime.frame(now));
         let frame_passed =
             matches!(frame_due, FrameDue::At(at) if self.runtime.instant_of(at) <= now);
         let is_due = match self.repaint {
@@ -50,7 +50,7 @@ where
             Repaint::Settled => frame_passed,
         };
         if !is_due {
-            return Ok(());
+            return Ok(frame_due);
         }
         let painted = self
             .shell
@@ -66,7 +66,7 @@ where
         for error in painted.errors {
             self.step_and_repaint(Message::Paint(error), RepaintCause::Event);
         }
-        Ok(())
+        Ok(self.shell.frame_due(&self.runtime.frame(now)))
     }
 }
 
@@ -141,7 +141,7 @@ mod tests {
         event_loop.last_paint_at = Some(now - Duration::from_millis(5));
         event_loop.repaint = repaint;
 
-        event_loop.paint_if_due(now, FrameDue::Settled).unwrap();
+        event_loop.paint_if_due(now).unwrap();
 
         assert_eq!(shell_scripted.toasts.len(), painted);
         fixture.runtime.drain();

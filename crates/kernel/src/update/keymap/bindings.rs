@@ -194,7 +194,7 @@ fn resolution(
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Keymap {
     pub(crate) keymap_overrides: KeymapOverrides,
     errors: Vec<KeymapError>,

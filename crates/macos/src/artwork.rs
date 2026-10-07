@@ -1,16 +1,11 @@
 #![forbid(unsafe_code)]
 
-use std::{
-    io,
-    iter,
-    path::{Path, PathBuf},
-    ptr::NonNull,
-};
+use std::{io, iter, path::Path, ptr::NonNull, sync::Arc};
 
 use block2::RcBlock;
 use kernel::{
     cmd::Cmd,
-    domain::revision::Revision,
+    domain::{revision::Revision, track::Track},
     message::{MacosError, MacosEvent},
     update::machine::{LoopEffect, Machine, Unhandled},
 };
@@ -37,21 +32,21 @@ pub(crate) fn artwork(bytes: &[u8]) -> Option<Retained<MPMediaItemArtwork>> {
     Some(ffi::media_item_artwork(bounds, &handler))
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Artwork {
-    track_path: Option<PathBuf>,
+    track: Option<Arc<Track>>,
     revision: Revision,
 }
 
 impl Artwork {
     pub(crate) fn shows(&self, path: Option<&Path>) -> bool {
-        self.track_path.as_deref() == path
+        self.track.as_deref().map(Track::path) == path
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ArtworkMessage {
-    TrackShown(Option<PathBuf>),
+    TrackShown(Option<Arc<Track>>),
     ReadDone(ArtworkBytes),
 }
 
@@ -64,19 +59,21 @@ impl Machine for Artwork {
         message: ArtworkMessage,
     ) -> Result<Self::Effect, Unhandled> {
         match message {
-            ArtworkMessage::TrackShown(track_path) if self.track_path == track_path => {
+            ArtworkMessage::TrackShown(track)
+                if self.shows(track.as_deref().map(Track::path)) =>
+            {
                 Err(Unhandled)
             }
-            ArtworkMessage::TrackShown(track_path) => {
-                self.track_path.clone_from(&track_path);
+            ArtworkMessage::TrackShown(track) => {
                 self.revision = self.revision.next();
                 let revision = self.revision;
-                let read = track_path.map(|track_path| {
+                let read = track.as_ref().map(|track| {
                     LoopEffect::Run(MacosJob::ReadArtwork {
-                        track_path,
+                        track: Arc::clone(track),
                         revision,
                     })
                 });
+                self.track = track;
                 Ok(iter::once(LoopEffect::Execute(MacosEffect::ClearArtwork))
                     .chain(read)
                     .collect())
@@ -110,11 +107,11 @@ impl Machine for Artwork {
 
 #[cfg(test)]
 mod tests {
-    use std::{io, path::PathBuf};
+    use std::{io, path::Path, sync::Arc};
 
     use kernel::{
         cmd::Cmd,
-        domain::revision::Revision,
+        domain::{revision::Revision, track::Track},
         message::{MacosError, MacosEvent},
         update::machine::{LoopEffect, Machine, Unhandled},
     };
@@ -133,8 +130,8 @@ mod tests {
         assert!(artwork(b"").is_none());
     }
 
-    fn track(name: &str) -> PathBuf {
-        PathBuf::from(name)
+    fn track(name: &str) -> Arc<Track> {
+        Arc::new(Track::listed(Path::new(name)))
     }
 
     fn revision(count: u8) -> Revision {
@@ -143,14 +140,14 @@ mod tests {
 
     fn holding(name: Option<&str>, count: u8) -> Artwork {
         Artwork {
-            track_path: name.map(track),
+            track: name.map(track),
             revision: revision(count),
         }
     }
 
     fn read(name: &str, count: u8) -> MacosJob {
         MacosJob::ReadArtwork {
-            track_path: track(name),
+            track: track(name),
             revision: revision(count),
         }
     }

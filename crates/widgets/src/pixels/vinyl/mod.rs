@@ -119,7 +119,7 @@ impl VinylCache {
         let art = self
             .art
             .cached_or_painted((key.path.clone(), canvas_side), || {
-                image.map(|image| prepare_art(image, canvas_side))
+                image.and_then(|image| prepare_art(image, canvas_side))
             })
             .as_ref();
         let record = self

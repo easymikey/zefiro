@@ -82,7 +82,10 @@ fn abandon_setup(
     let raw_mode = disable_raw();
     match screen.and(raw_mode) {
         Ok(()) => Error::Setup(error),
-        Err(teardown) => Error::Teardown(teardown),
+        Err(teardown_error) => Error::SetupAndTeardown {
+            setup_error: error,
+            teardown_error,
+        },
     }
 }
 
@@ -195,12 +198,20 @@ mod tests {
 
     #[rstest]
     #[case::both_succeed(Ok(()), Ok(()), "terminal setup: no tty")]
-    #[case::screen_fails(Err("screen"), Ok(()), "terminal teardown: screen")]
-    #[case::raw_mode_fails(Ok(()), Err("raw mode"), "terminal teardown: raw mode")]
-    #[case::both_fail_keeps_the_screen_error(
+    #[case::screen_fails(
+        Err("screen"),
+        Ok(()),
+        "terminal setup: no tty; teardown: screen"
+    )]
+    #[case::raw_mode_fails(
+        Ok(()),
+        Err("raw mode"),
+        "terminal setup: no tty; teardown: raw mode"
+    )]
+    #[case::both_fail_keeps_the_setup_and_the_screen_error(
         Err("screen"),
         Err("raw mode"),
-        "terminal teardown: screen"
+        "terminal setup: no tty; teardown: screen"
     )]
     fn an_abandoned_setup_runs_both_steps_and_combines_them(
         #[case] screen: Result<(), &'static str>,

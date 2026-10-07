@@ -21,7 +21,13 @@ use crate::support::{
 };
 
 fn reports_an_error(keymap_overrides: &KeymapOverrides) -> bool {
-    let mut model = Model::default();
+    let mut model = Model {
+        workspace: compiled(KeymapOverrides::from([(
+            Action::PlayPause,
+            KeyOverride::from("x"),
+        )])),
+        ..Model::default()
+    };
     let reload_event = ConfigEvent::KeymapReloaded(Box::new(keymap_overrides.clone()));
     update(&mut model, Message::Config(reload_event), Moment::default())
         .unwrap()

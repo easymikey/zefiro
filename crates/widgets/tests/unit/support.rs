@@ -22,7 +22,7 @@ use widgets::{
         timings::{AnimationTimings, TIMINGS},
     },
     card::metrics::CardMetrics,
-    playlist::pane::PlaylistAreas,
+    playlist::{pane::PlaylistAreas, row::RowWindow},
     screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
     theme::{
         backdrop_style::BackdropStyle,
@@ -180,6 +180,7 @@ pub(crate) fn playlist_areas(selected_area: Option<Rect>) -> PlaylistAreas {
     let sources = fixtures::SceneSources::new(fixtures::model_with_tracks(1));
     let layout = FrameLayout::from_scene(&sources.scene(), Rect::new(0, 0, 120, 40));
     PlaylistAreas {
+        window: RowWindow::default(),
         pane: Rect::default(),
         selected_area,
         ..layout

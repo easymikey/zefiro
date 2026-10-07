@@ -1,5 +1,5 @@
 use kernel::{
-    cmd::{Cmd, ConfigCmd, Effect},
+    cmd::{Cmd, ConfigCmd, ConfigPatch, Effect},
     domain::{
         appearance::{
             AppearancePatch,
@@ -17,12 +17,11 @@ use kernel::{
         setting_row::{
             AppearanceControl,
             AppearanceField,
-            AppearanceRow,
-            AppearanceRowChoice,
             Choice,
             OptionCount,
             SettingRow,
         },
+        theme::{ThemeChoice, ThemeName},
         time::Moment,
     },
     message::Message,
@@ -44,25 +43,6 @@ fn chosen(model: &Model, field: AppearanceField) -> Option<usize> {
         return None;
     };
     Some(option.get())
-}
-
-fn leaked(custom_row: AppearanceRow) -> &'static AppearanceRow {
-    Box::leak(Box::new(custom_row))
-}
-
-fn custom_setting(
-    field: AppearanceField,
-    control: AppearanceControl,
-) -> AppearanceRowChoice {
-    AppearanceRowChoice {
-        row: leaked(AppearanceRow {
-            field,
-            control,
-            cue: None,
-            theme_names: &[],
-        }),
-        choice: Choice::Option(control.count().index(0).unwrap()),
-    }
 }
 
 #[rstest]
@@ -107,21 +87,19 @@ fn a_cycle_row_wraps_at_its_own_ring_size() {
 
 #[test]
 fn all_places_the_leading_custom_row_before_theme_then_the_rest_after() {
-    let custom = vec![
-        custom_setting(AppearanceField::CoverBrackets, AppearanceControl::Toggle),
-        custom_setting(AppearanceField::CoverMode, AppearanceControl::Toggle),
-        custom_setting(AppearanceField::SpeedChip, AppearanceControl::Toggle),
-    ];
-
-    let all_row = SettingRow::all(&custom);
-
     assert_eq!(
-        all_row,
-        vec![
-            SettingRow::Appearance(AppearanceField::CoverBrackets),
+        SettingRow::ALL,
+        [
+            SettingRow::Appearance(AppearanceField::Preset),
             SettingRow::Theme,
             SettingRow::Appearance(AppearanceField::CoverMode),
+            SettingRow::Appearance(AppearanceField::CoverBrackets),
+            SettingRow::Appearance(AppearanceField::FormatChips),
             SettingRow::Appearance(AppearanceField::SpeedChip),
+            SettingRow::Appearance(AppearanceField::ProgressTime),
+            SettingRow::Appearance(AppearanceField::KeyHints),
+            SettingRow::Appearance(AppearanceField::Animations),
+            SettingRow::Appearance(AppearanceField::LayoutMode),
             SettingRow::Crossfade,
             SettingRow::ReplayGain,
             SettingRow::OutputDevice,
@@ -139,8 +117,7 @@ fn stepping_every_option_of_a_row_never_reorders_settings_row_all(
     #[case] option_count: usize,
 ) {
     let mut model = Model::default();
-    let before =
-        SettingRow::all(&appearance_row_choices(model.settings.appearance_settings));
+    let before = SettingRow::ALL;
 
     for _ in 0..option_count {
         drop(step(
@@ -148,12 +125,7 @@ fn stepping_every_option_of_a_row_never_reorders_settings_row_all(
             SettingRow::Appearance(field),
             Direction::Next,
         ));
-        assert_eq!(
-            SettingRow::all(&appearance_row_choices(
-                model.settings.appearance_settings
-            )),
-            before
-        );
+        assert_eq!(SettingRow::ALL, before);
     }
 }
 
@@ -221,23 +193,21 @@ fn stepping_a_row_changes_the_appearance_at_once() {
 }
 
 #[test]
-fn control_reads_the_matching_appearance_row_choice_for_a_custom_row() {
-    let count = OptionCount::new(5).unwrap();
-    let custom = vec![custom_setting(
-        AppearanceField::CoverMode,
-        AppearanceControl::Cycle(count),
-    )];
+fn control_reads_the_appearance_row_of_its_field() {
+    let count = OptionCount::new(4).unwrap();
 
     assert_eq!(
-        SettingRow::Appearance(AppearanceField::CoverMode).control(&custom),
+        SettingRow::Appearance(AppearanceField::CoverMode).control(),
         Some(AppearanceControl::Cycle(count))
     );
     assert_eq!(
-        SettingRow::Appearance(AppearanceField::Animations).control(&custom),
-        None
+        SettingRow::Appearance(AppearanceField::Animations).control(),
+        Some(AppearanceControl::Toggle)
     );
-    assert!(SettingRow::ReplayGain.activates(&custom));
-    assert!(!SettingRow::Crossfade.activates(&custom));
+    assert_eq!(SettingRow::Theme.control(), None);
+    assert!(SettingRow::Appearance(AppearanceField::Animations).activates());
+    assert!(SettingRow::ReplayGain.activates());
+    assert!(!SettingRow::Crossfade.activates());
 }
 
 fn edited_appearance() -> AppearanceSettings {
@@ -271,4 +241,35 @@ fn stepping_the_preset_row_selects_its_options_theme(
         Some(choice.to_string())
     });
     assert_eq!(theme, expected_theme.map(str::to_string));
+}
+
+#[test]
+fn stepping_the_preset_to_noir_selects_and_saves_the_noir_theme() {
+    let theme_name = ThemeName::from_static("noir");
+    let mut model = Model::default();
+
+    let cmd = step(
+        &mut model,
+        SettingRow::Appearance(AppearanceField::Preset),
+        Direction::Next,
+    );
+
+    assert_eq!(
+        model.themes.theme_choice,
+        ThemeChoice::Named(theme_name.clone())
+    );
+    let effects: Vec<&Effect> = cmd.effects().collect();
+    assert!(
+        effects.contains(&&Effect::Config(ConfigCmd::Save(ConfigPatch {
+            theme_name: Some(theme_name.clone()),
+            ..ConfigPatch::default()
+        }))),
+        "{effects:?}"
+    );
+    assert!(
+        effects.contains(&&Effect::Config(ConfigCmd::SelectTheme(
+            ThemeChoice::Named(theme_name)
+        ))),
+        "{effects:?}"
+    );
 }

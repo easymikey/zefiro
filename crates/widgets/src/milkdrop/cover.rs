@@ -1,6 +1,6 @@
 use std::{
     hash::{Hash, Hasher},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -29,6 +29,7 @@ struct MilkdropStamp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MilkdropPlan {
     Rebuild,
+    Recolour,
     Advance,
     Reuse,
 }
@@ -42,10 +43,11 @@ fn plan_milkdrop(
         return MilkdropPlan::Rebuild;
     };
     if installed_stamp.reset_key != desired_stamp.reset_key
-        || installed_stamp.theme_revision != desired_stamp.theme_revision
         || desired_stamp.since_first_paint < installed_stamp.since_first_paint
     {
         MilkdropPlan::Rebuild
+    } else if installed_stamp.theme_revision != desired_stamp.theme_revision {
+        MilkdropPlan::Recolour
     } else if desired_stamp.since_first_paint - installed_stamp.since_first_paint
         >= STEP
         && desired_stamp.playback == Playback::Playing
@@ -68,10 +70,26 @@ fn milkdrop_seed(path: Option<&Path>) -> u64 {
 #[derive(Default, Debug)]
 pub struct MilkdropCover {
     installed: Option<(MilkdropField, MilkdropStamp)>,
+    track_seed: Option<(PathBuf, u64)>,
     lines: Arc<[Line<'static>]>,
 }
 
 impl MilkdropCover {
+    fn track_seed_for(&mut self, current: Option<&Path>) -> u64 {
+        match (current, &self.track_seed) {
+            (Some(path), Some((stored, hash))) if stored == path => *hash,
+            (Some(path), _) => {
+                let hash = milkdrop_seed(Some(path));
+                self.track_seed = Some((path.to_path_buf(), hash));
+                hash
+            }
+            (None, _) => {
+                self.track_seed = None;
+                milkdrop_seed(None)
+            }
+        }
+    }
+
     pub fn refresh(
         &mut self,
         scene: &Scene<'_>,
@@ -84,32 +102,31 @@ impl MilkdropCover {
         };
         let width = usize::from(rect.width);
         let height = usize::from(rect.height);
-        let seed = milkdrop_seed(scene.player.current().map(|track| track.path()));
-        let playing = if scene.player.is_playing() {
-            Playback::Playing
-        } else {
-            Playback::Paused
-        };
+        let seed =
+            self.track_seed_for(scene.player.current().map(|track| track.path()));
         let desired_stamp = MilkdropStamp {
             reset_key: (seed, width, height),
             theme_revision: scene.revisions.theme,
             since_first_paint: scene.presentation.since_first_paint,
-            playback: playing,
+            playback: if scene.player.is_playing() {
+                Playback::Playing
+            } else {
+                Playback::Paused
+            },
         };
         let installed = self.installed.as_ref().map(|(_, stamp)| *stamp);
         let plan = plan_milkdrop(installed, desired_stamp);
         let since_first_paint = desired_stamp.since_first_paint;
+        let start =
+            installed.map_or(since_first_paint, |stamp| stamp.since_first_paint);
         let whole = elapsed_steps(installed, since_first_paint);
-        let steps = match plan {
-            MilkdropPlan::Rebuild => 1,
-            MilkdropPlan::Advance => whole.min(4),
-            MilkdropPlan::Reuse => 0,
-        };
-        let advanced_to = match installed {
-            Some(installed_stamp) if plan == MilkdropPlan::Advance && whole <= 4 => {
-                installed_stamp.since_first_paint + STEP * steps
+        let (steps, first_step, advanced_to) = match plan {
+            MilkdropPlan::Rebuild => (1, since_first_paint, since_first_paint),
+            MilkdropPlan::Recolour | MilkdropPlan::Reuse => (0, start, start),
+            MilkdropPlan::Advance if whole <= 4 => {
+                (whole, start + STEP, start + STEP * whole)
             }
-            Some(_) | None => desired_stamp.since_first_paint,
+            MilkdropPlan::Advance => (4, start + STEP, since_first_paint),
         };
         if plan == MilkdropPlan::Rebuild {
             self.installed = Some((MilkdropField::new(width, height), desired_stamp));
@@ -117,15 +134,12 @@ impl MilkdropCover {
         if plan != MilkdropPlan::Reuse
             && let Some((field, installed_stamp)) = self.installed.as_mut()
         {
-            for _ in 0..steps {
+            for step in (0..steps).map(|step| first_step + STEP * step) {
                 field.advance(&MilkdropAdvance {
                     spectrum: scene.presentation.spectrum,
-                    playback: playing,
+                    playback: desired_stamp.playback,
                     seed,
-                    tick: u64::try_from(
-                        scene.presentation.since_first_paint.as_millis(),
-                    )
-                    .unwrap_or(u64::MAX),
+                    tick: u64::try_from(step.as_millis()).unwrap_or(u64::MAX),
                 });
             }
             *installed_stamp = MilkdropStamp {
@@ -161,7 +175,7 @@ mod tests {
         cmd::Playback,
         domain::{
             appearance::Rgb,
-            player::Player,
+            player::{PausedBy, Player},
             playhead::Playhead,
             revision::Revision,
             speed::Speed,
@@ -217,7 +231,7 @@ mod tests {
     #[case::paused_clock_movement_reuses(Some(stamp((1, 20, 8), 100)), paused((1, 20, 8), 133), MilkdropPlan::Reuse)]
     #[case::paused_reset_key_change_rebuilds(Some(stamp((2, 20, 8), 100)), paused((1, 20, 8), 133), MilkdropPlan::Rebuild)]
     #[case::a_different_reset_key_rebuilds(Some(stamp((2, 20, 8), 100)), stamp((1, 20, 8), 100), MilkdropPlan::Rebuild)]
-    #[case::a_new_theme_rebuilds_even_when_paused(Some(stamp((1, 20, 8), 100)), themed(paused((1, 20, 8), 100)), MilkdropPlan::Rebuild)]
+    #[case::a_new_theme_rebuilds_even_when_paused(Some(stamp((1, 20, 8), 100)), themed(paused((1, 20, 8), 100)), MilkdropPlan::Recolour)]
     #[case::nothing_installed_rebuilds(None, stamp((1, 20, 8), 100), MilkdropPlan::Rebuild)]
     fn plan_milkdrop_decides_rebuild_advance_or_reuse(
         #[case] installed_stamp: Option<MilkdropStamp>,
@@ -245,12 +259,7 @@ mod tests {
         assert_eq!(milkdrop_seed(None), milkdrop_seed(None));
     }
 
-    #[test]
-    fn a_theme_change_while_paused_recolours_the_lines() {
-        let mut sources = SceneSources::new(model_with_tracks(1));
-        let area = Some(Rect::new(0, 0, 12, 6));
-        let mut cover = MilkdropCover::default();
-        let before = cover.refresh(&sources.scene(), area);
+    fn switch_to_ember(sources: &mut SceneSources) {
         sources.theme = stock_theme(
             ThemeName::from_static("ember"),
             &ThemeBase {
@@ -265,6 +274,15 @@ mod tests {
             },
         );
         sources.model.revisions.theme.advance();
+    }
+
+    #[test]
+    fn a_theme_change_while_paused_recolours_the_lines() {
+        let mut sources = SceneSources::new(model_with_tracks(1));
+        let area = Some(Rect::new(0, 0, 12, 6));
+        let mut cover = MilkdropCover::default();
+        let before = cover.refresh(&sources.scene(), area);
+        switch_to_ember(&mut sources);
         let after = cover.refresh(&sources.scene(), area);
         let (CardCover::Text(before), CardCover::Text(after)) = (before, after) else {
             panic!("milkdrop paints text lines");
@@ -277,6 +295,45 @@ mod tests {
             panic!("milkdrop paints text lines");
         };
         lines
+    }
+
+    fn playing(path: &str) -> Player {
+        Player::Playing {
+            track: Arc::new(Track::listed(Path::new(path))),
+            playhead: Playhead::anchored(
+                Duration::ZERO,
+                Moment::default(),
+                Speed::default(),
+            ),
+            preloaded: None,
+        }
+    }
+
+    #[test]
+    fn a_track_change_reseeds_the_field() {
+        let mut sources = SceneSources::new(model_with_tracks(1));
+        let area = Some(Rect::new(0, 0, 12, 6));
+        let mut cover = MilkdropCover::default();
+        let installed_key = |installed: &MilkdropCover| {
+            installed
+                .installed
+                .as_ref()
+                .map(|(_, stamp)| stamp.reset_key)
+        };
+        sources.model.player = playing("/music/a.flac");
+        cover.refresh(&sources.scene(), area);
+        let first = installed_key(&cover);
+        cover.refresh(&sources.scene(), area);
+        assert_eq!(installed_key(&cover), first);
+        let a = PathBuf::from("/music/a.flac");
+        assert_eq!(first, Some((milkdrop_seed(Some(&a)), 12, 6)));
+        sources.model.player = playing("/music/b.flac");
+        cover.refresh(&sources.scene(), area);
+        let b = PathBuf::from("/music/b.flac");
+        assert_eq!(
+            installed_key(&cover),
+            Some((milkdrop_seed(Some(&b)), 12, 6))
+        );
     }
 
     #[test]
@@ -306,5 +363,72 @@ mod tests {
         assert_eq!(once_lines, start);
         scene.presentation.since_first_paint = Duration::from_millis(40);
         assert_ne!(text(once_cover.refresh(&scene, area)), start);
+    }
+
+    #[test]
+    fn catch_up_steps_advance_on_their_own_step_times() {
+        let mut sources = SceneSources::new(model_with_tracks(1));
+        sources.model.player = playing("/music/b.flac");
+        sources.spectrum.fill(0.6);
+        let area = Some(Rect::new(0, 0, 24, 12));
+        let mut stepwise_cover = MilkdropCover::default();
+        let mut caught_up_cover = MilkdropCover::default();
+        let mut scene = sources.scene();
+        stepwise_cover.refresh(&scene, area);
+        caught_up_cover.refresh(&scene, area);
+        scene.presentation.since_first_paint = Duration::from_millis(35);
+        stepwise_cover.refresh(&scene, area);
+        scene.presentation.since_first_paint = Duration::from_millis(70);
+        let stepwise_lines = text(stepwise_cover.refresh(&scene, area));
+        let caught_up_lines = text(caught_up_cover.refresh(&scene, area));
+        assert_eq!(stepwise_lines, caught_up_lines);
+        assert_eq!(stepwise_cover.installed, caught_up_cover.installed);
+    }
+
+    #[test]
+    fn a_theme_change_while_paused_keeps_the_field_and_recolours_it() {
+        let mut sources = SceneSources::new(model_with_tracks(1));
+        sources.model.player = playing("/music/a.flac");
+        sources.spectrum.fill(0.6);
+        let area = Some(Rect::new(0, 0, 24, 12));
+        let mut cover = MilkdropCover::default();
+        {
+            let mut scene = sources.scene();
+            for millis in [0, 33, 66, 99] {
+                scene.presentation.since_first_paint = Duration::from_millis(millis);
+                cover.refresh(&scene, area);
+            }
+        }
+        sources.model.player = Player::Paused {
+            track: Arc::new(Track::listed(Path::new("/music/a.flac"))),
+            position: Duration::ZERO,
+            by: PausedBy::Listener,
+        };
+        let before = {
+            let mut scene = sources.scene();
+            scene.presentation.since_first_paint = Duration::from_millis(99);
+            text(cover.refresh(&scene, area))
+        };
+        switch_to_ember(&mut sources);
+        let after = {
+            let mut scene = sources.scene();
+            scene.presentation.since_first_paint = Duration::from_millis(132);
+            text(cover.refresh(&scene, area))
+        };
+        let glyphs = |lines: &[Line<'static>]| {
+            lines
+                .iter()
+                .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
+                .collect::<Vec<_>>()
+        };
+        let colours = |lines: &[Line<'static>]| {
+            lines
+                .iter()
+                .flat_map(|line| line.spans.iter().map(|span| span.style.fg))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(glyphs(&before), glyphs(&after));
+        assert!(glyphs(&after).iter().any(|glyph| glyph != " "));
+        assert_ne!(colours(&before), colours(&after));
     }
 }

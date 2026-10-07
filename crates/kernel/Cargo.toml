@@ -6,6 +6,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
+autotests = false
+
+[[test]]
+name = "main"
+path = "tests/main.rs"
 
 [dependencies]
 strum = { workspace = true }

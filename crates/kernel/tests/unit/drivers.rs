@@ -13,6 +13,7 @@ use kernel::{
         toast::ToastLevel,
     },
     message::{DriverEvent, Message},
+    update::machine::Unhandled,
 };
 
 use crate::support::{
@@ -57,6 +58,18 @@ fn a_driver_death_is_recorded_and_told_as_an_error() {
             Some("panicked")
         ))
     );
+}
+
+#[test]
+fn a_driver_death_while_stopped_is_refused() {
+    let mut model = playing_model(3);
+    model.drivers.record_mut(DriverName::Audio).status = DriverStatus::Stopped;
+    let before = model.drivers.clone();
+
+    let answer = update(&mut model, died(DriverName::Audio), Moment::default());
+
+    assert_eq!(answer, Err(Unhandled));
+    assert_eq!(model.drivers, before);
 }
 
 struct StrategyRow {

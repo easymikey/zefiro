@@ -18,11 +18,11 @@ use crate::{
     },
     engine::{
         effect::{AudioLoopCmd, EngineEffect},
-        message::{AudioMessage, EngineMessage, signalled},
+        message::{AudioMessage, ClosedMessage, EngineMessage, signalled},
         revisions::JobRevisions,
         state::{Closed, DeviceChoice, Engine, EngineState},
     },
-    error::{Error, preload_error},
+    error::{Error, decode_error_of, preload_error},
 };
 
 impl Machine for AudioDriver {
@@ -37,6 +37,9 @@ impl Machine for AudioDriver {
             return Err(Unhandled);
         }
         match audio_message {
+            AudioMessage::Cmds(cmds) => {
+                self.engine.transition(EngineMessage::Cmds(cmds))
+            }
             AudioMessage::Deck(DeckEvent::OutputLost(error)) => self.engine.lost(error),
             AudioMessage::Deck(DeckEvent::Woke(revision)) => Ok(Cmd::effect(
                 LoopEffect::Execute(EngineEffect::TakeSignals(revision)),
@@ -109,10 +112,9 @@ impl Machine for Engine {
             device_choice: _device_choice,
         } = self;
         match (&mut *state, engine_message) {
-            (_, EngineMessage::Reported(position)) => Ok(position
-                .map_or_else(Cmd::none, |position| {
-                    Cmd::message(AudioEvent::PositionReported(position))
-                })),
+            (_, EngineMessage::Reported(Some(position))) => {
+                Ok(Cmd::message(AudioEvent::PositionReported(position)))
+            }
             (_, EngineMessage::Error(error)) => self.failed(error),
             (_, EngineMessage::OutputLost(error)) => self.lost(error),
             (_, EngineMessage::DevicesListed(devices)) => {
@@ -120,15 +122,18 @@ impl Machine for Engine {
             }
             (_, EngineMessage::Opened(device_opened)) => Ok(self.opened(device_opened)),
             (_, EngineMessage::NotFound) => Ok(self.fell_back()),
-            (
-                EngineState::Closed(closed),
-                message @ (EngineMessage::Cmds(_)
-                | EngineMessage::Decoded(_)
+            (EngineState::Closed(closed), EngineMessage::Cmds(batch)) => {
+                closed.transition(ClosedMessage::Cmds(batch))
+            }
+            (_, EngineMessage::Reported(None))
+            | (
+                EngineState::Closed(_),
+                EngineMessage::Decoded(_)
                 | EngineMessage::Attached { .. }
                 | EngineMessage::Finished(_)
                 | EngineMessage::FadeStartReached
-                | EngineMessage::Ramped(_)),
-            ) => closed.transition(message),
+                | EngineMessage::Ramped(_),
+            ) => Err(Unhandled),
             (EngineState::Live(_), EngineMessage::Attached { revision, .. })
                 if !revisions.is_current_preload(revision) =>
             {
@@ -196,7 +201,7 @@ impl Engine {
                     .then(cmd),
                 )
             }
-            Err(error) => self.failed(AudioError::from(&error)),
+            Err(error) => self.failed(decode_error_of(error)),
         }
     }
 
@@ -210,7 +215,7 @@ impl Engine {
                 decoded_track: DecodedTrack { revision, decoder },
                 preload_mode: self.preload_mode().ok_or(Unhandled)?,
             }))),
-            Err(error) => self.failed(preload_error(&error)),
+            Err(error) => self.failed(preload_error(error)),
         }
     }
 
@@ -234,12 +239,13 @@ impl Engine {
             (_, error @ (AudioError::Seek { .. } | AudioError::ListDevices { .. })) => {
                 Ok(Cmd::message(AudioEvent::Error(error)))
             }
+            (EngineState::Closed(closed), error @ AudioError::OpenDevice { .. }) => {
+                closed.transition(ClosedMessage::Error(error))
+            }
             (
-                EngineState::Closed(closed),
-                error @ (AudioError::OpenDevice { .. }
-                | AudioError::Decode { .. }
-                | AudioError::Preload { .. }),
-            ) => closed.transition(EngineMessage::Error(error)),
+                EngineState::Closed(_),
+                AudioError::Decode { .. } | AudioError::Preload { .. },
+            ) => Err(Unhandled),
             (EngineState::Live(live), error @ AudioError::Decode { .. }) => {
                 live.decode_failed(revisions, error)
             }
@@ -267,7 +273,7 @@ mod tests {
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
     use kernel::{
-        cmd::{AudioCmd, Effect, Playback},
+        cmd::{AudioCmd, Cmds, Effect, Playback},
         domain::{
             bounded::Bounded,
             crossfade::Crossfade,
@@ -305,6 +311,7 @@ mod tests {
                 TRACK_A_DURATION,
                 awaiting,
                 cmd,
+                executed,
                 first,
                 live,
                 playing,
@@ -326,25 +333,6 @@ mod tests {
         }
     }
 
-    fn executed(
-        cmd: Result<AudioLoopCmd, Unhandled>,
-    ) -> Result<(Vec<EngineEffect>, Vec<AudioEvent>), Unhandled> {
-        cmd.map(|cmd| {
-            let (effects, events) = cmd.into_parts();
-            let executed = effects
-                .into_iter()
-                .filter_map(|effect| match effect {
-                    LoopEffect::Execute(effect) => Some(effect),
-                    LoopEffect::Run(_)
-                    | LoopEffect::After { .. }
-                    | LoopEffect::Watch { .. }
-                    | LoopEffect::Unwatch(_) => None,
-                })
-                .collect();
-            (executed, events)
-        })
-    }
-
     fn worker_panicked() -> crate::error::Error {
         crate::error::Error::WorkerPanicked(PathBuf::from("/a"))
     }
@@ -358,11 +346,11 @@ mod tests {
     )]
     #[case::decode_error(
         AudioMessage::Decoded { revision: Revision::default(), result: Err(worker_panicked()) },
-        EngineMessage::Error(kernel::message::AudioError::from(&worker_panicked()))
+        EngineMessage::Error(crate::error::decode_error_of(worker_panicked()))
     )]
     #[case::preload_error(
         AudioMessage::Preloaded { revision: Revision::default(), result: Err(worker_panicked()) },
-        EngineMessage::Error(crate::error::preload_error(&worker_panicked()))
+        EngineMessage::Error(crate::error::preload_error(worker_panicked()))
     )]
     fn a_landed_error_goes_to_the_engine_without_touching_the_deck(
         #[case] audio_message: AudioMessage,
@@ -371,6 +359,19 @@ mod tests {
         assert_eq!(
             executed(driver_with(live()).transition(audio_message)),
             executed(step(&mut EngineState::Live(live()), engine_message))
+        );
+    }
+
+    #[test]
+    fn a_command_batch_answers_alike_on_the_driver_and_engine_paths() {
+        let audio_cmd = AudioCmd::SetSpeed(Speed::clamped(1.5));
+        let audio_message = AudioMessage::from(Cmds {
+            cmds: vec![audio_cmd.clone()],
+            at: std::time::Instant::now(),
+        });
+        assert_eq!(
+            executed(driver_with(live()).transition(audio_message)),
+            executed(step(&mut EngineState::Live(live()), cmd(audio_cmd)))
         );
     }
 

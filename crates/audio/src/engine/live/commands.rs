@@ -461,19 +461,20 @@ mod tests {
     fn a_preload_without_a_settled_track_is_refused(#[case] live: Live) {
         let expected = EngineState::Live(live.clone());
         let mut state = EngineState::Live(live);
-        assert_same(step(&mut state, preload("/c")), Err(Unhandled));
+        assert_eq!(step(&mut state, preload("/c")).err(), Some(Unhandled));
         assert_eq!(state, expected);
     }
 
     #[test]
     fn the_device_in_use_is_refused() {
         let mut state = EngineState::Live(playing());
-        assert_same(
+        assert_eq!(
             step(
                 &mut state,
                 cmd(AudioCmd::SetDevice(OutputDevice::SystemDefault)),
-            ),
-            Err(Unhandled),
+            )
+            .err(),
+            Some(Unhandled)
         );
         assert_eq!(state, EngineState::Live(playing()));
     }
@@ -482,7 +483,7 @@ mod tests {
     fn a_stale_load_is_refused() {
         let live = with_load_revision(live(), second());
         let mut state = EngineState::Live(live.clone());
-        assert_same(step(&mut state, load("/b")), Err(Unhandled));
+        assert_eq!(step(&mut state, load("/b")).err(), Some(Unhandled));
         assert_eq!(state, EngineState::Live(live));
     }
 
@@ -490,7 +491,7 @@ mod tests {
     fn a_stale_preload_is_refused() {
         let live = with_preload_revision(playing(), second());
         let mut state = EngineState::Live(live.clone());
-        assert_same(step(&mut state, preload("/b")), Err(Unhandled));
+        assert_eq!(step(&mut state, preload("/b")).err(), Some(Unhandled));
         assert_eq!(state, EngineState::Live(live));
     }
 
@@ -519,7 +520,7 @@ mod tests {
         assert_same(step(&mut engine, row.first), Ok(row.audio_loop_cmd));
 
         let before = engine.clone();
-        assert_same(step(&mut engine, row.engine_message), Err(Unhandled));
+        assert_eq!(step(&mut engine, row.engine_message).err(), Some(Unhandled));
         assert_eq!(engine, before);
     }
 

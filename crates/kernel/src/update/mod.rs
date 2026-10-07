@@ -16,13 +16,13 @@ mod successor;
 mod transport;
 mod workspace;
 
+use std::sync::Arc;
+
 use crate::{
     cmd::{AudioCmd, Cmd, CoverJob, Effect, LibraryCmd, WindowColorsCmd},
     domain::{
         appearance::CoverMode,
-        appearance_rows::appearance_row_choices,
         cue::Cue,
-        driver::{DriverName, DriverStatus},
         geometry::Pixels,
         model::Model,
         playlist::{PlayOrder, Playlist},
@@ -31,6 +31,7 @@ use crate::{
         supervision::{Announcement, Decision},
         time::Moment,
         toast::Toast,
+        track::Track,
         workspace::Workspace,
     },
     message::{
@@ -56,6 +57,18 @@ pub fn update(
     message: Message,
     now: Moment,
 ) -> Result<Vec<Effect>, Unhandled> {
+    let message = if let Message::Key(press) = message {
+        match keymap::lookup::route(&model.workspace, press) {
+            Some(routed) => routed,
+            None => {
+                return release_chord_prefix(&mut model.workspace, Input::Request)
+                    .then(Vec::new)
+                    .ok_or(Unhandled);
+            }
+        }
+    } else {
+        message
+    };
     if let Message::Quit = message {
         return Ok(quit().into_parts().0);
     }
@@ -84,18 +97,6 @@ fn route(
         workspace.cover_side = cover_side;
         return Ok(Vec::new());
     }
-    let message = if let Message::Key(press) = message {
-        match keymap::lookup::route(&model.workspace, press) {
-            Some(routed) => routed,
-            None => {
-                return release_chord_prefix(&mut model.workspace, Input::Request)
-                    .then(Vec::new)
-                    .ok_or(Unhandled);
-            }
-        }
-    } else {
-        message
-    };
     let mut effects = update_model(model, message, now)?;
     effects.extend(roll_pending(&model.playlist));
     Ok(effects)
@@ -108,19 +109,28 @@ pub(crate) fn cover_side(workspace: &Workspace, settings: &Settings) -> Option<P
     }
 }
 
-fn shown_cover(model: &Model) -> Option<CoverJob> {
+fn shown_cover(model: &Model) -> Option<(Arc<Track>, Pixels)> {
     let side = cover_side(&model.workspace, &model.settings)?;
     let track = model.player.current()?;
-    Some(CoverJob {
-        path: track.path().to_path_buf(),
-        side,
-    })
+    Some((Arc::clone(track), side))
 }
 
-fn decode_cover(before: Option<&CoverJob>, model: &Model) -> Option<Effect> {
+fn decode_cover(
+    before: Option<&(Arc<Track>, Pixels)>,
+    model: &Model,
+) -> Option<Effect> {
     shown_cover(model)
-        .filter(|after| Some(after) != before)
-        .map(|job| Effect::Library(LibraryCmd::DecodeCover(job)))
+        .filter(|(track, side)| {
+            before.is_none_or(|(shown, shown_side)| {
+                (shown.path(), shown_side) != (track.path(), side)
+            })
+        })
+        .map(|(track, side)| {
+            Effect::Library(LibraryCmd::DecodeCover(CoverJob {
+                path: track.path().to_path_buf(),
+                side,
+            }))
+        })
 }
 
 fn drain(
@@ -347,6 +357,7 @@ pub(crate) fn library_parts(model: &mut Model) -> library::LibraryParts<'_> {
         playlist,
         playlist_source,
         player,
+        queue,
         ..
     } = model;
     library::LibraryParts {
@@ -360,6 +371,7 @@ pub(crate) fn library_parts(model: &mut Model) -> library::LibraryParts<'_> {
         playlist,
         playlist_source,
         player,
+        queue,
     }
 }
 
@@ -385,6 +397,7 @@ fn toast_expired(
     freshness: Freshness,
 ) -> Result<Cmd, Unhandled> {
     match freshness {
+        Freshness::Awaited if workspace.toasts.is_empty() => Err(Unhandled),
         Freshness::Awaited => Ok(workspace.expire_toasts(revision)),
         Freshness::Stale => Err(Unhandled),
     }
@@ -415,21 +428,16 @@ fn sleep_fired(
 
 fn driver_died(
     model: &mut Model,
-    driver_name: DriverName,
+    driver_death: driver::DriverDeath,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let (decision, restarted) =
-        driver::restart_if_allowed(&mut model.drivers, driver_name, now)?;
+    let driver_name = driver_death.driver_name;
+    let toast = Toast::error(format!("The {driver_name} driver stopped"))
+        .with_text(driver_death.error.to_string());
+    let (decision, died) = driver::died(&mut model.drivers, driver_death, now)?;
     let decided = match decision {
         Decision::Degrade(Announcement::Toast) => {
-            match &model.drivers.record(driver_name).status {
-                DriverStatus::Dead(error) => model.workspace.show(
-                    Toast::error(format!("The {driver_name} driver stopped"))
-                        .with_text(error.to_string()),
-                    &mut model.revisions,
-                ),
-                DriverStatus::Running | DriverStatus::Stopped => Cmd::none(),
-            }
+            model.workspace.show(toast, &mut model.revisions)
         }
         Decision::Degrade(Announcement::Silent) => Cmd::none(),
         Decision::Restart => {
@@ -447,22 +455,19 @@ fn driver_died(
                 .then(resumed)
         }
     };
-    Ok(restarted.then(decided))
+    Ok(died.then(decided))
 }
 
 fn update_overlay(
     model: &mut Model,
     request: OverlayRequest,
 ) -> Result<Cmd, Unhandled> {
-    let appearance_row_choices =
-        appearance_row_choices(model.settings.appearance_settings);
     overlay::update(
         overlay::OverlayParts {
             workspace: &mut model.workspace,
             playlist: &model.playlist,
             player: &model.player,
             history: &model.history,
-            appearance_row_choices: &appearance_row_choices,
             music_dir: &model.music_dir,
         },
         request,
@@ -515,16 +520,14 @@ fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhan
             .workspace
             .show(paint_toast(&error), &mut model.revisions)),
         Message::Elapsed(timer) => elapsed(model, timer, now),
+        Message::Driver {
+            driver_name,
+            event: DriverEvent::Died(error),
+        } => driver_died(model, driver::DriverDeath { driver_name, error }, now),
         Message::Driver { driver_name, event } => {
-            let has_died = matches!(event, DriverEvent::Died(_));
-            let cmd = driver::update(&mut model.drivers, driver_name, event)?;
-            match has_died {
-                true => Ok(cmd.then(driver_died(model, driver_name, now)?)),
-                false => Ok(cmd),
-            }
+            driver::update(&mut model.drivers, driver_name, event)
         }
-        Message::Key(_) | Message::Viewport { .. } => Ok(Cmd::none()),
-        Message::Quit => Ok(quit()),
+        Message::Key(_) | Message::Viewport { .. } | Message::Quit => Err(Unhandled),
     }
 }
 
@@ -550,7 +553,7 @@ mod tests {
             track::Track,
         },
         message::{DriverEvent, Message, PaintError, Timer},
-        update::{machine::Unhandled, startup::startup, update},
+        update::{branch, machine::Unhandled, startup::startup, update},
     };
 
     #[test]
@@ -586,7 +589,7 @@ mod tests {
         let mut model = Model::default();
         model.workspace.clock = Moment::new(Duration::from_secs(1));
         model.workspace.toasts = vec![Toast::info("hello")];
-        let before = format!("{model:?}");
+        let before = model.clone();
         let key = Key {
             code: KeyCode::Char(letter),
             modifiers: Modifiers::default(),
@@ -600,7 +603,7 @@ mod tests {
             ),
             Err(Unhandled)
         );
-        assert_eq!(format!("{model:?}"), before);
+        assert_eq!(model, before);
     }
 
     fn startup_with(shuffle: Shuffle) -> Startup {
@@ -678,5 +681,39 @@ mod tests {
         assert_eq!(effects, expected);
         assert_eq!(model.workspace.visible_rows, visible_rows);
         assert_eq!(model.workspace.cover_side, cover_side);
+    }
+
+    #[test]
+    fn a_key_reaching_the_branch_is_refused() {
+        let mut model = Model::default();
+        let before = model.clone();
+        let key = Key {
+            code: KeyCode::Char('j'),
+            modifiers: Modifiers::default(),
+        };
+
+        let result = branch(
+            &mut model,
+            Message::Key(KeyPress { key, typed: key }),
+            Moment::default(),
+        );
+
+        assert_eq!(result, Err(Unhandled));
+        assert_eq!(model, before);
+    }
+
+    #[test]
+    fn a_viewport_reaching_the_branch_is_refused() {
+        let mut model = Model::default();
+        let before = model.clone();
+        let viewport_message = Message::Viewport {
+            visible_rows: Cells(12),
+            cover_side: Some(Pixels(240)),
+        };
+
+        let result = branch(&mut model, viewport_message, Moment::default());
+
+        assert_eq!(result, Err(Unhandled));
+        assert_eq!(model, before);
     }
 }

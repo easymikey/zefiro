@@ -12,6 +12,7 @@ use kernel::{
         toast::{TOAST_LIFETIME, Toast},
     },
     message::{ConfigEvent, ConfigReload, Message, Timer},
+    update::machine::Unhandled,
 };
 use rstest::rstest;
 
@@ -82,11 +83,15 @@ fn a_source_failing_again_with_the_same_words_does_not_raise_a_second_toast() {
 
     let first = reduce(&mut model, Message::Config(fail(theme(), "Theme: boom")));
     model.workspace.toasts.clear();
-    let repeat = reduce(&mut model, Message::Config(fail(theme(), "Theme: boom")));
+    let repeat = update(
+        &mut model,
+        Message::Config(fail(theme(), "Theme: boom")),
+        Moment::default(),
+    );
     let changed = reduce(&mut model, Message::Config(fail(theme(), "Theme: worse")));
 
     assert!(has_raised_a_toast(&first), "{first:?}");
-    assert!(repeat == Cmd::none());
+    assert_eq!(repeat, Err(Unhandled));
     assert!(has_raised_a_toast(&changed), "{changed:?}");
     assert_eq!(
         model
@@ -137,10 +142,6 @@ fn keys_reloaded_installs_the_merged_table() {
         Message::Config(recovered(theme())),
     ],
     Some("UI: broken")
-)]
-#[case::recovery_without_a_failure_disturbs_nothing(
-    &[Message::Config(recovered(theme()))],
-    None
 )]
 fn config_errors_decide_which_toast_is_on_screen(
     #[case] messages: &[Message],

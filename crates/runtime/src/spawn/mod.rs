@@ -1,7 +1,6 @@
 use audio::tap::SpectrumTap;
 #[cfg(target_os = "macos")] use kernel::cmd::MacosCmd;
 use kernel::cmd::{AudioCmd, ConfigCmd, LibraryCmd};
-#[cfg(test)] use kernel::domain::driver::DriverName;
 
 use crate::{
     driver_thread::DriverThread,
@@ -12,12 +11,6 @@ use crate::{
         library_thread::spawn_library,
     },
     spawn_setup::SpawnSetup,
-};
-#[cfg(test)]
-use crate::{
-    driver_thread::spawn_idle,
-    registry,
-    spawn::{audio_thread::idle_audio, library_thread::idle_library},
 };
 
 pub(crate) mod audio_thread;
@@ -40,18 +33,6 @@ pub struct Spawners {
 }
 
 impl Spawners {
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn idle() -> Self {
-        Self {
-            audio: idle_audio,
-            library: idle_library,
-            config: |setup| spawn_idle(registry::row(DriverName::Config), setup.inbox),
-            #[cfg(target_os = "macos")]
-            macos: |setup| spawn_idle(registry::row(DriverName::Macos), setup.inbox),
-        }
-    }
-
     #[must_use]
     pub fn hardware() -> Self {
         Self {
@@ -63,6 +44,7 @@ impl Spawners {
         }
     }
 }
+
 #[cfg(test)]
 pub(crate) mod tests {
     use std::{
@@ -88,10 +70,48 @@ pub(crate) mod tests {
     use crate::{
         driver_thread::{Congestion, DriverThread, spawn_driver},
         error::SpawnError,
+        registry::{self, DriverRow},
         runtime::Runtime,
-        spawn::{ConfigCmd, LibraryCmd, Spawners, audio_thread::idle_audio},
+        spawn::{ConfigCmd, LibraryCmd, Spawners},
         spawn_setup::{SpawnSetup, StartupPaths},
     };
+
+    pub(crate) fn spawn_idle<C: Send + 'static>(
+        row: &DriverRow,
+        inbox: &Sender<Message>,
+    ) -> Result<DriverThread<C>, SpawnError> {
+        spawn_driver(
+            row,
+            |cmd_receiver: &Receiver<C>, _: &Sender<Message>, _: &Congestion| {
+                while cmd_receiver.recv().is_ok() {}
+                Ok(())
+            },
+            inbox,
+        )
+    }
+
+    pub(crate) fn idle_audio(
+        setup: &SpawnSetup<'_>,
+    ) -> Result<(DriverThread<AudioCmd>, SpectrumTap), SpawnError> {
+        let thread = spawn_idle(registry::row(DriverName::Audio), setup.inbox)?;
+        Ok((thread, SpectrumTap::silent()))
+    }
+
+    pub(crate) fn idle_library(
+        setup: &SpawnSetup<'_>,
+    ) -> Result<DriverThread<LibraryCmd>, SpawnError> {
+        spawn_idle(registry::row(DriverName::Library), setup.inbox)
+    }
+
+    pub(crate) fn idle_spawners() -> Spawners {
+        Spawners {
+            audio: idle_audio,
+            library: idle_library,
+            config: |setup| spawn_idle(registry::row(DriverName::Config), setup.inbox),
+            #[cfg(target_os = "macos")]
+            macos: |setup| spawn_idle(registry::row(DriverName::Macos), setup.inbox),
+        }
+    }
 
     pub(crate) fn spawn_audio_loop<R>(
         run: R,
@@ -106,8 +126,7 @@ pub(crate) mod tests {
             + Send
             + 'static,
     {
-        let thread =
-            spawn_driver(crate::registry::row(DriverName::Audio), run, setup.inbox)?;
+        let thread = spawn_driver(registry::row(DriverName::Audio), run, setup.inbox)?;
         Ok((thread, SpectrumTap::silent()))
     }
 
@@ -148,14 +167,14 @@ pub(crate) mod tests {
         setup: &SpawnSetup<'_>,
     ) -> Result<DriverThread<LibraryCmd>, SpawnError> {
         LIBRARY_CALLS.fetch_add(1, Ordering::SeqCst);
-        (Spawners::idle().library)(setup)
+        idle_library(setup)
     }
 
     fn counting_config(
         setup: &SpawnSetup<'_>,
     ) -> Result<DriverThread<ConfigCmd>, SpawnError> {
         CONFIG_CALLS.fetch_add(1, Ordering::SeqCst);
-        (Spawners::idle().config)(setup)
+        (idle_spawners().config)(setup)
     }
 
     #[cfg(target_os = "macos")]
@@ -163,7 +182,7 @@ pub(crate) mod tests {
         setup: &SpawnSetup<'_>,
     ) -> Result<DriverThread<kernel::cmd::MacosCmd>, SpawnError> {
         MACOS_CALLS.fetch_add(1, Ordering::SeqCst);
-        (Spawners::idle().macos)(setup)
+        (idle_spawners().macos)(setup)
     }
 
     #[test]
@@ -216,7 +235,7 @@ pub(crate) mod tests {
         let (audio, _spectrum) = idle_audio(&setup).unwrap();
 
         drop(audio.cmd_sender);
-        audio.handle.join().unwrap().unwrap();
+        audio.handle.join().unwrap();
     }
 
     static RESTART_LIBRARY_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -227,7 +246,7 @@ pub(crate) mod tests {
     ) -> Result<DriverThread<LibraryCmd>, SpawnError> {
         RESTART_LIBRARY_CALLS.fetch_add(1, Ordering::SeqCst);
         spawn_driver(
-            crate::registry::row(DriverName::Library),
+            registry::row(DriverName::Library),
             |_: &Receiver<LibraryCmd>, _: &Sender<Message>, _: &Congestion| boom(),
             setup.inbox,
         )
@@ -238,7 +257,7 @@ pub(crate) mod tests {
     ) -> Result<DriverThread<ConfigCmd>, SpawnError> {
         RESTART_CONFIG_CALLS.fetch_add(1, Ordering::SeqCst);
         spawn_driver(
-            crate::registry::row(DriverName::Config),
+            registry::row(DriverName::Config),
             |_: &Receiver<ConfigCmd>, _: &Sender<Message>, _: &Congestion| boom(),
             setup.inbox,
         )
@@ -255,12 +274,12 @@ pub(crate) mod tests {
         if driver_name == DriverName::Library {
             Spawners {
                 library: panicking_library,
-                ..Spawners::idle()
+                ..idle_spawners()
             }
         } else {
             Spawners {
                 config: panicking_config,
-                ..Spawners::idle()
+                ..idle_spawners()
             }
         }
     }

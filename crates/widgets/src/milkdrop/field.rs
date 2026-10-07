@@ -144,7 +144,8 @@ pub(crate) fn physical_offset(
 pub(crate) struct Warp {
     pub(crate) center: FieldCenter,
     pub(crate) zoom: f32,
-    pub(crate) rotation: f32,
+    pub(crate) sin: f32,
+    pub(crate) cos: f32,
     pub(crate) aspect_x: f32,
 }
 
@@ -154,11 +155,9 @@ pub(crate) fn warp_source(position: CellPosition, warp: &Warp) -> PlaneOffset {
         column: offset.column / warp.zoom,
         y: offset.y / warp.zoom,
     };
-    let angle = -warp.rotation;
-    let (sin, cos) = angle.sin_cos();
     let rotated_offset = PlaneOffset {
-        column: scaled_offset.column * cos - scaled_offset.y * sin,
-        y: scaled_offset.column * sin + scaled_offset.y * cos,
+        column: scaled_offset.column * warp.cos - scaled_offset.y * warp.sin,
+        y: scaled_offset.column * warp.sin + scaled_offset.y * warp.cos,
     };
     PlaneOffset {
         column: warp.center.column + rotated_offset.column / warp.aspect_x,

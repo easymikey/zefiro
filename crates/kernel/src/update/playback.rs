@@ -6,6 +6,7 @@ use crate::{
         cue::Cue,
         direction::Direction,
         player::{PausedBy, Player},
+        playlist::Playlist,
         time::Moment,
         transport::OutputStatus,
     },
@@ -42,10 +43,14 @@ pub(crate) fn update(
         }
         PlaybackRequest::Next => audio::next(playback_parts, now),
         PlaybackRequest::Previous => audio::previous(playback_parts, now),
-        PlaybackRequest::ToggleShuffle => toggle_shuffle(playback_parts),
-        PlaybackRequest::CycleRepeat => cycle_repeat(playback_parts),
+        PlaybackRequest::ToggleShuffle => {
+            reorder(playback_parts.playlist, PlaylistMessage::ToggleShuffle)
+        }
+        PlaybackRequest::CycleRepeat => {
+            reorder(playback_parts.playlist, PlaylistMessage::CycleRepeat)
+        }
         PlaybackRequest::SeekBy { direction, by } => {
-            seek_by(playback_parts, (direction, by), now)
+            seek_by(playback_parts, SeekStep { direction, by }, now)
         }
         PlaybackRequest::StepVolume(direction) => {
             step_volume(playback_parts, direction)
@@ -83,18 +88,13 @@ fn pause_playback(
     }
 }
 
-fn toggle_shuffle(playback_parts: &mut PlaybackParts<'_>) -> Result<Cmd, Unhandled> {
-    let cmd = playback_parts
-        .playlist
-        .transition(PlaylistMessage::ToggleShuffle)?;
-    Ok(cmd.then(Cue::PlayOrderChanged.into()))
-}
-
-fn cycle_repeat(playback_parts: &mut PlaybackParts<'_>) -> Result<Cmd, Unhandled> {
-    let cmd = playback_parts
-        .playlist
-        .transition(PlaylistMessage::CycleRepeat)?;
-    Ok(cmd.then(Cue::PlayOrderChanged.into()))
+fn reorder(
+    playlist: &mut Playlist,
+    message: PlaylistMessage,
+) -> Result<Cmd, Unhandled> {
+    Ok(playlist
+        .transition(message)?
+        .then(Cue::PlayOrderChanged.into()))
 }
 
 fn step_volume(
@@ -175,12 +175,18 @@ fn seek_tenths(
     seek(playback_parts, target, now)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SeekStep {
+    direction: Direction,
+    by: Duration,
+}
+
 fn seek_by(
     playback_parts: &mut PlaybackParts<'_>,
-    step: (Direction, Duration),
+    seek_step: SeekStep,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let target = relative_target(playback_parts.player, step, now);
+    let target = relative_target(playback_parts.player, seek_step, now);
     seek(playback_parts, target, now)
 }
 
@@ -235,7 +241,7 @@ fn restart(
         .cloned()
         .or_else(|| playback_parts.playlist.current().cloned());
     let track = again.ok_or(Unhandled)?;
-    audio::start(playback_parts, track, now)
+    Ok(player::start(playback_parts, track, now))
 }
 
 fn seek(
@@ -253,17 +259,11 @@ fn clamped(player: &Player, target: Duration) -> Option<Duration> {
 
 fn tenths_target(player: &Player, tenths: SeekTenths) -> Option<Duration> {
     let duration = player::duration_of(player);
-    if duration.is_zero() {
-        return None;
-    }
-    clamped(player, duration * u32::from(tenths.get()) / 10)
+    (!duration.is_zero()).then(|| duration * u32::from(tenths.get()) / 10)
 }
 
-fn relative_target(
-    player: &Player,
-    (direction, by): (Direction, Duration),
-    now: Moment,
-) -> Duration {
+fn relative_target(player: &Player, seek_step: SeekStep, now: Moment) -> Duration {
+    let SeekStep { direction, by } = seek_step;
     let position = player.position_at(now);
     let moved = match direction {
         Direction::Previous => position.saturating_sub(by),

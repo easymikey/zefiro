@@ -7,6 +7,7 @@ use kernel::{
         time::Moment,
     },
     message::Message,
+    update::machine::Unhandled,
 };
 
 use crate::support::{device, first_toast_expiry, update::update};
@@ -49,21 +50,58 @@ fn a_device_that_opened_as_asked_leaves_the_toast_alone() {
     let mut model = Model::default();
     model.settings.audio_settings.device = OutputDevice::Named(device("usb-dac"));
 
-    let cmd = update(
+    let result = update(
         &mut model,
         Message::Audio(kernel::message::AudioEvent::DeviceFellBack(
             OutputDevice::Named(device("usb-dac")),
         )),
         Moment::default(),
-    )
-    .unwrap();
+    );
 
+    assert_eq!(result, Err(Unhandled));
     assert_eq!(
         model.settings.audio_settings.device,
         OutputDevice::Named(device("usb-dac"))
     );
-    assert_eq!(cmd, Cmd::none());
     assert!(model.workspace.toasts.is_empty());
+}
+
+#[test]
+fn a_fallback_to_the_device_already_set_is_refused() {
+    let mut model = Model::default();
+    model.settings.audio_settings.device = OutputDevice::SystemDefault;
+    let before = model.clone();
+
+    let result = update(
+        &mut model,
+        Message::Audio(kernel::message::AudioEvent::DeviceFellBack(
+            OutputDevice::SystemDefault,
+        )),
+        Moment::default(),
+    );
+
+    assert_eq!(result, Err(Unhandled));
+    assert_eq!(model, before);
+}
+
+#[test]
+fn an_identical_device_list_is_refused() {
+    let mut model = Model::default();
+    let devices = vec![ListedDevice {
+        name: device("Speakers"),
+        default: DeviceDefault::Yes,
+    }];
+    model.settings.output_devices = devices.clone();
+    let before = model.clone();
+
+    let result = update(
+        &mut model,
+        Message::Audio(kernel::message::AudioEvent::DevicesListed(devices)),
+        Moment::default(),
+    );
+
+    assert_eq!(result, Err(Unhandled));
+    assert_eq!(model, before);
 }
 
 #[test]

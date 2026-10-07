@@ -8,7 +8,7 @@ use ratatui::{
 use crate::{
     playlist::{
         chrome::{pane_block, pane_title},
-        row::{self, PlaylistRows, WindowFit, cursor_band, row_window},
+        row::{self, PlaylistRows, RowWindow, WindowFit, cursor_band, row_window},
         view::{LibraryStatus, PlaylistView},
     },
     primitive::list_chrome::{ScrollAreas, Scrollbar, paint_scrollbar, scroll_areas},
@@ -34,6 +34,7 @@ impl<'a> PlaylistWidget<'a> {
 pub struct PlaylistAreas {
     pub pane: Rect,
     pub scroll_areas: ScrollAreas,
+    pub window: RowWindow,
     pub selected_area: Option<Rect>,
 }
 
@@ -44,13 +45,14 @@ impl PlaylistWidget<'_> {
         let scroll_areas = scroll_areas(pane, body);
         let window = row_window(&WindowFit {
             view: self.view,
-            height: body.height,
+            height: scroll_areas.content.height,
         });
         let selected_area =
-            cursor_band(scroll_areas.rows, &window, self.view.selected.get());
+            cursor_band(scroll_areas.rows, window, self.view.selected.get());
         PlaylistAreas {
             pane,
             scroll_areas,
+            window,
             selected_area,
         }
     }
@@ -105,10 +107,7 @@ fn paint_body(
         return;
     }
 
-    let window = row_window(&WindowFit {
-        view,
-        height: inner.height,
-    });
+    let window = areas.window;
 
     row::paint_rows(
         buffer,
@@ -116,7 +115,8 @@ fn paint_body(
             view,
             theme,
             rows: areas.scroll_areas.rows,
-            window: &window,
+            window,
+            selected_area: areas.selected_area,
         },
     );
 
@@ -491,6 +491,35 @@ mod tests {
         let cursor = buffer[(cursor_x, cursor_y)].style();
         assert_eq!(cursor.fg, Some(selection_text));
         assert_eq!(cursor.bg, Some(selection_background));
+    }
+
+    #[test]
+    fn the_painted_band_is_the_selected_area() {
+        let playlist = library(40);
+        let theme = noir();
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let selection_background = active_theme.colors().selection_background;
+        let widget = PlaylistWidget::new(
+            PlaylistView {
+                selected: ViewIndex::new(25),
+                ..view(&playlist, &theme)
+            },
+            active_theme,
+        );
+        let pane = ratatui::layout::Rect::new(0, 0, 60, 12);
+        let areas = widget.areas(pane);
+        let band = areas
+            .selected_area
+            .expect("the selection is inside the window");
+        let mut buffer = ratatui::buffer::Buffer::empty(pane);
+        widget.paint(&areas, &mut buffer);
+        let painted: Vec<(u16, u16)> = (0..pane.height)
+            .flat_map(|y| (0..pane.width).map(move |x| (x, y)))
+            .filter(|&(x, y)| buffer[(x, y)].style().bg == Some(selection_background))
+            .collect();
+        let expected: Vec<(u16, u16)> =
+            (band.x..band.x + band.width).map(|x| (x, band.y)).collect();
+        assert_eq!(painted, expected);
     }
 
     #[test]

@@ -15,11 +15,11 @@ use crate::{
         overlay::{Overlay, OverlayName, SearchQuery, TextEntry, TrashCandidate},
         player::Player,
         playlist::Playlist,
-        setting_row::{AppearanceRowChoice, SettingRow},
+        setting_row::SettingRow,
         track::Track,
         workspace::Workspace,
     },
-    message::{HistoryRequest, OverlayRequest, SearchEdit, SearchRequest, TextRequest},
+    message::{OverlayRequest, SearchRequest, TextRequest},
     update::{
         machine::{Machine, Unhandled},
         overlay::{history::HistoryMessage, settings::SettingRowMessage},
@@ -47,7 +47,6 @@ pub(crate) struct OverlayParts<'a> {
     pub(crate) playlist: &'a Playlist,
     pub(crate) player: &'a Player,
     pub(crate) history: &'a [HistoryEntry],
-    pub(crate) appearance_row_choices: &'a [AppearanceRowChoice],
     pub(crate) music_dir: &'a Path,
 }
 
@@ -65,11 +64,7 @@ pub(crate) fn update(
             search_request(parts.workspace, &parts.playlist.tracks, request)
         }
         OverlayRequest::Settings(request) => {
-            let message = settings::setting_row_message(
-                parts.workspace,
-                parts.appearance_row_choices,
-                request,
-            )?;
+            let message = settings::setting_row_message(parts.workspace, request)?;
             update_overlay(
                 parts.workspace,
                 OverlayMessage::Content(OverlayContentMessage::Settings(message)),
@@ -79,21 +74,13 @@ pub(crate) fn update(
             parts.workspace,
             OverlayMessage::Content(OverlayContentMessage::Text(message)),
         ),
-        OverlayRequest::History(request) => {
-            let len = parts.history.len();
-            let message = match request {
-                HistoryRequest::Navigate(direction) => {
-                    HistoryMessage::Navigate { direction, len }
-                }
-                HistoryRequest::SelectFirst => HistoryMessage::SelectFirst,
-                HistoryRequest::SelectLast => HistoryMessage::SelectLast { rows: len },
-                HistoryRequest::Enqueue => HistoryMessage::Enqueue(len),
-            };
-            update_overlay(
-                parts.workspace,
-                OverlayMessage::Content(OverlayContentMessage::History(message)),
-            )
-        }
+        OverlayRequest::History(request) => update_overlay(
+            parts.workspace,
+            OverlayMessage::Content(OverlayContentMessage::History(HistoryMessage {
+                request,
+                rows: parts.history.len(),
+            })),
+        ),
     }
 }
 
@@ -122,12 +109,7 @@ fn search_request(
     if let SearchRequest::Edit(edit) = message
         && let Some(Overlay::Search(search)) = workspace.overlay.as_mut()
     {
-        match edit {
-            SearchEdit::Char(_) => search::narrow(search, tracks),
-            SearchEdit::Backspace | SearchEdit::DeleteWord | SearchEdit::Clear => {
-                search::rerank(search, tracks);
-            }
-        }
+        search::requery(search, tracks, edit);
     }
     Ok(cmd)
 }
@@ -153,9 +135,7 @@ fn overlay_for(
         }
         OverlayName::SavePlaylist => Ok(Overlay::SavePlaylist(TextEntry::default())),
         OverlayName::History => Ok(Overlay::History(CursorOver::default())),
-        OverlayName::Settings => Ok(Overlay::Settings(SettingRow::first(
-            parts.appearance_row_choices,
-        ))),
+        OverlayName::Settings => Ok(Overlay::Settings(SettingRow::first())),
         OverlayName::ConfirmTrash => {
             let track = parts
                 .playlist

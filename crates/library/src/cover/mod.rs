@@ -12,7 +12,7 @@ use fast_image_resize::{
     Resizer,
     images::{Image, ImageRef},
 };
-use image::{DynamicImage, RgbaImage};
+use image::{DynamicImage, RgbImage, RgbaImage};
 use kernel::{cmd::CoverJob, domain::geometry::Pixels};
 
 use crate::tags::embedded_cover;
@@ -127,8 +127,7 @@ pub(crate) fn fit_square(
     image: DynamicImage,
     side: Pixels,
 ) -> Result<Option<RgbaImage>, image::ImageError> {
-    let source = image.into_rgba8();
-    let (source_width, source_height) = source.dimensions();
+    let (source_width, source_height) = (image.width(), image.height());
     if source_width == 0 || source_height == 0 {
         return Ok(None);
     }
@@ -136,14 +135,6 @@ pub(crate) fn fit_square(
     let crop = source_width.min(source_height);
     let crop_x = (source_width - crop) / 2;
     let crop_y = (source_height - crop) / 2;
-    let source_view = ImageRef::new(
-        source_width,
-        source_height,
-        source.as_raw(),
-        PixelType::U8x4,
-    )
-    .map_err(|error| resize_failed(&error))?;
-    let mut target = Image::new(side, side, PixelType::U8x4);
     let options = ResizeOptions::new()
         .crop(
             f64::from(crop_x),
@@ -152,10 +143,23 @@ pub(crate) fn fit_square(
             f64::from(crop),
         )
         .use_alpha(false);
-    Resizer::new()
-        .resize(&source_view, &mut target, &options)
-        .map_err(|error| resize_failed(&error))?;
-    Ok(RgbaImage::from_raw(side, side, target.into_vec()))
+    let resize = |buffer: &[u8], pixel_type: PixelType| {
+        let source_view =
+            ImageRef::new(source_width, source_height, buffer, pixel_type)
+                .map_err(|error| resize_failed(&error))?;
+        let mut target = Image::new(side, side, pixel_type);
+        Resizer::new()
+            .resize(&source_view, &mut target, &options)
+            .map_err(|error| resize_failed(&error))?;
+        Ok::<_, image::ImageError>(target.into_vec())
+    };
+    if let Some(source) = image.as_rgb8() {
+        let fitted = resize(source.as_raw(), PixelType::U8x3)?;
+        return Ok(RgbImage::from_raw(side, side, fitted)
+            .map(|rgb| DynamicImage::ImageRgb8(rgb).into_rgba8()));
+    }
+    let fitted = resize(image.into_rgba8().as_raw(), PixelType::U8x4)?;
+    Ok(RgbaImage::from_raw(side, side, fitted))
 }
 
 #[cfg(test)]
@@ -169,7 +173,7 @@ mod tests {
         sync::Arc,
     };
 
-    use image::{DynamicImage, ImageFormat, RgbaImage};
+    use image::{DynamicImage, ImageFormat, Rgb, RgbImage, RgbaImage};
     use kernel::{cmd::CoverJob, domain::geometry::Pixels};
 
     use crate::{
@@ -291,6 +295,18 @@ mod tests {
             fitted.map(|image| (image.width(), image.height())),
             Some((side.0, side.0))
         );
+    }
+
+    #[test]
+    fn fit_square_fits_an_rgb_cover_to_an_opaque_square() {
+        let wide =
+            DynamicImage::ImageRgb8(RgbImage::from_pixel(300, 200, Rgb([10, 20, 30])));
+        let side = Pixels(48);
+
+        let fitted = fit_square(wide, side).unwrap().unwrap();
+
+        assert_eq!(fitted.dimensions(), (side.0, side.0));
+        assert!(fitted.pixels().all(|pixel| pixel.0[3] == u8::MAX));
     }
 
     #[test]

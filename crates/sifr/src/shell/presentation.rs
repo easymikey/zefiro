@@ -5,7 +5,7 @@ use kernel::domain::appearance::Appearance;
 use widgets::{
     key_hints::KeyHintChords,
     scene::PixelPath,
-    spectrum::Spectrum,
+    spectrum::{SPECTRUM_BANDS, Spectrum},
     theme::{
         Theme,
         colors::{Colors, ThemeBase},
@@ -22,6 +22,25 @@ pub(crate) struct ShellPresentation {
     pub(in crate::shell) home_dir: Option<PathBuf>,
     pub(in crate::shell) spectrum: Spectrum,
     pub(in crate::shell) key_hint_chords: KeyHintChords,
+}
+
+impl ShellPresentation {
+    pub(in crate::shell) fn new(
+        theme: Theme,
+        pixel_path: PixelPath,
+        color_depth: ColorDepth,
+    ) -> Self {
+        Self {
+            theme,
+            appearance: Appearance::default(),
+            pixel_path,
+            color_depth,
+            cell_aspect: widgets::geometry::DEFAULT_CELL_ASPECT,
+            home_dir: dirs::home_dir(),
+            spectrum: [0.0; SPECTRUM_BANDS],
+            key_hint_chords: KeyHintChords::default(),
+        }
+    }
 }
 
 pub(in crate::shell) fn theme(toml_theme: TomlTheme) -> Theme {
@@ -49,20 +68,6 @@ pub(in crate::shell) fn theme(toml_theme: TomlTheme) -> Theme {
         name: toml_theme.name,
         colors: Colors::from_theme_base(&theme_base),
         scanning_label: toml_theme.scanning_label,
-    }
-}
-
-#[cfg(test)]
-pub(in crate::shell) fn test_presentation() -> ShellPresentation {
-    ShellPresentation {
-        theme: theme(crate::startup::fallback_theme()),
-        appearance: Appearance::default(),
-        pixel_path: PixelPath::Halfblocks,
-        color_depth: ColorDepth::TrueColor,
-        cell_aspect: widgets::geometry::DEFAULT_CELL_ASPECT,
-        home_dir: None,
-        spectrum: [0.0; widgets::spectrum::SPECTRUM_BANDS],
-        key_hint_chords: KeyHintChords::default(),
     }
 }
 

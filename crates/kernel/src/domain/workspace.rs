@@ -13,7 +13,7 @@ use crate::{
     update::keymap::bindings::Keymap,
 };
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Workspace {
     pub overlay: Option<Overlay>,
     pub browse: Browse,

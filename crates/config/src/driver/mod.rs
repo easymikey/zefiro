@@ -17,7 +17,7 @@ use kernel::{
         appearance::Appearance,
         config::{ConfigError, ConfigName, Diagnostic},
         io_error::IoError,
-        theme::{ThemeChoice, ThemeName},
+        theme::ThemeName,
     },
     message::{ConfigEvent, ConfigReload},
     update::machine::{LoopEffect, Machine, Unhandled, each_handled},
@@ -32,6 +32,7 @@ use crate::{
         saves::PendingSaves,
         watch::{ConfigChange, ConfigWatch, ConfigWatchEffect, ConfigWatchMessage},
     },
+    embedded_theme::theme_name,
     load::theme_parsed,
     theme_file::TomlTheme,
 };
@@ -132,10 +133,9 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> ConfigDriver<P, A> {
                 self.saves.hold_config(patch);
                 Ok(Cmd::none())
             }
-            ConfigCmd::SelectTheme(ThemeChoice::Named(name)) => {
-                self.drive_watch(ConfigWatchMessage::SelectTheme(name))
-            }
-            ConfigCmd::SelectTheme(ThemeChoice::Auto) => Err(Unhandled),
+            ConfigCmd::SelectTheme(theme_choice) => self.drive_watch(
+                ConfigWatchMessage::SelectTheme(theme_name(&theme_choice)),
+            ),
             ConfigCmd::SetAppearance(patch) => {
                 self.saves.hold_appearance(patch);
                 Ok(Cmd::none())
@@ -443,6 +443,7 @@ mod tests {
         Ok(Cmd::message(ConfigEvent::Error(ConfigError::Watch(IoError::Missing))))
     )]
     #[case::select_theme(cmds(vec![ConfigCmd::SelectTheme("noir".parse().unwrap())]), Ok(Cmd::effect(executed(reading(noir(), "/config/themes/noir.toml")))))]
+    #[case::auto_theme(cmds(vec![ConfigCmd::SelectTheme(ThemeChoice::Auto)]), Ok(Cmd::effect(executed(reading(noir(), "/config/themes/noir.toml")))))]
     #[case::save(saving(ConfigPatch {
         ..ConfigPatch::default()
     }), Ok(after(issued(1))))]
@@ -457,7 +458,6 @@ mod tests {
 
     #[rstest]
     #[case::nothing_pending(ConfigMessage::Elapsed(Revision::default()))]
-    #[case::auto_theme(cmds(vec![ConfigCmd::SelectTheme(ThemeChoice::Auto)]))]
     fn a_fresh_driver_refuses_and_stays_unchanged(#[case] message: ConfigMessage) {
         let mut fresh = driver(None);
         let before = format!("{fresh:?}");

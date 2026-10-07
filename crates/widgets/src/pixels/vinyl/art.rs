@@ -1,6 +1,6 @@
 use image::RgbaImage;
 use kernel::domain::geometry::Pixels;
-use tiny_skia::{FillRule, IntSize, Mask, Path, Pixmap, PixmapPaint, Transform};
+use tiny_skia::{ColorU8, FillRule, Mask, Path, Pixmap, PixmapPaint, Transform};
 
 use crate::pixels::{
     numeric::{dimension_f32, floor},
@@ -28,26 +28,31 @@ fn label_diameter(canvas_side: Pixels) -> u32 {
 
 #[derive(Debug)]
 pub(crate) struct VinylArt {
-    pub(crate) sleeve: RgbaImage,
-    pub(crate) label: RgbaImage,
+    pub(crate) sleeve: Pixmap,
+    pub(crate) label: Pixmap,
 }
 
 #[must_use]
-pub(crate) fn prepare_art(image: &RgbaImage, canvas_side: Pixels) -> VinylArt {
-    let sleeve_side = sleeve_inset_side(canvas_side);
-    let label_side = label_diameter(canvas_side);
-    VinylArt {
-        sleeve: cover_crop_resize(image, sleeve_side, sleeve_side),
-        label: cover_crop_resize(image, label_side, label_side),
-    }
+pub(crate) fn prepare_art(image: &RgbaImage, canvas_side: Pixels) -> Option<VinylArt> {
+    let premultiplied = |side: u32| {
+        let resized = cover_crop_resize(image, side, side);
+        let mut pixmap = Pixmap::new(side, side)?;
+        for (target, source) in pixmap.pixels_mut().iter_mut().zip(resized.pixels()) {
+            let [red, green, blue, alpha] = source.0;
+            *target = ColorU8::from_rgba(red, green, blue, alpha).premultiply();
+        }
+        Some(pixmap)
+    };
+    Some(VinylArt {
+        sleeve: premultiplied(sleeve_inset_side(canvas_side))?,
+        label: premultiplied(label_diameter(canvas_side))?,
+    })
 }
 
 pub(crate) struct ArtClip {
     path: Path,
     x: f32,
     y: f32,
-    width: f32,
-    height: f32,
 }
 
 impl ArtClip {
@@ -56,8 +61,6 @@ impl ArtClip {
             path: rounded_rect_path(rect)?,
             x: rect.x.round(),
             y: rect.y.round(),
-            width: rect.width,
-            height: rect.height,
         })
     }
 
@@ -67,19 +70,11 @@ impl ArtClip {
             path: circle_path(disc)?,
             x: disc.center_x - diameter / 2.0,
             y: disc.center_y - diameter / 2.0,
-            width: diameter,
-            height: diameter,
         })
     }
 }
 
-pub(crate) fn paint_art_clipped(pixmap: &mut Pixmap, art: &RgbaImage, clip: &ArtClip) {
-    let target_width = floor::<u32>(clip.width.round()).max(1);
-    let target_height = floor::<u32>(clip.height.round()).max(1);
-    let sized = sized_or_resized(art, target_width, target_height);
-    let Some(source) = pixmap_from(&sized) else {
-        return;
-    };
+pub(crate) fn paint_art_clipped(pixmap: &mut Pixmap, art: &Pixmap, clip: &ArtClip) {
     let Some(mut mask) = Mask::new(pixmap.width(), pixmap.height()) else {
         return;
     };
@@ -87,29 +82,11 @@ pub(crate) fn paint_art_clipped(pixmap: &mut Pixmap, art: &RgbaImage, clip: &Art
     pixmap.draw_pixmap(
         0,
         0,
-        source.as_ref(),
+        art.as_ref(),
         &PixmapPaint::default(),
         Transform::from_translate(clip.x, clip.y),
         Some(&mask),
     );
-}
-
-fn sized_or_resized(
-    image: &RgbaImage,
-    target_width: u32,
-    target_height: u32,
-) -> std::borrow::Cow<'_, RgbaImage> {
-    if image.dimensions() == (target_width, target_height) {
-        std::borrow::Cow::Borrowed(image)
-    } else {
-        std::borrow::Cow::Owned(cover_crop_resize(image, target_width, target_height))
-    }
-}
-
-fn pixmap_from(image: &RgbaImage) -> Option<Pixmap> {
-    let (width, height) = image.dimensions();
-    let size = IntSize::from_wh(width, height)?;
-    Pixmap::from_vec(image.as_raw().clone(), size)
 }
 
 #[cfg(test)]
@@ -144,8 +121,18 @@ mod tests {
         let prepared = prepare_art(&art, canvas_side);
         let sleeve_side = sleeve_inset_side(canvas_side);
         let label_side = label_diameter(canvas_side);
-        assert_eq!(prepared.sleeve.dimensions(), (sleeve_side, sleeve_side));
-        assert_eq!(prepared.label.dimensions(), (label_side, label_side));
+        assert_eq!(
+            prepared
+                .as_ref()
+                .map(|prepared| (prepared.sleeve.width(), prepared.sleeve.height())),
+            Some((sleeve_side, sleeve_side))
+        );
+        assert_eq!(
+            prepared
+                .as_ref()
+                .map(|prepared| (prepared.label.width(), prepared.label.height())),
+            Some((label_side, label_side))
+        );
     }
 
     #[test]

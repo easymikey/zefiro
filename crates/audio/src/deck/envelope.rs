@@ -11,6 +11,7 @@ use kernel::{
     domain::revision::Revision,
     update::machine::{Machine, Unhandled},
 };
+use num_traits::ToPrimitive;
 use rodio::Source;
 use triple_buffer::{Input, Output, triple_buffer};
 
@@ -103,8 +104,13 @@ impl Frames {
         if rate == 0 {
             return Duration::ZERO;
         }
-        let nanos = u128::from(self.0) * 1_000_000_000u128 / u128::from(rate);
-        Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
+        let rate = u64::from(rate);
+        Duration::from_secs(self.0 / rate)
+            + Duration::from_nanos(self.0 % rate * 1_000_000_000 / rate)
+    }
+
+    fn fraction_of(self, total: Frames) -> f32 {
+        self.0.to_f32().unwrap_or(0.0) / total.0.to_f32().unwrap_or(1.0)
     }
 
     fn from_duration(duration: Duration, rate: u32) -> Self {
@@ -292,11 +298,11 @@ impl<S: Source> Envelope<S> {
         }
     }
 
-    fn advance_fade_start(&mut self) {
+    fn advance_fade_start(&mut self, position: Duration) {
         let Some(fade_start) = self.fade_start else {
             return;
         };
-        if self.offset + self.frames.duration(self.rate) >= fade_start {
+        if position >= fade_start {
             self.raise(Signals::FADE_START);
             self.fade_start = None;
         }
@@ -315,19 +321,12 @@ impl<S: Source> Envelope<S> {
             }
             return;
         }
-        let elapsed = running.elapsed_frames.duration(self.rate);
-        let total = running.ramp.length.duration(self.rate);
-        let fraction = if total.is_zero() {
-            1.0
-        } else {
-            elapsed.as_secs_f32() / total.as_secs_f32()
-        };
+        let fraction = running.elapsed_frames.fraction_of(running.ramp.length);
         self.gain = curved_gain(running.ramp, fraction);
         self.running = Some(running);
     }
 
-    fn publish(&self) {
-        let position = self.offset + self.frames.duration(self.rate);
+    fn publish(&self, position: Duration) {
         let nanos = u64::try_from(position.as_nanos()).unwrap_or(u64::MAX);
         self.envelope_readout
             .position_bits
@@ -344,9 +343,10 @@ impl<S: Source> Envelope<S> {
                 Ok(()) | Err(Unhandled) => {}
             }
         }
-        self.advance_fade_start();
+        let position = self.offset + self.frames.duration(self.rate);
+        self.advance_fade_start(position);
         self.advance_ramp();
-        self.publish();
+        self.publish(position);
     }
 }
 

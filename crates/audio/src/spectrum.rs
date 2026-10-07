@@ -42,23 +42,20 @@ impl SpectrumAnalyzer {
         &mut self,
         spectrum_tap: &SpectrumTap,
     ) -> [f32; BANDS] {
-        spectrum_tap.latest(&mut self.input);
-        self.input
-            .iter_mut()
-            .zip(self.window.iter())
-            .for_each(|(slot, window)| *slot *= window);
-        match self.transform.process_with_scratch(
-            &mut self.input[..],
-            &mut self.bins,
-            &mut self.scratch,
-        ) {
-            Ok(()) => {}
-            Err(
-                FftError::InputBuffer(..)
-                | FftError::OutputBuffer(..)
-                | FftError::ScratchBuffer(..)
-                | FftError::InputValues(..),
-            ) => self.bins.fill(Complex::default()),
+        if spectrum_tap.windowed(&self.window, &mut self.input) {
+            match self.transform.process_with_scratch(
+                &mut self.input[..],
+                &mut self.bins,
+                &mut self.scratch,
+            ) {
+                Ok(()) => {}
+                Err(
+                    FftError::InputBuffer(..)
+                    | FftError::OutputBuffer(..)
+                    | FftError::ScratchBuffer(..)
+                    | FftError::InputValues(..),
+                ) => self.bins.fill(Complex::default()),
+            }
         }
         let usable = WINDOW / 2;
         let scale = float_count(usable) * self.window_scale;
@@ -107,41 +104,13 @@ fn bin_index(fractional_bin: f32) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
-    use rodio::Source;
+    use rodio::buffer::SamplesBuffer;
     use rstest::rstest;
 
     use crate::{
         spectrum::SpectrumAnalyzer,
         tap::{TappedSource, WINDOW, spectrum_channel},
     };
-
-    struct Tone {
-        samples: std::vec::IntoIter<f32>,
-    }
-
-    impl Iterator for Tone {
-        type Item = f32;
-        fn next(&mut self) -> Option<f32> {
-            self.samples.next()
-        }
-    }
-
-    impl Source for Tone {
-        fn current_span_len(&self) -> Option<usize> {
-            None
-        }
-        fn channels(&self) -> u16 {
-            1
-        }
-        fn sample_rate(&self) -> u32 {
-            44_100
-        }
-        fn total_duration(&self) -> Option<Duration> {
-            None
-        }
-    }
 
     fn tone(cycles: f32) -> Vec<f32> {
         (0..WINDOW)
@@ -167,18 +136,15 @@ mod tests {
     #[test]
     fn a_failed_transform_gives_zero_bands_instead_of_the_last_spectrum() {
         let (spectrum_buffers, spectrum_tap) = spectrum_channel();
-        TappedSource::new(
-            Tone {
-                samples: tone(64.0).into_iter(),
-            },
-            &spectrum_buffers,
-        )
-        .for_each(drop);
+        TappedSource::new(SamplesBuffer::new(1, 44_100, tone(64.0)), &spectrum_buffers)
+            .for_each(drop);
         let mut analyzer = SpectrumAnalyzer::new();
         let loud: [f32; 8] = analyzer.bands(&spectrum_tap);
         assert!(loud.iter().any(|&band| band > 0.0));
 
         analyzer.bins.truncate(WINDOW / 4);
+        TappedSource::new(SamplesBuffer::new(1, 44_100, tone(64.0)), &spectrum_buffers)
+            .for_each(drop);
         let failed: [f32; 8] = analyzer.bands(&spectrum_tap);
         assert!(failed.iter().all(|&band| band == 0.0), "{failed:?}");
     }
@@ -188,9 +154,7 @@ mod tests {
     #[case::many_bands(32)]
     fn every_band_stays_within_unit_range(#[case] count: usize) {
         let (spectrum_buffers, spectrum_tap) = spectrum_channel();
-        let source_tone = Tone {
-            samples: tone(64.0).into_iter(),
-        };
+        let source_tone = SamplesBuffer::new(1, 44_100, tone(64.0));
         TappedSource::new(source_tone, &spectrum_buffers).for_each(drop);
 
         let mut analyzer = SpectrumAnalyzer::new();

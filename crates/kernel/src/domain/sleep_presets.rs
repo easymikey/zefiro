@@ -65,10 +65,14 @@ impl SleepPresets {
     }
 
     #[must_use]
-    pub fn bundle(bundle_index: usize) -> Option<Self> {
-        SleepPresets::BUNDLES
-            .get(bundle_index)
-            .map(|&bundle| Self(bundle.into()))
+    pub fn bundle(bundle_index: usize) -> Self {
+        Self(
+            Self::BUNDLES
+                .get(bundle_index % Self::BUNDLES.len())
+                .copied()
+                .unwrap_or(&[])
+                .into(),
+        )
     }
 
     #[must_use]

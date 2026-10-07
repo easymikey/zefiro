@@ -33,9 +33,6 @@ fn route_changed(
     playback_parts: &mut PlaybackParts<'_>,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    if !playback_parts.player.is_playing() {
-        return Err(Unhandled);
-    }
     let paused = playback::update(playback_parts, PlaybackRequest::Pause, now)?;
     let raised = playback_parts.workspace.show(
         Toast::info("Output changed — paused".to_string()),

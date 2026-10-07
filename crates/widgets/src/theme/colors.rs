@@ -84,7 +84,11 @@ impl Colors {
             window_background,
             foreground: theme_base.foreground,
             accent: theme_base.accent,
-            favorite: theme_base.yellow,
+            favorite: raise_contrast(
+                theme_base.yellow,
+                &[window_background, selection_background],
+                MIN_MARKER_CONTRAST,
+            ),
             selection_foreground: raise_contrast(
                 theme_base.foreground,
                 &[selection_background],
@@ -173,6 +177,25 @@ mod tests {
         assert!(
             contrast_ratio(colors.bar_groove, window_background) >= MIN_BAND_CONTRAST,
             "a bar's unfilled track has to be visible on the card it is painted on"
+        );
+    }
+
+    #[test]
+    fn a_favorite_too_dim_for_the_window_is_raised_to_marker_contrast() {
+        let theme_base = ThemeBase {
+            background: Rgb([0x10, 0x10, 0x10]),
+            muted_foreground: Rgb([0x40, 0x40, 0x40]),
+            yellow: Rgb([0x60, 0x50, 0]),
+            ..test_base()
+        };
+        let colors = Colors::from_theme_base(&theme_base);
+        assert!(
+            contrast_ratio(colors.favorite, colors.window_background)
+                >= MIN_MARKER_CONTRAST
+        );
+        assert!(
+            contrast_ratio(colors.favorite, colors.selection_background)
+                >= MIN_MARKER_CONTRAST
         );
     }
 

@@ -464,7 +464,7 @@ fn a_key_press_routes_through_update(
     model.workspace.toasts = vec![Toast::info("hello")];
 
     let press = KeyPress { key, typed };
-    let before = format!("{model:?}");
+    let before = model.clone();
     let routed = update(&mut model, Message::Key(press), Moment::default());
     assert_eq!(routed.is_err(), typed.code == KeyCode::Char('w'));
 
@@ -483,7 +483,7 @@ fn a_key_press_routes_through_update(
         }
         KeyCode::Char('w') => {
             assert!(matches!(routed, Err(Unhandled)));
-            assert_eq!(format!("{model:?}"), before);
+            assert_eq!(model, before);
         }
         KeyCode::Char(_)
         | KeyCode::Enter
@@ -511,7 +511,7 @@ fn cancelling_a_chord_handles_the_key(
     #[case] letter: char,
 ) {
     model.workspace.toasts = vec![Toast::info("hello")];
-    let before = format!("{model:?}");
+    let before = model.clone();
     model.workspace.chord_prefix = Some(ChordPrefix::G);
     let key = character(letter);
 
@@ -524,7 +524,7 @@ fn cancelling_a_chord_handles_the_key(
     assert_eq!(routed, Ok(Vec::new()));
     assert_eq!(model.workspace.chord_prefix, None);
     assert_eq!(model.workspace.toasts, vec![Toast::info("hello")]);
-    assert_eq!(format!("{model:?}"), before);
+    assert_eq!(model, before);
 }
 
 #[test]

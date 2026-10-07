@@ -79,27 +79,19 @@ fn settings_cells(table_row: &SettingsTableRow<'_>) -> [String; 2] {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{
-        geometry::Cells,
-        setting_row::{AppearanceRowChoice, SettingRow},
-    };
+    use kernel::domain::{geometry::Cells, setting_row::SettingRow};
     use unicode_width::UnicodeWidthStr;
 
     use crate::overlay::settings::{
         rows::{SettingsColumns, SettingsTableRow, settings_cells},
-        test_support::{appearance_row_choices, settings_values},
+        test_support::settings_values,
     };
-
-    fn all_rows(appearance_row_choices: &[AppearanceRowChoice]) -> Vec<SettingRow> {
-        SettingRow::all(appearance_row_choices)
-    }
 
     #[test]
     fn every_row_fits_its_columns() {
-        let custom = appearance_row_choices();
         let view = settings_values();
         let columns = SettingsColumns::for_width(Cells(60), Cells(0), Cells(20));
-        for row in all_rows(&custom) {
+        for row in SettingRow::ALL {
             let [label, value] = settings_cells(&SettingsTableRow {
                 setting_row: row,
                 view: &view,

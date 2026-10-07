@@ -12,6 +12,7 @@ use crate::support::update::update;
 
 fn reloaded(appearance_settings: AppearanceSettings) -> Model {
     let mut model = Model::default();
+    model.settings.appearance_settings.cover_mode = CoverMode::Milkdrop;
     let cmd = update(
         &mut model,
         Message::Config(ConfigEvent::AppearanceReloaded(appearance_settings)),

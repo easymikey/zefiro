@@ -6,10 +6,10 @@ use proptest::prelude::{prop_assert_eq, proptest};
 
 use crate::support::strategies::{message, reached_model};
 
-fn without_chord(model: &Model) -> String {
+fn without_chord(model: &Model) -> Model {
     let mut model = model.clone();
     model.workspace.chord_prefix = None;
-    format!("{model:?}")
+    model
 }
 
 proptest! {

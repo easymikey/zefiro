@@ -6,6 +6,12 @@ pub enum Error {
     Setup(#[source] io::Error),
     #[error("terminal teardown: {0}")]
     Teardown(#[source] io::Error),
+    #[error("terminal setup: {setup_error}; teardown: {teardown_error}")]
+    SetupAndTeardown {
+        #[source]
+        setup_error: io::Error,
+        teardown_error: io::Error,
+    },
     #[error("window colors: {0}")]
     WriteWindowColors(#[source] io::Error),
     #[error("terminal probe: {0}")]
@@ -28,6 +34,13 @@ mod tests {
     #[case::teardown(
         Error::Teardown(io::Error::other("broken pipe")),
         "terminal teardown: broken pipe"
+    )]
+    #[case::setup_and_teardown(
+        Error::SetupAndTeardown {
+            setup_error: io::Error::other("no tty"),
+            teardown_error: io::Error::other("broken pipe"),
+        },
+        "terminal setup: no tty; teardown: broken pipe"
     )]
     #[case::window_colors(
         Error::WriteWindowColors(io::Error::other("closed")),

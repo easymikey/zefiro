@@ -120,6 +120,17 @@ fn a_lost_output_under_a_paused_player_leaves_it_paused_and_says_so() {
 }
 
 #[test]
+fn a_loss_repeated_under_a_paused_player_is_refused_and_changes_nothing() {
+    let mut model = lost_while_playing(3);
+    let before = model.clone();
+
+    let result = update(&mut model, output_lost(), Moment::default());
+
+    assert_eq!(result, Err(Unhandled));
+    assert_eq!(model, before);
+}
+
+#[test]
 fn play_while_the_output_is_lost_loads_again_so_the_engine_reopens() {
     let mut model = lost_while_playing(3);
 

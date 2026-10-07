@@ -84,7 +84,9 @@ fn list(dir: &Path) -> ConfigMessage {
             })
             .collect::<Result<Vec<_>, _>>()
             .map_or_else(
-                |error| ConfigMessage::Error(Diagnostic::from_error(&error).into()),
+                |error| {
+                    ConfigMessage::Error(ConfigError::ListThemes(error.kind().into()))
+                },
                 listed,
             ),
         Err(error) if error.kind() == io::ErrorKind::NotFound => listed(Vec::new()),

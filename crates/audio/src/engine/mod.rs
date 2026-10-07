@@ -24,7 +24,7 @@ pub(crate) mod tests {
             speed::Speed,
             transport::OutputError,
         },
-        message::{AudioError, DecodeError},
+        message::{AudioError, AudioEvent, DecodeError},
         update::machine::{LoopEffect, Machine, Unhandled},
     };
     use proptest::test_runner::TestCaseError;
@@ -33,7 +33,7 @@ pub(crate) mod tests {
         AudioDriver,
         deck::{job::AudioJob, source::PreloadMode},
         engine::{
-            effect::AudioLoopCmd,
+            effect::{AudioLoopCmd, EngineEffect},
             message::{DeviceOpened, EngineMessage},
             phase::{
                 Fade,
@@ -52,6 +52,25 @@ pub(crate) mod tests {
     #[track_caller]
     pub(crate) fn assert_same<T: std::fmt::Debug>(actual: T, expected: T) {
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    }
+
+    pub(crate) fn executed(
+        cmd: Result<AudioLoopCmd, Unhandled>,
+    ) -> Result<(Vec<EngineEffect>, Vec<AudioEvent>), Unhandled> {
+        cmd.map(|cmd| {
+            let (effects, events) = cmd.into_parts();
+            let executed = effects
+                .into_iter()
+                .filter_map(|effect| match effect {
+                    LoopEffect::Execute(effect) => Some(effect),
+                    LoopEffect::Run(_)
+                    | LoopEffect::After { .. }
+                    | LoopEffect::Watch { .. }
+                    | LoopEffect::Unwatch(_) => None,
+                })
+                .collect();
+            (executed, events)
+        })
     }
 
     pub(crate) const TRACK_A_DURATION: Duration = Duration::from_secs(100);
@@ -463,5 +482,15 @@ pub(crate) mod tests {
         } = moved_row;
         assert_eq!(state, next);
         assert_same(effect, expected);
+    }
+
+    #[test]
+    fn an_empty_report_is_refused() {
+        let mut state = EngineState::Live(live());
+        assert_eq!(
+            step(&mut state, EngineMessage::Reported(None)).err(),
+            Some(Unhandled)
+        );
+        assert_eq!(state, EngineState::Live(live()));
     }
 }

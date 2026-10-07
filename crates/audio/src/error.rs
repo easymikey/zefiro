@@ -60,22 +60,20 @@ fn decode_error(source: &rodio::decoder::DecoderError) -> DecodeError {
     }
 }
 
-impl From<&Error> for AudioError {
-    fn from(error: &Error) -> Self {
-        match error {
-            Error::Open { path, source } => AudioError::Decode {
-                path: path.clone(),
-                error: DecodeError::Unreadable(source.kind().into()),
-            },
-            Error::Decode { path, source } => AudioError::Decode {
-                path: path.clone(),
-                error: decode_error(source),
-            },
-            Error::WorkerPanicked(path) => AudioError::Decode {
-                path: path.clone(),
-                error: DecodeError::Panicked,
-            },
-        }
+pub(crate) fn decode_error_of(error: Error) -> AudioError {
+    match error {
+        Error::Open { path, source } => AudioError::Decode {
+            path,
+            error: DecodeError::Unreadable(source.kind().into()),
+        },
+        Error::Decode { path, source } => AudioError::Decode {
+            path,
+            error: decode_error(&source),
+        },
+        Error::WorkerPanicked(path) => AudioError::Decode {
+            path,
+            error: DecodeError::Panicked,
+        },
     }
 }
 
@@ -121,13 +119,20 @@ pub(crate) fn seek_error(error: &rodio::source::SeekError) -> AudioError {
     }
 }
 
-pub(crate) fn preload_error(error: &Error) -> AudioError {
-    match AudioError::from(error) {
-        AudioError::Decode { path, error } => AudioError::Preload { path, error },
-        other @ (AudioError::OpenDevice { .. }
-        | AudioError::ListDevices { .. }
-        | AudioError::Preload { .. }
-        | AudioError::Seek { .. }) => other,
+pub(crate) fn preload_error(error: Error) -> AudioError {
+    match error {
+        Error::Open { path, source } => AudioError::Preload {
+            path,
+            error: DecodeError::Unreadable(source.kind().into()),
+        },
+        Error::Decode { path, source } => AudioError::Preload {
+            path,
+            error: decode_error(&source),
+        },
+        Error::WorkerPanicked(path) => AudioError::Preload {
+            path,
+            error: DecodeError::Panicked,
+        },
     }
 }
 
@@ -146,7 +151,14 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::error::{DeviceError, Error, device_error, output_error, preload_error};
+    use crate::error::{
+        DeviceError,
+        Error,
+        decode_error_of,
+        device_error,
+        output_error,
+        preload_error,
+    };
 
     fn device_name(name: &str) -> DeviceName {
         DeviceName::new(name.to_string()).unwrap()
@@ -208,7 +220,7 @@ mod tests {
             path: PathBuf::from("/music/track.flac"),
             source,
         };
-        let error = AudioError::from(&error);
+        let error = decode_error_of(error);
         assert_eq!(
             error,
             AudioError::Decode {
@@ -237,7 +249,7 @@ mod tests {
         #[case] error: Error,
         #[case] expected: AudioError,
     ) {
-        assert_eq!(AudioError::from(&error), expected);
+        assert_eq!(decode_error_of(error), expected);
     }
 
     #[test]
@@ -344,7 +356,7 @@ mod tests {
         #[case] error: Error,
         #[case] expected: AudioError,
     ) {
-        assert_eq!(preload_error(&error), expected);
+        assert_eq!(preload_error(error), expected);
     }
 
     #[rstest]

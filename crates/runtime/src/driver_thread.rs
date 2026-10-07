@@ -56,7 +56,7 @@ impl Congestion {
 #[derive(Debug)]
 pub(crate) struct DriverThread<C> {
     pub(crate) cmd_sender: Sender<C>,
-    pub(crate) handle: JoinHandle<Result<(), SendError>>,
+    pub(crate) handle: JoinHandle<()>,
     pub(crate) congestion: Congestion,
 }
 
@@ -80,21 +80,6 @@ pub(crate) fn send(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn spawn_idle<C: Send + 'static>(
-    row: &DriverRow,
-    inbox: &Sender<Message>,
-) -> Result<DriverThread<C>, SpawnError> {
-    spawn_driver(
-        row,
-        |cmd_receiver: &Receiver<C>, _: &Sender<Message>, _: &Congestion| {
-            while cmd_receiver.recv().is_ok() {}
-            Ok(())
-        },
-        inbox,
-    )
-}
-
 pub(crate) fn spawn_driver<C, R>(
     row: &DriverRow,
     run: R,
@@ -114,7 +99,7 @@ where
         .name(row.thread_name.to_owned())
         .spawn({
             let congestion = congestion.clone();
-            move || -> Result<(), SendError> {
+            move || {
                 let result = catch_unwind(AssertUnwindSafe(|| {
                     run(&cmd_receiver, &inbox, &congestion)
                 }));
@@ -123,14 +108,16 @@ where
                     Ok(Err(error)) => DriverEvent::Died(error),
                     Err(_payload) => DriverEvent::Died(DriverError::Panicked),
                 };
-                send(
+                match send(
                     &inbox,
                     &congestion,
                     Message::Driver {
                         driver_name: driver,
                         event: report,
                     },
-                )
+                ) {
+                    Ok(()) | Err(SendError::Closed) => {}
+                }
             }
         })
         .map_err(|error| SpawnError::Thread {
@@ -156,8 +143,9 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        driver_thread::{Congestion, SendError, send, spawn_driver, spawn_idle},
+        driver_thread::{Congestion, SendError, send, spawn_driver},
         registry,
+        spawn::tests::spawn_idle,
     };
 
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
@@ -219,7 +207,7 @@ mod tests {
         )
         .unwrap();
 
-        thread.handle.join().unwrap().unwrap();
+        thread.handle.join().unwrap();
         let message = reports.recv_timeout(RECV_TIMEOUT).unwrap();
 
         assert_eq!(
@@ -241,7 +229,7 @@ mod tests {
         )
         .unwrap();
 
-        thread.handle.join().unwrap().unwrap();
+        thread.handle.join().unwrap();
         let message = reports.recv_timeout(RECV_TIMEOUT).unwrap();
 
         assert_eq!(
@@ -267,7 +255,7 @@ mod tests {
         .unwrap();
         drop(thread.cmd_sender);
 
-        thread.handle.join().unwrap().unwrap();
+        thread.handle.join().unwrap();
         let message = reports.recv_timeout(RECV_TIMEOUT).unwrap();
 
         assert_eq!(
@@ -286,7 +274,7 @@ mod tests {
             spawn_idle::<()>(registry::row(DriverName::Audio), &inbox).unwrap();
         drop(thread.cmd_sender);
 
-        thread.handle.join().unwrap().unwrap();
+        thread.handle.join().unwrap();
         let message = reports.recv_timeout(RECV_TIMEOUT).unwrap();
 
         assert_eq!(

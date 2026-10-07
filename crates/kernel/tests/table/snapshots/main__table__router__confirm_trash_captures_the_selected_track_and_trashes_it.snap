@@ -1,6 +1,6 @@
 ---
 source: crates/kernel/tests/table/router.rs
-assertion_line: 372
+assertion_line: 382
 expression: "walked(model, messages)"
 ---
 [
@@ -66,6 +66,40 @@ expression: "walked(model, messages)"
                     ),
                 ),
             ),
+        ],
+        Stopped,
+        None,
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        Cursor {
+            index: 0,
+            len: 3,
+        },
+        [],
+        Off,
+        Linear,
+        Transport {
+            volume: Percent(
+                50,
+            ),
+            speed: Speed(
+                1.0,
+            ),
+            sleep_timer: None,
+            ab_loop: None,
+            output_status: Ready,
+        },
+        [],
+    ),
+    (
+        Library(
+            Trashed(
+                "/m/0.flac",
+            ),
+        ),
+        [
             Animate(
                 TrackTrashed,
             ),

@@ -89,13 +89,6 @@ impl Output {
         }
     }
 
-    pub(crate) fn append<S>(&self, envelope: Envelope<S>)
-    where
-        S: Source + Send + 'static,
-    {
-        self.current.append(envelope);
-    }
-
     pub(crate) fn attach_incoming<S>(
         &self,
         envelope: Envelope<S>,

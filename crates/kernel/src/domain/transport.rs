@@ -25,7 +25,7 @@ pub enum OutputStatus {
 
 pub const PRELOAD_LEAD: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Transport {
     pub volume: Percent,
     pub speed: Speed,

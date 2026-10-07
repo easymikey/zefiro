@@ -10,7 +10,7 @@ use crate::{
     engine::{
         effect::{AudioLoopCmd, EngineEffect},
         machine::batched,
-        message::{DeviceOpened, EngineMessage},
+        message::{ClosedMessage, DeviceOpened},
         revisions::JobRevisions,
         state::{Closed, Live},
     },
@@ -19,29 +19,11 @@ use crate::{
 impl Closed {
     pub(crate) fn transition(
         &mut self,
-        message: EngineMessage,
+        message: ClosedMessage,
     ) -> Result<AudioLoopCmd, Unhandled> {
         match message {
-            EngineMessage::Cmds(batch) => batched(batch, |cmd| self.command(cmd)),
-            EngineMessage::Error(error @ AudioError::OpenDevice { .. }) => {
-                Ok(self.stays_silent(error))
-            }
-            EngineMessage::Error(
-                AudioError::Decode { .. }
-                | AudioError::Preload { .. }
-                | AudioError::ListDevices { .. }
-                | AudioError::Seek { .. },
-            )
-            | EngineMessage::OutputLost(_)
-            | EngineMessage::Opened(_)
-            | EngineMessage::NotFound
-            | EngineMessage::Reported(_)
-            | EngineMessage::DevicesListed(_)
-            | EngineMessage::Decoded(_)
-            | EngineMessage::Attached { .. }
-            | EngineMessage::Finished(_)
-            | EngineMessage::FadeStartReached
-            | EngineMessage::Ramped(_) => Err(Unhandled),
+            ClosedMessage::Cmds(batch) => batched(batch, |cmd| self.command(cmd)),
+            ClosedMessage::Error(error) => Ok(self.stays_silent(error)),
         }
     }
 
@@ -61,6 +43,18 @@ impl Closed {
                     speed: self.speed,
                 })))
             }
+            AudioCmd::SetSpeed(speed) if speed == self.speed => Err(Unhandled),
+            AudioCmd::SetCrossfade(crossfade)
+                if crossfade == self.settings.crossfade =>
+            {
+                Err(Unhandled)
+            }
+            AudioCmd::SetReplayGain(replay_gain)
+                if replay_gain == self.settings.replay_gain =>
+            {
+                Err(Unhandled)
+            }
+            AudioCmd::Stop if self.track_load.is_none() => Err(Unhandled),
             AudioCmd::SetSpeed(speed) => {
                 self.speed = speed;
                 Ok(Cmd::none())
@@ -300,7 +294,7 @@ mod tests {
         #[case] message: EngineMessage,
     ) {
         let mut state = engine_state.clone();
-        assert_same(step(&mut state, message), Err(Unhandled));
+        assert_eq!(step(&mut state, message).err(), Some(Unhandled));
         assert_eq!(state, engine_state);
     }
 
@@ -320,8 +314,25 @@ mod tests {
         #[case] message: EngineMessage,
     ) {
         let mut state = engine_state.clone();
-        assert_same(step(&mut state, message), Err(Unhandled));
+        assert_eq!(step(&mut state, message).err(), Some(Unhandled));
         assert_eq!(state, engine_state);
+    }
+
+    #[test]
+    fn closed_stop_without_a_load_is_refused() {
+        let mut state = closed();
+        assert_eq!(step(&mut state, cmd(AudioCmd::Stop)).err(), Some(Unhandled));
+        assert_eq!(state, closed());
+    }
+
+    #[rstest]
+    #[case::speed(cmd(AudioCmd::SetSpeed(Speed::default())))]
+    #[case::crossfade(set_crossfade(0))]
+    #[case::replay_gain(cmd(AudioCmd::SetReplayGain(ReplayGain::Off)))]
+    fn closed_same_speed_is_refused(#[case] message: EngineMessage) {
+        let mut state = closed();
+        assert_eq!(step(&mut state, message).err(), Some(Unhandled));
+        assert_eq!(state, closed());
     }
 
     #[rstest]

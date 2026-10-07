@@ -28,7 +28,6 @@ use widgets::{
         timings::TIMINGS,
     },
     card::{CardCover, clock_frame_due},
-    key_hints::KeyHintChords,
     pixels::cover::{
         CoverImage,
         CoverMotion,
@@ -96,14 +95,12 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
         Self {
             terminal,
             presentation: ShellPresentation {
-                theme: presentation::theme(theme),
-                appearance: Appearance::default(),
-                pixel_path,
-                color_depth,
                 cell_aspect,
-                home_dir: dirs::home_dir(),
-                spectrum: [0.0; SPECTRUM_BANDS],
-                key_hint_chords: KeyHintChords::default(),
+                ..ShellPresentation::new(
+                    presentation::theme(theme),
+                    pixel_path,
+                    color_depth,
+                )
             },
             cover_painter: CoverPainter::new(picker, cell_pixels),
             cell_pixels,
@@ -418,15 +415,17 @@ mod tests {
         animation::stage::Backdrop,
         card::CardCover,
         repaint::Presence,
+        scene::PixelPath,
         screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
         spectrum::{SPECTRUM_BANDS, SpectrumFeed},
+        theme::rgb::ColorDepth,
     };
 
     use crate::{
         shell::{
             motion::{PaintClock, ScreenClear},
             painter::{Painter, protected_layout},
-            presentation::test_presentation,
+            presentation::{ShellPresentation, theme},
             shell_input::ShellInput,
             view,
             window_colors::WindowColorsWrite,
@@ -450,7 +449,11 @@ mod tests {
         let mut terminal = test_terminal();
         let mut painter =
             Painter::new(&mut terminal, test_theme(), test_capabilities());
-        painter.presentation = test_presentation();
+        painter.presentation = ShellPresentation::new(
+            theme(fallback_theme()),
+            PixelPath::Halfblocks,
+            ColorDepth::TrueColor,
+        );
         painter.motion.outgoing_theme_background = outgoing;
         let layout = FrameLayout {
             screen: Rect::new(0, 0, 40, 10),

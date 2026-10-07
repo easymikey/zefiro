@@ -2,7 +2,6 @@ use audio::AUDIO_EXTENSIONS;
 use kernel::{cmd::LibraryCmd, domain::driver::DriverName};
 use library::{driver::LibraryDriver, job::LibraryJob};
 
-#[cfg(test)] use crate::driver_thread::spawn_idle;
 use crate::{
     driver::DriverLoop,
     driver_thread::DriverThread,
@@ -10,13 +9,6 @@ use crate::{
     registry,
     spawn_setup::SpawnSetup,
 };
-
-#[cfg(test)]
-pub(crate) fn idle_library(
-    setup: &SpawnSetup<'_>,
-) -> Result<DriverThread<LibraryCmd>, SpawnError> {
-    spawn_idle(registry::row(DriverName::Library), setup.inbox)
-}
 
 pub(crate) fn spawn_library(
     setup: &SpawnSetup<'_>,
@@ -127,7 +119,7 @@ mod tests {
 
         fn stop(self) -> Receiver<Message> {
             drop(self.thread.cmd_sender);
-            self.thread.handle.join().unwrap().unwrap();
+            self.thread.handle.join().unwrap();
             self.inbox_receiver
         }
     }

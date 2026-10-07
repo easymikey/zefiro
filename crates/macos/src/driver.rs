@@ -81,14 +81,14 @@ impl MacosDriver {
     ) -> Result<MacosLoopCmd, Unhandled> {
         match macos_cmd {
             MacosCmd::NowPlaying(now_playing) => {
-                let track = now_playing
-                    .as_deref()
-                    .map(|track| track.path().to_path_buf());
-                let moved = if self.artwork.shows(track.as_deref()) {
-                    Cmd::none()
-                } else {
-                    self.artwork.transition(ArtworkMessage::TrackShown(track))?
-                };
+                let moved =
+                    if self.artwork.shows(now_playing.as_deref().map(Track::path)) {
+                        Cmd::none()
+                    } else {
+                        self.artwork.transition(ArtworkMessage::TrackShown(
+                            now_playing.clone(),
+                        ))?
+                    };
                 self.track = now_playing;
                 self.clock = self.clock.seek(Duration::ZERO, at);
                 Ok(moved)
@@ -143,7 +143,7 @@ impl Machine for MacosDriver {
                 self.artwork.transition(ArtworkMessage::ReadDone(bytes))
             }
             MacosMessage::Remote(input) => {
-                Ok(remote(input).map_effect(LoopEffect::Execute))
+                Ok(remote(input)?.map_effect(LoopEffect::Execute))
             }
         }
     }
@@ -210,15 +210,15 @@ fn volume_of(macos_cmd: &MacosCmd) -> Option<Percent> {
     }
 }
 
-fn remote(input: RemoteInput) -> Cmd<MacosEffect, MacosEvent> {
+fn remote(input: RemoteInput) -> Result<Cmd<MacosEffect, MacosEvent>, Unhandled> {
     match input {
-        RemoteInput::Press(request) | RemoteInput::HoldBegan(request) => {
-            Cmd::message(MacosEvent::MediaKeyPressed(request))
+        RemoteInput::Press(request) => {
+            Ok(Cmd::message(MacosEvent::MediaKeyPressed(request)))
         }
-        RemoteInput::HoldEnded => Cmd::none(),
-        RemoteInput::Scrub(target) => {
-            Cmd::message(MacosEvent::MediaKeyPressed(PlaybackRequest::SeekTo(target)))
-        }
+        RemoteInput::HoldEnded => Err(Unhandled),
+        RemoteInput::Scrub(target) => Ok(Cmd::message(MacosEvent::MediaKeyPressed(
+            PlaybackRequest::SeekTo(target),
+        ))),
     }
 }
 
@@ -229,7 +229,7 @@ fn failed(cause: fn(OsStatus) -> MacosError, error: core_audio::Error) -> MacosM
 #[cfg(test)]
 mod tests {
     use std::{
-        path::{Path, PathBuf},
+        path::Path,
         sync::Arc,
         time::{Duration, Instant},
     };
@@ -323,14 +323,6 @@ mod tests {
     #[case::a_press_is_a_media_key(
         MacosMessage::Remote(RemoteInput::Press(PlaybackRequest::SeekBy { direction: Direction::Next, by: SEEK_MEDIUM })),
         Cmd::message(MacosEvent::MediaKeyPressed(PlaybackRequest::SeekBy { direction: Direction::Next, by: SEEK_MEDIUM }))
-    )]
-    #[case::a_hold_start_is_a_media_key(
-        MacosMessage::Remote(RemoteInput::HoldBegan(PlaybackRequest::SeekBy { direction: Direction::Previous, by: SEEK_MEDIUM })),
-        Cmd::message(MacosEvent::MediaKeyPressed(PlaybackRequest::SeekBy { direction: Direction::Previous, by: SEEK_MEDIUM }))
-    )]
-    #[case::a_hold_end_is_quiet(
-        MacosMessage::Remote(RemoteInput::HoldEnded),
-        Cmd::none()
     )]
     #[case::a_scrub_seeks(
         MacosMessage::Remote(RemoteInput::Scrub(Duration::from_secs(3))),
@@ -460,7 +452,7 @@ mod tests {
         vec![cmds(vec![MacosCmd::NowPlaying(Some(Arc::new(Track::listed(Path::new("a.flac")))))])],
         (
             vec![MacosEffect::ClearArtwork, MacosEffect::ShowNowPlaying],
-            vec![MacosJob::ReadArtwork { track_path: PathBuf::from("a.flac"), revision: Revision::default().next() }],
+            vec![MacosJob::ReadArtwork { track: Arc::new(Track::listed(Path::new("a.flac"))), revision: Revision::default().next() }],
             vec![]
         )
     )]
@@ -540,6 +532,7 @@ mod tests {
         polled((1, 1), None)
     )]
     #[case::artwork_bytes_of_nothing(vec![], artwork_read(&[]))]
+    #[case::a_hold_end(vec![], MacosMessage::Remote(RemoteInput::HoldEnded))]
     fn the_macos_driver_refuses_what_changes_nothing(
         #[case] earlier_macos_messages: Vec<MacosMessage>,
         #[case] refused_macos_message: MacosMessage,

@@ -6,6 +6,7 @@ use kernel::{
     domain::{
         driver::{DriverError, DriverName, DriverStatus},
         model::Model,
+        settings::AudioSettings,
     },
     message::{DriverEvent, Message},
 };
@@ -45,45 +46,31 @@ impl Wiring {
     ) -> Result<Self, SpawnError> {
         let (inbox, inbox_receiver) = bounded(INBOX_SLOTS);
         let (latest_senders, latest_receivers, doorbell) = latest_channels();
-        #[cfg(target_os = "macos")]
-        let macos_channel = MacosChannel::new();
-        let setup = SpawnSetup {
-            audio_settings: &model.settings.audio_settings,
-            paths,
-            inbox: &inbox,
-            latest_senders: &latest_senders,
-            #[cfg(target_os = "macos")]
-            macos_channel: &macos_channel,
-        };
-
-        let (audio, spectrum) = (spawners.audio)(&setup)?;
-        let library = (spawners.library)(&setup)?;
-        let config = (spawners.config)(&setup)?;
-        #[cfg(target_os = "macos")]
-        let port = Port::spawned(DriverName::Macos, (spawners.macos)(&setup)?);
-        #[cfg(not(target_os = "macos"))]
-        let port = Port::Closed;
-
-        let ports = Ports {
-            audio: Port::spawned(DriverName::Audio, audio),
-            library: Port::spawned(DriverName::Library, library),
-            config: Port::spawned(DriverName::Config, config),
-            macos: port,
-        };
-
-        Ok(Self {
+        let mut wiring = Self {
             inbox_receiver,
             inbox,
-            ports,
-            spectrum_tap: spectrum,
+            ports: Ports {
+                audio: Port::Closed,
+                library: Port::Closed,
+                config: Port::Closed,
+                macos: Port::Closed,
+            },
+            spectrum_tap: SpectrumTap::silent(),
             latest_receivers,
             doorbell,
             spawners: *spawners,
             paths: paths.clone(),
             latest_senders,
             #[cfg(target_os = "macos")]
-            macos_channel,
-        })
+            macos_channel: MacosChannel::new(),
+        };
+        for row in registry::REGISTRY
+            .iter()
+            .filter(|row| row.platform.is_present())
+        {
+            wiring.respawn(row.driver_name, &model.settings.audio_settings)?;
+        }
+        Ok(wiring)
     }
 
     pub(crate) fn restart(
@@ -93,20 +80,7 @@ impl Wiring {
     ) -> Option<Message> {
         self.ports.hang_up(driver_name);
         drop(self.ports.join(driver_name));
-        let paths = self.paths.clone();
-        let inbox = self.inbox.clone();
-        let latest_senders = self.latest_senders.clone();
-        #[cfg(target_os = "macos")]
-        let macos = self.macos_channel.clone();
-        let setup = SpawnSetup {
-            audio_settings: &model.settings.audio_settings,
-            paths: &paths,
-            inbox: &inbox,
-            latest_senders: &latest_senders,
-            #[cfg(target_os = "macos")]
-            macos_channel: &macos,
-        };
-        match self.restart_driver(driver_name, &setup) {
+        match self.respawn(driver_name, &model.settings.audio_settings) {
             Ok(()) => None,
             Err(spawn) => Some(Message::Driver {
                 driver_name,
@@ -115,28 +89,36 @@ impl Wiring {
         }
     }
 
-    fn restart_driver(
+    fn respawn(
         &mut self,
         driver_name: DriverName,
-        setup: &SpawnSetup<'_>,
+        audio_settings: &AudioSettings,
     ) -> Result<(), SpawnError> {
+        let setup = SpawnSetup {
+            audio_settings,
+            paths: &self.paths,
+            inbox: &self.inbox,
+            latest_senders: &self.latest_senders,
+            #[cfg(target_os = "macos")]
+            macos_channel: &self.macos_channel,
+        };
         match driver_name {
             DriverName::Audio => {
-                let (thread, spectrum) = (self.spawners.audio)(setup)?;
+                let (thread, spectrum) = (self.spawners.audio)(&setup)?;
                 self.spectrum_tap = spectrum;
                 self.ports.audio = Port::spawned(driver_name, thread);
             }
             DriverName::Library => {
-                let thread = (self.spawners.library)(setup)?;
+                let thread = (self.spawners.library)(&setup)?;
                 self.ports.library = Port::spawned(driver_name, thread);
             }
             DriverName::Config => {
-                let thread = (self.spawners.config)(setup)?;
+                let thread = (self.spawners.config)(&setup)?;
                 self.ports.config = Port::spawned(driver_name, thread);
             }
             #[cfg(target_os = "macos")]
             DriverName::Macos => {
-                let thread = (self.spawners.macos)(setup)?;
+                let thread = (self.spawners.macos)(&setup)?;
                 self.ports.macos = Port::spawned(driver_name, thread);
             }
             #[cfg(not(target_os = "macos"))]
@@ -198,11 +180,11 @@ pub(crate) mod tests {
     use library::dirs::LibraryDirs;
 
     use crate::{
-        driver_thread::{Congestion, DriverThread, send},
+        driver_thread::{Congestion, DriverThread, SendError, send},
         latest::{LatestSenders, latest_channels},
         port::{Port, Ports},
         registry,
-        spawn::Spawners,
+        spawn::tests::{idle_spawners, spawn_idle},
         spawn_setup::StartupPaths,
         wiring::Wiring,
     };
@@ -211,7 +193,7 @@ pub(crate) mod tests {
         driver_name: DriverName,
         inbox: &Sender<Message>,
     ) -> DriverThread<C> {
-        crate::driver_thread::spawn_idle(registry::row(driver_name), inbox).unwrap()
+        spawn_idle(registry::row(driver_name), inbox).unwrap()
     }
 
     pub(crate) fn stub_paths() -> StartupPaths {
@@ -240,14 +222,16 @@ pub(crate) mod tests {
                     break;
                 }
             }
-            send(
+            match send(
                 &inbox,
                 &Congestion::default(),
                 Message::Driver {
                     driver_name: DriverName::Library,
                     event: DriverEvent::Stopped,
                 },
-            )
+            ) {
+                Ok(()) | Err(SendError::Closed) => {}
+            }
         });
         DriverThread {
             cmd_sender,
@@ -290,7 +274,7 @@ pub(crate) mod tests {
                 spectrum_tap: SpectrumTap::silent(),
                 latest_receivers,
                 doorbell,
-                spawners: Spawners::idle(),
+                spawners: idle_spawners(),
                 paths,
                 latest_senders: latest_senders.clone(),
                 #[cfg(target_os = "macos")]

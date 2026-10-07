@@ -99,10 +99,12 @@ impl MilkdropField {
         let center = field_center(size);
         let zoom = preset.base_zoom + levels.bass * ZOOM_GAIN;
         let rotation = preset.base_rotation + levels.mid * ROTATION_GAIN;
+        let (sin, cos) = (-rotation).sin_cos();
         let warp = Warp {
             center,
             zoom,
-            rotation,
+            sin,
+            cos,
             aspect_x: ASPECT_X,
         };
 

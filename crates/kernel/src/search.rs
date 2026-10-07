@@ -71,35 +71,22 @@ fn score_chars(query_chars: &[char], haystack: &str) -> Option<i32> {
 
 #[must_use]
 pub fn rank(tracks: &[Arc<Track>], query: &str) -> Vec<ViewIndex> {
-    let mut matches = Vec::new();
-    rank_into(tracks, query, &mut matches);
-    matches
+    if query.is_empty() {
+        return (0..tracks.len()).map(ViewIndex::new).collect();
+    }
+    ranked(tracks, query, 0..tracks.len())
 }
 
-pub(crate) fn rank_into(
+#[must_use]
+pub(crate) fn narrow(
     tracks: &[Arc<Track>],
     query: &str,
-    matches: &mut Vec<ViewIndex>,
-) {
-    matches.clear();
+    matches: &[ViewIndex],
+) -> Vec<ViewIndex> {
     if query.is_empty() {
-        matches.extend((0..tracks.len()).map(ViewIndex::new));
-        return;
+        return rank(tracks, query);
     }
-    *matches = ranked(tracks, query, 0..tracks.len());
-}
-
-pub(crate) fn narrow_into(
-    tracks: &[Arc<Track>],
-    query: &str,
-    matches: &mut Vec<ViewIndex>,
-) {
-    if query.is_empty() {
-        rank_into(tracks, query, matches);
-        return;
-    }
-    let narrowed = ranked(tracks, query, matches.iter().map(|index| index.get()));
-    *matches = narrowed;
+    ranked(tracks, query, matches.iter().map(|index| index.get()))
 }
 
 fn ranked(
@@ -147,7 +134,7 @@ mod tests {
             index::ViewIndex,
             track::{AudioFormat, Tags, Track, TrackParts},
         },
-        search::{narrow_into, rank, score_chars},
+        search::{narrow, rank, score_chars},
     };
 
     fn lower(haystack: &str) -> String {
@@ -227,8 +214,7 @@ mod tests {
     #[test]
     fn narrowing_a_search_past_a_word_final_sigma_equals_a_full_rank() {
         let tracks = vec![titled_track("ΑΣΑ")];
-        let mut narrowed = rank(&tracks, "ΑΣ");
-        narrow_into(&tracks, "ΑΣΑ", &mut narrowed);
+        let narrowed = narrow(&tracks, "ΑΣΑ", &rank(&tracks, "ΑΣ"));
         assert_eq!(narrowed, rank(&tracks, "ΑΣΑ"));
         assert_eq!(narrowed, vec![ViewIndex::new(0)]);
     }
@@ -251,8 +237,7 @@ mod tests {
         ) {
             let tracks: Vec<Arc<Track>> = titles.iter().map(|title| titled_track(title)).collect();
             let longer = format!("{query}{appended}");
-            let mut narrowed = rank(&tracks, &query);
-            narrow_into(&tracks, &longer, &mut narrowed);
+            let narrowed = narrow(&tracks, &longer, &rank(&tracks, &query));
             prop_assert_eq!(narrowed, rank(&tracks, &longer));
         }
 

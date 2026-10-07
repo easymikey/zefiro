@@ -14,10 +14,14 @@ use crate::{
     update::machine::{Machine, Unhandled},
 };
 
+pub(crate) struct DriverDeath {
+    pub(crate) driver_name: DriverName,
+    pub(crate) error: DriverError,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DriverStatusMessage {
     Died(DriverError),
-    Restarted,
     Stopped,
     Full(DriverName),
 }
@@ -35,10 +39,6 @@ impl Machine for DriverStatus {
                 *self = DriverStatus::Dead(error);
                 Ok(Cmd::none())
             }
-            (DriverStatus::Dead(_), DriverStatusMessage::Restarted) => {
-                *self = DriverStatus::Running;
-                Ok(Cmd::none())
-            }
             (
                 DriverStatus::Running | DriverStatus::Dead(_),
                 DriverStatusMessage::Stopped,
@@ -51,19 +51,23 @@ impl Machine for DriverStatus {
                     "The {driver} driver is falling behind"
                 )))))
             }
-            (DriverStatus::Running, DriverStatusMessage::Restarted)
-            | (
+            (
                 DriverStatus::Dead(_),
                 DriverStatusMessage::Died(_) | DriverStatusMessage::Full(..),
             )
             | (
                 DriverStatus::Stopped,
                 DriverStatusMessage::Died(_)
-                | DriverStatusMessage::Restarted
                 | DriverStatusMessage::Stopped
                 | DriverStatusMessage::Full(..),
             ) => Err(Unhandled),
         }
+    }
+}
+
+impl DriverStatus {
+    fn restart(&mut self) {
+        *self = DriverStatus::Running;
     }
 }
 
@@ -83,11 +87,21 @@ pub(crate) fn update(
         .transition(driver_status_message)
 }
 
-pub(crate) fn restart_if_allowed(
+pub(crate) fn died(
+    drivers: &mut Drivers,
+    driver_death: DriverDeath,
+    now: Moment,
+) -> Result<(Decision, Cmd), Unhandled> {
+    let DriverDeath { driver_name, error } = driver_death;
+    let died = update(drivers, driver_name, DriverEvent::Died(error))?;
+    Ok((restart_if_allowed(drivers, driver_name, now), died))
+}
+
+fn restart_if_allowed(
     drivers: &mut Drivers,
     driver_name: DriverName,
     now: Moment,
-) -> Result<(Decision, Cmd), Unhandled> {
+) -> Decision {
     let decision = decide_restart(
         Supervision::standard(driver_name),
         &drivers.record(driver_name).restarts,
@@ -96,14 +110,12 @@ pub(crate) fn restart_if_allowed(
     match decision {
         Decision::Restart => {
             let restarting = drivers.record_mut(driver_name);
-            let restarted = restarting
-                .status
-                .transition(DriverStatusMessage::Restarted)?;
+            restarting.status.restart();
             restarting.restarts.record(now);
-            Ok((Decision::Restart, restarted))
         }
-        Decision::Degrade(_) => Ok((decision, Cmd::none())),
+        Decision::Degrade(_) => {}
     }
+    decision
 }
 
 pub(crate) struct ResumeParts<'a> {
@@ -161,9 +173,10 @@ mod tests {
         message::Message,
         update::{
             driver::{
+                DriverDeath,
                 DriverStatusMessage,
                 ResumeParts,
-                restart_if_allowed,
+                died,
                 resume_driver,
             },
             machine::{Machine, Unhandled},
@@ -174,7 +187,7 @@ mod tests {
         DriverStatus::Dead(DriverError::Panicked)
     }
 
-    fn died() -> DriverStatusMessage {
+    fn panicked() -> DriverStatusMessage {
         DriverStatusMessage::Died(DriverError::Panicked)
     }
 
@@ -198,7 +211,7 @@ mod tests {
     #[rstest]
     #[case::running_dies(LifeRow {
         driver_status: DriverStatus::Running,
-        driver_status_message: died(),
+        driver_status_message: panicked(),
         next: dead(),
         result: Ok(Cmd::none()),
     })]
@@ -216,7 +229,7 @@ mod tests {
     })]
     #[case::dead_refuses_a_second_death(LifeRow {
         driver_status: dead(),
-        driver_status_message: died(),
+        driver_status_message: panicked(),
         next: dead(),
         result: Err(Unhandled),
     })]
@@ -232,27 +245,9 @@ mod tests {
         next: dead(),
         result: Err(Unhandled),
     })]
-    #[case::dead_restarts(LifeRow {
-        driver_status: dead(),
-        driver_status_message: DriverStatusMessage::Restarted,
-        next: DriverStatus::Running,
-        result: Ok(Cmd::none()),
-    })]
-    #[case::running_refuses_a_restart(LifeRow {
-        driver_status: DriverStatus::Running,
-        driver_status_message: DriverStatusMessage::Restarted,
-        next: DriverStatus::Running,
-        result: Err(Unhandled),
-    })]
-    #[case::stopped_refuses_a_restart(LifeRow {
-        driver_status: DriverStatus::Stopped,
-        driver_status_message: DriverStatusMessage::Restarted,
-        next: DriverStatus::Stopped,
-        result: Err(Unhandled),
-    })]
     #[case::stopped_refuses_a_death(LifeRow {
         driver_status: DriverStatus::Stopped,
-        driver_status_message: died(),
+        driver_status_message: panicked(),
         next: DriverStatus::Stopped,
         result: Err(Unhandled),
     })]
@@ -275,33 +270,53 @@ mod tests {
         assert_eq!(result, row.result);
     }
 
+    #[test]
+    fn dead_restarts() {
+        let mut status = dead();
+
+        status.restart();
+
+        assert_eq!(status, DriverStatus::Running);
+    }
+
     #[rstest]
-    #[case::a_running_driver(DriverStatus::Running)]
+    #[case::a_dead_driver(dead())]
     #[case::a_stopped_driver(DriverStatus::Stopped)]
-    fn a_restart_the_status_refuses_is_refused_and_not_recorded(
+    fn a_death_the_status_refuses_is_refused_and_not_recorded(
         #[case] status: DriverStatus,
     ) {
         let mut drivers = Drivers::default();
         drivers.record_mut(DriverName::Audio).status = status;
         let before = drivers.clone();
 
-        let decision =
-            restart_if_allowed(&mut drivers, DriverName::Audio, Moment::default());
+        let death = died(
+            &mut drivers,
+            DriverDeath {
+                driver_name: DriverName::Audio,
+                error: DriverError::Panicked,
+            },
+            Moment::default(),
+        );
 
-        assert_eq!(decision, Err(Unhandled));
+        assert_eq!(death, Err(Unhandled));
         assert_eq!(drivers, before);
     }
 
     #[test]
     fn a_dead_driver_restarts_and_the_restart_is_recorded() {
         let mut drivers = Drivers::default();
-        drivers.record_mut(DriverName::Audio).status = dead();
         let before = drivers.clone();
 
-        let decision =
-            restart_if_allowed(&mut drivers, DriverName::Audio, Moment::default());
+        let death = died(
+            &mut drivers,
+            DriverDeath {
+                driver_name: DriverName::Audio,
+                error: DriverError::Panicked,
+            },
+            Moment::default(),
+        );
 
-        assert_eq!(decision, Ok((Decision::Restart, Cmd::none())));
+        assert_eq!(death, Ok((Decision::Restart, Cmd::none())));
         assert_eq!(drivers.status(DriverName::Audio), &DriverStatus::Running);
         assert_ne!(
             drivers.record(DriverName::Audio).restarts,

@@ -174,11 +174,15 @@ mod tests {
 
     use crate::{
         driver_thread::{Congestion, DriverThread},
-        error::SpawnError,
+        error::{Error, SpawnError},
         event_loop::run,
         runtime::Runtime,
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
-        spawn::{Spawners, config_thread::spawn_config, tests::spawn_audio_loop},
+        spawn::{
+            Spawners,
+            config_thread::spawn_config,
+            tests::{idle_spawners, spawn_audio_loop},
+        },
         spawn_setup::{SpawnSetup, StartupPaths},
         wiring::Wiring,
     };
@@ -258,7 +262,7 @@ mod tests {
         (
             Spawners {
                 audio: recording_audio,
-                ..Spawners::idle()
+                ..idle_spawners()
             },
             cmd_receiver,
         )
@@ -276,7 +280,7 @@ mod tests {
     fn panicking_spawners() -> Spawners {
         Spawners {
             audio: panicking_audio,
-            ..Spawners::idle()
+            ..idle_spawners()
         }
     }
 
@@ -339,7 +343,7 @@ mod tests {
         let startup = stock_startup();
         let spawners = Spawners {
             config: spawn_config,
-            ..Spawners::idle()
+            ..idle_spawners()
         };
         let runtime = Runtime::start(startup, &paths, &spawners).unwrap();
 
@@ -355,6 +359,59 @@ mod tests {
         assert!(
             text.contains("replay_gain"),
             "drain must flush the pending replay_gain save to disk"
+        );
+    }
+
+    struct StepThenPaintError;
+
+    impl Shell for StepThenPaintError {
+        type Input = SaveStep;
+        type Error = io::Error;
+
+        fn input(&mut self, save_step: SaveStep) -> Reaction {
+            match save_step {
+                SaveStep::Step => Reaction::Message(Message::Step {
+                    row: SettingRow::ReplayGain,
+                    direction: Direction::Next,
+                }),
+                SaveStep::Quit => Reaction::Message(Message::Quit),
+            }
+        }
+
+        fn effect(&mut self, _effect: ShellEffect) {}
+
+        fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
+            FrameDue::Settled
+        }
+
+        fn paint(&mut self, _frame: Frame<'_>) -> Result<Painted, io::Error> {
+            Err(io::Error::other("broken pipe"))
+        }
+    }
+
+    #[test]
+    fn a_paint_failure_still_writes_the_pending_config_save() {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = start_paths(directory.path());
+        let config_path = paths.config_paths.config_path.clone();
+        let startup = stock_startup();
+        let spawners = Spawners {
+            config: spawn_config,
+            ..idle_spawners()
+        };
+        let runtime = Runtime::start(startup, &paths, &spawners).unwrap();
+
+        let (steps, input) = unbounded();
+        steps.send(SaveStep::Step).unwrap();
+        let mut shell = StepThenPaintError;
+
+        let ended = run(runtime, &mut shell, &input);
+
+        assert!(matches!(ended, Err(Error::Paint(_))));
+        assert!(
+            std::fs::read_to_string(&config_path)
+                .is_ok_and(|text| text.contains("replay_gain")),
+            "a failed run must still flush the pending replay_gain save to disk"
         );
     }
 
@@ -457,7 +514,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let spawners = Spawners {
             audio: audio_that_cannot_restart,
-            ..Spawners::idle()
+            ..idle_spawners()
         };
         let mut runtime =
             Runtime::start(stock_startup(), &start_paths(directory.path()), &spawners)

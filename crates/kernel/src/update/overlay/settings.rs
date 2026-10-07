@@ -3,11 +3,11 @@ use crate::{
     domain::{
         direction::Direction,
         overlay::Overlay,
-        setting_row::{AppearanceRowChoice, SettingRow},
+        setting_row::SettingRow,
         workspace::Workspace,
     },
     message::{Message, SettingRowRequest},
-    update::machine::{Machine, Unhandled},
+    update::machine::{Machine, Unhandled, replace},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,7 +26,7 @@ impl Machine for SettingRow {
     ) -> Result<Cmd, Unhandled> {
         match setting_row_message {
             SettingRowMessage::Set(row) => {
-                *self = row;
+                replace(self, row)?;
                 Ok(Cmd::none())
             }
             SettingRowMessage::Step(direction) => Ok(Cmd::message(Message::Step {
@@ -39,40 +39,32 @@ impl Machine for SettingRow {
 
 pub(crate) fn setting_row_message(
     workspace: &Workspace,
-    appearance_row_choices: &[AppearanceRowChoice],
     request: SettingRowRequest,
 ) -> Result<SettingRowMessage, Unhandled> {
     match request {
-        SettingRowRequest::Navigate(direction) => {
-            navigate_target(workspace, appearance_row_choices, direction)
-        }
+        SettingRowRequest::Navigate(direction) => navigate_target(workspace, direction),
         SettingRowRequest::Step(direction) => Ok(SettingRowMessage::Step(direction)),
-        SettingRowRequest::Activate => activate(workspace, appearance_row_choices),
+        SettingRowRequest::Activate => activate(workspace),
     }
 }
 
 fn navigate_target(
     workspace: &Workspace,
-    appearance_row_choices: &[AppearanceRowChoice],
     direction: Direction,
 ) -> Result<SettingRowMessage, Unhandled> {
     let Some(Overlay::Settings(selected)) = &workspace.overlay else {
         return Err(Unhandled);
     };
-    let setting_row = SettingRow::all(appearance_row_choices);
     Ok(SettingRowMessage::Set(
-        selected.moved(&setting_row, direction),
+        selected.moved(&SettingRow::ALL, direction),
     ))
 }
 
-fn activate(
-    workspace: &Workspace,
-    appearance_row_choices: &[AppearanceRowChoice],
-) -> Result<SettingRowMessage, Unhandled> {
+fn activate(workspace: &Workspace) -> Result<SettingRowMessage, Unhandled> {
     let Some(Overlay::Settings(selected)) = &workspace.overlay else {
         return Err(Unhandled);
     };
-    if selected.activates(appearance_row_choices) {
+    if selected.activates() {
         Ok(SettingRowMessage::Step(Direction::Next))
     } else {
         Err(Unhandled)

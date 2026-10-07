@@ -8,7 +8,7 @@ use crate::domain::{
     track::Track,
 };
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Library {
     pub tracks: Vec<Arc<Track>>,
     pub track_indexes: Vec<TrackIndex>,

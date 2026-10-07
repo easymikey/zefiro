@@ -3,8 +3,7 @@ use std::time::Duration;
 use kernel::{
     cmd::{AudioCmd, Cmd, ConfigCmd, Effect},
     domain::{
-        appearance::AppearanceSettings,
-        appearance_rows::appearance_row_choices,
+        appearance::{AppearanceSettings, KeyHints},
         crossfade::Crossfade,
         device::{DeviceDefault, ListedDevice, OutputDevice},
         direction::Direction,
@@ -23,7 +22,10 @@ use kernel::{
         PlaybackRequest,
         SettingRowRequest,
     },
-    update::machine::Unhandled,
+    update::{
+        machine::{Machine, Unhandled},
+        overlay::settings::SettingRowMessage,
+    },
 };
 use rstest::rstest;
 
@@ -32,12 +34,10 @@ use crate::support::{
     update::{send, update},
 };
 
-fn all_rows() -> Vec<SettingRow> {
-    SettingRow::all(&appearance_row_choices(AppearanceSettings::default()))
-}
-
 fn row_index(row: SettingRow) -> usize {
-    let found = all_rows().iter().position(|candidate| *candidate == row);
+    let found = SettingRow::ALL
+        .iter()
+        .position(|candidate| *candidate == row);
     found.unwrap_or_else(|| panic!("row missing from the settings list: {row:?}"))
 }
 
@@ -68,30 +68,48 @@ fn navigated_to(row_index: usize) -> Model {
 fn navigate_down_steps_to_the_next_row() {
     let mut model = navigated_to(0);
     let cmd = navigate(&mut model, Direction::Next);
-    assert_eq!(selected_row(&model), all_rows().get(1).copied());
+    assert_eq!(selected_row(&model), SettingRow::ALL.get(1).copied());
     assert!(cmd == Cmd::none());
 }
 
 #[test]
-fn navigate_up_clamps_at_the_first_row() {
+fn navigating_up_from_the_first_setting_row_is_refused() {
     let mut model = navigated_to(0);
-    let cmd = navigate(&mut model, Direction::Previous);
-    assert_eq!(selected_row(&model), all_rows().first().copied());
-    assert!(cmd == Cmd::none());
+    let request = SettingRowRequest::Navigate(Direction::Previous);
+    let result = update(
+        &mut model,
+        Message::Overlay(OverlayRequest::Settings(request)),
+        Moment::default(),
+    );
+    assert_eq!(result, Err(Unhandled));
+    assert_eq!(selected_row(&model), SettingRow::ALL.first().copied());
 }
 
 #[test]
-fn navigate_down_clamps_at_the_last_row() {
-    let last = all_rows().len() - 1;
+fn navigating_down_from_the_last_setting_row_is_refused() {
+    let last = SettingRow::ALL.len() - 1;
     let mut model = navigated_to(last);
-    let cmd = navigate(&mut model, Direction::Next);
-    assert_eq!(selected_row(&model), all_rows().last().copied());
-    assert!(cmd == Cmd::none());
+    let request = SettingRowRequest::Navigate(Direction::Next);
+    let result = update(
+        &mut model,
+        Message::Overlay(OverlayRequest::Settings(request)),
+        Moment::default(),
+    );
+    assert_eq!(result, Err(Unhandled));
+    assert_eq!(selected_row(&model), SettingRow::ALL.last().copied());
+}
+
+#[test]
+fn setting_the_selected_row_again_is_refused() {
+    let mut setting_row = SettingRow::Crossfade;
+    let result = setting_row.transition(SettingRowMessage::Set(SettingRow::Crossfade));
+    assert_eq!(result, Err(Unhandled));
+    assert_eq!(setting_row, SettingRow::Crossfade);
 }
 
 #[rstest]
 #[case::step_hands_the_router_the_selected_row(SettingRow::ReplayGain, Direction::Next)]
-#[case::step_keeps_the_direction(SettingRow::Crossfade, Direction::Previous)]
+#[case::step_keeps_the_direction(SettingRow::SleepPresets, Direction::Previous)]
 fn step_resolves_the_row_under_the_cursor(
     #[case] row: SettingRow,
     #[case] direction: Direction,
@@ -162,33 +180,14 @@ fn step_row_toggles_a_config_row() {
         cmd.effects()
             .any(|effect| matches!(effect, Effect::Config(ConfigCmd::Save(_))))
     }
-    fn live_effects(cmd: &Cmd) -> Vec<String> {
-        cmd.effects()
-            .filter_map(|effect| match effect {
-                Effect::Audio(command) => Some(format!("{command:?}")),
-                Effect::Library(command) => Some(format!("{command:?}")),
-                Effect::RollShuffle(..) => Some("RollShuffle".to_string()),
-                Effect::WindowColors(_)
-                | Effect::Config(_)
-                | Effect::Macos(_)
-                | Effect::Animate(_)
-                | Effect::After { .. }
-                | Effect::Restart(_)
-                | Effect::Quit => None,
-            })
-            .collect()
-    }
-
     let mut model = seeded();
     let cmd = step(&mut model, SettingRow::ReplayGain, Direction::Next);
 
     assert_eq!(model.settings.audio_settings.replay_gain, ReplayGain::On);
     assert!(saves(&cmd));
-    assert!(
-        live_effects(&cmd)
-            .iter()
-            .any(|effect| effect == "SetReplayGain(On)")
-    );
+    assert!(cmd.effects().any(
+        |effect| *effect == Effect::Audio(AudioCmd::SetReplayGain(ReplayGain::On))
+    ));
 
     let toggled_back = step(&mut model, SettingRow::ReplayGain, Direction::Previous);
     assert_eq!(model.settings.audio_settings.replay_gain, ReplayGain::Off);
@@ -209,25 +208,52 @@ fn step_row_crossfade_steps_by_500ms_and_clamps_both_ends() {
     let mut model = seeded();
     let half_second = Crossfade::try_from(Duration::from_millis(500)).unwrap();
 
-    let cmd = step(&mut model, SettingRow::Crossfade, Direction::Previous);
-    assert_eq!(
-        model.settings.audio_settings.crossfade,
-        Crossfade::default()
-    );
-    assert_eq!(crossfade_patch(&cmd), Some(Crossfade::default()));
-
     let stepped_up = step(&mut model, SettingRow::Crossfade, Direction::Next);
     assert_eq!(model.settings.audio_settings.crossfade, half_second);
+    assert_eq!(crossfade_patch(&stepped_up), Some(half_second));
     assert!(
         stepped_up
             .effects()
             .any(|effect| matches!(effect, Effect::Audio(AudioCmd::SetCrossfade(_))))
     );
 
-    for _ in 0..21 {
+    for _ in 0..19 {
         press(&mut model, SettingRow::Crossfade, Direction::Next);
     }
     let ceiling = Crossfade::try_from(Duration::from_secs(10)).unwrap();
+    assert_eq!(model.settings.audio_settings.crossfade, ceiling);
+}
+
+#[test]
+fn stepping_crossfade_below_its_floor_is_refused() {
+    let mut model = seeded();
+    let message = Message::Step {
+        row: SettingRow::Crossfade,
+        direction: Direction::Previous,
+    };
+
+    let result = update(&mut model, message, Moment::default());
+
+    assert_eq!(result, Err(Unhandled));
+    assert_eq!(
+        model.settings.audio_settings.crossfade,
+        Crossfade::default()
+    );
+}
+
+#[test]
+fn stepping_crossfade_past_its_ceiling_is_refused() {
+    let mut model = seeded();
+    let ceiling = Crossfade::try_from(Duration::from_secs(10)).unwrap();
+    model.settings.audio_settings.crossfade = ceiling;
+    let message = Message::Step {
+        row: SettingRow::Crossfade,
+        direction: Direction::Next,
+    };
+
+    let result = update(&mut model, message, Moment::default());
+
+    assert_eq!(result, Err(Unhandled));
     assert_eq!(model.settings.audio_settings.crossfade, ceiling);
 }
 
@@ -370,7 +396,7 @@ fn step_row_sleep_presets_cycles_and_wraps_and_persists() {
         Some(model.settings.audio_settings.sleep_presets.as_slice()),
         SleepPresets::BUNDLES.get(1).copied()
     );
-    assert_eq!(sleep_presets_patch(&cmd), SleepPresets::bundle(1));
+    assert_eq!(sleep_presets_patch(&cmd), Some(SleepPresets::bundle(1)));
 
     press(&mut model, SettingRow::SleepPresets, Direction::Previous);
     let wrapped = step(&mut model, SettingRow::SleepPresets, Direction::Previous);
@@ -382,7 +408,7 @@ fn step_row_sleep_presets_cycles_and_wraps_and_persists() {
             .as_slice()
             .is_empty()
     );
-    assert_eq!(sleep_presets_patch(&wrapped), SleepPresets::bundle(4));
+    assert_eq!(sleep_presets_patch(&wrapped), Some(SleepPresets::bundle(4)));
 }
 
 #[test]
@@ -524,9 +550,10 @@ fn an_appearance_reload_while_open_keeps_the_selection_on_the_same_row() {
 
     send(
         &mut model,
-        Message::Config(ConfigEvent::AppearanceReloaded(
-            AppearanceSettings::default(),
-        )),
+        Message::Config(ConfigEvent::AppearanceReloaded(AppearanceSettings {
+            key_hints: KeyHints::Hidden,
+            ..AppearanceSettings::default()
+        })),
     );
 
     assert_eq!(

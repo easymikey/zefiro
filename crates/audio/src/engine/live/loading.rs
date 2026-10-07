@@ -345,7 +345,7 @@ mod tests {
         #[case] message: EngineMessage,
     ) {
         let mut state = engine_state.clone();
-        assert_same(step(&mut state, message), Err(Unhandled));
+        assert_eq!(step(&mut state, message).err(), Some(Unhandled));
         assert_eq!(state, engine_state);
     }
 
@@ -358,12 +358,13 @@ mod tests {
                 Speed::default(),
             )))),
         );
-        assert_same(
+        assert_eq!(
             step(
                 &mut engine_state,
                 EngineMessage::Decoded(Some(TRACK_A_DURATION)),
-            ),
-            Err(Unhandled),
+            )
+            .err(),
+            Some(Unhandled)
         );
     }
 }

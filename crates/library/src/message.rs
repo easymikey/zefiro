@@ -46,6 +46,7 @@ pub enum LibraryMessage {
         skipped: Option<Error>,
     },
     FavoritesLoaded(Favorites),
+    Trashed(PathBuf),
     HistoryLoaded {
         entries: Vec<HistoryEntry>,
         skipped: Option<Error>,

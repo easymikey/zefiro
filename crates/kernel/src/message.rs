@@ -263,6 +263,7 @@ pub enum LibraryEvent {
     },
     FavoritesLoaded(Favorites),
     HistoryLoaded(Vec<HistoryEntry>),
+    Trashed(PathBuf),
     Error(LibraryError),
 }
 

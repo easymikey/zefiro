@@ -18,7 +18,8 @@ impl JobRevisions {
             AudioMessage::Preloaded { revision, .. } => {
                 self.is_current_preload(*revision)
             }
-            AudioMessage::Deck(_)
+            AudioMessage::Cmds(_)
+            | AudioMessage::Deck(_)
             | AudioMessage::DevicesListed(_)
             | AudioMessage::SignalsTaken { .. }
             | AudioMessage::Engine(_) => true,

@@ -131,7 +131,11 @@ fn toasted() -> Message {
 )]
 #[case::trashing_a_track_raises_a_cue(
     moon_library_scanned(),
-    vec![open(OverlayName::ConfirmTrash), Message::Overlay(OverlayRequest::Confirm)],
+    vec![
+        open(OverlayName::ConfirmTrash),
+        Message::Overlay(OverlayRequest::Confirm),
+        Message::Library(LibraryEvent::Trashed("/m/0.flac".into())),
+    ],
     Cue::TrackTrashed
 )]
 #[case::reloading_the_theme_raises_a_cue(
@@ -169,17 +173,16 @@ fn the_system_echoing_a_volume_is_refused() {
     assert_eq!(result, Err(Unhandled));
 }
 
-#[rstest]
-#[case::a_toast_timer_without_a_toast_stays_silent(
-    model_with_tracks(3),
-    vec![Message::Elapsed(Timer::Toast(Revision::default()))]
-)]
-fn a_non_transition_stays_silent(
-    #[case] mut model: Model,
-    #[case] messages: Vec<Message>,
-) {
-    let seen = cues(&mut model, messages);
-    assert!(seen.is_empty(), "expected no cue, saw {seen:?}");
+#[test]
+fn a_toast_timer_without_a_toast_is_refused() {
+    let mut model = model_with_tracks(3);
+    let before = model.clone();
+    let message = Message::Elapsed(Timer::Toast(Revision::default()));
+
+    let result = update(&mut model, message, Moment::default());
+
+    assert_eq!(result, Err(Unhandled));
+    assert_eq!(model, before);
 }
 
 #[rstest]

@@ -249,10 +249,11 @@ mod tests {
 
     use crate::{
         driver::{DriverLoop, Outlets},
-        driver_thread::{Congestion, DriverThread, spawn_idle},
+        driver_thread::{Congestion, DriverThread},
         jobs::stash,
         registry,
         runtime::Runtime,
+        spawn::tests::spawn_idle,
         spawn_setup::CALLBACK_SLOTS,
         timers::Timers,
         watcher::FileStream,
@@ -389,7 +390,7 @@ mod tests {
 
         fn stop(self) {
             drop(self.thread.cmd_sender);
-            self.thread.handle.join().unwrap().unwrap();
+            self.thread.handle.join().unwrap();
             assert_eq!(
                 self.report_receiver.recv_timeout(RECV_TIMEOUT),
                 Ok(Message::Driver {
@@ -512,7 +513,7 @@ mod tests {
                 event: DriverEvent::Stopped
             })
         );
-        thread.handle.join().unwrap().unwrap();
+        thread.handle.join().unwrap();
     }
 
     #[test]
@@ -669,7 +670,7 @@ mod tests {
 
         let asked = Instant::now();
         drop(thread.cmd_sender);
-        thread.handle.join().unwrap().unwrap();
+        thread.handle.join().unwrap();
 
         assert!(asked.elapsed() < Runtime::DRAIN);
         assert_eq!(
@@ -706,7 +707,7 @@ mod tests {
             })
         );
         drop(thread.cmd_sender);
-        thread.handle.join().unwrap().unwrap();
+        thread.handle.join().unwrap();
     }
 
     fn start_audio_driver() -> (DriverThread<AudioCmd>, Receiver<Message>) {
@@ -748,7 +749,7 @@ mod tests {
         assert!(sent.try_recv().is_err());
 
         drop(thread.cmd_sender);
-        thread.handle.join().unwrap().unwrap();
+        thread.handle.join().unwrap();
     }
 
     #[test]
@@ -765,7 +766,7 @@ mod tests {
         ));
 
         drop(thread.cmd_sender);
-        thread.handle.join().unwrap().unwrap();
+        thread.handle.join().unwrap();
     }
 
     #[test]

@@ -3,19 +3,15 @@ use std::path::PathBuf;
 use crate::{
     cmd::{Cmd, Effect, LibraryCmd, ScanMode, WindowColorsCmd},
     domain::{
-        appearance::AppearanceSettings,
-        appearance_rows::appearance_row_choices,
         cue::Cue,
-        overlay::Overlay,
         revision::Revisions,
-        setting_row::SettingRow,
         settings::Settings,
         theme::{ThemeName, Themes},
         toast::Toast,
         workspace::Workspace,
     },
     message::ConfigEvent,
-    update::machine::Unhandled,
+    update::machine::{Unhandled, replace},
 };
 
 pub(crate) struct ConfigParts<'a> {
@@ -39,22 +35,22 @@ pub(crate) fn update(
     } = config_parts;
     match event {
         ConfigEvent::KeymapReloaded(keymap_overrides) => {
-            Ok(workspace.keymap_reloaded(*keymap_overrides, revisions))
+            workspace.keymap_reloaded(*keymap_overrides, revisions)
         }
         ConfigEvent::ThemeReloaded(name) => Ok(theme_reloaded(revisions, name)),
         ConfigEvent::AppearanceReloaded(appearance) => {
-            settings.appearance_settings = appearance;
-            rows_reloaded(workspace, appearance);
+            replace(&mut settings.appearance_settings, appearance)?;
             Ok(Cmd::none())
         }
         ConfigEvent::ThemesLoaded {
             theme_names: names,
             refused,
         } => {
-            themes.names = names;
             if refused.is_empty() {
+                replace(&mut themes.names, names)?;
                 return Ok(Cmd::none());
             }
+            themes.names = names;
             Ok(workspace.show(
                 Toast::info(format!(
                     "Skipped themes with invalid names: {}",
@@ -64,11 +60,9 @@ pub(crate) fn update(
             ))
         }
         ConfigEvent::MusicDirReloaded(reloaded) => {
-            Ok(music_dir_reloaded(music_dir, revisions, reloaded))
+            music_dir_reloaded(music_dir, revisions, reloaded)
         }
-        ConfigEvent::Reloaded(reload) => {
-            Ok(workspace.config_reloaded(reload, revisions))
-        }
+        ConfigEvent::Reloaded(reload) => workspace.config_reloaded(reload, revisions),
         ConfigEvent::Error(error) => Ok(workspace.show(
             Toast::error("Config error").with_text(error.to_string()),
             revisions,
@@ -82,31 +76,18 @@ fn theme_reloaded(revisions: &mut Revisions, name: ThemeName) -> Cmd {
         .then(Cue::ThemeChanged.into())
 }
 
-fn rows_reloaded(workspace: &mut Workspace, appearance_settings: AppearanceSettings) {
-    let Some(Overlay::Settings(selected)) = &mut workspace.overlay else {
-        return;
-    };
-    *selected = selected.kept(&SettingRow::all(&appearance_row_choices(
-        appearance_settings,
-    )));
-}
-
 fn music_dir_reloaded(
     music_dir: &mut PathBuf,
     revisions: &mut Revisions,
     reloaded_path: PathBuf,
-) -> Cmd {
-    if reloaded_path == *music_dir {
-        Cmd::none()
-    } else {
-        *music_dir = reloaded_path.clone();
-        Effect::Library(LibraryCmd::Scan {
-            music_dir: reloaded_path,
-            revision: revisions.issue_scan(),
-            mode: ScanMode::Fresh,
-        })
-        .into()
-    }
+) -> Result<Cmd, Unhandled> {
+    replace(music_dir, reloaded_path.clone())?;
+    Ok(Effect::Library(LibraryCmd::Scan {
+        music_dir: reloaded_path,
+        revision: revisions.issue_scan(),
+        mode: ScanMode::Fresh,
+    })
+    .into())
 }
 
 #[cfg(test)]
@@ -116,13 +97,16 @@ mod tests {
     use crate::{
         cmd::{Cmd, Effect, LibraryCmd},
         domain::{
-            config::ConfigError,
+            appearance::{AppearanceSettings, CoverMode},
+            config::{ConfigError, ConfigName},
+            io_error::IoError,
             keymap::{Action, KeyOverride, KeymapOverrides},
             model::Model,
+            settings::Settings,
             theme::{ThemeName, Themes},
             toast::ToastLevel,
         },
-        message::ConfigEvent,
+        message::{ConfigEvent, ConfigReload},
         update::{config, config_parts, machine::Unhandled},
     };
 
@@ -154,19 +138,14 @@ mod tests {
     fn unchanged_keymap_keeps_the_revision() {
         let mut model = Model::default();
         let keymap_overrides = model.workspace.keymap.overrides().clone();
-        update(
-            &mut model,
-            ConfigEvent::KeymapReloaded(Box::new(keymap_overrides.clone())),
-        )
-        .unwrap();
         let before = model.revisions.config;
 
-        update(
+        let result = update(
             &mut model,
             ConfigEvent::KeymapReloaded(Box::new(keymap_overrides)),
-        )
-        .unwrap();
+        );
 
+        assert_eq!(result, Err(Unhandled));
         assert_eq!(model.revisions.config, before);
     }
 
@@ -190,9 +169,7 @@ mod tests {
 
         update(
             &mut model,
-            ConfigEvent::Error(ConfigError::Watch(
-                crate::domain::io_error::IoError::Other,
-            )),
+            ConfigEvent::Error(ConfigError::Watch(IoError::Other)),
         )
         .unwrap();
 
@@ -214,24 +191,124 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case::the_root_it_already_plays(PathBuf::from("/music"), None)]
-    #[case::another_root(PathBuf::from("/other"), Some(PathBuf::from("/other")))]
+    #[case::the_root_it_already_plays(PathBuf::from("/music"), Err(Unhandled))]
+    #[case::another_root(PathBuf::from("/other"), Ok(Some(PathBuf::from("/other"))))]
     fn a_music_dir_reload_rescans_only_a_music_dir_that_moved(
         #[case] reloaded_path: PathBuf,
-        #[case] expected: Option<PathBuf>,
+        #[case] expected: Result<Option<PathBuf>, Unhandled>,
     ) {
         let mut model = Model {
             music_dir: PathBuf::from("/music"),
             ..Model::default()
         };
 
-        let cmd = emitted(
-            &mut model,
+        let result = config::update(
+            config_parts(&mut model),
             ConfigEvent::MusicDirReloaded(reloaded_path.clone()),
         );
 
-        assert_eq!(rescanned_music_dir(&cmd), expected);
+        assert_eq!(result.map(|cmd| rescanned_music_dir(&cmd)), expected);
         assert_eq!(model.music_dir, reloaded_path);
+    }
+
+    #[test]
+    fn an_unchanged_music_dir_is_refused() {
+        let mut model = Model {
+            music_dir: PathBuf::from("/music"),
+            ..Model::default()
+        };
+        let before = model.clone();
+
+        let result = update(
+            &mut model,
+            ConfigEvent::MusicDirReloaded(PathBuf::from("/music")),
+        );
+
+        assert_eq!(result, Err(Unhandled));
+        assert_eq!(model, before);
+    }
+
+    #[test]
+    fn a_repeated_config_error_is_refused() {
+        let mut model = Model::default();
+        let event = ConfigEvent::Reloaded(ConfigReload {
+            name: ConfigName::Config,
+            result: Err(ConfigError::Read {
+                name: ConfigName::Config,
+                error: IoError::Denied,
+            }),
+        });
+        update(&mut model, event.clone()).unwrap();
+        let before = model.clone();
+
+        let result = update(&mut model, event);
+
+        assert_eq!(result, Err(Unhandled));
+        assert_eq!(model, before);
+    }
+
+    #[test]
+    fn a_config_reload_with_nothing_to_clear_is_refused() {
+        let mut model = Model::default();
+        let before = model.clone();
+
+        let result = update(
+            &mut model,
+            ConfigEvent::Reloaded(ConfigReload {
+                name: ConfigName::Config,
+                result: Ok(()),
+            }),
+        );
+
+        assert_eq!(result, Err(Unhandled));
+        assert_eq!(model, before);
+    }
+
+    #[test]
+    fn an_equal_appearance_is_refused() {
+        let mut model = Model {
+            settings: Settings {
+                appearance_settings: AppearanceSettings {
+                    cover_mode: CoverMode::Plain,
+                    ..AppearanceSettings::default()
+                },
+                ..Settings::default()
+            },
+            ..Model::default()
+        };
+        let appearance_settings = model.settings.appearance_settings;
+        let before = model.clone();
+
+        let result = update(
+            &mut model,
+            ConfigEvent::AppearanceReloaded(appearance_settings),
+        );
+
+        assert_eq!(result, Err(Unhandled));
+        assert_eq!(model, before);
+    }
+
+    #[test]
+    fn reloading_the_same_themes_is_refused() {
+        let mut model = Model {
+            themes: Themes {
+                names: vec![ThemeName::from_static("wafer")],
+                ..Themes::default()
+            },
+            ..Model::default()
+        };
+        let before = model.clone();
+
+        let result = update(
+            &mut model,
+            ConfigEvent::ThemesLoaded {
+                theme_names: vec![ThemeName::from_static("wafer")],
+                refused: Vec::new(),
+            },
+        );
+
+        assert_eq!(result, Err(Unhandled));
+        assert_eq!(model, before);
     }
 
     #[test]

@@ -46,11 +46,17 @@ pub(crate) fn move_cursor(
     cursor: &mut Cursor,
     moved_cursor: Cursor,
 ) -> Result<Cmd, Unhandled> {
-    if moved_cursor == *cursor {
-        return Err(Unhandled);
-    }
-    *cursor = moved_cursor;
+    replace(cursor, moved_cursor)?;
     Ok(Cmd::none())
+}
+
+pub(crate) fn replace<T: PartialEq>(field: &mut T, next: T) -> Result<(), Unhandled> {
+    if *field == next {
+        Err(Unhandled)
+    } else {
+        *field = next;
+        Ok(())
+    }
 }
 
 pub type LoopCmd<E, J, M, V> = Cmd<LoopEffect<E, J, M>, V>;

@@ -31,7 +31,7 @@ pub struct Lookahead {
 }
 
 impl Lookahead {
-    fn loop_start(&self, position: Duration) -> Option<Duration> {
+    pub(crate) fn loop_start(&self, position: Duration) -> Option<Duration> {
         self.ab_loop.and_then(|(a, b)| (position >= b).then_some(a))
     }
 
@@ -100,11 +100,12 @@ impl Player {
 
     pub(crate) fn failed(&mut self, error: &AudioError) -> Result<Cmd, Unhandled> {
         match error {
-            AudioError::Decode { .. }
-            | AudioError::OpenDevice { .. }
-            | AudioError::ListDevices { .. }
-            | AudioError::Preload { .. } => self.load_failed(),
-            AudioError::Seek { .. } => Err(Unhandled),
+            AudioError::Decode { .. } | AudioError::OpenDevice { .. } => {
+                self.load_failed()
+            }
+            AudioError::ListDevices { .. }
+            | AudioError::Preload { .. }
+            | AudioError::Seek { .. } => Err(Unhandled),
         }
     }
 
@@ -130,9 +131,6 @@ impl Player {
         position: Duration,
         lookahead: Lookahead,
     ) -> Result<Cmd, Unhandled> {
-        if let Some(a) = lookahead.loop_start(position) {
-            return self.seek(a, lookahead.now);
-        }
         match self {
             Player::Playing {
                 playhead,
@@ -305,7 +303,7 @@ mod tests {
     struct Setup {
         ab_loop: Option<(u64, u64)>,
         next: Option<Arc<Track>>,
-        duration_ms: u64,
+        duration_secs: u64,
     }
 
     fn lookahead(setup: Setup) -> Lookahead {
@@ -314,7 +312,7 @@ mod tests {
                 .ab_loop
                 .map(|(a, b)| (Duration::from_secs(a), Duration::from_secs(b))),
             next: setup.next,
-            duration: Duration::from_secs(setup.duration_ms),
+            duration: Duration::from_secs(setup.duration_secs),
             now: Moment::new(Duration::ZERO),
             revision: Revision::default(),
             cover_side: None,
@@ -324,37 +322,37 @@ mod tests {
     #[rstest]
     #[case::no_decision_ahead_arms_nothing(
         head_at(0, 1.0),
-        lookahead(Setup { ab_loop: None, next: None, duration_ms: 0 }),
+        lookahead(Setup { ab_loop: None, next: None, duration_secs: 0 }),
         None
     )]
     #[case::preload_due_point_arms_at_unity_speed(
         head_at(0, 1.0),
-        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_ms: 100 }),
+        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_secs: 100 }),
         Some(90)
     )]
     #[case::ab_b_point_arms_when_earlier_than_preload(
         head_at(0, 1.0),
-        lookahead(Setup { ab_loop: Some((5, 20)), next: Some(a_track()), duration_ms: 100 }),
+        lookahead(Setup { ab_loop: Some((5, 20)), next: Some(a_track()), duration_secs: 100 }),
         Some(20)
     )]
     #[case::double_speed_halves_the_wait(
         head_at(0, 2.0),
-        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_ms: 100 }),
+        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_secs: 100 }),
         Some(45)
     )]
     #[case::half_speed_doubles_the_wait(
         head_at(0, 0.5),
-        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_ms: 100 }),
+        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_secs: 100 }),
         Some(180)
     )]
     #[case::a_past_decision_is_not_armed(
         head_at(95, 1.0),
-        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_ms: 100 }),
+        lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_secs: 100 }),
         None
     )]
     #[case::no_next_track_skips_the_preload_point(
         head_at(0, 1.0),
-        lookahead(Setup { ab_loop: None, next: None, duration_ms: 100 }),
+        lookahead(Setup { ab_loop: None, next: None, duration_secs: 100 }),
         None
     )]
     fn next_decision_arms_the_earlier_of_preload_or_ab(

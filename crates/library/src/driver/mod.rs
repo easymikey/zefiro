@@ -235,12 +235,13 @@ impl<P> Machine for LibraryDriver<P> {
             LibraryMessage::FavoritesLoaded(favorites) => {
                 Ok(Cmd::message(LibraryEvent::FavoritesLoaded(favorites)))
             }
+            LibraryMessage::Trashed(path) => {
+                Ok(Cmd::message(LibraryEvent::Trashed(path)))
+            }
             LibraryMessage::HistoryLoaded { entries, skipped } => {
                 Ok(reported(LibraryEvent::HistoryLoaded(entries), skipped))
             }
-            LibraryMessage::Error(error) => {
-                Ok(Cmd::message(LibraryEvent::Error((&error).into())))
-            }
+            LibraryMessage::Error(error) => Ok(reported_error(&error)),
         }
     }
 }
@@ -666,6 +667,20 @@ mod tests {
         message: cover("/music/two.flac"),
         cmd: "publish /music/two.flac @ 64 missing",
     })]
+    #[case::a_stale_decoded_cover_is_remembered_not_published(LibraryRow {
+        library_messages: vec![cover("/music/one.flac"), cover("/music/two.flac")],
+        message: decoded("/music/one.flac", 1),
+        cmd: "nothing",
+    })]
+    #[case::a_stale_decoded_cover_is_published_from_memory(LibraryRow {
+        library_messages: vec![
+            cover("/music/one.flac"),
+            cover("/music/two.flac"),
+            decoded("/music/one.flac", 1),
+        ],
+        message: cover("/music/one.flac"),
+        cmd: "publish /music/one.flac @ 64 missing",
+    })]
     fn a_row_steps_the_driver_and_names_its_cmd(#[case] row: LibraryRow) {
         let mut driver = driver();
         for message in row.library_messages {
@@ -713,9 +728,9 @@ mod tests {
         ],
         prefetch("/music/one.flac")
     )]
-    #[case::a_stale_decoded_cover(
+    #[case::a_stale_failed_cover(
         vec![cover("/music/one.flac"), cover("/music/two.flac")],
-        decoded("/music/one.flac", 1)
+        failed("/music/one.flac", 1)
     )]
     #[case::the_same_cover_while_it_decodes(
         vec![cover("/music/one.flac")],

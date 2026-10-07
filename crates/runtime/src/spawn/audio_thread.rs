@@ -1,7 +1,6 @@
 use audio::tap::SpectrumTap;
 use kernel::{cmd::AudioCmd, domain::driver::DriverName};
 
-#[cfg(test)] use crate::driver_thread::spawn_idle;
 use crate::{
     driver::DriverLoop,
     driver_thread::DriverThread,
@@ -9,14 +8,6 @@ use crate::{
     registry,
     spawn_setup::{CALLBACK_SLOTS, SpawnSetup},
 };
-
-#[cfg(test)]
-pub(crate) fn idle_audio(
-    setup: &SpawnSetup<'_>,
-) -> Result<(DriverThread<AudioCmd>, SpectrumTap), SpawnError> {
-    let thread = spawn_idle(registry::row(DriverName::Audio), setup.inbox)?;
-    Ok((thread, SpectrumTap::silent()))
-}
 
 pub(crate) fn spawn_audio(
     setup: &SpawnSetup<'_>,
@@ -77,7 +68,7 @@ mod tests {
         spawn::{
             SpawnSetup,
             Spawners,
-            tests::{RECV_TIMEOUT, boom, spawn_audio_loop, stub_paths},
+            tests::{RECV_TIMEOUT, boom, idle_spawners, spawn_audio_loop, stub_paths},
         },
     };
 
@@ -136,7 +127,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let spawners = Spawners {
             audio: panic_once_then_record_audio,
-            ..Spawners::idle()
+            ..idle_spawners()
         };
         let mut runtime = Runtime::start(
             Startup::default(),
@@ -203,7 +194,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let spawners = Spawners {
             audio: sequenced_audio,
-            ..Spawners::idle()
+            ..idle_spawners()
         };
         let mut runtime = Runtime::start(
             Startup::default(),

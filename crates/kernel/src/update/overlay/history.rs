@@ -1,16 +1,14 @@
 use crate::{
     cmd::Cmd,
-    domain::{cursor_over::CursorOver, direction::Direction},
-    message::{Message, QueueRequest},
+    domain::cursor_over::CursorOver,
+    message::{HistoryRequest, Message, QueueRequest},
     update::machine::{Machine, Unhandled, move_cursor},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HistoryMessage {
-    Navigate { direction: Direction, len: usize },
-    SelectFirst,
-    SelectLast { rows: usize },
-    Enqueue(usize),
+pub struct HistoryMessage {
+    pub request: HistoryRequest,
+    pub rows: usize,
 }
 
 impl Machine for CursorOver<()> {
@@ -21,22 +19,23 @@ impl Machine for CursorOver<()> {
         &mut self,
         history_message: HistoryMessage,
     ) -> Result<Cmd, Unhandled> {
-        match history_message {
-            HistoryMessage::Navigate { direction, len } => {
-                let moved = self.cursor.resize(len).step(direction.sign());
+        let HistoryMessage { request, rows } = history_message;
+        match request {
+            HistoryRequest::Navigate(direction) => {
+                let moved = self.cursor.resize(rows).step(direction.sign());
                 move_cursor(&mut self.cursor, moved)
             }
-            HistoryMessage::SelectFirst => {
+            HistoryRequest::SelectFirst => {
                 let moved = self.cursor.first();
                 move_cursor(&mut self.cursor, moved)
             }
-            HistoryMessage::SelectLast { rows } => {
+            HistoryRequest::SelectLast => {
                 let moved = self.cursor.resize(rows).last();
                 move_cursor(&mut self.cursor, moved)
             }
-            HistoryMessage::Enqueue(len) => {
+            HistoryRequest::Enqueue => {
                 let selected = self.selected().get();
-                (selected < len)
+                (selected < rows)
                     .then(|| {
                         Cmd::message(Message::Queue(QueueRequest::ToggleHistoryEntry(
                             selected,

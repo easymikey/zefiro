@@ -304,7 +304,7 @@ mod tests {
         overlay::{
             layer::{OverlayView, OverlayWidget, SavePhase, accent},
             modal::placement::OverlayAreas,
-            settings::test_support::{appearance_row_choices, settings_values},
+            settings::test_support::settings_values,
         },
         screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
         test_support::{noir, rendered},
@@ -396,8 +396,7 @@ mod tests {
     #[test]
     fn settings_overlay_lists_the_settings_view() {
         let theme = noir();
-        let custom = appearance_row_choices();
-        let model = model_with(Overlay::Settings(SettingRow::first(&custom)));
+        let model = model_with(Overlay::Settings(SettingRow::first()));
         let layout = layout(Rect::default());
         let mut with_values = layer(&theme, &model, &layout);
         with_values.view.settings_view = settings_values();

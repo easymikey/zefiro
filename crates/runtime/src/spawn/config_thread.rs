@@ -106,7 +106,7 @@ mod tests {
 
         fn stop(self) {
             drop(self.thread.cmd_sender);
-            self.thread.handle.join().unwrap().unwrap();
+            self.thread.handle.join().unwrap();
         }
     }
 

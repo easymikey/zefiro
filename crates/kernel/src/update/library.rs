@@ -6,6 +6,7 @@ use crate::{
         cue::Cue,
         favorites::Favorites,
         history::HistoryEntry,
+        index::TrackIndex,
         library::{Library, sort_indices},
         model::ScanStatus,
         overlay::Overlay,
@@ -17,7 +18,10 @@ use crate::{
         workspace::Workspace,
     },
     message::{LibraryError, LibraryEvent, LibrarySubject},
-    update::machine::Unhandled,
+    update::{
+        browse::{ResyncParts, relist, resync_playlist},
+        machine::{Unhandled, replace},
+    },
 };
 
 pub(crate) struct LibraryParts<'a> {
@@ -31,6 +35,7 @@ pub(crate) struct LibraryParts<'a> {
     pub(crate) playlist: &'a mut Playlist,
     pub(crate) playlist_source: &'a PlaylistSource,
     pub(crate) player: &'a mut Player,
+    pub(crate) queue: &'a mut Vec<TrackSource>,
 }
 
 pub(crate) fn update(
@@ -46,20 +51,67 @@ pub(crate) fn update(
     }
     match event {
         LibraryEvent::FavoritesLoaded(favorites) => {
-            *parts.favorites = favorites;
+            replace(parts.favorites, favorites)?;
             Ok(Cmd::none())
         }
         LibraryEvent::Loaded { tracks, .. } => Ok(whole_library(&mut parts, tracks)),
         LibraryEvent::Listed { tracks, revision } => {
             Ok(listed_library(&mut parts, tracks, revision))
         }
-        LibraryEvent::Tagged { tracks, .. } => Ok(tagged_tracks(&mut parts, tracks)),
+        LibraryEvent::Tagged { tracks, .. } => Ok(tagged_tracks(&mut parts, &tracks)),
         LibraryEvent::HistoryLoaded(entries) => {
-            *parts.history = entries;
+            replace(parts.history, entries)?;
             Ok(Cmd::none())
         }
+        LibraryEvent::Trashed(path) => trashed_track(&mut parts, &path),
         LibraryEvent::Error(error) => Ok(library_failed(&mut parts, &error)),
     }
+}
+
+fn trashed_track(
+    library_parts: &mut LibraryParts<'_>,
+    path: &Path,
+) -> Result<Cmd, Unhandled> {
+    let library = library_parts.library.as_mut().ok_or(Unhandled)?;
+    let removed_position = library
+        .tracks
+        .iter()
+        .position(|track| track.path() == path)
+        .ok_or(Unhandled)?;
+    let track = library.tracks.remove(removed_position);
+    library.track_indexes = library
+        .track_indexes
+        .iter()
+        .filter(|index| index.get() != removed_position)
+        .map(|index| {
+            if index.get() > removed_position {
+                TrackIndex::new(index.get() - 1)
+            } else {
+                *index
+            }
+        })
+        .collect();
+    library_parts
+        .queue
+        .retain(|queued| queued != track.source());
+    let resync_parts = ResyncParts {
+        workspace: &mut *library_parts.workspace,
+        player: library_parts.player,
+        playlist: library_parts.playlist,
+    };
+    match library_parts.playlist_source {
+        PlaylistSource::Library => {
+            resync_playlist(PlaylistSource::Library, library, resync_parts);
+        }
+        PlaylistSource::Named => {
+            let kept = std::mem::take(&mut resync_parts.playlist.tracks)
+                .into_iter()
+                .filter(|listed| listed.source() != track.source())
+                .collect();
+            relist(kept, resync_parts);
+        }
+    }
+    Ok(Cmd::from(Cue::TrackTrashed))
 }
 
 fn library_failed(parts: &mut LibraryParts<'_>, error: &LibraryError) -> Cmd {
@@ -120,11 +172,11 @@ fn tag_request(
     .into()
 }
 
-fn tagged_tracks(parts: &mut LibraryParts<'_>, tagged_tracks: Vec<Arc<Track>>) -> Cmd {
+fn tagged_tracks(parts: &mut LibraryParts<'_>, tagged_tracks: &[Arc<Track>]) -> Cmd {
     let read = tagged_tracks.len();
-    let tagged: Tagged = tagged_tracks
-        .into_iter()
-        .map(|track| (track.source().clone(), track))
+    let tagged: Tagged<'_> = tagged_tracks
+        .iter()
+        .map(|track| (track.source(), track))
         .collect();
     if let Some(ready) = parts.library {
         retag_tracks(&mut ready.tracks, &tagged);
@@ -140,10 +192,10 @@ fn tagged_tracks(parts: &mut LibraryParts<'_>, tagged_tracks: Vec<Arc<Track>>) -
 fn library_loaded(parts: &mut LibraryParts<'_>, tracks: Vec<Arc<Track>>) {
     install_library(parts, tracks);
     if let Some(ready) = parts.library {
-        crate::update::browse::resync_playlist(
+        resync_playlist(
             *parts.playlist_source,
-            crate::update::browse::ResyncParts {
-                library: ready,
+            ready,
+            ResyncParts {
                 workspace: &mut *parts.workspace,
                 player: parts.player,
                 playlist: parts.playlist,
@@ -152,9 +204,9 @@ fn library_loaded(parts: &mut LibraryParts<'_>, tracks: Vec<Arc<Track>>) {
     }
 }
 
-type Tagged = HashMap<TrackSource, Arc<Track>>;
+type Tagged<'a> = HashMap<&'a TrackSource, &'a Arc<Track>>;
 
-fn retag_tracks(tracks: &mut [Arc<Track>], tagged: &Tagged) {
+fn retag_tracks(tracks: &mut [Arc<Track>], tagged: &Tagged<'_>) {
     for track in tracks {
         if let Some(read) = tagged.get(track.source()) {
             *track = Arc::clone(read);
@@ -162,7 +214,7 @@ fn retag_tracks(tracks: &mut [Arc<Track>], tagged: &Tagged) {
     }
 }
 
-fn retag_player(player: &mut Player, tagged: &Tagged) {
+fn retag_player(player: &mut Player, tagged: &Tagged<'_>) {
     if let Player::Loading(track)
     | Player::Playing { track, .. }
     | Player::Paused { track, .. } = player
@@ -304,6 +356,35 @@ mod tests {
             Some(2)
         );
         assert_eq!(cmd, Cmd::effect(Effect::Animate(Cue::LibraryOpened)));
+    }
+
+    #[test]
+    fn a_trashed_track_leaves_a_named_playlist() {
+        let a = track("/music/a.flac");
+        let b = track("/music/b.flac");
+        let mut model = Model {
+            library: Some(Library {
+                tracks: vec![Arc::clone(&a), Arc::clone(&b)],
+                track_indexes: vec![TrackIndex::new(0), TrackIndex::new(1)],
+            }),
+            playlist_source: PlaylistSource::Named,
+            playlist: crate::domain::playlist::Playlist::from_tracks(vec![
+                Arc::clone(&a),
+                Arc::clone(&b),
+            ]),
+            ..Model::default()
+        };
+        model.workspace.browse.cursor = crate::domain::cursor::Cursor::at(2, 1);
+
+        let cmd = update(
+            crate::update::library_parts(&mut model),
+            LibraryEvent::Trashed(a.path().to_path_buf()),
+        )
+        .unwrap();
+
+        assert_eq!(model.playlist.tracks, vec![b]);
+        assert!(model.workspace.browse.cursor.index() < model.playlist.tracks.len());
+        assert_eq!(cmd, Cmd::from(Cue::TrackTrashed));
     }
 
     #[test]

@@ -55,8 +55,19 @@ impl SpectrumTap {
         spectrum_channel().1
     }
 
-    pub(crate) fn latest(&self, out: &mut [f32; WINDOW]) {
-        *out = *self.output.borrow_mut().read();
+    pub(crate) fn windowed(
+        &self,
+        window: &[f32; WINDOW],
+        out: &mut [f32; WINDOW],
+    ) -> bool {
+        let mut output = self.output.borrow_mut();
+        if !output.update() {
+            return false;
+        }
+        out.iter_mut()
+            .zip(output.output_buffer().iter().zip(window))
+            .for_each(|(slot, (sample, weight))| *slot = sample * weight);
+        true
     }
 }
 
@@ -177,38 +188,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
-    use rodio::Source;
+    use rodio::buffer::SamplesBuffer;
     use rstest::rstest;
 
     use crate::tap::{HOP, SpectrumTap, TappedSource, WINDOW, spectrum_channel};
-
-    struct Synthetic {
-        samples: std::vec::IntoIter<f32>,
-    }
-
-    impl Iterator for Synthetic {
-        type Item = f32;
-        fn next(&mut self) -> Option<f32> {
-            self.samples.next()
-        }
-    }
-
-    impl Source for Synthetic {
-        fn current_span_len(&self) -> Option<usize> {
-            None
-        }
-        fn channels(&self) -> u16 {
-            1
-        }
-        fn sample_rate(&self) -> u32 {
-            44100
-        }
-        fn total_duration(&self) -> Option<Duration> {
-            None
-        }
-    }
 
     fn samples(count: usize) -> Vec<f32> {
         let count = u16::try_from(count).unwrap_or(u16::MAX);
@@ -225,9 +208,7 @@ mod tests {
         let data = samples(count);
         let (spectrum_buffers, spectrum_tap) = spectrum_channel();
         let mut wrapped_source = TappedSource::new(
-            Synthetic {
-                samples: data.clone().into_iter(),
-            },
+            SamplesBuffer::new(1, 44_100, data.clone()),
             &spectrum_buffers,
         );
 
@@ -235,9 +216,10 @@ mod tests {
         assert_eq!(collected, data);
 
         let mut out = [0.0f32; WINDOW];
-        spectrum_tap.latest(&mut out);
+        let fresh = spectrum_tap.windowed(&[1.0; WINDOW], &mut out);
 
         let flushed = count - (count % HOP);
+        assert_eq!(fresh, flushed > 0);
         let kept = flushed.min(out.len());
         assert_eq!(
             out.get(out.len() - kept..),
@@ -254,27 +236,23 @@ mod tests {
         let (spectrum_buffers, spectrum_tap) = spectrum_channel();
         let first_batch = samples(HOP);
         let first = TappedSource::new(
-            Synthetic {
-                samples: first_batch.clone().into_iter(),
-            },
+            SamplesBuffer::new(1, 44_100, first_batch.clone()),
             &spectrum_buffers,
         );
         first.for_each(drop);
 
         let mut out = [0.0f32; WINDOW];
-        spectrum_tap.latest(&mut out);
+        assert!(spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
         assert_eq!(out.get(out.len() - HOP..), Some(first_batch.as_slice()));
 
         let second_batch = samples(HOP);
         let second = TappedSource::new(
-            Synthetic {
-                samples: second_batch.clone().into_iter(),
-            },
+            SamplesBuffer::new(1, 44_100, second_batch.clone()),
             &spectrum_buffers,
         );
         second.for_each(drop);
 
-        spectrum_tap.latest(&mut out);
+        assert!(spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
         assert_eq!(out.get(out.len() - HOP..), Some(second_batch.as_slice()));
     }
 
@@ -282,22 +260,18 @@ mod tests {
     fn a_second_tapped_source_without_a_returned_writer_stays_silent() {
         let (spectrum_buffers, spectrum_tap) = spectrum_channel();
         let held_source = TappedSource::new(
-            Synthetic {
-                samples: Vec::new().into_iter(),
-            },
+            SamplesBuffer::new(1, 44_100, Vec::new()),
             &spectrum_buffers,
         );
         let unlucky_batch = samples(HOP);
         let unlucky_source = TappedSource::new(
-            Synthetic {
-                samples: unlucky_batch.into_iter(),
-            },
+            SamplesBuffer::new(1, 44_100, unlucky_batch),
             &spectrum_buffers,
         );
         unlucky_source.for_each(drop);
 
         let mut out = [0.0f32; WINDOW];
-        spectrum_tap.latest(&mut out);
+        assert!(!spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
         assert!(out.iter().all(|&sample| sample == 0.0));
         drop(held_source);
     }
@@ -311,8 +285,8 @@ mod tests {
 
     #[test]
     fn a_silent_tap_reads_an_empty_window() {
-        let mut out = [1.0f32; WINDOW];
-        SpectrumTap::silent().latest(&mut out);
+        let mut out = [0.0f32; WINDOW];
+        assert!(!SpectrumTap::silent().windowed(&[1.0; WINDOW], &mut out));
         assert!(out.iter().all(|&sample| sample == 0.0));
     }
 }

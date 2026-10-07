@@ -71,13 +71,19 @@ impl<P> LibraryDriver<P> {
         revision: Revision,
         decoded: Result<CoverDecoded, CoverError>,
     ) -> Result<LibraryLoopCmd, Unhandled> {
-        let settled = self
-            .decoding
-            .transition(CoverDecodingMessage::Decoded(revision))?;
+        let is_current =
+            self.decoding.busy().is_some() && revision == self.cover_revision;
+        let settled = if decoded.is_err() || is_current {
+            lift_decoding(
+                self.decoding
+                    .transition(CoverDecodingMessage::Decoded(revision))?,
+            )
+        } else {
+            Cmd::none()
+        };
         if let Ok(decoded) = &decoded {
             self.cover_cache.remember(decoded);
         }
-        let settled = lift_decoding(settled);
         let answer = match decoded {
             Ok(decoded) => self.published(decoded),
             Err(error) => self.failed(&error),

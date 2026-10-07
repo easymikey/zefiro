@@ -7,7 +7,7 @@ use kernel::{
         time::Moment,
         track::TrackSource,
     },
-    message::{Message, QueueRequest},
+    message::{HistoryRequest, Message, QueueRequest},
     update::{machine::Unhandled, overlay::history::HistoryMessage},
 };
 use rstest::rstest;
@@ -26,7 +26,10 @@ fn cursor(selected_index: usize, len: usize) -> CursorOver<()> {
 }
 
 fn nav(direction: Direction, len: usize) -> HistoryMessage {
-    HistoryMessage::Navigate { direction, len }
+    HistoryMessage {
+        request: HistoryRequest::Navigate(direction),
+        rows: len,
+    }
 }
 
 #[rstest]
@@ -47,25 +50,25 @@ fn nav(direction: Direction, len: usize) -> HistoryMessage {
     nav(Direction::Next, 0),
     Err(Unhandled)
 )]
-#[case::select_first_jumps_to_the_first_entry(cursor(2, 3), HistoryMessage::SelectFirst, Ok((cursor(0, 3), Cmd::none())))]
+#[case::select_first_jumps_to_the_first_entry(cursor(2, 3), HistoryMessage { request: HistoryRequest::SelectFirst, rows: 3 }, Ok((cursor(0, 3), Cmd::none())))]
 #[case::select_first_on_the_first_entry_is_refused(
     cursor(0, 3),
-    HistoryMessage::SelectFirst,
+    HistoryMessage { request: HistoryRequest::SelectFirst, rows: 3 },
     Err(Unhandled)
 )]
 #[case::select_last_on_the_last_entry_is_refused(
     cursor(2, 3),
-    HistoryMessage::SelectLast { rows: 3 },
+    HistoryMessage { request: HistoryRequest::SelectLast, rows: 3 },
     Err(Unhandled)
 )]
 #[case::select_last_resizes_then_jumps_to_the_last(
     cursor(0, 3),
-    HistoryMessage::SelectLast { rows: 4 },
+    HistoryMessage { request: HistoryRequest::SelectLast, rows: 4 },
     Ok((cursor(3, 4), Cmd::none()))
 )]
 #[case::enqueue_names_the_entry_under_the_cursor(
     cursor(1, 2),
-    HistoryMessage::Enqueue(2),
+    HistoryMessage { request: HistoryRequest::Enqueue, rows: 2 },
     Ok((
         cursor(1, 2),
         Cmd::message(Message::Queue(QueueRequest::ToggleHistoryEntry(1)))
@@ -73,7 +76,7 @@ fn nav(direction: Direction, len: usize) -> HistoryMessage {
 )]
 #[case::enqueue_names_the_cursor_not_the_first_entry(
     cursor(2, 3),
-    HistoryMessage::Enqueue(3),
+    HistoryMessage { request: HistoryRequest::Enqueue, rows: 3 },
     Ok((
         cursor(2, 3),
         Cmd::message(Message::Queue(QueueRequest::ToggleHistoryEntry(2)))
@@ -81,12 +84,12 @@ fn nav(direction: Direction, len: usize) -> HistoryMessage {
 )]
 #[case::enqueue_with_the_cursor_past_the_end_is_refused(
     cursor(1, 2),
-    HistoryMessage::Enqueue(1),
+    HistoryMessage { request: HistoryRequest::Enqueue, rows: 1 },
     Err(Unhandled)
 )]
 #[case::enqueue_on_an_empty_log_is_refused(
     cursor(0, 0),
-    HistoryMessage::Enqueue(0),
+    HistoryMessage { request: HistoryRequest::Enqueue, rows: 0 },
     Err(Unhandled)
 )]
 fn history_cell(

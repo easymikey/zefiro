@@ -1,5 +1,8 @@
 use kernel::domain::geometry::Cells;
-use ratatui::{style::Style, text::Line};
+use ratatui::{
+    style::{Color, Style},
+    text::Line,
+};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
@@ -17,7 +20,7 @@ use crate::{
         span::{line, text},
         truncate::{blanks, truncate},
     },
-    theme::active_theme::ActiveTheme,
+    theme::colors::Colors,
 };
 
 const CHIP_GAP: usize = 1;
@@ -55,9 +58,8 @@ pub(crate) struct TrackRow<'a> {
 #[must_use]
 pub(crate) fn track_row_line<'a>(
     track_row: &TrackRow<'a>,
-    theme: &ActiveTheme<'_>,
+    colors: &Colors<Color>,
 ) -> Line<'a> {
-    let colors = theme.colors();
     let favorite_width = usize::from(FAVORITE_COLUMNS);
     let playing_width = usize::from(PLAYING_COLUMNS);
     let fav = favorite_marker(track_row.favorite);
@@ -86,7 +88,7 @@ pub(crate) fn track_row_line<'a>(
         Selected::No => Style::default().fg(colors.foreground),
     };
     let fixed = [
-        text(fav).fg(theme.favorite()),
+        text(fav).fg(colors.favorite),
         text(blanks(column_padding(fav, favorite_width))).style(row_style),
         text(playing).style(row_style),
         text(blanks(column_padding(playing, playing_width))).style(row_style),
@@ -132,7 +134,7 @@ mod tests {
         let row_width = Cells(20);
         let text = track_row_line(
             &base_props("a very long track title that will not fit", row_width),
-            &ActiveTheme::new(&noir(), ColorDepth::TrueColor),
+            &ActiveTheme::new(&noir(), ColorDepth::TrueColor).colors(),
         )
         .to_string();
         assert_eq!(text.width(), row_width.count());
@@ -148,7 +150,7 @@ mod tests {
     fn a_title_that_fits_is_borrowed_not_copied() {
         let line = track_row_line(
             &base_props("song", Cells(20)),
-            &ActiveTheme::new(&noir(), ColorDepth::TrueColor),
+            &ActiveTheme::new(&noir(), ColorDepth::TrueColor).colors(),
         );
         assert!(
             line.spans
@@ -161,9 +163,11 @@ mod tests {
     fn the_chip_follows_the_title_with_one_space_and_carries_the_position() {
         let mut view = base_props("song", Cells(20));
         view.queued_number = Some(QueueNumber::new(12));
-        let text =
-            track_row_line(&view, &ActiveTheme::new(&noir(), ColorDepth::TrueColor))
-                .to_string();
+        let text = track_row_line(
+            &view,
+            &ActiveTheme::new(&noir(), ColorDepth::TrueColor).colors(),
+        )
+        .to_string();
         assert!(text.ends_with("song [q12]"));
     }
 
@@ -172,9 +176,11 @@ mod tests {
         let row_width = Cells(20);
         let mut view = base_props("a very long track title", row_width);
         view.queued_number = Some(QueueNumber::new(1));
-        let text =
-            track_row_line(&view, &ActiveTheme::new(&noir(), ColorDepth::TrueColor))
-                .to_string();
+        let text = track_row_line(
+            &view,
+            &ActiveTheme::new(&noir(), ColorDepth::TrueColor).colors(),
+        )
+        .to_string();
         assert_eq!(text.width(), row_width.count());
         assert!(text.ends_with("… [q1]"));
     }
@@ -186,7 +192,7 @@ mod tests {
         let title_width = row_width.count() - fixed_width;
         let text = track_row_line(
             &base_props("界界界界界界界界", row_width),
-            &ActiveTheme::new(&noir(), ColorDepth::TrueColor),
+            &ActiveTheme::new(&noir(), ColorDepth::TrueColor).colors(),
         )
         .to_string();
         let title_part = text.get(fixed_width..).unwrap_or("").trim_end();

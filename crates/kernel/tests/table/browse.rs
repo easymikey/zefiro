@@ -30,7 +30,14 @@ use kernel::{
         revision::Revision,
         time::Moment,
     },
-    message::{AudioEvent, BrowseRequest, Message, PlaybackRequest, QueueRequest},
+    message::{
+        AudioEvent,
+        BrowseRequest,
+        LibraryEvent,
+        Message,
+        PlaybackRequest,
+        QueueRequest,
+    },
     update::machine::Unhandled,
 };
 use rstest::rstest;
@@ -414,7 +421,7 @@ fn a_rescan_keeps_the_view_in_the_chosen_sort_order() {
 
     send(
         &mut model,
-        Message::Library(kernel::message::LibraryEvent::Loaded {
+        Message::Library(LibraryEvent::Loaded {
             tracks: vec![
                 titled_track("/music/c.flac", "C", "Charlie"),
                 titled_track("/music/a.flac", "A", "Alpha"),
@@ -613,11 +620,17 @@ fn scanned(paths: &[&str]) -> Model {
     model
 }
 
+fn trashed(path: &str) -> Message {
+    Message::Library(LibraryEvent::Trashed(PathBuf::from(path)))
+}
+
 #[test]
 fn trash_removes_the_track_everywhere_and_asks_for_the_file_to_go() {
     let mut model = scanned(&["/music/a.flac", "/music/b.flac"]);
     let source = model.playlist.tracks[0].source().clone();
-    let effects = browse(&mut model, BrowseRequest::Trash(source));
+    let asked = browse(&mut model, BrowseRequest::Trash(source));
+    let answered =
+        update(&mut model, trashed("/music/a.flac"), Moment::default()).unwrap();
 
     let left = vec![PathBuf::from("/music/b.flac")];
     let all = paths(&model.library.as_ref().unwrap().tracks);
@@ -625,13 +638,14 @@ fn trash_removes_the_track_everywhere_and_asks_for_the_file_to_go() {
     assert_eq!(view_paths(&model), left);
     assert_eq!(paths(&model.playlist.tracks), left);
     assert_eq!(
-        effects,
-        Cmd::from_iter([
-            Effect::Library(LibraryCmd::Disk(DiskCmd::Trash(PathBuf::from(
-                "/music/a.flac"
-            )))),
-            Effect::Animate(Cue::TrackTrashed),
-        ])
+        asked,
+        Cmd::from_iter([Effect::Library(LibraryCmd::Disk(DiskCmd::Trash(
+            PathBuf::from("/music/a.flac")
+        )))])
+    );
+    assert_eq!(
+        answered,
+        Cmd::from_iter([Effect::Animate(Cue::TrackTrashed)])
     );
 }
 
@@ -642,6 +656,7 @@ fn trash_remaps_the_queue_and_drops_the_trashed_entry() {
     let source = model.playlist.tracks[0].source().clone();
 
     send(&mut model, Message::Browse(BrowseRequest::Trash(source)));
+    send(&mut model, trashed("/music/a.flac"));
 
     assert_eq!(
         paths(&model.playlist.tracks),
@@ -660,6 +675,7 @@ fn trash_shrinks_the_browse_cursor_with_the_playlist() {
     let source = model.playlist.tracks[0].source().clone();
 
     send(&mut model, Message::Browse(BrowseRequest::Trash(source)));
+    send(&mut model, trashed("/music/a.flac"));
 
     assert_eq!(model.workspace.browse.cursor, Cursor::at(1, 0));
 }
@@ -668,7 +684,7 @@ fn trash_shrinks_the_browse_cursor_with_the_playlist() {
 #[case::missing_from_the_library(scanned(&["/music/a.flac"]))]
 #[case::without_a_library(Model::default())]
 fn trash_of_an_unknown_track_is_refused(#[case] mut model: Model) {
-    let before = format!("{model:?}");
+    let before = model.clone();
     let gone_source =
         kernel::domain::track::TrackSource::Local(PathBuf::from("/music/gone.flac"));
 
@@ -679,11 +695,11 @@ fn trash_of_an_unknown_track_is_refused(#[case] mut model: Model) {
     );
 
     assert_eq!(result.err(), Some(Unhandled));
-    assert_eq!(format!("{model:?}"), before);
+    assert_eq!(model, before);
 }
 
 fn listed(paths: &[&str]) -> Message {
-    Message::Library(kernel::message::LibraryEvent::Listed {
+    Message::Library(LibraryEvent::Listed {
         tracks: paths
             .iter()
             .map(|path| Arc::new(kernel::domain::track::Track::listed(Path::new(path))))
@@ -722,6 +738,7 @@ fn a_rescan_under_the_confirm_overlay_trashes_the_same_file() {
         == Effect::Library(LibraryCmd::Disk(DiskCmd::Trash(PathBuf::from(
             "/music/b.flac"
         ))))));
+    send(&mut model, trashed("/music/b.flac"));
     assert_eq!(
         paths(&model.playlist.tracks),
         [

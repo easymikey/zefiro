@@ -13,7 +13,7 @@ pub(crate) enum BindingOrigin {
     Default,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct KeyBinding {
     pub pattern: KeyPattern,
     pub message: Message,

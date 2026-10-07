@@ -242,11 +242,16 @@ fn loaded() -> impl Strategy<Value = PlaybackRequest> {
 }
 
 fn library() -> impl Strategy<Value = LibraryEvent> {
-    select(vec![
-        LibraryEvent::HistoryLoaded(Vec::new()),
-        LibraryEvent::FavoritesLoaded(Favorites::default()),
-        LibraryEvent::Error(LibraryError::NoUserDirs),
-    ])
+    prop_oneof![
+        select(vec![
+            LibraryEvent::HistoryLoaded(Vec::new()),
+            LibraryEvent::FavoritesLoaded(Favorites::default()),
+            LibraryEvent::Error(LibraryError::NoUserDirs),
+        ]),
+        (0usize..4).prop_map(|row| {
+            LibraryEvent::Trashed(format!("/tmp/track{row}.flac").into())
+        }),
+    ]
 }
 
 fn config() -> impl Strategy<Value = ConfigEvent> {

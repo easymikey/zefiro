@@ -1,9 +1,10 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use kernel::{
-    cmd::{Cmd, Effect, LibraryCmd},
+    cmd::{Cmd, DiskCmd, Effect, LibraryCmd},
     domain::{
         cue::Cue,
+        io_error::IoError,
         model::{Model, ScanStatus},
         overlay::OverlayName,
         player::Player,
@@ -11,11 +12,14 @@ use kernel::{
         revision::Revision,
         speed::Speed,
         time::Moment,
+        toast::Toast,
         track::{Tagging, Tags, Track, TrackParts},
     },
     message::{
         BrowseRequest,
+        LibraryError,
         LibraryEvent,
+        LibrarySubject,
         Message,
         OverlayRequest,
         SearchEdit,
@@ -27,9 +31,17 @@ use rstest::rstest;
 
 use crate::support::{
     effects,
+    router::moon_library_scanned,
     track_at,
     update::{send, update},
 };
+
+fn paths(tracks: &[Arc<Track>]) -> Vec<PathBuf> {
+    tracks
+        .iter()
+        .map(|track| track.path().to_path_buf())
+        .collect()
+}
 
 fn tagged(path: &str, title: &str, seconds: u64) -> Arc<Track> {
     Arc::new(Track::new(TrackParts {
@@ -353,4 +365,128 @@ fn a_listing_from_a_superseded_scan_asks_for_no_tags() {
 
     assert_eq!(cmd, Err(Unhandled));
     assert_eq!(model.scan_status, ScanStatus::Scanning);
+}
+
+#[test]
+fn a_confirmed_trash_keeps_the_track_until_the_disk_answers() {
+    let mut model = moon_library_scanned();
+    let track = Arc::clone(&model.playlist.tracks[0]);
+    model.queue = vec![track.source().clone()];
+    let library = paths(&model.library.as_ref().unwrap().tracks);
+    let playlist = paths(&model.playlist.tracks);
+
+    let cmd = update(
+        &mut model,
+        Message::Browse(BrowseRequest::Trash(track.source().clone())),
+        Moment::default(),
+    );
+
+    assert_eq!(
+        cmd.map(effects),
+        Ok(vec![Effect::Library(LibraryCmd::Disk(DiskCmd::Trash(
+            track.path().to_path_buf()
+        )))])
+    );
+    let ready = model.library.as_ref().unwrap();
+    assert_eq!(paths(&ready.tracks), library);
+    assert_eq!(ready.track_indexes.len(), library.len());
+    assert_eq!(paths(&model.playlist.tracks), playlist);
+    assert_eq!(model.queue, [track.source().clone()]);
+}
+
+#[test]
+fn a_trashed_answer_removes_the_track() {
+    let mut model = moon_library_scanned();
+    let track = Arc::clone(&model.playlist.tracks[0]);
+    model.queue = vec![track.source().clone()];
+    let path = track.path().to_path_buf();
+
+    let cmd = update(
+        &mut model,
+        Message::Library(LibraryEvent::Trashed(path.clone())),
+        Moment::default(),
+    );
+
+    assert_eq!(
+        cmd.map(effects),
+        Ok(vec![Effect::Animate(Cue::TrackTrashed)])
+    );
+    let ready = model.library.as_ref().unwrap();
+    assert!(!paths(&ready.tracks).contains(&path));
+    assert_eq!(ready.track_indexes.len(), ready.tracks.len());
+    assert!(model.queue.is_empty());
+    assert!(!paths(&model.playlist.tracks).contains(&path));
+    assert_eq!(model.playlist.tracks.len(), ready.tracks.len());
+}
+
+#[test]
+fn a_failed_trash_keeps_the_track_and_raises_a_toast() {
+    let mut model = moon_library_scanned();
+    let track = Arc::clone(&model.playlist.tracks[0]);
+    let library = paths(&model.library.as_ref().unwrap().tracks);
+    let playlist = paths(&model.playlist.tracks);
+    let error = LibraryError::Disk {
+        subject: LibrarySubject::Trash,
+        path: track.path().to_path_buf(),
+        error: IoError::Denied,
+    };
+    send(
+        &mut model,
+        Message::Browse(BrowseRequest::Trash(track.source().clone())),
+    );
+
+    send(
+        &mut model,
+        Message::Library(LibraryEvent::Error(error.clone())),
+    );
+
+    assert_eq!(paths(&model.library.as_ref().unwrap().tracks), library);
+    assert_eq!(paths(&model.playlist.tracks), playlist);
+    assert_eq!(
+        model.workspace.toasts,
+        [Toast::error("Library error").with_text(error.to_string())]
+    );
+}
+
+#[test]
+fn a_trashed_answer_for_an_unknown_path_is_refused() {
+    let mut model = moon_library_scanned();
+
+    let cmd = update(
+        &mut model,
+        Message::Library(LibraryEvent::Trashed(PathBuf::from("/m/nowhere.flac"))),
+        Moment::default(),
+    );
+
+    assert_eq!(cmd, Err(Unhandled));
+}
+
+#[test]
+fn an_identical_favorites_load_is_refused() {
+    let mut model = moon_library_scanned();
+    let before = model.clone();
+
+    let cmd = update(
+        &mut model,
+        Message::Library(LibraryEvent::FavoritesLoaded(before.favorites.clone())),
+        Moment::default(),
+    );
+
+    assert_eq!(cmd, Err(Unhandled));
+    assert_eq!(model, before);
+}
+
+#[test]
+fn an_identical_history_load_is_refused() {
+    let mut model = moon_library_scanned();
+    let before = model.clone();
+
+    let cmd = update(
+        &mut model,
+        Message::Library(LibraryEvent::HistoryLoaded(before.history.clone())),
+        Moment::default(),
+    );
+
+    assert_eq!(cmd, Err(Unhandled));
+    assert_eq!(model, before);
 }

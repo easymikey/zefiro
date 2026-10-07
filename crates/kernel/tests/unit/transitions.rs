@@ -11,7 +11,7 @@ use kernel::{
         keymap::{Action, KeyOverride, KeymapOverrides},
         model::Model,
         percent::Percent,
-        player::Player,
+        player::{AbLoop, PausedBy, Player},
         playhead::Playhead,
         playlist::{PlayOrder, Playlist, RepeatMode},
         revision::Revision,
@@ -32,6 +32,7 @@ use crate::support::{
     model_playing_at,
     model_with_tracks,
     track_at as arc_track,
+    track_with_duration,
     update::{send, update},
 };
 
@@ -381,6 +382,83 @@ fn preload_peeks_queue_head_when_queue_nonempty() {
     )));
 }
 
+fn model_at_the_loop_end(player: impl FnOnce(Arc<Track>) -> Player) -> Model {
+    let mut model = model_with_tracks(3);
+    model.transport.ab_loop = Some(AbLoop::BothMarked {
+        loop_start: Duration::from_secs(5),
+        loop_end: Duration::from_secs(15),
+    });
+    model.player = player(track_with_duration(
+        "/tmp/track0.flac",
+        Duration::from_secs(100),
+    ));
+    model
+}
+
+fn playing_at(
+    track: Arc<Track>,
+    position: Duration,
+    preloaded: Option<Arc<Track>>,
+) -> Player {
+    Player::Playing {
+        track,
+        playhead: Playhead::anchored(position, Moment::default(), Speed::default()),
+        preloaded,
+    }
+}
+
+#[rstest]
+#[case::with_a_preload(Some(arc_track("/tmp/track1.flac")))]
+#[case::without_a_preload(None)]
+fn a_lookahead_at_the_loop_end_seeks_once_to_the_loop_start(
+    #[case] preloaded: Option<Arc<Track>>,
+) {
+    let mut model = model_at_the_loop_end(|track| {
+        playing_at(track, Duration::from_secs(15), preloaded.clone())
+    });
+    let mark = model.revisions.lookahead;
+    let cmd = update(
+        &mut model,
+        Message::Elapsed(Timer::Lookahead(mark)),
+        Moment::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        driver_effects(cmd),
+        vec![
+            Effect::Audio(AudioCmd::Seek(Duration::from_secs(5))),
+            Effect::Macos(MacosCmd::SetPosition(Duration::from_secs(5))),
+            Effect::After {
+                delay: Duration::from_secs(10),
+                timer: Timer::Lookahead(model.revisions.lookahead),
+            },
+        ]
+    );
+    let track = track_with_duration("/tmp/track0.flac", Duration::from_secs(100));
+    assert_eq!(
+        model.player,
+        playing_at(track, Duration::from_secs(5), preloaded)
+    );
+}
+
+#[test]
+fn a_lookahead_over_a_paused_player_at_the_loop_end_is_refused() {
+    let mut model = model_at_the_loop_end(|track| Player::Paused {
+        track,
+        position: Duration::from_secs(15),
+        by: PausedBy::Listener,
+    });
+    let before = model.clone();
+    let mark = model.revisions.lookahead;
+    let answer = update(
+        &mut model,
+        Message::Elapsed(Timer::Lookahead(mark)),
+        Moment::default(),
+    );
+    assert_eq!(answer, Err(Unhandled));
+    assert_eq!(model, before);
+}
+
 #[test]
 fn track_ended_repeat_one_without_current_stops() {
     let mut model = model_playing_at(3, 0, Duration::ZERO);
@@ -452,6 +530,28 @@ fn an_audio_failure_raises_an_error_toast(
     assert_eq!(toast.level, ToastLevel::Error);
     let text = toast.text.as_deref().map_or("", str::trim);
     assert!(text.contains(excerpt), "got {text:?}");
+}
+
+#[test]
+fn a_device_listing_failure_while_loading_keeps_the_load() {
+    let player = Player::Loading(arc_track("/tmp/track0.flac"));
+    let mut model = Model {
+        player: player.clone(),
+        ..Default::default()
+    };
+    send(
+        &mut model,
+        Message::Audio(kernel::message::AudioEvent::Error(
+            kernel::message::AudioError::ListDevices {
+                diagnostic: kernel::domain::config::Diagnostic::from_error(
+                    &std::io::Error::other("the host cannot list its devices"),
+                ),
+            },
+        )),
+    );
+    assert_eq!(model.player, player);
+    let toast = model.workspace.toasts.first().unwrap();
+    assert_eq!(toast.level, ToastLevel::Error);
 }
 
 #[test]
@@ -542,29 +642,29 @@ fn keymap_naming(chord: &str) -> KeymapOverrides {
 }
 
 #[rstest]
-#[case::the_keymap_it_already_carries(KeymapOverrides::default())]
-#[case::a_keymap_naming_another_chord(keymap_naming("space"))]
+#[case::the_keymap_it_already_carries(KeymapOverrides::default(), Err(Unhandled))]
+#[case::a_keymap_naming_another_chord(keymap_naming("space"), Ok(Cmd::none()))]
 fn a_keymap_reload_moves_the_generation_only_when_the_file_says_something_new(
     #[case] keymap_overrides: KeymapOverrides,
+    #[case] expected: Result<Cmd, Unhandled>,
 ) {
     let mut model = Model::default();
     let before = model.revisions.config;
 
-    let cmd = update(
+    let result = update(
         &mut model,
         Message::Config(ConfigEvent::KeymapReloaded(Box::new(
             keymap_overrides.clone(),
         ))),
         Moment::default(),
-    )
-    .unwrap();
+    );
 
     assert_eq!(
         model.revisions.config != before,
         keymap_overrides != KeymapOverrides::default()
     );
     assert_eq!(model.workspace.keymap.overrides(), &keymap_overrides);
-    assert!(cmd == Cmd::none());
+    assert_eq!(result, expected);
 }
 
 #[test]

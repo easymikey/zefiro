@@ -36,24 +36,30 @@ pub(crate) fn rerank(
     search_query: &mut CursorOver<SearchQuery>,
     tracks: &[Arc<Track>],
 ) {
-    crate::search::rank_into(
-        tracks,
-        &search_query.content.input,
-        &mut search_query.content.matches,
-    );
-    search_query.cursor = Cursor::new(search_query.content.matches.len());
+    let ranked = crate::search::rank(tracks, &search_query.content.input);
+    refreshed(search_query, ranked);
 }
 
-pub(crate) fn narrow(
+pub(crate) fn requery(
     search_query: &mut CursorOver<SearchQuery>,
     tracks: &[Arc<Track>],
+    edit: SearchEdit,
 ) {
-    crate::search::narrow_into(
-        tracks,
-        &search_query.content.input,
-        &mut search_query.content.matches,
-    );
-    search_query.cursor = Cursor::new(search_query.content.matches.len());
+    let input = &search_query.content.input;
+    let ranked = match edit {
+        SearchEdit::Char(_) => {
+            crate::search::narrow(tracks, input, &search_query.content.matches)
+        }
+        SearchEdit::Backspace | SearchEdit::DeleteWord | SearchEdit::Clear => {
+            crate::search::rank(tracks, input)
+        }
+    };
+    refreshed(search_query, ranked);
+}
+
+fn refreshed(search_query: &mut CursorOver<SearchQuery>, matches: Vec<ViewIndex>) {
+    search_query.cursor = Cursor::new(matches.len());
+    search_query.content.matches = matches;
 }
 
 fn edit_query(input: &mut String, edit: SearchEdit) -> Result<(), Unhandled> {

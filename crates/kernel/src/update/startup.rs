@@ -1,15 +1,5 @@
 use crate::{
-    cmd::{
-        AudioCmd,
-        Cmd,
-        ConfigCmd,
-        DiskCmd,
-        Effect,
-        LibraryCmd,
-        MacosCmd,
-        Playback,
-        ScanMode,
-    },
+    cmd::{AudioCmd, Cmd, ConfigCmd, DiskCmd, Effect, LibraryCmd, ScanMode},
     domain::{
         config::{ConfigError, ConfigName},
         driver::DriverName,
@@ -109,11 +99,7 @@ pub(crate) fn startup_cmd(model: &mut Model, driver_name: DriverName) -> Cmd {
             Effect::Config(ConfigCmd::SelectTheme(model.themes.theme_choice.clone()))
                 .into()
         }
-        DriverName::Macos => Cmd::from_iter([
-            Effect::Macos(MacosCmd::NowPlaying(None)),
-            Effect::Macos(MacosCmd::SetPlayback(Playback::Paused)),
-            Effect::Macos(MacosCmd::SetVolume(model.transport.volume)),
-        ]),
+        DriverName::Macos => Cmd::none(),
     }
 }
 
@@ -122,7 +108,7 @@ fn startup_toasts(model: &mut Model, errors: Vec<(ConfigName, ConfigError)>) -> 
     let Some((name, error)) = errors.next() else {
         return Cmd::none();
     };
-    let cmd = model.workspace.config_reloaded(
+    let cmd = model.workspace.config_reported(
         ConfigReload {
             name,
             result: Err(error),

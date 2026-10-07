@@ -82,7 +82,15 @@ pub(crate) fn compose_vinyl_frame(
     );
     let width = pixmap.width();
     let height = pixmap.height();
-    RgbaImage::from_raw(width, height, pixmap.take())
+    let straight = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|pixel| {
+            let color = pixel.demultiply();
+            [color.red(), color.green(), color.blue(), color.alpha()]
+        })
+        .collect();
+    RgbaImage::from_raw(width, height, straight)
         .unwrap_or_else(|| solid_fallback(width, height))
 }
 
@@ -323,7 +331,7 @@ mod tests {
         };
         let sleeve_input = SleeveInput {
             frame,
-            art: Some(&prepared),
+            art: prepared.as_ref(),
         };
         let layered = paint_record_layer(frame)
             .zip(paint_sleeve_layer(&sleeve_input))
@@ -339,6 +347,27 @@ mod tests {
         assert_eq!(
             layered.as_ref(),
             Some(cache.compose(&key, Some(&art)).as_raw())
+        );
+    }
+
+    #[test]
+    fn transparent_art_shows_the_paper_at_the_sleeve_centre() {
+        let canvas_side = Pixels(96);
+        let vinyl_style = VinylStyle::fixture();
+        let art = image::RgbaImage::from_pixel(64, 64, image::Rgba([255, 255, 255, 0]));
+        let key = VinylCacheKey {
+            path: Some(std::path::PathBuf::from("/music/clear.flac")),
+            side: canvas_side,
+            vinyl_style,
+        };
+        let mut cache = VinylCache::default();
+
+        let image = cache.compose(&key, Some(&art));
+
+        let Rgb([red, green, blue]) = vinyl_style.paper;
+        assert_eq!(
+            *image.get_pixel(canvas_side.0 / 2, canvas_side.0 / 2),
+            image::Rgba([red, green, blue, 255])
         );
     }
 }

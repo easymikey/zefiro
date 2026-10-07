@@ -180,11 +180,15 @@ fn write_property<Value: Copy>(
     let status = unsafe {
         AudioObjectSetPropertyData(object, address, 0, ptr::null(), size, data_ptr)
     };
-    if status == 0 {
+    checked(status)
+}
+
+fn checked(code: i32) -> Result<(), Error> {
+    if code == 0 {
         Ok(())
     } else {
         Err(Error {
-            status: OsStatus(status),
+            status: OsStatus(code),
         })
     }
 }
@@ -269,13 +273,7 @@ fn add_listener(
             listener,
         )
     };
-    if status == 0 {
-        Ok(())
-    } else {
-        Err(Error {
-            status: OsStatus(status),
-        })
-    }
+    checked(status)
 }
 
 fn remove_listener(
@@ -293,13 +291,7 @@ fn remove_listener(
             listener,
         )
     };
-    if status == 0 {
-        Ok(())
-    } else {
-        Err(Error {
-            status: OsStatus(status),
-        })
-    }
+    checked(status)
 }
 
 extern "C-unwind" fn on_property_changed(

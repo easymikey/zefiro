@@ -16,24 +16,20 @@ impl Runtime {
             .into_iter()
             .filter_map(|effect| match effect {
                 Effect::Audio(cmd) => {
-                    match self.wiring.ports.audio.send(&self.model.drivers, cmd) {
-                        Ok(()) | Err(_) => None,
-                    }
+                    self.wiring.ports.audio.send(&self.model.drivers, cmd);
+                    None
                 }
                 Effect::Library(cmd) => {
-                    match self.wiring.ports.library.send(&self.model.drivers, cmd) {
-                        Ok(()) | Err(_) => None,
-                    }
+                    self.wiring.ports.library.send(&self.model.drivers, cmd);
+                    None
                 }
                 Effect::Macos(cmd) => {
-                    match self.wiring.ports.macos.send(&self.model.drivers, cmd) {
-                        Ok(()) | Err(_) => None,
-                    }
+                    self.wiring.ports.macos.send(&self.model.drivers, cmd);
+                    None
                 }
                 Effect::Config(cmd) => {
-                    match self.wiring.ports.config.send(&self.model.drivers, cmd) {
-                        Ok(()) | Err(_) => None,
-                    }
+                    self.wiring.ports.config.send(&self.model.drivers, cmd);
+                    None
                 }
                 Effect::WindowColors(cmd) => {
                     self.shell_effects.push(ShellEffect::WindowColors(cmd));

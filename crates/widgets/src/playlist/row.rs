@@ -11,7 +11,7 @@ use kernel::domain::{
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::Style,
+    style::{Color, Style},
     widgets::{HighlightSpacing, List, ListState, StatefulWidget},
 };
 
@@ -23,14 +23,15 @@ use crate::{
         marker::{FAVORITE_COLUMNS, Favorite, QueueNumber},
         track_row::{self, Playing, Selected, TrackRow},
     },
-    theme::active_theme::ActiveTheme,
+    theme::{active_theme::ActiveTheme, colors::Colors},
 };
 
-pub(crate) struct RowWindow {
-    pub(crate) start: usize,
-    pub(crate) end: usize,
-    pub(crate) offset: u16,
-    pub(crate) playlist_len: usize,
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RowWindow {
+    pub start: usize,
+    pub end: usize,
+    pub offset: u16,
+    pub playlist_len: usize,
 }
 
 pub(crate) struct WindowFit<'a> {
@@ -105,13 +106,14 @@ pub(crate) struct PlaylistRows<'a> {
     pub(crate) view: PlaylistView<'a>,
     pub(crate) theme: ActiveTheme<'a>,
     pub(crate) rows: Rect,
-    pub(crate) window: &'a RowWindow,
+    pub(crate) window: RowWindow,
+    pub(crate) selected_area: Option<Rect>,
 }
 
 struct PlaylistRowParts<'a> {
     view: PlaylistView<'a>,
     row_width: Cells,
-    theme: ActiveTheme<'a>,
+    colors: Colors<Color>,
     positions: HashMap<&'a TrackSource, QueueNumber>,
 }
 
@@ -149,7 +151,7 @@ fn build_line<'a>(
             .filter(|_| playing_index != Some(index)),
         row_width: playlist_row_parts.row_width,
     };
-    track_row::track_row_line(&track_row, &playlist_row_parts.theme)
+    track_row::track_row_line(&track_row, &playlist_row_parts.colors)
 }
 
 pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
@@ -158,6 +160,7 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
         theme,
         rows,
         window,
+        selected_area,
     } = playlist_rows;
     let colors = theme.colors();
     let start = window.start;
@@ -166,7 +169,7 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
     let playlist_row_parts = PlaylistRowParts {
         view,
         row_width: Cells(rows.width),
-        theme,
+        colors,
         positions: queue_numbers(view.queue, visible_tracks),
     };
 
@@ -193,14 +196,14 @@ pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
     );
     StatefulWidget::render(list, rows, buffer, &mut playing_row);
 
-    if let Some(band) = cursor_band(rows, window, view.selected.get()) {
+    if let Some(band) = selected_area {
         buffer.set_style(band, Style::default().bg(colors.selection_background));
     }
 }
 
 pub(crate) fn cursor_band(
     band: Rect,
-    window: &RowWindow,
+    window: RowWindow,
     cursor_index: usize,
 ) -> Option<Rect> {
     if cursor_index < window.start || cursor_index >= window.end {

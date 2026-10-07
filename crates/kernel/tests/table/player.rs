@@ -96,6 +96,21 @@ fn seek_error() -> PlayerMessage {
     })
 }
 
+fn list_devices_error() -> PlayerMessage {
+    PlayerMessage::Error(AudioError::ListDevices {
+        diagnostic: kernel::domain::config::Diagnostic::from_error(
+            &std::io::Error::other("the host cannot list its devices"),
+        ),
+    })
+}
+
+fn preload_error() -> PlayerMessage {
+    PlayerMessage::Error(AudioError::Preload {
+        path: "/tmp/b.flac".into(),
+        error: DecodeError::Unsupported,
+    })
+}
+
 fn lookahead_reached(
     position_secs: u64,
     ab_loop: Option<(u64, u64)>,
@@ -117,13 +132,6 @@ fn lookahead_reached(
 
 fn track_changed(next: Option<Arc<Track>>) -> PlayerMessage {
     PlayerMessage::TrackChanged { next, now: now() }
-}
-
-fn next(track: Arc<Track>) -> PlayerMessage {
-    PlayerMessage::Start {
-        track,
-        stamp: stamp(),
-    }
 }
 
 fn ended(next: Option<Arc<Track>>) -> PlayerMessage {
@@ -281,7 +289,7 @@ fn loaded(duration: Option<Duration>) -> PlayerMessage {
 )]
 #[case::playing_toggle_pauses_in_place(playing(track_a(), AT, Some(track_b())), toggle(Some(track_a())), Ok((paused(track_a(), AT), pauses())))]
 #[case::paused_toggle_resumes_without_a_preload(paused(track_a(), AT), toggle(None), Ok((playing(track_a(), AT, None), plays())))]
-#[case::stopped_stop_stops_again(Player::Stopped, PlayerMessage::Stop, Ok((Player::Stopped, stopped())))]
+#[case::stopped_stop_is_refused(Player::Stopped, PlayerMessage::Stop, Err(Unhandled))]
 #[case::loading_stop_stops(loading(track_a()), PlayerMessage::Stop, Ok((Player::Stopped, stopped())))]
 #[case::playing_stop_stops(playing(track_a(), AT, Some(track_b())), PlayerMessage::Stop, Ok((Player::Stopped, stopped())))]
 #[case::paused_stop_stops(paused(track_a(), AT), PlayerMessage::Stop, Ok((Player::Stopped, stopped())))]
@@ -315,10 +323,6 @@ fn loaded(duration: Option<Duration>) -> PlayerMessage {
     PlayerMessage::SleepFired(now()),
     Err(Unhandled)
 )]
-#[case::stopped_next_starts(Player::Stopped, next(track_b()), Ok((loading(track_b()), cut_in(&track_b()))))]
-#[case::loading_next_interrupts_the_load(loading(track_a()), next(track_b()), Ok((loading(track_b()), cut_in(&track_b()))))]
-#[case::playing_next_drops_the_preload_and_starts(playing(track_a(), AT, Some(track_a())), next(track_b()), Ok((loading(track_b()), cut_in(&track_b()))))]
-#[case::paused_next_starts(paused(track_a(), AT), next(track_b()), Ok((loading(track_b()), cut_in(&track_b()))))]
 #[case::stopped_loaded_is_refused(Player::Stopped, loaded(None), Err(Unhandled))]
 #[case::loading_loaded_plays_with_the_engines_duration(loading(track_a()), loaded(Some(secs(120))), Ok((playing(track_with_duration("/tmp/a.flac", secs(120)), Duration::ZERO, None), Cmd::none())))]
 #[case::loading_loaded_without_a_duration_keeps_the_tags(loading(track_a()), loaded(None), Ok((playing(track_a(), Duration::ZERO, None), Cmd::none())))]
@@ -348,11 +352,26 @@ fn loaded(duration: Option<Duration>) -> PlayerMessage {
     Err(Unhandled)
 )]
 #[case::stopped_seek_error_is_refused(Player::Stopped, seek_error(), Err(Unhandled))]
+#[case::loading_list_devices_error_is_refused(
+    loading(track_a()),
+    list_devices_error(),
+    Err(Unhandled)
+)]
+#[case::playing_list_devices_error_is_refused(
+    playing(track_a(), AT, None),
+    list_devices_error(),
+    Err(Unhandled)
+)]
+#[case::loading_preload_error_is_refused(
+    loading(track_a()),
+    preload_error(),
+    Err(Unhandled)
+)]
 #[case::playing_position_moves(playing(track_a(), AT, None), lookahead_reached(50, None, Some(track_b())), Ok((playing(track_a(), secs(50), None), Cmd::none())))]
 #[case::playing_position_arms_the_preload_near_the_end(playing(track_a(), AT, None), lookahead_reached(95, None, Some(track_b())), Ok((playing(track_a(), secs(95), Some(track_b())), preloads(&track_b()))))]
 #[case::playing_position_arms_nothing_when_nothing_follows(playing(track_a(), AT, None), lookahead_reached(95, None, None), Ok((playing(track_a(), secs(95), None), Cmd::none())))]
 #[case::playing_position_arms_only_once(playing(track_a(), AT, Some(track_b())), lookahead_reached(95, None, Some(track_b())), Ok((playing(track_a(), secs(95), Some(track_b())), Cmd::none())))]
-#[case::playing_position_closes_the_loop(playing(track_a(), AT, Some(track_b())), lookahead_reached(15, Some((5, 15)), Some(track_b())), Ok((playing(track_a(), secs(5), Some(track_b())), seeks(5))))]
+#[case::playing_position_past_the_loop_end_only_moves(playing(track_a(), AT, Some(track_b())), lookahead_reached(15, Some((5, 15)), Some(track_b())), Ok((playing(track_a(), secs(15), Some(track_b())), Cmd::none())))]
 #[case::playing_speed_changed_moves_the_anchor_and_keeps_the_preload(playing(track_a(), AT, Some(track_b())), PlayerMessage::SpeedChanged(anchor_later()), Ok((reanchored(track_a(), Some(track_b())), Cmd::none())))]
 #[case::playing_speed_changed_to_the_same_anchor_keeps_playing(playing(track_a(), AT, Some(track_b())), PlayerMessage::SpeedChanged(anchor()), Ok((playing(track_a(), AT, Some(track_b())), Cmd::none())))]
 #[case::paused_speed_changed_is_refused(
@@ -382,8 +401,6 @@ fn loaded(duration: Option<Duration>) -> PlayerMessage {
     PlayerMessage::OutputLost(now()),
     Err(Unhandled)
 )]
-#[case::playing_position_past_the_loop_without_a_preload_seeks(playing(track_a(), AT, None), lookahead_reached(15, Some((5, 15)), Some(track_b())), Ok((playing(track_a(), secs(5), None), seeks(5))))]
-#[case::paused_position_closes_the_loop(paused(track_a(), AT), lookahead_reached(15, Some((5, 15)), None), Ok((paused(track_a(), secs(5)), seeks(5))))]
 #[case::stopped_track_changed_is_refused(
     Player::Stopped,
     track_changed(Some(track_b())),

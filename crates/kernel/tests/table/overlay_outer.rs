@@ -23,6 +23,7 @@ use kernel::{
     },
     message::{
         BrowseRequest,
+        HistoryRequest,
         Message,
         OverlayRequest,
         PlaybackRequest,
@@ -82,8 +83,7 @@ fn history(selected_index: usize, len: usize) -> Overlay {
 }
 
 fn settings(selected_index: usize) -> Overlay {
-    let setting_row = SettingRow::all(&[]);
-    Overlay::Settings(setting_row[selected_index])
+    Overlay::Settings(SettingRow::ALL[selected_index])
 }
 
 fn fresh_settings() -> Overlay {
@@ -194,7 +194,11 @@ fn releases() -> Cmd {
     OverlayMessage::Confirm,
     Err(Unhandled)
 )]
-#[case::settings_confirm_closes_and_releases(Some(settings(3)), OverlayMessage::Confirm, Ok((None, closed(releases()))))]
+#[case::settings_confirm_is_refused(
+    Some(settings(3)),
+    OverlayMessage::Confirm,
+    Err(Unhandled)
+)]
 #[case::search_confirm_plays_the_selected_match(Some(search("mo", vec![0, 2], 1)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Playback(PlaybackRequest::JumpTo(ViewIndex::new(2))))))))]
 #[case::search_confirm_without_a_match_is_refused(Some(search("zzz", vec![], 0)), OverlayMessage::Confirm, Err(Unhandled))]
 #[case::save_confirm_saves_under_the_name(Some(save("mix", None)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::SavePlaylist(saved_name("mix"))))))))]
@@ -257,16 +261,16 @@ fn releases() -> Cmd {
     inner(OverlayContentMessage::Search(SearchRequest::Enqueue)),
     Err(Unhandled)
 )]
-#[case::history_navigates(Some(history(0, 3)), inner(OverlayContentMessage::History(HistoryMessage::Navigate { direction: Direction::Next, len: 3 })), Ok((Some(history(1, 3)), Cmd::none())))]
-#[case::history_enqueues_the_entry_under_the_cursor(Some(history(1, 2)), inner(OverlayContentMessage::History(HistoryMessage::Enqueue(2))), Ok((Some(history(1, 2)), Cmd::message(Message::Queue(QueueRequest::ToggleHistoryEntry(1))))))]
+#[case::history_navigates(Some(history(0, 3)), inner(OverlayContentMessage::History(HistoryMessage { request: HistoryRequest::Navigate(Direction::Next), rows: 3 })), Ok((Some(history(1, 3)), Cmd::none())))]
+#[case::history_enqueues_the_entry_under_the_cursor(Some(history(1, 2)), inner(OverlayContentMessage::History(HistoryMessage { request: HistoryRequest::Enqueue, rows: 2 })), Ok((Some(history(1, 2)), Cmd::message(Message::Queue(QueueRequest::ToggleHistoryEntry(1))))))]
 #[case::history_enqueue_past_the_end_is_refused(
     Some(history(0, 1)),
-    inner(OverlayContentMessage::History(HistoryMessage::Enqueue(0))),
+    inner(OverlayContentMessage::History(HistoryMessage { request: HistoryRequest::Enqueue, rows: 0 })),
     Err(Unhandled)
 )]
 #[case::closed_content_is_refused(None, text(TextRequest::Char('a')), Err(Unhandled))]
 #[case::help_refuses_text(Some(help()), text(TextRequest::Char('a')), Err(Unhandled))]
-#[case::search_refuses_history(Some(search("mo", vec![0], 0)), inner(OverlayContentMessage::History(HistoryMessage::SelectFirst)), Err(Unhandled))]
+#[case::search_refuses_history(Some(search("mo", vec![0], 0)), inner(OverlayContentMessage::History(HistoryMessage { request: HistoryRequest::SelectFirst, rows: 1 })), Err(Unhandled))]
 #[case::save_refuses_search(
     Some(save("mix", None)),
     inner(OverlayContentMessage::Search(SearchRequest::Enqueue)),

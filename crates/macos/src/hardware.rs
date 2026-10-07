@@ -31,37 +31,38 @@ pub(crate) struct Hardware {
 }
 
 impl Hardware {
-    fn heard_volume(&mut self, polled_volume: Percent) -> Option<MacosEvent> {
-        let echo = self
-            .pending_volume
-            .is_some_and(|pending| pending.get().abs_diff(polled_volume.get()) <= 1);
-        if echo {
-            self.pending_volume = None;
-            self.reported_volume = Some(polled_volume);
-            return None;
+    fn polled(
+        &mut self,
+        poll: HardwarePoll,
+    ) -> Result<Cmd<MacosEffect, MacosEvent>, Unhandled> {
+        let HardwarePoll {
+            tracked,
+            current,
+            volume,
+        } = poll;
+        let echo = volume.filter(|polled| {
+            self.pending_volume
+                .is_some_and(|pending| pending.get().abs_diff(polled.get()) <= 1)
+        });
+        let changed = volume
+            .filter(|polled| echo.is_none() && self.reported_volume != Some(*polled));
+        let moved = self.device_id != Some(current);
+        let rebind = (tracked != current).then_some(MacosEffect::Rebind(current));
+        if echo.is_none() && changed.is_none() && !moved && rebind.is_none() {
+            return Err(Unhandled);
         }
-        if self.reported_volume == Some(polled_volume) {
-            return None;
-        }
-        self.pending_volume = None;
-        self.reported_volume = Some(polled_volume);
-        Some(MacosEvent::VolumeChanged(polled_volume))
-    }
-
-    fn polled(&mut self, poll: HardwarePoll) -> Cmd<MacosEffect, MacosEvent> {
-        let volume = poll.volume.and_then(|polled| self.heard_volume(polled));
-        let route = self
-            .device_id
-            .is_some_and(|previous| previous != poll.current)
+        let route = (moved && self.device_id.is_some())
             .then_some(MacosEvent::OutputRouteChanged);
-        let rebind =
-            (poll.tracked != poll.current).then_some(MacosEffect::Rebind(poll.current));
-        self.device_id = Some(poll.current);
-        [volume, route]
+        if let Some(polled) = echo.or(changed) {
+            self.pending_volume = None;
+            self.reported_volume = Some(polled);
+        }
+        self.device_id = Some(current);
+        Ok([changed.map(MacosEvent::VolumeChanged), route]
             .into_iter()
             .flatten()
             .map(Cmd::message)
-            .fold(rebind.into_iter().collect(), Cmd::then)
+            .fold(rebind.into_iter().collect(), Cmd::then))
     }
 }
 
@@ -73,19 +74,18 @@ impl Machine for Hardware {
         &mut self,
         message: HardwareMessage,
     ) -> Result<Self::Effect, Unhandled> {
-        let mut next = *self;
-        let cmd = match message {
-            HardwareMessage::Polled(poll) => next.polled(poll),
-            HardwareMessage::VolumeSet(volume) => {
-                next.pending_volume = Some(volume);
-                Cmd::none()
+        match message {
+            HardwareMessage::Polled(poll) => self.polled(poll),
+            HardwareMessage::VolumeSet(volume)
+                if self.pending_volume == Some(volume) =>
+            {
+                Err(Unhandled)
             }
-        };
-        if next == *self && cmd == Cmd::none() {
-            return Err(Unhandled);
+            HardwareMessage::VolumeSet(volume) => {
+                self.pending_volume = Some(volume);
+                Ok(Cmd::none())
+            }
         }
-        *self = next;
-        Ok(cmd)
     }
 }
 
@@ -226,6 +226,36 @@ mod tests {
     #[test]
     fn a_refused_poll_leaves_the_hardware_as_it_was() {
         let mut hardware = after_our_write();
+        let before = hardware;
+        assert_eq!(
+            hardware.transition(poll((1, 1), Some(percent(30)))),
+            Err(Unhandled)
+        );
+        assert_eq!(hardware, before);
+    }
+
+    #[test]
+    fn a_repeated_volume_set_is_refused() {
+        let mut hardware = Hardware::default();
+        assert_eq!(
+            hardware.transition(HardwareMessage::VolumeSet(percent(40))),
+            Ok(Cmd::none())
+        );
+        let before = hardware;
+        assert_eq!(
+            hardware.transition(HardwareMessage::VolumeSet(percent(40))),
+            Err(Unhandled)
+        );
+        assert_eq!(hardware, before);
+    }
+
+    #[test]
+    fn an_unchanged_poll_is_refused() {
+        let mut hardware = Hardware {
+            pending_volume: None,
+            reported_volume: Some(percent(30)),
+            device_id: Some(1),
+        };
         let before = hardware;
         assert_eq!(
             hardware.transition(poll((1, 1), Some(percent(30)))),

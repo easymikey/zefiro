@@ -19,7 +19,12 @@ pub fn run<S: Shell>(
 where
     S::Error: std::error::Error + 'static,
 {
-    let ended = EventLoop::new(&mut runtime, shell, input_receiver).drive();
+    let mut event_loop = EventLoop::new(&mut runtime, shell, input_receiver);
+    let ended = event_loop.drive();
+    if ended.is_err() {
+        event_loop.step_and_repaint(Message::Quit, RepaintCause::Event);
+        event_loop.run_shell_effects();
+    }
     runtime.drain();
     ended
 }
@@ -60,7 +65,7 @@ where
         }
     }
 
-    pub(crate) fn drive(mut self) -> Result<(), Error<S::Error>> {
+    pub(crate) fn drive(&mut self) -> Result<(), Error<S::Error>> {
         let mut frame_due = self.shell.frame_due(&self.runtime.frame(Instant::now()));
         loop {
             let deadline = self.deadline(Instant::now(), frame_due);
@@ -69,15 +74,17 @@ where
             let now = Instant::now();
             self.fire_timers(now);
             self.report_congestion();
-            let effects = self.runtime.take_shell_effects();
-            for effect in effects {
-                self.shell.effect(effect);
-            }
+            self.run_shell_effects();
             if self.runtime.flow().is_break() {
                 return Ok(());
             }
-            frame_due = self.shell.frame_due(&self.runtime.frame(now));
-            self.paint_if_due(now, frame_due)?;
+            frame_due = self.paint_if_due(now)?;
+        }
+    }
+
+    fn run_shell_effects(&mut self) {
+        for effect in self.runtime.take_shell_effects() {
+            self.shell.effect(effect);
         }
     }
 
@@ -212,6 +219,7 @@ fn ready<T>(receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
 #[cfg(test)]
 pub(crate) mod tests {
     use std::{
+        cell::RefCell,
         convert::Infallible,
         ops::ControlFlow,
         path::Path,
@@ -248,7 +256,7 @@ pub(crate) mod tests {
         event_loop::EventLoop,
         latest::LatestSenders,
         port::Port,
-        repaint::{Repaint, RepaintCause},
+        repaint::{FRAME_INTERVAL, Repaint, RepaintCause},
         runtime::Runtime,
         shell::{Frame, FrameDue, Painted, Reaction, Shell, ShellEffect},
         wiring::{INBOX_SLOTS, Wiring},
@@ -271,7 +279,10 @@ pub(crate) mod tests {
     pub(crate) struct Scripted {
         key_sender: Sender<Key>,
         quit_after: usize,
-        key: Key,
+        key: Option<Key>,
+        frame_duration: Option<Duration>,
+        asked_moments: RefCell<Vec<Moment>>,
+        painted_moments: Vec<Moment>,
         cover_side: Option<Pixels>,
         shell_effects: Vec<ShellEffect>,
         pub(crate) toasts: Vec<Option<String>>,
@@ -284,7 +295,10 @@ pub(crate) mod tests {
             Self {
                 key_sender,
                 quit_after,
-                key: Key::Stray,
+                key: Some(Key::Stray),
+                frame_duration: None,
+                asked_moments: RefCell::new(Vec::new()),
+                painted_moments: Vec::new(),
                 cover_side: None,
                 shell_effects: Vec::new(),
                 toasts: Vec::new(),
@@ -317,24 +331,32 @@ pub(crate) mod tests {
             self.shell_effects.push(shell_effect);
         }
 
-        fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
-            FrameDue::Settled
+        fn frame_due(&self, frame: &Frame<'_>) -> FrameDue {
+            self.asked_moments.borrow_mut().push(frame.now);
+            self.frame_duration.map_or(FrameDue::Settled, |interval| {
+                FrameDue::At(self.painted_moments.last().map_or(frame.now, |last| {
+                    Moment::new(last.since_epoch() + interval)
+                }))
+            })
         }
 
         fn paint(&mut self, frame: Frame<'_>) -> Result<Painted, Infallible> {
             if frame.latest_receivers.theme_receiver.take().is_some() {
                 self.orders.push(Order::Reloaded);
             }
+            self.painted_moments.push(frame.now);
             let toast = frame.model.workspace.toasts.first();
             self.toasts.push(toast.map(|toast| toast.title.clone()));
             let next = if self.toasts.len() >= self.quit_after {
-                Key::Quit
+                Some(Key::Quit)
             } else {
                 self.key
             };
-            self.key_sender
-                .send(next)
-                .expect("the key receiver outlives the shell");
+            if let Some(next) = next {
+                self.key_sender
+                    .send(next)
+                    .expect("the key receiver outlives the shell");
+            }
             Ok(Painted {
                 cover_side: self.cover_side,
                 visible_rows: frame.model.workspace.visible_rows,
@@ -458,6 +480,28 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_frame_due_paint_asks_once_per_iteration_with_no_empty_iteration() {
+        let mut fixture = fixture();
+        let (keys, input) = unbounded();
+        let mut shell_scripted = Scripted::new(keys, 4);
+        shell_scripted.key = None;
+        shell_scripted.frame_duration = Some(FRAME_INTERVAL);
+
+        let ended =
+            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input).drive();
+
+        assert!(matches!(ended, Ok(())));
+        assert_eq!(shell_scripted.painted_moments.len(), 4);
+        let mut asked_moments = shell_scripted.asked_moments.take();
+        asked_moments.retain(|at| !shell_scripted.painted_moments.contains(at));
+        assert!(
+            asked_moments.len() <= 1,
+            "asked between paints: {asked_moments:?}"
+        );
+        fixture.runtime.drain();
+    }
+
+    #[test]
     fn a_rejection_repaints_nothing() {
         let mut fixture = fixture();
         fixture
@@ -507,7 +551,7 @@ pub(crate) mod tests {
         let (keys, input) = unbounded();
         keys.send(Key::Ping).unwrap();
         let mut shell_scripted = Scripted::new(keys, 2);
-        shell_scripted.key = Key::Ping;
+        shell_scripted.key = Some(Key::Ping);
         shell_scripted.cover_side = Some(Pixels(64));
 
         let ended =

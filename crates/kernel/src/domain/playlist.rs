@@ -106,7 +106,7 @@ impl PlayOrder {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Playlist {
     pub tracks: Vec<Arc<Track>>,
     pub cursor: Cursor,

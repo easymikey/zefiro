@@ -9,7 +9,7 @@ use crate::{
         workspace::Workspace,
     },
     message::{ConfigReload, Timer},
-    update::keymap::bindings::Keymap,
+    update::{keymap::bindings::Keymap, machine::Unhandled},
 };
 
 impl Workspace {
@@ -17,16 +17,16 @@ impl Workspace {
         &mut self,
         keymap_overrides: KeymapOverrides,
         revisions: &mut Revisions,
-    ) -> Cmd {
+    ) -> Result<Cmd, Unhandled> {
         if self.keymap.overrides() == &keymap_overrides {
-            return Cmd::none();
+            return Err(Unhandled);
         }
         self.keymap = Keymap::new(keymap_overrides);
         let result = self
             .keymap
             .diagnostic()
             .map_or(Ok(()), |diagnostic| Err(ConfigError::Parse(diagnostic)));
-        let cmd = self.config_reloaded(
+        let cmd = self.config_reported(
             ConfigReload {
                 name: ConfigName::Config,
                 result,
@@ -34,7 +34,7 @@ impl Workspace {
             revisions,
         );
         revisions.config.advance();
-        cmd
+        Ok(cmd)
     }
 
     pub(crate) fn show(&mut self, toast: Toast, revisions: &mut Revisions) -> Cmd {
@@ -91,6 +91,22 @@ impl Workspace {
     }
 
     pub(crate) fn config_reloaded(
+        &mut self,
+        reload: ConfigReload,
+        revisions: &mut Revisions,
+    ) -> Result<Cmd, Unhandled> {
+        let stored = self.config_errors.get(&reload.name);
+        let is_unchanged = match &reload.result {
+            Err(error) => stored == Some(error),
+            Ok(()) => stored.is_none(),
+        };
+        if is_unchanged {
+            return Err(Unhandled);
+        }
+        Ok(self.config_reported(reload, revisions))
+    }
+
+    pub(crate) fn config_reported(
         &mut self,
         reload: ConfigReload,
         revisions: &mut Revisions,

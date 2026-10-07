@@ -71,7 +71,7 @@ impl Deck {
         );
         match preload_mode {
             PreloadMode::Gapless => {
-                output.append(wrapped);
+                output.current.append(wrapped);
                 output.incoming_control = Some(control);
             }
             PreloadMode::Crossfade(speed) => {
@@ -162,7 +162,7 @@ impl Deck {
         };
         let (wrapped, control) =
             envelope(decoder, revision, self.callback_sender.clone());
-        output.append(wrapped);
+        output.current.append(wrapped);
         output.current_control = Some(control);
     }
 

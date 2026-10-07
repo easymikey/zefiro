@@ -9,6 +9,7 @@ use kernel::{
         cursor::Cursor,
         direction::Direction,
         index::ViewIndex,
+        key::KeyPress,
         model::Model,
         overlay::{Overlay, OverlayName, TrashCandidate},
         player::{AbLoop, PausedBy, Player},
@@ -17,13 +18,14 @@ use kernel::{
         time::Moment,
         transport::{OutputError, Transport},
     },
-    message::{AudioError, AudioEvent, Message, PlaybackRequest, Timer},
+    message::{AudioError, AudioEvent, LibraryEvent, Message, PlaybackRequest, Timer},
     update::{machine::Unhandled, update},
 };
 use rstest::{Context, rstest};
 
 use crate::support::{
     dated_track,
+    keymap::character,
     model_playing_at,
     model_with_tracks,
     playing_model,
@@ -135,7 +137,11 @@ fn resolved(message: Message, model: &Model) -> Message {
 )]
 #[case::confirm_trash_captures_the_selected_track_and_trashes_it(
     moon_library_scanned(),
-    vec![open(OverlayName::ConfirmTrash), confirm()]
+    vec![
+        open(OverlayName::ConfirmTrash),
+        confirm(),
+        Message::Library(LibraryEvent::Trashed("/m/0.flac".into())),
+    ]
 )]
 #[case::confirm_trash_cancelled_trashes_nothing(
     moon_library_scanned(),
@@ -462,12 +468,12 @@ fn a_refused_message_leaves_the_model_alone(
     #[case] message: Message,
     #[case] unhandled: Unhandled,
 ) {
-    let before = format!("{model:?}");
+    let before = model.clone();
     assert_eq!(
         update(&mut model, message, Moment::default()).err(),
         Some(unhandled)
     );
-    assert_eq!(format!("{model:?}"), before);
+    assert_eq!(model, before);
 }
 
 fn paused_model() -> Model {
@@ -547,13 +553,13 @@ fn a_self_loop_sends_no_position_and_arms_no_timer(
 #[test]
 fn a_self_loop_sleep_keeps_the_revisions() {
     let mut model = sleeping_paused_model();
-    let before = format!("{:?}", model.revisions);
+    let before = model.revisions;
 
     let message = awaited(sleep_fires(), &model);
 
     update(&mut model, message, Moment::default()).expect("a fired sleep is answered");
 
-    assert_eq!(format!("{:?}", model.revisions), before);
+    assert_eq!(model.revisions, before);
 }
 
 #[test]
@@ -569,4 +575,26 @@ fn a_refused_follow_up_keeps_the_parents_effects() {
 
     assert_eq!(effects, Ok(vec![Effect::Animate(Cue::OverlayClosed)]));
     assert_eq!(model.workspace.overlay, None);
+}
+
+#[test]
+fn the_quit_key_while_shuffle_is_pending_answers_like_a_quit() {
+    let pending = || {
+        let mut model = model_with_tracks(3);
+        model.playlist.play_order = PlayOrder::ShufflePending;
+        model
+    };
+    let key = character('q');
+    let mut pressed_model = pending();
+    let mut quit_model = pending();
+
+    let pressed = update(
+        &mut pressed_model,
+        Message::Key(KeyPress { key, typed: key }),
+        Moment::default(),
+    );
+    let quit = update(&mut quit_model, Message::Quit, Moment::default());
+
+    assert_eq!(pressed, quit);
+    assert_eq!(pressed_model, quit_model);
 }

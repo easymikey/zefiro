@@ -15,7 +15,6 @@ use crate::ffi::{self, Trigger};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RemoteInput {
     Press(PlaybackRequest),
-    HoldBegan(PlaybackRequest),
     HoldEnded,
     Scrub(Duration),
 }
@@ -52,7 +51,7 @@ impl RemoteInput {
 
     fn from_phase(request: PlaybackRequest, phase: MPSeekCommandEventType) -> Self {
         if phase == MPSeekCommandEventType::BeginSeeking {
-            RemoteInput::HoldBegan(request)
+            RemoteInput::Press(request)
         } else {
             RemoteInput::HoldEnded
         }
@@ -81,7 +80,7 @@ mod tests {
     #[rstest]
     #[case::begin(
         MPSeekCommandEventType::BeginSeeking,
-        RemoteInput::HoldBegan(PlaybackRequest::SeekBy { direction: Direction::Next, by: SEEK_MEDIUM })
+        RemoteInput::Press(PlaybackRequest::SeekBy { direction: Direction::Next, by: SEEK_MEDIUM })
     )]
     #[case::end(MPSeekCommandEventType::EndSeeking, RemoteInput::HoldEnded)]
     fn only_the_start_of_a_hold_seeks(

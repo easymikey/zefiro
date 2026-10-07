@@ -25,41 +25,28 @@ pub enum SettingRow {
     Appearance(AppearanceField),
 }
 
-const FIXED_ROWS: [SettingRow; 4] = [
-    SettingRow::Crossfade,
-    SettingRow::ReplayGain,
-    SettingRow::OutputDevice,
-    SettingRow::SleepPresets,
-];
-
 impl SettingRow {
-    #[must_use]
-    pub fn all(appearance_row_choices: &[AppearanceRowChoice]) -> Vec<SettingRow> {
-        let appearance_row = |appearance_row_choice: &AppearanceRowChoice| {
-            SettingRow::Appearance(appearance_row_choice.row.field)
-        };
-        let (leading, rest) = match appearance_row_choices.split_first() {
-            Some((leading, rest)) => (Some(appearance_row(leading)), rest),
-            None => (None, appearance_row_choices),
-        };
-        leading
-            .into_iter()
-            .chain([SettingRow::Theme])
-            .chain(rest.iter().map(appearance_row))
-            .chain(FIXED_ROWS)
-            .collect()
-    }
+    pub const ALL: [SettingRow; 14] = [
+        SettingRow::Appearance(AppearanceField::Preset),
+        SettingRow::Theme,
+        SettingRow::Appearance(AppearanceField::CoverMode),
+        SettingRow::Appearance(AppearanceField::CoverBrackets),
+        SettingRow::Appearance(AppearanceField::FormatChips),
+        SettingRow::Appearance(AppearanceField::SpeedChip),
+        SettingRow::Appearance(AppearanceField::ProgressTime),
+        SettingRow::Appearance(AppearanceField::KeyHints),
+        SettingRow::Appearance(AppearanceField::Animations),
+        SettingRow::Appearance(AppearanceField::LayoutMode),
+        SettingRow::Crossfade,
+        SettingRow::ReplayGain,
+        SettingRow::OutputDevice,
+        SettingRow::SleepPresets,
+    ];
 
     #[must_use]
-    pub fn control(
-        self,
-        appearance_row_choices: &[AppearanceRowChoice],
-    ) -> Option<AppearanceControl> {
+    pub fn control(self) -> Option<AppearanceControl> {
         match self {
-            SettingRow::Appearance(field) => appearance_row_choices
-                .iter()
-                .find(|appearance_row_choice| appearance_row_choice.row.field == field)
-                .map(|appearance_row_choice| appearance_row_choice.row.control),
+            SettingRow::Appearance(field) => Some(field.row().control),
             SettingRow::Theme
             | SettingRow::Crossfade
             | SettingRow::ReplayGain
@@ -69,10 +56,10 @@ impl SettingRow {
     }
 
     #[must_use]
-    pub fn activates(self, appearance_row_choices: &[AppearanceRowChoice]) -> bool {
+    pub fn activates(self) -> bool {
         match self {
             SettingRow::Crossfade => false,
-            SettingRow::Appearance(_) => self.control(appearance_row_choices).is_some(),
+            SettingRow::Appearance(_) => self.control().is_some(),
             SettingRow::Theme
             | SettingRow::ReplayGain
             | SettingRow::OutputDevice
@@ -85,7 +72,6 @@ impl SettingRow {
 pub enum AppearanceControl {
     Toggle,
     Cycle(OptionCount),
-    Step(OptionCount),
 }
 
 impl AppearanceControl {
@@ -96,7 +82,7 @@ impl AppearanceControl {
                 Some(count) => count,
                 None => OptionCount::ONE,
             },
-            AppearanceControl::Cycle(count) | AppearanceControl::Step(count) => count,
+            AppearanceControl::Cycle(count) => count,
         }
     }
 }
@@ -157,24 +143,9 @@ impl Choice {
         match self {
             Choice::Mixed => clamped(count, 0),
             Choice::Option(index) => {
-                let next = match control {
-                    AppearanceControl::Toggle | AppearanceControl::Cycle(_) => {
-                        direction.wrapped(index.get(), count.get())
-                    }
-                    AppearanceControl::Step(_) => {
-                        saturated(index.get(), count.get(), direction)
-                    }
-                };
-                clamped(count, next)
+                clamped(count, direction.wrapped(index.get(), count.get()))
             }
         }
-    }
-}
-
-fn saturated(current: usize, len: usize, direction: Direction) -> usize {
-    match direction {
-        Direction::Next => current.saturating_add(1).min(len.saturating_sub(1)),
-        Direction::Previous => current.saturating_sub(1),
     }
 }
 
@@ -200,11 +171,8 @@ pub struct AppearanceRowChoice {
 
 impl SettingRow {
     #[must_use]
-    pub fn first(appearance_row_choices: &[AppearanceRowChoice]) -> Self {
-        SettingRow::all(appearance_row_choices)
-            .first()
-            .copied()
-            .unwrap_or(SettingRow::Theme)
+    pub const fn first() -> Self {
+        SettingRow::Appearance(AppearanceField::Preset)
     }
 
     #[must_use]
@@ -214,15 +182,6 @@ impl SettingRow {
         let last = rows.len().saturating_sub(1);
         let next = current.saturating_add_signed(delta).min(last);
         rows.get(next).copied().unwrap_or(self)
-    }
-
-    #[must_use]
-    pub fn kept(self, rows: &[SettingRow]) -> Self {
-        if rows.contains(&self) {
-            self
-        } else {
-            rows.first().copied().unwrap_or(self)
-        }
     }
 }
 
@@ -270,18 +229,6 @@ mod tests {
         control: AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
         direction: Direction::Previous,
         expected: option(3, 2),
-    })]
-    #[case::step_stops_at_the_top(StepRow {
-        choice: Choice::Option(option(3, 2)),
-        control: AppearanceControl::Step(OptionCount::new(3).unwrap()),
-        direction: Direction::Next,
-        expected: option(3, 2),
-    })]
-    #[case::step_stops_at_0(StepRow {
-        choice: Choice::Option(option(3, 0)),
-        control: AppearanceControl::Step(OptionCount::new(3).unwrap()),
-        direction: Direction::Previous,
-        expected: option(3, 0),
     })]
     #[case::mixed_up(StepRow {
         choice: Choice::Mixed,

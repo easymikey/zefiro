@@ -1,5 +1,6 @@
 ---
 source: crates/sifr/src/shell/presentation.rs
+assertion_line: 85
 expression: colors
 ---
 Colors {
@@ -33,9 +34,9 @@ Colors {
     ),
     favorite: Rgb(
         [
-            234,
-            157,
-            52,
+            117,
+            78,
+            26,
         ],
     ),
     selection_foreground: Rgb(

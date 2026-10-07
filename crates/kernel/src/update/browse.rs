@@ -9,7 +9,7 @@ use crate::{
         favorites::Favorites,
         geometry::Cells,
         history::HistoryEntry,
-        index::{TrackIndex, ViewIndex},
+        index::ViewIndex,
         library::{Library, sort_indices},
         model::ScanStatus,
         overlay::Overlay,
@@ -17,7 +17,7 @@ use crate::{
         playlist::{PlayOrder, Playlist, PlaylistSource, index_of},
         time::Moment,
         toast::Toast,
-        track::TrackSource,
+        track::{Track, TrackSource},
         workspace::{Browse, Workspace},
     },
     message::{BrowseRequest, Message, QueueRequest},
@@ -41,9 +41,6 @@ pub(crate) fn update(
     request: BrowseRequest,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    if let BrowseRequest::Trash(source) = &request {
-        return trash_track(&mut parts, source);
-    }
     let len = parts.playback_parts.playlist.tracks.len();
     let workspace = &mut *parts.playback_parts.workspace;
     if is_refused(&request, len, workspace.visible_rows) {
@@ -62,7 +59,10 @@ pub(crate) fn update(
             let moved = workspace.browse.cursor.last();
             move_cursor(&mut workspace.browse.cursor, moved)
         }
-        BrowseRequest::CycleSort => Ok(cycle_sort(&mut parts)),
+        BrowseRequest::CycleSort => {
+            cycle_sort(&mut parts);
+            Ok(Cmd::none())
+        }
         BrowseRequest::ToggleFavorite => toggle_favorite(&mut parts),
         BrowseRequest::PlaySelected => {
             let selected = workspace.browse.selected();
@@ -81,7 +81,7 @@ pub(crate) fn update(
             }))
             .into())
         }
-        BrowseRequest::Trash(_) => Err(Unhandled),
+        BrowseRequest::Trash(source) => trash_track(&parts, &source),
     }
 }
 
@@ -116,24 +116,20 @@ pub(crate) fn queue(
         browse,
         queue,
     } = parts;
-    let track_source = source_at(playlist, ViewIndex::new(browse.cursor.index()));
-    match (request, track_source) {
-        (QueueRequest::ToggleAt(index), _) => source_at(playlist, index)
+    let at_cursor =
+        || source_at(playlist, ViewIndex::new(browse.cursor.index())).ok_or(Unhandled);
+    match request {
+        QueueRequest::ToggleAt(index) => source_at(playlist, index)
             .map(|source| toggle_queued(queue, source))
             .ok_or(Unhandled),
-        (QueueRequest::ToggleHistoryEntry(position), _) => {
+        QueueRequest::ToggleHistoryEntry(position) => {
             let history_entry = history.get(position).ok_or(Unhandled)?;
             Ok(enqueue_history_entry(queue, playlist, history_entry))
         }
-        (_, None) => Err(Unhandled),
-        (QueueRequest::Toggle, Some(track_source)) => {
-            Ok(toggle_queued(queue, track_source))
-        }
-        (QueueRequest::PlayNext, Some(track_source)) => play_next(queue, track_source),
-        (QueueRequest::Dequeue, Some(track_source)) => dequeue(queue, &track_source),
-        (QueueRequest::Move(direction), Some(track_source)) => {
-            move_in_queue(queue, &track_source, direction)
-        }
+        QueueRequest::Toggle => Ok(toggle_queued(queue, at_cursor()?)),
+        QueueRequest::PlayNext => play_next(queue, at_cursor()?),
+        QueueRequest::Dequeue => dequeue(queue, &at_cursor()?),
+        QueueRequest::Move(direction) => move_in_queue(queue, &at_cursor()?, direction),
     }
 }
 
@@ -142,12 +138,11 @@ fn enqueue_history_entry(
     playlist: &Playlist,
     history_entry: &HistoryEntry,
 ) -> Cmd {
-    index_of(&playlist.tracks, &history_entry.track_source)
-        .and_then(|index| source_at(playlist, ViewIndex::new(index)))
-        .map_or_else(
-            || Cmd::message(Message::Toast(Toast::info("Not in library".to_string()))),
-            |source| toggle_queued(queue, source),
-        )
+    if index_of(&playlist.tracks, &history_entry.track_source).is_some() {
+        toggle_queued(queue, history_entry.track_source.clone())
+    } else {
+        Cmd::message(Message::Toast(Toast::info("Not in library".to_string())))
+    }
 }
 
 fn source_at(playlist: &Playlist, index: ViewIndex) -> Option<TrackSource> {
@@ -241,83 +236,71 @@ fn move_in_queue(
     Ok(Cue::QueueChanged.into())
 }
 
-fn cycle_sort(parts: &mut BrowseParts<'_>) -> Cmd {
+fn cycle_sort(parts: &mut BrowseParts<'_>) {
     let browse = &mut parts.playback_parts.workspace.browse;
     browse.sort_key = cycled(browse.sort_key, Direction::Next);
     let sort_key = browse.sort_key;
     let Some(library) = parts.library.as_mut() else {
-        return Cmd::none();
+        return;
     };
     library.track_indexes = sort_indices(&library.tracks, sort_key, parts.favorites);
     resync_playlist(
         *parts.playlist_source,
+        library,
         ResyncParts {
-            library,
             workspace: &mut *parts.playback_parts.workspace,
             player: parts.playback_parts.player,
             playlist: parts.playback_parts.playlist,
         },
     );
-    Cmd::none()
 }
 
 pub(crate) struct ResyncParts<'a> {
-    pub(crate) library: &'a mut Library,
     pub(crate) workspace: &'a mut Workspace,
     pub(crate) player: &'a Player,
     pub(crate) playlist: &'a mut Playlist,
 }
 
 fn trash_track(
-    parts: &mut BrowseParts<'_>,
+    parts: &BrowseParts<'_>,
     source: &TrackSource,
 ) -> Result<Cmd, Unhandled> {
-    let playback = &mut parts.playback_parts;
-    let library = parts.library.as_mut().ok_or(Unhandled)?;
-    let removed_position = index_of(&library.tracks, source).ok_or(Unhandled)?;
-    let track = library.tracks.remove(removed_position);
-    library.track_indexes = library
-        .track_indexes
+    let library = parts.library.as_ref().ok_or(Unhandled)?;
+    let path = library
+        .tracks
         .iter()
-        .filter(|index| index.get() != removed_position)
-        .map(|index| {
-            if index.get() > removed_position {
-                TrackIndex::new(index.get() - 1)
-            } else {
-                *index
-            }
-        })
-        .collect();
-    playback.queue.retain(|queued| queued != source);
-    resync_playlist(
-        *parts.playlist_source,
-        ResyncParts {
-            library,
-            workspace: &mut *playback.workspace,
-            player: playback.player,
-            playlist: playback.playlist,
-        },
-    );
-    Ok(Cmd::from_iter([
-        Effect::Library(LibraryCmd::Disk(DiskCmd::Trash(track.path().to_path_buf()))),
-        Effect::Animate(Cue::TrackTrashed),
-    ]))
+        .find(|track| track.source() == source)
+        .ok_or(Unhandled)?
+        .path()
+        .to_path_buf();
+    Ok(Effect::Library(LibraryCmd::Disk(DiskCmd::Trash(path))).into())
 }
 
-pub(crate) fn resync_playlist(source: PlaylistSource, parts: ResyncParts<'_>) {
-    if source == PlaylistSource::Named {
-        return;
+pub(crate) fn resync_playlist(
+    source: PlaylistSource,
+    library: &Library,
+    parts: ResyncParts<'_>,
+) {
+    match source {
+        PlaylistSource::Library => {
+            let tracks = library
+                .view_tracks()
+                .map(|(_, track)| Arc::clone(track))
+                .collect();
+            relist(tracks, parts);
+        }
+        PlaylistSource::Named => {}
     }
-    let ResyncParts {
-        library,
+}
+
+pub(crate) fn relist(
+    tracks: Vec<Arc<Track>>,
+    ResyncParts {
         workspace,
         player,
         playlist,
-    } = parts;
-    let tracks: Vec<_> = library
-        .view_tracks()
-        .map(|(_, track)| Arc::clone(track))
-        .collect();
+    }: ResyncParts<'_>,
+) {
     let anchor = player
         .current()
         .and_then(|track| index_of(&tracks, track.source()))

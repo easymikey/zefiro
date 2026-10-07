@@ -12,10 +12,10 @@ use crate::{
         sleep::SleepTimer,
         sleep_presets::SleepPresets,
         time::Moment,
-        transport::{OutputError, OutputStatus, Transport},
+        transport::{OutputStatus, Transport},
     },
     message::Timer,
-    update::machine::{Machine, Unhandled},
+    update::machine::{Machine, Unhandled, replace},
 };
 
 #[derive(Debug, Clone)]
@@ -29,9 +29,6 @@ pub enum TransportMessage {
         now: Moment,
     },
     AbMark(Option<Duration>),
-    OutputLost(OutputError),
-    OutputReady,
-    TrackChanged,
     SleepFired,
 }
 
@@ -76,18 +73,6 @@ impl Machine for Transport {
                 replace(&mut self.ab_loop, ab_loop)?;
                 Ok(Cmd::none())
             }
-            TransportMessage::OutputLost(error) => {
-                replace(&mut self.output_status, OutputStatus::Lost(error))?;
-                Ok(Cmd::none())
-            }
-            TransportMessage::OutputReady => {
-                replace(&mut self.output_status, OutputStatus::Ready)?;
-                Ok(Cmd::none())
-            }
-            TransportMessage::TrackChanged => {
-                replace(&mut self.ab_loop, None)?;
-                Ok(Cmd::none())
-            }
             TransportMessage::SleepFired => {
                 replace(&mut self.sleep_timer, None)?;
                 Ok(Cmd::none())
@@ -96,12 +81,13 @@ impl Machine for Transport {
     }
 }
 
-fn replace<T: PartialEq>(field: &mut T, next: T) -> Result<(), Unhandled> {
-    if *field == next {
-        Err(Unhandled)
-    } else {
-        *field = next;
-        Ok(())
+impl Transport {
+    pub(crate) fn output_ready(&mut self) {
+        self.output_status = OutputStatus::Ready;
+    }
+
+    pub(crate) fn track_changed(&mut self) {
+        self.ab_loop = None;
     }
 }
 
@@ -309,21 +295,6 @@ mod tests {
         mark(20),
         (looping(both_marked(10, 20)), Cmd::none())
     )]
-    #[case::output_lost_records_the_error(
-        Transport::default(),
-        TransportMessage::OutputLost(OutputError::Backend),
-        (output_lost(), Cmd::none())
-    )]
-    #[case::output_ready_clears_the_loss(
-        output_lost(),
-        TransportMessage::OutputReady,
-        (Transport::default(), Cmd::none())
-    )]
-    #[case::track_changed_clears_the_loop(
-        looping(both_marked(10, 20)),
-        TransportMessage::TrackChanged,
-        (looping(None), Cmd::none())
-    )]
     #[case::sleep_fired_clears_the_timer(
         sleeping(Some((1, 30))),
         TransportMessage::SleepFired,
@@ -371,7 +342,6 @@ mod tests {
     )]
     #[case::ab_mark_at_the_a_point(looping(start_marked(10)), mark(10))]
     #[case::ab_mark_before_the_a_point(looping(start_marked(10)), mark(5))]
-    #[case::track_changed_without_a_loop(looping(None), TransportMessage::TrackChanged)]
     #[case::sleep_fired_without_a_timer(sleeping(None), TransportMessage::SleepFired)]
     fn a_transport_message_that_changes_nothing_is_refused(
         #[case] mut transport: Transport,
@@ -384,23 +354,20 @@ mod tests {
     }
 
     #[test]
-    fn an_output_status_that_does_not_change_is_refused() {
-        let mut ready_transport = Transport::default();
-        let mut lost_transport = output_lost();
+    fn output_ready_clears_the_loss() {
+        let mut transport = output_lost();
 
-        assert_eq!(
-            ready_transport.transition(TransportMessage::OutputReady),
-            Err(Unhandled)
-        );
-        assert_eq!(
-            lost_transport
-                .transition(TransportMessage::OutputLost(OutputError::Backend)),
-            Err(Unhandled)
-        );
-        assert_eq!(ready_transport.output_status, OutputStatus::Ready);
-        assert_eq!(
-            lost_transport.output_status,
-            OutputStatus::Lost(OutputError::Backend)
-        );
+        transport.output_ready();
+
+        assert_eq!(state(&transport), state(&Transport::default()));
+    }
+
+    #[test]
+    fn track_changed_clears_the_loop() {
+        let mut transport = looping(both_marked(10, 20));
+
+        transport.track_changed();
+
+        assert_eq!(state(&transport), state(&looping(None)));
     }
 }

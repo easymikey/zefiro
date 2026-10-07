@@ -75,6 +75,10 @@ impl ConfigErrors {
         !is_unchanged
     }
 
+    pub(crate) fn get(&self, name: &ConfigName) -> Option<&ConfigError> {
+        self.0.get(name)
+    }
+
     pub(crate) fn clear(&mut self, name: &ConfigName) -> Option<ConfigError> {
         self.0.remove(name)
     }

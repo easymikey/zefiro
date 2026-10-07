@@ -26,7 +26,7 @@ pub(crate) enum FileStream<M> {
         events: Events,
         changed: Changed<M>,
     },
-    Lost(Changed<M>),
+    Lost,
 }
 
 fn started() -> Result<(RecommendedWatcher, Events), IoError> {
@@ -42,7 +42,7 @@ impl<M> FileStream<M> {
     pub(crate) fn events(&self) -> Option<&Events> {
         match self {
             Self::Watching { events, .. } => Some(events),
-            Self::Idle | Self::Lost(_) => None,
+            Self::Idle | Self::Lost => None,
         }
     }
 
@@ -51,10 +51,10 @@ impl<M> FileStream<M> {
             Self::Watching {
                 watcher, events, ..
             } => (watcher, events),
-            Self::Idle | Self::Lost(_) => match started() {
+            Self::Idle | Self::Lost => match started() {
                 Ok(started) => started,
                 Err(error) => {
-                    *self = Self::Lost(changed);
+                    *self = Self::Lost;
                     return Some(changed(Err(error)));
                 }
             },
@@ -93,7 +93,7 @@ impl<M> FileStream<M> {
         &self,
         received: Result<notify::Result<notify::Event>, RecvError>,
     ) -> Option<M> {
-        let (Self::Watching { changed, .. } | Self::Lost(changed)) = self else {
+        let Self::Watching { changed, .. } = self else {
             return None;
         };
         let event = received.ok()?;
@@ -107,14 +107,14 @@ impl<M> FileStream<M> {
             return None;
         };
         let changed = *changed;
-        *self = Self::Lost(changed);
+        *self = Self::Lost;
         Some(changed(Err(IoError::Other)))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, time::Duration};
+    use std::time::Duration;
 
     use crossbeam_channel::RecvError;
     use kernel::domain::io_error::IoError;
@@ -208,7 +208,7 @@ mod tests {
         match file_stream {
             FileStream::Idle => Stage::Idle,
             FileStream::Watching { .. } => Stage::Watching,
-            FileStream::Lost(_) => Stage::Lost,
+            FileStream::Lost => Stage::Lost,
         }
     }
 
@@ -268,15 +268,14 @@ mod tests {
     }
 
     #[test]
-    fn a_lost_stream_still_hears_but_watches_no_directory() {
-        let mut file_stream: FileStream<Result<(), IoError>> =
-            FileStream::Lost(as_change);
+    fn a_lost_stream_hears_nothing_and_watches_no_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut file_stream = FileStream::Idle;
+        assert_eq!(file_stream.watch(directory.path(), as_change), None);
+        assert_eq!(file_stream.lose(), Some(Err(IoError::Other)));
 
-        assert_eq!(
-            file_stream.changed(Ok(Ok(notify::Event::default()))),
-            Some(Ok(()))
-        );
-        assert_eq!(file_stream.unwatch(Path::new("/music")), None);
+        assert_eq!(file_stream.changed(Ok(Ok(notify::Event::default()))), None);
+        assert_eq!(file_stream.unwatch(directory.path()), None);
         assert!(file_stream.events().is_none());
     }
 }

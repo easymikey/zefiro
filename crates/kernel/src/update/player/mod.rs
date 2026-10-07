@@ -54,10 +54,6 @@ pub enum PlayerMessage {
     },
     SleepFired(Moment),
     OutputLost(Moment),
-    Start {
-        track: Arc<Track>,
-        stamp: Stamp,
-    },
     Loaded {
         duration: Option<Duration>,
         anchor: Anchor,
@@ -90,7 +86,12 @@ impl Machine for Player {
         match message {
             PlayerMessage::Toggle { current, stamp } => self.toggle(current, stamp),
             PlayerMessage::OutputLost(now) => self.output_lost(now),
-            PlayerMessage::Stop => Ok(self.stop()),
+            PlayerMessage::Stop => match self {
+                Player::Loading(..)
+                | Player::Playing { .. }
+                | Player::Paused { .. } => Ok(self.stop()),
+                Player::Stopped => Err(Unhandled),
+            },
             PlayerMessage::Hold(now) => self.pause(now, PausedBy::Overlay),
             PlayerMessage::Release(anchor) => self.release(anchor),
             PlayerMessage::Seek { target, now } => self.seek(target, now),
@@ -100,9 +101,6 @@ impl Machine for Player {
                     Err(Unhandled)
                 }
             },
-            PlayerMessage::Start { track, stamp } => {
-                Ok(self.start(track, StartOrigin::User(stamp)))
-            }
             PlayerMessage::Loaded { duration, anchor } => self.loaded(duration, anchor),
             PlayerMessage::Error(error) => self.failed(&error),
             PlayerMessage::SpeedChanged(anchor) => match self {
@@ -174,6 +172,18 @@ pub(crate) fn update_player(
     Ok(cmd.then(armed))
 }
 
+pub(crate) fn start(
+    playback_parts: &mut PlaybackParts<'_>,
+    track: Arc<Track>,
+    now: Moment,
+) -> Cmd {
+    let stamp = Stamp::pending(playback_parts.transport, playback_parts.revisions, now);
+    let started = playback_parts.player.start(track, StartOrigin::User(stamp));
+    playback_parts.revisions.effects = stamp.revision;
+    playback_parts.transport.track_changed();
+    started
+}
+
 pub(crate) fn duration_of(player: &Player) -> Duration {
     player
         .current()
@@ -236,4 +246,95 @@ pub(crate) fn stopped_effects() -> Cmd {
         .into_iter()
         .chain([Effect::Macos(MacosCmd::NowPlaying(None))])
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::Path, sync::Arc, time::Duration};
+
+    use rstest::rstest;
+
+    use crate::{
+        cmd::{AudioCmd, Cmd, DiskCmd, Effect, LibraryCmd, MacosCmd, TrackLoad},
+        domain::{
+            cue::{Cue, PlaybackChange},
+            history::HistoryEntry,
+            model::Model,
+            player::{PausedBy, Player},
+            playhead::Playhead,
+            revision::Revision,
+            speed::Speed,
+            time::Moment,
+            track::Track,
+        },
+        update::{playback_parts, player::start},
+    };
+
+    const AT: Duration = Duration::from_secs(5);
+
+    fn now() -> Moment {
+        Moment::new(Duration::from_secs(1_000))
+    }
+
+    fn track_a() -> Arc<Track> {
+        Arc::new(Track::listed(Path::new("/tmp/a.flac")))
+    }
+
+    fn track_b() -> Arc<Track> {
+        Arc::new(Track::listed(Path::new("/tmp/b.flac")))
+    }
+
+    fn playing(track: Arc<Track>, preloaded: Option<Arc<Track>>) -> Player {
+        Player::Playing {
+            track,
+            playhead: Playhead::anchored(AT, now(), Speed::default()),
+            preloaded,
+        }
+    }
+
+    fn paused(track: Arc<Track>) -> Player {
+        Player::Paused {
+            track,
+            position: AT,
+            by: PausedBy::Listener,
+        }
+    }
+
+    fn cut_in(track: &Arc<Track>) -> Cmd {
+        let mut effects = vec![
+            Effect::Audio(AudioCmd::Stop),
+            Effect::Audio(AudioCmd::Load(TrackLoad::for_track(
+                track,
+                Revision::default().next(),
+            ))),
+            Effect::Library(LibraryCmd::Disk(DiskCmd::AppendHistory(
+                HistoryEntry::from_track(track, now()),
+            ))),
+            Effect::Macos(MacosCmd::NowPlaying(Some(Arc::clone(track)))),
+        ];
+        effects.extend(PlaybackChange::Play.effects());
+        effects.push(Effect::Animate(Cue::TrackChanged));
+        effects.push(Effect::Animate(Cue::PlaybackChanged(PlaybackChange::Play)));
+        Cmd::from_iter(effects)
+    }
+
+    #[rstest]
+    #[case::stopped_next_starts(Player::Stopped)]
+    #[case::loading_next_interrupts_the_load(Player::Loading(track_a()))]
+    #[case::playing_next_drops_the_preload_and_starts(playing(
+        track_a(),
+        Some(track_a())
+    ))]
+    #[case::paused_next_starts(paused(track_a()))]
+    fn a_start_loads_the_track_in_every_state(#[case] player: Player) {
+        let mut model = Model {
+            player,
+            ..Model::default()
+        };
+
+        let cmd = start(&mut playback_parts(&mut model), track_b(), now());
+
+        assert_eq!(model.player, Player::Loading(track_b()));
+        assert_eq!(cmd, cut_in(&track_b()));
+    }
 }

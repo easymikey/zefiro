@@ -48,6 +48,7 @@ impl Signals {
 }
 
 pub enum AudioMessage {
+    Cmds(Cmds<AudioCmd>),
     Deck(DeckEvent),
     Decoded {
         revision: Revision,
@@ -68,6 +69,7 @@ pub enum AudioMessage {
 impl fmt::Debug for AudioMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AudioMessage::Cmds(cmds) => f.debug_tuple("Cmds").field(cmds).finish(),
             AudioMessage::Deck(event) => f.debug_tuple("Deck").field(event).finish(),
             AudioMessage::Decoded { revision, .. } => f
                 .debug_struct("Decoded")
@@ -112,9 +114,14 @@ pub enum EngineMessage {
     DevicesListed(Vec<ListedDevice>),
 }
 
+pub(crate) enum ClosedMessage {
+    Cmds(Cmds<AudioCmd>),
+    Error(AudioError),
+}
+
 impl From<Cmds<AudioCmd>> for AudioMessage {
     fn from(cmds: Cmds<AudioCmd>) -> Self {
-        AudioMessage::Engine(EngineMessage::Cmds(cmds))
+        AudioMessage::Cmds(cmds)
     }
 }
 

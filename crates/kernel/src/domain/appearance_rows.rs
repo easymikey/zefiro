@@ -67,6 +67,13 @@ pub const ANIMATIONS: [Animations; 2] = [Animations::On, Animations::Off];
 pub const LAYOUT_MODES: [LayoutMode; 3] =
     [LayoutMode::Auto, LayoutMode::Full, LayoutMode::Compact];
 
+const _: () = assert!(
+    PRESETS.len() >= 2
+        && COVER_MODES.len() >= 2
+        && SPEED_CHIPS.len() >= 2
+        && LAYOUT_MODES.len() >= 2
+);
+
 pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
     AppearanceRow {
         field: AppearanceField::Preset,
@@ -124,6 +131,23 @@ pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
     },
 ];
 
+impl AppearanceField {
+    #[must_use]
+    pub fn row(self) -> &'static AppearanceRow {
+        match (self, &APPEARANCE_ROWS) {
+            (AppearanceField::Preset, [row, ..])
+            | (AppearanceField::CoverMode, [_, row, ..])
+            | (AppearanceField::CoverBrackets, [_, _, row, ..])
+            | (AppearanceField::FormatChips, [_, _, _, row, ..])
+            | (AppearanceField::SpeedChip, [.., row, _, _, _, _])
+            | (AppearanceField::ProgressTime, [.., row, _, _, _])
+            | (AppearanceField::KeyHints, [.., row, _, _])
+            | (AppearanceField::Animations, [.., row, _])
+            | (AppearanceField::LayoutMode, [.., row]) => row,
+        }
+    }
+}
+
 #[must_use]
 pub fn appearance_row_choices(
     appearance_settings: AppearanceSettings,
@@ -160,7 +184,7 @@ fn preset_choice(appearance_settings: AppearanceSettings) -> Choice {
         .map_or(Choice::Mixed, |preset| option_choice(PRESETS, preset))
 }
 
-fn field_choice(
+pub(crate) fn field_choice(
     field: AppearanceField,
     appearance_settings: AppearanceSettings,
 ) -> Choice {
@@ -258,14 +282,7 @@ mod tests {
     };
 
     fn option_at_row(field: AppearanceField, option_index: usize) -> OptionIndex {
-        APPEARANCE_ROWS
-            .iter()
-            .find(|row| row.field == field)
-            .unwrap()
-            .control
-            .count()
-            .index(option_index)
-            .unwrap()
+        field.row().control.count().index(option_index).unwrap()
     }
 
     #[test]
@@ -304,6 +321,9 @@ mod tests {
             APPEARANCE_ROWS.iter().map(|row| row.field).collect();
 
         assert_eq!(fields.len(), APPEARANCE_ROWS.len());
+        for row in &APPEARANCE_ROWS {
+            assert_eq!(row.field.row(), row, "{row:?}");
+        }
     }
 
     #[test]
