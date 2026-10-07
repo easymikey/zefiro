@@ -9,7 +9,6 @@ mod comments;
 mod config_doc_appearance;
 mod config_doc_config;
 mod conventions;
-mod conventions_allow;
 mod demeter;
 mod demeter_views;
 mod dispatch;

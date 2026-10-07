@@ -143,7 +143,7 @@ impl MilkdropCover {
                 ..desired_stamp
             };
             let style = MilkdropStyle::from_theme(&scene.active_theme());
-            self.lines = lines(field, &style);
+            self.lines = lines(field, style);
         }
         CardCover::Text(Arc::clone(&self.lines))
     }
@@ -277,7 +277,13 @@ mod tests {
         let mut sources = SceneSources::new(model_with_tracks(1));
         let area = Some(Rect::new(0, 0, 12, 6));
         let mut cover = MilkdropCover::default();
+        sources.model.player = playing("/music/a.flac");
         let before = cover.refresh(&sources.scene(), area);
+        sources.model.player = Player::Paused {
+            track: Arc::new(Track::listed(Path::new("/music/a.flac"))),
+            position: Duration::ZERO,
+            by: PausedBy::Listener,
+        };
         switch_to_ember(&mut sources);
         let after = cover.refresh(&sources.scene(), area);
         let (CardCover::Text(before), CardCover::Text(after)) = (before, after) else {
@@ -344,6 +350,7 @@ mod tests {
             ),
             preloaded: None,
         };
+        sources.spectrum.fill(0.6);
         let area = Some(Rect::new(0, 0, 12, 6));
         let mut once_cover = MilkdropCover::default();
         let mut twice_cover = MilkdropCover::default();

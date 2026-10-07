@@ -104,7 +104,7 @@ impl<'a> CardView<'a> {
         if duration.is_zero() {
             0.0
         } else {
-            unit_fraction(self.position().as_secs_f64() / duration.as_secs_f64())
+            unit_fraction(self.position().div_duration_f64(duration))
         }
     }
 

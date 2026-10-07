@@ -1,6 +1,0 @@
----
-source: crates/widgets/tests/unit/animation_catalogue.rs
-assertion_line: 307
-expression: "wash_row(&buffer, width)"
----
-RRRRRRRRRRRRRRRRRRRRRRR~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.....................................

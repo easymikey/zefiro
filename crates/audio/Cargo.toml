@@ -1,6 +1,6 @@
 [package]
 name = "audio"
-description = "Playback engine: executes audio commands with rodio, reports audio events"
+description = "Playback engine: decodes with symphonia, mixes on the cpal callback, reports audio events"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,11 +8,14 @@ license.workspace = true
 publish = false
 
 [dependencies]
+cpal = { workspace = true }
 crossbeam-channel = { workspace = true }
 kernel = { workspace = true }
 num-traits = { workspace = true }
 realfft = { workspace = true }
-rodio = { workspace = true }
+rtrb = { workspace = true }
+rubato = { workspace = true }
+symphonia = { workspace = true }
 thiserror = { workspace = true }
 triple_buffer = { workspace = true }
 

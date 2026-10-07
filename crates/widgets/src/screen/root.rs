@@ -156,7 +156,17 @@ impl ScreenWidget<'_> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{appearance::ProgressTime, geometry::Cells, toast::Toast};
+    use std::time::Duration;
+
+    use kernel::domain::{
+        appearance::ProgressTime,
+        geometry::Cells,
+        player::Player,
+        playhead::Playhead,
+        speed::Speed,
+        time::Moment,
+        toast::Toast,
+    };
     use ratatui::layout::{Rect, Size};
     use rstest::rstest;
 
@@ -169,7 +179,7 @@ mod tests {
             frame_layout::FrameLayout,
             root::ScreenWidget,
         },
-        test_support::{SceneSources, model_with_tracks, rendered},
+        test_support::{SceneSources, model_with_tracks, rendered, track},
     };
 
     fn frame(scene: Scene<'_>, card_cover: &CardCover, size: (u16, u16)) -> String {
@@ -224,6 +234,34 @@ mod tests {
         let sources = SceneSources::new(model);
         let text = frame(sources.scene(), &CardCover::Missing, (80, 24));
         assert!(text.contains("Saved"), "got {text}");
+    }
+
+    #[test]
+    fn the_painted_full_card_shows_the_layout_remaining_label() {
+        let mut model = model_with_tracks(1);
+        model.player = Player::Playing {
+            track: track("song00"),
+            playhead: Playhead::anchored(
+                Duration::from_secs(30),
+                Moment::default(),
+                Speed::default(),
+            ),
+            preloaded: None,
+        };
+        model.settings.appearance_settings.progress_time = ProgressTime::Remaining;
+        let sources = SceneSources::new(model);
+        let scene = sources.scene();
+        let layout = FrameLayout::from_scene(&scene, Rect::new(0, 0, 80, 24));
+        assert_eq!(layout.breakpoint, Breakpoint::Full);
+        assert!(!layout.remaining_label.is_empty());
+        let text = rendered(80, 24, |frame| {
+            frame.render_widget(
+                &ScreenWidget::new(scene, &layout).card_cover(&CardCover::Missing),
+                frame.area(),
+            );
+        })
+        .to_string();
+        assert!(text.contains(&layout.remaining_label), "got {text}");
     }
 
     #[rstest]

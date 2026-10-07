@@ -1,8 +1,6 @@
 // GUARD: every `use` starts at `crate::` or an external crate, no glob.
 
-use crate::guards::support::{self, Allow};
-
-const ALLOWLIST: &[Allow] = &[];
+use crate::guards::support;
 
 const PARENT_SEGMENT: &str = concat!("super", "::");
 const GLOB_SEGMENT: &str = concat!("::", "*");
@@ -62,7 +60,6 @@ fn offenders(content: &str) -> Vec<(usize, &'static str)> {
 #[test]
 fn every_use_names_an_absolute_path_and_no_glob() {
     let mut violations: Vec<String> = Vec::new();
-    let mut seen_allowlist: Vec<(String, &'static str)> = Vec::new();
 
     let files = support::source_files(&["src", "tests", "examples"]);
     assert!(
@@ -74,11 +71,7 @@ fn every_use_names_an_absolute_path_and_no_glob() {
     for (rel, path) in files {
         let content = support::read(&path);
         for (line, rule) in offenders(&content) {
-            if support::allowed(ALLOWLIST, &rel, rule) {
-                seen_allowlist.push((rel.clone(), rule));
-            } else {
-                violations.push(format!("{rel}:{line}: {rule}"));
-            }
+            violations.push(format!("{rel}:{line}: {rule}"));
         }
     }
 
@@ -86,6 +79,5 @@ fn every_use_names_an_absolute_path_and_no_glob() {
         "import guard: every `use` names its path from `crate::` (or an external \
          crate), no `use` ends in a glob and no `use` is public — see docs/agent-rules.md.",
         &violations,
-        &support::stale(ALLOWLIST, &seen_allowlist),
     );
 }

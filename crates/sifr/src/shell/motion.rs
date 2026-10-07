@@ -1,10 +1,10 @@
 use std::time::Duration;
 
 use kernel::domain::time::Moment;
-use ratatui::{layout::Rect, style::Color};
+use ratatui::layout::Rect;
 use runtime::repaint::FRAME_INTERVAL;
 use widgets::{
-    pixels::cover::gate::CrossfadeGate,
+    animation::catalogue::PaintedCell,
     repaint::{OnScreen, Presence},
     spectrum::SpectrumSmoothing,
 };
@@ -14,10 +14,9 @@ pub(crate) struct Motion {
     pub(in crate::shell) area: Rect,
     pub(in crate::shell) spectrum_smoothing: SpectrumSmoothing,
     pub(in crate::shell) spectrum_advanced_at: Moment,
-    pub(in crate::shell) crossfade_gate: CrossfadeGate,
     pub(in crate::shell) on_screen: OnScreen,
     pub(in crate::shell) screen_clear: ScreenClear,
-    pub(in crate::shell) outgoing_theme_background: Option<Color>,
+    pub(in crate::shell) painted_cells: Vec<PaintedCell>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,7 +67,6 @@ impl Default for Motion {
             area: Rect::default(),
             spectrum_smoothing: SpectrumSmoothing::default(),
             spectrum_advanced_at: Moment::default(),
-            crossfade_gate: CrossfadeGate::default(),
             on_screen: OnScreen {
                 progress_bar_width: None,
                 clock: Presence::Hidden,
@@ -76,7 +74,7 @@ impl Default for Motion {
                 spectrum: Presence::Hidden,
             },
             screen_clear: ScreenClear::NotDue,
-            outgoing_theme_background: None,
+            painted_cells: Vec::new(),
         }
     }
 }

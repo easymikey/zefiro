@@ -333,7 +333,7 @@ pub(crate) mod tests {
         let mut cache = VinylCache::default();
         let calls = Cell::new(0u32);
         let build = || {
-            calls.set(calls.get() + 1);
+            calls.update(|n| n + 1);
             None::<Pixmap>
         };
         let vinyl_style = noir_vinyl_style();

@@ -9,14 +9,15 @@ use ratatui::{style::Color, text::Line};
 use crate::{
     milkdrop::field::{
         ASPECT_X,
+        BandLevels,
         COLOR_BAND_HIGH,
-        COLOR_BAND_MID,
         CORE_GAIN,
         CORE_RADIUS,
         CellPosition,
         DECAY,
         FieldSize,
         Injection,
+        LEVEL_GLIDE,
         Mirror,
         RAMP,
         RAMP_FALLBACK,
@@ -54,6 +55,7 @@ fn resolve_mirror(field: &mut MilkdropField, size: FieldSize, mirror: Mirror) {
 pub(crate) struct MilkdropField {
     cells: Vec<f32>,
     scratch: Vec<f32>,
+    band_levels: BandLevels,
     width: usize,
     height: usize,
 }
@@ -66,6 +68,7 @@ impl MilkdropField {
         Self {
             cells: vec![0.0; width * height],
             scratch: vec![0.0; width * height],
+            band_levels: BandLevels::default(),
             width,
             height,
         }
@@ -89,7 +92,10 @@ pub(crate) struct MilkdropAdvance<'a> {
 
 impl MilkdropField {
     pub(crate) fn advance(&mut self, milkdrop_advance: &MilkdropAdvance<'_>) {
-        let levels = band_levels(milkdrop_advance.spectrum);
+        self.band_levels = self
+            .band_levels
+            .lerp(band_levels(milkdrop_advance.spectrum), LEVEL_GLIDE);
+        let levels = self.band_levels;
         let preset = preset_for_seed(milkdrop_advance.seed);
 
         let size = FieldSize {
@@ -139,7 +145,6 @@ impl MilkdropField {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct MilkdropStyle {
-    muted_foreground: Color,
     accent: Color,
     foreground: Color,
 }
@@ -149,16 +154,13 @@ impl MilkdropStyle {
     pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         let colors = theme.colors();
         Self {
-            muted_foreground: colors.muted_foreground,
             accent: colors.accent,
             foreground: colors.foreground,
         }
     }
 
-    fn color_for(&self, intensity: f32) -> Color {
-        if intensity < COLOR_BAND_MID {
-            self.muted_foreground
-        } else if intensity < COLOR_BAND_HIGH {
+    fn color_for(self, intensity: f32) -> Color {
+        if intensity < COLOR_BAND_HIGH {
             self.accent
         } else {
             self.foreground
@@ -168,9 +170,8 @@ impl MilkdropStyle {
 
 fn ramp_glyph(intensity: f32) -> &'static str {
     let last_index = RAMP.len() - 1;
-    let clamped = intensity.clamp(0.0, 1.0);
     let index = crate::pixels::numeric::round::<usize>(
-        clamped * crate::pixels::numeric::dimension_f32(last_index),
+        intensity.clamp(0.0, 1.0) * crate::pixels::numeric::dimension_f32(last_index),
     );
     RAMP.get(index.min(last_index))
         .copied()
@@ -179,7 +180,7 @@ fn ramp_glyph(intensity: f32) -> &'static str {
 
 pub(crate) fn lines(
     field: &MilkdropField,
-    style: &MilkdropStyle,
+    style: MilkdropStyle,
 ) -> Arc<[Line<'static>]> {
     (0..field.height)
         .map(|row| {
@@ -200,12 +201,14 @@ mod tests {
 
     use crate::{
         milkdrop::{
+            COLOR_BAND_HIGH,
             CellPosition,
             MilkdropAdvance,
             MilkdropField,
             MilkdropStyle,
             lines,
         },
+        pixels::numeric::dimension_f32,
         spectrum::Spectrum,
     };
 
@@ -228,11 +231,10 @@ mod tests {
     fn lines_renders_exactly_height_rows_of_exactly_width_cells() {
         let field = MilkdropField::new(20, 8);
         let style = MilkdropStyle {
-            muted_foreground: Color::Black,
             accent: Color::Red,
             foreground: Color::White,
         };
-        let rendered = lines(&field, &style);
+        let rendered = lines(&field, style);
         assert_eq!(rendered.len(), 8);
         for line in rendered.iter() {
             assert_eq!(line.spans.len(), 20);
@@ -243,11 +245,54 @@ mod tests {
     fn lines_matches_the_seven_row_variant_too() {
         let field = MilkdropField::new(20, 7);
         let style = MilkdropStyle {
-            muted_foreground: Color::Black,
             accent: Color::Red,
             foreground: Color::White,
         };
-        assert_eq!(lines(&field, &style).len(), 7);
+        assert_eq!(lines(&field, style).len(), 7);
+    }
+
+    #[test]
+    fn a_faint_cell_paints_the_lightest_shade_in_the_accent() {
+        let mut field = MilkdropField::new(1, 1);
+        field.cells = vec![0.2];
+        let style = MilkdropStyle {
+            accent: Color::Red,
+            foreground: Color::White,
+        };
+        let rendered = lines(&field, style);
+        let span = &rendered[0].spans[0];
+        assert_eq!(
+            (span.content.as_ref(), span.style.fg),
+            ("░", Some(Color::Red))
+        );
+    }
+
+    #[test]
+    fn a_near_zero_cell_paints_a_space() {
+        let mut field = MilkdropField::new(1, 1);
+        field.cells = vec![0.05];
+        let style = MilkdropStyle {
+            accent: Color::Red,
+            foreground: Color::White,
+        };
+        let rendered = lines(&field, style);
+        assert_eq!(rendered[0].spans[0].content.as_ref(), " ");
+    }
+
+    #[test]
+    fn a_cell_at_the_mid_band_paints_the_faintest_glyph_in_the_accent() {
+        let mut field = MilkdropField::new(1, 1);
+        field.cells = vec![0.35];
+        let style = MilkdropStyle {
+            accent: Color::Red,
+            foreground: Color::White,
+        };
+        let rendered = lines(&field, style);
+        let span = &rendered[0].spans[0];
+        assert_eq!(
+            (span.content.as_ref(), span.style.fg),
+            ("░", Some(Color::Red))
+        );
     }
 
     #[test]
@@ -348,6 +393,48 @@ mod tests {
                         row: mirrored_row
                     }),
                     "not top-bottom symmetric at ({column}, {row})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn loud_bands_leave_the_top_and_bottom_rows_below_the_bright_band() {
+        let loud = [1.0; 16];
+        for seed in 0..3 {
+            let mut field = MilkdropField::new(20, 8);
+            for tick in 0..30 {
+                field.advance(&input(&loud, Playback::Playing, (seed, tick)));
+            }
+            for row in [0, field.height - 1] {
+                let total: f32 = (0..field.width)
+                    .map(|column| field.cell(CellPosition { column, row }))
+                    .sum();
+                let mean = total / dimension_f32(field.width);
+                assert!(
+                    mean < COLOR_BAND_HIGH,
+                    "seed {seed}: row {row} averages {mean}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn one_loud_step_after_silence_changes_no_cell_by_half() {
+        let loud = [1.0; 16];
+        for seed in 0..3 {
+            let mut field = MilkdropField::new(20, 8);
+            for tick in 0..30 {
+                field.advance(&input(&SILENT_BANDS, Playback::Playing, (seed, tick)));
+            }
+            let settled = field.clone();
+            field.advance(&input(&loud, Playback::Playing, (seed, 30)));
+            for (index, (before, after)) in
+                settled.cells.iter().zip(&field.cells).enumerate()
+            {
+                assert!(
+                    (after - before).abs() < 0.5,
+                    "seed {seed}: cell {index} went from {before} to {after}"
                 );
             }
         }

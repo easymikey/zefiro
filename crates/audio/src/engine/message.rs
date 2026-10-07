@@ -4,7 +4,7 @@ use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
     cmd::{AudioCmd, Cmds, Playback},
     domain::{
-        device::{ListedDevice, OutputDevice},
+        device::{DeviceName, ListedDevice, OutputDevice},
         revision::Revision,
     },
     message::AudioError,
@@ -28,6 +28,7 @@ pub enum SinkRole {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeviceOpened {
     pub(crate) device: OutputDevice,
+    pub(crate) device_name: Option<DeviceName>,
     pub(crate) position: Duration,
     pub(crate) playback: Playback,
 }
@@ -63,6 +64,8 @@ pub enum AudioMessage {
         signals: Signals,
     },
     Engine(EngineMessage),
+    Started,
+    Fed,
 }
 
 impl fmt::Debug for AudioMessage {
@@ -95,6 +98,8 @@ impl fmt::Debug for AudioMessage {
             AudioMessage::Engine(message) => {
                 f.debug_tuple("Engine").field(message).finish()
             }
+            AudioMessage::Started => f.write_str("Started"),
+            AudioMessage::Fed => f.write_str("Fed"),
         }
     }
 }
@@ -104,6 +109,7 @@ pub enum EngineMessage {
     Cmds(Cmds<AudioCmd>),
     Reported(Option<Duration>),
     Error(AudioError),
+    Interrupted(Revision, AudioError),
     Opened(DeviceOpened),
     NotFound,
     Decoded(Option<Duration>),

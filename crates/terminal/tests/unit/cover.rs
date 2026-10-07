@@ -2,29 +2,23 @@ use std::{mem::discriminant, path::PathBuf, sync::Arc, time::Duration};
 
 use image::{Rgba, RgbaImage};
 use kernel::domain::{
-    appearance::{Animations, CoverMode, Rgb},
+    appearance::{CoverMode, Rgb},
     geometry::{Cells, Pixels},
+    time::Moment,
 };
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 use ratatui_image::picker::{Picker, ProtocolType};
 use rstest::{fixture, rstest};
-use terminal::pixels::CoverPainter;
+use terminal::{capabilities::Capabilities, pixels::CoverPainter};
 use widgets::{
-    animation::timings::TIMINGS,
+    animation::stage::{AnimationStage, animation_frame_due},
     card::CardCover,
-    pixels::cover::{
-        CoverImage,
-        CoverMotion,
-        CoverRefresh,
-        CoverWash,
-        CrossfadePermit,
-        pixmap::CellPixels,
-    },
-    scene::PixelPath,
+    pixels::cover::{CoverImage, pixmap::CellPixels},
     screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
     theme::{
         Theme,
         colors::{Colors, ThemeBase},
+        rgb::ColorDepth,
     },
 };
 
@@ -77,21 +71,6 @@ fn layout_with_cover(cover_area: Option<Rect>) -> FrameLayout<'static> {
     }
 }
 
-fn cover_refresh(
-    layout: &FrameLayout<'_>,
-    crossfade_permit: CrossfadePermit,
-) -> CoverRefresh {
-    CoverRefresh {
-        cover_area: layout.cover_area,
-        crossfade_permit,
-        wash: CoverWash::Idle,
-    }
-}
-
-fn crossfade_duration() -> Duration {
-    Duration::from_millis(u64::from(TIMINGS.cover_crossfade.0))
-}
-
 fn painted(buffer: &Buffer, rect: Rect) -> bool {
     (rect.left()..rect.right())
         .flat_map(|x| (rect.top()..rect.bottom()).map(move |y| (x, y)))
@@ -99,30 +78,46 @@ fn painted(buffer: &Buffer, rect: Rect) -> bool {
         .any(|cell| cell.symbol() != " " || cell.bg != Color::Reset)
 }
 
-fn painter_for(picker: Picker, pixel_path: PixelPath) -> CoverPainter {
+fn halfblocks_capabilities() -> Capabilities {
+    Capabilities {
+        picker: Picker::halfblocks(),
+        color_depth: ColorDepth::TrueColor,
+    }
+}
+
+#[fixture]
+fn capabilities() -> Capabilities {
+    let mut picker = Picker::halfblocks();
+    picker.set_protocol_type(ProtocolType::Kitty);
+    Capabilities {
+        picker,
+        color_depth: ColorDepth::TrueColor,
+    }
+}
+
+#[fixture]
+fn painter(capabilities: Capabilities) -> CoverPainter {
+    let Capabilities {
+        picker,
+        color_depth: _color_depth,
+    } = capabilities;
     let font_size = picker.font_size();
     let cell_pixels = CellPixels {
         width: Pixels(u32::from(font_size.width)),
         height: Pixels(u32::from(font_size.height)),
     };
-    CoverPainter::new(picker, cell_pixels, pixel_path)
+    CoverPainter::new(picker, cell_pixels)
 }
 
 #[fixture]
-fn painter() -> CoverPainter {
-    painter_for(Picker::halfblocks(), PixelPath::Halfblocks)
-}
-
-#[fixture]
-fn protocol_painter() -> CoverPainter {
-    let mut picker = Picker::halfblocks();
-    picker.set_protocol_type(ProtocolType::Kitty);
-    painter_for(picker, PixelPath::Protocol)
-}
-
-#[fixture]
-fn scenery(#[default(CoverMode::Plain)] cover_mode: CoverMode) -> Scenery {
-    let mut scenery = Scenery::new(playing_model("moon-river", 200, 50));
+fn scenery(
+    #[default(CoverMode::Plain)] cover_mode: CoverMode,
+    capabilities: Capabilities,
+) -> Scenery {
+    let mut scenery = Scenery::new(
+        playing_model("moon-river", 200, 50),
+        capabilities.pixel_path(),
+    );
     scenery.model.settings.appearance_settings.cover_mode = cover_mode;
     scenery
 }
@@ -142,20 +137,35 @@ fn a_cover_mode_picks_the_card_cover_kind(
     #[case] art: bool,
     #[case] expected: CardCover,
 ) {
-    let scenery = scenery::get(cover_mode);
-    let mut painter = painter::get();
+    let scenery = scenery::get(cover_mode, capabilities());
+    let mut painter = painter::get(capabilities());
     if art {
         painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
     }
 
-    let card_cover = painter.refresh(
-        &scenery.scene(),
-        cover_refresh(
-            &layout_with_cover(Some(cover_rect())),
-            CrossfadePermit::Withheld,
-        ),
-    );
+    let card_cover = painter.refresh(&scenery.scene(), Some(cover_rect()));
     assert_eq!(discriminant(&card_cover), discriminant(&expected));
+}
+
+#[rstest]
+#[case::plain(CoverMode::Plain)]
+#[case::vinyl(CoverMode::Vinyl)]
+fn a_halfblocks_painter_in_an_image_mode_answers_missing_and_stays_still(
+    #[case] cover_mode: CoverMode,
+) {
+    let scenery = scenery::get(cover_mode, halfblocks_capabilities());
+    let mut painter = painter::get(halfblocks_capabilities());
+    let layout = layout_with_cover(Some(cover_rect()));
+    painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
+
+    let first = painter.refresh(&scenery.scene(), layout.cover_area);
+    let second = painter.refresh(&scenery.scene(), layout.cover_area);
+    assert!(matches!(first, CardCover::Missing));
+    assert!(matches!(second, CardCover::Missing));
+
+    let mut buffer = Buffer::empty(cover_rect());
+    painter.paint(&mut buffer, &layout);
+    assert!(!painted(&buffer, cover_rect()));
 }
 
 #[rstest]
@@ -165,13 +175,10 @@ fn a_cover_mode_without_a_cover_rect_is_missing(
     #[case] cover_mode: CoverMode,
     mut painter: CoverPainter,
 ) {
-    let scenery = scenery::get(cover_mode);
+    let scenery = scenery::get(cover_mode, capabilities());
     painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
 
-    let card_cover = painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout_with_cover(None), CrossfadePermit::Withheld),
-    );
+    let card_cover = painter.refresh(&scenery.scene(), None);
     assert!(matches!(card_cover, CardCover::Missing));
 }
 
@@ -180,13 +187,7 @@ fn a_milkdrop_style_returns_text_sized_to_the_cover_rect(
     #[with(CoverMode::Milkdrop)] scenery: Scenery,
     mut painter: CoverPainter,
 ) {
-    let card_cover = painter.refresh(
-        &scenery.scene(),
-        cover_refresh(
-            &layout_with_cover(Some(cover_rect())),
-            CrossfadePermit::Withheld,
-        ),
-    );
+    let card_cover = painter.refresh(&scenery.scene(), Some(cover_rect()));
     let CardCover::Text(lines) = card_cover else {
         panic!("milkdrop must hand back text lines, got {card_cover:?}");
     };
@@ -194,6 +195,34 @@ fn a_milkdrop_style_returns_text_sized_to_the_cover_rect(
     for line in lines.iter() {
         assert_eq!(line.spans.len(), 8);
     }
+}
+
+#[rstest]
+fn a_cover_fade_keeps_the_next_frame_due_until_its_last_step(
+    mut scenery: Scenery,
+    mut painter: CoverPainter,
+) {
+    let animation_stage = AnimationStage::default();
+    let next_frame_at = Moment::new(Duration::from_millis(1_033));
+    let frame_due = |cover_painter: &CoverPainter| {
+        animation_frame_due(&animation_stage, cover_painter.motion(), next_frame_at)
+    };
+    painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
+    painter.refresh(&scenery.scene(), Some(cover_rect()));
+    assert_eq!(frame_due(&painter), None);
+
+    scenery.model.player = playing_model("blue-moon", 200, 50).player;
+    painter.set_cover(cover("blue-moon", Rgba([10, 10, 200, 255])));
+    painter.refresh(&scenery.scene(), Some(cover_rect()));
+    assert_eq!(frame_due(&painter), Some(next_frame_at));
+
+    scenery.since_first_paint = Duration::from_millis(300);
+    painter.refresh(&scenery.scene(), Some(cover_rect()));
+    assert_eq!(frame_due(&painter), Some(next_frame_at));
+
+    scenery.since_first_paint = Duration::from_millis(600);
+    painter.refresh(&scenery.scene(), Some(cover_rect()));
+    assert_eq!(frame_due(&painter), None);
 }
 
 #[rstest]
@@ -205,23 +234,14 @@ fn switching_from_plain_to_vinyl_and_back_keeps_showing_the_plain_image(
     painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
 
     scenery.model.settings.appearance_settings.cover_mode = CoverMode::Plain;
-    let first = painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
+    let first = painter.refresh(&scenery.scene(), layout.cover_area);
     assert!(matches!(first, CardCover::Image));
 
     scenery.model.settings.appearance_settings.cover_mode = CoverMode::Vinyl;
-    painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
+    painter.refresh(&scenery.scene(), layout.cover_area);
 
     scenery.model.settings.appearance_settings.cover_mode = CoverMode::Plain;
-    let back = painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
+    let back = painter.refresh(&scenery.scene(), layout.cover_area);
     assert!(
         matches!(back, CardCover::Image),
         "a style detour must not lose the plain cover"
@@ -240,24 +260,15 @@ fn switching_between_milkdrop_and_vinyl_changes_the_cover_art_kind_immediately(
     let layout = layout_with_cover(Some(cover_rect()));
 
     scenery.model.settings.appearance_settings.cover_mode = CoverMode::Milkdrop;
-    let text = painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
+    let text = painter.refresh(&scenery.scene(), layout.cover_area);
     assert!(matches!(text, CardCover::Text(_)));
 
     scenery.model.settings.appearance_settings.cover_mode = CoverMode::Vinyl;
-    let image = painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
+    let image = painter.refresh(&scenery.scene(), layout.cover_area);
     assert!(matches!(image, CardCover::Image));
 
     scenery.model.settings.appearance_settings.cover_mode = CoverMode::Milkdrop;
-    let text_again = painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
+    let text_again = painter.refresh(&scenery.scene(), layout.cover_area);
     assert!(matches!(text_again, CardCover::Text(_)));
 }
 
@@ -268,10 +279,9 @@ fn a_reused_plan_returns_the_same_lines_allocation(
 ) {
     let layout = layout_with_cover(Some(cover_rect()));
     scenery.model.settings.appearance_settings.cover_mode = CoverMode::Milkdrop;
-    let refresh = cover_refresh(&layout, CrossfadePermit::Withheld);
 
-    let first = painter.refresh(&scenery.scene(), refresh);
-    let second = painter.refresh(&scenery.scene(), refresh);
+    let first = painter.refresh(&scenery.scene(), layout.cover_area);
+    let second = painter.refresh(&scenery.scene(), layout.cover_area);
 
     let (CardCover::Text(first), CardCover::Text(second)) = (first, second) else {
         panic!("milkdrop must hand back text lines");
@@ -287,44 +297,25 @@ fn reusing_the_same_path_and_rect_stays_an_image_across_frames(
     let layout = layout_with_cover(Some(cover_rect()));
     painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
 
-    painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
-    let card_cover = painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
+    painter.refresh(&scenery.scene(), layout.cover_area);
+    let card_cover = painter.refresh(&scenery.scene(), layout.cover_area);
     assert!(matches!(card_cover, CardCover::Image));
 }
 
 #[rstest]
-fn an_allowed_track_change_crossfades_over_time(
+fn a_track_change_repaints_the_new_cover_once(
     mut scenery: Scenery,
     mut painter: CoverPainter,
 ) {
-    scenery.model.settings.appearance_settings.animations = Animations::On;
     let layout = layout_with_cover(Some(cover_rect()));
 
     painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
-    painter.refresh(
-        &scenery.scene_at(Duration::ZERO),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
+    painter.refresh(&scenery.scene(), layout.cover_area);
 
     scenery.model.player = playing_model("second", 200, 50).player;
     painter.set_cover(cover("second", Rgba([10, 10, 200, 255])));
-    let mid = painter.refresh(
-        &scenery.scene_at(Duration::from_millis(50)),
-        cover_refresh(&layout, CrossfadePermit::Allowed),
-    );
-    assert!(matches!(mid, CardCover::Image));
-
-    let settled = painter.refresh(
-        &scenery.scene_at(Duration::from_secs(5)),
-        cover_refresh(&layout, CrossfadePermit::Allowed),
-    );
-    assert!(matches!(settled, CardCover::Image));
+    let swapped = painter.refresh(&scenery.scene(), layout.cover_area);
+    assert!(matches!(swapped, CardCover::Image));
 
     let mut buffer = Buffer::empty(cover_rect());
     painter.paint(&mut buffer, &layout);
@@ -332,291 +323,29 @@ fn an_allowed_track_change_crossfades_over_time(
 }
 
 #[rstest]
-fn a_protocol_track_change_repaints_once_without_a_crossfade(
-    mut scenery: Scenery,
-    mut protocol_painter: CoverPainter,
-) {
-    scenery.model.settings.appearance_settings.animations = Animations::On;
-    let layout = layout_with_cover(Some(cover_rect()));
-
-    protocol_painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
-    protocol_painter.refresh(
-        &scenery.scene_at(Duration::ZERO),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
-
-    scenery.model.player = playing_model("second", 200, 50).player;
-    protocol_painter.set_cover(cover("second", Rgba([10, 10, 200, 255])));
-    let swapped = protocol_painter.refresh(
-        &scenery.scene_at(Duration::from_millis(1)),
-        cover_refresh(&layout, CrossfadePermit::Allowed),
-    );
-
-    assert!(matches!(swapped, CardCover::Image));
-    assert_eq!(protocol_painter.motion(), CoverMotion::Still);
-}
-
-#[rstest]
-fn no_cover_reports_a_still_motion(painter: CoverPainter) {
-    assert_eq!(painter.motion(), CoverMotion::Still);
-}
-
-#[rstest]
-fn an_allowed_new_path_reports_crossfading(
-    mut scenery: Scenery,
-    mut painter: CoverPainter,
-) {
-    scenery.model.settings.appearance_settings.animations = Animations::On;
-    let layout = layout_with_cover(Some(cover_rect()));
-
-    painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
-    painter.refresh(
-        &scenery.scene_at(Duration::ZERO),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
-
-    scenery.model.player = playing_model("second", 200, 50).player;
-    painter.set_cover(cover("second", Rgba([10, 10, 200, 255])));
-    painter.refresh(
-        &scenery.scene_at(Duration::from_millis(1)),
-        cover_refresh(&layout, CrossfadePermit::Allowed),
-    );
-
-    assert_eq!(painter.motion(), CoverMotion::Moving);
-}
-
-#[rstest]
-fn a_withheld_new_path_stays_still(mut scenery: Scenery, mut painter: CoverPainter) {
-    scenery.model.settings.appearance_settings.animations = Animations::On;
-    let layout = layout_with_cover(Some(cover_rect()));
-
-    painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
-    painter.refresh(
-        &scenery.scene_at(Duration::ZERO),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
-
-    scenery.model.player = playing_model("second", 200, 50).player;
-    painter.set_cover(cover("second", Rgba([10, 10, 200, 255])));
-    painter.refresh(
-        &scenery.scene_at(Duration::from_millis(1)),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
-
-    assert_eq!(painter.motion(), CoverMotion::Still);
-}
-
-#[rstest]
-fn a_crossfade_reports_crossfading_until_a_paint_settles_it(
-    mut scenery: Scenery,
-    mut painter: CoverPainter,
-) {
-    scenery.model.settings.appearance_settings.animations = Animations::On;
-    let layout = layout_with_cover(Some(cover_rect()));
-
-    painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
-    painter.refresh(
-        &scenery.scene_at(Duration::ZERO),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
-
-    scenery.model.player = playing_model("second", 200, 50).player;
-    painter.set_cover(cover("second", Rgba([10, 10, 200, 255])));
-    painter.refresh(
-        &scenery.scene_at(Duration::from_millis(1)),
-        cover_refresh(&layout, CrossfadePermit::Allowed),
-    );
-
-    let elapsed = Duration::from_millis(1) + crossfade_duration();
-    assert_eq!(painter.motion(), CoverMotion::Moving);
-
-    painter.refresh(
-        &scenery.scene_at(elapsed),
-        cover_refresh(&layout, CrossfadePermit::Allowed),
-    );
-    assert_eq!(painter.motion(), CoverMotion::Still);
-}
-
-#[rstest]
-#[case::off(CoverMode::Off)]
-#[case::vinyl(CoverMode::Vinyl)]
-#[case::milkdrop(CoverMode::Milkdrop)]
-fn a_mode_switch_mid_crossfade_ends_still(
-    #[case] next: CoverMode,
-    mut painter: CoverPainter,
-) {
-    let mut scenery = Scenery::new(playing_model("first", 200, 50));
-    scenery.model.settings.appearance_settings.cover_mode = CoverMode::Plain;
-    scenery.model.settings.appearance_settings.animations = Animations::On;
-    let layout = layout_with_cover(Some(cover_rect()));
-
-    painter.set_cover(cover("first", Rgba([200, 10, 10, 255])));
-    painter.refresh(
-        &scenery.scene_at(Duration::ZERO),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
-    scenery.model.player = playing_model("second", 200, 50).player;
-    painter.set_cover(cover("second", Rgba([10, 10, 200, 255])));
-    painter.refresh(
-        &scenery.scene_at(Duration::from_millis(1)),
-        cover_refresh(&layout, CrossfadePermit::Allowed),
-    );
-    let mid_crossfade = Duration::from_millis(2);
-    assert_eq!(painter.motion(), CoverMotion::Moving);
-
-    scenery.model.settings.appearance_settings.cover_mode = next;
-    painter.refresh(
-        &scenery.scene_at(mid_crossfade),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
-
-    assert_eq!(painter.motion(), CoverMotion::Still);
-}
-
-#[rstest]
-fn a_wider_rect_forces_a_rebuild_without_a_crossfade(
-    mut scenery: Scenery,
-    mut painter: CoverPainter,
-) {
-    scenery.model.settings.appearance_settings.animations = Animations::On;
+fn a_wider_rect_forces_a_rebuild(scenery: Scenery, mut painter: CoverPainter) {
     painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
 
-    painter.refresh(
-        &scenery.scene(),
-        cover_refresh(
-            &layout_with_cover(Some(cover_rect())),
-            CrossfadePermit::Allowed,
-        ),
-    );
+    painter.refresh(&scenery.scene(), Some(cover_rect()));
     let wider = Rect::new(0, 0, 16, 4);
-    let card_cover = painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout_with_cover(Some(wider)), CrossfadePermit::Allowed),
-    );
+    let card_cover = painter.refresh(&scenery.scene(), Some(wider));
     assert!(matches!(card_cover, CardCover::Image));
-    assert_eq!(painter.motion(), CoverMotion::Still);
 }
 
 #[rstest]
-fn a_settled_theme_wash_ends_on_the_new_image_and_goes_still(
+fn a_theme_change_installs_the_new_image_at_once(
     #[with(CoverMode::Vinyl)] mut scenery: Scenery,
     mut painter: CoverPainter,
 ) {
     let layout = layout_with_cover(Some(cover_rect()));
 
-    painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
+    painter.refresh(&scenery.scene(), layout.cover_area);
 
     scenery.model.revisions.theme.advance();
     scenery.theme = recolored_theme();
-    let mid = painter.refresh(
-        &scenery.scene(),
-        CoverRefresh {
-            wash: CoverWash::Running {
-                progress: 0.2,
-                screen_width: Cells(80),
-            },
-            ..cover_refresh(&layout, CrossfadePermit::Withheld)
-        },
-    );
-    assert!(matches!(mid, CardCover::Image));
-    assert_eq!(painter.motion(), CoverMotion::Moving);
-
-    let settled = painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
-    assert!(matches!(settled, CardCover::Image));
-    assert_eq!(painter.motion(), CoverMotion::Still);
-}
-
-#[rstest]
-fn a_theme_change_with_no_wash_staged_installs_the_new_image_at_once(
-    #[with(CoverMode::Vinyl)] mut scenery: Scenery,
-    mut painter: CoverPainter,
-) {
-    scenery.model.settings.appearance_settings.animations = Animations::Off;
-    let layout = layout_with_cover(Some(cover_rect()));
-
-    painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
-
-    scenery.model.revisions.theme.advance();
-    scenery.theme = recolored_theme();
-    let card_cover = painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
+    let card_cover = painter.refresh(&scenery.scene(), layout.cover_area);
 
     assert!(matches!(card_cover, CardCover::Image));
-    assert_eq!(painter.motion(), CoverMotion::Still);
-}
-
-#[rstest]
-fn a_vinyl_rebuild_with_permission_on_a_new_path_crossfades_then_settles(
-    #[with(CoverMode::Vinyl)] mut scenery: Scenery,
-    mut painter: CoverPainter,
-) {
-    scenery.model.settings.appearance_settings.animations = Animations::On;
-    let layout = layout_with_cover(Some(Rect::new(0, 0, 10, 10)));
-    let allowed = cover_refresh(&layout, CrossfadePermit::Allowed);
-
-    painter.set_cover(cover("moon-river", Rgba([200, 100, 50, 255])));
-    painter.refresh(&scenery.scene(), allowed);
-    scenery.model.player = playing_model("second", 200, 50).player;
-    painter.set_cover(cover("second", Rgba([200, 100, 50, 255])));
-    painter.refresh(&scenery.scene(), allowed);
-    assert_eq!(painter.motion(), CoverMotion::Moving);
-
-    painter.refresh(&scenery.scene_at(crossfade_duration()), allowed);
-    assert_eq!(painter.motion(), CoverMotion::Still);
-}
-
-#[rstest]
-fn a_vinyl_rebuild_without_permission_never_crossfades(
-    #[with(CoverMode::Vinyl)] mut scenery: Scenery,
-    mut painter: CoverPainter,
-) {
-    scenery.model.settings.appearance_settings.animations = Animations::On;
-    let layout = layout_with_cover(Some(Rect::new(0, 0, 10, 10)));
-
-    painter.set_cover(cover("moon-river", Rgba([200, 100, 50, 255])));
-    painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Allowed),
-    );
-    scenery.model.player = playing_model("second", 200, 50).player;
-    painter.set_cover(cover("second", Rgba([200, 100, 50, 255])));
-    painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
-    assert_eq!(painter.motion(), CoverMotion::Still);
-}
-
-#[rstest]
-fn a_vinyl_rebuild_for_a_new_rect_on_the_same_path_never_crossfades(
-    #[with(CoverMode::Vinyl)] mut scenery: Scenery,
-    mut painter: CoverPainter,
-) {
-    scenery.model.settings.appearance_settings.animations = Animations::On;
-    painter.set_cover(cover("moon-river", Rgba([200, 100, 50, 255])));
-
-    let narrow = layout_with_cover(Some(Rect::new(0, 0, 10, 10)));
-    painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&narrow, CrossfadePermit::Allowed),
-    );
-    let wide = layout_with_cover(Some(Rect::new(0, 0, 12, 10)));
-    painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&wide, CrossfadePermit::Allowed),
-    );
-    assert_eq!(painter.motion(), CoverMotion::Still);
 }
 
 #[rstest]
@@ -628,13 +357,10 @@ fn a_toast_overlapping_the_cover_rect_hides_it(
     #[case] visible: bool,
     mut painter: CoverPainter,
 ) {
-    let scenery = scenery::get(CoverMode::Vinyl);
+    let scenery = scenery::get(CoverMode::Vinyl, capabilities());
     let mut layout = layout_with_cover(Some(cover_rect()));
     layout.toast = toast;
-    painter.refresh(
-        &scenery.scene(),
-        cover_refresh(&layout, CrossfadePermit::Withheld),
-    );
+    painter.refresh(&scenery.scene(), layout.cover_area);
 
     let mut buffer = Buffer::empty(cover_rect());
     painter.paint(&mut buffer, &layout);

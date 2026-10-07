@@ -33,12 +33,12 @@ impl Supervision {
         match driver_name {
             DriverName::Audio => Supervision::Restart {
                 attempts: 3,
-                window: Duration::from_secs(60),
+                window: Duration::from_mins(1),
                 announcement: Announcement::Toast,
             },
             DriverName::Library => Supervision::Restart {
                 attempts: 1,
-                window: Duration::from_secs(60),
+                window: Duration::from_mins(1),
                 announcement: Announcement::Toast,
             },
             DriverName::Config => Supervision::Degrade(Announcement::Toast),

@@ -104,12 +104,11 @@ fn bin_index(fractional_bin: f32) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use rodio::buffer::SamplesBuffer;
     use rstest::rstest;
 
     use crate::{
         spectrum::SpectrumAnalyzer,
-        tap::{TappedSource, WINDOW, spectrum_channel},
+        tap::{SpectrumWriter, WINDOW, spectrum_channel},
     };
 
     fn tone(cycles: f32) -> Vec<f32> {
@@ -136,15 +135,13 @@ mod tests {
     #[test]
     fn a_failed_transform_gives_zero_bands_instead_of_the_last_spectrum() {
         let (spectrum_buffers, spectrum_tap) = spectrum_channel();
-        TappedSource::new(SamplesBuffer::new(1, 44_100, tone(64.0)), &spectrum_buffers)
-            .for_each(drop);
+        SpectrumWriter::new(&spectrum_buffers, 1).push(&tone(64.0));
         let mut analyzer = SpectrumAnalyzer::new();
         let loud: [f32; 8] = analyzer.bands(&spectrum_tap);
         assert!(loud.iter().any(|&band| band > 0.0));
 
         analyzer.bins.truncate(WINDOW / 4);
-        TappedSource::new(SamplesBuffer::new(1, 44_100, tone(64.0)), &spectrum_buffers)
-            .for_each(drop);
+        SpectrumWriter::new(&spectrum_buffers, 1).push(&tone(64.0));
         let failed: [f32; 8] = analyzer.bands(&spectrum_tap);
         assert!(failed.iter().all(|&band| band == 0.0), "{failed:?}");
     }
@@ -154,8 +151,7 @@ mod tests {
     #[case::many_bands(32)]
     fn every_band_stays_within_unit_range(#[case] count: usize) {
         let (spectrum_buffers, spectrum_tap) = spectrum_channel();
-        let source_tone = SamplesBuffer::new(1, 44_100, tone(64.0));
-        TappedSource::new(source_tone, &spectrum_buffers).for_each(drop);
+        SpectrumWriter::new(&spectrum_buffers, 1).push(&tone(64.0));
 
         let mut analyzer = SpectrumAnalyzer::new();
         let bands: Vec<f32> = match count {

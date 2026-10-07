@@ -38,7 +38,7 @@ XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► inbox �
 | Request | kernel | what the shell asks the core; always a branch of `Message` | `XRequest` | guard |
 | Message | kernel | the only input of `update`: `X(XRequest)`, `X(XEvent)`, answers, `Elapsed(Timer)`, `Driver { driver_name, event }`, `Key(KeyPress)`, … | `Message` | review |
 | Driver | audio, macos, library, config | the top machine of one external source (§4) | `AudioDriver`, `MacosDriver`, `LibraryDriver`, `ConfigDriver` | guard |
-| DriverLoop | runtime | one generic loop, one thread per driver (§4); a driver effect reaches it through `LoopEffect { Execute, Run, After, Watch, Unwatch }` (decided 2026-10-04); runtime seeds `XMessage::Started` into the inbox at spawn through the `DriverLoop` field `message: Option<D::Message>`; the loop's private next-input enum is `LoopInput` (not `Wake`, reserved for the realtime wake-up); the inputs `Spawners` hands each driver thread are `SpawnSetup`, the audio start closure `SpawnAudio`; an audio driver that stops before handing over its tap is `SpawnError::TapLost { driver_name }`; a value the driver publishes goes out through a closure sink `P: Fn(T)` the runtime passes in | `DriverLoop` | guard |
+| DriverLoop | runtime | one generic loop, one thread per driver (§4); a driver effect reaches it through `LoopEffect { Execute, Run, After, Watch, Unwatch }` (decided 2026-10-04); runtime seeds `XMessage::Started` into the inbox at spawn through the `DriverLoop` field `message: Option<D::Message>`; the loop's private next-input enum is `LoopInput` (not `Wake`, reserved for the audio feeder's wake-up); the inputs `Spawners` hands each driver thread are `SpawnSetup`, the audio start closure `SpawnAudio`; an audio driver that stops before handing over its tap is `SpawnError::TapLost { driver_name }`; a value the driver publishes goes out through a closure sink `P: Fn(T)` the runtime passes in | `DriverLoop` | guard |
 | Stream | runtime | a repeated input started by a driver effect (`LibraryWatchEffect::Watch(PathBuf)`, as Crux `stream_from_shell`); runtime owns it and feeds its items back as `XMessage`s. The word `Subscription` is not used | `FileStream` | guard |
 | Job | driver crate (type), runtime (thread) | slow blocking work a driver hands to the runtime worker as `XEffect::Run(XJob)`; the result returns as an `XMessage`; stale by `Revision` (§4.7) | `AudioJob`, `LibraryJob`, `MacosJob` | review |
 | Error | every crate that can fail | §6 | `Error`, `<Type>Error` | guard |
@@ -66,8 +66,6 @@ refusal sites
 1 runtime/src/driver.rs: let Ok(cmd) = driver.transition(message) else {
 1 runtime/src/event_loop.rs: if self.runtime.deliver(message).is_ok() {
 1 audio/src/deck/envelope.rs: Ok(()) | Err(Unhandled) => {}
-2 sifr/src/shell/painter.rs: Ok(_) | Err(Unhandled) => {}
-1 sifr/src/shell/painter.rs: Err(Unhandled) => CrossfadePermit::Withheld,
 1 sifr/src/shell/painter.rs: if let Ok(cmd) = self.window_colors_write.transition(message) {
 1 kernel/src/update/mod.rs: let Some(cmd) = branch(model, message, clock).ok() else {
 1 kernel/src/update/mod.rs: Err(refusal) => {
@@ -95,9 +93,9 @@ Why `Driver`: same roles as OS drivers (request in, interrupt-driven events out,
 2. `XDriver::transition` returns `Cmd<XEffect, XEvent>`: `effects` are actions, `messages` are reports to the kernel. An `XEffect` enum has no variant carrying an event. DECIDED 2026-10-03 (Crux `map_event`): `messages` always go one level up to the parent, at every level; a part inside a driver returns `Cmd<PartEffect, XMessage>` (`ConfigWatch` → `Cmd<ConfigWatchEffect, ConfigChange>`, which `ConfigDriver` lifts) and the driver lifts its effects with `map_effect` and its messages one by one after `into_parts()`; the top driver's parent is the kernel, so its messages are `XEvent`. A machine never messages itself; an IO answer comes back through `execute` (§4.3). No driver builds a kernel `Message`. `review`
 3. The only impure step is `XDriver::execute(&mut self, effect: XEffect) -> Option<XMessage>`. `None` = fire-and-forget (Crux `Output = ()`); `Some(answer)` = the IO result, which `DriverLoop` feeds to `transition` at once, before the next inbox item (Crux `resolve`). The answer to effect `X` is the message variant named for it in the past tense (`Open` → `Opened`, `Save` → `Saved`, `Read` → `ReadDone`). Words `perform`, `handle`, `process`, `dispatch`, `apply` are banned for it. `guard`
 4. Data a driver needs at start are fields of `XDriver`, not a `*Parts` bundle. `review`
-5a. DECIDED 2026-10-03 (Crux: effects start everything, the shell owns the loop): kernel `pub trait Driver: Machine { type Effect; fn execute(&mut self, effect: Self::Effect) -> Option<Self::Message>; }` is the only driver trait; kernel `enum Driver` (which driver) becomes `DriverName` (as `OverlayName`, `ConfigName`). No per-driver hooks in `DriverLoop`: a deadline or debounce is an effect `After { delay, timer }` (as kernel `Effect::After`, Crux `notify_after`); watching files or any repeated input is an effect that starts a stream (`LibraryWatchEffect::Watch(PathBuf)`), whose items come back as `XMessage`s; shutdown is an ordinary kernel command sent before `Quit` (`ConfigCmd::Flush`), not a loop hook; `DriverLoop` drains the inbox and delivers all pending commands as one message `XMessage::Cmds(Cmds<XCmd>)`, so coalescing (keep the last volume) is pure machine logic tested by tables; `DriverLoop::spawn(start: impl FnOnce() -> D + Send)` builds the driver on its own thread (rodio output is `!Send`). Rejected: Elm-style `subscriptions()` (a second mechanism beside effects). `review`
-5. A driver opens no thread and no channel. `DriverLoop` (runtime) opens and closes every thread, channel, worker and stream: receive, read the clock, `transition`, `execute` each effect, send each event as a `Message` into `inbox`. There is no per-driver loop type. Threads a library opens inside itself (rodio output, `notify` watcher) are excepted. `review`
-5b. DECIDED 2026-10-03: a thread the OS or a library owns (AppKit main thread, CoreAudio listeners, cpal/rodio output) is a callback, never created or joined by us. Runtime opens a channel into the driver's inbox and hands its sender to whoever registers the callback; the callback only parses its input (§4.6) and sends an `XMessage`; every decision is in the driver machine on its own thread. The AppKit main loop `MainLoop` is started by runtime `host` (the name follows AppKit; allowed `Loop` types are in §9). `review`
+5a. DECIDED 2026-10-03 (Crux: effects start everything, the shell owns the loop): kernel `pub trait Driver: Machine { type Effect; fn execute(&mut self, effect: Self::Effect) -> Option<Self::Message>; }` is the only driver trait; kernel `enum Driver` (which driver) becomes `DriverName` (as `OverlayName`, `ConfigName`). No per-driver hooks in `DriverLoop`: a deadline or debounce is an effect `After { delay, timer }` (as kernel `Effect::After`, Crux `notify_after`); watching files or any repeated input is an effect that starts a stream (`LibraryWatchEffect::Watch(PathBuf)`), whose items come back as `XMessage`s; shutdown is an ordinary kernel command sent before `Quit` (`ConfigCmd::Flush`), not a loop hook; `DriverLoop` drains the inbox and delivers all pending commands as one message `XMessage::Cmds(Cmds<XCmd>)`, so coalescing (keep the last volume) is pure machine logic tested by tables; `DriverLoop::spawn(start: impl FnOnce() -> D + Send)` builds the driver on its own thread (the cpal output stream is `!Send`). Rejected: Elm-style `subscriptions()` (a second mechanism beside effects). `review`
+5. A driver opens no thread and no channel. `DriverLoop` (runtime) opens and closes every thread, channel, worker and stream: receive, read the clock, `transition`, `execute` each effect, send each event as a `Message` into `inbox`. There is no per-driver loop type. Threads a library opens inside itself (the cpal output stream, `notify` watcher) are excepted. `review`
+5b. DECIDED 2026-10-03: a thread the OS or a library owns (AppKit main thread, CoreAudio listeners, cpal output) is a callback, never created or joined by us. Runtime opens a channel into the driver's inbox and hands its sender to whoever registers the callback; the callback only parses its input (§4.6) and sends an `XMessage`; every decision is in the driver machine on its own thread. The AppKit main loop `MainLoop` is started by runtime `host` (the name follows AppKit; allowed `Loop` types are in §9). `review`
 6. Input from a callback that must answer synchronously (AppKit remote commands) is parsed at the boundary and decided in the machine: `RemoteInput::parse(trigger, event) -> Result<RemoteInput, RemoteInputError>`; a parse error answers `CommandFailed` at once, a parsed input is sent as `MacosMessage::Remote(input)` and answers `Success`. `review`
 7. An `Effect` is what a machine asks to be done outside; it runs at once (`execute` for a driver, runtime for the kernel). A `Job` is slow work for a worker thread, carried as `Run(XJob)` (not `Queue`: queue is the play queue); its result returns later as an `XMessage`. A job in flight carries a `Revision`; a result whose `Revision` is stale is dropped. `review`
 8. Nothing shared crosses a driver boundary: values cross as owned messages or through latest-value cells; no `Mutex`/`RwLock` handed out. A plain fn the composition root hands a driver (`library::cover::cover_bytes` for macos covers) is code, not shared state. `review`
@@ -203,7 +201,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | driver order and a batch of them | `*Cmd`, `Cmds`; values `cmd`, `cmds`, `cmd_sender`, `cmd_receiver` | `command`, `commands`, `batch`, `EngineCmd`, `BatchFlags` |
 | track load order | `TrackLoad`; value `track_load` | `load`, `pending`, `requested`, `request` |
 | engine track record | `LoadedTrack`; roles `current`, `incoming`, `outgoing` | `CurrentTrack`, `preload`, `track` for the incoming one, `primary`, `swap_primary`, `retire_primary` |
-| crossfade gain pair of one engine track | `Fader { sink, control }`; values `incoming_fader`, `outgoing_fader` | `Slot` |
+| crossfade gain pair of one engine track | `Fader { control }`; values `incoming_fader`, `outgoing_fader` | `Slot` |
 | decoded audio | `DecodedTrack { revision, decoder }`; value `decoded_track` | `TrackSource` for it, `source` |
 | next-track preparation | `PreloadMode`; value `preload_mode` | `PreloadKind`, `Preload`, `mode` outside `Deck`, `ExpectPreload`, `expect_preload`, `Envelopes.gapless` |
 | crossfade start | `EngineEffect::SetFadeStart`, `EngineMessage::FadeStartReached`, `Signals::FADE_START`; value `fade_start` | `cue` for it, `Cued`, `CUED`, `Arm`, `arm_cue`, `armed`, `rearm`, `EngineEffect::Cue`, `crossfade_cue`, `cue_set`, `recue` |
@@ -239,8 +237,6 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | cover mode | `CoverMode`; value `cover_mode` (key `cover_mode`) | `CoverStyle`, `style`, `active`, `mode`, `PixelCoverStyle`, `RendererMode` |
 | pixel path | `PixelPath`; value `pixel_path` | `detected` |
 | time since first paint | `Duration`; value `since_first_paint` (`Workspace.clock` keeps its word) | `clock` for the shell clock |
-| cover refresh | `CoverRefresh`; value `cover_refresh` | `CoverRefreshParts`, `parts` |
-| crossfade permit | `CrossfadePermit`; value `crossfade_permit` | `crossfade` for it |
 | vinyl style | `VinylStyle`; value `style` in `Vinyl*`, `vinyl_style` elsewhere | `colors` for it |
 | playback flag | kernel `Playback`; value `playback` | `playing` for it |
 | playing row | `Option<ViewIndex>`; value `playing_index` | `playing` for it |
@@ -264,7 +260,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | help rows | `HelpRow`; value `rows` | `bindings` for it, `KeyGroup`, `Group` |
 | time text | module `time_text`; values `duration_text`, `elapsed_text`, `relative_time_text` | `format_time`, `elapsed_of`, `relative_time`, `clock_text`, module `clock`, `time`, `elapsed_total` |
 | milkdrop stamp | `MilkdropStamp`; value `stamp` | `MilkdropTick`, `tick`, `WarpParams`, `InjectParams` |
-| screen wash | `screen_wash` | `THEME_WASH_*` |
+| screen wash: a theme change fades every cell at once from the colours on screen in a quick fade | `screen_wash`; the colours on screen `PaintedCell` (`fg`, `bg`), value `painted_cells`, the start `wash_from` | `THEME_WASH_GRADIENT_CELLS` |
 | scatter animation | `scatter_burst` | `delete_*` |
 | animation inputs | `CellFilter`; value `cell_filter` | `guard`, `duration` for them |
 | who paused playback | `PausedBy` | — |
@@ -281,7 +277,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | terminal window bg/fg | `WindowColors` | `WindowTint` |
 | replay gain | `ReplayGain` | `Replaygain` |
 | seek by tenths | `SeekTenths` | `SeekFraction` |
-| realtime wake-up of a driver | `Wake { Sent, Pending }`, fn `wake`; job staleness is a `Revision`, as timers | `Unsent`, `ring`, `Ticket` |
+| the audio feeder's wake-up of the driver | `Wake { Sent, Pending }`, fn `wake`; job staleness is a `Revision`, as timers | `Unsent`, `ring`, `Ticket` |
 | frame pipeline | `FrameLayout`, `Scene`, `XWidget::render` (ratatui trait methods only), `paint*` (own fns writing into `Buffer`/`Canvas`/`Pixmap`) | `draw`, `render` for own fns or for building, `DrawnRows`, `FrameInputs`, `FrameRenderInputs` |
 | values `Scene` takes beside the `Model` (theme, colour depth, bindings, …) | `ScenePresentation` | — |
 | time passed into the kernel | `Moment` | — |
@@ -296,7 +292,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | default key bindings | Rust tables in kernel `update/keymap` (data in code by decision 2026-10-04) | embedded TOML |
 | a child module's message handler | `update` (Elm), beside the root `update` | `step`, `handle` |
 | audio engine with no device open | `EngineState::Closed`, its input `ClosedMessage` | `Muted` (reads as volume mute) |
-| deck's realtime wake-up signal | `DeckEvent::Woke(Revision)`, fn `wake` | `Track(Revision)`, `notify` |
+| deck's wake-up signal, sent by the feeder | `DeckEvent::Woke(Revision)`, fn `wake` | `Track(Revision)`, `notify` |
 | macOS main-loop parts | `MainLoopStop`, `NowPlaying`, `NowPlayingClock`; `HardwarePoll`, `ArtworkReader` keep their names | `LoopStopper`, `Panel`, `PanelClock`, `MediaWorker`, `MediaResult`, `MediaEvent` |
 | terminal app identity, pixel protocol | `TerminalApp`; the pixel protocol is ratatui-image's `ProtocolType`; `Capabilities::from_environment`; `CoverPainter` | `Brand`, `Protocol { Kgp, Iip, Probe }`, `before_probe`, `CoverRenderer`, `CoverPlan`, `CoverAction`, `CoverPaint`, `CoverDraw`, `FramePrepaint`, `DeferredDraw` |
 | config watch sub-machine step inside `ConfigDriver` | `drive_watch`; never-read file state `Seen::Unread` | `drive`, `Seen::Never`, `HotReloadPoll`, `WatcherPollTiming` |
@@ -306,7 +302,6 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | named `Rect`s of one `FrameLayout` part | suffix `*Areas` (`ModalAreas`, `PlaylistAreas`, `OverlayAreas`) | `Rects`, `Regions` |
 | read-models `KeyHintsContent`, `OverlayContent` | `KeyHintsView`, `OverlayView` (View row) | `Content` suffix |
 | sifr's values beside the Model for `ScenePresentation` | `ShellPresentation` | `Presentation` |
-| the cover-crossfade state machine (widgets `pixels::cover::gate`) | `CrossfadeGate`, `CrossfadeGateMessage`; `CoverArrival`; `Motion` keeps its name | `PendingCrossfade`, `Advance`, `CrossfadeActionParams` |
 | CPU-parallel work inside one job (tag reading) | allowed: `thread::scope` inside a job body, joined before the job returns (decided 2026-10-04) | detached threads in jobs |
 | turning the raw `TomlTheme` into the widgets `Theme` | the shell (sifr) does it: `Theme` is a widgets type and config sits below widgets; config publishes `TomlTheme` (decided 2026-10-04) | config depending on widgets |
 | which cover to decode and at what size | the kernel decides: the shell reports the laid-out cover side through `Message::Viewport` (`Pixels`), kernel emits `Effect::Library(LibraryCmd::DecodeCover(CoverJob))` on track or side change; no shell→driver side channel (decided 2026-10-04) | paint path sending `LibraryMessage::Cover` |
@@ -326,7 +321,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | `Cfg`, `Ctx` in a type name | `naming.rs` | guard |
 | type suffixes `Props Tuning Sync Scratch Slices Info Type Kind Inputs Values Flags Params Options Data Manager Handler Helper Util Utils Wrapper Holder Draw Spec Slot` | `naming.rs`, `forbidden_names.rs`, review criteria | guard |
 | type suffixes `State` (machine parts), `File`/`Config` (raw or parsed shapes), `XColors` other than `Colors` | decided 2026-10-02/03 | review |
-| `Loop` suffix except `DriverLoop`, `MainLoop` (AppKit) and runtime's `EventLoop`; no per-driver loop | decided 2026-10-02/03 | guard |
+| `Loop` suffix except `DriverLoop`, `MainLoop` (AppKit), runtime's `EventLoop` and the kernel's `AbLoop`; no per-driver loop | decided 2026-10-02/03 | guard |
 | identifiers ending `Refused`, `Fault`, `Problem`, `Failure`, `Rejected` | `forbidden_names.rs`, decided 2026-10-02/03 | guard |
 | words `Outcome`, `apply`, `Look`, `Adjust`, `Nudge`, `Subscription`; type prefix `Custom*`; `*Overlay` widgets | decided 2026-10-03 | guard |
 | `*Request` outside kernel shell → core enums | decided 2026-10-03 | review |
@@ -372,13 +367,13 @@ A name or shape this file does not cover (a new suffix, a new domain word, a sec
 ## 12. Events, frames and performance
 
 1. Three event classes, one path each: a fact reaches `update` as a `Message` through the bounded mailbox; driver internals never leave the driver thread; a stream value (spectrum, decoded cover, reloaded theme, reloaded appearance) goes into a latest-value cell, never a queue. No message exists only because time passed. `review`
-2. Cells are lock-free: `triple_buffer` for samples, atomics for scalars, `arc-swap` for large rare values. On a realtime path (audio callback, OS callback) no `Mutex`, allocation or blocking call; it only sets a flag or `try_send`s into a bounded(1) doorbell. `review`
+2. Cells are lock-free: `triple_buffer` for samples and envelope orders, atomics for scalars, `arc-swap` for large rare values. On a realtime path (audio callback, OS callback) no `Mutex`, allocation, free or blocking call. The audio render callback `Mixer::mix` sends no signal: it takes decoded chunks, mixer orders and returns empty chunks and retired voices through wait-free rtrb rings, reads envelope orders from `triple_buffer` cells and leaves position and flags in atomics; the feeder, a `DriverLoop` job paced by the driver, refills the chunks and wakes the driver. An OS callback only sets a flag or `try_send`s into a bounded(1) doorbell. `Mixer::mix` and `FeedSource::read` carry `#[sanitize(realtime = "nonblocking")]`, and `scripts/rtsan.sh` runs the audio tests under RTSan. `review`
 3. Kernel timers (`Effect::After`) exist only for decisions (`Timer::Lookahead`, `Sleep`, `Toast`); a timer whose only purpose is to move pixels is a defect. `review`
 4. `update` names each transition worth animating as `Effect::Animate(Cue)`; the shell plays the cue and never diffs the model to guess what changed. `review`
 5. Frames only while something moves: every `frame_due` source is a pure function of (layout, anchor, now) that never slides; spectrum frames only while it is on screen and playing or decaying; with nothing moving the loop blocks with no deadline. `review`
 6. Every channel that carries traffic is bounded; the loop never blocks on a driver (`try_send`; full → the command is dropped and the port's congestion flag rises; a closed port or a driver that is not running drops it too, with no reason value); a driver raises its flag before it blocks on a full mailbox; one episode (`Episode { Clear, Reported }` per port) yields exactly one `DriverEvent::Full` and one toast, and ends at the first loop iteration where the port's flag stays down. `review`
 7. A message with no visual change: no paint, no allocation. A burst of keys or messages is drained as one batch and paints once. Spectrum frames never queue and never wake the loop. Idle: every thread blocked, 0 % CPU. `review`
-8. Playlist rows borrow precomputed display text, no `String` per row per frame, `Arc::clone` over deep clones; pixel components are memoized by (input, generation) and re-encode only on change. `review`
+8. Playlist rows borrow precomputed display text, no `String` per row per frame, `Arc::clone` over deep clones; pixel components are memoized by (input, generation) and re-encode only on change; a cover change on a pixel terminal with Animations on fades in at most `COVER_CROSSFADE_STEPS` encoded steps, with Animations off it repaints once. `review`
 9. Performance is read from the code in reviews; it is measured only when the user asks, never inside a step. `review`
 10. Config lives under XDG; the working directory is never written. `review`
 

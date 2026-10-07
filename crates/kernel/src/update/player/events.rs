@@ -45,23 +45,24 @@ impl Lookahead {
     }
 
     fn preloading(self, position: Duration, preloaded: &mut Option<Arc<Track>>) -> Cmd {
-        match self.next {
-            Some(next) if self.is_preload_due(position) => {
-                let preload_cmd_effect = Effect::Audio(AudioCmd::Preload(
-                    TrackLoad::for_track(&next, self.revision),
-                ));
-                let prefetch = self.cover_side.map(|side| {
-                    Effect::Library(LibraryCmd::PrefetchCover(CoverJob {
-                        path: next.path().to_path_buf(),
-                        side,
-                    }))
-                });
-                let cmd =
-                    Cmd::from_iter(std::iter::once(preload_cmd_effect).chain(prefetch));
-                *preloaded = Some(next);
-                cmd
-            }
-            Some(_) | None => Cmd::none(),
+        if self.is_preload_due(position)
+            && let Some(next) = self.next
+        {
+            let preload_cmd_effect = Effect::Audio(AudioCmd::Preload(
+                TrackLoad::for_track(&next, self.revision),
+            ));
+            let prefetch = self.cover_side.map(|side| {
+                Effect::Library(LibraryCmd::PrefetchCover(CoverJob {
+                    path: next.path().to_path_buf(),
+                    side,
+                }))
+            });
+            let cmd =
+                Cmd::from_iter(std::iter::once(preload_cmd_effect).chain(prefetch));
+            *preloaded = Some(next);
+            cmd
+        } else {
+            Cmd::none()
         }
     }
 }

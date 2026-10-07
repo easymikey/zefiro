@@ -260,13 +260,11 @@ mod tests {
 
             let scores: Vec<Option<i32>> = titles.iter().map(|title| score(&query, title)).collect();
             let scored = |index: usize| scores.get(index).copied().flatten().unwrap_or(i32::MIN);
-            for window in ranked.windows(2) {
-                if let [left, right] = *window {
-                    let (left_score, right_score) = (scored(left.get()), scored(right.get()));
-                    prop_assert!(left_score >= right_score);
-                    if left_score == right_score {
-                        prop_assert!(left < right);
-                    }
+            for &[left, right] in ranked.array_windows() {
+                let (left_score, right_score) = (scored(left.get()), scored(right.get()));
+                prop_assert!(left_score >= right_score);
+                if left_score == right_score {
+                    prop_assert!(left < right);
                 }
             }
         }

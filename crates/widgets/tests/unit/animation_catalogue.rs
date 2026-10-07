@@ -1,15 +1,15 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use kernel::domain::cue::Cue;
 use ratatui::{
-    buffer::Buffer,
+    buffer::{Buffer, CellDiffOption},
     layout::{Position, Rect},
-    style::Style,
+    style::{Color, Style},
 };
-use rstest::rstest;
 use tachyonfx::{CellFilter, Effect as Animation};
 use widgets::animation::{
     catalogue::{
+        PaintedCell,
         chip_pulse,
         modal_reveal,
         row_flash,
@@ -17,7 +17,6 @@ use widgets::animation::{
         screen_wash,
         toast_slide_in,
         volume_pulse,
-        wash_reveal,
     },
     stage::AnimationStage,
 };
@@ -156,7 +155,7 @@ fn every_animation() -> Vec<(String, Animation)> {
             "volume_pulse".to_string(),
             volume_pulse(volume_fill(), volume_lifted(), CellFilter::All),
         ),
-        ("screen_wash".to_string(), screen_wash(BACKGROUND)),
+        ("screen_wash".to_string(), screen_wash(Arc::default())),
         (
             "scatter_burst".to_string(),
             scatter_burst(BACKGROUND, CellFilter::All),
@@ -189,32 +188,6 @@ fn every_animation_ends_on_the_painted_frame() {
     }
 }
 
-#[rstest]
-#[case::the_first_column(0)]
-#[case::a_middle_column(40)]
-#[case::the_last_column(89)]
-fn wash_reveal_answers_nothing_at_the_start(#[case] column: u16) {
-    assert_eq!(wash_reveal(0.0, column, 90), 0.0);
-}
-
-#[rstest]
-#[case::the_first_column(0)]
-#[case::a_middle_column(40)]
-#[case::the_last_column(89)]
-fn wash_reveal_answers_everything_at_the_end(#[case] column: u16) {
-    assert_eq!(wash_reveal(1.0, column, 90), 1.0);
-}
-
-#[test]
-fn wash_reveal_is_never_smaller_for_a_column_further_left() {
-    let left = wash_reveal(0.5, 10, 90);
-    let right = wash_reveal(0.5, 80, 90);
-    assert!(
-        left > right,
-        "left={left} must reveal ahead of right={right}"
-    );
-}
-
 fn filled_row(width: u16) -> Buffer {
     let area = Rect {
         x: 0,
@@ -232,37 +205,154 @@ fn filled_row(width: u16) -> Buffer {
     buffer
 }
 
-fn wash_row(buffer: &Buffer, width: u16) -> String {
-    (0..width)
-        .map(|column| {
-            let bg = buffer.cell((column, 0)).map(|cell| cell.bg);
-            if bg == Some(BACKGROUND) {
-                'R'
-            } else if bg == Some(ACCENT) {
-                '.'
-            } else {
-                '~'
-            }
-        })
-        .collect()
+const OLD: PaintedCell = PaintedCell {
+    fg: ACCENT,
+    bg: TEXT,
+};
+
+const DRAWN: PaintedCell = PaintedCell {
+    fg: TEXT,
+    bg: BACKGROUND,
+};
+
+fn washed(from: Arc<[PaintedCell]>, mut buffer: Buffer, elapsed: Duration) -> Buffer {
+    let mut stage = AnimationStage::default();
+    stage.stage(screen_wash(from), buffer.area);
+    stage.advance(&mut buffer, elapsed);
+    buffer
+}
+
+fn washed_row(elapsed: Duration) -> Buffer {
+    washed(vec![OLD; 90].into(), filled_row(90), elapsed)
+}
+
+fn row_colors(buffer: &Buffer) -> Vec<PaintedCell> {
+    buffer.content.iter().map(PaintedCell::from).collect()
+}
+
+fn strictly_between(color: Color, from: Color, to: Color) -> bool {
+    match (color, from, to) {
+        (
+            Color::Rgb(r, g, b),
+            Color::Rgb(from_r, from_g, from_b),
+            Color::Rgb(to_r, to_g, to_b),
+        ) => [(r, from_r, to_r), (g, from_g, to_g), (b, from_b, to_b)]
+            .into_iter()
+            .all(|(channel, start, end)| {
+                channel > start.min(end) && channel < start.max(end)
+            }),
+        _ => false,
+    }
 }
 
 #[test]
-fn a_theme_wash_reveals_left_before_right_mid_animation() {
-    let width = 90;
-    let mut stage = AnimationStage::default();
-    stage.stage(
-        screen_wash(ACCENT),
-        Rect {
-            x: 0,
-            y: 0,
-            width,
-            height: 1,
-        },
+fn a_theme_wash_fades_every_cell_at_once() {
+    let start = washed_row(Duration::ZERO);
+    assert_eq!(
+        row_colors(&start),
+        vec![OLD; 90],
+        "at the start every cell shows its old colours"
+    );
+    assert!(
+        start.content.iter().all(
+            |cell| cell.diff_option == CellDiffOption::None && cell.symbol() == "X"
+        ),
+        "no cell is blank or left to the terminal"
     );
 
-    let mut buffer = filled_row(width);
-    stage.advance(&mut buffer, slice(|t| t.screen_wash, 4));
+    let middle = row_colors(&washed_row(slice(|t| t.screen_wash, 2)));
+    assert_eq!(
+        middle.first(),
+        middle.last(),
+        "the first and the last cell fade by the same fraction"
+    );
+    assert!(
+        middle.first().is_some_and(|first| {
+            strictly_between(first.fg, OLD.fg, DRAWN.fg)
+                && strictly_between(first.bg, OLD.bg, DRAWN.bg)
+        }),
+        "mid-animation a cell blends both colours: {:?}",
+        middle.first()
+    );
 
-    insta::assert_snapshot!(wash_row(&buffer, width));
+    let end = washed_row(slice(|t| t.screen_wash, 1));
+    assert_eq!(
+        row_colors(&end),
+        vec![DRAWN; 90],
+        "at the end every cell is drawn"
+    );
+}
+
+#[test]
+fn a_theme_wash_is_done_after_150_ms() {
+    assert_ne!(
+        row_colors(&washed_row(Duration::from_millis(75))),
+        vec![DRAWN; 90],
+        "half way the cells still fade"
+    );
+    assert_eq!(
+        row_colors(&washed_row(Duration::from_millis(150))),
+        vec![DRAWN; 90],
+        "after 150 ms every cell is drawn"
+    );
+}
+
+#[test]
+fn a_theme_wash_leaves_a_skipped_cell_as_drawn() {
+    let mut row = filled_row(90);
+    if let Some(cell) = row.cell_mut(Position { x: 40, y: 0 }) {
+        cell.set_diff_option(CellDiffOption::Skip);
+    }
+    let middle = row_colors(&washed(
+        vec![OLD; 90].into(),
+        row,
+        slice(|t| t.screen_wash, 2),
+    ));
+    assert_eq!(
+        middle.get(40),
+        Some(&DRAWN),
+        "an image placement keeps its drawn colours"
+    );
+    assert_ne!(
+        middle.first(),
+        Some(&DRAWN),
+        "the cells around it still fade"
+    );
+}
+
+#[test]
+fn a_theme_wash_from_another_screen_size_leaves_the_frame_as_drawn() {
+    let resized = washed(
+        vec![OLD; 89].into(),
+        filled_row(90),
+        slice(|t| t.screen_wash, 2),
+    );
+    assert_eq!(
+        row_colors(&resized),
+        vec![DRAWN; 90],
+        "colours of another size are not laid over the frame"
+    );
+}
+
+#[test]
+fn a_theme_wash_during_a_wash_starts_from_the_blended_colours_on_screen() {
+    let on_screen = row_colors(&washed_row(slice(|t| t.screen_wash, 2)));
+    let mut next_theme = Buffer::empty(Rect {
+        x: 0,
+        y: 0,
+        width: 90,
+        height: 1,
+    });
+    next_theme.set_string(
+        0,
+        0,
+        "X".repeat(90),
+        Style::default().fg(BACKGROUND).bg(ACCENT),
+    );
+    let restarted = washed(on_screen.clone().into(), next_theme, Duration::ZERO);
+    assert_eq!(
+        row_colors(&restarted),
+        on_screen,
+        "the next wash starts where the last one stood, so the fade never jumps"
+    );
 }

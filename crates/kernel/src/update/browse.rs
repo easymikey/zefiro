@@ -14,7 +14,7 @@ use crate::{
         model::ScanStatus,
         overlay::Overlay,
         player::Player,
-        playlist::{PlayOrder, Playlist, PlaylistSource, index_of},
+        playlist::{Playlist, PlaylistSource, index_of},
         time::Moment,
         toast::Toast,
         track::{Track, TrackSource},
@@ -305,8 +305,7 @@ pub(crate) fn relist(
         .and_then(|track| index_of(&tracks, track.source()))
         .map(ViewIndex::new);
     playlist.relist(tracks, anchor);
-    playlist.play_order =
-        std::mem::replace(&mut playlist.play_order, PlayOrder::Linear).without_order();
+    playlist.play_order = std::mem::take(&mut playlist.play_order).without_order();
     workspace.browse.cursor = workspace.browse.cursor.resize(playlist.tracks.len());
     if let Some(Overlay::Search(search)) = workspace.overlay.as_mut() {
         crate::update::overlay::search::rerank(search, &playlist.tracks);

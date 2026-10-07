@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use kernel::domain::revision::Revision;
 
-use crate::{deck::job::AudioJob, engine::message::AudioMessage};
+use crate::{
+    deck::job::AudioJob,
+    engine::message::{AudioMessage, EngineMessage},
+};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct JobRevisions {
@@ -22,11 +25,16 @@ impl JobRevisions {
                 revision,
                 result: _result,
             } => self.is_current_preload(*revision),
+            AudioMessage::Engine(EngineMessage::Interrupted(revision, _)) => {
+                *revision >= self.decode
+            }
             AudioMessage::Cmds(_)
             | AudioMessage::Deck(_)
             | AudioMessage::DevicesListed(_)
             | AudioMessage::SignalsTaken { .. }
-            | AudioMessage::Engine(_) => true,
+            | AudioMessage::Engine(_)
+            | AudioMessage::Started
+            | AudioMessage::Fed => true,
         }
     }
 
@@ -66,12 +74,19 @@ impl JobRevisions {
 mod tests {
     use std::path::PathBuf;
 
-    use kernel::domain::revision::Revision;
+    use kernel::{
+        domain::revision::Revision,
+        message::{AudioError, DecodeError},
+    };
     use rstest::rstest;
 
     use crate::{
         deck::{event::DeckEvent, job::AudioJob},
-        engine::{message::AudioMessage, revisions::JobRevisions},
+        engine::{
+            message::{AudioMessage, EngineMessage},
+            revisions::JobRevisions,
+            tests::assert_same,
+        },
         error::Error,
     };
 
@@ -106,12 +121,12 @@ mod tests {
     #[test]
     fn a_decode_job_carries_the_newest_revision() {
         let mut job_revisions = JobRevisions::default();
-        assert_eq!(
+        assert_same(
             job_revisions.decode_job("/a".into()),
             AudioJob::Decode {
                 path: "/a".into(),
                 revision: revision(2),
-            }
+            },
         );
     }
 
@@ -123,6 +138,11 @@ mod tests {
     #[case::preload_after_a_load(vec![preload_job_step("/b"), decode_job_step("/a")], AudioMessage::Preloaded { revision: revision(1), result: failed() }, false)]
     #[case::preload_after_a_newer_preload(vec![preload_job_step("/b"), preload_job_step("/c")], AudioMessage::Preloaded { revision: revision(1), result: failed() }, false)]
     #[case::woke_event(vec![cancel_step()], AudioMessage::Deck(DeckEvent::Woke(revision(9))), true)]
+    #[case::interruption_of_the_loaded_feed(vec![decode_job_step("/a")], AudioMessage::Engine(EngineMessage::Interrupted(revision(2), AudioError::Decode { path: "/a".into(), error: DecodeError::Corrupt })), true)]
+    #[case::interruption_of_a_preloaded_feed(vec![decode_job_step("/a"), preload_job_step("/b")], AudioMessage::Engine(EngineMessage::Interrupted(revision(3), AudioError::Decode { path: "/a".into(), error: DecodeError::Corrupt })), true)]
+    #[case::interruption_of_the_playing_preload_after_a_newer_preload(vec![decode_job_step("/a"), preload_job_step("/b"), preload_job_step("/c")], AudioMessage::Engine(EngineMessage::Interrupted(revision(3), AudioError::Decode { path: "/a".into(), error: DecodeError::Corrupt })), true)]
+    #[case::interruption_after_a_second_load(vec![decode_job_step("/a"), decode_job_step("/b")], AudioMessage::Engine(EngineMessage::Interrupted(revision(2), AudioError::Decode { path: "/a".into(), error: DecodeError::Corrupt })), false)]
+    #[case::interruption_after_cancel(vec![decode_job_step("/a"), cancel_step()], AudioMessage::Engine(EngineMessage::Interrupted(revision(2), AudioError::Decode { path: "/a".into(), error: DecodeError::Corrupt })), false)]
     fn a_result_is_current_only_for_the_newest_revision(
         #[case] steps: Vec<Step>,
         #[case] message: AudioMessage,

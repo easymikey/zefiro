@@ -167,12 +167,6 @@ pub(crate) fn sifr_dependencies(manifest: &toml::Value, out: &mut BTreeSet<Strin
     }
 }
 
-pub(crate) fn allowed(allowlist: &[Allow], path: &str, pattern: &str) -> bool {
-    allowlist
-        .iter()
-        .any(|row| row.path == path && row.pattern == pattern)
-}
-
 pub(crate) fn stale(
     allowlist: &[Allow],
     seen: &[(String, &'static str)],
@@ -188,23 +182,20 @@ pub(crate) fn stale(
         .collect()
 }
 
-pub(crate) fn stale_by_text(
-    allowlist: &[Allow],
-    files: &[(String, PathBuf)],
-) -> Vec<String> {
-    let seen: Vec<(String, &'static str)> = allowlist
-        .iter()
-        .filter(|row| {
-            files.iter().any(|(relative, path)| {
-                relative == row.path && read(path).contains(row.pattern)
-            })
-        })
-        .map(|row| (row.path.to_owned(), row.pattern))
-        .collect();
-    stale(allowlist, &seen)
+pub(crate) fn report(headline: &str, violations: &[String]) {
+    assert!(
+        violations.is_empty(),
+        "{headline}\n{} violation(s):\n{}",
+        violations.len(),
+        violations.join("\n"),
+    );
 }
 
-pub(crate) fn report(headline: &str, violations: &[String], stale_rows: &[String]) {
+pub(crate) fn report_with_stale(
+    headline: &str,
+    violations: &[String],
+    stale_rows: &[String],
+) {
     assert!(
         violations.is_empty() && stale_rows.is_empty(),
         "{headline}\n\

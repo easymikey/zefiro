@@ -22,14 +22,13 @@ impl ConfigErrors {
         &mut self,
         name: ConfigName,
         error: ConfigError,
-    ) -> Result<(), Unhandled> {
+    ) -> Result<&ConfigError, Unhandled> {
         match self.0.entry(name) {
-            Entry::Vacant(vacant) => {
-                vacant.insert(error);
-                Ok(())
-            }
-            Entry::Occupied(mut occupied) => {
-                machine::replace(occupied.get_mut(), error)
+            Entry::Vacant(vacant) => Ok(vacant.insert(error)),
+            Entry::Occupied(occupied) => {
+                let stored = occupied.into_mut();
+                machine::replace(stored, error)?;
+                Ok(stored)
             }
         }
     }
@@ -132,8 +131,8 @@ impl Workspace {
         let ConfigReload { name, result } = reload;
         match result {
             Err(error) => {
-                let toast = trouble(&name, &error);
-                self.config_errors.replace(name, error)?;
+                let toast =
+                    trouble(&name, self.config_errors.replace(name.clone(), error)?);
                 Ok(self.show(toast, revisions))
             }
             Ok(()) => Ok(self.config_recovered(&name)),

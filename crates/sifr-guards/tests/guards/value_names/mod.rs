@@ -756,7 +756,7 @@ fn every_value_is_named_after_its_type() {
     let (new_violations, stale) = compare(&findings);
     violations.extend(new_violations);
     violations.extend(unsorted_baseline());
-    support::report(
+    support::report_with_stale(
         "naming guard: a field, parameter or typed let is named after its type — the \
          type word, a role word from the glossary, or the type word without the \
          owner's own words; a domain word names only its own types. Fix the name; \

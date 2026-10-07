@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::guards::support::{self, Allow};
+use crate::guards::support;
 
 const RENDER_SOURCE: &str = "widgets/src/";
 
@@ -135,15 +135,8 @@ fn organisms_and_below_never_reach_a_whole_model_outside_from_model() {
         "demeter (views) guard: components below screen/** take a narrow view slice \
          built by an allowlisted `from_model` constructor, never a whole &Model.",
         &violations,
-        &[],
     );
 }
-
-const UI_ALLOWLIST: &[Allow] = &[];
-
-const SLICE_ALLOWLIST: &[Allow] = &[];
-
-const CHAIN_ALLOWLIST: &[Allow] = &[];
 
 const SLICE_TYPES: &[&str] =
     &["Playlist", "Library", "Transport", "Settings", "History"];
@@ -191,20 +184,9 @@ fn scan_scoped_lines(
     }
 }
 
-fn excuse(
-    allowlist: &'static [Allow],
-    relative: &str,
-    raw_line: &str,
-) -> Option<&'static Allow> {
-    allowlist
-        .iter()
-        .find(|row| row.path == relative && raw_line.contains(row.pattern))
-}
-
 #[test]
 fn organisms_and_below_never_hold_a_bare_workspace_outside_overlay_context() {
     let mut violations = Vec::new();
-    let mut seen: Vec<(String, &'static str)> = Vec::new();
 
     scan_scoped_lines(
         |relative| !is_screen_root(relative),
@@ -212,26 +194,20 @@ fn organisms_and_below_never_hold_a_bare_workspace_outside_overlay_context() {
             if !reaches_by_ref_type(raw_line, "Workspace") {
                 return;
             }
-            match excuse(UI_ALLOWLIST, relative, raw_line) {
-                Some(row) => seen.push((relative.to_owned(), row.pattern)),
-                None => violations
-                    .push(format!("{relative}:{line_no}: {}", raw_line.trim())),
-            }
+            violations.push(format!("{relative}:{line_no}: {}", raw_line.trim()));
         },
     );
 
     support::report(
         "demeter (views) guard: components take the specific `Workspace` field \
-         they read, not a bare `&Workspace` — only `OverlayView` is allowlisted for that.",
+         they read, not a bare `&Workspace` — only the files in `SCREEN_ROOTS` are exempt.",
         &violations,
-        &support::stale(UI_ALLOWLIST, &seen),
     );
 }
 
 #[test]
 fn card_compact_card_and_minimal_never_hold_a_whole_domain_slice() {
     let mut violations = Vec::new();
-    let mut seen: Vec<(String, &'static str)> = Vec::new();
 
     scan_scoped_lines(
         |relative| {
@@ -246,11 +222,7 @@ fn card_compact_card_and_minimal_never_hold_a_whole_domain_slice() {
             if !hits_a_slice_type {
                 return;
             }
-            match excuse(SLICE_ALLOWLIST, relative, raw_line) {
-                Some(row) => seen.push((relative.to_owned(), row.pattern)),
-                None => violations
-                    .push(format!("{relative}:{line_no}: {}", raw_line.trim())),
-            }
+            violations.push(format!("{relative}:{line_no}: {}", raw_line.trim()));
         },
     );
 
@@ -259,14 +231,12 @@ fn card_compact_card_and_minimal_never_hold_a_whole_domain_slice() {
          fields they read off Playlist/Library/Transport/Settings/History, not the \
          whole slice by reference.",
         &violations,
-        &support::stale(SLICE_ALLOWLIST, &seen),
     );
 }
 
 #[test]
 fn overlay_workspace_chains_never_go_deeper_than_one_field() {
     let mut violations = Vec::new();
-    let mut seen: Vec<(String, &'static str)> = Vec::new();
 
     scan_scoped_lines(
         |relative| relative.starts_with("components/organisms/overlays/"),
@@ -274,11 +244,7 @@ fn overlay_workspace_chains_never_go_deeper_than_one_field() {
             if !chains_deeper_than_one_field_off_workspace(raw_line) {
                 return;
             }
-            match excuse(CHAIN_ALLOWLIST, relative, raw_line) {
-                Some(row) => seen.push((relative.to_owned(), row.pattern)),
-                None => violations
-                    .push(format!("{relative}:{line_no}: {}", raw_line.trim())),
-            }
+            violations.push(format!("{relative}:{line_no}: {}", raw_line.trim()));
         },
     );
 
@@ -286,6 +252,5 @@ fn overlay_workspace_chains_never_go_deeper_than_one_field() {
         "demeter (views) guard: an overlay chains at most one field off `workspace` (the \
          `workspace.overlay` convention every overlay's own `render` uses).",
         &violations,
-        &support::stale(CHAIN_ALLOWLIST, &seen),
     );
 }

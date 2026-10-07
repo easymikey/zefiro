@@ -97,7 +97,7 @@ where
 pub struct TomlAudio {
     #[serde(deserialize_with = "crossfade")]
     pub(crate) crossfade: Crossfade,
-    #[serde(alias = "replaygain", deserialize_with = "flag")]
+    #[serde(deserialize_with = "flag")]
     pub(crate) replay_gain: ReplayGain,
     #[serde(deserialize_with = "device")]
     pub(crate) device: OutputDevice,

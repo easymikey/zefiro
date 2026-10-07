@@ -67,7 +67,6 @@ fn crate_dependencies_only_point_left() {
         "layering guard: a crate depends only on the crates its allow-map entry names \
          (docs/principles.md Level 4).",
         &violations,
-        &[],
     );
 }
 
@@ -92,7 +91,6 @@ fn only_screen_imports_screen() {
         "layering guard: no widgets module outside src/screen/ imports \
          crate::screen. There is no allowlist.",
         &violations,
-        &[],
     );
 }
 
@@ -282,7 +280,6 @@ fn module_cycles() {
         "layering guard: a crate's modules import each other over `crate::` paths without \
          a cycle (conventions.md §11.10).",
         &violations,
-        &[],
     );
 }
 

@@ -57,8 +57,7 @@ pub const KEY_HINTS: [KeyHints; 2] = [KeyHints::Shown, KeyHints::Hidden];
 
 pub const ANIMATIONS: [Animations; 2] = [Animations::On, Animations::Off];
 
-pub const LAYOUT_MODES: [LayoutMode; 3] =
-    [LayoutMode::Auto, LayoutMode::Full, LayoutMode::Compact];
+pub const LAYOUT_MODES: [LayoutMode; 2] = [LayoutMode::Auto, LayoutMode::Compact];
 
 const _: () = assert!(
     PRESETS.len() >= 2
@@ -321,7 +320,7 @@ mod tests {
     #[case::progress_time(AppearanceField::ProgressTime, 1)]
     #[case::key_hints(AppearanceField::KeyHints, 1)]
     #[case::animations(AppearanceField::Animations, 1)]
-    #[case::layout_mode(AppearanceField::LayoutMode, 2)]
+    #[case::layout_mode(AppearanceField::LayoutMode, 1)]
     fn field_choice_is_the_inverse_of_appearance_patch(
         #[case] field: AppearanceField,
         #[case] option_index: usize,

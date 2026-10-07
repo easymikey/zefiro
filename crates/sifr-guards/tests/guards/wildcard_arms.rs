@@ -127,10 +127,10 @@ fn own_enum(file: &File, enums: &Enums, from: usize) -> Option<String> {
 }
 
 fn only_wildcards(file: &File, (from, to): (usize, usize)) -> bool {
-    to > from + 3
+    to > from + 2
         && file.tx(from) == "("
         && file.matching_close(from) + 1 == to
-        && (from + 1..to - 1).all(|at| matches!(file.tx(at), "_" | ","))
+        && (from + 1..to - 1).all(|at| matches!(file.tx(at), "_" | "," | "."))
 }
 
 fn alternatives(file: &File, (from, to): (usize, usize)) -> Vec<(usize, usize)> {
@@ -216,7 +216,6 @@ fn no_wildcard_arm_over_an_own_enum() {
     support::report(
         "wildcard arm guard: name every variant of an enum of the same crate, no `_ =>`.",
         &violations,
-        &[],
     );
 }
 
@@ -246,6 +245,9 @@ fn pair(left: Mode, right: Mode, key: Key) {
     match (key, key) { (Key::Up, _) => {} (_, _) => {} }
     match (left, key) { (Mode::A, _) => {} (_, Key::Up) | (_, _) => {} }
     match left { Mode::B(_) | _ => {} }
+    match (left, right) { (Mode::A, _) => {} (_, ..) => {} }
+    match (left, right) { (Mode::A, _) => {} (.., _) => {} }
+    match (left, right) { (Mode::A, _) => {} (..) => {} }
 }
 #[cfg(test)]
 mod tests {
@@ -265,6 +267,9 @@ fn wildcard_arm_is_seen_only_over_an_own_enum() {
         "kernel/src/sample.rs:22: `(_, _) =>` on `Mode`",
         "kernel/src/sample.rs:25: `(_, _) =>` on `Mode`",
         "kernel/src/sample.rs:26: `_ =>` on `Mode`",
+        "kernel/src/sample.rs:27: `(_, _) =>` on `Mode`",
+        "kernel/src/sample.rs:28: `(_, _) =>` on `Mode`",
+        "kernel/src/sample.rs:29: `(_, _) =>` on `Mode`",
     ];
     assert_eq!(wildcard_hits(&file, &enums), expected);
 }

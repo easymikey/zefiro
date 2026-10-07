@@ -14,6 +14,7 @@ use crate::{
     AudioDriver,
     deck::{
         event::DeckEvent,
+        job::AudioJob,
         source::{DecodedTrack, PreloadMode, TrackDecoder},
     },
     engine::{
@@ -59,6 +60,14 @@ impl Machine for AudioDriver {
                 })
             }
             AudioMessage::Engine(message) => self.engine.transition(message),
+            AudioMessage::Started => self
+                .feed_receiver
+                .take()
+                .map(|feed_receiver| {
+                    Cmd::effect(LoopEffect::Run(AudioJob::Feed(feed_receiver)))
+                })
+                .ok_or(Unhandled),
+            AudioMessage::Fed => Ok(Cmd::none()),
         }
     }
 }
@@ -116,6 +125,7 @@ impl Machine for Engine {
                 Ok(Cmd::message(AudioEvent::PositionReported(position)))
             }
             (_, EngineMessage::Error(error)) => self.failed(error),
+            (_, EngineMessage::Interrupted(_, error)) => state.interrupted(error),
             (_, EngineMessage::DevicesListed(devices)) => {
                 Ok(Cmd::message(AudioEvent::DevicesListed(devices)))
             }
@@ -523,7 +533,7 @@ mod tests {
                     LoopEffect::Run(AudioJob::Preload { path, .. }) => {
                         self.incoming_path = Some(path.clone());
                     }
-                    LoopEffect::Run(AudioJob::ListDevices)
+                    LoopEffect::Run(AudioJob::ListDevices | AudioJob::Feed(_))
                     | LoopEffect::After { .. }
                     | LoopEffect::Watch { .. }
                     | LoopEffect::Unwatch(_) => {}

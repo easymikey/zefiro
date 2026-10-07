@@ -39,6 +39,7 @@ impl Live {
     ) -> AudioLoopCmd {
         let DeviceOpened {
             device,
+            device_name: _device_name,
             position,
             playback,
         } = device_opened;
@@ -148,6 +149,18 @@ impl Live {
         };
         self.phase = Phase::Idle;
         Ok(cmd)
+    }
+
+    pub(crate) fn interrupted(
+        &self,
+        error: AudioError,
+    ) -> Result<AudioLoopCmd, Unhandled> {
+        match &self.phase {
+            Phase::Playing(_) | Phase::Handover(_) => {
+                Ok(Cmd::message(AudioEvent::Error(error)))
+            }
+            Phase::Idle | Phase::Loading(_) => Err(Unhandled),
+        }
     }
 
     fn start_effect(&self, resume: Option<&Resume>) -> AudioLoopCmd {

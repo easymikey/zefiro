@@ -3,21 +3,43 @@ use std::sync::{
     atomic::{AtomicU8, Ordering},
 };
 
+use cpal::{
+    FromSample,
+    SizedSample,
+    traits::{DeviceTrait, HostTrait, StreamTrait},
+};
 use crossbeam_channel::{Sender, TrySendError};
 use kernel::domain::{
     device::{DeviceDefault, DeviceName, ListedDevice, OutputDevice},
+    speed::Speed,
     transport::OutputError,
-};
-use rodio::{
-    cpal,
-    cpal::traits::{DeviceTrait, HostTrait},
 };
 
 use crate::{
-    deck::event::DeckEvent,
+    deck::{
+        event::DeckEvent,
+        mixer::{MixerChannel, MixerControl, RetiredVoices, mixer_channel},
+        varispeed::OutputFormat,
+    },
     engine::message::AudioMessage,
-    error::{DeviceError, output_error},
+    error::{DeviceError, OpenError, output_error},
+    tap::SpectrumBuffers,
 };
+
+pub(crate) struct Opening<'a> {
+    pub(crate) speed: Speed,
+    pub(crate) spectrum_buffers: &'a SpectrumBuffers,
+    pub(crate) callback_sender: &'a Sender<AudioMessage>,
+    pub(crate) output_loss: &'a OutputLoss,
+}
+
+pub(crate) struct OpenedOutput {
+    pub(crate) stream: cpal::Stream,
+    pub(crate) format: OutputFormat,
+    pub(crate) mixer_control: MixerControl,
+    pub(crate) retired_voices: RetiredVoices,
+    pub(crate) device_name: Option<DeviceName>,
+}
 
 const CLEAR: u8 = 0;
 const DEVICE_GONE: u8 = 1;
@@ -106,54 +128,122 @@ fn output_loss_callback(
     }
 }
 
-pub(crate) fn open_stream(
+pub(crate) fn open_output(
     device: &OutputDevice,
-    callback_sender: &Sender<AudioMessage>,
-    output_loss: &OutputLoss,
-) -> Result<rodio::OutputStream, DeviceError> {
-    let callback = output_loss_callback(callback_sender, output_loss);
-    match device {
-        OutputDevice::Named(name) => open_named(name, callback),
-        OutputDevice::SystemDefault => open_default(callback),
+    opening: &Opening<'_>,
+) -> Result<OpenedOutput, DeviceError> {
+    let no_device = |source: OpenError| DeviceError::NoDevice {
+        requested_device: device.clone(),
+        source,
+    };
+    let found = match device {
+        OutputDevice::Named(name) => find_by_name(name)
+            .map_err(|source| DeviceError::Lookup {
+                requested_device: device.clone(),
+                source,
+            })?
+            .ok_or_else(|| DeviceError::NotFound(name.clone()))?,
+        OutputDevice::SystemDefault => cpal::default_host()
+            .default_output_device()
+            .ok_or_else(|| {
+                no_device(OpenError::Config(
+                    cpal::DefaultStreamConfigError::DeviceNotAvailable,
+                ))
+            })?,
+    };
+    let opened_output = found
+        .default_output_config()
+        .map_err(OpenError::Config)
+        .and_then(|config| open_config(&found, &config, opening));
+    match (opened_output, device) {
+        (Ok(opened_output), _) => Ok(opened_output),
+        (Err(error), OutputDevice::Named(_)) => Err(error),
+        (Err(error), OutputDevice::SystemDefault) => found
+            .supported_output_configs()
+            .map_err(OpenError::Configs)
+            .and_then(|configs| {
+                pick_config(configs.collect())
+                    .iter()
+                    .map(|config| open_config(&found, config, opening))
+                    .find(Result::is_ok)
+                    .unwrap_or(Err(error))
+            }),
+    }
+    .map_err(no_device)
+}
+
+fn pick_config(
+    mut supported: Vec<cpal::SupportedStreamConfigRange>,
+) -> Vec<cpal::SupportedStreamConfig> {
+    supported.sort_by(|left, right| right.cmp_default_heuristics(left));
+    supported
+        .into_iter()
+        .flat_map(|range| {
+            let (min, max) = (range.min_sample_rate(), range.max_sample_rate());
+            let cd_rate = cpal::SampleRate(44_100);
+            [
+                Some(range.with_max_sample_rate()),
+                (min < cd_rate && cd_rate < max)
+                    .then(|| range.with_sample_rate(cd_rate)),
+                (min < max).then(|| range.with_sample_rate(min)),
+            ]
+            .into_iter()
+            .flatten()
+        })
+        .collect()
+}
+
+fn open_config(
+    device: &cpal::Device,
+    config: &cpal::SupportedStreamConfig,
+    opening: &Opening<'_>,
+) -> Result<OpenedOutput, OpenError> {
+    match config.sample_format() {
+        cpal::SampleFormat::F32 => build::<f32>(device, config, opening),
+        cpal::SampleFormat::I16 => build::<i16>(device, config, opening),
+        cpal::SampleFormat::U16 => build::<u16>(device, config, opening),
+        cpal::SampleFormat::I32 => build::<i32>(device, config, opening),
+        cpal::SampleFormat::F64 => build::<f64>(device, config, opening),
+        other @ (cpal::SampleFormat::I8
+        | cpal::SampleFormat::I24
+        | cpal::SampleFormat::I64
+        | cpal::SampleFormat::U8
+        | cpal::SampleFormat::U32
+        | cpal::SampleFormat::U64)
+        | other => Err(OpenError::UnsupportedFormat(other)),
     }
 }
 
-fn open_named(
-    name: &DeviceName,
-    callback: impl FnMut(cpal::StreamError) + Clone + Send + 'static,
-) -> Result<rodio::OutputStream, DeviceError> {
-    let device = find_by_name(name)
-        .map_err(|source| DeviceError::Lookup {
-            requested_device: OutputDevice::Named(name.clone()),
-            source,
-        })?
-        .ok_or_else(|| DeviceError::NotFound(name.clone()))?;
-    rodio::OutputStreamBuilder::from_device(device)
-        .map(|builder| builder.with_error_callback(callback))
-        .and_then(rodio::OutputStreamBuilder::open_stream)
-        .map(silence_drop_log)
-        .map_err(|source| DeviceError::NoDevice {
-            requested_device: OutputDevice::Named(name.clone()),
-            source,
-        })
-}
-
-fn open_default(
-    callback: impl FnMut(cpal::StreamError) + Clone + Send + 'static,
-) -> Result<rodio::OutputStream, DeviceError> {
-    rodio::OutputStreamBuilder::from_default_device()
-        .map(|builder| builder.with_error_callback(callback))
-        .and_then(|builder| builder.open_stream_or_fallback())
-        .map(silence_drop_log)
-        .map_err(|source| DeviceError::NoDevice {
-            requested_device: OutputDevice::SystemDefault,
-            source,
-        })
-}
-
-fn silence_drop_log(mut stream: rodio::OutputStream) -> rodio::OutputStream {
-    stream.log_on_drop(false);
-    stream
+fn build<T: SizedSample + FromSample<f32>>(
+    device: &cpal::Device,
+    config: &cpal::SupportedStreamConfig,
+    opening: &Opening<'_>,
+) -> Result<OpenedOutput, OpenError> {
+    let format = OutputFormat {
+        channels: config.channels(),
+        rate: config.sample_rate().0,
+    };
+    let MixerChannel {
+        mut mixer,
+        control,
+        retired_voices,
+    } = mixer_channel(format, opening.speed, opening.spectrum_buffers);
+    let stream = device
+        .build_output_stream::<T, _, _>(
+            &config.config(),
+            move |out: &mut [T], _: &cpal::OutputCallbackInfo| mixer.mix(out),
+            output_loss_callback(opening.callback_sender, opening.output_loss),
+            None,
+        )
+        .map_err(OpenError::Build)?;
+    stream.play().map_err(OpenError::Play)?;
+    Ok(OpenedOutput {
+        stream,
+        format,
+        mixer_control: control,
+        retired_voices,
+        device_name: readable(device.name()),
+    })
 }
 
 fn find_by_name(name: &DeviceName) -> Result<Option<cpal::Device>, cpal::DevicesError> {
@@ -164,28 +254,98 @@ fn find_by_name(name: &DeviceName) -> Result<Option<cpal::Device>, cpal::Devices
 
 #[cfg(test)]
 mod tests {
+    use cpal::traits::HostTrait;
     use crossbeam_channel::TryRecvError;
     use kernel::domain::{
         device::{DeviceDefault, DeviceName, ListedDevice, OutputDevice},
+        speed::Speed,
         transport::OutputError,
     };
-    use rodio::{cpal, cpal::traits::HostTrait};
     use rstest::rstest;
 
     use crate::{
         deck::event::DeckEvent,
         device::{
+            Opening,
             OutputLoss,
             latched,
             list_output_devices,
             listed,
             loss_code,
-            open_stream,
+            open_output,
+            pick_config,
             readable,
         },
         engine::message::AudioMessage,
         error::DeviceError,
+        tap::spectrum_channel,
     };
+
+    fn range(
+        channels: u16,
+        rates: std::ops::RangeInclusive<u32>,
+        sample_format: cpal::SampleFormat,
+    ) -> cpal::SupportedStreamConfigRange {
+        cpal::SupportedStreamConfigRange::new(
+            channels,
+            cpal::SampleRate(*rates.start()),
+            cpal::SampleRate(*rates.end()),
+            cpal::SupportedBufferSize::Unknown,
+            sample_format,
+        )
+    }
+
+    #[rstest]
+    #[case::no_configs(Vec::new(), Vec::new())]
+    #[case::a_wide_range_tries_its_top_the_cd_rate_and_its_bottom(
+        vec![range(2, 8_000..=96_000, cpal::SampleFormat::F32)],
+        vec![
+            (2, 96_000, cpal::SampleFormat::F32),
+            (2, 44_100, cpal::SampleFormat::F32),
+            (2, 8_000, cpal::SampleFormat::F32),
+        ]
+    )]
+    #[case::a_fixed_rate_is_tried_once(
+        vec![range(2, 48_000..=48_000, cpal::SampleFormat::I16)],
+        vec![(2, 48_000, cpal::SampleFormat::I16)]
+    )]
+    #[case::stereo_goes_before_mono(
+        vec![
+            range(1, 48_000..=48_000, cpal::SampleFormat::F32),
+            range(2, 44_100..=48_000, cpal::SampleFormat::I16),
+        ],
+        vec![
+            (2, 48_000, cpal::SampleFormat::I16),
+            (2, 44_100, cpal::SampleFormat::I16),
+            (1, 48_000, cpal::SampleFormat::F32),
+        ]
+    )]
+    #[case::float_goes_before_integer_at_equal_channels(
+        vec![
+            range(2, 48_000..=48_000, cpal::SampleFormat::I16),
+            range(2, 48_000..=48_000, cpal::SampleFormat::F32),
+        ],
+        vec![
+            (2, 48_000, cpal::SampleFormat::F32),
+            (2, 48_000, cpal::SampleFormat::I16),
+        ]
+    )]
+    fn pick_config_orders_the_fallback_configs(
+        #[case] supported: Vec<cpal::SupportedStreamConfigRange>,
+        #[case] expected: Vec<(u16, u32, cpal::SampleFormat)>,
+    ) {
+        let picked: Vec<(u16, u32, cpal::SampleFormat)> = pick_config(supported)
+            .iter()
+            .map(|config| {
+                (
+                    config.channels(),
+                    config.sample_rate().0,
+                    config.sample_format(),
+                )
+            })
+            .collect();
+        assert_eq!(picked, expected);
+    }
 
     fn no_output_device_available() -> bool {
         cpal::default_host().default_output_device().is_none()
@@ -323,7 +483,7 @@ mod tests {
 
     #[test]
     #[ignore = "hardware: needs a real audio device; run with --include-ignored"]
-    fn open_stream_with_unknown_name_reports_not_found_and_default_still_opens() {
+    fn open_output_with_unknown_name_reports_not_found_and_default_still_opens() {
         if no_output_device_available() {
             eprintln!("skipping: no default output device in this environment");
             return;
@@ -331,18 +491,21 @@ mod tests {
 
         let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(1);
         let output_loss = OutputLoss::default();
+        let (spectrum_buffers, _spectrum_tap) = spectrum_channel();
+        let opening = Opening {
+            speed: Speed::default(),
+            spectrum_buffers: &spectrum_buffers,
+            callback_sender: &callback_sender,
+            output_loss: &output_loss,
+        };
         let unknown_device = OutputDevice::Named(name("no-such-device-xyz"));
-        let refusal =
-            open_stream(&unknown_device, &callback_sender, &output_loss).err();
+        let refusal = open_output(&unknown_device, &opening).err();
         assert!(matches!(refusal, Some(DeviceError::NotFound(_))));
         assert_eq!(
             refusal.map(|refusal| refusal.to_string()),
             Some("audio device 'no-such-device-xyz' not found".to_owned())
         );
 
-        assert!(
-            open_stream(&OutputDevice::SystemDefault, &callback_sender, &output_loss)
-                .is_ok()
-        );
+        assert!(open_output(&OutputDevice::SystemDefault, &opening).is_ok());
     }
 }

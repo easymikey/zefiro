@@ -111,7 +111,6 @@ pub enum SpeedChip {
 pub enum LayoutMode {
     #[default]
     Auto,
-    Full,
     Compact,
 }
 
@@ -292,9 +291,10 @@ impl FromStr for Rgb {
 
     fn from_str(spelling: &str) -> Result<Self, Self::Err> {
         let trimmed = spelling.strip_prefix('#').unwrap_or(spelling);
-        let sized = <[u8; 6]>::try_from(trimmed.as_bytes()).ok();
-        sized
-            .and_then(|[r1, r0, g1, g0, b1, b0]| {
+        trimmed
+            .as_bytes()
+            .as_array::<6>()
+            .and_then(|&[r1, r0, g1, g0, b1, b0]| {
                 Some(Rgb([
                     hex_byte(r1, r0)?,
                     hex_byte(g1, g0)?,

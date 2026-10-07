@@ -1,4 +1,4 @@
-use audio::tap::SpectrumTap;
+use audio::{FeedChannel, engine::message::AudioMessage, tap::SpectrumTap};
 use kernel::{cmd::AudioCmd, domain::driver::DriverName};
 
 use crate::{
@@ -6,7 +6,7 @@ use crate::{
     driver_thread::DriverThread,
     error::SpawnError,
     registry,
-    spawn_setup::{CALLBACK_SLOTS, SpawnSetup},
+    spawn_setup::{CALLBACK_SLOTS, FEED_SLOTS, SpawnSetup},
 };
 
 pub(crate) fn spawn_audio(
@@ -17,16 +17,24 @@ pub(crate) fn spawn_audio(
     let (callback_sender, callback_receiver) =
         crossbeam_channel::bounded(CALLBACK_SLOTS);
     let row = registry::row(DriverName::Audio);
+    let (feed_sender, feed_receiver) = crossbeam_channel::bounded(FEED_SLOTS);
     let run_job = audio::deck::job::AudioJob::run;
     let thread = DriverLoop::<audio::AudioDriver, _> {
         row,
         inbox: setup.inbox.clone(),
         callback_receiver,
-        message: None,
+        message: Some(AudioMessage::Started),
         run_job,
     }
     .spawn(move || {
-        let (driver, spectrum_tap) = audio::AudioDriver::new(settings, callback_sender);
+        let (driver, spectrum_tap) = audio::AudioDriver::new(
+            settings,
+            callback_sender,
+            FeedChannel {
+                feed_sender,
+                feed_receiver,
+            },
+        );
         if let Err(unclaimed) = spectrum_sender.send(spectrum_tap) {
             drop(unclaimed.into_inner());
         }

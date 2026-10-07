@@ -2,9 +2,7 @@
 
 use std::{fs, path::Path};
 
-use crate::guards::support::{self, Allow};
-
-const ALLOWLIST: &[Allow] = &[];
+use crate::guards::support;
 
 fn strip_comments_and_strings(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
@@ -128,8 +126,6 @@ fn denylist_reason(token: &str) -> Option<&'static str> {
         .map(|(_, _, message)| *message)
 }
 
-const TYPE_ALLOW: &[&str] = &[];
-
 const DENIED_PARAMETERS: &[&str] = &[
     "data", "info", "ctx", "cfg", "opts", "options", "idx", "tmp", "res", "val",
     "value", "handle", "item", "entry", "thing", "stuff", "params", "args", "props",
@@ -139,8 +135,6 @@ const DENIED_PARAMETERS: &[&str] = &[
 const GEOMETRY_FILES: &[&str] = &["widgets/src/geometry.rs", "widgets/src/node.rs"];
 
 const GEOMETRY_PARAMETERS: &[&str] = &["x", "y", "w", "h", "value"];
-
-const PARAM_ALLOW: &[Allow] = &[];
 
 fn parameter_name(slot: &str) -> Option<String> {
     let bytes = slot.as_bytes();
@@ -208,7 +202,6 @@ const RETIRED_NAMES: &[&str] = &[
     "AudioFault",
     "FrameInputs",
     "FrameRenderInputs",
-    "CrossfadeActionParams",
     "WarpParams",
     "InjectParams",
     "SettingsValues",
@@ -341,17 +334,10 @@ fn sync_directories(dir: &Path, crates_dir: &Path, out: &mut Vec<String>) {
 #[test]
 fn no_mechanism_names() {
     let mut violations: Vec<String> = Vec::new();
-    let mut seen_allowlist: Vec<&str> = Vec::new();
 
-    let mut flag =
-        |rel: &str, name: &str, reason: &str, violations: &mut Vec<String>| {
-            let key = format!("{rel}:{name}");
-            if let Some(entry) = TYPE_ALLOW.iter().find(|e| **e == key) {
-                seen_allowlist.push(*entry);
-            } else {
-                violations.push(format!("{rel}: {reason} (found `{name}`)"));
-            }
-        };
+    let flag = |rel: &str, name: &str, reason: &str, violations: &mut Vec<String>| {
+        violations.push(format!("{rel}: {reason} (found `{name}`)"));
+    };
 
     for (rel, path) in support::source_files(&["src"]) {
         let content = support::read(&path);
@@ -396,17 +382,10 @@ fn no_mechanism_names() {
         );
     }
 
-    let stale: Vec<String> = TYPE_ALLOW
-        .iter()
-        .filter(|entry| !seen_allowlist.contains(entry))
-        .map(|entry| (*entry).to_owned())
-        .collect();
-
     support::report(
         "naming guard: a type, function or module names the thing it is, not the \
          mechanism it uses.",
         &violations,
-        &stale,
     );
 }
 
@@ -441,7 +420,6 @@ fn no_retired_names() {
         "naming guard: a retired name stays retired — the sweep renamed it once, and a \
          new declaration may not bring the old spelling back.",
         &violations,
-        &[],
     );
 }
 
@@ -492,7 +470,6 @@ fn retired_names_sit_in_domain_words() {
         "naming guard: docs/conventions.md §8 is the one names rulebook, so every retired \
          name sits in the \"not\" column of its concept's row.",
         &violations,
-        &[],
     );
 }
 
@@ -655,14 +632,12 @@ fn no_retired_snake_names() {
         "naming guard: a retired word stays retired in function, test and field names — \
          the sweep renamed it once, and new code may not bring the old spelling back.",
         &violations,
-        &[],
     );
 }
 
 #[test]
 fn no_denied_parameter_names() {
     let mut violations: Vec<String> = Vec::new();
-    let mut seen: Vec<(String, &'static str)> = Vec::new();
 
     for (rel, path) in support::source_files(&["src", "tests", "benches"]) {
         let geometry = GEOMETRY_FILES.contains(&rel.as_str());
@@ -675,15 +650,7 @@ fn no_denied_parameter_names() {
                 if geometry && GEOMETRY_PARAMETERS.contains(&parameter.as_str()) {
                     continue;
                 }
-                if let Some(row) = PARAM_ALLOW
-                    .iter()
-                    .find(|row| row.path == rel && row.pattern == parameter)
-                {
-                    seen.push((rel.clone(), row.pattern));
-                } else {
-                    violations
-                        .push(format!("{rel}:{line}: `{name}` takes `{parameter}`"));
-                }
+                violations.push(format!("{rel}:{line}: `{name}` takes `{parameter}`"));
             }
         }
     }
@@ -692,14 +659,12 @@ fn no_denied_parameter_names() {
         "naming guard: a parameter names what it carries, not the mechanism carrying \
          it and not a placeholder.",
         &violations,
-        &support::stale(PARAM_ALLOW, &seen),
     );
 }
 
 #[test]
 fn no_project_abbreviations() {
     let mut violations: Vec<String> = Vec::new();
-    let mut seen: Vec<(String, &'static str)> = Vec::new();
 
     for (rel, path) in support::source_files(&["src"]) {
         let content = support::read(&path);
@@ -710,14 +675,7 @@ fn no_project_abbreviations() {
                 let Some(reason) = denylist_reason(token) else {
                     continue;
                 };
-                if let Some(row) = ALLOWLIST
-                    .iter()
-                    .find(|row| row.path == rel && row.pattern == token)
-                {
-                    seen.push((rel.clone(), row.pattern));
-                } else {
-                    violations.push(format!("{rel}:{n}: {reason} (found `{token}`)"));
-                }
+                violations.push(format!("{rel}:{n}: {reason} (found `{token}`)"));
             }
         }
     }
@@ -725,6 +683,5 @@ fn no_project_abbreviations() {
     support::report(
         "naming guard: project-made abbreviations are spelled out as full words.",
         &violations,
-        &support::stale(ALLOWLIST, &seen),
     );
 }

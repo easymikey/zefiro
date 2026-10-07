@@ -207,7 +207,7 @@ impl Drop for HardwareListeners {
 }
 
 fn system_object() -> AudioObjectID {
-    kAudioObjectSystemObject.unsigned_abs()
+    kAudioObjectSystemObject.cast_unsigned()
 }
 
 fn default_output_address() -> AudioObjectPropertyAddress {

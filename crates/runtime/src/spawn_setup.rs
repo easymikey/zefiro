@@ -8,6 +8,7 @@ use library::dirs::LibraryDirs;
 use crate::latest::LatestSenders;
 
 pub(crate) const CALLBACK_SLOTS: usize = 64;
+pub(crate) const FEED_SLOTS: usize = 4;
 
 #[derive(Debug, Clone)]
 pub struct StartupPaths {

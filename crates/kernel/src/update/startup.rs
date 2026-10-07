@@ -44,6 +44,7 @@ pub(crate) fn startup_model(model: &mut Model, startup: Startup) -> Cmd {
     model.settings = Settings {
         audio_settings: startup.audio_settings,
         output_devices: Vec::new(),
+        device_name: None,
         appearance_settings: startup.appearance_settings,
     };
     model.transport.volume = startup.volume;

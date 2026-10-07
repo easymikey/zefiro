@@ -1,6 +1,6 @@
 // GUARD: a test touching real hardware must carry `#[ignore = "hardware..."]`.
 
-use crate::guards::support::{self, Allow};
+use crate::guards::support;
 
 const MARKERS: &[&str] = &[
     "spawn_audio",
@@ -9,8 +9,6 @@ const MARKERS: &[&str] = &[
     "recommended_watcher",
     "osascript",
 ];
-
-const ALLOWLIST: &[Allow] = &[];
 
 fn preceding_attributes<'a>(lines: &[&'a str], fn_line_index: usize) -> Vec<&'a str> {
     let mut attributes = Vec::new();
@@ -73,7 +71,6 @@ fn every_hardware_touching_test_body_is_ignored() {
     assert!(!files.is_empty(), "expected to find crate sources");
 
     let mut violations: Vec<String> = Vec::new();
-    let mut seen: Vec<(String, &'static str)> = Vec::new();
 
     for (relative, path) in &files {
         let content = support::read(path);
@@ -106,37 +103,16 @@ fn every_hardware_touching_test_body_is_ignored() {
                 continue;
             }
 
-            for row in ALLOWLIST {
-                if row.path == *relative && block.contains(row.pattern) {
-                    seen.push((row.path.to_owned(), row.pattern));
-                }
-            }
-            let excused = ALLOWLIST
-                .iter()
-                .any(|row| row.path == *relative && block.contains(row.pattern));
-            if !excused {
-                violations.push(format!(
-                    "{relative}:{line_number}: `{name}` calls `{marker}` without \
-                     `#[ignore = \"hardware...\"]`"
-                ));
-            }
+            violations.push(format!(
+                "{relative}:{line_number}: `{name}` calls `{marker}` without \
+                 `#[ignore = \"hardware...\"]`"
+            ));
         }
     }
-
-    let stale: Vec<String> = ALLOWLIST
-        .iter()
-        .filter(|row| {
-            !seen
-                .iter()
-                .any(|(path, pattern)| path == row.path && *pattern == row.pattern)
-        })
-        .map(|row| format!("{}: `{}` ({})", row.path, row.pattern, row.reason))
-        .collect();
 
     support::report(
         "hardware guard: a test naming one of the driver-spawning or shell-out \
          functions listed in MARKERS must carry #[ignore = \"hardware...\"].",
         &violations,
-        &stale,
     );
 }

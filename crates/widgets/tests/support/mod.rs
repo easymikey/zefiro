@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use kernel::domain::{
     appearance::Rgb,
@@ -18,6 +18,7 @@ use ratatui::{
 };
 use widgets::{
     animation::{
+        catalogue::PaintedCell,
         stage::Backdrop,
         timings::{AnimationTimings, TIMINGS},
     },
@@ -198,13 +199,21 @@ pub(crate) fn quiet_backdrop() -> Backdrop<'static> {
             accent: volume_fill(),
             volume_lifted: volume_lifted(),
         },
-        wash_from: BACKGROUND,
+        wash_from: Arc::default(),
     }
 }
 
 pub(crate) fn screen_backdrop() -> Backdrop<'static> {
     Backdrop {
         layout: FrameLayout::empty(SCREEN, Breakpoint::Full),
+        wash_from: vec![
+            PaintedCell {
+                fg: ACCENT,
+                bg: ACCENT,
+            };
+            usize::from(SCREEN.width) * usize::from(SCREEN.height)
+        ]
+        .into(),
         ..quiet_backdrop()
     }
 }

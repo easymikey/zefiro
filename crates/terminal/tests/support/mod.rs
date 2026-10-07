@@ -76,10 +76,12 @@ pub(crate) struct Scenery {
     pub(crate) spectrum: Spectrum,
     pub(crate) appearance: Appearance,
     pub(crate) key_hint_chords: KeyHintChords,
+    pub(crate) pixel_path: PixelPath,
+    pub(crate) since_first_paint: Duration,
 }
 
 impl Scenery {
-    pub(crate) fn new(mut model: Model) -> Self {
+    pub(crate) fn new(mut model: Model, pixel_path: PixelPath) -> Self {
         model.music_dir = PathBuf::from("/home/user/Music");
         let key_hint_chords =
             KeyHintChords::from_bindings(model.workspace.keymap.bindings());
@@ -89,10 +91,12 @@ impl Scenery {
             spectrum: [0.0; SPECTRUM_BANDS],
             appearance: Appearance::default(),
             key_hint_chords,
+            pixel_path,
+            since_first_paint: Duration::ZERO,
         }
     }
 
-    pub(crate) fn scene_at(&self, since_first_paint: Duration) -> Scene<'_> {
+    pub(crate) fn scene(&self) -> Scene<'_> {
         Scene::from_model(
             &self.model,
             ScenePresentation {
@@ -100,17 +104,13 @@ impl Scenery {
                 theme: &self.theme,
                 color_depth: ColorDepth::TrueColor,
                 spectrum: &self.spectrum,
-                pixel_path: PixelPath::Protocol,
+                pixel_path: self.pixel_path,
                 cell_aspect: DEFAULT_CELL_ASPECT,
-                since_first_paint,
+                since_first_paint: self.since_first_paint,
                 now: Moment::default(),
                 home_dir: None,
                 key_hint_chords: &self.key_hint_chords,
             },
         )
-    }
-
-    pub(crate) fn scene(&self) -> Scene<'_> {
-        self.scene_at(Duration::ZERO)
     }
 }

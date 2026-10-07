@@ -58,7 +58,7 @@ fn no_verb_module_file_names() {
     }
     let (hard, stale) =
         gate_by_crate("verb module names", &violations, VERB_MODULE_PENDING);
-    support::report(
+    support::report_with_stale(
         "naming guard: a module file names what it holds, not the verb it performs.",
         &hard,
         &stale,
@@ -80,7 +80,7 @@ fn no_get_prefix_functions() {
         }
     }
     let (hard, stale) = gate_by_crate("get_ prefixes", &violations, GET_PREFIX_PENDING);
-    support::report(
+    support::report_with_stale(
         "naming guard: a getter is the field name, never get_*.",
         &hard,
         &stale,
@@ -113,7 +113,7 @@ fn no_should_wants_needs_predicates() {
         &violations,
         PREDICATE_PENDING,
     );
-    support::report(
+    support::report_with_stale(
         "naming guard: a predicate is is_*/has_*/can_*, never should_/wants_/needs_.",
         &hard,
         &stale,
@@ -181,7 +181,7 @@ fn no_constructors_named_by_mechanism() {
         &violations,
         SELF_RETURNING_PENDING,
     );
-    support::report(
+    support::report_with_stale(
         "naming guard: compile/build_*/make_*/create_*/place_*/resolve_* never return Self.",
         &hard,
         &stale,
@@ -249,7 +249,7 @@ fn no_forbidden_type_suffixes() {
             format!("Spec/Slot suffixes: `{path}:{name}` is pending but has no hit — remove it")
         })
         .collect();
-    support::report(
+    support::report_with_stale(
         "naming guard: no Spec/Slot type suffix — Kind/Info/Data/Manager/Helper are the \
          existing mechanism-suffix guard's job.",
         &hard,
@@ -286,7 +286,7 @@ fn no_refused_fault_problem_identifiers() {
         &violations,
         REFUSED_FAULT_PROBLEM_PENDING,
     );
-    support::report(
+    support::report_with_stale(
         "naming guard: an error's third word is never Refused/Fault/Problem.",
         &hard,
         &stale,

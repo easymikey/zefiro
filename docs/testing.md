@@ -36,7 +36,6 @@ Every guard that reads source text lives in `crates/sifr-guards/tests/guards/`, 
 | `length.rs` | ≤800 lines per file, tests included (§9) |
 | `macros.rs` | no `macro_rules!`, no proc-macro crate of our own (§9) |
 | `naming.rs` | full words, mechanism names, retired names, parameter names (§9) |
-| `conventions_allow.rs` | each allow row in conventions still matches source |
 | `public_types.rs` | one public type name lives in one crate (`Error` exempt) |
 | `test_files.rs` | no source file exists only for `#[cfg(test)]` (§13) |
 | `purity.rs` | `kernel` and `widgets` touch no IO, clock, thread or environment (§1.2) |
@@ -46,7 +45,7 @@ Every guard that reads source text lives in `crates/sifr-guards/tests/guards/`, 
 
 `fault.rs` holds the error type the `config_doc` guards fail through. A guard that would repeat a denied clippy lint (`bool` parameters, panics, indexing) does not exist: the lint is the guard; wildcard arms get a guard only where clippy cannot see the enum's crate.
 
-Allowlists are shrink-only and the shrinking is enforced: a row whose `(path, pattern)` no longer matches anything turns its guard red and prints the row's `reason`, so a paid-off debt cannot be re-spent elsewhere. `length.rs` rows carry the current length of an over-long file as its ceiling.
+Every other guard refuses every hit; only `comments.rs` and `demeter.rs` keep an allowlist. Those lists are shrink-only and the shrinking is enforced: a row whose `(path, pattern)` no longer matches anything turns its guard red and prints the row's `reason`, so a paid-off debt cannot be re-spent elsewhere. A new exemption is a rule change in `docs/conventions.md`, not an allowlist row.
 
 The `config_doc` guards are the exception that reach into another crate's own types (`config`) to compare `docs/config.md` against a schema instead of scanning source text; `sifr-guards` carries them as dependencies for that. `sifr-guards` is not a layer in the layering table: nothing depends on it.
 

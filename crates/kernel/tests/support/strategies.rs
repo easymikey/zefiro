@@ -52,7 +52,7 @@ use proptest::{
 };
 use strum::IntoEnumIterator;
 
-use crate::support::{model_with_dated_tracks, playing_model};
+use crate::support::{device, model_with_dated_tracks, playing_model};
 
 pub(crate) fn repeat_mode() -> impl Strategy<Value = RepeatMode> {
     prop_oneof![
@@ -229,6 +229,8 @@ fn audio() -> impl Strategy<Value = AudioEvent> {
             AudioEvent::TrackChanged,
             AudioEvent::Ended,
             AudioEvent::DeviceFellBack(OutputDevice::SystemDefault),
+            AudioEvent::DeviceOpened(device("Speakers")),
+            AudioEvent::DeviceOpened(device("Headphones")),
             AudioEvent::DevicesListed(Vec::new()),
             AudioEvent::Loaded(None),
             AudioEvent::OutputLost(OutputError::DeviceGone),

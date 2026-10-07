@@ -49,7 +49,6 @@ fn no_public_type_name_in_two_crates() {
     support::report(
         "public type guard: one public type name lives in one crate.",
         &shared_names(&files),
-        &[],
     );
 }
 

@@ -81,12 +81,13 @@ struct PlacedToast<'a> {
 fn wrapped_paragraph(text: &str, width: usize) -> Vec<String> {
     text.split_whitespace()
         .fold(Vec::new(), |mut lines: Vec<String>, word| {
-            match lines.last_mut() {
-                Some(line) if line.width() + 1 + word.width() <= width => {
-                    line.push(' ');
-                    line.push_str(word);
-                }
-                Some(_) | None => lines.push(word.to_owned()),
+            if let Some(line) = lines.last_mut()
+                && line.width() + 1 + word.width() <= width
+            {
+                line.push(' ');
+                line.push_str(word);
+            } else {
+                lines.push(word.to_owned());
             }
             lines
         })

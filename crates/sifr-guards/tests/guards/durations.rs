@@ -49,7 +49,6 @@ fn no_duration_unit_over_a_runtime_value() {
     support::report(
         "duration guard: `Duration::from_mins/from_hours/from_days` panic on overflow; take a literal or a const, else `from_secs` with a saturating product.",
         &violations,
-        &[],
     );
 }
 

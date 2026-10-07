@@ -1,6 +1,6 @@
 // GUARD: no `macro_rules!` and no proc-macro crate of our own.
 
-use crate::guards::support::{self, Allow};
+use crate::guards::support;
 
 const DECLARATIONS: &[&str] = &[
     concat!("macro_", "rules!"),
@@ -9,12 +9,9 @@ const DECLARATIONS: &[&str] = &[
     "#[proc_macro]",
 ];
 
-const ALLOWLIST: &[Allow] = &[];
-
 #[test]
 fn no_declarative_or_proc_macros_anywhere() {
     let mut violations: Vec<String> = Vec::new();
-    let mut seen: Vec<(String, &'static str)> = Vec::new();
 
     let files = support::source_files(&["src", "tests", "benches", "examples"]);
     assert!(
@@ -35,15 +32,11 @@ fn no_declarative_or_proc_macros_anywhere() {
                 if !raw_line.contains(declaration) {
                     continue;
                 }
-                if support::allowed(ALLOWLIST, &rel, declaration) {
-                    seen.push((rel.clone(), declaration));
-                } else {
-                    violations.push(format!(
-                        "{rel}:{}: declares `{declaration}` — a generic type or a derive says \
-                         the same thing where the compiler and the reader can see it",
-                        index + 1
-                    ));
-                }
+                violations.push(format!(
+                    "{rel}:{}: declares `{declaration}` — a generic type or a derive says \
+                     the same thing where the compiler and the reader can see it",
+                    index + 1
+                ));
             }
         }
     }
@@ -51,6 +44,5 @@ fn no_declarative_or_proc_macros_anywhere() {
     support::report(
         "macros guard: the workspace declares no declarative or proc macros (cleanup plan §2).",
         &violations,
-        &support::stale(ALLOWLIST, &seen),
     );
 }

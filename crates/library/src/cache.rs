@@ -226,7 +226,7 @@ pub(crate) fn load(
         Err(error) => return Err(Error::io(LibrarySubject::Cache, &cache_path)(error)),
     };
     let (tracks, saved_dir) = decode(&bytes, &cache_path)?;
-    Ok(if saved_dir == music_dir.to_string_lossy().as_bytes() {
+    Ok(if saved_dir == music_dir.as_os_str().as_encoded_bytes() {
         tracks
     } else {
         Vec::new()
@@ -250,7 +250,7 @@ pub(crate) fn save(
     crate::files::create_parent_dir(&cache_path)
         .map_err(Error::io(LibrarySubject::Cache, &dirs.cache_dir))?;
     let mut bytes = encode(&tagged_tracks, &cache_path)?;
-    bytes.extend_from_slice(music_dir.to_string_lossy().as_bytes());
+    bytes.extend_from_slice(music_dir.as_os_str().as_encoded_bytes());
     crate::files::write_atomic(&cache_path, &bytes)
         .map_err(Error::io(LibrarySubject::Cache, &cache_path))
 }

@@ -29,13 +29,6 @@ impl Closed {
 
     fn command(&mut self, audio_cmd: AudioCmd) -> Result<AudioLoopCmd, Unhandled> {
         match audio_cmd {
-            AudioCmd::SetDevice(device) => {
-                self.settings.device = device.clone();
-                Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Open {
-                    device,
-                    speed: self.speed,
-                })))
-            }
             AudioCmd::Load(track_load) => {
                 self.track_load = Some(track_load);
                 Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Open {
@@ -54,7 +47,14 @@ impl Closed {
             {
                 Err(Unhandled)
             }
+            AudioCmd::SetDevice(device) if device == self.settings.device => {
+                Err(Unhandled)
+            }
             AudioCmd::Stop if self.track_load.is_none() => Err(Unhandled),
+            AudioCmd::SetDevice(device) => {
+                self.settings.device = device;
+                Ok(Cmd::none())
+            }
             AudioCmd::SetSpeed(speed) => {
                 self.speed = speed;
                 Ok(Cmd::none())
@@ -92,6 +92,7 @@ impl Closed {
     ) -> (Live, AudioLoopCmd) {
         let DeviceOpened {
             device,
+            device_name: _device_name,
             position: _position,
             playback: _playback,
         } = device_opened;
@@ -111,10 +112,10 @@ impl Closed {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use kernel::{
-        cmd::{AudioCmd, Cmd, Playback, TrackLoad},
+        cmd::{AudioCmd, Cmd, Cmds, Playback, TrackLoad},
         domain::{
             bounded::Bounded,
             device::{DeviceName, OutputDevice},
@@ -132,7 +133,7 @@ mod tests {
         deck::job::AudioJob,
         engine::{
             effect::EngineEffect,
-            message::{AudioMessage, EngineMessage},
+            message::{AudioMessage, DeviceOpened, EngineMessage},
             state::{Closed, EngineState, Live},
             tests::{
                 EngineRow,
@@ -183,15 +184,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::closed_retries_a_device(
+    #[case::closed_records_a_device(
         closed(),
         cmd(AudioCmd::SetDevice(OutputDevice::Named(DeviceName::new("usb".to_string()).unwrap()))),
         EngineRow {
             next: EngineState::Closed(Closed { settings: settings_on("usb"), track_load: None, speed: Speed::default() }),
-            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Open {
-                device: OutputDevice::Named(DeviceName::new("usb".to_string()).unwrap()),
-                speed: Speed::default(),
-            }))),
+            effect: Ok(Cmd::none()),
         }
     )]
     #[case::closed_lists_devices(
@@ -340,6 +338,7 @@ mod tests {
     #[case::speed(cmd(AudioCmd::SetSpeed(Speed::default())))]
     #[case::crossfade(set_crossfade(0))]
     #[case::replay_gain(cmd(AudioCmd::SetReplayGain(ReplayGain::Off)))]
+    #[case::device(cmd(AudioCmd::SetDevice(OutputDevice::SystemDefault)))]
     fn closed_same_speed_is_refused(#[case] message: EngineMessage) {
         let mut state = closed();
         assert_eq!(step(&mut state, message).err(), Some(Unhandled));
@@ -434,6 +433,35 @@ mod tests {
         assert_fallback(engine_state, moved_row);
     }
 
+    fn device_then_load(output_device: OutputDevice) -> EngineMessage {
+        EngineMessage::Cmds(Cmds {
+            cmds: vec![
+                AudioCmd::SetDevice(output_device),
+                AudioCmd::Load(TrackLoad {
+                    path: "/a".into(),
+                    decibels: None,
+                    revision: first(),
+                }),
+            ],
+            at: Instant::now(),
+        })
+    }
+
+    #[test]
+    fn a_device_set_while_closed_opens_once_at_the_load() {
+        let output_device =
+            OutputDevice::Named(DeviceName::new("usb".to_string()).unwrap());
+        let (_, log) =
+            trace(closed(), vec![device_then_load(output_device.clone())]).unwrap();
+        assert_same(
+            log,
+            vec![Cmd::effect(LoopEffect::Execute(EngineEffect::Open {
+                device: output_device,
+                speed: Speed::default(),
+            }))],
+        );
+    }
+
     #[test]
     fn an_open_that_finds_no_device_asks_for_the_system_default() {
         let output_device =
@@ -441,7 +469,7 @@ mod tests {
         let (_, log) = trace(
             closed(),
             vec![
-                cmd(AudioCmd::SetDevice(output_device.clone())),
+                device_then_load(output_device.clone()),
                 EngineMessage::NotFound,
                 opened(
                     OutputDevice::SystemDefault,
@@ -462,7 +490,69 @@ mod tests {
                     device: OutputDevice::SystemDefault,
                     speed: Speed::default(),
                 })),
-                Cmd::message(AudioEvent::DeviceFellBack(OutputDevice::SystemDefault)),
+                Cmd::message(AudioEvent::DeviceFellBack(OutputDevice::SystemDefault))
+                    .then(
+                        Cmd::effect(LoopEffect::Execute(EngineEffect::StartLoad(
+                            Speed::default(),
+                        )))
+                        .then(decoding("/a")),
+                    ),
+            ],
+        );
+    }
+
+    fn speakers() -> DeviceName {
+        DeviceName::new("Speakers".to_string()).unwrap()
+    }
+
+    fn opened_on_speakers() -> EngineMessage {
+        EngineMessage::Opened(DeviceOpened {
+            device: OutputDevice::SystemDefault,
+            device_name: Some(speakers()),
+            position: Duration::ZERO,
+            playback: Playback::Playing,
+        })
+    }
+
+    #[test]
+    fn an_open_names_the_opened_device() {
+        let (_, log) = trace(closed(), vec![opened_on_speakers()]).unwrap();
+        assert_same(
+            log,
+            vec![Cmd::message(AudioEvent::DeviceOpened(speakers()))],
+        );
+    }
+
+    #[test]
+    fn a_fallback_names_the_opened_device_after_the_fallback() {
+        let output_device =
+            OutputDevice::Named(DeviceName::new("usb".to_string()).unwrap());
+        let (_, log) = trace(
+            closed(),
+            vec![
+                device_then_load(output_device.clone()),
+                EngineMessage::NotFound,
+                opened_on_speakers(),
+            ],
+        )
+        .unwrap();
+        assert_same(
+            log,
+            vec![
+                Cmd::effect(LoopEffect::Execute(EngineEffect::Open {
+                    device: output_device,
+                    speed: Speed::default(),
+                })),
+                Cmd::effect(LoopEffect::Execute(EngineEffect::Open {
+                    device: OutputDevice::SystemDefault,
+                    speed: Speed::default(),
+                })),
+                Cmd::message(AudioEvent::DeviceFellBack(OutputDevice::SystemDefault))
+                    .then(Cmd::message(AudioEvent::DeviceOpened(speakers())))
+                    .then(Cmd::effect(LoopEffect::Execute(EngineEffect::StartLoad(
+                        Speed::default(),
+                    ))))
+                    .then(decoding("/a")),
             ],
         );
     }

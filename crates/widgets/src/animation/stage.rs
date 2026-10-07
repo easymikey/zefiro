@@ -1,10 +1,11 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use kernel::domain::{appearance::Animations, time::Moment};
-use ratatui::{buffer::Buffer, layout::Rect, style::Color};
+use ratatui::{buffer::Buffer, layout::Rect};
 use tachyonfx::{CellFilter, Effect as Animation, EffectRenderer, RefRect};
 
 use crate::{
+    animation::catalogue::PaintedCell,
     pixels::cover::CoverMotion,
     screen::frame_layout::FrameLayout,
     theme::backdrop_style::BackdropStyle,
@@ -77,7 +78,7 @@ pub struct Backdrop<'a> {
     pub animations: Animations,
     pub layout: FrameLayout<'a>,
     pub style: BackdropStyle,
-    pub wash_from: Color,
+    pub wash_from: Arc<[PaintedCell]>,
 }
 
 impl AnimationStage {
@@ -162,7 +163,7 @@ impl AnimationStage {
 fn paint_kept(
     buffer: &mut Buffer,
     elapsed: Duration,
-) -> impl FnMut(&mut Animation, Rect) -> bool + '_ {
+) -> impl FnMut(&mut Animation, Rect) -> bool {
     move |animation: &mut Animation, area: Rect| {
         let visible = area.intersection(buffer.area);
         if visible.is_empty() {
@@ -297,6 +298,18 @@ mod tests {
     }
 
     #[test]
+    fn a_running_stage_wants_the_next_frame() {
+        let mut animation_stage = AnimationStage::default();
+        animation_stage.stage_whole_screen(fade(100), INSIDE);
+        let next_frame_at = Moment::new(Duration::from_millis(1_033));
+
+        assert_eq!(
+            animation_frame_due(&animation_stage, CoverMotion::Still, next_frame_at),
+            Some(next_frame_at)
+        );
+    }
+
+    #[test]
     fn a_running_crossfade_wants_the_next_frame() {
         let animation_stage = AnimationStage::default();
         let next_frame_at = Moment::new(Duration::from_millis(1_033));
@@ -308,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn a_settled_crossfade_wants_no_frame() {
+    fn a_settled_stage_wants_no_frame() {
         let animation_stage = AnimationStage::default();
         let next_frame_at = Moment::new(Duration::from_millis(1_033));
 

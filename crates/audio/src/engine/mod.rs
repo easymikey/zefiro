@@ -4,7 +4,7 @@ pub mod effect;
 mod execute;
 mod live;
 mod machine;
-pub(crate) mod message;
+pub mod message;
 pub(crate) mod phase;
 pub(crate) mod revisions;
 pub(crate) mod state;
@@ -170,9 +170,15 @@ pub(crate) mod tests {
     pub(crate) fn driver_with(engine_state: EngineState) -> AudioDriver {
         let (spectrum_buffers, _spectrum_tap) = crate::tap::spectrum_channel();
         let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
+        let (feed_sender, feed_receiver) = crossbeam_channel::bounded(4);
         AudioDriver {
             engine: Engine::new(engine_state),
-            deck: crate::deck::Deck::new(spectrum_buffers, callback_sender),
+            deck: crate::deck::Deck::new(
+                spectrum_buffers,
+                callback_sender,
+                feed_sender,
+            ),
+            feed_receiver: Some(feed_receiver),
         }
     }
 
@@ -448,6 +454,7 @@ pub(crate) mod tests {
     ) -> EngineMessage {
         EngineMessage::Opened(DeviceOpened {
             device,
+            device_name: None,
             position,
             playback,
         })

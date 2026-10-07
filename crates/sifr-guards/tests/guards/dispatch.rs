@@ -2,9 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::guards::support::{self, Allow};
-
-const ALLOWLIST: &[Allow] = &[];
+use crate::guards::support;
 
 fn paint_path_files() -> Vec<(String, PathBuf)> {
     const INPUT_SIDE: [&str; 2] =
@@ -111,20 +109,9 @@ fn paint_path_never_updates() {
             let Some(pattern) = reason else {
                 continue;
             };
-            let context: String = lines
-                .iter()
-                .skip(i)
-                .take(4)
-                .map(|line| format!("{line}\n"))
-                .collect();
-            let excused = ALLOWLIST
-                .iter()
-                .any(|row| row.path == *rel && context.contains(row.pattern));
-            if !excused {
-                violations.push(format!(
-                    "{rel}:{n}: painting only paints — `{pattern}` belongs in the poll step"
-                ));
-            }
+            violations.push(format!(
+                "{rel}:{n}: painting only paints — `{pattern}` belongs in the poll step"
+            ));
         }
     }
 
@@ -132,6 +119,5 @@ fn paint_path_never_updates() {
         "dispatch guard: the paint path only paints — no dispatch, no driver, no clock \
          read (docs/principles.md, paint path purity).",
         &violations,
-        &support::stale_by_text(ALLOWLIST, &files),
     );
 }

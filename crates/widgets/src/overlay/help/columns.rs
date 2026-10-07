@@ -223,10 +223,10 @@ fn columns_that_fit(
     let squeezed = candidate_columns
         .iter()
         .position(|candidate| squeezed_width(candidate) <= inner_width);
-    let picked = match natural {
-        Some(index) if index < last => Some(index),
-        Some(_) | None => squeezed.or(natural),
-    };
+    let picked = natural
+        .filter(|&index| index < last)
+        .or(squeezed)
+        .or(natural);
     candidate_columns
         .into_iter()
         .nth(picked.unwrap_or(last))

@@ -2,5 +2,5 @@
 source: crates/config/src/appearance_file.rs
 expression: error.to_string()
 ---
-unknown field `bogus`, expected one of `mode`, `cover_cells`, `text_cells`, `brackets`
+unknown field `bogus`, expected one of `mode`, `cover_cells`, `brackets`
 sifr-ui.toml:2

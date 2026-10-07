@@ -210,7 +210,7 @@ where
     }
 }
 
-fn ready<T>(receiver: &Receiver<T>) -> impl Iterator<Item = T> + '_ {
+fn ready<T>(receiver: &Receiver<T>) -> impl Iterator<Item = T> {
     receiver.try_iter().take(receiver.len())
 }
 

@@ -11,7 +11,7 @@ use kernel::{
             preset_appearance,
             preset_of,
         },
-        appearance_rows::{KEY_HINTS, LAYOUT_MODES},
+        appearance_rows::{KEY_HINTS, SPEED_CHIPS},
         cue::Cue,
         direction::Direction,
         model::Model,
@@ -58,7 +58,7 @@ fn a_toggle_row_wraps_mod_two(
 #[test]
 fn a_cycle_row_wraps_at_its_own_ring_size() {
     let mut model = Model::default();
-    let field = AppearanceField::LayoutMode;
+    let field = AppearanceField::SpeedChip;
 
     let walked: Vec<usize> = (0..4)
         .map(|_| {
@@ -67,16 +67,34 @@ fn a_cycle_row_wraps_at_its_own_ring_size() {
                 SettingRow::Appearance(field),
                 Direction::Next,
             ));
-            LAYOUT_MODES
+            SPEED_CHIPS
                 .iter()
-                .position(|&layout_mode| {
-                    layout_mode == model.settings.appearance_settings.layout_mode
+                .position(|&speed_chip| {
+                    speed_chip == model.settings.appearance_settings.speed_chip
                 })
                 .unwrap_or(usize::MAX)
         })
         .collect();
 
     assert_eq!(walked, vec![1, 2, 0, 1]);
+}
+
+#[test]
+fn the_layout_row_steps_from_auto_to_compact_and_back() {
+    let mut model = Model::default();
+
+    let layout_modes: Vec<LayoutMode> = (0..2)
+        .map(|_| {
+            drop(step(
+                &mut model,
+                SettingRow::Appearance(AppearanceField::LayoutMode),
+                Direction::Next,
+            ));
+            model.settings.appearance_settings.layout_mode
+        })
+        .collect();
+
+    assert_eq!(layout_modes, vec![LayoutMode::Compact, LayoutMode::Auto]);
 }
 
 #[test]
@@ -104,7 +122,8 @@ fn the_preset_and_theme_rows_lead_setting_row_all() {
 
 #[rstest]
 #[case::toggle(AppearanceField::ProgressTime, 2)]
-#[case::cycle(AppearanceField::LayoutMode, 3)]
+#[case::cycle(AppearanceField::SpeedChip, 3)]
+#[case::layout(AppearanceField::LayoutMode, 2)]
 #[case::four_options(AppearanceField::CoverMode, 4)]
 fn stepping_every_option_of_a_row_is_handled(
     #[case] field: AppearanceField,
@@ -136,7 +155,7 @@ fn stepping_a_row_with_a_cue_emits_the_setting_then_the_cue() {
         effects,
         vec![
             &Effect::Config(ConfigCmd::SetAppearance(AppearancePatch {
-                layout_mode: Some(LayoutMode::Full),
+                layout_mode: Some(LayoutMode::Compact),
                 ..AppearancePatch::default()
             })),
             &Effect::Animate(Cue::LayoutChanged),

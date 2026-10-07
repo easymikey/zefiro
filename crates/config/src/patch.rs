@@ -375,7 +375,7 @@ mod tests {
     #[rstest]
     #[case::cover_mode("cover_mode", AppearanceField::CoverMode, 3)]
     #[case::key_hints("key_hints", AppearanceField::KeyHints, 1)]
-    #[case::layout_mode("layout_mode", AppearanceField::LayoutMode, 2)]
+    #[case::layout_mode("layout_mode", AppearanceField::LayoutMode, 1)]
     fn an_effect_lands_in_the_file_it_belongs_to(
         #[case] name: &str,
         #[case] field: AppearanceField,
@@ -487,7 +487,7 @@ mod tests {
         include_str!("../tests/fixtures/config_commented.toml");
 
     const CONFIG_WITH_DEVICE: &str =
-        "[audio]\ndevice = \"Speakers\"\nreplaygain = false\n";
+        "[audio]\ndevice = \"Speakers\"\nreplay_gain = false\n";
 
     fn crossfade_seconds(secs: u64) -> Crossfade {
         Crossfade::clamped(Duration::from_secs(secs))

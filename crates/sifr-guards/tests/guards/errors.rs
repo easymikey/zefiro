@@ -2,15 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::guards::support::{self, Allow};
-
-const ALLOWLIST: &[Allow] = &[];
-
-fn allowed(path: &str, line: &str) -> bool {
-    ALLOWLIST
-        .iter()
-        .any(|row| row.path == path && line.contains(row.pattern))
-}
+use crate::guards::support;
 
 fn test_line_flags(lines: &[&str]) -> Vec<bool> {
     let mut flags = Vec::with_capacity(lines.len());
@@ -220,7 +212,6 @@ struct Edge<'a> {
     line_idx: usize,
     y_name: &'a str,
     x_name: &'a str,
-    line: &'a str,
 }
 
 fn check_from_edge(
@@ -233,7 +224,6 @@ fn check_from_edge(
         line_idx,
         y_name,
         x_name,
-        line,
     } = edge;
     let c = crate_of_rel(rel);
     let (Some(y_crate), Some(x_crate)) = (
@@ -245,7 +235,7 @@ fn check_from_edge(
     let visible = |crate_name: &str| {
         crate_name == c || deps.get(c).is_some_and(|d| d.contains(crate_name))
     };
-    if !(visible(y_crate) && visible(x_crate)) && !allowed(rel, line) {
+    if !(visible(y_crate) && visible(x_crate)) {
         let n = *line_idx + 1;
         return vec![format!(
             "{rel}:{n}: `{y_name}: From<{x_name}>` written in {c}, which cannot see both \
@@ -288,7 +278,7 @@ fn every_error_variant_has_error_attr_and_from_follows_dependency_graph() {
                             .checked_sub(1)
                             .and_then(|previous| lines.get(previous))
                             .is_some_and(|previous| previous.contains("#[error("));
-                        if !has_attr && !allowed(rel, line) {
+                        if !has_attr {
                             violations.push(format!(
                                 "{rel}:{name}::{variant}: variant missing a preceding \
                                  #[error(\"...\")] attribute"
@@ -302,7 +292,6 @@ fn every_error_variant_has_error_attr_and_from_follows_dependency_graph() {
                                 line_idx: k,
                                 y_name: name,
                                 x_name: x,
-                                line,
                             },
                             &enum_crate,
                             &deps,
@@ -322,7 +311,6 @@ fn every_error_variant_has_error_attr_and_from_follows_dependency_graph() {
                         line_idx: i,
                         y_name: y,
                         x_name: x,
-                        line,
                     },
                     &enum_crate,
                     &deps,
@@ -336,7 +324,6 @@ fn every_error_variant_has_error_attr_and_from_follows_dependency_graph() {
          From/#[from] between two of our error enums follows a real Cargo.toml edge \
          (docs/errors.md).",
         &violations,
-        &[],
     );
 }
 
@@ -354,9 +341,7 @@ const SIMPLE_RULES: &[support::Rule] = &[
 fn check_simple_rules(rel: &str, lines: &[&str], violations: &mut Vec<String>) {
     for (i, line) in lines.iter().enumerate() {
         let n = i + 1;
-        if let Some(rule) = support::rule_hit(line, SIMPLE_RULES)
-            && !allowed(rel, line)
-        {
+        if let Some(rule) = support::rule_hit(line, SIMPLE_RULES) {
             violations.push(format!("{rel}:{n}: {}", rule.message));
         }
     }
@@ -371,9 +356,7 @@ fn check_bare_string_payload(rel: &str, lines: &[&str], violations: &mut Vec<Str
             let j = enum_body_end(lines, i);
             for (k, body_line) in lines.iter().enumerate().take(j + 1).skip(i) {
                 let n = k + 1;
-                if body_line.replace(' ', "").contains("(String)")
-                    && !allowed(rel, body_line)
-                {
+                if body_line.replace(' ', "").contains("(String)") {
                     violations.push(format!(
                         "{rel}:{n}: bare (String) payload on `{name}` — use a named context field instead"
                     ));
@@ -388,7 +371,7 @@ fn check_bare_string_payload(rel: &str, lines: &[&str], violations: &mut Vec<Str
 fn check_stringified_ctor(rel: &str, lines: &[&str], violations: &mut Vec<String>) {
     for (i, line) in lines.iter().enumerate() {
         let n = i + 1;
-        if has_stringified_ctor(line) && !allowed(rel, line) {
+        if has_stringified_ctor(line) {
             violations.push(format!(
                 "{rel}:{n}: .to_string() passed into an Error/Failed/Fault constructor — keep the source typed"
             ));
@@ -408,7 +391,7 @@ fn check_swallowed_write(
 ) {
     for (i, (line, in_test)) in source.lines.iter().zip(source.in_test).enumerate() {
         let n = i + 1;
-        if !*in_test && has_swallowed_write(line) && !allowed(rel, line) {
+        if !*in_test && has_swallowed_write(line) {
             violations.push(format!(
                 "{rel}:{n}: `let _ =` swallows a save/append/write/move_to_trash/persist call outside tests"
             ));
@@ -443,6 +426,5 @@ fn no_boxed_or_string_payload_errors_and_no_swallowed_writes() {
         "errors guard: no Box<dyn Error>, no bare (String) payload, no .to_string() \
          into an error constructor, no `let _ =` over a write (docs/errors.md).",
         &violations,
-        &support::stale_by_text(ALLOWLIST, &files),
     );
 }

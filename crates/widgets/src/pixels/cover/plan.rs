@@ -5,8 +5,6 @@ use crate::pixels::{cover::pixmap::Identity, vinyl::Wanted};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PaintPlan {
     Reuse,
-    Refit,
-    Wash,
     Rebuild,
 }
 
@@ -22,18 +20,13 @@ pub(crate) fn plan_paint(
     wanted: &Wanted<'_>,
     rect: Rect,
 ) -> PaintPlan {
-    match painted_cover {
-        Some(painted) if painted.rect == rect && painted.identity.is_wanted(wanted) => {
-            PaintPlan::Reuse
-        }
-        Some(painted)
-            if painted.rect == rect
-                && painted.identity.is_changed_only_by_theme(wanted) =>
-        {
-            PaintPlan::Wash
-        }
-        Some(painted) if painted.identity.is_wanted(wanted) => PaintPlan::Refit,
-        Some(_) | None => PaintPlan::Rebuild,
+    if let Some(painted) = painted_cover
+        && painted.rect == rect
+        && painted.identity.is_wanted(wanted)
+    {
+        PaintPlan::Reuse
+    } else {
+        PaintPlan::Rebuild
     }
 }
 
@@ -136,7 +129,7 @@ mod tests {
             painted: Some((plain("a.jpg"), rect())),
             want: want("a.jpg", other_rect()),
         },
-        PaintPlan::Refit
+        PaintPlan::Rebuild
     )]
     #[case::vinyl_same_key_and_rect(
         PlanRow {
@@ -157,14 +150,14 @@ mod tests {
             painted: Some((vinyl("a.flac"), rect())),
             want: want("a.flac", other_rect()),
         },
-        PaintPlan::Refit
+        PaintPlan::Rebuild
     )]
     #[case::vinyl_only_the_colors_moved(
         PlanRow {
             painted: Some((vinyl("a.flac"), rect())),
             want: Want { vinyl_style: recolored(), ..want("a.flac", rect()) },
         },
-        PaintPlan::Wash
+        PaintPlan::Rebuild
     )]
     #[case::vinyl_the_theme_moved_and_the_rect_changed(
         PlanRow {

@@ -138,7 +138,7 @@ The contexts (`KeyContext`), and what is in focus in each:
 | `help` | the help overlay |
 | `history` | the history overlay |
 | `settings` | the settings overlay |
-| `confirm_delete` | the delete confirmation |
+| `confirm_trash` | the trash confirmation |
 | `jump_to_time` | the jump-to-time prompt |
 | `track_details` | the track info overlay |
 
@@ -218,13 +218,13 @@ Path: `<config dir>/sifr/sifr-ui.toml`, beside `config.toml`.
 | `compact_min_height` | integer | `13` | Fewest rows for the `Compact` layout. |
 | `min_width` | integer | `48` | Below this many columns sifr shows a "too small" message instead. |
 | `min_height` | integer | `16` | Below this many rows sifr shows a "too small" message instead. |
-| `mode` | `"auto"`, `"full"` or `"compact"` | `"auto"` | Forces a layout tier. A forced tier that does not fit falls back to what `auto` picks. |
+| `mode` | `"auto"` or `"compact"` | `"auto"` | Forces a layout tier. A forced tier that does not fit falls back to what `auto` picks. |
 
 ### `[window]`
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `animations` | bool | `true` | Play the short transitions (overlays, toasts, track change, layout and theme changes). `false` stops them. |
+| `animations` | bool | `true` | Play the short transitions (overlays, toasts, track change, theme changes). A theme change fades the whole screen at once in a quick 150 ms fade; a layout change shows at once with no transition. `false` stops them. |
 | `key_hints` | bool | `true` | Draw the key-hint line. When `false`, the playlist gets that row. |
 
 <!-- defaults:window -->

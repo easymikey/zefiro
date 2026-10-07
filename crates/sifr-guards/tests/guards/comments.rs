@@ -40,11 +40,6 @@ const ALLOW: &[Allow] = &[
         "one line saying why this guard exists",
     ),
     Allow::new(
-        "sifr-guards/tests/guards/conventions_allow.rs",
-        "GUARD:",
-        "one line saying why this guard exists",
-    ),
-    Allow::new(
         "sifr-guards/tests/guards/lexer.rs",
         "GUARD:",
         "one line saying why this guard exists",
@@ -308,7 +303,7 @@ fn every_comment_is_a_listed_one_liner() {
         }
     }
 
-    support::report(
+    support::report_with_stale(
         "comments guard (docs/principles.md): the code has no comments. The only \
          survivors are a one-line `SAFETY:` above an unsafe block and the \
          one-liners listed in this guard's ALLOW — a `PROTOCOL:` recording a terminal or AppKit event, \

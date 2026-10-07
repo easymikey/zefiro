@@ -1,7 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 1a2d48effe54f02ae58fc3d2d916fe061852d60b9c3656ef14715a81bb32a675 # shrinks to text = "", patch = ConfigPatch { crossfade: None, device: Keep, replaygain: None, theme: None, volume: None, sleep_presets: Some([3540s, 60s]), music_dir: None }

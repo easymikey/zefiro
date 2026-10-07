@@ -149,7 +149,7 @@ mod tests {
         for (index, bundle) in SleepPresets::BUNDLES.iter().enumerate() {
             assert_eq!(SleepPresets::nearest_bundle(bundle), index);
         }
-        let custom = [Duration::from_secs(100 * 60)];
+        let custom = [Duration::from_mins(100)];
         assert_eq!(SleepPresets::nearest_bundle(&custom), 0);
     }
 

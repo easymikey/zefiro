@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use kernel::domain::{
     appearance::Animations,
     cue::{Cue, PlaybackChange},
@@ -77,10 +79,14 @@ impl AnimationStage {
                 scatter_burst(backdrop.style.background, self.cell_filter()),
                 vacated.selected_row,
             ),
-            Cue::ThemeChanged | Cue::LayoutChanged => {
-                self.stage_whole_screen(screen_wash(backdrop.wash_from), layout.screen);
+            Cue::ThemeChanged => {
+                self.stage_whole_screen(
+                    screen_wash(Arc::clone(&backdrop.wash_from)),
+                    layout.screen,
+                );
             }
             Cue::TrackChanged
+            | Cue::LayoutChanged
             | Cue::QueueChanged
             | Cue::PlayOrderChanged
             | Cue::LibraryOpened => {}
@@ -131,6 +137,8 @@ fn pulsed(change: PlaybackChange, backdrop: &Backdrop<'_>) -> Color {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use kernel::domain::{
         appearance::Animations,
         cue::{Cue, PlaybackChange},
@@ -175,7 +183,7 @@ mod tests {
                 accent: Color::Rgb(240, 120, 40),
                 volume_lifted: Color::Rgb(200, 210, 220),
             },
-            wash_from: Color::Rgb(0, 0, 0),
+            wash_from: Arc::default(),
         }
     }
 
@@ -202,13 +210,13 @@ mod tests {
     }
 
     #[test]
-    fn a_layout_change_stages_one_wash_over_the_whole_screen() {
+    fn a_layout_change_stages_nothing() {
         let mut stage = AnimationStage::default();
         let backdrop = empty_backdrop();
 
         stage.play(vec![Cue::LayoutChanged], &backdrop);
 
-        assert!(stage.wash_progress().is_some());
+        assert!(stage.wash_progress().is_none());
         assert!(stage.take_running().is_empty());
     }
 

@@ -142,7 +142,7 @@ fn update_handlers_below_the_router_take_their_slices_not_a_whole_model() {
         }
     }
 
-    support::report(
+    support::report_with_stale(
         "demeter guard: update handlers below update/mod.rs and update/startup.rs take \
          only the Model slices they touch — a handler that genuinely spans 4+ slices, \
          or forwards the whole Model to one that does, belongs in \

@@ -11,6 +11,10 @@ use rstest::rstest;
     "next = { chord = \"y\", context = \"search\" }",
     KeyOverride { chord: String::from("y"), key_context: Some(KeyContext::Search) }
 )]
+#[case::the_trash_confirmation_context_reads_as_confirm_trash(
+    "next = { chord = \"y\", context = \"confirm_trash\" }",
+    KeyOverride { chord: String::from("y"), key_context: Some(KeyContext::ConfirmTrash) }
+)]
 #[case::a_table_without_a_context_keeps_the_action_context(
     "next = { chord = \"y\" }",
     KeyOverride { chord: String::from("y"), key_context: None }
@@ -26,6 +30,9 @@ fn a_key_binding_reads_as_a_chord_with_its_context(
 #[rstest]
 #[case::an_unknown_context_does_not_parse(
     "next = { chord = \"y\", context = \"nowhere\" }"
+)]
+#[case::the_old_confirm_delete_context_does_not_parse(
+    "next = { chord = \"y\", context = \"confirm_delete\" }"
 )]
 #[case::an_unknown_field_does_not_parse("next = { chord = \"y\", scope = \"search\" }")]
 #[case::a_table_without_a_chord_does_not_parse("next = { context = \"search\" }")]

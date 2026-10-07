@@ -234,7 +234,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use audio::AudioDriver;
+    use audio::{AudioDriver, FeedChannel, engine::message::AudioMessage};
     use crossbeam_channel::{Receiver, Sender, bounded, never, unbounded};
     use kernel::{
         cmd::{AudioCmd, Cmd, Cmds},
@@ -254,7 +254,7 @@ mod tests {
         registry,
         runtime::Runtime,
         spawn::tests::spawn_idle,
-        spawn_setup::CALLBACK_SLOTS,
+        spawn_setup::{CALLBACK_SLOTS, FEED_SLOTS},
         timers::Timers,
         watcher::FileStream,
     };
@@ -690,8 +690,9 @@ mod tests {
             inbox,
             callback_receiver: never(),
             message: None,
-            run_job: |nap: Nap| match nap {
-                Nap::Long | Nap::Brief => panic!("the job panics"),
+            run_job: |_nap: Nap| -> NapperMessage {
+                thread::sleep(SHORT);
+                panic!("the job panics after it started")
             },
         }
         .spawn(|| Napper)
@@ -713,6 +714,11 @@ mod tests {
     fn start_audio_driver() -> (DriverThread<AudioCmd>, Receiver<Message>) {
         let (inbox, sent) = unbounded();
         let (callback_sender, callback_receiver) = bounded(CALLBACK_SLOTS);
+        let (feed_sender, feed_receiver) = bounded(FEED_SLOTS);
+        let feed_channel = FeedChannel {
+            feed_sender,
+            feed_receiver,
+        };
         let settings = AudioSettings::default();
         let row = registry::row(DriverName::Audio);
         let run_job = audio::deck::job::AudioJob::run;
@@ -720,10 +726,10 @@ mod tests {
             row,
             inbox,
             callback_receiver,
-            message: None,
+            message: Some(AudioMessage::Started),
             run_job,
         }
-        .spawn(move || AudioDriver::new(settings, callback_sender).0)
+        .spawn(move || AudioDriver::new(settings, callback_sender, feed_channel).0)
         .unwrap();
         (thread, sent)
     }

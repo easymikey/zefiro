@@ -1,7 +1,7 @@
 use crate::domain::{
     appearance::AppearanceSettings,
     crossfade::Crossfade,
-    device::{ListedDevice, OutputDevice},
+    device::{DeviceName, ListedDevice, OutputDevice},
     sleep_presets::SleepPresets,
 };
 
@@ -17,6 +17,7 @@ pub struct AudioSettings {
 pub struct Settings {
     pub audio_settings: AudioSettings,
     pub output_devices: Vec<ListedDevice>,
+    pub device_name: Option<DeviceName>,
     pub appearance_settings: AppearanceSettings,
 }
 

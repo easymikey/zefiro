@@ -23,6 +23,7 @@ expression: "(model.settings, model.transport.volume, model.themes,)"
             ),
         },
         output_devices: [],
+        device_name: None,
         appearance_settings: AppearanceSettings {
             cover_mode: Vinyl,
             cover_brackets: Hidden,

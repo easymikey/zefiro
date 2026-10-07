@@ -1,35 +1,42 @@
 pub(crate) mod envelope;
 pub(crate) mod event;
+pub(crate) mod feed;
 pub mod job;
+pub(crate) mod mixer;
 pub(crate) mod output;
 pub(crate) mod source;
+pub(crate) mod varispeed;
 
 use std::time::Duration;
 
-use crossbeam_channel::Sender;
+use crossbeam_channel::{SendError, Sender};
 use kernel::{
     cmd::Playback,
     domain::{device::OutputDevice, revision::Revision, speed::Speed},
+    message::AudioError,
 };
 
 use crate::{
     deck::{
-        envelope::{EnvelopeControl, Ramp, envelope},
+        envelope::{EnvelopeControl, Ramp},
+        feed::{FeedCmd, feed_channel, play},
+        mixer::{MixerOrder, Voice},
         output::{Fader, Output},
         source::{DecodedTrack, PreloadMode},
     },
-    device::{OutputLoss, open_stream},
-    engine::message::{AudioMessage, DeviceOpened, EngineMessage},
+    device::{OpenedOutput, Opening, OutputLoss, open_output},
+    engine::message::{AudioMessage, DeviceOpened, EngineMessage, SinkRole},
     error::DeviceError,
     gain::Gain,
     tap::SpectrumBuffers,
 };
 
 pub(crate) struct Deck {
-    stream: Option<rodio::OutputStream>,
+    stream: Option<cpal::Stream>,
     pub(crate) output: Option<Output>,
     staged_track: Option<DecodedTrack>,
     callback_sender: Sender<AudioMessage>,
+    feed_sender: Sender<FeedCmd>,
     spectrum_buffers: SpectrumBuffers,
     output_loss: OutputLoss,
 }
@@ -38,12 +45,14 @@ impl Deck {
     pub(crate) fn new(
         spectrum_buffers: SpectrumBuffers,
         callback_sender: Sender<AudioMessage>,
+        feed_sender: Sender<FeedCmd>,
     ) -> Self {
         Self {
             stream: None,
             output: None,
             staged_track: None,
             callback_sender,
+            feed_sender,
             spectrum_buffers,
             output_loss: OutputLoss::default(),
         }
@@ -64,29 +73,87 @@ impl Deck {
     ) -> Option<AudioMessage> {
         let output = self.output.as_mut()?;
         let duration = decoded_track.duration();
-        let (wrapped, control) = envelope(
-            decoded_track.decoder,
-            decoded_track.revision,
+        let revision = decoded_track.revision;
+        let path = decoded_track.decoder.path.to_path_buf();
+        let speed = match preload_mode {
+            PreloadMode::Gapless => Speed::default(),
+            PreloadMode::Crossfade(speed) => speed,
+        };
+        let (source, feed) = feed_channel(
+            decoded_track,
+            output.format.channels,
             self.callback_sender.clone(),
         );
+        let (envelope, mut control) = play(&source, feed, &self.feed_sender);
+        let voice = match output.varispeed(source.sample_rate(), speed) {
+            Ok(varispeed) => Box::new(Voice::new(source, envelope, varispeed)),
+            Err(error) => {
+                return Some(
+                    EngineMessage::Error(AudioError::Preload { path, error }).into(),
+                );
+            }
+        };
         match preload_mode {
             PreloadMode::Gapless => {
-                output.current.append(wrapped);
+                if let Some(current_gain) =
+                    output.current_control.as_ref().map(EnvelopeControl::volume)
+                {
+                    control.set_volume(current_gain);
+                }
+                output.mixer_control.order(MixerOrder::Queue(voice));
                 output.incoming_control = Some(control);
             }
-            PreloadMode::Crossfade(speed) => {
-                let sink = output.attach_incoming(wrapped, speed);
-                output.incoming_fader = Some(Fader { sink, control });
+            PreloadMode::Crossfade(_) => {
+                control.set_volume(Gain::SILENCE);
+                output.mixer_control.order(MixerOrder::Attach {
+                    role: SinkRole::Incoming,
+                    voice,
+                });
+                output.incoming_fader = Some(Fader { control });
             }
         }
+        let (_, playback) = output.position();
+        self.pace(playback);
         Some(
             EngineMessage::Attached {
-                revision: decoded_track.revision,
+                revision,
                 preload_mode,
                 duration,
             }
             .into(),
         )
+    }
+
+    pub(crate) fn pace(&self, playback: Playback) {
+        match self.feed_sender.send(FeedCmd::Pace(playback)) {
+            Ok(()) | Err(SendError(_)) => {}
+        }
+    }
+
+    pub(crate) fn transport(&mut self, playback: Playback) {
+        if let Some(output) = self.output.as_mut() {
+            output.current_playback = playback;
+            output.mixer_control.order(MixerOrder::Transport(playback));
+        }
+        self.pace(playback);
+    }
+
+    pub(crate) fn set_speed(&mut self, speed: Speed) {
+        if let Some(output) = self.output.as_mut() {
+            output.mixer_control.order(MixerOrder::Speed(speed));
+        }
+    }
+
+    pub(crate) fn seek(&mut self, target: Duration) {
+        let Some(output) = self.output.as_mut() else {
+            return;
+        };
+        let (_, playback) = output.position();
+        if let Some(control) = &output.current_control {
+            control.pace(playback);
+        }
+        output.mixer_control.order(MixerOrder::Seek(target));
+        self.pace(playback);
     }
 
     pub(crate) fn take_signals(&self, revision: Revision) -> Option<AudioMessage> {
@@ -106,13 +173,7 @@ impl Deck {
     }
 
     pub(crate) fn position(&self) -> Option<Duration> {
-        let output = self.output.as_ref()?;
-        Some(
-            output
-                .current_control
-                .as_ref()
-                .map_or_else(|| output.current.get_pos(), EnvelopeControl::position),
-        )
+        self.output.as_ref().map(|output| output.position().0)
     }
 
     pub(crate) fn silence(&mut self) {
@@ -127,17 +188,32 @@ impl Deck {
         device: OutputDevice,
         speed: Speed,
     ) -> Result<DeviceOpened, DeviceError> {
-        let stream = open_stream(&device, &self.callback_sender, &self.output_loss)?;
+        let OpenedOutput {
+            stream,
+            format,
+            mixer_control,
+            retired_voices,
+            device_name,
+        } = open_output(
+            &device,
+            &Opening {
+                speed,
+                spectrum_buffers: &self.spectrum_buffers,
+                callback_sender: &self.callback_sender,
+                output_loss: &self.output_loss,
+            },
+        )?;
         self.drop_preload();
         let (position, playback) = self
             .output
             .as_ref()
             .map_or((Duration::ZERO, Playback::Playing), Output::position);
         drop(self.output.take());
-        self.output = Some(Output::with_stream(&stream, speed, &self.spectrum_buffers));
+        self.output = Some(Output::new(mixer_control, retired_voices, format));
         self.stream = Some(stream);
         Ok(DeviceOpened {
             device,
+            device_name,
             position,
             playback,
         })
@@ -146,6 +222,9 @@ impl Deck {
     pub(crate) fn drop_preload(&mut self) {
         if let Some(output) = self.output.as_mut() {
             output.incoming_fader = None;
+            output
+                .mixer_control
+                .order(MixerOrder::Drop(SinkRole::Incoming));
         }
     }
 
@@ -153,17 +232,32 @@ impl Deck {
         self.staged_track = None;
     }
 
-    pub(crate) fn append_staged(&mut self) {
-        let Some(output) = self.output.as_mut() else {
-            return;
+    pub(crate) fn append_staged(&mut self) -> Option<AudioMessage> {
+        let output = self.output.as_mut()?;
+        let staged_track = self.staged_track.take()?;
+        let path = staged_track.decoder.path.to_path_buf();
+        let (source, feed) = feed_channel(
+            staged_track,
+            output.format.channels,
+            self.callback_sender.clone(),
+        );
+        let (envelope, control) = play(&source, feed, &self.feed_sender);
+        let voice = match output.varispeed(source.sample_rate(), Speed::default()) {
+            Ok(varispeed) => Box::new(Voice::new(source, envelope, varispeed)),
+            Err(error) => {
+                return Some(
+                    EngineMessage::Error(AudioError::Decode { path, error }).into(),
+                );
+            }
         };
-        let Some(DecodedTrack { revision, decoder }) = self.staged_track.take() else {
-            return;
-        };
-        let (wrapped, control) =
-            envelope(decoder, revision, self.callback_sender.clone());
-        output.current.append(wrapped);
+        output.mixer_control.order(MixerOrder::Attach {
+            role: SinkRole::Current,
+            voice,
+        });
         output.current_control = Some(control);
+        let (_, playback) = output.position();
+        self.pace(playback);
+        None
     }
 
     pub(crate) fn promote(&mut self) {
@@ -195,6 +289,16 @@ impl Deck {
         control.set_fade_start(fade_start);
     }
 
+    pub(crate) fn set_current_gain(&mut self, gain: Gain) {
+        if let Some(control) = self
+            .output
+            .as_mut()
+            .and_then(|output| output.current_control.as_mut())
+        {
+            control.set_volume(gain);
+        }
+    }
+
     pub(crate) fn crossfade(&mut self, duration: Duration, incoming: Gain) {
         let Some(output) = self.output.as_mut() else {
             return;
@@ -207,9 +311,12 @@ impl Deck {
                 .map(|fader| &mut fader.control),
             duration,
         );
-        if let Some(incoming_fader) = output.incoming_fader.as_ref() {
-            incoming_fader.sink.set_volume(incoming.amplitude());
-            incoming_fader.sink.play();
+        if let Some(incoming_fader) = output.incoming_fader.as_mut() {
+            incoming_fader.control.set_volume(incoming);
+            output.mixer_control.order(MixerOrder::RolePlayback {
+                role: SinkRole::Incoming,
+                playback: Playback::Playing,
+            });
         }
     }
 
@@ -222,13 +329,19 @@ impl Deck {
         }
         if let Some(incoming_fader) = output.incoming_fader.as_mut() {
             incoming_fader.control.ramp(Ramp::hold(Gain::SILENCE));
-            incoming_fader.sink.pause();
+            output.mixer_control.order(MixerOrder::RolePlayback {
+                role: SinkRole::Incoming,
+                playback: Playback::Paused,
+            });
         }
     }
 
     pub(crate) fn drop_outgoing(&mut self) {
         if let Some(output) = self.output.as_mut() {
             output.outgoing_fader = None;
+            output
+                .mixer_control
+                .order(MixerOrder::Drop(SinkRole::Outgoing));
         }
     }
 
@@ -244,15 +357,9 @@ impl Deck {
             output.current_control.as_mut(),
             duration,
         );
-        output.current.set_volume(current.amplitude());
-    }
-
-    pub(crate) fn current(&self) -> Option<&rodio::Sink> {
-        self.output.as_ref().map(|output| &output.current)
-    }
-
-    pub(crate) fn sinks(&self) -> impl Iterator<Item = &rodio::Sink> {
-        self.output.iter().flat_map(Output::sinks)
+        if let Some(control) = output.current_control.as_mut() {
+            control.set_volume(current);
+        }
     }
 }
 
@@ -273,23 +380,25 @@ fn fade(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::{io::Write, time::Duration};
+    use std::{io::Write, thread, time::Duration};
 
-    use kernel::domain::{revision::Revision, speed::Speed};
-    use rodio::{Source, source::SineWave};
+    use kernel::domain::{device::OutputDevice, revision::Revision, speed::Speed};
     use rstest::rstest;
+    use tempfile::NamedTempFile;
 
     use crate::{
         deck::{
             Deck,
-            envelope::{EnvelopeControl, Ramp, envelope},
+            envelope::{Envelope, EnvelopeControl, Ramp},
+            feed::{Feed, FeedCmd, FeedSource, feed_channel, play},
             output::{Output, tests::detached_output},
-            source::{DecodedTrack, PreloadMode, decode},
+            source::{DecodedTrack, PreloadMode, decode, tests::ramp_file},
         },
         engine::{
             message::{AudioMessage, EngineMessage, Signals, SinkRole},
             tests::assert_same,
         },
+        gain::Gain,
         tap,
     };
 
@@ -324,8 +433,7 @@ pub(crate) mod tests {
     }
 
     fn control(revision: Revision) -> EnvelopeControl {
-        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
-        envelope(tone(1), revision, callback_sender).1
+        played(1, revision).3
     }
 
     fn staged_revision() -> Revision {
@@ -396,8 +504,7 @@ pub(crate) mod tests {
     }
 
     fn append_staged(deck: &mut Deck) -> Option<AudioMessage> {
-        deck.append_staged();
-        None
+        deck.append_staged()
     }
 
     fn silence(deck: &mut Deck) -> Option<AudioMessage> {
@@ -456,22 +563,80 @@ pub(crate) mod tests {
     pub(crate) fn deck_with_detached_output() -> Deck {
         let (spectrum_buffers, _spectrum_tap) = tap::spectrum_channel();
         let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(64);
-        let mut deck = Deck::new(spectrum_buffers, callback_sender);
+        let (feed_sender, _feed_receiver) = crossbeam_channel::bounded(4);
+        let mut deck = Deck::new(spectrum_buffers, callback_sender, feed_sender);
         deck.output = Some(detached_output());
         deck
     }
 
-    pub(crate) fn tone(millis: u64) -> impl Source {
-        SineWave::new(440.0).take_duration(Duration::from_millis(millis))
+    pub(crate) fn played(
+        millis: u64,
+        revision: Revision,
+    ) -> (
+        NamedTempFile,
+        FeedSource,
+        Envelope,
+        EnvelopeControl,
+        Box<Feed>,
+    ) {
+        let file = ramp_file(1, usize::try_from(millis * 8).unwrap());
+        let (feed_sender, feed_receiver) = crossbeam_channel::bounded(1);
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
+        let decoded_track = DecodedTrack {
+            revision,
+            decoder: decode(file.path()).unwrap(),
+        };
+        let (source, unserved) = feed_channel(decoded_track, 1, callback_sender);
+        let (envelope, control) = play(&source, unserved, &feed_sender);
+        let Ok(FeedCmd::Serve(feed)) = feed_receiver.try_recv() else {
+            panic!("play sends its feed to the feeder");
+        };
+        (file, source, envelope, control, feed)
+    }
+
+    pub(crate) fn pulled(
+        source: &mut FeedSource,
+        envelope: &mut Envelope,
+        samples: usize,
+    ) -> Vec<f32> {
+        let mut out = vec![0.0; samples];
+        let read = source.read(&mut out);
+        out.truncate(read);
+        envelope.read(&mut out);
+        if read < samples {
+            envelope.end();
+        }
+        out
+    }
+
+    #[test]
+    #[ignore = "hardware: needs a real audio device; run with --include-ignored"]
+    fn a_reopened_deck_keeps_the_spectrum_moving() {
+        let (spectrum_buffers, spectrum_tap) = tap::spectrum_channel();
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(64);
+        let (feed_sender, _feed_receiver) = crossbeam_channel::unbounded();
+        let mut deck = Deck::new(spectrum_buffers, callback_sender, feed_sender);
+        for _ in 0..2 {
+            assert!(
+                deck.open(OutputDevice::SystemDefault, Speed::default())
+                    .is_ok()
+            );
+        }
+
+        let mut window = [1.0_f32; tap::WINDOW];
+        for _ in 0..2 {
+            thread::sleep(Duration::from_millis(300));
+            assert!(spectrum_tap.windowed(&[1.0; tap::WINDOW], &mut window));
+        }
+        assert!(window.iter().all(|&sample| sample == 0.0));
     }
 
     #[test]
     fn a_finished_current_sink_reports_the_track_finished() {
         let mut deck = deck_with_detached_output();
-        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
-        let (source, control) =
-            envelope(tone(1), Revision::default().next(), callback_sender);
-        for _ in source {}
+        let (_file, mut source, mut envelope, control, _feed) =
+            played(1, Revision::default().next());
+        assert_eq!(pulled(&mut source, &mut envelope, 16).len(), 8);
         let revision = control.revision();
         output(&mut deck).current_control = Some(control);
 
@@ -490,10 +655,9 @@ pub(crate) mod tests {
     #[test]
     fn a_gapless_incoming_track_keeps_its_signals_until_it_is_current() {
         let mut deck = deck_with_detached_output();
-        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
-        let (source, control) =
-            envelope(tone(1), Revision::default().next(), callback_sender);
-        for _ in source {}
+        let (_file, mut source, mut envelope, control, _feed) =
+            played(1, Revision::default().next());
+        assert_eq!(pulled(&mut source, &mut envelope, 16).len(), 8);
         let revision = control.revision();
         output(&mut deck).incoming_control = Some(control);
 
@@ -516,13 +680,13 @@ pub(crate) mod tests {
         let mut deck = deck_with_detached_output();
         let decoded = Revision::default().next();
         let preloaded = decoded.next();
-        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(8);
-        let (source, mut outgoing) =
-            envelope(tone(100), preloaded, callback_sender.clone());
+        let (_file, mut source, mut envelope, mut outgoing, _feed) =
+            played(100, preloaded);
         outgoing.ramp(Ramp::fade_out(outgoing.frames(Duration::from_millis(10))));
-        for _ in source {}
+        assert_eq!(pulled(&mut source, &mut envelope, 1_024).len(), 800);
         let revision = outgoing.revision();
-        let (_source, current) = envelope(tone(100), decoded, callback_sender);
+        let (_current_file, _source, _envelope, current, _current_feed) =
+            played(100, decoded);
         let output = output(&mut deck);
         output.current_control = Some(outgoing);
         output.retire_current(Speed::default());
@@ -533,5 +697,20 @@ pub(crate) mod tests {
             Some(AudioMessage::SignalsTaken { role: SinkRole::Outgoing, signals })
                 if signals.contains(Signals::RAMPED)
         ));
+    }
+
+    #[test]
+    fn a_gapless_attach_copies_the_current_gain_to_the_queued_control() {
+        let mut deck = loaded_deck();
+        deck.append_staged();
+        deck.set_current_gain(Gain::from_amplitude(0.5));
+        assert!(attach_gapless(&mut deck).is_some());
+        assert_eq!(
+            output(&mut deck)
+                .incoming_control
+                .as_ref()
+                .map(EnvelopeControl::volume),
+            Some(Gain::from_amplitude(0.5))
+        );
     }
 }

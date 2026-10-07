@@ -1,6 +1,7 @@
 use std::fmt;
 
 use image::DynamicImage;
+use ratatui::layout::Rect;
 use ratatui_image::{
     picker::{Capability, Picker, ProtocolType},
     protocol::{StatefulProtocol, StatefulProtocolType, kitty::StatefulKitty},
@@ -10,12 +11,9 @@ use widgets::{
     pixels::cover::{
         CoverImage,
         CoverMotion,
-        CoverRefresh,
-        CoverWash,
-        CrossfadePermit,
         lifecycle::{CoverFrame, CoverLifecycle},
     },
-    scene::{PixelPath, Scene},
+    scene::Scene,
 };
 
 const COVER_KITTY_ID: u32 = 1;
@@ -23,7 +21,6 @@ const COVER_KITTY_ID: u32 = 1;
 pub(crate) struct Cover {
     lifecycle: CoverLifecycle,
     picker: Picker,
-    pixel_path: PixelPath,
     protocol: Option<StatefulProtocol>,
 }
 
@@ -37,15 +34,10 @@ impl fmt::Debug for Cover {
 }
 
 impl Cover {
-    pub(crate) fn new(
-        lifecycle: CoverLifecycle,
-        picker: Picker,
-        pixel_path: PixelPath,
-    ) -> Self {
+    pub(crate) fn new(lifecycle: CoverLifecycle, picker: Picker) -> Self {
         Self {
             lifecycle,
             picker,
-            pixel_path,
             protocol: None,
         }
     }
@@ -57,17 +49,9 @@ impl Cover {
     pub(crate) fn refresh(
         &mut self,
         scene: &Scene<'_>,
-        refresh: CoverRefresh,
+        cover_area: Option<Rect>,
     ) -> CardCover {
-        let refresh = match self.pixel_path {
-            PixelPath::Halfblocks => refresh,
-            PixelPath::Protocol => CoverRefresh {
-                crossfade_permit: CrossfadePermit::Withheld,
-                wash: CoverWash::Idle,
-                ..refresh
-            },
-        };
-        let update = self.lifecycle.refresh(scene, refresh);
+        let update = self.lifecycle.refresh(scene, cover_area);
         match update.frame {
             CoverFrame::Keep => {}
             CoverFrame::Forget => self.protocol = None,

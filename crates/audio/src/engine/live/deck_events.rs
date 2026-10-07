@@ -197,20 +197,25 @@ mod tests {
             settings::{AudioSettings, ReplayGain},
             track::Decibels,
         },
-        message::AudioEvent,
+        message::{AudioError, AudioEvent, DecodeError},
         update::machine::{LoopEffect, Machine, Unhandled},
     };
     use proptest::prelude::{prop_assert_eq, proptest};
     use rstest::rstest;
+    use tempfile::NamedTempFile;
 
     use crate::{
-        deck::{job::AudioJob, source::PreloadMode},
+        deck::{
+            feed::{feed_channel, tests::corrupt_file},
+            job::AudioJob,
+            source::{DecodedTrack, PreloadMode, decode},
+        },
         engine::{
             crossfade::replay_gain_factor,
             effect::{AudioLoopCmd, EngineEffect},
             message::{AudioMessage, EngineMessage, SinkRole},
             phase::{Incoming, LoadedTrack, NextTrack, Phase, Playing},
-            state::{Engine, EngineState, Live},
+            state::{Engine, EngineState, Live, then_report},
             tests::{
                 CROSSFADE_SECONDS,
                 EngineRow,
@@ -688,5 +693,60 @@ mod tests {
                 })
             );
         }
+    }
+
+    fn reported(file: &NamedTempFile) -> EngineMessage {
+        let decoder = decode(file.path()).unwrap();
+        let channels = decoder.channels();
+        let decoded_track = DecodedTrack {
+            revision: Revision::default(),
+            decoder,
+        };
+        let (callback_sender, callback_receiver) = crossbeam_channel::bounded(4);
+        let (_source, mut feed) =
+            feed_channel(decoded_track, channels, callback_sender);
+        feed.prime();
+        match callback_receiver.try_recv() {
+            Ok(AudioMessage::Engine(report)) => report,
+            unreported => panic!("the feed reports its corrupt stream: {unreported:?}"),
+        }
+    }
+
+    fn corrupt(file: &NamedTempFile) -> AudioError {
+        AudioError::Decode {
+            path: file.path().to_path_buf(),
+            error: DecodeError::Corrupt,
+        }
+    }
+
+    #[test]
+    fn a_corrupt_stream_in_play_raises_the_error_and_then_ends_as_at_its_end() {
+        let file = corrupt_file(24, 0);
+        let mut state = EngineState::Live(playing());
+        assert_same(
+            step(&mut state, reported(&file)),
+            Ok(Cmd::message(AudioEvent::Error(corrupt(&file)))),
+        );
+        assert_eq!(state, EngineState::Live(playing()));
+        assert_same(
+            step(&mut state, EngineMessage::Finished(SinkRole::Current)),
+            Ok(then_report(Cmd::message(AudioEvent::Ended))),
+        );
+        assert_eq!(state, EngineState::Live(live()));
+    }
+
+    #[test]
+    fn a_corrupt_outgoing_stream_raises_the_error_and_keeps_the_incoming_load() {
+        let file = corrupt_file(24, 0);
+        let engine_state =
+            EngineState::Live(handing_over(Incoming::Loading(loading_track("/b"))));
+        assert_cell(
+            engine_state.clone(),
+            reported(&file),
+            EngineRow {
+                next: engine_state,
+                effect: Ok(Cmd::message(AudioEvent::Error(corrupt(&file)))),
+            },
+        );
     }
 }

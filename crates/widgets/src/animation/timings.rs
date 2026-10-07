@@ -5,9 +5,8 @@ const TOAST_SLIDE_IN_MS: u32 = 900;
 const PULSE_MS: u32 = 900;
 const PULSE_HALF_MS: u32 = PULSE_MS / 2;
 const DELETE_BURST_MS: u32 = 900;
-const THEME_WASH_MS: u32 = 400;
-pub const THEME_WASH_GRADIENT_CELLS: u16 = 30;
-const COVER_CROSSFADE_MS: u32 = 900;
+const THEME_WASH_MS: u32 = 150;
+pub const COVER_CROSSFADE_STEPS: u8 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnimationTimings {
@@ -36,7 +35,7 @@ pub const TIMINGS: AnimationTimings = AnimationTimings {
     volume_pulse: (PULSE_MS, Interpolation::QuadOut),
     volume_pulse_mix: 0.2,
     screen_wash: (THEME_WASH_MS, Interpolation::QuadOut),
-    cover_crossfade: (COVER_CROSSFADE_MS, Interpolation::QuadOut),
+    cover_crossfade: (600, Interpolation::QuadOut),
     delete_burst: (DELETE_BURST_MS, Interpolation::QuadOut),
     delete_force: 3.0,
     delete_force_variance: 1.0,

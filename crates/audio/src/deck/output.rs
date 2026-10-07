@@ -3,110 +3,92 @@ use std::time::Duration;
 use kernel::{
     cmd::Playback,
     domain::{revision::Revision, speed::Speed},
+    message::DecodeError,
 };
-use rodio::{Source, source::Zero};
 
 use crate::{
-    deck::envelope::{Envelope, EnvelopeControl},
+    deck::{
+        envelope::EnvelopeControl,
+        mixer::{MixerControl, MixerOrder, RetiredVoices},
+        varispeed::{OutputFormat, Varispeed},
+    },
     engine::message::SinkRole,
-    gain::Gain,
-    tap::{SpectrumBuffers, TappedSource},
 };
 
 pub(crate) struct Fader {
-    pub(crate) sink: rodio::Sink,
     pub(crate) control: EnvelopeControl,
 }
 
 pub(crate) struct Output {
-    mix: rodio::mixer::Mixer,
-    pub(crate) current: rodio::Sink,
+    pub(crate) mixer_control: MixerControl,
+    pub(crate) retired_voices: RetiredVoices,
+    pub(crate) format: OutputFormat,
     pub(crate) current_control: Option<EnvelopeControl>,
     pub(crate) incoming_control: Option<EnvelopeControl>,
     pub(crate) incoming_fader: Option<Fader>,
     pub(crate) outgoing_fader: Option<Fader>,
-}
-
-fn fresh_sink(mix: &rodio::mixer::Mixer, speed: Speed) -> rodio::Sink {
-    let sink = rodio::Sink::connect_new(mix);
-    sink.set_speed(speed.get());
-    sink.pause();
-    sink
+    pub(crate) current_playback: Playback,
 }
 
 impl Output {
-    pub(crate) fn with_stream(
-        stream: &rodio::OutputStream,
-        speed: Speed,
-        spectrum_buffers: &SpectrumBuffers,
+    pub(crate) fn new(
+        mixer_control: MixerControl,
+        retired_voices: RetiredVoices,
+        format: OutputFormat,
     ) -> Self {
-        let channels = stream.config().channel_count();
-        let rate = stream.config().sample_rate();
-        let (mix, mix_source) = rodio::mixer::mixer(channels, rate);
-        stream
-            .mixer()
-            .add(TappedSource::new(mix_source, spectrum_buffers));
-        mix.add(Zero::new(channels, rate));
-        let current = fresh_sink(&mix, speed);
         Self {
-            mix,
-            current,
+            mixer_control,
+            retired_voices,
+            format,
             current_control: None,
             incoming_control: None,
             incoming_fader: None,
             outgoing_fader: None,
+            current_playback: Playback::Paused,
         }
+    }
+
+    pub(crate) fn varispeed(
+        &self,
+        rate: u32,
+        speed: Speed,
+    ) -> Result<Varispeed, DecodeError> {
+        Varispeed::new(rate, self.format, speed).or(Err(DecodeError::Unsupported))
     }
 
     pub(crate) fn swap_current(&mut self, speed: Speed) {
         self.outgoing_fader = None;
-        self.current = fresh_sink(&self.mix, speed);
         self.current_control = None;
+        self.current_playback = Playback::Paused;
+        self.mixer_control
+            .order(MixerOrder::Drop(SinkRole::Outgoing));
+        self.mixer_control
+            .order(MixerOrder::Drop(SinkRole::Current));
+        self.mixer_control.order(MixerOrder::Speed(speed));
     }
 
     pub(crate) fn retire_current(&mut self, speed: Speed) {
-        let current = fresh_sink(&self.mix, speed);
-        let sink = std::mem::replace(&mut self.current, current);
-        self.outgoing_fader = self
-            .current_control
-            .take()
-            .map(|control| Fader { sink, control });
+        self.outgoing_fader =
+            self.current_control.take().map(|control| Fader { control });
+        self.current_playback = Playback::Paused;
+        self.mixer_control.order(MixerOrder::Retire);
+        self.mixer_control.order(MixerOrder::Speed(speed));
     }
 
     pub(crate) fn position(&self) -> (Duration, Playback) {
-        let playback = if self.current.is_paused() {
-            Playback::Paused
-        } else {
-            Playback::Playing
-        };
-        (self.current.get_pos(), playback)
+        (
+            self.current_control
+                .as_ref()
+                .map_or(Duration::ZERO, EnvelopeControl::position),
+            self.current_playback,
+        )
     }
 
     pub(crate) fn promote(&mut self) {
-        if let Some(Fader { sink, control }) = self.incoming_fader.take() {
-            self.current = sink;
+        if let Some(Fader { control }) = self.incoming_fader.take() {
+            self.mixer_control.order(MixerOrder::Promote);
             self.current_control = Some(control);
         }
-    }
-
-    pub(crate) fn attach_incoming<S>(
-        &self,
-        envelope: Envelope<S>,
-        speed: Speed,
-    ) -> rodio::Sink
-    where
-        S: Source + Send + 'static,
-    {
-        let sink = fresh_sink(&self.mix, speed);
-        sink.set_volume(Gain::SILENCE.amplitude());
-        sink.append(envelope);
-        sink
-    }
-
-    pub(crate) fn sinks(&self) -> impl Iterator<Item = &rodio::Sink> {
-        std::iter::once(&self.current)
-            .chain(self.incoming_fader.as_ref().map(|fader| &fader.sink))
-            .chain(self.outgoing_fader.as_ref().map(|fader| &fader.sink))
     }
 
     #[must_use]
@@ -138,18 +120,30 @@ impl Output {
 pub(crate) mod tests {
     use kernel::domain::speed::Speed;
 
-    use crate::deck::output::{Output, fresh_sink};
+    use crate::{
+        deck::{
+            mixer::{Mixer, MixerChannel, mixer_channel},
+            output::Output,
+            varispeed::OutputFormat,
+        },
+        tap::{SpectrumBuffers, spectrum_channel},
+    };
+
+    pub(crate) fn mixed_output(
+        rate: u32,
+        spectrum_buffers: &SpectrumBuffers,
+    ) -> (Output, Mixer) {
+        let format = OutputFormat { channels: 1, rate };
+        let MixerChannel {
+            mixer,
+            control,
+            retired_voices,
+        } = mixer_channel(format, Speed::default(), spectrum_buffers);
+        (Output::new(control, retired_voices, format), mixer)
+    }
 
     pub(crate) fn detached_output() -> Output {
-        let (mix, _mix_source) = rodio::mixer::mixer(1, 44_100);
-        let current = fresh_sink(&mix, Speed::default());
-        Output {
-            mix,
-            current,
-            current_control: None,
-            incoming_control: None,
-            incoming_fader: None,
-            outgoing_fader: None,
-        }
+        let (spectrum_buffers, _spectrum_tap) = spectrum_channel();
+        mixed_output(44_100, &spectrum_buffers).0
     }
 }

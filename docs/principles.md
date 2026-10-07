@@ -48,7 +48,7 @@ Performance is a property of the design, not of tuning:
 
 - **Do nothing when nothing changes.** An idle player blocks every thread and uses no CPU; frames are painted only while something on screen moves.
 - **No per-frame waste.** A message that changes nothing visible paints nothing and allocates nothing; rows borrow precomputed text; images are encoded once per change.
-- **Realtime paths never wait.** The audio callback and OS callbacks never lock, allocate or block; they set a flag or ring a doorbell.
+- **Realtime paths never wait.** The audio callback never locks, allocates, frees, blocks or sends: it trades through wait-free rings, cells and atomics. OS callbacks never lock, allocate or block; they set a flag or ring a doorbell.
 - **Measure on request.** Performance is reasoned from the code in reviews and measured only when the user asks, so routine work is never held up by noisy benchmarks.
 
 ## What we deliberately do not use

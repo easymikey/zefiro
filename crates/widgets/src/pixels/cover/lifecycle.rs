@@ -10,21 +10,16 @@ use crate::{
         cover::{
             CoverImage,
             CoverMotion,
-            CoverRefresh,
-            CoverWash,
-            CrossfadePermit,
-            crossfade::{CoverCrossfade, CrossfadeStage, blend_by_column},
+            crossfade::CoverCrossfade,
             pixmap::{
                 BuiltPixmap,
                 CellPixels,
                 Identity,
                 cover_side,
                 fit_to_rect,
-                is_translucent,
                 plain_pixmap,
             },
             plan::{PaintPlan, PlacedCover, plan_paint},
-            wash::column_reveal,
         },
         vinyl::{VinylCache, VinylStyle, Wanted, vinyl_key},
     },
@@ -38,13 +33,6 @@ pub enum PixmapSource {
 }
 
 impl PixmapSource {
-    fn keeps_outgoing_during_wash(&self, translucency: Translucency) -> bool {
-        match self {
-            Self::Plain => translucency == Translucency::Translucent,
-            Self::Vinyl(_) => false,
-        }
-    }
-
     fn build(
         &mut self,
         wanted: Wanted<'_>,
@@ -54,14 +42,16 @@ impl PixmapSource {
             Self::Plain => plain_pixmap(wanted.cover_image),
             Self::Vinyl(cache) => {
                 let key = vinyl_key(&wanted);
-                let pixmap = match painted_cover {
-                    Some(PaintedCover {
-                        identity: Identity::Vinyl(painted),
-                        pixmap,
-                        rect: _rect,
-                        translucency: _translucency,
-                    }) if *painted == key => Arc::clone(pixmap),
-                    Some(_) | None => Arc::new(cache.compose(&wanted)),
+                let pixmap = if let Some(PaintedCover {
+                    identity: Identity::Vinyl(painted),
+                    pixmap,
+                    rect: _rect,
+                }) = painted_cover
+                    && *painted == key
+                {
+                    Arc::clone(pixmap)
+                } else {
+                    Arc::new(cache.compose(&wanted))
                 };
                 Some(BuiltPixmap {
                     pixmap,
@@ -72,23 +62,10 @@ impl PixmapSource {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Tick {
-    since_first_paint: Duration,
-    wash: CoverWash,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Translucency {
-    Opaque,
-    Translucent,
-}
-
 struct PaintedCover {
     identity: Identity,
     rect: Rect,
     pixmap: Arc<RgbaImage>,
-    translucency: Translucency,
 }
 
 impl PaintedCover {
@@ -98,14 +75,6 @@ impl PaintedCover {
             rect: self.rect,
         }
     }
-}
-
-struct RebuildParts {
-    plan: PaintPlan,
-    built_pixmap: BuiltPixmap,
-    rect: Rect,
-    crossfade_permit: CrossfadePermit,
-    tick: Tick,
 }
 
 #[derive(Debug)]
@@ -121,19 +90,12 @@ pub struct CoverUpdate {
     pub frame: CoverFrame,
 }
 
-#[derive(Debug)]
-enum CoverFade {
-    Still,
-    Crossfade(CoverCrossfade),
-    Wash(Arc<RgbaImage>),
-}
-
 pub struct CoverLifecycle {
     source: PixmapSource,
     cell_pixels: CellPixels,
     cover_image: Option<CoverImage>,
     painted_cover: Option<PaintedCover>,
-    fade: CoverFade,
+    crossfade: Option<CoverCrossfade>,
 }
 
 impl fmt::Debug for CoverLifecycle {
@@ -159,7 +121,7 @@ impl CoverLifecycle {
             cell_pixels,
             cover_image: None,
             painted_cover: None,
-            fade: CoverFade::Still,
+            crossfade: None,
         }
     }
 
@@ -170,14 +132,9 @@ impl CoverLifecycle {
     pub fn refresh(
         &mut self,
         scene: &Scene<'_>,
-        cover_refresh: CoverRefresh,
+        cover_area: Option<Rect>,
     ) -> CoverUpdate {
-        let CoverRefresh {
-            cover_area: cover,
-            crossfade_permit,
-            wash,
-        } = cover_refresh;
-        let Some(rect) = cover else {
+        let Some(rect) = cover_area else {
             return self.forget();
         };
         let current = scene.current_track_path();
@@ -189,36 +146,46 @@ impl CoverLifecycle {
             side: cover_side(rect, self.cell_pixels),
             vinyl_style: VinylStyle::from_theme(&scene.active_theme()),
         };
-        let tick = Tick {
-            since_first_paint: scene.presentation.since_first_paint,
-            wash,
-        };
+        let since_first_paint = scene.presentation.since_first_paint;
         let placed = self.painted_cover.as_ref().map(PaintedCover::placed);
-        let plan = plan_paint(placed, &wanted, rect);
-        if plan == PaintPlan::Reuse {
+        if plan_paint(placed, &wanted, rect) == PaintPlan::Reuse {
             return CoverUpdate {
                 card_cover: CardCover::Image,
-                frame: self.advance(tick),
+                frame: self.advance(since_first_paint),
             };
         }
         let Some(built_pixmap) = self.source.build(wanted, self.painted_cover.as_ref())
         else {
             return self.forget();
         };
-        let crossfade_permit = if scene.settings.appearance_settings.animations
-            == Animations::On
-            && plan == PaintPlan::Rebuild
-        {
-            crossfade_permit
-        } else {
-            CrossfadePermit::Withheld
+        let pixmap = match self.source {
+            PixmapSource::Plain => {
+                fit_to_rect(built_pixmap.pixmap, rect, self.cell_pixels)
+            }
+            PixmapSource::Vinyl(_) => built_pixmap.pixmap,
         };
-        let frame = self.rebuild(RebuildParts {
-            plan,
-            built_pixmap,
+        let outgoing = if let Some(painted) = self.painted_cover.take()
+            && painted.rect == rect
+            && painted.identity.path() != wanted.path()
+            && scene.settings.appearance_settings.animations == Animations::On
+        {
+            Some(match self.crossfade.take() {
+                Some(crossfade) => crossfade.on_screen(&painted.pixmap),
+                None => painted.pixmap,
+            })
+        } else {
+            None
+        };
+        self.crossfade =
+            outgoing.map(|outgoing| CoverCrossfade::begin(outgoing, since_first_paint));
+        let frame = match self.crossfade {
+            Some(_) => CoverFrame::Keep,
+            None => CoverFrame::Repaint(RgbaImage::clone(&pixmap)),
+        };
+        self.painted_cover = Some(PaintedCover {
+            identity: built_pixmap.identity,
             rect,
-            crossfade_permit,
-            tick,
+            pixmap,
         });
         CoverUpdate {
             card_cover: CardCover::Image,
@@ -228,137 +195,33 @@ impl CoverLifecycle {
 
     #[must_use]
     pub fn motion(&self) -> CoverMotion {
-        match &self.fade {
-            CoverFade::Still => CoverMotion::Still,
-            CoverFade::Crossfade(_) | CoverFade::Wash(_) => CoverMotion::Moving,
+        self.crossfade
+            .as_ref()
+            .map_or(CoverMotion::Still, CoverCrossfade::motion)
+    }
+
+    fn advance(&mut self, since_first_paint: Duration) -> CoverFrame {
+        let (Some(crossfade), Some(painted)) =
+            (self.crossfade.as_mut(), self.painted_cover.as_ref())
+        else {
+            return CoverFrame::Keep;
+        };
+        let frame = crossfade
+            .advance(&painted.pixmap, since_first_paint)
+            .map_or(CoverFrame::Keep, CoverFrame::Repaint);
+        if crossfade.motion() == CoverMotion::Still {
+            self.crossfade = None;
         }
+        frame
     }
 
     fn forget(&mut self) -> CoverUpdate {
         self.painted_cover = None;
-        self.fade = CoverFade::Still;
+        self.crossfade = None;
         CoverUpdate {
             card_cover: CardCover::Missing,
             frame: CoverFrame::Forget,
         }
-    }
-
-    fn rebuild(&mut self, parts: RebuildParts) -> CoverFrame {
-        let RebuildParts {
-            plan,
-            built_pixmap,
-            rect,
-            crossfade_permit,
-            tick,
-        } = parts;
-        let outgoing = self.painted_cover.take().map(|painted| painted.pixmap);
-        let pixmap = match self.source {
-            PixmapSource::Plain => {
-                fit_to_rect(built_pixmap.pixmap, rect, self.cell_pixels)
-            }
-            PixmapSource::Vinyl(_) => built_pixmap.pixmap,
-        };
-        let shown = if plan == PaintPlan::Wash {
-            self.fade = match outgoing {
-                Some(outgoing) if matches!(tick.wash, CoverWash::Running { .. }) => {
-                    CoverFade::Wash(outgoing)
-                }
-                Some(_) | None => CoverFade::Still,
-            };
-            tick
-        } else {
-            self.fade = match outgoing {
-                Some(outgoing)
-                    if crossfade_permit == CrossfadePermit::Allowed
-                        && outgoing.dimensions() == pixmap.dimensions() =>
-                {
-                    CoverFade::Crossfade(CoverCrossfade::begin(
-                        outgoing,
-                        tick.since_first_paint,
-                    ))
-                }
-                Some(_) | None => CoverFade::Still,
-            };
-            Tick {
-                wash: CoverWash::Idle,
-                ..tick
-            }
-        };
-        let translucency = if is_translucent(&pixmap) {
-            Translucency::Translucent
-        } else {
-            Translucency::Opaque
-        };
-        self.painted_cover = Some(PaintedCover {
-            identity: built_pixmap.identity,
-            rect,
-            pixmap,
-            translucency,
-        });
-        let frame = self.cover_frame(shown);
-        self.hold_wash_outgoing(tick);
-        frame
-    }
-
-    fn hold_wash_outgoing(&mut self, tick: Tick) {
-        if matches!(tick.wash, CoverWash::Running { .. })
-            && match &self.fade {
-                CoverFade::Still => true,
-                CoverFade::Crossfade(fade) => {
-                    fade.stage(tick.since_first_paint) == CrossfadeStage::Ended
-                }
-                CoverFade::Wash(_) => false,
-            }
-            && let Some(PaintedCover {
-                pixmap,
-                translucency,
-                identity: _identity,
-                rect: _rect,
-            }) = &self.painted_cover
-            && self.source.keeps_outgoing_during_wash(*translucency)
-        {
-            self.fade = CoverFade::Wash(Arc::clone(pixmap));
-        }
-    }
-
-    fn advance(&mut self, tick: Tick) -> CoverFrame {
-        self.hold_wash_outgoing(tick);
-        match &self.fade {
-            CoverFade::Still => CoverFrame::Keep,
-            CoverFade::Crossfade(crossfade) => {
-                if crossfade.stage(tick.since_first_paint) == CrossfadeStage::Ended {
-                    self.fade = CoverFade::Still;
-                }
-                self.cover_frame(tick)
-            }
-            CoverFade::Wash(_) => {
-                if tick.wash == CoverWash::Idle {
-                    self.fade = CoverFade::Still;
-                }
-                self.cover_frame(tick)
-            }
-        }
-    }
-
-    fn cover_frame(&self, tick: Tick) -> CoverFrame {
-        let Some(painted) = self.painted_cover.as_ref() else {
-            return CoverFrame::Keep;
-        };
-        let pixmap = &painted.pixmap;
-        let image = match &self.fade {
-            CoverFade::Still => RgbaImage::clone(pixmap),
-            CoverFade::Crossfade(crossfade) => {
-                crossfade.crossfade_at(pixmap, tick.since_first_paint)
-            }
-            CoverFade::Wash(outgoing) => {
-                column_reveal(painted.rect, self.cell_pixels.width, tick.wash)
-                    .map_or_else(
-                        || RgbaImage::clone(pixmap),
-                        |reveal| blend_by_column(outgoing, pixmap, reveal),
-                    )
-            }
-        };
-        CoverFrame::Repaint(image)
     }
 }
 
@@ -373,8 +236,8 @@ mod tests {
 
     use image::{Rgba, RgbaImage};
     use kernel::domain::{
-        appearance::Animations,
-        geometry::{Cells, Pixels},
+        appearance::{Animations, Rgb},
+        geometry::Pixels,
         model::Model,
         player::Player,
         playhead::Playhead,
@@ -389,10 +252,7 @@ mod tests {
         card::CardCover,
         pixels::cover::{
             CoverImage,
-            CoverRefresh,
-            CoverWash,
-            CrossfadePermit,
-            lifecycle::{CoverFade, CoverFrame, CoverLifecycle, PixmapSource},
+            lifecycle::{CoverFrame, CoverLifecycle, PixmapSource},
             pixmap::CellPixels,
         },
         test_support::SceneSources,
@@ -406,10 +266,8 @@ mod tests {
         RgbaImage::from_pixel(4, 4, Rgba([200, 100, 50, 255]))
     }
 
-    fn animated_sources() -> SceneSources {
-        let mut sources = SceneSources::new(Model::default());
-        sources.model.settings.appearance_settings.animations = Animations::On;
-        sources
+    fn sources() -> SceneSources {
+        SceneSources::new(Model::default())
     }
 
     fn cell() -> CellPixels {
@@ -424,14 +282,6 @@ mod tests {
             u32::from(rect().width) * cell().width.0,
             u32::from(rect().height) * cell().height.0,
         )
-    }
-
-    fn parts(crossfade_permit: CrossfadePermit) -> CoverRefresh {
-        CoverRefresh {
-            cover_area: Some(rect()),
-            crossfade_permit,
-            wash: CoverWash::Idle,
-        }
     }
 
     fn playing(path: &str) -> Player {
@@ -474,13 +324,12 @@ mod tests {
         #[case] current: Option<&str>,
         #[case] expected: CardCover,
     ) {
-        let mut sources = animated_sources();
+        let mut sources = sources();
         sources.model.player = current.map_or(Player::Stopped, playing);
         let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
         cover_lifecycle.set_cover(cover_image(decoded));
 
-        let update =
-            cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Withheld));
+        let update = cover_lifecycle.refresh(&sources.scene(), Some(rect()));
         assert_eq!(
             mem::discriminant(&update.card_cover),
             mem::discriminant(&expected)
@@ -489,15 +338,14 @@ mod tests {
 
     #[test]
     fn a_track_change_without_a_new_cover_clears_the_previous_art() {
-        let mut sources = animated_sources();
+        let mut sources = sources();
         sources.model.player = playing("/music/a.flac");
         let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
         cover_lifecycle.set_cover(cover_image("/music/a.flac"));
-        cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Withheld));
+        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
         sources.model.player = playing("/music/b.flac");
 
-        let update =
-            cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Withheld));
+        let update = cover_lifecycle.refresh(&sources.scene(), Some(rect()));
         assert!(matches!(update.card_cover, CardCover::Missing));
     }
 
@@ -516,60 +364,118 @@ mod tests {
     }
 
     #[test]
-    fn a_cover_with_no_crossfade_behind_it_is_painted_as_it_is() {
-        let mut sources = animated_sources();
+    fn a_new_cover_is_painted_as_it_is() {
+        let mut sources = sources();
+        sources.model.settings.appearance_settings.animations = Animations::Off;
         sources.model.player = playing("/music/a.flac");
         let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
         cover_lifecycle.set_cover(cover_image("/music/a.flac"));
-        cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Withheld));
+        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
         sources.model.player = playing("/music/b.flac");
         cover_lifecycle.set_cover(translucent_cover("/music/b.flac", 20));
 
-        let update =
-            cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Withheld));
-        assert!(matches!(cover_lifecycle.fade, CoverFade::Still));
+        let update = cover_lifecycle.refresh(&sources.scene(), Some(rect()));
         assert_eq!(painted_pixel(&update.frame), Some(Rgba([20, 100, 50, 128])));
     }
 
-    #[test]
-    fn a_wash_arriving_during_a_crossfade_waits_for_the_crossfade() {
-        let mut sources = animated_sources();
-        sources.model.player = playing("/music/a.flac");
-        let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
-        cover_lifecycle.set_cover(translucent_cover("/music/a.flac", 200));
-        cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Allowed));
-        sources.model.player = playing("/music/b.flac");
-        cover_lifecycle.set_cover(translucent_cover("/music/b.flac", 20));
-        cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Allowed));
-        let cover_refresh = CoverRefresh {
-            wash: CoverWash::Running {
-                progress: 0.0,
-                screen_width: Cells(80),
-            },
-            ..parts(CrossfadePermit::Allowed)
-        };
-
-        let outgoing = Rgba([200, 100, 50, 128]);
-
-        let waiting = cover_lifecycle.refresh(&sources.scene(), cover_refresh);
-        assert_eq!(painted_pixel(&waiting.frame), Some(outgoing));
-        let mut over = sources.scene();
-        over.presentation.since_first_paint = Duration::from_secs(5);
-        let washed = cover_lifecycle.refresh(&over, cover_refresh);
-        assert!(matches!(cover_lifecycle.fade, CoverFade::Wash(_)));
-        assert_eq!(painted_pixel(&washed.frame), Some(Rgba([20, 100, 50, 128])));
-    }
-
-    #[test]
-    fn a_crossfade_blends_a_pixmap_already_fitted_to_the_cover_rect() {
-        let mut sources = animated_sources();
+    fn painted_reds_over_a_cover_change(sources: &mut SceneSources) -> Vec<Option<u8>> {
         sources.model.player = playing("/music/a.flac");
         let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
         cover_lifecycle.set_cover(cover_image("/music/a.flac"));
-        cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Allowed));
+        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
+        sources.model.player = playing("/music/b.flac");
+        cover_lifecycle.set_cover(CoverImage {
+            path: PathBuf::from("/music/b.flac"),
+            image: Arc::new(RgbaImage::from_pixel(4, 4, Rgba([20, 100, 50, 255]))),
+        });
+        (0..=28)
+            .map(|tick| {
+                sources.since_first_paint = Duration::from_millis(25 * tick);
+                let update = cover_lifecycle.refresh(&sources.scene(), Some(rect()));
+                assert!(matches!(update.card_cover, CardCover::Image));
+                assert!(!matches!(update.frame, CoverFrame::Forget));
+                painted_pixel(&update.frame).map(|Rgba([red, ..])| red)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_cover_change_with_animations_on_repaints_in_eight_steps() {
+        let mut sources = sources();
+
+        let reds = painted_reds_over_a_cover_change(&mut sources);
+        let repaints: Vec<u8> = reds.iter().flatten().copied().collect();
+        assert_eq!(repaints.len(), 8);
+        assert!(repaints.is_sorted_by(|a, b| a > b));
+        assert!(repaints[..7].iter().all(|red| (21..200).contains(red)));
+        assert_eq!(repaints.last(), Some(&20));
+        assert_eq!(reds.first(), Some(&None));
+        assert_eq!(reds.iter().rposition(Option::is_some), Some(24));
+    }
+
+    #[test]
+    fn a_cover_change_with_animations_off_repaints_once() {
+        let mut sources = sources();
+        sources.model.settings.appearance_settings.animations = Animations::Off;
+
+        let reds = painted_reds_over_a_cover_change(&mut sources);
+        let repaints: Vec<u8> = reds.iter().flatten().copied().collect();
+        assert_eq!(repaints, vec![20]);
+        assert_eq!(reds.first(), Some(&Some(20)));
+    }
+
+    fn vinyl_repaints_over(
+        change: fn(&mut SceneSources, &mut CoverLifecycle),
+    ) -> usize {
+        let mut sources = sources();
+        sources.model.player = playing("/music/a.flac");
+        let mut cover_lifecycle =
+            CoverLifecycle::new(PixmapSource::Vinyl(Box::default()), cell());
+        cover_lifecycle.set_cover(cover_image("/music/a.flac"));
+        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
+        change(&mut sources, &mut cover_lifecycle);
+        (0..=28)
+            .filter(|tick| {
+                sources.since_first_paint = Duration::from_millis(25 * tick);
+                matches!(
+                    cover_lifecycle
+                        .refresh(&sources.scene(), Some(rect()))
+                        .frame,
+                    CoverFrame::Repaint(_)
+                )
+            })
+            .count()
+    }
+
+    fn restyle(sources: &mut SceneSources, _: &mut CoverLifecycle) {
+        sources.theme.colors.accent = Rgb([0x20, 0x90, 0xd0]);
+    }
+
+    fn change_track(sources: &mut SceneSources, cover_lifecycle: &mut CoverLifecycle) {
+        sources.model.player = playing("/music/b.flac");
+        cover_lifecycle.set_cover(translucent_cover("/music/b.flac", 20));
+    }
+
+    #[rstest]
+    #[case::a_theme_change_on_a_painted_vinyl_repaints_once(restyle, 1)]
+    #[case::a_track_change_on_a_vinyl_repaints_in_eight_steps(change_track, 8)]
+    fn a_vinyl_with_animations_on_fades_only_a_cover_change(
+        #[case] change: fn(&mut SceneSources, &mut CoverLifecycle),
+        #[case] repaints: usize,
+    ) {
+        assert_eq!(vinyl_repaints_over(change), repaints);
+    }
+
+    #[test]
+    fn a_track_change_fits_the_new_pixmap_to_the_cover_rect() {
+        let mut sources = sources();
+        sources.model.player = playing("/music/a.flac");
+        let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
+        cover_lifecycle.set_cover(cover_image("/music/a.flac"));
+        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
         sources.model.player = playing("/music/b.flac");
         cover_lifecycle.set_cover(cover_image("/music/b.flac"));
-        cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Allowed));
+        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
         let incoming = cover_lifecycle
             .painted_cover
             .as_ref()
@@ -579,40 +485,33 @@ mod tests {
     }
 
     #[test]
-    fn a_new_cover_in_a_resized_rect_shows_still_instead_of_crossfading() {
-        let mut sources = animated_sources();
+    fn a_new_cover_in_a_resized_rect_is_painted_as_it_is() {
+        let mut sources = sources();
         sources.model.player = playing("/music/a.flac");
         let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
         cover_lifecycle.set_cover(cover_image("/music/a.flac"));
-        cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Allowed));
+        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
         sources.model.player = playing("/music/b.flac");
         cover_lifecycle.set_cover(translucent_cover("/music/b.flac", 20));
-        let resized_cover_refresh = CoverRefresh {
-            cover_area: Some(Rect::new(0, 0, 6, 6)),
-            ..parts(CrossfadePermit::Allowed)
-        };
-
-        let update = cover_lifecycle.refresh(&sources.scene(), resized_cover_refresh);
-        assert!(matches!(cover_lifecycle.fade, CoverFade::Still));
+        let update =
+            cover_lifecycle.refresh(&sources.scene(), Some(Rect::new(0, 0, 6, 6)));
         assert_eq!(painted_pixel(&update.frame), Some(Rgba([20, 100, 50, 128])));
     }
 
     #[test]
     fn a_settled_plain_refresh_keeps_the_fitted_pixmap_and_repaints_nothing() {
-        let mut sources = animated_sources();
+        let mut sources = sources();
         sources.model.player = playing("/music/a.flac");
         let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
         cover_lifecycle.set_cover(cover_image("/music/a.flac"));
 
-        let first =
-            cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Withheld));
+        let first = cover_lifecycle.refresh(&sources.scene(), Some(rect()));
         let fitted = cover_lifecycle
             .painted_cover
             .as_ref()
             .map(|painted| Arc::clone(&painted.pixmap))
             .expect("a refresh with a cover rect paints a pixmap");
-        let second =
-            cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Withheld));
+        let second = cover_lifecycle.refresh(&sources.scene(), Some(rect()));
         let kept = cover_lifecycle
             .painted_cover
             .as_ref()
@@ -626,18 +525,18 @@ mod tests {
 
     #[test]
     fn a_settled_vinyl_refresh_shares_the_cached_pixmap() {
-        let sources = animated_sources();
+        let sources = sources();
         let mut cover_lifecycle =
             CoverLifecycle::new(PixmapSource::Vinyl(Box::default()), cell());
 
-        cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Allowed));
+        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
         let first = cover_lifecycle
             .painted_cover
             .as_ref()
             .map(|painted| Arc::clone(&painted.pixmap))
             .expect("a refresh with a cover rect paints a pixmap");
 
-        cover_lifecycle.refresh(&sources.scene(), parts(CrossfadePermit::Allowed));
+        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
         let second = cover_lifecycle
             .painted_cover
             .as_ref()

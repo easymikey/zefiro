@@ -7,7 +7,7 @@ use crate::domain::{
     bounded::Bounded,
     chord::ChordPrefix,
     config::{ConfigError, ConfigName, Diagnostic},
-    device::{ListedDevice, OutputDevice},
+    device::{DeviceName, ListedDevice, OutputDevice},
     direction::Direction,
     driver::{DriverError, DriverName},
     favorites::Favorites,
@@ -334,6 +334,7 @@ pub enum AudioEvent {
     OutputLost(OutputError),
     DevicesListed(Vec<ListedDevice>),
     DeviceFellBack(OutputDevice),
+    DeviceOpened(DeviceName),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, IntoStaticStr)]

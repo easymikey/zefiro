@@ -25,7 +25,6 @@ fn no_select_new_in_the_runtime() {
     support::report(
         "select guard: a runtime wait is `select_biased!` with a `default(timeout)` arm, no `Select::new()`.",
         &violations,
-        &[],
     );
 }
 

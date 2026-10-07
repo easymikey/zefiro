@@ -1,4 +1,7 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use fast_image_resize::CropBox;
 use image::RgbaImage;
@@ -18,26 +21,21 @@ pub(crate) enum Identity {
 }
 
 impl Identity {
-    pub(crate) fn is_wanted(&self, wanted: &Wanted<'_>) -> bool {
+    pub(crate) fn path(&self) -> Option<&Path> {
         match self {
-            Self::Plain(path) => wanted.path() == Some(path.as_path()),
-            Self::Vinyl(key) => {
-                key.path.as_deref() == wanted.path()
-                    && key.side == wanted.side
-                    && key.vinyl_style == wanted.vinyl_style
-            }
+            Self::Plain(path) => Some(path.as_path()),
+            Self::Vinyl(key) => key.path.as_deref(),
         }
     }
 
-    pub(crate) fn is_changed_only_by_theme(&self, wanted: &Wanted<'_>) -> bool {
-        match self {
-            Self::Vinyl(key) => {
-                key.vinyl_style != wanted.vinyl_style
-                    && key.path.as_deref() == wanted.path()
-                    && key.side == wanted.side
+    pub(crate) fn is_wanted(&self, wanted: &Wanted<'_>) -> bool {
+        self.path() == wanted.path()
+            && match self {
+                Self::Plain(_) => true,
+                Self::Vinyl(key) => {
+                    key.side == wanted.side && key.vinyl_style == wanted.vinyl_style
+                }
             }
-            Self::Plain(_) => false,
-        }
     }
 }
 
@@ -59,11 +57,6 @@ pub(crate) fn plain_pixmap(cover_image: Option<&CoverImage>) -> Option<BuiltPixm
         pixmap: Arc::clone(&cover_image.image),
         identity: Identity::Plain(cover_image.path.clone()),
     })
-}
-
-#[must_use]
-pub(crate) fn is_translucent(image: &RgbaImage) -> bool {
-    image.pixels().any(|pixel| pixel.0[3] < 255)
 }
 
 #[must_use]

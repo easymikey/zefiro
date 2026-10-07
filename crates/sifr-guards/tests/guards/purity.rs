@@ -1,8 +1,6 @@
 // GUARD: `kernel`, `widgets` are pure: no IO, clock or threads.
 
-use crate::guards::support::{self, Allow};
-
-const ALLOWLIST: &[Allow] = &[];
+use crate::guards::support;
 
 const PURE_CRATES: &[&str] = &["kernel", "widgets"];
 
@@ -37,7 +35,6 @@ fn denylist_hit(line: &str) -> Option<&'static str> {
 #[test]
 fn no_io_clock_threads_or_env_in_the_pure_crates() {
     let mut violations: Vec<String> = Vec::new();
-    let mut seen_allowlist: Vec<(String, &'static str)> = Vec::new();
 
     let files = support::files_in(PURE_CRATES, "src");
     assert!(
@@ -59,13 +56,9 @@ fn no_io_clock_threads_or_env_in_the_pure_crates() {
             }
 
             if let Some(pattern) = denylist_hit(raw_line) {
-                if support::allowed(ALLOWLIST, &rel, pattern) {
-                    seen_allowlist.push((rel.clone(), pattern));
-                } else {
-                    violations.push(format!(
-                        "{rel}:{n}: forbidden `{pattern}` (functional core must not touch IO/clock/threads/env)"
-                    ));
-                }
+                violations.push(format!(
+                    "{rel}:{n}: forbidden `{pattern}` (functional core must not touch IO/clock/threads/env)"
+                ));
             }
         }
     }
@@ -74,6 +67,5 @@ fn no_io_clock_threads_or_env_in_the_pure_crates() {
         "purity guard: the functional core touches no IO, clock, thread or \
          environment (docs/principles.md Level 3).",
         &violations,
-        &support::stale(ALLOWLIST, &seen_allowlist),
     );
 }

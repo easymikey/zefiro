@@ -3,13 +3,10 @@ use std::{sync::Arc, time::Duration};
 use image::{Rgba, RgbaImage};
 use tachyonfx::Interpolation;
 
-use crate::{animation::timings::TIMINGS, pixels::numeric::channel_byte};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CrossfadeStage {
-    Running,
-    Ended,
-}
+use crate::{
+    animation::timings::{COVER_CROSSFADE_STEPS, TIMINGS},
+    pixels::{cover::CoverMotion, numeric::channel_byte},
+};
 
 #[derive(Debug)]
 pub(crate) struct CoverCrossfade {
@@ -17,6 +14,7 @@ pub(crate) struct CoverCrossfade {
     start: Duration,
     duration: Duration,
     interpolation: Interpolation,
+    shown_step: u8,
 }
 
 impl CoverCrossfade {
@@ -27,54 +25,63 @@ impl CoverCrossfade {
             start: since_first_paint,
             duration: Duration::from_millis(u64::from(millis)),
             interpolation,
+            shown_step: 0,
         }
     }
 
-    fn alpha(&self, since_first_paint: Duration) -> f32 {
-        let whole = self.duration.as_secs_f32();
-        if whole <= 0.0 {
-            return 1.0;
-        }
-        let elapsed = since_first_paint.saturating_sub(self.start).as_secs_f32();
-        self.interpolation.alpha((elapsed / whole).clamp(0.0, 1.0))
-    }
-
-    #[must_use]
-    pub(crate) fn stage(&self, since_first_paint: Duration) -> CrossfadeStage {
-        if self.alpha(since_first_paint) < 1.0 {
-            CrossfadeStage::Running
-        } else {
-            CrossfadeStage::Ended
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn crossfade_at(
-        &self,
+    pub(crate) fn advance(
+        &mut self,
         incoming: &RgbaImage,
         since_first_paint: Duration,
-    ) -> RgbaImage {
-        let alpha = self.alpha(since_first_paint);
-        blend_by_column(&self.outgoing, incoming, |_| alpha)
+    ) -> Option<RgbaImage> {
+        let whole = self.duration.as_secs_f32();
+        let elapsed = since_first_paint.saturating_sub(self.start).as_secs_f32();
+        let alpha = if whole <= 0.0 {
+            1.0
+        } else {
+            self.interpolation.alpha((elapsed / whole).clamp(0.0, 1.0))
+        };
+        let reached = (1..=COVER_CROSSFADE_STEPS)
+            .filter(|count| {
+                f32::from(*count) <= alpha * f32::from(COVER_CROSSFADE_STEPS)
+            })
+            .max()
+            .unwrap_or(0);
+        (reached != self.shown_step).then(|| {
+            self.shown_step = reached;
+            self.frame(incoming)
+        })
     }
-}
 
-pub(crate) fn blend_by_column(
-    back: &RgbaImage,
-    front: &RgbaImage,
-    alpha_at: impl Fn(u32) -> f32,
-) -> RgbaImage {
-    let mut front = front.clone();
-    for (front_row, back_row) in front.rows_mut().zip(back.rows()) {
-        for (column, (front_pixel, back_pixel)) in front_row.zip(back_row).enumerate() {
-            let alpha = alpha_at(u32::try_from(column).unwrap_or(u32::MAX));
-            *front_pixel = blend_pixel(*back_pixel, *front_pixel, alpha);
+    pub(crate) fn on_screen(&self, incoming: &RgbaImage) -> Arc<RgbaImage> {
+        if self.shown_step == 0 {
+            Arc::clone(&self.outgoing)
+        } else {
+            Arc::new(self.frame(incoming))
         }
     }
-    front
+
+    pub(crate) fn motion(&self) -> CoverMotion {
+        if self.shown_step < COVER_CROSSFADE_STEPS {
+            CoverMotion::Moving
+        } else {
+            CoverMotion::Still
+        }
+    }
+
+    fn frame(&self, incoming: &RgbaImage) -> RgbaImage {
+        let alpha = f32::from(self.shown_step) / f32::from(COVER_CROSSFADE_STEPS);
+        let mut frame = incoming.clone();
+        if self.shown_step < COVER_CROSSFADE_STEPS {
+            for (front, back) in frame.pixels_mut().zip(self.outgoing.pixels()) {
+                *front = blend_pixel(*back, *front, alpha);
+            }
+        }
+        frame
+    }
 }
 
-pub(crate) fn blend_pixel(back: Rgba<u8>, front: Rgba<u8>, alpha: f32) -> Rgba<u8> {
+fn blend_pixel(back: Rgba<u8>, front: Rgba<u8>, alpha: f32) -> Rgba<u8> {
     let Rgba(back) = back;
     let Rgba(front) = front;
     Rgba(std::array::from_fn(|channel| {
@@ -92,11 +99,11 @@ mod tests {
 
     use crate::{
         animation::timings::TIMINGS,
-        pixels::cover::crossfade::{CoverCrossfade, CrossfadeStage},
+        pixels::cover::{CoverMotion, crossfade::CoverCrossfade},
     };
 
-    const OLD_COVER_PIXEL: Rgba<u8> = Rgba([200, 128, 40, 255]);
-    const NEW_COVER_PIXEL: Rgba<u8> = Rgba([40, 128, 200, 255]);
+    const OLD_COVER_PIXEL: Rgba<u8> = Rgba([200, 40, 40, 255]);
+    const NEW_COVER_PIXEL: Rgba<u8> = Rgba([20, 160, 220, 255]);
 
     fn filled_cover(pixel: Rgba<u8>) -> RgbaImage {
         RgbaImage::from_pixel(2, 2, pixel)
@@ -106,52 +113,57 @@ mod tests {
         Duration::from_millis(u64::from(TIMINGS.cover_crossfade.0))
     }
 
-    fn sample(image: &RgbaImage) -> Rgba<u8> {
-        image
-            .get_pixel_checked(1, 1)
-            .copied()
-            .unwrap_or(Rgba([0, 0, 0, 0]))
+    fn sample(image: &RgbaImage) -> Option<Rgba<u8>> {
+        image.get_pixel_checked(1, 1).copied()
     }
 
     fn running() -> CoverCrossfade {
         CoverCrossfade::begin(Arc::new(filled_cover(OLD_COVER_PIXEL)), Duration::ZERO)
     }
 
-    fn shown(crossfade: &CoverCrossfade, since_first_paint: Duration) -> Rgba<u8> {
-        sample(
-            &crossfade.crossfade_at(&filled_cover(NEW_COVER_PIXEL), since_first_paint),
-        )
-    }
-
     #[test]
     fn the_first_frame_of_a_crossfade_is_still_the_old_cover() {
-        let crossfade = running();
-        assert_eq!(shown(&crossfade, Duration::ZERO), OLD_COVER_PIXEL);
+        let mut crossfade = running();
+        let incoming = filled_cover(NEW_COVER_PIXEL);
+
+        assert!(crossfade.advance(&incoming, Duration::ZERO).is_none());
+        assert_eq!(
+            sample(&crossfade.on_screen(&incoming)),
+            Some(OLD_COVER_PIXEL)
+        );
     }
 
     #[test]
     fn half_way_through_every_pixel_sits_between_the_two_covers() {
-        let crossfade = running();
+        let mut crossfade = running();
+
+        let shown = crossfade.advance(&filled_cover(NEW_COVER_PIXEL), whole() / 2);
         assert!(matches!(
-            shown(&crossfade, whole() / 2),
-            Rgba([red, green, blue, 255])
-                if (1..255).contains(&red)
-                    && (1..255).contains(&green)
-                    && (1..255).contains(&blue)
+            shown.as_ref().and_then(sample),
+            Some(Rgba([red, green, blue, 255]))
+                if (21..200).contains(&red)
+                    && (41..160).contains(&green)
+                    && (41..220).contains(&blue)
         ));
     }
 
     #[test]
-    fn a_played_out_crossfade_shows_the_new_cover_exactly() {
-        let crossfade = running();
-        assert_eq!(shown(&crossfade, whole()), NEW_COVER_PIXEL);
-        assert_eq!(shown(&crossfade, whole() * 2), NEW_COVER_PIXEL);
+    fn a_played_out_crossfade_shows_the_new_cover_exactly_and_is_still() {
+        let mut crossfade = running();
+        let incoming = filled_cover(NEW_COVER_PIXEL);
+
+        let shown = crossfade.advance(&incoming, whole());
+        assert_eq!(shown.as_ref().and_then(sample), Some(NEW_COVER_PIXEL));
+        assert_eq!(crossfade.motion(), CoverMotion::Still);
+        assert!(crossfade.advance(&incoming, whole() * 2).is_none());
     }
 
     #[test]
-    fn a_crossfade_is_over_once_it_is_played_out() {
-        let crossfade = running();
-        assert_eq!(crossfade.stage(whole() / 2), CrossfadeStage::Running);
-        assert_eq!(crossfade.stage(whole()), CrossfadeStage::Ended);
+    fn a_crossfade_moves_until_its_last_step() {
+        let mut crossfade = running();
+        let incoming = filled_cover(NEW_COVER_PIXEL);
+
+        crossfade.advance(&incoming, whole() / 2);
+        assert_eq!(crossfade.motion(), CoverMotion::Moving);
     }
 }

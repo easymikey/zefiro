@@ -10,11 +10,22 @@ const LOW_BAND: BandRange = BandRange { start: 0, end: 3 };
 const MID_BAND: BandRange = BandRange { start: 3, end: 9 };
 const HIGH_BAND: BandRange = BandRange { start: 9, end: 16 };
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct BandLevels {
     pub(crate) bass: f32,
     pub(crate) mid: f32,
     pub(crate) treble: f32,
+}
+
+impl BandLevels {
+    pub(crate) fn lerp(self, target: Self, fraction: f32) -> Self {
+        let Self { bass, mid, treble } = self;
+        Self {
+            bass: lerp(bass, target.bass, fraction),
+            mid: lerp(mid, target.mid, fraction),
+            treble: lerp(treble, target.treble, fraction),
+        }
+    }
 }
 
 pub(crate) fn band_mean(spectrum: &Spectrum, range: BandRange) -> f32 {
@@ -85,17 +96,17 @@ pub(crate) fn preset_for_seed(seed: u64) -> MilkdropPreset {
 }
 
 pub(crate) const DECAY: f32 = 0.85;
-pub(crate) const ZOOM_GAIN: f32 = 0.35;
+pub(crate) const LEVEL_GLIDE: f32 = 0.15;
+pub(crate) const ZOOM_GAIN: f32 = 0.1;
 pub(crate) const ROTATION_GAIN: f32 = 0.5;
 pub(crate) const CORE_RADIUS: f32 = 1.2;
-pub(crate) const CORE_GAIN: f32 = 1.8;
+pub(crate) const CORE_GAIN: f32 = 0.6;
 pub(crate) const SPARK_COUNT: u32 = 3;
 pub(crate) const ASPECT_X: f32 = 0.5;
 
 pub(crate) const RAMP: [&str; 5] = [" ", "░", "▒", "▓", "█"];
 pub(crate) const RAMP_FALLBACK: &str = "█";
 
-pub(crate) const COLOR_BAND_MID: f32 = 0.35;
 pub(crate) const COLOR_BAND_HIGH: f32 = 0.7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

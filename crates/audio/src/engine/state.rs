@@ -6,8 +6,8 @@ use kernel::{
         settings::AudioSettings,
         speed::Speed,
     },
-    message::AudioEvent,
-    update::machine::LoopEffect,
+    message::{AudioError, AudioEvent},
+    update::machine::{LoopEffect, Unhandled},
 };
 
 use crate::{
@@ -45,14 +45,10 @@ impl Engine {
     }
 
     pub(crate) fn opened(&mut self, device_opened: DeviceOpened) -> AudioLoopCmd {
-        let device = device_opened.device.clone();
-        let device_choice = self.device_choice;
-        self.device_choice = DeviceChoice::Requested;
-        announce(
-            device_choice,
-            device,
-            self.state.opened(&mut self.job_revisions, device_opened),
-        )
+        let device_choice =
+            std::mem::replace(&mut self.device_choice, DeviceChoice::Requested);
+        announce(device_choice, &device_opened)
+            .then(self.state.opened(&mut self.job_revisions, device_opened))
     }
 
     pub(crate) fn fell_back(&mut self) -> AudioLoopCmd {
@@ -96,6 +92,16 @@ pub(crate) struct ExecutedRevisions {
 }
 
 impl EngineState {
+    pub(crate) fn interrupted(
+        &self,
+        error: AudioError,
+    ) -> Result<AudioLoopCmd, Unhandled> {
+        match self {
+            EngineState::Live(live) => live.interrupted(error),
+            EngineState::Closed(_) => Err(Unhandled),
+        }
+    }
+
     pub(crate) fn opened(
         &mut self,
         job_revisions: &mut JobRevisions,
@@ -133,15 +139,20 @@ impl Live {
     }
 }
 
-pub(crate) fn announce(
-    device_choice: DeviceChoice,
-    device: OutputDevice,
-    loop_cmd: AudioLoopCmd,
-) -> AudioLoopCmd {
-    if matches!(device_choice, DeviceChoice::Requested) {
-        return loop_cmd;
-    }
-    Cmd::message(AudioEvent::DeviceFellBack(device)).then(loop_cmd)
+fn announce(device_choice: DeviceChoice, device_opened: &DeviceOpened) -> AudioLoopCmd {
+    let fell_back = match device_choice {
+        DeviceChoice::Requested => Cmd::none(),
+        DeviceChoice::FellBack => {
+            Cmd::message(AudioEvent::DeviceFellBack(device_opened.device.clone()))
+        }
+    };
+    let named = device_opened
+        .device_name
+        .clone()
+        .map_or_else(Cmd::none, |device_name| {
+            Cmd::message(AudioEvent::DeviceOpened(device_name))
+        });
+    fell_back.then(named)
 }
 
 pub(crate) fn then_report(loop_cmd: AudioLoopCmd) -> AudioLoopCmd {

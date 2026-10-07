@@ -1,4 +1,4 @@
-use crate::guards::support::{self, Allow};
+use crate::guards::support;
 
 const MARKERS: &[&str] = &[
     "bon::",
@@ -7,8 +7,6 @@ const MARKERS: &[&str] = &[
     ", Builder",
     "maybe_",
 ];
-
-const ALLOWLIST: &[Allow] = &[];
 
 fn offenders(content: &str) -> Vec<(usize, &'static str)> {
     content
@@ -27,7 +25,6 @@ fn offenders(content: &str) -> Vec<(usize, &'static str)> {
 #[test]
 fn no_generated_builder_or_maybe_setter() {
     let mut violations = Vec::new();
-    let mut seen: Vec<(String, &'static str)> = Vec::new();
     for (relative, path) in
         support::source_files(&["src", "tests", "benches", "examples"])
     {
@@ -35,11 +32,7 @@ fn no_generated_builder_or_maybe_setter() {
             continue;
         }
         for (line, marker) in offenders(&support::read(&path)) {
-            if support::allowed(ALLOWLIST, &relative, marker) {
-                seen.push((relative.clone(), marker));
-            } else {
-                violations.push(format!("{relative}:{line}: `{marker}`"));
-            }
+            violations.push(format!("{relative}:{line}: `{marker}`"));
         }
     }
     for (crate_name, manifest) in support::manifests() {
@@ -55,7 +48,6 @@ fn no_generated_builder_or_maybe_setter() {
         "builders guard: a widget is `XWidget::new(..)` plus setters named after the field, \
          a patch is `XPatch { field: Some(v), ..XPatch::default() }`; no bon builder, no maybe_ setter.",
         &violations,
-        &support::stale(ALLOWLIST, &seen),
     );
 }
 

@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use ratatui::{
-    buffer::{Buffer, Cell},
+    buffer::{Buffer, Cell, CellDiffOption},
     layout::Position,
     style::Color,
 };
@@ -14,7 +16,7 @@ use tachyonfx::{
     pattern::RadialPattern,
 };
 
-use crate::animation::timings::{THEME_WASH_GRADIENT_CELLS, TIMINGS};
+use crate::animation::timings::TIMINGS;
 
 #[must_use]
 pub fn modal_reveal() -> Animation {
@@ -99,41 +101,61 @@ pub fn volume_pulse(fill: Color, lifted: Color, cell_filter: CellFilter) -> Anim
     ]))
 }
 
-#[must_use]
-pub fn wash_reveal(progress: f32, column: u16, width: u16) -> f32 {
-    let gradient = f32::from(THEME_WASH_GRADIENT_CELLS);
-    let window = f32::from(width) + gradient;
-    ((progress * window - f32::from(column)) / gradient).clamp(0.0, 1.0)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaintedCell {
+    pub fg: Color,
+    pub bg: Color,
+}
+
+impl From<&Cell> for PaintedCell {
+    fn from(cell: &Cell) -> Self {
+        Self {
+            fg: cell.fg,
+            bg: cell.bg,
+        }
+    }
 }
 
 #[must_use]
-pub fn screen_wash(from: Color) -> Animation {
+pub fn screen_wash(from: Arc<[PaintedCell]>) -> Animation {
     fx::effect_fn_buf((), TIMINGS.screen_wash, move |_state, context, buffer| {
-        wash_buffer(from, &context, buffer);
+        wash_buffer(&from, &context, buffer);
     })
 }
 
-fn wash_buffer(from: Color, context: &ShaderFnContext<'_>, buffer: &mut Buffer) {
+fn wash_buffer(
+    from: &[PaintedCell],
+    context: &ShaderFnContext<'_>,
+    buffer: &mut Buffer,
+) {
+    if from.len() != buffer.content.len() {
+        return;
+    }
     let area = context.area.intersection(buffer.area);
     let alpha = context.alpha();
+    let blend = |old: Color, painted: Color| match (old, painted) {
+        (Color::Rgb(..), Color::Rgb(..)) => ColorSpace::Rgb.lerp(&old, &painted, alpha),
+        _ => painted,
+    };
     let allowed = context.filter().map(FilterProcessor::validator);
     for row in area.y..area.bottom() {
         for x in area.x..area.right() {
             let position = Position { x, y: row };
+            let Some(&old) = from.get(buffer.index_of(x, row)) else {
+                continue;
+            };
             let Some(cell) = buffer.cell_mut(position) else {
                 continue;
             };
-            if allowed
-                .as_ref()
-                .is_some_and(|cell_filter| !cell_filter.is_valid(position, cell))
+            if cell.diff_option == CellDiffOption::Skip
+                || allowed
+                    .as_ref()
+                    .is_some_and(|cell_filter| !cell_filter.is_valid(position, cell))
             {
                 continue;
             }
-            let reveal = wash_reveal(alpha, x - area.x, area.width);
-            let fg = ColorSpace::Rgb.lerp(&from, &cell.fg, reveal);
-            let bg = ColorSpace::Rgb.lerp(&from, &cell.bg, reveal);
-            cell.set_fg(fg);
-            cell.set_bg(bg);
+            let (fg, bg) = (blend(old.fg, cell.fg), blend(old.bg, cell.bg));
+            cell.set_fg(fg).set_bg(bg);
         }
     }
 }

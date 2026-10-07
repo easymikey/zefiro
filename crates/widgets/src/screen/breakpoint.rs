@@ -40,20 +40,12 @@ impl Breakpoint {
             breakpoints.compact_min_height.0,
         );
         match (layout_mode, full, compact) {
-            (LayoutMode::Compact, _, Fit::Enough) => Self::Compact,
-            (
-                LayoutMode::Auto | LayoutMode::Full | LayoutMode::Compact,
-                Fit::Enough,
-                _,
-            ) => Self::Full,
-            (LayoutMode::Auto | LayoutMode::Full, Fit::Short, Fit::Enough) => {
-                Self::Compact
+            (LayoutMode::Compact, _, Fit::Enough)
+            | (LayoutMode::Auto, Fit::Short, Fit::Enough) => Self::Compact,
+            (LayoutMode::Auto | LayoutMode::Compact, Fit::Enough, _) => Self::Full,
+            (LayoutMode::Auto | LayoutMode::Compact, Fit::Short, Fit::Short) => {
+                Self::Minimal
             }
-            (
-                LayoutMode::Auto | LayoutMode::Full | LayoutMode::Compact,
-                Fit::Short,
-                Fit::Short,
-            ) => Self::Minimal,
         }
     }
 }
@@ -75,16 +67,6 @@ mod tests {
     #[case::short(LayoutMode::Auto, Size::new(80, 18), Breakpoint::Compact)]
     #[case::narrow(LayoutMode::Auto, Size::new(59, 24), Breakpoint::Compact)]
     #[case::compact_asked(LayoutMode::Compact, Size::new(80, 24), Breakpoint::Compact)]
-    #[case::full_asked_but_short(
-        LayoutMode::Full,
-        Size::new(80, 18),
-        Breakpoint::Compact
-    )]
-    #[case::full_asked_at_the_full_edge(
-        LayoutMode::Full,
-        Size::new(60, 19),
-        Breakpoint::Full
-    )]
     #[case::below_minimum(LayoutMode::Auto, Size::new(47, 24), Breakpoint::TooSmall)]
     #[case::below_minimum_rows(
         LayoutMode::Auto,

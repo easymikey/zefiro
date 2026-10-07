@@ -5,16 +5,15 @@ use kernel::{
     domain::{device::OutputDevice, speed::Speed},
     update::machine::Driver,
 };
-use rodio::Sink;
 
 use crate::{
     AudioDriver,
-    deck::Deck,
+    deck::{Deck, mixer::MixerOrder},
     engine::{
         effect::EngineEffect,
-        message::{AudioMessage, EngineMessage},
+        message::{AudioMessage, EngineMessage, SinkRole},
     },
-    error::{DeviceError, device_error, seek_error},
+    error::{DeviceError, device_error},
     gain::Gain,
 };
 
@@ -22,6 +21,9 @@ impl Driver for AudioDriver {
     type Effect = EngineEffect;
 
     fn execute(&mut self, effect: EngineEffect) -> Option<AudioMessage> {
+        if let Some(output) = self.deck.output.as_mut() {
+            output.retired_voices.by_ref().for_each(drop);
+        }
         execute(effect, &mut self.deck)
     }
 }
@@ -35,21 +37,21 @@ fn execute(effect: EngineEffect, deck: &mut Deck) -> Option<AudioMessage> {
             quietly(deck, |deck| start_handover(deck, speed))
         }
         EngineEffect::ClearStaged => quietly(deck, Deck::clear_staged),
-        EngineEffect::Start(gain) => quietly(deck, |deck| start(deck, gain)),
+        EngineEffect::Start(gain) => start(deck, gain),
         EngineEffect::Resume {
             gain,
             position,
             playback,
         } => {
-            let failed = resume_current(deck, position, playback);
-            set_current_gain(deck, gain);
-            failed
+            let refusal = resume_current(deck, position, playback);
+            deck.set_current_gain(gain);
+            refusal
         }
-        EngineEffect::Play => quietly(deck, |deck| deck.sinks().for_each(Sink::play)),
-        EngineEffect::Pause => quietly(deck, |deck| deck.sinks().for_each(Sink::pause)),
-        EngineEffect::Seek(target) => seek_current(deck, target),
+        EngineEffect::Play => quietly(deck, |deck| deck.transport(Playback::Playing)),
+        EngineEffect::Pause => quietly(deck, |deck| deck.transport(Playback::Paused)),
+        EngineEffect::Seek(target) => quietly(deck, |deck| deck.seek(target)),
         EngineEffect::SetGain(gain) => {
-            quietly(deck, |deck| set_current_gain(deck, gain))
+            quietly(deck, |deck| deck.set_current_gain(gain))
         }
         EngineEffect::SetFadeStart(fade_start) => {
             quietly(deck, |deck| deck.set_fade_start(fade_start))
@@ -62,10 +64,8 @@ fn execute(effect: EngineEffect, deck: &mut Deck) -> Option<AudioMessage> {
             quietly(deck, |deck| deck.ramp_handover(duration, current))
         }
         EngineEffect::DropOutgoing => quietly(deck, Deck::drop_outgoing),
-        EngineEffect::SetSpeed(speed) => quietly(deck, |deck| {
-            deck.sinks().for_each(|sink| sink.set_speed(speed.get()));
-        }),
-        EngineEffect::Clear(speed) => quietly(deck, |deck| clear(deck, speed)),
+        EngineEffect::SetSpeed(speed) => quietly(deck, |deck| deck.set_speed(speed)),
+        EngineEffect::Clear(speed) => quietly(deck, |deck| start_load(deck, speed)),
         EngineEffect::DropPreload => quietly(deck, Deck::drop_preload),
         EngineEffect::Promote(gain) => quietly(deck, |deck| promote(deck, gain)),
         EngineEffect::Report => report(deck),
@@ -105,12 +105,13 @@ fn report(deck: &Deck) -> Option<AudioMessage> {
 
 fn promote(deck: &mut Deck, gain: Gain) {
     deck.promote();
-    set_current_gain(deck, gain);
+    deck.set_current_gain(gain);
 }
 
-fn start(deck: &mut Deck, gain: Gain) {
-    deck.append_staged();
-    set_current_gain(deck, gain);
+fn start(deck: &mut Deck, gain: Gain) -> Option<AudioMessage> {
+    let refusal = deck.append_staged();
+    deck.set_current_gain(gain);
+    refusal
 }
 
 fn start_load(deck: &mut Deck, speed: Speed) {
@@ -125,31 +126,10 @@ fn start_handover(deck: &mut Deck, speed: Speed) {
     deck.clear_staged();
 }
 
-fn clear(deck: &mut Deck, speed: Speed) {
-    deck.drop_preload();
-    if deck.current().is_some() {
-        deck.swap_current(speed);
-    }
-    deck.clear_staged();
-}
-
 fn advance(deck: &mut Deck, gain: Gain) -> Option<AudioMessage> {
     let signals = deck.advance();
-    set_current_gain(deck, gain);
+    deck.set_current_gain(gain);
     signals
-}
-
-fn set_current_gain(deck: &Deck, gain: Gain) {
-    if let Some(sink) = deck.current() {
-        sink.set_volume(gain.amplitude());
-    }
-}
-
-fn seek_current(deck: &Deck, target: Duration) -> Option<AudioMessage> {
-    let sink = deck.current()?;
-    sink.try_seek(target)
-        .err()
-        .map(|error| EngineMessage::Error(seek_error(&error)).into())
 }
 
 fn resume_current(
@@ -157,40 +137,246 @@ fn resume_current(
     position: Duration,
     playback: Playback,
 ) -> Option<AudioMessage> {
-    deck.append_staged();
-    let failed = seek_current(deck, position);
-    if let Playback::Paused = playback
-        && let Some(sink) = deck.current()
-    {
-        sink.pause();
+    let refusal = deck.append_staged();
+    if let (Playback::Paused, Some(output)) = (playback, deck.output.as_mut()) {
+        output.current_playback = Playback::Paused;
+        output.mixer_control.order(MixerOrder::RolePlayback {
+            role: SinkRole::Current,
+            playback: Playback::Paused,
+        });
     }
-    failed
+    deck.seek(position);
+    refusal
 }
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::revision::Revision;
+    use std::{
+        sync::atomic::{AtomicBool, Ordering},
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use kernel::{
+        domain::{revision::Revision, settings::AudioSettings},
+        update::machine::Driver,
+    };
+    use rstest::rstest;
 
     use crate::{
+        AudioDriver,
+        FeedChannel,
         deck::{
-            envelope::envelope,
-            tests::{deck_with_detached_output, tone},
+            Deck,
+            envelope::EnvelopeControl,
+            feed::serve,
+            mixer::{DECLICK_FRAMES, Mixer, RETIRED_SLOTS},
+            output::tests::mixed_output,
+            source::{DecodedTrack, decode, tests::ramp_file},
+            tests::{deck_with_detached_output, played, pulled, track},
         },
         engine::{
             effect::EngineEffect,
             execute::execute,
-            message::{AudioMessage, Signals, SinkRole},
+            message::{AudioMessage, EngineMessage, Signals, SinkRole},
         },
         gain::Gain,
+        tap,
     };
+
+    const RAMP_RATE: u32 = 8_000;
+    const RAMP_STEP: f32 = 1.0 / 32_768.0;
+
+    struct Listening {
+        deck: Deck,
+        mixer: Mixer,
+        heard: Vec<f32>,
+    }
+
+    fn listen(mixer: &mut Mixer, heard: &mut Vec<f32>, frames: usize) {
+        let mut out = vec![0.0_f32; frames];
+        mixer.mix(&mut out);
+        heard.extend(out.into_iter().filter(|sample| *sample != 0.0));
+    }
+
+    impl Listening {
+        fn playing_ramp(frames: usize) -> Self {
+            let file = ramp_file(1, frames);
+            let (feed_sender, feed_receiver) = crossbeam_channel::bounded(4);
+            thread::spawn(move || serve(&feed_receiver));
+            let (spectrum_buffers, _spectrum_tap) = tap::spectrum_channel();
+            let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(64);
+            let (output, mixer) = mixed_output(RAMP_RATE, &spectrum_buffers);
+            let mut deck = Deck::new(spectrum_buffers, callback_sender, feed_sender);
+            deck.output = Some(output);
+            deck.stage(DecodedTrack {
+                revision: Revision::default().next(),
+                decoder: decode(file.path()).unwrap(),
+            });
+            let mut listening = Self {
+                deck,
+                mixer,
+                heard: Vec::new(),
+            };
+            assert!(
+                listening
+                    .execute(EngineEffect::Start(Gain::UNITY))
+                    .is_none()
+            );
+            assert!(listening.execute(EngineEffect::Play).is_none());
+            listening.pull(4_000);
+            listening
+        }
+
+        fn execute(&mut self, effect: EngineEffect) -> Option<AudioMessage> {
+            execute(effect, &mut self.deck)
+        }
+
+        fn pull(&mut self, frames: usize) {
+            listen(&mut self.mixer, &mut self.heard, frames);
+        }
+
+        fn executed_while_pulled(
+            &mut self,
+            effect: EngineEffect,
+        ) -> Option<AudioMessage> {
+            let Self { deck, mixer, heard } = self;
+            let executed = AtomicBool::new(false);
+            thread::scope(|scope| {
+                scope.spawn(|| {
+                    while !executed.load(Ordering::Acquire) {
+                        listen(mixer, heard, 16);
+                    }
+                });
+                let answer = execute(effect, deck);
+                executed.store(true, Ordering::Release);
+                answer
+            })
+        }
+
+        fn heard_since(&mut self, start: usize, count: usize) -> Vec<f32> {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while self.heard.len() < start + count && Instant::now() < deadline {
+                self.pull(1_024);
+            }
+            self.heard.iter().skip(start).take(count).copied().collect()
+        }
+    }
+
+    fn ramp_from(target: Duration, skipped: usize, count: usize) -> Vec<f32> {
+        let first = usize::try_from(target.as_millis() * u128::from(RAMP_RATE) / 1_000)
+            .unwrap()
+            + skipped;
+        (first..first + count)
+            .map(|frame| {
+                f32::from(i16::try_from(frame % 30_000 + 1).unwrap()) * RAMP_STEP
+            })
+            .collect()
+    }
+
+    fn paused_and_sought(frames: usize, target: Duration) -> Vec<f32> {
+        let mut listening = Listening::playing_ramp(frames);
+        assert!(listening.execute(EngineEffect::Pause).is_none());
+        listening.pull(4_000);
+        let start = listening.heard.len();
+
+        assert!(
+            listening
+                .executed_while_pulled(EngineEffect::Seek(target))
+                .is_none()
+        );
+        assert!(listening.execute(EngineEffect::Play).is_none());
+        listening.pull(1);
+        let Some(AudioMessage::Engine(EngineMessage::Reported(Some(reported)))) =
+            listening.execute(EngineEffect::Report)
+        else {
+            panic!("a report answers the position");
+        };
+        assert!(reported >= target && reported < target + Duration::from_millis(1));
+
+        listening.heard_since(start + usize::from(DECLICK_FRAMES), 200)
+    }
+
+    #[test]
+    fn a_seek_while_paused_plays_from_the_target_after_play() {
+        let target = Duration::from_secs(5);
+        assert_eq!(
+            paused_and_sought(80_000, target),
+            ramp_from(target, usize::from(DECLICK_FRAMES), 200)
+        );
+    }
+
+    #[rstest]
+    #[case::decoded_to_the_end(16_000, Duration::from_millis(1_500))]
+    #[case::still_decoding(80_000, Duration::from_millis(8_500))]
+    fn a_seek_in_the_last_two_seconds_plays_from_the_target_after_play(
+        #[case] frames: usize,
+        #[case] target: Duration,
+    ) {
+        assert_eq!(
+            paused_and_sought(frames, target),
+            ramp_from(target, usize::from(DECLICK_FRAMES), 200)
+        );
+    }
+
+    #[test]
+    fn a_seek_while_playing_plays_from_the_target() {
+        let target = Duration::from_secs(5);
+        let mut listening = Listening::playing_ramp(80_000);
+        let last_before = listening.heard.len() - 1;
+
+        assert!(
+            listening
+                .executed_while_pulled(EngineEffect::Seek(target))
+                .is_none()
+        );
+        listening.pull(16);
+        thread::sleep(Duration::from_millis(100));
+
+        let heard = listening.heard_since(last_before, 10_000);
+        let after_the_jump: Vec<f32> = heard
+            .windows(2)
+            .position(|pair| matches!(pair, [previous, next] if *next != previous + RAMP_STEP))
+            .map_or_else(Vec::new, |jump| heard.iter().skip(jump + 1).take(200).copied().collect());
+        assert_eq!(after_the_jump, ramp_from(target, 0, 200));
+    }
+
+    #[test]
+    fn more_retires_than_retired_slots_all_reach_the_driver() {
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(64);
+        let (feed_sender, feed_receiver) = crossbeam_channel::unbounded();
+        let (mut driver, _driver_tap) = AudioDriver::new(
+            AudioSettings::default(),
+            callback_sender,
+            FeedChannel {
+                feed_sender,
+                feed_receiver,
+            },
+        );
+        let (spectrum_buffers, _spectrum_tap) = tap::spectrum_channel();
+        let (output, mut mixer) = mixed_output(RAMP_RATE, &spectrum_buffers);
+        driver.deck.output = Some(output);
+
+        for _ in 0..RETIRED_SLOTS + 2 {
+            driver.deck.stage(track(Revision::default().next()));
+            assert!(driver.execute(EngineEffect::Start(Gain::UNITY)).is_none());
+            mixer.mix(&mut [0.0_f32; 16]);
+        }
+
+        let waiting = driver
+            .deck
+            .output
+            .as_mut()
+            .map_or(0, |opened| opened.retired_voices.by_ref().count());
+        assert_eq!(waiting, 1);
+    }
 
     #[test]
     fn advance_answers_the_signals_an_incoming_track_raised_before_it_was_promoted() {
         let mut deck = deck_with_detached_output();
-        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
-        let (source, control) =
-            envelope(tone(1), Revision::default().next(), callback_sender);
-        for _ in source {}
+        let (_file, mut source, mut envelope, control, _feed) =
+            played(1, Revision::default().next());
+        assert_eq!(pulled(&mut source, &mut envelope, 16).len(), 8);
         deck.output.as_mut().unwrap().incoming_control = Some(control);
 
         let answer = execute(EngineEffect::Advance(Gain::UNITY), &mut deck);
@@ -200,5 +386,26 @@ mod tests {
             Some(AudioMessage::SignalsTaken { role: SinkRole::Current, signals })
                 if signals.contains(Signals::FINISHED)
         ));
+    }
+
+    #[test]
+    fn advance_sets_the_gain_on_the_new_current_control() {
+        let mut deck = deck_with_detached_output();
+        let (_file, _source, _envelope, control, _feed) =
+            played(1, Revision::default().next());
+        deck.output.as_mut().unwrap().incoming_control = Some(control);
+
+        assert!(
+            execute(EngineEffect::Advance(Gain::from_amplitude(0.5)), &mut deck)
+                .is_some()
+        );
+
+        assert_eq!(
+            deck.output
+                .as_ref()
+                .and_then(|output| output.current_control.as_ref())
+                .map(EnvelopeControl::volume),
+            Some(Gain::from_amplitude(0.5))
+        );
     }
 }

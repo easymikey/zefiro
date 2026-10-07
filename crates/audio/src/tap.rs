@@ -1,7 +1,6 @@
-use std::{cell::RefCell, fmt, time::Duration};
+use std::{cell::RefCell, fmt};
 
 use crossbeam_channel::{Receiver, Sender, TrySendError};
-use rodio::Source;
 use triple_buffer::{Input, Output, triple_buffer};
 
 pub(crate) const WINDOW: usize = 2048;
@@ -22,7 +21,8 @@ impl Writer {
     }
 }
 
-pub(crate) struct SpectrumBuffers {
+#[derive(Clone)]
+pub struct SpectrumBuffers {
     sender: Sender<Input<[f32; WINDOW]>>,
     receiver: Receiver<Input<[f32; WINDOW]>>,
 }
@@ -34,8 +34,11 @@ impl fmt::Debug for SpectrumBuffers {
 }
 
 impl SpectrumBuffers {
-    fn take(&self) -> Option<Input<[f32; WINDOW]>> {
-        self.receiver.try_recv().ok()
+    fn take(&self) -> Option<Writer> {
+        self.receiver.try_recv().ok().map(|input| Writer {
+            scratch: [0.0; WINDOW],
+            input,
+        })
     }
 }
 
@@ -85,41 +88,58 @@ pub(crate) fn spectrum_channel() -> (SpectrumBuffers, SpectrumTap) {
     )
 }
 
-pub(crate) struct TappedSource<S> {
-    inner: S,
+pub(crate) struct SpectrumWriter {
+    spectrum_buffers: SpectrumBuffers,
     writer: Option<Writer>,
-    return_sender: Sender<Input<[f32; WINDOW]>>,
-    frame: f32,
-    channel: u16,
+    channels: u16,
     hop: [f32; HOP],
     filled: usize,
 }
 
-impl<S> TappedSource<S>
-where
-    S: Source,
-{
-    pub(crate) fn new(inner: S, spectrum_buffers: &SpectrumBuffers) -> Self {
-        let writer = spectrum_buffers.take().map(|input| Writer {
-            scratch: [0.0; WINDOW],
-            input,
-        });
+impl fmt::Debug for SpectrumWriter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SpectrumWriter")
+            .field("channels", &self.channels)
+            .field("filled", &self.filled)
+            .finish_non_exhaustive()
+    }
+}
+
+impl SpectrumWriter {
+    pub(crate) fn new(spectrum_buffers: &SpectrumBuffers, channels: u16) -> Self {
         Self {
-            inner,
-            writer,
-            return_sender: spectrum_buffers.sender.clone(),
-            frame: 0.0,
-            channel: 0,
+            spectrum_buffers: spectrum_buffers.clone(),
+            writer: spectrum_buffers.take(),
+            channels: channels.max(1),
             hop: [0.0; HOP],
             filled: 0,
         }
     }
+
+    pub(crate) fn push(&mut self, frames: &[f32]) {
+        let width = f32::from(self.channels);
+        for frame in frames.chunks_exact(usize::from(self.channels)) {
+            if let Some(cell) = self.hop.get_mut(self.filled) {
+                *cell = frame.iter().sum::<f32>() / width;
+            }
+            self.filled += 1;
+            if self.filled >= HOP {
+                if self.writer.is_none() {
+                    self.writer = self.spectrum_buffers.take();
+                }
+                if let Some(writer) = self.writer.as_mut() {
+                    writer.publish_hop(&self.hop);
+                }
+                self.filled = 0;
+            }
+        }
+    }
 }
 
-impl<S> Drop for TappedSource<S> {
+impl Drop for SpectrumWriter {
     fn drop(&mut self) {
         if let Some(writer) = self.writer.take() {
-            match self.return_sender.try_send(writer.input) {
+            match self.spectrum_buffers.sender.try_send(writer.input) {
                 Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
                 }
             }
@@ -127,71 +147,11 @@ impl<S> Drop for TappedSource<S> {
     }
 }
 
-impl<S> Iterator for TappedSource<S>
-where
-    S: Source,
-{
-    type Item = f32;
-
-    fn next(&mut self) -> Option<f32> {
-        let sample = self.inner.next()?;
-        let channels = self.inner.channels();
-        self.frame += sample;
-        self.channel += 1;
-        if self.channel >= channels {
-            let averaged = self.frame / f32::from(channels);
-            if let Some(cell) = self.hop.get_mut(self.filled) {
-                *cell = averaged;
-            }
-            self.filled += 1;
-            if self.filled >= HOP {
-                if let Some(writer) = self.writer.as_mut() {
-                    writer.publish_hop(&self.hop);
-                }
-                self.filled = 0;
-            }
-            self.frame = 0.0;
-            self.channel = 0;
-        }
-        Some(sample)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl<S> Source for TappedSource<S>
-where
-    S: Source,
-{
-    fn current_span_len(&self) -> Option<usize> {
-        self.inner.current_span_len()
-    }
-
-    fn channels(&self) -> u16 {
-        self.inner.channels()
-    }
-
-    fn sample_rate(&self) -> u32 {
-        self.inner.sample_rate()
-    }
-
-    fn total_duration(&self) -> Option<Duration> {
-        self.inner.total_duration()
-    }
-
-    fn try_seek(&mut self, position: Duration) -> Result<(), rodio::source::SeekError> {
-        self.inner.try_seek(position)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use rodio::buffer::SamplesBuffer;
     use rstest::rstest;
 
-    use crate::tap::{HOP, SpectrumTap, TappedSource, WINDOW, spectrum_channel};
+    use crate::tap::{HOP, SpectrumTap, SpectrumWriter, WINDOW, spectrum_channel};
 
     fn samples(count: usize) -> Vec<f32> {
         let count = u16::try_from(count).unwrap_or(u16::MAX);
@@ -202,18 +162,12 @@ mod tests {
     #[case::a_partial_hop_stays_unpublished(HOP - 1)]
     #[case::a_single_hop_publishes_its_tail(HOP)]
     #[case::wrapping_past_the_window(WINDOW + HOP)]
-    fn a_tapped_source_batches_by_hop_and_publishes_the_newest_window(
+    fn a_spectrum_writer_batches_by_hop_and_publishes_the_newest_window(
         #[case] count: usize,
     ) {
         let data = samples(count);
         let (spectrum_buffers, spectrum_tap) = spectrum_channel();
-        let mut wrapped_source = TappedSource::new(
-            SamplesBuffer::new(1, 44_100, data.clone()),
-            &spectrum_buffers,
-        );
-
-        let collected: Vec<f32> = wrapped_source.by_ref().collect();
-        assert_eq!(collected, data);
+        SpectrumWriter::new(&spectrum_buffers, 1).push(&data);
 
         let mut out = [0.0f32; WINDOW];
         let fresh = spectrum_tap.windowed(&[1.0; WINDOW], &mut out);
@@ -235,45 +189,66 @@ mod tests {
     fn a_reopened_stream_gets_the_writer_back() {
         let (spectrum_buffers, spectrum_tap) = spectrum_channel();
         let first_batch = samples(HOP);
-        let first = TappedSource::new(
-            SamplesBuffer::new(1, 44_100, first_batch.clone()),
-            &spectrum_buffers,
-        );
-        first.for_each(drop);
+        SpectrumWriter::new(&spectrum_buffers, 1).push(&first_batch);
 
         let mut out = [0.0f32; WINDOW];
         assert!(spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
         assert_eq!(out.get(out.len() - HOP..), Some(first_batch.as_slice()));
 
         let second_batch = samples(HOP);
-        let second = TappedSource::new(
-            SamplesBuffer::new(1, 44_100, second_batch.clone()),
-            &spectrum_buffers,
-        );
-        second.for_each(drop);
+        SpectrumWriter::new(&spectrum_buffers, 1).push(&second_batch);
 
         assert!(spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
         assert_eq!(out.get(out.len() - HOP..), Some(second_batch.as_slice()));
     }
 
     #[test]
-    fn a_second_tapped_source_without_a_returned_writer_stays_silent() {
+    fn a_second_spectrum_writer_without_a_returned_writer_stays_silent() {
         let (spectrum_buffers, spectrum_tap) = spectrum_channel();
-        let held_source = TappedSource::new(
-            SamplesBuffer::new(1, 44_100, Vec::new()),
-            &spectrum_buffers,
-        );
-        let unlucky_batch = samples(HOP);
-        let unlucky_source = TappedSource::new(
-            SamplesBuffer::new(1, 44_100, unlucky_batch),
-            &spectrum_buffers,
-        );
-        unlucky_source.for_each(drop);
+        let held_spectrum_writer = SpectrumWriter::new(&spectrum_buffers, 1);
+        SpectrumWriter::new(&spectrum_buffers, 1).push(&samples(HOP));
 
         let mut out = [0.0f32; WINDOW];
         assert!(!spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
         assert!(out.iter().all(|&sample| sample == 0.0));
-        drop(held_source);
+        drop(held_spectrum_writer);
+    }
+
+    #[test]
+    fn a_spectrum_writer_built_while_another_holds_the_window_takes_it_once_the_other_drops()
+     {
+        let (spectrum_buffers, spectrum_tap) = spectrum_channel();
+        let older_spectrum_writer = SpectrumWriter::new(&spectrum_buffers, 1);
+        let mut newer_spectrum_writer = SpectrumWriter::new(&spectrum_buffers, 1);
+        let newer_batch = samples(HOP);
+        drop(older_spectrum_writer);
+        newer_spectrum_writer.push(&newer_batch);
+
+        let mut out = [0.0f32; WINDOW];
+        assert!(spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
+        assert_eq!(out.get(out.len() - HOP..), Some(newer_batch.as_slice()));
+    }
+
+    #[test]
+    fn a_hop_of_frames_publishes_one_window_of_their_channel_average() {
+        let (spectrum_buffers, spectrum_tap) = spectrum_channel();
+        let mut spectrum_writer = SpectrumWriter::new(&spectrum_buffers, 2);
+        let stereo: Vec<f32> = samples(HOP)
+            .iter()
+            .flat_map(|&sample| [sample, sample + 2.0])
+            .collect();
+        let (head, tail) = stereo.split_at(HOP);
+        let mut out = [0.0f32; WINDOW];
+
+        spectrum_writer.push(head);
+        assert!(!spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
+        spectrum_writer.push(tail);
+        assert!(spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
+        assert!(!spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
+
+        let averaged: Vec<f32> =
+            samples(HOP).iter().map(|sample| sample + 1.0).collect();
+        assert_eq!(out.get(WINDOW - HOP..), Some(averaged.as_slice()));
     }
 
     #[test]

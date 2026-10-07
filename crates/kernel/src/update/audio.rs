@@ -4,7 +4,7 @@ use crate::{
     cmd::Cmd,
     domain::{
         cursor::Cursor,
-        device::OutputDevice,
+        device::{DeviceName, OutputDevice},
         direction::Direction,
         index::ViewIndex,
         player::Player,
@@ -73,6 +73,7 @@ pub(crate) fn update(
         AudioEvent::DeviceFellBack(output_device) => {
             fell_back(playback_parts, &output_device)
         }
+        AudioEvent::DeviceOpened(device_name) => opened(playback_parts, device_name),
     }
 }
 
@@ -87,13 +88,13 @@ fn fell_back(
         &mut playback_parts.settings.audio_settings.device,
         output_device.clone(),
     );
+    playback_parts.settings.device_name = None;
     let OutputDevice::Named(requested) = requested else {
         return Ok(Cmd::none());
     };
-    let fallback_device_text = output_device.named().map_or_else(
-        || "the system default".to_string(),
-        crate::domain::device::DeviceName::to_string,
-    );
+    let fallback_device_text = output_device
+        .named()
+        .map_or_else(|| "the system default".to_string(), DeviceName::to_string);
     let toast_text = format!(
         "output device '{requested}' is gone — playing on {fallback_device_text}"
     );
@@ -101,6 +102,21 @@ fn fell_back(
         Toast::error("Output device lost").with_text(toast_text),
         playback_parts.revisions,
     ))
+}
+
+fn opened(
+    playback_parts: &mut PlaybackParts<'_>,
+    device_name: DeviceName,
+) -> Result<Cmd, Unhandled> {
+    let toast = Toast::info(format!("Playing on {device_name}"));
+    let first = playback_parts.settings.device_name.is_none();
+    replace(&mut playback_parts.settings.device_name, Some(device_name))?;
+    if first {
+        return Ok(Cmd::none());
+    }
+    Ok(playback_parts
+        .workspace
+        .show(toast, playback_parts.revisions))
 }
 
 fn error(

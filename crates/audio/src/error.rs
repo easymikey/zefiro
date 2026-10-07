@@ -9,7 +9,20 @@ use kernel::{
     },
     message::{AudioError, DecodeError},
 };
-use rodio::cpal;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum OpenError {
+    #[error("cannot read the device's output config: {0}")]
+    Config(#[source] cpal::DefaultStreamConfigError),
+    #[error("cannot list the device's output configs: {0}")]
+    Configs(#[source] cpal::SupportedStreamConfigsError),
+    #[error("cannot build the output stream: {0}")]
+    Build(#[source] cpal::BuildStreamError),
+    #[error("cannot start the output stream: {0}")]
+    Play(#[source] cpal::PlayStreamError),
+    #[error("unsupported sample format {0}")]
+    UnsupportedFormat(cpal::SampleFormat),
+}
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DeviceError {
@@ -19,7 +32,7 @@ pub(crate) enum DeviceError {
     NoDevice {
         requested_device: OutputDevice,
         #[source]
-        source: rodio::StreamError,
+        source: OpenError,
     },
     #[error("cannot look up output device {requested_device}: {source}")]
     Lookup {
@@ -41,22 +54,22 @@ pub enum Error {
     Decode {
         path: PathBuf,
         #[source]
-        source: rodio::decoder::DecoderError,
+        source: symphonia::core::errors::Error,
     },
     #[error("the decode worker panicked on {0}")]
     WorkerPanicked(PathBuf),
 }
 
-fn decode_error(source: &rodio::decoder::DecoderError) -> DecodeError {
+fn decode_error(source: &symphonia::core::errors::Error) -> DecodeError {
     match source {
-        rodio::decoder::DecoderError::UnrecognizedFormat => DecodeError::Unsupported,
-        rodio::decoder::DecoderError::IoError(_) => {
+        symphonia::core::errors::Error::Unsupported(_) => DecodeError::Unsupported,
+        symphonia::core::errors::Error::IoError(_) => {
             DecodeError::Unreadable(IoError::Other)
         }
-        rodio::decoder::DecoderError::DecodeError(_)
-        | rodio::decoder::DecoderError::LimitError(_)
-        | rodio::decoder::DecoderError::ResetRequired
-        | rodio::decoder::DecoderError::NoStreams => DecodeError::Corrupt,
+        symphonia::core::errors::Error::DecodeError(_)
+        | symphonia::core::errors::Error::SeekError(_)
+        | symphonia::core::errors::Error::LimitError(_)
+        | symphonia::core::errors::Error::ResetRequired => DecodeError::Corrupt,
     }
 }
 
@@ -113,7 +126,11 @@ pub(crate) fn output_error(error: &cpal::StreamError) -> OutputError {
     }
 }
 
-pub(crate) fn seek_error(error: &rodio::source::SeekError) -> AudioError {
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub(crate) struct SeekError(#[from] symphonia::core::errors::Error);
+
+pub(crate) fn seek_error(error: &impl std::error::Error) -> AudioError {
     AudioError::Seek {
         diagnostic: Diagnostic::from_error(error),
     }
@@ -154,6 +171,7 @@ mod tests {
     use crate::error::{
         DeviceError,
         Error,
+        OpenError,
         decode_error_of,
         device_error,
         output_error,
@@ -175,9 +193,9 @@ mod tests {
     #[case::decode(
         Error::Decode {
             path: PathBuf::from("/music/track.flac"),
-            source: rodio::decoder::DecoderError::UnrecognizedFormat,
+            source: symphonia::core::errors::Error::Unsupported("core (probe): no suitable format reader found"),
         },
-        "cannot decode /music/track.flac: Unrecognized format"
+        "cannot decode /music/track.flac: unsupported feature: core (probe): no suitable format reader found"
     )]
     #[case::worker_panicked(
         Error::WorkerPanicked(PathBuf::from("/music/track.flac")),
@@ -192,28 +210,35 @@ mod tests {
 
     #[rstest]
     #[case::unrecognized_format(
-        rodio::decoder::DecoderError::UnrecognizedFormat,
+        symphonia::core::errors::Error::Unsupported("no suitable format reader"),
         DecodeError::Unsupported
     )]
     #[case::io_error(
-        rodio::decoder::DecoderError::IoError("broken pipe".to_owned()),
+        symphonia::core::errors::Error::IoError(std::io::Error::from(
+            std::io::ErrorKind::BrokenPipe
+        )),
         DecodeError::Unreadable(IoError::Other)
     )]
     #[case::decode_error(
-        rodio::decoder::DecoderError::DecodeError("bad frame"),
+        symphonia::core::errors::Error::DecodeError("bad frame"),
         DecodeError::Corrupt
     )]
     #[case::limit_error(
-        rodio::decoder::DecoderError::LimitError("too large"),
+        symphonia::core::errors::Error::LimitError("too large"),
         DecodeError::Corrupt
     )]
     #[case::reset_required(
-        rodio::decoder::DecoderError::ResetRequired,
+        symphonia::core::errors::Error::ResetRequired,
         DecodeError::Corrupt
     )]
-    #[case::no_streams(rodio::decoder::DecoderError::NoStreams, DecodeError::Corrupt)]
+    #[case::seek_error(
+        symphonia::core::errors::Error::SeekError(
+            symphonia::core::errors::SeekErrorKind::OutOfRange
+        ),
+        DecodeError::Corrupt
+    )]
     fn a_decode_error_maps_to_its_audio_error(
-        #[case] source: rodio::decoder::DecoderError,
+        #[case] source: symphonia::core::errors::Error,
         #[case] expected: DecodeError,
     ) {
         let error = Error::Decode {
@@ -268,7 +293,8 @@ mod tests {
 
     #[test]
     fn an_open_failure_keeps_its_cause() {
-        let source = rodio::StreamError::NoDevice;
+        let source =
+            OpenError::Config(cpal::DefaultStreamConfigError::DeviceNotAvailable);
         let cause = source.to_string();
         let error = device_error(&DeviceError::NoDevice {
             requested_device: OutputDevice::SystemDefault,
@@ -277,15 +303,15 @@ mod tests {
         assert!(error.to_string().contains(&cause));
     }
 
-    fn backend_error() -> rodio::cpal::BackendSpecificError {
-        rodio::cpal::BackendSpecificError {
+    fn backend_error() -> cpal::BackendSpecificError {
+        cpal::BackendSpecificError {
             description: "host gone".to_owned(),
         }
     }
 
     #[test]
     fn a_lookup_failure_while_opening_maps_to_an_open_failure() {
-        let source = rodio::cpal::DevicesError::BackendSpecific {
+        let source = cpal::DevicesError::BackendSpecific {
             err: backend_error(),
         };
         let diagnostic = Diagnostic::from_error(&source);
@@ -303,31 +329,41 @@ mod tests {
     }
 
     #[rstest]
-    #[case::no_named_device(
-        DeviceError::NoDevice {
-            requested_device: OutputDevice::Named(device_name("usb")),
-            source: rodio::StreamError::NoDevice,
-        },
-        AudioError::OpenDevice {
-            requested_device: OutputDevice::Named(device_name("usb")),
-            diagnostic: Diagnostic::from_error(&rodio::StreamError::NoDevice),
-        }
+    #[case::no_config_on_a_named_device(
+        OutputDevice::Named(device_name("usb")),
+        || OpenError::Config(cpal::DefaultStreamConfigError::DeviceNotAvailable)
     )]
-    #[case::no_default_device(
-        DeviceError::NoDevice {
-            requested_device: OutputDevice::SystemDefault,
-            source: rodio::StreamError::NoDevice,
-        },
-        AudioError::OpenDevice {
-            requested_device: OutputDevice::SystemDefault,
-            diagnostic: Diagnostic::from_error(&rodio::StreamError::NoDevice),
-        }
+    #[case::no_config_list_on_the_default_device(
+        OutputDevice::SystemDefault,
+        || OpenError::Configs(cpal::SupportedStreamConfigsError::DeviceNotAvailable)
     )]
-    fn every_device_error_maps_to_its_audio_error(
-        #[case] error: DeviceError,
-        #[case] expected: AudioError,
+    #[case::a_stream_that_cannot_be_built(
+        OutputDevice::SystemDefault,
+        || OpenError::Build(cpal::BuildStreamError::StreamConfigNotSupported)
+    )]
+    #[case::a_stream_that_cannot_start(
+        OutputDevice::Named(device_name("usb")),
+        || OpenError::Play(cpal::PlayStreamError::DeviceNotAvailable)
+    )]
+    #[case::an_unsupported_sample_format(
+        OutputDevice::SystemDefault,
+        || OpenError::UnsupportedFormat(cpal::SampleFormat::U8)
+    )]
+    fn every_open_error_maps_to_an_open_device_error_with_its_diagnostic(
+        #[case] requested_device: OutputDevice,
+        #[case] open_error: fn() -> OpenError,
     ) {
-        assert_eq!(device_error(&error), expected);
+        let error = DeviceError::NoDevice {
+            requested_device: requested_device.clone(),
+            source: open_error(),
+        };
+        assert_eq!(
+            device_error(&error),
+            AudioError::OpenDevice {
+                requested_device,
+                diagnostic: Diagnostic::from_error(&open_error()),
+            }
+        );
     }
 
     #[rstest]
@@ -344,7 +380,7 @@ mod tests {
     #[case::decode_unsupported(
         Error::Decode {
             path: PathBuf::from("/a"),
-            source: rodio::decoder::DecoderError::UnrecognizedFormat,
+            source: symphonia::core::errors::Error::Unsupported("no suitable format reader"),
         },
         AudioError::Preload { path: PathBuf::from("/a"), error: DecodeError::Unsupported }
     )]
@@ -361,19 +397,19 @@ mod tests {
 
     #[rstest]
     #[case::device_not_available(
-        rodio::cpal::StreamError::DeviceNotAvailable,
+        cpal::StreamError::DeviceNotAvailable,
         OutputError::DeviceGone
     )]
     #[case::backend_specific(
-        rodio::cpal::StreamError::BackendSpecific {
-            err: rodio::cpal::BackendSpecificError {
+        cpal::StreamError::BackendSpecific {
+            err: cpal::BackendSpecificError {
                 description: "underrun".to_string(),
             },
         },
         OutputError::Backend
     )]
     fn a_stream_error_maps_to_its_output_error(
-        #[case] error: rodio::cpal::StreamError,
+        #[case] error: cpal::StreamError,
         #[case] expected: OutputError,
     ) {
         assert_eq!(output_error(&error), expected);

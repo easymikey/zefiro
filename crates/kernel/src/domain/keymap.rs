@@ -14,7 +14,6 @@ pub enum KeyContext {
     Help,
     History,
     Settings,
-    #[strum(serialize = "confirm_delete")]
     ConfirmTrash,
     JumpToTime,
     TrackDetails,

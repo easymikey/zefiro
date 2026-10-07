@@ -58,7 +58,6 @@ impl Default for TomlCoverCells {
 pub struct TomlCover {
     #[serde(deserialize_with = "variant_field")]
     pub(crate) mode: CoverMode,
-    #[serde(alias = "text_cells")]
     pub cover_cells: TomlCoverCells,
     #[serde(deserialize_with = "crate::appearance::flag")]
     pub(crate) brackets: CoverBrackets,
@@ -126,9 +125,7 @@ pub struct TomlLayout {
     pub full_min_height: u16,
     pub compact_min_width: u16,
     pub compact_min_height: u16,
-    #[serde(alias = "min_columns")]
     pub min_width: u16,
-    #[serde(alias = "min_rows")]
     pub min_height: u16,
     #[serde(deserialize_with = "variant_field")]
     pub(crate) mode: LayoutMode,

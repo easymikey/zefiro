@@ -1,7 +1,6 @@
 // GUARD: conventions naming and shape rules over one item pass.
 
 use crate::guards::{
-    conventions_allow::allow_rows,
     lexer::{File, IMPL, Item, TEST, WIDGET, is_word},
     support,
 };
@@ -10,7 +9,7 @@ type Hits = Vec<String>;
 
 const BANNED: &str = "outcome apply look adjust failure rejected perform handle \
                       process dispatch supervise";
-const LOOPS: &[&str] = &["MainLoop", "DriverLoop", "EventLoop"];
+const LOOPS: &[&str] = &["MainLoop", "DriverLoop", "EventLoop", "AbLoop"];
 
 fn key_if(hit: bool, key: &str) -> Hits {
     hit.then(|| key.to_owned()).into_iter().collect()
@@ -23,8 +22,8 @@ fn camel_words(name: &str) -> Vec<&str> {
         .map(|(at, _)| at)
         .collect();
     cuts.push(name.len());
-    cuts.windows(2)
-        .map(|pair| &name[pair[0]..pair[1]])
+    cuts.array_windows()
+        .map(|&[start, end]| &name[start..end])
         .collect()
 }
 
@@ -336,26 +335,15 @@ fn conventions_hold() {
         .iter()
         .map(|(relative, path)| File::parse(relative, &support::read(path)))
         .collect();
-    let (mut violations, mut stale) = (Vec::new(), Vec::new());
-    for (rule, message, hits) in checks(&files) {
-        let (allow, mut seen) = (allow_rows(rule), Vec::new());
-        for (path, line, key) in hits {
-            let row = allow
-                .iter()
-                .find(|row| row.path == path && row.pattern == key);
-            match row {
-                Some(row) => seen.push((path, row.pattern)),
-                None => violations
-                    .push(format!("{path}:{line}: `{key}` — {message} [{rule}]")),
-            }
-        }
-        stale.extend(support::stale(&allow, &seen));
-    }
-    support::report(
-        "conventions guard (docs/conventions.md):",
-        &violations,
-        &stale,
-    );
+    let violations: Vec<String> = checks(&files)
+        .into_iter()
+        .flat_map(|(rule, message, hits)| {
+            hits.into_iter().map(move |(path, line, key)| {
+                format!("{path}:{line}: `{key}` — {message} [{rule}]")
+            })
+        })
+        .collect();
+    support::report("conventions guard (docs/conventions.md):", &violations);
 }
 
 #[test]

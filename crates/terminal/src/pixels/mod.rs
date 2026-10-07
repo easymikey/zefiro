@@ -10,11 +10,10 @@ use widgets::{
     pixels::cover::{
         CoverImage,
         CoverMotion,
-        CoverRefresh,
         lifecycle::{CoverLifecycle, PixmapSource},
         pixmap::CellPixels,
     },
-    scene::{PixelPath, Scene},
+    scene::Scene,
     screen::frame_layout::FrameLayout,
 };
 
@@ -30,18 +29,16 @@ pub struct CoverPainter {
 
 impl CoverPainter {
     #[must_use]
-    pub fn new(picker: Picker, cell_pixels: CellPixels, pixel_path: PixelPath) -> Self {
+    pub fn new(picker: Picker, cell_pixels: CellPixels) -> Self {
         Self {
             cover_mode: CoverMode::Off,
             plain_cover: Cover::new(
                 CoverLifecycle::new(PixmapSource::Plain, cell_pixels),
                 picker.clone(),
-                pixel_path,
             ),
             vinyl_cover: Cover::new(
                 CoverLifecycle::new(PixmapSource::Vinyl(Box::default()), cell_pixels),
                 picker,
-                pixel_path,
             ),
             milkdrop_cover: MilkdropCover::default(),
         }
@@ -52,16 +49,18 @@ impl CoverPainter {
         self.vinyl_cover.set_cover(cover_image);
     }
 
-    pub fn refresh(&mut self, scene: &Scene<'_>, refresh: CoverRefresh) -> CardCover {
+    pub fn refresh(
+        &mut self,
+        scene: &Scene<'_>,
+        cover_area: Option<Rect>,
+    ) -> CardCover {
         let cover_mode = scene.cover_mode();
         self.cover_mode = cover_mode;
         match cover_mode {
             CoverMode::Off => CardCover::Missing,
-            CoverMode::Plain => self.plain_cover.refresh(scene, refresh),
-            CoverMode::Vinyl => self.vinyl_cover.refresh(scene, refresh),
-            CoverMode::Milkdrop => {
-                self.milkdrop_cover.refresh(scene, refresh.cover_area)
-            }
+            CoverMode::Plain => self.plain_cover.refresh(scene, cover_area),
+            CoverMode::Vinyl => self.vinyl_cover.refresh(scene, cover_area),
+            CoverMode::Milkdrop => self.milkdrop_cover.refresh(scene, cover_area),
         }
     }
 

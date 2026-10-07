@@ -78,6 +78,7 @@ pub(crate) struct SceneSources {
     pub(crate) appearance: Appearance,
     pub(crate) key_hint_chords: KeyHintChords,
     pub(crate) pixel_path: PixelPath,
+    pub(crate) since_first_paint: Duration,
 }
 
 impl SceneSources {
@@ -92,6 +93,7 @@ impl SceneSources {
             appearance: Appearance::default(),
             key_hint_chords,
             pixel_path: PixelPath::Halfblocks,
+            since_first_paint: Duration::ZERO,
         }
     }
 
@@ -109,7 +111,7 @@ impl SceneSources {
                 spectrum: &self.spectrum,
                 pixel_path: self.pixel_path,
                 cell_aspect: DEFAULT_CELL_ASPECT,
-                since_first_paint: Duration::ZERO,
+                since_first_paint: self.since_first_paint,
                 now: Moment::default(),
                 home_dir: None,
                 key_hint_chords: &self.key_hint_chords,

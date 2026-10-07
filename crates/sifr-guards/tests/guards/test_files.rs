@@ -53,7 +53,6 @@ fn no_test_only_source_files() {
     support::report(
         "test-only file guard: tests stay in `mod tests` beside their code.",
         &violations,
-        &[],
     );
 }
 

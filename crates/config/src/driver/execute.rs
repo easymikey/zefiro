@@ -475,7 +475,7 @@ speed_chip = "always"
             (AppearanceField::FormatChips, 0),
             (AppearanceField::ProgressTime, 1),
             (AppearanceField::KeyHints, 1),
-            (AppearanceField::LayoutMode, 2),
+            (AppearanceField::LayoutMode, 1),
         ]
         .into_iter()
         .map(|(field, position)| {

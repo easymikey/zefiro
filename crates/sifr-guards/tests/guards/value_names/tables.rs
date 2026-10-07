@@ -96,8 +96,6 @@ pub(crate) const ROLE_WORDS: &[(&str, &[&str])] = &[
     ("Sender", &["sender", "inbox"]),
     ("Receiver", &["receiver", "doorbell"]),
     ("CoverMode", &["cover_mode"]),
-    ("CrossfadePermit", &["crossfade_permit"]),
-    ("CoverCrossfade", &["crossfade"]),
     ("Percent", &["volume"]),
     ("TextRequest", &["message"]),
     ("SearchRequest", &["message"]),
