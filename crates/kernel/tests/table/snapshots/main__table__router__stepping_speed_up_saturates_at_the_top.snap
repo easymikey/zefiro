@@ -18,6 +18,13 @@ expression: "walked(model, messages)"
                     ),
                 ),
             ),
+            Macos(
+                SetSpeed(
+                    Speed(
+                        1.25,
+                    ),
+                ),
+            ),
         ],
         Stopped,
         None,
@@ -53,6 +60,13 @@ expression: "walked(model, messages)"
         ),
         [
             Audio(
+                SetSpeed(
+                    Speed(
+                        1.5,
+                    ),
+                ),
+            ),
+            Macos(
                 SetSpeed(
                     Speed(
                         1.5,
@@ -100,6 +114,13 @@ expression: "walked(model, messages)"
                     ),
                 ),
             ),
+            Macos(
+                SetSpeed(
+                    Speed(
+                        1.75,
+                    ),
+                ),
+            ),
         ],
         Stopped,
         None,
@@ -141,6 +162,13 @@ expression: "walked(model, messages)"
                     ),
                 ),
             ),
+            Macos(
+                SetSpeed(
+                    Speed(
+                        2.0,
+                    ),
+                ),
+            ),
         ],
         Stopped,
         None,
@@ -176,6 +204,13 @@ expression: "walked(model, messages)"
         ),
         [
             Audio(
+                SetSpeed(
+                    Speed(
+                        2.25,
+                    ),
+                ),
+            ),
+            Macos(
                 SetSpeed(
                     Speed(
                         2.25,

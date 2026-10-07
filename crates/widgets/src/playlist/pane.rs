@@ -158,7 +158,7 @@ mod tests {
             pane::PlaylistWidget,
             view::{LibraryStatus, PlaylistView},
         },
-        primitive::canvas::find_text,
+        primitive::canvas::tests::find_text,
         status_line::StatusLineView,
         test_support::{noir, rendered},
         theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},

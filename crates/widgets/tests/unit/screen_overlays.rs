@@ -1,17 +1,12 @@
 use kernel::domain::{
     cursor_over::CursorOver,
-    overlay::{Overlay, SearchQuery, TextEntry, TrashCandidate},
+    overlay::{Overlay, SearchQuery, TextEntry},
     setting_row::SettingRow,
 };
 use ratatui::layout::Rect;
 use widgets::screen::{frame_layout::FrameLayout, root::ScreenWidget};
 
-use crate::unit::support::fixtures::{
-    SceneSources,
-    model_with_tracks,
-    rendered,
-    track,
-};
+use crate::support::fixtures::{SceneSources, model_with_tracks, rendered, track};
 
 fn frame_with_overlay(overlay: Overlay) -> String {
     let mut sources = SceneSources::new(model_with_tracks(3));
@@ -56,11 +51,7 @@ fn the_settings_overlay_is_painted_over_the_full_frame() {
 
 #[test]
 fn the_confirm_trash_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::ConfirmTrash(TrashCandidate {
-        source: kernel::domain::track::TrackSource::Local("/music/moon.flac".into()),
-        title: "Moon River".to_string(),
-        artist: "Audrey Hepburn".to_string(),
-    }));
+    let text = frame_with_overlay(Overlay::ConfirmTrash(track("Moon River")));
     assert!(text.contains("MOVE TO TRASH?"), "got {text:?}");
 }
 

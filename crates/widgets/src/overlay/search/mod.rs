@@ -41,6 +41,7 @@ pub(crate) struct SearchWidget<'a> {
     theme: ActiveTheme<'a>,
     tracks: &'a [Arc<Track>],
     search_query: &'a CursorOver<SearchQuery>,
+    title: &'a str,
     bounds: Rect,
     container: ModalContainer<'a>,
 }
@@ -55,6 +56,7 @@ impl<'a> SearchWidget<'a> {
             theme: active_theme,
             tracks: &[],
             search_query: query,
+            title: "",
             bounds: Rect::default(),
             container: ModalContainer::Floating(&[]),
         }
@@ -63,6 +65,12 @@ impl<'a> SearchWidget<'a> {
     #[must_use]
     pub(crate) fn tracks(mut self, tracks: &'a [Arc<Track>]) -> Self {
         self.tracks = tracks;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn title(mut self, title: &'a str) -> Self {
+        self.title = title;
         self
     }
 
@@ -119,7 +127,7 @@ impl SearchWidget<'_> {
         let theme = self.theme;
         ModalBorder {
             area,
-            title: search_title(&self.header(), theme),
+            title: modal_title(glyphs::search::TITLE_WORD, self.title, theme.colors()),
             theme,
         }
     }
@@ -219,36 +227,32 @@ impl Widget for &SearchWidget<'_> {
     }
 }
 
-fn search_title(header: &SearchHeader<'_>, theme: ActiveTheme<'_>) -> Line<'static> {
-    modal_title(
-        glyphs::search::TITLE_WORD,
-        format!(
-            "{} {} {}",
-            header.matches,
-            glyphs::search::OF,
-            header.tracks_len
-        ),
-        theme.colors(),
+#[must_use]
+pub(crate) fn search_title(
+    search_query: &CursorOver<SearchQuery>,
+    tracks_len: usize,
+) -> String {
+    format!(
+        "{} {} {tracks_len}",
+        search_query.content.matches.len(),
+        glyphs::search::OF
     )
 }
 
-fn query_line(header: &SearchHeader<'_>, colors: Colors<Color>) -> Line<'static> {
+fn query_line<'a>(header: &SearchHeader<'a>, colors: Colors<Color>) -> Line<'a> {
     line([
         text(glyphs::search::HEADER_PREFIX).fg(colors.accent),
-        text(header.query.to_string()).fg(colors.foreground),
+        text(header.query).fg(colors.foreground),
         text(glyphs::search::CURSOR).fg(colors.accent),
     ])
 }
 
-fn header_line(header: &SearchHeader<'_>, colors: Colors<Color>) -> Line<'static> {
+fn header_line<'a>(header: &SearchHeader<'a>, colors: Colors<Color>) -> Line<'a> {
     let summary = match_count_text(header.matches, header.tracks_len);
-    line([
-        text(glyphs::search::HEADER_PREFIX).fg(colors.accent),
-        text(header.query.to_string()).fg(colors.foreground),
-        text(glyphs::search::CURSOR).fg(colors.accent),
-        text(glyphs::search::HEADER_GAP).fg(colors.foreground),
-        text(summary).fg(colors.muted_foreground),
-    ])
+    let mut line = query_line(header, colors);
+    line.push_span(text(glyphs::search::HEADER_GAP).fg(colors.foreground));
+    line.push_span(text(summary).fg(colors.muted_foreground));
+    line
 }
 
 fn match_count_text(matches: usize, tracks_len: usize) -> String {
@@ -288,8 +292,11 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        overlay::{modal::placement::ModalContainer, search::SearchWidget},
-        primitive::canvas::find_text,
+        overlay::{
+            modal::placement::ModalContainer,
+            search::{SearchWidget, search_title},
+        },
+        primitive::canvas::tests::find_text,
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
@@ -334,8 +341,10 @@ mod tests {
             titled_track("Moonlight Sonata"),
         ];
         let search = query("moon", vec![0, 2], 0);
+        let title = search_title(&search, tracks.len());
         let overlay =
             SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .title(&title)
                 .tracks(&tracks)
                 .bounds(Rect::new(0, 0, 80, 28))
                 .container(pane_container(Rect::new(0, 0, 80, 28)));
@@ -350,8 +359,10 @@ mod tests {
         let theme = noir();
         let tracks = [titled_track("Alpha")];
         let search = query("zz", vec![], 0);
+        let title = search_title(&search, tracks.len());
         let overlay =
             SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .title(&title)
                 .tracks(&tracks)
                 .bounds(Rect::new(0, 0, 80, 28))
                 .container(pane_container(Rect::new(0, 0, 80, 28)));
@@ -366,8 +377,10 @@ mod tests {
         let theme = noir();
         let tracks: Vec<Arc<Track>> = (0..1961).map(|_| titled_track("Song")).collect();
         let search = query("moon", (0..7).collect(), 0);
+        let title = search_title(&search, tracks.len());
         let overlay =
             SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .title(&title)
                 .tracks(&tracks)
                 .bounds(Rect::new(0, 0, 80, 28))
                 .container(pane_container(Rect::new(0, 0, 80, 28)));
@@ -388,8 +401,10 @@ mod tests {
         let theme = noir();
         let tracks = [titled_track("Alpha"), titled_track("Beta")];
         let search = query("a", matches, selected_index);
+        let title = search_title(&search, tracks.len());
         let overlay =
             SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .title(&title)
                 .tracks(&tracks)
                 .bounds(Rect::new(0, 0, 80, 28))
                 .container(ModalContainer::Floating(&[]));
@@ -404,7 +419,9 @@ mod tests {
         let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let tracks = [titled_track("Alpha"), titled_track("Beta")];
         let search = query("a", vec![0, 1], 1);
+        let title = search_title(&search, tracks.len());
         let overlay = SearchWidget::new(&search, active_theme)
+            .title(&title)
             .tracks(&tracks)
             .bounds(Rect::new(0, 0, 80, 28))
             .container(pane_container(Rect::new(0, 0, 80, 28)));
@@ -431,8 +448,10 @@ mod tests {
         let tracks = [titled_track("Track")];
         let search = query("t", vec![0], 0);
         let pane = Rect::new(0, 0, 80, 28);
+        let title = search_title(&search, tracks.len());
         let overlay =
             SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .title(&title)
                 .tracks(&tracks)
                 .bounds(pane)
                 .container(pane_container(pane));
@@ -455,8 +474,10 @@ mod tests {
         let theme = noir();
         let tracks = [titled_track("Alpha")];
         let search = query("", vec![0; count], count - 1);
+        let title = search_title(&search, tracks.len());
         let overlay =
             SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .title(&title)
                 .tracks(&tracks)
                 .bounds(Rect::new(0, 0, 80, 28))
                 .container(ModalContainer::Floating(&[]));
@@ -479,8 +500,10 @@ mod tests {
         } else {
             ModalContainer::Floating(&[])
         };
+        let title = search_title(&search, tracks.len());
         let overlay =
             SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .title(&title)
                 .tracks(&tracks)
                 .bounds(Rect::new(0, 0, 80, 28))
                 .container(container);
@@ -500,8 +523,10 @@ mod tests {
         let tracks: [Arc<Track>; 0] = [];
         let search = CursorOver::default();
         let container = pane.map_or(ModalContainer::Floating(&[]), pane_container);
+        let title = search_title(&search, tracks.len());
         let overlay =
             SearchWidget::new(&search, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .title(&title)
                 .tracks(&tracks)
                 .bounds(Rect::new(0, 0, 4, 3))
                 .container(container);

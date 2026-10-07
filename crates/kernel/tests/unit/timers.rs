@@ -13,7 +13,11 @@ use kernel::{
     update::machine::Unhandled,
 };
 
-use crate::support::{playing_model, update::update};
+use crate::support::{
+    model_with_dated_tracks,
+    playing_model,
+    update::{send, update},
+};
 
 fn sent(model: &mut Model, message: Message) -> Cmd {
     update(model, message, Moment::default()).unwrap()
@@ -56,6 +60,30 @@ fn position(position: Duration) -> Message {
 
 fn moment(millis: u64) -> Moment {
     Moment::new(Duration::from_millis(millis))
+}
+
+#[test]
+fn a_seek_back_after_the_preload_arms_no_preload_point() {
+    let mut model = model_with_dated_tracks(3);
+    send(&mut model, Message::Playback(PlaybackRequest::Toggle));
+    send(&mut model, Message::Audio(AudioEvent::Loaded(None)));
+    send(&mut model, position(secs(95)));
+    let mark = model.revisions.lookahead;
+    send(&mut model, Message::Elapsed(Timer::Lookahead(mark)));
+    assert!(matches!(
+        model.player,
+        Player::Playing {
+            preloaded: Some(_),
+            ..
+        }
+    ));
+
+    let cmd = sent(
+        &mut model,
+        Message::Playback(PlaybackRequest::SeekTo(secs(10))),
+    );
+
+    assert!(scheduled(&cmd).is_empty(), "{cmd:?}");
 }
 
 #[test]

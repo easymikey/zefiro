@@ -2,7 +2,7 @@ use crate::{
     cmd::Cmd,
     domain::cursor_over::CursorOver,
     message::{HistoryRequest, Message, QueueRequest},
-    update::machine::{Machine, Unhandled, move_cursor},
+    update::machine::{Machine, Unhandled, replace},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,15 +23,15 @@ impl Machine for CursorOver<()> {
         match request {
             HistoryRequest::Navigate(direction) => {
                 let moved = self.cursor.resize(rows).step(direction.sign());
-                move_cursor(&mut self.cursor, moved)
+                replace(&mut self.cursor, moved).map(|()| Cmd::none())
             }
             HistoryRequest::SelectFirst => {
                 let moved = self.cursor.first();
-                move_cursor(&mut self.cursor, moved)
+                replace(&mut self.cursor, moved).map(|()| Cmd::none())
             }
             HistoryRequest::SelectLast => {
                 let moved = self.cursor.resize(rows).last();
-                move_cursor(&mut self.cursor, moved)
+                replace(&mut self.cursor, moved).map(|()| Cmd::none())
             }
             HistoryRequest::Enqueue => {
                 let selected = self.selected().get();

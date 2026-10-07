@@ -24,12 +24,12 @@ impl<T> CursorOver<T> {
 pub(crate) fn cycled<T>(current: T, direction: Direction) -> T
 where
     T: IntoEnumIterator + Copy + PartialEq,
+    T::Iterator: ExactSizeIterator,
 {
-    let variants: Vec<T> = T::iter().collect();
-    let index = variants
-        .iter()
-        .position(|variant| *variant == current)
+    let index = T::iter()
+        .position(|variant| variant == current)
         .unwrap_or(0);
-    let next = direction.wrapped(index, variants.len());
-    variants.get(next).copied().unwrap_or(current)
+    T::iter()
+        .nth(direction.wrapped(index, T::iter().len()))
+        .unwrap_or(current)
 }

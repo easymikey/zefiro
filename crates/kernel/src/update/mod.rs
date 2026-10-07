@@ -278,7 +278,16 @@ fn config_parts(model: &mut Model) -> config::ConfigParts<'_> {
         settings,
         themes,
         music_dir,
-        ..
+        library: _library,
+        scan_status: _scan_status,
+        playlist: _playlist,
+        playlist_source: _playlist_source,
+        queue: _queue,
+        player: _player,
+        transport: _transport,
+        history: _history,
+        favorites: _favorites,
+        drivers: _drivers,
     } = model;
     config::ConfigParts {
         workspace,
@@ -298,7 +307,14 @@ pub(crate) fn playback_parts(model: &mut Model) -> player::PlaybackParts<'_> {
         workspace,
         revisions,
         settings,
-        ..
+        library: _library,
+        music_dir: _music_dir,
+        scan_status: _scan_status,
+        playlist_source: _playlist_source,
+        history: _history,
+        favorites: _favorites,
+        themes: _themes,
+        drivers: _drivers,
     } = model;
     player::PlaybackParts {
         player,
@@ -325,7 +341,9 @@ fn browse_parts(model: &mut Model) -> browse::BrowseParts<'_> {
         scan_status,
         music_dir,
         playlist_source,
-        ..
+        history: _history,
+        themes: _themes,
+        drivers: _drivers,
     } = model;
     browse::BrowseParts {
         playback_parts: player::PlaybackParts {
@@ -358,7 +376,10 @@ pub(crate) fn library_parts(model: &mut Model) -> library::LibraryParts<'_> {
         playlist_source,
         player,
         queue,
-        ..
+        transport: _transport,
+        settings: _settings,
+        themes: _themes,
+        drivers: _drivers,
     } = model;
     library::LibraryParts {
         library,
@@ -445,6 +466,7 @@ fn driver_died(
             let resumed = driver::resume_driver(
                 driver::ResumeParts {
                     player: &model.player,
+                    transport: &model.transport,
                     revisions: &mut model.revisions,
                 },
                 driver_name,

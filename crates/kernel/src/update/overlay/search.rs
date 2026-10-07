@@ -10,7 +10,7 @@ use crate::{
         track::Track,
     },
     message::{Message, QueueRequest, SearchEdit, SearchRequest},
-    update::machine::{Machine, Unhandled, move_cursor},
+    update::machine::{Machine, Unhandled, replace},
 };
 
 impl Machine for CursorOver<SearchQuery> {
@@ -25,7 +25,7 @@ impl Machine for CursorOver<SearchQuery> {
             }
             SearchRequest::Navigate(direction) => {
                 let moved = self.cursor.step(direction.sign());
-                move_cursor(&mut self.cursor, moved)
+                replace(&mut self.cursor, moved).map(|()| Cmd::none())
             }
             SearchRequest::Enqueue => enqueue(self),
         }

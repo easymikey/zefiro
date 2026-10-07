@@ -1,6 +1,8 @@
+use std::borrow::Cow;
+
 use kernel::domain::{appearance::SpeedChip, geometry::Cells, speed::Speed};
 use ratatui::{style::Color, text::Span};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     pixels::numeric::small_count_u16,
@@ -9,13 +11,22 @@ use crate::{
 };
 
 #[must_use]
-pub(crate) fn spans(label: &str, colors: &Colors<Color>) -> Vec<Span<'static>> {
+pub(crate) fn spans<'a>(
+    label: impl Into<Cow<'a, str>>,
+    colors: &Colors<Color>,
+) -> Vec<Span<'a>> {
+    let label = label.into();
+    let label = if label.chars().any(char::is_lowercase) {
+        Cow::Owned(label.to_uppercase())
+    } else {
+        label
+    };
     vec![
-        text(format!("{}{}", glyphs::chip::OPEN, glyphs::chip::PAD))
+        text(glyphs::chip::OPEN_PAD)
             .fg(colors.muted_foreground)
             .into(),
-        text(label.to_uppercase()).fg(colors.foreground).into(),
-        text(format!("{}{}", glyphs::chip::PAD, glyphs::chip::CLOSE))
+        text(label).fg(colors.foreground).into(),
+        text(glyphs::chip::PAD_CLOSE)
             .fg(colors.muted_foreground)
             .into(),
     ]
@@ -23,15 +34,14 @@ pub(crate) fn spans(label: &str, colors: &Colors<Color>) -> Vec<Span<'static>> {
 
 #[must_use]
 pub(crate) fn width(label: &str) -> Cells {
-    let decoration = format!(
-        "{}{}{}{}",
-        glyphs::chip::OPEN,
-        glyphs::chip::PAD,
-        glyphs::chip::PAD,
-        glyphs::chip::CLOSE
-    );
-    let cells = decoration.width() + label.to_uppercase().width();
-    Cells(small_count_u16(cells))
+    let cells = label
+        .chars()
+        .flat_map(char::to_uppercase)
+        .map(|ch| ch.width().unwrap_or(0))
+        .sum::<usize>();
+    Cells(small_count_u16(
+        glyphs::chip::OPEN_PAD.width() + glyphs::chip::PAD_CLOSE.width() + cells,
+    ))
 }
 
 fn speed_chip_text(speed: Speed, speed_chip: SpeedChip) -> Option<String> {

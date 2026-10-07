@@ -30,7 +30,7 @@ use widgets::{
     },
 };
 
-#[path = "fixtures.rs"] pub(crate) mod fixtures;
+pub(crate) mod fixtures;
 
 use fixtures::track;
 
@@ -189,28 +189,27 @@ pub(crate) fn playlist_areas(selected_area: Option<Rect>) -> PlaylistAreas {
     }
 }
 
-pub(crate) fn quiet_backdrop() -> Backdrop {
+pub(crate) fn quiet_backdrop() -> Backdrop<'static> {
     Backdrop {
         animations: kernel::domain::appearance::Animations::On,
         layout: FrameLayout::empty(Rect::default(), Breakpoint::Full),
         style: BackdropStyle {
             background: BACKGROUND,
-            accent: ACCENT,
-            volume_fill: volume_fill(),
+            accent: volume_fill(),
             volume_lifted: volume_lifted(),
         },
         wash_from: BACKGROUND,
     }
 }
 
-pub(crate) fn screen_backdrop() -> Backdrop {
+pub(crate) fn screen_backdrop() -> Backdrop<'static> {
     Backdrop {
         layout: FrameLayout::empty(SCREEN, Breakpoint::Full),
         ..quiet_backdrop()
     }
 }
 
-pub(crate) fn pane_backdrop() -> Backdrop {
+pub(crate) fn pane_backdrop() -> Backdrop<'static> {
     Backdrop {
         layout: FrameLayout {
             card_metrics: Some(card_metrics(PANE_STATUS, CARD_TITLE, VOLUME_LABEL)),
@@ -221,7 +220,7 @@ pub(crate) fn pane_backdrop() -> Backdrop {
     }
 }
 
-pub(crate) fn chip_backdrop() -> Backdrop {
+pub(crate) fn chip_backdrop() -> Backdrop<'static> {
     Backdrop {
         layout: FrameLayout {
             card_metrics: Some(card_metrics(AREA, Rect::default(), Rect::default())),
@@ -231,7 +230,7 @@ pub(crate) fn chip_backdrop() -> Backdrop {
     }
 }
 
-pub(crate) fn overlay_backdrop(overlay: Option<Rect>) -> Backdrop {
+pub(crate) fn overlay_backdrop(overlay: Option<Rect>) -> Backdrop<'static> {
     Backdrop {
         layout: FrameLayout {
             overlay_areas: overlay
@@ -248,7 +247,7 @@ pub(crate) enum ToastPresence {
     Hidden,
 }
 
-pub(crate) fn toast_backdrop(presence: ToastPresence) -> Backdrop {
+pub(crate) fn toast_backdrop(presence: ToastPresence) -> Backdrop<'static> {
     let toast = match presence {
         ToastPresence::Shown => Some(AREA),
         ToastPresence::Hidden => None,
@@ -262,7 +261,7 @@ pub(crate) fn toast_backdrop(presence: ToastPresence) -> Backdrop {
     }
 }
 
-pub(crate) fn toast_card_backdrop() -> Backdrop {
+pub(crate) fn toast_card_backdrop() -> Backdrop<'static> {
     Backdrop {
         layout: FrameLayout {
             toast: Some(TOAST_CARD),

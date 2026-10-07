@@ -66,8 +66,8 @@ impl std::fmt::Debug for Track {
             tags,
             audio_format,
             display,
+            title: _title,
             tagging,
-            ..
         } = self;
         formatter
             .debug_struct("Track")

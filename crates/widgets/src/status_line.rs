@@ -40,16 +40,16 @@ pub(crate) struct StatusLineView<'a> {
 
 const NAME: &str = "Playlist";
 
-fn counts(status_line_view: StatusLineView<'_>) -> String {
+fn counts<'a>(status_line_view: StatusLineView<'a>) -> Cow<'a, str> {
     match status_line_view.scan_status {
-        ScanStatus::Idle => format!(
+        ScanStatus::Idle => Cow::Owned(format!(
             "{}/{}",
             (status_line_view.selected.get() + 1).min(status_line_view.playlist_len),
             status_line_view.playlist_len
-        ),
-        ScanStatus::Scanning => status_line_view.scanning_label.to_string(),
+        )),
+        ScanStatus::Scanning => Cow::Borrowed(status_line_view.scanning_label),
         ScanStatus::Tagging { done, total } => {
-            format!("{total} tracks · tagging {done}/{total}")
+            Cow::Owned(format!("{total} tracks · tagging {done}/{total}"))
         }
     }
 }
@@ -72,8 +72,8 @@ pub(crate) fn status_line<'a>(
     };
     let repeat: &'static str = <&'static str>::from(status_line_view.repeat_mode);
 
-    let flag = |label: &'static str, value: Cow<'a, str>| -> Vec<StyledText<'a>> {
-        vec![
+    let flag = |label: &'static str, value: Cow<'a, str>| -> [StyledText<'a>; 2] {
+        [
             text(label).fg(colors.muted_foreground),
             text(value).fg(colors.accent),
         ]

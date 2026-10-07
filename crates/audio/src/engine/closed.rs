@@ -90,7 +90,11 @@ impl Closed {
         revisions: &mut JobRevisions,
         device_opened: DeviceOpened,
     ) -> (Live, AudioLoopCmd) {
-        let DeviceOpened { device, .. } = device_opened;
+        let DeviceOpened {
+            device,
+            position: _position,
+            playback: _playback,
+        } = device_opened;
         let mut live = Live::new(
             AudioSettings {
                 device,
@@ -120,7 +124,7 @@ mod tests {
             transport::OutputError,
         },
         message::AudioEvent,
-        update::machine::{LoopEffect, Unhandled},
+        update::machine::{LoopEffect, Machine, Unhandled},
     };
     use rstest::rstest;
 
@@ -128,7 +132,7 @@ mod tests {
         deck::job::AudioJob,
         engine::{
             effect::EngineEffect,
-            message::EngineMessage,
+            message::{AudioMessage, EngineMessage},
             state::{Closed, EngineState, Live},
             tests::{
                 EngineRow,
@@ -142,6 +146,7 @@ mod tests {
                 crossfade,
                 decoding,
                 device_error,
+                driver_with,
                 failed,
                 first,
                 live,
@@ -288,7 +293,6 @@ mod tests {
     #[rstest]
     #[case::closed_ignores_a_decode(closed(), EngineMessage::Decoded(None))]
     #[case::closed_ignores_a_preload_answer(closed(), attached(&track_b(), Revision::default()))]
-    #[case::closed_ignores_a_second_output_error(closed(), failed())]
     fn a_stale_cell_leaves_the_closed_engine_alone(
         #[case] engine_state: EngineState,
         #[case] message: EngineMessage,
@@ -319,6 +323,13 @@ mod tests {
     }
 
     #[test]
+    fn closed_ignores_a_second_output_error() {
+        let mut driver = driver_with(closed());
+        assert_eq!(driver.transition(failed()).err(), Some(Unhandled));
+        assert_eq!(driver.engine.state, closed());
+    }
+
+    #[test]
     fn closed_stop_without_a_load_is_refused() {
         let mut state = closed();
         assert_eq!(step(&mut state, cmd(AudioCmd::Stop)).err(), Some(Unhandled));
@@ -341,23 +352,21 @@ mod tests {
         AudioEvent::OutputLost(OutputError::DeviceGone)
     )]
     #[case::a_reopen_error_while_live(
-        EngineMessage::Error(device_error()),
+        AudioMessage::Engine(EngineMessage::Error(device_error())),
         AudioEvent::Error(device_error())
     )]
     fn an_error_mutes_the_engine_once(
-        #[case] message: EngineMessage,
+        #[case] message: AudioMessage,
         #[case] expected: AudioEvent,
     ) {
-        let (engine, log) = trace(EngineState::Live(playing()), vec![message]).unwrap();
+        let mut driver = driver_with(EngineState::Live(playing()));
         assert_same(
-            log,
-            vec![
-                Cmd::effect(LoopEffect::Execute(EngineEffect::Silence))
-                    .then(Cmd::message(expected)),
-            ],
+            driver.transition(message),
+            Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Silence))
+                .then(Cmd::message(expected))),
         );
 
-        assert_eq!(silenced(engine), None);
+        assert_eq!(silenced(driver.engine.state), None);
     }
 
     #[test]

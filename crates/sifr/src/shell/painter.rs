@@ -3,13 +3,12 @@ use std::{mem, sync::Arc};
 use audio::spectrum::SpectrumAnalyzer;
 use crossterm::event::Event;
 use kernel::{
-    cmd::WindowColorsCmd,
+    cmd::{Playback, WindowColorsCmd},
     domain::{
         appearance::{Animations, Appearance},
         config::Diagnostic,
         cue::Cue,
         geometry::{Cells, Pixels},
-        time::Moment,
     },
     message::PaintError,
     update::machine::{Machine, Unhandled},
@@ -30,7 +29,6 @@ use widgets::{
     card::{CardCover, clock_frame_due},
     pixels::cover::{
         CoverImage,
-        CoverMotion,
         CoverRefresh,
         CrossfadePermit,
         gate::{CoverArrival, CrossfadeGateMessage},
@@ -52,8 +50,6 @@ use crate::shell::{
     view,
     window_colors::{WindowColorsMessage, WindowColorsWrite},
 };
-
-const NO_BANDS: Spectrum = [0.0; SPECTRUM_BANDS];
 
 pub(crate) struct Painter<'terminal, B: Backend> {
     terminal: &'terminal mut Terminal<B>,
@@ -102,7 +98,7 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
                     color_depth,
                 )
             },
-            cover_painter: CoverPainter::new(picker, cell_pixels),
+            cover_painter: CoverPainter::new(picker, cell_pixels, pixel_path),
             cell_pixels,
             spectrum_analyzer: SpectrumAnalyzer::new(),
             motion: Motion {
@@ -193,7 +189,9 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
 
     fn accept_cover(&mut self, decoded: &CoverDecoded) {
         let CoverDecoded {
-            path, cover_lookup, ..
+            path,
+            cover_lookup,
+            side: _side,
         } = decoded;
         let arrival = match cover_lookup {
             library::cover::CoverLookup::Found(image) => {
@@ -214,17 +212,19 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
         }
     }
 
-    fn painted(&mut self, frame_layout: &FrameLayout) -> Painted {
+    fn painted(&mut self, cover_area: Option<Rect>, visible_rows: Cells) -> Painted {
         Painted {
-            cover_side: frame_layout
-                .cover_area
-                .map(|rect| cover_side(rect, self.cell_pixels)),
-            visible_rows: frame_layout.playlist_body_height(),
+            cover_side: cover_area.map(|rect| cover_side(rect, self.cell_pixels)),
+            visible_rows,
             errors: mem::take(&mut self.errors),
         }
     }
 
-    fn backdrop(&self, animations: Animations, layout: FrameLayout) -> Backdrop {
+    fn backdrop<'a>(
+        &self,
+        animations: Animations,
+        layout: FrameLayout<'a>,
+    ) -> Backdrop<'a> {
         let theme =
             ActiveTheme::new(&self.presentation.theme, self.presentation.color_depth)
                 .with_volume_pulse(TIMINGS.volume_pulse_mix);
@@ -240,33 +240,21 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
         }
     }
 
-    fn cover_motion(&self, now: Moment) -> CoverMotion {
-        let elapsed = self.motion.paint_clock.elapsed(now);
-        self.cover_painter.motion(elapsed)
-    }
-
     fn smoothed_bands(&mut self, frame: &Frame<'_>) -> Spectrum {
         match self.motion.on_screen.spectrum {
             Presence::Shown => {
-                let raw_bands = self.raw_bands(frame);
+                let raw_bands = frame.model.player.is_playing().then(|| {
+                    self.spectrum_analyzer
+                        .bands::<SPECTRUM_BANDS>(frame.spectrum_tap)
+                });
                 let elapsed = frame.now.elapsed_since(self.motion.spectrum_advanced_at);
                 self.motion.spectrum_advanced_at = frame.now;
-                let feed = SpectrumFeed::of(&frame.model.player, &raw_bands);
+                let feed = raw_bands
+                    .as_ref()
+                    .map_or(SpectrumFeed::Silent, SpectrumFeed::Live);
                 self.motion.spectrum_smoothing.advance(feed, elapsed)
             }
             Presence::Hidden => *self.motion.spectrum_smoothing.bands(),
-        }
-    }
-
-    fn raw_bands(&mut self, frame: &Frame<'_>) -> Spectrum {
-        match (
-            self.motion.on_screen.spectrum,
-            frame.model.player.is_playing(),
-        ) {
-            (Presence::Shown, true) => self
-                .spectrum_analyzer
-                .bands::<SPECTRUM_BANDS>(frame.spectrum_tap),
-            (Presence::Shown | Presence::Hidden, _) => NO_BANDS,
         }
     }
 }
@@ -301,7 +289,7 @@ where
         let next_frame = self.motion.next_frame();
         let animation = animation_frame_due(
             &self.animation_stage,
-            self.cover_motion(frame.now),
+            self.cover_painter.motion(),
             next_frame,
         );
         let progress = progress_frame_due(
@@ -320,7 +308,7 @@ where
             Presence::Shown => self
                 .motion
                 .spectrum_smoothing
-                .frame_due(SpectrumFeed::of(scene.player, &NO_BANDS), next_frame),
+                .frame_due(Playback::from(scene.player), next_frame),
             Presence::Hidden => None,
         };
         [animation, progress, clock, sleep, spectrum]
@@ -362,7 +350,7 @@ where
             .advance_to(scene.presentation.since_first_paint);
         let backdrop = self.backdrop(
             scene.settings.appearance_settings.animations,
-            protected_layout(layout, &card_cover),
+            protected_layout(&layout, &card_cover),
         );
         if mem::replace(&mut self.motion.screen_clear, ScreenClear::NotDue)
             == ScreenClear::Due
@@ -381,19 +369,27 @@ where
             animation_stage.play(cues, &backdrop);
             animation_stage.advance(screen.buffer_mut(), elapsed);
         })?;
+        let (cover_area, visible_rows) =
+            (layout.cover_area, layout.playlist_body_height());
         self.flush_staged_window_colors();
-        Ok(self.painted(&layout))
+        Ok(self.painted(cover_area, visible_rows))
     }
 }
 
-fn protected_layout(layout: FrameLayout, card_cover: &CardCover) -> FrameLayout {
-    if matches!(card_cover, CardCover::Image) {
-        layout
+fn protected_layout<'a>(
+    layout: &FrameLayout<'a>,
+    card_cover: &CardCover,
+) -> FrameLayout<'a> {
+    let cover_area = if matches!(card_cover, CardCover::Image) {
+        layout.cover_area
     } else {
-        FrameLayout {
-            cover_area: None,
-            ..layout
-        }
+        None
+    };
+    FrameLayout {
+        cover_area,
+        remaining_label: String::new(),
+        overlay_content: None,
+        ..*layout
     }
 }
 
@@ -403,7 +399,12 @@ mod tests {
 
     use audio::tap::SpectrumTap;
     use crossterm::event::Event;
-    use kernel::domain::{appearance::Animations, model::Model, time::Moment};
+    use kernel::domain::{
+        appearance::Animations,
+        geometry::Cells,
+        model::Model,
+        time::Moment,
+    };
     use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
     use rstest::rstest;
     use runtime::{
@@ -445,7 +446,10 @@ mod tests {
         fallback_theme()
     }
 
-    fn test_backdrop(card_cover: &CardCover, outgoing: Option<Color>) -> Backdrop {
+    fn test_backdrop(
+        card_cover: &CardCover,
+        outgoing: Option<Color>,
+    ) -> Backdrop<'static> {
         let mut terminal = test_terminal();
         let mut painter =
             Painter::new(&mut terminal, test_theme(), test_capabilities());
@@ -461,15 +465,18 @@ mod tests {
             content: Rect::default(),
             header: Rect::default(),
             card_metrics: None,
+            progress_bar_width: Cells(0),
+            remaining_label: String::new(),
             cover_area: Some(Rect::new(0, 0, 4, 4)),
             playlist_pane: Rect::default(),
             playlist_areas: None,
             key_hints: None,
             search_bounds: Rect::default(),
             overlay_areas: None,
+            overlay_content: None,
             toast: Some(Rect::new(0, 0, 10, 1)),
         };
-        painter.backdrop(Animations::On, protected_layout(layout, card_cover))
+        painter.backdrop(Animations::On, protected_layout(&layout, card_cover))
     }
 
     #[test]

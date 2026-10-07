@@ -15,6 +15,12 @@ pub enum Presence {
     Hidden,
 }
 
+impl From<bool> for Presence {
+    fn from(visible: bool) -> Self {
+        if visible { Self::Shown } else { Self::Hidden }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OnScreen {
     pub progress_bar_width: Option<Cells>,
@@ -66,7 +72,9 @@ pub fn progress_frame_due(
     now: Moment,
 ) -> Option<Moment> {
     let Player::Playing {
-        playhead, track, ..
+        playhead,
+        track,
+        preloaded: _preloaded,
     } = player
     else {
         return None;

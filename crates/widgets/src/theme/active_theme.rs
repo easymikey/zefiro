@@ -6,7 +6,7 @@ use ratatui::style::Color;
 use crate::theme::{
     Theme,
     colors::Colors,
-    rgb::{ColorDepth, color_at_depth, lerp_rgb, scale_channel},
+    rgb::{ColorDepth, color_at_depth, lerp_rgb, shade},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -79,8 +79,7 @@ impl<'a> ActiveTheme<'a> {
 
     #[must_use]
     pub(crate) fn muted_accent(&self) -> Color {
-        let accent = self.theme.colors.accent.0;
-        self.color(Rgb(accent.map(|channel| scale_channel(channel, 0.82))))
+        self.color(shade(self.theme.colors.accent, 0.82))
     }
 
     #[must_use]

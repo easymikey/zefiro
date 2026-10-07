@@ -58,23 +58,14 @@ impl Restarts {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DriverRecord {
     pub status: DriverStatus,
     pub restarts: Restarts,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Drivers([DriverRecord; 4]);
-
-impl Default for Drivers {
-    fn default() -> Self {
-        Self(DriverName::ALL.map(|_| DriverRecord {
-            status: DriverStatus::default(),
-            restarts: Restarts::default(),
-        }))
-    }
-}
 
 impl Drivers {
     #[must_use]

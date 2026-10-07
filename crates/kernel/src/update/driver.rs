@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::{
     cmd::{AudioCmd, Cmd, Effect, Playback, TrackLoad},
     domain::{
@@ -9,6 +7,7 @@ use crate::{
         supervision::{Decision, Supervision, decide_restart},
         time::Moment,
         toast::Toast,
+        transport::Transport,
     },
     message::{DriverEvent, Message},
     update::machine::{Machine, Unhandled},
@@ -65,12 +64,6 @@ impl Machine for DriverStatus {
     }
 }
 
-impl DriverStatus {
-    fn restart(&mut self) {
-        *self = DriverStatus::Running;
-    }
-}
-
 pub(crate) fn update(
     drivers: &mut Drivers,
     driver_name: DriverName,
@@ -110,7 +103,7 @@ fn restart_if_allowed(
     match decision {
         Decision::Restart => {
             let restarting = drivers.record_mut(driver_name);
-            restarting.status.restart();
+            restarting.status = DriverStatus::Running;
             restarting.restarts.record(now);
         }
         Decision::Degrade(_) => {}
@@ -120,6 +113,7 @@ fn restart_if_allowed(
 
 pub(crate) struct ResumeParts<'a> {
     pub(crate) player: &'a Player,
+    pub(crate) transport: &'a Transport,
     pub(crate) revisions: &'a mut Revisions,
 }
 
@@ -128,27 +122,48 @@ pub(crate) fn resume_driver(
     driver_name: DriverName,
     now: Moment,
 ) -> Cmd {
-    let ResumeParts { player, revisions } = parts;
+    let ResumeParts {
+        player,
+        transport,
+        revisions,
+    } = parts;
     let (track, playback) = match (driver_name, player) {
-        (DriverName::Audio, Player::Playing { track, .. } | Player::Loading(track)) => {
-            (track, Playback::Playing)
-        }
-        (DriverName::Audio, Player::Paused { track, .. }) => (track, Playback::Paused),
+        (
+            DriverName::Audio,
+            Player::Playing {
+                track,
+                playhead: _playhead,
+                preloaded: _preloaded,
+            },
+        ) => (track, Playback::Playing),
+        (DriverName::Audio, Player::Loading(track)) => (track, Playback::Playing),
+        (
+            DriverName::Audio,
+            Player::Paused {
+                track,
+                position: _position,
+                by: _by,
+            },
+        ) => (track, Playback::Paused),
         (DriverName::Audio, Player::Stopped)
         | (DriverName::Library | DriverName::Config | DriverName::Macos, _) => {
             return Cmd::none();
         }
     };
-    let track_load = TrackLoad::for_track(track, revisions.issue_effect());
-    load_from(track_load, player.position_at(now), playback)
-}
-
-fn load_from(track_load: TrackLoad, position: Duration, playback: Playback) -> Cmd {
-    Cmd::from_iter([
-        Effect::Audio(AudioCmd::Load(track_load)),
-        Effect::Audio(AudioCmd::Seek(position)),
-        Effect::Audio(AudioCmd::SetPlayback(playback)),
-    ])
+    let revision = revisions.issue_effect();
+    let preload = player.preloaded().map(|next| {
+        Effect::Audio(AudioCmd::Preload(TrackLoad::for_track(next, revision)))
+    });
+    Cmd::from_iter(
+        [
+            Effect::Audio(AudioCmd::Load(TrackLoad::for_track(track, revision))),
+            Effect::Audio(AudioCmd::Seek(player.position_at(now))),
+            Effect::Audio(AudioCmd::SetPlayback(playback)),
+            Effect::Audio(AudioCmd::SetSpeed(transport.speed)),
+        ]
+        .into_iter()
+        .chain(preload),
+    )
 }
 
 #[cfg(test)]
@@ -160,6 +175,7 @@ mod tests {
     use crate::{
         cmd::{AudioCmd, Cmd, Effect, Playback, TrackLoad},
         domain::{
+            bounded::Bounded,
             driver::{DriverError, DriverName, DriverStatus, Drivers},
             player::{PausedBy, Player},
             playhead::Playhead,
@@ -169,6 +185,7 @@ mod tests {
             time::Moment,
             toast::Toast,
             track::Track,
+            transport::Transport,
         },
         message::Message,
         update::{
@@ -270,15 +287,6 @@ mod tests {
         assert_eq!(result, row.result);
     }
 
-    #[test]
-    fn dead_restarts() {
-        let mut status = dead();
-
-        status.restart();
-
-        assert_eq!(status, DriverStatus::Running);
-    }
-
     #[rstest]
     #[case::a_dead_driver(dead())]
     #[case::a_stopped_driver(DriverStatus::Stopped)]
@@ -334,6 +342,10 @@ mod tests {
         Arc::new(Track::listed(Path::new("/music/a.flac")))
     }
 
+    fn next_track() -> Arc<Track> {
+        Arc::new(Track::listed(Path::new("/music/b.flac")))
+    }
+
     fn reloaded(position: Duration, playback: Playback) -> Cmd {
         Cmd::from_iter([
             Effect::Audio(AudioCmd::Load(TrackLoad::for_track(
@@ -342,6 +354,7 @@ mod tests {
             ))),
             Effect::Audio(AudioCmd::Seek(position)),
             Effect::Audio(AudioCmd::SetPlayback(playback)),
+            Effect::Audio(AudioCmd::SetSpeed(Speed::default())),
         ])
     }
 
@@ -388,11 +401,52 @@ mod tests {
         let effects = resume_driver(
             ResumeParts {
                 player: &row.player,
+                transport: &Transport::default(),
                 revisions: &mut revisions,
             },
             row.driver_name,
             Moment::default(),
         );
         assert_eq!(effects, row.cmd);
+    }
+
+    #[test]
+    fn an_audio_restart_resends_the_speed_and_the_preload() {
+        let speed = Speed::clamped(1.5);
+        let player = Player::Playing {
+            track: track(),
+            playhead: Playhead::anchored(
+                Duration::from_secs(5),
+                Moment::default(),
+                speed,
+            ),
+            preloaded: Some(next_track()),
+        };
+        let revision = Revisions::default().issue_effect();
+        let effects = resume_driver(
+            ResumeParts {
+                player: &player,
+                transport: &Transport {
+                    speed,
+                    ..Transport::default()
+                },
+                revisions: &mut Revisions::default(),
+            },
+            DriverName::Audio,
+            Moment::default(),
+        );
+        assert_eq!(
+            effects,
+            Cmd::from_iter([
+                Effect::Audio(AudioCmd::Load(TrackLoad::for_track(&track(), revision))),
+                Effect::Audio(AudioCmd::Seek(Duration::from_secs(5))),
+                Effect::Audio(AudioCmd::SetPlayback(Playback::Playing)),
+                Effect::Audio(AudioCmd::SetSpeed(speed)),
+                Effect::Audio(AudioCmd::Preload(TrackLoad::for_track(
+                    &next_track(),
+                    revision,
+                ))),
+            ])
+        );
     }
 }

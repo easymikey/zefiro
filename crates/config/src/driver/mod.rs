@@ -12,7 +12,7 @@ use std::{
 };
 
 use kernel::{
-    cmd::{Cmd, Cmds, ConfigCmd},
+    cmd::{Cmd, ConfigCmd},
     domain::{
         appearance::Appearance,
         config::{ConfigError, ConfigName, Diagnostic},
@@ -27,6 +27,7 @@ use crate::{
     appearance_file::TomlAppearance,
     driver::{
         effect::{ConfigEffect, ConfigLoopCmd},
+        files::parent_dir,
         message::ConfigMessage,
         paths::ConfigPaths,
         saves::PendingSaves,
@@ -39,8 +40,6 @@ use crate::{
 
 pub struct ConfigDriver<P: Fn(TomlTheme), A: Fn(Appearance)> {
     dir: Option<PathBuf>,
-    config_path: PathBuf,
-    appearance_path: PathBuf,
     default_music_dir: Option<PathBuf>,
     watch: ConfigWatch,
     saves: PendingSaves,
@@ -62,9 +61,7 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> std::fmt::Debug for ConfigDriver<P, A>
 impl<P: Fn(TomlTheme), A: Fn(Appearance)> ConfigDriver<P, A> {
     pub fn new(paths: &ConfigPaths, publish_theme: P, publish_appearance: A) -> Self {
         Self {
-            dir: config_directory(&paths.appearance_path),
-            config_path: paths.config_path.clone(),
-            appearance_path: paths.appearance_path.clone(),
+            dir: parent_dir(&paths.appearance_path).map(Path::to_path_buf),
             default_music_dir: paths.default_music_dir.clone(),
             watch: ConfigWatch::new(paths),
             saves: PendingSaves::default(),
@@ -83,7 +80,7 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> Machine for ConfigDriver<P, A> {
         message: ConfigMessage,
     ) -> Result<ConfigLoopCmd, Unhandled> {
         match message {
-            ConfigMessage::Cmds(Cmds { cmds, .. }) => self.transition_cmds(cmds),
+            ConfigMessage::Cmds(batch) => self.transition_cmds(batch.cmds),
             ConfigMessage::Started => {
                 let watch = self.dir.clone().map_or_else(
                     || {
@@ -106,9 +103,6 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> Machine for ConfigDriver<P, A> {
             }
             ConfigMessage::Watch(message) => self.drive_watch(message),
             ConfigMessage::Elapsed(revision) => self.saves.elapsed(revision),
-            ConfigMessage::Saved { name, text } => {
-                self.drive_watch(ConfigWatchMessage::Saved { name, text })
-            }
             ConfigMessage::Error(error) => Ok(Cmd::message(ConfigEvent::Error(error))),
         }
     }
@@ -276,13 +270,6 @@ fn embedded_and_user(user_theme_names: Vec<ThemeName>) -> Vec<ThemeName> {
         })
 }
 
-fn config_directory(appearance_path: &Path) -> Option<PathBuf> {
-    appearance_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-}
-
 #[cfg(test)]
 mod tests {
     use std::{convert::Infallible, path::PathBuf, time::Instant};
@@ -310,8 +297,8 @@ mod tests {
             effect::{ConfigEffect, ConfigLoopCmd},
             message::ConfigMessage,
             paths::{ConfigPaths, SeenTexts},
-            saves::SAVE_DEBOUNCE,
-            watch::{ConfigWatchEffect, ConfigWatchMessage},
+            saves::{PendingSaves, SAVE_DEBOUNCE},
+            watch::{ConfigWatch, ConfigWatchEffect, ConfigWatchMessage, SavedFile},
         },
         theme_file::TomlTheme,
     };
@@ -420,6 +407,17 @@ mod tests {
         driver.transition(message).unwrap()
     }
 
+    fn state(
+        driver: &Driver,
+    ) -> (Option<PathBuf>, Option<PathBuf>, ConfigWatch, PendingSaves) {
+        (
+            driver.dir.clone(),
+            driver.default_music_dir.clone(),
+            driver.watch.clone(),
+            driver.saves.clone(),
+        )
+    }
+
     #[rstest]
     #[case::started(ConfigMessage::Started, Ok(Cmd::from_iter([
         "watch /config".to_string(),
@@ -433,7 +431,7 @@ mod tests {
         read_done(ConfigName::Config, None),
         Ok(Cmd::none())
     )]
-    #[case::own_appearance_write(ConfigMessage::Saved { name: ConfigName::Appearance, text: "[window]\n".to_string() }, Ok(Cmd::none()))]
+    #[case::own_appearance_write(ConfigMessage::Watch(ConfigWatchMessage::Saved { saved_file: SavedFile::Appearance, text: "[window]\n".to_string() }), Ok(Cmd::none()))]
     #[case::save_error(
         ConfigMessage::Error(ConfigError::Save { name: ConfigName::Config, error: IoError::Other }),
         Ok(Cmd::message(ConfigEvent::Error(ConfigError::Save { name: ConfigName::Config, error: IoError::Other }))),
@@ -460,10 +458,10 @@ mod tests {
     #[case::nothing_pending(ConfigMessage::Elapsed(Revision::default()))]
     fn a_fresh_driver_refuses_and_stays_unchanged(#[case] message: ConfigMessage) {
         let mut fresh = driver(None);
-        let before = format!("{fresh:?}");
+        let before = state(&fresh);
 
         assert!(matches!(fresh.transition(message), Err(Unhandled)));
-        assert_eq!(format!("{fresh:?}"), before);
+        assert_eq!(state(&fresh), before);
     }
 
     #[test]
@@ -630,10 +628,10 @@ mod tests {
             );
         }
 
-        let before_stale = format!("{current:?}");
+        let before_stale = state(&current);
         let stale =
             current.transition(ConfigMessage::Elapsed(Revision::default().next()));
-        assert_eq!(format!("{current:?}"), before_stale);
+        assert_eq!(state(&current), before_stale);
         let config_message = ConfigMessage::Elapsed(current.saves.revision());
         let due = step(&mut current, config_message);
 
@@ -720,11 +718,11 @@ mod tests {
             .collect();
 
         assert_eq!(names, expected);
-        let flushed_state = format!("{next:?}");
+        let flushed_state = state(&next);
         assert!(matches!(
             next.transition(ConfigMessage::Elapsed(old)),
             Err(Unhandled)
         ));
-        assert_eq!(format!("{next:?}"), flushed_state);
+        assert_eq!(state(&next), flushed_state);
     }
 }

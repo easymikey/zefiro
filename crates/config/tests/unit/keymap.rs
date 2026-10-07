@@ -3,17 +3,17 @@ use kernel::domain::keymap::{Action, KeyContext, KeyOverride};
 use rstest::rstest;
 
 #[rstest]
-#[case::a_string_is_the_short_form_for_the_global_context(
+#[case::a_string_keeps_the_action_context(
     "next = \"y\"",
-    KeyOverride::from("y")
+    KeyOverride { chord: String::from("y"), key_context: None }
 )]
 #[case::a_table_names_the_context(
     "next = { chord = \"y\", context = \"search\" }",
-    KeyOverride { chord: String::from("y"), key_context: KeyContext::Search }
+    KeyOverride { chord: String::from("y"), key_context: Some(KeyContext::Search) }
 )]
-#[case::a_table_without_a_context_is_global(
+#[case::a_table_without_a_context_keeps_the_action_context(
     "next = { chord = \"y\" }",
-    KeyOverride::from("y")
+    KeyOverride { chord: String::from("y"), key_context: None }
 )]
 fn a_key_binding_reads_as_a_chord_with_its_context(
     #[case] spelling: &str,

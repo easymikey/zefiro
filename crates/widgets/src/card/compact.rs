@@ -11,8 +11,8 @@ use crate::{
     card::{CardView, card_frame},
     primitive::{
         bar::BarFill,
-        chip::{speed_chip_spans, speed_chip_width},
-        span::{line, text},
+        chip::speed_chip_spans,
+        span::{self, line, text},
         time_text::elapsed_text,
         truncate::truncate,
     },
@@ -36,15 +36,21 @@ pub(crate) struct CompactCardWidget<'a> {
     view: CardView<'a>,
     theme: ActiveTheme<'a>,
     speed_chip: SpeedChip,
+    progress_bar_width: Cells,
 }
 
 impl<'a> CompactCardWidget<'a> {
     #[must_use]
-    pub(crate) fn new(view: CardView<'a>, theme: ActiveTheme<'a>) -> Self {
+    pub(crate) fn new(
+        view: CardView<'a>,
+        theme: ActiveTheme<'a>,
+        progress_bar_width: Cells,
+    ) -> Self {
         Self {
             view,
             theme,
             speed_chip: SpeedChip::default(),
+            progress_bar_width,
         }
     }
 
@@ -57,7 +63,9 @@ impl<'a> CompactCardWidget<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CompactCardAreas {
-    inner: Rect,
+    title: Rect,
+    artist: Rect,
+    progress: Rect,
     status: Rect,
     meter: Rect,
 }
@@ -70,7 +78,24 @@ impl CompactCardAreas {
         let row = inner.y + TITLE_ROWS + PROGRESS_ROWS;
         let clamp = |rect: Rect| rect.intersection(inner);
         Self {
-            inner,
+            title: clamp(Rect {
+                x: inner.x,
+                y: inner.y,
+                width: row_width,
+                height: 1,
+            }),
+            artist: clamp(Rect {
+                x: inner.x,
+                y: inner.y + 1,
+                width: row_width,
+                height: 1,
+            }),
+            progress: clamp(Rect {
+                x: inner.x,
+                y: inner.y + TITLE_ROWS,
+                width: row_width,
+                height: 1,
+            }),
             status: clamp(Rect {
                 x: inner.x,
                 y: row,
@@ -126,34 +151,23 @@ fn paint_header_row(
     compact_card_widget: &CompactCardWidget<'_>,
     compact_card_areas: &CompactCardAreas,
 ) {
-    let inner = compact_card_areas.inner;
-    let clamp = |rect: Rect| rect.intersection(inner);
-    let row_width = inner.width;
     let colors = compact_card_widget.theme.colors();
+    let title_row = compact_card_areas.title;
+    let artist_row = compact_card_areas.artist;
 
     let title = compact_card_widget.view.title();
     let artist = compact_card_widget.view.artist();
 
-    let title_row = clamp(Rect {
-        x: inner.x,
-        y: inner.y,
-        width: row_width,
-        height: 1,
-    });
-    Paragraph::new(line([text(truncate(title, usize::from(row_width)))
+    Paragraph::new(line([text(truncate(title, usize::from(title_row.width)))
         .fg(colors.foreground)
         .bold()]))
     .render(title_row, buffer);
 
-    let artist_row = clamp(Rect {
-        x: inner.x,
-        y: inner.y + 1,
-        width: row_width,
-        height: 1,
-    });
-    Paragraph::new(line([
-        text(truncate(artist, usize::from(row_width))).fg(colors.muted_foreground)
-    ]))
+    Paragraph::new(line([text(truncate(
+        artist,
+        usize::from(artist_row.width),
+    ))
+    .fg(colors.muted_foreground)]))
     .render(artist_row, buffer);
 }
 
@@ -162,27 +176,17 @@ fn paint_progress_row(
     compact_card_widget: &CompactCardWidget<'_>,
     compact_card_areas: &CompactCardAreas,
 ) {
-    let inner = compact_card_areas.inner;
-    let clamp = |rect: Rect| rect.intersection(inner);
-    let row_width = inner.width;
-    let progress_y = inner.y + TITLE_ROWS;
-    let progress_row = clamp(Rect {
-        x: inner.x,
-        y: progress_y,
-        width: row_width,
-        height: 1,
-    });
     Paragraph::new(
         BarFill::progress(
             compact_card_widget.view.progress_fraction(),
-            Cells(row_width),
+            compact_card_widget.progress_bar_width,
         )
         .line(
             compact_card_widget.theme.progress_fill(),
             compact_card_widget.theme.progress_groove(),
         ),
     )
-    .render(progress_row, buffer);
+    .render(compact_card_areas.progress, buffer);
 }
 
 fn paint_status_row(
@@ -193,18 +197,14 @@ fn paint_status_row(
     let view = compact_card_widget.view;
     let status = view.status();
     let status_color = status.color(&compact_card_widget.theme);
-    let label = status.label();
-
-    let status_base = format!("{} {}", label.glyph, label.word);
     let elapsed_total = elapsed_text(view.position(), view.duration());
-    let status_text = format!("{status_base}  {elapsed_total}");
+    let status_text = format!("{}  {elapsed_total}", status.text());
     let indicator_spans = speed_chip_spans(
         view.speed,
         compact_card_widget.speed_chip,
         &compact_card_widget.theme.colors(),
     );
-    let indicator_width =
-        speed_chip_width(view.speed, compact_card_widget.speed_chip).count();
+    let indicator_width = span::width(&indicator_spans);
     let status_width = usize::from(compact_card_areas.status.width);
     let fits = status_text.chars().count() + indicator_width <= status_width;
     let status_spans: Vec<_> = std::iter::once(
@@ -250,11 +250,12 @@ mod tests {
         time::Moment,
         transport::OutputStatus,
     };
+    use ratatui::layout::Rect;
 
     use crate::{
         card::{
             CardView,
-            compact::{CompactCardWidget, compact_height},
+            compact::{CompactCardWidget, compact_height, progress_bar_width},
         },
         spectrum::{SPECTRUM_BANDS, Spectrum},
         test_support::{noir, rendered, track},
@@ -291,6 +292,7 @@ mod tests {
         let widget = CompactCardWidget::new(
             view,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            progress_bar_width(Rect::new(0, 0, 40, compact_height())),
         )
         .speed_chip(SpeedChip::Always);
         let text = rendered(40, compact_height(), |frame| {
@@ -322,6 +324,7 @@ mod tests {
         let widget = CompactCardWidget::new(
             view,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            progress_bar_width(Rect::new(0, 0, 40, compact_height())),
         )
         .speed_chip(SpeedChip::Always);
         let text = rendered(40, compact_height(), |frame| {
@@ -357,6 +360,7 @@ mod tests {
         let widget = CompactCardWidget::new(
             view,
             ActiveTheme::new(&theme, ColorDepth::TrueColor).with_progress_bar(bar),
+            progress_bar_width(Rect::new(0, 0, 40, compact_height())),
         )
         .speed_chip(SpeedChip::Always);
         let backend = rendered(40, compact_height(), |frame| {

@@ -1,7 +1,4 @@
-use std::{
-    error::Error,
-    fmt::{self, Write},
-};
+use std::error::Error;
 
 use kernel::domain::geometry::Cells;
 use ratatui::{
@@ -17,8 +14,9 @@ use crate::{
     overlay::modal::frame::{Modal, ModalAreas, ModalSize},
     primitive::{
         canvas::Canvas,
+        display_width,
         span::{line, text},
-        truncate::truncate,
+        truncate::{truncate_head, truncate_owned},
     },
     theme::active_theme::ActiveTheme,
 };
@@ -26,27 +24,13 @@ use crate::{
 const MARKER: &str = "> ";
 const CURSOR: &str = "_";
 
-struct CharCount(usize);
-
-impl Write for CharCount {
-    fn write_str(&mut self, text: &str) -> fmt::Result {
-        self.0 += text.width();
-        Ok(())
-    }
-}
-
-fn error_width(error: &dyn Error) -> usize {
-    let mut count = CharCount(0);
-    write!(count, "{error}").map_or(0, |()| count.0)
-}
-
 #[derive(Debug)]
 pub(crate) enum PromptBody<'a> {
     Entry(&'a str),
     Sentence([&'a str; 5]),
 }
 
-impl PromptBody<'_> {
+impl<'a> PromptBody<'a> {
     fn width(&self) -> usize {
         match self {
             PromptBody::Entry(input) => MARKER.width() + input.width() + CURSOR.width(),
@@ -54,15 +38,18 @@ impl PromptBody<'_> {
         }
     }
 
-    fn line(&self, width: usize, color: Color) -> Line<'static> {
+    fn line(&self, width: usize, color: Color) -> Line<'a> {
         match self {
-            PromptBody::Entry(input) => line([
-                text(MARKER).fg(color),
-                text((*input).to_string()).fg(color),
-                text(CURSOR).fg(color),
-            ]),
+            PromptBody::Entry(input) => {
+                let budget = width.saturating_sub(MARKER.width() + CURSOR.width());
+                line([
+                    text(MARKER).fg(color),
+                    text(truncate_head(input, budget)).fg(color),
+                    text(CURSOR).fg(color),
+                ])
+            }
             PromptBody::Sentence(parts) => {
-                line([text(truncate(&parts.concat(), width).into_owned()).fg(color)])
+                line([text(truncate_owned(parts.concat(), width)).fg(color)])
             }
         }
     }
@@ -86,7 +73,7 @@ impl PromptWidget<'_> {
     }
 
     fn modal(&self) -> Modal<'_> {
-        let error_width = self.error.map_or(0, error_width);
+        let error_width = self.error.map_or(0, |error| display_width(&error));
         let widest = self.title.width().max(self.body.width()).max(error_width);
         let colors = self.theme.colors();
         Modal {
@@ -104,13 +91,12 @@ impl PromptWidget<'_> {
         }
     }
 
-    fn lines(&self, width: usize) -> Vec<Line<'static>> {
+    fn lines(&self, width: usize) -> Vec<Line<'_>> {
         let mut lines = vec![self.body.line(width, self.theme.colors().foreground)];
         if let Some(error) = self.error {
-            lines.push(line([text(
-                truncate(&error.to_string(), width).into_owned(),
-            )
-            .fg(self.theme.alert())]));
+            lines
+                .push(line([text(truncate_owned(error.to_string(), width))
+                    .fg(self.theme.alert())]));
         }
         lines
     }
@@ -181,7 +167,8 @@ mod tests {
     use kernel::domain::time::TimecodeError;
 
     use crate::{
-        overlay::modal::prompt::{PromptBody, PromptWidget, error_width},
+        overlay::modal::prompt::{PromptBody, PromptWidget},
+        primitive::display_width,
         test_support::noir,
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
@@ -197,6 +184,6 @@ mod tests {
         .error(Some(&error));
         let lines = widget.lines(usize::MAX);
         assert_eq!(widget.body.width(), lines[0].width());
-        assert_eq!(error_width(&error), lines[1].width());
+        assert_eq!(display_width(&error), lines[1].width());
     }
 }

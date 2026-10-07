@@ -117,7 +117,7 @@ mod hertz_record {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct TrackRecord {
     path: PathBuf,
     duration: Option<Duration>,
@@ -127,13 +127,23 @@ struct TrackRecord {
     audio_format: AudioFormat,
 }
 
-impl From<&Track> for TrackRecord {
-    fn from(track: &Track) -> Self {
+#[derive(Serialize)]
+struct TrackRecordRef<'a> {
+    path: &'a Path,
+    duration: Option<Duration>,
+    #[serde(serialize_with = "TagsRecord::serialize")]
+    tags: &'a Tags,
+    #[serde(serialize_with = "AudioFormatRecord::serialize")]
+    audio_format: &'a AudioFormat,
+}
+
+impl<'a> From<&'a Track> for TrackRecordRef<'a> {
+    fn from(track: &'a Track) -> Self {
         Self {
-            path: track.path().to_path_buf(),
+            path: track.path(),
             duration: track.duration(),
-            tags: track.tags().clone(),
-            audio_format: track.audio_format().clone(),
+            tags: track.tags(),
+            audio_format: track.audio_format(),
         }
     }
 }
@@ -161,15 +171,21 @@ fn cache_file(dirs: &LibraryDirs) -> PathBuf {
 }
 
 pub(crate) fn encode(tracks: &[&Track], path: &Path) -> Result<Vec<u8>, Error> {
-    let records: Vec<TrackRecord> =
-        tracks.iter().copied().map(TrackRecord::from).collect();
-    let payload = bincode::serde::encode_to_vec(&records, bincode_config()).map_err(
-        |source| Error::Encode {
-            path: path.to_path_buf(),
-            source,
-        },
-    )?;
-    Ok(std::iter::once(CACHE_VERSION).chain(payload).collect())
+    let mut bytes = vec![CACHE_VERSION];
+    bincode::serde::encode_into_std_write(
+        tracks
+            .iter()
+            .copied()
+            .map(TrackRecordRef::from)
+            .collect::<Vec<_>>(),
+        &mut bytes,
+        bincode_config(),
+    )
+    .map_err(|source| Error::Encode {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(bytes)
 }
 
 pub(crate) fn decode<'bytes>(

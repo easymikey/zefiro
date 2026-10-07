@@ -7,4 +7,3 @@ mod screen_breakpoint;
 mod screen_layout;
 mod screen_overlays;
 mod screen_snapshots;
-mod support;

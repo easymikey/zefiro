@@ -84,6 +84,10 @@ FrameLayout {
             },
         },
     ),
+    progress_bar_width: Cells(
+        71,
+    ),
+    remaining_label: "",
     cover_area: None,
     playlist_pane: Rect {
         x: 1,
@@ -155,5 +159,6 @@ FrameLayout {
         height: 9,
     },
     overlay_areas: None,
+    overlay_content: None,
     toast: None,
 }

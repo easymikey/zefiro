@@ -12,13 +12,15 @@ pub(crate) fn read_error(name: ConfigName, error: &io::Error) -> ConfigError {
     }
 }
 
-pub(crate) fn store(path: &Path, contents: &[u8]) -> Result<(), IoError> {
-    let parent = path
-        .parent()
+pub(crate) fn parent_dir(path: &Path) -> Option<&Path> {
+    path.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-        .ok_or(IoError::Missing)?;
+}
+
+pub(crate) fn store(path: &Path, contents: &[u8]) -> Result<(), IoError> {
+    let parent = parent_dir(path).ok_or(IoError::Missing)?;
     std::fs::create_dir_all(parent).map_err(|error| IoError::from(error.kind()))?;
-    write_atomic(parent, path, contents).map_err(|error| IoError::from(error.kind()))
+    write_atomic(path, contents).map_err(|error| IoError::from(error.kind()))
 }
 
 pub(crate) fn read_if_present(path: &Path) -> io::Result<Option<String>> {
@@ -29,10 +31,58 @@ pub(crate) fn read_if_present(path: &Path) -> io::Result<Option<String>> {
     }
 }
 
-fn write_atomic(parent_dir: &Path, path: &Path, contents: &[u8]) -> io::Result<()> {
-    let mut staging = tempfile::NamedTempFile::new_in(parent_dir)?;
+fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let target = match std::fs::canonicalize(path) {
+        Ok(target) => target,
+        Err(error) if error.kind() == io::ErrorKind::NotFound && path.is_symlink() => {
+            path.parent()
+                .unwrap_or_else(|| Path::new(""))
+                .join(std::fs::read_link(path)?)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => path.to_path_buf(),
+        Err(error) => return Err(error),
+    };
+    let mut staging = tempfile::NamedTempFile::new_in(
+        parent_dir(&target).unwrap_or_else(|| Path::new(".")),
+    )?;
     staging.write_all(contents)?;
     staging.as_file().sync_all()?;
-    staging.persist(path).map_err(|error| error.error)?;
+    staging.persist(&target).map_err(|error| error.error)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use crate::driver::files::store;
+
+    #[rstest]
+    #[cfg(unix)]
+    #[case::an_existing_target(Some(b"old = 1".as_slice()))]
+    #[case::a_dangling_link(None)]
+    fn store_through_a_symlink_keeps_the_link_and_writes_the_target(
+        #[case] before: Option<&[u8]>,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let dotfiles = directory.path().join("dotfiles");
+        std::fs::create_dir(&dotfiles).unwrap();
+        if let Some(before) = before {
+            std::fs::write(dotfiles.join("config.toml"), before).unwrap();
+        }
+        let link = directory.path().join("config.toml");
+        std::os::unix::fs::symlink(
+            std::path::Path::new("dotfiles").join("config.toml"),
+            &link,
+        )
+        .unwrap();
+
+        store(&link, b"new = 2").unwrap();
+
+        assert!(link.is_symlink(), "the link stays a link");
+        assert_eq!(
+            std::fs::read(dotfiles.join("config.toml")).unwrap(),
+            b"new = 2".to_vec()
+        );
+    }
 }

@@ -50,46 +50,23 @@ pub fn sort_indices(
     match key {
         SortKey::Added => (0..tracks.len()).map(TrackIndex::new).collect(),
         SortKey::Favorites => {
-            let mut track_indexes: Vec<TrackIndex> =
-                (0..tracks.len()).map(TrackIndex::new).collect();
-            track_indexes.sort_by_key(|&index| {
-                !tracks
-                    .get(index.get())
-                    .is_some_and(|found| favorites.is_favorite(found.source()))
-            });
-            track_indexes
+            sorted(tracks, |found| !favorites.is_favorite(found.source()))
         }
-        SortKey::Artist => sort_by_artist(tracks),
-        SortKey::Album => sort_by_key(tracks, |found| &found.tags().album),
-        SortKey::Year => sort_by_key(tracks, |found| &found.tags().date),
+        SortKey::Artist => sorted(tracks, |found| {
+            (lower(&found.tags().artist), lower(&found.tags().album))
+        }),
+        SortKey::Album => sorted(tracks, |found| lower(&found.tags().album)),
+        SortKey::Year => sorted(tracks, |found| lower(&found.tags().date)),
     }
 }
 
-fn sort_by_key(
+fn sorted<K: Ord>(
     tracks: &[Arc<Track>],
-    field: impl Fn(&Track) -> &Option<String>,
+    rank: impl Fn(&Track) -> K,
 ) -> Vec<TrackIndex> {
-    let mut keyed: Vec<(String, TrackIndex)> = tracks
-        .iter()
-        .enumerate()
-        .map(|(index, found)| (lower(field(found)), TrackIndex::new(index)))
-        .collect();
-    keyed.sort();
-    keyed.into_iter().map(|(_, index)| index).collect()
-}
-
-fn sort_by_artist(tracks: &[Arc<Track>]) -> Vec<TrackIndex> {
-    let mut keyed: Vec<(String, String, TrackIndex)> = tracks
-        .iter()
-        .enumerate()
-        .map(|(index, found)| {
-            (
-                lower(&found.tags().artist),
-                lower(&found.tags().album),
-                TrackIndex::new(index),
-            )
-        })
-        .collect();
-    keyed.sort();
-    keyed.into_iter().map(|(_, _, index)| index).collect()
+    let mut track_indexes: Vec<TrackIndex> =
+        (0..tracks.len()).map(TrackIndex::new).collect();
+    track_indexes
+        .sort_by_cached_key(|index| tracks.get(index.get()).map(|found| rank(found)));
+    track_indexes
 }

@@ -22,8 +22,8 @@ use crate::{
 };
 
 impl AnimationStage {
-    pub fn play(&mut self, cues: Vec<Cue>, backdrop: &Backdrop) {
-        self.remember_protected(backdrop.layout);
+    pub fn play(&mut self, cues: Vec<Cue>, backdrop: &Backdrop<'_>) {
+        self.remember_protected(&backdrop.layout);
         match backdrop.animations {
             Animations::On if cues.is_empty() => {}
             Animations::On => {
@@ -35,7 +35,7 @@ impl AnimationStage {
             }
             Animations::Off => self.clear(),
         }
-        let layout = backdrop.layout;
+        let layout = &backdrop.layout;
         self.vacated_areas = VacatedAreas {
             overlay: layout.overlay_areas.map(OverlayAreas::outer),
             toast: layout.toast,
@@ -45,9 +45,9 @@ impl AnimationStage {
         };
     }
 
-    fn stage_cue(&mut self, cue: Cue, backdrop: &Backdrop) {
+    fn stage_cue(&mut self, cue: Cue, backdrop: &Backdrop<'_>) {
         let vacated = self.vacated_areas;
-        let layout = backdrop.layout;
+        let layout = &backdrop.layout;
         match cue {
             Cue::OverlayOpened => {
                 self.stage_at(
@@ -87,8 +87,8 @@ impl AnimationStage {
         }
     }
 
-    fn stage_favorite_toggled(&mut self, backdrop: &Backdrop) {
-        let layout = backdrop.layout;
+    fn stage_favorite_toggled(&mut self, backdrop: &Backdrop<'_>) {
+        let layout = &backdrop.layout;
         let selected = layout
             .playlist_areas
             .and_then(|playlist| playlist.selected_area);
@@ -102,10 +102,10 @@ impl AnimationStage {
         );
     }
 
-    fn stage_volume_changed(&mut self, backdrop: &Backdrop) {
-        let layout = backdrop.layout;
+    fn stage_volume_changed(&mut self, backdrop: &Backdrop<'_>) {
+        let layout = &backdrop.layout;
         let pulse = volume_pulse(
-            backdrop.style.volume_fill,
+            backdrop.style.accent,
             backdrop.style.volume_lifted,
             self.cell_filter(),
         );
@@ -122,7 +122,7 @@ fn once_each(cues: Vec<Cue>) -> Vec<Cue> {
     })
 }
 
-fn pulsed(change: PlaybackChange, backdrop: &Backdrop) -> Color {
+fn pulsed(change: PlaybackChange, backdrop: &Backdrop<'_>) -> Color {
     match change {
         PlaybackChange::Play => backdrop.style.background,
         PlaybackChange::Pause | PlaybackChange::Stop => backdrop.style.accent,
@@ -166,14 +166,13 @@ mod tests {
         assert_eq!(once_each(cues.clone()), cues);
     }
 
-    fn empty_backdrop() -> Backdrop {
+    fn empty_backdrop() -> Backdrop<'static> {
         Backdrop {
             animations: Animations::On,
             layout: FrameLayout::empty(Rect::default(), Breakpoint::Full),
             style: BackdropStyle {
                 background: Color::Rgb(0, 0, 0),
                 accent: Color::Rgb(240, 120, 40),
-                volume_fill: Color::Rgb(220, 80, 160),
                 volume_lifted: Color::Rgb(200, 210, 220),
             },
             wash_from: Color::Rgb(0, 0, 0),

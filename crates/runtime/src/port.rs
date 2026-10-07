@@ -47,7 +47,9 @@ impl<C> Port<C> {
         let Self::Open {
             congestion,
             episode,
-            ..
+            driver_name: _driver_name,
+            cmd_sender: _cmd_sender,
+            thread: _thread,
         } = self
         else {
             return None;
@@ -67,7 +69,13 @@ impl<C> Port<C> {
 
     pub(crate) fn hang_up(&mut self) {
         *self = match mem::replace(self, Self::Closed) {
-            Self::Open { thread, .. } => Self::HungUp(thread),
+            Self::Open {
+                thread,
+                driver_name: _driver_name,
+                congestion: _congestion,
+                episode: _episode,
+                cmd_sender: _cmd_sender,
+            } => Self::HungUp(thread),
             port @ (Self::HungUp(_) | Self::Closed) => port,
         };
     }
@@ -87,7 +95,8 @@ impl<C> Port<C> {
             driver_name,
             congestion,
             cmd_sender,
-            ..
+            episode: _episode,
+            thread: _thread,
         } = self
         else {
             return;

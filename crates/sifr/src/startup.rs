@@ -142,7 +142,7 @@ fn merged_startup(
     Startup {
         music_dir,
         shuffle: shuffle_requested(cli.shuffle),
-        keymap_overrides: toml_settings.to_keymap_overrides(),
+        keymap_overrides: toml_settings.keymap.into_keymap_overrides(),
         audio_settings: toml_settings.audio.into(),
         theme_choice: toml_settings.theme_choice,
         volume: cli.volume.map_or(toml_settings.volume, Percent::clamped),

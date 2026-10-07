@@ -1,9 +1,8 @@
-use ratatui::{style::Color, text::Line};
+use ratatui::style::Color;
 
 use crate::{
-    braille,
-    pixels::numeric::small_count_u16,
-    primitive::span::{line, text},
+    braille::{BrailleCanvas, MeterFill},
+    primitive::canvas::Canvas,
 };
 
 fn spectrum_row_fraction(y: u16, total_rows: u16) -> f32 {
@@ -13,23 +12,15 @@ fn spectrum_row_fraction(y: u16, total_rows: u16) -> f32 {
     1.0 - f32::from(y) / f32::from(total_rows - 1)
 }
 
-#[must_use]
-pub(crate) fn lines(
-    fill: &braille::MeterFill<'_>,
+pub(crate) fn paint(
+    fill: &MeterFill<'_>,
+    canvas: Canvas<'_>,
     color_at: impl Fn(f32) -> Color,
-) -> Vec<Line<'static>> {
-    let spectrum_rows = braille::meter_rows(fill);
-    let spectrum_total_rows = small_count_u16(spectrum_rows.len());
-    spectrum_rows
-        .into_iter()
-        .enumerate()
-        .map(|(row, glyphs)| {
-            let fraction =
-                spectrum_row_fraction(small_count_u16(row), spectrum_total_rows);
-            let color = color_at(fraction);
-            line([text(glyphs).fg(color)])
-        })
-        .collect()
+) {
+    let total_rows = fill.size.height;
+    BrailleCanvas::from(fill).paint(canvas, |row| {
+        color_at(spectrum_row_fraction(row, total_rows))
+    });
 }
 
 #[cfg(test)]

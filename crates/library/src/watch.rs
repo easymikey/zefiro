@@ -73,7 +73,11 @@ impl LibraryWatch {
                 burst: Burst::Armed,
                 ..
             } => Err(Unhandled),
-            LibraryWatch::Rooted { burst, .. } => {
+            LibraryWatch::Rooted {
+                burst,
+                music_dir: _music_dir,
+                revision: _revision,
+            } => {
                 *burst = Burst::Armed;
                 Ok(Cmd::effect(LibraryWatchEffect::StartDebounce))
             }
@@ -86,13 +90,15 @@ impl LibraryWatch {
     ) -> Result<Cmd<LibraryWatchEffect, LibraryEvent>, Unhandled> {
         match self {
             LibraryWatch::Unrooted => Err(Unhandled),
-            LibraryWatch::Rooted { music_dir, .. } => {
-                Ok(Cmd::message(LibraryEvent::Error(LibraryError::Disk {
-                    subject: LibrarySubject::Watch,
-                    path: music_dir.clone(),
-                    error,
-                })))
-            }
+            LibraryWatch::Rooted {
+                music_dir,
+                revision: _revision,
+                burst: _burst,
+            } => Ok(Cmd::message(LibraryEvent::Error(LibraryError::Disk {
+                subject: LibrarySubject::Watch,
+                path: music_dir.clone(),
+                error,
+            }))),
         }
     }
 
@@ -133,10 +139,18 @@ impl LibraryWatch {
                     scan_effect,
                 ]
             }
-            LibraryWatch::Rooted { music_dir, .. } if *music_dir == next_music_dir => {
+            LibraryWatch::Rooted {
+                music_dir,
+                revision: _revision,
+                burst: _burst,
+            } if *music_dir == next_music_dir => {
                 vec![scan_effect]
             }
-            LibraryWatch::Rooted { music_dir, .. } => vec![
+            LibraryWatch::Rooted {
+                music_dir,
+                revision: _revision,
+                burst: _burst,
+            } => vec![
                 LibraryWatchEffect::Unwatch(music_dir.clone()),
                 LibraryWatchEffect::Watch(next_music_dir.clone()),
                 scan_effect,

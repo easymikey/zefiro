@@ -9,7 +9,16 @@ use kernel::{
 use crate::engine::{
     effect::{AudioLoopCmd, EngineEffect},
     message::DeviceOpened,
-    phase::{Incoming, LoadedTrack, Loading, Phase, Playing, Resume},
+    phase::{
+        Incoming,
+        LoadedTrack,
+        Loading,
+        NextTrack,
+        Phase,
+        Playing,
+        Resume,
+        Upcoming,
+    },
     revisions::JobRevisions,
     state::{Closed, Live, then_report},
 };
@@ -34,45 +43,77 @@ impl Live {
             playback,
         } = device_opened;
         self.settings.device = device;
-        match std::mem::replace(&mut self.phase, Phase::Idle) {
+        let (current, upcoming) = match std::mem::replace(&mut self.phase, Phase::Idle)
+        {
             Phase::Idle => {
-                Cmd::effect(LoopEffect::Execute(EngineEffect::SetGain(self.gain())))
+                return Cmd::effect(LoopEffect::Execute(EngineEffect::SetGain(
+                    self.gain(),
+                )));
             }
             Phase::Loading(loading) | Phase::Handover(Incoming::Loading(loading)) => {
                 self.phase = Phase::Loading(loading);
-                Cmd::effect(LoopEffect::Execute(EngineEffect::SetGain(self.gain())))
+                return Cmd::effect(LoopEffect::Execute(EngineEffect::SetGain(
+                    self.gain(),
+                )));
             }
-            Phase::Playing(Playing { current, .. })
-            | Phase::Handover(Incoming::Playing(current)) => {
-                let LoadedTrack {
-                    duration,
-                    decibels,
-                    path,
-                } = current;
-                self.phase = Phase::Loading(Loading {
-                    path: path.clone(),
-                    decibels,
-                    resume: Some(Resume {
-                        position,
-                        playback,
-                        duration,
-                    }),
-                });
-                Cmd::effect(LoopEffect::Execute(EngineEffect::ClearStaged))
-                    .then(Cmd::effect(LoopEffect::Run(revisions.decode_job(path))))
+            Phase::Playing(Playing { current, next }) => {
+                let upcoming = match next {
+                    NextTrack::None => None,
+                    NextTrack::Preloading { path, decibels } => {
+                        Some(Upcoming { path, decibels })
+                    }
+                    NextTrack::Gapless(track) => Some(Upcoming::from(track)),
+                    NextTrack::Crossfading {
+                        incoming,
+                        fade: _fade,
+                    } => Some(Upcoming::from(incoming)),
+                };
+                (current, upcoming)
             }
-        }
+            Phase::Handover(Incoming::Playing(current)) => (current, None),
+        };
+        let LoadedTrack {
+            duration,
+            decibels,
+            path,
+        } = current;
+        self.phase = Phase::Loading(Loading {
+            path: path.clone(),
+            decibels,
+            resume: Some(Resume {
+                position,
+                playback,
+                duration,
+                upcoming,
+            }),
+        });
+        Cmd::effect(LoopEffect::Execute(EngineEffect::ClearStaged))
+            .then(Cmd::effect(LoopEffect::Run(revisions.decode_job(path))))
     }
 
     pub(crate) fn decoded(
         &mut self,
+        revisions: &mut JobRevisions,
         duration: Option<Duration>,
     ) -> Result<AudioLoopCmd, Unhandled> {
         match std::mem::replace(&mut self.phase, Phase::Idle) {
             Phase::Loading(loading) => {
-                let (current, after_load) = loading.into_current(duration);
-                self.phase = Phase::Playing(Playing::new(current));
-                Ok(then_report(self.start_effect(after_load.as_ref())))
+                let (current, mut after_load) = loading.into_current(duration);
+                let (next, preload) = match after_load
+                    .as_mut()
+                    .and_then(|resume| resume.upcoming.take())
+                {
+                    None => (NextTrack::None, Cmd::none()),
+                    Some(Upcoming { path, decibels }) => (
+                        NextTrack::Preloading {
+                            path: path.clone(),
+                            decibels,
+                        },
+                        Cmd::effect(LoopEffect::Run(revisions.preload_job(path))),
+                    ),
+                };
+                self.phase = Phase::Playing(Playing { current, next });
+                Ok(then_report(self.start_effect(after_load.as_ref())).then(preload))
             }
             Phase::Handover(Incoming::Loading(loading)) => {
                 let (current, after_load) = loading.into_current(duration);
@@ -118,7 +159,10 @@ impl Live {
                 )),
             ),
             Some(Resume {
-                position, playback, ..
+                position,
+                playback,
+                duration: _duration,
+                upcoming: _upcoming,
             }) => Cmd::effect(LoopEffect::Execute(EngineEffect::Resume {
                 gain,
                 position: *position,
@@ -128,15 +172,13 @@ impl Live {
     }
 
     fn handover_started(&self, resume: Option<&Resume>) -> AudioLoopCmd {
-        let gain = self.gain();
-        let duration = self.settings.crossfade.get();
-        let start = self.start_effect(resume);
-        start
-            .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Ramp {
-                duration,
-                current: gain,
-            })))
-            .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))
+        then_report(
+            self.start_effect(resume)
+                .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Ramp {
+                    duration: self.settings.crossfade.get(),
+                    current: self.gain(),
+                }))),
+        )
     }
 }
 
@@ -152,38 +194,43 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::engine::{
-        effect::EngineEffect,
-        message::EngineMessage,
-        phase::{Incoming, Loading, Phase, Playing, Resume},
-        state::{Closed, EngineState, Live, then_report},
-        tests::{
-            CROSSFADE_SECONDS,
-            EngineRow,
-            TRACK_A_DURATION,
-            TRACK_B_DURATION,
-            assert_cell,
-            assert_fallback,
-            assert_same,
-            cmd,
-            crossfade,
-            decode_error,
-            decoding,
-            error,
-            handed_over_to_b,
-            handing_over,
-            live,
-            live_with_crossfade,
-            loading,
-            loading_track,
-            opened,
-            playing,
-            resuming,
-            seconds,
-            settings,
-            settings_on,
-            step,
-            track_a,
+    use crate::{
+        deck::job::AudioJob,
+        engine::{
+            effect::EngineEffect,
+            message::EngineMessage,
+            phase::{Fade, Incoming, Loading, NextTrack, Phase, Playing, Resume},
+            state::{Closed, EngineState, Live, then_report},
+            tests::{
+                CROSSFADE_SECONDS,
+                EngineRow,
+                TRACK_A_DURATION,
+                TRACK_B_DURATION,
+                assert_cell,
+                assert_fallback,
+                assert_same,
+                cmd,
+                crossfade,
+                decode_error,
+                decoding,
+                error,
+                handed_over_to_b,
+                handing_over,
+                live,
+                live_with_crossfade,
+                loading,
+                loading_track,
+                opened,
+                playing,
+                resuming,
+                seconds,
+                settings,
+                settings_on,
+                step,
+                trace,
+                track_a,
+                track_b,
+            },
         },
     };
 
@@ -264,6 +311,7 @@ mod tests {
                         position: seconds(5),
                         playback: Playback::Paused,
                         duration: Some(TRACK_B_DURATION),
+                        upcoming: None,
                     }),
                 }),
                 settings: AudioSettings { crossfade: crossfade(10), ..settings_on("usb") },
@@ -325,6 +373,44 @@ mod tests {
                 )))),
             },
         );
+    }
+
+    #[rstest]
+    #[case::while_preloading(NextTrack::Preloading { path: "/b".into(), decibels: None })]
+    #[case::while_gapless(NextTrack::Gapless(track_b()))]
+    #[case::while_crossfading(NextTrack::Crossfading { incoming: track_b(), fade: Fade::Running })]
+    fn a_reopened_device_preloads_the_upcoming_track_again(#[case] next: NextTrack) {
+        let (engine_state, log) = trace(
+            EngineState::Live(Live {
+                phase: Phase::Playing(Playing {
+                    current: track_a(),
+                    next,
+                }),
+                ..live()
+            }),
+            vec![
+                opened(settings().device, seconds(5), Playback::Playing),
+                EngineMessage::Decoded(Some(TRACK_A_DURATION)),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            engine_state,
+            EngineState::Live(Live {
+                phase: Phase::Playing(Playing {
+                    current: track_a(),
+                    next: NextTrack::Preloading {
+                        path: "/b".into(),
+                        decibels: None,
+                    },
+                }),
+                ..live()
+            })
+        );
+        assert!(log.iter().flat_map(Cmd::effects).any(|effect| matches!(
+            effect,
+            LoopEffect::Run(AudioJob::Preload { path, .. }) if path.as_path() == std::path::Path::new("/b")
+        )));
     }
 
     #[rstest]

@@ -9,14 +9,7 @@ use kernel::{
         direction::Direction,
         index::ViewIndex,
         model::Model,
-        overlay::{
-            MusicDirError,
-            Overlay,
-            OverlayName,
-            SearchQuery,
-            TextEntry,
-            TrashCandidate,
-        },
+        overlay::{MusicDirError, Overlay, OverlayName, SearchQuery, TextEntry},
         playlist::{PlaylistFileName, PlaylistFileNameError},
         setting_row::SettingRow,
         time::TimecodeError,
@@ -90,16 +83,8 @@ fn fresh_settings() -> Overlay {
     Overlay::Settings(SettingRow::Theme)
 }
 
-fn candidate() -> TrashCandidate {
-    TrashCandidate {
-        source: kernel::domain::track::TrackSource::Local("/music/sun.flac".into()),
-        title: "Sun Song".to_string(),
-        artist: "Someone".to_string(),
-    }
-}
-
 fn confirm_trash() -> Overlay {
-    Overlay::ConfirmTrash(candidate())
+    Overlay::ConfirmTrash(track_at("/music/sun.flac"))
 }
 
 fn track_details() -> Overlay {
@@ -203,7 +188,7 @@ fn releases() -> Cmd {
 #[case::search_confirm_without_a_match_is_refused(Some(search("zzz", vec![], 0)), OverlayMessage::Confirm, Err(Unhandled))]
 #[case::save_confirm_saves_under_the_name(Some(save("mix", None)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::SavePlaylist(saved_name("mix"))))))))]
 #[case::save_confirm_with_an_empty_name_stays_open_with_the_error(Some(save("", None)), OverlayMessage::Confirm, Ok((Some(save("", Some(PlaylistFileNameError::Empty))), Cmd::none())))]
-#[case::confirm_trash_confirm_trashes_the_candidate(Some(confirm_trash()), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::Trash(candidate().source)))))))]
+#[case::confirm_trash_confirm_trashes_the_candidate(Some(confirm_trash()), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::Trash(kernel::domain::track::TrackSource::Local("/music/sun.flac".into()))))))))]
 #[case::jump_confirm_seeks_to_the_parsed_time(Some(jump("1:40", None)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Playback(PlaybackRequest::SeekTo(Duration::from_secs(100))))))))]
 #[case::jump_confirm_malformed_stays_open_with_the_error(Some(jump("5:", None)), OverlayMessage::Confirm, Ok((Some(jump("5:", Some(TimecodeError::Malformed))), Cmd::none())))]
 #[case::jump_confirm_malformed_again_is_refused(

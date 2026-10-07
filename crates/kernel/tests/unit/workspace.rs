@@ -16,7 +16,10 @@ use kernel::{
 };
 use rstest::rstest;
 
-use crate::support::{first_toast_expiry, update::update};
+use crate::support::{
+    first_toast_expiry,
+    update::{send, update},
+};
 
 fn reduce(model: &mut Model, message: Message) -> Cmd {
     update(model, message, Moment::default()).unwrap()
@@ -106,13 +109,40 @@ fn a_source_failing_again_with_the_same_words_does_not_raise_a_second_toast() {
 #[test]
 fn keys_reloaded_installs_the_merged_table() {
     let mut model = Model::default();
-    let config = KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]);
+    let config = KeymapOverrides::from([(Action::Next, KeyOverride::from("m"))]);
     let cmd = reduce(
         &mut model,
         Message::Config(ConfigEvent::KeymapReloaded(Box::new(config.clone()))),
     );
     assert_eq!(model.workspace.keymap.overrides(), &config);
     assert!(cmd == Cmd::none());
+}
+
+#[test]
+fn a_bad_chord_keeps_its_toast_through_the_config_reload_that_follows() {
+    let mut model = Model::default();
+    let overrides =
+        KeymapOverrides::from([(Action::PlayPause, KeyOverride::from("bad"))]);
+    send(
+        &mut model,
+        Message::Config(ConfigEvent::KeymapReloaded(Box::new(overrides))),
+    );
+    send(&mut model, Message::Config(recovered(ConfigName::Config)));
+
+    let toast = model.workspace.toasts.first();
+    assert_eq!(
+        toast.map(|toast| toast.title.clone()),
+        Some(format!("Trouble with {}", ConfigName::Config))
+    );
+    assert!(toast.is_some_and(|toast| toast.text.is_some()), "{toast:?}");
+    assert_eq!(
+        update(
+            &mut model,
+            Message::Config(recovered(ConfigName::Config)),
+            Moment::default(),
+        ),
+        Err(Unhandled)
+    );
 }
 
 #[rstest]

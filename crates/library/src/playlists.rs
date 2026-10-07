@@ -1,11 +1,12 @@
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use kernel::{
     domain::{
-        playlist::{Playlist, PlaylistFileName},
+        playlist::{PLAYLIST_EXTENSION, Playlist, PlaylistFileName},
         track::Track,
     },
     message::LibrarySubject,
@@ -14,18 +15,15 @@ use kernel::{
 use crate::{dirs::LibraryDirs, error::Error};
 
 fn playlist_path(dirs: &LibraryDirs, name: &PlaylistFileName) -> PathBuf {
-    dirs.playlists_dir.join(format!("{}.m3u8", name.as_str()))
+    dirs.playlists_dir
+        .join(format!("{}{PLAYLIST_EXTENSION}", name.as_str()))
 }
 
 pub fn load(dirs: &LibraryDirs, name: &PlaylistFileName) -> Result<Playlist, Error> {
     let path = playlist_path(dirs, name);
     let content = std::fs::read_to_string(&path)
         .map_err(Error::io(LibrarySubject::Playlist, &path))?;
-    let track_paths = parse(&content, &dirs.playlists_dir);
-    let tracks: Vec<Arc<Track>> = track_paths
-        .iter()
-        .map(|track_path| crate::tags::read_or_list(track_path))
-        .collect();
+    let tracks = crate::scan::read_tags(&parse(&content, &dirs.playlists_dir)).tracks;
     Ok(Playlist::from_tracks(tracks))
 }
 
@@ -51,8 +49,13 @@ fn to_m3u(tracks: &[Arc<Track>]) -> String {
 fn entry_line(track: &Track) -> String {
     let seconds = track.duration().map_or(0, |duration| duration.as_secs());
     let label = match (&track.tags().artist, &track.tags().title) {
-        (Some(artist), Some(title)) => format!("{artist} - {title}"),
-        _ => track.display().to_string(),
+        (Some(artist), Some(title)) => Cow::Owned(format!("{artist} - {title}")),
+        _ => Cow::Borrowed(track.display()),
+    };
+    let label = if label.contains(['\r', '\n']) {
+        Cow::Owned(label.replace(['\r', '\n'], " "))
+    } else {
+        label
     };
     format!("#EXTINF:{seconds},{label}\n{}\n", track.path().display())
 }
@@ -114,6 +117,21 @@ mod tests {
         let text = to_m3u(&tracks);
         insta::assert_snapshot!(text);
         insta::assert_debug_snapshot!(parse(&text, Path::new("/music")));
+    }
+
+    #[rstest]
+    #[case::newline_in_the_title(("Artist", "Title\nsecond line"))]
+    #[case::line_break_in_the_artist(("Art\r\nist", "Title"))]
+    #[case::carriage_return_in_the_title(("Artist", "Title\rsecond line"))]
+    fn a_label_with_a_line_break_parses_back_to_one_track(
+        #[case] artist_title: (&str, &str),
+    ) {
+        let text = to_m3u(&[track("/music/a.flac", 10.0, artist_title)]);
+
+        assert_eq!(
+            parse(&text, Path::new("/music")),
+            vec![PathBuf::from("/music/a.flac")]
+        );
     }
 
     #[rstest]

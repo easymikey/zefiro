@@ -3,16 +3,12 @@ use ratatui::style::Color;
 
 use crate::pixels::numeric::{channel_byte, dimension_f32, floor};
 
-pub(crate) fn scale_channel(channel: u8, factor: f32) -> u8 {
+fn scale_channel(channel: u8, factor: f32) -> u8 {
     channel_byte(f32::from(channel) * factor)
 }
 
 pub(crate) fn shade(color: Rgb, factor: f32) -> Rgb {
-    Rgb([
-        scale_channel(color.0[0], factor),
-        scale_channel(color.0[1], factor),
-        scale_channel(color.0[2], factor),
-    ])
+    Rgb(color.0.map(|channel| scale_channel(channel, factor)))
 }
 
 fn lerp_channel(from: u8, to: u8, fraction: f32) -> u8 {

@@ -26,11 +26,11 @@ TomlSettings {
     keymap: {
         "play_pause": KeyOverride {
             chord: "space",
-            key_context: Global,
+            key_context: None,
         },
         "quit": KeyOverride {
             chord: "q",
-            key_context: Global,
+            key_context: None,
         },
     },
 }

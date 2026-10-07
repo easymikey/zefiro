@@ -14,7 +14,7 @@ use crate::{
         SettingRowRequest,
         TextRequest,
     },
-    update::keymap::chord::{BindingOrigin, KeyBinding, bare, key},
+    update::keymap::chord::{KeyBinding, bare, key},
 };
 
 fn plain(code: KeyCode) -> KeyPattern {
@@ -41,7 +41,6 @@ fn settings_bindings(
             message: message.clone(),
             action: Some(action),
             key_context: KeyContext::Settings,
-            origin: BindingOrigin::Default,
         })
         .collect()
 }
@@ -80,7 +79,6 @@ fn rows_in(
             message,
             action: None,
             key_context,
-            origin: BindingOrigin::Default,
         })
         .collect()
 }

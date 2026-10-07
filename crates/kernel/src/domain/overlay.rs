@@ -8,7 +8,7 @@ use crate::domain::{
     playlist::PlaylistFileNameError,
     setting_row::SettingRow,
     time::TimecodeError,
-    track::{Track, TrackSource},
+    track::Track,
 };
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr, EnumDiscriminants)]
@@ -24,7 +24,7 @@ pub enum Overlay {
     SavePlaylist(TextEntry<PlaylistFileNameError>),
     History(CursorOver<()>),
     Settings(SettingRow),
-    ConfirmTrash(TrashCandidate),
+    ConfirmTrash(Arc<Track>),
     JumpToTime(TextEntry<TimecodeError>),
     TrackDetails(Arc<Track>),
     MusicDir(TextEntry<MusicDirError>),
@@ -95,11 +95,4 @@ impl Accepts for MusicDirError {
 pub struct SearchQuery {
     pub input: String,
     pub matches: Vec<ViewIndex>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TrashCandidate {
-    pub source: TrackSource,
-    pub title: String,
-    pub artist: String,
 }

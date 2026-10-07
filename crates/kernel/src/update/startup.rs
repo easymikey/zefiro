@@ -9,12 +9,12 @@ use crate::{
         startup::{Shuffle, Startup},
         theme::Themes,
     },
-    message::ConfigReload,
     update::{
         drained,
         keymap::bindings::Keymap,
         player::stopped_effects,
         roll_pending,
+        workspace::trouble,
     },
 };
 
@@ -104,24 +104,11 @@ pub(crate) fn startup_cmd(model: &mut Model, driver_name: DriverName) -> Cmd {
 }
 
 fn startup_toasts(model: &mut Model, errors: Vec<(ConfigName, ConfigError)>) -> Cmd {
-    let mut errors = errors.into_iter();
-    let Some((name, error)) = errors.next() else {
-        return Cmd::none();
-    };
-    let cmd = model.workspace.config_reported(
-        ConfigReload {
-            name,
-            result: Err(error),
-        },
-        &mut model.revisions,
-    );
-    errors.for_each(|(rest_name, rest_error)| {
-        model
-            .workspace
-            .config_errors
-            .insert_if_changed(rest_name, rest_error);
-    });
-    cmd
+    let toast = errors.first().map(|(name, error)| trouble(name, error));
+    model.workspace.config_errors.extend(errors);
+    toast.map_or(Cmd::none(), |toast| {
+        model.workspace.show(toast, &mut model.revisions)
+    })
 }
 
 #[cfg(test)]
@@ -228,21 +215,29 @@ mod tests {
                 Some(broken_error.to_string())
             )]
         );
-        assert!(!model.workspace.config_errors.insert_if_changed(
-            crate::domain::config::ConfigName::Appearance,
-            unreadable_error
-        ));
-        assert!(!model.workspace.config_errors.insert_if_changed(
-            crate::domain::config::ConfigName::Theme(ThemeName::from_static("ghost")),
-            broken_error
-        ));
+        assert_eq!(
+            model.workspace.config_errors.replace(
+                crate::domain::config::ConfigName::Appearance,
+                unreadable_error
+            ),
+            Err(crate::update::machine::Unhandled)
+        );
+        assert_eq!(
+            model.workspace.config_errors.replace(
+                crate::domain::config::ConfigName::Theme(ThemeName::from_static(
+                    "ghost"
+                )),
+                broken_error
+            ),
+            Err(crate::update::machine::Unhandled)
+        );
     }
 
     #[test]
     fn startup_applies_the_keymap_overrides() {
         let mut model = Model::default();
         let keymap_overrides =
-            KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]);
+            KeymapOverrides::from([(Action::Next, KeyOverride::from("m"))]);
         let startup = Startup {
             keymap_overrides: keymap_overrides.clone(),
             ..stock_startup()

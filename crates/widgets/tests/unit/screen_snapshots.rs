@@ -9,12 +9,12 @@ use widgets::{
     screen::{frame_layout::FrameLayout, root::ScreenWidget},
 };
 
-use crate::unit::support::{
+use crate::support::{
     fixtures::{SceneSources, model_with_tracks, rendered},
     playing_track,
 };
 
-fn painted_frame(scene: Scene<'_>, size: (u16, u16)) -> (FrameLayout, String) {
+fn painted_frame(scene: Scene<'_>, size: (u16, u16)) -> (FrameLayout<'_>, String) {
     let (width, height) = size;
     let layout = FrameLayout::from_scene(&scene, Rect::new(0, 0, width, height));
     let text = rendered(width, height, |frame| {

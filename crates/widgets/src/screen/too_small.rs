@@ -8,7 +8,7 @@ use ratatui::{
 use crate::{
     primitive::{
         span::{line, text},
-        truncate::truncate,
+        truncate::{truncate, truncate_owned},
     },
     theme::active_theme::ActiveTheme,
 };
@@ -41,7 +41,7 @@ impl Widget for &TooSmallWidget<'_> {
         let text_style = Style::default().fg(colors.foreground);
         let dim_style = Style::default().fg(colors.muted_foreground);
         let width = usize::from(area.width);
-        let fit = |line: String| truncate(&line, width).into_owned();
+        let fit = |line: String| truncate_owned(line, width);
         let resize_line = fit(format!(
             "{}{}{}{}",
             RESIZE_PREFIX, self.minimum.width, DIMENSION_SEPARATOR, self.minimum.height
@@ -51,7 +51,7 @@ impl Widget for &TooSmallWidget<'_> {
             CURRENT_OPEN, area.width, DIMENSION_SEPARATOR, area.height, CURRENT_CLOSE
         ));
         let lines = vec![
-            line([text(fit(HEADLINE.to_string())).style(text_style)])
+            line([text(truncate(HEADLINE, width)).style(text_style)])
                 .alignment(Alignment::Center),
             line([text(resize_line).style(text_style)]).alignment(Alignment::Center),
             line([text(current_line).style(dim_style)]).alignment(Alignment::Center),

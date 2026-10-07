@@ -1,7 +1,7 @@
 mod columns;
-mod groups;
+pub(crate) mod groups;
 
-use kernel::{domain::geometry::Cells, update::keymap::chord::KeyBinding};
+use kernel::domain::geometry::Cells;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Flex, Layout, Rect},
@@ -22,7 +22,12 @@ use crate::{
     theme::active_theme::ActiveTheme,
 };
 
-fn paint_help_columns(body: Rect, help_columns: &HelpColumns, buffer: &mut Buffer) {
+fn paint_help_columns(
+    help_columns: &HelpColumns,
+    theme: &ActiveTheme<'_>,
+    canvas: Canvas<'_>,
+) {
+    let Canvas { area: body, buffer } = canvas;
     let widths: Vec<Constraint> = help_columns
         .columns
         .iter()
@@ -36,7 +41,7 @@ fn paint_help_columns(body: Rect, help_columns: &HelpColumns, buffer: &mut Buffe
 
     for (&rect, column) in rects.iter().zip(&help_columns.columns) {
         let constraints = column.constraints();
-        Table::new(column.rows.clone(), constraints)
+        Table::new(column.rows(theme), constraints)
             .column_spacing(chord_gap)
             .render(rect, buffer);
     }
@@ -47,24 +52,41 @@ const TITLE: &str = "KEYS";
 #[derive(Debug)]
 pub(crate) struct HelpWidget<'a> {
     theme: ActiveTheme<'a>,
-    bindings: &'a [KeyBinding],
+    help_columns: &'a HelpColumns,
     avoid: &'a [Rect],
 }
 
-struct HelpColumns {
+#[derive(Debug, Clone, PartialEq)]
+pub struct HelpColumns {
     columns: Vec<HelpColumn>,
     column_gap_width: Cells,
+}
+
+impl HelpColumns {
+    #[must_use]
+    pub(crate) fn new(groups: &HelpGroups, screen: Rect) -> Self {
+        let columns = select_help_columns(groups, screen);
+        let column_gap_width = if columns.len() > 1 {
+            Cells(COLUMN_GAP)
+        } else {
+            Cells(0)
+        };
+        Self {
+            columns,
+            column_gap_width,
+        }
+    }
 }
 
 impl<'a> HelpWidget<'a> {
     #[must_use]
     pub(crate) fn new(
-        bindings: &'a [KeyBinding],
+        help_columns: &'a HelpColumns,
         active_theme: ActiveTheme<'a>,
     ) -> Self {
         Self {
             theme: active_theme,
-            bindings,
+            help_columns,
             avoid: &[],
         }
     }
@@ -77,7 +99,7 @@ impl<'a> HelpWidget<'a> {
 
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::List(self.placement(&self.content(screen)).areas(screen))
+        OverlayAreas::List(self.placement().areas(screen))
     }
 
     pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
@@ -85,8 +107,7 @@ impl<'a> HelpWidget<'a> {
             return;
         };
         let Canvas { area, buffer } = canvas;
-        let content = self.content(area);
-        self.placement(&content).paint(
+        self.placement().paint(
             areas,
             Canvas {
                 area,
@@ -96,31 +117,18 @@ impl<'a> HelpWidget<'a> {
         if areas.content.width == 0 || areas.content.height == 0 {
             return;
         }
-        paint_help_columns(areas.content, &content, buffer);
+        paint_help_columns(
+            self.help_columns,
+            &self.theme,
+            Canvas {
+                area: areas.content,
+                buffer,
+            },
+        );
     }
 
-    fn content(&self, screen: Rect) -> HelpColumns {
-        let groups = HelpGroups::new(self.bindings);
-        let columns = select_help_columns(&groups, &self.theme, screen);
-        let column_gap_width = if columns.len() > 1 {
-            Cells(COLUMN_GAP)
-        } else {
-            Cells(0)
-        };
-        HelpColumns {
-            columns,
-            column_gap_width,
-        }
-    }
-
-    fn placement<'content>(
-        &self,
-        help_columns: &'content HelpColumns,
-    ) -> ModalPlacement<'content>
-    where
-        Self: 'content,
-    {
-        let columns = &help_columns.columns;
+    fn placement(&self) -> ModalPlacement<'a> {
+        let columns = &self.help_columns.columns;
         let gaps = small_count_u16(columns.len().saturating_sub(1));
         ModalPlacement {
             container: ModalContainer::Floating(self.avoid),
@@ -128,13 +136,12 @@ impl<'a> HelpWidget<'a> {
             modal_title: TITLE,
             content_width: Cells(
                 columns.iter().map(|column| column.width.0).sum::<u16>()
-                    + help_columns.column_gap_width.0 * gaps,
+                    + self.help_columns.column_gap_width.0 * gaps,
             ),
             content_rows: columns
                 .iter()
                 .map(|column| column.height)
                 .fold(Cells(0), Cells::max),
-            hint: None,
             theme: self.theme,
         }
     }
@@ -149,10 +156,11 @@ impl Widget for &HelpWidget<'_> {
 #[cfg(test)]
 mod tests {
     use kernel::update::keymap::bindings::Keymap;
+    use ratatui::layout::Rect;
     use rstest::rstest;
 
     use crate::{
-        overlay::help::HelpWidget,
+        overlay::help::{HelpColumns, HelpWidget, groups::HelpGroups},
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
@@ -160,9 +168,10 @@ mod tests {
     fn help_frame(width: u16, height: u16) -> String {
         let theme = noir();
         let keymap = Keymap::default();
-        let bindings = keymap.bindings();
-        let overlay_widget =
-            HelpWidget::new(bindings, ActiveTheme::new(&theme, ColorDepth::TrueColor));
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let groups = HelpGroups::new(keymap.bindings());
+        let help_columns = HelpColumns::new(&groups, Rect::new(0, 0, width, height));
+        let overlay_widget = HelpWidget::new(&help_columns, active_theme);
         rendered(width, height, |frame| {
             frame.render_widget(&overlay_widget, frame.area());
         })

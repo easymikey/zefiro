@@ -84,7 +84,7 @@ mod tests {
 
     use crate::overlay::settings::{
         rows::{SettingsColumns, SettingsTableRow, settings_cells},
-        test_support::settings_values,
+        tests::settings_values,
     };
 
     #[test]

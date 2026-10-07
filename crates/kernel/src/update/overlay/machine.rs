@@ -49,12 +49,18 @@ fn release() -> Cmd {
 }
 
 fn opened_playback(previous: Option<&Overlay>, overlay: &Overlay) -> Cmd {
-    match (previous, overlay) {
-        (_, Overlay::Settings(..)) => {
+    match overlay {
+        Overlay::Settings(..) => {
             Cmd::message(Message::Playback(PlaybackRequest::HoldForOverlay))
         }
-        (Some(Overlay::Settings(..)), _) => release(),
-        (_, _) => Cmd::none(),
+        Overlay::Help
+        | Overlay::Search(_)
+        | Overlay::SavePlaylist(_)
+        | Overlay::History(_)
+        | Overlay::ConfirmTrash(_)
+        | Overlay::TrackDetails(_)
+        | Overlay::JumpToTime(_)
+        | Overlay::MusicDir(_) => previous.map_or(Cmd::none(), closed_playback),
     }
 }
 
@@ -92,8 +98,8 @@ fn confirm_cmd(overlay: &mut Overlay) -> Result<Confirmed, Unhandled> {
     match overlay {
         Overlay::Search(search) => confirm_search(search).map(Confirmed::Close),
         Overlay::SavePlaylist(text_entry) => confirm_save_playlist(text_entry),
-        Overlay::ConfirmTrash(candidate) => Ok(Confirmed::Close(Cmd::message(
-            Message::Browse(BrowseRequest::Trash(candidate.source.clone())),
+        Overlay::ConfirmTrash(track) => Ok(Confirmed::Close(Cmd::message(
+            Message::Browse(BrowseRequest::Trash(track.source().clone())),
         ))),
         Overlay::JumpToTime(text_entry) => confirm_jump(text_entry),
         Overlay::MusicDir(text_entry) => confirm_music_dir(text_entry),

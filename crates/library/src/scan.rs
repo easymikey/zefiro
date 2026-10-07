@@ -12,8 +12,11 @@ use crate::{error::Error, tags::read_track};
 fn is_audio_file(path: &Path, audio_extensions: &[&str]) -> bool {
     path.extension()
         .and_then(OsStr::to_str)
-        .map(str::to_ascii_lowercase)
-        .is_some_and(|extension| audio_extensions.contains(&extension.as_str()))
+        .is_some_and(|extension| {
+            audio_extensions
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+        })
 }
 
 #[must_use]
@@ -25,7 +28,7 @@ pub(crate) struct Listing {
 
 impl Listing {
     fn keeping(mut self, walked: walkdir::DirEntry, audio_extensions: &[&str]) -> Self {
-        if is_audio_file(walked.path(), audio_extensions) {
+        if is_audio_file(walked.path(), audio_extensions) && walked.path().is_file() {
             self.paths.push(walked.into_path());
         }
         self
@@ -50,26 +53,27 @@ fn walk_error(error: walkdir::Error, music_dir: &Path) -> Error {
     Error::io(LibrarySubject::Scan, &path)(io_error)
 }
 
-pub(crate) fn list_dir(music_dir: &Path, audio_extensions: &[&str]) -> Listing {
+pub(crate) fn list_dir(
+    music_dir: &Path,
+    audio_extensions: &[&str],
+) -> Result<Listing, Error> {
     if !music_dir.is_dir() {
         let kind = if music_dir.exists() {
             std::io::ErrorKind::NotADirectory
         } else {
             std::io::ErrorKind::NotFound
         };
-        return Listing {
-            paths: Vec::new(),
-            skipped: Some(Error::io(LibrarySubject::Scan, music_dir)(
-                std::io::Error::from(kind),
-            )),
-        };
+        return Err(Error::io(LibrarySubject::Scan, music_dir)(
+            std::io::Error::from(kind),
+        ));
     }
     walkdir::WalkDir::new(music_dir)
         .sort_by_file_name()
         .into_iter()
-        .fold(Listing::default(), |listing, entry| match entry {
-            Ok(entry) => listing.keeping(entry, audio_extensions),
-            Err(error) => listing.skipping(error, music_dir),
+        .try_fold(Listing::default(), |listing, entry| match entry {
+            Ok(entry) => Ok(listing.keeping(entry, audio_extensions)),
+            Err(error) if error.depth() == 0 => Err(walk_error(error, music_dir)),
+            Err(error) => Ok(listing.skipping(error, music_dir)),
         })
 }
 
@@ -197,7 +201,7 @@ mod tests {
     }
 
     fn scanned(dir: &Path) -> Vec<Arc<Track>> {
-        read_tags(&list_dir(dir, AUDIO_EXTENSIONS).paths).tracks
+        read_tags(&list_dir(dir, AUDIO_EXTENSIONS).unwrap().paths).tracks
     }
 
     #[test]
@@ -236,7 +240,7 @@ mod tests {
         for name in ["b.mp3", "a.flac", "notes.txt"] {
             std::fs::write(temp_dir.path().join(name), b"stub").unwrap();
         }
-        let listing = list_dir(temp_dir.path(), AUDIO_EXTENSIONS);
+        let listing = list_dir(temp_dir.path(), AUDIO_EXTENSIONS).unwrap();
         assert!(listing.skipped.is_none());
         insta::with_settings!({ filters => temp_dir_filters() }, {
             insta::assert_debug_snapshot!(listing.paths);
@@ -250,7 +254,7 @@ mod tests {
         for name in ["a.flac", "b.mp3", "c.mkv"] {
             std::fs::write(temp_dir.path().join(name), b"stub").unwrap();
         }
-        let listing = list_dir(temp_dir.path(), AUDIO_EXTENSIONS);
+        let listing = list_dir(temp_dir.path(), AUDIO_EXTENSIONS).unwrap();
         let chunk = &listing.paths[..2];
 
         let tracks = read_tags(chunk).tracks;
@@ -287,11 +291,10 @@ mod tests {
             std::fs::write(&music_dir, b"stub").unwrap();
         }
 
-        let listing = list_dir(&music_dir, AUDIO_EXTENSIONS);
+        let skipped = list_dir(&music_dir, AUDIO_EXTENSIONS).err();
 
-        assert!(listing.paths.is_empty());
         insta::with_settings!({ filters => temp_dir_filters(), snapshot_suffix => name.unwrap_or("gone") }, {
-            insta::assert_debug_snapshot!(listing.skipped);
+            insta::assert_debug_snapshot!(skipped);
         });
     }
 
@@ -309,7 +312,7 @@ mod tests {
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
             .unwrap();
 
-        let listing = list_dir(temp_dir.path(), AUDIO_EXTENSIONS);
+        let listing = list_dir(temp_dir.path(), AUDIO_EXTENSIONS).unwrap();
 
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755))
             .unwrap();
@@ -350,6 +353,17 @@ mod tests {
                 .iter()
                 .all(|track| matches!(track.tagging(), Tagging::Listed(_)))
         );
+    }
+
+    #[rstest]
+    fn a_directory_named_like_audio_is_not_listed(temp_dir: tempfile::TempDir) {
+        let folder = temp_dir.path().join("Live.flac");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("one.mp3"), b"stub").unwrap();
+
+        let listing = list_dir(temp_dir.path(), AUDIO_EXTENSIONS).unwrap();
+
+        assert_eq!(listing.paths, vec![folder.join("one.mp3")]);
     }
 
     #[rstest]

@@ -18,12 +18,40 @@ expression: "walked(model, messages)"
         Stopped,
         Some(
             ConfirmTrash(
-                TrashCandidate {
+                Track {
                     source: Local(
                         "/m/0.flac",
                     ),
-                    title: "Moon River",
-                    artist: "Audrey Hepburn",
+                    tags: Tags {
+                        title: Some(
+                            "Moon River",
+                        ),
+                        artist: Some(
+                            "Audrey Hepburn",
+                        ),
+                        album: None,
+                        album_artist: None,
+                        date: None,
+                        genre: None,
+                        track_number: None,
+                        track_total: None,
+                        disc: None,
+                        composer: None,
+                        comment: None,
+                        lyrics: None,
+                    },
+                    audio_format: AudioFormat {
+                        format: None,
+                        bitrate: None,
+                        sample_rate: None,
+                        bits_per_sample: None,
+                        channels: None,
+                        decibels: None,
+                    },
+                    display: "Audrey Hepburn — Moon River",
+                    tagging: Tagged(
+                        100s,
+                    ),
                 },
             ),
         ),

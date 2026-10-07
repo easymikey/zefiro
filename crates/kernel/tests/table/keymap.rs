@@ -10,8 +10,8 @@ use kernel::{
         direction::Direction,
         geometry::Cells,
         key::{Key, KeyCode, KeyPress, Modifiers},
-        keymap::{KeyContext, KeymapOverrides},
-        overlay::{Overlay, OverlayName, TextEntry, TrashCandidate},
+        keymap::{Action, KeyContext, KeyOverride, KeymapOverrides},
+        overlay::{Overlay, OverlayName, TextEntry},
         setting_row::SettingRow,
         time::Moment,
         toast::Toast,
@@ -24,12 +24,17 @@ use kernel::{
         Message,
         OverlayRequest,
         PlaybackRequest,
+        QueueRequest,
         SearchEdit,
         SearchRequest,
         SettingRowRequest,
         TextRequest,
     },
-    update::{keymap::lookup::route, machine::Unhandled, update},
+    update::{
+        keymap::{bindings::Keymap, lookup::route},
+        machine::Unhandled,
+        update,
+    },
 };
 use rstest::rstest;
 
@@ -70,11 +75,9 @@ fn settings_on(row: SettingRow) -> Workspace {
 }
 
 fn confirming_trash() -> Workspace {
-    with_overlay(Overlay::ConfirmTrash(TrashCandidate {
-        source: kernel::domain::track::TrackSource::Local("/music/moon.flac".into()),
-        title: "Moon River".to_string(),
-        artist: "Audrey Hepburn".to_string(),
-    }))
+    with_overlay(Overlay::ConfirmTrash(Arc::new(Track::listed(Path::new(
+        "/music/moon.flac",
+    )))))
 }
 
 fn jumping() -> Workspace {
@@ -121,6 +124,11 @@ fn settings_row(setting_row_request: SettingRowRequest) -> Option<Message> {
     Some(Message::Overlay(OverlayRequest::Settings(
         setting_row_request,
     )))
+}
+
+fn compiled(keymap_overrides: KeymapOverrides, mut workspace: Workspace) -> Workspace {
+    workspace.keymap = Keymap::new(keymap_overrides);
+    workspace
 }
 
 fn close() -> Option<Message> {
@@ -436,6 +444,55 @@ fn routed_key(
     #[case] expected: Option<Message>,
 ) {
     workspace.visible_rows = VISIBLE_ROWS;
+    let press = KeyPress { key, typed: key };
+    assert_eq!(route(&workspace, press), expected);
+}
+
+#[rstest]
+#[case::a_global_chord_takes_a_playlist_default_chord(
+    compiled(
+        KeymapOverrides::from([(Action::PlayPause, KeyOverride::from("j"))]),
+        browsing(),
+    ),
+    'j',
+    Some(Message::Playback(PlaybackRequest::Toggle))
+)]
+#[case::a_plain_chord_takes_the_prefix_it_would_arm(
+    compiled(
+        KeymapOverrides::from([(
+            Action::Enqueue,
+            KeyOverride {
+                chord: "g".to_string(),
+                key_context: Some(KeyContext::Playlist),
+            },
+        )]),
+        browsing(),
+    ),
+    'g',
+    Some(Message::Queue(QueueRequest::Toggle))
+)]
+#[case::a_global_plain_chord_takes_the_playlist_prefix_it_would_arm(
+    compiled(
+        KeymapOverrides::from([(Action::Quit, KeyOverride::from("g"))]),
+        browsing(),
+    ),
+    'g',
+    Some(Message::Quit)
+)]
+#[case::a_bare_chord_keeps_the_overlay_context(
+    compiled(
+        KeymapOverrides::from([(Action::SettingsClose, KeyOverride::from("x"))]),
+        settings_on(SettingRow::Theme),
+    ),
+    'x',
+    close()
+)]
+fn a_configured_chord_routes(
+    #[case] workspace: Workspace,
+    #[case] pressed: char,
+    #[case] expected: Option<Message>,
+) {
+    let key = character(pressed);
     let press = KeyPress { key, typed: key };
     assert_eq!(route(&workspace, press), expected);
 }

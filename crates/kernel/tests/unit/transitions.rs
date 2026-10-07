@@ -599,6 +599,7 @@ fn start_track_emits_nowplaying_and_playing_state() {
             Effect::Macos(
                 MacosCmd::SetPlayback(_)
                 | MacosCmd::SetPosition(_)
+                | MacosCmd::SetSpeed(_)
                 | MacosCmd::SetVolume(_),
             )
             | Effect::Audio(_)

@@ -66,33 +66,36 @@ impl Model {
 }
 
 #[cfg(test)]
-fn titled_track(title: &str) -> Arc<Track> {
-    Arc::new(Track::new(crate::domain::track::TrackParts {
-        path: format!("{title}.mp3").into(),
-        duration: std::time::Duration::from_secs(1),
-        tags: crate::domain::track::Tags {
-            title: Some(title.to_string()),
-            ..crate::domain::track::Tags::default()
-        },
-        audio_format: crate::domain::track::AudioFormat::default(),
-    }))
-}
+mod tests {
+    use std::{sync::Arc, time::Duration};
 
-#[cfg(test)]
-mod displayed_track_tests {
-    use std::time::Duration;
+    use rstest::rstest;
 
     use crate::domain::{
         cursor::Cursor,
-        index::TrackIndex,
+        index::{TrackIndex, ViewIndex},
         library::Library,
-        model::{Model, titled_track},
-        player::Player,
+        model::Model,
+        player::{PausedBy, Player},
         playhead::Playhead,
+        playlist::Playlist,
         speed::Speed,
         time::Moment,
+        track::{AudioFormat, Tags, Track, TrackParts},
         workspace::{Browse, Workspace},
     };
+
+    fn titled_track(title: &str) -> Arc<Track> {
+        Arc::new(Track::new(TrackParts {
+            path: format!("{title}.mp3").into(),
+            duration: Duration::from_secs(1),
+            tags: Tags {
+                title: Some(title.to_string()),
+                ..Tags::default()
+            },
+            audio_format: AudioFormat::default(),
+        }))
+    }
 
     #[test]
     fn playing_track_wins_over_the_playlist_selection() {
@@ -146,25 +149,6 @@ mod displayed_track_tests {
         let model = Model::default();
         assert_eq!(model.displayed_track(), None);
     }
-}
-
-#[cfg(test)]
-mod playing_index_tests {
-    use std::{sync::Arc, time::Duration};
-
-    use rstest::rstest;
-
-    use crate::domain::{
-        cursor::Cursor,
-        index::ViewIndex,
-        model::{Model, titled_track},
-        player::{PausedBy, Player},
-        playhead::Playhead,
-        playlist::Playlist,
-        speed::Speed,
-        time::Moment,
-        track::Track,
-    };
 
     fn anchored_at_zero() -> Playhead {
         Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default())

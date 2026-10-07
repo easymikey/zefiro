@@ -91,17 +91,19 @@ pub(crate) fn paint_art_clipped(pixmap: &mut Pixmap, art: &Pixmap, clip: &ArtCli
 
 #[cfg(test)]
 mod tests {
+    use std::{path::PathBuf, sync::Arc};
+
     use kernel::domain::geometry::Pixels;
 
     use crate::pixels::{
+        cover::CoverImage,
         numeric::{dimension_f32, floor},
         vinyl::{
             VinylCache,
-            VinylCacheKey,
-            VinylStyle,
+            Wanted,
             art::{label_diameter, prepare_art, sleeve_inset_side},
             geometry::{VINYL_LAYOUT, shadow_horizontal_reach_fraction},
-            test_support::synthetic_art,
+            tests::{noir_vinyl_style, synthetic_art},
         },
     };
 
@@ -139,14 +141,18 @@ mod tests {
     fn art_of_the_wrong_size_is_resized_to_fit() {
         let art = synthetic_art(8);
         let canvas_side = Pixels(96);
-        let key = VinylCacheKey {
-            path: None,
+        let cover_image = CoverImage {
+            path: PathBuf::from("/music/small.flac"),
+            image: Arc::new(art),
+        };
+        let wanted = Wanted {
+            cover_image: Some(&cover_image),
             side: canvas_side,
-            vinyl_style: VinylStyle::fixture(),
+            vinyl_style: noir_vinyl_style(),
         };
         let mut cache = VinylCache::default();
 
-        let image = cache.compose(&key, Some(&art));
+        let image = cache.compose(&wanted);
         let peek = expected_peek(canvas_side);
         assert_eq!(image.dimensions(), (canvas_side.0 + peek, canvas_side.0));
         let center = (canvas_side.0 / 2, canvas_side.0 / 2);

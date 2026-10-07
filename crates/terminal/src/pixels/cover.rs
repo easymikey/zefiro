@@ -1,4 +1,4 @@
-use std::{fmt, time::Duration};
+use std::fmt;
 
 use image::DynamicImage;
 use ratatui_image::{
@@ -13,10 +13,9 @@ use widgets::{
         CoverRefresh,
         CoverWash,
         CrossfadePermit,
-        lifecycle::{CoverFrame, CoverLifecycle, PixmapSource},
-        pixmap::CellPixels,
+        lifecycle::{CoverFrame, CoverLifecycle},
     },
-    scene::Scene,
+    scene::{PixelPath, Scene},
 };
 
 const COVER_KITTY_ID: u32 = 1;
@@ -24,6 +23,7 @@ const COVER_KITTY_ID: u32 = 1;
 pub(crate) struct Cover {
     lifecycle: CoverLifecycle,
     picker: Picker,
+    pixel_path: PixelPath,
     protocol: Option<StatefulProtocol>,
 }
 
@@ -38,13 +38,14 @@ impl fmt::Debug for Cover {
 
 impl Cover {
     pub(crate) fn new(
-        pixmap_source: PixmapSource,
+        lifecycle: CoverLifecycle,
         picker: Picker,
-        cell_pixels: CellPixels,
+        pixel_path: PixelPath,
     ) -> Self {
         Self {
-            lifecycle: CoverLifecycle::new(pixmap_source, cell_pixels),
+            lifecycle,
             picker,
+            pixel_path,
             protocol: None,
         }
     }
@@ -58,15 +59,13 @@ impl Cover {
         scene: &Scene<'_>,
         refresh: CoverRefresh,
     ) -> CardCover {
-        let refresh = match self.picker.protocol_type() {
-            ProtocolType::Halfblocks => refresh,
-            ProtocolType::Sixel | ProtocolType::Kitty | ProtocolType::Iterm2 => {
-                CoverRefresh {
-                    crossfade_permit: CrossfadePermit::Withheld,
-                    wash: CoverWash::Idle,
-                    ..refresh
-                }
-            }
+        let refresh = match self.pixel_path {
+            PixelPath::Halfblocks => refresh,
+            PixelPath::Protocol => CoverRefresh {
+                crossfade_permit: CrossfadePermit::Withheld,
+                wash: CoverWash::Idle,
+                ..refresh
+            },
         };
         let update = self.lifecycle.refresh(scene, refresh);
         match update.frame {
@@ -86,8 +85,8 @@ impl Cover {
         self.protocol.as_mut()
     }
 
-    pub(crate) fn motion(&self, since_first_paint: Duration) -> CoverMotion {
-        self.lifecycle.motion(since_first_paint)
+    pub(crate) fn motion(&self) -> CoverMotion {
+        self.lifecycle.motion()
     }
 }
 

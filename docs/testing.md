@@ -23,7 +23,7 @@ Every guard that reads source text lives in `crates/sifr-guards/tests/guards/`, 
 |---|---|
 | `comments.rs` | only the listed `SAFETY:` / `PROTOCOL:` / `GUARD:` one-liners (§9) |
 | `builders.rs` | no generated `builder()`, no `maybe_` setter; setters are named after their fields (§2) |
-| `conventions.rs` | banned words and loop names from the conventions vocabulary (§9); item rules: `mem::take` (§3.5), part names (§3.7), one-field variants (§5.1), no `Result` alias (§5.5), `let _` and `.ok();` discards (§6.3) |
+| `conventions.rs` | banned words and loop names from the conventions vocabulary (§9); item rules: `mem::take` of a `self` field inside a `transition` body (§3.5), part names (§3.7), one-field variants (§5.1), no `Result` alias (§5.5), `let _` and `.ok();` discards (§6.3) |
 | `config_doc_config.rs`, `config_doc_appearance.rs` | `docs/config.md`'s default blocks still parse into the config defaults |
 | `demeter.rs` | kernel `update` handlers take slices, not a whole `Model` (§1.3) |
 | `demeter_views.rs` | widgets below `screen` never hold a whole `Model` (§1.3) |
@@ -52,7 +52,7 @@ The `config_doc` guards are the exception that reach into another crate's own ty
 
 ## Hardware tests
 
-Tests needing a real audio device or an FSEvents watcher carry `#[ignore = "hardware: …"]` and are skipped by default. They live next to the code they drive (`--lib`), not in `tests/`; run them with `cargo test -p runtime -- --include-ignored` (and `-p audio` for its device test). CI does not run them.
+Tests needing a real audio device, CoreAudio or an FSEvents watcher carry `#[ignore = "hardware: …"]` and are skipped by default. They live next to the code they drive (`--lib`), not in `tests/`; run them with `cargo test -p runtime -- --include-ignored` (the output device, the macOS driver, the watcher), `-p audio` (its device tests) and `-p macos` (the system volume write). CI does not run them.
 
 ## rstest: fixtures and cases
 

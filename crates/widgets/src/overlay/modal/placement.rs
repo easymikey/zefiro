@@ -55,28 +55,22 @@ impl OverlayAreas {
 #[derive(Debug)]
 pub(crate) struct ModalBorder<'a> {
     pub(crate) area: Rect,
-    pub(crate) title: Line<'static>,
+    pub(crate) title: Line<'a>,
     pub(crate) theme: ActiveTheme<'a>,
 }
 
 impl ModalBorder<'_> {
-    fn block(&self) -> Block<'static> {
-        pane_block(
-            Some(self.title.clone()),
-            self.theme.colors().muted_foreground,
-        )
-    }
-
     #[must_use]
     pub(crate) fn areas(&self) -> ScrollAreas {
-        let inner = self.block().inner(self.area);
+        let inner =
+            pane_block(None, self.theme.colors().muted_foreground).inner(self.area);
         if inner.width == 0 || inner.height == 0 {
             return ScrollAreas::empty(self.area);
         }
         scroll_areas(self.area, inner)
     }
 
-    pub(crate) fn paint(&self, buffer: &mut Buffer) {
+    pub(crate) fn paint(self, buffer: &mut Buffer) {
         Clear.render(self.area, buffer);
         let colors = self.theme.colors();
         Block::new()
@@ -86,18 +80,17 @@ impl ModalBorder<'_> {
                     .fg(colors.foreground),
             )
             .render(self.area, buffer);
-        self.block().render(self.area, buffer);
+        pane_block(Some(self.title), colors.muted_foreground).render(self.area, buffer);
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct ModalPlacement<'a> {
     pub(crate) container: ModalContainer<'a>,
-    pub(crate) border_title: Line<'static>,
+    pub(crate) border_title: Line<'a>,
     pub(crate) modal_title: &'a str,
     pub(crate) content_width: Cells,
     pub(crate) content_rows: Cells,
-    pub(crate) hint: Option<Line<'static>>,
     pub(crate) theme: ActiveTheme<'a>,
 }
 
@@ -105,7 +98,7 @@ impl<'a> ModalPlacement<'a> {
     fn border(&self, area: Rect) -> ModalBorder<'a> {
         ModalBorder {
             area,
-            title: self.border_title.clone(),
+            title: Line::default(),
             theme: self.theme,
         }
     }
@@ -118,7 +111,7 @@ impl<'a> ModalPlacement<'a> {
                 content_width: self.content_width,
                 content_rows: self.content_rows.max(Cells(1)),
             },
-            hint: self.hint.clone(),
+            hint: None,
             border: colors.muted_foreground,
             window_background: colors.window_background,
         }
@@ -138,10 +131,15 @@ impl<'a> ModalPlacement<'a> {
         }
     }
 
-    pub(crate) fn paint(&self, areas: ScrollAreas, canvas: Canvas<'_>) {
+    pub(crate) fn paint(self, areas: ScrollAreas, canvas: Canvas<'_>) {
         let buffer = canvas.buffer;
         match self.container {
-            ModalContainer::Playlist(pane) => self.border(pane).paint(buffer),
+            ModalContainer::Playlist(pane) => ModalBorder {
+                area: pane,
+                title: self.border_title,
+                theme: self.theme,
+            }
+            .paint(buffer),
             ModalContainer::Floating(_) => {
                 self.modal().paint(ModalAreas::from(areas), buffer);
             }

@@ -131,22 +131,20 @@ impl Player {
         position: Duration,
         lookahead: Lookahead,
     ) -> Result<Cmd, Unhandled> {
-        match self {
+        let reported = self.reported(position, lookahead.now)?;
+        Ok(reported.then(match self {
             Player::Playing {
-                playhead,
-                preloaded,
-                ..
-            } => {
-                *playhead = Playhead::anchored(position, lookahead.now, playhead.speed);
-                Ok(match preloaded {
-                    None => lookahead.preloading(position, preloaded),
-                    Some(_) => Cmd::none(),
-                })
+                preloaded: preloaded @ None,
+                track: _track,
+                playhead: _playhead,
+            } => lookahead.preloading(position, preloaded),
+            Player::Playing {
+                preloaded: Some(_), ..
             }
-            Player::Paused { .. } | Player::Loading(..) | Player::Stopped => {
-                Err(Unhandled)
-            }
-        }
+            | Player::Paused { .. }
+            | Player::Loading(..)
+            | Player::Stopped => Cmd::none(),
+        }))
     }
 
     pub(crate) fn reported(
@@ -155,7 +153,11 @@ impl Player {
         now: Moment,
     ) -> Result<Cmd, Unhandled> {
         match self {
-            Player::Playing { playhead, .. } => {
+            Player::Playing {
+                playhead,
+                track: _track,
+                preloaded: _preloaded,
+            } => {
                 *playhead = Playhead::anchored(position, now, playhead.speed);
                 Ok(Cmd::none())
             }
@@ -170,38 +172,30 @@ impl Player {
         next: Option<Arc<Track>>,
         now: Moment,
     ) -> Result<Cmd, Unhandled> {
-        match self {
+        let (track, change) = match self {
             Player::Playing {
                 track,
                 playhead,
                 preloaded,
             } => {
-                if let Some(next) = next {
-                    *track = next;
-                }
                 *playhead = Playhead::anchored(Duration::ZERO, now, playhead.speed);
                 *preloaded = None;
-                Ok(Cmd::from_iter(handover_effects(
-                    track,
-                    PlaybackChange::Play,
-                    now,
-                )))
+                (track, PlaybackChange::Play)
             }
             Player::Paused {
-                track, position, ..
+                track,
+                position,
+                by: _by,
             } => {
-                if let Some(next) = next {
-                    *track = next;
-                }
                 *position = Duration::ZERO;
-                Ok(Cmd::from_iter(handover_effects(
-                    track,
-                    PlaybackChange::Pause,
-                    now,
-                )))
+                (track, PlaybackChange::Pause)
             }
-            Player::Loading(..) | Player::Stopped => Err(Unhandled),
+            Player::Loading(..) | Player::Stopped => return Err(Unhandled),
+        };
+        if let Some(next) = next {
+            *track = next;
         }
+        Ok(Cmd::from_iter(handover_effects(track, change, now)))
     }
 
     pub(crate) fn ended(

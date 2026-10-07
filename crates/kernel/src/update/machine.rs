@@ -1,9 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
-use crate::{
-    cmd::Cmd,
-    domain::{cursor::Cursor, io_error::IoError},
-};
+use crate::{cmd::Cmd, domain::io_error::IoError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Unhandled;
@@ -40,14 +37,6 @@ pub enum LoopEffect<E, J, M> {
         changed: fn(Result<(), IoError>) -> M,
     },
     Unwatch(PathBuf),
-}
-
-pub(crate) fn move_cursor(
-    cursor: &mut Cursor,
-    moved_cursor: Cursor,
-) -> Result<Cmd, Unhandled> {
-    replace(cursor, moved_cursor)?;
-    Ok(Cmd::none())
 }
 
 pub(crate) fn replace<T: PartialEq>(field: &mut T, next: T) -> Result<(), Unhandled> {

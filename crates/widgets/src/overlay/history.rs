@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use kernel::domain::{
     geometry::Cells,
     history::HistoryEntry,
@@ -41,6 +43,7 @@ use crate::{
 pub(crate) struct HistoryWidget<'a> {
     theme: ActiveTheme<'a>,
     entries: &'a [HistoryEntry],
+    measures: &'a HistoryMeasures,
     now: Moment,
     selected: RowIndex,
     container: ModalContainer<'a>,
@@ -50,11 +53,13 @@ impl<'a> HistoryWidget<'a> {
     #[must_use]
     pub(crate) fn new(
         entries: &'a [HistoryEntry],
+        measures: &'a HistoryMeasures,
         active_theme: ActiveTheme<'a>,
     ) -> Self {
         Self {
             theme: active_theme,
             entries,
+            measures,
             now: Moment::default(),
             selected: RowIndex::new(0),
             container: ModalContainer::Floating(&[]),
@@ -83,7 +88,7 @@ impl<'a> HistoryWidget<'a> {
 impl HistoryWidget<'_> {
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::List(self.placement(&self.labels()).areas(screen))
+        OverlayAreas::List(self.placement().areas(screen))
     }
 
     pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
@@ -91,8 +96,7 @@ impl HistoryWidget<'_> {
             return;
         };
         let Canvas { area, buffer } = canvas;
-        let labels = self.labels();
-        self.placement(&labels).paint(
+        self.placement().paint(
             areas,
             Canvas {
                 area,
@@ -109,39 +113,26 @@ impl HistoryWidget<'_> {
                 .render(areas.content, buffer);
             return;
         }
-        self.paint_rows(
-            LabeledRows {
-                areas,
-                labels: &labels,
-            },
-            buffer,
-        );
+        self.paint_rows(areas, buffer);
     }
 
-    fn labels(&self) -> Vec<String> {
-        self.entries.iter().map(played_label).collect()
-    }
-
-    fn placement(&self, labels: &[String]) -> ModalPlacement<'_> {
+    fn placement(&self) -> ModalPlacement<'_> {
         let theme = self.theme;
-        let measures = HistoryMeasures::of(labels);
         ModalPlacement {
             container: self.container,
             border_title: modal_title(
                 glyphs::history::TITLE_WORD,
-                track_count_text(self.entries.len()),
+                &self.measures.detail,
                 theme.colors(),
             ),
             modal_title: glyphs::history::TITLE_WORD,
-            content_width: measures.natural_width(COLUMN_SPACING),
+            content_width: self.measures.natural_width(COLUMN_SPACING),
             content_rows: Cells(small_count_u16(self.entries.len())),
-            hint: None,
             theme,
         }
     }
 
-    fn paint_rows(&self, labeled_rows: LabeledRows<'_>, buffer: &mut Buffer) {
-        let LabeledRows { areas, labels } = labeled_rows;
+    fn paint_rows(&self, areas: ScrollAreas, buffer: &mut Buffer) {
         let colors = self.theme.colors();
         let table_area = areas.rows;
         let lead = leading_cells(&areas).0;
@@ -152,12 +143,14 @@ impl HistoryWidget<'_> {
         let table = Table::new(
             self.entries
                 .iter()
-                .zip(labels)
-                .map(|(history_entry, label)| {
+                .skip(offset)
+                .take(height)
+                .map(|history_entry| {
+                    let label = played_label(history_entry);
                     entry_row(
                         &EntryRow {
                             history_entry,
-                            label,
+                            label: &label,
                             columns,
                             lead,
                         },
@@ -174,8 +167,7 @@ impl HistoryWidget<'_> {
                 .bg(colors.selection_background),
         );
         let mut table_state = TableState::new()
-            .with_offset(offset)
-            .with_selected(Some(self.selected.get()));
+            .with_selected(Some(self.selected.get().saturating_sub(offset)));
         StatefulWidget::render(table, table_area, buffer, &mut table_state);
 
         paint_scrollbar(
@@ -207,39 +199,57 @@ fn track_count_text(tracks: usize) -> String {
     format!("{tracks} {noun}")
 }
 
-fn played_label(history_entry: &HistoryEntry) -> String {
+fn played_label(history_entry: &HistoryEntry) -> Cow<'_, str> {
     history_entry
         .artist
         .as_deref()
         .filter(|artist| !artist.is_empty())
         .map_or_else(
-            || history_entry.title.clone(),
+            || Cow::Borrowed(history_entry.title.as_str()),
             |artist| {
-                format!(
+                Cow::Owned(format!(
                     "{artist}{}{}",
                     glyphs::history::LABEL_SEPARATOR,
                     history_entry.title
-                )
+                ))
             },
         )
 }
 
 const WHEN_COLUMN_CELLS: Cells = Cells(8);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct HistoryMeasures {
+#[derive(Debug, Clone, PartialEq)]
+pub struct HistoryMeasures {
     label_width: Cells,
+    detail: String,
 }
 
 impl HistoryMeasures {
-    fn of(labels: &[String]) -> Self {
-        let widest = labels.iter().map(|label| label.width()).max().unwrap_or(0);
+    #[must_use]
+    pub(crate) fn of(entries: &[HistoryEntry]) -> Self {
+        let widest = entries
+            .iter()
+            .map(|history_entry| {
+                let title = history_entry.title.width();
+                history_entry
+                    .artist
+                    .as_deref()
+                    .filter(|artist| !artist.is_empty())
+                    .map_or(title, |artist| {
+                        artist.width()
+                            + glyphs::history::LABEL_SEPARATOR.width()
+                            + title
+                    })
+            })
+            .max()
+            .unwrap_or(0);
         Self {
             label_width: Cells(small_count_u16(widest)),
+            detail: track_count_text(entries.len()),
         }
     }
 
-    fn natural_width(self, spacing: u16) -> Cells {
+    fn natural_width(&self, spacing: u16) -> Cells {
         if self.label_width == Cells(0) {
             let placeholder = glyphs::history::EMPTY_PLACEHOLDER.width();
             return Cells(small_count_u16(placeholder));
@@ -287,12 +297,6 @@ impl HistoryColumns {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct LabeledRows<'a> {
-    areas: ScrollAreas,
-    labels: &'a [String],
-}
-
 struct EntryRow<'a> {
     history_entry: &'a HistoryEntry,
     label: &'a str,
@@ -338,8 +342,11 @@ mod tests {
     use ratatui::layout::Rect;
 
     use crate::{
-        overlay::{history::HistoryWidget, modal::placement::ModalContainer},
-        primitive::canvas::find_text,
+        overlay::{
+            history::{HistoryMeasures, HistoryWidget},
+            modal::placement::ModalContainer,
+        },
+        primitive::canvas::tests::find_text,
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
@@ -376,8 +383,10 @@ mod tests {
             entry("/m/a.flac", "Alpha", Some("Artist A")),
             entry("/m/b.flac", "Beta", None),
         ];
+        let measures = HistoryMeasures::of(&entries);
         let overlay = HistoryWidget::new(
             &entries,
+            &measures,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         )
         .now(now())
@@ -397,7 +406,8 @@ mod tests {
             entry("/m/a.flac", "Alpha", Some("Artist A")),
             entry("/m/b.flac", "Beta", None),
         ];
-        let overlay = HistoryWidget::new(&entries, active_theme)
+        let measures = HistoryMeasures::of(&entries);
+        let overlay = HistoryWidget::new(&entries, &measures, active_theme)
             .now(now())
             .selected(RowIndex::new(1))
             .container(ModalContainer::Floating(&[]));
@@ -423,8 +433,10 @@ mod tests {
     fn history_overlay_with_a_scrollbar_keeps_its_time_column_clear_of_it() {
         let theme = noir();
         let entries = scrolling_entries();
+        let measures = HistoryMeasures::of(&entries);
         let overlay = HistoryWidget::new(
             &entries,
+            &measures,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         )
         .now(now())
@@ -437,11 +449,40 @@ mod tests {
     }
 
     #[test]
+    fn history_overlay_of_two_hundred_entries_scrolls_to_the_selected_one() {
+        let theme = noir();
+        let entries: Vec<HistoryEntry> = (0..200)
+            .map(|index| {
+                entry(
+                    &format!("/m/{index:03}.flac"),
+                    &format!("Song {index:03}"),
+                    Some(&format!("Artist {index}")),
+                )
+            })
+            .collect();
+        let measures = HistoryMeasures::of(&entries);
+        let overlay = HistoryWidget::new(
+            &entries,
+            &measures,
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        )
+        .now(now())
+        .selected(RowIndex::new(150))
+        .container(ModalContainer::Playlist(Rect::new(0, 0, 120, 40)));
+        insta::assert_snapshot!(
+            rendered(120, 40, |frame| frame.render_widget(&overlay, frame.area()))
+                .to_string()
+        );
+    }
+
+    #[test]
     fn the_history_time_column_never_touches_the_scrollbar() {
         let theme = noir();
         let entries = scrolling_entries();
+        let measures = HistoryMeasures::of(&entries);
         let overlay = HistoryWidget::new(
             &entries,
+            &measures,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         )
         .now(now())
@@ -462,8 +503,10 @@ mod tests {
     fn history_overlay_shows_a_placeholder_when_empty() {
         let theme = noir();
         let entries: [HistoryEntry; 0] = [];
+        let measures = HistoryMeasures::of(&entries);
         let overlay = HistoryWidget::new(
             &entries,
+            &measures,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         )
         .now(now())
@@ -479,8 +522,10 @@ mod tests {
     fn history_overlay_does_not_panic_on_a_tiny_terminal() {
         let theme = noir();
         let entries: [HistoryEntry; 0] = [];
+        let measures = HistoryMeasures::of(&entries);
         let overlay = HistoryWidget::new(
             &entries,
+            &measures,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         )
         .now(now())

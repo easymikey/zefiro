@@ -44,7 +44,7 @@ pub(crate) fn format_chips_line(
 ) -> Option<Line<'static>> {
     let values = format_chip_values(audio_format);
     let spans: Vec<Span<'static>> = values
-        .iter()
+        .into_iter()
         .map(|value| chip::spans(value, colors))
         .enumerate()
         .scan(0usize, |used_width, (index, chip_spans)| {

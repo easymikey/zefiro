@@ -9,6 +9,7 @@ use std::{sync::Arc, time::Duration};
 use headings::CardStatus;
 use kernel::domain::{
     appearance::{AppearanceSettings, CoverBrackets},
+    geometry::Cells,
     percent::Percent,
     player::Player,
     playlist::{PlayOrder, RepeatMode},
@@ -30,6 +31,7 @@ use crate::{
     geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
     pixels::numeric::{small_count_u16, unit_fraction},
     primitive::{
+        bar::remaining_label,
         canvas::Canvas,
         corner_brackets,
         corner_brackets::CornerBracketsWidget,
@@ -68,6 +70,8 @@ pub(crate) struct CardWidget<'a> {
     cover_sizing: CoverSizing,
     appearance_settings: AppearanceSettings,
     card_cover: &'a CardCover,
+    progress_bar_width: Cells,
+    remaining_label: &'a str,
 }
 
 const NO_TRACK_TITLE: &str = "No track";
@@ -119,7 +123,7 @@ impl<'a> CardView<'a> {
     }
 
     pub(crate) fn status(&self) -> CardStatus {
-        CardStatus::new(self.output_status, self.player)
+        CardStatus::new(*self.output_status, self.player)
     }
 }
 
@@ -133,6 +137,8 @@ impl<'a> CardWidget<'a> {
             cover_sizing: CoverSizing::default(),
             appearance_settings: AppearanceSettings::default(),
             card_cover: &CardCover::Missing,
+            progress_bar_width: Cells(0),
+            remaining_label: "",
         }
     }
 
@@ -160,6 +166,18 @@ impl<'a> CardWidget<'a> {
     #[must_use]
     pub(crate) fn card_cover(mut self, card_cover: &'a CardCover) -> Self {
         self.card_cover = card_cover;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn progress_bar_width(mut self, progress_bar_width: Cells) -> Self {
+        self.progress_bar_width = progress_bar_width;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn remaining_label(mut self, remaining_label: &'a str) -> Self {
+        self.remaining_label = remaining_label;
         self
     }
 }
@@ -220,7 +238,15 @@ impl CardWidget<'_> {
 impl Widget for &CardWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let metrics = CardMetrics::new(area, self.cell_aspect, self.cover_sizing);
-        self.paint(&metrics, Canvas { area, buffer });
+        let remaining_label = remaining_label(self.view.remaining());
+        let progress_bar_width = metrics.progress_bar_width(
+            self.appearance_settings.progress_time,
+            &remaining_label,
+        );
+        (*self)
+            .progress_bar_width(progress_bar_width)
+            .remaining_label(&remaining_label)
+            .paint(&metrics, Canvas { area, buffer });
     }
 }
 
@@ -230,7 +256,12 @@ pub fn clock_frame_due(
     clock: Presence,
     now: Moment,
 ) -> Option<Moment> {
-    let Player::Playing { playhead, .. } = player else {
+    let Player::Playing {
+        playhead,
+        track: _track,
+        preloaded: _preloaded,
+    } = player
+    else {
         return None;
     };
     (clock == Presence::Shown).then(|| next_clock_second(*playhead, now))

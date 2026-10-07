@@ -126,7 +126,7 @@ pub struct TomlSettings {
     #[serde(deserialize_with = "volume")]
     pub volume: Percent,
     pub audio: TomlAudio,
-    pub(crate) keymap: TomlKeymap,
+    pub keymap: TomlKeymap,
 }
 
 impl Default for TomlSettings {
@@ -138,17 +138,6 @@ impl Default for TomlSettings {
             audio: TomlAudio::default(),
             keymap: TomlKeymap::default(),
         }
-    }
-}
-
-impl TomlSettings {
-    #[must_use]
-    pub fn to_keymap_overrides(&self) -> KeymapOverrides {
-        self.keymap
-            .0
-            .iter()
-            .map(|(action, key_override)| (*action, key_override.0.clone()))
-            .collect()
     }
 }
 
@@ -165,7 +154,7 @@ pub struct ConfigSettings {
 
 pub fn parse_config_settings(text: &str) -> Result<ConfigSettings, Error> {
     parse_config(text).map(|config| ConfigSettings {
-        keymap_overrides: config.to_keymap_overrides(),
+        keymap_overrides: config.keymap.into_keymap_overrides(),
         music_dir: config.music_dir,
     })
 }
@@ -269,6 +258,9 @@ mod tests {
     #[case::sleep_zero_minutes("[audio]\nsleep_presets = [0]\n")]
     #[case::sleep_not_ascending("[audio]\nsleep_presets = [30, 20]\n")]
     #[case::sleep_too_many("[audio]\nsleep_presets = [1, 2, 3, 4, 5, 6]\n")]
+    #[case::sleep_past_the_duration_range(
+        "[audio]\nsleep_presets = [307445734561825861]\n"
+    )]
     #[case::device_empty("[audio]\ndevice = \"\"\n")]
     fn config_values_out_of_range_are_rejected(#[case] text: &str) {
         assert!(

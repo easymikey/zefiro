@@ -1,4 +1,4 @@
-use kernel::domain::{geometry::Cells, overlay::TrashCandidate};
+use kernel::domain::{geometry::Cells, track::Track};
 
 use crate::{
     overlay::modal::prompt::{PromptBody, PromptWidget},
@@ -9,21 +9,21 @@ use crate::{
 const MIN_WIDTH: Cells = Cells(24);
 
 #[must_use]
-fn sentence(candidate: &TrashCandidate) -> [&str; 5] {
+fn sentence(track: &Track) -> [&str; 5] {
     [
         glyphs::confirm_trash::QUOTE_OPEN,
-        &candidate.title,
+        track.title(),
         glyphs::confirm_trash::QUOTE_CLOSE,
         glyphs::confirm_trash::ARTIST_SEPARATOR,
-        &candidate.artist,
+        track.tags().artist.as_deref().unwrap_or(""),
     ]
 }
 
 pub(crate) fn prompt<'a>(
-    candidate: &'a TrashCandidate,
+    track: &'a Track,
     active_theme: ActiveTheme<'a>,
 ) -> PromptWidget<'a> {
-    PromptWidget::new(PromptBody::Sentence(sentence(candidate)), active_theme)
+    PromptWidget::new(PromptBody::Sentence(sentence(track)), active_theme)
         .title(glyphs::confirm_trash::TITLE_WORD)
         .hint(glyphs::confirm_trash::HINT)
         .min_width(MIN_WIDTH)
@@ -31,7 +31,9 @@ pub(crate) fn prompt<'a>(
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::overlay::TrashCandidate;
+    use std::{sync::Arc, time::Duration};
+
+    use kernel::domain::track::{AudioFormat, Tags, Track, TrackParts};
     use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
     use crate::{
@@ -41,21 +43,23 @@ mod tests {
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
-    fn candidate() -> TrashCandidate {
-        TrashCandidate {
-            source: kernel::domain::track::TrackSource::Local(
-                "/music/moon.flac".into(),
-            ),
-            title: "Moon River".to_string(),
-            artist: "Audrey Hepburn".to_string(),
-        }
+    fn track() -> Arc<Track> {
+        Arc::new(Track::new(TrackParts {
+            path: "/music/moon.flac".into(),
+            duration: Duration::from_secs(201),
+            tags: Tags {
+                title: Some("Moon River".to_string()),
+                artist: Some("Audrey Hepburn".to_string()),
+                ..Tags::default()
+            },
+            audio_format: AudioFormat::default(),
+        }))
     }
 
     fn frame(width: u16, height: u16) -> String {
         let theme = noir();
-        let candidate = candidate();
-        let prompt =
-            prompt(&candidate, ActiveTheme::new(&theme, ColorDepth::TrueColor));
+        let track = track();
+        let prompt = prompt(&track, ActiveTheme::new(&theme, ColorDepth::TrueColor));
         rendered(width, height, |frame| {
             frame.render_widget(&prompt, frame.area());
         })
@@ -65,7 +69,7 @@ mod tests {
     #[test]
     fn the_sentence_quotes_the_title_and_names_the_artist() {
         assert_eq!(
-            sentence(&candidate()).concat(),
+            sentence(&track()).concat(),
             "\"Moon River\" — Audrey Hepburn"
         );
     }
@@ -78,9 +82,8 @@ mod tests {
     #[test]
     fn prompt_paints_the_areas_it_is_given() {
         let theme = noir();
-        let candidate = candidate();
-        let widget =
-            prompt(&candidate, ActiveTheme::new(&theme, ColorDepth::TrueColor));
+        let track = track();
+        let widget = prompt(&track, ActiveTheme::new(&theme, ColorDepth::TrueColor));
         let rect = Rect::new(0, 0, 60, 12);
         let mut buffer = Buffer::empty(rect);
         widget.paint(

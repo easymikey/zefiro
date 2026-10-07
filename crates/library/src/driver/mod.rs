@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use kernel::{
-    cmd::{Cmd, Cmds, CoverJob, DiskCmd, LibraryCmd, ScanMode},
+    cmd::{Cmd, CoverJob, DiskCmd, LibraryCmd, ScanMode},
     domain::{revision::Revision, track::Track},
     message::LibraryEvent,
     update::machine::{LoopCmd, LoopEffect, Machine, Unhandled, each_handled},
@@ -192,8 +192,8 @@ impl<P> Machine for LibraryDriver<P> {
         message: LibraryMessage,
     ) -> Result<LibraryLoopCmd, Unhandled> {
         match message {
-            LibraryMessage::Cmds(Cmds { cmds, .. }) => {
-                each_handled(cmds, |cmd| self.transition_cmd(cmd))
+            LibraryMessage::Cmds(batch) => {
+                each_handled(batch.cmds, |cmd| self.transition_cmd(cmd))
             }
             LibraryMessage::Changed(result) => {
                 self.watched(LibraryWatchMessage::Changed(result), ScanMode::Fresh)
@@ -250,6 +250,7 @@ impl<P> Machine for LibraryDriver<P> {
 mod tests {
     use std::{
         path::{Path, PathBuf},
+        sync::Arc,
         time::Instant,
     };
 
@@ -260,6 +261,7 @@ mod tests {
             geometry::Pixels,
             io_error::IoError,
             revision::Revision,
+            track::Track,
         },
         update::machine::{LoopEffect, Machine, Unhandled},
     };
@@ -690,6 +692,24 @@ mod tests {
         let cmd = driver.transition(row.message).unwrap();
 
         assert_eq!(describe(cmd), row.cmd);
+    }
+
+    #[rstest]
+    #[case::a_cache_loads(Ok(vec![Arc::new(Track::listed(Path::new("/music/a.flac")))]), "tell loaded")]
+    #[case::a_bad_cache_reports(Err(Error::NoUserDirs), "list /music @ 1; tell error")]
+    fn a_cached_answer_loads_or_reports_then_lists(
+        #[case] tracks: Result<Vec<Arc<Track>>, Error>,
+        #[case] cmd: &str,
+    ) {
+        let message = LibraryMessage::Cached {
+            music_dir: PathBuf::from("/music"),
+            revision: Revision::default().next(),
+            tracks,
+        };
+
+        let answer = driver().transition(message).unwrap();
+
+        assert_eq!(describe(answer), cmd);
     }
 
     #[rstest]

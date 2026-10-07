@@ -126,12 +126,66 @@ fn own_enum(file: &File, enums: &Enums, from: usize) -> Option<String> {
     enums.contains(&key).then(|| name.to_owned())
 }
 
+fn only_wildcards(file: &File, (from, to): (usize, usize)) -> bool {
+    to > from + 3
+        && file.tx(from) == "("
+        && file.matching_close(from) + 1 == to
+        && (from + 1..to - 1).all(|at| matches!(file.tx(at), "_" | ","))
+}
+
+fn alternatives(file: &File, (from, to): (usize, usize)) -> Vec<(usize, usize)> {
+    let mut depth = 0_i32;
+    let end = (from..to)
+        .find(|at| {
+            depth += bracket(file.tx(*at));
+            depth == 0 && file.tx(*at) == "if"
+        })
+        .unwrap_or(to);
+    let mut depth = 0_i32;
+    let bars: Vec<usize> = (from..end)
+        .filter(|at| {
+            depth += bracket(file.tx(*at));
+            depth == 0 && file.tx(*at) == "|"
+        })
+        .collect();
+    let starts = std::iter::once(from).chain(bars.iter().map(|bar| bar + 1));
+    let ends = bars.iter().copied().chain(std::iter::once(end));
+    starts
+        .zip(ends)
+        .filter(|(start, stop)| stop > start)
+        .collect()
+}
+
+fn tuple_wildcard_hit(file: &File, enums: &Enums, open: usize) -> Option<String> {
+    let arms = patterns(file, open);
+    let (wildcard, shape) = arms.iter().find_map(|arm| {
+        let alternatives = alternatives(file, *arm);
+        let is_alternation = alternatives.len() > 1;
+        alternatives.into_iter().find_map(|(from, to)| {
+            if only_wildcards(file, (from, to)) {
+                Some((from, "(_, _)"))
+            } else if is_alternation && to == from + 1 && file.tx(from) == "_" {
+                Some((from, "_"))
+            } else {
+                None
+            }
+        })
+    })?;
+    let name = arms
+        .iter()
+        .find_map(|(from, to)| (*from..*to).find_map(|at| own_enum(file, enums, at)))?;
+    let line = file.tokens[wildcard].line;
+    Some(format!("{}:{line}: `{shape} =>` on `{name}`", file.path))
+}
+
 fn wildcard_hits(file: &File, enums: &Enums) -> Vec<String> {
-    let opens = (0..file.tokens.len())
+    let tests = file.test_tokens();
+    let opens: Vec<usize> = (0..file.tokens.len())
         .filter(|at| file.tx(*at) == "match")
-        .filter_map(|at| body_open(file, at));
-    let hit = |open: usize| {
-        let arms = patterns(file, open);
+        .filter_map(|at| body_open(file, at))
+        .collect();
+    let hit = |open: &usize| {
+        let arms = patterns(file, *open);
         let wildcard = arms
             .iter()
             .find(|(from, to)| *to == from + 1 && file.tx(*from) == "_")?;
@@ -141,7 +195,11 @@ fn wildcard_hits(file: &File, enums: &Enums) -> Vec<String> {
         let line = file.tokens[wildcard.0].line;
         Some(format!("{}:{line}: `_ =>` on `{name}`", file.path))
     };
-    opens.filter_map(hit).collect()
+    let tuples = opens
+        .iter()
+        .filter(|open| !tests.get(**open).copied().unwrap_or(false))
+        .filter_map(|open| tuple_wildcard_hit(file, enums, *open));
+    opens.iter().filter_map(hit).chain(tuples).collect()
 }
 
 #[test]
@@ -180,6 +238,21 @@ impl Mode {
         }
     }
 }
+fn pair(left: Mode, right: Mode, key: Key) {
+    match (left, right) {
+        (Mode::A, Mode::A) => {}
+        (_, _) => {}
+    }
+    match (key, key) { (Key::Up, _) => {} (_, _) => {} }
+    match (left, key) { (Mode::A, _) => {} (_, Key::Up) | (_, _) => {} }
+    match left { Mode::B(_) | _ => {} }
+}
+#[cfg(test)]
+mod tests {
+    fn g(left: Mode, right: Mode) {
+        match (left, right) { (Mode::A, _) => {} (_, _) => {} }
+    }
+}
 ";
 
 #[test]
@@ -189,6 +262,9 @@ fn wildcard_arm_is_seen_only_over_an_own_enum() {
     let expected = [
         "kernel/src/sample.rs:6: `_ =>` on `Mode`",
         "kernel/src/sample.rs:15: `_ =>` on `Mode`",
+        "kernel/src/sample.rs:22: `(_, _) =>` on `Mode`",
+        "kernel/src/sample.rs:25: `(_, _) =>` on `Mode`",
+        "kernel/src/sample.rs:26: `_ =>` on `Mode`",
     ];
     assert_eq!(wildcard_hits(&file, &enums), expected);
 }

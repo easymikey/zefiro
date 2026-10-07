@@ -1,6 +1,7 @@
 use kernel::{
     cmd::Effect,
     domain::{
+        config::ConfigName,
         cue::Cue,
         cursor_over::CursorOver,
         key::KeyPress,
@@ -10,14 +11,14 @@ use kernel::{
         time::Moment,
         workspace::Workspace,
     },
-    message::{ConfigEvent, Message, PlaybackRequest},
+    message::{ConfigEvent, ConfigReload, Message, PlaybackRequest},
     update::keymap::{bindings::Keymap, lookup::route},
 };
 use rstest::rstest;
 
 use crate::support::{
     keymap::{bindings, character},
-    update::update,
+    update::{send, update},
 };
 
 fn reports_an_error(keymap_overrides: &KeymapOverrides) -> bool {
@@ -29,10 +30,17 @@ fn reports_an_error(keymap_overrides: &KeymapOverrides) -> bool {
         ..Model::default()
     };
     let reload_event = ConfigEvent::KeymapReloaded(Box::new(keymap_overrides.clone()));
-    update(&mut model, Message::Config(reload_event), Moment::default())
-        .unwrap()
-        .effects()
-        .any(|effect| *effect == Effect::Animate(Cue::ToastRaised))
+    send(&mut model, Message::Config(reload_event));
+    let config_event = ConfigEvent::Reloaded(ConfigReload {
+        name: ConfigName::Config,
+        result: Ok(()),
+    });
+    update(&mut model, Message::Config(config_event), Moment::default()).is_ok_and(
+        |cmd| {
+            cmd.effects()
+                .any(|effect| *effect == Effect::Animate(Cue::ToastRaised))
+        },
+    )
 }
 
 fn config_with(next: Option<&str>, prev: Option<&str>) -> KeymapOverrides {
@@ -114,7 +122,7 @@ fn next_in_search() -> KeymapOverrides {
         Action::Next,
         KeyOverride {
             chord: "n".to_string(),
-            key_context: KeyContext::Search,
+            key_context: Some(KeyContext::Search),
         },
     )])
 }

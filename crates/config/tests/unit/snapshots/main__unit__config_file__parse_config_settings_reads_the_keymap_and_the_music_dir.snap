@@ -7,7 +7,7 @@ ConfigSettings {
     keymap_overrides: {
         "next": KeyOverride {
             chord: "x",
-            key_context: Global,
+            key_context: None,
         },
     },
     music_dir: Some(

@@ -26,7 +26,7 @@ TomlSettings {
     keymap: {
         "next": KeyOverride {
             chord: "not-a-key",
-            key_context: Global,
+            key_context: None,
         },
     },
 }

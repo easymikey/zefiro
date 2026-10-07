@@ -1,7 +1,9 @@
+use std::collections::hash_map::Entry;
+
 use crate::{
     cmd::{Cmd, Effect},
     domain::{
-        config::{ConfigError, ConfigName},
+        config::{ConfigError, ConfigErrors, ConfigName},
         cue::Cue,
         keymap::KeymapOverrides,
         revision::{Revision, Revisions},
@@ -9,8 +11,33 @@ use crate::{
         workspace::Workspace,
     },
     message::{ConfigReload, Timer},
-    update::{keymap::bindings::Keymap, machine::Unhandled},
+    update::{
+        keymap::bindings::Keymap,
+        machine::{self, Unhandled},
+    },
 };
+
+impl ConfigErrors {
+    pub(crate) fn replace(
+        &mut self,
+        name: ConfigName,
+        error: ConfigError,
+    ) -> Result<(), Unhandled> {
+        match self.0.entry(name) {
+            Entry::Vacant(vacant) => {
+                vacant.insert(error);
+                Ok(())
+            }
+            Entry::Occupied(mut occupied) => {
+                machine::replace(occupied.get_mut(), error)
+            }
+        }
+    }
+}
+
+pub(crate) fn trouble(name: &ConfigName, error: &ConfigError) -> Toast {
+    Toast::error(format!("Trouble with {name}")).with_text(error.to_string())
+}
 
 impl Workspace {
     pub(crate) fn keymap_reloaded(
@@ -22,19 +49,8 @@ impl Workspace {
             return Err(Unhandled);
         }
         self.keymap = Keymap::new(keymap_overrides);
-        let result = self
-            .keymap
-            .diagnostic()
-            .map_or(Ok(()), |diagnostic| Err(ConfigError::Parse(diagnostic)));
-        let cmd = self.config_reported(
-            ConfigReload {
-                name: ConfigName::Config,
-                result,
-            },
-            revisions,
-        );
         revisions.config.advance();
-        Ok(cmd)
+        Ok(Cmd::none())
     }
 
     pub(crate) fn show(&mut self, toast: Toast, revisions: &mut Revisions) -> Cmd {
@@ -62,11 +78,7 @@ impl Workspace {
     }
 
     pub(crate) fn dismiss_newest(&mut self) -> Option<Toast> {
-        if self.toasts.is_empty() {
-            None
-        } else {
-            Some(self.toasts.remove(0))
-        }
+        (!self.toasts.is_empty()).then(|| self.toasts.remove(0))
     }
 
     pub(crate) fn expire_toasts(&mut self, revision: Revision) -> Cmd {
@@ -95,34 +107,36 @@ impl Workspace {
         reload: ConfigReload,
         revisions: &mut Revisions,
     ) -> Result<Cmd, Unhandled> {
-        let stored = self.config_errors.get(&reload.name);
-        let is_unchanged = match &reload.result {
-            Err(error) => stored == Some(error),
-            Ok(()) => stored.is_none(),
+        let result = match (&reload.name, reload.result) {
+            (ConfigName::Config, Ok(())) => self
+                .keymap
+                .diagnostic()
+                .map_or(Ok(()), |diagnostic| Err(ConfigError::Parse(diagnostic))),
+            (
+                ConfigName::Config | ConfigName::Appearance | ConfigName::Theme(_),
+                result,
+            ) => result,
         };
-        if is_unchanged {
+        let reload = ConfigReload { result, ..reload };
+        if reload.result.is_ok() && self.config_errors.get(&reload.name).is_none() {
             return Err(Unhandled);
         }
-        Ok(self.config_reported(reload, revisions))
+        self.config_reported(reload, revisions)
     }
 
-    pub(crate) fn config_reported(
+    fn config_reported(
         &mut self,
         reload: ConfigReload,
         revisions: &mut Revisions,
-    ) -> Cmd {
+    ) -> Result<Cmd, Unhandled> {
         let ConfigReload { name, result } = reload;
         match result {
             Err(error) => {
-                let text = error.to_string();
-                if self.config_errors.insert_if_changed(name.clone(), error) {
-                    let title = format!("Trouble with {name}");
-                    self.show(Toast::error(title).with_text(text), revisions)
-                } else {
-                    Cmd::none()
-                }
+                let toast = trouble(&name, &error);
+                self.config_errors.replace(name, error)?;
+                Ok(self.show(toast, revisions))
             }
-            Ok(()) => self.config_recovered(&name),
+            Ok(()) => Ok(self.config_recovered(&name)),
         }
     }
 

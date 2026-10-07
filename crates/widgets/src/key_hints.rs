@@ -110,7 +110,15 @@ impl KeyHintChords {
             }),
             settings_chips: SETTINGS_HINTS
                 .iter()
-                .filter_map(|hint| settings_chip(bindings, *hint))
+                .filter_map(|hint| {
+                    chip(
+                        bindings,
+                        [Some(hint.action), hint.fallback_action]
+                            .into_iter()
+                            .flatten(),
+                        hint.label,
+                    )
+                })
                 .collect(),
         }
     }
@@ -155,29 +163,24 @@ impl Widget for &KeyHintsWidget<'_> {
     }
 }
 
-fn settings_chip(bindings: &[KeyBinding], hint: SettingsHint) -> Option<Chip> {
-    let key = [Some(hint.action), hint.fallback_action]
+fn chip(
+    bindings: &[KeyBinding],
+    actions: impl IntoIterator<Item = Action>,
+    label: &'static str,
+) -> Option<Chip> {
+    let key = actions
         .into_iter()
-        .flatten()
         .flat_map(|action| chords_for_action(bindings, action).take(CHORDS_PER_ACTION))
         .collect::<Vec<_>>()
         .join("/");
-    (!key.is_empty()).then(|| Chip::new(&key, hint.label))
+    (!key.is_empty()).then(|| Chip::new(&key, label))
 }
 
 fn key_chips(bindings: &[KeyBinding], keep: impl Fn(Action) -> bool) -> Vec<Chip> {
     KEY_HINTS
         .iter()
         .filter(|(action, _)| keep(*action))
-        .map(|(action, label)| {
-            let chord = chords_for_action(bindings, *action)
-                .take(CHORDS_PER_ACTION)
-                .collect::<Vec<_>>()
-                .join("/");
-            (chord, *label)
-        })
-        .filter(|(chord, _)| !chord.is_empty())
-        .map(|(chord, label)| Chip::new(&chord, label))
+        .filter_map(|(action, label)| chip(bindings, [*action], label))
         .collect()
 }
 

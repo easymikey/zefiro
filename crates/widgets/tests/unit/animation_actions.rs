@@ -3,8 +3,7 @@ use ratatui::layout::Rect;
 use rstest::rstest;
 use widgets::animation::stage::{AnimationStage, Backdrop};
 
-use crate::unit::{
-    animation_stage::{has_moved, run_out_over, step_over},
+use crate::{
     support::{
         CARD_TITLE,
         PANE_ROW,
@@ -17,9 +16,14 @@ use crate::unit::{
         slice,
         volume_bar_frame,
     },
+    unit::animation_stage::{has_moved, run_out_over, step_over},
 };
 
-fn animated(cues: &[Cue], backdrop: &Backdrop, watched: &[Rect]) -> (bool, Vec<Rect>) {
+fn animated(
+    cues: &[Cue],
+    backdrop: &Backdrop<'_>,
+    watched: &[Rect],
+) -> (bool, Vec<Rect>) {
     let mut stage = AnimationStage::default();
     stage.play(Vec::new(), backdrop);
     run_out_over(&mut stage, volume_bar_frame);
@@ -45,7 +49,7 @@ fn animated(cues: &[Cue], backdrop: &Backdrop, watched: &[Rect]) -> (bool, Vec<R
 
 struct AnimationRow<'a> {
     cues: &'a [Cue],
-    backdrop: Backdrop,
+    backdrop: Backdrop<'static>,
     expected: &'a [Rect],
     still: &'a [Rect],
 }

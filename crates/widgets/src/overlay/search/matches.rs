@@ -68,7 +68,8 @@ pub(crate) fn paint_match_pane(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
         area,
         search_query,
         colors,
-        ..
+        tracks: _tracks,
+        lead: _lead,
     } = *list;
     if let Some(line) =
         no_matches_line(search_query.content.matches.len(), colors.muted_foreground)
@@ -110,7 +111,8 @@ pub(crate) fn paint_match_rows(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
         area,
         search_query,
         colors,
-        ..
+        tracks: _tracks,
+        lead: _lead,
     } = *list;
     if area.height == 0 {
         return;
@@ -137,26 +139,25 @@ pub(crate) fn paint_match_rows(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
 }
 
 fn match_line<'a>(match_row: &MatchRow<'a>, colors: Colors<Color>) -> Line<'a> {
-    let base_text = match match_row.selected {
-        Selected::Yes => colors.selection_foreground,
-        Selected::No => colors.foreground,
-    };
-    let marker = match match_row.selected {
-        Selected::Yes => glyphs::search::SELECTED_MARKER,
-        Selected::No => glyphs::search::UNSELECTED_MARKER,
+    let (marker, marker_style, content_style) = match match_row.selected {
+        Selected::Yes => {
+            let selected = Style::default()
+                .fg(colors.selection_foreground)
+                .bg(colors.selection_background);
+            (glyphs::search::SELECTED_MARKER, selected, selected)
+        }
+        Selected::No => (
+            glyphs::search::UNSELECTED_MARKER,
+            Style::default().fg(colors.muted_foreground),
+            Style::default().fg(colors.foreground),
+        ),
     };
 
     let title_width = match_row.row_width.saturating_sub(marker.width());
     let content = truncate(match_row.title, title_width);
 
-    let marker_piece = match match_row.selected {
-        Selected::Yes => text(marker).fg(base_text).bg(colors.selection_background),
-        Selected::No => text(marker).fg(colors.muted_foreground),
-    };
-    let content_piece = match match_row.selected {
-        Selected::Yes => text(content).fg(base_text).bg(colors.selection_background),
-        Selected::No => text(content).fg(base_text),
-    };
-
-    line([marker_piece, content_piece])
+    line([
+        text(marker).style(marker_style),
+        text(content).style(content_style),
+    ])
 }

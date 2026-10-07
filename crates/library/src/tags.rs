@@ -1,4 +1,4 @@
-use std::{borrow::Cow, path::Path, sync::Arc};
+use std::{borrow::Cow, path::Path};
 
 use kernel::{
     domain::track::{Decibels, Hertz, Kbps, Track, TrackParts},
@@ -17,10 +17,6 @@ use crate::error::Error;
 
 fn tag_text(tag: Option<Cow<'_, str>>) -> Option<String> {
     tag.map(Cow::into_owned)
-}
-
-pub(crate) fn read_or_list(path: &Path) -> Arc<Track> {
-    Arc::new(read_track(path).unwrap_or_else(|_unread| Track::listed(path)))
 }
 
 fn probe(path: &Path) -> Result<TaggedFile, Error> {
@@ -87,21 +83,26 @@ fn main_tag(tagged: &TaggedFile) -> Option<&Tag> {
     tagged.primary_tag().or_else(|| tagged.first_tag())
 }
 
+const MAX_DECIBELS: f32 = 60.0;
+
 fn parse_decibels(tag_text: &str) -> Option<Decibels> {
     tag_text
         .trim()
         .trim_end_matches(|ch: char| ch.is_ascii_alphabetic())
         .trim()
-        .parse()
+        .parse::<f32>()
         .ok()
+        .filter(|decibels| decibels.abs() <= MAX_DECIBELS)
         .map(Decibels)
 }
 
 pub fn embedded_cover(path: &Path) -> Result<Option<Vec<u8>>, FileParseError> {
-    let tagged = Probe::open(path)?.read()?;
-    Ok(main_tag(&tagged)
-        .and_then(|tag| tag.pictures().first())
-        .map(|picture| picture.data().to_vec()))
+    let mut tagged = Probe::open(path)?.read()?;
+    let tag_type = main_tag(&tagged).map(Tag::tag_type);
+    Ok(tag_type
+        .and_then(|tag_type| tagged.remove(tag_type))
+        .filter(|tag| !tag.pictures().is_empty())
+        .map(|mut tag| tag.remove_picture(0).into_data()))
 }
 
 #[cfg(test)]
@@ -110,7 +111,8 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use crate::{
-        tags::{embedded_cover, parse_decibels, read_or_list},
+        scan::read_tags,
+        tags::{embedded_cover, parse_decibels},
         test_support::{minimal_flac_with_cover, temp_dir_filters},
     };
 
@@ -126,7 +128,8 @@ mod tests {
         unparseable_media: tempfile::TempDir,
     ) {
         let path = unparseable_media.path().join("clip.mkv");
-        let track = read_or_list(&path);
+        let read = read_tags(&[path]);
+        let track = &read.tracks[0];
         insta::with_settings!({ filters => temp_dir_filters() }, {
             insta::assert_debug_snapshot!(track);
         });
@@ -135,7 +138,8 @@ mod tests {
     #[rstest]
     fn unparseable_file_has_no_decibels(unparseable_media: tempfile::TempDir) {
         let path = unparseable_media.path().join("clip.mkv");
-        let track = read_or_list(&path);
+        let read = read_tags(&[path]);
+        let track = &read.tracks[0];
         assert_eq!(track.audio_format().decibels, None);
     }
 
@@ -148,6 +152,11 @@ mod tests {
     #[case::empty("", None)]
     #[case::unit_only("dB", None)]
     #[case::non_numeric("not a number dB", None)]
+    #[case::not_a_number("nan dB", None)]
+    #[case::negative_infinity("-inf dB", None)]
+    #[case::far_too_loud("1e9 dB", None)]
+    #[case::at_the_bound("60 dB", Some(60.0))]
+    #[case::past_the_bound("-60.5 dB", None)]
     fn decibels_read_the_number_before_the_db_unit(
         #[case] tag_text: &str,
         #[case] expected: Option<f32>,

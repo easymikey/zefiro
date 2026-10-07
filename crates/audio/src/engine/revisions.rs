@@ -14,10 +14,14 @@ pub(crate) struct JobRevisions {
 impl JobRevisions {
     pub(crate) fn is_current(&self, message: &AudioMessage) -> bool {
         match message {
-            AudioMessage::Decoded { revision, .. } => *revision == self.decode,
-            AudioMessage::Preloaded { revision, .. } => {
-                self.is_current_preload(*revision)
-            }
+            AudioMessage::Decoded {
+                revision,
+                result: _result,
+            } => *revision == self.decode,
+            AudioMessage::Preloaded {
+                revision,
+                result: _result,
+            } => self.is_current_preload(*revision),
             AudioMessage::Cmds(_)
             | AudioMessage::Deck(_)
             | AudioMessage::DevicesListed(_)

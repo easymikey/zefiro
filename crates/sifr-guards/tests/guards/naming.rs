@@ -445,6 +445,57 @@ fn no_retired_names() {
     );
 }
 
+const CONVENTIONS: &str = include_str!("../../../../docs/conventions.md");
+
+fn domain_word_not_cells() -> Vec<&'static str> {
+    CONVENTIONS
+        .lines()
+        .skip_while(|line| !line.starts_with("## 8. "))
+        .skip(1)
+        .take_while(|line| !line.starts_with("## "))
+        .filter(|line| line.starts_with("| ") && !line.starts_with("| concept "))
+        .filter_map(|line| line.trim_end().trim_end_matches('|').rsplit('|').next())
+        .collect()
+}
+
+fn quoted_words(cell: &str) -> impl Iterator<Item = &str> {
+    cell.split('`').skip(1).step_by(2).flat_map(|span| {
+        span.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '*'))
+            .filter(|word| !word.is_empty())
+    })
+}
+
+fn word_covers(word: &str, name: &str) -> bool {
+    match word.strip_suffix('*') {
+        Some(prefix) => !prefix.is_empty() && name.starts_with(prefix),
+        None => word == name,
+    }
+}
+
+#[test]
+fn retired_names_sit_in_domain_words() {
+    let cells = domain_word_not_cells();
+    let violations: Vec<String> = RETIRED_NAMES
+        .iter()
+        .filter(|name| {
+            !cells
+                .iter()
+                .flat_map(|cell| quoted_words(cell))
+                .any(|word| word_covers(word, name))
+        })
+        .map(|name| {
+            format!("`{name}` is in `RETIRED_NAMES` but in no §8 \"not\" cell of docs/conventions.md")
+        })
+        .collect();
+
+    support::report(
+        "naming guard: docs/conventions.md §8 is the one names rulebook, so every retired \
+         name sits in the \"not\" column of its concept's row.",
+        &violations,
+        &[],
+    );
+}
+
 const RETIRED_WORDS: &[&str] = &[
     "seek_fraction",
     "toast_notices",

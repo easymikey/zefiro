@@ -16,10 +16,12 @@ use crate::{
     },
     primitive::{
         bar::{BarFill, HudProgress, hud_progress_line},
+        canvas::Canvas,
         chip,
+        span,
         spectrum_meter,
         time_text::elapsed_text,
-        truncate::truncate,
+        truncate::truncate_owned,
     },
 };
 
@@ -52,11 +54,7 @@ fn paint_time_row(
         card_widget.appearance_settings.speed_chip,
         &colors,
     );
-    let speed_width = chip::speed_chip_width(
-        card_widget.view.speed,
-        card_widget.appearance_settings.speed_chip,
-    )
-    .count();
+    let speed_width = span::width(&speed_spans);
     let left_width = elapsed_width + speed_width;
     let fit = chips::FormatChipFit::new(
         &FormatChipsInput {
@@ -70,7 +68,7 @@ fn paint_time_row(
         },
     );
     let elapsed_span: Span<'_> =
-        truncated_span(&elapsed_total, fit.elapsed_budget, dim_color);
+        truncated_span(elapsed_total, fit.elapsed_budget, dim_color);
     let time_line = Line::from_iter(
         std::iter::once(elapsed_span).chain(
             speed_spans
@@ -84,8 +82,8 @@ fn paint_time_row(
     }
 }
 
-fn truncated_span(text: &str, budget: usize, color: Color) -> Span<'static> {
-    crate::primitive::span::text(truncate(text, budget).into_owned())
+fn truncated_span(text: String, budget: usize, color: Color) -> Span<'static> {
+    span::text(truncate_owned(text, budget))
         .fg(color)
         .dim()
         .into()
@@ -102,29 +100,28 @@ fn paint_progress_row(
     card_widget: &CardWidget<'_>,
     metrics: &CardMetrics,
 ) {
-    let row_width = metrics.row_width;
-    let bar_colors = (
-        card_widget.active_theme.progress_fill(),
-        card_widget.active_theme.progress_groove(),
-    );
-
+    let bar_width = card_widget.progress_bar_width;
+    let fill = card_widget.active_theme.progress_fill();
+    let groove = card_widget.active_theme.progress_groove();
     let fraction = card_widget.view.progress_fraction();
     let progress_row = metrics.progress_row;
     match card_widget.appearance_settings.progress_time {
         ProgressTime::Remaining => Paragraph::new(hud_progress_line(
             &HudProgress {
                 fraction,
-                row_width,
-                remaining: card_widget.view.remaining(),
+                row_width: Cells(progress_row.width),
+                bar_width,
+                remaining_label: card_widget.remaining_label,
+                fill,
+                groove,
             },
-            bar_colors,
             &card_widget.active_theme.colors(),
         ))
         .render(progress_row, buffer),
-        ProgressTime::Elapsed => Paragraph::new(
-            BarFill::progress(fraction, row_width).line(bar_colors.0, bar_colors.1),
-        )
-        .render(progress_row, buffer),
+        ProgressTime::Elapsed => {
+            Paragraph::new(BarFill::progress(fraction, bar_width).line(fill, groove))
+                .render(progress_row, buffer);
+        }
     }
 }
 
@@ -142,7 +139,7 @@ fn paint_volume_row(
     .render(bar_area, buffer);
 
     let spectrum_area = metrics.spectrum_row;
-    let spectrum_lines = spectrum_meter::lines(
+    spectrum_meter::paint(
         &MeterFill {
             size: CanvasSize {
                 width: spectrum_area.width,
@@ -151,9 +148,12 @@ fn paint_volume_row(
             levels: card_widget.view.spectrum,
             max_dots: SPECTRUM_MAX_DOTS,
         },
+        Canvas {
+            area: spectrum_area,
+            buffer,
+        },
         |fraction| card_widget.active_theme.spectrum_color_at(fraction),
     );
-    Paragraph::new(spectrum_lines).render(spectrum_area, buffer);
 }
 
 #[cfg(test)]
@@ -176,7 +176,7 @@ mod tests {
     use crate::{
         card::{CardView, CardWidget, meters::paint_time_row, metrics::CardMetrics},
         geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
-        primitive::canvas::find_text,
+        primitive::canvas::tests::find_text,
         spectrum::{SPECTRUM_BANDS, Spectrum},
         test_support::noir,
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},

@@ -5,9 +5,10 @@ use kernel::domain::{
     direction::Direction,
     index::ViewIndex,
     player::AbLoop,
-    playlist::{PlayOrder, Playlist},
+    playlist::{PlayOrder, Playlist, RepeatMode},
 };
 use proptest::prelude::{Just, prop_assert, prop_assert_eq, prop_oneof, proptest};
+use rstest::rstest;
 
 use crate::support::{bare_track, strategies::repeat_mode};
 
@@ -57,4 +58,34 @@ proptest! {
             }
         }
     }
+}
+
+#[rstest]
+#[case::repeat_all_wraps_past_the_last(RepeatMode::All, Direction::Next, Some(0))]
+#[case::repeat_all_wraps_before_the_first(
+    RepeatMode::All,
+    Direction::Previous,
+    Some(2)
+)]
+#[case::repeat_off_stops_at_the_last(RepeatMode::Off, Direction::Next, None)]
+#[case::repeat_off_stops_at_the_first(RepeatMode::Off, Direction::Previous, None)]
+#[case::repeat_one_stops_at_the_last(RepeatMode::One, Direction::Next, None)]
+#[case::repeat_one_stops_at_the_first(RepeatMode::One, Direction::Previous, None)]
+fn skip_at_the_edges_follows_the_repeat_mode(
+    #[case] repeat_mode: RepeatMode,
+    #[case] direction: Direction,
+    #[case] expected: Option<usize>,
+) {
+    let start = match direction {
+        Direction::Next => 2,
+        Direction::Previous => 0,
+    };
+    let mut playlist = Playlist {
+        tracks: (0..3).map(bare_track).collect(),
+        cursor: Cursor::at(3, start),
+        play_order: PlayOrder::Linear,
+        repeat_mode,
+    };
+    let moved = playlist.skip(direction).is_some();
+    assert_eq!(moved.then(|| playlist.cursor.index()), expected);
 }

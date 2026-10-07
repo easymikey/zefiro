@@ -25,10 +25,7 @@ impl Machine for SettingRow {
         setting_row_message: SettingRowMessage,
     ) -> Result<Cmd, Unhandled> {
         match setting_row_message {
-            SettingRowMessage::Set(row) => {
-                replace(self, row)?;
-                Ok(Cmd::none())
-            }
+            SettingRowMessage::Set(row) => replace(self, row).map(|()| Cmd::none()),
             SettingRowMessage::Step(direction) => Ok(Cmd::message(Message::Step {
                 row: *self,
                 direction,

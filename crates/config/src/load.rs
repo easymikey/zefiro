@@ -228,7 +228,7 @@ mod tests {
         let loaded = loaded(directory.path(), None);
 
         assert_eq!(
-            loaded.toml_settings.to_keymap_overrides(),
+            loaded.toml_settings.keymap.into_keymap_overrides(),
             KeymapOverrides::from([(Action::Quit, KeyOverride::from("q"))])
         );
         assert_eq!(loaded.texts.config.as_deref(), Some(text));

@@ -16,7 +16,7 @@ use crate::{
         effect::ConfigEffect,
         files::{read_error, read_if_present, store},
         message::ConfigMessage,
-        watch::{ConfigWatchEffect, ConfigWatchMessage},
+        watch::{ConfigWatchEffect, ConfigWatchMessage, SavedFile},
     },
     patch::{patched_appearance_text, patched_config_text},
     theme_file::TomlTheme,
@@ -33,14 +33,14 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> Driver for ConfigDriver<P, A> {
                 Some(read(name, &path))
             }
             ConfigEffect::Watch(ConfigWatchEffect::List(dir)) => Some(list(&dir)),
-            ConfigEffect::SaveConfig(patch) => {
-                Some(save(ConfigName::Config, &self.config_path, |text| {
-                    patched_config_text(text, patch)
-                }))
-            }
+            ConfigEffect::SaveConfig(patch) => Some(save(
+                SavedFile::Config,
+                self.watch.path(SavedFile::Config),
+                |text| patched_config_text(text, patch),
+            )),
             ConfigEffect::SaveAppearance(patch) => Some(save(
-                ConfigName::Appearance,
-                &self.appearance_path,
+                SavedFile::Appearance,
+                self.watch.path(SavedFile::Appearance),
                 |text| patched_appearance_text(text, patch),
             )),
             ConfigEffect::PublishTheme(theme) => {
@@ -67,60 +67,56 @@ fn read(config_name: ConfigName, path: &Path) -> ConfigMessage {
 
 fn list(dir: &Path) -> ConfigMessage {
     match std::fs::read_dir(dir) {
-        Ok(entries) => entries
-            .map(|entry| entry.map(|entry| entry.path()))
-            .filter(|path| {
-                path.as_ref().map_or(true, |path| {
-                    path.extension().and_then(|extension| extension.to_str())
+        Ok(mut entries) => entries
+            .try_fold(
+                (Vec::new(), Vec::new()),
+                |(mut theme_names, mut refused), entry| {
+                    let path = entry?.path();
+                    if path.extension().and_then(|extension| extension.to_str())
                         == Some(THEME_EXTENSION)
-                })
-            })
-            .map(|path| {
-                path.map(|path| {
-                    path.file_stem().map_or_else(String::new, |stem| {
-                        stem.to_string_lossy().into_owned()
-                    })
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_or_else(
-                |error| {
-                    ConfigMessage::Error(ConfigError::ListThemes(error.kind().into()))
+                    {
+                        let stem = path.file_stem().map_or_else(String::new, |stem| {
+                            stem.to_string_lossy().into_owned()
+                        });
+                        match ThemeName::new(stem.clone()) {
+                            Ok(name) => theme_names.push(name),
+                            Err(_) => refused.push(stem),
+                        }
+                    }
+                    Ok::<_, io::Error>((theme_names, refused))
                 },
-                listed,
+            )
+            .map_or_else(
+                |error| list_failed(&error),
+                |(theme_names, refused)| {
+                    ConfigMessage::Watch(ConfigWatchMessage::Listed {
+                        theme_names,
+                        refused,
+                    })
+                },
             ),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => listed(Vec::new()),
-        Err(error) => {
-            ConfigMessage::Error(ConfigError::ListThemes(error.kind().into()))
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            ConfigMessage::Watch(ConfigWatchMessage::Listed {
+                theme_names: Vec::new(),
+                refused: Vec::new(),
+            })
         }
+        Err(error) => list_failed(&error),
     }
 }
 
-fn listed(stems: Vec<String>) -> ConfigMessage {
-    let (theme_names, refused) = stems.into_iter().fold(
-        (Vec::new(), Vec::new()),
-        |(mut theme_names, mut refused), stem| {
-            match ThemeName::new(stem.clone()) {
-                Ok(name) => theme_names.push(name),
-                Err(_) => refused.push(stem),
-            }
-            (theme_names, refused)
-        },
-    );
-    ConfigMessage::Watch(ConfigWatchMessage::Listed {
-        theme_names,
-        refused,
-    })
+fn list_failed(error: &io::Error) -> ConfigMessage {
+    ConfigMessage::Error(ConfigError::ListThemes(error.kind().into()))
 }
 
 fn save(
-    config_name: ConfigName,
+    saved_file: SavedFile,
     path: &Path,
     produce: impl FnOnce(&str) -> Result<String, crate::error::Error>,
 ) -> ConfigMessage {
     let old_text = match read_if_present(path) {
         Ok(old_text) => old_text,
-        Err(error) => return save_failed(config_name, IoError::from(error.kind())),
+        Err(error) => return save_failed(saved_file, IoError::from(error.kind())),
     };
     let text = match produce(old_text.as_deref().unwrap_or("")) {
         Ok(text) => text,
@@ -129,17 +125,14 @@ fn save(
         }
     };
     match store(path, text.as_bytes()) {
-        Ok(()) => ConfigMessage::Saved {
-            name: config_name,
-            text,
-        },
-        Err(error) => save_failed(config_name, error),
+        Ok(()) => ConfigMessage::Watch(ConfigWatchMessage::Saved { saved_file, text }),
+        Err(error) => save_failed(saved_file, error),
     }
 }
 
-fn save_failed(config_name: ConfigName, error: IoError) -> ConfigMessage {
+fn save_failed(saved_file: SavedFile, error: IoError) -> ConfigMessage {
     ConfigMessage::Error(ConfigError::Save {
-        name: config_name,
+        name: saved_file.into(),
         error,
     })
 }
@@ -171,7 +164,7 @@ mod tests {
             effect::ConfigEffect,
             message::ConfigMessage,
             paths::{ConfigPaths, SeenTexts},
-            watch::{ConfigWatchEffect, ConfigWatchMessage},
+            watch::{ConfigWatchEffect, ConfigWatchMessage, SavedFile},
         },
         theme_file::TomlTheme,
     };
@@ -333,7 +326,7 @@ mod tests {
         name: &'static str,
         text: &'static str,
         save: fn() -> ConfigEffect,
-        config_name: ConfigName,
+        saved_file: SavedFile,
     }
 
     #[rstest]
@@ -341,30 +334,30 @@ mod tests {
         name: "appearance_missing",
         text: "",
         save: save_cover_brackets,
-        config_name: ConfigName::Appearance,
+        saved_file: SavedFile::Appearance,
     })]
     #[case::appearance_updates_one_key_of_an_existing_file(SaveRow {
         name: "appearance_existing",
         text: EXISTING_UI,
         save: save_cover_brackets,
-        config_name: ConfigName::Appearance,
+        saved_file: SavedFile::Appearance,
     })]
     #[case::config_creates_a_minimal_file(SaveRow {
         name: "config_missing",
         text: "",
         save: save_theme,
-        config_name: ConfigName::Config,
+        saved_file: SavedFile::Config,
     })]
     #[case::config_updates_one_key_of_an_existing_file(SaveRow {
         name: "config_existing",
         text: EXISTING_CONFIG,
         save: save_crossfade,
-        config_name: ConfigName::Config,
+        saved_file: SavedFile::Config,
     })]
     fn a_save_lands_on_disk(#[case] save_row: SaveRow, mut disk: Disk) {
-        let path = match save_row.config_name {
-            ConfigName::Appearance => disk.paths.appearance_path.clone(),
-            ConfigName::Config | ConfigName::Theme(_) => disk.paths.config_path.clone(),
+        let path = match save_row.saved_file {
+            SavedFile::Appearance => disk.paths.appearance_path.clone(),
+            SavedFile::Config => disk.paths.config_path.clone(),
         };
         if !save_row.text.is_empty() {
             std::fs::write(&path, save_row.text).unwrap();
@@ -375,10 +368,10 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
             saved,
-            Some(ConfigMessage::Saved {
-                name: save_row.config_name,
+            Some(ConfigMessage::Watch(ConfigWatchMessage::Saved {
+                saved_file: save_row.saved_file,
                 text: text.clone()
-            }),
+            })),
             "the reported text is the text on disk"
         );
         assert!(toml::from_str::<toml::Value>(&text).is_ok());
@@ -515,10 +508,10 @@ speed_chip = "always"
         let text = std::fs::read_to_string(&disk.paths.appearance_path).unwrap();
         assert_eq!(
             saved,
-            Some(ConfigMessage::Saved {
-                name: ConfigName::Appearance,
+            Some(ConfigMessage::Watch(ConfigWatchMessage::Saved {
+                saved_file: SavedFile::Appearance,
                 text: text.clone()
-            })
+            }))
         );
         insta::assert_snapshot!(text);
         let parsed: toml::Value = toml::from_str(&text).unwrap();

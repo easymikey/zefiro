@@ -80,18 +80,20 @@ fn parse_history(
     contents: &str,
     limit: usize,
 ) -> (Vec<HistoryEntry>, Option<serde_json::Error>) {
-    let (parsed, broken): (Vec<_>, Vec<_>) = contents
+    let mut skipped = None;
+    let entries = contents
         .lines()
         .rev()
-        .map(serde_json::from_str::<HistoryRecord>)
-        .partition(Result::is_ok);
-    let entries = parsed
-        .into_iter()
-        .flatten()
-        .map(HistoryEntry::from)
+        .filter_map(|line| match serde_json::from_str::<HistoryRecord>(line) {
+            Ok(record) => Some(HistoryEntry::from(record)),
+            Err(error) => {
+                skipped.get_or_insert(error);
+                None
+            }
+        })
         .take(limit)
         .collect();
-    (entries, broken.into_iter().find_map(Result::err))
+    (entries, skipped)
 }
 
 #[cfg(test)]
@@ -203,6 +205,13 @@ mod tests {
         let (entries, skipped) = parse_history(HISTORY_LOG, 10);
         assert!(skipped.is_some());
         insta::assert_debug_snapshot!(entries);
+    }
+
+    #[test]
+    fn a_broken_line_older_than_the_newest_limit_entries_is_not_reported() {
+        let (entries, skipped) = parse_history(HISTORY_LOG, 2);
+        assert_eq!(entries.len(), 2);
+        assert!(skipped.is_none(), "{skipped:?}");
     }
 
     #[rstest]

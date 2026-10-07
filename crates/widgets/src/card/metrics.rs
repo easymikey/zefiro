@@ -1,10 +1,13 @@
-use kernel::domain::geometry::Cells;
+use kernel::domain::{appearance::ProgressTime, geometry::Cells};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     widgets::{Block, Borders},
 };
 
-use crate::{geometry::CoverSizing, primitive::inset::Inset};
+use crate::{
+    geometry::CoverSizing,
+    primitive::{bar::hud_progress_bar_width, inset::Inset},
+};
 
 const COLUMN_GAP: u16 = 2;
 const CARD_HEIGHT: u16 = 12;
@@ -41,7 +44,10 @@ fn cover_width_for_height(height: Cells, cell_aspect: f32, cover_aspect: f32) ->
 pub(crate) fn cover_cell_height(area: Rect, sizing: CoverSizing) -> Cells {
     let available = Cells(inner(area).height);
     match sizing {
-        CoverSizing::Fixed { height, .. } => height.min(available),
+        CoverSizing::Fixed {
+            height,
+            width: _width,
+        } => height.min(available),
         CoverSizing::Auto(_) => available,
         CoverSizing::Off => Cells(0),
     }
@@ -54,22 +60,18 @@ pub(crate) fn cover_cell_width(
     sizing: CoverSizing,
 ) -> Cells {
     match sizing {
-        CoverSizing::Fixed { width, .. } => width,
+        CoverSizing::Fixed {
+            width,
+            height: _height,
+        } => width.min(Cells(
+            inner(area).width.saturating_sub(COLUMN_GAP + STATUS_WIDTH),
+        )),
         CoverSizing::Off => Cells(0),
         CoverSizing::Auto(cover_aspect) => cover_width_for_height(
             cover_cell_height(area, sizing),
             cell_aspect,
             cover_aspect,
         ),
-    }
-}
-
-fn cover_column_span(area: Rect, cell_aspect: f32, sizing: CoverSizing) -> Cells {
-    match sizing {
-        CoverSizing::Off => Cells(0),
-        CoverSizing::Fixed { .. } | CoverSizing::Auto(_) => {
-            Cells(cover_cell_width(area, cell_aspect, sizing).0 + COLUMN_GAP)
-        }
     }
 }
 
@@ -122,14 +124,19 @@ impl CardMetrics {
         cell_aspect: f32,
         sizing: CoverSizing,
     ) -> CardMetrics {
+        let width = cover_cell_width(area, cell_aspect, sizing);
+        let column_span = match sizing {
+            CoverSizing::Off => 0,
+            CoverSizing::Fixed { .. } | CoverSizing::Auto(_) => width.0 + COLUMN_GAP,
+        };
         let [cover_column, content_column] = inner(area).layout(&Layout::horizontal([
-            Constraint::Length(cover_column_span(area, cell_aspect, sizing).0),
+            Constraint::Length(column_span),
             Constraint::Min(0),
         ]));
         let cover_square = Rect {
             x: cover_column.x,
             y: cover_column.y,
-            width: cover_cell_width(area, cell_aspect, sizing).0,
+            width: width.0,
             height: cover_cell_height(area, sizing).0,
         };
 
@@ -163,6 +170,21 @@ impl CardMetrics {
             volume_row,
         }
     }
+
+    #[must_use]
+    pub(crate) fn progress_bar_width(
+        &self,
+        progress_time: ProgressTime,
+        remaining_label: &str,
+    ) -> Cells {
+        let row_width = Cells(self.progress_row.width);
+        match progress_time {
+            ProgressTime::Remaining => {
+                hud_progress_bar_width(row_width, remaining_label)
+            }
+            ProgressTime::Elapsed => row_width,
+        }
+    }
 }
 
 pub(crate) fn content_rect(metrics: &CardMetrics) -> Rect {
@@ -192,7 +214,6 @@ mod tests {
             content_rect,
             cover_cell_height,
             cover_cell_width,
-            cover_column_span,
             inner,
         },
         geometry::{CoverSizing, DEFAULT_CELL_ASPECT},
@@ -246,9 +267,10 @@ mod tests {
                 > CardMetrics::new(area, cell_aspect, vinyl_sizing).row_width
         );
         for sizing in [plain_sizing, vinyl_sizing] {
+            let metrics = CardMetrics::new(area, cell_aspect, sizing);
             assert_eq!(
-                cover_column_span(area, cell_aspect, sizing),
-                Cells(cover_cell_width(area, cell_aspect, sizing).0 + COLUMN_GAP),
+                metrics.content_column.x - metrics.cover_square.x,
+                cover_cell_width(area, cell_aspect, sizing).0 + COLUMN_GAP,
                 "the column is the cell plus exactly one gap, nothing more"
             );
         }
@@ -265,8 +287,10 @@ mod tests {
         let cell_aspect = DEFAULT_CELL_ASPECT;
 
         assert_eq!(
-            cover_column_span(area, cell_aspect, CoverSizing::Off),
-            Cells(0)
+            CardMetrics::new(area, cell_aspect, CoverSizing::Off)
+                .content_column
+                .x,
+            inner(area).x
         );
         assert_eq!(
             CardMetrics::new(area, cell_aspect, CoverSizing::Off).row_width,
@@ -277,6 +301,34 @@ mod tests {
                 .cover_square
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn a_fixed_cover_wider_than_the_card_stays_inside_it_beside_the_text() {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 12,
+        };
+        let sizing = CoverSizing::Fixed {
+            width: Cells(120),
+            height: Cells(8),
+        };
+        let metrics = CardMetrics::new(area, DEFAULT_CELL_ASPECT, sizing);
+        let card = inner(area);
+
+        assert!(
+            metrics.cover_square.right() <= card.right(),
+            "the cover ends inside the card, got {:?} in {card:?}",
+            metrics.cover_square
+        );
+        assert!(
+            !metrics.content_column.is_empty(),
+            "the text column keeps its room, got {:?}",
+            metrics.content_column
+        );
+        assert!(metrics.content_column.right() <= card.right());
     }
 
     #[test]

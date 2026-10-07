@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use rstest::rstest;
 use widgets::screen::frame_layout::FrameLayout;
 
-use crate::unit::support::fixtures::{SceneSources, model_with_tracks};
+use crate::support::fixtures::{SceneSources, model_with_tracks};
 
 fn playlist_rows(key_hints: KeyHints, layout_mode: LayoutMode) -> u16 {
     let mut sources = SceneSources::new(model_with_tracks(3));

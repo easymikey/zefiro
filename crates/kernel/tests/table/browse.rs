@@ -502,7 +502,7 @@ fn toggle_favorite_on_an_empty_playlist_is_refused() {
         Message::Browse(BrowseRequest::ToggleFavorite),
         Moment::default(),
     );
-    assert!(model.favorites.is_empty());
+    assert_eq!(model.favorites, Favorites::default());
     assert_eq!(effects, Err(Unhandled));
 }
 

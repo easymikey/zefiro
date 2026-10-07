@@ -55,7 +55,7 @@ The layer map is conventions §1.1; edges only point down the table.
 | terminal input | crossterm `read` | terminal events to the event loop |
 | signals | signal-hook | terminate |
 
-Off macOS `host` runs the body inline. Every driver thread runs under `catch_unwind`; on exit it reports `Message::Driver { driver, event: Stopped | Died(..) }`. `model.drivers` holds each driver's status; a port sends a command only to a running driver, otherwise the interpreter drops the command (`DropReason::NotRunning` or `Closed`).
+Off macOS `host` runs the body inline. Every driver thread runs under `catch_unwind`; on exit it reports `Message::Driver { driver_name, event: Stopped | Died(..) }`. `model.drivers` holds each driver's status; a port sends a command only to a running driver with an open port, otherwise it drops the command; no reason value is kept.
 
 Hardware drivers are injected: the binary passes the real spawners to `Runtime::start`, tests pass stubs, so start and stop are tested without a sound device.
 
@@ -63,9 +63,9 @@ Hardware drivers are injected: the binary passes the real spawners to `Runtime::
 
 **Key press.** crossterm event → input thread → event loop → `Shell::input` → `Message::Key(KeyPress)` → `update` routes it through the key context stack (§3.8) → effects → interpreter → driver commands, timers, shell effects → paint.
 
-**Playback.** `update` returns `Effect::Audio(AudioCmd::Load(..))` → audio port → `DriverLoop` delivers `AudioMessage::Cmds { cmds, at }` → `AudioDriver::transition` → `execute` opens the file → `AudioEvent`s → `DriverLoop` → `inbox` → `update`.
+**Playback.** `update` returns `Effect::Audio(AudioCmd::Load(..))` → audio port → `DriverLoop` delivers `AudioMessage::Cmds(Cmds { cmds, at })` → `AudioDriver::transition` → `execute` opens the file → `AudioEvent`s → `DriverLoop` → `inbox` → `update`.
 
-**Volume.** `update` returns `MacosCmd::SetVolume` → macOS driver → CoreAudio write; the driver machine swallows the listener echo of its own write. A change made outside sifr arrives as `MacosEvent::Volume`.
+**Volume.** `update` returns `MacosCmd::SetVolume` → macOS driver → CoreAudio write; the driver machine swallows the listener echo of its own write. A change made outside sifr arrives as `MacosEvent::VolumeChanged`.
 
 **In-app setting.** a `Step` key → `update` → `Effect::Config(ConfigCmd::SetAppearance { .. })` → the config driver patches its appearance, schedules the save (coalesced, format-preserving) and publishes the appearance into its cell → the next paint installs it. The driver marks its own write as seen, so it never comes back as a reload.
 
@@ -93,7 +93,7 @@ Linux analogy: an OS callback is an interrupt top half (sets a flag or rings a d
 
 ## Registry
 
-The driver set is static: audio, macOS, library, config. `runtime::registry` holds one hand-written `DriverRow` per driver (thread name, hosting, platform) and matches exhaustively over the driver name, so a new driver fails to compile until its row is filled. Supervision defaults are kernel data (`Supervision::standard`): audio restarts up to 3 times in 60 s, library once in 60 s, then each degrades with a toast; config degrades with a toast; macOS degrades silently. The typed `Ports` (one port per driver, each with its congestion flag) is hand-written too. Wiring, spawn, drain and the port's send read the row; nothing else knows a driver. Adding a driver is the checklist in §4.10.
+The driver set is static: audio, macOS, library, config. `runtime::registry` holds one hand-written `DriverRow` per driver (driver name, thread name, platform) and matches exhaustively over the driver name, so a new driver fails to compile until its row is filled. Supervision defaults are kernel data (`Supervision::standard`): audio restarts up to 3 times in 60 s, library once in 60 s, then each degrades with a toast; config degrades with a toast; macOS degrades silently. The typed `Ports` (one port per driver, each with its congestion flag) is hand-written too. Wiring (which drivers start on this platform, which to join at drain) and spawn (the driver thread's and its job worker's names) read the row; the port's send reads only the driver's status in `model.drivers`; nothing else knows a driver. Adding a driver is the checklist in §4.10.
 
 ## Cells
 
@@ -103,7 +103,7 @@ A cell holds one latest value: a writer overwrites, the shell reads at paint, no
 - atomics for scalars (congestion flags, the library overflow flag);
 - `arc-swap` for the theme, the appearance and the decoded cover: `latest_channels()` returns the senders (`publish` overwrites and rings), the receivers (`take` swaps the value out) and one bounded(1) doorbell the loop selects on.
 
-The displayed playhead is not a cell: the kernel holds the anchor `Playhead { offset, since, speed }` and the shell computes the position at paint. The audio engine reports a new anchor only after an action (start, play, pause, seek, speed, track change).
+The displayed playhead is not a cell: the kernel holds the anchor `Playhead { offset, started_at, speed }` and the shell computes the position at paint. The audio engine reports a new anchor only after an action (start, play, pause, seek, speed, track change).
 
 ## Loop, frames and backpressure
 
@@ -111,6 +111,6 @@ One `select` over input, the mailbox and the cell doorbell, with one deadline: t
 
 The pending repaint is `Repaint { Settled, Now, NextFrame }`: input raises it to `Now` (paint at once), a fact or a doorbell to `NextFrame` (wait for the 33 ms grid since the last paint), `Settled` paints only when the shell's own `frame_due` has passed. The frame sources (animation, spectrum, progress bar, clock, sleep countdown) each live in its component's widgets module (`frame_due` fns); when nothing moves the loop blocks with no deadline.
 
-Every channel that carries traffic is bounded. The loop only `try_send`s to drivers; a full port drops the command (`DropReason::Full`) and raises the port's congestion flag; a driver that finds the mailbox full raises its flag before it blocks. After each batch a raised flag with no open episode becomes one `DriverEvent::Full` and one toast. No cycle can deadlock: the loop only `try_send`s, drivers only `send`.
+Every channel that carries traffic is bounded. The loop only `try_send`s to drivers; a full port drops the command and raises the port's congestion flag; a driver that finds the mailbox full raises its flag before it blocks. After each batch a raised flag with no open episode becomes one `DriverEvent::Full` and one toast. No cycle can deadlock: the loop only `try_send`s, drivers only `send`.
 
 Nothing records dropped commands, join or restart failures: the runtime keeps no trace. A debugging record is future devtools (§6.4).

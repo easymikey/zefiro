@@ -509,4 +509,30 @@ mod tests {
 
         assert!(matches!(message, LibraryMessage::Error(_)));
     }
+
+    #[rstest]
+    #[case::save_favorites(DiskCmd::SaveFavorites(Favorites::default()))]
+    #[case::save_playlist(DiskCmd::SavePlaylist {
+        name: PlaylistFileName::new("My Mix").unwrap(),
+        tracks: Vec::new(),
+    })]
+    fn a_failed_disk_command_answers_an_error(#[case] disk_cmd: DiskCmd) {
+        let directory = tempfile::tempdir().unwrap();
+        let blocker = directory.path().join("blocker");
+        std::fs::write(&blocker, b"a file, not a directory").unwrap();
+        let library_dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: blocker.join("data"),
+            playlists_dir: blocker.join("playlists"),
+        };
+        let mut library_driver: LibraryDriver<fn(CoverDecoded)> =
+            LibraryDriver::new(library_dirs, AUDIO_EXTENSIONS, unpublished);
+
+        let message = library_driver.execute(LibraryEffect::Execute(disk_cmd));
+
+        assert!(
+            matches!(message, Some(LibraryMessage::Error(_))),
+            "{message:?}"
+        );
+    }
 }

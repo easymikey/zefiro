@@ -8,7 +8,7 @@ use widgets::{
     screen::frame_layout::FrameLayout,
 };
 
-use crate::unit::support::{
+use crate::support::{
     AREA,
     COVER,
     PROGRESS_LINE,
@@ -258,7 +258,7 @@ fn a_protocol_cover_rect_is_subtracted_from_the_fade() {
 
 #[test]
 fn only_the_cover_rect_survives_a_whole_screen_animation() {
-    let mut opened = overlay_backdrop(Some(crate::unit::support::SCREEN));
+    let mut opened = overlay_backdrop(Some(crate::support::SCREEN));
     opened.layout.cover_area = Some(COVER);
 
     let mut stage = AnimationStage::default();
@@ -435,7 +435,7 @@ fn a_second_toast_while_one_is_showing_slides_in_again() {
 fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
     let sources = SceneSources::new(model_with_tracks(3));
     let scene = sources.scene();
-    let layout = FrameLayout::from_scene(&scene, crate::unit::support::SCREEN);
+    let layout = FrameLayout::from_scene(&scene, crate::support::SCREEN);
 
     let backdrop = Backdrop {
         layout,
@@ -450,7 +450,7 @@ fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
         "a theme change washes the real frame layout"
     );
 
-    let mut buffer = Buffer::empty(crate::unit::support::SCREEN);
+    let mut buffer = Buffer::empty(crate::support::SCREEN);
     stage.advance(&mut buffer, start);
     let mid = scene.presentation.since_first_paint + slice(|t| t.screen_wash, 4);
     let elapsed = stage.advance_to(mid);

@@ -13,7 +13,7 @@ use crate::driver::{
 
 pub(crate) const SAVE_DEBOUNCE: Duration = Duration::from_millis(200);
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PendingSaves {
     config_patch: Option<ConfigPatch>,
     appearance_patch: Option<AppearancePatch>,

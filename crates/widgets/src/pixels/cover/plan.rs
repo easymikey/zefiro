@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 
-use crate::pixels::cover::pixmap::{Identity, Wanted};
+use crate::pixels::{cover::pixmap::Identity, vinyl::Wanted};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PaintPlan {
@@ -49,10 +49,10 @@ mod tests {
     use crate::pixels::{
         cover::{
             CoverImage,
-            pixmap::{Identity, Wanted},
+            pixmap::Identity,
             plan::{PaintPlan, PlacedCover, plan_paint},
         },
-        vinyl::{VinylCacheKey, VinylStyle},
+        vinyl::{VinylCacheKey, VinylStyle, Wanted, tests::noir_vinyl_style},
     };
 
     fn cover_image(path: &str) -> CoverImage {
@@ -76,7 +76,7 @@ mod tests {
     fn want(path: &'static str, rect: Rect) -> Want {
         Want {
             path,
-            vinyl_style: VinylStyle::fixture(),
+            vinyl_style: noir_vinyl_style(),
             rect,
         }
     }
@@ -102,13 +102,13 @@ mod tests {
     }
 
     fn vinyl(path: &str) -> Identity {
-        vinyl_with_colors(path, VinylStyle::fixture())
+        vinyl_with_colors(path, noir_vinyl_style())
     }
 
     fn recolored() -> VinylStyle {
         VinylStyle {
             accent: Rgb([0x3d, 0x9b, 0xff]),
-            ..VinylStyle::fixture()
+            ..noir_vinyl_style()
         }
     }
 

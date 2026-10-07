@@ -23,7 +23,7 @@ pub(crate) enum CardStatus {
 
 impl CardStatus {
     #[must_use]
-    pub(crate) fn new(output_status: &OutputStatus, player: &Player) -> Self {
+    pub(crate) fn new(output_status: OutputStatus, player: &Player) -> Self {
         match output_status {
             OutputStatus::Lost(..) => Self::OutputLost,
             OutputStatus::Ready => match player {
@@ -48,22 +48,20 @@ impl CardStatus {
     #[must_use]
     pub(crate) fn label(self) -> StatusLabel {
         match self {
-            Self::Playing => StatusLabel {
-                glyph: "\u{25b6}",
-                word: "Playing",
-            },
-            Self::Paused => StatusLabel {
-                glyph: "\u{23f8}",
-                word: "Paused",
-            },
-            Self::Stopped => StatusLabel {
-                glyph: "\u{25a0}",
-                word: "Stopped",
-            },
-            Self::OutputLost => StatusLabel {
-                glyph: "\u{26a0}",
-                word: "No output",
-            },
+            Self::Playing => StatusLabel { glyph: "\u{25b6}" },
+            Self::Paused => StatusLabel { glyph: "\u{23f8}" },
+            Self::Stopped => StatusLabel { glyph: "\u{25a0}" },
+            Self::OutputLost => StatusLabel { glyph: "\u{26a0}" },
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn text(self) -> &'static str {
+        match self {
+            Self::Playing => "\u{25b6} Playing",
+            Self::Paused => "\u{23f8} Paused",
+            Self::Stopped => "\u{25a0} Stopped",
+            Self::OutputLost => "\u{26a0} No output",
         }
     }
 }
@@ -71,7 +69,6 @@ impl CardStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct StatusLabel {
     pub(crate) glyph: &'static str,
-    pub(crate) word: &'static str,
 }
 
 pub(crate) fn paint(
@@ -86,9 +83,7 @@ pub(crate) fn paint(
 
     let status = card_widget.view.status();
     let status_color = status.color(&card_widget.active_theme);
-    let label = status.label();
-    let status_text = format!("{} {}", label.glyph, label.word);
-    let status_line = truncate(&status_text, usize::from(metrics.status_row.width));
+    let status_line = truncate(status.text(), usize::from(metrics.status_row.width));
     let status_span: Span<'_> = text(status_line).fg(status_color).into();
     Paragraph::new(status_span)
         .alignment(Alignment::Right)

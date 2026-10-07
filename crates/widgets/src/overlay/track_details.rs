@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use kernel::domain::{geometry::Cells, track::Track};
 use ratatui::{
     buffer::Buffer,
@@ -25,20 +27,22 @@ use crate::{
 };
 
 const MIN_WIDTH: u16 = 28;
-const LEADER_COLUMN: usize = 10;
 
 #[derive(Debug)]
 pub(crate) struct TrackDetailsWidget<'a> {
-    track: &'a Track,
+    rows: &'a [TrackDetailsRow<'a>],
     active_theme: ActiveTheme<'a>,
     avoid: &'a [Rect],
 }
 
 impl<'a> TrackDetailsWidget<'a> {
     #[must_use]
-    pub(crate) fn new(track: &'a Track, active_theme: ActiveTheme<'a>) -> Self {
+    pub(crate) fn new(
+        rows: &'a [TrackDetailsRow<'a>],
+        active_theme: ActiveTheme<'a>,
+    ) -> Self {
         Self {
-            track,
+            rows,
             active_theme,
             avoid: &[],
         }
@@ -52,10 +56,7 @@ impl<'a> TrackDetailsWidget<'a> {
 
     #[must_use]
     pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::Dialog(
-            self.modal(&TrackDetailsRow::all(self.track))
-                .areas(screen, self.avoid),
-        )
+        OverlayAreas::Dialog(self.modal().areas(screen, self.avoid))
     }
 
     pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
@@ -63,18 +64,18 @@ impl<'a> TrackDetailsWidget<'a> {
             return;
         };
         let buffer = canvas.buffer;
-        let rows = TrackDetailsRow::all(self.track);
-        self.modal(&rows).paint(areas, buffer);
+        self.modal().paint(areas, buffer);
         if areas.body.width == 0 || areas.body.height == 0 {
             return;
         }
-        Paragraph::new(self.lines(rows, usize::from(areas.body.width)))
+        Paragraph::new(self.lines(usize::from(areas.body.width)))
             .render(areas.body, buffer);
     }
 
-    fn modal(&self, rows: &[TrackDetailsRow]) -> Modal<'static> {
+    fn modal(&self) -> Modal<'static> {
         let colors = self.active_theme.colors();
-        let content_width = rows
+        let content_width = self
+            .rows
             .iter()
             .filter(|detail_row| detail_row.truncation == Truncation::Tail)
             .map(|detail_row| {
@@ -88,7 +89,7 @@ impl<'a> TrackDetailsWidget<'a> {
             size: ModalSize::Dialog {
                 min_width: Cells(MIN_WIDTH),
                 content_width: Cells(content_width),
-                content_rows: Cells(small_count_u16(rows.len())),
+                content_rows: Cells(small_count_u16(self.rows.len())),
             },
             hint: Some(line([
                 text(glyphs::track_details::HINT).fg(colors.muted_foreground)
@@ -98,16 +99,16 @@ impl<'a> TrackDetailsWidget<'a> {
         }
     }
 
-    fn lines(&self, rows: Vec<TrackDetailsRow>, width: usize) -> Vec<Line<'static>> {
+    fn lines(&self, width: usize) -> Vec<Line<'a>> {
         let colors = self.active_theme.colors();
-        rows.into_iter()
+        self.rows
+            .iter()
             .map(|detail_row| {
                 let budget = width.saturating_sub(detail_row.prefix.width());
                 let value = match detail_row.truncation {
                     Truncation::Head => truncate_head(&detail_row.value, budget),
                     Truncation::Tail => truncate(&detail_row.value, budget),
-                }
-                .into_owned();
+                };
                 line([
                     text(detail_row.prefix).fg(colors.muted_foreground),
                     text(value).fg(colors.foreground),
@@ -129,23 +130,25 @@ enum Truncation {
     Tail,
 }
 
-struct TrackDetailsRow {
-    prefix: String,
-    value: String,
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackDetailsRow<'a> {
+    prefix: &'static str,
+    value: Cow<'a, str>,
     truncation: Truncation,
 }
 
-impl TrackDetailsRow {
-    fn all(track: &Track) -> Vec<TrackDetailsRow> {
+impl<'a> TrackDetailsRow<'a> {
+    #[must_use]
+    pub(crate) fn all(track: &'a Track) -> Vec<Self> {
         let path_row = TrackDetailsRow {
-            prefix: RowPrefix::Plain.text(glyphs::track_details::PATH_LABEL),
-            value: track.path().display().to_string(),
+            prefix: glyphs::track_details::PATH_LABEL,
+            value: track.path().to_string_lossy(),
             truncation: Truncation::Head,
         };
         tag_rows(track)
             .into_iter()
-            .map(|(label, shape, value)| TrackDetailsRow {
-                prefix: shape.text(label),
+            .map(|(prefix, value)| TrackDetailsRow {
+                prefix,
                 value,
                 truncation: Truncation::Tail,
             })
@@ -154,104 +157,59 @@ impl TrackDetailsRow {
     }
 }
 
-fn tag_rows(track: &Track) -> [(&'static str, RowPrefix, String); 7] {
+fn tag_rows(track: &Track) -> [(&'static str, Cow<'_, str>); 7] {
     let tags = track.tags();
     [
         (
             glyphs::track_details::TITLE_LABEL,
-            RowPrefix::Leader,
-            missing_or_value(tags.title.clone()),
+            missing_or_value(tags.title.as_deref()),
         ),
         (
             glyphs::track_details::ARTIST_LABEL,
-            RowPrefix::Leader,
-            missing_or_value(tags.artist.clone()),
+            missing_or_value(tags.artist.as_deref()),
         ),
         (
             glyphs::track_details::ALBUM_LABEL,
-            RowPrefix::Leader,
-            missing_or_value(tags.album.clone()),
+            missing_or_value(tags.album.as_deref()),
         ),
         (
             glyphs::track_details::YEAR_LABEL,
-            RowPrefix::Plain,
-            missing_or_value(tags.date.clone()),
+            missing_or_value(tags.date.as_deref()),
         ),
-        (
-            glyphs::track_details::TRACK_LABEL,
-            RowPrefix::Plain,
-            track_number(track),
-        ),
+        (glyphs::track_details::TRACK_LABEL, track_number(track)),
         (
             glyphs::track_details::DURATION_LABEL,
-            RowPrefix::Plain,
-            track.duration().map_or_else(
-                || glyphs::track_details::MISSING.to_string(),
-                duration_text,
-            ),
+            track
+                .duration()
+                .map_or(Cow::Borrowed(glyphs::track_details::MISSING), |duration| {
+                    Cow::Owned(duration_text(duration))
+                }),
         ),
-        (
-            glyphs::track_details::FORMAT_LABEL,
-            RowPrefix::Plain,
-            format_summary(track),
-        ),
+        (glyphs::track_details::FORMAT_LABEL, format_summary(track)),
     ]
 }
 
-#[derive(Debug, Clone, Copy)]
-enum RowPrefix {
-    Leader,
-    Plain,
-}
-
-impl RowPrefix {
-    fn text(self, label: &str) -> String {
-        match self {
-            Self::Leader => leader_prefix(label),
-            Self::Plain => plain_prefix(label),
-        }
-    }
-}
-
-fn leader_prefix(label: &str) -> String {
-    let dashes = LEADER_COLUMN
-        .saturating_sub(label.width())
-        .saturating_sub(1)
-        .max(1);
-    format!(
-        "{label} {}{}",
-        glyphs::track_details::LEADER_DASH
-            .to_string()
-            .repeat(dashes),
-        glyphs::track_details::GAP
-    )
-}
-
-fn plain_prefix(label: &str) -> String {
-    format!("{label}{}", glyphs::track_details::GAP)
-}
-
-fn track_number(track: &Track) -> String {
+fn track_number(track: &Track) -> Cow<'static, str> {
     match (track.tags().track_number, track.tags().track_total) {
-        (Some(number), Some(total)) => {
-            format!("{number}{}{total}", glyphs::track_details::TRACK_OF)
-        }
-        (Some(number), None) => number.to_string(),
-        (None, _) => glyphs::track_details::MISSING.to_string(),
+        (Some(number), Some(total)) => Cow::Owned(format!(
+            "{number}{}{total}",
+            glyphs::track_details::TRACK_OF
+        )),
+        (Some(number), None) => Cow::Owned(number.to_string()),
+        (None, _) => Cow::Borrowed(glyphs::track_details::MISSING),
     }
 }
 
-fn format_summary(track: &Track) -> String {
+fn format_summary(track: &Track) -> Cow<'static, str> {
     Some(format_chip_values(track.audio_format()))
         .filter(|values| !values.is_empty())
-        .map_or_else(
-            || glyphs::track_details::MISSING.to_string(),
-            |values| values.join(glyphs::DOT_SEPARATOR),
-        )
+        .map_or(Cow::Borrowed(glyphs::track_details::MISSING), |values| {
+            Cow::Owned(values.join(glyphs::DOT_SEPARATOR))
+        })
 }
 
-fn missing_or_value(tag: Option<String>) -> String {
-    tag.unwrap_or_else(|| glyphs::track_details::MISSING.to_string())
+fn missing_or_value(tag: Option<&str>) -> Cow<'_, str> {
+    tag.map_or(Cow::Borrowed(glyphs::track_details::MISSING), Cow::Borrowed)
 }
 
 #[cfg(test)]
@@ -262,7 +220,7 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use crate::{
-        overlay::track_details::TrackDetailsWidget,
+        overlay::track_details::{TrackDetailsRow, TrackDetailsWidget},
         test_support::{noir, rendered},
         theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
     };
@@ -297,8 +255,9 @@ mod tests {
     #[rstest]
     fn track_details_overlay_shows_every_row_at_80x24(theme: Theme) {
         let track = full_track();
+        let rows = TrackDetailsRow::all(&track);
         let overlay_widget = TrackDetailsWidget::new(
-            &track,
+            &rows,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
         insta::assert_snapshot!(
@@ -321,8 +280,9 @@ mod tests {
             },
             audio_format: AudioFormat::default(),
         });
+        let rows = TrackDetailsRow::all(&track);
         let overlay_widget = TrackDetailsWidget::new(
-            &track,
+            &rows,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
         insta::assert_snapshot!(
@@ -335,8 +295,9 @@ mod tests {
     #[rstest]
     fn track_details_overlay_does_not_panic_on_a_tiny_terminal(theme: Theme) {
         let track = full_track();
+        let rows = TrackDetailsRow::all(&track);
         let overlay_widget = TrackDetailsWidget::new(
-            &track,
+            &rows,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
         assert_eq!(

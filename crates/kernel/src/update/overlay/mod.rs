@@ -12,7 +12,7 @@ use crate::{
     domain::{
         cursor_over::CursorOver,
         history::{HISTORY_LIMIT, HistoryEntry},
-        overlay::{Overlay, OverlayName, SearchQuery, TextEntry, TrashCandidate},
+        overlay::{Overlay, OverlayName, SearchQuery, TextEntry},
         player::Player,
         playlist::Playlist,
         setting_row::SettingRow,
@@ -136,18 +136,13 @@ fn overlay_for(
         OverlayName::SavePlaylist => Ok(Overlay::SavePlaylist(TextEntry::default())),
         OverlayName::History => Ok(Overlay::History(CursorOver::default())),
         OverlayName::Settings => Ok(Overlay::Settings(SettingRow::first())),
-        OverlayName::ConfirmTrash => {
-            let track = parts
-                .playlist
-                .tracks
-                .get(parts.workspace.browse.selected().get())
-                .ok_or(Unhandled)?;
-            Ok(Overlay::ConfirmTrash(TrashCandidate {
-                source: track.source().clone(),
-                title: track.title().to_owned(),
-                artist: track.tags().artist.clone().unwrap_or_else(String::new),
-            }))
-        }
+        OverlayName::ConfirmTrash => parts
+            .playlist
+            .tracks
+            .get(parts.workspace.browse.selected().get())
+            .cloned()
+            .map(Overlay::ConfirmTrash)
+            .ok_or(Unhandled),
         OverlayName::TrackDetails => parts
             .playlist
             .tracks

@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 
-use crate::domain::{cue::Cue, direction::Direction, theme::ThemeName};
+use crate::domain::{cue::Cue, direction::Direction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AppearanceField {
@@ -160,13 +160,6 @@ pub struct AppearanceRow {
     pub field: AppearanceField,
     pub control: AppearanceControl,
     pub cue: Option<Cue>,
-    pub theme_names: &'static [Option<ThemeName>],
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AppearanceRowChoice {
-    pub row: &'static AppearanceRow,
-    pub choice: Choice,
 }
 
 impl SettingRow {

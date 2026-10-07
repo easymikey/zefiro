@@ -29,6 +29,14 @@ pub(crate) fn truncate(text: &str, width: usize) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+#[must_use]
+pub(crate) fn truncate_owned(text: String, width: usize) -> String {
+    if width > 0 && text.width() <= width {
+        return text;
+    }
+    truncate(&text, width).into_owned()
+}
+
 const BLANKS: &str = "                                                                                                                                                                                                                                                                ";
 
 #[must_use]
@@ -98,7 +106,7 @@ mod tests {
     use crate::primitive::{
         glyphs::ELLIPSIS,
         span::{line, text},
-        truncate::{truncate, truncate_line},
+        truncate::{truncate, truncate_line, truncate_owned},
     };
 
     proptest! {
@@ -123,6 +131,26 @@ mod tests {
                 );
             }
         }
+
+        #[test]
+        fn truncate_owned_matches_truncate(text in "(?s:.)*", width in 0usize..40) {
+            let expected = truncate(&text, width).into_owned();
+            prop_assert_eq!(truncate_owned(text, width), expected);
+        }
+    }
+
+    #[rstest]
+    #[case::fits("hello", 5)]
+    #[case::cut("hello world", 6)]
+    #[case::no_budget("hello", 0)]
+    fn truncate_owned_keeps_a_fitting_text_and_cuts_like_truncate(
+        #[case] text: &str,
+        #[case] width: usize,
+    ) {
+        assert_eq!(
+            truncate_owned(text.to_owned(), width),
+            truncate(text, width)
+        );
     }
 
     #[rstest]

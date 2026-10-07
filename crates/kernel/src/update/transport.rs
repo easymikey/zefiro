@@ -10,7 +10,6 @@ use crate::{
         player::AbLoop,
         revision::Revision,
         sleep::SleepTimer,
-        sleep_presets::SleepPresets,
         time::Moment,
         transport::{OutputStatus, Transport},
     },
@@ -24,9 +23,8 @@ pub enum TransportMessage {
     SetVolume(Percent),
     StepSpeed(Direction),
     CycleSleep {
-        presets: SleepPresets,
+        sleep_timer: Option<SleepTimer>,
         revision: Revision,
-        now: Moment,
     },
     AbMark(Option<Duration>),
     SleepFired,
@@ -50,15 +48,16 @@ impl Machine for Transport {
             TransportMessage::StepSpeed(direction) => {
                 let speed = self.speed.step(direction);
                 replace(&mut self.speed, speed)?;
-                Ok(Effect::Audio(AudioCmd::SetSpeed(self.speed)).into())
+                Ok(Cmd::from_iter([
+                    Effect::Audio(AudioCmd::SetSpeed(self.speed)),
+                    Effect::Macos(MacosCmd::SetSpeed(self.speed)),
+                ]))
             }
             TransportMessage::CycleSleep {
-                presets,
+                sleep_timer,
                 revision,
-                now,
             } => {
-                let sleep = next_sleep(self.sleep_timer, presets.as_slice(), now);
-                replace(&mut self.sleep_timer, sleep)?;
+                replace(&mut self.sleep_timer, sleep_timer)?;
                 Ok(self.sleep_timer.map_or(Cmd::none(), |timer| {
                     Effect::After {
                         delay: timer.delay,
@@ -70,12 +69,10 @@ impl Machine for Transport {
             TransportMessage::AbMark(None) => Err(Unhandled),
             TransportMessage::AbMark(Some(position)) => {
                 let ab_loop = AbLoop::mark(self.ab_loop, position);
-                replace(&mut self.ab_loop, ab_loop)?;
-                Ok(Cmd::none())
+                replace(&mut self.ab_loop, ab_loop).map(|()| Cmd::none())
             }
             TransportMessage::SleepFired => {
-                replace(&mut self.sleep_timer, None)?;
-                Ok(Cmd::none())
+                replace(&mut self.sleep_timer, None).map(|()| Cmd::none())
             }
         }
     }
@@ -91,7 +88,7 @@ impl Transport {
     }
 }
 
-fn next_sleep(
+pub(crate) fn next_sleep(
     current: Option<SleepTimer>,
     sleep_presets: &[Duration],
     now: Moment,
@@ -129,7 +126,7 @@ mod tests {
         message::Timer,
         update::{
             machine::{Machine, Unhandled},
-            transport::TransportMessage,
+            transport::{TransportMessage, next_sleep},
         },
     };
 
@@ -149,7 +146,7 @@ mod tests {
             transport.speed,
             transport.sleep_timer,
             transport.ab_loop,
-            transport.output_status.clone(),
+            transport.output_status,
         )
     }
 
@@ -201,15 +198,10 @@ mod tests {
         }
     }
 
-    fn cycle_sleep() -> TransportMessage {
-        cycle_sleep_with(SleepPresets::default())
-    }
-
-    fn cycle_sleep_with(presets: SleepPresets) -> TransportMessage {
+    fn cycle_sleep(sleep_timer: Option<SleepTimer>) -> TransportMessage {
         TransportMessage::CycleSleep {
-            presets,
+            sleep_timer,
             revision: revision(),
-            now: Moment::new(NOW),
         }
     }
 
@@ -227,6 +219,10 @@ mod tests {
 
     fn audio_speed(rate: f32) -> Cmd {
         Effect::Audio(AudioCmd::SetSpeed(Speed::clamped(rate))).into()
+    }
+
+    fn macos_speed(rate: f32) -> Cmd {
+        Effect::Macos(MacosCmd::SetSpeed(Speed::clamped(rate))).into()
     }
 
     fn mark(seconds: u64) -> TransportMessage {
@@ -263,26 +259,21 @@ mod tests {
     #[case::step_speed_up(
         at_speed(1.0),
         TransportMessage::StepSpeed(Direction::Next),
-        (at_speed(1.25), audio_speed(1.25))
+        (at_speed(1.25), audio_speed(1.25).then(macos_speed(1.25)))
     )]
     #[case::step_speed_down(
         at_speed(1.0),
         TransportMessage::StepSpeed(Direction::Previous),
-        (at_speed(0.75), audio_speed(0.75))
+        (at_speed(0.75), audio_speed(0.75).then(macos_speed(0.75)))
     )]
-    #[case::cycle_sleep_starts_at_the_first_preset(
-        sleeping(None),
-        cycle_sleep(),
-        (sleeping(Some((0, 15))), sleep_after(15))
-    )]
-    #[case::cycle_sleep_moves_to_the_next_preset(
+    #[case::cycle_sleep_records_the_decided_timer(
         sleeping(Some((0, 15))),
-        cycle_sleep(),
+        cycle_sleep(Some(timer(1, 30))),
         (sleeping(Some((1, 30))), sleep_after(30))
     )]
-    #[case::cycle_sleep_wraps_past_the_last_preset_to_off(
+    #[case::cycle_sleep_switches_the_timer_off(
         sleeping(Some((2, 60))),
-        cycle_sleep(),
+        cycle_sleep(None),
         (sleeping(None), Cmd::none())
     )]
     #[case::ab_mark_sets_a(
@@ -336,9 +327,10 @@ mod tests {
         at_speed(0.25),
         TransportMessage::StepSpeed(Direction::Previous)
     )]
-    #[case::cycle_sleep_without_presets_and_without_a_timer(
-        sleeping(None),
-        cycle_sleep_with(SleepPresets::from_minutes(&[]).unwrap())
+    #[case::cycle_sleep_to_no_timer_without_a_timer(sleeping(None), cycle_sleep(None))]
+    #[case::cycle_sleep_to_the_current_timer(
+        sleeping(Some((1, 30))),
+        cycle_sleep(Some(timer(1, 30)))
     )]
     #[case::ab_mark_at_the_a_point(looping(start_marked(10)), mark(10))]
     #[case::ab_mark_before_the_a_point(looping(start_marked(10)), mark(5))]
@@ -351,6 +343,34 @@ mod tests {
 
         assert_eq!(transport.transition(message), Err(Unhandled));
         assert_eq!(state(&transport), before);
+    }
+
+    #[rstest]
+    #[case::starts_at_the_first_preset(
+        None,
+        SleepPresets::default(),
+        Some(timer(0, 15))
+    )]
+    #[case::moves_to_the_next_preset(
+        Some(timer(0, 15)),
+        SleepPresets::default(),
+        Some(timer(1, 30))
+    )]
+    #[case::wraps_past_the_last_preset_to_off(
+        Some(timer(2, 60)),
+        SleepPresets::default(),
+        None
+    )]
+    #[case::stays_off_without_presets(None, SleepPresets::from_minutes(&[]).unwrap(), None)]
+    fn next_sleep_walks_the_presets(
+        #[case] current: Option<SleepTimer>,
+        #[case] presets: SleepPresets,
+        #[case] expected: Option<SleepTimer>,
+    ) {
+        assert_eq!(
+            next_sleep(current, presets.as_slice(), Moment::new(NOW)),
+            expected
+        );
     }
 
     #[test]

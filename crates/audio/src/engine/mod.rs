@@ -31,10 +31,10 @@ pub(crate) mod tests {
 
     use crate::{
         AudioDriver,
-        deck::{job::AudioJob, source::PreloadMode},
+        deck::{event::DeckEvent, job::AudioJob, source::PreloadMode},
         engine::{
             effect::{AudioLoopCmd, EngineEffect},
-            message::{DeviceOpened, EngineMessage},
+            message::{AudioMessage, DeviceOpened, EngineMessage},
             phase::{
                 Fade,
                 Incoming,
@@ -163,8 +163,17 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn failed() -> EngineMessage {
-        EngineMessage::OutputLost(OutputError::DeviceGone)
+    pub(crate) fn failed() -> AudioMessage {
+        AudioMessage::Deck(DeckEvent::OutputLost(OutputError::DeviceGone))
+    }
+
+    pub(crate) fn driver_with(engine_state: EngineState) -> AudioDriver {
+        let (spectrum_buffers, _spectrum_tap) = crate::tap::spectrum_channel();
+        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
+        AudioDriver {
+            engine: Engine::new(engine_state),
+            deck: crate::deck::Deck::new(spectrum_buffers, callback_sender),
+        }
     }
 
     pub(crate) fn closed() -> EngineState {
@@ -242,6 +251,7 @@ pub(crate) mod tests {
                     position: seconds(5),
                     playback: Playback::Paused,
                     duration: Some(TRACK_A_DURATION),
+                    upcoming: None,
                 }),
             }),
             settings: settings_on("usb"),

@@ -9,18 +9,13 @@ use kernel::{
             KeyHints,
             LayoutMode,
             preset_appearance,
+            preset_of,
         },
-        appearance_rows::appearance_row_choices,
+        appearance_rows::{KEY_HINTS, LAYOUT_MODES},
         cue::Cue,
         direction::Direction,
         model::Model,
-        setting_row::{
-            AppearanceControl,
-            AppearanceField,
-            Choice,
-            OptionCount,
-            SettingRow,
-        },
+        setting_row::{AppearanceControl, AppearanceField, OptionCount, SettingRow},
         theme::{ThemeChoice, ThemeName},
         time::Moment,
     },
@@ -32,17 +27,6 @@ use crate::support::update::update;
 
 fn step(model: &mut Model, row: SettingRow, direction: Direction) -> Cmd {
     update(model, Message::Step { row, direction }, Moment::default()).unwrap()
-}
-
-fn chosen(model: &Model, field: AppearanceField) -> Option<usize> {
-    let appearance_row_choice =
-        appearance_row_choices(model.settings.appearance_settings)
-            .into_iter()
-            .find(|appearance_row_choice| appearance_row_choice.row.field == field)?;
-    let Choice::Option(option) = appearance_row_choice.choice else {
-        return None;
-    };
-    Some(option.get())
 }
 
 #[rstest]
@@ -59,7 +43,12 @@ fn a_toggle_row_wraps_mod_two(
         .into_iter()
         .map(|direction| {
             drop(step(&mut model, SettingRow::Appearance(field), direction));
-            chosen(&model, field).unwrap_or(usize::MAX)
+            KEY_HINTS
+                .iter()
+                .position(|&key_hints| {
+                    key_hints == model.settings.appearance_settings.key_hints
+                })
+                .unwrap_or(usize::MAX)
         })
         .collect();
 
@@ -78,7 +67,12 @@ fn a_cycle_row_wraps_at_its_own_ring_size() {
                 SettingRow::Appearance(field),
                 Direction::Next,
             ));
-            chosen(&model, field).unwrap_or(usize::MAX)
+            LAYOUT_MODES
+                .iter()
+                .position(|&layout_mode| {
+                    layout_mode == model.settings.appearance_settings.layout_mode
+                })
+                .unwrap_or(usize::MAX)
         })
         .collect();
 
@@ -86,7 +80,7 @@ fn a_cycle_row_wraps_at_its_own_ring_size() {
 }
 
 #[test]
-fn all_places_the_leading_custom_row_before_theme_then_the_rest_after() {
+fn the_preset_and_theme_rows_lead_setting_row_all() {
     assert_eq!(
         SettingRow::ALL,
         [
@@ -112,12 +106,11 @@ fn all_places_the_leading_custom_row_before_theme_then_the_rest_after() {
 #[case::toggle(AppearanceField::ProgressTime, 2)]
 #[case::cycle(AppearanceField::LayoutMode, 3)]
 #[case::four_options(AppearanceField::CoverMode, 4)]
-fn stepping_every_option_of_a_row_never_reorders_settings_row_all(
+fn stepping_every_option_of_a_row_is_handled(
     #[case] field: AppearanceField,
     #[case] option_count: usize,
 ) {
     let mut model = Model::default();
-    let before = SettingRow::ALL;
 
     for _ in 0..option_count {
         drop(step(
@@ -125,7 +118,6 @@ fn stepping_every_option_of_a_row_never_reorders_settings_row_all(
             SettingRow::Appearance(field),
             Direction::Next,
         ));
-        assert_eq!(SettingRow::ALL, before);
     }
 }
 
@@ -217,30 +209,49 @@ fn edited_appearance() -> AppearanceSettings {
     }
 }
 
+struct PresetCase {
+    preset: AppearancePreset,
+    theme: Option<&'static str>,
+}
+
 #[rstest]
-#[case::custom_steps_to_default(edited_appearance(), Direction::Next, (0, None))]
-#[case::default_steps_to_noir(AppearanceSettings::default(), Direction::Next, (1, Some("noir")))]
-#[case::noir_steps_to_default(preset_appearance(AppearancePreset::Noir), Direction::Previous, (0, None))]
+#[case::custom_steps_to_default(
+    edited_appearance(),
+    Direction::Next,
+    PresetCase { preset: AppearancePreset::Stock, theme: None }
+)]
+#[case::default_steps_to_noir(
+    AppearanceSettings::default(),
+    Direction::Next,
+    PresetCase { preset: AppearancePreset::Noir, theme: Some("noir") }
+)]
+#[case::noir_steps_to_default(
+    preset_appearance(AppearancePreset::Noir),
+    Direction::Previous,
+    PresetCase { preset: AppearancePreset::Stock, theme: None }
+)]
 fn stepping_the_preset_row_selects_its_options_theme(
     #[case] appearance_settings: AppearanceSettings,
     #[case] direction: Direction,
-    #[case] expected: (usize, Option<&str>),
+    #[case] expected: PresetCase,
 ) {
-    let (expected_option, expected_theme) = expected;
     let field = AppearanceField::Preset;
     let mut model = Model::default();
     model.settings.appearance_settings = appearance_settings;
 
     let cmd = step(&mut model, SettingRow::Appearance(field), direction);
 
-    assert_eq!(chosen(&model, field), Some(expected_option));
+    assert_eq!(
+        preset_of(model.settings.appearance_settings),
+        Some(expected.preset)
+    );
     let theme = cmd.effects().find_map(|effect| {
         let Effect::Config(ConfigCmd::SelectTheme(choice)) = effect else {
             return None;
         };
         Some(choice.to_string())
     });
-    assert_eq!(theme, expected_theme.map(str::to_string));
+    assert_eq!(theme, expected.theme.map(str::to_string));
 }
 
 #[test]

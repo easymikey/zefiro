@@ -1,4 +1,4 @@
-use std::{borrow::Cow, time::Duration};
+use std::{borrow::Cow, sync::Arc, time::Duration};
 
 use kernel::{
     domain::{
@@ -16,6 +16,7 @@ pub(crate) struct HelpRow {
     pub(crate) label: Cow<'static, str>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HelpGroup {
     pub(crate) title: &'static str,
     pub(crate) help_rows: Vec<HelpRow>,
@@ -138,7 +139,10 @@ fn is_digit_chord(chord: &str) -> bool {
     chord.len() == 1 && chord.chars().next().is_some_and(|c| c.is_ascii_digit())
 }
 
-fn continues_digit_run(previous: &str, current: &str) -> bool {
+fn continues_digit_run(
+    (previous, previous_help): &(String, Cow<'static, str>),
+    (current, current_help): &(String, Cow<'static, str>),
+) -> bool {
     is_digit_chord(previous)
         && is_digit_chord(current)
         && previous
@@ -146,10 +150,12 @@ fn continues_digit_run(previous: &str, current: &str) -> bool {
             .ok()
             .zip(current.parse::<u8>().ok())
             .is_some_and(|(previous, current)| current == previous.saturating_add(1))
+        && previous_help.replacen(previous.as_str(), "N", 1)
+            == current_help.replacen(current.as_str(), "N", 1)
 }
 
 fn collapse_digit_runs(rows: &[(String, Cow<'static, str>)]) -> Vec<HelpRow> {
-    rows.chunk_by(|(previous, _), (current, _)| continues_digit_run(previous, current))
+    rows.chunk_by(continues_digit_run)
         .flat_map(|run| match run {
             [(first_chord, first_help), .., (last_chord, _)] => vec![HelpRow {
                 chord: format!("{first_chord}-{last_chord}"),
@@ -166,11 +172,12 @@ fn collapse_digit_runs(rows: &[(String, Cow<'static, str>)]) -> Vec<HelpRow> {
         .collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HelpGroups {
-    pub(crate) playback_group: HelpGroup,
-    pub(crate) navigation_group: HelpGroup,
-    pub(crate) playlist_group: HelpGroup,
-    pub(crate) general_group: HelpGroup,
+    pub(crate) playback_group: Arc<HelpGroup>,
+    pub(crate) navigation_group: Arc<HelpGroup>,
+    pub(crate) playlist_group: Arc<HelpGroup>,
+    pub(crate) general_group: Arc<HelpGroup>,
 }
 
 impl HelpGroups {
@@ -186,10 +193,10 @@ impl HelpGroups {
                     (chords, help.text())
                 })
                 .collect();
-            HelpGroup {
+            Arc::new(HelpGroup {
                 title: spec.title,
                 help_rows: collapse_digit_runs(&rows),
-            }
+            })
         };
         let [playback, navigation, playlist, general] = &HELP_GROUPS;
         Self {
@@ -229,6 +236,10 @@ mod tests {
     #[case::digits_that_do_different_things(
         &[("0", "Zero"), ("5", "Five")],
         &[("0", "Zero"), ("5", "Five")]
+    )]
+    #[case::consecutive_digits_that_do_different_things(
+        &[("3", "Down"), ("4", "Up")],
+        &[("3", "Down"), ("4", "Up")]
     )]
     #[case::not_a_digit(&[("q", "Quit")], &[("q", "Quit")])]
     fn collapse_digit_runs_merges_only_a_real_run(

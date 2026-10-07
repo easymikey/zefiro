@@ -2,8 +2,7 @@ use std::time::Duration;
 
 use crate::domain::time::Moment;
 
-pub const TOAST_SECONDS: u64 = 5;
-pub const TOAST_LIFETIME: Duration = Duration::from_secs(TOAST_SECONDS);
+pub const TOAST_LIFETIME: Duration = Duration::from_secs(5);
 pub const TOAST_STACK: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -108,18 +108,24 @@ pub(crate) fn remaining_label(remaining: Duration) -> String {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct HudProgress {
+pub(crate) struct HudProgress<'a> {
     pub(crate) fraction: f32,
     pub(crate) row_width: Cells,
-    pub(crate) remaining: Duration,
+    pub(crate) bar_width: Cells,
+    pub(crate) remaining_label: &'a str,
+    pub(crate) fill: Color,
+    pub(crate) groove: Color,
+}
+
+fn reserved_cells(label: &str) -> u16 {
+    chip::width(label)
+        .0
+        .saturating_add(small_count_u16(HUD_GAP.width()))
 }
 
 #[must_use]
-pub(crate) fn hud_progress_bar_width(row_width: Cells, remaining: Duration) -> Cells {
-    let gap = small_count_u16(HUD_GAP.width());
-    let reserved = chip::width(&remaining_label(remaining))
-        .0
-        .saturating_add(gap);
+pub(crate) fn hud_progress_bar_width(row_width: Cells, remaining_label: &str) -> Cells {
+    let reserved = reserved_cells(remaining_label);
     if row_width.0 <= reserved {
         row_width
     } else {
@@ -128,20 +134,16 @@ pub(crate) fn hud_progress_bar_width(row_width: Cells, remaining: Duration) -> C
 }
 
 #[must_use]
-pub(crate) fn hud_progress_line(
-    hud_progress: &HudProgress,
-    (fill_color, groove): (Color, Color),
+pub(crate) fn hud_progress_line<'a>(
+    hud_progress: &HudProgress<'a>,
     colors: &Colors<Color>,
-) -> Line<'static> {
-    let chip_spans = chip::spans(&remaining_label(hud_progress.remaining), colors);
-    let bar_width =
-        hud_progress_bar_width(hud_progress.row_width, hud_progress.remaining);
-    if bar_width == hud_progress.row_width {
-        return BarFill::progress(hud_progress.fraction, hud_progress.row_width)
-            .line(fill_color, groove);
+) -> Line<'a> {
+    let bar = BarFill::progress(hud_progress.fraction, hud_progress.bar_width)
+        .line(hud_progress.fill, hud_progress.groove);
+    if hud_progress.bar_width == hud_progress.row_width {
+        return bar;
     }
-    let bar =
-        BarFill::progress(hud_progress.fraction, bar_width).line(fill_color, groove);
+    let chip_spans = chip::spans(hud_progress.remaining_label, colors);
     Line::from_iter(
         bar.spans
             .into_iter()
@@ -160,7 +162,13 @@ mod tests {
 
     use crate::{
         primitive::{
-            bar::{BarFill, HudProgress, hud_progress_line},
+            bar::{
+                BarFill,
+                HudProgress,
+                hud_progress_bar_width,
+                hud_progress_line,
+                remaining_label,
+            },
             glyphs,
         },
         theme::colors::Colors,
@@ -214,13 +222,16 @@ mod tests {
     }
 
     fn hud_progress_text(fraction: f32, row_width: u16, remaining: Duration) -> String {
+        let label = remaining_label(remaining);
         let line = hud_progress_line(
             &HudProgress {
                 fraction,
                 row_width: Cells(row_width),
-                remaining,
+                bar_width: hud_progress_bar_width(Cells(row_width), &label),
+                remaining_label: &label,
+                fill: Color::Red,
+                groove: Color::Black,
             },
-            (Color::Red, Color::Black),
             &Colors {
                 muted_foreground: Color::Black,
                 foreground: Color::White,

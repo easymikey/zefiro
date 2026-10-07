@@ -4,10 +4,9 @@ use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 
 use crate::domain::chord::{Chord, ChordError};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumString)]
 #[strum(serialize_all = "snake_case")]
 pub enum KeyContext {
-    #[default]
     Global,
     Playlist,
     TextPrompt,
@@ -87,14 +86,14 @@ impl fmt::Display for Action {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyOverride {
     pub chord: String,
-    pub key_context: KeyContext,
+    pub key_context: Option<KeyContext>,
 }
 
 impl From<&str> for KeyOverride {
     fn from(chord: &str) -> Self {
         Self {
             chord: chord.to_string(),
-            key_context: KeyContext::default(),
+            key_context: None,
         }
     }
 }
@@ -103,7 +102,7 @@ impl From<String> for KeyOverride {
     fn from(chord: String) -> Self {
         Self {
             chord,
-            key_context: KeyContext::default(),
+            key_context: None,
         }
     }
 }
@@ -153,7 +152,7 @@ pub enum KeymapError {
 }
 
 #[cfg(test)]
-mod validation_error_tests {
+mod tests {
     use rstest::rstest;
 
     use crate::domain::{

@@ -1,10 +1,13 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use image::RgbaImage;
 use kernel::domain::{appearance::Rgb, geometry::Pixels};
 use tiny_skia::Pixmap;
 
-use crate::theme::{active_theme::ActiveTheme, rgb::shade};
+use crate::{
+    pixels::cover::CoverImage,
+    theme::{active_theme::ActiveTheme, rgb::shade},
+};
 
 pub(crate) mod art;
 pub(crate) mod geometry;
@@ -48,18 +51,6 @@ impl VinylStyle {
             shadow: SHADOW_COLOR,
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn fixture() -> Self {
-        Self {
-            paper: Rgb([0xec, 0xe6, 0xd6]),
-            border: Rgb([0x3a, 0x3a, 0x3a]),
-            record: Rgb([0x10, 0x10, 0x10]),
-            groove: Rgb([0xff, 0xff, 0xff]),
-            accent: Rgb([0xff, 0x6b, 0x3d]),
-            shadow: Rgb([0x00, 0x00, 0x00]),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -96,6 +87,29 @@ pub(crate) struct VinylCacheKey {
     pub(crate) vinyl_style: VinylStyle,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Wanted<'a> {
+    pub cover_image: Option<&'a CoverImage>,
+    pub side: Pixels,
+    pub vinyl_style: VinylStyle,
+}
+
+impl Wanted<'_> {
+    pub(crate) fn path(&self) -> Option<&Path> {
+        self.cover_image
+            .map(|cover_image| cover_image.path.as_path())
+    }
+}
+
+#[must_use]
+pub(crate) fn vinyl_key(wanted: &Wanted<'_>) -> VinylCacheKey {
+    VinylCacheKey {
+        path: wanted.path().map(Path::to_path_buf),
+        side: wanted.side,
+        vinyl_style: wanted.vinyl_style,
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct VinylCache {
     art: Memo<(Option<PathBuf>, Pixels), Option<VinylArt>>,
@@ -105,11 +119,11 @@ pub struct VinylCache {
 
 impl VinylCache {
     #[must_use]
-    pub(crate) fn compose(
-        &mut self,
-        key: &VinylCacheKey,
-        image: Option<&RgbaImage>,
-    ) -> RgbaImage {
+    pub(crate) fn compose(&mut self, wanted: &Wanted<'_>) -> RgbaImage {
+        let key = vinyl_key(wanted);
+        let image = wanted
+            .cover_image
+            .map(|cover_image| cover_image.image.as_ref());
         let frame = VinylFrame {
             side: Pixels(key.side.0.max(1)),
             style: key.vinyl_style,
@@ -131,7 +145,7 @@ impl VinylCache {
         let sleeve_input = SleeveInput { frame, art };
         let sleeve = self
             .sleeve
-            .cached_or_painted((key.vinyl_style, key.path.clone(), canvas_side), || {
+            .cached_or_painted((key.vinyl_style, key.path, canvas_side), || {
                 paint_sleeve_layer(&sleeve_input)
             })
             .as_ref();
@@ -145,8 +159,29 @@ impl VinylCache {
 }
 
 #[cfg(test)]
-pub(crate) mod test_support {
+pub(crate) mod tests {
+    use std::{cell::Cell, path::PathBuf, sync::Arc};
+
     use image::RgbaImage;
+    use kernel::domain::{appearance::Rgb, geometry::Pixels};
+    use tiny_skia::Pixmap;
+
+    use crate::{
+        pixels::{
+            cover::CoverImage,
+            numeric::dimension_f32,
+            vinyl::{
+                Memo,
+                VinylCache,
+                VinylStyle,
+                Wanted,
+                geometry,
+                geometry::{VINYL_LAYOUT, canvas_aspect_ratio},
+            },
+        },
+        test_support::noir,
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
+    };
 
     pub(crate) fn synthetic_art(size: u32) -> RgbaImage {
         RgbaImage::from_fn(size, size, |x, y| {
@@ -158,31 +193,30 @@ pub(crate) mod test_support {
             ])
         })
     }
-}
-#[cfg(test)]
-mod tests {
-    use std::{cell::Cell, path::PathBuf};
 
-    use kernel::domain::{appearance::Rgb, geometry::Pixels};
-    use tiny_skia::Pixmap;
-
-    use crate::pixels::{
-        numeric::dimension_f32,
-        vinyl::{
-            Memo,
-            VinylCache,
-            VinylCacheKey,
-            VinylStyle,
-            geometry,
-            geometry::{VINYL_LAYOUT, canvas_aspect_ratio},
-            test_support::synthetic_art,
-        },
-    };
+    pub(crate) fn noir_vinyl_style() -> VinylStyle {
+        VinylStyle::from_theme(&ActiveTheme::new(&noir(), ColorDepth::TrueColor))
+    }
 
     const CANVAS_SIDE: Pixels = Pixels(96);
 
-    fn composed(art: Option<&image::RgbaImage>) -> image::RgbaImage {
-        VinylCache::default().compose(&key(None), art)
+    fn cover_image(art: RgbaImage) -> CoverImage {
+        CoverImage {
+            path: PathBuf::from("/music/a.flac"),
+            image: Arc::new(art),
+        }
+    }
+
+    fn wanted(cover_image: Option<&CoverImage>) -> Wanted<'_> {
+        Wanted {
+            cover_image,
+            side: CANVAS_SIDE,
+            vinyl_style: noir_vinyl_style(),
+        }
+    }
+
+    fn composed(cover_image: Option<&CoverImage>) -> RgbaImage {
+        VinylCache::default().compose(&wanted(cover_image))
     }
 
     fn expected_peek(canvas_side: Pixels) -> u32 {
@@ -197,14 +231,14 @@ mod tests {
 
     #[test]
     fn canvas_width_is_the_canvas_side_plus_peek_and_height_is_the_canvas_side() {
-        let image = composed(Some(&synthetic_art(32)));
+        let image = composed(Some(&cover_image(synthetic_art(32))));
         let peek = expected_peek(CANVAS_SIDE);
         assert_eq!(image.dimensions(), (CANVAS_SIDE.0 + peek, CANVAS_SIDE.0));
     }
 
     #[test]
     fn canvas_aspect_ratio_matches_rendered_size() {
-        let image = composed(Some(&synthetic_art(32)));
+        let image = composed(Some(&cover_image(synthetic_art(32))));
         let (width, height) = image.dimensions();
         let rendered_ratio = f64::from(width) / f64::from(height);
         assert!((rendered_ratio - f64::from(canvas_aspect_ratio())).abs() < 0.02);
@@ -212,7 +246,7 @@ mod tests {
 
     #[test]
     fn same_input_renders_identical_bytes() {
-        let art = synthetic_art(32);
+        let art = cover_image(synthetic_art(32));
 
         assert_eq!(
             composed(Some(&art)).into_raw(),
@@ -227,22 +261,13 @@ mod tests {
         assert_eq!(image.dimensions(), (CANVAS_SIDE.0 + peek, CANVAS_SIDE.0));
     }
 
-    fn key(path: Option<PathBuf>) -> VinylCacheKey {
-        VinylCacheKey {
-            path,
-            side: CANVAS_SIDE,
-            vinyl_style: VinylStyle::fixture(),
-        }
-    }
-
     #[test]
     fn a_cover_changes_the_frame_and_keeps_the_sleeve_height() {
         let mut cache = VinylCache::default();
-        let art = synthetic_art(CANVAS_SIDE.0);
-        let path = Some(PathBuf::from("/music/a.flac"));
+        let art = cover_image(synthetic_art(CANVAS_SIDE.0));
 
-        let with_art = cache.compose(&key(path), Some(&art));
-        let without = cache.compose(&key(None), None);
+        let with_art = cache.compose(&wanted(Some(&art)));
+        let without = cache.compose(&wanted(None));
 
         assert_eq!(with_art.height(), CANVAS_SIDE.0);
         assert_ne!(with_art.into_raw(), without.into_raw());
@@ -251,11 +276,14 @@ mod tests {
     #[test]
     fn a_rebuilt_frame_reuses_the_remembered_art() {
         let mut cache = VinylCache::default();
-        let art = synthetic_art(CANVAS_SIDE.0);
-        let path = Some(PathBuf::from("/music/a.flac"));
+        let art = cover_image(synthetic_art(CANVAS_SIDE.0));
+        let blank_cover_image = CoverImage {
+            path: art.path.clone(),
+            image: Arc::new(RgbaImage::new(1, 1)),
+        };
 
-        let first = cache.compose(&key(path.clone()), Some(&art));
-        let again = cache.compose(&key(path), None);
+        let first = cache.compose(&wanted(Some(&art)));
+        let again = cache.compose(&wanted(Some(&blank_cover_image)));
 
         assert_eq!(first.into_raw(), again.into_raw());
     }
@@ -308,15 +336,19 @@ mod tests {
             calls.set(calls.get() + 1);
             None::<Pixmap>
         };
-        let colors = VinylStyle::fixture();
+        let vinyl_style = noir_vinyl_style();
 
-        cache.record.cached_or_painted((colors, Pixels(128)), build);
-        cache.record.cached_or_painted((colors, Pixels(128)), build);
+        cache
+            .record
+            .cached_or_painted((vinyl_style, Pixels(128)), build);
+        cache
+            .record
+            .cached_or_painted((vinyl_style, Pixels(128)), build);
         assert_eq!(calls.get(), 1, "unchanged colors and size must not rebuild");
 
         let recolored_style = VinylStyle {
             accent: Rgb([0x3d, 0x9b, 0xff]),
-            ..colors
+            ..vinyl_style
         };
         cache
             .record

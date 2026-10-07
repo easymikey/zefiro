@@ -15,6 +15,7 @@ use crate::{
         geometry::Pixels,
         history::HistoryEntry,
         percent::Percent,
+        player::Player,
         playlist::PlaylistFileName,
         revision::Revision,
         settings::ReplayGain,
@@ -146,6 +147,7 @@ pub enum MacosCmd {
     NowPlaying(Option<Arc<Track>>),
     SetPlayback(Playback),
     SetPosition(Duration),
+    SetSpeed(Speed),
     SetVolume(Percent),
 }
 
@@ -153,6 +155,16 @@ pub enum MacosCmd {
 pub enum Playback {
     Playing,
     Paused,
+}
+
+impl From<&Player> for Playback {
+    fn from(player: &Player) -> Self {
+        if player.is_playing() {
+            Self::Playing
+        } else {
+            Self::Paused
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

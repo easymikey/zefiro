@@ -42,26 +42,39 @@ pub(crate) fn update(
     mut parts: LibraryParts<'_>,
     event: LibraryEvent,
 ) -> Result<Cmd, Unhandled> {
-    if let LibraryEvent::Loaded { revision, .. }
-    | LibraryEvent::Listed { revision, .. }
-    | LibraryEvent::Tagged { revision, .. } = &event
+    if let LibraryEvent::Loaded {
+        revision,
+        tracks: _tracks,
+    }
+    | LibraryEvent::Listed {
+        revision,
+        tracks: _tracks,
+    }
+    | LibraryEvent::Tagged {
+        revision,
+        tracks: _tracks,
+    } = &event
         && let Freshness::Stale = revision.freshness(parts.revisions.scan)
     {
         return Err(Unhandled);
     }
     match event {
         LibraryEvent::FavoritesLoaded(favorites) => {
-            replace(parts.favorites, favorites)?;
-            Ok(Cmd::none())
+            replace(parts.favorites, favorites).map(|()| Cmd::none())
         }
-        LibraryEvent::Loaded { tracks, .. } => Ok(whole_library(&mut parts, tracks)),
+        LibraryEvent::Loaded {
+            tracks,
+            revision: _revision,
+        } => Ok(whole_library(&mut parts, tracks)),
         LibraryEvent::Listed { tracks, revision } => {
             Ok(listed_library(&mut parts, tracks, revision))
         }
-        LibraryEvent::Tagged { tracks, .. } => Ok(tagged_tracks(&mut parts, &tracks)),
+        LibraryEvent::Tagged {
+            tracks,
+            revision: _revision,
+        } => Ok(tagged_tracks(&mut parts, &tracks)),
         LibraryEvent::HistoryLoaded(entries) => {
-            replace(parts.history, entries)?;
-            Ok(Cmd::none())
+            replace(parts.history, entries).map(|()| Cmd::none())
         }
         LibraryEvent::Trashed(path) => trashed_track(&mut parts, &path),
         LibraryEvent::Error(error) => Ok(library_failed(&mut parts, &error)),
@@ -215,11 +228,22 @@ fn retag_tracks(tracks: &mut [Arc<Track>], tagged: &Tagged<'_>) {
 }
 
 fn retag_player(player: &mut Player, tagged: &Tagged<'_>) {
-    if let Player::Loading(track)
-    | Player::Playing { track, .. }
-    | Player::Paused { track, .. } = player
-    {
-        retag_tracks(std::slice::from_mut(track), tagged);
+    match player {
+        Player::Loading(track) => retag_tracks(std::slice::from_mut(track), tagged),
+        Player::Paused {
+            track,
+            position: _position,
+            by: _by,
+        } => retag_tracks(std::slice::from_mut(track), tagged),
+        Player::Playing {
+            track,
+            playhead: _playhead,
+            preloaded,
+        } => {
+            retag_tracks(std::slice::from_mut(track), tagged);
+            retag_tracks(preloaded.as_mut_slice(), tagged);
+        }
+        Player::Stopped => {}
     }
 }
 

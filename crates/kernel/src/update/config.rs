@@ -39,16 +39,14 @@ pub(crate) fn update(
         }
         ConfigEvent::ThemeReloaded(name) => Ok(theme_reloaded(revisions, name)),
         ConfigEvent::AppearanceReloaded(appearance) => {
-            replace(&mut settings.appearance_settings, appearance)?;
-            Ok(Cmd::none())
+            replace(&mut settings.appearance_settings, appearance).map(|()| Cmd::none())
         }
         ConfigEvent::ThemesLoaded {
             theme_names: names,
             refused,
         } => {
             if refused.is_empty() {
-                replace(&mut themes.names, names)?;
-                return Ok(Cmd::none());
+                return replace(&mut themes.names, names).map(|()| Cmd::none());
             }
             themes.names = names;
             Ok(workspace.show(

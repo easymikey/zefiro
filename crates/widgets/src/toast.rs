@@ -3,12 +3,13 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
+    text::Line,
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget},
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    primitive::{canvas::Canvas, inset::Inset, truncate::truncate},
+    primitive::{canvas::Canvas, inset::Inset, truncate::truncate_owned},
     screen::breakpoint::Breakpoint,
     theme::active_theme::ActiveTheme,
 };
@@ -75,7 +76,6 @@ impl Form {
 struct PlacedToast<'a> {
     toast: &'a Toast,
     rect: Rect,
-    lines: Vec<String>,
 }
 
 fn wrapped_paragraph(text: &str, width: usize) -> Vec<String> {
@@ -92,6 +92,25 @@ fn wrapped_paragraph(text: &str, width: usize) -> Vec<String> {
         })
 }
 
+fn rows(text: &str, width: usize) -> usize {
+    text.lines()
+        .map(|line| {
+            line.split_whitespace()
+                .fold(None, |last: Option<(usize, usize)>, word| match last {
+                    Some((count, line_width))
+                        if line_width + 1 + word.width() <= width =>
+                    {
+                        Some((count, line_width + 1 + word.width()))
+                    }
+                    Some((count, _)) => Some((count + 1, word.width())),
+                    None => Some((1, word.width())),
+                })
+                .map_or(0, |(count, _)| count)
+        })
+        .sum::<usize>()
+        .min(MAX_TEXT_ROWS)
+}
+
 fn wrapped(text: &str, width: usize) -> Vec<String> {
     text.lines()
         .flat_map(|line| wrapped_paragraph(line, width))
@@ -99,26 +118,28 @@ fn wrapped(text: &str, width: usize) -> Vec<String> {
 }
 
 fn fitted(text: &str, width: usize, rows: usize) -> Vec<String> {
-    let clipped = |line: &String| truncate(line, width).into_owned();
     let lines = wrapped(text, width);
     if lines.len() <= rows {
-        return lines.iter().map(clipped).collect();
+        return lines
+            .into_iter()
+            .map(|line| truncate_owned(line, width))
+            .collect();
     }
     let head = rows.saturating_sub(1);
     let tail = lines
         .get(head..)
         .map_or_else(String::new, |rest| rest.join(" "));
     lines
-        .iter()
+        .into_iter()
         .take(head)
-        .map(clipped)
-        .chain(std::iter::once(truncate(&tail, width).into_owned()))
+        .chain(std::iter::once(tail))
+        .map(|line| truncate_owned(line, width))
         .collect()
 }
 
 fn title_text(toast: &Toast, room: usize) -> String {
     let line = format!("{} {}", icon(toast.level), toast.title);
-    truncate(&line, room).into_owned()
+    truncate_owned(line, room)
 }
 
 impl<'a> ToastWidget<'a> {
@@ -141,8 +162,9 @@ impl<'a> ToastWidget<'a> {
         self.toasts
             .first()
             .map(|toast| {
-                let title = title_text(toast, usize::from(screen.width));
-                let width = u16::try_from(title.width()).unwrap_or(screen.width);
+                let width =
+                    u16::try_from(title_text(toast, usize::from(screen.width)).width())
+                        .unwrap_or(screen.width);
                 PlacedToast {
                     toast,
                     rect: Rect {
@@ -151,7 +173,6 @@ impl<'a> ToastWidget<'a> {
                         width,
                         height: 1,
                     },
-                    lines: vec![title],
                 }
             })
             .into_iter()
@@ -168,23 +189,17 @@ impl<'a> ToastWidget<'a> {
         self.toasts
             .iter()
             .scan(screen.y.saturating_add(INSET_CELLS), |top, toast| {
-                let text = fitted(
-                    toast.text.as_deref().map_or("", str::trim),
-                    usize::from(room),
-                    MAX_TEXT_ROWS,
-                );
-                let rows = u16::try_from(text.len()).unwrap_or(0);
-                let height = BORDER_ROWS + TITLE_ROWS + rows;
+                let height = BORDER_ROWS
+                    + TITLE_ROWS
+                    + u16::try_from(rows(
+                        toast.text.as_deref().map_or("", str::trim),
+                        usize::from(room),
+                    ))
+                    .unwrap_or(0);
                 (top.saturating_add(height) <= screen.bottom()).then(|| {
                     let rect = Rect::new(x, *top, width, height);
                     *top = top.saturating_add(height + GAP);
-                    PlacedToast {
-                        toast,
-                        rect,
-                        lines: std::iter::once(title_text(toast, usize::from(room)))
-                            .chain(text)
-                            .collect(),
-                    }
+                    PlacedToast { toast, rect }
                 })
             })
             .collect()
@@ -206,9 +221,9 @@ impl<'a> ToastWidget<'a> {
     }
 
     fn paint_toast(&self, placed_toast: &PlacedToast<'_>, buffer: &mut Buffer) {
-        let accent = accent(&self.active_theme, placed_toast.toast.level);
+        let PlacedToast { toast, rect } = *placed_toast;
+        let accent = accent(&self.active_theme, toast.level);
         let colors = self.active_theme.colors();
-        let rect = placed_toast.rect;
         Clear.render(rect, buffer);
         Block::new()
             .style(
@@ -217,14 +232,11 @@ impl<'a> ToastWidget<'a> {
                     .fg(colors.foreground),
             )
             .render(rect, buffer);
-        let (title_text, body_lines) = placed_toast
-            .lines
-            .split_first()
-            .map_or(("", &[][..]), |(title, rest)| (title.as_str(), rest));
-        let title = Paragraph::new(title_text)
-            .style(Style::default().fg(accent).add_modifier(Modifier::BOLD));
+        let title_style = Style::default().fg(accent).add_modifier(Modifier::BOLD);
         if rect.height == 1 {
-            title.render(rect, buffer);
+            Paragraph::new(title_text(toast, usize::from(rect.width)))
+                .style(title_style)
+                .render(rect, buffer);
             return;
         }
         let block = Block::default()
@@ -234,16 +246,28 @@ impl<'a> ToastWidget<'a> {
             .padding(CARD_INSET.padding());
         let inner = block.inner(rect);
         block.render(rect, buffer);
-        title.render(Rect { height: 1, ..inner }, buffer);
-        let body = body_lines.join("\n");
+        let room = usize::from(inner.width);
+        Paragraph::new(title_text(toast, room))
+            .style(title_style)
+            .render(Rect { height: 1, ..inner }, buffer);
+        let body_lines = fitted(
+            toast.text.as_deref().map_or("", str::trim),
+            room,
+            MAX_TEXT_ROWS,
+        );
         let below = Rect {
             y: inner.y.saturating_add(1),
             height: inner.height.saturating_sub(1),
             ..inner
         };
-        Paragraph::new(body)
-            .style(Style::default().fg(colors.foreground))
-            .render(below, buffer);
+        Paragraph::new(
+            body_lines
+                .iter()
+                .map(|line| Line::from(line.as_str()))
+                .collect::<Vec<_>>(),
+        )
+        .style(Style::default().fg(colors.foreground))
+        .render(below, buffer);
     }
 }
 
@@ -264,7 +288,7 @@ mod tests {
         screen::breakpoint::Breakpoint,
         test_support::{noir, rendered},
         theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
-        toast::{ToastWidget, accent, icon},
+        toast::{Form, MAX_TEXT_ROWS, ToastWidget, accent, fitted, icon, rows},
     };
 
     fn toast_widget<'a>(toasts: &'a [Toast], theme: &'a Theme) -> ToastWidget<'a> {
@@ -317,5 +341,46 @@ mod tests {
             .unwrap();
         assert_eq!((area.y, area.height), (0, 1));
         assert_eq!(area.right(), 30);
+    }
+
+    #[test]
+    fn the_area_is_the_union_of_the_painted_toasts() {
+        let toasts = [
+            Toast::info("Careful").with_text(
+                "The quick brown fox jumps over the lazy dog and keeps running far away",
+            ),
+            Toast::error("Scan failed").with_text("line one\nline two\nline three\nline four"),
+        ];
+        let theme = noir();
+        let widget = toast_widget(&toasts, &theme);
+        let screen = Rect::new(0, 0, 60, 20);
+        let area = widget.area(screen, Breakpoint::Full).unwrap();
+        let painted = widget
+            .placed(screen, Form::painted(area))
+            .iter()
+            .map(|placed| placed.rect)
+            .reduce(Rect::union);
+        assert_eq!(Some(area), painted);
+        assert_eq!(area, Rect::new(17, 1, 42, 12));
+    }
+
+    #[test]
+    fn rows_counts_the_lines_fitted_builds() {
+        [
+            "",
+            "short",
+            "The quick brown fox jumps over the lazy dog and keeps running far away",
+            "one\n\ntwo",
+            "line one\nline two\nline three\nline four",
+            "averyveryverylongwordthatoverflows next",
+        ]
+        .iter()
+        .for_each(|text| {
+            assert_eq!(
+                rows(text, 12),
+                fitted(text, 12, MAX_TEXT_ROWS).len(),
+                "{text}"
+            );
+        });
     }
 }

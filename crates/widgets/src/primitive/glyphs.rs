@@ -45,7 +45,8 @@ pub(crate) mod corner {
 pub(crate) mod chip {
     pub(crate) const OPEN: &str = "[";
     pub(crate) const CLOSE: &str = "]";
-    pub(crate) const PAD: char = ' ';
+    pub(crate) const OPEN_PAD: &str = "[ ";
+    pub(crate) const PAD_CLOSE: &str = " ]";
 }
 
 pub(crate) mod key_hints {
@@ -83,16 +84,14 @@ pub(crate) mod history {
 pub(crate) mod track_details {
     pub(crate) const TITLE_WORD: &str = "TRACK INFO";
     pub(crate) const HINT: &str = "any key · close";
-    pub(crate) const TITLE_LABEL: &str = "TITLE";
-    pub(crate) const ARTIST_LABEL: &str = "ARTIST";
-    pub(crate) const ALBUM_LABEL: &str = "ALBUM";
-    pub(crate) const YEAR_LABEL: &str = "YEAR";
-    pub(crate) const TRACK_LABEL: &str = "TRACK";
-    pub(crate) const DURATION_LABEL: &str = "DURATION";
-    pub(crate) const FORMAT_LABEL: &str = "FORMAT";
-    pub(crate) const PATH_LABEL: &str = "PATH";
-    pub(crate) const LEADER_DASH: char = '─';
-    pub(crate) const GAP: &str = "  ";
+    pub(crate) const TITLE_LABEL: &str = "TITLE ────  ";
+    pub(crate) const ARTIST_LABEL: &str = "ARTIST ───  ";
+    pub(crate) const ALBUM_LABEL: &str = "ALBUM ────  ";
+    pub(crate) const YEAR_LABEL: &str = "YEAR  ";
+    pub(crate) const TRACK_LABEL: &str = "TRACK  ";
+    pub(crate) const DURATION_LABEL: &str = "DURATION  ";
+    pub(crate) const FORMAT_LABEL: &str = "FORMAT  ";
+    pub(crate) const PATH_LABEL: &str = "PATH  ";
     pub(crate) const MISSING: &str = "—";
     pub(crate) const TRACK_OF: &str = "/";
 }

@@ -108,11 +108,7 @@ impl MilkdropCover {
             reset_key: (seed, width, height),
             theme_revision: scene.revisions.theme,
             since_first_paint: scene.presentation.since_first_paint,
-            playback: if scene.player.is_playing() {
-                Playback::Playing
-            } else {
-                Playback::Paused
-            },
+            playback: Playback::from(scene.player),
         };
         let installed = self.installed.as_ref().map(|(_, stamp)| *stamp);
         let plan = plan_milkdrop(installed, desired_stamp);

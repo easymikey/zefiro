@@ -17,7 +17,7 @@ use crate::{
         pane::{PlaylistAreas, PlaylistWidget},
         view::PlaylistView,
     },
-    primitive::bar::hud_progress_bar_width,
+    primitive::bar::remaining_label,
     repaint::{OnScreen, Presence},
     scene::Scene,
     screen::{
@@ -32,15 +32,28 @@ const MAX_WIDTH: u16 = 100;
 const MARGIN: u16 = 1;
 const KEY_HINTS_ROWS: u16 = 1;
 
-impl FrameLayout {
+impl<'a> FrameLayout<'a> {
     #[must_use]
-    pub fn from_scene(scene: &Scene<'_>, screen: Rect) -> Self {
+    pub fn from_scene(scene: &Scene<'a>, screen: Rect) -> Self {
         let body = body(scene, screen);
         if body.breakpoint == Breakpoint::TooSmall {
             return body;
         }
+        let overlay_view = OverlayView::from_scene(scene);
+        let body = Self {
+            overlay_content: overlay_view.content(screen),
+            ..body
+        };
+        let remaining_label = match scene.settings.appearance_settings.progress_time {
+            ProgressTime::Remaining if body.breakpoint == Breakpoint::Full => {
+                remaining_label(CardView::from_scene(scene).remaining())
+            }
+            ProgressTime::Remaining | ProgressTime::Elapsed => String::new(),
+        };
         Self {
-            overlay_areas: OverlayWidget::new(OverlayView::from_scene(scene), &body)
+            progress_bar_width: body.progress_bar_width(scene, &remaining_label),
+            remaining_label,
+            overlay_areas: OverlayWidget::new(overlay_view, &body)
                 .avoid(body.cover_exclusion(scene.cover_mode()))
                 .areas(screen),
             toast: ToastWidget::from_scene(scene)
@@ -52,24 +65,12 @@ impl FrameLayout {
     #[must_use]
     pub fn on_screen(&self, scene: &Scene<'_>) -> OnScreen {
         OnScreen {
-            progress_bar_width: self.progress_bar_width(scene),
-            clock: if self.is_card_shown() {
-                Presence::Shown
-            } else {
-                Presence::Hidden
-            },
-            sleep_label: if self.playlist_areas.is_some()
-                && scene.transport.sleep_timer.is_some()
-            {
-                Presence::Shown
-            } else {
-                Presence::Hidden
-            },
-            spectrum: if self.is_spectrum_shown(scene) {
-                Presence::Shown
-            } else {
-                Presence::Hidden
-            },
+            progress_bar_width: self.is_card_shown().then_some(self.progress_bar_width),
+            clock: Presence::from(self.is_card_shown()),
+            sleep_label: Presence::from(
+                self.playlist_areas.is_some() && scene.transport.sleep_timer.is_some(),
+            ),
+            spectrum: Presence::from(self.is_spectrum_shown(scene)),
         }
     }
 
@@ -90,29 +91,22 @@ impl FrameLayout {
         card_spectrum || milkdrop_spectrum
     }
 
-    fn progress_bar_width(&self, scene: &Scene<'_>) -> Option<Cells> {
+    fn progress_bar_width(&self, scene: &Scene<'_>, remaining_label: &str) -> Cells {
         match self.breakpoint {
-            Breakpoint::Full => self
-                .card_metrics
-                .map(|metrics| full_progress_bar_width(scene, &metrics)),
-            Breakpoint::Compact => Some(compact_progress_bar_width(self.header)),
-            Breakpoint::Minimal => Some(minimal_progress_bar_width(
+            Breakpoint::Full => self.card_metrics.map_or(Cells(0), |metrics| {
+                metrics.progress_bar_width(
+                    scene.settings.appearance_settings.progress_time,
+                    remaining_label,
+                )
+            }),
+            Breakpoint::Compact => compact_progress_bar_width(self.header),
+            Breakpoint::Minimal => minimal_progress_bar_width(
                 CardView::from_scene(scene),
                 scene.settings.appearance_settings.speed_chip,
                 Cells(self.screen.width),
-            )),
-            Breakpoint::TooSmall => None,
+            ),
+            Breakpoint::TooSmall => Cells(0),
         }
-    }
-}
-
-fn full_progress_bar_width(scene: &Scene<'_>, metrics: &CardMetrics) -> Cells {
-    let row_width = Cells(metrics.progress_row.width);
-    match scene.settings.appearance_settings.progress_time {
-        ProgressTime::Remaining => {
-            hud_progress_bar_width(row_width, CardView::from_scene(scene).remaining())
-        }
-        ProgressTime::Elapsed => row_width,
     }
 }
 
@@ -141,7 +135,7 @@ fn header_rows(breakpoint: Breakpoint) -> u16 {
     }
 }
 
-fn body(scene: &Scene<'_>, screen: Rect) -> FrameLayout {
+fn body(scene: &Scene<'_>, screen: Rect) -> FrameLayout<'static> {
     let appearance_settings = scene.settings.appearance_settings;
     let breakpoint = Breakpoint::new(
         screen.as_size(),
@@ -175,7 +169,11 @@ fn body(scene: &Scene<'_>, screen: Rect) -> FrameLayout {
     }
 }
 
-fn card_areas(scene: &Scene<'_>, header: Rect, layout: FrameLayout) -> FrameLayout {
+fn card_areas(
+    scene: &Scene<'_>,
+    header: Rect,
+    layout: FrameLayout<'static>,
+) -> FrameLayout<'static> {
     if layout.breakpoint != Breakpoint::Full {
         return layout;
     }
@@ -219,7 +217,7 @@ mod tests {
     use crate::{
         card::{CardView, compact::progress_bar_width as compact_progress_bar_width},
         overlay::modal::placement::OverlayAreas,
-        primitive::bar::hud_progress_bar_width,
+        primitive::bar::{hud_progress_bar_width, remaining_label},
         repaint::Presence,
         scene::{PixelPath, Scene, ScenePresentation},
         screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
@@ -433,7 +431,7 @@ mod tests {
                 let expected = match progress_time.unwrap() {
                     ProgressTime::Remaining => hud_progress_bar_width(
                         Cells(row_width),
-                        CardView::from_scene(&scene).remaining(),
+                        &remaining_label(CardView::from_scene(&scene).remaining()),
                     ),
                     ProgressTime::Elapsed => Cells(row_width),
                 };

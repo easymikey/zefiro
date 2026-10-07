@@ -6,7 +6,6 @@ use crate::theme::active_theme::ActiveTheme;
 pub struct BackdropStyle {
     pub background: Color,
     pub accent: Color,
-    pub volume_fill: Color,
     pub volume_lifted: Color,
 }
 
@@ -14,12 +13,42 @@ impl BackdropStyle {
     #[must_use]
     pub fn from_theme(theme: &ActiveTheme<'_>) -> Self {
         let colors = theme.colors();
-        let accent = colors.accent;
         Self {
             background: colors.window_background,
-            accent,
-            volume_fill: accent,
+            accent: colors.accent,
             volume_lifted: theme.lifted(theme.colors.accent, theme.volume_pulse_mix),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        test_support::noir,
+        theme::{
+            active_theme::ActiveTheme,
+            backdrop_style::BackdropStyle,
+            rgb::{ColorDepth, color_at_depth, lerp_rgb},
+        },
+    };
+
+    #[test]
+    fn from_theme_lifts_the_accent_toward_the_text_by_the_volume_pulse_mix() {
+        let theme = noir();
+        let mix = 0.5;
+        let active_theme =
+            ActiveTheme::new(&theme, ColorDepth::TrueColor).with_volume_pulse(mix);
+        let colors = active_theme.colors();
+        let style = BackdropStyle::from_theme(&active_theme);
+        assert_eq!(style.background, colors.window_background);
+        assert_eq!(style.accent, colors.accent);
+        assert_eq!(
+            style.volume_lifted,
+            color_at_depth(
+                lerp_rgb(theme.colors.accent, theme.colors.foreground, mix),
+                ColorDepth::TrueColor,
+            )
+        );
+        assert_ne!(style.volume_lifted, style.accent);
     }
 }

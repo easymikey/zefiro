@@ -1,6 +1,9 @@
-use std::{mem, time::Instant};
+use std::{
+    mem,
+    time::{Duration, Instant},
+};
 
-use crossbeam_channel::{Receiver, Select, never};
+use crossbeam_channel::{Receiver, never, select_biased};
 use kernel::message::Message;
 
 use crate::{
@@ -93,40 +96,35 @@ where
         deadline_at: Option<Instant>,
     ) -> Result<Option<Arrival<S::Input>>, Error<S::Error>> {
         let wiring = &mut self.runtime.wiring;
-        let mut select = Select::new();
-        let input_index = select.recv(self.input_receiver);
-        let inbox_index = select.recv(&wiring.inbox_receiver);
-        select.recv(&wiring.doorbell);
-        let operation = match deadline_at {
-            Some(deadline) => match select.select_deadline(deadline) {
-                Ok(operation) => operation,
-                Err(_) => return Ok(None),
-            },
-            None => select.select(),
-        };
-        let index = operation.index();
-        if index == input_index {
-            return operation
-                .recv(self.input_receiver)
-                .map(|input| Some(Arrival::Input(input)))
-                .map_err(|_| Error::InputClosed);
+        let timeout = deadline_at.map_or(Duration::MAX, |deadline| {
+            deadline.saturating_duration_since(Instant::now())
+        });
+        select_biased! {
+            recv(self.input_receiver) -> input => {
+                input
+                    .map(|input| Some(Arrival::Input(input)))
+                    .map_err(|_| Error::InputClosed)
+            }
+            recv(wiring.inbox_receiver) -> message => {
+                Ok(message.map_or_else(
+                    |_| {
+                        wiring.inbox_receiver = never();
+                        None
+                    },
+                    |message| Some(Arrival::Message(message)),
+                ))
+            }
+            recv(wiring.doorbell) -> rang => {
+                Ok(rang.map_or_else(
+                    |_| {
+                        wiring.doorbell = never();
+                        None
+                    },
+                    |()| Some(Arrival::Doorbell),
+                ))
+            }
+            default(timeout) => Ok(None),
         }
-        if index == inbox_index {
-            return Ok(operation.recv(&wiring.inbox_receiver).map_or_else(
-                |_| {
-                    wiring.inbox_receiver = never();
-                    None
-                },
-                |message| Some(Arrival::Message(message)),
-            ));
-        }
-        Ok(operation.recv(&wiring.doorbell).map_or_else(
-            |_| {
-                wiring.doorbell = never();
-                None
-            },
-            |()| Some(Arrival::Doorbell),
-        ))
     }
 
     fn gather(&mut self, first: Option<Arrival<S::Input>>) {

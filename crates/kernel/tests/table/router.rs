@@ -11,7 +11,7 @@ use kernel::{
         index::ViewIndex,
         key::KeyPress,
         model::Model,
-        overlay::{Overlay, OverlayName, TrashCandidate},
+        overlay::{Overlay, OverlayName},
         player::{AbLoop, PausedBy, Player},
         playlist::{PlayOrder, RepeatMode},
         revision::Revision,
@@ -64,6 +64,7 @@ use crate::support::{
         toasted,
         typed,
     },
+    track_at,
 };
 
 type Step = (
@@ -565,11 +566,7 @@ fn a_self_loop_sleep_keeps_the_revisions() {
 #[test]
 fn a_refused_follow_up_keeps_the_parents_effects() {
     let mut model = Model::default();
-    model.workspace.overlay = Some(Overlay::ConfirmTrash(TrashCandidate {
-        source: kernel::domain::track::TrackSource::Local("/music/gone.flac".into()),
-        title: "Gone".to_string(),
-        artist: String::new(),
-    }));
+    model.workspace.overlay = Some(Overlay::ConfirmTrash(track_at("/music/gone.flac")));
 
     let effects = update(&mut model, confirm(), Moment::default());
 

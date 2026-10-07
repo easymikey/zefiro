@@ -16,7 +16,7 @@ pub enum OutputError {
     Backend,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputStatus {
     #[default]
     Ready,

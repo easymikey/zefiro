@@ -10,7 +10,6 @@ use objc2_media_player::{MPMediaItemArtwork, MPNowPlayingPlaybackState};
 use crate::{clock::NowPlayingClock, ffi};
 
 const PLACEHOLDER_TITLE: &str = "sifr";
-const PLAYING_RATE: f64 = 1.0;
 const PAUSED_RATE: f64 = 0.0;
 
 #[derive(Debug, Clone, Copy)]
@@ -20,9 +19,9 @@ pub(crate) struct NowPlaying<'a> {
     pub(crate) artwork: Option<&'a MPMediaItemArtwork>,
 }
 
-fn rate(playback: Playback) -> f64 {
-    match playback {
-        Playback::Playing => PLAYING_RATE,
+fn rate(clock: NowPlayingClock) -> f64 {
+    match clock.playback() {
+        Playback::Playing => f64::from(clock.speed().get()),
         Playback::Paused => PAUSED_RATE,
     }
 }
@@ -47,7 +46,7 @@ pub(crate) fn now_playing_info(
     let album = album.map(NSString::from_str);
     let duration = NSNumber::new_f64(duration.as_secs_f64());
     let elapsed = NSNumber::new_f64(now_playing.clock.elapsed(now).as_secs_f64());
-    let rate = NSNumber::new_f64(rate(now_playing.clock.playback()));
+    let rate = NSNumber::new_f64(rate(now_playing.clock));
     let keys = [
         ffi::title_key(),
         ffi::duration_key(),
@@ -91,7 +90,11 @@ mod tests {
 
     use kernel::{
         cmd::Playback,
-        domain::track::{AudioFormat, Tags, Track, TrackParts},
+        domain::{
+            bounded::Bounded,
+            speed::Speed,
+            track::{AudioFormat, Tags, Track, TrackParts},
+        },
     };
     use objc2::runtime::AnyObject;
     use objc2_foundation::{NSDictionary, NSNumber, NSString};
@@ -99,7 +102,7 @@ mod tests {
     use crate::{
         clock::NowPlayingClock,
         ffi,
-        now_playing::{NowPlaying, PLACEHOLDER_TITLE, PLAYING_RATE, now_playing_info},
+        now_playing::{NowPlaying, PLACEHOLDER_TITLE, now_playing_info},
     };
 
     fn text(
@@ -163,6 +166,22 @@ mod tests {
         assert_eq!(text(&info, artist).as_deref(), Some("Amorphis"));
         assert!(info.objectForKey(album).is_none());
         assert_eq!(number(&info, elapsed), Some(10.0));
-        assert_eq!(number(&info, rate), Some(PLAYING_RATE));
+        assert_eq!(number(&info, rate), Some(1.0));
+    }
+
+    #[test]
+    fn a_clock_playing_at_a_speed_publishes_that_speed_as_the_rate() {
+        let start = Instant::now();
+        let now_playing = NowPlaying {
+            track: None,
+            clock: NowPlayingClock::default()
+                .at_speed(Speed::clamped(2.0), start)
+                .change_playback(Playback::Playing, start),
+            artwork: None,
+        };
+        let info = now_playing_info(now_playing, start + Duration::from_secs(3));
+        let (elapsed, rate) = (ffi::elapsed_key(), ffi::rate_key());
+        assert_eq!(number(&info, elapsed), Some(6.0));
+        assert_eq!(number(&info, rate), Some(2.0));
     }
 }

@@ -118,8 +118,7 @@ fn an_empty_listing_opens_the_library_at_once() {
     assert_eq!(openings(cmd), 1);
 }
 
-#[test]
-fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
+fn playing_a(preloaded: Option<Arc<Track>>) -> Model {
     let (mut model, _) = listed_library(&["/music/a.flac", "/music/b.flac"]);
     model.player = Player::Playing {
         track: track_at("/music/a.flac"),
@@ -128,18 +127,28 @@ fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
             Moment::default(),
             Speed::default(),
         ),
-        preloaded: None,
+        preloaded,
     };
+    model
+}
 
-    let cmd = update(
-        &mut model,
+fn tag(model: &mut Model, track: Arc<Track>) -> Cmd {
+    update(
+        model,
         Message::Library(LibraryEvent::Tagged {
-            tracks: vec![tagged("/music/a.flac", "Alpha", 200)],
+            tracks: vec![track],
             revision: Revision::default(),
         }),
         Moment::default(),
     )
-    .unwrap();
+    .unwrap()
+}
+
+#[test]
+fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
+    let mut model = playing_a(None);
+
+    let cmd = tag(&mut model, tagged("/music/a.flac", "Alpha", 200));
 
     assert_eq!(titles(&model), ["Alpha", "b"]);
     assert_eq!(
@@ -156,6 +165,35 @@ fn a_tagged_chunk_rewrites_its_rows_and_the_playing_track() {
     );
     assert_eq!(model.scan_status, ScanStatus::Tagging { done: 1, total: 2 });
     assert_eq!(openings(cmd), 0);
+}
+
+#[test]
+fn a_tagged_chunk_rewrites_the_preloaded_track() {
+    let mut model = playing_a(Some(track_at("/music/b.flac")));
+
+    drop(tag(&mut model, tagged("/music/b.flac", "Bravo", 300)));
+
+    assert_eq!(titles(&model), ["a", "Bravo"]);
+    let Player::Playing {
+        track: _track,
+        playhead: _playhead,
+        preloaded,
+    } = &model.player
+    else {
+        panic!("the player must stay playing");
+    };
+    assert_eq!(
+        preloaded.as_ref().map(|track| (
+            track.display().to_owned(),
+            track.duration(),
+            track.tagging()
+        )),
+        Some((
+            "Bravo".to_owned(),
+            Some(Duration::from_secs(300)),
+            Tagging::Tagged(Duration::from_secs(300))
+        ))
+    );
 }
 
 #[test]

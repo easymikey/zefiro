@@ -4,7 +4,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Style},
     text::Line,
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget},
+    widgets::{Block, BorderType, Borders, Clear, Widget},
 };
 
 use crate::overlay::modal::place::{
@@ -74,42 +74,31 @@ impl<'a> Modal<'a> {
     }
 
     fn outer(&self, bounds: ModalBounds<'_>, hint: Hint) -> Rect {
-        match self.size {
+        let size = match self.size {
             ModalSize::List {
                 content_width,
                 content_rows,
-            } => {
-                let size = frame_size(
-                    bounds.area,
-                    ContentSize {
-                        min_width: Cells(0),
-                        content_width,
-                        content_rows,
-                        hint,
-                        screen_margin_width: LIST_SCREEN_MARGIN,
-                    },
-                );
-                place(bounds.area, size, bounds.avoid)
-            }
+            } => ContentSize {
+                min_width: Cells(0),
+                content_width,
+                content_rows,
+                hint,
+                screen_margin_width: LIST_SCREEN_MARGIN,
+            },
             ModalSize::Dialog {
                 min_width,
                 content_width,
                 content_rows,
-            } => {
-                let size = frame_size(
-                    bounds.area,
-                    ContentSize {
-                        min_width,
-                        content_width,
-                        content_rows,
-                        hint,
-                        screen_margin_width: DIALOG_SCREEN_MARGIN,
-                    },
-                );
-                place(bounds.area, size, bounds.avoid)
-            }
-            ModalSize::FullWidth(full_width) => full_width.outer(hint),
-        }
+            } => ContentSize {
+                min_width,
+                content_width,
+                content_rows,
+                hint,
+                screen_margin_width: DIALOG_SCREEN_MARGIN,
+            },
+            ModalSize::FullWidth(full_width) => return full_width.outer(hint),
+        };
+        place(bounds.area, frame_size(bounds.area, size), bounds.avoid)
     }
 
     pub(crate) fn paint(&self, modal_areas: ModalAreas, buffer: &mut Buffer) {
@@ -127,10 +116,10 @@ impl<'a> Modal<'a> {
             .title_style(Style::default().fg(self.border))
             .render(modal_areas.outer, buffer);
 
-        if let Some(hint) = self.hint.clone()
+        if let Some(hint) = &self.hint
             && modal_areas.hint_row.height > 0
         {
-            Paragraph::new(hint).render(modal_areas.hint_row, buffer);
+            hint.render(modal_areas.hint_row, buffer);
         }
     }
 }

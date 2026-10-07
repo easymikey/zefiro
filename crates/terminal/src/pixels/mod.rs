@@ -1,7 +1,5 @@
 mod cover;
 
-use std::time::Duration;
-
 use kernel::domain::appearance::CoverMode;
 use ratatui::{buffer::Buffer, layout::Rect, widgets::StatefulWidget};
 use ratatui_image::{StatefulImage, picker::Picker};
@@ -13,10 +11,10 @@ use widgets::{
         CoverImage,
         CoverMotion,
         CoverRefresh,
-        lifecycle::PixmapSource,
+        lifecycle::{CoverLifecycle, PixmapSource},
         pixmap::CellPixels,
     },
-    scene::Scene,
+    scene::{PixelPath, Scene},
     screen::frame_layout::FrameLayout,
 };
 
@@ -32,14 +30,18 @@ pub struct CoverPainter {
 
 impl CoverPainter {
     #[must_use]
-    pub fn new(picker: Picker, cell_pixels: CellPixels) -> Self {
+    pub fn new(picker: Picker, cell_pixels: CellPixels, pixel_path: PixelPath) -> Self {
         Self {
             cover_mode: CoverMode::Off,
-            plain_cover: Cover::new(PixmapSource::Plain, picker.clone(), cell_pixels),
+            plain_cover: Cover::new(
+                CoverLifecycle::new(PixmapSource::Plain, cell_pixels),
+                picker.clone(),
+                pixel_path,
+            ),
             vinyl_cover: Cover::new(
-                PixmapSource::Vinyl(Box::default()),
+                CoverLifecycle::new(PixmapSource::Vinyl(Box::default()), cell_pixels),
                 picker,
-                cell_pixels,
+                pixel_path,
             ),
             milkdrop_cover: MilkdropCover::default(),
         }
@@ -64,15 +66,15 @@ impl CoverPainter {
     }
 
     #[must_use]
-    pub fn motion(&self, since_first_paint: Duration) -> CoverMotion {
+    pub fn motion(&self) -> CoverMotion {
         match self.cover_mode {
-            CoverMode::Plain => self.plain_cover.motion(since_first_paint),
-            CoverMode::Vinyl => self.vinyl_cover.motion(since_first_paint),
+            CoverMode::Plain => self.plain_cover.motion(),
+            CoverMode::Vinyl => self.vinyl_cover.motion(),
             CoverMode::Milkdrop | CoverMode::Off => CoverMotion::Still,
         }
     }
 
-    pub fn paint(&mut self, buffer: &mut Buffer, layout: &FrameLayout) {
+    pub fn paint(&mut self, buffer: &mut Buffer, layout: &FrameLayout<'_>) {
         let Some(rect) = layout.cover_area else {
             return;
         };
@@ -91,7 +93,7 @@ impl CoverPainter {
     }
 }
 
-fn is_hidden_by_overlay(rect: Rect, layout: &FrameLayout) -> bool {
+fn is_hidden_by_overlay(rect: Rect, layout: &FrameLayout<'_>) -> bool {
     let overlay = layout.overlay_areas.map(OverlayAreas::outer);
     let toast = layout.toast;
     [overlay, toast]

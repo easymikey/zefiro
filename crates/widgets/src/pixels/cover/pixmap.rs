@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use fast_image_resize::CropBox;
 use image::RgbaImage;
@@ -11,7 +8,7 @@ use ratatui::layout::Rect;
 use crate::pixels::{
     cover::CoverImage,
     resample::{ResampleError, resample},
-    vinyl::{VinylCache, VinylCacheKey, VinylStyle},
+    vinyl::{VinylCacheKey, Wanted},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,20 +38,6 @@ impl Identity {
             }
             Self::Plain(_) => false,
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Wanted<'a> {
-    pub cover_image: Option<&'a CoverImage>,
-    pub side: Pixels,
-    pub vinyl_style: VinylStyle,
-}
-
-impl Wanted<'_> {
-    fn path(&self) -> Option<&Path> {
-        self.cover_image
-            .map(|cover_image| cover_image.path.as_path())
     }
 }
 
@@ -117,25 +100,6 @@ pub(crate) fn fit_to_rect(
 #[must_use]
 pub fn cover_side(rect: Rect, cell_pixels: CellPixels) -> Pixels {
     Pixels(u32::from(rect.height).saturating_mul(cell_pixels.height.0))
-}
-
-#[must_use]
-pub(crate) fn vinyl_key(wanted: &Wanted<'_>) -> VinylCacheKey {
-    VinylCacheKey {
-        path: wanted.path().map(Path::to_path_buf),
-        side: wanted.side,
-        vinyl_style: wanted.vinyl_style,
-    }
-}
-
-#[must_use]
-pub(crate) fn compose_vinyl(
-    cache: &mut VinylCache,
-    key: &VinylCacheKey,
-    cover_image: Option<&CoverImage>,
-) -> Arc<RgbaImage> {
-    let image = cover_image.map(|cover_image| cover_image.image.as_ref());
-    Arc::new(cache.compose(key, image))
 }
 
 #[cfg(test)]

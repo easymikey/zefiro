@@ -1,10 +1,6 @@
 use kernel::{
     cmd::{Cmds, ConfigCmd},
-    domain::{
-        config::{ConfigError, ConfigName},
-        io_error::IoError,
-        revision::Revision,
-    },
+    domain::{config::ConfigError, io_error::IoError, revision::Revision},
 };
 use strum::IntoStaticStr;
 
@@ -17,7 +13,6 @@ pub enum ConfigMessage {
     Changed(Result<(), IoError>),
     Watch(ConfigWatchMessage),
     Elapsed(Revision),
-    Saved { name: ConfigName, text: String },
     Error(ConfigError),
 }
 

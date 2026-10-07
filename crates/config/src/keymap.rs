@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt};
 
-use kernel::domain::keymap::{Action, KeyContext, KeyOverride};
+use kernel::domain::keymap::{Action, KeyContext, KeyOverride, KeymapOverrides};
 use serde::{
     Deserialize,
     de::{Deserializer, MapAccess, Visitor, value::MapAccessDeserializer},
@@ -38,12 +38,11 @@ impl<'de> Visitor<'de> for KeyOverrideVisitor {
 
     fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<Self::Value, M::Error> {
         let table = TomlKeyOverrideTable::deserialize(MapAccessDeserializer::new(map))?;
-        let context = match table.context {
-            Some(spelling) => spelling
-                .parse::<KeyContext>()
-                .map_err(serde::de::Error::custom)?,
-            None => KeyContext::default(),
-        };
+        let context = table
+            .context
+            .map(|spelling| spelling.parse::<KeyContext>())
+            .transpose()
+            .map_err(serde::de::Error::custom)?;
         Ok(TomlKeyOverride(KeyOverride {
             chord: table.chord,
             key_context: context,
@@ -61,7 +60,17 @@ type KeymapByName = HashMap<String, TomlKeyOverride>;
 
 #[derive(Clone, Default, PartialEq, Deserialize)]
 #[serde(try_from = "KeymapByName", expecting = "a [keymap] table")]
-pub(crate) struct TomlKeymap(pub(crate) HashMap<Action, TomlKeyOverride>);
+pub struct TomlKeymap(pub(crate) HashMap<Action, TomlKeyOverride>);
+
+impl TomlKeymap {
+    #[must_use]
+    pub fn into_keymap_overrides(self) -> KeymapOverrides {
+        self.0
+            .into_iter()
+            .map(|(action, key_override)| (action, key_override.0))
+            .collect()
+    }
+}
 
 impl TryFrom<KeymapByName> for TomlKeymap {
     type Error = strum::ParseError;

@@ -7,8 +7,7 @@ use ratatui::{
 };
 use widgets::animation::stage::AnimationStage;
 
-use crate::unit::{
-    animation_stage::step_over,
+use crate::{
     support::{
         ACCENT,
         AREA,
@@ -20,6 +19,7 @@ use crate::unit::{
         volume_fill,
         volume_lifted,
     },
+    unit::animation_stage::step_over,
 };
 
 const FILLED_CELLS: u16 = 3;

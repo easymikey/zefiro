@@ -281,24 +281,28 @@ fn stroke_path(pixmap: &mut Pixmap, path: Option<Path>, stroke: Stroke) {
 
 #[cfg(test)]
 mod tests {
+    use std::{path::PathBuf, sync::Arc};
+
     use kernel::domain::{appearance::Rgb, geometry::Pixels};
     use rstest::rstest;
 
-    use crate::pixels::vinyl::{
-        VinylCache,
-        VinylCacheKey,
-        VinylStyle,
-        art::prepare_art,
-        layers::{
-            SleeveInput,
-            VinylFrame,
-            compose_vinyl_frame,
-            paint_record_layer,
-            paint_sleeve_layer,
-            skia_color,
-            skia_color_with_alpha,
+    use crate::pixels::{
+        cover::CoverImage,
+        vinyl::{
+            VinylCache,
+            Wanted,
+            art::prepare_art,
+            layers::{
+                SleeveInput,
+                VinylFrame,
+                compose_vinyl_frame,
+                paint_record_layer,
+                paint_sleeve_layer,
+                skia_color,
+                skia_color_with_alpha,
+            },
+            tests::{noir_vinyl_style, synthetic_art},
         },
-        test_support::synthetic_art,
     };
 
     #[rstest]
@@ -323,7 +327,7 @@ mod tests {
     fn composing_the_layers_matches_the_cache() {
         let art = synthetic_art(64);
         let canvas_side = Pixels(96);
-        let vinyl_style = VinylStyle::fixture();
+        let vinyl_style = noir_vinyl_style();
         let prepared = prepare_art(&art, canvas_side);
         let frame = VinylFrame {
             side: canvas_side,
@@ -338,31 +342,39 @@ mod tests {
             .map(|(record, sleeve)| {
                 compose_vinyl_frame(&record, &sleeve, &sleeve_input).into_raw()
             });
-        let key = VinylCacheKey {
-            path: None,
+        let cover_image = CoverImage {
+            path: PathBuf::from("/music/a.flac"),
+            image: Arc::new(art),
+        };
+        let wanted = Wanted {
+            cover_image: Some(&cover_image),
             side: canvas_side,
             vinyl_style,
         };
         let mut cache = VinylCache::default();
-        assert_eq!(
-            layered.as_ref(),
-            Some(cache.compose(&key, Some(&art)).as_raw())
-        );
+        assert_eq!(layered.as_ref(), Some(cache.compose(&wanted).as_raw()));
     }
 
     #[test]
     fn transparent_art_shows_the_paper_at_the_sleeve_centre() {
         let canvas_side = Pixels(96);
-        let vinyl_style = VinylStyle::fixture();
-        let art = image::RgbaImage::from_pixel(64, 64, image::Rgba([255, 255, 255, 0]));
-        let key = VinylCacheKey {
-            path: Some(std::path::PathBuf::from("/music/clear.flac")),
+        let vinyl_style = noir_vinyl_style();
+        let cover_image = CoverImage {
+            path: PathBuf::from("/music/clear.flac"),
+            image: Arc::new(image::RgbaImage::from_pixel(
+                64,
+                64,
+                image::Rgba([255, 255, 255, 0]),
+            )),
+        };
+        let wanted = Wanted {
+            cover_image: Some(&cover_image),
             side: canvas_side,
             vinyl_style,
         };
         let mut cache = VinylCache::default();
 
-        let image = cache.compose(&key, Some(&art));
+        let image = cache.compose(&wanted);
 
         let Rgb([red, green, blue]) = vinyl_style.paper;
         assert_eq!(

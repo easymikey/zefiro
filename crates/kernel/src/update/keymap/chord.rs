@@ -7,19 +7,12 @@ use crate::{
     message::Message,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BindingOrigin {
-    Configured,
-    Default,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct KeyBinding {
     pub pattern: KeyPattern,
     pub message: Message,
     pub action: Option<Action>,
     pub key_context: KeyContext,
-    pub(crate) origin: BindingOrigin,
 }
 
 pub(crate) fn key(character: char) -> Chord {

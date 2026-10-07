@@ -12,13 +12,14 @@ pub(crate) const COLUMN_SPACING: u16 = 1;
 pub(crate) const QUERY_ROWS: u16 = 2;
 
 #[must_use]
-pub(crate) fn modal_title(
-    word: &str,
-    detail: String,
+pub(crate) fn modal_title<'a>(
+    word: &'a str,
+    detail: &'a str,
     colors: Colors<Color>,
-) -> Line<'static> {
+) -> Line<'a> {
     line([
-        text(format!("{word}{TITLE_SEPARATOR}")).fg(colors.muted_foreground),
+        text(word).fg(colors.muted_foreground),
+        text(TITLE_SEPARATOR).fg(colors.muted_foreground),
         text(detail).fg(colors.muted_foreground),
     ])
 }

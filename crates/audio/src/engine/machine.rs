@@ -116,7 +116,6 @@ impl Machine for Engine {
                 Ok(Cmd::message(AudioEvent::PositionReported(position)))
             }
             (_, EngineMessage::Error(error)) => self.failed(error),
-            (_, EngineMessage::OutputLost(error)) => self.lost(error),
             (_, EngineMessage::DevicesListed(devices)) => {
                 Ok(Cmd::message(AudioEvent::DevicesListed(devices)))
             }
@@ -134,23 +133,26 @@ impl Machine for Engine {
                 | EngineMessage::FadeStartReached
                 | EngineMessage::Ramped(_),
             ) => Err(Unhandled),
-            (EngineState::Live(_), EngineMessage::Attached { revision, .. })
-                if !revisions.is_current_preload(revision) =>
-            {
-                Err(Unhandled)
-            }
+            (
+                EngineState::Live(_),
+                EngineMessage::Attached {
+                    revision,
+                    preload_mode: _preload_mode,
+                    duration: _duration,
+                },
+            ) if !revisions.is_current_preload(revision) => Err(Unhandled),
             (EngineState::Live(live), EngineMessage::Cmds(batch)) => {
                 batched(batch, |cmd| live.command(revisions, cmd))
             }
             (EngineState::Live(live), EngineMessage::Decoded(duration)) => {
-                live.decoded(duration)
+                live.decoded(revisions, duration)
             }
             (
                 EngineState::Live(live),
                 EngineMessage::Attached {
                     preload_mode,
                     duration,
-                    ..
+                    revision: _revision,
                 },
             ) => live.attached(preload_mode, duration),
             (EngineState::Live(live), EngineMessage::Finished(role)) => {
@@ -311,6 +313,7 @@ mod tests {
                 TRACK_A_DURATION,
                 awaiting,
                 cmd,
+                driver_with,
                 executed,
                 first,
                 live,
@@ -324,15 +327,6 @@ mod tests {
 
     const CROSSFADE: Duration = Duration::from_secs(7);
 
-    fn driver_with(live: Live) -> crate::AudioDriver {
-        let (spectrum_buffers, _spectrum_tap) = crate::tap::spectrum_channel();
-        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
-        crate::AudioDriver {
-            engine: Engine::new(EngineState::Live(live)),
-            deck: crate::deck::Deck::new(spectrum_buffers, callback_sender),
-        }
-    }
-
     fn worker_panicked() -> crate::error::Error {
         crate::error::Error::WorkerPanicked(PathBuf::from("/a"))
     }
@@ -342,23 +336,23 @@ mod tests {
         AudioMessage::Deck(DeckEvent::OutputLost(
             kernel::domain::transport::OutputError::DeviceGone
         )),
-        EngineMessage::OutputLost(kernel::domain::transport::OutputError::DeviceGone)
+        Engine::new(EngineState::Live(live())).lost(kernel::domain::transport::OutputError::DeviceGone)
     )]
     #[case::decode_error(
         AudioMessage::Decoded { revision: Revision::default(), result: Err(worker_panicked()) },
-        EngineMessage::Error(crate::error::decode_error_of(worker_panicked()))
+        step(&mut EngineState::Live(live()), EngineMessage::Error(crate::error::decode_error_of(worker_panicked())))
     )]
     #[case::preload_error(
         AudioMessage::Preloaded { revision: Revision::default(), result: Err(worker_panicked()) },
-        EngineMessage::Error(crate::error::preload_error(worker_panicked()))
+        step(&mut EngineState::Live(live()), EngineMessage::Error(crate::error::preload_error(worker_panicked())))
     )]
     fn a_landed_error_goes_to_the_engine_without_touching_the_deck(
         #[case] audio_message: AudioMessage,
-        #[case] engine_message: EngineMessage,
+        #[case] expected: Result<AudioLoopCmd, Unhandled>,
     ) {
         assert_eq!(
-            executed(driver_with(live()).transition(audio_message)),
-            executed(step(&mut EngineState::Live(live()), engine_message))
+            executed(driver_with(EngineState::Live(live())).transition(audio_message)),
+            executed(expected)
         );
     }
 
@@ -370,7 +364,7 @@ mod tests {
             at: std::time::Instant::now(),
         });
         assert_eq!(
-            executed(driver_with(live()).transition(audio_message)),
+            executed(driver_with(EngineState::Live(live())).transition(audio_message)),
             executed(step(&mut EngineState::Live(live()), cmd(audio_cmd)))
         );
     }
@@ -379,7 +373,7 @@ mod tests {
     fn a_track_event_asks_execute_to_take_its_signals() {
         let audio_message = AudioMessage::Deck(DeckEvent::Woke(Revision::default()));
         assert_eq!(
-            executed(driver_with(live()).transition(audio_message)),
+            executed(driver_with(EngineState::Live(live())).transition(audio_message)),
             Ok((vec![EngineEffect::TakeSignals(Revision::default())], vec![]))
         );
     }
@@ -394,7 +388,7 @@ mod tests {
         #[case] audio_message: AudioMessage,
     ) {
         assert_eq!(
-            executed(driver_with(live).transition(audio_message)),
+            executed(driver_with(EngineState::Live(live)).transition(audio_message)),
             Err(Unhandled)
         );
     }
@@ -416,7 +410,7 @@ mod tests {
             preload_mode: mode,
         };
         assert_eq!(
-            executed(driver_with(live).transition(audio_message)),
+            executed(driver_with(EngineState::Live(live)).transition(audio_message)),
             Ok((vec![engine_effect], vec![]))
         );
     }
@@ -450,7 +444,9 @@ mod tests {
             signals: Signals::FINISHED,
         };
         assert_eq!(
-            executed(driver_with(live()).transition(taken_audio_message)),
+            executed(
+                driver_with(EngineState::Live(live())).transition(taken_audio_message)
+            ),
             executed(step(
                 &mut EngineState::Live(live()),
                 EngineMessage::Finished(SinkRole::Current)

@@ -41,7 +41,11 @@ fn started() -> Result<(RecommendedWatcher, Events), IoError> {
 impl<M> FileStream<M> {
     pub(crate) fn events(&self) -> Option<&Events> {
         match self {
-            Self::Watching { events, .. } => Some(events),
+            Self::Watching {
+                events,
+                watcher: _watcher,
+                changed: _changed,
+            } => Some(events),
             Self::Idle | Self::Lost => None,
         }
     }
@@ -49,7 +53,9 @@ impl<M> FileStream<M> {
     pub(crate) fn watch(&mut self, path: &Path, changed: Changed<M>) -> Option<M> {
         let (mut watcher, events) = match mem::replace(self, Self::Idle) {
             Self::Watching {
-                watcher, events, ..
+                watcher,
+                events,
+                changed: _changed,
             } => (watcher, events),
             Self::Idle | Self::Lost => match started() {
                 Ok(started) => started,
@@ -77,7 +83,9 @@ impl<M> FileStream<M> {
 
     pub(crate) fn unwatch(&mut self, path: &Path) -> Option<M> {
         let Self::Watching {
-            watcher, changed, ..
+            watcher,
+            changed,
+            events: _events,
         } = self
         else {
             return None;
@@ -93,7 +101,12 @@ impl<M> FileStream<M> {
         &self,
         received: Result<notify::Result<notify::Event>, RecvError>,
     ) -> Option<M> {
-        let Self::Watching { changed, .. } = self else {
+        let Self::Watching {
+            changed,
+            watcher: _watcher,
+            events: _events,
+        } = self
+        else {
             return None;
         };
         let event = received.ok()?;
@@ -103,7 +116,12 @@ impl<M> FileStream<M> {
     }
 
     pub(crate) fn lose(&mut self) -> Option<M> {
-        let Self::Watching { changed, .. } = self else {
+        let Self::Watching {
+            changed,
+            watcher: _watcher,
+            events: _events,
+        } = self
+        else {
             return None;
         };
         let changed = *changed;
@@ -255,6 +273,24 @@ mod tests {
         }
 
         assert_eq!(stage(&file_stream), expected);
+    }
+
+    #[rstest]
+    #[case::the_watched_directory(None, None)]
+    #[case::a_missing_child(Some("missing"), Some(Err(IoError::Missing)))]
+    fn unwatch_reports_only_real_failures(
+        #[case] child: Option<&str>,
+        #[case] watched: Option<Result<(), IoError>>,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = child.map_or_else(
+            || directory.path().to_path_buf(),
+            |name| directory.path().join(name),
+        );
+        let mut file_stream = FileStream::Idle;
+        assert_eq!(file_stream.watch(&path, as_change), watched);
+
+        assert_eq!(file_stream.unwatch(&path), None);
     }
 
     #[test]

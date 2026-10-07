@@ -25,11 +25,11 @@ impl Live {
         audio_cmd: AudioCmd,
     ) -> Result<AudioLoopCmd, Unhandled> {
         match audio_cmd {
-            AudioCmd::Load(TrackLoad { revision, .. })
-                if revision <= self.executed_revisions.load =>
-            {
-                Err(Unhandled)
-            }
+            AudioCmd::Load(TrackLoad {
+                revision,
+                path: _path,
+                decibels: _decibels,
+            }) if revision <= self.executed_revisions.load => Err(Unhandled),
             AudioCmd::Load(track_load) => Ok(self.load(revisions, track_load)),
             AudioCmd::Preload(track_load) => self.preload(revisions, track_load),
             AudioCmd::SetPlayback(playback) => {
@@ -103,7 +103,11 @@ impl Live {
     fn seek(&mut self, target: Duration) -> AudioLoopCmd {
         let Phase::Playing(Playing {
             current,
-            next: NextTrack::Crossfading { fade, .. },
+            next:
+                NextTrack::Crossfading {
+                    fade,
+                    incoming: _incoming,
+                },
         }) = &mut self.phase
         else {
             return then_report(Cmd::effect(LoopEffect::Execute(EngineEffect::Seek(

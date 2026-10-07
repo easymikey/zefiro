@@ -29,9 +29,9 @@ pub(crate) enum ConfigChange {
 struct Signature(u64);
 
 impl Signature {
-    fn from_text(text: &str) -> Self {
+    fn of(hashed: &impl Hash) -> Self {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        text.hash(&mut hasher);
+        hashed.hash(&mut hasher);
         Self(hasher.finish())
     }
 }
@@ -46,21 +46,17 @@ enum Seen {
 
 impl Seen {
     fn from_text(text: Option<&str>) -> Self {
-        text.map_or(Seen::Absent, |text| {
-            Seen::Present(Signature::from_text(text))
-        })
+        text.map_or(Seen::Absent, |text| Seen::Present(Signature::of(&text)))
     }
 
     fn from_start_text(text: Option<&str>) -> Self {
-        text.map_or(Seen::Unread, |text| {
-            Seen::Present(Signature::from_text(text))
-        })
+        text.map_or(Seen::Unread, |text| Seen::Present(Signature::of(&text)))
     }
 
-    fn is_changed_by(self, text: Option<&str>) -> bool {
+    fn is_changed_to(self, next: Seen) -> bool {
         match self {
             Seen::Unread => true,
-            Seen::Absent | Seen::Present(_) => self != Seen::from_text(text),
+            Seen::Absent | Seen::Present(_) => self != next,
         }
     }
 }
@@ -106,6 +102,28 @@ impl ConfigWatch {
             seen: Seen::Unread,
         }
     }
+
+    pub(crate) fn path(&self, saved_file: SavedFile) -> &Path {
+        match saved_file {
+            SavedFile::Config => &self.config_path.path,
+            SavedFile::Appearance => &self.appearance_path.path,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SavedFile {
+    Config,
+    Appearance,
+}
+
+impl From<SavedFile> for ConfigName {
+    fn from(saved_file: SavedFile) -> Self {
+        match saved_file {
+            SavedFile::Config => ConfigName::Config,
+            SavedFile::Appearance => ConfigName::Appearance,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -124,7 +142,7 @@ pub enum ConfigWatchMessage {
     },
     SelectTheme(ThemeName),
     Saved {
-        name: ConfigName,
+        saved_file: SavedFile,
         text: String,
     },
 }
@@ -150,10 +168,6 @@ impl Machine for ConfigWatch {
             ConfigWatchMessage::PollConfig => {
                 Ok(read(ConfigName::Config, &self.config_path.path))
             }
-            ConfigWatchMessage::Saved {
-                name: ConfigName::Theme(_),
-                ..
-            } => Err(Unhandled),
             ConfigWatchMessage::PollTheme => self.poll_theme(),
             ConfigWatchMessage::PollThemes => Ok(Cmd::effect(ConfigWatchEffect::List(
                 self.themes_dir.clone(),
@@ -184,14 +198,14 @@ impl Machine for ConfigWatch {
             } => Ok(self.themes_listed(theme_names, refused)),
             ConfigWatchMessage::SelectTheme(name) => self.select_theme(name),
             ConfigWatchMessage::Saved {
-                name: ConfigName::Appearance,
+                saved_file: SavedFile::Appearance,
                 text,
             } => {
                 self.appearance_path.seen = Seen::from_text(Some(&text));
                 Ok(Cmd::none())
             }
             ConfigWatchMessage::Saved {
-                name: ConfigName::Config,
+                saved_file: SavedFile::Config,
                 text,
             } => {
                 self.config_path.seen = Seen::from_text(Some(&text));
@@ -242,17 +256,11 @@ impl ConfigWatch {
         theme_names: Vec<ThemeName>,
         refused: Vec<String>,
     ) -> Cmd<ConfigWatchEffect, ConfigChange> {
-        let listing = theme_names
-            .iter()
-            .map(ThemeName::as_str)
-            .chain(std::iter::once("\0"))
-            .chain(refused.iter().map(String::as_str))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if !self.seen.is_changed_by(Some(&listing)) {
+        let next = Seen::Present(Signature::of(&(&theme_names, &refused)));
+        if !self.seen.is_changed_to(next) {
             return Cmd::none();
         }
-        self.seen = Seen::from_text(Some(&listing));
+        self.seen = next;
         Cmd::message(ConfigChange::Themes {
             theme_names,
             refused,
@@ -265,10 +273,11 @@ fn read_done(
     text: Option<String>,
     change: impl FnOnce(Option<String>) -> ConfigChange,
 ) -> Cmd<ConfigWatchEffect, ConfigChange> {
-    if !seen.is_changed_by(text.as_deref()) {
+    let next = Seen::from_text(text.as_deref());
+    if !seen.is_changed_to(next) {
         return Cmd::none();
     }
-    *seen = Seen::from_text(text.as_deref());
+    *seen = next;
     Cmd::message(change(text))
 }
 
@@ -298,6 +307,7 @@ mod tests {
             ConfigWatch,
             ConfigWatchEffect,
             ConfigWatchMessage,
+            SavedFile,
             Seen,
         },
     };
@@ -305,13 +315,13 @@ mod tests {
     proptest! {
         #[test]
         fn a_fresh_target_always_reports_changed(text in option::of(".*")) {
-            prop_assert!(Seen::Unread.is_changed_by(text.as_deref()));
+            prop_assert!(Seen::Unread.is_changed_to(Seen::from_text(text.as_deref())));
         }
 
         #[test]
         fn its_own_text_never_reports_changed(text in option::of(".*")) {
             let seen = Seen::from_text(text.as_deref());
-            prop_assert!(!seen.is_changed_by(text.as_deref()));
+            prop_assert!(!seen.is_changed_to(Seen::from_text(text.as_deref())));
         }
 
         #[test]
@@ -321,7 +331,7 @@ mod tests {
         ) {
             prop_assume!(first != second);
             let seen = Seen::from_text(first.as_deref());
-            prop_assert!(seen.is_changed_by(second.as_deref()));
+            prop_assert!(seen.is_changed_to(Seen::from_text(second.as_deref())));
         }
     }
 
@@ -373,7 +383,7 @@ mod tests {
     #[case::seen_at_start(ConfigWatchMessage::ReadDone { name: ConfigName::Appearance, text: Some("seen".to_string()) }, Cmd::none())]
     #[case::absent_config_at_start(ConfigWatchMessage::ReadDone { name: ConfigName::Config, text: None }, Cmd::none())]
     #[case::config_appears(ConfigWatchMessage::ReadDone { name: ConfigName::Config, text: Some("x".to_string()) }, Cmd::message(ConfigChange::Config(Some("x".to_string()))))]
-    #[case::own_write(ConfigWatchMessage::Saved { name: ConfigName::Config, text: "x".to_string() }, Cmd::none())]
+    #[case::own_write(ConfigWatchMessage::Saved { saved_file: SavedFile::Config, text: "x".to_string() }, Cmd::none())]
     #[case::absent_theme(
         ConfigWatchMessage::ReadDone { name: noir(), text: None },
         Cmd::message(ConfigChange::Theme {
@@ -400,7 +410,6 @@ mod tests {
     #[rstest]
     #[case::poll(ConfigWatchMessage::PollTheme)]
     #[case::read_done(ConfigWatchMessage::ReadDone { name: noir(), text: None })]
-    #[case::theme_write(ConfigWatchMessage::Saved { name: noir(), text: String::new() })]
     fn an_unselected_watch_refuses_the_theme(#[case] message: ConfigWatchMessage) {
         let mut unselected = watch(None);
 
@@ -443,7 +452,7 @@ mod tests {
         let mut watch = watch(None);
         let text = "[window]\n".to_string();
         let written = watch.transition(ConfigWatchMessage::Saved {
-            name: ConfigName::Appearance,
+            saved_file: SavedFile::Appearance,
             text: text.clone(),
         });
         assert_eq!(written, Ok(Cmd::none()));

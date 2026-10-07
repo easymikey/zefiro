@@ -6,7 +6,6 @@ use kernel::{
     domain::{
         device::{ListedDevice, OutputDevice},
         revision::Revision,
-        transport::OutputError,
     },
     message::AudioError,
 };
@@ -71,11 +70,17 @@ impl fmt::Debug for AudioMessage {
         match self {
             AudioMessage::Cmds(cmds) => f.debug_tuple("Cmds").field(cmds).finish(),
             AudioMessage::Deck(event) => f.debug_tuple("Deck").field(event).finish(),
-            AudioMessage::Decoded { revision, .. } => f
+            AudioMessage::Decoded {
+                revision,
+                result: _result,
+            } => f
                 .debug_struct("Decoded")
                 .field("revision", revision)
                 .finish_non_exhaustive(),
-            AudioMessage::Preloaded { revision, .. } => f
+            AudioMessage::Preloaded {
+                revision,
+                result: _result,
+            } => f
                 .debug_struct("Preloaded")
                 .field("revision", revision)
                 .finish_non_exhaustive(),
@@ -99,7 +104,6 @@ pub enum EngineMessage {
     Cmds(Cmds<AudioCmd>),
     Reported(Option<Duration>),
     Error(AudioError),
-    OutputLost(OutputError),
     Opened(DeviceOpened),
     NotFound,
     Decoded(Option<Duration>),

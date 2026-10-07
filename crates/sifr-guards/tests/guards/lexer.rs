@@ -68,6 +68,29 @@ impl File {
             .find(|at| closed(*at))
             .unwrap_or(self.tokens.len())
     }
+
+    pub(crate) fn test_tokens(&self) -> Vec<bool> {
+        let base = self.path.contains("test_support");
+        let (mut stack, mut head) = (Vec::new(), 0);
+        let mut out = Vec::with_capacity(self.tokens.len());
+        for (at, token) in self.tokens.iter().enumerate() {
+            out.push(base || stack.contains(&true));
+            match token.text.as_str() {
+                "{" => {
+                    let header = &self.tokens[head..at];
+                    let tests = header.iter().any(|word| word.text == "tests");
+                    stack.push(tests || header_scope(header) & TEST != 0);
+                }
+                "}" => {
+                    stack.pop();
+                }
+                ";" => {}
+                _ => continue,
+            }
+            head = at + 1;
+        }
+        out
+    }
 }
 
 pub(crate) fn is_word(text: &str) -> bool {

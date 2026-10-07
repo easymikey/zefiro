@@ -54,15 +54,17 @@ fn run_shell(
     let (input_sender, input_receiver) = bounded(256);
     let environment_capabilities = Capabilities::from_environment(&environment);
     let capabilities = queried(app, environment_capabilities, &input_sender)?;
-    let signal_thread = termination::install(input_sender.clone())?;
-    let mut painter = Painter::new(session.terminal_mut(), theme, capabilities)
-        .with_appearance(appearance);
-    shell::input::spawn_input(input_sender);
+    let (run_result, teardown) = {
+        let _signal_thread = termination::install(input_sender.clone())?;
+        let mut painter = Painter::new(session.terminal_mut(), theme, capabilities)
+            .with_appearance(appearance);
+        shell::input::spawn_input(input_sender);
 
-    let run_result = runtime::event_loop::run(runtime, &mut painter, &input_receiver);
-    drop(input_receiver);
-    let teardown = session.restore();
-    drop(signal_thread);
+        let run_result =
+            runtime::event_loop::run(runtime, &mut painter, &input_receiver);
+        drop(input_receiver);
+        (run_result, session.restore())
+    };
     with_thread_failures(merge_exit_errors(run_result, teardown))
 }
 

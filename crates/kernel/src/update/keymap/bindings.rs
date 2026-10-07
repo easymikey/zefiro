@@ -8,10 +8,7 @@ use crate::{
         config::Diagnostic,
         keymap::{Action, KeyContext, KeyOverride, KeymapError, KeymapOverrides},
     },
-    update::keymap::{
-        chord::{BindingOrigin, KeyBinding},
-        table,
-    },
+    update::keymap::{chord::KeyBinding, table},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +37,46 @@ struct Binding {
     key_context: KeyContext,
 }
 
+fn lane(key_context: KeyContext) -> KeyContext {
+    match key_context {
+        KeyContext::Global | KeyContext::Playlist => KeyContext::Global,
+        overlay @ (KeyContext::TextPrompt
+        | KeyContext::Search
+        | KeyContext::Help
+        | KeyContext::History
+        | KeyContext::Settings
+        | KeyContext::ConfirmTrash
+        | KeyContext::JumpToTime
+        | KeyContext::TrackDetails) => overlay,
+    }
+}
+
+impl Binding {
+    fn collides(&self, other: &Self) -> bool {
+        lane(self.key_context) == lane(other.key_context)
+            && match (self.chord, other.chord) {
+                (
+                    Chord::Key(key),
+                    Chord::Sequence {
+                        prefix: chord_prefix,
+                        key: _key,
+                    },
+                )
+                | (
+                    Chord::Sequence {
+                        prefix: chord_prefix,
+                        key: _key,
+                    },
+                    Chord::Key(key),
+                ) => key == chord_prefix.key(),
+                (Chord::Key(_), Chord::Key(_))
+                | (Chord::Sequence { .. }, Chord::Sequence { .. }) => {
+                    self.chord == other.chord
+                }
+            }
+    }
+}
+
 struct Candidate {
     action: Action,
     key_context: KeyContext,
@@ -47,11 +84,14 @@ struct Candidate {
     binding: Option<Binding>,
 }
 
-fn parsed(key_override: &KeyOverride) -> Result<Binding, KeymapError> {
+fn parsed(
+    key_override: &KeyOverride,
+    default_context: KeyContext,
+) -> Result<Binding, KeymapError> {
     let chord = key_override.chord.parse::<Chord>()?;
     Ok(Binding {
         chord,
-        key_context: key_override.key_context,
+        key_context: key_override.key_context.unwrap_or(default_context),
     })
 }
 
@@ -71,11 +111,14 @@ fn candidates(
                     .filter(|default| default.action == action)
                     .map(|default| default.chord)
                     .collect();
-                let (configured, error) =
-                    match keymap_overrides.get(action).map(parsed).transpose() {
-                        Ok(configured) => (configured, None),
-                        Err(error) => (None, Some(error)),
-                    };
+                let (configured, error) = match keymap_overrides
+                    .get(action)
+                    .map(|key_override| parsed(key_override, key_context))
+                    .transpose()
+                {
+                    Ok(configured) => (configured, None),
+                    Err(error) => (None, Some(error)),
+                };
                 Some((
                     Candidate {
                         action,
@@ -92,8 +135,30 @@ fn candidates(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ChordAssignment {
-    action: Action,
+    action: Option<Action>,
     binding: Binding,
+}
+
+fn fixed(key_binding: &KeyBinding) -> bool {
+    matches!(key_binding.action, None | Some(Action::SeekTenth(_)))
+}
+
+fn fixed_chord_assignments(
+    default_key_bindings: &[KeyBinding],
+) -> Vec<ChordAssignment> {
+    default_key_bindings
+        .iter()
+        .filter(|binding| fixed(binding))
+        .filter_map(|binding| {
+            Some(ChordAssignment {
+                action: binding.action,
+                binding: Binding {
+                    chord: binding.pattern.chord()?,
+                    key_context: binding.key_context,
+                },
+            })
+        })
+        .collect()
 }
 
 fn placed(
@@ -103,7 +168,7 @@ fn placed(
     entries.iter().copied().partition(|entry| {
         entries
             .iter()
-            .find(|earlier| earlier.binding == entry.binding)
+            .find(|earlier| earlier.binding.collides(&entry.binding))
             == Some(entry)
     })
 }
@@ -113,7 +178,7 @@ fn configured_placement(candidates: &[Candidate]) -> Vec<ChordAssignment> {
         .iter()
         .filter_map(|candidate| {
             Some(ChordAssignment {
-                action: candidate.action,
+                action: Some(candidate.action),
                 binding: candidate.binding?,
             })
         })
@@ -128,7 +193,7 @@ fn final_chords(candidates: &[Candidate]) -> Vec<ChordAssignment> {
                 .default_chords
                 .iter()
                 .map(move |&chord| ChordAssignment {
-                    action: candidate.action,
+                    action: Some(candidate.action),
                     binding: Binding {
                         chord,
                         key_context: candidate.key_context,
@@ -150,7 +215,11 @@ fn resolution(
 ) -> Resolution {
     let (candidates, errors) =
         candidates(keymap_overrides, &default_bindings(default_key_bindings));
-    let (configured, refused) = placed(configured_placement(&candidates));
+    let (configured, refused) = placed(
+        fixed_chord_assignments(default_key_bindings)
+            .into_iter()
+            .chain(configured_placement(&candidates)),
+    );
     let (settled, _) = placed(configured.iter().copied().chain(
         final_chords(&candidates).into_iter().filter(|entry| {
             configured
@@ -163,7 +232,7 @@ fn resolution(
         .filter_map(|candidate| {
             let chords: Vec<Chord> = settled
                 .iter()
-                .filter(|placement| placement.action == candidate.action)
+                .filter(|placement| placement.action == Some(candidate.action))
                 .map(|placement| placement.binding.chord)
                 .collect();
             (!chords.is_empty()).then_some((candidate.action, chords))
@@ -185,7 +254,9 @@ fn resolution(
         .collect();
     let contexts = configured
         .iter()
-        .map(|placement| (placement.action, placement.binding.key_context))
+        .filter_map(|placement| {
+            Some((placement.action?, placement.binding.key_context))
+        })
         .collect();
     Resolution {
         errors,
@@ -256,38 +327,23 @@ fn resolved_bindings(
         contexts,
     } = resolution(keymap_overrides, &base);
 
-    let (configured, fallback): (Vec<KeyBinding>, Vec<KeyBinding>) = Action::iter()
+    let key_bindings = Action::iter()
         .filter_map(|action| {
             let template =
                 base.iter().find(|binding| binding.action == Some(action))?;
             let chords = final_chords.get(&action)?;
-            let configured = contexts.get(&action).copied();
-            let key_context = configured.unwrap_or(template.key_context);
+            let key_context = contexts
+                .get(&action)
+                .copied()
+                .unwrap_or(template.key_context);
             Some(chords.iter().map(move |&chord| KeyBinding {
                 pattern: KeyPattern::Chord(chord),
-                origin: if configured.is_some() {
-                    BindingOrigin::Configured
-                } else {
-                    BindingOrigin::Default
-                },
                 key_context,
                 ..template.clone()
             }))
         })
         .flatten()
-        .partition(|binding| matches!(binding.origin, BindingOrigin::Configured));
-    let key_bindings = configured
-        .into_iter()
-        .chain(fallback)
-        .chain(
-            base.iter()
-                .filter(|binding| {
-                    !binding.action.is_some_and(|action| {
-                        Action::iter().any(|rebindable| rebindable == action)
-                    })
-                })
-                .cloned(),
-        )
+        .chain(base.iter().filter(|binding| fixed(binding)).cloned())
         .collect();
     (key_bindings, errors)
 }
@@ -320,6 +376,19 @@ mod tests {
                 .as_ref()
                 .map(Diagnostic::text),
             Some("invalid key chord `bad`; key collision on `y`")
+        );
+    }
+
+    #[test]
+    fn a_configured_chord_on_a_fixed_chord_is_a_collision() {
+        let keymap_overrides =
+            KeymapOverrides::from([(Action::Next, KeyOverride::from("5"))]);
+        assert_eq!(
+            Keymap::new(keymap_overrides)
+                .diagnostic()
+                .as_ref()
+                .map(Diagnostic::text),
+            Some("key collision on `5`")
         );
     }
 }

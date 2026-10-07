@@ -57,6 +57,15 @@ mod tests {
     }
 
     #[test]
+    fn a_long_path_keeps_its_tail_and_cursor_in_view() {
+        let screen = frame(&("/a".repeat(60) + "/end"), None, (80, 24));
+        assert!(
+            screen.lines().any(|row| row.contains("end_")),
+            "the input row must show the typed tail and the cursor:\n{screen}"
+        );
+    }
+
+    #[test]
     fn music_dir_overlay_does_not_panic_on_a_tiny_terminal() {
         assert_eq!(frame("", None, (4, 3)).lines().count(), 3);
     }

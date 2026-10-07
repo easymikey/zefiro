@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use kernel::domain::{player::Player, time::Moment};
+use kernel::{cmd::Playback, domain::time::Moment};
 
 pub const SPECTRUM_BANDS: usize = 16;
 
@@ -8,6 +8,8 @@ pub type Spectrum = [f32; SPECTRUM_BANDS];
 
 const REFERENCE_RATE_HZ: f32 = 60.0;
 const SILENT_BAND: f32 = 1.0 / 1024.0;
+const ATTACK: f32 = 0.85;
+const DECAY: f32 = 0.35;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SpectrumMotion {
@@ -21,32 +23,9 @@ pub enum SpectrumFeed<'a> {
     Silent,
 }
 
-impl<'a> SpectrumFeed<'a> {
-    #[must_use]
-    pub fn of(player: &Player, spectrum: &'a Spectrum) -> Self {
-        if player.is_playing() {
-            Self::Live(spectrum)
-        } else {
-            Self::Silent
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct SpectrumSmoothing {
-    attack: f32,
-    decay: f32,
     spectrum: Spectrum,
-}
-
-impl Default for SpectrumSmoothing {
-    fn default() -> Self {
-        Self {
-            attack: 0.85,
-            decay: 0.35,
-            spectrum: [0.0; SPECTRUM_BANDS],
-        }
-    }
 }
 
 fn effective_coefficient(base: f32, elapsed_secs: f32) -> f32 {
@@ -69,12 +48,12 @@ impl SpectrumSmoothing {
     #[must_use]
     pub fn frame_due(
         &self,
-        feed: SpectrumFeed<'_>,
+        playback: Playback,
         next_frame_at: Moment,
     ) -> Option<Moment> {
-        let is_due = match feed {
-            SpectrumFeed::Live(_) => true,
-            SpectrumFeed::Silent => self.motion() == SpectrumMotion::Moving,
+        let is_due = match playback {
+            Playback::Playing => true,
+            Playback::Paused => self.motion() == SpectrumMotion::Moving,
         };
         is_due.then_some(next_frame_at)
     }
@@ -82,8 +61,8 @@ impl SpectrumSmoothing {
     #[must_use]
     fn smooth(&mut self, spectrum: &Spectrum, elapsed: Duration) -> Spectrum {
         let elapsed_secs = elapsed.as_secs_f32();
-        let attack = effective_coefficient(self.attack, elapsed_secs);
-        let decay = effective_coefficient(self.decay, elapsed_secs);
+        let attack = effective_coefficient(ATTACK, elapsed_secs);
+        let decay = effective_coefficient(DECAY, elapsed_secs);
         for (previous, &level) in self.spectrum.iter_mut().zip(spectrum.iter()) {
             let coefficient = if level > *previous { attack } else { decay };
             let smoothed = smooth_band(*previous, level, coefficient);
@@ -120,7 +99,7 @@ impl SpectrumSmoothing {
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::time::Moment;
+    use kernel::{cmd::Playback, domain::time::Moment};
 
     use crate::spectrum::{
         SILENT_BAND,
@@ -252,22 +231,21 @@ mod tests {
     #[test]
     fn a_frame_is_due_only_while_bands_can_move() {
         let next_frame_at = Moment::new(Duration::from_millis(33));
-        let raw = [0.0; SPECTRUM_BANDS];
         let settled_smoothing = SpectrumSmoothing::default();
         let mut moving_smoothing = SpectrumSmoothing::default();
         let lifted = moving_smoothing.smooth(&[1.0; SPECTRUM_BANDS], FRAME);
         assert_eq!(lifted, *moving_smoothing.bands());
 
         assert_eq!(
-            settled_smoothing.frame_due(SpectrumFeed::Live(&raw), next_frame_at),
+            settled_smoothing.frame_due(Playback::Playing, next_frame_at),
             Some(next_frame_at)
         );
         assert_eq!(
-            moving_smoothing.frame_due(SpectrumFeed::Silent, next_frame_at),
+            moving_smoothing.frame_due(Playback::Paused, next_frame_at),
             Some(next_frame_at)
         );
         assert_eq!(
-            settled_smoothing.frame_due(SpectrumFeed::Silent, next_frame_at),
+            settled_smoothing.frame_due(Playback::Paused, next_frame_at),
             None
         );
     }
@@ -287,9 +265,6 @@ mod tests {
         }
 
         assert!(frames < 300);
-        assert_eq!(
-            smoothing.frame_due(SpectrumFeed::Silent, next_frame_at),
-            None
-        );
+        assert_eq!(smoothing.frame_due(Playback::Paused, next_frame_at), None);
     }
 }

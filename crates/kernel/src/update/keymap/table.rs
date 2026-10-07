@@ -17,16 +17,7 @@ use crate::{
         SeekTenths,
     },
     update::keymap::{
-        chord::{
-            BindingOrigin,
-            KeyBinding,
-            bare,
-            ctrl,
-            digit_char,
-            digits,
-            key,
-            shifted,
-        },
+        chord::{KeyBinding, bare, ctrl, digit_char, digits, key, shifted},
         overlays,
     },
 };
@@ -37,7 +28,6 @@ fn row(key_context: KeyContext) -> impl Fn(Action, Chord, Message) -> KeyBinding
         message,
         action: Some(action),
         key_context,
-        origin: BindingOrigin::Default,
     }
 }
 

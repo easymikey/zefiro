@@ -45,14 +45,8 @@ impl Stage {
         let Stage::Running(mut active) = self else {
             return Stage::Idle;
         };
-        let bounds = buffer.area;
         active.retain_mut(|(animation, area)| {
-            let visible = area.intersection(bounds);
-            if visible.is_empty() {
-                return false;
-            }
-            buffer.render_effect(animation, visible, elapsed);
-            !animation.done()
+            paint_kept(buffer, elapsed)(animation, *area)
         });
         if active.is_empty() {
             Stage::Ended
@@ -78,10 +72,10 @@ pub(crate) struct VacatedAreas {
     pub(crate) selected_row: Option<Rect>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Backdrop {
+#[derive(Debug, Clone)]
+pub struct Backdrop<'a> {
     pub animations: Animations,
-    pub layout: FrameLayout,
+    pub layout: FrameLayout<'a>,
     pub style: BackdropStyle,
     pub wash_from: Color,
 }
@@ -131,7 +125,7 @@ impl AnimationStage {
         };
     }
 
-    pub(crate) fn remember_protected(&self, layout: FrameLayout) {
+    pub(crate) fn remember_protected(&self, layout: &FrameLayout<'_>) {
         self.cover_area.set(layout.cover_area.unwrap_or(Rect::ZERO));
     }
 
@@ -159,13 +153,23 @@ impl AnimationStage {
         self.stage =
             std::mem::replace(&mut self.stage, Stage::Idle).advance(buffer, elapsed);
         self.wash = self.wash.take().and_then(|(mut animation, area)| {
-            let visible = area.intersection(buffer.area);
-            if visible.is_empty() {
-                return None;
-            }
-            buffer.render_effect(&mut animation, visible, elapsed);
-            (!animation.done()).then_some((animation, area))
+            paint_kept(buffer, elapsed)(&mut animation, area)
+                .then_some((animation, area))
         });
+    }
+}
+
+fn paint_kept(
+    buffer: &mut Buffer,
+    elapsed: Duration,
+) -> impl FnMut(&mut Animation, Rect) -> bool + '_ {
+    move |animation: &mut Animation, area: Rect| {
+        let visible = area.intersection(buffer.area);
+        if visible.is_empty() {
+            return false;
+        }
+        buffer.render_effect(animation, visible, elapsed);
+        !animation.done()
     }
 }
 

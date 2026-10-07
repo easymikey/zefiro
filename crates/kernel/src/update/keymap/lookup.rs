@@ -102,9 +102,10 @@ fn armable_prefix(
 
 fn starts_with(pattern: KeyPattern, chord_prefix: ChordPrefix) -> bool {
     match pattern {
-        KeyPattern::Chord(Chord::Sequence { prefix: armed, .. }) => {
-            armed == chord_prefix
-        }
+        KeyPattern::Chord(Chord::Sequence {
+            prefix: armed,
+            key: _key,
+        }) => armed == chord_prefix,
         KeyPattern::Chord(Chord::Key(_)) | KeyPattern::AnyKey => false,
     }
 }

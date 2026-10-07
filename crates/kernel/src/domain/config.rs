@@ -62,24 +62,20 @@ impl std::fmt::Display for Diagnostic {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct ConfigErrors(HashMap<ConfigName, ConfigError>);
+pub(crate) struct ConfigErrors(pub(crate) HashMap<ConfigName, ConfigError>);
 
 impl ConfigErrors {
-    pub(crate) fn insert_if_changed(
-        &mut self,
-        name: ConfigName,
-        error: ConfigError,
-    ) -> bool {
-        let is_unchanged = self.0.get(&name) == Some(&error);
-        self.0.insert(name, error);
-        !is_unchanged
-    }
-
     pub(crate) fn get(&self, name: &ConfigName) -> Option<&ConfigError> {
         self.0.get(name)
     }
 
     pub(crate) fn clear(&mut self, name: &ConfigName) -> Option<ConfigError> {
         self.0.remove(name)
+    }
+}
+
+impl Extend<(ConfigName, ConfigError)> for ConfigErrors {
+    fn extend<T: IntoIterator<Item = (ConfigName, ConfigError)>>(&mut self, errors: T) {
+        self.0.extend(errors);
     }
 }

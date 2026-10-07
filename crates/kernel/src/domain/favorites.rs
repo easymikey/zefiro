@@ -18,11 +18,6 @@ impl Favorites {
         }
     }
 
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
     pub fn iter(&self) -> impl Iterator<Item = &TrackSource> {
         self.0.iter()
     }
@@ -55,12 +50,15 @@ mod tests {
     }
 
     #[test]
-    fn is_empty_tracks_membership() {
+    fn toggling_a_path_twice_leaves_no_favorites() {
         let mut favorites = Favorites::default();
-        assert!(favorites.is_empty());
+        assert!(favorites.iter().next().is_none());
 
         favorites.toggle(path("/a.flac"));
-        assert!(!favorites.is_empty());
+        assert!(favorites.iter().next().is_some());
+
+        favorites.toggle(path("/a.flac"));
+        assert_eq!(favorites, Favorites::default());
     }
 
     #[test]

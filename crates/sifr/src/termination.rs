@@ -143,6 +143,7 @@ pub(crate) fn take_worker_panic() -> bool {
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use std::{
         io,

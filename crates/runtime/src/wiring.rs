@@ -31,9 +31,9 @@ pub(crate) struct Wiring {
     pub(crate) spectrum_tap: SpectrumTap,
     pub(crate) latest_receivers: LatestReceivers,
     pub(crate) doorbell: Receiver<()>,
-    spawners: Spawners,
-    paths: StartupPaths,
-    latest_senders: LatestSenders,
+    pub(crate) spawners: Spawners,
+    pub(crate) paths: StartupPaths,
+    pub(crate) latest_senders: LatestSenders,
     #[cfg(target_os = "macos")]
     pub(crate) macos_channel: MacosChannel,
 }

@@ -11,6 +11,8 @@ use crate::domain::{
 
 const ILLEGAL_NAME_CHARS: [char; 9] = ['/', '\\', '?', '<', '>', ':', '*', '|', '"'];
 
+pub const PLAYLIST_EXTENSION: &str = ".m3u8";
+
 const MAX_NAME_BYTES: usize = 255;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,17 +20,18 @@ pub struct PlaylistFileName(String);
 
 impl PlaylistFileName {
     pub fn new(name: &str) -> Result<Self, PlaylistFileNameError> {
-        let filtered: String = name
-            .chars()
-            .filter(|ch| !ILLEGAL_NAME_CHARS.contains(ch) && !ch.is_control())
-            .collect();
-        if filtered.is_empty() {
+        let stem = truncated_to_bytes(
+            name.chars()
+                .filter(|ch| !ILLEGAL_NAME_CHARS.contains(ch) && !ch.is_control()),
+            MAX_NAME_BYTES - PLAYLIST_EXTENSION.len(),
+        );
+        if stem.is_empty() {
             return Err(PlaylistFileNameError::Empty);
         }
-        if filtered.chars().all(|ch| ch == '.') {
+        if stem.chars().all(|ch| ch == '.') {
             return Err(PlaylistFileNameError::AllDots);
         }
-        Ok(Self(truncated_to_bytes(&filtered, MAX_NAME_BYTES)))
+        Ok(Self(stem))
     }
 
     #[must_use]
@@ -37,9 +40,8 @@ impl PlaylistFileName {
     }
 }
 
-fn truncated_to_bytes(input: &str, max_bytes: usize) -> String {
-    input
-        .chars()
+fn truncated_to_bytes(chars: impl Iterator<Item = char>, max_bytes: usize) -> String {
+    chars
         .scan(0usize, |bytes, ch| {
             *bytes += ch.len_utf8();
             (*bytes <= max_bytes).then_some(ch)
@@ -145,54 +147,39 @@ impl Playlist {
     }
 
     pub fn skip(&mut self, direction: Direction) -> Option<&Arc<Track>> {
-        let next_index = match self.play_order.order() {
-            Some(_) => self.skip_shuffled(direction)?,
-            None => self.skip_linear(direction)?,
-        };
+        let next_index = self.next_index(direction)?;
         self.cursor = Cursor::at(self.tracks.len(), next_index);
         self.current()
     }
 
-    fn skip_linear(&self, direction: Direction) -> Option<usize> {
+    fn next_index(&self, direction: Direction) -> Option<usize> {
         if self.cursor.is_empty() {
             return None;
         }
-        let len = isize::try_from(self.cursor.len()).ok()?;
-        let current = isize::try_from(self.cursor.index()).ok()?;
-        let delta = direction.sign();
-        match self.repeat_mode {
-            RepeatMode::All => usize::try_from((current + delta).rem_euclid(len)).ok(),
-            RepeatMode::Off | RepeatMode::One => {
-                let next = current + delta;
-                (next >= 0 && next < len)
-                    .then_some(next)
-                    .and_then(|next| usize::try_from(next).ok())
-            }
-        }
-    }
-
-    fn skip_shuffled(&self, direction: Direction) -> Option<usize> {
-        if self.cursor.is_empty() {
-            return None;
-        }
-        let order = self.play_order.order()?;
         let current = self.cursor.index();
-        let position = order
-            .iter()
-            .position(|track_index| track_index.get() == current)
-            .unwrap_or(0);
-        order
-            .get(direction.wrapped(position, order.len()))
-            .map(|index| index.get())
+        let len = self.cursor.len();
+        self.play_order.order().map_or_else(
+            || match self.repeat_mode {
+                RepeatMode::All => Some(direction.wrapped(current, len)),
+                RepeatMode::Off | RepeatMode::One => current
+                    .checked_add_signed(direction.sign())
+                    .filter(|&next| next < len),
+            },
+            |order| {
+                let position = order
+                    .iter()
+                    .position(|track_index| track_index.get() == current)
+                    .unwrap_or(0);
+                order
+                    .get(direction.wrapped(position, order.len()))
+                    .map(|index| index.get())
+            },
+        )
     }
 
     #[must_use]
     pub(crate) fn upcoming(&self) -> Option<&Arc<Track>> {
-        let next_index = match self.play_order.order() {
-            Some(_) => self.skip_shuffled(Direction::Next)?,
-            None => self.skip_linear(Direction::Next)?,
-        };
-        self.tracks.get(next_index)
+        self.tracks.get(self.next_index(Direction::Next)?)
     }
 
     pub fn jump(&mut self, index: ViewIndex) -> Option<&Arc<Track>> {
@@ -209,10 +196,14 @@ pub(crate) fn index_of(tracks: &[Arc<Track>], source: &TrackSource) -> Option<us
 }
 
 #[cfg(test)]
-mod playlist_file_name_tests {
+mod tests {
     use rstest::rstest;
 
-    use crate::domain::playlist::{PlaylistFileName, PlaylistFileNameError};
+    use crate::domain::playlist::{
+        PLAYLIST_EXTENSION,
+        PlaylistFileName,
+        PlaylistFileNameError,
+    };
 
     #[rstest]
     #[case::empty("", PlaylistFileNameError::Empty)]
@@ -240,6 +231,22 @@ mod playlist_file_name_tests {
     fn truncates_to_the_byte_budget() {
         let long = "a".repeat(300);
         let name = PlaylistFileName::new(&long).unwrap();
-        assert_eq!(name.as_str().len(), 255);
+        assert_eq!(name.as_str().len(), 250);
+    }
+
+    #[test]
+    fn a_max_length_name_still_fits_a_file_name_with_its_extension() {
+        let long = "a".repeat(300);
+        let name = PlaylistFileName::new(&long).unwrap();
+        assert!(format!("{}{PLAYLIST_EXTENSION}", name.as_str()).len() <= 255);
+    }
+
+    #[test]
+    fn truncation_to_only_dots_is_refused() {
+        let dots_then_letter = format!("{}x", ".".repeat(256));
+        assert_eq!(
+            PlaylistFileName::new(&dots_then_letter),
+            Err(PlaylistFileNameError::AllDots)
+        );
     }
 }

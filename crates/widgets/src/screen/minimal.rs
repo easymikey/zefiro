@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use kernel::domain::{appearance::SpeedChip, geometry::Cells, playlist::RepeatMode};
 use ratatui::{
     buffer::Buffer,
@@ -16,7 +14,7 @@ use crate::{
         chip::{speed_chip_spans, speed_chip_width},
         span::{line, text},
         time_text::{elapsed_text, elapsed_width},
-        truncate::truncate,
+        truncate::truncate_owned,
     },
     theme::active_theme::ActiveTheme,
 };
@@ -26,15 +24,21 @@ pub(crate) struct MinimalScreenWidget<'a> {
     view: CardView<'a>,
     theme: ActiveTheme<'a>,
     speed_chip: SpeedChip,
+    progress_bar_width: Cells,
 }
 
 impl<'a> MinimalScreenWidget<'a> {
     #[must_use]
-    pub(crate) fn new(view: CardView<'a>, active_theme: ActiveTheme<'a>) -> Self {
+    pub(crate) fn new(
+        view: CardView<'a>,
+        active_theme: ActiveTheme<'a>,
+        progress_bar_width: Cells,
+    ) -> Self {
         Self {
             view,
             theme: active_theme,
             speed_chip: SpeedChip::default(),
+            progress_bar_width,
         }
     }
 
@@ -65,25 +69,8 @@ impl Widget for &MinimalScreenWidget<'_> {
     }
 }
 
-struct MinimalProgress {
-    time_width: u16,
-    chip_width: Cells,
-    bar_width: Cells,
-    gap: u16,
-}
-
-impl MinimalProgress {
-    fn new(view: CardView<'_>, speed_chip: SpeedChip, width: Cells) -> Self {
-        let time_width = elapsed_width(view.position(), view.duration()).min(width.0);
-        let gap = u16::from(width.0 > time_width);
-        let chip_width = speed_chip_width(view.speed, speed_chip);
-        Self {
-            time_width,
-            chip_width,
-            bar_width: Cells(width.0.saturating_sub(time_width + gap + chip_width.0)),
-            gap,
-        }
-    }
+fn time_width(view: CardView<'_>, width: Cells) -> u16 {
+    elapsed_width(view.position(), view.duration()).min(width.0)
 }
 
 #[must_use]
@@ -92,7 +79,10 @@ pub(crate) fn progress_bar_width(
     speed_chip: SpeedChip,
     width: Cells,
 ) -> Cells {
-    MinimalProgress::new(view, speed_chip, width).bar_width
+    let time_width = time_width(view, width);
+    let gap = u16::from(width.0 > time_width);
+    let chip_width = speed_chip_width(view.speed, speed_chip);
+    Cells(width.0.saturating_sub(time_width + gap + chip_width.0))
 }
 
 impl MinimalScreenWidget<'_> {
@@ -101,30 +91,23 @@ impl MinimalScreenWidget<'_> {
         let color = status.color(&self.theme);
         let title = self.view.title();
         let label = format!("{} {title}", status.label().glyph);
-        line([text(truncate(&label, width.count()).into_owned()).fg(color)])
+        line([text(truncate_owned(label, width.count())).fg(color)])
     }
 
     fn progress_line(&self, width: Cells) -> Line<'static> {
         let colors = self.theme.colors();
-        let minimal_progress = MinimalProgress::new(self.view, self.speed_chip, width);
-        let bar_width = minimal_progress.bar_width;
+        let bar_width = self.progress_bar_width;
         let mut spans = BarFill::progress(self.view.progress_fraction(), bar_width)
             .line(self.theme.progress_fill(), self.theme.progress_groove())
             .spans;
-        if bar_width > Cells(0) && minimal_progress.gap > 0 {
+        if bar_width > Cells(0) {
             spans.push(Span::raw(" "));
         }
         let elapsed = elapsed_text(self.view.position(), self.view.duration());
-        let elapsed = match truncate(&elapsed, usize::from(minimal_progress.time_width))
-        {
-            Cow::Borrowed(_) => elapsed,
-            Cow::Owned(cut) => cut,
-        };
+        let elapsed =
+            truncate_owned(elapsed, usize::from(time_width(self.view, width)));
         spans.push(text(elapsed).fg(colors.foreground).into());
-        let chip = speed_chip_spans(self.view.speed, self.speed_chip, &colors);
-        if minimal_progress.chip_width > Cells(0) {
-            spans.extend(chip);
-        }
+        spans.extend(speed_chip_spans(self.view.speed, self.speed_chip, &colors));
         Line::from(spans)
     }
 
@@ -144,7 +127,7 @@ impl MinimalScreenWidget<'_> {
             self.view.volume.get()
         );
         Line::from(Span::styled(
-            truncate(&status, width.count()).into_owned(),
+            truncate_owned(status, width.count()),
             Style::default().fg(self.theme.colors().muted_foreground),
         ))
     }
@@ -194,6 +177,7 @@ mod tests {
         let widget = MinimalScreenWidget::new(
             view,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            progress_bar_width(view, SpeedChip::Always, Cells(40)),
         )
         .speed_chip(SpeedChip::Always);
         rendered(40, 3, |frame| {

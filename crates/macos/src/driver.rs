@@ -101,6 +101,10 @@ impl MacosDriver {
                 self.clock = self.clock.seek(position, at);
                 Ok(Cmd::none())
             }
+            MacosCmd::SetSpeed(speed) => {
+                self.clock = self.clock.at_speed(speed, at);
+                Ok(Cmd::none())
+            }
             MacosCmd::SetVolume(_) => Ok(Cmd::none()),
         }
     }
@@ -206,7 +210,8 @@ fn volume_of(macos_cmd: &MacosCmd) -> Option<Percent> {
         MacosCmd::SetVolume(volume) => Some(*volume),
         MacosCmd::NowPlaying(_)
         | MacosCmd::SetPlayback(_)
-        | MacosCmd::SetPosition(_) => None,
+        | MacosCmd::SetPosition(_)
+        | MacosCmd::SetSpeed(_) => None,
     }
 }
 
@@ -242,6 +247,7 @@ mod tests {
             direction::Direction,
             percent::Percent,
             revision::Revision,
+            speed::Speed,
             track::Track,
             transport::SEEK_MEDIUM,
         },
@@ -390,6 +396,29 @@ mod tests {
             Ok((vec![MacosEffect::ShowNowPlaying], vec![]))
         );
         assert_eq!(macos_driver.clock.playback(), playback);
+    }
+
+    #[test]
+    fn a_speed_command_runs_the_now_playing_clock_at_that_speed() {
+        let (callback_sender, _callback_receiver) = bounded(1);
+        let mut macos_driver = MacosDriver::new(callback_sender);
+        let at = Instant::now();
+        let message = MacosMessage::Cmds(Cmds {
+            cmds: vec![
+                MacosCmd::SetPlayback(Playback::Playing),
+                MacosCmd::SetSpeed(Speed::clamped(2.0)),
+            ],
+            at,
+        });
+        assert_eq!(
+            macos_driver.transition(message).map(executed),
+            Ok((vec![MacosEffect::ShowNowPlaying], vec![]))
+        );
+        assert_eq!(macos_driver.clock.speed(), Speed::clamped(2.0));
+        assert_eq!(
+            macos_driver.clock.elapsed(at + Duration::from_secs(3)),
+            Duration::from_secs(6)
+        );
     }
 
     type Placed = (Vec<MacosEffect>, Vec<MacosJob>, Vec<MacosEvent>);

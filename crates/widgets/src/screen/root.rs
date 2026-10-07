@@ -24,13 +24,13 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 pub struct ScreenWidget<'a> {
     scene: Scene<'a>,
-    frame_layout: &'a FrameLayout,
+    frame_layout: &'a FrameLayout<'a>,
     card_cover: &'a CardCover,
 }
 
 impl<'a> ScreenWidget<'a> {
     #[must_use]
-    pub fn new(scene: Scene<'a>, frame_layout: &'a FrameLayout) -> Self {
+    pub fn new(scene: Scene<'a>, frame_layout: &'a FrameLayout<'a>) -> Self {
         Self {
             scene,
             frame_layout,
@@ -68,15 +68,22 @@ impl Widget for &ScreenWidget<'_> {
                 return;
             }
             Breakpoint::Minimal => {
-                (&MinimalScreenWidget::new(CardView::from_scene(&self.scene), theme)
-                    .speed_chip(self.scene.settings.appearance_settings.speed_chip))
+                (&MinimalScreenWidget::new(
+                    CardView::from_scene(&self.scene),
+                    theme,
+                    layout.progress_bar_width,
+                )
+                .speed_chip(self.scene.settings.appearance_settings.speed_chip))
                     .render(layout.screen, buffer);
             }
             Breakpoint::Full => self.paint_card(buffer),
             Breakpoint::Compact => {
-                let card =
-                    CompactCardWidget::new(CardView::from_scene(&self.scene), theme)
-                        .speed_chip(self.scene.settings.appearance_settings.speed_chip);
+                let card = CompactCardWidget::new(
+                    CardView::from_scene(&self.scene),
+                    theme,
+                    layout.progress_bar_width,
+                )
+                .speed_chip(self.scene.settings.appearance_settings.speed_chip);
                 (&card).render(layout.header, buffer);
             }
         }
@@ -96,6 +103,8 @@ impl ScreenWidget<'_> {
             .cover_sizing(scene.cover_sizing())
             .appearance_settings(scene.settings.appearance_settings)
             .card_cover(self.card_cover)
+            .progress_bar_width(self.frame_layout.progress_bar_width)
+            .remaining_label(&self.frame_layout.remaining_label)
             .paint(
                 &metrics,
                 Canvas {
@@ -147,13 +156,19 @@ impl ScreenWidget<'_> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::toast::Toast;
-    use ratatui::layout::Rect;
+    use kernel::domain::{appearance::ProgressTime, geometry::Cells, toast::Toast};
+    use ratatui::layout::{Rect, Size};
+    use rstest::rstest;
 
     use crate::{
         card::CardCover,
+        primitive::glyphs,
         scene::{PixelPath, Scene},
-        screen::{frame_layout::FrameLayout, root::ScreenWidget},
+        screen::{
+            breakpoint::Breakpoint,
+            frame_layout::FrameLayout,
+            root::ScreenWidget,
+        },
         test_support::{SceneSources, model_with_tracks, rendered},
     };
 
@@ -209,5 +224,58 @@ mod tests {
         let sources = SceneSources::new(model);
         let text = frame(sources.scene(), &CardCover::Missing, (80, 24));
         assert!(text.contains("Saved"), "got {text}");
+    }
+
+    #[rstest]
+    #[case::full_with_chip(
+        Size::new(80, 24),
+        ProgressTime::Remaining,
+        Breakpoint::Full
+    )]
+    #[case::full_without_chip(
+        Size::new(80, 24),
+        ProgressTime::Elapsed,
+        Breakpoint::Full
+    )]
+    #[case::compact(Size::new(80, 18), ProgressTime::Elapsed, Breakpoint::Compact)]
+    #[case::minimal(Size::new(20, 5), ProgressTime::Elapsed, Breakpoint::Minimal)]
+    fn the_painted_bar_is_as_wide_as_the_layout_says(
+        #[case] size: Size,
+        #[case] progress_time: ProgressTime,
+        #[case] breakpoint: Breakpoint,
+    ) {
+        let mut sources = SceneSources::new(model_with_tracks(1));
+        sources.appearance_mut().breakpoints.min_width = Cells(10);
+        sources.appearance_mut().breakpoints.min_height = Cells(3);
+        sources.model.settings.appearance_settings.progress_time = progress_time;
+        let scene = sources.scene();
+        let area = Rect::new(0, 0, size.width, size.height);
+        let layout = FrameLayout::from_scene(&scene, area);
+        assert_eq!(layout.breakpoint, breakpoint);
+        let row = match layout.breakpoint {
+            Breakpoint::Full => layout
+                .card_metrics
+                .map_or(0, |metrics| metrics.progress_row.y),
+            Breakpoint::Compact => layout.header.y + 3,
+            Breakpoint::Minimal | Breakpoint::TooSmall => layout.screen.y + 1,
+        };
+        let backend = rendered(size.width, size.height, |frame| {
+            frame.render_widget(
+                &ScreenWidget::new(scene, &layout).card_cover(&CardCover::Missing),
+                frame.area(),
+            );
+        });
+        let bar_glyphs = [
+            glyphs::progress_line::FULL,
+            glyphs::progress_line::PARTIAL,
+            glyphs::progress_line::EMPTY,
+        ];
+        let bar_cells = (area.left()..area.right())
+            .filter(|&x| bar_glyphs.contains(&backend.buffer()[(x, row)].symbol()))
+            .count();
+        assert_eq!(
+            layout.progress_bar_width,
+            Cells(u16::try_from(bar_cells).unwrap())
+        );
     }
 }

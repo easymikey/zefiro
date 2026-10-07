@@ -96,39 +96,38 @@ fn trash_error(error: &trash::Error) -> IoError {
 
 impl From<&Error> for LibraryError {
     fn from(error: &Error) -> Self {
-        match error {
+        let (subject, path, io_error) = match error {
             Error::Io {
                 subject,
                 path,
                 source,
-            } => LibraryError::Disk {
-                subject: *subject,
-                path: path.clone(),
-                error: source.kind().into(),
-            },
-            Error::Json { subject, path, .. } => LibraryError::Disk {
-                subject: *subject,
-                path: path.clone(),
-                error: IoError::Malformed,
-            },
-            Error::Encode { path, .. } | Error::Decode { path, .. } => {
-                LibraryError::Disk {
-                    subject: LibrarySubject::Cache,
-                    path: path.clone(),
-                    error: IoError::Malformed,
-                }
+            } => (*subject, path, source.kind().into()),
+            Error::Json {
+                subject,
+                path,
+                source: _source,
+            } => (*subject, path, IoError::Malformed),
+            Error::Encode {
+                path,
+                source: _source,
+            } => (LibrarySubject::Cache, path, IoError::Malformed),
+            Error::Decode {
+                path,
+                source: _source,
+            } => (LibrarySubject::Cache, path, IoError::Malformed),
+            Error::Tags {
+                path,
+                source: _source,
+            } => (LibrarySubject::Scan, path, IoError::Malformed),
+            Error::Trash { path, source } => {
+                (LibrarySubject::Trash, path, trash_error(source))
             }
-            Error::Tags { path, .. } => LibraryError::Disk {
-                subject: LibrarySubject::Scan,
-                path: path.clone(),
-                error: IoError::Malformed,
-            },
-            Error::Trash { path, source } => LibraryError::Disk {
-                subject: LibrarySubject::Trash,
-                path: path.clone(),
-                error: trash_error(source),
-            },
-            Error::NoUserDirs => LibraryError::NoUserDirs,
+            Error::NoUserDirs => return LibraryError::NoUserDirs,
+        };
+        LibraryError::Disk {
+            subject,
+            path: path.clone(),
+            error: io_error,
         }
     }
 }

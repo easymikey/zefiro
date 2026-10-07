@@ -14,8 +14,11 @@ pub(crate) enum Phase {
 impl Phase {
     pub(crate) fn current(&self) -> Option<&LoadedTrack> {
         match self {
-            Phase::Playing(Playing { current, .. })
-            | Phase::Handover(Incoming::Playing(current)) => Some(current),
+            Phase::Playing(Playing {
+                current,
+                next: _next,
+            }) => Some(current),
+            Phase::Handover(Incoming::Playing(current)) => Some(current),
             Phase::Idle | Phase::Loading(_) | Phase::Handover(Incoming::Loading(_)) => {
                 None
             }
@@ -38,13 +41,15 @@ impl Playing {
         }
     }
 
-    pub(crate) fn promote(&mut self) -> bool {
-        let NextTrack::Crossfading { incoming, .. } = &mut self.next else {
-            return false;
-        };
-        std::mem::swap(&mut self.current, incoming);
-        self.next = NextTrack::None;
-        true
+    pub(crate) fn promote(&mut self) {
+        if let NextTrack::Crossfading {
+            incoming,
+            fade: _fade,
+        } = &mut self.next
+        {
+            std::mem::swap(&mut self.current, incoming);
+            self.next = NextTrack::None;
+        }
     }
 }
 
@@ -118,4 +123,22 @@ pub(crate) struct Resume {
     pub(crate) position: Duration,
     pub(crate) playback: Playback,
     pub(crate) duration: Option<Duration>,
+    pub(crate) upcoming: Option<Upcoming>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Upcoming {
+    pub(crate) path: PathBuf,
+    pub(crate) decibels: Option<kernel::domain::track::Decibels>,
+}
+
+impl From<LoadedTrack> for Upcoming {
+    fn from(track: LoadedTrack) -> Self {
+        let LoadedTrack {
+            duration: _duration,
+            decibels,
+            path,
+        } = track;
+        Upcoming { path, decibels }
+    }
 }

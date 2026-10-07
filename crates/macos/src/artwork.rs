@@ -78,20 +78,21 @@ impl Machine for Artwork {
                     .chain(read)
                     .collect())
             }
-            ArtworkMessage::ReadDone(ArtworkBytes { revision, .. })
-                if revision != self.revision =>
-            {
-                Err(Unhandled)
-            }
             ArtworkMessage::ReadDone(ArtworkBytes {
-                bytes: Ok(bytes), ..
+                revision,
+                bytes: _bytes,
+            }) if revision != self.revision => Err(Unhandled),
+            ArtworkMessage::ReadDone(ArtworkBytes {
+                bytes: Ok(bytes),
+                revision: _revision,
             }) if bytes.is_empty() => Err(Unhandled),
             ArtworkMessage::ReadDone(ArtworkBytes {
                 bytes: Err(MacosError::ReadArtwork(error)),
-                ..
+                revision: _revision,
             }) if error == io::ErrorKind::NotFound.into() => Err(Unhandled),
             ArtworkMessage::ReadDone(ArtworkBytes {
-                bytes: Ok(bytes), ..
+                bytes: Ok(bytes),
+                revision: _revision,
             }) => Ok(
                 [MacosEffect::ShowArtwork(bytes), MacosEffect::ShowNowPlaying]
                     .into_iter()
@@ -99,7 +100,8 @@ impl Machine for Artwork {
                     .collect(),
             ),
             ArtworkMessage::ReadDone(ArtworkBytes {
-                bytes: Err(error), ..
+                bytes: Err(error),
+                revision: _revision,
             }) => Ok(Cmd::message(MacosEvent::Error(error))),
         }
     }

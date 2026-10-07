@@ -123,11 +123,27 @@ impl Runtime {
     }
 
     pub(crate) fn drain(self) {
-        let Self { model, wiring, .. } = self;
+        let Self {
+            model,
+            wiring,
+            timers: _timers,
+            started_at: _started_at,
+            unix_offset: _unix_offset,
+            flow: _flow,
+            shell_effects: _shell_effects,
+        } = self;
         let Wiring {
             inbox_receiver,
+            inbox: _inbox,
             mut ports,
-            ..
+            spectrum_tap: _spectrum_tap,
+            latest_receivers: _latest_receivers,
+            doorbell: _doorbell,
+            spawners: _spawners,
+            paths: _paths,
+            latest_senders: _latest_senders,
+            #[cfg(target_os = "macos")]
+                macos_channel: _macos_channel,
         } = wiring;
         for row in registry::REGISTRY {
             ports.hang_up(row.driver_name);

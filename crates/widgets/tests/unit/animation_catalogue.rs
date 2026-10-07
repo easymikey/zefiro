@@ -22,8 +22,7 @@ use widgets::animation::{
     stage::AnimationStage,
 };
 
-use crate::unit::{
-    animation_stage::{run_out_over, step_over},
+use crate::{
     support::{
         ACCENT,
         BACKGROUND,
@@ -37,6 +36,7 @@ use crate::unit::{
         volume_fill,
         volume_lifted,
     },
+    unit::animation_stage::{run_out_over, step_over},
 };
 
 const PAST_THE_END: Duration = Duration::from_secs(10);
@@ -139,7 +139,7 @@ fn the_arriving_toast_paints_nothing_outside_the_card() {
 #[test]
 fn delete_burst_storyboard() {
     let mut stage = AnimationStage::default();
-    let pane = crate::unit::support::pane_backdrop();
+    let pane = crate::support::pane_backdrop();
     stage.play(Vec::new(), &pane);
     stage.play(vec![Cue::TrackTrashed], &pane);
 

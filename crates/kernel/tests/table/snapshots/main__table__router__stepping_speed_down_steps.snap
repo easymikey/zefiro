@@ -18,6 +18,13 @@ expression: "walked(model, messages)"
                     ),
                 ),
             ),
+            Macos(
+                SetSpeed(
+                    Speed(
+                        0.75,
+                    ),
+                ),
+            ),
         ],
         Stopped,
         None,

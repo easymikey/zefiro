@@ -1,4 +1,4 @@
-use std::{path::Path, time::Duration};
+use std::{fmt::Display, path::Path, time::Duration};
 
 use kernel::domain::{
     appearance::{
@@ -23,7 +23,7 @@ use kernel::domain::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::primitive::glyphs;
+use crate::primitive::{display_width, glyphs};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SettingsView<'a> {
@@ -126,14 +126,16 @@ fn appearance_label(field: AppearanceField) -> &'static str {
 
 pub(crate) fn value_text(row: SettingRow, view: &SettingsView<'_>) -> String {
     match row {
-        SettingRow::Theme => pick_text(view.theme),
+        SettingRow::Theme => pick_text(&view.theme),
         SettingRow::Crossfade => duration_step_text(view.crossfade.get()),
-        SettingRow::ReplayGain => toggle_text(Toggle::from(view.replay_gain)),
+        SettingRow::ReplayGain => {
+            toggle_text(Toggle::from(view.replay_gain)).to_owned()
+        }
         SettingRow::OutputDevice => {
             let name = view
                 .output_device_name
                 .unwrap_or(glyphs::settings::OUTPUT_DEVICE_DEFAULT);
-            pick_text(name)
+            pick_text(&name)
         }
         SettingRow::SleepPresets => pick_text(&sleep_presets_text(view.sleep_presets)),
         SettingRow::Appearance(field) => {
@@ -148,32 +150,26 @@ fn appearance_value_text(
 ) -> String {
     match field {
         AppearanceField::Preset => {
-            pick_text(preset_label(preset_of(appearance_settings)))
+            pick_text(&preset_label(preset_of(appearance_settings)))
         }
-        AppearanceField::CoverMode => {
-            pick_text(&appearance_settings.cover_mode.to_string())
-        }
+        AppearanceField::CoverMode => pick_text(&appearance_settings.cover_mode),
         AppearanceField::CoverBrackets => {
-            toggle_text(Toggle::from(appearance_settings.cover_brackets))
+            toggle_text(Toggle::from(appearance_settings.cover_brackets)).to_owned()
         }
         AppearanceField::FormatChips => {
-            toggle_text(Toggle::from(appearance_settings.format_chips))
+            toggle_text(Toggle::from(appearance_settings.format_chips)).to_owned()
         }
-        AppearanceField::SpeedChip => {
-            pick_text(&appearance_settings.speed_chip.to_string())
-        }
+        AppearanceField::SpeedChip => pick_text(&appearance_settings.speed_chip),
         AppearanceField::ProgressTime => {
-            toggle_text(Toggle::from(appearance_settings.progress_time))
+            toggle_text(Toggle::from(appearance_settings.progress_time)).to_owned()
         }
         AppearanceField::KeyHints => {
-            toggle_text(Toggle::from(appearance_settings.key_hints))
+            toggle_text(Toggle::from(appearance_settings.key_hints)).to_owned()
         }
         AppearanceField::Animations => {
-            toggle_text(Toggle::from(appearance_settings.animations))
+            toggle_text(Toggle::from(appearance_settings.animations)).to_owned()
         }
-        AppearanceField::LayoutMode => {
-            pick_text(&appearance_settings.layout_mode.to_string())
-        }
+        AppearanceField::LayoutMode => pick_text(&appearance_settings.layout_mode),
     }
 }
 
@@ -187,23 +183,30 @@ fn preset_label(preset: Option<AppearancePreset>) -> &'static str {
 
 pub(crate) fn widest_value(row: SettingRow, view: &SettingsView<'_>) -> usize {
     match row {
-        SettingRow::Theme => {
-            widest_pick(view.theme_names.iter().map(ThemeName::to_string))
-        }
+        SettingRow::Theme => widest_pick(
+            view.theme_names
+                .iter()
+                .map(display_width)
+                .chain(std::iter::once(view.theme.width())),
+        ),
         SettingRow::Crossfade => duration_step_text(Crossfade::MAX).width(),
         SettingRow::ReplayGain => widest_toggle(),
         SettingRow::OutputDevice => widest_pick(
             view.output_devices
                 .iter()
-                .map(|device| device.name.to_string())
+                .map(|device| device.name.as_str().width())
+                .chain(view.output_device_name.map(UnicodeWidthStr::width))
                 .chain(std::iter::once(
-                    glyphs::settings::OUTPUT_DEVICE_DEFAULT.to_string(),
+                    glyphs::settings::OUTPUT_DEVICE_DEFAULT.width(),
                 )),
         ),
         SettingRow::SleepPresets => widest_pick(
             SleepPresets::BUNDLES
                 .iter()
-                .map(|bundle| sleep_presets_text(bundle)),
+                .map(|bundle| sleep_presets_text(bundle).width())
+                .chain(std::iter::once(
+                    sleep_presets_text(view.sleep_presets).width(),
+                )),
         ),
         SettingRow::Appearance(field) => appearance_value_width(field),
     }
@@ -215,11 +218,10 @@ fn widest_toggle() -> usize {
         .max(toggle_text(Toggle::Off).width())
 }
 
-fn widest_pick(labels: impl Iterator<Item = String>) -> usize {
-    labels
-        .map(|label| pick_text(&label).width())
-        .max()
-        .unwrap_or(0)
+fn widest_pick(widths: impl Iterator<Item = usize>) -> usize {
+    glyphs::settings::PICK_LEFT.width()
+        + glyphs::settings::PICK_RIGHT.width()
+        + widths.max().unwrap_or(0)
 }
 
 fn appearance_value_width(field: AppearanceField) -> usize {
@@ -231,16 +233,16 @@ fn appearance_value_width(field: AppearanceField) -> usize {
                 None,
             ]
             .into_iter()
-            .map(|preset| preset_label(preset).to_string()),
+            .map(|preset| preset_label(preset).width()),
         ),
         AppearanceField::CoverMode => {
-            widest_pick(COVER_MODES.iter().map(ToString::to_string))
+            widest_pick(COVER_MODES.iter().map(display_width))
         }
         AppearanceField::SpeedChip => {
-            widest_pick(SPEED_CHIPS.iter().map(ToString::to_string))
+            widest_pick(SPEED_CHIPS.iter().map(display_width))
         }
         AppearanceField::LayoutMode => {
-            widest_pick(LAYOUT_MODES.iter().map(ToString::to_string))
+            widest_pick(LAYOUT_MODES.iter().map(display_width))
         }
         AppearanceField::CoverBrackets
         | AppearanceField::FormatChips
@@ -250,10 +252,10 @@ fn appearance_value_width(field: AppearanceField) -> usize {
     }
 }
 
-fn toggle_text(toggle: Toggle) -> String {
+fn toggle_text(toggle: Toggle) -> &'static str {
     match toggle {
-        Toggle::On => glyphs::settings::TOGGLE_ON.to_string(),
-        Toggle::Off => glyphs::settings::TOGGLE_OFF.to_string(),
+        Toggle::On => glyphs::settings::TOGGLE_ON,
+        Toggle::Off => glyphs::settings::TOGGLE_OFF,
     }
 }
 
@@ -282,7 +284,7 @@ fn sleep_presets_text(presets: &[Duration]) -> String {
         .join(", ")
 }
 
-fn pick_text(current: &str) -> String {
+fn pick_text(current: &impl Display) -> String {
     format!(
         "{}{current}{}",
         glyphs::settings::PICK_LEFT,
@@ -330,7 +332,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::overlay::settings::{
-        test_support::settings_values,
+        tests::settings_values,
         view::{
             SettingsView,
             abbreviate_home,

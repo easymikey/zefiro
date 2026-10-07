@@ -1,6 +1,7 @@
 use crate::{
     cmd::{AudioCmd, Cmd, ConfigCmd, ConfigPatch, Effect},
     domain::{
+        appearance::{AppearancePreset, preset_of},
         appearance_rows::{appearance_patch, field_choice},
         device::OutputDevice,
         direction::Direction,
@@ -42,7 +43,11 @@ fn step_appearance(
     direction: Direction,
 ) -> Cmd {
     let ConfigParts {
-        themes, settings, ..
+        themes,
+        settings,
+        workspace: _workspace,
+        revisions: _revisions,
+        music_dir: _music_dir,
     } = config_parts;
     let row = field.row();
     let option = field_choice(field, settings.appearance_settings)
@@ -53,11 +58,10 @@ fn step_appearance(
     }
     let setting =
         patch.map(|patch| Cmd::from(Effect::Config(ConfigCmd::SetAppearance(patch))));
-    let theme = row
-        .theme_names
-        .get(option.get())
-        .cloned()
+    let theme = (field == AppearanceField::Preset)
+        .then(|| preset_of(settings.appearance_settings))
         .flatten()
+        .and_then(AppearancePreset::theme)
         .map(|name| select_theme(themes, name));
     let cue = row.cue.map(Cmd::from);
     [setting, theme, cue]
@@ -145,8 +149,7 @@ fn step_output_device(
 
 fn step_sleep_presets(settings: &mut Settings, direction: Direction) -> Cmd {
     let presets = settings.audio_settings.sleep_presets.as_slice();
-    let current = SleepPresets::bundle_index(presets)
-        .unwrap_or_else(|| SleepPresets::nearest_bundle(presets));
+    let current = SleepPresets::nearest_bundle(presets);
     let next_index = direction.wrapped(current, SleepPresets::BUNDLES.len());
     let next = SleepPresets::bundle(next_index);
     settings.audio_settings.sleep_presets = next.clone();

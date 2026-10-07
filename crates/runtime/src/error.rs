@@ -39,7 +39,10 @@ pub struct ClockError(#[source] pub(crate) SystemTimeError);
 impl From<&SpawnError> for DriverError {
     fn from(error: &SpawnError) -> Self {
         match error {
-            SpawnError::Thread { error, .. } => DriverError::Spawn {
+            SpawnError::Thread {
+                error,
+                driver_name: _driver_name,
+            } => DriverError::Spawn {
                 error: error.kind().into(),
             },
             SpawnError::TapLost { .. } => DriverError::Spawn {

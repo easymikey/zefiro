@@ -1,30 +1,63 @@
-use kernel::domain::{appearance::CoverMode, geometry::Cells};
+use std::sync::Arc;
+
+use kernel::domain::{
+    appearance::CoverMode,
+    cursor_over::CursorOver,
+    geometry::Cells,
+    overlay::{MusicDirError, SearchQuery, TextEntry},
+    playlist::PlaylistFileNameError,
+    setting_row::SettingRow,
+    time::TimecodeError,
+    track::Track,
+};
 use ratatui::layout::Rect;
 
 use crate::{
     card::metrics::CardMetrics,
-    overlay::modal::placement::OverlayAreas,
+    overlay::{
+        help::HelpColumns,
+        history::HistoryMeasures,
+        modal::placement::OverlayAreas,
+        settings::SettingsTable,
+        track_details::TrackDetailsRow,
+    },
     playlist::pane::PlaylistAreas,
     screen::breakpoint::Breakpoint,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FrameLayout {
+#[derive(Debug, Clone, PartialEq)]
+pub enum OverlayContent<'a> {
+    Help(HelpColumns),
+    Search(&'a CursorOver<SearchQuery>, String),
+    SavePlaylist(&'a TextEntry<PlaylistFileNameError>),
+    History(&'a CursorOver<()>, HistoryMeasures),
+    Settings(SettingRow, SettingsTable),
+    ConfirmTrash(&'a Arc<Track>),
+    JumpToTime(&'a TextEntry<TimecodeError>),
+    TrackDetails(Vec<TrackDetailsRow<'a>>),
+    MusicDir(&'a TextEntry<MusicDirError>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameLayout<'a> {
     pub screen: Rect,
     pub breakpoint: Breakpoint,
     pub content: Rect,
     pub header: Rect,
     pub card_metrics: Option<CardMetrics>,
+    pub progress_bar_width: Cells,
+    pub remaining_label: String,
     pub cover_area: Option<Rect>,
     pub playlist_pane: Rect,
     pub playlist_areas: Option<PlaylistAreas>,
     pub key_hints: Option<Rect>,
     pub search_bounds: Rect,
     pub overlay_areas: Option<OverlayAreas>,
+    pub overlay_content: Option<OverlayContent<'a>>,
     pub toast: Option<Rect>,
 }
 
-impl FrameLayout {
+impl FrameLayout<'_> {
     #[must_use]
     pub fn empty(screen: Rect, breakpoint: Breakpoint) -> Self {
         Self {
@@ -33,12 +66,15 @@ impl FrameLayout {
             content: Rect::default(),
             header: Rect::default(),
             card_metrics: None,
+            progress_bar_width: Cells(0),
+            remaining_label: String::new(),
             cover_area: None,
             playlist_pane: Rect::default(),
             playlist_areas: None,
             key_hints: None,
             search_bounds: Rect::default(),
             overlay_areas: None,
+            overlay_content: None,
             toast: None,
         }
     }

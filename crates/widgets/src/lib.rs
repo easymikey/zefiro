@@ -20,7 +20,7 @@ pub mod screen;
 pub mod spectrum;
 pub mod status_line;
 #[cfg(test)]
-#[path = "../tests/unit/fixtures.rs"]
+#[path = "../tests/support/fixtures.rs"]
 mod test_support;
 pub mod theme;
 pub mod toast;

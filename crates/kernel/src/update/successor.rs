@@ -23,8 +23,26 @@ impl Successor {
         match self {
             Successor::Preloaded(track)
             | Successor::Repeating(track)
-            | Successor::Queued { track, .. }
             | Successor::Following(track) => Some(track),
+            Successor::Queued {
+                track,
+                queue_index: _queue_index,
+                index: _index,
+            } => Some(track),
+            Successor::Nothing => None,
+        }
+    }
+
+    pub(crate) fn into_track(self) -> Option<Arc<Track>> {
+        match self {
+            Successor::Preloaded(track)
+            | Successor::Repeating(track)
+            | Successor::Following(track) => Some(track),
+            Successor::Queued {
+                track,
+                queue_index: _queue_index,
+                index: _index,
+            } => Some(track),
             Successor::Nothing => None,
         }
     }

@@ -22,7 +22,7 @@ use crate::{
     },
     message::{BrowseRequest, Message, QueueRequest},
     update::{
-        machine::{Unhandled, move_cursor},
+        machine::{Unhandled, replace},
         player::PlaybackParts,
     },
 };
@@ -49,15 +49,15 @@ pub(crate) fn update(
     match request {
         BrowseRequest::CursorBy { rows } => {
             let moved = workspace.browse.cursor.step(rows);
-            move_cursor(&mut workspace.browse.cursor, moved)
+            replace(&mut workspace.browse.cursor, moved).map(|()| Cmd::none())
         }
         BrowseRequest::SelectFirst => {
             let moved = workspace.browse.cursor.first();
-            move_cursor(&mut workspace.browse.cursor, moved)
+            replace(&mut workspace.browse.cursor, moved).map(|()| Cmd::none())
         }
         BrowseRequest::SelectLast => {
             let moved = workspace.browse.cursor.last();
-            move_cursor(&mut workspace.browse.cursor, moved)
+            replace(&mut workspace.browse.cursor, moved).map(|()| Cmd::none())
         }
         BrowseRequest::CycleSort => {
             cycle_sort(&mut parts);
@@ -71,7 +71,7 @@ pub(crate) fn update(
         BrowseRequest::PageBy(direction) => {
             let rows = workspace.visible_rows.count();
             let moved = workspace.browse.cursor.page(rows, direction);
-            move_cursor(&mut workspace.browse.cursor, moved)
+            replace(&mut workspace.browse.cursor, moved).map(|()| Cmd::none())
         }
         BrowseRequest::Rescan => full_scan(&mut parts),
         BrowseRequest::SavePlaylist(name) => {
@@ -210,11 +210,10 @@ fn dequeue(
     queue: &mut Vec<TrackSource>,
     track_source: &TrackSource,
 ) -> Result<Cmd, Unhandled> {
-    let before = queue.len();
-    queue.retain(|queued| queued != track_source);
-    if queue.len() == before {
+    if !queue.contains(track_source) {
         return Err(Unhandled);
     }
+    queue.retain(|queued| queued != track_source);
     Ok(Cue::QueueChanged.into())
 }
 

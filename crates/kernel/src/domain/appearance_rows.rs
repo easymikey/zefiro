@@ -19,12 +19,10 @@ use crate::domain::{
         AppearanceControl,
         AppearanceField,
         AppearanceRow,
-        AppearanceRowChoice,
         Choice,
         OptionCount,
         OptionIndex,
     },
-    theme::ThemeName,
 };
 
 const fn option_count(count: usize) -> OptionCount {
@@ -36,11 +34,6 @@ const fn option_count(count: usize) -> OptionCount {
 
 const PRESETS: [AppearancePreset; 2] =
     [AppearancePreset::Stock, AppearancePreset::Noir];
-
-const PRESET_THEMES: [Option<ThemeName>; 2] = [
-    AppearancePreset::Stock.theme(),
-    AppearancePreset::Noir.theme(),
-];
 
 pub const COVER_MODES: [CoverMode; 4] = [
     CoverMode::Vinyl,
@@ -79,55 +72,46 @@ pub static APPEARANCE_ROWS: [AppearanceRow; 9] = [
         field: AppearanceField::Preset,
         control: AppearanceControl::Cycle(option_count(PRESETS.len())),
         cue: Some(Cue::LayoutChanged),
-        theme_names: &PRESET_THEMES,
     },
     AppearanceRow {
         field: AppearanceField::CoverMode,
         control: AppearanceControl::Cycle(option_count(COVER_MODES.len())),
         cue: None,
-        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::CoverBrackets,
         control: AppearanceControl::Toggle,
         cue: None,
-        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::FormatChips,
         control: AppearanceControl::Toggle,
         cue: None,
-        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::SpeedChip,
         control: AppearanceControl::Cycle(option_count(SPEED_CHIPS.len())),
         cue: None,
-        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::ProgressTime,
         control: AppearanceControl::Toggle,
         cue: None,
-        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::KeyHints,
         control: AppearanceControl::Toggle,
         cue: None,
-        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::Animations,
         control: AppearanceControl::Toggle,
         cue: None,
-        theme_names: &[],
     },
     AppearanceRow {
         field: AppearanceField::LayoutMode,
         control: AppearanceControl::Cycle(option_count(LAYOUT_MODES.len())),
         cue: Some(Cue::LayoutChanged),
-        theme_names: &[],
     },
 ];
 
@@ -146,19 +130,6 @@ impl AppearanceField {
             | (AppearanceField::LayoutMode, [.., row]) => row,
         }
     }
-}
-
-#[must_use]
-pub fn appearance_row_choices(
-    appearance_settings: AppearanceSettings,
-) -> Vec<AppearanceRowChoice> {
-    APPEARANCE_ROWS
-        .iter()
-        .map(|row| AppearanceRowChoice {
-            row,
-            choice: field_choice(row.field, appearance_settings),
-        })
-        .collect()
 }
 
 fn option_at<Choices: Copy, const N: usize>(
@@ -275,10 +246,9 @@ mod tests {
             FormatChips,
             preset_appearance,
         },
-        appearance_rows::{APPEARANCE_ROWS, appearance_patch, appearance_row_choices},
+        appearance_rows::{APPEARANCE_ROWS, appearance_patch, field_choice},
         cue::Cue,
         setting_row::{AppearanceField, Choice, OptionCount, OptionIndex},
-        theme::ThemeName,
     };
 
     fn option_at_row(field: AppearanceField, option_index: usize) -> OptionIndex {
@@ -296,23 +266,6 @@ mod tests {
                 assert_eq!(row.cue, None, "{row:?}");
             }
         }
-    }
-
-    #[test]
-    fn appearance_row_choices_copies_the_cue_from_its_appearance_row() {
-        let rows = appearance_row_choices(AppearanceSettings::default());
-        let layout_row = APPEARANCE_ROWS
-            .into_iter()
-            .find(|row| row.field == AppearanceField::LayoutMode)
-            .unwrap();
-        let appearance_row_choice = rows
-            .into_iter()
-            .find(|appearance_row_choice| {
-                appearance_row_choice.row.field == layout_row.field
-            })
-            .unwrap();
-
-        assert_eq!(appearance_row_choice.row.cue, Some(Cue::LayoutChanged));
     }
 
     #[test]
@@ -348,16 +301,15 @@ mod tests {
     }
 
     #[test]
-    fn appearance_row_choices_reads_the_stock_appearance_as_position_zero_for_every_row()
-     {
-        let rows = appearance_row_choices(AppearanceSettings::default());
+    fn field_choice_reads_the_stock_appearance_as_position_zero_for_every_row() {
         let zero = OptionCount::new(1).unwrap().index(0).unwrap();
-        assert!(
-            rows.iter()
-                .all(|appearance_row_choice| appearance_row_choice.choice
-                    == Choice::Option(zero)),
-            "{rows:?}"
-        );
+        for row in APPEARANCE_ROWS {
+            assert_eq!(
+                field_choice(row.field, AppearanceSettings::default()),
+                Choice::Option(zero),
+                "{row:?}"
+            );
+        }
     }
 
     #[rstest]
@@ -370,7 +322,7 @@ mod tests {
     #[case::key_hints(AppearanceField::KeyHints, 1)]
     #[case::animations(AppearanceField::Animations, 1)]
     #[case::layout_mode(AppearanceField::LayoutMode, 2)]
-    fn appearance_row_choices_is_the_inverse_of_appearance_patch(
+    fn field_choice_is_the_inverse_of_appearance_patch(
         #[case] field: AppearanceField,
         #[case] option_index: usize,
     ) {
@@ -382,13 +334,10 @@ mod tests {
         let patch = appearance_patch(row.field, option).unwrap();
         let appearance_settings = AppearanceSettings::default().patched(patch);
 
-        let rows = appearance_row_choices(appearance_settings);
-        let appearance_row_choice = rows
-            .into_iter()
-            .find(|appearance_row_choice| appearance_row_choice.row.field == row.field)
-            .unwrap();
-
-        assert_eq!(appearance_row_choice.choice, Choice::Option(option));
+        assert_eq!(
+            field_choice(row.field, appearance_settings),
+            Choice::Option(option)
+        );
     }
 
     #[test]
@@ -421,15 +370,10 @@ mod tests {
         let patch = appearance_patch(AppearanceField::Preset, option).unwrap();
         let appearance_settings = AppearanceSettings::default().patched(patch);
 
-        let rows = appearance_row_choices(appearance_settings);
-        let appearance_row_choice = rows
-            .into_iter()
-            .find(|appearance_row_choice| {
-                appearance_row_choice.row.field == AppearanceField::Preset
-            })
-            .unwrap();
-
-        assert_eq!(appearance_row_choice.choice, Choice::Option(option));
+        assert_eq!(
+            field_choice(AppearanceField::Preset, appearance_settings),
+            Choice::Option(option)
+        );
     }
 
     #[test]
@@ -440,27 +384,9 @@ mod tests {
         };
         let appearance_settings = AppearanceSettings::default().patched(patch);
 
-        let rows = appearance_row_choices(appearance_settings);
-        let appearance_row_choice = rows
-            .into_iter()
-            .find(|appearance_row_choice| {
-                appearance_row_choice.row.field == AppearanceField::Preset
-            })
-            .unwrap();
-
-        assert_eq!(appearance_row_choice.choice, Choice::Mixed);
-    }
-
-    #[test]
-    fn the_preset_rows_options_carry_a_theme_per_preset() {
-        let row = APPEARANCE_ROWS
-            .iter()
-            .find(|row| row.field == AppearanceField::Preset)
-            .unwrap();
-
         assert_eq!(
-            row.theme_names,
-            &[None, Some(ThemeName::from_static("noir"))]
+            field_choice(AppearanceField::Preset, appearance_settings),
+            Choice::Mixed
         );
     }
 }

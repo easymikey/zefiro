@@ -111,15 +111,16 @@ sleep_presets = [15, 30, 60]
 
 ### Key contexts
 
-A `[keymap]` entry has two spellings. A chord string binds the action in the
-`global` context:
+A `[keymap]` entry has two spellings. A chord string binds the action in its
+own context, the one its built-in chords live in:
 
 ```toml
 [keymap]
 next = "N"
 ```
 
-A table also names the context:
+A table also names the context; a table without `context` keeps the action's
+own context too:
 
 ```toml
 [keymap]
@@ -188,7 +189,7 @@ Path: `<config dir>/sifr/sifr-ui.toml`, beside `config.toml`.
 |---|---|---|---|
 | `mode` | `"vinyl"`, `"plain"`, `"milkdrop"` or `"off"` | `"vinyl"` | Cover treatment. `vinyl` and `plain` draw an image and size the cover from its aspect ratio. `milkdrop` draws text cells with no image. `off` draws no cover. |
 | `cover_cells.width` / `cover_cells.height` | integer / integer | `20` / `8` | Cell size of the cover. Used only by `milkdrop`. |
-| `brackets` | bool | `false` | Draw corner brackets around the cover. |
+| `brackets` | bool | `false` | Draw corner brackets around the cover and around the card's text column. |
 
 ### `[card]`
 

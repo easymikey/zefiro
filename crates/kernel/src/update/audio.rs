@@ -67,8 +67,8 @@ pub(crate) fn update(
         AudioEvent::Error(error) => self::error(playback_parts, error, now),
         AudioEvent::OutputLost(error) => output_lost(playback_parts, error, now),
         AudioEvent::DevicesListed(devices) => {
-            replace(&mut playback_parts.settings.output_devices, devices)?;
-            Ok(Cmd::none())
+            replace(&mut playback_parts.settings.output_devices, devices)
+                .map(|()| Cmd::none())
         }
         AudioEvent::DeviceFellBack(output_device) => {
             fell_back(playback_parts, &output_device)
@@ -305,7 +305,9 @@ fn move_onto(
             move_onto_preloaded(playlist, queue, &committed);
         }
         Successor::Queued {
-            queue_index, index, ..
+            queue_index,
+            index,
+            track: _track,
         } => {
             queue.drain(..=queue_index);
             cursor_to(playlist, index);

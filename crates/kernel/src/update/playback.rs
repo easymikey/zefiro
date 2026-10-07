@@ -21,7 +21,7 @@ use crate::{
             stamp::{Anchor, Stamp},
         },
         playlist::PlaylistMessage,
-        transport::TransportMessage,
+        transport::{TransportMessage, next_sleep},
     },
 };
 
@@ -132,12 +132,20 @@ fn cycle_sleep(
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
     let candidate = playback_parts.revisions.effects.next();
+    let sleep_timer = next_sleep(
+        playback_parts.transport.sleep_timer,
+        playback_parts
+            .settings
+            .audio_settings
+            .sleep_presets
+            .as_slice(),
+        now,
+    );
     let cmd = playback_parts
         .transport
         .transition(TransportMessage::CycleSleep {
-            presets: playback_parts.settings.audio_settings.sleep_presets.clone(),
+            sleep_timer,
             revision: candidate,
-            now,
         })?;
     playback_parts.revisions.effects = candidate;
     playback_parts.revisions.sleep = candidate;
@@ -214,7 +222,8 @@ fn release(
         playback_parts.player,
         Player::Paused {
             by: PausedBy::Overlay,
-            ..
+            track: _track,
+            position: _position
         }
     );
     if lost(playback_parts) && held {
