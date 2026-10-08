@@ -56,4 +56,8 @@ impl Catalog {
             album_level: None,
         }
     }
+
+    pub fn level(&mut self) -> &mut BrowseLevel {
+        self.album_level.as_mut().unwrap_or(&mut self.albums_level)
+    }
 }

@@ -1,15 +1,19 @@
+use std::sync::Arc;
+
 use crate::{
     cmd::{AudioCmd, Cmd, Effect, Playback, TrackLoad},
     domain::{
         driver::{DriverError, DriverName, DriverStatus, Drivers},
         player::Player,
-        revision::Revisions,
+        revision::{Revision, Revisions},
+        server::Download,
         supervision::{Decision, Supervision, decide_restart},
         time::Moment,
         toast::Toast,
+        track::Track,
         transport::Transport,
     },
-    message::{DriverEvent, Message},
+    message::{DriverEvent, Message, PlaybackRequest},
     update::machine::{Machine, Unhandled},
 };
 
@@ -114,6 +118,7 @@ fn restart_if_allowed(
 pub(crate) struct ResumeParts<'a> {
     pub(crate) player: &'a Player,
     pub(crate) transport: &'a Transport,
+    pub(crate) downloads: &'a [Download],
     pub(crate) revisions: &'a mut Revisions,
 }
 
@@ -125,62 +130,89 @@ pub(crate) fn resume_driver(
     let ResumeParts {
         player,
         transport,
+        downloads,
         revisions,
     } = parts;
-    let (track, playback) = match (driver_name, player) {
-        (
-            DriverName::Audio,
-            Player::Playing {
-                track,
-                playhead: _playhead,
-                preloaded: _preloaded,
-            },
-        ) => (track, Playback::Playing),
-        (DriverName::Audio, Player::Loading(track)) => (track, Playback::Playing),
-        (
-            DriverName::Audio,
-            Player::Paused {
-                track,
-                position: _position,
-                by: _by,
-            },
-        ) => (track, Playback::Paused),
-        (DriverName::Audio, Player::Stopped)
-        | (
-            DriverName::Library
-            | DriverName::Config
-            | DriverName::Macos
-            | DriverName::Remote,
-            _,
-        ) => {
-            return Cmd::none();
-        }
-    };
-    let Some(track_load) = track
-        .local_path()
-        .and_then(|_path| TrackLoad::for_track(track, revisions.issue_effect()))
-    else {
+    let Some((track, playback)) = (match driver_name {
+        DriverName::Audio => resumed(player),
+        DriverName::Library
+        | DriverName::Config
+        | DriverName::Macos
+        | DriverName::Remote => None,
+    }) else {
         return Cmd::none();
+    };
+    let audio_cmds = [
+        AudioCmd::SetPlayback(playback),
+        AudioCmd::SetSpeed(transport.speed),
+    ];
+    let candidate = revisions.effects.next();
+    let [download, preloaded] = [Some(track), player.preloaded()].map(|held| {
+        held.and_then(|held| {
+            downloads
+                .iter()
+                .find(|download| held.holds(&download.media_fetch))
+        })
+    });
+    let Some(load) = track_load(track, download, candidate) else {
+        return download.map_or_else(
+            || Cmd::message(Message::Playback(PlaybackRequest::Stop)),
+            |_download| Cmd::from_iter(audio_cmds.map(Effect::Audio)),
+        );
     };
     let preload = player
         .preloaded()
-        .and_then(|next| TrackLoad::for_track(next, track_load.revision))
-        .map(|next_load| Effect::Audio(AudioCmd::Preload(next_load)));
+        .and_then(|next| track_load(next, preloaded, candidate));
+    if download.is_none() || (preloaded.is_none() && preload.is_some()) {
+        revisions.effects = candidate;
+    }
     Cmd::from_iter(
-        [Effect::Audio(AudioCmd::Load(track_load))]
-            .into_iter()
-            .chain([
-                Effect::Audio(AudioCmd::Seek(player.position_at(now))),
-                Effect::Audio(AudioCmd::SetPlayback(playback)),
-                Effect::Audio(AudioCmd::SetSpeed(transport.speed)),
-            ])
-            .chain(preload),
+        [
+            AudioCmd::Load(load),
+            AudioCmd::Seek(player.position_at(now)),
+        ]
+        .into_iter()
+        .chain(audio_cmds)
+        .chain(preload.map(AudioCmd::Preload))
+        .map(Effect::Audio),
+    )
+}
+
+fn resumed(player: &Player) -> Option<(&Arc<Track>, Playback)> {
+    match player {
+        Player::Playing {
+            track,
+            playhead: _playhead,
+            preloaded: _preloaded,
+        } => Some((track, Playback::Playing)),
+        Player::Loading(track) => Some((track, Playback::Playing)),
+        Player::Paused {
+            track,
+            position: _position,
+            by: _by,
+        } => Some((track, Playback::Paused)),
+        Player::Stopped => None,
+    }
+}
+
+fn track_load(
+    track: &Track,
+    download: Option<&Download>,
+    revision: Revision,
+) -> Option<TrackLoad> {
+    download.map_or_else(
+        || TrackLoad::for_track(track, revision),
+        |download| TrackLoad::fetched(track, download),
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc, time::Duration};
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+        time::Duration,
+    };
 
     use rstest::rstest;
 
@@ -191,15 +223,26 @@ mod tests {
             driver::{DriverError, DriverName, DriverStatus, Drivers},
             player::{PausedBy, Player},
             playhead::Playhead,
-            revision::Revisions,
+            revision::{Revision, Revisions},
+            server::{
+                CacheKey,
+                Download,
+                Endpoint,
+                Fetched,
+                MediaFetch,
+                START_MARGIN,
+                ServerName,
+                ServerTrackId,
+                Session,
+            },
             speed::Speed,
             supervision::Decision,
             time::Moment,
             toast::Toast,
-            track::Track,
+            track::{Track, TrackSource},
             transport::Transport,
         },
-        message::Message,
+        message::{Message, PlaybackRequest},
         update::{
             driver::{
                 DriverDeath,
@@ -346,6 +389,7 @@ mod tests {
 
     struct ResumeRow {
         player: Player,
+        downloads: Vec<Download>,
         driver_name: DriverName,
         cmd: Cmd,
     }
@@ -356,6 +400,48 @@ mod tests {
 
     fn next_track() -> Arc<Track> {
         Arc::new(Track::listed(Path::new("/music/b.flac")))
+    }
+
+    fn server_track(id: &str) -> Arc<Track> {
+        Arc::new(Track::from(TrackSource::Server {
+            server_name: ServerName::new("home"),
+            server_track_id: ServerTrackId::new(id),
+        }))
+    }
+
+    fn download(id: &str, revision: Revision, downloaded: u64) -> Download {
+        let server_name = ServerName::new("home");
+        let server_track_id = ServerTrackId::new(id);
+        Download {
+            media_fetch: MediaFetch {
+                cache_key: CacheKey::new(&server_name, &server_track_id, "flac"),
+                server_name,
+                server_track_id,
+                session: Session::new(
+                    Endpoint::parse("https://music.example.com").unwrap(),
+                    "u=ann&t=token&s=salt",
+                ),
+                first_byte: 0,
+                revision,
+            },
+            fetched: Some(Fetched {
+                media_path: PathBuf::from(format!("/cache/home/{id}.flac")),
+                downloaded,
+                byte_len: 4 * START_MARGIN,
+            }),
+        }
+    }
+
+    fn fetch_revision() -> Revision {
+        Revision::default().next().next().next()
+    }
+
+    fn served(id: &str) -> TrackLoad {
+        TrackLoad::fetched(
+            &server_track(id),
+            &download(id, fetch_revision(), START_MARGIN),
+        )
+        .unwrap()
     }
 
     fn reloaded(position: Duration, playback: Playback) -> Cmd {
@@ -381,11 +467,13 @@ mod tests {
             ),
             preloaded: None,
         },
+        downloads: Vec::new(),
         driver_name: DriverName::Audio,
         cmd: reloaded(Duration::from_secs(5), Playback::Playing),
     })]
     #[case::a_loading_track_resumes_playing(ResumeRow {
         player: Player::Loading(track()),
+        downloads: Vec::new(),
         driver_name: DriverName::Audio,
         cmd: reloaded(Duration::ZERO, Playback::Playing),
     })]
@@ -395,31 +483,124 @@ mod tests {
             position: Duration::from_secs(3),
             by: PausedBy::Listener,
         },
+        downloads: Vec::new(),
         driver_name: DriverName::Audio,
         cmd: reloaded(Duration::from_secs(3), Playback::Paused),
     })]
     #[case::a_stopped_player_resumes_nothing(ResumeRow {
         player: Player::Stopped,
+        downloads: Vec::new(),
         driver_name: DriverName::Audio,
         cmd: Cmd::none(),
     })]
     #[case::a_library_restart_resumes_nothing(ResumeRow {
         player: Player::Loading(track()),
+        downloads: Vec::new(),
         driver_name: DriverName::Library,
         cmd: Cmd::none(),
     })]
+    #[case::a_playing_server_track_resumes(ResumeRow {
+        player: Player::Playing {
+            track: server_track("tr-1"),
+            playhead: Playhead::anchored(
+                Duration::from_secs(5),
+                Moment::default(),
+                Speed::default(),
+            ),
+            preloaded: Some(server_track("tr-2")),
+        },
+        downloads: vec![
+            download("tr-1", fetch_revision(), START_MARGIN),
+            download("tr-2", fetch_revision(), START_MARGIN),
+        ],
+        driver_name: DriverName::Audio,
+        cmd: Cmd::from_iter([
+            Effect::Audio(AudioCmd::Load(served("tr-1"))),
+            Effect::Audio(AudioCmd::Seek(Duration::from_secs(5))),
+            Effect::Audio(AudioCmd::SetPlayback(Playback::Playing)),
+            Effect::Audio(AudioCmd::SetSpeed(Speed::default())),
+            Effect::Audio(AudioCmd::Preload(served("tr-2"))),
+        ]),
+    })]
+    #[case::a_local_track_resumes_before_a_server_successor(ResumeRow {
+        player: Player::Playing {
+            track: track(),
+            playhead: Playhead::anchored(
+                Duration::from_secs(5),
+                Moment::default(),
+                Speed::default(),
+            ),
+            preloaded: Some(server_track("tr-2")),
+        },
+        downloads: vec![download("tr-2", fetch_revision(), START_MARGIN)],
+        driver_name: DriverName::Audio,
+        cmd: reloaded(Duration::from_secs(5), Playback::Playing)
+            .then(Cmd::effect(Effect::Audio(AudioCmd::Preload(served("tr-2"))))),
+    })]
+    #[case::a_server_track_resumes_before_a_local_successor(ResumeRow {
+        player: Player::Playing {
+            track: server_track("tr-1"),
+            playhead: Playhead::anchored(
+                Duration::from_secs(5),
+                Moment::default(),
+                Speed::default(),
+            ),
+            preloaded: Some(next_track()),
+        },
+        downloads: vec![download("tr-1", fetch_revision(), START_MARGIN)],
+        driver_name: DriverName::Audio,
+        cmd: Cmd::from_iter([
+            Effect::Audio(AudioCmd::Load(served("tr-1"))),
+            Effect::Audio(AudioCmd::Seek(Duration::from_secs(5))),
+            Effect::Audio(AudioCmd::SetPlayback(Playback::Playing)),
+            Effect::Audio(AudioCmd::SetSpeed(Speed::default())),
+            Effect::Audio(AudioCmd::Preload(
+                TrackLoad::for_track(
+                    &next_track(),
+                    Revisions::default().issue_effect(),
+                )
+                .unwrap(),
+            )),
+        ]),
+    })]
+    #[case::a_loading_server_track_waits_for_its_download(ResumeRow {
+        player: Player::Loading(server_track("tr-1")),
+        downloads: vec![download("tr-1", fetch_revision(), 0)],
+        driver_name: DriverName::Audio,
+        cmd: Cmd::from_iter([
+            Effect::Audio(AudioCmd::SetPlayback(Playback::Playing)),
+            Effect::Audio(AudioCmd::SetSpeed(Speed::default())),
+        ]),
+    })]
+    #[case::a_server_track_without_its_download_stops(ResumeRow {
+        player: Player::Paused {
+            track: server_track("tr-1"),
+            position: Duration::from_secs(3),
+            by: PausedBy::Listener,
+        },
+        downloads: Vec::new(),
+        driver_name: DriverName::Audio,
+        cmd: Cmd::message(Message::Playback(PlaybackRequest::Stop)),
+    })]
     fn an_audio_restart_resumes_the_player(#[case] row: ResumeRow) {
+        let ResumeRow {
+            player,
+            downloads,
+            driver_name,
+            cmd,
+        } = row;
         let mut revisions = Revisions::default();
         let effects = resume_driver(
             ResumeParts {
-                player: &row.player,
+                player: &player,
                 transport: &Transport::default(),
+                downloads: &downloads,
                 revisions: &mut revisions,
             },
-            row.driver_name,
+            driver_name,
             Moment::default(),
         );
-        assert_eq!(effects, row.cmd);
+        assert_eq!(effects, cmd);
     }
 
     #[test]
@@ -442,6 +623,7 @@ mod tests {
                     speed,
                     ..Transport::default()
                 },
+                downloads: &[],
                 revisions: &mut Revisions::default(),
             },
             DriverName::Audio,

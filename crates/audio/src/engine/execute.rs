@@ -65,7 +65,6 @@ fn execute(effect: EngineEffect, deck: &mut Deck) -> Option<AudioMessage> {
         }
         EngineEffect::DropOutgoing => quietly(deck, Deck::drop_outgoing),
         EngineEffect::SetSpeed(speed) => quietly(deck, |deck| deck.set_speed(speed)),
-        EngineEffect::Clear(speed) => quietly(deck, |deck| start_load(deck, speed)),
         EngineEffect::DropPreload => quietly(deck, Deck::drop_preload),
         EngineEffect::Promote(gain) => quietly(deck, |deck| promote(deck, gain)),
         EngineEffect::Report => report(deck),
@@ -158,6 +157,7 @@ mod tests {
     };
 
     use kernel::{
+        cmd::Playback,
         domain::{revision::Revision, settings::AudioSettings},
         update::machine::Driver,
     };
@@ -171,14 +171,19 @@ mod tests {
             envelope::EnvelopeControl,
             feed::serve,
             mixer::{DECLICK_FRAMES, Mixer, RETIRED_SLOTS},
-            output::tests::mixed_output,
-            source::{DecodedTrack, decode, tests::ramp_file},
+            output::{Fader, Output, tests::mixed_output},
+            source::{
+                DecodedTrack,
+                decode,
+                tests::{decoded, ramp_file},
+            },
             tests::{deck_with_detached_output, played, pulled, track},
         },
         engine::{
             effect::EngineEffect,
             execute::execute,
             message::{AudioMessage, EngineMessage, Signals, SinkRole},
+            tests::assert_same,
         },
         gain::Gain,
         tap,
@@ -407,5 +412,161 @@ mod tests {
                 .map(EnvelopeControl::volume),
             Some(Gain::from_amplitude(0.5))
         );
+    }
+
+    #[test]
+    fn a_paused_resume_holds_the_current_voice_at_the_position() {
+        let target = Duration::from_secs(5);
+        let mut listening = Listening::playing_ramp(80_000);
+        let file = ramp_file(1, 80_000);
+        listening.deck.stage(DecodedTrack {
+            revision: Revision::default().next().next(),
+            decoder: decode(file.path()).unwrap(),
+        });
+        let start = listening.heard.len();
+
+        assert!(
+            listening
+                .execute(EngineEffect::Resume {
+                    gain: Gain::UNITY,
+                    position: target,
+                    playback: Playback::Paused,
+                })
+                .is_none()
+        );
+        listening.pull(8_000);
+        thread::sleep(Duration::from_millis(100));
+        listening.pull(8_000);
+
+        assert!(listening.heard.len() <= start + usize::from(DECLICK_FRAMES));
+        let Some(AudioMessage::Engine(EngineMessage::Reported(Some(reported)))) =
+            listening.execute(EngineEffect::Report)
+        else {
+            panic!("a report answers the position");
+        };
+        assert!(reported >= target && reported < target + Duration::from_millis(1));
+    }
+
+    fn crossfade_revisions() -> [Revision; 2] {
+        let fading = Revision::default().next();
+        [fading, fading.next()]
+    }
+
+    #[test]
+    fn a_cancelled_crossfade_holds_the_current_at_unity_and_silences_the_incoming() {
+        let [current_revision, incoming_revision] = crossfade_revisions();
+        let mut deck = deck_with_detached_output();
+        let (file, mut current_source, mut current_envelope, current, _current_feed) =
+            played(100, current_revision);
+        let (
+            _incoming_file,
+            mut incoming_source,
+            mut incoming_envelope,
+            incoming,
+            _incoming_feed,
+        ) = played(100, incoming_revision);
+        let output = deck.output.as_mut().unwrap();
+        output.current_control = Some(current);
+        output.incoming_fader = Some(Fader { control: incoming });
+
+        for effect in [
+            EngineEffect::Crossfade {
+                duration: Duration::from_millis(10),
+                incoming: Gain::UNITY,
+            },
+            EngineEffect::CancelCrossfade,
+        ] {
+            assert!(execute(effect, &mut deck).is_none());
+        }
+
+        let held = pulled(&mut current_source, &mut current_envelope, 1_024);
+        let silenced = pulled(&mut incoming_source, &mut incoming_envelope, 1_024);
+        assert_eq!(held.len(), 800);
+        assert!(
+            held.iter()
+                .zip(&decoded(&file))
+                .all(|(sample, unity)| (sample - unity).abs() < 1e-6)
+        );
+        assert_eq!(silenced.len(), 800);
+        assert!(silenced.iter().all(|sample| sample.abs() < 1e-6));
+        for (revision, role) in [
+            (current_revision, SinkRole::Current),
+            (incoming_revision, SinkRole::Incoming),
+        ] {
+            assert_same(
+                deck.take_signals(revision),
+                Some(AudioMessage::SignalsTaken {
+                    role,
+                    signals: Signals::FINISHED,
+                }),
+            );
+        }
+    }
+
+    #[rstest]
+    #[case(
+        |output: &mut Output, fading, rising| {
+            output.current_control = Some(fading);
+            output.incoming_fader = Some(Fader { control: rising });
+        },
+        |duration, incoming| EngineEffect::Crossfade { duration, incoming },
+        [SinkRole::Current, SinkRole::Incoming]
+    )]
+    #[case(
+        |output: &mut Output, fading, rising| {
+            output.outgoing_fader = Some(Fader { control: fading });
+            output.current_control = Some(rising);
+        },
+        |duration, current| EngineEffect::Ramp { duration, current },
+        [SinkRole::Outgoing, SinkRole::Current]
+    )]
+    fn a_crossfade_fades_out_the_current_and_raises_the_incoming_volume(
+        #[case] place: fn(&mut Output, EnvelopeControl, EnvelopeControl),
+        #[case] effect: fn(Duration, Gain) -> EngineEffect,
+        #[case] roles: [SinkRole; 2],
+    ) {
+        let revisions = crossfade_revisions();
+        let mut deck = deck_with_detached_output();
+        let (
+            _fading_file,
+            mut fading_source,
+            mut fading_envelope,
+            fading,
+            _fading_feed,
+        ) = played(100, revisions[0]);
+        let (rising_file, mut rising_source, mut rising_envelope, rising, _rising_feed) =
+            played(100, revisions[1]);
+        place(deck.output.as_mut().unwrap(), fading, rising);
+        let gain = Gain::from_amplitude(0.5);
+
+        assert!(execute(effect(Duration::from_millis(10), gain), &mut deck).is_none());
+
+        let faded = pulled(&mut fading_source, &mut fading_envelope, 1_024);
+        let raised = pulled(&mut rising_source, &mut rising_envelope, 1_024);
+        let plain = decoded(&rising_file);
+        assert_eq!(faded.len(), 800);
+        assert!(faded[..40].iter().any(|sample| sample.abs() > 1e-6));
+        assert!(faded[80..].iter().all(|sample| sample.abs() < 1e-6));
+        assert_eq!(raised.len(), 800);
+        assert!(raised[..40].iter().zip(&plain).all(|(sample, unity)| {
+            sample.abs() < unity.abs() * gain.amplitude() + 1e-6
+        }));
+        assert!(
+            raised[80..]
+                .iter()
+                .zip(&plain[80..])
+                .all(|(sample, unity)| {
+                    (sample - unity * gain.amplitude()).abs() < 1e-6
+                })
+        );
+        for (revision, role) in revisions.into_iter().zip(roles) {
+            assert_same(
+                deck.take_signals(revision),
+                Some(AudioMessage::SignalsTaken {
+                    role,
+                    signals: Signals(Signals::RAMPED.0 | Signals::FINISHED.0),
+                }),
+            );
+        }
     }
 }

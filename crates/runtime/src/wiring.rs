@@ -82,7 +82,7 @@ impl Wiring {
         model: &Model,
     ) -> Option<Message> {
         self.ports.hang_up(driver_name);
-        drop(self.ports.join(driver_name));
+        self.ports.join(driver_name);
         match self.respawn(driver_name, &model.settings.audio_settings) {
             Ok(()) => None,
             Err(spawn) => Some(Message::Driver {
@@ -170,7 +170,7 @@ pub(crate) fn await_exits(
 pub(crate) fn join_exited(ports: &mut Ports, reported_driver_names: &[DriverName]) {
     for row in registry::REGISTRY {
         if reported_driver_names.contains(&row.driver_name) {
-            drop(ports.join(row.driver_name));
+            ports.join(row.driver_name);
         }
     }
 }

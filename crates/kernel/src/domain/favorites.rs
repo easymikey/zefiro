@@ -1,6 +1,23 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, ops::Not, sync::Arc};
 
 use crate::domain::track::TrackSource;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Favorite {
+    Yes,
+    No,
+}
+
+impl Not for Favorite {
+    type Output = Self;
+
+    fn not(self) -> Self {
+        match self {
+            Self::Yes => Self::No,
+            Self::No => Self::Yes,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Favorites(Arc<HashSet<TrackSource>>);
@@ -11,11 +28,30 @@ impl Favorites {
         self.0.contains(track_source)
     }
 
-    pub fn toggle(&mut self, track_source: TrackSource) {
-        let set = Arc::make_mut(&mut self.0);
-        if !set.remove(&track_source) {
-            set.insert(track_source);
+    #[must_use]
+    pub fn favorite(&self, track_source: &TrackSource) -> Favorite {
+        if self.is_favorite(track_source) {
+            Favorite::Yes
+        } else {
+            Favorite::No
         }
+    }
+
+    pub fn set(&mut self, track_source: TrackSource, favorite: Favorite) {
+        let set = Arc::make_mut(&mut self.0);
+        match favorite {
+            Favorite::Yes => {
+                set.insert(track_source);
+            }
+            Favorite::No => {
+                set.remove(&track_source);
+            }
+        }
+    }
+
+    pub fn toggle(&mut self, track_source: TrackSource) {
+        let favorite = !self.favorite(&track_source);
+        self.set(track_source, favorite);
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &TrackSource> {

@@ -1,10 +1,5 @@
-use std::{
-    collections::{HashSet, VecDeque},
-    mem::discriminant,
-};
-
 use kernel::{
-    cmd::{AudioCmd, Cmd, Cmds},
+    cmd::Cmd,
     domain::{revision::Revision, transport::OutputError},
     message::{AudioError, AudioEvent},
     update::machine::{LoopEffect, Machine, Unhandled, each_handled},
@@ -18,12 +13,13 @@ use crate::{
         source::{DecodedTrack, PreloadMode, TrackDecoder},
     },
     engine::{
+        closed::batched,
         effect::{AudioLoopCmd, EngineEffect},
         message::{AudioMessage, ClosedMessage, EngineMessage, signalled},
         revisions::JobRevisions,
         state::{Closed, DeviceChoice, Engine, EngineState},
     },
-    error::{Error, decode_error_of, preload_error},
+    error::{Error, decode_error_of},
 };
 
 impl Machine for AudioDriver {
@@ -45,6 +41,12 @@ impl Machine for AudioDriver {
             AudioMessage::Deck(DeckEvent::Woke(revision)) => Ok(Cmd::effect(
                 LoopEffect::Execute(EngineEffect::TakeSignals(revision)),
             )),
+            AudioMessage::Deck(DeckEvent::Buffering(revision)) => {
+                Ok(Cmd::message(AudioEvent::Buffering(revision)))
+            }
+            AudioMessage::Deck(DeckEvent::Buffered(revision)) => {
+                Ok(Cmd::message(AudioEvent::Buffered(revision)))
+            }
             AudioMessage::Decoded { revision, result } => {
                 self.engine.decoded(revision, result)
             }
@@ -70,41 +72,6 @@ impl Machine for AudioDriver {
             AudioMessage::Fed => Ok(Cmd::none()),
         }
     }
-}
-
-pub(crate) fn keep_last_idempotent(audio_cmds: Vec<AudioCmd>) -> Vec<AudioCmd> {
-    let (_seen, kept) = audio_cmds.into_iter().rev().fold(
-        (HashSet::new(), VecDeque::new()),
-        |(mut seen, mut kept), cmd| {
-            let fresh = match &cmd {
-                AudioCmd::Load(_) | AudioCmd::Stop => {
-                    seen.clear();
-                    true
-                }
-                AudioCmd::SetSpeed(_) | AudioCmd::Seek(_) => {
-                    seen.insert(discriminant(&cmd))
-                }
-                AudioCmd::SetPlayback(_)
-                | AudioCmd::Preload(_)
-                | AudioCmd::SetCrossfade(_)
-                | AudioCmd::SetReplayGain(_)
-                | AudioCmd::SetDevice(_)
-                | AudioCmd::ListDevices => true,
-            };
-            if fresh {
-                kept.push_front(cmd);
-            }
-            (seen, kept)
-        },
-    );
-    Vec::from(kept)
-}
-
-pub(crate) fn batched(
-    cmds: Cmds<AudioCmd>,
-    run: impl FnMut(AudioCmd) -> Result<AudioLoopCmd, Unhandled>,
-) -> Result<AudioLoopCmd, Unhandled> {
-    each_handled(keep_last_idempotent(cmds.cmds), run)
 }
 
 impl Machine for Engine {
@@ -206,6 +173,7 @@ impl Engine {
                 let decoded_track = DecodedTrack { revision, decoder };
                 let cmd =
                     self.transition(EngineMessage::Decoded(decoded_track.duration()))?;
+                self.job_revisions.decoded(decoded_track.decoder.download());
                 Ok(
                     Cmd::effect(LoopEffect::Execute(EngineEffect::Stage(
                         decoded_track,
@@ -213,7 +181,10 @@ impl Engine {
                     .then(cmd),
                 )
             }
-            Err(error) => self.failed(decode_error_of(error)),
+            Err(error) => {
+                let (path, error) = decode_error_of(error);
+                self.failed(AudioError::Decode { path, error })
+            }
         }
     }
 
@@ -227,7 +198,10 @@ impl Engine {
                 decoded_track: DecodedTrack { revision, decoder },
                 preload_mode: self.preload_mode().ok_or(Unhandled)?,
             }))),
-            Err(error) => self.failed(preload_error(error)),
+            Err(error) => {
+                let (path, error) = decode_error_of(error);
+                self.failed(AudioError::Preload { path, error })
+            }
         }
     }
 
@@ -285,7 +259,7 @@ mod tests {
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
     use kernel::{
-        cmd::{AudioCmd, Cmds, Effect, Playback},
+        cmd::{AudioCmd, Cmds, Effect},
         domain::{
             bounded::Bounded,
             crossfade::Crossfade,
@@ -298,7 +272,14 @@ mod tests {
             time::Moment,
             track::{AudioFormat, Tags, Track, TrackParts},
         },
-        message::{AudioEvent, BrowseRequest, Message, PlaybackRequest},
+        message::{
+            AudioError,
+            AudioEvent,
+            BrowseRequest,
+            DecodeError,
+            Message,
+            PlaybackRequest,
+        },
         update::{
             machine::{LoopEffect, Machine, Unhandled},
             update,
@@ -315,7 +296,6 @@ mod tests {
         },
         engine::{
             effect::{AudioLoopCmd, EngineEffect},
-            machine::keep_last_idempotent,
             message::{AudioMessage, EngineMessage, Signals, SinkRole, signalled},
             revisions::JobRevisions,
             state::{Engine, EngineState, Live},
@@ -350,11 +330,11 @@ mod tests {
     )]
     #[case::decode_error(
         AudioMessage::Decoded { revision: Revision::default(), result: Err(worker_panicked()) },
-        step(&mut EngineState::Live(live()), EngineMessage::Error(crate::error::decode_error_of(worker_panicked())))
+        step(&mut EngineState::Live(live()), EngineMessage::Error(AudioError::Decode { path: PathBuf::from("/a"), error: DecodeError::Panicked }))
     )]
     #[case::preload_error(
         AudioMessage::Preloaded { revision: Revision::default(), result: Err(worker_panicked()) },
-        step(&mut EngineState::Live(live()), EngineMessage::Error(crate::error::preload_error(worker_panicked())))
+        step(&mut EngineState::Live(live()), EngineMessage::Error(AudioError::Preload { path: PathBuf::from("/a"), error: DecodeError::Panicked }))
     )]
     fn a_landed_error_goes_to_the_engine_without_touching_the_deck(
         #[case] audio_message: AudioMessage,
@@ -528,11 +508,11 @@ mod tests {
             for effect in loop_cmd.effects() {
                 match effect {
                     LoopEffect::Execute(effect) => self.run(effect),
-                    LoopEffect::Run(AudioJob::Decode { path, .. }) => {
-                        self.current_path = Some(path.clone());
+                    LoopEffect::Run(AudioJob::Decode { media_path, .. }) => {
+                        self.current_path = Some(media_path.clone());
                     }
-                    LoopEffect::Run(AudioJob::Preload { path, .. }) => {
-                        self.incoming_path = Some(path.clone());
+                    LoopEffect::Run(AudioJob::Preload { media_path, .. }) => {
+                        self.incoming_path = Some(media_path.clone());
                     }
                     LoopEffect::Run(AudioJob::ListDevices | AudioJob::Feed(_))
                     | LoopEffect::After { .. }
@@ -544,9 +524,7 @@ mod tests {
 
         fn run(&mut self, engine_effect: &EngineEffect) {
             match engine_effect {
-                EngineEffect::Clear(_)
-                | EngineEffect::Silence
-                | EngineEffect::StartLoad(_) => {
+                EngineEffect::Silence | EngineEffect::StartLoad(_) => {
                     self.current_path = None;
                     self.incoming_path = None;
                     self.outgoing_path = None;
@@ -665,78 +643,6 @@ mod tests {
         }
     }
 
-    fn load(path: &str) -> AudioCmd {
-        AudioCmd::Load(kernel::cmd::TrackLoad {
-            path: PathBuf::from(path),
-            decibels: None,
-            revision: Revision::default(),
-        })
-    }
-
-    #[rstest]
-    #[case::two_speeds(
-        vec![
-            AudioCmd::SetSpeed(Speed::clamped(1.5)),
-            AudioCmd::SetSpeed(Speed::clamped(2.0)),
-        ],
-        vec![AudioCmd::SetSpeed(Speed::clamped(2.0))]
-    )]
-    #[case::speed_seek_speed(
-        vec![
-            AudioCmd::SetSpeed(Speed::clamped(1.5)),
-            AudioCmd::Seek(Duration::from_secs(1)),
-            AudioCmd::SetSpeed(Speed::clamped(2.0)),
-        ],
-        vec![
-            AudioCmd::Seek(Duration::from_secs(1)),
-            AudioCmd::SetSpeed(Speed::clamped(2.0)),
-        ]
-    )]
-    #[case::seeks_across_a_load(
-        vec![
-            AudioCmd::Seek(Duration::from_secs(1)),
-            load("/b"),
-            AudioCmd::Seek(Duration::from_secs(2)),
-            AudioCmd::Seek(Duration::from_secs(3)),
-        ],
-        vec![
-            AudioCmd::Seek(Duration::from_secs(1)),
-            load("/b"),
-            AudioCmd::Seek(Duration::from_secs(3)),
-        ]
-    )]
-    #[case::stop_splits(
-        vec![
-            AudioCmd::SetSpeed(Speed::clamped(1.5)),
-            AudioCmd::Stop,
-            AudioCmd::SetSpeed(Speed::clamped(2.0)),
-        ],
-        vec![
-            AudioCmd::SetSpeed(Speed::clamped(1.5)),
-            AudioCmd::Stop,
-            AudioCmd::SetSpeed(Speed::clamped(2.0)),
-        ]
-    )]
-    #[case::others_untouched(
-        vec![
-            AudioCmd::SetPlayback(Playback::Playing),
-            AudioCmd::SetPlayback(Playback::Playing),
-            AudioCmd::ListDevices,
-        ],
-        vec![
-            AudioCmd::SetPlayback(Playback::Playing),
-            AudioCmd::SetPlayback(Playback::Playing),
-            AudioCmd::ListDevices,
-        ]
-    )]
-    #[case::empty(Vec::new(), Vec::new())]
-    fn coalesced_keeps_the_last_idempotent_command(
-        #[case] audio_cmds: Vec<AudioCmd>,
-        #[case] expected: Vec<AudioCmd>,
-    ) {
-        assert_eq!(keep_last_idempotent(audio_cmds), expected);
-    }
-
     #[test]
     fn a_picked_row_fades_over_the_stream_the_media_key_started() {
         let mut wiring = Wiring::new();
@@ -792,5 +698,21 @@ mod tests {
         wiring.handover_settles();
         wiring.one_open_stream("three skips inside one fade");
         insta::assert_debug_snapshot!(wiring.log);
+    }
+
+    #[test]
+    fn a_buffering_report_of_the_feeder_reaches_the_kernel() {
+        let reported = [DeckEvent::Buffering(first()), DeckEvent::Buffered(first())]
+            .map(|event| {
+                executed(
+                    driver_with(EngineState::Live(live()))
+                        .transition(AudioMessage::Deck(event)),
+                )
+            });
+        let buffering = [
+            AudioEvent::Buffering(first()),
+            AudioEvent::Buffered(first()),
+        ];
+        assert_eq!(reported, buffering.map(|event| Ok((vec![], vec![event]))));
     }
 }

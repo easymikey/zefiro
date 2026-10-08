@@ -4,13 +4,19 @@ use kernel::{
         cue::Cue,
         device::{DeviceDefault, ListedDevice, OutputDevice},
         model::Model,
+        revision::Revision,
         time::Moment,
     },
-    message::{AudioEvent, Message},
+    message::{AudioEvent, Message, PlaybackRequest},
     update::machine::Unhandled,
 };
 
-use crate::support::{device, first_toast_expiry, update::update};
+use crate::support::{
+    device,
+    first_toast_expiry,
+    model_with_dated_tracks,
+    update::{send, update},
+};
 
 #[test]
 fn a_device_that_fell_back_replaces_the_requested_name_and_says_so() {
@@ -222,4 +228,67 @@ fn devices_loaded_replaces_output_devices_and_emits_nothing() {
 
     assert_eq!(model.settings.output_devices, devices);
     assert_eq!(cmd, Cmd::none());
+}
+
+#[test]
+fn a_buffering_report_sets_the_transport_flag_and_its_buffered_clears_it() {
+    let mut model = Model::default();
+    let download = Revision::default().next();
+
+    let buffering = update(
+        &mut model,
+        Message::Audio(AudioEvent::Buffering(download)),
+        Moment::default(),
+    );
+    let flagged = model.transport.buffering_revision;
+    let buffered = update(
+        &mut model,
+        Message::Audio(AudioEvent::Buffered(download)),
+        Moment::default(),
+    );
+
+    assert_eq!(
+        (
+            buffering,
+            flagged,
+            buffered,
+            model.transport.buffering_revision
+        ),
+        (Ok(Cmd::none()), Some(download), Ok(Cmd::none()), None)
+    );
+}
+
+#[test]
+fn a_loaded_track_clears_the_buffering_flag() {
+    let mut model = model_with_dated_tracks(3);
+    send(&mut model, Message::Playback(PlaybackRequest::Toggle));
+    send(
+        &mut model,
+        Message::Audio(AudioEvent::Buffering(Revision::default().next())),
+    );
+
+    send(&mut model, Message::Audio(AudioEvent::Loaded(None)));
+
+    assert_eq!(model.transport.buffering_revision, None);
+}
+
+#[test]
+fn a_buffered_report_of_another_download_is_refused() {
+    let mut model = Model::default();
+    let download = Revision::default().next();
+    let buffering = update(
+        &mut model,
+        Message::Audio(AudioEvent::Buffering(download)),
+        Moment::default(),
+    );
+    let before = model.clone();
+
+    let answer = update(
+        &mut model,
+        Message::Audio(AudioEvent::Buffered(download.next())),
+        Moment::default(),
+    );
+
+    assert_eq!((buffering, answer), (Ok(Cmd::none()), Err(Unhandled)));
+    assert_eq!(model, before);
 }

@@ -275,10 +275,10 @@ impl Mixer {
                 let dropped = self.voice(role).take();
                 retire(&mut self.retired, dropped);
                 match role {
-                    SinkRole::Current => {
+                    SinkRole::Current | SinkRole::Incoming => {
                         retire(&mut self.retired, self.queued_voice.take());
                     }
-                    SinkRole::Incoming | SinkRole::Outgoing => {}
+                    SinkRole::Outgoing => {}
                 }
             }
             MixerOrder::Transport(playback) => {
@@ -557,6 +557,18 @@ mod tests {
             assert_eq!(out.get(1_000..), second_expected.get(..1_048));
             assert!(out.iter().all(|&sample| sample != 0.0));
             assert_eq!(retired_voices.by_ref().count(), 1);
+        });
+    }
+
+    #[test]
+    fn dropping_the_incoming_role_retires_a_queued_voice() {
+        served(|feed_sender| {
+            let mut channel = channel(MONO_8K);
+            let (queued, _control) = voice(&ramp_file(1, 8_000), MONO_8K, feed_sender);
+            channel.control.order(MixerOrder::Queue(queued));
+            channel.control.order(MixerOrder::Drop(SinkRole::Incoming));
+            mixed(&mut channel.mixer, 64);
+            assert_eq!(channel.retired_voices.count(), 1);
         });
     }
 

@@ -7,10 +7,7 @@ use kernel::domain::{
     track::{Track, TrackSource},
 };
 
-use crate::{
-    primitive::{marker::Favorite, track_row::Playing},
-    status_line::StatusLineView,
-};
+use crate::{primitive::track_row::Playing, status_line::StatusLineView};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LibraryStatus {
@@ -52,14 +49,6 @@ impl<'a> CatalogView<'a> {
             Playing::Yes
         } else {
             Playing::No
-        }
-    }
-
-    pub(crate) fn favorite(self, track: &Track) -> Favorite {
-        if self.favorites.is_favorite(track.source()) {
-            Favorite::Yes
-        } else {
-            Favorite::No
         }
     }
 }

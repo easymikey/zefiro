@@ -13,12 +13,13 @@ use kernel::{
         },
         crossfade::Crossfade,
         device::OutputDevice,
+        server::Account,
         settings::ReplayGain,
         theme::ThemeName,
         time::SECONDS_PER_MINUTE,
     },
 };
-use toml_edit::{Array, DocumentMut, Item, Table, value};
+use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, value};
 
 use crate::error::Error;
 
@@ -156,6 +157,28 @@ fn write_device(
     Ok(())
 }
 
+fn write_servers(doc: &mut DocumentMut, accounts: Option<Vec<Account>>) {
+    let Some(accounts) = accounts else {
+        return;
+    };
+    if accounts.is_empty() {
+        doc.remove("server");
+        return;
+    }
+    doc["server"] = Item::ArrayOfTables(
+        accounts
+            .iter()
+            .map(|account| {
+                Table::from_iter([
+                    ("name", account.server_name.as_str()),
+                    ("url", account.endpoint.as_str()),
+                    ("user", account.user_name.as_str()),
+                ])
+            })
+            .collect::<ArrayOfTables>(),
+    );
+}
+
 fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> {
     let ConfigPatch {
         crossfade,
@@ -165,7 +188,9 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> 
         volume,
         sleep_presets,
         music_dir,
+        accounts,
     } = patch;
+    write_servers(doc, accounts);
     write_edits(
         doc,
         [
@@ -189,14 +214,9 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> 
                 table: "audio",
                 key: "sleep_presets",
                 item: sleep_presets.map(|presets| {
-                    value(
-                        presets
-                            .as_slice()
-                            .iter()
-                            .copied()
-                            .map(minutes)
-                            .collect::<Array>(),
-                    )
+                    value(Array::from_iter(
+                        presets.as_slice().iter().copied().map(minutes),
+                    ))
                 }),
             },
             FieldEdit {
@@ -256,6 +276,7 @@ mod tests {
             crossfade::Crossfade,
             device::{DeviceName, OutputDevice},
             percent::Percent,
+            server::{Account, Endpoint, ServerName, UserName},
             setting_row::{AppearanceField, OptionCount},
             settings::ReplayGain,
             sleep_presets::SleepPresets,
@@ -274,7 +295,7 @@ mod tests {
 
     use crate::{
         appearance_file::parse_appearance,
-        config_file::parse_config,
+        config_file::{parse_config, parse_config_settings},
         error::Error,
         patch::{
             format_crossfade,
@@ -508,7 +529,63 @@ mod tests {
             volume: Some(Percent::clamped(80)),
             sleep_presets: Some(SleepPresets::from_minutes(&[10, 20]).unwrap()),
             music_dir: Some("/new/music".into()),
+            accounts: None,
         }
+    }
+
+    fn accounts() -> Vec<Account> {
+        [
+            ("home", "https://music.example", "ann"),
+            ("work", "http://10.0.0.2:4533", "bob"),
+        ]
+        .into_iter()
+        .map(|(name, link, user)| Account {
+            server_name: ServerName::new(name),
+            endpoint: Endpoint::parse(link).unwrap(),
+            user_name: UserName::new(user).unwrap(),
+        })
+        .collect()
+    }
+
+    #[test]
+    fn a_servers_patch_reads_back_its_accounts_and_keeps_every_comment() {
+        let written = patched_config_text(
+            COMMENTED_CONFIG,
+            ConfigPatch {
+                accounts: Some(accounts()),
+                ..ConfigPatch::default()
+            },
+        )
+        .unwrap();
+        let emptied = patched_config_text(
+            &written,
+            ConfigPatch {
+                accounts: Some(Vec::new()),
+                ..ConfigPatch::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            parse_config_settings(&written)
+                .map(|settings| settings.accounts)
+                .ok(),
+            Some(accounts())
+        );
+        assert!(
+            COMMENTED_CONFIG
+                .lines()
+                .filter(|line| line.contains('#'))
+                .all(|line| written.contains(line)),
+            "was {written}"
+        );
+        assert_eq!(
+            parse_config_settings(&emptied)
+                .map(|settings| settings.accounts)
+                .ok(),
+            Some(Vec::new())
+        );
+        assert!(!emptied.contains("[[server]]"), "was {emptied}");
     }
 
     #[rstest]
@@ -628,6 +705,11 @@ mod tests {
             proptest::option::of(
                 prop_oneof![Just("/music"), Just("/new/music")].prop_map(PathBuf::from),
             ),
+            proptest::option::of(prop_oneof![
+                Just(Vec::new()),
+                Just(accounts()),
+                Just(accounts().split_off(1)),
+            ]),
         )
             .prop_map(
                 |(
@@ -638,6 +720,7 @@ mod tests {
                     volume,
                     sleep_presets,
                     music_dir,
+                    accounts,
                 )| {
                     ConfigPatch {
                         crossfade,
@@ -647,6 +730,7 @@ mod tests {
                         volume,
                         sleep_presets,
                         music_dir,
+                        accounts,
                     }
                 },
             )
@@ -661,6 +745,8 @@ mod tests {
                 let base = parse_config(text).unwrap();
                 let written = patched_config_text(text, patch.clone()).unwrap();
                 let parsed = parse_config(&written).unwrap();
+                let base_accounts = parse_config_settings(text).unwrap().accounts;
+                let parsed_accounts = parse_config_settings(&written).unwrap().accounts;
 
                 prop_assert_eq!(
                     parsed.audio.crossfade,
@@ -686,6 +772,10 @@ mod tests {
                 prop_assert_eq!(
                     parsed.music_dir,
                     patch.music_dir.or(base.music_dir)
+                );
+                prop_assert_eq!(
+                    parsed_accounts,
+                    patch.accounts.unwrap_or(base_accounts)
                 );
             }
         }

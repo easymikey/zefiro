@@ -1,4 +1,14 @@
-use std::{ffi::OsStr, fs::File, io::ErrorKind, path::Path, time::Duration};
+use std::{
+    ffi::OsStr,
+    fs::File,
+    io::{self, ErrorKind, Read, Seek, SeekFrom},
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use kernel::domain::{revision::Revision, speed::Speed};
 use symphonia::core::{
@@ -6,7 +16,7 @@ use symphonia::core::{
     codecs::{CODEC_TYPE_NULL, Decoder, DecoderOptions},
     errors,
     formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track},
-    io::{MediaSourceStream, MediaSourceStreamOptions},
+    io::{MediaSource, MediaSourceStream, MediaSourceStreamOptions},
     meta::MetadataOptions,
     probe::Hint,
     units::TimeBase,
@@ -26,6 +36,7 @@ pub struct TrackDecoder {
     buffer: Box<SampleBuffer<f32>>,
     offset: usize,
     pub(crate) path: Box<Path>,
+    pub(crate) download: Option<GrowingDownload>,
 }
 
 impl std::fmt::Debug for TrackDecoder {
@@ -38,6 +49,10 @@ impl std::fmt::Debug for TrackDecoder {
 }
 
 impl TrackDecoder {
+    pub(crate) fn download(&self) -> Option<Revision> {
+        self.download.as_ref().map(|download| download.revision)
+    }
+
     pub(crate) fn channels(&self) -> u16 {
         u16::try_from(self.spec.channels.count()).unwrap_or(u16::MAX)
     }
@@ -191,17 +206,123 @@ pub enum PreloadMode {
     Crossfade(Speed),
 }
 
-pub(crate) fn decode(path: &Path) -> Result<TrackDecoder, Error> {
-    let file = File::open(path).map_err(|source| Error::Open {
+#[derive(Debug)]
+pub(crate) enum TrackBytes {
+    File(File),
+    Growing(GrowingFile),
+}
+
+#[derive(Debug)]
+pub(crate) struct GrowingFile {
+    pub(crate) file: File,
+    pub(crate) download: GrowingDownload,
+}
+
+#[derive(Debug, Clone)]
+pub struct GrowingDownload {
+    pub(crate) downloaded: Arc<AtomicU64>,
+    pub(crate) byte_len: u64,
+    pub(crate) revision: Revision,
+    pub(crate) read_byte: Arc<AtomicU64>,
+}
+
+impl GrowingDownload {
+    pub(crate) fn decode(self, media_path: &Path) -> Result<TrackDecoder, Error> {
+        let growing_file = GrowingFile {
+            file: open(media_path)?,
+            download: self,
+        };
+        probe(TrackBytes::Growing(growing_file), media_path)
+    }
+}
+
+impl Read for TrackBytes {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::File(file) => file.read(buf),
+            Self::Growing(growing_file) => growing_file.read(buf),
+        }
+    }
+}
+
+impl Seek for TrackBytes {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        match self {
+            Self::File(file) => file.seek(pos),
+            Self::Growing(growing_file) => growing_file.seek(pos),
+        }
+    }
+}
+
+impl MediaSource for TrackBytes {
+    fn is_seekable(&self) -> bool {
+        match self {
+            Self::File(file) => file.is_seekable(),
+            Self::Growing(_growing_file) => true,
+        }
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        match self {
+            Self::File(file) => file.byte_len(),
+            Self::Growing(growing_file) => Some(growing_file.download.byte_len),
+        }
+    }
+}
+
+impl Read for GrowingFile {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let position = self.file.stream_position()?;
+        let bound = self
+            .download
+            .downloaded
+            .load(Ordering::Acquire)
+            .min(self.download.byte_len);
+        let room = usize::try_from(bound.saturating_sub(position))
+            .unwrap_or(usize::MAX)
+            .min(buf.len());
+        let read = self.file.read(buf.get_mut(..room).unwrap_or(&mut []))?;
+        self.download.read_byte.store(
+            position.saturating_add(u64::try_from(read).unwrap_or(u64::MAX)),
+            Ordering::Release,
+        );
+        Ok(read)
+    }
+}
+
+impl Seek for GrowingFile {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let position = self.file.seek(pos)?;
+        self.download.read_byte.store(position, Ordering::Release);
+        Ok(position)
+    }
+}
+
+pub(crate) fn open(path: &Path) -> Result<File, Error> {
+    File::open(path).map_err(|source| Error::Open {
         path: path.to_path_buf(),
         source,
-    })?;
+    })
+}
+
+pub(crate) fn decode(path: &Path) -> Result<TrackDecoder, Error> {
+    probe(TrackBytes::File(open(path)?), path)
+}
+
+pub(crate) fn probe(
+    track_bytes: TrackBytes,
+    path: &Path,
+) -> Result<TrackDecoder, Error> {
     let decoding = |source| Error::Decode {
         path: path.to_path_buf(),
         source,
     };
+    let download = match &track_bytes {
+        TrackBytes::File(_file) => None,
+        TrackBytes::Growing(growing_file) => Some(growing_file.download.clone()),
+    };
     let stream = MediaSourceStream::new(
-        Box::new(file),
+        Box::new(track_bytes),
         MediaSourceStreamOptions {
             buffer_len: READ_CAPACITY,
         },
@@ -235,6 +356,7 @@ pub(crate) fn decode(path: &Path) -> Result<TrackDecoder, Error> {
         )),
         offset: 0,
         path: path.into(),
+        download,
     };
     track_decoder.frames().map_err(decoding)?;
     Ok(track_decoder)
@@ -257,16 +379,52 @@ fn track_codec(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::{io::Write, time::Duration};
+    use std::{
+        io::Write,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+        time::Duration,
+    };
 
-    use kernel::message::{AudioError, DecodeError};
+    use kernel::{domain::revision::Revision, message::DecodeError};
     use symphonia::core::{formats::SeekMode, units::TimeBase};
     use tempfile::NamedTempFile;
 
     use crate::{
-        deck::source::{decode, seek_mode},
+        deck::source::{GrowingDownload, decode, seek_mode},
         error::decode_error_of,
     };
+
+    const WAV_HEADER: u64 = 44;
+
+    #[test]
+    fn a_growing_file_probes_within_its_bound_and_decodes_like_the_whole_file_once_grown()
+     {
+        let file = ramp_file(2, 2_000);
+        let byte_len = file.as_file().metadata().unwrap().len();
+        let downloaded = Arc::new(AtomicU64::new(WAV_HEADER));
+        let download = GrowingDownload {
+            downloaded: Arc::clone(&downloaded),
+            byte_len,
+            revision: Revision::default(),
+            read_byte: Arc::default(),
+        };
+
+        let mut decoder = download.decode(file.path()).unwrap();
+        let before = decoder.frames().unwrap().len();
+        downloaded.store(byte_len, Ordering::Release);
+        let mut samples = Vec::new();
+        while let available @ [_, ..] = decoder.frames().unwrap() {
+            samples.extend_from_slice(available);
+            let frames = available.len() / 2;
+            decoder.consume(frames);
+        }
+
+        assert_eq!(before, 0);
+        assert_eq!(samples, decoded(&file));
+    }
 
     pub(crate) fn ramp_file(channels: u16, frames: usize) -> NamedTempFile {
         let samples = usize::from(channels) * frames;
@@ -339,10 +497,7 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(
             decode(file.path()).err().map(decode_error_of),
-            Some(AudioError::Decode {
-                path: file.path().to_path_buf(),
-                error: DecodeError::Unsupported,
-            })
+            Some((file.path().to_path_buf(), DecodeError::Unsupported))
         );
     }
 

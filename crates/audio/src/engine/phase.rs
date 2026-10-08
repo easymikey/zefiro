@@ -1,6 +1,6 @@
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
-use kernel::cmd::Playback;
+use kernel::cmd::{Media, Playback};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) enum Phase {
@@ -63,7 +63,7 @@ pub(crate) enum Incoming {
 pub(crate) struct LoadedTrack {
     pub(crate) duration: Option<Duration>,
     pub(crate) decibels: Option<kernel::domain::track::Decibels>,
-    pub(crate) path: PathBuf,
+    pub(crate) media: Media,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -71,7 +71,7 @@ pub(crate) enum NextTrack {
     #[default]
     None,
     Preloading {
-        path: PathBuf,
+        media: Media,
         decibels: Option<kernel::domain::track::Decibels>,
     },
     Gapless(LoadedTrack),
@@ -89,7 +89,7 @@ pub(crate) enum Fade {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Loading {
-    pub(crate) path: PathBuf,
+    pub(crate) media: Media,
     pub(crate) decibels: Option<kernel::domain::track::Decibels>,
     pub(crate) resume: Option<Resume>,
 }
@@ -100,7 +100,7 @@ impl Loading {
         duration: Option<Duration>,
     ) -> (LoadedTrack, Option<Resume>) {
         let Loading {
-            path,
+            media,
             decibels,
             resume: after_load,
         } = self;
@@ -111,7 +111,7 @@ impl Loading {
             LoadedTrack {
                 duration,
                 decibels,
-                path,
+                media,
             },
             after_load,
         )
@@ -128,7 +128,7 @@ pub(crate) struct Resume {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Upcoming {
-    pub(crate) path: PathBuf,
+    pub(crate) media: Media,
     pub(crate) decibels: Option<kernel::domain::track::Decibels>,
 }
 
@@ -137,8 +137,8 @@ impl From<LoadedTrack> for Upcoming {
         let LoadedTrack {
             duration: _duration,
             decibels,
-            path,
+            media,
         } = track;
-        Upcoming { path, decibels }
+        Upcoming { media, decibels }
     }
 }

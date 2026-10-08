@@ -1,24 +1,18 @@
-use std::{
-    any::Any,
-    collections::{HashMap, hash_map::Entry},
-    mem,
-    panic::resume_unwind,
-    time::Instant,
-};
+use std::{collections::HashMap, panic::resume_unwind, time::Instant};
 
-use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use kernel::{
     cmd::Cmds,
     domain::driver::DriverError,
     message::Message,
-    update::machine::{Driver, LoopCmd, LoopEffect, Machine},
+    update::machine::{Driver, LoopCmd, Machine},
 };
 
 use crate::{
     driver_thread::{Congestion, DriverThread, Halt, send, spawn_driver},
     driver_wait::{LoopInput, WaitSources},
     error::SpawnError,
-    jobs::{spawn_jobs, stash},
+    outlets::Outlets,
     registry::DriverRow,
     timers::Timers,
     watcher::FileStream,
@@ -33,70 +27,6 @@ pub(crate) struct DriverLoop<D: Driver, J> {
     pub(crate) callback_receiver: Receiver<D::Message>,
     pub(crate) message: Option<D::Message>,
     pub(crate) run_job: fn(J) -> D::Message,
-}
-
-struct Outlets<'a, D: Driver, J> {
-    inbox: &'a Sender<Message>,
-    congestion: &'a Congestion,
-    row: &'static DriverRow,
-    run_job: fn(J) -> D::Message,
-    result_sender: Sender<Result<D::Message, Box<dyn Any + Send>>>,
-    workers: HashMap<mem::Discriminant<J>, Sender<J>>,
-    pending: Vec<J>,
-    timers: Timers<D::Message>,
-    file_stream: FileStream<D::Message>,
-}
-
-impl<D, J> Outlets<'_, D, J>
-where
-    D: Driver,
-    D::Message: Send + 'static,
-    J: Send + 'static,
-{
-    fn hand_over(&mut self) -> Result<(), SpawnError> {
-        for job in mem::take(&mut self.pending) {
-            let worker = match self.workers.entry(mem::discriminant(&job)) {
-                Entry::Occupied(entry) => entry.into_mut(),
-                Entry::Vacant(entry) => entry.insert(spawn_jobs(
-                    self.row,
-                    self.result_sender.clone(),
-                    self.run_job,
-                )?),
-            };
-            match worker.try_send(job) {
-                Ok(()) => {}
-                Err(TrySendError::Full(job)) => self.pending.push(job),
-                Err(TrySendError::Disconnected(_job)) => {
-                    resume_unwind(Box::new("a job worker died"))
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn place(
-        &mut self,
-        loop_effect: LoopEffect<<D as Driver>::Effect, J, D::Message>,
-        driver: &mut D,
-    ) -> Option<D::Message> {
-        match loop_effect {
-            LoopEffect::Execute(effect) => driver.execute(effect),
-            LoopEffect::Run(job) => {
-                stash(&mut self.pending, job);
-                None
-            }
-            LoopEffect::After { delay, message } => {
-                if let Some(deadline) = Instant::now().checked_add(delay) {
-                    self.timers.schedule(deadline, message);
-                }
-                None
-            }
-            LoopEffect::Watch { path, changed } => {
-                self.file_stream.watch(&path, changed)
-            }
-            LoopEffect::Unwatch(path) => self.file_stream.unwatch(&path),
-        }
-    }
 }
 
 impl<D, J, E, X, M> DriverLoop<D, J>
@@ -224,11 +154,10 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::{
         collections::HashMap,
         convert::Infallible,
-        panic::{AssertUnwindSafe, catch_unwind},
         path::PathBuf,
         thread,
         time::{Duration, Instant},
@@ -248,9 +177,9 @@ mod tests {
     };
 
     use crate::{
-        driver::{DriverLoop, Outlets},
+        driver::DriverLoop,
         driver_thread::{Congestion, DriverThread},
-        jobs::stash,
+        outlets::Outlets,
         registry,
         runtime::Runtime,
         spawn::tests::spawn_idle,
@@ -259,9 +188,9 @@ mod tests {
         watcher::FileStream,
     };
 
-    const RECV_TIMEOUT: Duration = Duration::from_secs(1);
+    pub(crate) const RECV_TIMEOUT: Duration = Duration::from_secs(1);
     const SHORT: Duration = Duration::from_millis(30);
-    const LONG_JOB: Duration = Runtime::DRAIN.saturating_mul(2);
+    pub(crate) const LONG_JOB: Duration = Runtime::DRAIN.saturating_mul(2);
 
     #[derive(Debug, PartialEq, Eq)]
     enum ProbeCmd {
@@ -538,12 +467,12 @@ mod tests {
     }
 
     #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-    enum Nap {
+    pub(crate) enum Nap {
         Long,
         Brief,
     }
 
-    enum NapperMessage {
+    pub(crate) enum NapperMessage {
         Cmds(Cmds<Nap>),
         Woke(Nap),
     }
@@ -554,7 +483,7 @@ mod tests {
         }
     }
 
-    struct Napper;
+    pub(crate) struct Napper;
 
     impl Machine for Napper {
         type Message = NapperMessage;
@@ -582,69 +511,6 @@ mod tests {
         fn execute(&mut self, effect: Infallible) -> Option<NapperMessage> {
             match effect {}
         }
-    }
-
-    #[test]
-    fn a_hand_over_to_a_dead_worker_makes_the_driver_died() {
-        let (inbox, _reports) = unbounded();
-        let congestion = Congestion::default();
-        let (result_sender, _result_receiver) = unbounded();
-        let mut outlets = Outlets::<Napper, Nap> {
-            inbox: &inbox,
-            congestion: &congestion,
-            row: registry::row(DriverName::Config),
-            run_job: |_nap: Nap| -> NapperMessage { panic!("the job panics") },
-            result_sender,
-            workers: HashMap::new(),
-            pending: Vec::new(),
-            timers: Timers::default(),
-            file_stream: FileStream::Idle,
-        };
-        let deadline = Instant::now() + RECV_TIMEOUT;
-
-        let died = std::iter::repeat_with(|| {
-            stash(&mut outlets.pending, Nap::Long);
-            catch_unwind(AssertUnwindSafe(|| outlets.hand_over())).is_err()
-        })
-        .take_while(|_| Instant::now() < deadline)
-        .any(|died| died);
-
-        assert!(died);
-    }
-
-    #[test]
-    fn a_job_of_one_kind_does_not_wait_behind_a_running_job_of_another() {
-        let (inbox, _reports) = unbounded();
-        let congestion = Congestion::default();
-        let (result_sender, result_receiver) = unbounded();
-        let mut outlets = Outlets::<Napper, Nap> {
-            inbox: &inbox,
-            congestion: &congestion,
-            row: registry::row(DriverName::Config),
-            run_job: |nap: Nap| {
-                if nap == Nap::Long {
-                    thread::sleep(LONG_JOB);
-                }
-                NapperMessage::Woke(nap)
-            },
-            result_sender,
-            workers: HashMap::new(),
-            pending: Vec::new(),
-            timers: Timers::default(),
-            file_stream: FileStream::Idle,
-        };
-        stash(&mut outlets.pending, Nap::Long);
-        stash(&mut outlets.pending, Nap::Brief);
-
-        outlets.hand_over().unwrap();
-
-        let Ok(NapperMessage::Woke(first)) =
-            result_receiver.recv_timeout(RECV_TIMEOUT).unwrap()
-        else {
-            panic!("a job answers with Woke");
-        };
-        assert_eq!(first, Nap::Brief);
-        assert_eq!(outlets.workers.len(), 2);
     }
 
     #[test]

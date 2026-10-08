@@ -112,14 +112,16 @@ impl MacosDriver {
 
     fn poll(&self) -> Option<MacosMessage> {
         let listeners = self.listeners.as_ref()?;
-        let current = default_output_device();
-        Some(MacosMessage::Hardware(HardwareMessage::Polled(
-            HardwarePoll {
-                tracked: listeners.tracked_device(),
-                current,
-                volume: read_volume(current),
-            },
-        )))
+        Some(match default_output_device() {
+            Ok(current) => {
+                MacosMessage::Hardware(HardwareMessage::Polled(HardwarePoll {
+                    tracked: listeners.tracked_device(),
+                    current,
+                    volume: read_volume(current),
+                }))
+            }
+            Err(error) => failed(MacosError::Listen, error),
+        })
     }
 }
 
@@ -177,14 +179,16 @@ impl Driver for MacosDriver {
                 .as_mut()
                 .and_then(|listeners| listeners.rebind_to(device).err())
                 .map(|error| failed(MacosError::Rebind, error)),
-            MacosEffect::SetVolume(volume) => {
-                Some(match write_volume(default_output_device(), volume) {
+            MacosEffect::SetVolume(volume) => Some(
+                match default_output_device()
+                    .and_then(|device| write_volume(device, volume))
+                {
                     Ok(()) => {
                         MacosMessage::Hardware(HardwareMessage::VolumeSet(volume))
                     }
                     Err(error) => failed(MacosError::SetVolume, error),
-                })
-            }
+                },
+            ),
             MacosEffect::ShowNowPlaying => {
                 let now_playing = NowPlaying {
                     track: self.track.as_deref(),
@@ -420,6 +424,32 @@ mod tests {
             macos_driver.clock.elapsed(at + Duration::from_secs(3)),
             Duration::from_secs(6)
         );
+    }
+
+    #[test]
+    fn a_now_playing_or_a_seek_re_anchors_the_now_playing_clock() {
+        let (callback_sender, _callback_receiver) = bounded(1);
+        let mut macos_driver = MacosDriver::new(callback_sender);
+        let at = Instant::now();
+        let seek_message = MacosMessage::Cmds(Cmds {
+            cmds: vec![
+                MacosCmd::SetPlayback(Playback::Playing),
+                MacosCmd::SetPosition(Duration::from_secs(30)),
+            ],
+            at,
+        });
+        assert!(macos_driver.transition(seek_message).is_ok());
+        assert_eq!(macos_driver.clock.elapsed(at), Duration::from_secs(30));
+        let later = at + Duration::from_secs(5);
+        let now_playing_message = MacosMessage::Cmds(Cmds {
+            cmds: vec![MacosCmd::NowPlaying(Some(Arc::new(Track::listed(
+                Path::new("a.flac"),
+            ))))],
+            at: later,
+        });
+        assert!(macos_driver.transition(now_playing_message).is_ok());
+        assert_eq!(macos_driver.clock.elapsed(later), Duration::ZERO);
+        assert_eq!(macos_driver.clock.playback(), Playback::Playing);
     }
 
     type Placed = (Vec<MacosEffect>, Vec<MacosJob>, Vec<MacosEvent>);

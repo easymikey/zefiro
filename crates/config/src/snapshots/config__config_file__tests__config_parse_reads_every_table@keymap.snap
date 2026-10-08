@@ -33,4 +33,5 @@ TomlSettings {
             key_context: None,
         },
     },
+    servers: [],
 }

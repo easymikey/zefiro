@@ -1,15 +1,19 @@
+use std::{
+    collections::{HashSet, VecDeque},
+    mem::discriminant,
+};
+
 use kernel::{
-    cmd::{AudioCmd, Cmd, Playback},
-    domain::settings::AudioSettings,
+    cmd::{AudioCmd, Cmd, Cmds, Media, Playback, TrackLoad},
+    domain::{revision::Revision, settings::AudioSettings},
     message::{AudioError, AudioEvent},
-    update::machine::{LoopEffect, Unhandled},
+    update::machine::{LoopEffect, Unhandled, each_handled},
 };
 
 use crate::{
     deck::job::AudioJob,
     engine::{
         effect::{AudioLoopCmd, EngineEffect},
-        machine::batched,
         message::{ClosedMessage, DeviceOpened},
         revisions::JobRevisions,
         state::{Closed, Live},
@@ -73,11 +77,36 @@ impl Closed {
             }
             AudioCmd::SetPlayback(Playback::Paused | Playback::Playing)
             | AudioCmd::Seek(_)
-            | AudioCmd::Preload(_) => Err(Unhandled),
+            | AudioCmd::Preload(_)
+            | AudioCmd::CancelPreload => Err(Unhandled),
             AudioCmd::ListDevices => {
                 Ok(Cmd::effect(LoopEffect::Run(AudioJob::ListDevices)))
             }
+            AudioCmd::Grow {
+                revision,
+                downloaded,
+            } => self.grow(revision, downloaded),
         }
+    }
+
+    fn grow(
+        &mut self,
+        revision: Revision,
+        downloaded: u64,
+    ) -> Result<AudioLoopCmd, Unhandled> {
+        let Some(TrackLoad {
+            media: Media::Growing(growing_media),
+            revision: _load,
+            decibels: _decibels,
+        }) = &mut self.track_load
+        else {
+            return Err(Unhandled);
+        };
+        if growing_media.revision != revision {
+            return Err(Unhandled);
+        }
+        growing_media.downloaded = growing_media.downloaded.max(downloaded);
+        Ok(Cmd::none())
     }
 
     fn stays_silent(&mut self, error: AudioError) -> AudioLoopCmd {
@@ -87,7 +116,7 @@ impl Closed {
 
     pub(crate) fn reopened(
         self,
-        revisions: &mut JobRevisions,
+        job_revisions: &mut JobRevisions,
         device_opened: DeviceOpened,
     ) -> (Live, AudioLoopCmd) {
         let DeviceOpened {
@@ -105,17 +134,57 @@ impl Closed {
         );
         let cmd = self
             .track_load
-            .map_or_else(Cmd::none, |track_load| live.load(revisions, track_load));
+            .map_or_else(Cmd::none, |track_load| live.load(job_revisions, track_load));
         (live, cmd)
     }
 }
 
+pub(crate) fn keep_last_idempotent(audio_cmds: Vec<AudioCmd>) -> Vec<AudioCmd> {
+    let (_seen, kept) = audio_cmds.into_iter().rev().fold(
+        (HashSet::new(), VecDeque::new()),
+        |(mut seen, mut kept), cmd| {
+            let fresh = match &cmd {
+                AudioCmd::Load(_) | AudioCmd::Stop => {
+                    seen.clear();
+                    true
+                }
+                AudioCmd::SetSpeed(_) | AudioCmd::Seek(_) => {
+                    seen.insert(discriminant(&cmd))
+                }
+                AudioCmd::SetPlayback(_)
+                | AudioCmd::Preload(_)
+                | AudioCmd::CancelPreload
+                | AudioCmd::SetCrossfade(_)
+                | AudioCmd::SetReplayGain(_)
+                | AudioCmd::SetDevice(_)
+                | AudioCmd::ListDevices
+                | AudioCmd::Grow { .. } => true,
+            };
+            if fresh {
+                kept.push_front(cmd);
+            }
+            (seen, kept)
+        },
+    );
+    Vec::from(kept)
+}
+
+pub(crate) fn batched(
+    cmds: Cmds<AudioCmd>,
+    run: impl FnMut(AudioCmd) -> Result<AudioLoopCmd, Unhandled>,
+) -> Result<AudioLoopCmd, Unhandled> {
+    each_handled(keep_last_idempotent(cmds.cmds), run)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        path::PathBuf,
+        time::{Duration, Instant},
+    };
 
     use kernel::{
-        cmd::{AudioCmd, Cmd, Cmds, Playback, TrackLoad},
+        cmd::{AudioCmd, Cmd, Cmds, GrowingMedia, Media, Playback, TrackLoad},
         domain::{
             bounded::Bounded,
             device::{DeviceName, OutputDevice},
@@ -156,6 +225,7 @@ mod tests {
                 opened,
                 playing,
                 preload,
+                second,
                 seconds,
                 set_crossfade,
                 settings,
@@ -311,6 +381,7 @@ mod tests {
     )]
     #[case::closed_refuses_seek(closed(), cmd(AudioCmd::Seek(seconds(5))))]
     #[case::closed_refuses_preload(closed(), preload("/b"))]
+    #[case::closed_refuses_cancel_preload(closed(), cmd(AudioCmd::CancelPreload))]
     fn a_refused_cell_leaves_the_state_and_names_the_error(
         #[case] engine_state: EngineState,
         #[case] message: EngineMessage,
@@ -373,8 +444,8 @@ mod tests {
         let (engine, mut log) = trace(closed(), vec![load("/a")]).unwrap();
         let track_load = silenced(engine.clone());
         assert_eq!(
-            track_load.map(|track_load| track_load.path),
-            Some("/a".into())
+            track_load.map(|track_load| track_load.media),
+            Some(Media::Local("/a".into()))
         );
 
         let (engine, tail) = trace(
@@ -438,7 +509,7 @@ mod tests {
             cmds: vec![
                 AudioCmd::SetDevice(output_device),
                 AudioCmd::Load(TrackLoad {
-                    path: "/a".into(),
+                    media: Media::Local("/a".into()),
                     decibels: None,
                     revision: first(),
                 }),
@@ -554,6 +625,122 @@ mod tests {
                     ))))
                     .then(decoding("/a")),
             ],
+        );
+    }
+
+    fn growing_load(downloaded: u64) -> TrackLoad {
+        TrackLoad {
+            media: Media::Growing(GrowingMedia {
+                media_path: "/a".into(),
+                downloaded,
+                byte_len: 1_000,
+                revision: second().next(),
+            }),
+            decibels: None,
+            revision: first(),
+        }
+    }
+
+    #[test]
+    fn a_grow_while_closed_raises_the_held_download_and_another_is_refused() {
+        let mut engine_state = EngineState::Closed(Closed {
+            settings: settings(),
+            track_load: Some(growing_load(100)),
+            speed: Speed::default(),
+        });
+
+        let grown = step(
+            &mut engine_state,
+            cmd(AudioCmd::Grow {
+                revision: second().next(),
+                downloaded: 600,
+            }),
+        );
+        let other = step(
+            &mut engine_state,
+            cmd(AudioCmd::Grow {
+                revision: first(),
+                downloaded: 900,
+            }),
+        );
+
+        assert_eq!(grown.map(|cmd| cmd.effects().count()), Ok(0));
+        assert_eq!(other.err(), Some(Unhandled));
+        assert_eq!(silenced(engine_state), Some(growing_load(600)));
+    }
+
+    fn local_load(path: &str) -> AudioCmd {
+        AudioCmd::Load(TrackLoad {
+            media: Media::Local(PathBuf::from(path)),
+            decibels: None,
+            revision: Revision::default(),
+        })
+    }
+
+    #[rstest]
+    #[case::two_speeds(
+        vec![
+            AudioCmd::SetSpeed(Speed::clamped(1.5)),
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
+        ],
+        vec![AudioCmd::SetSpeed(Speed::clamped(2.0))]
+    )]
+    #[case::speed_seek_speed(
+        vec![
+            AudioCmd::SetSpeed(Speed::clamped(1.5)),
+            AudioCmd::Seek(Duration::from_secs(1)),
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
+        ],
+        vec![
+            AudioCmd::Seek(Duration::from_secs(1)),
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
+        ]
+    )]
+    #[case::seeks_across_a_load(
+        vec![
+            AudioCmd::Seek(Duration::from_secs(1)),
+            local_load("/b"),
+            AudioCmd::Seek(Duration::from_secs(2)),
+            AudioCmd::Seek(Duration::from_secs(3)),
+        ],
+        vec![
+            AudioCmd::Seek(Duration::from_secs(1)),
+            local_load("/b"),
+            AudioCmd::Seek(Duration::from_secs(3)),
+        ]
+    )]
+    #[case::stop_splits(
+        vec![
+            AudioCmd::SetSpeed(Speed::clamped(1.5)),
+            AudioCmd::Stop,
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
+        ],
+        vec![
+            AudioCmd::SetSpeed(Speed::clamped(1.5)),
+            AudioCmd::Stop,
+            AudioCmd::SetSpeed(Speed::clamped(2.0)),
+        ]
+    )]
+    #[case::others_untouched(
+        vec![
+            AudioCmd::SetPlayback(Playback::Playing),
+            AudioCmd::SetPlayback(Playback::Playing),
+            AudioCmd::ListDevices,
+        ],
+        vec![
+            AudioCmd::SetPlayback(Playback::Playing),
+            AudioCmd::SetPlayback(Playback::Playing),
+            AudioCmd::ListDevices,
+        ]
+    )]
+    #[case::empty(Vec::new(), Vec::new())]
+    fn coalesced_keeps_the_last_idempotent_command(
+        #[case] audio_cmds: Vec<AudioCmd>,
+        #[case] expected: Vec<AudioCmd>,
+    ) {
+        assert_eq!(
+            crate::engine::closed::keep_last_idempotent(audio_cmds),
+            expected
         );
     }
 }

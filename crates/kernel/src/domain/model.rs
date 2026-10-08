@@ -10,7 +10,7 @@ use crate::domain::{
     player::Player,
     playlist::{Playlist, PlaylistSource},
     revision::Revisions,
-    server::{Download, Server},
+    server::{Download, PlayReport, Server},
     settings::Settings,
     theme::Themes,
     track::{Track, TrackSource},
@@ -50,6 +50,7 @@ pub struct Model {
     pub downloads: Vec<Download>,
     pub catalog_name: CatalogName,
     pub catalogs: Vec<Catalog>,
+    pub play_reports: Vec<PlayReport>,
 }
 
 impl Model {

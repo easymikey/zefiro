@@ -6,7 +6,7 @@ use ratatui::style::Color;
 use crate::theme::{
     Theme,
     colors::Colors,
-    rgb::{ColorDepth, color_at_depth, lerp_rgb, shade},
+    rgb::{ColorDepth, color_at_depth, shade},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -15,7 +15,6 @@ pub struct ActiveTheme<'a> {
     pub(crate) color_depth: ColorDepth,
     fill: Option<Rgb>,
     groove: Option<Rgb>,
-    pub volume_pulse_mix: f32,
 }
 
 impl<'a> ActiveTheme<'a> {
@@ -26,7 +25,6 @@ impl<'a> ActiveTheme<'a> {
             color_depth,
             fill: None,
             groove: None,
-            volume_pulse_mix: 0.0,
         }
     }
 
@@ -35,14 +33,6 @@ impl<'a> ActiveTheme<'a> {
         Self {
             fill: progress_bar.fill,
             groove: progress_bar.groove,
-            ..self
-        }
-    }
-
-    #[must_use]
-    pub fn with_volume_pulse(self, volume_pulse_mix: f32) -> Self {
-        Self {
-            volume_pulse_mix,
             ..self
         }
     }
@@ -65,11 +55,6 @@ impl<'a> ActiveTheme<'a> {
     #[must_use]
     pub(crate) fn progress_groove(&self) -> Color {
         self.color(self.groove.unwrap_or(self.theme.colors.bar_groove))
-    }
-
-    #[must_use]
-    pub(crate) fn lifted(&self, rgb: Rgb, toward_text: f32) -> Color {
-        self.color(lerp_rgb(rgb, self.theme.colors.foreground, toward_text))
     }
 
     #[must_use]

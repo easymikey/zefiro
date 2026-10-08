@@ -13,4 +13,5 @@ ConfigSettings {
     music_dir: Some(
         "/tmp/music",
     ),
+    accounts: [],
 }

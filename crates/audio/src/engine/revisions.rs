@@ -1,17 +1,30 @@
-use std::path::PathBuf;
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
-use kernel::domain::revision::Revision;
+use kernel::{
+    cmd::{GrowingMedia, Media},
+    domain::revision::Revision,
+    update::machine::Unhandled,
+};
 
 use crate::{
-    deck::job::AudioJob,
+    deck::{job::AudioJob, source::GrowingDownload},
     engine::message::{AudioMessage, EngineMessage},
 };
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Default)]
 pub(crate) struct JobRevisions {
     issued: Revision,
     decode: Revision,
     preload: Revision,
+    preloaded_revision: Option<Revision>,
+    downloaded: HashMap<Revision, Arc<AtomicU64>>,
 }
 
 impl JobRevisions {
@@ -42,26 +55,76 @@ impl JobRevisions {
         revision == self.preload
     }
 
-    pub(crate) fn decode_job(&mut self, path: PathBuf) -> AudioJob {
+    pub(crate) fn decode_job(&mut self, media: Media) -> AudioJob {
         self.preload = self.issue();
         self.decode = self.issue();
+        self.preloaded_revision = None;
+        let (media_path, download) = self.download(media);
         AudioJob::Decode {
-            path,
+            media_path,
+            download,
             revision: self.decode,
         }
     }
 
-    pub(crate) fn preload_job(&mut self, path: PathBuf) -> AudioJob {
+    pub(crate) fn preload_job(&mut self, media: Media) -> AudioJob {
         self.preload = self.issue();
+        let (media_path, download) = self.download(media);
+        self.preloaded_revision = download.as_ref().map(|download| download.revision);
         AudioJob::Preload {
-            path,
+            media_path,
+            download,
             revision: self.preload,
+        }
+    }
+
+    pub(crate) fn grow(
+        &self,
+        revision: Revision,
+        downloaded: u64,
+    ) -> Result<(), Unhandled> {
+        self.downloaded
+            .get(&revision)
+            .ok_or(Unhandled)?
+            .fetch_max(downloaded, Ordering::Release);
+        Ok(())
+    }
+
+    pub(crate) fn decoded(&mut self, download_revision: Option<Revision>) {
+        let preloaded_revision = self.preloaded_revision;
+        self.downloaded.retain(|revision, _bound| {
+            Some(*revision) == download_revision
+                || Some(*revision) == preloaded_revision
+        });
+    }
+
+    fn download(&mut self, media: Media) -> (PathBuf, Option<GrowingDownload>) {
+        match media {
+            Media::Local(media_path) => (media_path, None),
+            Media::Growing(GrowingMedia {
+                media_path,
+                downloaded,
+                byte_len,
+                revision,
+            }) => {
+                let bound = Arc::clone(self.downloaded.entry(revision).or_default());
+                bound.fetch_max(downloaded, Ordering::Release);
+                let download = GrowingDownload {
+                    downloaded: bound,
+                    byte_len,
+                    revision,
+                    read_byte: Arc::default(),
+                };
+                (media_path, Some(download))
+            }
         }
     }
 
     pub(crate) fn cancel(&mut self) {
         self.preload = self.issue();
         self.decode = self.issue();
+        self.preloaded_revision = None;
+        self.downloaded.clear();
     }
 
     fn issue(&mut self) -> Revision {
@@ -72,16 +135,22 @@ impl JobRevisions {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::atomic::Ordering};
 
     use kernel::{
+        cmd::{GrowingMedia, Media},
         domain::revision::Revision,
         message::{AudioError, DecodeError},
+        update::machine::Unhandled,
     };
     use rstest::rstest;
 
     use crate::{
-        deck::{event::DeckEvent, job::AudioJob},
+        deck::{
+            event::DeckEvent,
+            job::AudioJob,
+            source::tests::{decoded, ramp_file},
+        },
         engine::{
             message::{AudioMessage, EngineMessage},
             revisions::JobRevisions,
@@ -101,16 +170,16 @@ mod tests {
     type Step = Box<dyn Fn(&mut JobRevisions)>;
 
     fn decode_job_step(path: &str) -> Step {
-        let path = PathBuf::from(path);
+        let media = Media::Local(PathBuf::from(path));
         Box::new(move |revisions| {
-            revisions.decode_job(path.clone());
+            revisions.decode_job(media.clone());
         })
     }
 
     fn preload_job_step(path: &str) -> Step {
-        let path = PathBuf::from(path);
+        let media = Media::Local(PathBuf::from(path));
         Box::new(move |revisions| {
-            revisions.preload_job(path.clone());
+            revisions.preload_job(media.clone());
         })
     }
 
@@ -122,12 +191,163 @@ mod tests {
     fn a_decode_job_carries_the_newest_revision() {
         let mut job_revisions = JobRevisions::default();
         assert_same(
-            job_revisions.decode_job("/a".into()),
+            job_revisions.decode_job(Media::Local("/a".into())),
             AudioJob::Decode {
-                path: "/a".into(),
+                media_path: "/a".into(),
+                download: None,
                 revision: revision(2),
             },
         );
+    }
+
+    fn growing(media_path: PathBuf, downloaded: u64, byte_len: u64) -> Media {
+        Media::Growing(GrowingMedia {
+            media_path,
+            downloaded,
+            byte_len,
+            revision: revision(9),
+        })
+    }
+
+    fn bound(audio_job: &AudioJob) -> u64 {
+        let (AudioJob::Decode {
+            media_path: _media_path,
+            download: Some(download),
+            revision: _revision,
+        }
+        | AudioJob::Preload {
+            media_path: _media_path,
+            download: Some(download),
+            revision: _revision,
+        }) = audio_job
+        else {
+            panic!("a growing media gives a growing job, got {audio_job:?}");
+        };
+        download.downloaded.load(Ordering::Acquire)
+    }
+
+    #[test]
+    fn a_decode_again_of_a_growing_media_starts_at_the_bound_grow_raised() {
+        let mut job_revisions = JobRevisions::default();
+        let loaded = job_revisions.decode_job(growing("/a".into(), 100, 1_000));
+
+        job_revisions.grow(revision(9), 600).unwrap();
+        let resumed = job_revisions.decode_job(growing("/a".into(), 100, 1_000));
+
+        assert_eq!((bound(&loaded), bound(&resumed)), (600, 600));
+    }
+
+    #[test]
+    fn a_grow_for_media_no_job_holds_is_refused() {
+        let mut job_revisions = JobRevisions::default();
+        drop(job_revisions.decode_job(growing("/a".into(), 100, 1_000)));
+        job_revisions.cancel();
+
+        assert_eq!(
+            (
+                job_revisions.grow(revision(9), 600),
+                job_revisions.grow(revision(8), 600)
+            ),
+            (Err(Unhandled), Err(Unhandled))
+        );
+    }
+
+    #[test]
+    fn a_decoded_track_keeps_only_its_own_download_growing() {
+        let mut job_revisions = JobRevisions::default();
+        drop(job_revisions.decode_job(growing("/a".into(), 100, 1_000)));
+        let mut other_job_revisions = JobRevisions::default();
+        drop(other_job_revisions.decode_job(growing("/a".into(), 100, 1_000)));
+
+        job_revisions.decoded(Some(revision(9)));
+        other_job_revisions.decoded(None);
+
+        assert_eq!(
+            (
+                job_revisions.grow(revision(9), 600),
+                other_job_revisions.grow(revision(9), 600)
+            ),
+            (Ok(()), Err(Unhandled))
+        );
+    }
+
+    fn growing_preload(media_path: PathBuf, revision: Revision) -> Media {
+        Media::Growing(GrowingMedia {
+            media_path,
+            downloaded: 100,
+            byte_len: 1_000,
+            revision,
+        })
+    }
+
+    #[test]
+    fn a_decoded_track_keeps_the_download_of_its_pending_preload_growing() {
+        let mut job_revisions = JobRevisions::default();
+        drop(job_revisions.decode_job(growing("/a".into(), 100, 1_000)));
+        drop(job_revisions.preload_job(growing_preload("/b".into(), revision(7))));
+
+        job_revisions.decoded(Some(revision(9)));
+
+        assert_eq!(
+            (
+                job_revisions.grow(revision(9), 600),
+                job_revisions.grow(revision(7), 600)
+            ),
+            (Ok(()), Ok(()))
+        );
+    }
+
+    #[test]
+    fn a_decoded_track_clears_the_download_of_a_superseded_preload() {
+        let mut job_revisions = JobRevisions::default();
+        drop(job_revisions.decode_job(growing("/a".into(), 100, 1_000)));
+        drop(job_revisions.preload_job(growing_preload("/b".into(), revision(7))));
+        drop(job_revisions.preload_job(growing_preload("/c".into(), revision(6))));
+
+        job_revisions.decoded(Some(revision(9)));
+
+        assert_eq!(
+            (
+                job_revisions.grow(revision(7), 600),
+                job_revisions.grow(revision(6), 600)
+            ),
+            (Err(Unhandled), Ok(()))
+        );
+    }
+
+    #[test]
+    fn a_download_grown_in_steps_through_grow_decodes_like_the_whole_file() {
+        const MARGIN: u64 = 64 * 1024;
+        let file = ramp_file(2, 200_000);
+        let byte_len = file.as_file().metadata().unwrap().len();
+        let mut job_revisions = JobRevisions::default();
+        let audio_job =
+            job_revisions.decode_job(growing(file.path().into(), 44, byte_len));
+        let AudioJob::Decode {
+            media_path,
+            download: Some(download),
+            revision: _revision,
+        } = audio_job
+        else {
+            panic!("a load of a growing media gives a growing decode job");
+        };
+        let mut decoder = download.decode(&media_path).unwrap();
+        let mut samples = Vec::new();
+
+        for downloaded in [byte_len / 4, byte_len / 2, byte_len * 3 / 4, byte_len] {
+            job_revisions.grow(revision(9), downloaded).unwrap();
+            while (44 + 2 * u64::try_from(samples.len()).unwrap() + MARGIN
+                <= downloaded
+                || downloaded == byte_len)
+                && let available @ [_, ..] = decoder.frames().unwrap()
+            {
+                samples.extend_from_slice(available);
+                let frames = available.len() / 2;
+                decoder.consume(frames);
+            }
+        }
+
+        assert_eq!(samples, decoded(&file));
     }
 
     #[rstest]

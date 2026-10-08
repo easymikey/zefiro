@@ -82,6 +82,7 @@ expression: "walked(model, messages)"
             sleep_timer: None,
             ab_loop: None,
             output_status: Ready,
+            buffering_revision: None,
         },
         [],
     ),
@@ -97,7 +98,9 @@ expression: "walked(model, messages)"
             Audio(
                 Preload(
                     TrackLoad {
-                        path: "/tmp/track1.flac",
+                        media: Local(
+                            "/tmp/track1.flac",
+                        ),
                         decibels: None,
                         revision: Revision(
                             2,
@@ -208,6 +211,7 @@ expression: "walked(model, messages)"
             sleep_timer: None,
             ab_loop: None,
             output_status: Ready,
+            buffering_revision: None,
         },
         [],
     ),
@@ -323,6 +327,7 @@ expression: "walked(model, messages)"
             sleep_timer: None,
             ab_loop: None,
             output_status: Ready,
+            buffering_revision: None,
         },
         [],
     ),
@@ -485,6 +490,7 @@ expression: "walked(model, messages)"
             sleep_timer: None,
             ab_loop: None,
             output_status: Ready,
+            buffering_revision: None,
         },
         [],
     ),

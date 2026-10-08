@@ -43,14 +43,14 @@ impl Runtime {
     ) -> Result<Self, Error> {
         let (model, effects) = kernel::update::startup::startup(startup);
         let wiring = Wiring::spawn(&model, paths, spawners)?;
-        Ok(Self::assemble((model, effects), wiring)?)
+        Ok(Self::assemble(model, effects, wiring)?)
     }
 
     pub(crate) fn assemble(
-        started: (Model, Vec<Effect>),
+        model: Model,
+        effects: Vec<Effect>,
         wiring: Wiring,
     ) -> Result<Self, ClockError> {
-        let (model, effects) = started;
         let mut runtime = Self {
             model,
             wiring,
@@ -89,10 +89,6 @@ impl Runtime {
             }
         }
         Ok(())
-    }
-
-    pub(crate) fn flow(&self) -> ControlFlow<()> {
-        self.flow
     }
 
     pub(crate) fn take_shell_effects(&mut self) -> Vec<ShellEffect> {
@@ -167,7 +163,8 @@ mod tests {
         io,
         path::Path,
         sync::atomic::{AtomicUsize, Ordering},
-        time::{Duration, SystemTime, UNIX_EPOCH},
+        thread,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     use audio::tap::SpectrumTap;
@@ -189,6 +186,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
+        driver::tests::{LONG_JOB, RECV_TIMEOUT},
         driver_thread::{Congestion, DriverThread},
         error::{Error, SpawnError},
         event_loop::run,
@@ -431,6 +429,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn drain_gives_up_on_a_driver_that_never_reports_its_stop() {
+        let directory = tempfile::tempdir().unwrap();
+        let spawners = Spawners {
+            audio: |spawn_setup| {
+                spawn_audio_loop(
+                    |_: &Receiver<AudioCmd>, _: &Sender<Message>, _: &Congestion| {
+                        thread::sleep(LONG_JOB);
+                        Ok(())
+                    },
+                    spawn_setup,
+                )
+            },
+            ..idle_spawners()
+        };
+        let asked = Instant::now();
+        let runtime =
+            Runtime::start(stock_startup(), &start_paths(directory.path()), &spawners)
+                .unwrap();
+        let (keys, input) = unbounded();
+        keys.send(()).unwrap();
+        let mut shell = QuitShell;
+
+        let ended = run(runtime, &mut shell, &input);
+
+        assert!(matches!(ended, Ok(())));
+        assert!(asked.elapsed() < Runtime::DRAIN + RECV_TIMEOUT);
+    }
+
     #[derive(Debug, Clone, Copy)]
     enum LifeStep {
         Paint,
@@ -554,8 +581,8 @@ mod tests {
 
     fn start(driver_status: DriverStatus) -> (Runtime, Receiver<LibraryCmd>) {
         let (wiring, library_cmd_receiver, _latest_senders) = Wiring::idle();
-        let started = kernel::update::startup::startup(stock_startup());
-        let mut runtime = Runtime::assemble(started, wiring).unwrap();
+        let (model, effects) = kernel::update::startup::startup(stock_startup());
+        let mut runtime = Runtime::assemble(model, effects, wiring).unwrap();
         runtime.model.drivers.record_mut(DriverName::Library).status = driver_status;
         (runtime, library_cmd_receiver)
     }

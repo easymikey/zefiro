@@ -1,0 +1,16 @@
+---
+source: crates/widgets/src/overlay/search/mod.rs
+expression: "rendered(60, 12, |frame|\nframe.render_widget(&overlay, frame.area())).to_string()"
+---
+"┏ SEARCH ── home ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+"┃ / moon_                                                  ┃"
+"┃ ───────────────────────────────────────────────────────  ┃"
+"┃ Albums                                                   ┃"
+"┃ Air — Moon Safari                                        ┃"
+"┃ Pink Floyd — The Dark Side of the Moon                   ┃"
+"┃ Tracks                                                   ┃"
+"┃ Moon River                                               ┃"
+"┃ Moonlight Sonata                                         ┃"
+"┃                                                          ┃"
+"┃                                                          ┃"
+"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"

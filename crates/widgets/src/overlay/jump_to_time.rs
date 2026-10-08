@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use kernel::domain::{geometry::Cells, overlay::TextEntry, time::TimecodeError};
 
 use crate::{
@@ -12,11 +14,14 @@ pub(crate) fn prompt<'a>(
     text_entry: &'a TextEntry<TimecodeError>,
     active_theme: ActiveTheme<'a>,
 ) -> PromptWidget<'a> {
-    PromptWidget::new(PromptBody::Entry(&text_entry.input), active_theme)
-        .title(glyphs::jump_to_time::TITLE_WORD)
-        .hint(glyphs::jump_to_time::HINT)
-        .min_width(MIN_WIDTH)
-        .error(text_entry.error.as_ref())
+    PromptWidget::new(
+        PromptBody::Entry(Cow::Borrowed(text_entry.input.as_str())),
+        active_theme,
+    )
+    .title(glyphs::jump_to_time::TITLE_WORD)
+    .hint(glyphs::jump_to_time::HINT)
+    .min_width(MIN_WIDTH)
+    .error(text_entry.error.as_ref())
 }
 
 #[cfg(test)]

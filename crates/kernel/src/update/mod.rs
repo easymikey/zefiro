@@ -8,6 +8,7 @@ pub mod machine;
 mod macos;
 pub mod overlay;
 mod parts;
+mod play_reports;
 mod playback;
 pub mod player;
 mod playlist;
@@ -18,12 +19,21 @@ mod successor;
 mod transport;
 mod workspace;
 
-use std::sync::Arc;
+use std::{mem, sync::Arc};
 
 use parts::{browse_parts, config_parts, library_parts, playback_parts, server_parts};
 
 use crate::{
-    cmd::{AudioCmd, Cmd, CoverJob, Effect, LibraryCmd, WindowColorsCmd},
+    cmd::{
+        AudioCmd,
+        Cmd,
+        ConfigCmd,
+        CoverJob,
+        Effect,
+        LibraryCmd,
+        RemoteCmd,
+        WindowColorsCmd,
+    },
     domain::{
         appearance::CoverMode,
         cue::Cue,
@@ -31,6 +41,7 @@ use crate::{
         model::Model,
         playlist::{PlayOrder, Playlist},
         revision::{Freshness, Revision},
+        server::PlayReport,
         settings::Settings,
         supervision::{Announcement, Decision},
         time::Moment,
@@ -45,6 +56,7 @@ use crate::{
         OverlayRequest,
         PaintError,
         QueueRequest,
+        RemoteEvent,
         Timer,
     },
     update::machine::{Machine, Unhandled},
@@ -74,7 +86,7 @@ pub fn update(
         message
     };
     if let Message::Quit = message {
-        return Ok(quit().into_parts().0);
+        return Ok(quit(mem::take(&mut model.play_reports)).into_parts().0);
     }
     let before = shown_cover(model);
     let mut effects = route(model, message, now)?;
@@ -178,10 +190,11 @@ fn follow_one(model: &mut Model, message: Message, depth: usize) -> Vec<Effect> 
         .collect()
 }
 
-pub(crate) fn quit() -> Cmd {
+pub(crate) fn quit(play_reports: Vec<PlayReport>) -> Cmd {
     Cmd::from_iter([
         Effect::Audio(AudioCmd::Stop),
-        Effect::Config(crate::cmd::ConfigCmd::Flush),
+        Effect::Config(ConfigCmd::Flush),
+        Effect::Remote(RemoteCmd::Flush(play_reports)),
         Effect::WindowColors(WindowColorsCmd::Reset),
         Effect::Quit,
     ])
@@ -293,7 +306,10 @@ fn elapsed(model: &mut Model, timer: Timer, now: Moment) -> Result<Cmd, Unhandle
             audio::lookahead_fired(&mut playback_parts(model), revision, now)
         }
         Timer::Fetch(revision) => {
-            server::retry(&model.downloads, &model.player, revision)
+            player::retry(&model.downloads, &model.player, revision)
+        }
+        Timer::Scrobble(revision) => {
+            player::scrobble::scrobble(&mut playback_parts(model), revision, now)
         }
     }
 }
@@ -311,7 +327,7 @@ fn toast_expired(
 }
 
 fn sleep_fired(
-    playback_parts: &mut player::PlaybackParts<'_>,
+    playback_parts: &mut player::events::PlaybackParts<'_>,
     revision: Revision,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
@@ -353,6 +369,7 @@ fn driver_died(
                 driver::ResumeParts {
                     player: &model.player,
                     transport: &model.transport,
+                    downloads: &model.downloads,
                     revisions: &mut model.revisions,
                 },
                 driver_name,
@@ -378,6 +395,8 @@ fn update_overlay(
             history: &model.history,
             music_dir: &model.music_dir,
             servers: &model.servers,
+            catalog_name: &model.catalog_name,
+            revisions: &mut model.revisions,
         },
         request,
     )
@@ -389,6 +408,7 @@ fn update_queue(
 ) -> Result<Cmd, Unhandled> {
     browse::queue(
         browse::QueueParts {
+            catalog_name: &model.catalog_name,
             playlist: &model.playlist,
             history: &model.history,
             browse: &mut model.workspace.browse,
@@ -396,6 +416,22 @@ fn update_queue(
         },
         queue_request,
     )
+}
+
+fn remote(model: &mut Model, event: RemoteEvent) -> Result<Cmd, Unhandled> {
+    let answer = if let RemoteEvent::Restored(result) = event {
+        play_reports::restored(&mut model.play_reports, result)?
+    } else if let RemoteEvent::Unsaved(io_error) = event {
+        Cmd::message(Message::Toast(Toast::error(format!(
+            "Play reports are unsaved: {io_error}"
+        ))))
+    } else {
+        server::update(server_parts(model), event)?
+    };
+    Ok(answer.then(play_reports::ordered(
+        &model.servers,
+        &mut model.play_reports,
+    )))
 }
 
 fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhandled> {
@@ -425,7 +461,7 @@ fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhan
             audio::update(&mut playback_parts(model), audio_event, now)
         }
         Message::Macos(event) => macos::update(&mut playback_parts(model), event, now),
-        Message::Remote(event) => server::update(server_parts(model), event),
+        Message::Remote(event) => remote(model, event),
         Message::Server(request) => server::request(server_parts(model), request),
         Message::Paint(error) => Ok(model
             .workspace

@@ -1,4 +1,4 @@
-use kernel::domain::{player::Player, transport::OutputStatus};
+use kernel::domain::{player::Player, revision::Revision, transport::OutputStatus};
 use ratatui::{
     buffer::Buffer,
     layout::Alignment,
@@ -9,25 +9,41 @@ use ratatui::{
 
 use crate::{
     card::{CardWidget, metrics::CardMetrics},
-    primitive::{span::text, truncate::truncate},
+    primitive::{
+        span::{line, text},
+        truncate::{truncate, truncate_line},
+    },
     theme::active_theme::ActiveTheme,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CardStatus {
     Playing,
+    Buffering,
     Paused,
     Stopped,
     OutputLost,
 }
 
+const BUFFERING_GLYPH: &str = "\u{25cc}";
+
 impl CardStatus {
     #[must_use]
-    pub(crate) fn new(output_status: OutputStatus, player: &Player) -> Self {
+    pub(crate) fn new(
+        output_status: OutputStatus,
+        buffering_revision: Option<Revision>,
+        player: &Player,
+    ) -> Self {
         match output_status {
             OutputStatus::Lost(..) => Self::OutputLost,
             OutputStatus::Ready => match player {
-                Player::Playing { .. } | Player::Loading(..) => Self::Playing,
+                Player::Playing { .. } | Player::Loading(..) => {
+                    if buffering_revision.is_some() {
+                        Self::Buffering
+                    } else {
+                        Self::Playing
+                    }
+                }
                 Player::Paused { .. } => Self::Paused,
                 Player::Stopped => Self::Stopped,
             },
@@ -41,34 +57,31 @@ impl CardStatus {
             Self::OutputLost => theme.alert(),
             Self::Playing => colors.accent,
             Self::Paused => colors.foreground,
-            Self::Stopped => colors.muted_foreground,
+            Self::Buffering | Self::Stopped => colors.muted_foreground,
         }
     }
 
     #[must_use]
-    pub(crate) fn label(self) -> StatusLabel {
+    pub(crate) fn glyph(self) -> &'static str {
         match self {
-            Self::Playing => StatusLabel { glyph: "\u{25b6}" },
-            Self::Paused => StatusLabel { glyph: "\u{23f8}" },
-            Self::Stopped => StatusLabel { glyph: "\u{25a0}" },
-            Self::OutputLost => StatusLabel { glyph: "\u{26a0}" },
+            Self::Playing => "\u{25b6}",
+            Self::Buffering => BUFFERING_GLYPH,
+            Self::Paused => "\u{23f8}",
+            Self::Stopped => "\u{25a0}",
+            Self::OutputLost => "\u{26a0}",
         }
     }
 
     #[must_use]
-    pub(crate) fn text(self) -> &'static str {
+    pub(crate) fn word(self) -> &'static str {
         match self {
-            Self::Playing => "\u{25b6} Playing",
-            Self::Paused => "\u{23f8} Paused",
-            Self::Stopped => "\u{25a0} Stopped",
-            Self::OutputLost => "\u{26a0} No output",
+            Self::Playing => "Playing",
+            Self::Buffering => "Buffering",
+            Self::Paused => "Paused",
+            Self::Stopped => "Stopped",
+            Self::OutputLost => "No output",
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct StatusLabel {
-    pub(crate) glyph: &'static str,
 }
 
 pub(crate) fn paint(
@@ -83,9 +96,14 @@ pub(crate) fn paint(
 
     let status = card_widget.view.status();
     let status_color = status.color(&card_widget.active_theme);
-    let status_line = truncate(status.text(), usize::from(metrics.status_row.width));
-    let status_span: Span<'_> = text(status_line).fg(status_color).into();
-    Paragraph::new(status_span)
+    let status_line = truncate_line(
+        line([
+            text(status.glyph()).fg(status_color),
+            text(format!(" {}", status.word())).fg(status_color),
+        ]),
+        usize::from(metrics.status_row.width),
+    );
+    Paragraph::new(status_line)
         .alignment(Alignment::Right)
         .render(metrics.status_row, buffer);
 

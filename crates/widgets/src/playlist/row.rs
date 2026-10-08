@@ -20,7 +20,7 @@ use crate::{
     playlist::view::PlaylistView,
     primitive::{
         list_chrome::{ScrollAreas, scroll_offset},
-        marker::{FAVORITE_COLUMNS, Favorite, QueueNumber},
+        marker::{FAVORITE_COLUMNS, QueueNumber},
         track_row::{self, Playing, Selected, TrackRow},
     },
     theme::{active_theme::ActiveTheme, colors::Colors},
@@ -137,11 +137,7 @@ fn build_line<'a>(
     } else {
         Selected::No
     };
-    let favorite = if view.favorites.is_favorite(track.source()) {
-        Favorite::Yes
-    } else {
-        Favorite::No
-    };
+    let favorite = view.favorites.favorite(track.source());
     let playing_index = view.playing_index;
     let playing = if playing_index == Some(index) {
         Playing::Yes

@@ -175,7 +175,10 @@ impl<'a> CatalogWidget<'a> {
                         &TrackRow {
                             title: track.display(),
                             selected,
-                            favorite: self.catalog_view.favorite(track),
+                            favorite: self
+                                .catalog_view
+                                .favorites
+                                .favorite(track.source()),
                             playing: self.catalog_view.playing(track),
                             queued_number: None,
                             row_width,

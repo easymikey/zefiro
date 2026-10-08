@@ -3,10 +3,11 @@ use std::{
     io::{self, ErrorKind},
     path::{Path, PathBuf},
     sync::Arc,
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use kernel::domain::{
+    favorites::Favorite,
     io_error::IoError,
     revision::Revision,
     server::{
@@ -18,12 +19,16 @@ use kernel::domain::{
         Listing,
         MediaFetch,
         Page,
+        PlayReport,
         RemoteError,
+        Scrobble,
         Secret,
         SecretError,
         ServerName,
+        ServerTrackId,
         Session,
     },
+    time::Moment,
 };
 use keyring_core::Entry;
 use ureq::Agent;
@@ -32,15 +37,16 @@ use crate::{
     http::CACHE_BYTES,
     message::RemoteMessage,
     subsonic::{
-        answer,
         cache_error,
         catalog_rows,
         download,
-        fetched,
+        get,
         ping,
         query,
+        scrobble,
         search_query,
         search_rows,
+        star,
     },
 };
 
@@ -49,6 +55,7 @@ pub const KEYCHAIN_SERVICE: &str = "sifr";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteJob {
     Connect(Connection),
+    Forget(Account),
     List {
         server_name: ServerName,
         session: Session,
@@ -72,6 +79,19 @@ pub enum RemoteJob {
         input: String,
         revision: Revision,
     },
+    Star {
+        server_name: ServerName,
+        session: Session,
+        server_track_id: ServerTrackId,
+        favorite: Favorite,
+    },
+    Report(Vec<SignedReport>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignedReport {
+    pub session: Session,
+    pub play_report: PlayReport,
 }
 
 impl RemoteJob {
@@ -79,30 +99,21 @@ impl RemoteJob {
     pub fn run(self, agent: &Agent) -> RemoteMessage {
         match self {
             RemoteJob::Connect(connection) => connected(agent, &connection),
+            RemoteJob::Forget(account) => RemoteMessage::Forgotten(forget(&account)),
             RemoteJob::List {
                 server_name,
                 session,
                 listing,
                 page,
                 revision,
-            } => {
-                let link = format!(
-                    "{}/rest/{}&{}",
-                    session.endpoint,
-                    query(&listing, page),
-                    session.query
-                );
-                let result = fetched(&server_name, link, |current| agent.get(current))
-                    .and_then(|response| answer(&server_name, response))
-                    .and_then(|answer| catalog_rows(&server_name, &listing, &answer));
-                RemoteMessage::Listed {
-                    server_name,
-                    listing,
-                    page,
-                    result,
-                    revision,
-                }
-            }
+            } => RemoteMessage::Listed {
+                result: get(agent, &server_name, query(&listing, page, &session))
+                    .and_then(|answer| catalog_rows(&server_name, &listing, &answer)),
+                server_name,
+                listing,
+                page,
+                revision,
+            },
             RemoteJob::Fetch {
                 media_fetch,
                 media_dir,
@@ -124,22 +135,31 @@ impl RemoteJob {
                 session,
                 input,
                 revision,
-            } => {
-                let link = search_query(&input, &session);
-                RemoteMessage::Found {
-                    result: fetched(&server_name, link, |current| agent.get(current))
-                        .and_then(|response| answer(&server_name, response))
-                        .and_then(|answer| search_rows(&server_name, &answer)),
-                    server_name,
-                    revision,
-                }
-            }
+            } => RemoteMessage::Found {
+                result: get(agent, &server_name, search_query(&input, &session))
+                    .and_then(|answer| search_rows(&server_name, &answer)),
+                server_name,
+                revision,
+            },
+            RemoteJob::Star {
+                server_name,
+                session,
+                server_track_id: id,
+                favorite,
+            } => RemoteMessage::Starred {
+                result: sent(agent, &server_name, star(&id, favorite, &session)),
+                server_name,
+                server_track_id: id,
+                favorite,
+            },
+            RemoteJob::Report(signed_reports) => reported(agent, signed_reports),
         }
     }
 
     pub(crate) fn revision(&self) -> Option<Revision> {
         match self {
             RemoteJob::Connect(_connection) => None,
+            RemoteJob::Forget(_account) => None,
             RemoteJob::List {
                 server_name: _server_name,
                 session: _session,
@@ -163,8 +183,122 @@ impl RemoteJob {
                 input: _input,
                 revision,
             } => Some(*revision),
+            RemoteJob::Star {
+                server_name: _server_name,
+                session: _session,
+                server_track_id: _server_track_id,
+                favorite: _favorite,
+            } => None,
+            RemoteJob::Report(_signed_reports) => None,
         }
     }
+
+    pub(crate) fn server_name(&self) -> Option<&ServerName> {
+        match self {
+            RemoteJob::Connect(connection) => Some(&connection.account.server_name),
+            RemoteJob::Forget(account) => Some(&account.server_name),
+            RemoteJob::List {
+                server_name,
+                session: _session,
+                listing: _listing,
+                page: _page,
+                revision: _revision,
+            } => Some(server_name),
+            RemoteJob::Search {
+                server_name,
+                session: _session,
+                input: _input,
+                revision: _revision,
+            } => Some(server_name),
+            RemoteJob::Star {
+                server_name,
+                session: _session,
+                server_track_id: _server_track_id,
+                favorite: _favorite,
+            } => Some(server_name),
+            RemoteJob::Fetch {
+                media_fetch,
+                media_dir: _media_dir,
+                kept_cache_keys: _kept_cache_keys,
+            }
+            | RemoteJob::Prefetch {
+                media_fetch,
+                media_dir: _media_dir,
+                kept_cache_keys: _kept_cache_keys,
+            } => Some(&media_fetch.server_name),
+            RemoteJob::Report(_signed_reports) => None,
+        }
+    }
+}
+
+fn reported(agent: &Agent, signed_reports: Vec<SignedReport>) -> RemoteMessage {
+    let mut play_reports = Vec::with_capacity(signed_reports.len());
+    let result = signed_reports.into_iter().try_for_each(
+        |SignedReport {
+             session,
+             play_report,
+         }| {
+            let link = scrobble(&play_report, &session);
+            sent(agent, &play_report.server_name, link)
+                .map(|()| play_reports.push(play_report))
+        },
+    );
+    RemoteMessage::Reported {
+        play_reports,
+        result,
+    }
+}
+
+pub(crate) fn flush(
+    reports_path: &Path,
+    play_reports: &[PlayReport],
+) -> Result<(), IoError> {
+    let stored: Vec<(&str, &str, Duration)> = play_reports
+        .iter()
+        .filter_map(|play_report| match play_report.scrobble {
+            Scrobble::NowPlaying => None,
+            Scrobble::Played(moment) => Some((
+                play_report.server_name.as_str(),
+                play_report.server_track_id.as_str(),
+                moment.since_epoch(),
+            )),
+        })
+        .collect();
+    serde_json::to_vec(&stored)
+        .map_err(io::Error::from)
+        .and_then(|bytes| {
+            if let Some(reports_dir) = reports_path.parent() {
+                fs::create_dir_all(reports_dir)?;
+            }
+            fs::write(reports_path, bytes)
+        })
+        .map_err(|error| IoError::from(error.kind()))
+}
+
+pub(crate) fn restored(reports_path: &Path) -> Result<Vec<PlayReport>, IoError> {
+    let bytes = match fs::read(reports_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(IoError::from(error.kind())),
+    };
+    let stored: Vec<(String, String, Duration)> =
+        serde_json::from_slice(&bytes).map_err(|_error| IoError::Malformed)?;
+    Ok(stored
+        .into_iter()
+        .map(|(server_name, server_track_id, since_epoch)| PlayReport {
+            server_name: ServerName::new(&server_name),
+            server_track_id: ServerTrackId::new(&server_track_id),
+            scrobble: Scrobble::Played(Moment::new(since_epoch)),
+        })
+        .collect())
+}
+
+fn sent(
+    agent: &Agent,
+    server_name: &ServerName,
+    link: String,
+) -> Result<(), RemoteError> {
+    get(agent, server_name, link).map(drop)
 }
 
 fn cached(
@@ -292,6 +426,16 @@ fn store(account: &Account, secret: &Secret) -> Result<(), RemoteError> {
     entry(account)?
         .set_password(secret.as_str())
         .map_err(|error| keychain(&account.server_name, &error))
+}
+
+fn forget(account: &Account) -> Result<(), RemoteError> {
+    entry(account)?.delete_credential().or_else(|error| {
+        if matches!(error, keyring_core::Error::NoEntry) {
+            Ok(())
+        } else {
+            Err(keychain(&account.server_name, &error))
+        }
+    })
 }
 
 fn entry(account: &Account) -> Result<Entry, RemoteError> {

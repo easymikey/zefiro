@@ -62,7 +62,7 @@ impl<C: Copy> Colors<C> {
 
 impl Colors {
     pub fn spectrum_color_at(&self, fraction: f32) -> Rgb {
-        gradient_at(&self.spectrum, fraction).unwrap_or(self.spectrum[1])
+        gradient_at(&self.spectrum, fraction)
     }
 
     #[must_use]
@@ -223,5 +223,25 @@ mod tests {
         };
         let colors = Colors::from_theme_base(&theme_base);
         assert!(luma(colors.window_background) < luma(colors.background));
+    }
+
+    #[test]
+    fn an_accent_darker_than_the_selection_band_is_raised_to_marker_contrast_on_both() {
+        let theme_base = ThemeBase {
+            background: Rgb([0x10, 0x10, 0x10]),
+            muted_foreground: Rgb([0x80, 0x80, 0x80]),
+            foreground: Rgb([0xe0, 0xe0, 0xe0]),
+            accent: Rgb([0x1a, 0x23, 0x7e]),
+            ..test_base()
+        };
+        let colors = Colors::from_theme_base(&theme_base);
+        assert!(
+            contrast_ratio(colors.highlight, colors.window_background)
+                >= MIN_MARKER_CONTRAST
+        );
+        assert!(
+            contrast_ratio(colors.highlight, colors.selection_background)
+                >= MIN_MARKER_CONTRAST
+        );
     }
 }

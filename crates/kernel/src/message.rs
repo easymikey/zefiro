@@ -7,10 +7,11 @@ use crate::domain::{
     bounded::Bounded,
     chord::ChordPrefix,
     config::{ConfigError, ConfigName, Diagnostic},
+    cursor_over::CursorOver,
     device::{DeviceName, ListedDevice, OutputDevice},
     direction::Direction,
     driver::{DriverError, DriverName},
-    favorites::Favorites,
+    favorites::{Favorite, Favorites},
     geometry::{Cells, Pixels},
     history::HistoryEntry,
     index::ViewIndex,
@@ -21,7 +22,17 @@ use crate::domain::{
     percent::Percent,
     playlist::PlaylistFileName,
     revision::Revision,
-    server::{Connection, Fetched, Listing, Page, RemoteError, ServerName, Session},
+    server::{
+        Connection,
+        Fetched,
+        Listing,
+        Page,
+        PlayReport,
+        RemoteError,
+        ServerName,
+        ServerTrackId,
+        Session,
+    },
     setting_row::SettingRow,
     theme::ThemeName,
     toast::Toast,
@@ -105,6 +116,7 @@ pub enum Timer {
     Sleep(Revision),
     Lookahead(Revision),
     Fetch(Revision),
+    Scrobble(Revision),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, IntoStaticStr)]
@@ -233,7 +245,7 @@ impl Bounded for SeekTenths {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BrowseRequest {
     Trash(TrackSource),
     SavePlaylist(PlaylistFileName),
@@ -247,6 +259,7 @@ pub enum BrowseRequest {
     PageBy(Direction),
     StepCatalog(Direction),
     LevelUp,
+    Open(CursorOver<Vec<CatalogRow>>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
@@ -349,6 +362,8 @@ pub enum AudioEvent {
     DevicesListed(Vec<ListedDevice>),
     DeviceFellBack(OutputDevice),
     DeviceOpened(DeviceName),
+    Buffering(Revision),
+    Buffered(Revision),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, IntoStaticStr)]
@@ -371,6 +386,7 @@ pub enum RemoteEvent {
         listing: Listing,
         page: Page,
         catalog_rows: Vec<CatalogRow>,
+        favorites: Favorites,
         revision: Revision,
     },
     Error(RemoteError),
@@ -380,9 +396,16 @@ pub enum RemoteEvent {
     },
     Found {
         server_name: ServerName,
-        catalog_rows: Vec<CatalogRow>,
+        result: Result<(Vec<CatalogRow>, Favorites), RemoteError>,
         revision: Revision,
     },
+    Starred {
+        server_name: ServerName,
+        server_track_id: ServerTrackId,
+        favorite: Favorite,
+    },
+    Restored(Result<Vec<PlayReport>, IoError>),
+    Unsaved(IoError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -6,6 +6,7 @@ use crate::domain::{
     cursor_over::CursorOver,
     index::ViewIndex,
     playlist::PlaylistFileNameError,
+    revision::Revision,
     server::{
         Endpoint,
         EndpointError,
@@ -16,7 +17,7 @@ use crate::domain::{
     },
     setting_row::SettingRow,
     time::TimecodeError,
-    track::Track,
+    track::{CatalogRow, Track},
 };
 
 #[derive(Debug, Clone, PartialEq, IntoStaticStr, EnumDiscriminants)]
@@ -29,6 +30,7 @@ use crate::domain::{
 pub enum Overlay {
     Help,
     Search(CursorOver<SearchQuery>),
+    ServerSearch(CursorOver<ServerQuery>),
     SavePlaylist(TextEntry<PlaylistFileNameError>),
     History(CursorOver<()>),
     Settings(SettingRow),
@@ -46,6 +48,7 @@ impl Overlay {
     pub(crate) fn captures_text(&self) -> bool {
         match self {
             Overlay::Search(_)
+            | Overlay::ServerSearch(_)
             | Overlay::SavePlaylist(_)
             | Overlay::MusicDir(_)
             | Overlay::AddServer(_) => true,
@@ -193,4 +196,12 @@ impl fmt::Debug for ServerPrompt {
 pub struct SearchQuery {
     pub input: String,
     pub matches: Vec<ViewIndex>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerQuery {
+    pub server_name: ServerName,
+    pub input: String,
+    pub catalog_rows: Vec<CatalogRow>,
+    pub revision: Option<Revision>,
 }

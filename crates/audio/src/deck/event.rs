@@ -4,4 +4,6 @@ use kernel::domain::{revision::Revision, transport::OutputError};
 pub enum DeckEvent {
     OutputLost(OutputError),
     Woke(Revision),
+    Buffering(Revision),
+    Buffered(Revision),
 }

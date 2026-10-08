@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 
-use ratatui::text::{Line, Span};
+use ratatui::{
+    style::Style,
+    text::{Line, Span},
+};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::primitive::glyphs::ELLIPSIS;
@@ -18,15 +21,19 @@ pub(crate) fn truncate(text: &str, width: usize) -> Cow<'_, str> {
         return Cow::Borrowed(text);
     }
     let keep_width = width.saturating_sub(cell_width(ELLIPSIS));
-    let out: String = text
-        .chars()
-        .scan(0usize, |kept_width, ch| {
+    Cow::Owned(format!("{}{ELLIPSIS}", prefix(text, keep_width)))
+}
+
+fn prefix(text: &str, width: usize) -> &str {
+    let end = text
+        .char_indices()
+        .scan(0usize, |kept_width, (offset, ch)| {
             *kept_width += cell_width(ch);
-            (*kept_width <= keep_width).then_some(ch)
+            (*kept_width <= width).then_some(offset + ch.len_utf8())
         })
-        .chain(std::iter::once(ELLIPSIS))
-        .collect();
-    Cow::Owned(out)
+        .last()
+        .unwrap_or(0);
+    text.get(..end).unwrap_or("")
 }
 
 #[must_use]
@@ -72,34 +79,44 @@ pub(crate) fn truncate_line<'a>(line: Line<'a>, width: usize) -> Line<'a> {
     if line.width() <= width {
         return line;
     }
-    let clipped = |span: Span<'a>, budget: usize| {
-        let clipped_text = truncate(&span.content, budget).into_owned();
-        (!clipped_text.is_empty()).then(|| {
-            crate::primitive::span::text(clipped_text)
-                .style(span.style)
-                .into()
-        })
+    let Some(keep_width) = width.checked_sub(cell_width(ELLIPSIS)) else {
+        return Line::default();
     };
+    let style = line
+        .spans
+        .first()
+        .map_or_else(Style::default, |span| span.style);
     let spans: Vec<Span<'a>> = line
         .spans
         .into_iter()
-        .scan(Some(width), |budget, span| {
+        .scan(Some(keep_width), |budget, span| {
             let remaining = (*budget)?;
             *budget = remaining.checked_sub(span.content.width());
             if budget.is_some() {
                 return Some(Some(span));
             }
-            Some(clipped(span, remaining))
+            let kept = prefix(&span.content, remaining);
+            Some((!kept.is_empty()).then(|| {
+                crate::primitive::span::text(kept.to_owned())
+                    .style(span.style)
+                    .into()
+            }))
         })
         .flatten()
         .collect();
-    Line::from(spans)
+    let ellipsis: Span<'a> = crate::primitive::span::text(String::from(ELLIPSIS))
+        .style(spans.last().map_or(style, |span| span.style))
+        .into();
+    Line::from_iter(spans.into_iter().chain(std::iter::once(ellipsis)))
 }
 
 #[cfg(test)]
 mod tests {
     use proptest::prelude::{prop_assert, prop_assert_eq, proptest};
-    use ratatui::{style::Color, text::Line};
+    use ratatui::{
+        style::Color,
+        text::{Line, Span},
+    };
     use rstest::rstest;
     use unicode_width::UnicodeWidthStr;
 
@@ -203,5 +220,22 @@ mod tests {
 
         let empty = truncate_line(styled_line(), 0);
         assert_eq!(empty.width(), 0);
+    }
+
+    #[test]
+    fn a_line_cut_exactly_at_a_span_boundary_ends_with_the_ellipsis() {
+        let line = styled_line();
+        let first_width = line.spans.first().map_or(0, Span::width);
+        assert_eq!(first_width, 14);
+
+        let cut = truncate_line(line, first_width);
+        assert!(cut.width() <= first_width);
+        let text: String = cut.spans.iter().map(|span| span.content.as_ref()).collect();
+        assert_eq!(text, "[Shuffle: on]…");
+        assert_eq!(
+            cut.spans.last().map(|span| span.style.fg),
+            Some(Some(Color::White)),
+            "the ellipsis is styled like the last kept span"
+        );
     }
 }

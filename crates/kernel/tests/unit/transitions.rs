@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use kernel::{
-    cmd::{AudioCmd, Cmd, Effect, MacosCmd, TrackLoad, WindowColorsCmd},
+    cmd::{AudioCmd, Cmd, Effect, MacosCmd, Media, TrackLoad, WindowColorsCmd},
     domain::{
         bounded::Bounded,
         cue::Cue,
@@ -198,7 +198,8 @@ fn seek_routes_clamp_to_duration_regardless_of_message_source(
 }
 
 #[test]
-fn quit_stops_audio_flushes_config_resets_the_window_colors_and_ends_with_quit() {
+fn quit_stops_audio_flushes_config_and_reports_resets_the_window_colors_and_ends_with_quit()
+ {
     let mut model = Model::default();
     let cmd = update(&mut model, Message::Quit, Moment::default()).unwrap();
     let (effects, _messages) = cmd.into_parts();
@@ -212,6 +213,10 @@ fn quit_stops_audio_flushes_config_resets_the_window_colors_and_ends_with_quit()
     ));
     assert!(matches!(
         effects.get(2),
+        Some(Effect::Remote(kernel::cmd::RemoteCmd::Flush(play_reports))) if play_reports.is_empty()
+    ));
+    assert!(matches!(
+        effects.get(3),
         Some(Effect::WindowColors(WindowColorsCmd::Reset))
     ));
     assert!(matches!(effects.last(), Some(Effect::Quit)));
@@ -237,7 +242,7 @@ fn jump_request_starts_selected_track() {
     let loading = model.player.current().unwrap();
     assert_eq!(loading.local_path(), Some(Path::new("/tmp/track2.flac")));
     assert!(effects(cmd).iter().any(
-        |e| matches!(e, Effect::Audio(AudioCmd::Load(TrackLoad { path: p, .. })) if p == "/tmp/track2.flac")
+        |e| matches!(e, Effect::Audio(AudioCmd::Load(TrackLoad { media: Media::Local(p), .. })) if p == "/tmp/track2.flac")
     ));
 
     drop(ack_loaded(&mut model));
@@ -378,7 +383,7 @@ fn preload_peeks_queue_head_when_queue_nonempty() {
     .unwrap();
     assert!(cmd.effects().any(|effect| matches!(
         effect,
-        Effect::Audio(AudioCmd::Preload(TrackLoad { path, .. })) if path.as_os_str() == "/tmp/track2.flac"
+        Effect::Audio(AudioCmd::Preload(TrackLoad { media: Media::Local(path), .. })) if path.as_os_str() == "/tmp/track2.flac"
     )));
 }
 

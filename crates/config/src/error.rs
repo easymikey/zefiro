@@ -42,7 +42,7 @@ pub(crate) enum CrossfadeTextError {
     OutOfRange(#[from] kernel::domain::crossfade::CrossfadeError),
 }
 
-fn line_at(text: &str, offset: usize) -> usize {
+pub(crate) fn line_at(text: &str, offset: usize) -> usize {
     text.get(..offset)
         .unwrap_or(text)
         .bytes()

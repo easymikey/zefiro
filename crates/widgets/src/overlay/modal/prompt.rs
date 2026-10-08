@@ -1,4 +1,4 @@
-use std::error::Error;
+use std::{borrow::Cow, error::Error};
 
 use kernel::domain::geometry::Cells;
 use ratatui::{
@@ -6,7 +6,7 @@ use ratatui::{
     layout::Rect,
     style::Color,
     text::Line,
-    widgets::{Paragraph, Widget},
+    widgets::Widget,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -26,7 +26,7 @@ const CURSOR: &str = "_";
 
 #[derive(Debug)]
 pub(crate) enum PromptBody<'a> {
-    Entry(&'a str),
+    Entry(Cow<'a, str>),
     Sentence([&'a str; 5]),
 }
 
@@ -38,7 +38,7 @@ impl<'a> PromptBody<'a> {
         }
     }
 
-    fn line(&self, width: usize, color: Color) -> Line<'a> {
+    fn line(&self, width: usize, color: Color) -> Line<'_> {
         match self {
             PromptBody::Entry(input) => {
                 let budget = width.saturating_sub(MARKER.width() + CURSOR.width());
@@ -98,15 +98,18 @@ impl PromptWidget<'_> {
         }
     }
 
-    fn lines(&self, width: usize) -> Vec<Line<'_>> {
-        let mut lines = self.answers.clone();
-        lines.push(self.body.line(width, self.theme.colors().foreground));
-        if let Some(error) = self.error {
-            lines
-                .push(line([text(truncate_owned(error.to_string(), width))
-                    .fg(self.theme.alert())]));
-        }
-        lines
+    fn lines(&self, width: usize) -> impl Iterator<Item = Cow<'_, Line<'_>>> {
+        let body = self.body.line(width, self.theme.colors().foreground);
+        let error =
+            self.error.map(|error| {
+                line([text(truncate_owned(error.to_string(), width))
+                    .fg(self.theme.alert())])
+            });
+        self.answers
+            .iter()
+            .map(Cow::Borrowed)
+            .chain([Cow::Owned(body)])
+            .chain(error.map(Cow::Owned))
     }
 }
 
@@ -164,9 +167,11 @@ impl<'a> PromptWidget<'a> {
     pub(crate) fn paint(&self, areas: ModalAreas, canvas: Canvas<'_>) {
         let buffer = canvas.buffer;
         self.modal().paint(areas, buffer);
-        if areas.body.width != 0 && areas.body.height != 0 {
-            Paragraph::new(self.lines(usize::from(areas.body.width)))
-                .render(areas.body, buffer);
+        let body = areas.body;
+        if body.width != 0 && body.height != 0 {
+            for (line, row) in self.lines(usize::from(body.width)).zip(body.rows()) {
+                buffer.set_line(row.x, row.y, &line, row.width);
+            }
         }
     }
 }
@@ -197,7 +202,7 @@ mod tests {
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         )
         .error(Some(&error));
-        let lines = widget.lines(usize::MAX);
+        let lines: Vec<_> = widget.lines(usize::MAX).collect();
         assert_eq!(widget.body.width(), lines[0].width());
         assert_eq!(display_width(&error), lines[1].width());
     }

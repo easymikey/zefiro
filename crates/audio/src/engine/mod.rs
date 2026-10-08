@@ -14,7 +14,7 @@ pub(crate) mod tests {
     use std::time::{Duration, Instant};
 
     use kernel::{
-        cmd::{AudioCmd, Cmd, Cmds, Playback, TrackLoad},
+        cmd::{AudioCmd, Cmd, Cmds, Media, Playback, TrackLoad},
         domain::{
             bounded::Bounded,
             crossfade::Crossfade,
@@ -193,7 +193,7 @@ pub(crate) mod tests {
     pub(crate) fn waiting_for(path: &str) -> EngineState {
         EngineState::Closed(Closed {
             track_load: Some(TrackLoad {
-                path: path.into(),
+                media: Media::Local(path.into()),
                 decibels: None,
                 revision: first(),
             }),
@@ -210,7 +210,7 @@ pub(crate) mod tests {
         LoadedTrack {
             duration: Some(TRACK_A_DURATION),
             decibels: None,
-            path: "/a".into(),
+            media: Media::Local("/a".into()),
         }
     }
 
@@ -218,7 +218,7 @@ pub(crate) mod tests {
         LoadedTrack {
             duration: Some(TRACK_B_DURATION),
             decibels: None,
-            path: "/b".into(),
+            media: Media::Local("/b".into()),
         }
     }
 
@@ -228,7 +228,7 @@ pub(crate) mod tests {
 
     pub(crate) fn loading_track(path: &str) -> Loading {
         Loading {
-            path: path.into(),
+            media: Media::Local(path.into()),
             decibels: None,
             resume: None,
         }
@@ -251,7 +251,7 @@ pub(crate) mod tests {
     pub(crate) fn resuming() -> Live {
         Live {
             phase: Phase::Loading(Loading {
-                path: "/a".into(),
+                media: Media::Local("/a".into()),
                 decibels: None,
                 resume: Some(Resume {
                     position: seconds(5),
@@ -354,7 +354,7 @@ pub(crate) mod tests {
 
     pub(crate) fn load_with_revision(path: &str, revision: Revision) -> EngineMessage {
         cmd(AudioCmd::Load(TrackLoad {
-            path: path.into(),
+            media: Media::Local(path.into()),
             decibels: None,
             revision,
         }))
@@ -369,7 +369,7 @@ pub(crate) mod tests {
         revision: Revision,
     ) -> EngineMessage {
         cmd(AudioCmd::Preload(TrackLoad {
-            path: path.into(),
+            media: Media::Local(path.into()),
             decibels: None,
             revision,
         }))
@@ -399,7 +399,7 @@ pub(crate) mod tests {
         Live {
             phase: Phase::Playing(Playing {
                 next: NextTrack::Preloading {
-                    path: path.into(),
+                    media: Media::Local(path.into()),
                     decibels: None,
                 },
                 ..playing
@@ -421,14 +421,16 @@ pub(crate) mod tests {
 
     pub(crate) fn decoding(path: &str) -> AudioLoopCmd {
         Cmd::effect(LoopEffect::Run(AudioJob::Decode {
-            path: path.into(),
+            media_path: path.into(),
+            download: None,
             revision: second(),
         }))
     }
 
     pub(crate) fn preloading(path: &str) -> AudioLoopCmd {
         Cmd::effect(LoopEffect::Run(AudioJob::Preload {
-            path: path.into(),
+            media_path: path.into(),
+            download: None,
             revision: first(),
         }))
     }

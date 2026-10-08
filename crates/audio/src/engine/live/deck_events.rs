@@ -45,6 +45,13 @@ impl Live {
     }
 
     fn finished_current(&mut self) -> Result<AudioLoopCmd, Unhandled> {
+        if let Phase::Handover(Incoming::Playing(_)) = self.phase {
+            self.phase = Phase::Idle;
+            return Ok(then_report(
+                Cmd::effect(LoopEffect::Execute(EngineEffect::DropOutgoing))
+                    .then(Cmd::message(AudioEvent::Ended)),
+            ));
+        }
         let Phase::Playing(playing) = &mut self.phase else {
             return Err(Unhandled);
         };
@@ -144,13 +151,13 @@ impl Live {
         let Phase::Playing(playing) = &mut self.phase else {
             return Err(Unhandled);
         };
-        let NextTrack::Preloading { path, decibels } = &playing.next else {
+        let NextTrack::Preloading { media, decibels } = &playing.next else {
             return Err(Unhandled);
         };
         let incoming = LoadedTrack {
             duration,
             decibels: *decibels,
-            path: path.clone(),
+            media: media.clone(),
         };
         let (next, cmd) = match preload_mode {
             PreloadMode::Gapless => (NextTrack::Gapless(incoming), Cmd::none()),
@@ -189,7 +196,7 @@ impl Live {
 #[cfg(test)]
 mod tests {
     use kernel::{
-        cmd::{AudioCmd, Cmd, Playback, TrackLoad},
+        cmd::{AudioCmd, Cmd, Media, Playback, TrackLoad},
         domain::{
             bounded::Bounded,
             crossfade::Crossfade,
@@ -314,6 +321,25 @@ mod tests {
             Some(Unhandled)
         );
         assert_eq!(state, expected);
+    }
+
+    #[test]
+    fn a_track_that_ends_inside_its_handover_ends() {
+        let mut state = EngineState::Live(handed_over_to_b());
+        assert_same(
+            step(&mut state, EngineMessage::Finished(SinkRole::Current)),
+            Ok(then_report(
+                Cmd::effect(LoopEffect::Execute(EngineEffect::DropOutgoing))
+                    .then(Cmd::message(AudioEvent::Ended)),
+            )),
+        );
+        assert_eq!(
+            state,
+            EngineState::Live(Live {
+                phase: Phase::Idle,
+                ..handed_over_to_b()
+            })
+        );
     }
 
     #[rstest]
@@ -589,7 +615,7 @@ mod tests {
             EngineState::Live(live),
             vec![
                 cmd(AudioCmd::Preload(TrackLoad {
-                    path: "/b".into(),
+                    media: Media::Local("/b".into()),
                     decibels: gain,
                     revision: first(),
                 })),
@@ -685,7 +711,7 @@ mod tests {
                 live.phase,
                 Phase::Playing(Playing {
                     next: NextTrack::Gapless(LoadedTrack {
-                        path: requested.into(),
+                        media: Media::Local(requested.into()),
                         decibels: None,
                         duration: None,
                     }),

@@ -24,6 +24,7 @@ pub(crate) fn config_parts(model: &mut Model) -> config::ConfigParts<'_> {
         downloads: _downloads,
         catalog_name: _catalog_name,
         catalogs: _catalogs,
+        play_reports: _play_reports,
     } = model;
     config::ConfigParts {
         workspace,
@@ -34,7 +35,7 @@ pub(crate) fn config_parts(model: &mut Model) -> config::ConfigParts<'_> {
     }
 }
 
-pub(crate) fn playback_parts(model: &mut Model) -> player::PlaybackParts<'_> {
+pub(crate) fn playback_parts(model: &mut Model) -> player::events::PlaybackParts<'_> {
     let Model {
         player,
         transport,
@@ -51,12 +52,13 @@ pub(crate) fn playback_parts(model: &mut Model) -> player::PlaybackParts<'_> {
         favorites: _favorites,
         themes: _themes,
         drivers: _drivers,
-        servers: _servers,
-        downloads: _downloads,
+        servers,
+        downloads,
         catalog_name: _catalog_name,
         catalogs: _catalogs,
+        play_reports: _play_reports,
     } = model;
-    player::PlaybackParts {
+    player::events::PlaybackParts {
         player,
         transport,
         playlist,
@@ -64,6 +66,8 @@ pub(crate) fn playback_parts(model: &mut Model) -> player::PlaybackParts<'_> {
         workspace,
         revisions,
         settings,
+        servers,
+        downloads,
     }
 }
 
@@ -85,12 +89,13 @@ pub(crate) fn browse_parts(model: &mut Model) -> browse::BrowseParts<'_> {
         themes: _themes,
         drivers: _drivers,
         servers,
-        downloads: _downloads,
+        downloads,
         catalog_name,
         catalogs,
+        play_reports: _play_reports,
     } = model;
     browse::BrowseParts {
-        playback_parts: player::PlaybackParts {
+        playback_parts: player::events::PlaybackParts {
             player,
             transport,
             playlist,
@@ -98,13 +103,14 @@ pub(crate) fn browse_parts(model: &mut Model) -> browse::BrowseParts<'_> {
             workspace,
             revisions,
             settings,
+            servers,
+            downloads,
         },
         library,
         favorites,
         scan_status,
         music_dir,
         playlist_source,
-        servers,
         catalog_name,
         catalogs,
     }
@@ -131,6 +137,7 @@ pub(crate) fn library_parts(model: &mut Model) -> library::LibraryParts<'_> {
         downloads: _downloads,
         catalog_name: _catalog_name,
         catalogs: _catalogs,
+        play_reports: _play_reports,
     } = model;
     library::LibraryParts {
         library,
@@ -153,12 +160,12 @@ pub(crate) fn server_parts(model: &mut Model) -> server::ServerParts<'_> {
         downloads,
         player,
         library: _library,
-        favorites: _favorites,
+        favorites,
         history: _history,
         scan_status: _scan_status,
         music_dir: _music_dir,
         revisions,
-        workspace: _workspace,
+        workspace,
         playlist: _playlist,
         playlist_source: _playlist_source,
         queue: _queue,
@@ -168,6 +175,7 @@ pub(crate) fn server_parts(model: &mut Model) -> server::ServerParts<'_> {
         drivers: _drivers,
         catalog_name,
         catalogs,
+        play_reports,
     } = model;
     server::ServerParts {
         servers,
@@ -176,5 +184,8 @@ pub(crate) fn server_parts(model: &mut Model) -> server::ServerParts<'_> {
         catalog_name,
         catalogs,
         revisions,
+        favorites,
+        overlay: &mut workspace.overlay,
+        play_reports,
     }
 }

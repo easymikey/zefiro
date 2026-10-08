@@ -114,9 +114,9 @@ fn trashed_track(
     };
     match library_parts.playlist_source {
         PlaylistSource::Library => {
-            resync_playlist(PlaylistSource::Library, library, resync_parts);
+            resync_playlist(&PlaylistSource::Library, library, resync_parts);
         }
-        PlaylistSource::Named => {
+        PlaylistSource::Named | PlaylistSource::Server(_) => {
             let kept = std::mem::take(&mut resync_parts.playlist.tracks)
                 .into_iter()
                 .filter(|listed| listed.source() != track.source())
@@ -206,7 +206,7 @@ fn library_loaded(parts: &mut LibraryParts<'_>, tracks: Vec<Arc<Track>>) {
     install_library(parts, tracks);
     if let Some(ready) = parts.library {
         resync_playlist(
-            *parts.playlist_source,
+            parts.playlist_source,
             ready,
             ResyncParts {
                 workspace: &mut *parts.workspace,

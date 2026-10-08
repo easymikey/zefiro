@@ -78,6 +78,7 @@ expression: "walked(model, messages)"
                 ),
             ),
             output_status: Ready,
+            buffering_revision: None,
         },
         [],
     ),

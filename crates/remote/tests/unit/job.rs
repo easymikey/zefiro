@@ -11,6 +11,7 @@ use std::{
 };
 
 use kernel::domain::{
+    favorites::{Favorite, Favorites},
     revision::Revision,
     server::{
         Account,
@@ -68,6 +69,37 @@ fn connection(link: &str, user: &str, credential: Credential) -> Option<Connecti
         },
         credential,
     })
+}
+
+#[test]
+fn a_forget_deletes_the_stored_password_and_a_missing_one_is_fine() {
+    mock_store();
+    let Some(account) =
+        connection("https://forget.example", "dora", Credential::Stored)
+            .map(|connection| connection.account)
+    else {
+        panic!("a valid account");
+    };
+    let saved = keyring_core::Entry::new("sifr", &account.keychain_account())
+        .and_then(|entry| entry.set_password("hunter2"));
+    assert!(saved.is_ok());
+
+    let first = RemoteJob::Forget(account.clone()).run(&agent());
+    let second = RemoteJob::Forget(account.clone()).run(&agent());
+
+    assert!(
+        matches!(first, RemoteMessage::Forgotten(Ok(()))),
+        "was {first:?}"
+    );
+    assert!(
+        matches!(second, RemoteMessage::Forgotten(Ok(()))),
+        "was {second:?}"
+    );
+    assert!(matches!(
+        keyring_core::Entry::new("sifr", &account.keychain_account())
+            .and_then(|entry| entry.get_password()),
+        Err(keyring_core::Error::NoEntry)
+    ));
 }
 
 fn typed() -> Option<Credential> {
@@ -162,7 +194,7 @@ fn a_refused_typed_password_is_not_saved() {
 
 const ALBUM_LIST_BODY: &str = r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"0.53.3 (13af8ed4)","openSubsonic":true,"albumList2":{"album":[{"id":"3a1f9c","name":"Kind of Blue","artist":"Miles Davis","artistId":"7b2e","coverArt":"al-3a1f9c_0","songCount":5,"duration":2760,"playCount":12,"created":"2024-03-01T10:00:00Z","year":1959,"genre":"Jazz","isDir":true,"isVideo":false,"mediaType":"album"},{"id":"9d0e"}]}}}"#;
 
-const ALBUM_BODY: &str = r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"0.53.3 (13af8ed4)","openSubsonic":true,"album":{"id":"3a1f9c","name":"Kind of Blue","artist":"Miles Davis","songCount":2,"duration":900,"song":[{"id":"c41d","parent":"3a1f9c","isDir":false,"title":"So What","album":"Kind of Blue","artist":"Miles Davis","track":1,"year":1959,"genre":"Jazz","coverArt":"mf-c41d_0","size":21000000,"contentType":"audio/flac","suffix":"flac","duration":562,"bitRate":1016,"samplingRate":44100,"bitDepth":16,"channelCount":2,"discNumber":1,"path":"Miles Davis/Kind of Blue/01 - So What.flac","replayGain":{"trackGain":-6.5,"albumGain":-7.1,"trackPeak":0.98}},{"id":"e7a2","title":"Freddie Freeloader"}]}}}"#;
+const ALBUM_BODY: &str = r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"0.53.3 (13af8ed4)","openSubsonic":true,"album":{"id":"3a1f9c","name":"Kind of Blue","artist":"Miles Davis","songCount":2,"duration":900,"song":[{"id":"c41d","parent":"3a1f9c","isDir":false,"title":"So What","album":"Kind of Blue","artist":"Miles Davis","track":1,"year":1959,"genre":"Jazz","coverArt":"mf-c41d_0","size":21000000,"contentType":"audio/flac","suffix":"flac","duration":562,"bitRate":1016,"samplingRate":44100,"bitDepth":16,"channelCount":2,"discNumber":1,"starred":"2024-05-01T10:00:00Z","path":"Miles Davis/Kind of Blue/01 - So What.flac","replayGain":{"trackGain":-6.5,"albumGain":-7.1,"trackPeak":0.98}},{"id":"e7a2","title":"Freddie Freeloader"}]}}}"#;
 
 fn list(link: &str, listing: Listing, page: Page) -> Option<RemoteJob> {
     Some(RemoteJob::List {
@@ -214,24 +246,27 @@ fn a_list_page_asks_for_two_hundred_albums_from_its_first_row_and_turns_them_int
     assert_eq!(revision, Revision::default().next());
     assert_eq!(
         result,
-        Ok(vec![
-            CatalogRow::Album(ServerAlbum {
-                album_id: AlbumId::new("3a1f9c"),
-                title: Arc::from("Kind of Blue"),
-                artist: Arc::from("Miles Davis"),
-                year: Some(1959),
-                track_count: 5,
-                duration: Duration::from_secs(2760),
-            }),
-            CatalogRow::Album(ServerAlbum {
-                album_id: AlbumId::new("9d0e"),
-                title: Arc::from(""),
-                artist: Arc::from(""),
-                year: None,
-                track_count: 0,
-                duration: Duration::ZERO,
-            }),
-        ])
+        Ok((
+            vec![
+                CatalogRow::Album(ServerAlbum {
+                    album_id: AlbumId::new("3a1f9c"),
+                    title: Arc::from("Kind of Blue"),
+                    artist: Arc::from("Miles Davis"),
+                    year: Some(1959),
+                    track_count: 5,
+                    duration: Duration::from_secs(2760),
+                }),
+                CatalogRow::Album(ServerAlbum {
+                    album_id: AlbumId::new("9d0e"),
+                    title: Arc::from(""),
+                    artist: Arc::from(""),
+                    year: None,
+                    track_count: 0,
+                    duration: Duration::ZERO,
+                }),
+            ],
+            Favorites::default()
+        ))
     );
 }
 
@@ -258,7 +293,7 @@ fn an_album_becomes_tagged_server_tracks_and_a_song_without_replay_gain_has_no_d
     assert!(request.starts_with("GET /rest/getAlbum?"));
     assert_eq!(query_value(query, "id"), Some("3a1f9c"));
     let Some(RemoteMessage::Listed {
-        result: Ok(catalog_rows),
+        result: Ok((catalog_rows, _favorites)),
         ..
     }) = message
     else {
@@ -306,6 +341,28 @@ fn an_album_becomes_tagged_server_tracks_and_a_song_without_replay_gain_has_no_d
     );
     assert_eq!(freeloader.audio_format(), &AudioFormat::default());
     assert_eq!(freeloader.tagging(), Tagging::Tagged(Duration::ZERO));
+}
+
+#[test]
+fn a_song_with_starred_is_a_favorite_and_a_song_without_it_is_not() {
+    let (message, _requests) = listed(
+        ALBUM_BODY,
+        Listing::Album(AlbumId::new("3a1f9c")),
+        Page::default(),
+    );
+    let Some(RemoteMessage::Listed {
+        result: Ok((_catalog_rows, favorites)),
+        ..
+    }) = message
+    else {
+        panic!("an album answers Listed");
+    };
+    let song = |id| TrackSource::Server {
+        server_name: ServerName::new("home"),
+        server_track_id: ServerTrackId::new(id),
+    };
+    assert_eq!(favorites.favorite(&song("c41d")), Favorite::Yes);
+    assert_eq!(favorites.favorite(&song("e7a2")), Favorite::No);
 }
 
 #[test]
@@ -680,7 +737,7 @@ fn an_error_answer_with_status_200_is_an_api_error_and_leaves_no_file() {
     assert!(!media_dir.exists() || fs::remove_dir_all(&media_dir).is_ok());
 }
 
-const SEARCH_BODY: &str = r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"0.53.3 (13af8ed4)","openSubsonic":true,"searchResult3":{"song":[{"id":"c41d","parent":"3a1f9c","title":"So What","album":"Kind of Blue","artist":"Miles Davis","duration":562}],"album":[{"id":"3a1f9c","name":"Kind of Blue","artist":"Miles Davis","songCount":5,"duration":2760,"year":1959}]}}}"#;
+const SEARCH_BODY: &str = r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome","serverVersion":"0.53.3 (13af8ed4)","openSubsonic":true,"searchResult3":{"song":[{"id":"c41d","parent":"3a1f9c","title":"So What","album":"Kind of Blue","artist":"Miles Davis","duration":562,"starred":"2024-05-01T10:00:00Z"}],"album":[{"id":"3a1f9c","name":"Kind of Blue","artist":"Miles Davis","songCount":5,"duration":2760,"year":1959}]}}}"#;
 
 #[test]
 fn a_search_asks_search3_for_albums_and_songs_and_gives_albums_before_tracks() {
@@ -705,7 +762,7 @@ fn a_search_asks_search3_for_albums_and_songs_and_gives_albums_before_tracks() {
     assert_eq!(query_value(query, "u"), Some("bob"));
     let Some(RemoteMessage::Found {
         server_name,
-        result: Ok(catalog_rows),
+        result: Ok((catalog_rows, favorites)),
         revision,
     }) = message
     else {
@@ -736,4 +793,5 @@ fn a_search_asks_search3_for_albums_and_songs_and_gives_albums_before_tracks() {
             server_track_id: ServerTrackId::new("c41d"),
         }
     );
+    assert_eq!(favorites, [so_what.source().clone()].into_iter().collect());
 }

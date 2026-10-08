@@ -22,7 +22,7 @@ use ratatui::{
 
 use crate::{
     overlay::{
-        add_server::AddServerWidget,
+        add_server,
         confirm_remove::ConfirmRemoveWidget,
         confirm_trash,
         help::{HelpColumns, HelpWidget, groups::HelpGroups},
@@ -33,7 +33,7 @@ use crate::{
             prompt::PromptWidget,
         },
         music_dir,
-        search::{SearchWidget, search_title},
+        search::{SearchWidget, matches::Query, search_title},
         servers::ServersWidget,
         settings::{SettingsTable, SettingsWidget, view::SettingsView},
         track_details::{TrackDetailsRow, TrackDetailsWidget},
@@ -65,6 +65,9 @@ impl<'a> OverlayView<'a> {
             )),
             Overlay::Search(search) => {
                 OverlayContent::Search(search, search_title(search, self.tracks.len()))
+            }
+            Overlay::ServerSearch(server_query) => {
+                OverlayContent::ServerSearch(server_query)
             }
             Overlay::SavePlaylist(entry) => OverlayContent::SavePlaylist(entry),
             Overlay::History(cursor) => {
@@ -105,7 +108,6 @@ enum ActiveOverlay<'a> {
     History(HistoryWidget<'a>),
     Settings(SettingsWidget<'a>),
     Prompt(PromptWidget<'a>),
-    AddServer(AddServerWidget<'a>),
     Servers(ServersWidget<'a>),
     TrackDetails(TrackDetailsWidget<'a>),
     Banner(SaveLine<'a>, ActiveTheme<'a>),
@@ -119,9 +121,6 @@ impl ActiveOverlay<'_> {
             Self::History(overlay) => Some(overlay.areas(screen)),
             Self::Settings(overlay) => Some(overlay.areas(screen)),
             Self::Prompt(overlay) => Some(OverlayAreas::Dialog(overlay.areas(screen))),
-            Self::AddServer(overlay) => {
-                Some(OverlayAreas::Dialog(overlay.areas(screen)))
-            }
             Self::Servers(overlay) => Some(OverlayAreas::Dialog(overlay.areas(screen))),
             Self::TrackDetails(overlay) => Some(overlay.areas(screen)),
             Self::Banner(..) => banner_area(screen).map(OverlayAreas::Banner),
@@ -136,10 +135,6 @@ impl ActiveOverlay<'_> {
             Self::History(widget) => widget.paint(areas, canvas),
             Self::TrackDetails(widget) => widget.paint(areas, canvas),
             Self::Prompt(widget) => match areas {
-                OverlayAreas::Dialog(dialog) => widget.paint(dialog, canvas),
-                OverlayAreas::List(_) | OverlayAreas::Banner(_) => {}
-            },
-            Self::AddServer(widget) => match areas {
                 OverlayAreas::Dialog(dialog) => widget.paint(dialog, canvas),
                 OverlayAreas::List(_) | OverlayAreas::Banner(_) => {}
             },
@@ -251,9 +246,15 @@ impl<'a> OverlayWidget<'a> {
                 ActiveOverlay::Help(HelpWidget::new(help_columns, theme).avoid(avoid))
             }
             OverlayContent::Search(search, title) => ActiveOverlay::Search(
-                SearchWidget::new(search, theme)
+                SearchWidget::new(Query::Search(search), theme)
                     .title(title)
                     .tracks(self.view.tracks)
+                    .bounds(self.frame_layout.search_bounds)
+                    .container(self.container(avoid)),
+            ),
+            OverlayContent::ServerSearch(server_query) => ActiveOverlay::Search(
+                SearchWidget::new(Query::ServerSearch(server_query), theme)
+                    .title(server_query.content.server_name.as_str())
                     .bounds(self.frame_layout.search_bounds)
                     .container(self.container(avoid)),
             ),
@@ -282,8 +283,8 @@ impl<'a> OverlayWidget<'a> {
             OverlayContent::MusicDir(entry) => {
                 ActiveOverlay::Prompt(music_dir::prompt(entry, theme).avoid(avoid))
             }
-            OverlayContent::AddServer(server_prompt) => ActiveOverlay::AddServer(
-                AddServerWidget::new(server_prompt, theme).avoid(avoid),
+            OverlayContent::AddServer(server_prompt) => ActiveOverlay::Prompt(
+                add_server::prompt(server_prompt, theme).avoid(avoid),
             ),
             OverlayContent::SavePlaylist(entry) => {
                 ActiveOverlay::Banner(SaveLine::new(entry), theme)

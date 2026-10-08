@@ -7,6 +7,7 @@ use crate::domain::{
     keymap::KeymapOverrides,
     percent::Percent,
     playlist::PlaylistSource,
+    server::Account,
     settings::AudioSettings,
     theme::{ThemeChoice, ThemeName},
     track::Track,
@@ -33,4 +34,5 @@ pub struct Startup {
     pub keymap_overrides: KeymapOverrides,
     pub theme_names: Vec<ThemeName>,
     pub errors: Vec<(ConfigName, ConfigError)>,
+    pub accounts: Vec<Account>,
 }

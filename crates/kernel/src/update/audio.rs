@@ -21,8 +21,8 @@ use crate::{
         machine::{Unhandled, replace},
         player,
         player::{
-            PlaybackParts,
             PlayerMessage,
+            events::PlaybackParts,
             stamp::{Anchor, Stamp},
         },
         successor::{Successor, first_queued, successor},
@@ -62,6 +62,7 @@ pub(crate) fn update(
                 now,
             )?;
             playback_parts.transport.output_ready();
+            playback_parts.transport.buffering_revision = None;
             Ok(cmd)
         }
         AudioEvent::Error(error) => self::error(playback_parts, error, now),
@@ -74,6 +75,18 @@ pub(crate) fn update(
             fell_back(playback_parts, &output_device)
         }
         AudioEvent::DeviceOpened(device_name) => opened(playback_parts, device_name),
+        AudioEvent::Buffering(revision) => replace(
+            &mut playback_parts.transport.buffering_revision,
+            Some(revision),
+        )
+        .map(|()| Cmd::none()),
+        AudioEvent::Buffered(revision) => {
+            if playback_parts.transport.buffering_revision != Some(revision) {
+                return Err(Unhandled);
+            }
+            playback_parts.transport.buffering_revision = None;
+            Ok(Cmd::none())
+        }
     }
 }
 
@@ -175,39 +188,33 @@ fn output_lost_text(player: &Player, error: OutputError) -> String {
     }
 }
 
-fn cursor_to(playlist: &mut Playlist, dequeued_index: ViewIndex) {
-    playlist.cursor = Cursor::at(playlist.tracks.len(), dequeued_index.get());
-}
-
-fn pop_queued_track(
-    playlist: &mut Playlist,
-    queue: &mut Vec<TrackSource>,
-) -> Option<Arc<Track>> {
-    let (position, index, track) = first_queued(playlist, queue)
-        .map(|(position, index, track)| (position, index, Arc::clone(track)))?;
-    queue.drain(..=position);
-    cursor_to(playlist, index);
-    Some(track)
-}
-
 pub(crate) fn next(
     playback_parts: &mut PlaybackParts<'_>,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let track = pop_queued_track(playback_parts.playlist, playback_parts.queue)
-        .or_else(|| playback_parts.playlist.skip(Direction::Next).cloned())
-        .ok_or(Unhandled)?;
-    Ok(start_and_follow(playback_parts, track, now))
-}
-
-fn start_and_follow(
-    playback_parts: &mut PlaybackParts<'_>,
-    track: Arc<Track>,
-    now: Moment,
-) -> Cmd {
-    let cmd = player::start(playback_parts, track, now);
-    follow_playback(playback_parts.workspace, playback_parts.playlist);
-    cmd
+    let pick = first_queued(playback_parts.playlist, playback_parts.queue).map_or_else(
+        || {
+            playback_parts
+                .playlist
+                .upcoming()
+                .cloned()
+                .map_or(Successor::Nothing, Successor::Following)
+        },
+        |(queue_index, index, track)| Successor::Queued {
+            queue_index,
+            index,
+            track: Arc::clone(track),
+        },
+    );
+    let track = pick.track().cloned().ok_or(Unhandled)?;
+    Ok(match player::start(playback_parts, track, now) {
+        Ok(cmd) => {
+            move_onto(playback_parts.playlist, playback_parts.queue, pick);
+            follow_playback(playback_parts.workspace, playback_parts.playlist);
+            cmd
+        }
+        Err(refusal) => refusal,
+    })
 }
 
 pub(crate) fn jump_to(
@@ -215,24 +222,42 @@ pub(crate) fn jump_to(
     index: ViewIndex,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let track = playback_parts
-        .playlist
-        .jump(index)
-        .cloned()
-        .ok_or(Unhandled)?;
-    Ok(player::start(playback_parts, track, now))
+    Ok(match jump(playback_parts, index, now)? {
+        Ok(cmd) | Err(cmd) => cmd,
+    })
 }
 
 pub(crate) fn previous(
     playback_parts: &mut PlaybackParts<'_>,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
+    let index = playback_parts
+        .playlist
+        .next_index(Direction::Previous)
+        .map(ViewIndex::new)
+        .ok_or(Unhandled)?;
+    Ok(match jump(playback_parts, index, now)? {
+        Ok(cmd) => {
+            follow_playback(playback_parts.workspace, playback_parts.playlist);
+            cmd
+        }
+        Err(refusal) => refusal,
+    })
+}
+
+fn jump(
+    playback_parts: &mut PlaybackParts<'_>,
+    index: ViewIndex,
+    now: Moment,
+) -> Result<Result<Cmd, Cmd>, Unhandled> {
     let track = playback_parts
         .playlist
-        .skip(Direction::Previous)
+        .tracks
+        .get(index.get())
         .cloned()
         .ok_or(Unhandled)?;
-    Ok(start_and_follow(playback_parts, track, now))
+    Ok(player::start(playback_parts, track, now)
+        .inspect(|_cmd| playback_parts.playlist.point_at(index)))
 }
 
 pub(crate) fn lookahead_fired(
@@ -263,16 +288,17 @@ fn ended(
     playback_parts: &mut PlaybackParts<'_>,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
+    let stamp = Stamp::pending(playback_parts.transport, playback_parts.revisions, now);
     let pick = successor(playback_parts.playlist, playback_parts.queue);
     let message = PlayerMessage::Ended {
         next: pick.track().cloned(),
-        stamp: Stamp::pending(playback_parts.transport, playback_parts.revisions, now),
+        stamp,
     };
     let cmd = player::update_player(playback_parts, message, now)?;
-    if pick.track().is_some() {
+    if playback_parts.player.current().is_some() {
         playback_parts.transport.track_changed();
+        move_onto(playback_parts.playlist, playback_parts.queue, pick);
     }
-    move_onto(playback_parts.playlist, playback_parts.queue, pick);
     Ok(cmd)
 }
 
@@ -326,7 +352,7 @@ fn move_onto(
             track: _track,
         } => {
             queue.drain(..=queue_index);
-            cursor_to(playlist, index);
+            playlist.point_at(index);
         }
         Successor::Following(_) => {
             playlist.skip(Direction::Next);
@@ -346,5 +372,5 @@ fn move_onto_preloaded(
         return;
     };
     queue.retain(|queued| queued != committed_track.source());
-    cursor_to(playlist, committed_index);
+    playlist.point_at(committed_index);
 }

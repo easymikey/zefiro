@@ -1,7 +1,7 @@
 use kernel::domain::appearance::Rgb;
 use ratatui::style::Color;
 
-use crate::pixels::numeric::{channel_byte, dimension_f32, floor};
+use crate::pixels::numeric::channel_byte;
 
 fn scale_channel(channel: u8, factor: f32) -> u8 {
     channel_byte(f32::from(channel) * factor)
@@ -24,22 +24,13 @@ pub fn lerp_rgb(from: Rgb, to: Rgb, fraction: f32) -> Rgb {
     ])
 }
 
-#[must_use]
-pub(crate) fn gradient_at(stops: &[Rgb], fraction: f32) -> Option<Rgb> {
-    match stops.len() {
-        0 => None,
-        1 => stops.first().copied(),
-        count => {
-            let fraction = fraction.clamp(0.0, 1.0);
-            let segments = dimension_f32(count - 1);
-            let scaled = fraction * segments;
-            let index = floor::<usize>(scaled).min(count - 2);
-            let local_t = scaled - dimension_f32(index);
-            stops
-                .get(index)
-                .zip(stops.get(index + 1))
-                .map(|(&from, &to)| lerp_rgb(from, to, local_t))
-        }
+pub(crate) fn gradient_at(stops: &[Rgb; 3], fraction: f32) -> Rgb {
+    let [start, middle, end] = *stops;
+    let scaled = fraction.clamp(0.0, 1.0) * 2.0;
+    if scaled < 1.0 {
+        lerp_rgb(start, middle, scaled)
+    } else {
+        lerp_rgb(middle, end, scaled - 1.0)
     }
 }
 
@@ -139,7 +130,7 @@ mod tests {
         nearest_xterm256,
     };
 
-    const RAMP: &[Rgb] = &[Rgb([0, 0, 0]), Rgb([128, 128, 128]), Rgb([255, 255, 255])];
+    const RAMP: [Rgb; 3] = [Rgb([0, 0, 0]), Rgb([128, 128, 128]), Rgb([255, 255, 255])];
 
     #[rstest]
     #[case::apple_terminal(Some("Apple_Terminal"), ColorDepth::Indexed256)]
@@ -191,21 +182,16 @@ mod tests {
     }
 
     #[rstest]
-    #[case::no_stops(&[], 0.5, None)]
-    #[case::one_stop_at_the_start(&[Rgb([1, 2, 3])], 0.0, Some(Rgb([1, 2, 3])))]
-    #[case::one_stop_in_the_middle(&[Rgb([1, 2, 3])], 0.5, Some(Rgb([1, 2, 3])))]
-    #[case::one_stop_at_the_end(&[Rgb([1, 2, 3])], 1.0, Some(Rgb([1, 2, 3])))]
-    #[case::three_stops_at_the_start(RAMP, 0.0, Some(Rgb([0, 0, 0])))]
-    #[case::three_stops_inside_the_first_segment(RAMP, 0.25, Some(Rgb([64, 64, 64])))]
-    #[case::three_stops_inside_the_second_segment(RAMP, 0.75, Some(Rgb([191, 191, 191])))]
-    #[case::three_stops_at_the_end(RAMP, 1.0, Some(Rgb([255, 255, 255])))]
-    #[case::before_the_start(RAMP, -1.0, Some(Rgb([0, 0, 0])))]
-    #[case::past_the_end(RAMP, 2.0, Some(Rgb([255, 255, 255])))]
+    #[case::three_stops_at_the_start(0.0, Rgb([0, 0, 0]))]
+    #[case::three_stops_inside_the_first_segment(0.25, Rgb([64, 64, 64]))]
+    #[case::three_stops_inside_the_second_segment(0.75, Rgb([191, 191, 191]))]
+    #[case::three_stops_at_the_end(1.0, Rgb([255, 255, 255]))]
+    #[case::before_the_start(-1.0, Rgb([0, 0, 0]))]
+    #[case::past_the_end(2.0, Rgb([255, 255, 255]))]
     fn palette_at_samples_the_segment_t_falls_in(
-        #[case] stops: &[Rgb],
         #[case] fraction: f32,
-        #[case] expected: Option<Rgb>,
+        #[case] expected: Rgb,
     ) {
-        assert_eq!(gradient_at(stops, fraction), expected);
+        assert_eq!(gradient_at(&RAMP, fraction), expected);
     }
 }

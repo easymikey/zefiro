@@ -1,15 +1,35 @@
-use std::time::Duration;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use kernel::{
-    cmd::{Cmd, Effect},
+    cmd::{AudioCmd, Cmd, Effect, GrowingMedia, Media, RemoteCmd, TrackLoad},
     domain::{
         cue::{Cue, PlaybackChange},
         model::Model,
         player::Player,
+        playhead::Playhead,
+        revision::Revision,
+        server::{
+            Account,
+            CacheKey,
+            Endpoint,
+            Fetched,
+            MediaFetch,
+            PlayReport,
+            START_MARGIN,
+            Scrobble,
+            Server,
+            ServerName,
+            ServerStatus,
+            ServerTrackId,
+            Session,
+            UserName,
+        },
+        speed::Speed,
         time::Moment,
         toast::Toast,
+        track::{AudioFormat, Tags, Track, TrackParts, TrackSource},
     },
-    message::{AudioEvent, Message, PlaybackRequest, Timer},
+    message::{AudioEvent, Message, PlaybackRequest, RemoteEvent, Timer},
     update::machine::Unhandled,
 };
 
@@ -255,4 +275,205 @@ fn a_stale_mark_is_ignored() {
     let cmd = update(&mut model, Message::Elapsed(stale), Moment::default());
 
     assert_eq!(cmd, Err(Unhandled));
+}
+
+fn home_session() -> Session {
+    Session::new(
+        Endpoint::parse("https://music.example.com").unwrap(),
+        "u=ann",
+    )
+}
+
+fn incoming_track() -> Arc<Track> {
+    Arc::new(Track::from(TrackSource::Server {
+        server_name: ServerName::new("home"),
+        server_track_id: ServerTrackId::new("tr-1"),
+    }))
+}
+
+fn incoming(revision: Revision, first_byte: u64) -> MediaFetch {
+    let server_name = ServerName::new("home");
+    let server_track_id = ServerTrackId::new("tr-1");
+    MediaFetch {
+        cache_key: CacheKey::new(&server_name, &server_track_id, ""),
+        server_name,
+        server_track_id,
+        session: home_session(),
+        first_byte,
+        revision,
+    }
+}
+
+fn due() -> (Model, Result<Vec<Effect>, Unhandled>) {
+    let mut model = Model {
+        servers: vec![Server {
+            account: Account {
+                server_name: ServerName::new("home"),
+                endpoint: Endpoint::parse("https://music.example.com").unwrap(),
+                user_name: UserName::new("ann").unwrap(),
+            },
+            server_status: ServerStatus::Online(home_session()),
+        }],
+        player: Player::Playing {
+            track: Arc::new(Track::new(TrackParts {
+                path: "/tmp/track0.flac".into(),
+                duration: Duration::from_secs(100),
+                tags: Tags::default(),
+                audio_format: AudioFormat::default(),
+            })),
+            playhead: Playhead::anchored(
+                Duration::from_secs(95),
+                Moment::default(),
+                Speed::default(),
+            ),
+            preloaded: None,
+        },
+        ..Model::default()
+    };
+    model.playlist.tracks = vec![incoming_track()];
+    model.queue = vec![incoming_track().source().clone()];
+    let mark = model.revisions.lookahead;
+    let effects = kernel::update::update(
+        &mut model,
+        Message::Elapsed(Timer::Lookahead(mark)),
+        Moment::default(),
+    );
+    (model, effects)
+}
+
+fn prefetched(model: &Model) -> Revision {
+    model
+        .downloads
+        .first()
+        .map_or(Revision::default(), |download| {
+            download.media_fetch.revision
+        })
+}
+
+fn grown(
+    model: &mut Model,
+    revision: Revision,
+    downloaded: u64,
+) -> Result<Vec<Effect>, Unhandled> {
+    let fetched = Fetched {
+        media_path: PathBuf::from("/cache/home/tr-1.part"),
+        downloaded,
+        byte_len: 4 * START_MARGIN,
+    };
+    kernel::update::update(
+        model,
+        Message::Remote(RemoteEvent::Fetched {
+            revision,
+            result: Ok(fetched),
+        }),
+        Moment::default(),
+    )
+}
+
+#[test]
+fn a_lookahead_orders_one_prefetch_of_a_server_successor_and_preloads_it() {
+    let (mut model, effects) = due();
+    let mark = model.revisions.lookahead;
+
+    let again = kernel::update::update(
+        &mut model,
+        Message::Elapsed(Timer::Lookahead(mark)),
+        Moment::default(),
+    );
+
+    let prefetch_effects: Vec<&Effect> = effects
+        .iter()
+        .chain(&again)
+        .flatten()
+        .filter(|effect| matches!(effect, Effect::Remote(RemoteCmd::Prefetch(_))))
+        .collect();
+    let revision = prefetched(&model);
+    assert_eq!(
+        prefetch_effects,
+        vec![&Effect::Remote(RemoteCmd::Prefetch(incoming(revision, 0)))]
+    );
+    assert!(matches!(
+        &model.player,
+        Player::Playing { preloaded: Some(track), .. } if *track == incoming_track()
+    ));
+}
+
+#[test]
+fn a_fetched_incoming_download_past_the_margin_preloads_it_growing() {
+    let (mut model, _effects) = due();
+    let revision = prefetched(&model);
+
+    let effects = grown(&mut model, revision, START_MARGIN);
+
+    assert_eq!(
+        effects,
+        Ok(vec![
+            Effect::Audio(AudioCmd::Preload(TrackLoad {
+                media: Media::Growing(GrowingMedia {
+                    media_path: PathBuf::from("/cache/home/tr-1.part"),
+                    downloaded: START_MARGIN,
+                    byte_len: 4 * START_MARGIN,
+                    revision,
+                }),
+                decibels: None,
+                revision,
+            })),
+            Effect::Remote(RemoteCmd::Prefetch(incoming(revision, START_MARGIN))),
+        ])
+    );
+}
+
+#[test]
+fn the_handover_makes_the_incoming_download_current() {
+    let (mut model, _effects) = due();
+    let revision = prefetched(&model);
+    assert!(grown(&mut model, revision, START_MARGIN).is_ok());
+
+    let handed = kernel::update::update(
+        &mut model,
+        Message::Audio(AudioEvent::TrackChanged),
+        Moment::default(),
+    );
+
+    assert!(handed.iter().flatten().any(|effect| {
+        *effect
+            == Effect::Remote(RemoteCmd::Report {
+                session: home_session(),
+                play_report: PlayReport {
+                    server_name: ServerName::new("home"),
+                    server_track_id: ServerTrackId::new("tr-1"),
+                    scrobble: Scrobble::NowPlaying,
+                },
+            })
+    }));
+    assert_eq!(
+        grown(&mut model, revision, 2 * START_MARGIN),
+        Ok(vec![
+            Effect::Audio(AudioCmd::Grow {
+                revision,
+                downloaded: 2 * START_MARGIN,
+            }),
+            Effect::Remote(RemoteCmd::Fetch(incoming(revision, 2 * START_MARGIN))),
+        ])
+    );
+}
+
+#[test]
+fn a_track_ending_before_its_successor_preloaded_starts_it_fresh() {
+    let (mut model, _effects) = due();
+    let revision = prefetched(&model);
+
+    let ended = kernel::update::update(
+        &mut model,
+        Message::Audio(AudioEvent::Ended),
+        Moment::default(),
+    );
+
+    assert_eq!(model.player, Player::Loading(incoming_track()));
+    assert_eq!(model.downloads.len(), 1);
+    let fresh = prefetched(&model);
+    assert_ne!(fresh, revision);
+    assert!(ended.iter().flatten().any(|effect| {
+        *effect == Effect::Remote(RemoteCmd::Fetch(incoming(fresh, 0)))
+    }));
 }

@@ -5,21 +5,29 @@ pub mod search;
 pub mod settings;
 mod text_entry;
 
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 
 use crate::{
     cmd::{Cmd, DiskCmd, Effect, LibraryCmd},
     domain::{
+        catalog::CatalogName,
         cursor::Cursor,
         cursor_over::CursorOver,
         direction::Direction,
         history::{HISTORY_LIMIT, HistoryEntry},
-        overlay::{Overlay, OverlayName, SearchQuery, ServerPrompt, TextEntry},
+        overlay::{
+            Overlay,
+            OverlayName,
+            SearchQuery,
+            ServerPrompt,
+            ServerQuery,
+            TextEntry,
+        },
         player::Player,
         playlist::Playlist,
-        server::Server,
+        revision::Revisions,
+        server::{Server, ServerName},
         setting_row::SettingRow,
-        track::Track,
         workspace::Workspace,
     },
     message::{
@@ -33,6 +41,7 @@ use crate::{
     update::{
         machine::{Machine, Unhandled},
         overlay::{history::HistoryMessage, settings::SettingRowMessage},
+        player::events::session,
     },
 };
 
@@ -59,6 +68,8 @@ pub(crate) struct OverlayParts<'a> {
     pub(crate) history: &'a [HistoryEntry],
     pub(crate) music_dir: &'a Path,
     pub(crate) servers: &'a [Server],
+    pub(crate) catalog_name: &'a CatalogName,
+    pub(crate) revisions: &'a mut Revisions,
 }
 
 pub(crate) fn update(
@@ -69,9 +80,7 @@ pub(crate) fn update(
         OverlayRequest::Open(name) => open_request(&mut parts, name),
         OverlayRequest::Close => update_overlay(parts.workspace, OverlayMessage::Close),
         OverlayRequest::Confirm => confirm_request(&mut parts),
-        OverlayRequest::Search(request) => {
-            search_request(parts.workspace, &parts.playlist.tracks, request)
-        }
+        OverlayRequest::Search(request) => search_request(&mut parts, request),
         OverlayRequest::Settings(request) => {
             let message = settings::setting_row_message(parts.workspace, request)?;
             update_overlay(
@@ -201,17 +210,33 @@ fn open_request(
 }
 
 fn search_request(
-    workspace: &mut Workspace,
-    tracks: &[Arc<Track>],
+    parts: &mut OverlayParts<'_>,
     message: SearchRequest,
 ) -> Result<Cmd, Unhandled> {
-    let cmd = update_overlay(workspace, content_search(message))?;
+    if matches!(parts.workspace.overlay, Some(Overlay::ServerSearch(_))) {
+        return search::server_request(parts, message);
+    }
+    let cmd = update_overlay(parts.workspace, content_search(message))?;
     if let SearchRequest::Edit(edit) = message
-        && let Some(Overlay::Search(search)) = workspace.overlay.as_mut()
+        && let Some(Overlay::Search(search)) = parts.workspace.overlay.as_mut()
     {
-        search::requery(search, tracks, edit);
+        search::requery(search, &parts.playlist.tracks, edit);
     }
     Ok(cmd)
+}
+
+fn server_search(
+    servers: &[Server],
+    server_name: &ServerName,
+) -> Result<Overlay, Unhandled> {
+    session(servers, server_name).ok_or(Unhandled)?;
+    let server_query = ServerQuery {
+        server_name: server_name.clone(),
+        input: String::new(),
+        catalog_rows: Vec::new(),
+        revision: None,
+    };
+    Ok(Overlay::ServerSearch(CursorOver::new(server_query, 0)))
 }
 
 fn content_search(message: SearchRequest) -> OverlayMessage {
@@ -224,15 +249,20 @@ fn overlay_for(
 ) -> Result<Overlay, Unhandled> {
     match name {
         OverlayName::Help => Ok(Overlay::Help),
-        OverlayName::Search => {
-            let matches = crate::search::rank(&parts.playlist.tracks, "");
-            let len = matches.len();
-            let query = SearchQuery {
-                input: String::new(),
-                matches,
-            };
-            Ok(Overlay::Search(CursorOver::new(query, len)))
-        }
+        OverlayName::Search | OverlayName::ServerSearch => match parts.catalog_name {
+            CatalogName::Local => {
+                let matches = crate::search::rank(&parts.playlist.tracks, "");
+                let len = matches.len();
+                let query = SearchQuery {
+                    input: String::new(),
+                    matches,
+                };
+                Ok(Overlay::Search(CursorOver::new(query, len)))
+            }
+            CatalogName::Server(server_name) => {
+                server_search(parts.servers, server_name)
+            }
+        },
         OverlayName::SavePlaylist => Ok(Overlay::SavePlaylist(TextEntry::default())),
         OverlayName::History => Ok(Overlay::History(CursorOver::default())),
         OverlayName::Settings => Ok(Overlay::Settings(SettingRow::first())),

@@ -75,12 +75,14 @@ fn list(dir: &Path) -> ConfigMessage {
                     if path.extension().and_then(|extension| extension.to_str())
                         == Some(THEME_EXTENSION)
                     {
-                        let stem = path.file_stem().map_or_else(String::new, |stem| {
-                            stem.to_string_lossy().into_owned()
-                        });
-                        match ThemeName::new(stem.clone()) {
+                        let stem = || {
+                            path.file_stem().map_or_else(String::new, |stem| {
+                                stem.to_string_lossy().into_owned()
+                            })
+                        };
+                        match ThemeName::new(stem()) {
                             Ok(name) => theme_names.push(name),
-                            Err(_) => refused.push(stem),
+                            Err(_) => refused.push(stem()),
                         }
                     }
                     Ok::<_, io::Error>((theme_names, refused))

@@ -1,117 +1,68 @@
 use std::borrow::Cow;
 
 use kernel::domain::{geometry::Cells, overlay::ServerPrompt};
-use ratatui::{layout::Rect, text::Line};
+use ratatui::text::Line;
 
 use crate::{
-    overlay::modal::{
-        frame::ModalAreas,
-        prompt::{PromptBody, PromptWidget},
-    },
-    primitive::{
-        canvas::Canvas,
-        span::{line, text},
-    },
+    overlay::modal::prompt::{PromptBody, PromptWidget},
+    primitive::span::{line, text},
     theme::active_theme::ActiveTheme,
 };
 
-pub(crate) const SECRET_DOT: &str = "•";
+const SECRET_DOT: &str = "•";
 const TITLE: &str = "Add server";
 const HINT: &str = "Enter next · Esc cancel";
 const MIN_WIDTH: Cells = Cells(40);
 
-#[derive(Debug)]
-pub(crate) struct AddServerWidget<'a> {
-    server_prompt: &'a ServerPrompt,
-    field: Cow<'a, str>,
-    avoid: &'a [Rect],
-    theme: ActiveTheme<'a>,
+fn answer<'a>(
+    label: &'static str,
+    answer: &'a str,
+    active_theme: ActiveTheme<'_>,
+) -> Line<'a> {
+    let colors = active_theme.colors();
+    line([
+        text(label).fg(colors.muted_foreground),
+        text(answer).fg(colors.foreground),
+    ])
 }
 
-impl<'a> AddServerWidget<'a> {
-    #[must_use]
-    pub(crate) fn new(
-        server_prompt: &'a ServerPrompt,
-        active_theme: ActiveTheme<'a>,
-    ) -> Self {
-        let field = match server_prompt {
-            ServerPrompt::Link {
-                origin_server_name: _origin_server_name,
-                text_entry,
-            } => Cow::Borrowed(text_entry.input.as_str()),
-            ServerPrompt::User {
-                origin_server_name: _origin_server_name,
-                endpoint: _endpoint,
-                text_entry,
-            } => Cow::Borrowed(text_entry.input.as_str()),
-            ServerPrompt::Password {
-                origin_server_name: _origin_server_name,
-                endpoint: _endpoint,
-                user_name: _user_name,
-                text_entry,
-            } => Cow::Owned(SECRET_DOT.repeat(text_entry.input.chars().count())),
-        };
-        Self {
-            server_prompt,
-            field,
-            avoid: &[],
-            theme: active_theme,
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn avoid(mut self, avoid: &'a [Rect]) -> Self {
-        self.avoid = avoid;
-        self
-    }
-
-    fn answer(&self, label: &'static str, answer: &'a str) -> Line<'a> {
-        let colors = self.theme.colors();
-        line([
-            text(label).fg(colors.muted_foreground),
-            text(answer).fg(colors.foreground),
-        ])
-    }
-
-    fn prompt(&self) -> PromptWidget<'_> {
-        let prompt = PromptWidget::new(PromptBody::Entry(&self.field), self.theme)
+#[must_use]
+pub(crate) fn prompt<'a>(
+    server_prompt: &'a ServerPrompt,
+    active_theme: ActiveTheme<'a>,
+) -> PromptWidget<'a> {
+    let widget = |field: Cow<'a, str>| {
+        PromptWidget::new(PromptBody::Entry(field), active_theme)
             .title(TITLE)
             .hint(HINT)
             .min_width(MIN_WIDTH)
-            .avoid(self.avoid);
-        match self.server_prompt {
-            ServerPrompt::Link {
-                origin_server_name: _origin_server_name,
-                text_entry,
-            } => prompt.error(text_entry.error.as_ref()),
-            ServerPrompt::User {
-                origin_server_name: _origin_server_name,
-                endpoint,
-                text_entry,
-            } => prompt
-                .answers(vec![self.answer("Link  ", endpoint.as_str())])
-                .error(text_entry.error.as_ref()),
-            ServerPrompt::Password {
-                origin_server_name: _origin_server_name,
-                endpoint,
-                user_name,
-                text_entry,
-            } => prompt
-                .answers(vec![
-                    self.answer("Link  ", endpoint.as_str()),
-                    self.answer("User  ", user_name.as_str()),
-                ])
-                .error(text_entry.error.as_ref()),
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn areas(&self, screen: Rect) -> ModalAreas {
-        self.prompt().areas(screen)
-    }
-
-    pub(crate) fn paint(&self, areas: ModalAreas, canvas: Canvas<'_>) {
-        self.prompt().paint(areas, canvas);
+    };
+    match server_prompt {
+        ServerPrompt::Link {
+            origin_server_name: _origin_server_name,
+            text_entry,
+        } => widget(Cow::Borrowed(text_entry.input.as_str()))
+            .error(text_entry.error.as_ref()),
+        ServerPrompt::User {
+            origin_server_name: _origin_server_name,
+            endpoint,
+            text_entry,
+        } => widget(Cow::Borrowed(text_entry.input.as_str()))
+            .answers(vec![answer("Link  ", endpoint.as_str(), active_theme)])
+            .error(text_entry.error.as_ref()),
+        ServerPrompt::Password {
+            origin_server_name: _origin_server_name,
+            endpoint,
+            user_name,
+            text_entry,
+        } => widget(Cow::Owned(
+            SECRET_DOT.repeat(text_entry.input.chars().count()),
+        ))
+        .answers(vec![
+            answer("Link  ", endpoint.as_str(), active_theme),
+            answer("User  ", user_name.as_str(), active_theme),
+        ])
+        .error(text_entry.error.as_ref()),
     }
 }
 
@@ -123,7 +74,7 @@ mod tests {
     };
 
     use crate::{
-        overlay::add_server::AddServerWidget,
+        overlay::add_server::prompt,
         primitive::canvas::Canvas,
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
@@ -142,7 +93,7 @@ mod tests {
 
     fn frame(server_prompt: &ServerPrompt) -> String {
         let theme = noir();
-        let widget = AddServerWidget::new(
+        let widget = prompt(
             server_prompt,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );

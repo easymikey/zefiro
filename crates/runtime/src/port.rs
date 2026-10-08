@@ -1,7 +1,4 @@
-use std::{
-    mem,
-    thread::{self, JoinHandle},
-};
+use std::{mem, thread::JoinHandle};
 
 use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
@@ -80,13 +77,12 @@ impl<C> Port<C> {
         };
     }
 
-    pub(crate) fn join(&mut self) -> Option<thread::Result<()>> {
+    pub(crate) fn join(&mut self) {
         match mem::replace(self, Self::Closed) {
-            Self::HungUp(thread) => Some(thread.join()),
-            port @ (Self::Open { .. } | Self::Closed) => {
-                *self = port;
-                None
-            }
+            Self::HungUp(thread) => match thread.join() {
+                Ok(()) | Err(_) => {}
+            },
+            port @ (Self::Open { .. } | Self::Closed) => *self = port,
         }
     }
 
@@ -144,10 +140,7 @@ impl Ports {
         }
     }
 
-    pub(crate) fn join(
-        &mut self,
-        driver_name: DriverName,
-    ) -> Option<thread::Result<()>> {
+    pub(crate) fn join(&mut self, driver_name: DriverName) {
         match driver_name {
             DriverName::Audio => self.audio.join(),
             DriverName::Library => self.library.join(),
@@ -273,37 +266,29 @@ mod tests {
     }
 
     #[rstest]
-    #[case::open_stays_open_when_joined(&[Step::Join], Stage::Open, false)]
-    #[case::open_hangs_up(&[Step::HangUp], Stage::HungUp, false)]
-    #[case::hung_up_joins_into_closed(&[Step::HangUp, Step::Join], Stage::Closed, true)]
-    #[case::hanging_up_twice_is_one_hang_up(
-        &[Step::HangUp, Step::HangUp],
-        Stage::HungUp,
-        false
-    )]
+    #[case::open_stays_open_when_joined(&[Step::Join], Stage::Open)]
+    #[case::open_hangs_up(&[Step::HangUp], Stage::HungUp)]
+    #[case::hung_up_joins_into_closed(&[Step::HangUp, Step::Join], Stage::Closed)]
+    #[case::hanging_up_twice_is_one_hang_up(&[Step::HangUp, Step::HangUp], Stage::HungUp)]
     #[case::a_joined_port_has_nothing_to_join(
         &[Step::HangUp, Step::Join, Step::Join],
-        Stage::Closed,
-        false
+        Stage::Closed
     )]
     fn a_port_goes_from_open_to_hung_up_to_closed(
         #[case] steps: &[Step],
         #[case] expected: Stage,
-        #[case] joined_last: bool,
     ) {
         let (cmd_sender, cmd_receiver) = unbounded::<AudioCmd>();
         let mut port = Port::new(DriverName::Audio, cmd_sender, Congestion::default());
-        let mut last_join = None;
 
         for step in steps {
             match step {
                 Step::HangUp => port.hang_up(),
-                Step::Join => last_join = Some(port.join()),
+                Step::Join => port.join(),
             }
         }
 
         assert_eq!(stage(&port), expected);
-        assert_eq!(last_join.is_some_and(|exit| exit.is_some()), joined_last);
         drop(cmd_receiver);
     }
 

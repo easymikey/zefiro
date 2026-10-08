@@ -1,6 +1,6 @@
 use std::{
     panic::{self, AssertUnwindSafe},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use crossbeam_channel::Receiver;
@@ -9,7 +9,7 @@ use kernel::domain::revision::Revision;
 use crate::{
     deck::{
         feed::{FeedCmd, serve},
-        source::{TrackDecoder, decode},
+        source::{GrowingDownload, TrackDecoder, decode},
     },
     device::list_output_devices,
     engine::message::AudioMessage,
@@ -18,8 +18,16 @@ use crate::{
 
 #[derive(Debug)]
 pub enum AudioJob {
-    Decode { path: PathBuf, revision: Revision },
-    Preload { path: PathBuf, revision: Revision },
+    Decode {
+        media_path: PathBuf,
+        download: Option<GrowingDownload>,
+        revision: Revision,
+    },
+    Preload {
+        media_path: PathBuf,
+        download: Option<GrowingDownload>,
+        revision: Revision,
+    },
     ListDevices,
     Feed(Receiver<FeedCmd>),
 }
@@ -28,12 +36,20 @@ impl AudioJob {
     #[must_use]
     pub fn run(self) -> AudioMessage {
         match self {
-            AudioJob::Decode { path, revision } => {
-                let result = decode_caught(path);
+            AudioJob::Decode {
+                media_path,
+                download,
+                revision,
+            } => {
+                let result = decode_caught(&media_path, download);
                 AudioMessage::Decoded { revision, result }
             }
-            AudioJob::Preload { path, revision } => {
-                let result = decode_caught(path);
+            AudioJob::Preload {
+                media_path,
+                download,
+                revision,
+            } => {
+                let result = decode_caught(&media_path, download);
                 AudioMessage::Preloaded { revision, result }
             }
             AudioJob::ListDevices => AudioMessage::DevicesListed(
@@ -47,9 +63,17 @@ impl AudioJob {
     }
 }
 
-fn decode_caught(path: PathBuf) -> Result<TrackDecoder, Error> {
-    panic::catch_unwind(AssertUnwindSafe(|| decode(&path)))
-        .unwrap_or_else(|_panic| Err(Error::WorkerPanicked(path)))
+fn decode_caught(
+    media_path: &Path,
+    download: Option<GrowingDownload>,
+) -> Result<TrackDecoder, Error> {
+    panic::catch_unwind(AssertUnwindSafe(|| {
+        download.map_or_else(
+            || decode(media_path),
+            |download| download.decode(media_path),
+        )
+    }))
+    .unwrap_or_else(|_panic| Err(Error::WorkerPanicked(media_path.to_path_buf())))
 }
 
 #[cfg(test)]

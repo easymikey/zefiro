@@ -1,6 +1,9 @@
 use ratatui::style::Color;
 
-use crate::theme::active_theme::ActiveTheme;
+use crate::{
+    animation::timings::TIMINGS,
+    theme::{active_theme::ActiveTheme, rgb::lerp_rgb},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackdropStyle {
@@ -16,7 +19,11 @@ impl BackdropStyle {
         Self {
             background: colors.window_background,
             accent: colors.accent,
-            volume_lifted: theme.lifted(theme.colors.accent, theme.volume_pulse_mix),
+            volume_lifted: theme.color(lerp_rgb(
+                theme.colors.accent,
+                theme.colors.foreground,
+                TIMINGS.volume_pulse_mix,
+            )),
         }
     }
 }
@@ -24,6 +31,7 @@ impl BackdropStyle {
 #[cfg(test)]
 mod tests {
     use crate::{
+        animation::timings::TIMINGS,
         test_support::noir,
         theme::{
             active_theme::ActiveTheme,
@@ -35,9 +43,7 @@ mod tests {
     #[test]
     fn from_theme_lifts_the_accent_toward_the_text_by_the_volume_pulse_mix() {
         let theme = noir();
-        let mix = 0.5;
-        let active_theme =
-            ActiveTheme::new(&theme, ColorDepth::TrueColor).with_volume_pulse(mix);
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let colors = active_theme.colors();
         let style = BackdropStyle::from_theme(&active_theme);
         assert_eq!(style.background, colors.window_background);
@@ -45,7 +51,11 @@ mod tests {
         assert_eq!(
             style.volume_lifted,
             color_at_depth(
-                lerp_rgb(theme.colors.accent, theme.colors.foreground, mix),
+                lerp_rgb(
+                    theme.colors.accent,
+                    theme.colors.foreground,
+                    TIMINGS.volume_pulse_mix,
+                ),
                 ColorDepth::TrueColor,
             )
         );

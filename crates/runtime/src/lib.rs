@@ -9,6 +9,7 @@ pub mod host;
 mod interpret;
 mod jobs;
 pub mod latest;
+mod outlets;
 mod paint;
 mod port;
 mod registry;

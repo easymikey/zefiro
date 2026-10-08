@@ -4,6 +4,7 @@ use crate::domain::{
     bounded::Bounded,
     percent::Percent,
     player::AbLoop,
+    revision::Revision,
     sleep::SleepTimer,
     speed::Speed,
 };
@@ -32,6 +33,7 @@ pub struct Transport {
     pub sleep_timer: Option<SleepTimer>,
     pub ab_loop: Option<AbLoop>,
     pub output_status: OutputStatus,
+    pub buffering_revision: Option<Revision>,
 }
 
 impl Default for Transport {
@@ -42,6 +44,7 @@ impl Default for Transport {
             sleep_timer: None,
             ab_loop: None,
             output_status: OutputStatus::Ready,
+            buffering_revision: None,
         }
     }
 }

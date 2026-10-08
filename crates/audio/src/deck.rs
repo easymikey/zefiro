@@ -13,7 +13,7 @@ use crossbeam_channel::{SendError, Sender};
 use kernel::{
     cmd::Playback,
     domain::{device::OutputDevice, revision::Revision, speed::Speed},
-    message::AudioError,
+    message::{AudioError, DecodeError},
 };
 
 use crate::{
@@ -71,7 +71,6 @@ impl Deck {
         decoded_track: DecodedTrack,
         preload_mode: PreloadMode,
     ) -> Option<AudioMessage> {
-        let output = self.output.as_mut()?;
         let duration = decoded_track.duration();
         let revision = decoded_track.revision;
         let path = decoded_track.decoder.path.to_path_buf();
@@ -79,20 +78,15 @@ impl Deck {
             PreloadMode::Gapless => Speed::default(),
             PreloadMode::Crossfade(speed) => speed,
         };
-        let (source, feed) = feed_channel(
-            decoded_track,
-            output.format.channels,
-            self.callback_sender.clone(),
-        );
-        let (envelope, mut control) = play(&source, feed, &self.feed_sender);
-        let voice = match output.varispeed(source.sample_rate(), speed) {
-            Ok(varispeed) => Box::new(Voice::new(source, envelope, varispeed)),
+        let (voice, mut control) = match self.voice(decoded_track, speed)? {
+            Ok(played) => played,
             Err(error) => {
                 return Some(
                     EngineMessage::Error(AudioError::Preload { path, error }).into(),
                 );
             }
         };
+        let output = self.output.as_mut()?;
         match preload_mode {
             PreloadMode::Gapless => {
                 if let Some(current_gain) =
@@ -233,23 +227,20 @@ impl Deck {
     }
 
     pub(crate) fn append_staged(&mut self) -> Option<AudioMessage> {
-        let output = self.output.as_mut()?;
-        let staged_track = self.staged_track.take()?;
+        let staged_track = self
+            .output
+            .as_ref()
+            .and_then(|_| self.staged_track.take())?;
         let path = staged_track.decoder.path.to_path_buf();
-        let (source, feed) = feed_channel(
-            staged_track,
-            output.format.channels,
-            self.callback_sender.clone(),
-        );
-        let (envelope, control) = play(&source, feed, &self.feed_sender);
-        let voice = match output.varispeed(source.sample_rate(), Speed::default()) {
-            Ok(varispeed) => Box::new(Voice::new(source, envelope, varispeed)),
+        let (voice, control) = match self.voice(staged_track, Speed::default())? {
+            Ok(played) => played,
             Err(error) => {
                 return Some(
                     EngineMessage::Error(AudioError::Decode { path, error }).into(),
                 );
             }
         };
+        let output = self.output.as_mut()?;
         output.mixer_control.order(MixerOrder::Attach {
             role: SinkRole::Current,
             voice,
@@ -258,6 +249,27 @@ impl Deck {
         let (_, playback) = output.position();
         self.pace(playback);
         None
+    }
+
+    fn voice(
+        &self,
+        decoded_track: DecodedTrack,
+        speed: Speed,
+    ) -> Option<Result<(Box<Voice>, EnvelopeControl), DecodeError>> {
+        let output = self.output.as_ref()?;
+        Some(
+            output
+                .varispeed(decoded_track.decoder.sample_rate(), speed)
+                .map(|varispeed| {
+                    let (source, feed) = feed_channel(
+                        decoded_track,
+                        output.format.channels,
+                        self.callback_sender.clone(),
+                    );
+                    let (envelope, control) = play(&source, feed, &self.feed_sender);
+                    (Box::new(Voice::new(source, envelope, varispeed)), control)
+                }),
+        )
     }
 
     pub(crate) fn promote(&mut self) {
@@ -380,9 +392,12 @@ fn fade(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::{io::Write, thread, time::Duration};
+    use std::{io::Write, path::PathBuf, thread, time::Duration};
 
-    use kernel::domain::{device::OutputDevice, revision::Revision, speed::Speed};
+    use kernel::{
+        domain::{device::OutputDevice, revision::Revision, speed::Speed},
+        message::{AudioError, DecodeError},
+    };
     use rstest::rstest;
     use tempfile::NamedTempFile;
 
@@ -557,6 +572,46 @@ pub(crate) mod tests {
     ) {
         let mut deck = loaded_deck();
         assert_same(operation(&mut deck), audio_message);
+        assert_eq!(slots(&deck), expected);
+    }
+
+    #[rstest]
+    #[case(
+        |deck: &mut Deck, decoded_track| deck.attach(decoded_track, PreloadMode::Gapless),
+        |path, error| AudioError::Preload { path, error },
+        [None, Some(incoming_revision()), None, None, Some(staged_revision())]
+    )]
+    #[case(
+        |deck: &mut Deck, decoded_track| {
+            deck.attach(decoded_track, PreloadMode::Crossfade(Speed::default()))
+        },
+        |path, error| AudioError::Preload { path, error },
+        [None, Some(incoming_revision()), None, None, Some(staged_revision())]
+    )]
+    #[case(
+        |deck: &mut Deck, decoded_track| {
+            deck.stage(decoded_track);
+            deck.append_staged()
+        },
+        |path, error| AudioError::Decode { path, error },
+        [None, Some(incoming_revision()), None, None, None]
+    )]
+    fn an_attach_the_resampler_refuses_answers_a_preload_error_and_fills_no_slot(
+        #[case] operation: fn(&mut Deck, DecodedTrack) -> Option<AudioMessage>,
+        #[case] audio_error: fn(PathBuf, DecodeError) -> AudioError,
+        #[case] expected: Slots,
+    ) {
+        let mut deck = loaded_deck();
+        output(&mut deck).format.rate = 0;
+        let decoded_track = track(Revision::default());
+        let path = decoded_track.decoder.path.to_path_buf();
+        assert_same(
+            operation(&mut deck, decoded_track),
+            Some(
+                EngineMessage::Error(audio_error(path, DecodeError::Unsupported))
+                    .into(),
+            ),
+        );
         assert_eq!(slots(&deck), expected);
     }
 

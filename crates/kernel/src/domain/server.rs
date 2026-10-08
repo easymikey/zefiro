@@ -1,13 +1,36 @@
-use std::{fmt, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use strum::EnumIter;
 
-use crate::domain::{config::Diagnostic, io_error::IoError, revision::Revision};
+use crate::domain::{
+    config::Diagnostic,
+    io_error::IoError,
+    revision::Revision,
+    time::Moment,
+};
 
 const SCHEMES: [&str; 2] = ["https://", "http://"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ServerName(Arc<str>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scrobble {
+    NowPlaying,
+    Played(Moment),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayReport {
+    pub server_name: ServerName,
+    pub server_track_id: ServerTrackId,
+    pub scrobble: Scrobble,
+}
 
 impl ServerName {
     #[must_use]
@@ -99,8 +122,10 @@ impl Endpoint {
             return Err(EndpointError::UserInfo);
         }
         let (host, port) = authority_parts(authority);
-        let port_valid = port
-            .is_none_or(|digits| digits.parse::<u16>().is_ok_and(|number| number != 0));
+        let port_valid = port.is_none_or(|digits| {
+            digits.bytes().all(|byte| byte.is_ascii_digit())
+                && digits.parse::<u16>().is_ok_and(|number| number != 0)
+        });
         if host.is_empty() || !port_valid {
             return Err(EndpointError::Host);
         }
@@ -116,7 +141,8 @@ impl Endpoint {
         authority_parts(self.authority()).0
     }
 
-    fn authority(&self) -> &str {
+    #[must_use]
+    pub fn authority(&self) -> &str {
         let rest = SCHEMES
             .into_iter()
             .find_map(|scheme| self.0.strip_prefix(scheme))
@@ -301,10 +327,30 @@ impl Fetched {
     }
 }
 
+pub const START_MARGIN: u64 = 512 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Download {
     pub media_fetch: MediaFetch,
     pub fetched: Option<Fetched>,
+}
+
+impl Download {
+    #[must_use]
+    pub fn ready(&self) -> bool {
+        self.fetched.as_ref().is_some_and(|fetched| {
+            fetched.is_complete()
+                || (fetched.downloaded >= START_MARGIN
+                    && !Path::new(self.media_fetch.cache_key.as_str())
+                        .extension()
+                        .and_then(|suffix| suffix.to_str())
+                        .is_some_and(|suffix| {
+                            ["m4a", "m4b", "mp4"]
+                                .iter()
+                                .any(|known| suffix.eq_ignore_ascii_case(known))
+                        }))
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -428,6 +474,22 @@ impl RemoteError {
             | Self::Cache { .. } => false,
         }
     }
+
+    #[must_use]
+    pub fn is_refusal(&self) -> bool {
+        match self {
+            Self::Status {
+                server_name: _server_name,
+                http_status,
+            } => (400..500).contains(&http_status.0),
+            Self::Api { .. } | Self::Parse { .. } => true,
+            Self::Unreachable { .. }
+            | Self::Moved { .. }
+            | Self::NoPassword { .. }
+            | Self::Keychain { .. }
+            | Self::Cache { .. } => false,
+        }
+    }
 }
 
 pub const PAGE_ROWS: usize = 200;
@@ -542,6 +604,7 @@ mod tests {
     #[case("https://", EndpointError::Host)]
     #[case("https://x:99999", EndpointError::Host)]
     #[case("https://x:0", EndpointError::Host)]
+    #[case("https://x:+80", EndpointError::Host)]
     #[case("https://alice@x", EndpointError::UserInfo)]
     #[case("https://x/?a", EndpointError::Query)]
     #[case("https://x/#a", EndpointError::Query)]
@@ -626,6 +689,23 @@ mod tests {
     ) {
         assert_eq!(error.is_credentials(), credentials);
         assert_eq!(error.server_name(), &server_name());
+    }
+
+    #[rstest]
+    #[case(RemoteError::Api { server_name: server_name(), api_code: ApiCode(70) }, true)]
+    #[case(RemoteError::Status { server_name: server_name(), http_status: HttpStatus(404) }, true)]
+    #[case(
+        RemoteError::Parse { server_name: server_name(), diagnostic: Diagnostic::from_error(&std::fmt::Error) },
+        true
+    )]
+    #[case(RemoteError::Status { server_name: server_name(), http_status: HttpStatus(503) }, false)]
+    #[case(RemoteError::Unreachable { server_name: server_name(), source: IoError::Other }, false)]
+    #[case(RemoteError::Moved { server_name: server_name() }, false)]
+    fn is_refusal_holds_for_api_codes_parse_failures_and_client_statuses(
+        #[case] error: RemoteError,
+        #[case] refusal: bool,
+    ) {
+        assert_eq!(error.is_refusal(), refusal);
     }
 
     #[rstest]

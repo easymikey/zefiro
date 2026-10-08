@@ -51,7 +51,6 @@ pub enum EngineEffect {
     },
     DropOutgoing,
     SetSpeed(Speed),
-    Clear(Speed),
     DropPreload,
     Promote(Gain),
     Report,

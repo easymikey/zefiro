@@ -11,6 +11,7 @@ use kernel::{
         Effect,
         LibraryCmd,
         MacosCmd,
+        Media,
         Playback,
         ScanMode,
         TrackLoad,
@@ -522,7 +523,7 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
         Cmd::from_iter([
             Effect::Audio(AudioCmd::Stop),
             Effect::Audio(AudioCmd::Load(TrackLoad {
-                path: track.local_path().unwrap().to_path_buf(),
+                media: Media::Local(track.local_path().unwrap().to_path_buf()),
                 decibels: None,
                 revision: Revision::default().next(),
             })),

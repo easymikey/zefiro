@@ -1,4 +1,7 @@
-use std::{mem, time::Instant};
+use std::{
+    mem,
+    time::{Duration, Instant},
+};
 
 #[derive(Debug)]
 struct Scheduled<M> {
@@ -28,6 +31,12 @@ impl<M> Timers<M> {
             deadline_at,
             message,
         });
+    }
+
+    pub(crate) fn after(&mut self, delay: Duration, message: M) {
+        if let Some(deadline_at) = Instant::now().checked_add(delay) {
+            self.schedule(deadline_at, message);
+        }
     }
 
     #[must_use]
@@ -79,6 +88,15 @@ mod tests {
     #[test]
     fn a_fresh_scheduler_has_no_deadline() {
         let timers = Timers::<Timer>::default();
+
+        assert_eq!(timers.next_deadline(), None);
+    }
+
+    #[test]
+    fn a_delay_that_would_overflow_the_clock_is_skipped() {
+        let mut timers = Timers::<Timer>::default();
+
+        timers.after(Duration::MAX, toast(revision_after(1)));
 
         assert_eq!(timers.next_deadline(), None);
     }

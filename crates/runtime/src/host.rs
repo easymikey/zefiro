@@ -50,8 +50,8 @@ mod tests {
 
     fn idle_runtime() -> Runtime {
         let (wiring, ..) = Wiring::idle();
-        let started = kernel::update::startup::startup(Startup::default());
-        Runtime::assemble(started, wiring).unwrap()
+        let (model, effects) = kernel::update::startup::startup(Startup::default());
+        Runtime::assemble(model, effects, wiring).unwrap()
     }
 
     #[test]

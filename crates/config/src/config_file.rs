@@ -6,16 +6,18 @@ use kernel::domain::{
     device::{DeviceName, OutputDevice},
     keymap::KeymapOverrides,
     percent::Percent,
+    server::{Account, Endpoint, ServerName, UserName},
     settings::{AudioSettings, ReplayGain},
     sleep_presets::SleepPresets,
     theme::ThemeChoice,
     transport::Transport,
 };
 use serde::{Deserialize, Deserializer};
+use toml::Spanned;
 
 use crate::{
     appearance::{Flag, flag},
-    error::{CrossfadeTextError, Error, parse_toml},
+    error::{CrossfadeTextError, Error, line_at, parse_toml},
     keymap::TomlKeymap,
 };
 
@@ -76,6 +78,35 @@ where
     SleepPresets::from_minutes(&minutes).map_err(serde::de::Error::custom)
 }
 
+fn server_name<'de, D>(deserializer: D) -> Result<Spanned<ServerName>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let name = Spanned::<String>::deserialize(deserializer)?;
+    if name.get_ref().trim().is_empty() {
+        return Err(serde::de::Error::custom("a server needs a name"));
+    }
+    Ok(Spanned::new(name.span(), ServerName::new(name.get_ref())))
+}
+
+fn endpoint<'de, D>(deserializer: D) -> Result<Endpoint, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let url = String::deserialize(deserializer)?;
+    Endpoint::parse(&url).map_err(|error| {
+        serde::de::Error::custom(format!("server url {url:?}: {error}"))
+    })
+}
+
+fn user_name<'de, D>(deserializer: D) -> Result<UserName, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let user = String::deserialize(deserializer)?;
+    UserName::new(&user).map_err(serde::de::Error::custom)
+}
+
 impl Flag for ReplayGain {
     const ON: Self = Self::On;
     const OFF: Self = Self::Off;
@@ -116,6 +147,27 @@ impl From<TomlAudio> for AudioSettings {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields, expecting = "a [[server]] table")]
+pub struct TomlServer {
+    #[serde(deserialize_with = "server_name")]
+    pub name: Spanned<ServerName>,
+    #[serde(rename = "url", deserialize_with = "endpoint")]
+    pub endpoint: Endpoint,
+    #[serde(rename = "user", deserialize_with = "user_name")]
+    pub user_name: UserName,
+}
+
+impl From<TomlServer> for Account {
+    fn from(toml_server: TomlServer) -> Self {
+        Self {
+            server_name: toml_server.name.into_inner(),
+            endpoint: toml_server.endpoint,
+            user_name: toml_server.user_name,
+        }
+    }
+}
+
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields, expecting = "the config.toml file")]
@@ -127,6 +179,8 @@ pub struct TomlSettings {
     pub volume: Percent,
     pub audio: TomlAudio,
     pub keymap: TomlKeymap,
+    #[serde(rename = "server")]
+    pub servers: Vec<TomlServer>,
 }
 
 impl Default for TomlSettings {
@@ -137,12 +191,34 @@ impl Default for TomlSettings {
             volume: Transport::default().volume,
             audio: TomlAudio::default(),
             keymap: TomlKeymap::default(),
+            servers: Vec::new(),
         }
     }
 }
 
 pub fn parse_config(text: &str) -> Result<TomlSettings, Error> {
-    parse_toml(text, ConfigName::Config)
+    let toml_settings: TomlSettings = parse_toml(text, ConfigName::Config)?;
+    let error = toml_settings
+        .servers
+        .iter()
+        .enumerate()
+        .find_map(|(index, server)| {
+            toml_settings
+                .servers
+                .iter()
+                .take(index)
+                .any(|known| known.name == server.name)
+                .then_some(&server.name)
+        })
+        .map(|name| Error::Parse {
+            name: ConfigName::Config,
+            line: line_at(text, name.span().start),
+            source: Box::new(serde::de::Error::custom(format!(
+                "server name {:?} is given twice",
+                name.get_ref().as_str()
+            ))),
+        });
+    error.map_or(Ok(toml_settings), Err)
 }
 
 #[must_use]
@@ -150,12 +226,14 @@ pub fn parse_config(text: &str) -> Result<TomlSettings, Error> {
 pub struct ConfigSettings {
     pub keymap_overrides: KeymapOverrides,
     pub(crate) music_dir: Option<PathBuf>,
+    pub accounts: Vec<Account>,
 }
 
 pub fn parse_config_settings(text: &str) -> Result<ConfigSettings, Error> {
     parse_config(text).map(|config| ConfigSettings {
         keymap_overrides: config.keymap.into_keymap_overrides(),
         music_dir: config.music_dir,
+        accounts: config.servers.into_iter().map(Account::from).collect(),
     })
 }
 
@@ -167,6 +245,7 @@ mod tests {
         bounded::Bounded,
         crossfade::Crossfade,
         keymap::{Action, KeyOverride, KeymapOverrides},
+        server::{Account, Endpoint, ServerName, UserName},
         theme::{ThemeChoice, ThemeName},
     };
     use rstest::rstest;
@@ -314,8 +393,67 @@ mod tests {
                     KeyOverride::from("x")
                 )]),
                 music_dir: Some(PathBuf::from("/tmp")),
+                accounts: Vec::new(),
             })
         );
+    }
+
+    const TWO_SERVERS: &str = "[[server]]\nname = \"home\"\nurl = \"https://music.example\"\nuser = \"ann\"\n\n[[server]]\nname = \"work\"\nurl = \"http://10.0.0.2:4533\"\nuser = \"bob\"\n";
+
+    fn account(name: &str, link: &str, user: &str) -> Account {
+        Account {
+            server_name: ServerName::new(name),
+            endpoint: Endpoint::parse(link).unwrap(),
+            user_name: UserName::new(user).unwrap(),
+        }
+    }
+
+    #[test]
+    fn two_servers_are_read_as_accounts_in_file_order() {
+        let parsed = parse_config_settings(TWO_SERVERS);
+        assert_eq!(
+            parsed.map(|settings| settings.accounts).ok(),
+            Some(vec![
+                account("home", "https://music.example", "ann"),
+                account("work", "http://10.0.0.2:4533", "bob"),
+            ])
+        );
+    }
+
+    #[test]
+    fn an_unknown_key_in_a_server_is_refused() {
+        let text = format!("{TWO_SERVERS}password = \"hunter2\"\n");
+        let error = parse_config(&text).expect_err("a password key must not parse");
+        assert!(error.to_string().contains("password"), "was {error}");
+    }
+
+    #[test]
+    fn a_bad_server_url_names_its_entry() {
+        let text = TWO_SERVERS.replace("http://10.0.0.2:4533", "ftp://work");
+        let error = parse_config(&text).expect_err("an ftp url must not parse");
+        let message = error.to_string();
+        assert_eq!(
+            message.lines().nth(1),
+            Some("config.toml:8"),
+            "was {message:?}"
+        );
+        assert!(message.contains("ftp://work"), "was {message:?}");
+    }
+
+    #[test]
+    fn a_second_entry_with_a_known_server_name_is_refused_and_named() {
+        let text = TWO_SERVERS
+            .replace("\"work\"", "\"home\"")
+            .replace("http://10.0.0.2:4533", "https://music.example");
+        let error =
+            parse_config_settings(&text).expect_err("a second home must not parse");
+        let message = error.to_string();
+        assert_eq!(
+            message.lines().nth(1),
+            Some("config.toml:7"),
+            "was {message:?}"
+        );
+        assert!(message.contains("\"home\""), "was {message:?}");
     }
 
     #[test]

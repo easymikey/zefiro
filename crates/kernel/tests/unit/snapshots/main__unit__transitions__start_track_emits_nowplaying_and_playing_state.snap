@@ -10,7 +10,9 @@ expression: effs
     Audio(
         Load(
             TrackLoad {
-                path: "/tmp/track0.flac",
+                media: Local(
+                    "/tmp/track0.flac",
+                ),
                 decibels: None,
                 revision: Revision(
                     1,

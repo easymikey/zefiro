@@ -154,6 +154,7 @@ impl<'a> KeyHintsView<'a> {
             | Some(
                 Overlay::Help
                 | Overlay::Search(_)
+                | Overlay::ServerSearch(_)
                 | Overlay::SavePlaylist(_)
                 | Overlay::History(_)
                 | Overlay::ConfirmTrash(_)
@@ -183,6 +184,7 @@ impl<'a> CardView<'a> {
             play_order: &scene.playlist.play_order,
             displayed_track: scene.displayed_track,
             output_status: &scene.transport.output_status,
+            buffering_revision: scene.transport.buffering_revision,
             now: scene.presentation.now,
         }
     }

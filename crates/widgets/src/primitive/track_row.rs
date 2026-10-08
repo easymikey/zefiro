@@ -1,4 +1,4 @@
-use kernel::domain::geometry::Cells;
+use kernel::domain::{favorites::Favorite, geometry::Cells};
 use ratatui::{
     style::{Color, Style},
     text::Line,
@@ -10,7 +10,6 @@ use crate::{
         glyphs,
         marker::{
             FAVORITE_COLUMNS,
-            Favorite,
             MARKERS_WIDTH,
             PLAYING_COLUMNS,
             QueueNumber,
@@ -106,12 +105,12 @@ pub(crate) fn track_row_line<'a>(
 mod tests {
     use std::borrow::Cow;
 
-    use kernel::domain::geometry::Cells;
+    use kernel::domain::{favorites::Favorite, geometry::Cells};
     use unicode_width::UnicodeWidthStr;
 
     use crate::{
         primitive::{
-            marker::{Favorite, MARKERS_WIDTH, QueueNumber},
+            marker::{MARKERS_WIDTH, QueueNumber},
             track_row::{Playing, Selected, TrackRow, track_row_line},
         },
         test_support::noir,

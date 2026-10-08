@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use crate::domain::server::{ServerAlbum, ServerName, ServerTrackId};
+use crate::domain::server::{MediaFetch, ServerAlbum, ServerName, ServerTrackId};
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Tags {
@@ -193,6 +193,17 @@ impl Track {
             .clone()
             .unwrap_or_else(|| source.name())
             .into_boxed_str()
+    }
+
+    pub(crate) fn holds(&self, media_fetch: &MediaFetch) -> bool {
+        matches!(
+            &self.source,
+            TrackSource::Server {
+                server_name,
+                server_track_id,
+            } if *server_name == media_fetch.server_name
+                && *server_track_id == media_fetch.server_track_id
+        )
     }
 
     #[must_use]

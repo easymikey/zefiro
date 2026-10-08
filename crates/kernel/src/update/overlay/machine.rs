@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{mem, path::PathBuf};
 
 use crate::{
     cmd::{Cmd, ConfigCmd, ConfigPatch, Effect},
@@ -64,6 +64,7 @@ fn opened_playback(previous: Option<&Overlay>, overlay: &Overlay) -> Cmd {
         }
         Overlay::Help
         | Overlay::Search(_)
+        | Overlay::ServerSearch(_)
         | Overlay::SavePlaylist(_)
         | Overlay::History(_)
         | Overlay::ConfirmTrash(_)
@@ -81,6 +82,7 @@ fn closed_playback(overlay: &Overlay) -> Cmd {
         Overlay::Settings(..) => release(),
         Overlay::Help
         | Overlay::Search(_)
+        | Overlay::ServerSearch(_)
         | Overlay::SavePlaylist(_)
         | Overlay::History(_)
         | Overlay::ConfirmTrash(_)
@@ -112,6 +114,19 @@ fn confirm(overlay: &mut Option<Overlay>) -> Result<Cmd, Unhandled> {
 fn confirm_cmd(overlay: &mut Overlay) -> Result<Confirmed, Unhandled> {
     match overlay {
         Overlay::Search(search) => confirm_search(search).map(Confirmed::Close),
+        Overlay::ServerSearch(server_query) => {
+            server_query
+                .cursor
+                .get(&server_query.content.catalog_rows)
+                .ok_or(Unhandled)?;
+            let found = CursorOver {
+                cursor: server_query.cursor,
+                content: mem::take(&mut server_query.content.catalog_rows),
+            };
+            Ok(Confirmed::Close(Cmd::message(Message::Browse(
+                BrowseRequest::Open(found),
+            ))))
+        }
         Overlay::SavePlaylist(text_entry) => confirm_save_playlist(text_entry),
         Overlay::ConfirmTrash(track) => Ok(Confirmed::Close(Cmd::message(
             Message::Browse(BrowseRequest::Trash(track.source().clone())),
@@ -224,7 +239,7 @@ impl ServerPrompt {
                     ServerRequest::Add {
                         connection: Connection {
                             account: Account {
-                                server_name: ServerName::new(endpoint.host()),
+                                server_name: ServerName::new(endpoint.authority()),
                                 endpoint: endpoint.clone(),
                                 user_name: user_name.clone(),
                             },
@@ -295,6 +310,7 @@ fn content_transition(
         (
             Overlay::Help
             | Overlay::Search(_)
+            | Overlay::ServerSearch(_)
             | Overlay::SavePlaylist(_)
             | Overlay::History(_)
             | Overlay::Settings(_)

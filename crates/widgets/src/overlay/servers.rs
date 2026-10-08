@@ -3,7 +3,7 @@ use kernel::domain::{
     index::ViewIndex,
     server::{Server, ServerStatus},
 };
-use ratatui::{layout::Rect, text::Line};
+use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Span};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
@@ -23,9 +23,20 @@ const MIN_WIDTH: Cells = Cells(44);
 
 #[derive(Debug)]
 pub(crate) struct ServersWidget<'a> {
-    rows: Vec<Line<'a>>,
+    rows: Vec<[Span<'a>; 5]>,
+    selected: ViewIndex,
+    starts: [usize; 5],
+    content_width: Cells,
     avoid: &'a [Rect],
     theme: ActiveTheme<'a>,
+}
+
+fn columns(server: &Server) -> [&str; 3] {
+    [
+        server.account.server_name.as_str(),
+        server.account.endpoint.host(),
+        server.account.user_name.as_str(),
+    ]
 }
 
 fn status(
@@ -53,13 +64,6 @@ impl<'a> ServersWidget<'a> {
         active_theme: ActiveTheme<'a>,
     ) -> Self {
         let colors = active_theme.colors();
-        let columns = |server: &'a Server| {
-            [
-                server.account.server_name.as_str(),
-                server.account.endpoint.host(),
-                server.account.user_name.as_str(),
-            ]
-        };
         let widths = servers.iter().map(columns).fold(
             [0; 3],
             |[name, host, user], [name_column, host_column, user_column]| {
@@ -70,44 +74,48 @@ impl<'a> ServersWidget<'a> {
                 ]
             },
         );
-        let rows =
-            servers
+        let starts: [usize; 5] = std::array::from_fn(|column| {
+            widths
                 .iter()
-                .enumerate()
-                .map(|(index, server)| {
-                    let chosen = index == selected.get();
-                    let marker = if chosen { MARKER } else { "  " };
-                    let padded = columns(server).into_iter().zip(widths).map(
-                        |(column, width)| {
-                            text(format!(
-                                "{column}{}  ",
-                                " ".repeat(width.saturating_sub(column.width()))
-                            ))
-                            .fg(colors.foreground)
-                        },
-                    );
-                    let pieces = [text(marker).fg(colors.accent)]
-                        .into_iter()
-                        .chain(padded)
-                        .chain([status(&server.server_status, &active_theme)]);
-                    line(pieces.map(|piece| {
-                        if chosen {
-                            piece
-                                .fg(colors.selection_foreground)
-                                .bg(colors.selection_background)
-                        } else {
-                            piece
-                        }
-                    }))
-                })
-                .collect::<Vec<_>>();
-        let rows = if rows.is_empty() {
-            vec![line([text(EMPTY_PLACEHOLDER).fg(colors.muted_foreground)])]
-        } else {
-            rows
-        };
+                .take(column.saturating_sub(1))
+                .map(|width| width + 2)
+                .sum::<usize>()
+                + usize::from(column != 0) * MARKER.width()
+        });
+        let rows = servers
+            .iter()
+            .enumerate()
+            .map(|(index, server)| {
+                let marker = if index == selected.get() {
+                    MARKER
+                } else {
+                    "  "
+                };
+                let [name, host, user] = columns(server).map(|column| {
+                    Span::styled(column, Style::new().fg(colors.foreground))
+                });
+                [
+                    Span::styled(marker, Style::new().fg(colors.accent)),
+                    name,
+                    host,
+                    user,
+                    status(&server.server_status, &active_theme).into(),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let [.., start] = starts;
+        let widest = rows
+            .iter()
+            .map(|[.., status]| start + status.width())
+            .max()
+            .unwrap_or(EMPTY_PLACEHOLDER.width())
+            .max(TITLE.width());
         Self {
             rows,
+            selected,
+            starts,
+            content_width: MIN_WIDTH
+                .max(u16::try_from(widest).map_or(MIN_WIDTH, Cells)),
             avoid: &[],
             theme: active_theme,
         }
@@ -121,18 +129,12 @@ impl<'a> ServersWidget<'a> {
 
     fn modal(&self) -> Modal<'_> {
         let colors = self.theme.colors();
-        let widest = self
-            .rows
-            .iter()
-            .map(Line::width)
-            .fold(TITLE.width(), usize::max);
         Modal {
             title: TITLE,
             size: ModalSize::Dialog {
                 min_width: MIN_WIDTH,
-                content_width: MIN_WIDTH
-                    .max(u16::try_from(widest).map_or(MIN_WIDTH, Cells)),
-                content_rows: u16::try_from(self.rows.len())
+                content_width: self.content_width,
+                content_rows: u16::try_from(self.rows.len().max(1))
                     .map_or(Cells(u16::MAX), Cells),
             },
             hint: Some(line([text(HINT).fg(colors.muted_foreground)])),
@@ -150,8 +152,50 @@ impl<'a> ServersWidget<'a> {
         let buffer = canvas.buffer;
         self.modal().paint(areas, buffer);
         let body = areas.body;
-        for (row, y) in self.rows.iter().zip(body.y..body.bottom()) {
-            buffer.set_line(body.x, y, row, body.width);
+        if self.rows.is_empty() && body.height != 0 {
+            buffer.set_stringn(
+                body.x,
+                body.y,
+                EMPTY_PLACEHOLDER,
+                usize::from(body.width),
+                Style::new().fg(self.theme.colors().muted_foreground),
+            );
+        }
+        self.paint_rows(body, buffer);
+    }
+
+    fn paint_rows(&self, body: Rect, buffer: &mut Buffer) {
+        let colors = self.theme.colors();
+        let place = |start: usize| {
+            u16::try_from(start)
+                .ok()
+                .map(|start| body.x.saturating_add(start))
+                .filter(|x| *x < body.right())
+        };
+        for (index, (row, y)) in self.rows.iter().zip(body.y..body.bottom()).enumerate()
+        {
+            for (span, start) in row.iter().zip(self.starts) {
+                if let Some(x) = place(start) {
+                    buffer.set_span(x, y, span, body.right() - x);
+                }
+            }
+            if index == self.selected.get() {
+                let [.., status] = row;
+                let [.., start] = self.starts;
+                let row_width = u16::try_from(start + status.width())
+                    .map_or(body.width, |width| width.min(body.width));
+                buffer.set_style(
+                    Rect {
+                        y,
+                        width: row_width,
+                        height: 1,
+                        ..body
+                    },
+                    Style::new()
+                        .fg(colors.selection_foreground)
+                        .bg(colors.selection_background),
+                );
+            }
         }
     }
 }

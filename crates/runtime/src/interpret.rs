@@ -1,4 +1,4 @@
-use std::{ops::ControlFlow, time::Instant};
+use std::ops::ControlFlow;
 
 use kernel::{cmd::Effect, domain::index::ViewIndex, message::Message};
 
@@ -47,9 +47,7 @@ impl Runtime {
                     Some(Message::ShuffleRolled(shuffle_order(len)))
                 }
                 Effect::After { delay, timer } => {
-                    if let Some(deadline) = Instant::now().checked_add(delay) {
-                        self.timers.schedule(deadline, timer);
-                    }
+                    self.timers.after(delay, timer);
                     None
                 }
                 Effect::Restart(driver) => self.wiring.restart(driver, &self.model),
@@ -132,7 +130,7 @@ mod tests {
                 remote: Port::new(DriverName::Remote, remote_tx, Congestion::default()),
             };
             Self {
-                runtime: Runtime::assemble((Model::default(), Vec::new()), wiring)
+                runtime: Runtime::assemble(Model::default(), Vec::new(), wiring)
                     .unwrap(),
                 audio_receiver,
                 library_receiver,
@@ -227,7 +225,7 @@ mod tests {
 
         assert_eq!(answers, Vec::new());
         assert_eq!(fixture.runtime.take_shell_effects(), Vec::new());
-        assert_eq!(fixture.runtime.flow(), ControlFlow::Continue(()));
+        assert_eq!(fixture.runtime.flow, ControlFlow::Continue(()));
     }
 
     #[test]
@@ -264,7 +262,7 @@ mod tests {
 
         assert_eq!(answers, Vec::new());
         assert_eq!(fixture.runtime.take_shell_effects(), Vec::new());
-        assert_eq!(fixture.runtime.flow(), ControlFlow::Continue(()));
+        assert_eq!(fixture.runtime.flow, ControlFlow::Continue(()));
     }
 
     #[test]
@@ -375,7 +373,7 @@ mod tests {
             &mut fixture.runtime,
         );
 
-        assert_eq!(fixture.runtime.flow(), ControlFlow::Break(()));
+        assert_eq!(fixture.runtime.flow, ControlFlow::Break(()));
         assert_eq!(fixture.audio_receiver.try_recv(), Ok(AudioCmd::Stop));
     }
 
@@ -445,20 +443,5 @@ mod tests {
         );
 
         assert!(fixture.runtime.timers.next_deadline().is_some());
-    }
-
-    #[test]
-    fn a_delay_that_would_overflow_the_clock_is_skipped() {
-        let mut fixture = Fixture::new();
-
-        run(
-            Cmd::effect(Effect::After {
-                delay: Duration::MAX,
-                timer: Timer::Toast(Revision::default()),
-            }),
-            &mut fixture.runtime,
-        );
-
-        assert!(fixture.runtime.timers.next_deadline().is_none());
     }
 }

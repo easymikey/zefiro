@@ -6,6 +6,7 @@ use crate::domain::{
     cursor::Cursor,
     direction::Direction,
     index::ViewIndex,
+    server::ServerName,
     track::{Track, TrackSource},
 };
 
@@ -66,11 +67,12 @@ pub enum RepeatMode {
     One,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PlaylistSource {
     #[default]
     Library,
     Named,
+    Server(ServerName),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -152,7 +154,7 @@ impl Playlist {
         self.current()
     }
 
-    fn next_index(&self, direction: Direction) -> Option<usize> {
+    pub(crate) fn next_index(&self, direction: Direction) -> Option<usize> {
         if self.cursor.is_empty() {
             return None;
         }
@@ -186,8 +188,12 @@ impl Playlist {
         if index.get() >= self.tracks.len() {
             return None;
         }
-        self.cursor = Cursor::at(self.tracks.len(), index.get());
+        self.point_at(index);
         self.current()
+    }
+
+    pub(crate) fn point_at(&mut self, index: ViewIndex) {
+        self.cursor = Cursor::at(self.tracks.len(), index.get());
     }
 }
 

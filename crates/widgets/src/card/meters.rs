@@ -212,6 +212,7 @@ mod tests {
             play_order: &play_order,
             displayed_track: Some(&track),
             output_status: &output_status,
+            buffering_revision: None,
             now: Moment::new(Duration::from_secs(5)),
         };
         let area = Rect::new(0, 0, 60, 12);

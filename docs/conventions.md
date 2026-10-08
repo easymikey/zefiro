@@ -14,7 +14,7 @@ Effect::X(XCmd) ─► runtime ─► DriverLoop ─► XMessage::Cmds(Cmds { cm
 XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► inbox ─► update
 ```
 
-1. Layer map: kernel: nothing; audio, library, macos, config: kernel; runtime: drivers, kernel, config; widgets: kernel; terminal: kernel, widgets; sifr: anything. `guard` (`layering.rs`)
+1. Layer map: kernel: nothing; audio, library, macos, config, remote: kernel; runtime: drivers, kernel, config; widgets: kernel; terminal: kernel, widgets; sifr: anything. `guard` (`layering.rs`)
 2. kernel and widgets are pure: no IO, clock, threads, env, channels. `guard` (`purity.rs`)
 3. Only the roots see a whole `Model`: the kernel router inside `update`, `startup`, `Scene::from_model`. Below them a function takes its slice or an `XParts`. `guard` (`demeter.rs`, `demeter_views.rs`)
 4. One entry each: `update` has one call site in runtime, there is one key router, one `startup`; the paint path never calls `update`. `guard` (`dispatch.rs`) for the `update` call site and the paint path, `review` for the one key router and the one `startup`
@@ -31,21 +31,21 @@ XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► inbox �
 | Machine | kernel (trait), implementors anywhere | `trait Machine { type Message; type Effect; fn transition(&mut self, message: Self::Message) -> Result<Self::Effect, Unhandled>; }`; `Effect` is a `Cmd` type (kernel `Cmd`, driver part `Cmd<XEffect, XEvent>`); the contract (`Machine`, `Driver`, `Unhandled`) lives in `kernel::update::machine`, effects in `kernel::cmd` | see §3 | review |
 | Parts | kernel | `struct XParts<'a>` whose fields are only `&`/`&mut` borrows of `Model` fields, built by the router | `XParts` | review |
 | Cmd | kernel | `struct Cmd<E = Effect, M = Message> { effects: Vec<E>, messages: Vec<M> }`; build with `Cmd::none()`, `Cmd::effect(e)`, `Cmd::message(m)`, `From<Effect>`, `From<Cue>`, `FromIterator<E>`; join with `then` (appends, in order); read with `effects()` / `IntoIterator`, split with `into_parts()` (runtime reads a driver Cmd); a nested machine's effects lift with `map_effect`, its messages through `into_parts()` (`ConfigDriver::drive_watch` turns each `ConfigChange` into its own `Cmd`). No other combinator (`merge`, `chain`, `batch`, `and`) | `Cmd` = what a machine returned | guard |
-| Effect | kernel | one variant per target: `Audio(AudioCmd)`, `Library(LibraryCmd)`, `Macos(MacosCmd)`, `Config(ConfigCmd)`, `WindowColors(WindowColorsCmd)`, `Animate(Cue)`, `RollShuffle(usize)`, `After { delay, timer }`, `Restart(DriverName)`, `Quit` | `Effect` | review |
-| XCmd | kernel | the order to one driver, carried inside `Effect` | `AudioCmd`, `LibraryCmd`, `MacosCmd`, `ConfigCmd` | guard |
+| Effect | kernel | one variant per target: `Audio(AudioCmd)`, `Library(LibraryCmd)`, `Macos(MacosCmd)`, `Remote(RemoteCmd)`, `Config(ConfigCmd)`, `WindowColors(WindowColorsCmd)`, `Animate(Cue)`, `RollShuffle(usize)`, `After { delay, timer }`, `Restart(DriverName)`, `Quit` | `Effect` | review |
+| XCmd | kernel | the order to one driver, carried inside `Effect` | `AudioCmd`, `LibraryCmd`, `MacosCmd`, `ConfigCmd`, `RemoteCmd` | guard |
 | Event | kernel (types) | what a driver reports; `From<XEvent> for Message`; driver lifecycle is `DriverEvent { Died, Stopped, Full }` | `XEvent` | guard |
 | Answer | kernel | runtime's reply to a kernel effect it ran: a `Message` variant named for the effect in the past tense (`Effect::RollShuffle` → `Message::ShuffleRolled`) | past tense of the effect | review |
 | Request | kernel | what the shell asks the core; always a branch of `Message` | `XRequest` | guard |
 | Message | kernel | the only input of `update`: `X(XRequest)`, `X(XEvent)`, answers, `Elapsed(Timer)`, `Driver { driver_name, event }`, `Key(KeyPress)`, … | `Message` | review |
-| Driver | audio, macos, library, config | the top machine of one external source (§4) | `AudioDriver`, `MacosDriver`, `LibraryDriver`, `ConfigDriver` | guard |
+| Driver | audio, macos, library, config, remote | the top machine of one external source (§4) | `AudioDriver`, `MacosDriver`, `LibraryDriver`, `ConfigDriver`, `RemoteDriver` | guard |
 | DriverLoop | runtime | one generic loop, one thread per driver (§4); a driver effect reaches it through `LoopEffect { Execute, Run, After, Watch, Unwatch }` (decided 2026-10-04); runtime seeds `XMessage::Started` into the inbox at spawn through the `DriverLoop` field `message: Option<D::Message>`; the loop's private next-input enum is `LoopInput` (not `Wake`, reserved for the audio feeder's wake-up); the inputs `Spawners` hands each driver thread are `SpawnSetup`, the audio start closure `SpawnAudio`; an audio driver that stops before handing over its tap is `SpawnError::TapLost { driver_name }`; a value the driver publishes goes out through a closure sink `P: Fn(T)` the runtime passes in | `DriverLoop` | guard |
 | Stream | runtime | a repeated input started by a driver effect (`LibraryWatchEffect::Watch(PathBuf)`, as Crux `stream_from_shell`); runtime owns it and feeds its items back as `XMessage`s. The word `Subscription` is not used | `FileStream` | guard |
-| Job | driver crate (type), runtime (thread) | slow blocking work a driver hands to the runtime worker as `XEffect::Run(XJob)`; the result returns as an `XMessage`; stale by `Revision` (§4.7) | `AudioJob`, `LibraryJob`, `MacosJob` | review |
+| Job | driver crate (type), runtime (thread) | slow blocking work a driver hands to the runtime worker as `XEffect::Run(XJob)`; the result returns as an `XMessage`; stale by `Revision` (§4.7) | `AudioJob`, `LibraryJob`, `MacosJob`, `RemoteJob` | review |
 | Error | every crate that can fail | §6 | `Error`, `<Type>Error` | guard |
 | Scene | widgets | `Scene::from_model(&Model, ScenePresentation)`; the only widget code that sees `&Model`; no `*_view()` or `layout_parts()` getters | `Scene` | guard |
 | View | widgets | read-model holding fields from two or more `Model` slices; borrowed fields, no state, no `&Model`; built only by `XView::from_scene(&Scene)` | `XView<'a>` | review |
 | Widget | widgets | every type with `impl Widget`, overlays included; every widget type ends in `Widget` (`ToastWidget`, `CardWidget`, `TooSmallWidget`); built as in ratatui and ratcn: `XWidget::new(..)` takes what the widget cannot paint without (its `input`, then the `ActiveTheme` when it paints in theme colours), every optional knob is a consuming setter named after the field (`style(XStyle)`, `speed_chip(SpeedChip)`, …); fields are private, so there is never a struct literal outside its module and never a `builder()`; `input` is `&` one Model slice or one `XView` | `XWidget`, never `*Overlay` | guard |
-| Style | widgets | a component's look; built only by `XStyle::from_theme(&ActiveTheme)`; an input beyond the theme rides on `ActiveTheme` through a builder (`with_progress_bar`, `with_volume_pulse`); fields are semantic colours (`foreground`, `muted_foreground`, `background`, `border`, `accent`, …) | `XStyle` | review |
+| Style | widgets | a component's look; built only by `XStyle::from_theme(&ActiveTheme)`; an input beyond the theme rides on `ActiveTheme` through a builder (`with_progress_bar`); fields are semantic colours (`foreground`, `muted_foreground`, `background`, `border`, `accent`, …) | `XStyle` | review |
 | Colors | widgets | only the theme palette | `Colors` | guard |
 | raw TOML | config | every serde shape of a file or a section; each carries `#[serde(expecting = "…")]` in user words (`"a [cover] table"`), so a Rust name never reaches a toast | `Toml*` (`TomlTheme`, `TomlAppearance`, `TomlKeymap`, `TomlCard`, `TomlColors`, `TomlAudio`) | guard |
 | parsed value | kernel, widgets | what inner code uses; parsed once at the boundary, never re-checked | bare noun (`Theme`, `Keymap`, `Appearance`) | review |
@@ -140,7 +140,7 @@ The meaning of each affix is `review`; the bans are in §9.
 | `Settings` | values the user edits | `AudioSettings`, `AppearanceSettings` |
 | `Toml` (prefix) | raw serde shape | `TomlTheme`, `TomlCard` |
 | `Name` | which one of a closed set | `OverlayName`, `ConfigName`, `ThemeName`, `DriverName` |
-| `Row` | settings / registry / test-table row | `SettingRow`, `DriverRow` |
+| `Row` | settings / registry / catalog / test-table row | `SettingRow`, `DriverRow`, `CatalogRow` |
 | `Patch` | partial change to a stored value; every field an `Option`, built by struct update `XPatch { field: Some(v), ..XPatch::default() }`, no builder crate | `ConfigPatch`, `AppearancePatch` |
 | `Index` | position newtype in one index space | `TrackIndex`, `ViewIndex` |
 
@@ -151,7 +151,20 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | concept | the word | not |
 |---|---|---|
 | track | `Track`, `Arc<Track>`; value `track` | `song`, `song_title` |
-| track identity everywhere (queue, favorites, history, m3u) | `TrackSource` (`enum TrackSource { Local(PathBuf) }`, a remote variant comes with Navidrome); value `track_source`; field `Track.source` (the type takes the word its field already has); `Local` keeps today's path behaviour: no normalisation, same path text on disk, lookup through a `TrackSource` to index map, a dangling ref is skipped on load | `TrackRef`, `track_ref`, `track` for it, `source` alone outside `Track`, a path or an index as identity |
+| track identity everywhere (queue, favorites, history, m3u) | `TrackSource` (`enum TrackSource { Local(PathBuf), Server { server_name, server_track_id } }`); value `track_source`; field `Track.source` (the type takes the word its field already has); `Local` keeps today's path behaviour: no normalisation, same path text on disk, lookup through a `TrackSource` to index map, a dangling ref is skipped on load; `Server` names a track by its server and the server's id, never by a URL | `TrackRef`, `track_ref`, `track` for it, `source` alone outside `Track`, a path or an index as identity, `TrackRef::Remote` |
+| a music server sifr knows | `Server { account, server_status }` (domain::server) in `Model.servers`; its state `ServerStatus { Connecting, Online(Session), Offline(RemoteError) }`; value `server` | — |
+| who logs in where, without the password | `Account { server_name, endpoint, user_name }`, kept in `config.toml` `[[server]]` tables; value `account` | — |
+| the password a connect uses | `Credential { Typed(Secret), Stored }`: typed just now, or the one in the Keychain (service "sifr", account "user@host"); value `credential` | — |
+| the signed auth query after a connect | `Session { endpoint, query }`; its `Debug` is redacted; the Model keeps it, never the password; value `session` | — |
+| a typed password in flight | `Secret`, only inside `Credential::Typed`; never stored in the Model | — |
+| which catalog the browser shows | `CatalogName { Local, Server(ServerName) }`; value `catalog_name` | — |
+| a server's browsed listings | `Catalog { server_name, albums_level, album_level }` and `BrowseLevel { listing, catalog_rows, cursor, paging }` (domain::catalog), in `Model.catalogs`; values `catalog`, `albums_level` | — |
+| one row of a server listing | `CatalogRow { Album(ServerAlbum), Track(Arc<Track>) }` (domain::track); value `catalog_rows` | — |
+| what audio opens | `Media { Local(PathBuf), Growing(GrowingMedia) }` (`TrackLoad.media`); `Growing` is a download still being written, read up to its safe byte bound; value `media` | — |
+| one ordered download chunk | `MediaFetch { server_name, server_track_id, cache_key, session, first_byte, revision }` in `RemoteCmd::Fetch` (the playing track) and `RemoteCmd::Prefetch` (the next one); value `media_fetch` | — |
+| a download the kernel drives | `Download { media_fetch, fetched }` in `Model.downloads`; value `download` | — |
+| a play to report to its server | `PlayReport { server_name, server_track_id, scrobble }` in `Model.play_reports`, flushed at quit and restored at start; value `play_report` | — |
+| what a play report says | `Scrobble { NowPlaying, Played(Moment) }`; value `scrobble` | — |
 | track number tag | `Tags.track_number` | `track` for it |
 | time into the track | `Duration`; value `position`; `offset` only for a position at an anchor (`Playhead.offset`), `target` for a seek destination, `by` for a relative step | `at`, `offset` for anything else |
 | track length | `Duration`; value `duration` | `total`, `decoded` for a length |
@@ -398,10 +411,13 @@ Frozen as today (2026-10-04), not reopened on this route:
 - S4: `PlaybackRequest` carried inside driver data (`RemoteInput`, `MacosEvent::MediaKeyPressed`).
 - S13: owner of volume (macOS vs app) and which effects stay relative.
 
-Navidrome (not in this route):
+Navidrome, closed by the streaming stage (decided 2026-10-07/08):
 
-- G1: network IO shape (request/response, retries, auth, pagination; effect or job).
-- G2: where credentials and the server URL live.
-- G3: streaming a remote track, and who resolves `TrackRef::Remote` to a source.
-- G5: a library of several sources, `Revision` per source.
+- G1 (closed): all HTTP is `RemoteJob`s of the `remote` driver; one job per variant runs at a time, and the driver queues connects, stars and play reports itself; token auth only; listings page by `Page`; redirects are followed by hand, at most 3, same host only.
+- G2 (closed): server name, link and user live in `config.toml` `[[server]]` tables (`Account`); the password lives in the Keychain through keyring-core, read and written only by the remote driver; the Model keeps the `Session`.
+- G3 (closed): `TrackSource::Server` names a server track; `remote` builds the stream URL from the `Session`, the kernel drives the download chunk by chunk (`MediaFetch`, `Download`), and audio plays `Media::Growing` up to the bound the kernel sends.
+- G5 (closed): the browser shows one catalog at a time (`CatalogName`); each server's listings are a `Catalog`, and each listing answer carries its own `Revision`.
+
+Open:
+
 - G7: where widget constants live and where widget snapshots go.

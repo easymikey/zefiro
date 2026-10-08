@@ -31,4 +31,5 @@ TomlSettings {
             ),
         },
     },
+    servers: [],
 }

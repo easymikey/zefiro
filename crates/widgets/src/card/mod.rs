@@ -13,6 +13,7 @@ use kernel::domain::{
     percent::Percent,
     player::Player,
     playlist::{PlayOrder, RepeatMode},
+    revision::Revision,
     speed::Speed,
     time::Moment,
     track::Track,
@@ -52,6 +53,7 @@ pub(crate) struct CardView<'a> {
     pub(crate) play_order: &'a PlayOrder,
     pub(crate) displayed_track: Option<&'a Arc<Track>>,
     pub(crate) output_status: &'a OutputStatus,
+    pub(crate) buffering_revision: Option<Revision>,
     pub(crate) now: Moment,
 }
 
@@ -123,7 +125,7 @@ impl<'a> CardView<'a> {
     }
 
     pub(crate) fn status(&self) -> CardStatus {
-        CardStatus::new(*self.output_status, self.player)
+        CardStatus::new(*self.output_status, self.buffering_revision, self.player)
     }
 }
 
@@ -278,6 +280,7 @@ mod tests {
         player::{PausedBy, Player},
         playhead::Playhead,
         playlist::PlayOrder,
+        revision::Revision,
         speed::Speed,
         time::Moment,
         track::{AudioFormat, Hertz, Kbps, Tags, Track, TrackParts},
@@ -316,6 +319,7 @@ mod tests {
         player: Player,
         spectrum: Spectrum,
         output_status: OutputStatus,
+        buffering_revision: Option<Revision>,
         play_order: PlayOrder,
         track: Option<Arc<Track>>,
     }
@@ -334,6 +338,7 @@ mod tests {
                 },
                 spectrum: [0.5; SPECTRUM_BANDS],
                 output_status: OutputStatus::Ready,
+                buffering_revision: None,
                 play_order: PlayOrder::default(),
                 track: Some(track),
             }
@@ -344,6 +349,7 @@ mod tests {
                 player: Player::Stopped,
                 spectrum: [0.0; SPECTRUM_BANDS],
                 output_status: OutputStatus::Ready,
+                buffering_revision: None,
                 play_order: PlayOrder::default(),
                 track: None,
             }
@@ -354,6 +360,7 @@ mod tests {
                 player: Player::Stopped,
                 spectrum: [0.2; SPECTRUM_BANDS],
                 output_status: OutputStatus::Lost(OutputError::DeviceGone),
+                buffering_revision: None,
                 play_order: PlayOrder::default(),
                 track: Some(track),
             }
@@ -369,6 +376,7 @@ mod tests {
                 play_order: &self.play_order,
                 displayed_track: self.track.as_ref(),
                 output_status: &self.output_status,
+                buffering_revision: self.buffering_revision,
                 now: Moment::default(),
             }
         }
@@ -387,6 +395,21 @@ mod tests {
     fn the_now_playing_card_shows_title_status_and_meters() {
         let theme = noir();
         let fixture = Fixture::playing(track("Moon River"));
+        let widget = card(fixture.view(), &theme, AppearanceSettings::default());
+        insta::assert_snapshot!(
+            rendered(60, card_height().0, |frame| frame
+                .render_widget(&widget, frame.area()))
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn a_stalled_download_shows_buffering_in_the_status_column() {
+        let theme = noir();
+        let fixture = Fixture {
+            buffering_revision: Some(Revision::default()),
+            ..Fixture::playing(track("Moon River"))
+        };
         let widget = card(fixture.view(), &theme, AppearanceSettings::default());
         insta::assert_snapshot!(
             rendered(60, card_height().0, |frame| frame

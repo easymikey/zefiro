@@ -28,7 +28,8 @@ expression: log
             ),
             Run(
                 Decode {
-                    path: "/a",
+                    media_path: "/a",
+                    download: None,
                     revision: Revision(
                         2,
                     ),

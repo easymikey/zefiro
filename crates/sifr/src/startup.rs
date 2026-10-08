@@ -14,6 +14,7 @@ use kernel::domain::{
     bounded::Bounded,
     percent::Percent,
     playlist::{PlaylistFileName, PlaylistSource},
+    server::Account,
     startup::{Shuffle, Startup},
     theme::{ThemeChoice, ThemeName},
 };
@@ -143,6 +144,11 @@ fn merged_startup(
         music_dir,
         shuffle: shuffle_requested(cli.shuffle),
         keymap_overrides: toml_settings.keymap.into_keymap_overrides(),
+        accounts: toml_settings
+            .servers
+            .into_iter()
+            .map(Account::from)
+            .collect(),
         audio_settings: toml_settings.audio.into(),
         theme_choice: toml_settings.theme_choice,
         volume: cli.volume.map_or(toml_settings.volume, Percent::clamped),

@@ -432,6 +432,32 @@ fn add_server_opens_on_the_link_step() {
 }
 
 #[test]
+fn two_adds_on_one_host_with_two_ports_keep_two_servers() {
+    let mut model = Model::default();
+    for link in [
+        "https://music.example.com:4533",
+        "https://music.example.com:4534",
+    ] {
+        model.workspace.overlay = Some(Overlay::AddServer(ServerPrompt::Password {
+            origin_server_name: None,
+            endpoint: Endpoint::parse(link).unwrap(),
+            user_name: user_name(),
+            text_entry: entry("hunter 2", None),
+        }));
+        send(&mut model, Message::Overlay(OverlayRequest::Confirm));
+    }
+    let server_names = model
+        .servers
+        .iter()
+        .map(|server| server.account.server_name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        server_names,
+        vec!["music.example.com:4533", "music.example.com:4534"]
+    );
+}
+
+#[test]
 fn the_model_debug_in_the_password_step_holds_no_typed_character() {
     let mut model = Model::default();
     model.workspace.overlay = Some(password_step("zq7#xv", None));

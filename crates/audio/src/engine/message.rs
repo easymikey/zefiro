@@ -145,10 +145,10 @@ impl DeckEvent {
     pub(crate) fn wake(
         self,
         callback_sender: &Sender<AudioMessage>,
-    ) -> Result<(), TrySendError<AudioMessage>> {
+    ) -> Result<(), TrySendError<()>> {
         match callback_sender.try_send(AudioMessage::Deck(self)) {
-            Err(TrySendError::Disconnected(_)) => Ok(()),
-            sent => sent,
+            Ok(()) | Err(TrySendError::Disconnected(_)) => Ok(()),
+            Err(TrySendError::Full(_)) => Err(TrySendError::Full(())),
         }
     }
 }

@@ -21,7 +21,7 @@ Message ──► kernel update(&mut Model, Message, Moment) ──► effects
 
 - The kernel is the only place that decides, and it is pure. `update` drains follow-up messages itself and returns the collected effects, or `Unhandled` when the message has no transition in the current state (§3.2, §3.4).
 - The runtime performs what the kernel decided; its interpreter is a lookup with no decisions.
-- Drivers adapt external sources (audio device, library files, config files, macOS media keys and system volume) into events. A driver waits for its source; nothing polls.
+- Drivers adapt external sources (audio device, library files, config files, macOS media keys and system volume, music servers) into events. A driver waits for its source; nothing polls.
 - The shell (binary `sifr`) turns terminal input into messages and the model into a frame.
 - Timers exist only in the kernel as `Effect::After { delay, timer }`; they come back as `Message::Elapsed(Timer)`.
 
@@ -35,7 +35,8 @@ The layer map is conventions §1.1; edges only point down the table.
 | 1 | `config` | file formats: `config.toml`, `sifr-ui.toml` (appearance), themes, keymap; parse and format-preserving patch; settings rows; `ConfigDriver` |
 | 1 | `library` | scan, tags, embedded covers, playlists, history, favorites; `LibraryDriver` |
 | 1 | `audio` | playback engine: symphonia decode, the feeder job, the mixer on the cpal callback with varispeed over rubato, spectrum tap; `AudioDriver` |
-| 1 | `macos` | media keys, Now Playing, system volume and output device (CoreAudio listeners); `MacosDriver`, `MainLoop` |
+| 1 | `macos` | media keys, Now Playing, system volume and output device (CoreAudio listeners), the Keychain store for keyring-core (`keychain`); `MacosDriver`, `MainLoop` |
+| 1 | `remote` | all HTTP: the Subsonic client (token auth, listings, search, stars, play reports), the track download and the media cache; `RemoteDriver` |
 | 2 | `runtime` | event loop, interpreter, timers, cells, registry, ports, `DriverLoop`, start, drain, `host` |
 | 2 | `widgets` | pure terminal view: `Scene`, `FrameLayout`, the `screen` module, card, playlist, overlays, toast, animations, milkdrop, spectrum smoothing, pixel images |
 | 3 | `terminal` | terminal IO: session, input, key conversion, capability probe, window colours, image protocols |
@@ -49,8 +50,8 @@ The layer map is conventions §1.1; edges only point down the table.
 |---|---|---|
 | main (macOS only) | the AppKit run loop (`MainLoop`), which `runtime::host` runs while the event loop lives on a thread of its own | remote commands into the macOS driver's inbox |
 | event loop | one `select` over input, mailbox and the cell doorbell; deadline = earliest of kernel timers, frame clock, pending repaint | commands to drivers; shell effects and paints to the shell |
-| one per driver (audio, library, config, macOS) | its `DriverLoop`: the command inbox and the driver's own sources (job results, stream items, callback input) | `XEvent`s into `inbox`; stream values into cells |
-| job workers | one worker per job kind, one job at a time (track decode, cover decode, device list); the audio feeder is a job that runs as long as the audio driver | the job result back to the driver's inbox; the feeder also wakes the audio driver |
+| one per driver (audio, library, config, macOS, remote) | its `DriverLoop`: the command inbox and the driver's own sources (job results, stream items, callback input) | `XEvent`s into `inbox`; stream values into cells |
+| job workers | one worker per job kind, one job at a time (track decode, cover decode, device list; for remote each request kind: connect, forget, listing, search, star, play report, fetch and prefetch chunk); the audio feeder is a job that runs as long as the audio driver | the job result back to the driver's inbox; the feeder also wakes the audio driver |
 | cpal render callback | the output device's buffer clock | nothing: `Mixer::mix` only reads and writes rtrb rings, `triple_buffer` cells and atomics (see Audio path) |
 | callbacks (CoreAudio, cpal stream errors, `notify`) | threads the OS or a library owns (§4.5b) | one message or flag into the driver's inbox |
 | terminal input | crossterm `read` | terminal events to the event loop |
@@ -78,7 +79,11 @@ Hardware drivers are injected: the binary passes the real spawners to `Runtime::
 
 **One frame.** the shell builds `Scene::from_model(&Model, ScenePresentation)` → `FrameLayout` computes every rect once → one terminal draw: the `screen` module paints text cells, then image protocols are placed last, skipping rects covered by overlays or toasts.
 
-**Stop.** `q`, a signal or a fatal driver decision → the kernel sends the stop commands (audio stop, window colours reset, `ConfigCmd::Flush`) and `Quit` → drain: drop the ports, wait for `Stopped | Died` from each driver up to two seconds in total, join those that reported; on macOS `host` then stops the main run loop.
+**Server track.** All HTTP lives in the `remote` crate; `audio` has no network, and the kernel never builds a protocol URL. Playing a `TrackSource::Server` track, the kernel records a `Download { media_fetch, fetched }` and orders the first chunk, `RemoteCmd::Fetch(MediaFetch)` for the current track or `RemoteCmd::Prefetch(MediaFetch)` for the next one → the remote driver runs it as a `RemoteJob`: it builds the stream URL from the `Session`, asks for one bounded Range chunk from `first_byte` (`FETCH_CHUNK`, 4 MiB, `Accept-Encoding: identity`, its own `FETCH_TIMEOUT`), appends it to the track's file in the media cache (keyed by `CacheKey`, trimmed to 2 GB) and answers `RemoteEvent::Fetched { revision, result }` → the kernel drops an answer whose `Revision` no download holds; on progress it stores the `Fetched` bytes, orders the next chunk from `downloaded` until the file is complete, loads the track as `Media::Growing` once the download is ready (`START_MARGIN`, or the whole file for MP4 containers), and from then on sends audio `AudioCmd::Grow { revision, downloaded }`, the safe byte bound of the growing file; audio reads only below that bound. A failed or empty chunk retries after `Timer::Fetch(revision)`. Seeking past the downloaded part is out of scope.
+
+**Server login.** `RemoteCmd::Connect(Connection)` → the remote driver reads or writes the password through keyring-core (service `sifr`, account `<user>@<host>`; the macOS store comes from the `macos` crate's `keychain` module, set as keyring-core's default store once at runtime wiring), signs the token query and answers `RemoteEvent::Connected { server_name, session }`; the Model keeps the `Session`, never the password. Connects, stars and play reports wait in the driver's own queue, since `DriverLoop` runs only the newest job of each variant; jobs of different variants run side by side.
+
+**Stop.** `q`, a signal or a fatal driver decision → the kernel sends the stop commands (audio stop, window colours reset, `ConfigCmd::Flush`, `RemoteCmd::Flush`) and `Quit` → drain: drop the ports, wait for `Stopped | Died` from each driver up to two seconds in total, join those that reported; on macOS `host` then stops the main run loop.
 
 ## Audio path
 
@@ -105,7 +110,7 @@ Linux analogy: an OS callback is an interrupt top half (sets a flag or rings a d
 
 ## Registry
 
-The driver set is static: audio, macOS, library, config. `runtime::registry` holds one hand-written `DriverRow` per driver (driver name, thread name, platform) and matches exhaustively over the driver name, so a new driver fails to compile until its row is filled. Supervision defaults are kernel data (`Supervision::standard`): audio restarts up to 3 times in 60 s, library once in 60 s, then each degrades with a toast; config degrades with a toast; macOS degrades silently. The typed `Ports` (one port per driver, each with its congestion flag) is hand-written too. Wiring (which drivers start on this platform, which to join at drain) and spawn (the driver thread's and its job worker's names) read the row; the port's send reads only the driver's status in `model.drivers`; nothing else knows a driver. Adding a driver is the checklist in §4.10.
+The driver set is static: audio, macOS, library, config, remote. `runtime::registry` holds one hand-written `DriverRow` per driver (driver name, thread name, platform) and matches exhaustively over the driver name, so a new driver fails to compile until its row is filled. Supervision defaults are kernel data (`Supervision::standard`): audio restarts up to 3 times in 60 s, library and remote once in 60 s, then each degrades with a toast; config degrades with a toast; macOS degrades silently. The typed `Ports` (one port per driver, each with its congestion flag) is hand-written too. Wiring (which drivers start on this platform, which to join at drain) and spawn (the driver thread's and its job worker's names) read the row; the port's send reads only the driver's status in `model.drivers`; nothing else knows a driver. Adding a driver is the checklist in §4.10.
 
 ## Cells
 

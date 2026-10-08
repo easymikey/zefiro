@@ -198,7 +198,7 @@ fn paint_status_row(
     let status = view.status();
     let status_color = status.color(&compact_card_widget.theme);
     let elapsed_total = elapsed_text(view.position(), view.duration());
-    let status_text = format!("{}  {elapsed_total}", status.text());
+    let status_text = format!("{} {}  {elapsed_total}", status.glyph(), status.word());
     let indicator_spans = speed_chip_spans(
         view.speed,
         compact_card_widget.speed_chip,
@@ -287,6 +287,7 @@ mod tests {
             play_order: &play_order,
             displayed_track: Some(&track),
             output_status: &output_status,
+            buffering_revision: None,
             now: Moment::default(),
         };
         let widget = CompactCardWidget::new(
@@ -319,6 +320,7 @@ mod tests {
             play_order: &play_order,
             displayed_track: None,
             output_status: &output_status,
+            buffering_revision: None,
             now: Moment::default(),
         };
         let widget = CompactCardWidget::new(
@@ -351,6 +353,7 @@ mod tests {
             play_order: &play_order,
             displayed_track: None,
             output_status: &output_status,
+            buffering_revision: None,
             now: Moment::default(),
         };
         let bar = ProgressBar {

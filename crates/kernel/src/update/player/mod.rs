@@ -1,43 +1,40 @@
 pub mod events;
 mod requests;
+pub mod scrobble;
 pub mod stamp;
 
 use std::{sync::Arc, time::Duration};
 
 use crate::{
-    cmd::{AudioCmd, Cmd, Effect, MacosCmd, TrackLoad},
+    cmd::{AudioCmd, Cmd, Effect, MacosCmd, RemoteCmd, TrackLoad},
     domain::{
         cue::PlaybackChange,
         player::{AbLoop, PausedBy, Player},
         playhead::Playhead,
-        playlist::Playlist,
-        revision::Revisions,
-        settings::Settings,
+        revision::Revision,
+        server::{CacheKey, Download, MediaFetch, Server},
         time::Moment,
+        toast::Toast,
         track::{Track, TrackSource},
-        transport::Transport,
-        workspace::Workspace,
     },
     message::{AudioError, Timer},
     update::{
         machine::{Machine, Unhandled},
         player::{
-            events::{Lookahead, handover_effects, next_decision},
+            events::{
+                Lookahead,
+                PlaybackParts,
+                duration_of,
+                handover_effects,
+                next_decision,
+                session,
+            },
+            scrobble::{now_playing, scrobble_timer},
             stamp::{Anchor, Stamp, StartOrigin},
         },
         successor::successor,
     },
 };
-
-pub(crate) struct PlaybackParts<'a> {
-    pub(crate) player: &'a mut Player,
-    pub(crate) transport: &'a mut Transport,
-    pub(crate) playlist: &'a mut Playlist,
-    pub(crate) queue: &'a mut Vec<TrackSource>,
-    pub(crate) workspace: &'a mut Workspace,
-    pub(crate) revisions: &'a mut Revisions,
-    pub(crate) settings: &'a mut Settings,
-}
 
 #[derive(Debug)]
 pub enum PlayerMessage {
@@ -82,8 +79,8 @@ impl Machine for Player {
     type Message = PlayerMessage;
     type Effect = Cmd;
 
-    fn transition(&mut self, message: PlayerMessage) -> Result<Cmd, Unhandled> {
-        match message {
+    fn transition(&mut self, player_message: PlayerMessage) -> Result<Cmd, Unhandled> {
+        match player_message {
             PlayerMessage::Toggle { current, stamp } => self.toggle(current, stamp),
             PlayerMessage::OutputLost(now) => self.output_lost(now),
             PlayerMessage::Stop => match self {
@@ -157,38 +154,171 @@ impl Player {
 
 pub(crate) fn update_player(
     playback_parts: &mut PlaybackParts<'_>,
-    message: PlayerMessage,
+    player_message: PlayerMessage,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let seeks = matches!(message, PlayerMessage::Seek { .. });
+    let seeks = matches!(player_message, PlayerMessage::Seek { .. });
+    let track_changed = matches!(player_message, PlayerMessage::TrackChanged { .. });
     let candidate = playback_parts.revisions.effects.next();
-    let cmd = playback_parts.player.transition(message)?;
+    let paused = matches!(playback_parts.player, Player::Paused { .. });
+    let (player_message, media_fetch, refusal) =
+        match upcoming(playback_parts.player, &player_message)
+            .map(|track| stream(playback_parts.servers, track, candidate))
+            .transpose()
+        {
+            Ok(media_fetch) => (player_message, media_fetch.flatten(), Cmd::none()),
+            Err(refusal) => {
+                let PlayerMessage::Ended { next: _next, stamp } = player_message else {
+                    return Ok(refusal);
+                };
+                (PlayerMessage::Ended { next: None, stamp }, None, refusal)
+            }
+        };
+    let cmd = playback_parts.player.transition(player_message)?;
     playback_parts.revisions.effects = candidate;
+    let cmd = cmd.then(fetch(playback_parts, media_fetch, now));
+    let cmd = if track_changed {
+        cmd.then(now_playing(playback_parts, now))
+    } else {
+        cmd
+    };
     let armed = if seeks {
         timer(playback_parts, now)
     } else {
         arm(playback_parts, now)
     };
-    Ok(cmd.then(armed))
+    let resumed = if paused
+        && matches!(playback_parts.player, Player::Playing { .. })
+        && playback_parts.revisions.scrobble.is_some()
+    {
+        scrobble_timer(playback_parts, candidate, now)
+    } else {
+        Cmd::none()
+    };
+    Ok(cmd.then(armed).then(resumed).then(refusal))
+}
+
+fn upcoming<'a>(
+    player: &Player,
+    player_message: &'a PlayerMessage,
+) -> Option<&'a Arc<Track>> {
+    match player_message {
+        PlayerMessage::Toggle {
+            current,
+            stamp: _stamp,
+        } => current
+            .as_ref()
+            .filter(|_track| matches!(player, Player::Stopped)),
+        PlayerMessage::Ended {
+            next,
+            stamp: _stamp,
+        } => next
+            .as_ref()
+            .filter(|_track| matches!(player, Player::Playing { .. })),
+        PlayerMessage::LookaheadReached {
+            position,
+            lookahead,
+        } => lookahead.next.as_ref().filter(|_track| {
+            lookahead.is_preload_due(*position)
+                && matches!(
+                    player,
+                    Player::Playing {
+                        preloaded: None,
+                        ..
+                    }
+                )
+        }),
+        PlayerMessage::Stop
+        | PlayerMessage::Hold(_)
+        | PlayerMessage::Release(_)
+        | PlayerMessage::Seek { .. }
+        | PlayerMessage::SleepFired(_)
+        | PlayerMessage::OutputLost(_)
+        | PlayerMessage::Loaded { .. }
+        | PlayerMessage::Error(_)
+        | PlayerMessage::PositionReported { .. }
+        | PlayerMessage::TrackChanged { .. }
+        | PlayerMessage::SpeedChanged(_) => None,
+    }
 }
 
 pub(crate) fn start(
     playback_parts: &mut PlaybackParts<'_>,
     track: Arc<Track>,
     now: Moment,
-) -> Cmd {
+) -> Result<Cmd, Cmd> {
     let stamp = Stamp::pending(playback_parts.transport, playback_parts.revisions, now);
+    let media_fetch = stream(playback_parts.servers, &track, stamp.revision)?;
     let started = playback_parts.player.start(track, StartOrigin::User(stamp));
     playback_parts.revisions.effects = stamp.revision;
     playback_parts.transport.track_changed();
-    started
+    Ok(started.then(fetch(playback_parts, media_fetch, now)))
 }
 
-pub(crate) fn duration_of(player: &Player) -> Duration {
-    player
-        .current()
-        .and_then(|track| track.duration())
-        .unwrap_or(Duration::ZERO)
+fn stream(
+    servers: &[Server],
+    track: &Track,
+    revision: Revision,
+) -> Result<Option<MediaFetch>, Cmd> {
+    let TrackSource::Server {
+        server_name,
+        server_track_id,
+    } = track.source()
+    else {
+        return Ok(None);
+    };
+    let session = session(servers, server_name).ok_or_else(|| {
+        Cmd::message(crate::message::Message::Toast(Toast::error(format!(
+            "{server_name} is offline"
+        ))))
+    })?;
+    Ok(Some(MediaFetch {
+        server_name: server_name.clone(),
+        server_track_id: server_track_id.clone(),
+        cache_key: CacheKey::new(
+            server_name,
+            server_track_id,
+            track.audio_format().format.as_deref().unwrap_or(""),
+        ),
+        session: session.clone(),
+        first_byte: 0,
+        revision,
+    }))
+}
+
+fn fetch(
+    playback_parts: &mut PlaybackParts<'_>,
+    media_fetch: Option<MediaFetch>,
+    now: Moment,
+) -> Cmd {
+    let player = &*playback_parts.player;
+    playback_parts.downloads.retain(|download| {
+        player
+            .current()
+            .into_iter()
+            .chain(player.preloaded())
+            .any(|track| track.holds(&download.media_fetch))
+            && media_fetch.as_ref().is_none_or(|media_fetch| {
+                download.media_fetch.server_name != media_fetch.server_name
+                    || download.media_fetch.server_track_id
+                        != media_fetch.server_track_id
+            })
+    });
+    let Some(media_fetch) = media_fetch else {
+        return Cmd::none();
+    };
+    let download = Download {
+        media_fetch,
+        fetched: None,
+    };
+    let chunk = chunk(&download, player);
+    playback_parts.downloads.push(download);
+    let reported = if matches!(chunk, Some(RemoteCmd::Fetch(_))) {
+        now_playing(playback_parts, now)
+    } else {
+        Cmd::none()
+    };
+    reported.then(Cmd::from_iter(chunk.map(Effect::Remote)))
 }
 
 pub(crate) fn lookahead(playback_parts: &PlaybackParts<'_>, now: Moment) -> Lookahead {
@@ -208,7 +338,20 @@ pub(crate) fn lookahead(playback_parts: &PlaybackParts<'_>, now: Moment) -> Look
             .then(|| {
                 successor(playback_parts.playlist, playback_parts.queue).into_track()
             })
-            .flatten(),
+            .flatten()
+            .filter(|track| match track.source() {
+                TrackSource::Local(_path) => true,
+                TrackSource::Server {
+                    server_name,
+                    server_track_id: _server_track_id,
+                } => {
+                    session(playback_parts.servers, server_name).is_some()
+                        && playback_parts
+                            .player
+                            .current()
+                            .is_none_or(|current| current.source() != track.source())
+                }
+            }),
         duration: duration_of(playback_parts.player),
         now,
         revision: playback_parts.revisions.effects.next(),
@@ -263,9 +406,59 @@ pub(crate) fn stopped_effects() -> Cmd {
         .collect()
 }
 
+pub(crate) fn retry(
+    downloads: &[Download],
+    player: &Player,
+    revision: Revision,
+) -> Result<Cmd, Unhandled> {
+    downloads
+        .iter()
+        .find(|download| download.media_fetch.revision == revision)
+        .and_then(|download| chunk(download, player))
+        .map(|remote_cmd| Cmd::from(Effect::Remote(remote_cmd)))
+        .ok_or(Unhandled)
+}
+
+pub(crate) fn chunk(download: &Download, player: &Player) -> Option<RemoteCmd> {
+    let media_fetch = &download.media_fetch;
+    let first_byte = match &download.fetched {
+        None => media_fetch.first_byte,
+        Some(fetched) if fetched.is_complete() => return None,
+        Some(fetched) => fetched.downloaded,
+    };
+    let next_media_fetch = MediaFetch {
+        server_name: media_fetch.server_name.clone(),
+        server_track_id: media_fetch.server_track_id.clone(),
+        cache_key: media_fetch.cache_key.clone(),
+        session: media_fetch.session.clone(),
+        first_byte,
+        revision: media_fetch.revision,
+    };
+    let current = player
+        .current()
+        .is_some_and(|track| track.holds(media_fetch));
+    Some(if current {
+        RemoteCmd::Fetch(next_media_fetch)
+    } else {
+        RemoteCmd::Prefetch(next_media_fetch)
+    })
+}
+
+pub(crate) fn preload(download: &Download, player: &Player) -> Option<AudioCmd> {
+    player
+        .preloaded()
+        .filter(|track| track.holds(&download.media_fetch))
+        .and_then(|track| TrackLoad::fetched(track, download))
+        .map(AudioCmd::Preload)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc, time::Duration};
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+        time::Duration,
+    };
 
     use rstest::rstest;
 
@@ -278,11 +471,23 @@ mod tests {
             player::{PausedBy, Player},
             playhead::Playhead,
             revision::Revision,
+            server::{
+                Account,
+                Endpoint,
+                Fetched,
+                Server,
+                ServerName,
+                ServerStatus,
+                ServerTrackId,
+                Session,
+                UserName,
+            },
             speed::Speed,
             time::Moment,
-            track::Track,
+            track::{Track, TrackSource},
         },
-        update::{playback_parts, player::start},
+        message::{Message, RemoteEvent, Timer},
+        update::{machine::Unhandled, playback_parts, player::start, update},
     };
 
     const AT: Duration = Duration::from_secs(5);
@@ -349,6 +554,70 @@ mod tests {
         let cmd = start(&mut playback_parts(&mut model), track_b(), now());
 
         assert_eq!(model.player, Player::Loading(track_b()));
-        assert_eq!(cmd, cut_in(&track_b()));
+        assert_eq!(cmd, Ok(cut_in(&track_b())));
+    }
+
+    fn session() -> Session {
+        Session::new(
+            Endpoint::parse("https://music.example.com").unwrap(),
+            "u=ann&t=token&s=salt",
+        )
+    }
+
+    fn online(player: Player) -> Model {
+        Model {
+            player,
+            servers: vec![Server {
+                account: Account {
+                    server_name: ServerName::new("home"),
+                    endpoint: Endpoint::parse("https://music.example.com").unwrap(),
+                    user_name: UserName::new("ann").unwrap(),
+                },
+                server_status: ServerStatus::Online(session()),
+            }],
+            ..Model::default()
+        }
+    }
+
+    #[test]
+    fn playing_another_track_drops_the_unfinished_download_of_the_last() {
+        let track = |id: &str| {
+            Arc::new(Track::from(TrackSource::Server {
+                server_name: ServerName::new("home"),
+                server_track_id: ServerTrackId::new(id),
+            }))
+        };
+        let first = Revision::default().next();
+        let mut model = online(Player::Stopped);
+        assert!(start(&mut playback_parts(&mut model), track("tr-1"), now()).is_ok());
+
+        assert!(start(&mut playback_parts(&mut model), track("tr-2"), now()).is_ok());
+
+        assert_eq!(
+            model
+                .downloads
+                .iter()
+                .map(|download| download.media_fetch.revision)
+                .collect::<Vec<_>>(),
+            vec![first.next()]
+        );
+        assert_eq!(
+            update(&mut model, Message::Elapsed(Timer::Fetch(first)), now()),
+            Err(Unhandled)
+        );
+        let downloads = model.downloads.clone();
+        let remote_event = RemoteEvent::Fetched {
+            revision: first,
+            result: Ok(Fetched {
+                media_path: PathBuf::from("/cache/home/tr-1.flac.part"),
+                downloaded: 1024,
+                byte_len: 4096,
+            }),
+        };
+        assert_eq!(
+            update(&mut model, Message::Remote(remote_event), now()),
+            Err(Unhandled)
+        );
+        assert_eq!(model.downloads, downloads);
     }
 }

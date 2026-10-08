@@ -1,3 +1,4 @@
+use kernel::domain::favorites::Favorite;
 use unicode_width::UnicodeWidthStr;
 
 use crate::primitive::glyphs;
@@ -14,12 +15,6 @@ pub(crate) fn favorite_marker(favorite: Favorite) -> &'static str {
         Favorite::Yes => glyphs::playlist::FAVORITE,
         Favorite::No => "",
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Favorite {
-    Yes,
-    No,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

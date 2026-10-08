@@ -8,7 +8,7 @@ expression: wiring.log
         Cmd {
             effects: [
                 Execute(
-                    Clear(
+                    StartLoad(
                         Speed(
                             1.0,
                         ),
@@ -30,7 +30,8 @@ expression: wiring.log
                 ),
                 Run(
                     Decode {
-                        path: "/tmp/track0.flac",
+                        media_path: "/tmp/track0.flac",
+                        download: None,
                         revision: Revision(
                             2,
                         ),
@@ -80,7 +81,7 @@ expression: wiring.log
         Cmd {
             effects: [
                 Execute(
-                    Clear(
+                    StartLoad(
                         Speed(
                             1.0,
                         ),
@@ -102,7 +103,8 @@ expression: wiring.log
                 ),
                 Run(
                     Decode {
-                        path: "/tmp/track1.flac",
+                        media_path: "/tmp/track1.flac",
+                        download: None,
                         revision: Revision(
                             2,
                         ),
@@ -152,7 +154,7 @@ expression: wiring.log
         Cmd {
             effects: [
                 Execute(
-                    Clear(
+                    StartLoad(
                         Speed(
                             1.0,
                         ),
@@ -174,7 +176,8 @@ expression: wiring.log
                 ),
                 Run(
                     Decode {
-                        path: "/tmp/track2.flac",
+                        media_path: "/tmp/track2.flac",
+                        download: None,
                         revision: Revision(
                             2,
                         ),
@@ -224,7 +227,7 @@ expression: wiring.log
         Cmd {
             effects: [
                 Execute(
-                    Clear(
+                    StartLoad(
                         Speed(
                             1.0,
                         ),
@@ -246,7 +249,8 @@ expression: wiring.log
                 ),
                 Run(
                     Decode {
-                        path: "/tmp/track3.flac",
+                        media_path: "/tmp/track3.flac",
+                        download: None,
                         revision: Revision(
                             2,
                         ),

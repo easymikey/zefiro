@@ -27,27 +27,38 @@ pub(crate) fn contrast_ratio(first: Rgb, second: Rgb) -> f32 {
 }
 
 pub(crate) fn raise_contrast(color: Rgb, against: &[Rgb], minimum: f32) -> Rgb {
-    let clears = |candidate: Rgb| {
+    let ratio = |candidate: Rgb| {
         against
             .iter()
-            .all(|&background| contrast_ratio(candidate, background) >= minimum)
+            .map(|&background| contrast_ratio(candidate, background))
+            .fold(f32::INFINITY, f32::min)
     };
-    if clears(color) {
+    if ratio(color) >= minimum {
         return color;
     }
     let brightest = against.iter().fold(0.0_f32, |brightest, &background| {
         brightest.max(relative_luminance(background))
     });
-    let target = if relative_luminance(color) >= brightest {
-        LIGHTEST
+    let targets = if relative_luminance(color) >= brightest {
+        [LIGHTEST, DARKEST]
     } else {
-        DARKEST
+        [DARKEST, LIGHTEST]
     };
-    NUDGE_LADDER
+    targets
         .iter()
-        .map(|&step| lerp_rgb(color, target, step))
-        .find(|&candidate| clears(candidate))
-        .unwrap_or(target)
+        .flat_map(|&target| {
+            NUDGE_LADDER
+                .iter()
+                .map(move |&step| lerp_rgb(color, target, step))
+        })
+        .find(|&candidate| ratio(candidate) >= minimum)
+        .unwrap_or_else(|| {
+            if ratio(LIGHTEST) >= ratio(DARKEST) {
+                LIGHTEST
+            } else {
+                DARKEST
+            }
+        })
 }
 
 pub(crate) fn visible_band(window_background: Rgb, text: Rgb, mix: f32) -> Rgb {

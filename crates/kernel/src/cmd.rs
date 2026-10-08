@@ -11,14 +11,25 @@ use crate::{
         cue::{Cue, PlaybackChange},
         device::OutputDevice,
         driver::DriverName,
-        favorites::Favorites,
+        favorites::{Favorite, Favorites},
         geometry::Pixels,
         history::HistoryEntry,
         percent::Percent,
         player::Player,
         playlist::PlaylistFileName,
         revision::Revision,
-        server::{Connection, Listing, MediaFetch, Page, ServerName, Session},
+        server::{
+            Account,
+            Connection,
+            Download,
+            Listing,
+            MediaFetch,
+            Page,
+            PlayReport,
+            ServerName,
+            ServerTrackId,
+            Session,
+        },
         settings::ReplayGain,
         sleep_presets::SleepPresets,
         speed::Speed,
@@ -44,6 +55,7 @@ pub struct ConfigPatch {
     pub volume: Option<Percent>,
     pub sleep_presets: Option<SleepPresets>,
     pub music_dir: Option<PathBuf>,
+    pub accounts: Option<Vec<Account>>,
 }
 
 impl ConfigPatch {
@@ -57,6 +69,7 @@ impl ConfigPatch {
             volume: later.volume.or(self.volume),
             sleep_presets: later.sleep_presets.or(self.sleep_presets),
             music_dir: later.music_dir.or(self.music_dir),
+            accounts: later.accounts.or(self.accounts),
         }
     }
 }
@@ -77,7 +90,7 @@ pub enum ConfigCmd {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackLoad {
-    pub path: PathBuf,
+    pub media: Media,
     pub decibels: Option<crate::domain::track::Decibels>,
     pub revision: Revision,
 }
@@ -86,11 +99,49 @@ impl TrackLoad {
     #[must_use]
     pub fn for_track(track: &Track, revision: Revision) -> Option<Self> {
         track.local_path().map(|path| Self {
-            path: path.to_path_buf(),
+            media: Media::Local(path.to_path_buf()),
             decibels: track.audio_format().decibels,
             revision,
         })
     }
+
+    #[must_use]
+    pub fn fetched(track: &Track, download: &Download) -> Option<Self> {
+        let fetched = download
+            .fetched
+            .as_ref()
+            .filter(|_fetched| download.ready())?;
+        let revision = download.media_fetch.revision;
+        let media = if fetched.is_complete() {
+            Media::Local(fetched.media_path.clone())
+        } else {
+            Media::Growing(GrowingMedia {
+                media_path: fetched.media_path.clone(),
+                downloaded: fetched.downloaded,
+                byte_len: fetched.byte_len,
+                revision,
+            })
+        };
+        Some(Self {
+            media,
+            decibels: track.audio_format().decibels,
+            revision,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Media {
+    Local(PathBuf),
+    Growing(GrowingMedia),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrowingMedia {
+    pub media_path: PathBuf,
+    pub downloaded: u64,
+    pub byte_len: u64,
+    pub revision: Revision,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,10 +152,12 @@ pub enum AudioCmd {
     SetSpeed(Speed),
     Stop,
     Preload(TrackLoad),
+    CancelPreload,
     SetCrossfade(Crossfade),
     SetReplayGain(ReplayGain),
     SetDevice(OutputDevice),
     ListDevices,
+    Grow { revision: Revision, downloaded: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -155,6 +208,7 @@ pub enum MacosCmd {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteCmd {
     Connect(Connection),
+    Forget(Account),
     List {
         server_name: ServerName,
         session: Session,
@@ -170,6 +224,17 @@ pub enum RemoteCmd {
         input: String,
         revision: Revision,
     },
+    Star {
+        server_name: ServerName,
+        session: Session,
+        server_track_id: ServerTrackId,
+        favorite: Favorite,
+    },
+    Report {
+        session: Session,
+        play_report: PlayReport,
+    },
+    Flush(Vec<PlayReport>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -293,15 +358,6 @@ impl<E, M> Cmd<E, M> {
     }
 }
 
-impl<E, M> IntoIterator for Cmd<E, M> {
-    type Item = E;
-    type IntoIter = std::vec::IntoIter<E>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.effects.into_iter()
-    }
-}
-
 impl From<Effect> for Cmd {
     fn from(effect: Effect) -> Self {
         Cmd::effect(effect)
@@ -410,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cmd_iterates_its_effects_in_order() {
+    fn a_cmd_keeps_its_effects_in_order() {
         let cmd: Cmd = Cmd::from_iter([
             Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
             Effect::Audio(AudioCmd::Stop),
@@ -425,7 +481,7 @@ mod tests {
                 ]
             ));
         }
-        let effects: Vec<Effect> = cmd.into_iter().collect();
+        let effects: Vec<Effect> = cmd.into_parts().0;
         assert!(matches!(
             effects.as_slice(),
             [
@@ -433,5 +489,33 @@ mod tests {
                 Effect::Audio(AudioCmd::Stop)
             ]
         ));
+    }
+
+    #[test]
+    fn an_empty_account_list_is_kept_and_a_later_list_wins() {
+        use crate::domain::server::{Account, Endpoint, ServerName, UserName};
+
+        let account = Account {
+            server_name: ServerName::new("home"),
+            endpoint: Endpoint::parse("https://music.example").unwrap(),
+            user_name: UserName::new("ann").unwrap(),
+        };
+        let empty_patch = ConfigPatch {
+            accounts: Some(Vec::new()),
+            ..ConfigPatch::default()
+        };
+        let account_patch = ConfigPatch {
+            accounts: Some(vec![account.clone()]),
+            ..ConfigPatch::default()
+        };
+
+        assert_eq!(
+            empty_patch.clone().then(ConfigPatch::default()).accounts,
+            Some(Vec::new())
+        );
+        assert_eq!(
+            empty_patch.then(account_patch).accounts,
+            Some(vec![account])
+        );
     }
 }

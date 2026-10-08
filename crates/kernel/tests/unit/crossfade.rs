@@ -1,7 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use kernel::{
-    cmd::{AudioCmd, Cmd, Effect, TrackLoad},
+    cmd::{AudioCmd, Cmd, Effect, Media, TrackLoad},
     domain::{model::Model, time::Moment},
     message::{AudioEvent, Message, PlaybackRequest, Timer},
 };
@@ -20,7 +20,11 @@ fn preloaded(cmd: &Cmd) -> Option<PathBuf> {
 }
 
 fn preload_path(effect: &Effect) -> Option<PathBuf> {
-    if let Effect::Audio(AudioCmd::Preload(TrackLoad { path, .. })) = effect {
+    if let Effect::Audio(AudioCmd::Preload(TrackLoad {
+        media: Media::Local(path),
+        ..
+    })) = effect
+    {
         return Some(path.clone());
     }
     None
@@ -31,7 +35,11 @@ fn loaded(cmd: &Cmd) -> Option<PathBuf> {
 }
 
 fn load_path(effect: &Effect) -> Option<PathBuf> {
-    if let Effect::Audio(AudioCmd::Load(TrackLoad { path, .. })) = effect {
+    if let Effect::Audio(AudioCmd::Load(TrackLoad {
+        media: Media::Local(path),
+        ..
+    })) = effect
+    {
         return Some(path.clone());
     }
     None

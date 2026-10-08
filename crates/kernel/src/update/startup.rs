@@ -1,10 +1,12 @@
 use crate::{
-    cmd::{AudioCmd, Cmd, ConfigCmd, DiskCmd, Effect, LibraryCmd, ScanMode},
+    cmd::{AudioCmd, Cmd, ConfigCmd, DiskCmd, Effect, LibraryCmd, RemoteCmd, ScanMode},
     domain::{
+        catalog::Catalog,
         config::{ConfigError, ConfigName},
         driver::DriverName,
         model::Model,
         playlist::PlayOrder,
+        server::{Connection, Credential, Server, ServerStatus},
         settings::Settings,
         startup::{Shuffle, Startup},
         theme::Themes,
@@ -12,9 +14,8 @@ use crate::{
     update::{
         drained,
         keymap::bindings::Keymap,
-        player::stopped_effects,
+        player::{chunk, stopped_effects},
         roll_pending,
-        server,
         workspace::trouble,
     },
 };
@@ -53,6 +54,19 @@ pub(crate) fn startup_model(model: &mut Model, startup: Startup) -> Cmd {
     model.library = None;
     model.music_dir = startup.music_dir;
     model.playlist_source = startup.playlist_source;
+    model.catalogs = startup
+        .accounts
+        .iter()
+        .map(|account| Catalog::new(account.server_name.clone()))
+        .collect();
+    model.servers = startup
+        .accounts
+        .into_iter()
+        .map(|account| Server {
+            account,
+            server_status: ServerStatus::Connecting,
+        })
+        .collect();
     model.themes = Themes {
         names: startup.theme_names,
         theme_choice: startup.theme_choice,
@@ -72,6 +86,7 @@ pub(crate) fn startup_model(model: &mut Model, startup: Startup) -> Cmd {
         .then(startup_cmd(model, DriverName::Audio))
         .then(startup_cmd(model, DriverName::Library))
         .then(startup_cmd(model, DriverName::Config))
+        .then(startup_cmd(model, DriverName::Remote))
         .then(toasts)
 }
 
@@ -101,13 +116,29 @@ pub(crate) fn startup_cmd(model: &mut Model, driver_name: DriverName) -> Cmd {
             Effect::Config(ConfigCmd::SelectTheme(model.themes.theme_choice.clone()))
                 .into()
         }
-        DriverName::Remote => Cmd::from_iter(
-            model
-                .downloads
-                .iter()
-                .filter_map(|download| server::chunk(download, &model.player))
-                .map(Effect::Remote),
-        ),
+        DriverName::Remote => {
+            for server in &mut model.servers {
+                server.server_status = ServerStatus::Connecting;
+            }
+            Cmd::from_iter(
+                model
+                    .servers
+                    .iter()
+                    .map(|server| {
+                        RemoteCmd::Connect(Connection {
+                            account: server.account.clone(),
+                            credential: Credential::Stored,
+                        })
+                    })
+                    .chain(
+                        model
+                            .downloads
+                            .iter()
+                            .filter_map(|download| chunk(download, &model.player)),
+                    )
+                    .map(Effect::Remote),
+            )
+        }
         DriverName::Macos => Cmd::none(),
     }
 }
@@ -129,24 +160,108 @@ mod tests {
     };
 
     use crate::{
-        cmd::{Effect, LibraryCmd},
+        cmd::{Effect, LibraryCmd, RemoteCmd},
         domain::{
             bounded::Bounded,
+            catalog::Catalog,
             crossfade::Crossfade,
             device::{DeviceName, OutputDevice},
+            driver::DriverName,
             index::ViewIndex,
             keymap::{Action, KeyOverride, KeymapOverrides},
             model::Model,
             percent::Percent,
             playlist::{PlayOrder, PlaylistSource},
+            server::{
+                Account,
+                Connection,
+                Credential,
+                Endpoint,
+                Server,
+                ServerName,
+                ServerStatus,
+                UserName,
+            },
             settings::{AudioSettings, ReplayGain},
             sleep_presets::SleepPresets,
             startup::{Shuffle, Startup},
             theme::{ThemeChoice, ThemeName},
             track::{Track, TrackSource},
         },
-        update::startup::startup_model,
+        update::{
+            drained,
+            startup::{startup, startup_cmd, startup_model},
+        },
     };
+
+    fn accounts() -> Vec<Account> {
+        ["home", "work"]
+            .into_iter()
+            .map(|name| Account {
+                server_name: ServerName::new(name),
+                endpoint: Endpoint::parse("https://music.example").unwrap(),
+                user_name: UserName::new("ann").unwrap(),
+            })
+            .collect()
+    }
+
+    fn stored_connects() -> Vec<Effect> {
+        accounts()
+            .into_iter()
+            .map(|account| {
+                Effect::Remote(RemoteCmd::Connect(Connection {
+                    account,
+                    credential: Credential::Stored,
+                }))
+            })
+            .collect()
+    }
+
+    fn remote_effects(effects: Vec<Effect>) -> Vec<Effect> {
+        effects
+            .into_iter()
+            .filter(|effect| matches!(effect, Effect::Remote(_)))
+            .collect()
+    }
+
+    #[test]
+    fn startup_with_two_accounts_connects_each_with_its_stored_password() {
+        let (model, effects) = startup(Startup {
+            accounts: accounts(),
+            ..stock_startup()
+        });
+
+        assert_eq!(remote_effects(effects), stored_connects());
+        assert_eq!(
+            model.servers,
+            accounts()
+                .into_iter()
+                .map(|account| Server {
+                    account,
+                    server_status: ServerStatus::Connecting,
+                })
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            model.catalogs,
+            vec![
+                Catalog::new(ServerName::new("home")),
+                Catalog::new(ServerName::new("work"))
+            ]
+        );
+    }
+
+    #[test]
+    fn a_restarted_remote_driver_connects_every_server_again() {
+        let (mut model, _) = startup(Startup {
+            accounts: accounts(),
+            ..stock_startup()
+        });
+
+        let cmd = startup_cmd(&mut model, DriverName::Remote);
+
+        assert_eq!(remote_effects(drained(&mut model, cmd)), stored_connects());
+    }
 
     fn stock_startup() -> Startup {
         let tracks = vec![
@@ -178,6 +293,7 @@ mod tests {
                 ThemeName::from_static("solar"),
             ],
             errors: Vec::new(),
+            accounts: Vec::new(),
         }
     }
 

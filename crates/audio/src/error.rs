@@ -60,7 +60,7 @@ pub enum Error {
     WorkerPanicked(PathBuf),
 }
 
-fn decode_error(source: &symphonia::core::errors::Error) -> DecodeError {
+pub(crate) fn decode_error(source: &symphonia::core::errors::Error) -> DecodeError {
     match source {
         symphonia::core::errors::Error::Unsupported(_) => DecodeError::Unsupported,
         symphonia::core::errors::Error::IoError(_) => {
@@ -73,20 +73,13 @@ fn decode_error(source: &symphonia::core::errors::Error) -> DecodeError {
     }
 }
 
-pub(crate) fn decode_error_of(error: Error) -> AudioError {
+pub(crate) fn decode_error_of(error: Error) -> (PathBuf, DecodeError) {
     match error {
-        Error::Open { path, source } => AudioError::Decode {
-            path,
-            error: DecodeError::Unreadable(source.kind().into()),
-        },
-        Error::Decode { path, source } => AudioError::Decode {
-            path,
-            error: decode_error(&source),
-        },
-        Error::WorkerPanicked(path) => AudioError::Decode {
-            path,
-            error: DecodeError::Panicked,
-        },
+        Error::Open { path, source } => {
+            (path, DecodeError::Unreadable(source.kind().into()))
+        }
+        Error::Decode { path, source } => (path, decode_error(&source)),
+        Error::WorkerPanicked(path) => (path, DecodeError::Panicked),
     }
 }
 
@@ -136,23 +129,6 @@ pub(crate) fn seek_error(error: &impl std::error::Error) -> AudioError {
     }
 }
 
-pub(crate) fn preload_error(error: Error) -> AudioError {
-    match error {
-        Error::Open { path, source } => AudioError::Preload {
-            path,
-            error: DecodeError::Unreadable(source.kind().into()),
-        },
-        Error::Decode { path, source } => AudioError::Preload {
-            path,
-            error: decode_error(&source),
-        },
-        Error::WorkerPanicked(path) => AudioError::Preload {
-            path,
-            error: DecodeError::Panicked,
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -175,7 +151,6 @@ mod tests {
         decode_error_of,
         device_error,
         output_error,
-        preload_error,
     };
 
     fn device_name(name: &str) -> DeviceName {
@@ -245,9 +220,9 @@ mod tests {
             path: PathBuf::from("/music/track.flac"),
             source,
         };
-        let error = decode_error_of(error);
+        let (path, error) = decode_error_of(error);
         assert_eq!(
-            error,
+            AudioError::Decode { path, error },
             AudioError::Decode {
                 path: PathBuf::from("/music/track.flac"),
                 error: expected,
@@ -274,7 +249,8 @@ mod tests {
         #[case] error: Error,
         #[case] expected: AudioError,
     ) {
-        assert_eq!(decode_error_of(error), expected);
+        let (path, error) = decode_error_of(error);
+        assert_eq!(AudioError::Decode { path, error }, expected);
     }
 
     #[test]
@@ -392,7 +368,8 @@ mod tests {
         #[case] error: Error,
         #[case] expected: AudioError,
     ) {
-        assert_eq!(preload_error(error), expected);
+        let (path, error) = decode_error_of(error);
+        assert_eq!(AudioError::Preload { path, error }, expected);
     }
 
     #[rstest]

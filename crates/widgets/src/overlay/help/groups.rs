@@ -114,7 +114,7 @@ const GENERAL_ACTIONS: &[(Action, HelpLabel)] = &[
     (Action::MusicDir, HelpLabel::Text("Library folder")),
     (Action::AddServer, HelpLabel::Text("Add server")),
     (Action::Servers, HelpLabel::Text("Servers")),
-    (Action::Reconnect, HelpLabel::Text("Reconnect")),
+    (Action::Reconnect, HelpLabel::Text("Reconnect (in Servers)")),
     (Action::Help, HelpLabel::Text("Toggle this help")),
     (Action::Quit, HelpLabel::Text("Quit")),
 ];
@@ -286,7 +286,11 @@ mod tests {
 
         assert_eq!(
             rows[add_server..add_server + 3],
-            [("u", "Add server"), ("c", "Servers"), ("t", "Reconnect")]
+            [
+                ("u", "Add server"),
+                ("c", "Servers"),
+                ("t", "Reconnect (in Servers)")
+            ]
         );
     }
 

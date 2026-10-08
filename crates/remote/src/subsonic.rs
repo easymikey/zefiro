@@ -8,6 +8,7 @@ use std::{
 
 use kernel::domain::{
     config::Diagnostic,
+    favorites::{Favorite, Favorites},
     io_error::IoError,
     server::{
         Account,
@@ -22,7 +23,9 @@ use kernel::domain::{
         MediaFetch,
         PAGE_ROWS,
         Page,
+        PlayReport,
         RemoteError,
+        Scrobble,
         Secret,
         ServerAlbum,
         ServerName,
@@ -53,12 +56,19 @@ pub fn ping(
     let account = &connection.account;
     let session = signed(account, secret);
     let link = format!("{}/rest/ping?{}", session.endpoint, session.query);
-    fetched(&account.server_name, link, |current| agent.get(current))
-        .and_then(|response| answer(&account.server_name, response))
-        .map(|_answer| session)
+    get(agent, &account.server_name, link).map(|_answer| session)
 }
 
-pub(crate) fn answer(
+pub(crate) fn get(
+    agent: &Agent,
+    server_name: &ServerName,
+    link: String,
+) -> Result<Value, RemoteError> {
+    fetched(server_name, link, |current| agent.get(current))
+        .and_then(|response| answer(server_name, response))
+}
+
+fn answer(
     server_name: &ServerName,
     mut response: Response<Body>,
 ) -> Result<Value, RemoteError> {
@@ -98,8 +108,8 @@ pub(crate) fn answer(
     })
 }
 
-pub(crate) fn query(listing: &Listing, page: Page) -> String {
-    match listing {
+pub(crate) fn query(listing: &Listing, page: Page, session: &Session) -> String {
+    let path = match listing {
         Listing::Albums(album_order) => {
             let album_type = match album_order {
                 AlbumOrder::Newest => "newest",
@@ -117,22 +127,72 @@ pub(crate) fn query(listing: &Listing, page: Page) -> String {
         Listing::Album(album_id) => {
             format!("getAlbum?id={}", encoded(album_id.as_str()))
         }
-    }
+    };
+    format!("{}/rest/{path}&{}", session.endpoint, session.query)
 }
 
 pub(crate) fn catalog_rows(
     server_name: &ServerName,
     listing: &Listing,
     answer: &Value,
-) -> Result<Vec<CatalogRow>, RemoteError> {
+) -> Result<(Vec<CatalogRow>, Favorites), RemoteError> {
     match listing {
-        Listing::Albums(_album_order) => {
-            albums(server_name, answer, "/subsonic-response/albumList2/album").collect()
-        }
+        Listing::Albums(_album_order) => Ok((
+            albums(server_name, answer, "/subsonic-response/albumList2/album")
+                .collect::<Result<_, _>>()?,
+            Favorites::default(),
+        )),
         Listing::Album(_album_id) => {
-            tracks(server_name, answer, "/subsonic-response/album/song").collect()
+            let songs = "/subsonic-response/album/song";
+            Ok((
+                tracks(server_name, answer, songs).collect::<Result<_, _>>()?,
+                favorites(server_name, answer, songs),
+            ))
         }
     }
+}
+
+fn favorites(server_name: &ServerName, answer: &Value, pointer: &str) -> Favorites {
+    entries(answer, pointer)
+        .filter(|record| record.get("starred").is_some())
+        .filter_map(|record| field(record, "id"))
+        .map(|id| TrackSource::Server {
+            server_name: server_name.clone(),
+            server_track_id: ServerTrackId::new(id),
+        })
+        .collect()
+}
+
+pub(crate) fn star(
+    server_track_id: &ServerTrackId,
+    favorite: Favorite,
+    session: &Session,
+) -> String {
+    let action = match favorite {
+        Favorite::Yes => "star",
+        Favorite::No => "unstar",
+    };
+    format!(
+        "{}/rest/{action}?id={}&{}",
+        session.endpoint,
+        encoded(server_track_id.as_str()),
+        session.query
+    )
+}
+
+pub(crate) fn scrobble(play_report: &PlayReport, session: &Session) -> String {
+    let submission = match play_report.scrobble {
+        Scrobble::NowPlaying => "submission=false".to_owned(),
+        Scrobble::Played(moment) => {
+            format!("time={}&submission=true", moment.since_epoch().as_millis())
+        }
+    };
+    format!(
+        "{}/rest/scrobble?id={}&{submission}&{}",
+        session.endpoint,
+        encoded(play_report.server_track_id.as_str()),
+        session.query
+    )
 }
 
 pub(crate) fn search_query(input: &str, session: &Session) -> String {
@@ -147,18 +207,18 @@ pub(crate) fn search_query(input: &str, session: &Session) -> String {
 pub(crate) fn search_rows(
     server_name: &ServerName,
     answer: &Value,
-) -> Result<Vec<CatalogRow>, RemoteError> {
-    albums(
-        server_name,
-        answer,
-        "/subsonic-response/searchResult3/album",
-    )
-    .chain(tracks(
-        server_name,
-        answer,
-        "/subsonic-response/searchResult3/song",
+) -> Result<(Vec<CatalogRow>, Favorites), RemoteError> {
+    let songs = "/subsonic-response/searchResult3/song";
+    Ok((
+        albums(
+            server_name,
+            answer,
+            "/subsonic-response/searchResult3/album",
+        )
+        .chain(tracks(server_name, answer, songs))
+        .collect::<Result<_, _>>()?,
+        favorites(server_name, answer, songs),
     ))
-    .collect()
 }
 
 fn albums<'a>(
@@ -480,5 +540,31 @@ fn read_error(server_name: &ServerName, error: &impl std::error::Error) -> Remot
     RemoteError::Parse {
         server_name: server_name.clone(),
         diagnostic: Diagnostic::from_error(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ureq::{Body, http::Response};
+
+    use crate::subsonic::redirected;
+
+    #[test]
+    fn a_redirect_from_https_to_http_is_moved() {
+        let followed = |location: &str| {
+            Response::builder()
+                .status(302)
+                .header("location", location)
+                .body(Body::builder().data(""))
+                .ok()
+                .map(|response| {
+                    redirected("https://music.example/rest/ping?u=alice", &response)
+                })
+        };
+        assert_eq!(followed("http://music.example/rest/ping"), Some(None));
+        assert_eq!(
+            followed("https://music.example/rest/ping"),
+            Some(Some("https://music.example/rest/ping?u=alice".to_owned()))
+        );
     }
 }

@@ -5,26 +5,33 @@ use std::{
 };
 
 use kernel::domain::{
+    favorites::Favorite,
     revision::Revision,
     server::{
         Account,
         AlbumOrder,
+        ApiCode,
         Connection,
         Credential,
         Endpoint,
         HttpStatus,
         Listing,
         Page,
+        PlayReport,
         RemoteError,
+        Scrobble,
         Secret,
         ServerName,
+        ServerTrackId,
         Session,
         UserName,
     },
+    time::Moment,
 };
 use remote::{
     http::{API_BYTES, agent},
-    job::RemoteJob,
+    job::{RemoteJob, SignedReport},
+    message::RemoteMessage,
     subsonic::ping,
 };
 
@@ -211,6 +218,20 @@ fn a_protocol_relative_redirect_is_moved() {
 }
 
 #[test]
+fn a_fourth_redirect_is_moved() {
+    let (link, handle) =
+        serve(vec![answer("302 Found", "Location: /rest/ping\r\n", ""); 4]);
+    let refused = pinged(&link).and_then(Result::err);
+    assert_eq!(
+        refused,
+        Some(RemoteError::Moved {
+            server_name: ServerName::new("home"),
+        })
+    );
+    assert!(handle.join().is_ok_and(|requests| requests.len() == 4));
+}
+
+#[test]
 fn a_body_over_the_limit_is_a_parse_error() {
     let body = " ".repeat(usize::try_from(API_BYTES).unwrap_or(usize::MAX) + 1);
     let (link, handle) = serve(vec![answer("200 OK", "", &body)]);
@@ -248,4 +269,115 @@ fn a_redirected_list_keeps_the_auth_query_and_drops_its_own_parameters() {
         "{second}"
     );
     assert!(!second.contains("type="), "{second}");
+}
+
+fn star(link: &str, favorite: Favorite) -> Option<RemoteJob> {
+    Some(RemoteJob::Star {
+        server_name: ServerName::new("home"),
+        session: Session::new(Endpoint::parse(link).ok()?, "u=bob&t=token&s=salt"),
+        server_track_id: ServerTrackId::new("c41d"),
+        favorite,
+    })
+}
+
+#[test]
+fn a_star_asks_star_and_an_unstar_asks_unstar_and_a_failed_one_is_an_error() {
+    let (link, handle) = serve(vec![
+        answer("200 OK", "", OK_BODY),
+        answer("200 OK", "", FAILED_BODY),
+    ]);
+    let results: Vec<Result<(), RemoteError>> = [Favorite::Yes, Favorite::No]
+        .into_iter()
+        .filter_map(|favorite| star(&link, favorite))
+        .map(|job| {
+            let RemoteMessage::Starred { result, .. } = job.run(&agent()) else {
+                panic!("a star job answers Starred");
+            };
+            result
+        })
+        .collect();
+    assert_eq!(
+        results,
+        [
+            Ok(()),
+            Err(RemoteError::Api {
+                server_name: ServerName::new("home"),
+                api_code: ApiCode(40),
+            }),
+        ]
+    );
+    let requests = handle.join().unwrap_or_else(|_panic| Vec::new());
+    let queries: Vec<(&str, Option<&str>)> = requests
+        .iter()
+        .filter_map(|request| request.split_once('?'))
+        .map(|(path, query)| (path, query_value(query, "id")))
+        .collect();
+    assert_eq!(
+        queries,
+        [
+            ("GET /rest/star", Some("c41d")),
+            ("GET /rest/unstar", Some("c41d"))
+        ]
+    );
+}
+
+fn report(link: &str, scrobble: Scrobble) -> Option<RemoteJob> {
+    Some(RemoteJob::Report(vec![SignedReport {
+        session: Session::new(Endpoint::parse(link).ok()?, "u=bob&t=token&s=salt"),
+        play_report: PlayReport {
+            server_name: ServerName::new("home"),
+            server_track_id: ServerTrackId::new("c41d"),
+            scrobble,
+        },
+    }]))
+}
+
+#[test]
+fn now_playing_asks_no_submission_and_played_submits_its_time() {
+    let (link, handle) = serve(vec![
+        answer("200 OK", "", OK_BODY),
+        answer("200 OK", "", FAILED_BODY),
+    ]);
+    let moment = Moment::new(std::time::Duration::from_millis(1_700_000_000_123));
+    let remote_messages: Vec<RemoteMessage> =
+        [Scrobble::NowPlaying, Scrobble::Played(moment)]
+            .into_iter()
+            .filter_map(|scrobble| report(&link, scrobble))
+            .map(|job| job.run(&agent()))
+            .collect();
+    let requests = handle.join().unwrap_or_else(|_panic| Vec::new());
+    let queries: Vec<(&str, [Option<&str>; 3])> = requests
+        .iter()
+        .filter_map(|request| request.split_once('?'))
+        .map(|(path, query)| {
+            (
+                path,
+                ["id", "time", "submission"].map(|key| query_value(query, key)),
+            )
+        })
+        .collect();
+
+    assert!(matches!(
+        remote_messages.as_slice(),
+        [
+            RemoteMessage::Reported {
+                play_reports: accepted,
+                result: Ok(()),
+            },
+            RemoteMessage::Reported {
+                play_reports: refused,
+                result: Err(RemoteError::Api { .. }),
+            }
+        ] if accepted.len() == 1 && refused.is_empty()
+    ));
+    assert_eq!(
+        queries,
+        [
+            ("GET /rest/scrobble", [Some("c41d"), None, Some("false")]),
+            (
+                "GET /rest/scrobble",
+                [Some("c41d"), Some("1700000000123"), Some("true")]
+            ),
+        ]
+    );
 }

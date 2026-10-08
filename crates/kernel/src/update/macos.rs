@@ -5,7 +5,7 @@ use crate::{
     update::{
         machine::{Machine, Unhandled},
         playback,
-        player::PlaybackParts,
+        player::events::PlaybackParts,
         transport::TransportMessage,
     },
 };

@@ -74,6 +74,7 @@ pub(crate) mod search {
     pub(crate) const OF: &str = "of";
     pub(crate) const TOTAL: &str = "total";
     pub(crate) const NO_MATCHES: &str = "No matches";
+    pub(crate) const ARTIST_SEPARATOR: &str = " — ";
 }
 
 pub(crate) mod history {

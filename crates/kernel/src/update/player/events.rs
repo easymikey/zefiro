@@ -8,10 +8,14 @@ use crate::{
         history::HistoryEntry,
         player::{PausedBy, Player},
         playhead::Playhead,
-        revision::Revision,
+        playlist::Playlist,
+        revision::{Revision, Revisions},
+        server::{Download, Server, ServerName, ServerStatus, Session},
+        settings::Settings,
         time::Moment,
-        track::Track,
-        transport::PRELOAD_LEAD,
+        track::{Track, TrackSource},
+        transport::{PRELOAD_LEAD, Transport},
+        workspace::Workspace,
     },
     message::AudioError,
     update::{
@@ -19,6 +23,18 @@ use crate::{
         player::stamp::{Anchor, Stamp, StartOrigin},
     },
 };
+
+pub(crate) struct PlaybackParts<'a> {
+    pub(crate) player: &'a mut Player,
+    pub(crate) transport: &'a mut Transport,
+    pub(crate) playlist: &'a mut Playlist,
+    pub(crate) queue: &'a mut Vec<TrackSource>,
+    pub(crate) workspace: &'a mut Workspace,
+    pub(crate) revisions: &'a mut Revisions,
+    pub(crate) settings: &'a mut Settings,
+    pub(crate) servers: &'a [Server],
+    pub(crate) downloads: &'a mut Vec<Download>,
+}
 
 #[derive(Debug)]
 pub struct Lookahead {
@@ -40,29 +56,27 @@ impl Lookahead {
             .then(|| self.duration.saturating_sub(PRELOAD_LEAD))
     }
 
-    fn is_preload_due(&self, position: Duration) -> bool {
+    pub(crate) fn is_preload_due(&self, position: Duration) -> bool {
         self.preload_due_at().is_some_and(|due| position >= due)
     }
 
     fn preloading(self, position: Duration, preloaded: &mut Option<Arc<Track>>) -> Cmd {
-        if self.is_preload_due(position)
-            && let Some(next) = self.next
-            && let Some(track_load) = TrackLoad::for_track(&next, self.revision)
-        {
-            let prefetch = self.cover_side.map(|side| {
-                Effect::Library(LibraryCmd::PrefetchCover(CoverJob {
-                    path: track_load.path.clone(),
-                    side,
-                }))
-            });
-            let preload_cmd_effect = Effect::Audio(AudioCmd::Preload(track_load));
-            let cmd =
-                Cmd::from_iter(std::iter::once(preload_cmd_effect).chain(prefetch));
-            *preloaded = Some(next);
-            cmd
-        } else {
-            Cmd::none()
+        if !self.is_preload_due(position) {
+            return Cmd::none();
         }
+        let Some(next) = self.next else {
+            return Cmd::none();
+        };
+        let preload_cmd_effect = TrackLoad::for_track(&next, self.revision)
+            .map(|track_load| Effect::Audio(AudioCmd::Preload(track_load)));
+        let prefetch = self.cover_side.zip(next.local_path()).map(|(side, path)| {
+            Effect::Library(LibraryCmd::PrefetchCover(CoverJob {
+                path: path.to_path_buf(),
+                side,
+            }))
+        });
+        *preloaded = Some(next);
+        Cmd::from_iter(preload_cmd_effect.into_iter().chain(prefetch))
     }
 }
 
@@ -213,6 +227,26 @@ impl Player {
             }
         }
     }
+}
+
+pub(crate) fn session<'a>(
+    servers: &'a [Server],
+    server_name: &ServerName,
+) -> Option<&'a Session> {
+    servers
+        .iter()
+        .find(|server| server.account.server_name == *server_name)
+        .and_then(|server| match &server.server_status {
+            ServerStatus::Online(session) => Some(session),
+            ServerStatus::Connecting | ServerStatus::Offline(_) => None,
+        })
+}
+
+pub(crate) fn duration_of(player: &Player) -> Duration {
+    player
+        .current()
+        .and_then(|track| track.duration())
+        .unwrap_or(Duration::ZERO)
 }
 
 #[must_use]

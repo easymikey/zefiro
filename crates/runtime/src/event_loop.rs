@@ -78,7 +78,7 @@ where
             self.fire_timers(now);
             self.report_congestion();
             self.run_shell_effects();
-            if self.runtime.flow().is_break() {
+            if self.runtime.flow.is_break() {
                 return Ok(());
             }
             frame_due = self.paint_if_due(now)?;
@@ -151,7 +151,7 @@ where
             .chain(messages.drain(..).map(Arrival::Message))
             .chain(rang.then_some(Arrival::Doorbell));
         for arrival in arrivals {
-            if self.runtime.flow().is_break() {
+            if self.runtime.flow.is_break() {
                 break;
             }
             self.route_arrival(arrival);
@@ -188,7 +188,7 @@ where
 
     fn report_congestion(&mut self) {
         for row in registry::REGISTRY {
-            if self.runtime.flow().is_break() {
+            if self.runtime.flow.is_break() {
                 return;
             }
             if let Some(event) = self.runtime.wiring.ports.congestion(row.driver_name) {
@@ -375,9 +375,9 @@ pub(crate) mod tests {
 
     pub(crate) fn fixture() -> Fixture {
         let (wiring, library_cmd_receiver, latest_senders) = Wiring::idle();
-        let started = kernel::update::startup::startup(stock_startup());
+        let (model, effects) = kernel::update::startup::startup(stock_startup());
         Fixture {
-            runtime: Runtime::assemble(started, wiring).unwrap(),
+            runtime: Runtime::assemble(model, effects, wiring).unwrap(),
             library_cmd_receiver,
             _latest_senders: latest_senders,
         }
@@ -752,7 +752,7 @@ pub(crate) mod tests {
         let first = event_loop.wait(None).unwrap();
         event_loop.gather(first);
 
-        assert!(fixture.runtime.flow().is_break());
+        assert!(fixture.runtime.flow.is_break());
         assert!(fixture.runtime.model.workspace.toasts.is_empty());
         fixture.runtime.drain();
     }

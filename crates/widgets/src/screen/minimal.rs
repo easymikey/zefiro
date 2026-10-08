@@ -90,7 +90,7 @@ impl MinimalScreenWidget<'_> {
         let status = self.view.status();
         let color = status.color(&self.theme);
         let title = self.view.title();
-        let label = format!("{} {title}", status.label().glyph);
+        let label = format!("{} {title}", status.glyph());
         line([text(truncate_owned(label, width.count())).fg(color)])
     }
 
@@ -172,6 +172,7 @@ mod tests {
             play_order: &play_order,
             displayed_track: None,
             output_status: &output_status,
+            buffering_revision: None,
             now: Moment::default(),
         };
         let widget = MinimalScreenWidget::new(
@@ -201,6 +202,7 @@ mod tests {
             play_order: &play_order,
             displayed_track: None,
             output_status: &output_status,
+            buffering_revision: None,
             now: Moment::default(),
         };
         let elapsed = elapsed_text(view.position(), view.duration());

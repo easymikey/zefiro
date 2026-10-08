@@ -60,8 +60,8 @@ impl Live {
             Phase::Playing(Playing { current, next }) => {
                 let upcoming = match next {
                     NextTrack::None => None,
-                    NextTrack::Preloading { path, decibels } => {
-                        Some(Upcoming { path, decibels })
+                    NextTrack::Preloading { media, decibels } => {
+                        Some(Upcoming { media, decibels })
                     }
                     NextTrack::Gapless(track) => Some(Upcoming::from(track)),
                     NextTrack::Crossfading {
@@ -76,10 +76,10 @@ impl Live {
         let LoadedTrack {
             duration,
             decibels,
-            path,
+            media,
         } = current;
         self.phase = Phase::Loading(Loading {
-            path: path.clone(),
+            media: media.clone(),
             decibels,
             resume: Some(Resume {
                 position,
@@ -89,7 +89,7 @@ impl Live {
             }),
         });
         Cmd::effect(LoopEffect::Execute(EngineEffect::ClearStaged))
-            .then(Cmd::effect(LoopEffect::Run(revisions.decode_job(path))))
+            .then(Cmd::effect(LoopEffect::Run(revisions.decode_job(media))))
     }
 
     pub(crate) fn decoded(
@@ -105,12 +105,12 @@ impl Live {
                     .and_then(|resume| resume.upcoming.take())
                 {
                     None => (NextTrack::None, Cmd::none()),
-                    Some(Upcoming { path, decibels }) => (
+                    Some(Upcoming { media, decibels }) => (
                         NextTrack::Preloading {
-                            path: path.clone(),
+                            media: media.clone(),
                             decibels,
                         },
-                        Cmd::effect(LoopEffect::Run(revisions.preload_job(path))),
+                        Cmd::effect(LoopEffect::Run(revisions.preload_job(media))),
                     ),
                 };
                 self.phase = Phase::Playing(Playing { current, next });
@@ -140,7 +140,7 @@ impl Live {
             Phase::Loading(_) => reported,
             Phase::Handover(Incoming::Loading(_)) => {
                 revisions.cancel();
-                Cmd::effect(LoopEffect::Execute(EngineEffect::Clear(self.speed)))
+                Cmd::effect(LoopEffect::Execute(EngineEffect::StartLoad(self.speed)))
                     .then(reported)
             }
             Phase::Idle | Phase::Playing(_) | Phase::Handover(Incoming::Playing(_)) => {
@@ -200,7 +200,7 @@ mod tests {
     use std::time::Duration;
 
     use kernel::{
-        cmd::{AudioCmd, Cmd, Playback},
+        cmd::{AudioCmd, Cmd, Media, Playback},
         domain::{settings::AudioSettings, speed::Speed},
         message::AudioEvent,
         update::machine::{LoopEffect, Unhandled},
@@ -222,11 +222,13 @@ mod tests {
                 assert_cell,
                 assert_fallback,
                 assert_same,
+                closed,
                 cmd,
                 crossfade,
                 decode_error,
                 decoding,
                 error,
+                first,
                 handed_over_to_b,
                 handing_over,
                 live,
@@ -318,7 +320,7 @@ mod tests {
         EngineRow {
             next: EngineState::Live(Live {
                 phase: Phase::Loading(Loading {
-                    path: "/b".into(),
+                    media: Media::Local("/b".into()),
                     decibels: None,
                     resume: Some(Resume {
                         position: seconds(5),
@@ -358,7 +360,7 @@ mod tests {
         EngineMessage::Error(decode_error()),
         EngineRow {
             next: EngineState::Live(live_with_crossfade(CROSSFADE_SECONDS)),
-            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Clear(Speed::default()))).then(Cmd::message(AudioEvent::Error(decode_error())))),
+            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::StartLoad(Speed::default()))).then(Cmd::message(AudioEvent::Error(decode_error())))),
         }
     )]
     fn a_cell_moves_the_engine_and_names_its_io(
@@ -389,7 +391,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::while_preloading(NextTrack::Preloading { path: "/b".into(), decibels: None })]
+    #[case::while_preloading(NextTrack::Preloading { media: Media::Local("/b".into()), decibels: None })]
     #[case::while_gapless(NextTrack::Gapless(track_b()))]
     #[case::while_crossfading(NextTrack::Crossfading { incoming: track_b(), fade: Fade::Running })]
     fn a_reopened_device_preloads_the_upcoming_track_again(#[case] next: NextTrack) {
@@ -413,7 +415,7 @@ mod tests {
                 phase: Phase::Playing(Playing {
                     current: track_a(),
                     next: NextTrack::Preloading {
-                        path: "/b".into(),
+                        media: Media::Local("/b".into()),
                         decibels: None,
                     },
                 }),
@@ -422,7 +424,7 @@ mod tests {
         );
         assert!(log.iter().flat_map(Cmd::effects).any(|effect| matches!(
             effect,
-            LoopEffect::Run(AudioJob::Preload { path, .. }) if path.as_path() == std::path::Path::new("/b")
+            LoopEffect::Run(AudioJob::Preload { media_path, download: None, .. }) if media_path.as_path() == std::path::Path::new("/b")
         )));
     }
 
@@ -453,7 +455,7 @@ mod tests {
         let mut engine_state = EngineState::Live(loading());
         assert_same(
             step(&mut engine_state, cmd(AudioCmd::Stop)),
-            Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Clear(
+            Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::StartLoad(
                 Speed::default(),
             )))),
         );
@@ -465,5 +467,24 @@ mod tests {
             .err(),
             Some(Unhandled)
         );
+    }
+
+    #[rstest]
+    #[case::idle(EngineState::Live(live()))]
+    #[case::loading(EngineState::Live(loading()))]
+    #[case::closed(closed())]
+    fn an_interruption_without_a_stream_in_play_is_refused(
+        #[case] engine_state: EngineState,
+    ) {
+        let mut state = engine_state.clone();
+        assert_eq!(
+            step(
+                &mut state,
+                EngineMessage::Interrupted(first(), decode_error())
+            )
+            .err(),
+            Some(Unhandled)
+        );
+        assert_eq!(state, engine_state);
     }
 }

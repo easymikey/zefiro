@@ -1,13 +1,24 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use kernel::{
-    cmd::{AudioCmd, Cmd, Effect, LibraryCmd, Playback, TrackLoad},
+    cmd::{AudioCmd, Cmd, Effect, LibraryCmd, Media, Playback, RemoteCmd, TrackLoad},
     domain::{
         cue::Cue,
         driver::{DriverError, DriverName, DriverStatus},
         model::Model,
         player::{PausedBy, Player},
         playhead::Playhead,
+        server::{
+            Account,
+            Connection,
+            Credential,
+            Endpoint,
+            Server,
+            ServerName,
+            ServerStatus,
+            Session,
+            UserName,
+        },
         speed::Speed,
         time::Moment,
         toast::ToastLevel,
@@ -164,6 +175,60 @@ fn a_death_follows_the_supervision(#[case] row: StrategyRow) {
 }
 
 #[test]
+fn a_remote_restart_shows_every_server_connecting_and_connects_each_once() {
+    let accounts: Vec<Account> = ["home", "work"]
+        .into_iter()
+        .map(|name| Account {
+            server_name: ServerName::new(name),
+            endpoint: Endpoint::parse("https://music.example").unwrap(),
+            user_name: UserName::new("ann").unwrap(),
+        })
+        .collect();
+    let mut model = Model {
+        servers: accounts
+            .iter()
+            .map(|account| Server {
+                account: account.clone(),
+                server_status: ServerStatus::Online(Session {
+                    endpoint: account.endpoint.clone(),
+                    query: Arc::from("u=ann"),
+                }),
+            })
+            .collect(),
+        ..Model::default()
+    };
+
+    let cmd = update(
+        &mut model,
+        died(DriverName::Remote),
+        Moment::new(Duration::from_secs(100)),
+    )
+    .unwrap();
+
+    assert_eq!(
+        model
+            .servers
+            .iter()
+            .map(|server| &server.server_status)
+            .collect::<Vec<_>>(),
+        [&ServerStatus::Connecting; 2]
+    );
+    assert_eq!(
+        cmd.effects()
+            .filter(|effect| matches!(effect, Effect::Remote(RemoteCmd::Connect(_))))
+            .cloned()
+            .collect::<Vec<_>>(),
+        accounts
+            .into_iter()
+            .map(|account| Effect::Remote(RemoteCmd::Connect(Connection {
+                account,
+                credential: Credential::Stored,
+            })))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn congestion_raises_one_toast_naming_the_driver() {
     let mut model = Model::default();
 
@@ -245,7 +310,7 @@ fn an_audio_restart_resumes_from_the_same_place(#[case] row: ResumeRow) {
 
     assert!(effects.iter().any(|effect| matches!(
         effect,
-        Effect::Audio(AudioCmd::Load(TrackLoad { path: loaded, .. })) if loaded == &path
+        Effect::Audio(AudioCmd::Load(TrackLoad { media: Media::Local(loaded), .. })) if loaded == &path
     )));
     assert!(effects.iter().any(|effect| matches!(
         effect,

@@ -24,4 +24,5 @@ TomlSettings {
         ),
     },
     keymap: {},
+    servers: [],
 }

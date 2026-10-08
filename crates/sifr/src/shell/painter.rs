@@ -25,7 +25,6 @@ use widgets::{
     animation::{
         catalogue::PaintedCell,
         stage::{AnimationStage, Backdrop, animation_frame_due},
-        timings::TIMINGS,
     },
     card::{CardCover, clock_frame_due},
     pixels::cover::{
@@ -209,8 +208,7 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
         layout: FrameLayout<'a>,
     ) -> Backdrop<'a> {
         let theme =
-            ActiveTheme::new(&self.presentation.theme, self.presentation.color_depth)
-                .with_volume_pulse(TIMINGS.volume_pulse_mix);
+            ActiveTheme::new(&self.presentation.theme, self.presentation.color_depth);
         let style = BackdropStyle::from_theme(&theme);
         Backdrop {
             animations,

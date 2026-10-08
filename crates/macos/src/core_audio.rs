@@ -65,11 +65,11 @@ pub(crate) struct HardwareListeners {
 
 impl HardwareListeners {
     pub(crate) fn new(callback_sender: Sender<MacosMessage>) -> Result<Self, Error> {
+        let device = default_output_device()?;
         let listener = Box::into_raw(Box::new(Listener {
             callback_sender,
             missed: AtomicBool::new(false),
         }));
-        let device = default_output_device();
         match add_listeners(listener.cast(), device) {
             Ok(()) => Ok(Self {
                 listener,
@@ -130,7 +130,7 @@ fn remove_device_listeners(
 }
 
 pub(crate) fn read_volume(device_id: AudioObjectID) -> Option<Percent> {
-    let scalar = read_property::<f32>(device_id, &volume_address())?;
+    let scalar = read_property::<f32>(device_id, &volume_address()).ok()?;
     Some(match read_mute(device_id) {
         Some(Muted::Yes) => Percent::clamped(0),
         Some(Muted::No) | None => Percent::from_ratio(scalar),
@@ -138,10 +138,12 @@ pub(crate) fn read_volume(device_id: AudioObjectID) -> Option<Percent> {
 }
 
 fn read_mute(device_id: AudioObjectID) -> Option<Muted> {
-    read_property::<u32>(device_id, &mute_address()).map(|flag| match flag {
-        0 => Muted::No,
-        _ => Muted::Yes,
-    })
+    read_property::<u32>(device_id, &mute_address())
+        .ok()
+        .map(|flag| match flag {
+            0 => Muted::No,
+            _ => Muted::Yes,
+        })
 }
 
 pub(crate) fn write_volume(
@@ -236,26 +238,30 @@ fn property_address(selector: u32, scope: u32) -> AudioObjectPropertyAddress {
     }
 }
 
-pub(crate) fn default_output_device() -> AudioObjectID {
+pub(crate) fn default_output_device() -> Result<AudioObjectID, Error> {
     read_property::<AudioObjectID>(system_object(), &default_output_address())
-        .unwrap_or(system_object())
 }
 
 fn read_property<Value: Copy>(
     object: AudioObjectID,
     address: &AudioObjectPropertyAddress,
-) -> Option<Value> {
+) -> Result<Value, Error> {
     let mut value = MaybeUninit::<Value>::uninit();
-    let mut size = u32::try_from(size_of::<Value>()).ok()?;
+    let Ok(mut size) = u32::try_from(size_of::<Value>()) else {
+        return Err(Error {
+            status: SIZE_OVERFLOW_STATUS,
+        });
+    };
     let address = NonNull::from(address);
     let size_ptr = NonNull::from(&mut size);
-    let data_ptr = NonNull::new(value.as_mut_ptr().cast::<c_void>())?;
+    let data_ptr = NonNull::from(&mut value).cast::<c_void>();
     // SAFETY: all pointers are live and `data_ptr` has room for one `Value`.
     let status = unsafe {
         AudioObjectGetPropertyData(object, address, 0, ptr::null(), size_ptr, data_ptr)
     };
+    checked(status)?;
     // SAFETY: status 0 means CoreAudio wrote a valid `Value`.
-    (status == 0).then(|| unsafe { value.assume_init() })
+    Ok(unsafe { value.assume_init() })
 }
 
 fn add_listener(
@@ -382,7 +388,7 @@ mod tests {
     #[test]
     #[ignore = "hardware: writes the system volume"]
     fn the_system_volume_reads_back_what_was_written() {
-        let device = default_output_device();
+        let device = default_output_device().unwrap();
         let original = read_volume(device);
         assert_eq!(write_volume(device, Percent::clamped(37)), Ok(()));
         let after = read_volume(device).unwrap();

@@ -16,8 +16,8 @@ use crate::{
         machine::{Machine, Unhandled},
         player,
         player::{
-            PlaybackParts,
             PlayerMessage,
+            events::PlaybackParts,
             stamp::{Anchor, Stamp},
         },
         playlist::PlaylistMessage,
@@ -250,7 +250,9 @@ fn restart(
         .cloned()
         .or_else(|| playback_parts.playlist.current().cloned());
     let track = again.ok_or(Unhandled)?;
-    Ok(player::start(playback_parts, track, now))
+    Ok(match player::start(playback_parts, track, now) {
+        Ok(cmd) | Err(cmd) => cmd,
+    })
 }
 
 fn seek(
@@ -262,12 +264,12 @@ fn seek(
 }
 
 fn clamped(player: &Player, target: Duration) -> Option<Duration> {
-    let duration = player::duration_of(player);
+    let duration = player::events::duration_of(player);
     (!duration.is_zero()).then(|| target.min(duration))
 }
 
 fn tenths_target(player: &Player, tenths: SeekTenths) -> Option<Duration> {
-    let duration = player::duration_of(player);
+    let duration = player::events::duration_of(player);
     (!duration.is_zero()).then(|| duration * u32::from(tenths.get()) / 10)
 }
 

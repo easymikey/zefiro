@@ -189,9 +189,9 @@ impl Machine for ConfigWatch {
                 ConfigChange::Config,
             )),
             ConfigWatchMessage::ReadDone {
-                name: ConfigName::Theme(_),
+                name: ConfigName::Theme(name),
                 text,
-            } => self.theme_read_done(text),
+            } => self.theme_read_done(name, text),
             ConfigWatchMessage::Listed {
                 theme_names,
                 refused,
@@ -224,10 +224,14 @@ impl ConfigWatch {
 
     fn theme_read_done(
         &mut self,
+        name: ThemeName,
         text: Option<String>,
     ) -> Result<Cmd<ConfigWatchEffect, ConfigChange>, Unhandled> {
-        let theme = self.watched_theme.as_mut().ok_or(Unhandled)?;
-        let name = theme.name.clone();
+        let theme = self
+            .watched_theme
+            .as_mut()
+            .filter(|theme| theme.name == name)
+            .ok_or(Unhandled)?;
         Ok(read_done(&mut theme.seen, text, |text| {
             ConfigChange::Theme { name, text }
         }))
@@ -415,6 +419,19 @@ mod tests {
 
         assert_eq!(unselected.transition(message), Err(Unhandled));
         assert_eq!(unselected, watch(None));
+    }
+
+    #[test]
+    fn a_read_of_a_theme_no_longer_watched_is_refused() {
+        let mut selected = watch(Some("noir"));
+
+        let answer = selected.transition(ConfigWatchMessage::ReadDone {
+            name: ConfigName::Theme(ThemeName::from_static("ink")),
+            text: Some("ink".to_string()),
+        });
+
+        assert_eq!(answer, Err(Unhandled));
+        assert_eq!(selected, watch(Some("noir")));
     }
 
     #[test]

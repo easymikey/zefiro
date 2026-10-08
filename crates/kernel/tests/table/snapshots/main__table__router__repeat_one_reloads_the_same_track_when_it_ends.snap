@@ -12,7 +12,9 @@ expression: "walked(model, messages)"
             Audio(
                 Load(
                     TrackLoad {
-                        path: "/tmp/track1.flac",
+                        media: Local(
+                            "/tmp/track1.flac",
+                        ),
                         decibels: None,
                         revision: Revision(
                             1,
@@ -147,6 +149,7 @@ expression: "walked(model, messages)"
             sleep_timer: None,
             ab_loop: None,
             output_status: Ready,
+            buffering_revision: None,
         },
         [],
     ),

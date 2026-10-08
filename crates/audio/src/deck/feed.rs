@@ -1,4 +1,5 @@
 mod channels;
+mod growing;
 mod source;
 
 use std::{
@@ -13,7 +14,7 @@ use std::{
 
 use channels::map_channels;
 use crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, TrySendError};
-use kernel::{cmd::Playback, domain::revision::Revision};
+use kernel::{cmd::Playback, domain::revision::Revision, message::AudioError};
 use rtrb::{Consumer, PopError, Producer, PushError, RingBuffer};
 
 use crate::{
@@ -24,7 +25,7 @@ use crate::{
         varispeed::OutputFormat,
     },
     engine::message::{AudioMessage, EngineMessage, Signals},
-    error::{Error, decode_error_of, seek_error},
+    error::{decode_error, seek_error},
 };
 
 const FEED_SECONDS: Duration = Duration::from_millis(1_500);
@@ -91,11 +92,13 @@ pub struct Feed {
     revision: Revision,
     signals: Signals,
     wake: Wake,
+    buffering_wake: Wake,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FeedPhase {
     Decoding,
+    Buffering,
     Drained,
 }
 
@@ -179,6 +182,7 @@ pub(crate) fn feed_channel(
         revision,
         signals: Signals::default(),
         wake: Wake::Sent,
+        buffering_wake: Wake::Sent,
     };
     (source, feed)
 }
@@ -194,10 +198,11 @@ impl Feed {
     }
 
     fn refill(&mut self, chunk: Chunk) {
-        let seek = self.seek_target.generation.load(Ordering::Acquire) != self.sought;
+        let seek = self.due_seek().is_some();
         if !seek
-            && (self.phase == FeedPhase::Drained
-                || self.spare_chunks.len() < SEEK_SPARES)
+            && (self.phase != FeedPhase::Decoding
+                || self.spare_chunks.len() < SEEK_SPARES
+                || self.stalled())
         {
             self.spare_chunks.push(chunk);
             return;
@@ -209,8 +214,10 @@ impl Feed {
                 Ok(()) | Err(PushError::Full(_)) => {}
             }
             next = match self.phase {
-                FeedPhase::Decoding if seek => self.spare_chunks.pop(),
-                FeedPhase::Decoding | FeedPhase::Drained => None,
+                FeedPhase::Decoding if seek && self.has_margin() => {
+                    self.spare_chunks.pop()
+                }
+                FeedPhase::Decoding | FeedPhase::Buffering | FeedPhase::Drained => None,
             };
         }
     }
@@ -231,7 +238,8 @@ impl Feed {
                 Ok(samples) => samples.len(),
                 Err(source) => {
                     let path = self.decoder.path.to_path_buf();
-                    let error = decode_error_of(Error::Decode { path, source });
+                    let error = decode_error(&source);
+                    let error = AudioError::Decode { path, error };
                     self.report(EngineMessage::Interrupted(self.revision, error));
                     0
                 }
@@ -278,10 +286,9 @@ impl Feed {
     }
 
     fn seek(&mut self) -> ChunkMark {
-        let generation = self.seek_target.generation.load(Ordering::Acquire);
-        if generation == self.sought {
+        let Some(generation) = self.due_seek() else {
             return ChunkMark::Samples;
-        }
+        };
         self.sought = generation;
         let rate = self.decoder.sample_rate();
         let position = Duration::from_nanos(
@@ -309,7 +316,9 @@ impl Feed {
                 landed
             }
         };
-        self.phase = FeedPhase::Decoding;
+        if self.phase == FeedPhase::Drained {
+            self.phase = FeedPhase::Decoding;
+        }
         self.frames = Frames::from_duration(landed, rate);
         ChunkMark::Samples
     }
@@ -326,12 +335,6 @@ impl Feed {
             };
         }
         self.signals = raised;
-    }
-
-    fn report(&self, message: EngineMessage) {
-        match self.callback_sender.try_send(AudioMessage::Engine(message)) {
-            Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
-        }
     }
 }
 
@@ -388,6 +391,7 @@ pub(crate) fn serve(receiver: &Receiver<FeedCmd>) {
                 return feed.wake == Wake::Pending;
             }
             feed.wake();
+            feed.buffer();
             catch_unwind(AssertUnwindSafe(|| {
                 if let Some(spare) = feed.spare_chunks.pop() {
                     feed.refill(spare);
