@@ -4,8 +4,9 @@ use kernel::domain::{
     appearance::CoverMode,
     cursor_over::CursorOver,
     geometry::Cells,
-    overlay::{MusicDirError, SearchQuery, TextEntry},
+    overlay::{MusicDirError, SearchQuery, ServerPrompt, TextEntry},
     playlist::PlaylistFileNameError,
+    server::ServerName,
     setting_row::SettingRow,
     time::TimecodeError,
     track::Track,
@@ -21,7 +22,7 @@ use crate::{
         settings::SettingsTable,
         track_details::TrackDetailsRow,
     },
-    playlist::pane::PlaylistAreas,
+    playlist::row::PlaylistAreas,
     screen::breakpoint::Breakpoint,
 };
 
@@ -36,6 +37,9 @@ pub enum OverlayContent<'a> {
     JumpToTime(&'a TextEntry<TimecodeError>),
     TrackDetails(Vec<TrackDetailsRow<'a>>),
     MusicDir(&'a TextEntry<MusicDirError>),
+    AddServer(&'a ServerPrompt),
+    Servers(&'a CursorOver<()>),
+    ConfirmRemove(&'a ServerName),
 }
 
 #[derive(Debug, Clone, PartialEq)]

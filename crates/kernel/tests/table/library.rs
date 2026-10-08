@@ -39,7 +39,7 @@ use crate::support::{
 fn paths(tracks: &[Arc<Track>]) -> Vec<PathBuf> {
     tracks
         .iter()
-        .map(|track| track.path().to_path_buf())
+        .map(|track| track.local_path().unwrap().to_path_buf())
         .collect()
 }
 
@@ -328,6 +328,7 @@ fn rescanning_model() -> Model {
         | Effect::Audio(_)
         | Effect::Macos(_)
         | Effect::Config(_)
+        | Effect::Remote(_)
         | Effect::WindowColors(_)
         | Effect::Animate(_)
         | Effect::RollShuffle(..)
@@ -422,7 +423,7 @@ fn a_confirmed_trash_keeps_the_track_until_the_disk_answers() {
     assert_eq!(
         cmd.map(effects),
         Ok(vec![Effect::Library(LibraryCmd::Disk(DiskCmd::Trash(
-            track.path().to_path_buf()
+            track.local_path().unwrap().to_path_buf()
         )))])
     );
     let ready = model.library.as_ref().unwrap();
@@ -437,7 +438,7 @@ fn a_trashed_answer_removes_the_track() {
     let mut model = moon_library_scanned();
     let track = Arc::clone(&model.playlist.tracks[0]);
     model.queue = vec![track.source().clone()];
-    let path = track.path().to_path_buf();
+    let path = track.local_path().unwrap().to_path_buf();
 
     let cmd = update(
         &mut model,
@@ -465,7 +466,7 @@ fn a_failed_trash_keeps_the_track_and_raises_a_toast() {
     let playlist = paths(&model.playlist.tracks);
     let error = LibraryError::Disk {
         subject: LibrarySubject::Trash,
-        path: track.path().to_path_buf(),
+        path: track.local_path().unwrap().to_path_buf(),
         error: IoError::Denied,
     };
     send(

@@ -1,0 +1,23 @@
+---
+source: crates/widgets/src/status_line.rs
+expression: line
+---
+Line::from_iter([
+    Span::from("Playlist").fg(Color::Rgb(217, 119, 87)),
+    Span::from(" · ").fg(Color::Rgb(107, 114, 128)),
+    Span::from("home").fg(Color::Rgb(107, 114, 128)),
+    Span::from(" ── ").fg(Color::Rgb(107, 114, 128)),
+    Span::from("3/12").fg(Color::Rgb(217, 119, 87)),
+    Span::from(" ── ").fg(Color::Rgb(107, 114, 128)),
+    Span::from("shuffle ").fg(Color::Rgb(107, 114, 128)),
+    Span::from("on").fg(Color::Rgb(217, 119, 87)),
+    Span::from(" · ").fg(Color::Rgb(107, 114, 128)),
+    Span::from("repeat ").fg(Color::Rgb(107, 114, 128)),
+    Span::from("all").fg(Color::Rgb(217, 119, 87)),
+    Span::from(" · ").fg(Color::Rgb(107, 114, 128)),
+    Span::from("queue ").fg(Color::Rgb(107, 114, 128)),
+    Span::from("7").fg(Color::Rgb(217, 119, 87)),
+    Span::from(" · ").fg(Color::Rgb(107, 114, 128)),
+    Span::from("theme ").fg(Color::Rgb(107, 114, 128)),
+    Span::from("rose-pine").fg(Color::Rgb(217, 119, 87)),
+])

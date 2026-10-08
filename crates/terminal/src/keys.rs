@@ -44,11 +44,10 @@ fn key(key_event: KeyEvent) -> Option<Key> {
         CrosstermCode::Right => KeyCode::Right,
         CrosstermCode::Home => KeyCode::Home,
         CrosstermCode::End => KeyCode::End,
-        CrosstermCode::Tab => KeyCode::Tab,
+        CrosstermCode::Tab | CrosstermCode::BackTab => KeyCode::Tab,
         CrosstermCode::PageUp => KeyCode::PageUp,
         CrosstermCode::PageDown => KeyCode::PageDown,
-        CrosstermCode::BackTab
-        | CrosstermCode::Delete
+        CrosstermCode::Delete
         | CrosstermCode::Insert
         | CrosstermCode::F(_)
         | CrosstermCode::Null
@@ -73,9 +72,14 @@ fn key(key_event: KeyEvent) -> Option<Key> {
         key_event.modifiers.contains(*held)
             && (*held != KeyModifiers::SHIFT || is_shift_reportable(key_event.code))
     })
-    .fold(Modifiers::NONE, |modifiers, (_, mapped)| {
-        modifiers.with(mapped)
-    });
+    .fold(
+        if key_event.code == CrosstermCode::BackTab {
+            Modifiers::SHIFT
+        } else {
+            Modifiers::NONE
+        },
+        |modifiers, (_, mapped)| modifiers.with(mapped),
+    );
     Some(Key { code, modifiers })
 }
 
@@ -122,6 +126,18 @@ mod tests {
         modifiers: KeyModifiers::NONE,
         expected_code: KeyCode::Char('h'),
         expected_shift: Shift::NotReported,
+    })]
+    #[case::shifted_back_tab_reports_tab_with_shift(ShiftRow {
+        code: CrosstermCode::BackTab,
+        modifiers: KeyModifiers::SHIFT,
+        expected_code: KeyCode::Tab,
+        expected_shift: Shift::Reported,
+    })]
+    #[case::bare_back_tab_reports_tab_with_shift(ShiftRow {
+        code: CrosstermCode::BackTab,
+        modifiers: KeyModifiers::NONE,
+        expected_code: KeyCode::Tab,
+        expected_shift: Shift::Reported,
     })]
     fn shift_is_reported_only_when_the_code_carries_no_built_in_case(
         #[case] row: ShiftRow,

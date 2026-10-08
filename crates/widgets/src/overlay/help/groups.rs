@@ -112,6 +112,9 @@ const GENERAL_ACTIONS: &[(Action, HelpLabel)] = &[
     (Action::History, HelpLabel::Text("History")),
     (Action::Settings, HelpLabel::Text("Settings")),
     (Action::MusicDir, HelpLabel::Text("Library folder")),
+    (Action::AddServer, HelpLabel::Text("Add server")),
+    (Action::Servers, HelpLabel::Text("Servers")),
+    (Action::Reconnect, HelpLabel::Text("Reconnect")),
     (Action::Help, HelpLabel::Text("Toggle this help")),
     (Action::Quit, HelpLabel::Text("Quit")),
 ];
@@ -212,9 +215,15 @@ impl HelpGroups {
 mod tests {
     use std::borrow::Cow;
 
+    use kernel::update::keymap::bindings::Keymap;
     use rstest::rstest;
 
-    use crate::overlay::help::groups::{HelpRow, collapse_digit_runs};
+    use crate::overlay::help::groups::{
+        HelpGroup,
+        HelpGroups,
+        HelpRow,
+        collapse_digit_runs,
+    };
 
     fn rows(pairs: &[(&str, &'static str)]) -> Vec<(String, Cow<'static, str>)> {
         pairs
@@ -255,5 +264,40 @@ mod tests {
             })
             .collect();
         assert_eq!(merged, expected);
+    }
+
+    fn group_rows(help_group: &HelpGroup) -> Vec<(&str, &str)> {
+        help_group
+            .help_rows
+            .iter()
+            .map(|help_row| (help_row.chord.as_str(), &*help_row.label))
+            .collect()
+    }
+
+    #[test]
+    fn the_general_group_lists_servers_and_reconnect_beside_add_server() {
+        let keymap = Keymap::default();
+        let help_groups = HelpGroups::new(keymap.bindings());
+        let rows = group_rows(&help_groups.general_group);
+        let add_server = rows
+            .iter()
+            .position(|(_, label)| *label == "Add server")
+            .unwrap();
+
+        assert_eq!(
+            rows[add_server..add_server + 3],
+            [("u", "Add server"), ("c", "Servers"), ("t", "Reconnect")]
+        );
+    }
+
+    #[test]
+    fn delete_lists_its_playlist_chord_once() {
+        let keymap = Keymap::default();
+        let help_groups = HelpGroups::new(keymap.bindings());
+
+        assert!(
+            group_rows(&help_groups.playlist_group)
+                .contains(&("d", "Delete (asks first)"))
+        );
     }
 }

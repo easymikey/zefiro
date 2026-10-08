@@ -236,8 +236,9 @@ fn an_audio_restart_resumes_from_the_same_place(#[case] row: ResumeRow) {
     let path: std::path::PathBuf = model
         .player
         .current()
-        .map(|track| track.path().to_path_buf())
-        .unwrap();
+        .and_then(|track| track.local_path())
+        .unwrap()
+        .to_path_buf();
 
     let cmd = update(&mut model, died(DriverName::Audio), Moment::default()).unwrap();
     let effects: Vec<&Effect> = cmd.effects().collect();

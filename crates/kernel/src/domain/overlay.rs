@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use strum::{EnumDiscriminants, EnumIter, IntoStaticStr};
 
@@ -6,6 +6,14 @@ use crate::domain::{
     cursor_over::CursorOver,
     index::ViewIndex,
     playlist::PlaylistFileNameError,
+    server::{
+        Endpoint,
+        EndpointError,
+        SecretError,
+        ServerName,
+        UserName,
+        UserNameError,
+    },
     setting_row::SettingRow,
     time::TimecodeError,
     track::Track,
@@ -28,21 +36,27 @@ pub enum Overlay {
     JumpToTime(TextEntry<TimecodeError>),
     TrackDetails(Arc<Track>),
     MusicDir(TextEntry<MusicDirError>),
+    AddServer(ServerPrompt),
+    Servers(CursorOver<()>),
+    ConfirmRemove(ServerName),
 }
 
 impl Overlay {
     #[must_use]
     pub(crate) fn captures_text(&self) -> bool {
         match self {
-            Overlay::Search(_) | Overlay::SavePlaylist(_) | Overlay::MusicDir(_) => {
-                true
-            }
+            Overlay::Search(_)
+            | Overlay::SavePlaylist(_)
+            | Overlay::MusicDir(_)
+            | Overlay::AddServer(_) => true,
             Overlay::Help
             | Overlay::History(_)
             | Overlay::Settings(..)
             | Overlay::ConfirmTrash(_)
             | Overlay::JumpToTime(_)
-            | Overlay::TrackDetails(_) => false,
+            | Overlay::TrackDetails(_)
+            | Overlay::Servers(_)
+            | Overlay::ConfirmRemove(_) => false,
         }
     }
 }
@@ -88,6 +102,90 @@ impl Accepts for MusicDirError {
 
     fn accepts(_character: char) -> bool {
         true
+    }
+}
+
+fn printable(character: char) -> bool {
+    !character.is_whitespace() && !character.is_control()
+}
+
+impl Accepts for EndpointError {
+    const MAX_LEN: usize = usize::MAX;
+
+    fn accepts(character: char) -> bool {
+        printable(character)
+    }
+}
+
+impl Accepts for UserNameError {
+    const MAX_LEN: usize = usize::MAX;
+
+    fn accepts(character: char) -> bool {
+        printable(character)
+    }
+}
+
+impl Accepts for SecretError {
+    const MAX_LEN: usize = usize::MAX;
+
+    fn accepts(_character: char) -> bool {
+        true
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum ServerPrompt {
+    Link {
+        origin_server_name: Option<ServerName>,
+        text_entry: TextEntry<EndpointError>,
+    },
+    User {
+        origin_server_name: Option<ServerName>,
+        endpoint: Endpoint,
+        text_entry: TextEntry<UserNameError>,
+    },
+    Password {
+        origin_server_name: Option<ServerName>,
+        endpoint: Endpoint,
+        user_name: UserName,
+        text_entry: TextEntry<SecretError>,
+    },
+}
+
+impl fmt::Debug for ServerPrompt {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Link {
+                origin_server_name,
+                text_entry,
+            } => formatter
+                .debug_struct("Link")
+                .field("origin_server_name", origin_server_name)
+                .field("text_entry", text_entry)
+                .finish(),
+            Self::User {
+                origin_server_name,
+                endpoint,
+                text_entry,
+            } => formatter
+                .debug_struct("User")
+                .field("origin_server_name", origin_server_name)
+                .field("endpoint", endpoint)
+                .field("text_entry", text_entry)
+                .finish(),
+            Self::Password {
+                origin_server_name,
+                endpoint,
+                user_name,
+                text_entry,
+            } => formatter
+                .debug_struct("Password")
+                .field("origin_server_name", origin_server_name)
+                .field("endpoint", endpoint)
+                .field("user_name", user_name)
+                .field("error", &text_entry.error)
+                .finish_non_exhaustive(),
+        }
     }
 }
 

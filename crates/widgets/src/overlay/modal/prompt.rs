@@ -60,6 +60,7 @@ pub(crate) struct PromptWidget<'a> {
     title: &'static str,
     hint: &'static str,
     min_width: Cells,
+    answers: Vec<Line<'a>>,
     body: PromptBody<'a>,
     error: Option<&'a dyn Error>,
     avoid: &'a [Rect],
@@ -74,7 +75,13 @@ impl PromptWidget<'_> {
 
     fn modal(&self) -> Modal<'_> {
         let error_width = self.error.map_or(0, |error| display_width(&error));
-        let widest = self.title.width().max(self.body.width()).max(error_width);
+        let widest = self
+            .answers
+            .iter()
+            .map(Line::width)
+            .fold(self.title.width().max(self.body.width()), usize::max)
+            .max(error_width);
+        let rows = self.answers.len() + 1 + usize::from(self.error.is_some());
         let colors = self.theme.colors();
         Modal {
             title: self.title,
@@ -83,7 +90,7 @@ impl PromptWidget<'_> {
                 content_width: self
                     .min_width
                     .max(u16::try_from(widest).map_or(self.min_width, Cells)),
-                content_rows: Cells(1 + u16::from(self.error.is_some())),
+                content_rows: u16::try_from(rows).map_or(Cells(u16::MAX), Cells),
             },
             hint: Some(line([text(self.hint).fg(colors.muted_foreground)])),
             border: colors.muted_foreground,
@@ -92,7 +99,8 @@ impl PromptWidget<'_> {
     }
 
     fn lines(&self, width: usize) -> Vec<Line<'_>> {
-        let mut lines = vec![self.body.line(width, self.theme.colors().foreground)];
+        let mut lines = self.answers.clone();
+        lines.push(self.body.line(width, self.theme.colors().foreground));
         if let Some(error) = self.error {
             lines
                 .push(line([text(truncate_owned(error.to_string(), width))
@@ -109,6 +117,7 @@ impl<'a> PromptWidget<'a> {
             title: "",
             hint: "",
             min_width: Cells(0),
+            answers: Vec::new(),
             body,
             error: None,
             avoid: &[],
@@ -131,6 +140,12 @@ impl<'a> PromptWidget<'a> {
     #[must_use]
     pub(crate) fn min_width(mut self, min_width: Cells) -> Self {
         self.min_width = min_width;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn answers(mut self, answers: Vec<Line<'a>>) -> Self {
+        self.answers = answers;
         self
     }
 

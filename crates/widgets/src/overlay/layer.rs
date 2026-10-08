@@ -6,6 +6,7 @@ use kernel::{
         index::RowIndex,
         overlay::{Overlay, TextEntry},
         playlist::PlaylistFileNameError,
+        server::Server,
         time::Moment,
         track::Track,
     },
@@ -21,6 +22,8 @@ use ratatui::{
 
 use crate::{
     overlay::{
+        add_server::AddServerWidget,
+        confirm_remove::ConfirmRemoveWidget,
         confirm_trash,
         help::{HelpColumns, HelpWidget, groups::HelpGroups},
         history::{HistoryMeasures, HistoryWidget},
@@ -31,6 +34,7 @@ use crate::{
         },
         music_dir,
         search::{SearchWidget, search_title},
+        servers::ServersWidget,
         settings::{SettingsTable, SettingsWidget, view::SettingsView},
         track_details::{TrackDetailsRow, TrackDetailsWidget},
     },
@@ -44,6 +48,7 @@ pub(crate) struct OverlayView<'a> {
     pub(crate) overlay: Option<&'a Overlay>,
     pub(crate) tracks: &'a [Arc<Track>],
     pub(crate) history: &'a [HistoryEntry],
+    pub(crate) servers: &'a [Server],
     pub(crate) active_theme: ActiveTheme<'a>,
     pub(crate) settings_view: SettingsView<'a>,
     pub(crate) bindings: &'a [KeyBinding],
@@ -75,6 +80,13 @@ impl<'a> OverlayView<'a> {
                 OverlayContent::TrackDetails(TrackDetailsRow::all(track))
             }
             Overlay::MusicDir(entry) => OverlayContent::MusicDir(entry),
+            Overlay::AddServer(server_prompt) => {
+                OverlayContent::AddServer(server_prompt)
+            }
+            Overlay::Servers(cursor) => OverlayContent::Servers(cursor),
+            Overlay::ConfirmRemove(server_name) => {
+                OverlayContent::ConfirmRemove(server_name)
+            }
         })
     }
 }
@@ -93,6 +105,8 @@ enum ActiveOverlay<'a> {
     History(HistoryWidget<'a>),
     Settings(SettingsWidget<'a>),
     Prompt(PromptWidget<'a>),
+    AddServer(AddServerWidget<'a>),
+    Servers(ServersWidget<'a>),
     TrackDetails(TrackDetailsWidget<'a>),
     Banner(SaveLine<'a>, ActiveTheme<'a>),
 }
@@ -105,6 +119,10 @@ impl ActiveOverlay<'_> {
             Self::History(overlay) => Some(overlay.areas(screen)),
             Self::Settings(overlay) => Some(overlay.areas(screen)),
             Self::Prompt(overlay) => Some(OverlayAreas::Dialog(overlay.areas(screen))),
+            Self::AddServer(overlay) => {
+                Some(OverlayAreas::Dialog(overlay.areas(screen)))
+            }
+            Self::Servers(overlay) => Some(OverlayAreas::Dialog(overlay.areas(screen))),
             Self::TrackDetails(overlay) => Some(overlay.areas(screen)),
             Self::Banner(..) => banner_area(screen).map(OverlayAreas::Banner),
         }
@@ -118,6 +136,14 @@ impl ActiveOverlay<'_> {
             Self::History(widget) => widget.paint(areas, canvas),
             Self::TrackDetails(widget) => widget.paint(areas, canvas),
             Self::Prompt(widget) => match areas {
+                OverlayAreas::Dialog(dialog) => widget.paint(dialog, canvas),
+                OverlayAreas::List(_) | OverlayAreas::Banner(_) => {}
+            },
+            Self::AddServer(widget) => match areas {
+                OverlayAreas::Dialog(dialog) => widget.paint(dialog, canvas),
+                OverlayAreas::List(_) | OverlayAreas::Banner(_) => {}
+            },
+            Self::Servers(widget) => match areas {
                 OverlayAreas::Dialog(dialog) => widget.paint(dialog, canvas),
                 OverlayAreas::List(_) | OverlayAreas::Banner(_) => {}
             },
@@ -256,9 +282,21 @@ impl<'a> OverlayWidget<'a> {
             OverlayContent::MusicDir(entry) => {
                 ActiveOverlay::Prompt(music_dir::prompt(entry, theme).avoid(avoid))
             }
+            OverlayContent::AddServer(server_prompt) => ActiveOverlay::AddServer(
+                AddServerWidget::new(server_prompt, theme).avoid(avoid),
+            ),
             OverlayContent::SavePlaylist(entry) => {
                 ActiveOverlay::Banner(SaveLine::new(entry), theme)
             }
+            OverlayContent::Servers(cursor) => ActiveOverlay::Servers(
+                ServersWidget::new(self.view.servers, cursor.selected(), theme)
+                    .avoid(avoid),
+            ),
+            OverlayContent::ConfirmRemove(server_name) => ActiveOverlay::Prompt(
+                ConfirmRemoveWidget::new(server_name, theme)
+                    .prompt()
+                    .avoid(avoid),
+            ),
         })
     }
 
@@ -322,6 +360,7 @@ mod tests {
             overlay: model.workspace.overlay.as_ref(),
             tracks: &model.playlist.tracks,
             history: &model.history,
+            servers: &model.servers,
             active_theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
             settings_view: settings_values(),
             bindings: &[],

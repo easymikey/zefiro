@@ -81,14 +81,15 @@ impl MacosDriver {
     ) -> Result<MacosLoopCmd, Unhandled> {
         match macos_cmd {
             MacosCmd::NowPlaying(now_playing) => {
-                let moved =
-                    if self.artwork.shows(now_playing.as_deref().map(Track::path)) {
-                        Cmd::none()
-                    } else {
-                        self.artwork.transition(ArtworkMessage::TrackShown(
-                            now_playing.clone(),
-                        ))?
-                    };
+                let moved = if self
+                    .artwork
+                    .shows(now_playing.as_deref().map(Track::source))
+                {
+                    Cmd::none()
+                } else {
+                    self.artwork
+                        .transition(ArtworkMessage::TrackShown(now_playing.clone()))?
+                };
                 self.track = now_playing;
                 self.clock = self.clock.seek(Duration::ZERO, at);
                 Ok(moved)
@@ -481,7 +482,7 @@ mod tests {
         vec![cmds(vec![MacosCmd::NowPlaying(Some(Arc::new(Track::listed(Path::new("a.flac")))))])],
         (
             vec![MacosEffect::ClearArtwork, MacosEffect::ShowNowPlaying],
-            vec![MacosJob::ReadArtwork { track: Arc::new(Track::listed(Path::new("a.flac"))), revision: Revision::default().next() }],
+            vec![MacosJob::ReadArtwork { path: "a.flac".into(), revision: Revision::default().next() }],
             vec![]
         )
     )]

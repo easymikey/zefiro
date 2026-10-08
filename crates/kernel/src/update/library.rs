@@ -89,7 +89,7 @@ fn trashed_track(
     let removed_position = library
         .tracks
         .iter()
-        .position(|track| track.path() == path)
+        .position(|track| track.local_path() == Some(path))
         .ok_or(Unhandled)?;
     let track = library.tracks.remove(removed_position);
     library.track_indexes = library
@@ -323,7 +323,7 @@ mod tests {
             library.map(|ready| ready
                 .tracks
                 .iter()
-                .map(|t| t.path())
+                .filter_map(|t| t.local_path())
                 .collect::<Vec<_>>()),
             Some(vec![
                 std::path::Path::new("/music/a.flac"),
@@ -402,7 +402,7 @@ mod tests {
 
         let cmd = update(
             crate::update::library_parts(&mut model),
-            LibraryEvent::Trashed(a.path().to_path_buf()),
+            LibraryEvent::Trashed(a.local_path().unwrap().to_path_buf()),
         )
         .unwrap();
 

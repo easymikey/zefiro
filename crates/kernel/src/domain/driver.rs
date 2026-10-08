@@ -11,14 +11,16 @@ pub enum DriverName {
     Library,
     Config,
     Macos,
+    Remote,
 }
 
 impl DriverName {
-    pub const ALL: [DriverName; 4] = [
+    pub const ALL: [DriverName; 5] = [
         DriverName::Audio,
         DriverName::Library,
         DriverName::Config,
         DriverName::Macos,
+        DriverName::Remote,
     ];
 }
 
@@ -65,7 +67,7 @@ pub struct DriverRecord {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Drivers([DriverRecord; 4]);
+pub struct Drivers([DriverRecord; 5]);
 
 impl Drivers {
     #[must_use]
@@ -75,22 +77,24 @@ impl Drivers {
 
     #[must_use]
     pub fn record(&self, driver_name: DriverName) -> &DriverRecord {
-        let [audio, library, config, macos] = &self.0;
+        let [audio, library, config, macos, remote] = &self.0;
         match driver_name {
             DriverName::Audio => audio,
             DriverName::Library => library,
             DriverName::Config => config,
             DriverName::Macos => macos,
+            DriverName::Remote => remote,
         }
     }
 
     pub fn record_mut(&mut self, driver_name: DriverName) -> &mut DriverRecord {
-        let [audio, library, config, macos] = &mut self.0;
+        let [audio, library, config, macos, remote] = &mut self.0;
         match driver_name {
             DriverName::Audio => audio,
             DriverName::Library => library,
             DriverName::Config => config,
             DriverName::Macos => macos,
+            DriverName::Remote => remote,
         }
     }
 }

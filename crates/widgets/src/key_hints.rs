@@ -40,9 +40,15 @@ pub(crate) fn chords_for_action(
     bindings: &[KeyBinding],
     action: Action,
 ) -> impl Iterator<Item = String> {
+    let key_context = bindings
+        .iter()
+        .find(|binding| binding.action == Some(action))
+        .map(|binding| binding.key_context);
     bindings
         .iter()
-        .filter(move |binding| binding.action == Some(action))
+        .filter(move |binding| {
+            binding.action == Some(action) && Some(binding.key_context) == key_context
+        })
         .map(|binding| binding.pattern.to_string())
 }
 
@@ -294,6 +300,15 @@ mod tests {
     fn an_unbound_action_shows_an_empty_chord() {
         let bindings: Vec<KeyBinding> = Vec::new();
         assert_eq!(chords_for_action(&bindings, Action::Help).next(), None);
+    }
+
+    #[test]
+    fn an_action_lists_only_the_chords_of_its_first_context() {
+        let keymap = Keymap::default();
+        assert_eq!(
+            chords_for_action(keymap.bindings(), Action::Delete).collect::<Vec<_>>(),
+            ["d"]
+        );
     }
 
     #[test]

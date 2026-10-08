@@ -9,6 +9,7 @@ pub mod effect;
 mod ffi;
 pub(crate) mod hardware;
 pub mod job;
+pub mod keychain;
 pub mod main_loop;
 pub mod message;
 mod now_playing;

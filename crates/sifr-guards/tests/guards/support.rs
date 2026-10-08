@@ -94,76 +94,78 @@ pub(crate) fn read(path: &Path) -> String {
 }
 
 pub(crate) fn manifests() -> Vec<(String, toml::Value)> {
-    let mut out = Vec::new();
-    let Ok(entries) = fs::read_dir(crates_dir()) else {
-        return out;
-    };
-    for entry in entries.flatten() {
-        let Ok(text) = fs::read_to_string(entry.path().join("Cargo.toml")) else {
-            continue;
-        };
-        let Ok(doc) = toml::from_str::<toml::Value>(&text) else {
-            continue;
-        };
-        let name = doc
-            .get("package")
-            .and_then(|package| package.get("name"))
-            .and_then(toml::Value::as_str)
-            .map(str::to_owned);
-        if let Some(name) = name {
-            out.push((name, doc));
-        }
-    }
+    let mut out: Vec<(String, toml::Value)> =
+        member_dirs(&read(&workspace_root().join("Cargo.toml")))
+            .iter()
+            .map(|dir| package(dir, &read(&crates_dir().join(dir).join("Cargo.toml"))))
+            .collect();
     out.sort_by(|left, right| left.0.cmp(&right.0));
     out
 }
 
-const WORKSPACE_CRATES: &[&str] = &[
-    "audio", "config", "kernel", "library", "macos", "runtime", "sifr", "terminal",
-    "widgets",
-];
+fn package(dir: &str, manifest: &str) -> (String, toml::Value) {
+    let doc = toml::from_str::<toml::Value>(manifest).unwrap_or_else(|error| {
+        panic!("crates/{dir}/Cargo.toml does not parse: {error}")
+    });
+    let name = doc
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or_else(|| panic!("crates/{dir}/Cargo.toml names no package"))
+        .to_owned();
+    (name, doc)
+}
 
-pub(crate) fn sifr_runtime_dependencies(
+pub(crate) const RUNTIME_TABLES: &[&str] = &["dependencies", "build-dependencies"];
+
+pub(crate) const DEPENDENCY_TABLES: &[&str] =
+    &["dependencies", "dev-dependencies", "build-dependencies"];
+
+pub(crate) fn workspace_members() -> Vec<String> {
+    manifests().into_iter().map(|(name, _)| name).collect()
+}
+
+pub(crate) fn member_dirs(root_manifest: &str) -> Vec<String> {
+    let doc = toml::from_str::<toml::Value>(root_manifest).unwrap_or_else(|error| {
+        panic!("the workspace Cargo.toml does not parse: {error}")
+    });
+    let members: Vec<String> = doc
+        .get("workspace")
+        .and_then(|workspace| workspace.get("members"))
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(toml::Value::as_str)
+        .map(|member| member.rsplit('/').next().unwrap_or(member).to_owned())
+        .collect();
+    assert!(
+        !members.is_empty(),
+        "the workspace Cargo.toml lists no members"
+    );
+    members
+}
+
+pub(crate) fn dependency_names(
     manifest: &toml::Value,
+    tables: &[&str],
     out: &mut BTreeSet<String>,
 ) {
     let Some(table) = manifest.as_table() else {
         return;
     };
     for (key, nested) in table {
-        if key == "dev-dependencies" {
-            continue;
+        if tables.contains(&key.as_str())
+            && let Some(dependencies) = nested.as_table()
+        {
+            out.extend(dependencies.iter().map(|(key, dependency)| {
+                dependency
+                    .get("package")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or(key)
+                    .to_owned()
+            }));
         }
-        let is_dependency_table =
-            matches!(key.as_str(), "dependencies" | "build-dependencies");
-        if is_dependency_table && let Some(dependencies) = nested.as_table() {
-            for name in dependencies.keys() {
-                if WORKSPACE_CRATES.contains(&name.as_str()) {
-                    out.insert(name.clone());
-                }
-            }
-        }
-        sifr_runtime_dependencies(nested, out);
-    }
-}
-
-pub(crate) fn sifr_dependencies(manifest: &toml::Value, out: &mut BTreeSet<String>) {
-    let Some(table) = manifest.as_table() else {
-        return;
-    };
-    for (key, nested) in table {
-        let is_dependency_table = matches!(
-            key.as_str(),
-            "dependencies" | "dev-dependencies" | "build-dependencies"
-        );
-        if is_dependency_table && let Some(dependencies) = nested.as_table() {
-            for name in dependencies.keys() {
-                if WORKSPACE_CRATES.contains(&name.as_str()) {
-                    out.insert(name.clone());
-                }
-            }
-        }
-        sifr_dependencies(nested, out);
+        dependency_names(nested, tables, out);
     }
 }
 
@@ -301,4 +303,28 @@ fn real_parameters(slots: &[String]) -> Vec<String> {
         .collect();
     let receiver = named.first().is_some_and(|first| first.ends_with("self"));
     named.into_iter().skip(usize::from(receiver)).collect()
+}
+
+#[test]
+#[should_panic(expected = "the workspace Cargo.toml does not parse")]
+fn member_dirs_fails_on_a_manifest_that_does_not_parse() {
+    member_dirs("[workspace\nmembers = [\"crates/audio\"]\n");
+}
+
+#[test]
+#[should_panic(expected = "the workspace Cargo.toml lists no members")]
+fn member_dirs_fails_on_a_manifest_without_members() {
+    member_dirs("[workspace]\nresolver = \"3\"\n");
+}
+
+#[test]
+fn package_names_a_member_by_its_package_not_its_directory() {
+    let (name, _) = package("player", "[package]\nname = \"sifr-player\"\n");
+    assert_eq!(name, "sifr-player");
+}
+
+#[test]
+#[should_panic(expected = "crates/player/Cargo.toml names no package")]
+fn package_fails_on_a_member_manifest_without_a_package_name() {
+    package("player", "[dependencies]\n");
 }

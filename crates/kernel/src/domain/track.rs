@@ -1,7 +1,10 @@
 use std::{
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
+
+use crate::domain::server::{ServerAlbum, ServerName, ServerTrackId};
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Tags {
@@ -47,6 +50,42 @@ pub enum Tagging {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TrackSource {
     Local(PathBuf),
+    Server {
+        server_name: ServerName,
+        server_track_id: ServerTrackId,
+    },
+}
+
+impl TrackSource {
+    #[must_use]
+    pub fn local_path(&self) -> Option<&Path> {
+        match self {
+            TrackSource::Local(path) => Some(path),
+            TrackSource::Server {
+                server_name: _server_name,
+                server_track_id: _server_track_id,
+            } => None,
+        }
+    }
+
+    fn name(&self) -> String {
+        match self {
+            TrackSource::Local(path) => path.file_stem().map_or_else(
+                || path.to_string_lossy().into_owned(),
+                |stem| stem.to_string_lossy().into_owned(),
+            ),
+            TrackSource::Server {
+                server_name: _server_name,
+                server_track_id,
+            } => server_track_id.as_str().to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CatalogRow {
+    Album(ServerAlbum),
+    Track(Arc<Track>),
 }
 
 #[derive(Clone, PartialEq)]
@@ -97,12 +136,18 @@ impl Track {
             tags,
             audio_format,
         } = track_parts;
-        let display = Self::display_from(&path, &tags);
-        let title = Self::title_from(&path, &tags);
+        Self::tagged(TrackSource::Local(path), duration, tags)
+            .with_audio_format(audio_format)
+    }
+
+    #[must_use]
+    pub fn tagged(source: TrackSource, duration: Duration, tags: Tags) -> Self {
+        let display = Self::display_from(&source, &tags);
+        let title = Self::title_from(&source, &tags);
         Self {
-            source: TrackSource::Local(path),
+            source,
             tags,
-            audio_format,
+            audio_format: AudioFormat::default(),
             display,
             title,
             tagging: Tagging::Tagged(duration),
@@ -110,34 +155,43 @@ impl Track {
     }
 
     #[must_use]
-    pub fn listed(path: &Path) -> Self {
+    pub fn with_audio_format(self, audio_format: AudioFormat) -> Self {
         Self {
-            display: file_stem(path).into_boxed_str(),
-            title: file_stem(path).into_boxed_str(),
-            source: TrackSource::Local(path.to_path_buf()),
-            tags: Tags::default(),
-            audio_format: AudioFormat::default(),
-            tagging: Tagging::Listed(None),
+            audio_format,
+            ..self
         }
     }
 
     #[must_use]
-    fn display_from(path: &Path, tags: &Tags) -> Box<str> {
-        let display = match (&tags.title, &tags.artist) {
-            (Some(title), Some(artist)) => format!("{artist} — {title}"),
-            (Some(title), None) => title.clone(),
-            _ => path.file_name().map_or_else(
+    pub fn listed(path: &Path) -> Self {
+        Self::from(TrackSource::Local(path.to_path_buf()))
+    }
+
+    #[must_use]
+    fn display_from(source: &TrackSource, tags: &Tags) -> Box<str> {
+        let display = match (&tags.title, &tags.artist, source) {
+            (Some(title), Some(artist), _source) => format!("{artist} — {title}"),
+            (Some(title), None, _source) => title.clone(),
+            (None, _artist, TrackSource::Local(path)) => path.file_name().map_or_else(
                 || path.to_string_lossy().into_owned(),
                 |name| name.to_string_lossy().into_owned(),
             ),
+            (
+                None,
+                _artist,
+                TrackSource::Server {
+                    server_name: _server_name,
+                    server_track_id,
+                },
+            ) => server_track_id.as_str().to_owned(),
         };
         display.into_boxed_str()
     }
 
-    fn title_from(path: &Path, tags: &Tags) -> Box<str> {
+    fn title_from(source: &TrackSource, tags: &Tags) -> Box<str> {
         tags.title
             .clone()
-            .unwrap_or_else(|| file_stem(path))
+            .unwrap_or_else(|| source.name())
             .into_boxed_str()
     }
 
@@ -147,9 +201,8 @@ impl Track {
     }
 
     #[must_use]
-    pub fn path(&self) -> &Path {
-        let TrackSource::Local(path) = &self.source;
-        path
+    pub fn local_path(&self) -> Option<&Path> {
+        self.source.local_path()
     }
 
     #[must_use]
@@ -198,18 +251,28 @@ impl Track {
     }
 }
 
-fn file_stem(path: &Path) -> String {
-    path.file_stem().map_or_else(
-        || path.to_string_lossy().into_owned(),
-        |stem| stem.to_string_lossy().into_owned(),
-    )
+impl From<TrackSource> for Track {
+    fn from(source: TrackSource) -> Self {
+        let name = source.name();
+        Self {
+            display: name.clone().into_boxed_str(),
+            title: name.into_boxed_str(),
+            source,
+            tags: Tags::default(),
+            audio_format: AudioFormat::default(),
+            tagging: Tagging::Listed(None),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, time::Duration};
+    use std::{cmp::Ordering, collections::HashSet, path::Path, time::Duration};
 
-    use crate::domain::track::{AudioFormat, Tags, Track, TrackParts};
+    use crate::domain::{
+        server::{ServerName, ServerTrackId},
+        track::{AudioFormat, Tags, Track, TrackParts, TrackSource},
+    };
 
     #[test]
     fn a_tagged_track_shows_its_tag_title_as_the_title() {
@@ -238,5 +301,31 @@ mod tests {
 
         assert_eq!(built_track.title(), "file-name");
         assert_eq!(listed.title(), "file-name");
+    }
+
+    #[test]
+    fn a_server_source_orders_and_hashes_apart_from_a_local_one_with_the_same_text() {
+        let local_source = TrackSource::Local("home".into());
+        let server_source = TrackSource::Server {
+            server_name: ServerName::new("home"),
+            server_track_id: ServerTrackId::new("home"),
+        };
+        let sources: HashSet<&TrackSource> =
+            [&local_source, &server_source].into_iter().collect();
+
+        assert_ne!(local_source.cmp(&server_source), Ordering::Equal);
+        assert_eq!(sources.len(), 2);
+    }
+
+    #[test]
+    fn a_server_track_has_no_local_path() {
+        let server_track = Track::from(TrackSource::Server {
+            server_name: ServerName::new("home"),
+            server_track_id: ServerTrackId::new("tr-1"),
+        });
+        let local_track = Track::listed(Path::new("/music/a.flac"));
+
+        assert_eq!(server_track.local_path(), None);
+        assert_eq!(local_track.local_path(), Some(Path::new("/music/a.flac")));
     }
 }

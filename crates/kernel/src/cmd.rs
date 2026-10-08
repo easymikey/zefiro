@@ -18,6 +18,7 @@ use crate::{
         player::Player,
         playlist::PlaylistFileName,
         revision::Revision,
+        server::{Connection, Listing, MediaFetch, Page, ServerName, Session},
         settings::ReplayGain,
         sleep_presets::SleepPresets,
         speed::Speed,
@@ -83,12 +84,12 @@ pub struct TrackLoad {
 
 impl TrackLoad {
     #[must_use]
-    pub fn for_track(track: &Track, revision: Revision) -> Self {
-        Self {
-            path: track.path().to_path_buf(),
+    pub fn for_track(track: &Track, revision: Revision) -> Option<Self> {
+        track.local_path().map(|path| Self {
+            path: path.to_path_buf(),
             decibels: track.audio_format().decibels,
             revision,
-        }
+        })
     }
 }
 
@@ -151,6 +152,26 @@ pub enum MacosCmd {
     SetVolume(Percent),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteCmd {
+    Connect(Connection),
+    List {
+        server_name: ServerName,
+        session: Session,
+        listing: Listing,
+        page: Page,
+        revision: Revision,
+    },
+    Fetch(MediaFetch),
+    Prefetch(MediaFetch),
+    Search {
+        server_name: ServerName,
+        session: Session,
+        input: String,
+        revision: Revision,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Playback {
     Playing,
@@ -173,6 +194,7 @@ pub enum Effect {
     Audio(AudioCmd),
     Library(LibraryCmd),
     Macos(MacosCmd),
+    Remote(RemoteCmd),
     Config(ConfigCmd),
     WindowColors(WindowColorsCmd),
     Animate(Cue),

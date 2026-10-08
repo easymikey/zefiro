@@ -47,16 +47,15 @@ impl Lookahead {
     fn preloading(self, position: Duration, preloaded: &mut Option<Arc<Track>>) -> Cmd {
         if self.is_preload_due(position)
             && let Some(next) = self.next
+            && let Some(track_load) = TrackLoad::for_track(&next, self.revision)
         {
-            let preload_cmd_effect = Effect::Audio(AudioCmd::Preload(
-                TrackLoad::for_track(&next, self.revision),
-            ));
             let prefetch = self.cover_side.map(|side| {
                 Effect::Library(LibraryCmd::PrefetchCover(CoverJob {
-                    path: next.path().to_path_buf(),
+                    path: track_load.path.clone(),
                     side,
                 }))
             });
+            let preload_cmd_effect = Effect::Audio(AudioCmd::Preload(track_load));
             let cmd =
                 Cmd::from_iter(std::iter::once(preload_cmd_effect).chain(prefetch));
             *preloaded = Some(next);
@@ -245,19 +244,20 @@ pub(crate) fn handover_effects(
     playback_change: PlaybackChange,
     now: Moment,
 ) -> Vec<Effect> {
-    [
+    let append_history = track.local_path().is_some().then(|| {
         Effect::Library(LibraryCmd::Disk(DiskCmd::AppendHistory(
             HistoryEntry::from_track(track, now),
-        ))),
-        Effect::Macos(MacosCmd::NowPlaying(Some(Arc::clone(track)))),
-    ]
-    .into_iter()
-    .chain(playback_change.effects())
-    .chain([
-        Effect::Animate(Cue::TrackChanged),
-        Effect::Animate(Cue::PlaybackChanged(playback_change)),
-    ])
-    .collect()
+        )))
+    });
+    append_history
+        .into_iter()
+        .chain([Effect::Macos(MacosCmd::NowPlaying(Some(Arc::clone(track))))])
+        .chain(playback_change.effects())
+        .chain([
+            Effect::Animate(Cue::TrackChanged),
+            Effect::Animate(Cue::PlaybackChanged(playback_change)),
+        ])
+        .collect()
 }
 
 #[cfg(test)]
@@ -267,16 +267,41 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
+        cmd::{DiskCmd, Effect, LibraryCmd},
         domain::{
             bounded::Bounded,
+            cue::PlaybackChange,
             playhead::Playhead,
             revision::Revision,
+            server::{ServerName, ServerTrackId},
             speed::Speed,
             time::Moment,
-            track::{AudioFormat, Tags, Track, TrackParts},
+            track::{AudioFormat, Tags, Track, TrackParts, TrackSource},
         },
-        update::player::events::{Lookahead, next_decision},
+        update::player::events::{Lookahead, handover_effects, next_decision},
     };
+
+    fn appends_history(track: &Arc<Track>) -> bool {
+        handover_effects(track, PlaybackChange::Play, Moment::default())
+            .iter()
+            .any(|effect| {
+                matches!(
+                    effect,
+                    Effect::Library(LibraryCmd::Disk(DiskCmd::AppendHistory(_)))
+                )
+            })
+    }
+
+    #[test]
+    fn handover_effects_of_a_server_track_append_no_history() {
+        let server_track = Arc::new(Track::from(TrackSource::Server {
+            server_name: ServerName::new("home"),
+            server_track_id: ServerTrackId::new("tr-1"),
+        }));
+
+        assert!(appends_history(&a_track()));
+        assert!(!appends_history(&server_track));
+    }
 
     fn head_at(offset: u64, speed_factor: f32) -> Playhead {
         Playhead::anchored(

@@ -3,6 +3,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 use kernel::{
     domain::{
         appearance::{Appearance, CoverMode},
+        catalog::{Catalog, CatalogName},
         device::DeviceName,
         favorites::Favorites,
         history::HistoryEntry,
@@ -12,6 +13,7 @@ use kernel::{
         player::Player,
         playlist::Playlist,
         revision::Revisions,
+        server::Server,
         settings::Settings,
         startup::Shuffle,
         theme::{ThemeChoice, Themes},
@@ -28,7 +30,7 @@ use crate::{
     geometry::{CoverSizing, cover_sizing},
     key_hints::{KeyHintChords, KeyHintsView},
     overlay::{layer::OverlayView, settings::view::SettingsView},
-    playlist::view::{LibraryStatus, PlaylistView},
+    playlist::view::{CatalogView, LibraryStatus, PlaylistView},
     spectrum::Spectrum,
     status_line::StatusLineView,
     theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
@@ -75,6 +77,9 @@ pub struct Scene<'a> {
     pub scan_status: ScanStatus,
     pub bindings: &'a [KeyBinding],
     pub music_dir: &'a Path,
+    pub servers: &'a [Server],
+    pub catalog_name: &'a CatalogName,
+    pub catalogs: &'a [Catalog],
     pub presentation: ScenePresentation<'a>,
 }
 
@@ -104,13 +109,16 @@ impl<'a> Scene<'a> {
             scan_status: model.scan_status,
             bindings: model.workspace.keymap.bindings(),
             music_dir: &model.music_dir,
+            servers: &model.servers,
+            catalog_name: &model.catalog_name,
+            catalogs: &model.catalogs,
             presentation,
         }
     }
 
     #[must_use]
     pub fn current_track_path(&self) -> Option<&'a Path> {
-        self.player.current().map(|track| track.path())
+        self.player.current().and_then(|track| track.local_path())
     }
 
     #[must_use]
@@ -151,7 +159,10 @@ impl<'a> KeyHintsView<'a> {
                 | Overlay::ConfirmTrash(_)
                 | Overlay::JumpToTime(_)
                 | Overlay::TrackDetails(_)
-                | Overlay::MusicDir(_),
+                | Overlay::MusicDir(_)
+                | Overlay::AddServer(_)
+                | Overlay::Servers(_)
+                | Overlay::ConfirmRemove(_),
             ) => Self {
                 full_chips: &chords.chips,
                 compact_chips: &chords.compact_chips,
@@ -198,6 +209,8 @@ impl<'a> StatusLineView<'a> {
                 .transport
                 .sleep_timer
                 .map(|timer| timer.deadline_at.elapsed_since(scene.presentation.now)),
+            servers: scene.servers,
+            catalog_name: scene.catalog_name,
         }
     }
 }
@@ -213,6 +226,31 @@ impl<'a> PlaylistView<'a> {
             playing_index: scene.playing_index,
             library_status: scene.library_status,
             status_line_view: StatusLineView::from_scene(scene),
+            catalog_view: CatalogView::from_scene(scene),
+        }
+    }
+}
+
+impl<'a> CatalogView<'a> {
+    #[must_use]
+    pub(crate) fn from_scene(scene: &Scene<'a>) -> Option<Self> {
+        match scene.catalog_name {
+            CatalogName::Local => None,
+            CatalogName::Server(server_name) => Some(Self {
+                catalog: scene
+                    .catalogs
+                    .iter()
+                    .find(|catalog| catalog.server_name == *server_name)?,
+                server: scene
+                    .servers
+                    .iter()
+                    .find(|server| server.account.server_name == *server_name)?,
+                favorites: scene.favorites,
+                playing_track_source: scene
+                    .player
+                    .current()
+                    .map(|track| track.source()),
+            }),
         }
     }
 }
@@ -243,6 +281,7 @@ impl<'a> OverlayView<'a> {
             overlay: scene.overlay,
             tracks: &scene.playlist.tracks,
             history: scene.history,
+            servers: scene.servers,
             active_theme: scene.active_theme(),
             settings_view: SettingsView::from_scene(scene),
             bindings: scene.bindings,
@@ -281,10 +320,36 @@ fn painted_cover_mode(cover_mode: CoverMode, pixel_path: PixelPath) -> CoverMode
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::appearance::CoverMode;
+    use std::sync::Arc;
+
+    use kernel::domain::{
+        appearance::CoverMode,
+        catalog::{BrowseLevel, Catalog, Paging},
+        cursor::Cursor,
+        server::{
+            Account,
+            AlbumId,
+            Endpoint,
+            Listing,
+            Page,
+            RemoteError,
+            Server,
+            ServerAlbum,
+            ServerName,
+            ServerStatus,
+            ServerTrackId,
+            Session,
+            UserName,
+        },
+        track::{CatalogRow, Track},
+    };
     use rstest::rstest;
 
-    use crate::scene::{PixelPath, painted_cover_mode};
+    use crate::{
+        playlist::{pane::PlaylistWidget, view::PlaylistView},
+        scene::{PixelPath, painted_cover_mode},
+        test_support::{SceneSources, model_with_tracks, rendered},
+    };
 
     #[rstest]
     #[case::vinyl_with_graphics(
@@ -325,5 +390,160 @@ mod tests {
         #[case] expected: CoverMode,
     ) {
         assert_eq!(painted_cover_mode(cover_mode, pixel_path), expected);
+    }
+
+    fn album(album_id: &str, title: &str, year: Option<u16>) -> CatalogRow {
+        CatalogRow::Album(ServerAlbum {
+            album_id: AlbumId::new(album_id),
+            title: Arc::from(title),
+            artist: Arc::from("Miles Davis"),
+            year,
+            track_count: if year.is_some() { 5 } else { 1 },
+            duration: std::time::Duration::from_secs(2_744),
+        })
+    }
+
+    fn server_track(title: &str) -> CatalogRow {
+        let server_name = ServerName::new("home");
+        let server_track_id = ServerTrackId::new(title);
+        let source = kernel::domain::track::TrackSource::Server {
+            server_name,
+            server_track_id,
+        };
+        let tags = kernel::domain::track::Tags {
+            title: Some(title.to_string()),
+            ..kernel::domain::track::Tags::default()
+        };
+        let duration = std::time::Duration::from_secs(545);
+        CatalogRow::Track(Arc::new(Track::tagged(source, duration, tags)))
+    }
+
+    fn albums(paging: Paging) -> Catalog {
+        let mut catalog = Catalog::new(ServerName::new("home"));
+        let level = &mut catalog.albums_level;
+        level.catalog_rows = vec![
+            album("a-1", "Kind of Blue", Some(1959)),
+            album("a-2", "Sketches of Spain", None),
+        ];
+        level.cursor = Cursor::new(2);
+        level.paging = paging;
+        catalog
+    }
+
+    fn server_frame(
+        server_status: ServerStatus,
+        catalog: Catalog,
+        width: u16,
+    ) -> String {
+        let mut model = model_with_tracks(0);
+        let endpoint = Endpoint::parse("https://music.example.com").unwrap();
+        let user_name = UserName::new("mikey").unwrap();
+        let server_name = ServerName::new("home");
+        let account = Account {
+            server_name: server_name.clone(),
+            endpoint,
+            user_name,
+        };
+        model.servers = vec![Server {
+            account,
+            server_status,
+        }];
+        model.catalogs = vec![catalog];
+        model.catalog_name = kernel::domain::catalog::CatalogName::Server(server_name);
+        let sources = SceneSources::new(model);
+        let scene = sources.scene();
+        let widget =
+            PlaylistWidget::new(PlaylistView::from_scene(&scene), scene.active_theme());
+        rendered(width, 8, |frame| frame.render_widget(&widget, frame.area()))
+            .to_string()
+    }
+
+    fn online() -> ServerStatus {
+        let endpoint = Endpoint::parse("https://music.example.com").unwrap();
+        ServerStatus::Online(Session::new(endpoint, "u=mikey"))
+    }
+
+    fn no_albums(paging: Paging) -> Catalog {
+        let mut catalog = Catalog::new(ServerName::new("home"));
+        catalog.albums_level.paging = paging;
+        catalog
+    }
+
+    #[test]
+    fn a_server_tab_paints_its_path_and_its_albums() {
+        let text = server_frame(online(), albums(Paging::Complete), 80);
+        for expected in [
+            "home · Albums: newest",
+            "Miles Davis — Kind of Blue",
+            "1959 · 5 tracks · 45:44",
+            " 1 track · 45:44",
+        ] {
+            assert!(
+                text.contains(expected),
+                "{expected:?} missing from {text:?}"
+            );
+        }
+        insta::assert_snapshot!(text);
+    }
+
+    #[rstest]
+    #[case::loading(
+        "loading",
+        server_frame(online(), albums(Paging::Loading(Page(1))), 80),
+        "newest · loading albums…"
+    )]
+    #[case::empty(
+        "empty",
+        server_frame(online(), no_albums(Paging::Complete), 80),
+        "No albums"
+    )]
+    #[case::offline(
+        "offline",
+        server_frame(
+            ServerStatus::Offline(RemoteError::Moved { server_name: ServerName::new("home") }),
+            albums(Paging::Complete),
+            80,
+        ),
+        "○ music.example.com unreachable · c opens Servers"
+    )]
+    fn a_server_tab_paints_what_it_waits_for(
+        #[case] name: &str,
+        #[case] text: String,
+        #[case] expected: &str,
+    ) {
+        assert!(text.contains(expected), "got {text:?}");
+        insta::with_settings!({ snapshot_suffix => name }, {
+            insta::assert_snapshot!(text);
+        });
+    }
+
+    #[rstest]
+    #[case::not_asked(Paging::Next(Page(0)))]
+    #[case::loading(Paging::Loading(Page(0)))]
+    fn a_tab_before_its_first_page_paints_no_empty_label(#[case] paging: Paging) {
+        let text = server_frame(online(), no_albums(paging), 80);
+        assert!(!text.contains("No albums"), "got {text:?}");
+    }
+
+    #[test]
+    fn a_60_column_server_tab_keeps_the_album_details_at_the_right() {
+        let text = server_frame(online(), albums(Paging::Complete), 60);
+        assert!(text.contains("1959 · 5 tracks · 45:44"), "got {text:?}");
+        insta::assert_snapshot!(text);
+    }
+
+    #[test]
+    fn an_open_album_follows_the_path_and_lists_its_tracks_like_local_rows() {
+        let mut catalog = albums(Paging::Complete);
+        catalog.album_level = Some(BrowseLevel {
+            listing: Listing::Album(AlbumId::new("a-1")),
+            catalog_rows: vec![server_track("So What"), server_track("Blue in Green")],
+            cursor: Cursor::at(2, 1),
+            paging: Paging::Complete,
+        });
+        let text = server_frame(online(), catalog, 80);
+        assert!(text.contains("newest › Kind of Blue"), "got {text:?}");
+        assert!(text.contains("So What"), "got {text:?}");
+        insta::assert_snapshot!(text);
     }
 }

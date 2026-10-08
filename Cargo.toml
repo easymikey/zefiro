@@ -6,6 +6,7 @@ members = [
   "crates/kernel",
   "crates/library",
   "crates/macos",
+  "crates/remote",
   "crates/runtime",
   "crates/sifr",
   "crates/sifr-guards",
@@ -140,11 +141,15 @@ config = { path = "crates/config" }
 kernel = { path = "crates/kernel" }
 library = { path = "crates/library" }
 macos = { path = "crates/macos" }
+remote = { path = "crates/remote" }
 runtime = { path = "crates/runtime" }
 terminal = { path = "crates/terminal" }
 widgets = { path = "crates/widgets" }
 
 # prod
+apple-native-keyring-store = { version = "1", default-features = false, features = [
+  "keychain",
+] }
 arc-swap = { version = "1", default-features = false }
 bincode = { version = "2", default-features = false, features = ["serde", "std"] }
 block2 = { version = "0.6", default-features = false, features = ["alloc"] }
@@ -167,9 +172,11 @@ dispatch2 = { version = "0.3", default-features = false, features = ["std"] }
 fast_image_resize = { version = "=6.1.0", default-features = false }
 fastrand = { version = "2", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false }
+keyring-core = { version = "1", default-features = false }
 lofty = { version = "0.25", default-features = false, features = [
   "id3v2_compression_support",
 ] }
+md5 = { version = "0.8", default-features = false, features = ["std"] }
 notify = { version = "8", default-features = false, features = [
   "crossbeam-channel",
   "macos_fsevent",
@@ -270,6 +277,11 @@ toml_edit = { version = "0.23", default-features = false, features = [
 trash = { version = "5", default-features = false }
 triple_buffer = { version = "9", default-features = false }
 unicode-width = { version = "0.2", default-features = false }
+ureq = { version = "3.4", default-features = false, features = [
+  "gzip",
+  "platform-verifier",
+  "rustls",
+] }
 walkdir = { version = "2", default-features = false }
 
 # test

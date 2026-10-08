@@ -98,9 +98,11 @@ fn crate_of_rel(rel: &str) -> &str {
 
 fn crate_deps() -> BTreeMap<String, BTreeSet<String>> {
     let mut out = BTreeMap::new();
+    let members = support::workspace_members();
     for (crate_name, doc) in support::manifests() {
         let mut deps = BTreeSet::new();
-        support::sifr_dependencies(&doc, &mut deps);
+        support::dependency_names(&doc, support::DEPENDENCY_TABLES, &mut deps);
+        deps.retain(|dep_name| members.contains(dep_name));
         out.insert(crate_name, deps);
     }
     out

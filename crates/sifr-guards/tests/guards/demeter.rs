@@ -8,7 +8,7 @@ const ALLOWED_MODEL_FUNCTIONS: &[Allow] = &[Allow::new(
     "routes a SettingRow nudge across themes, settings and appearance",
 )];
 
-const EXEMPT_FILES: &[&str] = &["mod.rs", "startup.rs"];
+const EXEMPT_FILES: &[&str] = &["mod.rs", "parts.rs", "startup.rs"];
 
 const UPDATE_TREE: &str = "kernel/src/update/";
 
@@ -143,7 +143,7 @@ fn update_handlers_below_the_router_take_their_slices_not_a_whole_model() {
     }
 
     support::report_with_stale(
-        "demeter guard: update handlers below update/mod.rs and update/startup.rs take \
+        "demeter guard: update handlers below update/mod.rs, update/parts.rs and update/startup.rs take \
          only the Model slices they touch — a handler that genuinely spans 4+ slices, \
          or forwards the whole Model to one that does, belongs in \
          ALLOWED_MODEL_FUNCTIONS instead.",

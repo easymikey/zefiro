@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, sync::Arc};
+use std::{cmp::Reverse, path::Path, sync::Arc};
 
 use crate::domain::{index::ViewIndex, track::Track};
 
@@ -109,7 +109,10 @@ fn ranked(
 }
 
 fn best_track_score(query_chars: &[char], track: &Track) -> Option<i32> {
-    let file_name = track.path().file_name().and_then(|name| name.to_str());
+    let file_name = track
+        .local_path()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
     [
         track.tags().title.as_deref(),
         track.tags().artist.as_deref(),

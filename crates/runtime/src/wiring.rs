@@ -54,6 +54,7 @@ impl Wiring {
                 library: Port::Closed,
                 config: Port::Closed,
                 macos: Port::Closed,
+                remote: Port::Closed,
             },
             spectrum_tap: SpectrumTap::silent(),
             latest_receivers,
@@ -64,6 +65,8 @@ impl Wiring {
             #[cfg(target_os = "macos")]
             macos_channel: MacosChannel::new(),
         };
+        #[cfg(target_os = "macos")]
+        ::macos::keychain::set_default_store();
         for row in registry::REGISTRY
             .iter()
             .filter(|row| row.platform.is_present())
@@ -123,6 +126,10 @@ impl Wiring {
             }
             #[cfg(not(target_os = "macos"))]
             DriverName::Macos => {}
+            DriverName::Remote => {
+                let thread = (self.spawners.remote)(&setup)?;
+                self.ports.remote = Port::spawned(driver_name, thread);
+            }
         }
         Ok(())
     }
@@ -173,7 +180,7 @@ pub(crate) mod tests {
     use audio::tap::SpectrumTap;
     use crossbeam_channel::{Receiver, Sender};
     use kernel::{
-        cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd},
+        cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd, RemoteCmd},
         domain::driver::DriverName,
         message::{DriverEvent, Message},
     };
@@ -262,6 +269,10 @@ pub(crate) mod tests {
                 macos: Port::spawned(
                     DriverName::Macos,
                     idle_thread::<MacosCmd>(DriverName::Macos, &inbox),
+                ),
+                remote: Port::spawned(
+                    DriverName::Remote,
+                    idle_thread::<RemoteCmd>(DriverName::Remote, &inbox),
                 ),
             };
 

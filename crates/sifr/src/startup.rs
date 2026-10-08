@@ -516,7 +516,7 @@ mod tests {
         let paths: Vec<_> = startup
             .playlist_tracks
             .iter()
-            .map(|track| track.path().to_path_buf())
+            .map(|track| track.local_path().unwrap().to_path_buf())
             .collect();
         assert_eq!(paths, [playlists.join("a.flac"), playlists.join("b.flac")]);
         assert_eq!(startup.playlist_index, saved.playing_index());

@@ -39,6 +39,7 @@ pub struct Revisions {
     pub toast: Revision,
     pub sleep: Revision,
     pub lookahead: Revision,
+    pub list: Revision,
 }
 
 impl Revisions {

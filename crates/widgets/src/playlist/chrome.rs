@@ -27,7 +27,7 @@ pub(crate) fn pane_block<'a>(title: Option<Line<'a>>, border: Color) -> Block<'a
     }
 }
 
-fn title_budget(area: Rect) -> Cells {
+pub(crate) fn title_budget(area: Rect) -> Cells {
     Cells(
         area.width
             .saturating_sub(BORDER_COLUMNS)
@@ -66,6 +66,8 @@ mod tests {
             scanning_label: "Scanning…",
             theme_name: "noir",
             remaining: None,
+            servers: &[],
+            catalog_name: &kernel::domain::catalog::CatalogName::Local,
         }
     }
 

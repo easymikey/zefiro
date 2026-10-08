@@ -1,0 +1,16 @@
+---
+source: crates/widgets/src/overlay/confirm_remove.rs
+expression: "rendered(60, 12, |frame|\nframe.render_widget(&prompt, frame.area())).to_string()"
+---
+"                                                            "
+"                                                            "
+"                                                            "
+"                                                            "
+"                ╭ REMOVE SERVER? ──────────╮                "
+"                │ Remove "home" from sifr  │                "
+"                │ Enter remove · Esc back  │                "
+"                ╰──────────────────────────╯                "
+"                                                            "
+"                                                            "
+"                                                            "
+"                                                            "

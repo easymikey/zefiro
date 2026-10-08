@@ -5,7 +5,7 @@ use std::{
 
 use crossbeam_channel::{Sender, TrySendError};
 use kernel::{
-    cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd},
+    cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd, RemoteCmd},
     domain::driver::{DriverName, DriverStatus, Drivers},
     message::DriverEvent,
 };
@@ -117,6 +117,7 @@ pub(crate) struct Ports {
     pub(crate) library: Port<LibraryCmd>,
     pub(crate) config: Port<ConfigCmd>,
     pub(crate) macos: Port<MacosCmd>,
+    pub(crate) remote: Port<RemoteCmd>,
 }
 
 impl Ports {
@@ -129,6 +130,7 @@ impl Ports {
             DriverName::Library => self.library.congestion(),
             DriverName::Config => self.config.congestion(),
             DriverName::Macos => self.macos.congestion(),
+            DriverName::Remote => self.remote.congestion(),
         }
     }
 
@@ -138,6 +140,7 @@ impl Ports {
             DriverName::Library => self.library.hang_up(),
             DriverName::Config => self.config.hang_up(),
             DriverName::Macos => self.macos.hang_up(),
+            DriverName::Remote => self.remote.hang_up(),
         }
     }
 
@@ -150,6 +153,7 @@ impl Ports {
             DriverName::Library => self.library.join(),
             DriverName::Config => self.config.join(),
             DriverName::Macos => self.macos.join(),
+            DriverName::Remote => self.remote.join(),
         }
     }
 }

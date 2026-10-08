@@ -664,3 +664,26 @@ fn every_compiled_binding_is_what_its_chord_routes_to() {
         assert_eq!(route(&workspace, press), Some(binding.message), "{chord}");
     }
 }
+
+fn delete_rows(keymap_overrides: &KeymapOverrides) -> Vec<String> {
+    bindings(keymap_overrides)
+        .iter()
+        .filter(|binding| binding.action == Some(Action::Delete))
+        .map(|binding| format!("{:?} {}", binding.key_context, binding.pattern))
+        .collect()
+}
+
+#[test]
+fn d_in_servers_is_bound_to_the_delete_action() {
+    assert_eq!(
+        delete_rows(&KeymapOverrides::default()),
+        ["Playlist d", "Servers d"]
+    );
+}
+
+#[test]
+fn a_configured_delete_chord_leaves_d_in_servers() {
+    let keymap_overrides =
+        KeymapOverrides::from([(Action::Delete, KeyOverride::from("x"))]);
+    assert_eq!(delete_rows(&keymap_overrides), ["Playlist x", "Servers d"]);
+}

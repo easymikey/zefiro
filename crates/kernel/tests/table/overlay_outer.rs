@@ -9,8 +9,27 @@ use kernel::{
         direction::Direction,
         index::ViewIndex,
         model::Model,
-        overlay::{MusicDirError, Overlay, OverlayName, SearchQuery, TextEntry},
+        overlay::{
+            MusicDirError,
+            Overlay,
+            OverlayName,
+            SearchQuery,
+            ServerPrompt,
+            TextEntry,
+        },
         playlist::{PlaylistFileName, PlaylistFileNameError},
+        server::{
+            Account,
+            Connection,
+            Credential,
+            Endpoint,
+            EndpointError,
+            Secret,
+            SecretError,
+            ServerName,
+            UserName,
+            UserNameError,
+        },
         setting_row::SettingRow,
         time::TimecodeError,
     },
@@ -23,6 +42,7 @@ use kernel::{
         QueueRequest,
         SearchEdit,
         SearchRequest,
+        ServerRequest,
         TextRequest,
     },
     update::{
@@ -97,6 +117,52 @@ fn jump(input: &str, error: Option<TimecodeError>) -> Overlay {
 
 fn source_dir(input: &str, error: Option<MusicDirError>) -> Overlay {
     Overlay::MusicDir(entry(input, error))
+}
+
+fn link_step(input: &str, error: Option<EndpointError>) -> Overlay {
+    Overlay::AddServer(ServerPrompt::Link {
+        origin_server_name: None,
+        text_entry: entry(input, error),
+    })
+}
+
+fn endpoint() -> Endpoint {
+    Endpoint::parse("https://music.example.com").unwrap()
+}
+
+fn user_name() -> UserName {
+    UserName::new("alice").unwrap()
+}
+
+fn user_step(input: &str, error: Option<UserNameError>) -> Overlay {
+    Overlay::AddServer(ServerPrompt::User {
+        origin_server_name: None,
+        endpoint: endpoint(),
+        text_entry: entry(input, error),
+    })
+}
+
+fn password_step(input: &str, error: Option<SecretError>) -> Overlay {
+    Overlay::AddServer(ServerPrompt::Password {
+        origin_server_name: None,
+        endpoint: endpoint(),
+        user_name: user_name(),
+        text_entry: entry(input, error),
+    })
+}
+
+fn added_server(password: &str) -> Cmd {
+    closed(Cmd::message(Message::Server(ServerRequest::Add {
+        connection: Connection {
+            account: Account {
+                server_name: ServerName::new("music.example.com"),
+                endpoint: endpoint(),
+                user_name: user_name(),
+            },
+            credential: Credential::Typed(Secret::new(password).unwrap()),
+        },
+        origin_server_name: None,
+    })))
 }
 
 fn open(overlay: Overlay) -> OverlayMessage {
@@ -209,6 +275,24 @@ fn releases() -> Cmd {
 #[case::source_dir_confirm_saves_the_folder(Some(source_dir("/music", None)), OverlayMessage::Confirm, Ok((None, saved_music_dir("/music"))))]
 #[case::music_dir_confirm_saves_the_folder_trimmed(Some(source_dir("  /music  ", None)), OverlayMessage::Confirm, Ok((None, saved_music_dir("/music"))))]
 #[case::source_dir_confirm_empty_stays_open_with_the_error(Some(source_dir("  ", None)), OverlayMessage::Confirm, Ok((Some(source_dir("  ", Some(MusicDirError::Empty))), Cmd::none())))]
+#[case::add_server_link_moves_to_the_user(Some(link_step(" https://music.example.com/ ", None)), OverlayMessage::Confirm, Ok((Some(user_step("", None)), Cmd::none())))]
+#[case::add_server_bad_link_stays_with_the_scheme_error(Some(link_step("music.example.com", None)), OverlayMessage::Confirm, Ok((Some(link_step("music.example.com", Some(EndpointError::Scheme))), Cmd::none())))]
+#[case::add_server_empty_user_stays(Some(user_step("", None)), OverlayMessage::Confirm, Ok((Some(user_step("", Some(UserNameError::Empty))), Cmd::none())))]
+#[case::add_server_user_moves_to_the_password(Some(user_step("alice", None)), OverlayMessage::Confirm, Ok((Some(password_step("", None)), Cmd::none())))]
+#[case::add_server_empty_password_stays(Some(password_step("", None)), OverlayMessage::Confirm, Ok((Some(password_step("", Some(SecretError::Empty))), Cmd::none())))]
+#[case::add_server_password_closes_and_adds_the_server(Some(password_step("hunter 2", None)), OverlayMessage::Confirm, Ok((None, added_server("hunter 2"))))]
+#[case::add_server_link_refuses_a_space(
+    Some(link_step("https://", None)),
+    text(TextRequest::Char(' ')),
+    Err(Unhandled)
+)]
+#[case::add_server_user_refuses_a_space(
+    Some(user_step("al", None)),
+    text(TextRequest::Char(' ')),
+    Err(Unhandled)
+)]
+#[case::add_server_link_types_a_char_and_clears_the_error(Some(link_step("x", Some(EndpointError::Scheme))), text(TextRequest::Char('/')), Ok((Some(link_step("x/", None)), Cmd::none())))]
+#[case::add_server_password_takes_a_space(Some(password_step("a", None)), text(TextRequest::Char(' ')), Ok((Some(password_step("a ", None)), Cmd::none())))]
 #[case::save_types_a_char(Some(save("mi", None)), text(TextRequest::Char('x')), Ok((Some(save("mix", None)), Cmd::none())))]
 #[case::save_backspace_on_empty_is_refused(
     Some(save("", None)),
@@ -335,4 +419,21 @@ fn music_dir_prompt_never_prefills_a_lossy_path() {
     let path = std::path::PathBuf::from(OsStr::from_bytes(b"/music/\xff"));
     let overlay = opened_music_dir(path);
     assert_eq!(overlay, Some(source_dir("", None)));
+}
+
+#[test]
+fn add_server_opens_on_the_link_step() {
+    let mut model = Model::default();
+    send(
+        &mut model,
+        Message::Overlay(OverlayRequest::Open(OverlayName::AddServer)),
+    );
+    assert_eq!(model.workspace.overlay, Some(link_step("", None)));
+}
+
+#[test]
+fn the_model_debug_in_the_password_step_holds_no_typed_character() {
+    let mut model = Model::default();
+    model.workspace.overlay = Some(password_step("zq7#xv", None));
+    assert!(!format!("{model:?}").contains("zq7#xv"));
 }

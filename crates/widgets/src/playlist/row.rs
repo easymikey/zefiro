@@ -19,7 +19,7 @@ use crate::{
     pixels::numeric::small_count_u16,
     playlist::view::PlaylistView,
     primitive::{
-        list_chrome::scroll_offset,
+        list_chrome::{ScrollAreas, scroll_offset},
         marker::{FAVORITE_COLUMNS, Favorite, QueueNumber},
         track_row::{self, Playing, Selected, TrackRow},
     },
@@ -34,19 +34,29 @@ pub struct RowWindow {
     pub playlist_len: usize,
 }
 
-pub(crate) struct WindowFit<'a> {
-    pub(crate) view: PlaylistView<'a>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlaylistAreas {
+    pub pane: Rect,
+    pub scroll_areas: ScrollAreas,
+    pub window: RowWindow,
+    pub selected_area: Option<Rect>,
+}
+
+pub(crate) struct WindowFit {
+    pub(crate) selected: ViewIndex,
+    pub(crate) playing_index: Option<ViewIndex>,
+    pub(crate) playlist_len: usize,
     pub(crate) height: u16,
 }
 
-pub(crate) fn row_window(fit: &WindowFit<'_>) -> RowWindow {
-    let &WindowFit { view, height } = fit;
-    let selected_line = if view.playlist.tracks.is_empty() {
-        0
-    } else {
-        view.selected.get()
-    };
-    let playlist_len = view.playlist.tracks.len();
+pub(crate) fn row_window(fit: &WindowFit) -> RowWindow {
+    let &WindowFit {
+        selected,
+        playing_index,
+        playlist_len,
+        height,
+    } = fit;
+    let selected_line = if playlist_len == 0 { 0 } else { selected.get() };
     let scrolled = small_count_u16(scroll_offset(
         RowIndex::new(selected_line),
         playlist_len,
@@ -55,8 +65,7 @@ pub(crate) fn row_window(fit: &WindowFit<'_>) -> RowWindow {
 
     let height = usize::from(height);
     let window = usize::from(scrolled)..usize::from(scrolled) + height;
-    let offset = view
-        .playing_index
+    let offset = playing_index
         .map(ViewIndex::get)
         .filter(|playing_line| height > 0 && !window.contains(playing_line))
         .map(|playing_line| {
@@ -233,20 +242,11 @@ pub fn favorite_cell(area: Rect) -> Rect {
 mod tests {
     use std::{path::Path, sync::Arc};
 
-    use kernel::domain::{
-        favorites::Favorites,
-        index::ViewIndex,
-        playlist::Playlist,
-        track::TrackSource,
-    };
+    use kernel::domain::{index::ViewIndex, playlist::Playlist, track::TrackSource};
 
     use crate::{
-        playlist::{
-            row::{WindowFit, queue_numbers, row_window},
-            view::{LibraryStatus, PlaylistView},
-        },
+        playlist::row::{WindowFit, queue_numbers, row_window},
         primitive::marker::QueueNumber,
-        status_line::StatusLineView,
     };
 
     fn library(count: usize) -> Playlist {
@@ -289,51 +289,31 @@ mod tests {
         assert!(!positions.contains_key::<TrackSource>(&source(0)));
     }
 
-    fn view<'a>(
-        playlist: &'a Playlist,
-        favorites: &'a Favorites,
-        selected: ViewIndex,
-    ) -> PlaylistView<'a> {
-        PlaylistView {
-            playlist,
-            queue: &[],
-            favorites,
-            selected,
-            playing_index: None,
-            library_status: LibraryStatus::Ready,
-            status_line_view: StatusLineView {
-                shuffle: kernel::domain::startup::Shuffle::Off,
-                repeat_mode: kernel::domain::playlist::RepeatMode::Off,
-                queue_len: 0,
-                selected,
-                playlist_len: playlist.tracks.len(),
-                scan_status: kernel::domain::model::ScanStatus::Idle,
-                scanning_label: "Scanning…",
-                theme_name: "noir",
-                remaining: None,
-            },
+    fn fit(
+        selected_line: usize,
+        playing_index: Option<usize>,
+        playlist_len: usize,
+    ) -> WindowFit {
+        WindowFit {
+            selected: ViewIndex::new(selected_line),
+            playing_index: playing_index.map(ViewIndex::new),
+            playlist_len,
+            height: 10,
         }
     }
 
     #[test]
     fn the_window_starts_at_zero_while_the_selection_fits_on_screen() {
-        let playlist = library(10);
-        let favorites = Favorites::default();
         let window = row_window(&WindowFit {
-            view: view(&playlist, &favorites, ViewIndex::new(2)),
             height: 5,
+            ..fit(2, None, 10)
         });
         assert_eq!((window.start, window.end), (0, 5));
     }
 
     #[test]
     fn the_window_follows_the_selection_past_the_first_screen() {
-        let playlist = library(40);
-        let favorites = Favorites::default();
-        let window = row_window(&WindowFit {
-            view: view(&playlist, &favorites, ViewIndex::new(35)),
-            height: 10,
-        });
+        let window = row_window(&fit(35, None, 40));
         assert!(window.start > 0, "the window must scroll to reach 35");
         assert!(window.end - window.start <= 10);
         assert!((window.start..window.end).contains(&35));
@@ -341,15 +321,7 @@ mod tests {
 
     #[test]
     fn the_window_shifts_to_keep_the_playing_row_visible_when_the_cursor_still_fits() {
-        let playlist = library(40);
-        let favorites = Favorites::default();
-        let window = row_window(&WindowFit {
-            view: PlaylistView {
-                playing_index: Some(ViewIndex::new(32)),
-                ..view(&playlist, &favorites, ViewIndex::new(30))
-            },
-            height: 10,
-        });
+        let window = row_window(&fit(30, Some(32), 40));
         assert!((window.start..window.end).contains(&32));
         assert!((window.start..window.end).contains(&30));
     }

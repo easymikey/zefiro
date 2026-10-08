@@ -12,6 +12,7 @@ mod overlay_outer;
 mod player;
 mod router;
 mod search;
+mod server_tab;
 mod settings;
 mod settings_appearance;
 mod toasts;

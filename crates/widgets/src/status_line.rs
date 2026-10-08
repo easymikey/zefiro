@@ -1,17 +1,27 @@
 use std::{borrow::Cow, time::Duration};
 
 use kernel::domain::{
+    catalog::CatalogName,
     geometry::Cells,
     index::ViewIndex,
     model::ScanStatus,
     playlist::RepeatMode,
+    server::{Server, ServerStatus},
     startup::Shuffle,
     time::Moment,
 };
 use ratatui::{style::Color, text::Line};
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     primitive::{
+        glyphs::{
+            CONNECTING_GLYPH,
+            CREDENTIALS_GLYPH,
+            DOT_SEPARATOR,
+            OFFLINE_GLYPH,
+            TITLE_SEPARATOR,
+        },
         span::{StyledText, line, text},
         truncate::truncate_line,
     },
@@ -36,6 +46,8 @@ pub(crate) struct StatusLineView<'a> {
     pub(crate) scanning_label: &'a str,
     pub(crate) theme_name: &'a str,
     pub(crate) remaining: Option<Duration>,
+    pub(crate) servers: &'a [Server],
+    pub(crate) catalog_name: &'a CatalogName,
 }
 
 const NAME: &str = "Playlist";
@@ -50,6 +62,49 @@ fn counts<'a>(status_line_view: StatusLineView<'a>) -> Cow<'a, str> {
         ScanStatus::Scanning => Cow::Borrowed(status_line_view.scanning_label),
         ScanStatus::Tagging { done, total } => {
             Cow::Owned(format!("{total} tracks · tagging {done}/{total}"))
+        }
+    }
+}
+
+fn glyph(server_status: &ServerStatus) -> Option<&'static str> {
+    match server_status {
+        ServerStatus::Connecting => Some(CONNECTING_GLYPH),
+        ServerStatus::Online(_session) => None,
+        ServerStatus::Offline(remote_error) => Some(if remote_error.is_credentials() {
+            CREDENTIALS_GLYPH
+        } else {
+            OFFLINE_GLYPH
+        }),
+    }
+}
+
+fn chip(server: &Server) -> impl Iterator<Item = &str> {
+    let state = glyph(&server.server_status);
+    [
+        Some(server.account.server_name.as_str()),
+        state.and(Some(" ")),
+        state,
+    ]
+    .into_iter()
+    .flatten()
+}
+
+fn tone(
+    status_line_view: StatusLineView<'_>,
+    server: Option<&Server>,
+    colors: &Colors<Color>,
+) -> Color {
+    match (status_line_view.catalog_name, server) {
+        (CatalogName::Server(server_name), Some(server))
+            if *server_name == server.account.server_name =>
+        {
+            colors.accent
+        }
+        (CatalogName::Local, None) if !status_line_view.servers.is_empty() => {
+            colors.accent
+        }
+        (CatalogName::Server(_) | CatalogName::Local, Some(_) | None) => {
+            colors.muted_foreground
         }
     }
 }
@@ -78,15 +133,33 @@ pub(crate) fn status_line<'a>(
             text(value).fg(colors.accent),
         ]
     };
-    let flag_separator =
-        || text(crate::primitive::glyphs::DOT_SEPARATOR).fg(colors.muted_foreground);
+    let flag_separator = || text(DOT_SEPARATOR).fg(colors.muted_foreground);
 
-    let head = [
-        text(NAME).fg(colors.muted_foreground),
-        text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(colors.muted_foreground),
-        text(pos_total).fg(colors.accent),
-        text(crate::primitive::glyphs::TITLE_SEPARATOR).fg(colors.muted_foreground),
-    ];
+    let chips = status_line_view
+        .servers
+        .iter()
+        .scan(
+            NAME.width() + 2 * TITLE_SEPARATOR.width() + pos_total.width(),
+            |used, server| {
+                *used += DOT_SEPARATOR.width()
+                    + chip(server).map(UnicodeWidthStr::width).sum::<usize>();
+                (*used <= row_width.count()).then_some(server)
+            },
+        )
+        .flat_map(|server| {
+            let tone = tone(status_line_view, Some(server), colors);
+            [text(DOT_SEPARATOR).fg(colors.muted_foreground)]
+                .into_iter()
+                .chain(chip(server).map(move |piece| text(piece).fg(tone)))
+        });
+    let head = [text(NAME).fg(tone(status_line_view, None, colors))]
+        .into_iter()
+        .chain(chips)
+        .chain([
+            text(TITLE_SEPARATOR).fg(colors.muted_foreground),
+            text(pos_total).fg(colors.accent),
+            text(TITLE_SEPARATOR).fg(colors.muted_foreground),
+        ]);
     let flags: [(&'static str, Cow<'a, str>); 4] = [
         (SHUFFLE_LABEL, Cow::Borrowed(shuffle)),
         (REPEAT_LABEL, Cow::Borrowed(repeat)),
@@ -99,16 +172,14 @@ pub(crate) fn status_line<'a>(
     let sleep = status_line_view
         .remaining
         .map(|sleep_left| (SLEEP_LABEL, Cow::Owned(sleep_label(sleep_left))));
-    let pieces =
-        head.into_iter()
-            .chain(flags.into_iter().chain(sleep).enumerate().flat_map(
-                |(index, (label, value))| {
-                    (index > 0)
-                        .then(flag_separator)
-                        .into_iter()
-                        .chain(flag(label, value))
-                },
-            ));
+    let pieces = head.chain(flags.into_iter().chain(sleep).enumerate().flat_map(
+        |(index, (label, value))| {
+            (index > 0)
+                .then(flag_separator)
+                .into_iter()
+                .chain(flag(label, value))
+        },
+    ));
 
     truncate_line(line(pieces), row_width.count())
 }
@@ -130,18 +201,31 @@ mod tests {
     use std::time::Duration;
 
     use kernel::domain::{
+        catalog::CatalogName,
         geometry::Cells,
         index::ViewIndex,
         model::ScanStatus,
         playlist::RepeatMode,
+        server::{
+            Account,
+            ApiCode,
+            Endpoint,
+            RemoteError,
+            Server,
+            ServerName,
+            ServerStatus,
+            Session,
+            UserName,
+        },
         startup::Shuffle,
         time::Moment,
     };
-    use ratatui::style::Color;
+    use ratatui::{layout::Rect, style::Color};
     use rstest::rstest;
     use unicode_width::UnicodeWidthStr;
 
     use crate::{
+        playlist::chrome::pane_title,
         repaint::Presence,
         status_line::{StatusLineView, sleep_frame_due, sleep_label, status_line},
         test_support::noir,
@@ -163,6 +247,8 @@ mod tests {
             scanning_label: "Scanning…",
             theme_name: "rose-pine",
             remaining: None,
+            servers: &[],
+            catalog_name: &CatalogName::Local,
         }
     }
 
@@ -283,5 +369,110 @@ mod tests {
         let now = Moment::new(Duration::from_secs(1_000));
 
         assert_eq!(sleep_frame_due(None, Presence::Shown, now), None);
+    }
+
+    fn server(name: &str, server_status: ServerStatus) -> Server {
+        Server {
+            account: Account {
+                server_name: ServerName::new(name),
+                endpoint: Endpoint::parse("https://music.example").unwrap(),
+                user_name: UserName::new("mikey").unwrap(),
+            },
+            server_status,
+        }
+    }
+
+    fn three_servers() -> [Server; 3] {
+        [
+            server("living-room", ServerStatus::Connecting),
+            server(
+                "office",
+                ServerStatus::Offline(RemoteError::Moved {
+                    server_name: ServerName::new("office"),
+                }),
+            ),
+            server(
+                "studio",
+                ServerStatus::Offline(RemoteError::Api {
+                    server_name: ServerName::new("studio"),
+                    api_code: ApiCode(40),
+                }),
+            ),
+        ]
+    }
+
+    #[test]
+    fn one_online_server_follows_an_accent_playlist_chip() {
+        let servers = [server(
+            "home",
+            ServerStatus::Online(Session::new(
+                Endpoint::parse("https://music.example").unwrap(),
+                "u=mikey",
+            )),
+        )];
+        let status_line_view = StatusLineView {
+            servers: &servers,
+            ..view()
+        };
+        let line = status_line(status_line_view, &colors(), Cells(100));
+        assert_eq!(
+            line.to_string(),
+            "Playlist · home ── 3/12 ── shuffle on · repeat all · queue 7 · theme rose-pine"
+        );
+        insta::assert_debug_snapshot!(line);
+    }
+
+    #[test]
+    fn a_server_tab_moves_the_accent_to_its_chip() {
+        let servers = [server(
+            "home",
+            ServerStatus::Online(Session::new(
+                Endpoint::parse("https://music.example").unwrap(),
+                "u=mikey",
+            )),
+        )];
+        let catalog_name = CatalogName::Server(ServerName::new("home"));
+        let status_line_view = StatusLineView {
+            servers: &servers,
+            catalog_name: &catalog_name,
+            ..view()
+        };
+        let line = status_line(status_line_view, &colors(), Cells(100));
+        let tone = |content: &str| {
+            line.spans
+                .iter()
+                .find(|span| span.content == content)
+                .and_then(|span| span.style.fg)
+        };
+        assert_eq!(tone("home"), Some(colors().accent));
+        assert_eq!(tone("Playlist"), Some(colors().muted_foreground));
+    }
+
+    #[test]
+    fn each_server_chip_wears_the_glyph_of_its_state() {
+        let servers = three_servers();
+        let status_line_view = StatusLineView {
+            servers: &servers,
+            ..view()
+        };
+        insta::assert_snapshot!(
+            status_line(status_line_view, &colors(), Cells(120)).to_string()
+        );
+    }
+
+    #[test]
+    fn a_60_column_pane_drops_server_chips_before_the_counts() {
+        let servers = three_servers();
+        let theme = noir();
+        let theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let status_line_view = StatusLineView {
+            servers: &servers,
+            ..view()
+        };
+        let title =
+            pane_title(Rect::new(0, 0, 60, 1), status_line_view, &theme).to_string();
+        assert!(title.contains("office ○ ── 3/12 ── "), "got {title:?}");
+        assert!(!title.contains("studio"), "got {title:?}");
+        insta::assert_snapshot!(title);
     }
 }

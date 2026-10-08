@@ -23,7 +23,7 @@ use widgets::{
         timings::{AnimationTimings, TIMINGS},
     },
     card::metrics::CardMetrics,
-    playlist::{pane::PlaylistAreas, row::RowWindow},
+    playlist::row::{PlaylistAreas, RowWindow},
     screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
     theme::{
         backdrop_style::BackdropStyle,

@@ -235,7 +235,7 @@ fn jump_request_starts_selected_track() {
     assert_eq!(model.playlist.playing_index(), Some(ViewIndex::new(2)));
     assert!(matches!(model.player, Player::Loading(..)));
     let loading = model.player.current().unwrap();
-    assert_eq!(loading.path(), Path::new("/tmp/track2.flac"));
+    assert_eq!(loading.local_path(), Some(Path::new("/tmp/track2.flac")));
     assert!(effects(cmd).iter().any(
         |e| matches!(e, Effect::Audio(AudioCmd::Load(TrackLoad { path: p, .. })) if p == "/tmp/track2.flac")
     ));
@@ -605,6 +605,7 @@ fn start_track_emits_nowplaying_and_playing_state() {
             | Effect::Audio(_)
             | Effect::Library(_)
             | Effect::Config(_)
+            | Effect::Remote(_)
             | Effect::Animate(_)
             | Effect::RollShuffle(..)
             | Effect::WindowColors(_)
@@ -618,7 +619,7 @@ fn start_track_emits_nowplaying_and_playing_state() {
     assert_eq!(shown.tags().artist.as_deref(), Some("Artist"));
     assert_eq!(shown.tags().album, None);
     assert_eq!(shown.duration(), Some(Duration::from_secs(200)));
-    assert_eq!(shown.path(), Path::new("/tmp/track0.flac"));
+    assert_eq!(shown.local_path(), Some(Path::new("/tmp/track0.flac")));
 }
 
 #[test]

@@ -55,6 +55,7 @@ fn found(cmd: &Cmd) -> Vec<Cue> {
             | Effect::Library(_)
             | Effect::Macos(_)
             | Effect::Config(_)
+            | Effect::Remote(_)
             | Effect::WindowColors(_)
             | Effect::RollShuffle(..)
             | Effect::After { .. }

@@ -4,6 +4,7 @@ use crate::{
         direction::Direction,
         key::{Key, KeyCode, Modifiers},
         keymap::{Action, KeyContext},
+        overlay::OverlayName,
     },
     message::{
         HistoryRequest,
@@ -261,6 +262,56 @@ fn track_details_rows() -> Vec<KeyBinding> {
     )
 }
 
+fn servers_rows() -> Vec<KeyBinding> {
+    let navigate = |direction| overlay(OverlayRequest::Navigate(direction));
+    [
+        rows_in(
+            KeyContext::Servers,
+            vec![
+                (letter('j'), navigate(Direction::Next)),
+                (plain(KeyCode::Down), navigate(Direction::Next)),
+                (letter('k'), navigate(Direction::Previous)),
+                (plain(KeyCode::Up), navigate(Direction::Previous)),
+                (plain(KeyCode::Enter), confirm()),
+                (
+                    letter('u'),
+                    overlay(OverlayRequest::Open(OverlayName::AddServer)),
+                ),
+                (plain(KeyCode::Esc), close()),
+                (letter('q'), close()),
+            ],
+        ),
+        vec![
+            KeyBinding {
+                pattern: letter('t'),
+                message: overlay(OverlayRequest::Reconnect),
+                action: Some(Action::Reconnect),
+                key_context: KeyContext::Servers,
+            },
+            KeyBinding {
+                pattern: letter('d'),
+                message: overlay(OverlayRequest::Open(OverlayName::ConfirmRemove)),
+                action: Some(Action::Delete),
+                key_context: KeyContext::Servers,
+            },
+        ],
+    ]
+    .concat()
+}
+
+fn confirm_remove_rows() -> Vec<KeyBinding> {
+    rows_in(
+        KeyContext::ConfirmRemove,
+        vec![
+            (plain(KeyCode::Enter), confirm()),
+            (
+                plain(KeyCode::Esc),
+                overlay(OverlayRequest::Open(OverlayName::Servers)),
+            ),
+        ],
+    )
+}
+
 pub(crate) fn rows() -> Vec<KeyBinding> {
     [
         text_prompt_rows(),
@@ -271,6 +322,8 @@ pub(crate) fn rows() -> Vec<KeyBinding> {
         confirm_trash_rows(),
         jump_rows(),
         track_details_rows(),
+        servers_rows(),
+        confirm_remove_rows(),
     ]
     .concat()
 }

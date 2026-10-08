@@ -42,11 +42,12 @@ pub(crate) fn save(
 
 fn to_m3u(tracks: &[Arc<Track>]) -> String {
     std::iter::once("#EXTM3U\n".to_string())
-        .chain(tracks.iter().map(|track| entry_line(track)))
+        .chain(tracks.iter().filter_map(|track| entry_line(track)))
         .collect()
 }
 
-fn entry_line(track: &Track) -> String {
+fn entry_line(track: &Track) -> Option<String> {
+    let path = track.local_path()?;
     let seconds = track.duration().map_or(0, |duration| duration.as_secs());
     let label = match (&track.tags().artist, &track.tags().title) {
         (Some(artist), Some(title)) => Cow::Owned(format!("{artist} - {title}")),
@@ -57,7 +58,7 @@ fn entry_line(track: &Track) -> String {
     } else {
         label
     };
-    format!("#EXTINF:{seconds},{label}\n{}\n", track.path().display())
+    Some(format!("#EXTINF:{seconds},{label}\n{}\n", path.display()))
 }
 
 #[must_use]
@@ -81,7 +82,8 @@ mod tests {
 
     use kernel::domain::{
         playlist::PlaylistFileName,
-        track::{Tags, Track},
+        server::{ServerName, ServerTrackId},
+        track::{Tags, Track, TrackSource},
     };
     use rstest::rstest;
 
@@ -180,6 +182,22 @@ mod tests {
         std::fs::set_permissions(&saved, permissions).unwrap();
 
         playlists::save(&dirs, &name("Locked"), &[track]).unwrap();
+    }
+
+    #[test]
+    fn an_m3u_save_writes_only_the_local_lines() {
+        let tracks = vec![
+            track("/music/a.flac", 123.0, ("Artist A", "Title A")),
+            Arc::new(Track::from(TrackSource::Server {
+                server_name: ServerName::new("home"),
+                server_track_id: ServerTrackId::new("tr-1"),
+            })),
+        ];
+
+        assert_eq!(
+            to_m3u(&tracks),
+            "#EXTM3U\n#EXTINF:123,Artist A - Title A\n/music/a.flac\n"
+        );
     }
 
     #[test]

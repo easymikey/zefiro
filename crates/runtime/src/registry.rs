@@ -23,7 +23,7 @@ pub(crate) struct DriverRow {
     pub(crate) platform: Platform,
 }
 
-pub(crate) const REGISTRY: [DriverRow; 4] = [
+pub(crate) const REGISTRY: [DriverRow; 5] = [
     DriverRow {
         driver_name: DriverName::Audio,
         thread_name: "sifr-audio",
@@ -44,15 +44,21 @@ pub(crate) const REGISTRY: [DriverRow; 4] = [
         thread_name: "sifr-config",
         platform: Platform::Every,
     },
+    DriverRow {
+        driver_name: DriverName::Remote,
+        thread_name: "sifr-remote",
+        platform: Platform::Every,
+    },
 ];
 
 pub(crate) const fn row(driver_name: DriverName) -> &'static DriverRow {
-    let [audio, macos, library, config] = &REGISTRY;
+    let [audio, macos, library, config, remote] = &REGISTRY;
     match driver_name {
         DriverName::Audio => audio,
         DriverName::Macos => macos,
         DriverName::Library => library,
         DriverName::Config => config,
+        DriverName::Remote => remote,
     }
 }
 
@@ -70,7 +76,8 @@ mod tests {
                 DriverName::Audio,
                 DriverName::Macos,
                 DriverName::Library,
-                DriverName::Config
+                DriverName::Config,
+                DriverName::Remote
             ]
         );
         for driver in DriverName::ALL {

@@ -1,6 +1,6 @@
 use audio::tap::SpectrumTap;
 #[cfg(target_os = "macos")] use kernel::cmd::MacosCmd;
-use kernel::cmd::{AudioCmd, ConfigCmd, LibraryCmd};
+use kernel::cmd::{AudioCmd, ConfigCmd, LibraryCmd, RemoteCmd};
 
 use crate::{
     driver_thread::DriverThread,
@@ -9,6 +9,7 @@ use crate::{
         audio_thread::spawn_audio,
         config_thread::spawn_config,
         library_thread::spawn_library,
+        remote_thread::spawn_remote,
     },
     spawn_setup::SpawnSetup,
 };
@@ -17,6 +18,7 @@ pub(crate) mod audio_thread;
 pub(crate) mod config_thread;
 mod library_thread;
 pub(crate) mod macos_thread;
+mod remote_thread;
 
 pub(crate) type Spawner<C> = fn(&SpawnSetup<'_>) -> Result<DriverThread<C>, SpawnError>;
 
@@ -30,6 +32,7 @@ pub struct Spawners {
     pub(crate) config: Spawner<ConfigCmd>,
     #[cfg(target_os = "macos")]
     pub(crate) macos: Spawner<MacosCmd>,
+    pub(crate) remote: Spawner<RemoteCmd>,
 }
 
 impl Spawners {
@@ -41,6 +44,7 @@ impl Spawners {
             config: spawn_config,
             #[cfg(target_os = "macos")]
             macos: macos_thread::spawn_macos,
+            remote: spawn_remote,
         }
     }
 }
@@ -72,7 +76,7 @@ pub(crate) mod tests {
         error::SpawnError,
         registry::{self, DriverRow},
         runtime::Runtime,
-        spawn::{ConfigCmd, LibraryCmd, Spawners},
+        spawn::{ConfigCmd, LibraryCmd, RemoteCmd, Spawners},
         spawn_setup::{SpawnSetup, StartupPaths},
     };
 
@@ -110,6 +114,7 @@ pub(crate) mod tests {
             config: |setup| spawn_idle(registry::row(DriverName::Config), setup.inbox),
             #[cfg(target_os = "macos")]
             macos: |setup| spawn_idle(registry::row(DriverName::Macos), setup.inbox),
+            remote: |setup| spawn_idle(registry::row(DriverName::Remote), setup.inbox),
         }
     }
 
@@ -155,6 +160,7 @@ pub(crate) mod tests {
     static CONFIG_CALLS: AtomicUsize = AtomicUsize::new(0);
     #[cfg(target_os = "macos")]
     static MACOS_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static REMOTE_CALLS: AtomicUsize = AtomicUsize::new(0);
 
     fn counting_audio(
         setup: &SpawnSetup<'_>,
@@ -185,6 +191,13 @@ pub(crate) mod tests {
         (idle_spawners().macos)(setup)
     }
 
+    fn counting_remote(
+        setup: &SpawnSetup<'_>,
+    ) -> Result<DriverThread<RemoteCmd>, SpawnError> {
+        REMOTE_CALLS.fetch_add(1, Ordering::SeqCst);
+        (idle_spawners().remote)(setup)
+    }
+
     #[test]
     fn every_driver_starts_through_its_spawner() {
         AUDIO_CALLS.store(0, Ordering::SeqCst);
@@ -192,6 +205,7 @@ pub(crate) mod tests {
         CONFIG_CALLS.store(0, Ordering::SeqCst);
         #[cfg(target_os = "macos")]
         MACOS_CALLS.store(0, Ordering::SeqCst);
+        REMOTE_CALLS.store(0, Ordering::SeqCst);
         let directory = tempfile::tempdir().unwrap();
         let spawners = Spawners {
             audio: counting_audio,
@@ -199,6 +213,7 @@ pub(crate) mod tests {
             config: counting_config,
             #[cfg(target_os = "macos")]
             macos: counting_macos,
+            remote: counting_remote,
         };
 
         let runtime = Runtime::start(
@@ -214,6 +229,7 @@ pub(crate) mod tests {
         assert_eq!(CONFIG_CALLS.load(Ordering::SeqCst), 1);
         #[cfg(target_os = "macos")]
         assert_eq!(MACOS_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(REMOTE_CALLS.load(Ordering::SeqCst), 1);
     }
 
     #[test]

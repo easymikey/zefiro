@@ -131,7 +131,7 @@ fn the_hand_off_adopts_the_preloaded_track_without_a_second_load() {
         model
             .player
             .current()
-            .map(|track| track.path().to_path_buf()),
+            .map(|track| track.local_path().unwrap().to_path_buf()),
         Some(PathBuf::from("/tmp/track1.flac"))
     );
 }

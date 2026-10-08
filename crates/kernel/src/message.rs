@@ -21,10 +21,11 @@ use crate::domain::{
     percent::Percent,
     playlist::PlaylistFileName,
     revision::Revision,
+    server::{Connection, Fetched, Listing, Page, RemoteError, ServerName, Session},
     setting_row::SettingRow,
     theme::ThemeName,
     toast::Toast,
-    track::{Track, TrackSource},
+    track::{CatalogRow, Track, TrackSource},
     transport::OutputError,
 };
 
@@ -46,6 +47,8 @@ pub enum Message {
     Config(ConfigEvent),
     Audio(AudioEvent),
     Macos(MacosEvent),
+    Remote(RemoteEvent),
+    Server(ServerRequest),
     Paint(PaintError),
     Elapsed(Timer),
     Driver {
@@ -72,6 +75,12 @@ impl From<MacosEvent> for Message {
     }
 }
 
+impl From<RemoteEvent> for Message {
+    fn from(event: RemoteEvent) -> Self {
+        Message::Remote(event)
+    }
+}
+
 impl From<PaintError> for Message {
     fn from(error: PaintError) -> Self {
         Message::Paint(error)
@@ -95,6 +104,7 @@ pub enum Timer {
     Toast(Revision),
     Sleep(Revision),
     Lookahead(Revision),
+    Fetch(Revision),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, IntoStaticStr)]
@@ -115,6 +125,8 @@ pub enum OverlayRequest {
     Settings(SettingRowRequest),
     Text(TextRequest),
     History(HistoryRequest),
+    Navigate(Direction),
+    Reconnect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
@@ -233,6 +245,8 @@ pub enum BrowseRequest {
     Rescan,
     ToggleFavorite,
     PageBy(Direction),
+    StepCatalog(Direction),
+    LevelUp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
@@ -344,6 +358,41 @@ pub enum MacosEvent {
     OutputRouteChanged,
     Error(MacosError),
     MediaKeyPressed(PlaybackRequest),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RemoteEvent {
+    Connected {
+        server_name: ServerName,
+        session: Session,
+    },
+    Listed {
+        server_name: ServerName,
+        listing: Listing,
+        page: Page,
+        catalog_rows: Vec<CatalogRow>,
+        revision: Revision,
+    },
+    Error(RemoteError),
+    Fetched {
+        revision: Revision,
+        result: Result<Fetched, RemoteError>,
+    },
+    Found {
+        server_name: ServerName,
+        catalog_rows: Vec<CatalogRow>,
+        revision: Revision,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerRequest {
+    Add {
+        connection: Connection,
+        origin_server_name: Option<ServerName>,
+    },
+    Reconnect(ServerName),
+    Remove(ServerName),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

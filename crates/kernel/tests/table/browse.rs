@@ -69,7 +69,7 @@ fn queued_track_sources(
 fn paths(tracks: &[Arc<kernel::domain::track::Track>]) -> Vec<PathBuf> {
     tracks
         .iter()
-        .map(|track| track.path().to_path_buf())
+        .map(|track| track.local_path().unwrap().to_path_buf())
         .collect()
 }
 
@@ -390,7 +390,7 @@ fn view_paths(model: &Model) -> Vec<PathBuf> {
         .library
         .iter()
         .flat_map(Library::view_tracks)
-        .map(|(_, track)| track.path().to_path_buf())
+        .map(|(_, track)| track.local_path().unwrap().to_path_buf())
         .collect()
 }
 
@@ -514,7 +514,7 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
     assert_eq!(model.playlist.playing_index(), Some(ViewIndex::new(1)));
     assert!(matches!(
         &model.player,
-        Player::Loading(track) if track.path() == Path::new("/tmp/track1.flac")
+        Player::Loading(track) if track.local_path() == Some(Path::new("/tmp/track1.flac"))
     ));
     let track = bare_track(1);
     assert_eq!(
@@ -522,7 +522,7 @@ fn play_selected_jumps_the_playlist_and_starts_the_track() {
         Cmd::from_iter([
             Effect::Audio(AudioCmd::Stop),
             Effect::Audio(AudioCmd::Load(TrackLoad {
-                path: track.path().to_path_buf(),
+                path: track.local_path().unwrap().to_path_buf(),
                 decibels: None,
                 revision: Revision::default().next(),
             })),

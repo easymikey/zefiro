@@ -10,6 +10,10 @@ pub(crate) fn key_context_of(overlay: &Overlay) -> KeyContext {
         Overlay::ConfirmTrash(_) => KeyContext::ConfirmTrash,
         Overlay::JumpToTime(_) => KeyContext::JumpToTime,
         Overlay::TrackDetails(_) => KeyContext::TrackDetails,
-        Overlay::SavePlaylist(_) | Overlay::MusicDir(_) => KeyContext::TextPrompt,
+        Overlay::Servers(_) => KeyContext::Servers,
+        Overlay::ConfirmRemove(_) => KeyContext::ConfirmRemove,
+        Overlay::SavePlaylist(_) | Overlay::MusicDir(_) | Overlay::AddServer(_) => {
+            KeyContext::TextPrompt
+        }
     }
 }

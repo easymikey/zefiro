@@ -1,6 +1,7 @@
 pub mod appearance;
 pub mod appearance_rows;
 pub mod bounded;
+pub mod catalog;
 pub mod chord;
 pub mod config;
 pub mod crossfade;
@@ -25,6 +26,7 @@ pub mod player;
 pub mod playhead;
 pub mod playlist;
 pub mod revision;
+pub mod server;
 pub mod setting_row;
 pub mod settings;
 pub mod sleep;

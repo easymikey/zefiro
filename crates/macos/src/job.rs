@@ -1,9 +1,12 @@
 #![forbid(unsafe_code)]
 
-use std::{io, path::Path, sync::Arc};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 use kernel::{
-    domain::{revision::Revision, track::Track},
+    domain::revision::Revision,
     message::{MacosError, MacosEvent},
     update::machine::LoopCmd,
 };
@@ -19,20 +22,17 @@ pub(crate) type ArtworkReader = fn(&Path) -> io::Result<Vec<u8>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MacosJob {
-    ReadArtwork {
-        track: Arc<Track>,
-        revision: Revision,
-    },
+    ReadArtwork { path: PathBuf, revision: Revision },
 }
 
 impl MacosJob {
     #[must_use]
     pub fn run(self, artwork_reader: ArtworkReader) -> MacosMessage {
         match self {
-            MacosJob::ReadArtwork { track, revision } => {
+            MacosJob::ReadArtwork { path, revision } => {
                 MacosMessage::ArtworkRead(ArtworkBytes {
                     revision,
-                    bytes: artwork_reader(track.path())
+                    bytes: artwork_reader(&path)
                         .map_err(|error| MacosError::ReadArtwork(error.kind().into())),
                 })
             }
@@ -42,12 +42,9 @@ impl MacosJob {
 
 #[cfg(test)]
 mod tests {
-    use std::{io, path::Path, sync::Arc};
+    use std::{io, path::Path};
 
-    use kernel::{
-        domain::{revision::Revision, track::Track},
-        message::MacosError,
-    };
+    use kernel::{domain::revision::Revision, message::MacosError};
 
     use crate::{
         job::MacosJob,
@@ -69,7 +66,7 @@ mod tests {
     #[test]
     fn an_unreadable_tag_is_reported() {
         let job = MacosJob::ReadArtwork {
-            track: Arc::new(Track::listed(Path::new("a.flac"))),
+            path: "a.flac".into(),
             revision: revision(1),
         };
         assert!(matches!(
@@ -84,7 +81,7 @@ mod tests {
     #[test]
     fn the_artwork_job_answers_with_its_revision() {
         let job = MacosJob::ReadArtwork {
-            track: Arc::new(Track::listed(Path::new("a.flac"))),
+            path: "a.flac".into(),
             revision: revision(3),
         };
         let MacosMessage::ArtworkRead(read) = job.run(embedded) else {

@@ -44,7 +44,7 @@ fn digit_seek_rows() -> impl Iterator<Item = KeyBinding> {
 
 #[rustfmt::skip]
 fn global_rows() -> Vec<KeyBinding> {
-    use crate::{domain::{keymap::{Action::{AbRepeat, Help, History, JumpToTime, MusicDir, Next, PlayPause, Previous, Quit, Repeat, Search, SeekBack, SeekBackLong, SeekBackShort, SeekForward, SeekForwardLong, SeekForwardShort, Settings, Shuffle, SleepTimer, SpeedDown, SpeedUp, VolumeDown, VolumeUp}, KeyContext::{Global}}}};
+    use crate::{domain::{keymap::{Action::{AbRepeat, AddServer, Help, History, JumpToTime, MusicDir, Next, PlayPause, Previous, Quit, Repeat, Search, SeekBack, SeekBackLong, SeekBackShort, SeekForward, SeekForwardLong, SeekForwardShort, Servers, Settings, Shuffle, SleepTimer, SpeedDown, SpeedUp, VolumeDown, VolumeUp}, KeyContext::{Global}}}};
     use PlaybackRequest as P;
     let row = row(Global);
     vec![
@@ -72,6 +72,8 @@ fn global_rows() -> Vec<KeyBinding> {
         row(History, key('H'), Message::Overlay(OverlayRequest::Open(OverlayName::History))),
         row(Settings, key(','), Message::Overlay(OverlayRequest::Open(OverlayName::Settings))),
         row(MusicDir, key('L'), Message::Overlay(OverlayRequest::Open(OverlayName::MusicDir))),
+        row(AddServer, key('u'), Message::Overlay(OverlayRequest::Open(OverlayName::AddServer))),
+        row(Servers, key('c'), Message::Overlay(OverlayRequest::Open(OverlayName::Servers))),
         row(Help, key('?'), Message::Overlay(OverlayRequest::Open(OverlayName::Help))),
         row(Help, ctrl('k'), Message::Overlay(OverlayRequest::Open(OverlayName::Help))),
         row(Quit, key('q'), Message::Quit),
@@ -80,7 +82,7 @@ fn global_rows() -> Vec<KeyBinding> {
 
 #[rustfmt::skip]
 fn playlist_rows() -> Vec<KeyBinding> {
-    use crate::{domain::{keymap::{Action::{Bottom, CycleSort, Delete, Dequeue, Down, Enqueue, Favorite, FullScan, PageDown, PageUp, PlayNext, PlaySelected, QueueMoveDown, QueueMoveUp, SavePlaylist, Top, TrackDetails, Up}, KeyContext::{Playlist}}}};
+    use crate::{domain::{keymap::{Action::{Bottom, CycleSort, Delete, Dequeue, Down, Enqueue, Favorite, FullScan, LevelUp, NextCatalog, PageDown, PageUp, PlayNext, PlaySelected, PreviousCatalog, QueueMoveDown, QueueMoveUp, SavePlaylist, Top, TrackDetails, Up}, KeyContext::{Playlist}}}};
     use BrowseRequest as B;
     use QueueRequest as Q;
     let row = row(Playlist);
@@ -98,6 +100,9 @@ fn playlist_rows() -> Vec<KeyBinding> {
         row(PageUp, bare(KeyCode::PageUp), Message::Browse(B::PageBy(Direction::Previous))),
         row(PageUp, ctrl('u'), Message::Browse(B::PageBy(Direction::Previous))),
         row(PlaySelected, bare(KeyCode::Enter), Message::Browse(B::PlaySelected)),
+        row(NextCatalog, bare(KeyCode::Tab), Message::Browse(B::StepCatalog(Direction::Next))),
+        row(PreviousCatalog, shifted(KeyCode::Tab), Message::Browse(B::StepCatalog(Direction::Previous))),
+        row(LevelUp, bare(KeyCode::Backspace), Message::Browse(B::LevelUp)),
         row(Enqueue, key('a'), Message::Queue(Q::Toggle)),
         row(PlayNext, key('A'), Message::Queue(Q::PlayNext)),
         row(Dequeue, key('x'), Message::Queue(Q::Dequeue)),

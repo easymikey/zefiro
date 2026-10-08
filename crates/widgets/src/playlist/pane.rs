@@ -7,11 +7,12 @@ use ratatui::{
 
 use crate::{
     playlist::{
+        catalog::CatalogWidget,
         chrome::{pane_block, pane_title},
-        row::{self, PlaylistRows, RowWindow, WindowFit, cursor_band, row_window},
+        row::{self, PlaylistAreas, PlaylistRows, WindowFit, cursor_band, row_window},
         view::{LibraryStatus, PlaylistView},
     },
-    primitive::list_chrome::{ScrollAreas, Scrollbar, paint_scrollbar, scroll_areas},
+    primitive::list_chrome::{Scrollbar, paint_scrollbar, scroll_areas},
     theme::active_theme::ActiveTheme,
 };
 
@@ -30,21 +31,18 @@ impl<'a> PlaylistWidget<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlaylistAreas {
-    pub pane: Rect,
-    pub scroll_areas: ScrollAreas,
-    pub window: RowWindow,
-    pub selected_area: Option<Rect>,
-}
-
 impl PlaylistWidget<'_> {
     #[must_use]
     pub(crate) fn areas(&self, pane: Rect) -> PlaylistAreas {
+        if let Some(catalog_view) = self.view.catalog_view {
+            return CatalogWidget::new(catalog_view, self.active_theme).areas(pane);
+        }
         let body = pane_block(None, Color::Reset).inner(pane);
         let scroll_areas = scroll_areas(pane, body);
         let window = row_window(&WindowFit {
-            view: self.view,
+            selected: self.view.selected,
+            playing_index: self.view.playing_index,
+            playlist_len: self.view.playlist.tracks.len(),
             height: scroll_areas.content.height,
         });
         let selected_area =
@@ -58,6 +56,10 @@ impl PlaylistWidget<'_> {
     }
 
     pub(crate) fn paint(&self, areas: &PlaylistAreas, buffer: &mut Buffer) {
+        if let Some(catalog_view) = self.view.catalog_view {
+            CatalogWidget::new(catalog_view, self.active_theme).paint(areas, buffer);
+            return;
+        }
         let pane = areas.pane;
         if pane.width == 0 || pane.height == 0 {
             return;
@@ -204,6 +206,8 @@ mod tests {
             scanning_label: theme.scanning_label.as_str(),
             theme_name: theme.name.as_str(),
             remaining: None,
+            servers: &[],
+            catalog_name: &kernel::domain::catalog::CatalogName::Local,
         }
     }
 
@@ -215,6 +219,7 @@ mod tests {
             selected: ViewIndex::new(0),
             playing_index: None,
             library_status: LibraryStatus::Ready,
+            catalog_view: None,
             status_line_view: status(playlist, &[], theme),
         }
     }
@@ -267,6 +272,7 @@ mod tests {
                 selected: ViewIndex::new(0),
                 playing_index: Some(ViewIndex::new(1)),
                 library_status: LibraryStatus::Ready,
+                catalog_view: None,
                 status_line_view: status(&playlist, &queue, &theme),
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
@@ -290,6 +296,7 @@ mod tests {
                 selected: ViewIndex::new(0),
                 playing_index: Some(ViewIndex::new(0)),
                 library_status: LibraryStatus::Ready,
+                catalog_view: None,
                 status_line_view: status(&playlist, &queue, &theme),
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
@@ -313,6 +320,7 @@ mod tests {
                 selected: ViewIndex::new(0),
                 playing_index: Some(ViewIndex::new(0)),
                 library_status: LibraryStatus::Ready,
+                catalog_view: None,
                 status_line_view: status(&playlist, &queue, &theme),
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
@@ -336,6 +344,7 @@ mod tests {
                 selected: ViewIndex::new(0),
                 playing_index: Some(ViewIndex::new(0)),
                 library_status: LibraryStatus::Ready,
+                catalog_view: None,
                 status_line_view: status(&playlist, &queue, &theme),
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
@@ -365,6 +374,7 @@ mod tests {
                 selected: ViewIndex::new(0),
                 playing_index: None,
                 library_status: LibraryStatus::Ready,
+                catalog_view: None,
                 status_line_view: status(&playlist, &queue, &theme),
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
@@ -393,6 +403,7 @@ mod tests {
                 selected: ViewIndex::new(0),
                 playing_index: None,
                 library_status: LibraryStatus::Ready,
+                catalog_view: None,
                 status_line_view: StatusLineView {
                     scan_status: ScanStatus::Tagging { done: 1, total: 3 },
                     ..status(&playlist, &[], &theme)
@@ -464,6 +475,7 @@ mod tests {
                 selected: ViewIndex::new(2),
                 playing_index: Some(ViewIndex::new(1)),
                 library_status: LibraryStatus::Ready,
+                catalog_view: None,
                 status_line_view: StatusLineView {
                     selected: ViewIndex::new(2),
                     ..status(&playlist, &[], &theme)
@@ -539,6 +551,7 @@ mod tests {
                 selected: ViewIndex::new(2),
                 playing_index: Some(ViewIndex::new(0)),
                 library_status: LibraryStatus::Ready,
+                catalog_view: None,
                 status_line_view: StatusLineView {
                     selected: ViewIndex::new(2),
                     ..status(&playlist, &[], &theme)
@@ -589,6 +602,7 @@ mod tests {
                 selected: ViewIndex::new(9_999),
                 playing_index: None,
                 library_status: LibraryStatus::Ready,
+                catalog_view: None,
                 status_line_view: StatusLineView {
                     selected: ViewIndex::new(9_999),
                     ..status(&playlist, &[], &theme)
@@ -660,6 +674,7 @@ mod tests {
                 selected: ViewIndex::new(model.workspace.browse.selected().get()),
                 playing_index: model.playing_index(),
                 library_status: LibraryStatus::Ready,
+                catalog_view: None,
                 status_line_view: StatusLineView {
                     selected: ViewIndex::new(model.workspace.browse.selected().get()),
                     ..status(&model.playlist, &model.queue, &theme)

@@ -27,6 +27,10 @@ impl Runtime {
                     self.wiring.ports.macos.send(&self.model.drivers, cmd);
                     None
                 }
+                Effect::Remote(cmd) => {
+                    self.wiring.ports.remote.send(&self.model.drivers, cmd);
+                    None
+                }
                 Effect::Config(cmd) => {
                     self.wiring.ports.config.send(&self.model.drivers, cmd);
                     None
@@ -74,6 +78,7 @@ mod tests {
             Effect,
             LibraryCmd,
             MacosCmd,
+            RemoteCmd,
             WindowColorsCmd,
         },
         domain::{
@@ -85,6 +90,7 @@ mod tests {
             index::ViewIndex,
             model::Model,
             revision::Revision,
+            server::{Account, Connection, Credential, Endpoint, ServerName, UserName},
         },
         message::{Message, Timer},
     };
@@ -103,6 +109,7 @@ mod tests {
         library_receiver: Receiver<LibraryCmd>,
         config_receiver: Receiver<ConfigCmd>,
         macos_receiver: Receiver<MacosCmd>,
+        remote_receiver: Receiver<RemoteCmd>,
     }
 
     impl Fixture {
@@ -111,6 +118,7 @@ mod tests {
             let (library_tx, library_receiver) = unbounded();
             let (config_tx, config_receiver) = unbounded();
             let (macos_tx, macos_receiver) = unbounded();
+            let (remote_tx, remote_receiver) = unbounded();
             let (mut wiring, ..) = Wiring::idle();
             wiring.ports = Ports {
                 audio: Port::new(DriverName::Audio, audio_tx, Congestion::default()),
@@ -121,6 +129,7 @@ mod tests {
                 ),
                 config: Port::new(DriverName::Config, config_tx, Congestion::default()),
                 macos: Port::new(DriverName::Macos, macos_tx, Congestion::default()),
+                remote: Port::new(DriverName::Remote, remote_tx, Congestion::default()),
             };
             Self {
                 runtime: Runtime::assemble((Model::default(), Vec::new()), wiring)
@@ -129,6 +138,7 @@ mod tests {
                 library_receiver,
                 config_receiver,
                 macos_receiver,
+                remote_receiver,
             }
         }
     }
@@ -147,6 +157,26 @@ mod tests {
         );
 
         assert_eq!(fixture.audio_receiver.try_recv(), Ok(AudioCmd::Stop));
+    }
+
+    #[test]
+    fn a_remote_cmd_reaches_the_remote_port() {
+        let mut fixture = Fixture::new();
+        let remote_cmd = RemoteCmd::Connect(Connection {
+            account: Account {
+                server_name: ServerName::new("home"),
+                endpoint: Endpoint::parse("https://music.example.com").unwrap(),
+                user_name: UserName::new("ann").unwrap(),
+            },
+            credential: Credential::Stored,
+        });
+
+        run(
+            Cmd::effect(Effect::Remote(remote_cmd.clone())),
+            &mut fixture.runtime,
+        );
+
+        assert_eq!(fixture.remote_receiver.try_recv(), Ok(remote_cmd));
     }
 
     #[test]

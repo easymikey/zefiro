@@ -138,11 +138,12 @@ impl Player {
 
     fn start(&mut self, track: Arc<Track>, origin: StartOrigin) -> Cmd {
         let track_load = TrackLoad::for_track(&track, origin.stamp().revision);
-        let load_effect = Effect::Audio(AudioCmd::Load(track_load));
+        let load_effect =
+            track_load.map(|track_load| Effect::Audio(AudioCmd::Load(track_load)));
         let cmd = origin
             .stop()
             .into_iter()
-            .chain([load_effect])
+            .chain(load_effect)
             .chain(handover_effects(
                 &track,
                 PlaybackChange::Play,
@@ -317,10 +318,9 @@ mod tests {
     fn cut_in(track: &Arc<Track>) -> Cmd {
         let mut effects = vec![
             Effect::Audio(AudioCmd::Stop),
-            Effect::Audio(AudioCmd::Load(TrackLoad::for_track(
-                track,
-                Revision::default().next(),
-            ))),
+            Effect::Audio(AudioCmd::Load(
+                TrackLoad::for_track(track, Revision::default().next()).unwrap(),
+            )),
             Effect::Library(LibraryCmd::Disk(DiskCmd::AppendHistory(
                 HistoryEntry::from_track(track, now()),
             ))),

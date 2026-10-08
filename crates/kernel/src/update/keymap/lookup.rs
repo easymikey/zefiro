@@ -135,6 +135,8 @@ fn typed_input(key_context: KeyContext, key: Key) -> Option<Message> {
         | KeyContext::History
         | KeyContext::Settings
         | KeyContext::ConfirmTrash
-        | KeyContext::TrackDetails => None,
+        | KeyContext::TrackDetails
+        | KeyContext::Servers
+        | KeyContext::ConfirmRemove => None,
     }
 }

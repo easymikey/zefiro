@@ -1,0 +1,12 @@
+---
+source: crates/widgets/src/scene.rs
+expression: text
+---
+"┏ home · Albums: newest ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+"┃    Miles Davis — Kind of Blue                        1959 · 5 tracks · 45:44 ┃"
+"┃    Miles Davis — Sketches of Spain                           1 track · 45:44 ┃"
+"┃                                                                              ┃"
+"┃                                                                              ┃"
+"┃                                                                              ┃"
+"┃                                                                              ┃"
+"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"

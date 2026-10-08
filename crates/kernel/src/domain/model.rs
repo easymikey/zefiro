@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crate::domain::{
+    catalog::{Catalog, CatalogName},
     driver::Drivers,
     favorites::Favorites,
     history::HistoryEntry,
@@ -9,6 +10,7 @@ use crate::domain::{
     player::Player,
     playlist::{Playlist, PlaylistSource},
     revision::Revisions,
+    server::{Download, Server},
     settings::Settings,
     theme::Themes,
     track::{Track, TrackSource},
@@ -44,6 +46,10 @@ pub struct Model {
     pub revisions: Revisions,
     pub themes: Themes,
     pub drivers: Drivers,
+    pub servers: Vec<Server>,
+    pub downloads: Vec<Download>,
+    pub catalog_name: CatalogName,
+    pub catalogs: Vec<Catalog>,
 }
 
 impl Model {

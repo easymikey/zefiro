@@ -1,3 +1,5 @@
+pub(crate) mod add_server;
+pub(crate) mod confirm_remove;
 pub(crate) mod confirm_trash;
 pub(crate) mod help;
 pub(crate) mod history;
@@ -6,5 +8,6 @@ pub mod layer;
 pub mod modal;
 pub(crate) mod music_dir;
 pub(crate) mod search;
+pub(crate) mod servers;
 pub(crate) mod settings;
 pub(crate) mod track_details;

@@ -1,0 +1,27 @@
+[package]
+name = "remote"
+description = "Music servers over HTTP: the Subsonic API"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+fastrand = { workspace = true }
+kernel = { workspace = true }
+keyring-core = { workspace = true }
+md5 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+
+[[test]]
+name = "main"
+path = "tests/main.rs"
+
+[lints]
+workspace = true

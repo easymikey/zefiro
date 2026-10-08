@@ -500,6 +500,7 @@ mod tests {
             Effect::Library(_)
             | Effect::Macos(_)
             | Effect::Config(_)
+            | Effect::Remote(_)
             | Effect::Animate(_)
             | Effect::RollShuffle(..)
             | Effect::WindowColors(_)

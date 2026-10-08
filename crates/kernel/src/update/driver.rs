@@ -146,23 +146,35 @@ pub(crate) fn resume_driver(
             },
         ) => (track, Playback::Paused),
         (DriverName::Audio, Player::Stopped)
-        | (DriverName::Library | DriverName::Config | DriverName::Macos, _) => {
+        | (
+            DriverName::Library
+            | DriverName::Config
+            | DriverName::Macos
+            | DriverName::Remote,
+            _,
+        ) => {
             return Cmd::none();
         }
     };
-    let revision = revisions.issue_effect();
-    let preload = player.preloaded().map(|next| {
-        Effect::Audio(AudioCmd::Preload(TrackLoad::for_track(next, revision)))
-    });
+    let Some(track_load) = track
+        .local_path()
+        .and_then(|_path| TrackLoad::for_track(track, revisions.issue_effect()))
+    else {
+        return Cmd::none();
+    };
+    let preload = player
+        .preloaded()
+        .and_then(|next| TrackLoad::for_track(next, track_load.revision))
+        .map(|next_load| Effect::Audio(AudioCmd::Preload(next_load)));
     Cmd::from_iter(
-        [
-            Effect::Audio(AudioCmd::Load(TrackLoad::for_track(track, revision))),
-            Effect::Audio(AudioCmd::Seek(player.position_at(now))),
-            Effect::Audio(AudioCmd::SetPlayback(playback)),
-            Effect::Audio(AudioCmd::SetSpeed(transport.speed)),
-        ]
-        .into_iter()
-        .chain(preload),
+        [Effect::Audio(AudioCmd::Load(track_load))]
+            .into_iter()
+            .chain([
+                Effect::Audio(AudioCmd::Seek(player.position_at(now))),
+                Effect::Audio(AudioCmd::SetPlayback(playback)),
+                Effect::Audio(AudioCmd::SetSpeed(transport.speed)),
+            ])
+            .chain(preload),
     )
 }
 
@@ -348,10 +360,10 @@ mod tests {
 
     fn reloaded(position: Duration, playback: Playback) -> Cmd {
         Cmd::from_iter([
-            Effect::Audio(AudioCmd::Load(TrackLoad::for_track(
-                &track(),
-                Revisions::default().issue_effect(),
-            ))),
+            Effect::Audio(AudioCmd::Load(
+                TrackLoad::for_track(&track(), Revisions::default().issue_effect())
+                    .unwrap(),
+            )),
             Effect::Audio(AudioCmd::Seek(position)),
             Effect::Audio(AudioCmd::SetPlayback(playback)),
             Effect::Audio(AudioCmd::SetSpeed(Speed::default())),
@@ -438,14 +450,15 @@ mod tests {
         assert_eq!(
             effects,
             Cmd::from_iter([
-                Effect::Audio(AudioCmd::Load(TrackLoad::for_track(&track(), revision))),
+                Effect::Audio(AudioCmd::Load(
+                    TrackLoad::for_track(&track(), revision).unwrap()
+                )),
                 Effect::Audio(AudioCmd::Seek(Duration::from_secs(5))),
                 Effect::Audio(AudioCmd::SetPlayback(Playback::Playing)),
                 Effect::Audio(AudioCmd::SetSpeed(speed)),
-                Effect::Audio(AudioCmd::Preload(TrackLoad::for_track(
-                    &next_track(),
-                    revision,
-                ))),
+                Effect::Audio(AudioCmd::Preload(
+                    TrackLoad::for_track(&next_track(), revision,).unwrap()
+                )),
             ])
         );
     }

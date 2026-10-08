@@ -137,14 +137,14 @@ struct TrackRecordRef<'a> {
     audio_format: &'a AudioFormat,
 }
 
-impl<'a> From<&'a Track> for TrackRecordRef<'a> {
-    fn from(track: &'a Track) -> Self {
-        Self {
-            path: track.path(),
+impl<'a> TrackRecordRef<'a> {
+    fn from_track(track: &'a Track) -> Option<Self> {
+        track.local_path().map(|path| Self {
+            path,
             duration: track.duration(),
             tags: track.tags(),
             audio_format: track.audio_format(),
-        }
+        })
     }
 }
 
@@ -176,7 +176,7 @@ pub(crate) fn encode(tracks: &[&Track], path: &Path) -> Result<Vec<u8>, Error> {
         tracks
             .iter()
             .copied()
-            .map(TrackRecordRef::from)
+            .filter_map(TrackRecordRef::from_track)
             .collect::<Vec<_>>(),
         &mut bytes,
         bincode_config(),

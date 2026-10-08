@@ -14,6 +14,7 @@ use crate::{
         keymap::bindings::Keymap,
         player::stopped_effects,
         roll_pending,
+        server,
         workspace::trouble,
     },
 };
@@ -100,6 +101,13 @@ pub(crate) fn startup_cmd(model: &mut Model, driver_name: DriverName) -> Cmd {
             Effect::Config(ConfigCmd::SelectTheme(model.themes.theme_choice.clone()))
                 .into()
         }
+        DriverName::Remote => Cmd::from_iter(
+            model
+                .downloads
+                .iter()
+                .filter_map(|download| server::chunk(download, &model.player))
+                .map(Effect::Remote),
+        ),
         DriverName::Macos => Cmd::none(),
     }
 }

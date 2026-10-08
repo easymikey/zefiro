@@ -36,14 +36,14 @@ pub(crate) fn append(
     dirs: &LibraryDirs,
     history_entry: &HistoryEntry,
 ) -> Result<(), Error> {
+    let Some(track_path) = history_entry.track_source.local_path() else {
+        return Ok(());
+    };
     let path = dirs.data_dir.join(HISTORY_FILE_NAME);
     crate::files::create_parent_dir(&path)
         .map_err(Error::io(LibrarySubject::History, &path))?;
     let record = HistoryRecord {
-        path: {
-            let TrackSource::Local(track_path) = &history_entry.track_source;
-            track_path.clone()
-        },
+        path: track_path.to_path_buf(),
         title: history_entry.title.clone(),
         artist: history_entry.artist.clone(),
         played_at: i64::try_from(history_entry.played_at.since_epoch().as_secs())

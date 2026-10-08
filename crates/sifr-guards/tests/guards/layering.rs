@@ -5,12 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::guards::support;
 
 const ALL: &[&str] = &[
-    "kernel", "audio", "library", "macos", "config", "runtime", "widgets", "terminal",
-];
-
-const MODULE_CRATES: &[&str] = &[
-    "kernel", "audio", "library", "macos", "config", "runtime", "widgets", "terminal",
-    "sifr",
+    "kernel", "audio", "library", "macos", "config", "remote", "runtime", "widgets",
+    "terminal",
 ];
 
 const ROOT: &str = "crate";
@@ -22,51 +18,156 @@ type Paths = Vec<Vec<String>>;
 fn allowed_deps(crate_name: &str) -> Option<&'static [&'static str]> {
     match crate_name {
         "kernel" => Some(&[]),
-        "audio" | "library" | "macos" | "config" => Some(&["kernel"]),
-        "runtime" => Some(&["audio", "library", "macos", "config", "kernel"]),
+        "audio" | "library" | "macos" | "config" | "remote" => Some(&["kernel"]),
+        "runtime" => Some(&["audio", "library", "macos", "config", "remote", "kernel"]),
         "widgets" => Some(&["kernel"]),
         "terminal" => Some(&["kernel", "widgets"]),
         "sifr" => Some(ALL),
+        "sifr-guards" => Some(&[]),
         _ => None,
     }
 }
 
+fn layer_violations(
+    members: &[String],
+    manifests: &[(String, toml::Value)],
+) -> Vec<String> {
+    members
+        .iter()
+        .flat_map(|member| {
+            let Some(allowed) = allowed_deps(member) else {
+                return vec![format!(
+                    "workspace member `{member}` has no row in `allowed_deps` — add one \
+                     to this guard"
+                )];
+            };
+            let Some((_, doc)) = manifests.iter().find(|(crate_name, _)| crate_name == member)
+            else {
+                return vec![format!("workspace member `{member}` has no manifest under crates/")];
+            };
+            let mut deps = BTreeSet::new();
+            support::dependency_names(doc, support::RUNTIME_TABLES, &mut deps);
+            deps.into_iter()
+                .filter(|dep_name| {
+                    members.contains(dep_name) && !allowed.contains(&dep_name.as_str())
+                })
+                .map(|dep_name| format!("{member} -> {dep_name} is not in the allow-map"))
+                .collect()
+        })
+        .collect()
+}
+
 #[test]
 fn crate_dependencies_only_point_left() {
-    let found = support::manifests();
-    assert!(!found.is_empty(), "expected to find the crate manifests");
-
-    let mut violations = Vec::new();
-    let mut unplaced = Vec::new();
-
-    for (crate_name, doc) in found {
-        let Some(allowed) = allowed_deps(&crate_name) else {
-            continue;
-        };
-
-        let mut deps = BTreeSet::new();
-        support::sifr_runtime_dependencies(&doc, &mut deps);
-
-        for dep_name in deps {
-            if allowed_deps(&dep_name).is_none() {
-                unplaced.push(format!(
-                    "unknown sifr crate `{dep_name}` referenced by `{crate_name}` — add it \
-                     to `allowed_deps` in this guard"
-                ));
-            } else if !allowed.contains(&dep_name.as_str()) {
-                violations.push(format!(
-                    "{crate_name} -> {dep_name} is not in the allow-map"
-                ));
-            }
-        }
-    }
-
-    violations.extend(unplaced);
+    let members = support::workspace_members();
+    assert!(
+        !members.is_empty(),
+        "expected to read the workspace members"
+    );
 
     support::report(
-        "layering guard: a crate depends only on the crates its allow-map entry names \
-         (docs/principles.md Level 4).",
+        "layering guard: every workspace member has an allow-map entry and depends only on \
+         the crates it names (docs/principles.md Level 4).",
+        &layer_violations(&members, &support::manifests()),
+    );
+}
+
+#[test]
+fn layer_violations_names_a_member_missing_from_the_allow_map() {
+    let manifest = |text: &str| toml::from_str::<toml::Value>(text).unwrap();
+    let members = ["kernel", "audio", "jukebox"].map(str::to_owned);
+    let manifests = [
+        ("kernel".to_owned(), manifest("[dependencies]\n")),
+        (
+            "audio".to_owned(),
+            manifest("[dependencies]\nkernel = {}\n"),
+        ),
+        (
+            "jukebox".to_owned(),
+            manifest("[dependencies]\naudio = {}\n"),
+        ),
+    ];
+    assert_eq!(
+        layer_violations(&members, &manifests),
+        [
+            "workspace member `jukebox` has no row in `allowed_deps` — add one to this \
+             guard"
+        ]
+    );
+}
+
+const DEPENDENCY_HOMES: &[(&str, &[&str])] = &[
+    ("ureq", &["remote"]),
+    ("md5", &["remote"]),
+    ("keyring-core", &["remote", "macos"]),
+    ("apple-native-keyring-store", &["macos"]),
+    ("objc2", &["macos"]),
+    ("block2", &["macos"]),
+    ("dispatch2", &["macos"]),
+    ("cpal", &["audio"]),
+    ("symphonia", &["audio"]),
+];
+
+fn misplaced_dependencies(crate_name: &str, manifest: &toml::Value) -> Vec<String> {
+    let mut deps = BTreeSet::new();
+    support::dependency_names(manifest, support::DEPENDENCY_TABLES, &mut deps);
+    deps.iter()
+        .filter_map(|dep_name| {
+            let (family, homes) = DEPENDENCY_HOMES.iter().find(|(family, _)| {
+                dep_name
+                    .strip_prefix(family)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+            })?;
+            (!homes.contains(&crate_name)).then(|| {
+                format!(
+                    "{crate_name} -> {dep_name}: the `{family}` crates belong only in {}",
+                    homes.join(", ")
+                )
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn network_keychain_os_and_audio_crates_stay_in_their_crate() {
+    let violations: Vec<String> = support::manifests()
+        .iter()
+        .flat_map(|(crate_name, doc)| misplaced_dependencies(crate_name, doc))
+        .collect();
+
+    support::report(
+        "layering guard: ureq and md5 live only in remote, keyring-core in remote and macos, \
+         the keychain store and the objc2 crates in macos, cpal and symphonia in audio \
+         (streaming stage: audio never has network).",
         &violations,
+    );
+}
+
+#[test]
+fn misplaced_dependencies_names_the_crate_and_the_dependency() {
+    let manifest = toml::from_str::<toml::Value>(
+        "[dependencies]\ncpal = {}\nureq = {}\n\
+         [target.'cfg(target_os = \"macos\")'.dev-dependencies]\nobjc2-foundation = {}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        misplaced_dependencies("audio", &manifest),
+        [
+            "audio -> objc2-foundation: the `objc2` crates belong only in macos",
+            "audio -> ureq: the `ureq` crates belong only in remote",
+        ]
+    );
+}
+
+#[test]
+fn misplaced_dependencies_reads_the_package_of_a_renamed_dependency() {
+    let manifest = toml::from_str::<toml::Value>(
+        "[dependencies]\nhttp = { package = \"ureq\" }\n",
+    )
+    .unwrap();
+    assert_eq!(
+        misplaced_dependencies("audio", &manifest),
+        ["audio -> ureq: the `ureq` crates belong only in remote"]
     );
 }
 
@@ -267,7 +368,10 @@ fn cycles(graph: &Graph) -> BTreeSet<Vec<String>> {
 
 #[test]
 fn module_cycles() {
-    let violations: Vec<String> = MODULE_CRATES
+    let dirs = support::member_dirs(&support::read(
+        &support::workspace_root().join("Cargo.toml"),
+    ));
+    let violations: Vec<String> = dirs
         .iter()
         .flat_map(|crate_name| {
             cycles(&module_graph(crate_name))

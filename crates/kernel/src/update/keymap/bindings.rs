@@ -47,7 +47,9 @@ fn lane(key_context: KeyContext) -> KeyContext {
         | KeyContext::Settings
         | KeyContext::ConfirmTrash
         | KeyContext::JumpToTime
-        | KeyContext::TrackDetails) => overlay,
+        | KeyContext::TrackDetails
+        | KeyContext::Servers
+        | KeyContext::ConfirmRemove) => overlay,
     }
 }
 
@@ -95,39 +97,59 @@ fn parsed(
     })
 }
 
+fn contexts(default_bindings: &[DefaultBinding], action: Action) -> Vec<KeyContext> {
+    default_bindings
+        .iter()
+        .enumerate()
+        .filter(|&(index, default)| {
+            default.action == action
+                && default_bindings.iter().position(|earlier| {
+                    earlier.action == action
+                        && earlier.key_context == default.key_context
+                }) == Some(index)
+        })
+        .map(|(_, default)| default.key_context)
+        .collect()
+}
+
 fn candidates(
     keymap_overrides: &KeymapOverrides,
     default_bindings: &[DefaultBinding],
 ) -> (Vec<Candidate>, Vec<KeymapError>) {
     let (candidates, errors): (Vec<Candidate>, Vec<Option<KeymapError>>) =
         Action::iter()
-            .filter_map(|action| {
-                let key_context = default_bindings
-                    .iter()
-                    .find(|default| default.action == action)?
-                    .key_context;
-                let default_chords: Vec<Chord> = default_bindings
-                    .iter()
-                    .filter(|default| default.action == action)
-                    .map(|default| default.chord)
-                    .collect();
-                let (configured, error) = match keymap_overrides
-                    .get(action)
-                    .map(|key_override| parsed(key_override, key_context))
-                    .transpose()
-                {
-                    Ok(configured) => (configured, None),
-                    Err(error) => (None, Some(error)),
-                };
-                Some((
-                    Candidate {
-                        action,
-                        key_context,
-                        default_chords,
-                        binding: configured,
-                    },
-                    error,
-                ))
+            .flat_map(|action| {
+                contexts(default_bindings, action)
+                    .into_iter()
+                    .enumerate()
+                    .map(move |(index, key_context)| {
+                        let default_chords: Vec<Chord> = default_bindings
+                            .iter()
+                            .filter(|default| {
+                                default.action == action
+                                    && default.key_context == key_context
+                            })
+                            .map(|default| default.chord)
+                            .collect();
+                        let (configured, error) = match keymap_overrides
+                            .get(action)
+                            .filter(|_| index == 0)
+                            .map(|key_override| parsed(key_override, key_context))
+                            .transpose()
+                        {
+                            Ok(configured) => (configured, None),
+                            Err(error) => (None, Some(error)),
+                        };
+                        (
+                            Candidate {
+                                action,
+                                key_context,
+                                default_chords,
+                                binding: configured,
+                            },
+                            error,
+                        )
+                    })
             })
             .unzip();
     (candidates, errors.into_iter().flatten().collect())
@@ -136,6 +158,7 @@ fn candidates(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ChordAssignment {
     action: Option<Action>,
+    key_context: KeyContext,
     binding: Binding,
 }
 
@@ -152,6 +175,7 @@ fn fixed_chord_assignments(
         .filter_map(|binding| {
             Some(ChordAssignment {
                 action: binding.action,
+                key_context: binding.key_context,
                 binding: Binding {
                     chord: binding.pattern.chord()?,
                     key_context: binding.key_context,
@@ -179,6 +203,7 @@ fn configured_placement(candidates: &[Candidate]) -> Vec<ChordAssignment> {
         .filter_map(|candidate| {
             Some(ChordAssignment {
                 action: Some(candidate.action),
+                key_context: candidate.key_context,
                 binding: candidate.binding?,
             })
         })
@@ -194,6 +219,7 @@ fn final_chords(candidates: &[Candidate]) -> Vec<ChordAssignment> {
                 .iter()
                 .map(move |&chord| ChordAssignment {
                     action: Some(candidate.action),
+                    key_context: candidate.key_context,
                     binding: Binding {
                         chord,
                         key_context: candidate.key_context,
@@ -203,10 +229,21 @@ fn final_chords(candidates: &[Candidate]) -> Vec<ChordAssignment> {
         .collect()
 }
 
+fn chords(chord_assignments: &[ChordAssignment], candidate: &Candidate) -> Vec<Chord> {
+    chord_assignments
+        .iter()
+        .filter(|placement| {
+            placement.action == Some(candidate.action)
+                && placement.key_context == candidate.key_context
+        })
+        .map(|placement| placement.binding.chord)
+        .collect()
+}
+
 struct Resolution {
     errors: Vec<KeymapError>,
-    final_chords: HashMap<Action, Vec<Chord>>,
-    contexts: HashMap<Action, KeyContext>,
+    final_chords: Vec<(Action, KeyContext, Vec<Chord>)>,
+    contexts: HashMap<(Action, KeyContext), KeyContext>,
 }
 
 fn resolution(
@@ -222,20 +259,21 @@ fn resolution(
     );
     let (settled, _) = placed(configured.iter().copied().chain(
         final_chords(&candidates).into_iter().filter(|entry| {
-            configured
-                .iter()
-                .all(|placement| placement.action != entry.action)
+            configured.iter().all(|placement| {
+                (placement.action, placement.key_context)
+                    != (entry.action, entry.key_context)
+            })
         }),
     ));
-    let final_chords: HashMap<Action, Vec<Chord>> = candidates
+    let final_chords: Vec<(Action, KeyContext, Vec<Chord>)> = candidates
         .iter()
         .filter_map(|candidate| {
-            let chords: Vec<Chord> = settled
-                .iter()
-                .filter(|placement| placement.action == Some(candidate.action))
-                .map(|placement| placement.binding.chord)
-                .collect();
-            (!chords.is_empty()).then_some((candidate.action, chords))
+            let chords = chords(&settled, candidate);
+            (!chords.is_empty()).then_some((
+                candidate.action,
+                candidate.key_context,
+                chords,
+            ))
         })
         .collect();
     let errors = errors
@@ -248,14 +286,22 @@ fn resolution(
         .chain(
             candidates
                 .iter()
-                .filter(|candidate| !final_chords.contains_key(&candidate.action))
+                .filter(|candidate| {
+                    !final_chords.iter().any(|(action, key_context, _)| {
+                        (*action, *key_context)
+                            == (candidate.action, candidate.key_context)
+                    })
+                })
                 .map(|candidate| KeymapError::ActionUnbound(candidate.action)),
         )
         .collect();
     let contexts = configured
         .iter()
         .filter_map(|placement| {
-            Some((placement.action?, placement.binding.key_context))
+            Some((
+                (placement.action?, placement.key_context),
+                placement.binding.key_context,
+            ))
         })
         .collect();
     Resolution {
@@ -327,16 +373,17 @@ fn resolved_bindings(
         contexts,
     } = resolution(keymap_overrides, &base);
 
-    let key_bindings = Action::iter()
-        .filter_map(|action| {
-            let template =
-                base.iter().find(|binding| binding.action == Some(action))?;
-            let chords = final_chords.get(&action)?;
+    let key_bindings = final_chords
+        .into_iter()
+        .filter_map(|(action, key_context, chords)| {
+            let template = base.iter().find(|binding| {
+                binding.action == Some(action) && binding.key_context == key_context
+            })?;
             let key_context = contexts
-                .get(&action)
+                .get(&(action, key_context))
                 .copied()
-                .unwrap_or(template.key_context);
-            Some(chords.iter().map(move |&chord| KeyBinding {
+                .unwrap_or(key_context);
+            Some(chords.into_iter().map(move |chord| KeyBinding {
                 pattern: KeyPattern::Chord(chord),
                 key_context,
                 ..template.clone()

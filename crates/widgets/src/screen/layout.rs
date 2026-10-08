@@ -13,10 +13,7 @@ use crate::{
         metrics::CardMetrics,
     },
     overlay::layer::{OverlayView, OverlayWidget},
-    playlist::{
-        pane::{PlaylistAreas, PlaylistWidget},
-        view::PlaylistView,
-    },
+    playlist::{pane::PlaylistWidget, row::PlaylistAreas, view::PlaylistView},
     primitive::bar::remaining_label,
     repaint::{OnScreen, Presence},
     scene::Scene,

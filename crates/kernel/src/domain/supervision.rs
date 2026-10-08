@@ -36,7 +36,7 @@ impl Supervision {
                 window: Duration::from_mins(1),
                 announcement: Announcement::Toast,
             },
-            DriverName::Library => Supervision::Restart {
+            DriverName::Library | DriverName::Remote => Supervision::Restart {
                 attempts: 1,
                 window: Duration::from_mins(1),
                 announcement: Announcement::Toast,
@@ -164,6 +164,14 @@ mod tests {
         assert_eq!(
             Supervision::standard(DriverName::Macos),
             Supervision::Degrade(Announcement::Silent)
+        );
+        assert_eq!(
+            Supervision::standard(DriverName::Remote),
+            Supervision::Restart {
+                attempts: 1,
+                window: std::time::Duration::from_secs(60),
+                announcement: Announcement::Toast,
+            }
         );
     }
 

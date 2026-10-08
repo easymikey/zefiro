@@ -25,6 +25,11 @@ impl LibraryDirs {
         })
     }
 
+    #[must_use]
+    pub fn media_dir(&self) -> PathBuf {
+        self.cache_dir.join("media")
+    }
+
     pub fn under(root_dir: &std::path::Path) -> Self {
         Self {
             cache_dir: root_dir.join("cache"),

@@ -7,9 +7,11 @@ mod library;
 pub mod machine;
 mod macos;
 pub mod overlay;
+mod parts;
 mod playback;
 pub mod player;
 mod playlist;
+mod server;
 mod settings;
 pub mod startup;
 mod successor;
@@ -17,6 +19,8 @@ mod transport;
 mod workspace;
 
 use std::sync::Arc;
+
+use parts::{browse_parts, config_parts, library_parts, playback_parts, server_parts};
 
 use crate::{
     cmd::{AudioCmd, Cmd, CoverJob, Effect, LibraryCmd, WindowColorsCmd},
@@ -122,14 +126,16 @@ fn decode_cover(
     shown_cover(model)
         .filter(|(track, side)| {
             before.is_none_or(|(shown, shown_side)| {
-                (shown.path(), shown_side) != (track.path(), side)
+                (shown.local_path(), shown_side) != (track.local_path(), side)
             })
         })
-        .map(|(track, side)| {
-            Effect::Library(LibraryCmd::DecodeCover(CoverJob {
-                path: track.path().to_path_buf(),
-                side,
-            }))
+        .and_then(|(track, side)| {
+            track.local_path().map(|path| {
+                Effect::Library(LibraryCmd::DecodeCover(CoverJob {
+                    path: path.to_path_buf(),
+                    side,
+                }))
+            })
         })
 }
 
@@ -204,6 +210,8 @@ impl Input {
                 | MacosEvent::Error(_),
             )
             | Message::Toast(_)
+            | Message::Remote(_)
+            | Message::Server(_)
             | Message::Paint(_)
             | Message::ShuffleRolled(_)
             | Message::Library(_)
@@ -271,131 +279,6 @@ fn release_chord_prefix(workspace: &mut Workspace, input: Input) -> bool {
     }
 }
 
-fn config_parts(model: &mut Model) -> config::ConfigParts<'_> {
-    let Model {
-        workspace,
-        revisions,
-        settings,
-        themes,
-        music_dir,
-        library: _library,
-        scan_status: _scan_status,
-        playlist: _playlist,
-        playlist_source: _playlist_source,
-        queue: _queue,
-        player: _player,
-        transport: _transport,
-        history: _history,
-        favorites: _favorites,
-        drivers: _drivers,
-    } = model;
-    config::ConfigParts {
-        workspace,
-        revisions,
-        settings,
-        themes,
-        music_dir,
-    }
-}
-
-pub(crate) fn playback_parts(model: &mut Model) -> player::PlaybackParts<'_> {
-    let Model {
-        player,
-        transport,
-        playlist,
-        queue,
-        workspace,
-        revisions,
-        settings,
-        library: _library,
-        music_dir: _music_dir,
-        scan_status: _scan_status,
-        playlist_source: _playlist_source,
-        history: _history,
-        favorites: _favorites,
-        themes: _themes,
-        drivers: _drivers,
-    } = model;
-    player::PlaybackParts {
-        player,
-        transport,
-        playlist,
-        queue,
-        workspace,
-        revisions,
-        settings,
-    }
-}
-
-fn browse_parts(model: &mut Model) -> browse::BrowseParts<'_> {
-    let Model {
-        player,
-        transport,
-        playlist,
-        queue,
-        workspace,
-        revisions,
-        settings,
-        library,
-        favorites,
-        scan_status,
-        music_dir,
-        playlist_source,
-        history: _history,
-        themes: _themes,
-        drivers: _drivers,
-    } = model;
-    browse::BrowseParts {
-        playback_parts: player::PlaybackParts {
-            player,
-            transport,
-            playlist,
-            queue,
-            workspace,
-            revisions,
-            settings,
-        },
-        library,
-        favorites,
-        scan_status,
-        music_dir,
-        playlist_source,
-    }
-}
-
-pub(crate) fn library_parts(model: &mut Model) -> library::LibraryParts<'_> {
-    let Model {
-        library,
-        favorites,
-        history,
-        scan_status,
-        music_dir,
-        revisions,
-        workspace,
-        playlist,
-        playlist_source,
-        player,
-        queue,
-        transport: _transport,
-        settings: _settings,
-        themes: _themes,
-        drivers: _drivers,
-    } = model;
-    library::LibraryParts {
-        library,
-        favorites,
-        history,
-        scan_status,
-        music_dir,
-        revisions,
-        workspace,
-        playlist,
-        playlist_source,
-        player,
-        queue,
-    }
-}
-
 fn elapsed(model: &mut Model, timer: Timer, now: Moment) -> Result<Cmd, Unhandled> {
     match timer {
         Timer::Toast(revision) => toast_expired(
@@ -408,6 +291,9 @@ fn elapsed(model: &mut Model, timer: Timer, now: Moment) -> Result<Cmd, Unhandle
         }
         Timer::Lookahead(revision) => {
             audio::lookahead_fired(&mut playback_parts(model), revision, now)
+        }
+        Timer::Fetch(revision) => {
+            server::retry(&model.downloads, &model.player, revision)
         }
     }
 }
@@ -491,6 +377,7 @@ fn update_overlay(
             player: &model.player,
             history: &model.history,
             music_dir: &model.music_dir,
+            servers: &model.servers,
         },
         request,
     )
@@ -538,6 +425,8 @@ fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhan
             audio::update(&mut playback_parts(model), audio_event, now)
         }
         Message::Macos(event) => macos::update(&mut playback_parts(model), event, now),
+        Message::Remote(event) => server::update(server_parts(model), event),
+        Message::Server(request) => server::request(server_parts(model), request),
         Message::Paint(error) => Ok(model
             .workspace
             .show(paint_toast(&error), &mut model.revisions)),

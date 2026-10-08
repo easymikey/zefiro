@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use kernel::{
     domain::{favorites::Favorites, track::TrackSource},
@@ -13,12 +16,9 @@ pub(crate) fn save(dirs: &LibraryDirs, favorites: &Favorites) -> Result<(), Erro
     let path = dirs.data_dir.join(FAVORITES_FILE_NAME);
     crate::files::create_parent_dir(&path)
         .map_err(Error::io(LibrarySubject::Favorites, &path))?;
-    let paths: BTreeSet<&PathBuf> = favorites
+    let paths: BTreeSet<&Path> = favorites
         .iter()
-        .map(|track_source| {
-            let TrackSource::Local(track_path) = track_source;
-            track_path
-        })
+        .filter_map(TrackSource::local_path)
         .collect();
     let json = serde_json::to_string(&paths)
         .map_err(Error::json(LibrarySubject::Favorites, &path))?;
@@ -42,7 +42,11 @@ pub(crate) fn load(dirs: &LibraryDirs) -> Result<Favorites, Error> {
 mod tests {
     use std::path::PathBuf;
 
-    use kernel::domain::{favorites::Favorites, track::TrackSource};
+    use kernel::domain::{
+        favorites::Favorites,
+        server::{ServerName, ServerTrackId},
+        track::TrackSource,
+    };
 
     use crate::{dirs::LibraryDirs, favorites};
 
@@ -76,5 +80,31 @@ mod tests {
         let loaded = favorites::load(&dirs).unwrap();
         assert_eq!(loaded, second);
         assert!(!loaded.is_favorite(&TrackSource::Local("/music/a.flac".into())));
+    }
+
+    #[test]
+    fn saving_a_mixed_set_writes_only_the_local_lines() {
+        let directory = tempfile::tempdir().unwrap();
+        let dirs = LibraryDirs {
+            cache_dir: directory.path().join("cache"),
+            data_dir: directory.path().join("data"),
+            playlists_dir: directory.path().join("playlists"),
+        };
+        let mixed_favorites: Favorites = [
+            TrackSource::Local("/music/a.flac".into()),
+            TrackSource::Server {
+                server_name: ServerName::new("home"),
+                server_track_id: ServerTrackId::new("tr-1"),
+            },
+        ]
+        .into_iter()
+        .collect();
+
+        favorites::save(&dirs, &mixed_favorites).unwrap();
+        let raw =
+            std::fs::read_to_string(dirs.data_dir.join(favorites::FAVORITES_FILE_NAME))
+                .unwrap();
+
+        assert_eq!(raw, r#"["/music/a.flac"]"#);
     }
 }

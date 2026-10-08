@@ -268,7 +268,7 @@ mod tests {
         assert_eq!(
             tracks
                 .iter()
-                .map(|track| track.path().to_path_buf())
+                .map(|track| track.local_path().unwrap().to_path_buf())
                 .collect::<Vec<_>>(),
             chunk
         );

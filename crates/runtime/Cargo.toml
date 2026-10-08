@@ -12,12 +12,11 @@ arc-swap = { workspace = true }
 audio = { workspace = true }
 config = { workspace = true }
 crossbeam-channel = { workspace = true }
-fast_image_resize = { workspace = true }
 fastrand = { workspace = true }
-image = { workspace = true, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 kernel = { workspace = true }
 library = { workspace = true }
 notify = { workspace = true }
+remote = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -224,7 +224,9 @@ fn toggle(current: Option<Arc<Track>>) -> PlayerMessage {
 
 fn faded_in(track: &Arc<Track>) -> Cmd {
     let mut effects = vec![
-        Effect::Audio(AudioCmd::Load(TrackLoad::for_track(track, revision()))),
+        Effect::Audio(AudioCmd::Load(
+            TrackLoad::for_track(track, revision()).unwrap(),
+        )),
         appended_to_history(track),
         now_playing(track),
     ];
@@ -246,9 +248,11 @@ fn stopped() -> Cmd {
 
 fn preloads(track: &Arc<Track>) -> Cmd {
     Cmd::from_iter([
-        Effect::Audio(AudioCmd::Preload(TrackLoad::for_track(track, revision()))),
+        Effect::Audio(AudioCmd::Preload(
+            TrackLoad::for_track(track, revision()).unwrap(),
+        )),
         Effect::Library(LibraryCmd::PrefetchCover(CoverJob {
-            path: track.path().to_path_buf(),
+            path: track.local_path().unwrap().to_path_buf(),
             side: COVER_SIDE,
         })),
     ])

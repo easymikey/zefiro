@@ -17,6 +17,8 @@ pub enum KeyContext {
     ConfirmTrash,
     JumpToTime,
     TrackDetails,
+    Servers,
+    ConfirmRemove,
 }
 
 #[derive(
@@ -49,6 +51,9 @@ pub enum Action {
     PageDown,
     PageUp,
     PlaySelected,
+    NextCatalog,
+    PreviousCatalog,
+    LevelUp,
     Enqueue,
     PlayNext,
     Dequeue,
@@ -70,6 +75,9 @@ pub enum Action {
     SettingsActivate,
     SettingsClose,
     MusicDir,
+    AddServer,
+    Servers,
+    Reconnect,
     Help,
     Quit,
     #[strum(disabled)]

@@ -102,8 +102,9 @@ impl MilkdropCover {
         };
         let width = usize::from(rect.width);
         let height = usize::from(rect.height);
-        let seed =
-            self.track_seed_for(scene.player.current().map(|track| track.path()));
+        let seed = self.track_seed_for(
+            scene.player.current().and_then(|track| track.local_path()),
+        );
         let desired_stamp = MilkdropStamp {
             reset_key: (seed, width, height),
             theme_revision: scene.revisions.theme,

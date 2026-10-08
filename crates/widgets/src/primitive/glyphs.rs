@@ -3,6 +3,9 @@ use ratatui::symbols::block;
 pub(crate) const TITLE_SEPARATOR: &str = " ── ";
 pub(crate) const DOT_SEPARATOR: &str = " · ";
 pub(crate) const ELLIPSIS: char = '\u{2026}';
+pub(crate) const CONNECTING_GLYPH: &str = "⟳";
+pub(crate) const OFFLINE_GLYPH: &str = "○";
+pub(crate) const CREDENTIALS_GLYPH: &str = "!";
 
 pub(crate) mod scrollbar {
     use ratatui::symbols::{block, scrollbar as ratatui_scrollbar, shade};
@@ -92,6 +95,8 @@ pub(crate) mod track_details {
     pub(crate) const DURATION_LABEL: &str = "DURATION  ";
     pub(crate) const FORMAT_LABEL: &str = "FORMAT  ";
     pub(crate) const PATH_LABEL: &str = "PATH  ";
+    pub(crate) const SERVER_LABEL: &str = "SERVER  ";
+    pub(crate) const ID_LABEL: &str = "ID  ";
     pub(crate) const MISSING: &str = "—";
     pub(crate) const TRACK_OF: &str = "/";
 }

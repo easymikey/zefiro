@@ -5,11 +5,20 @@ use crate::{
     domain::{
         cue::Cue,
         cursor_over::CursorOver,
-        overlay::{MusicDirError, Overlay, SearchQuery, TextEntry},
+        overlay::{MusicDirError, Overlay, SearchQuery, ServerPrompt, TextEntry},
         playlist::{PlaylistFileName, PlaylistFileNameError},
+        server::{
+            Account,
+            Connection,
+            Credential,
+            Endpoint,
+            Secret,
+            ServerName,
+            UserName,
+        },
         time::{TimecodeError, parse_timecode},
     },
-    message::{BrowseRequest, Message, PlaybackRequest},
+    message::{BrowseRequest, Message, PlaybackRequest, ServerRequest, TextRequest},
     update::{
         machine::{Machine, Unhandled, replace},
         overlay::{OverlayContentMessage, OverlayMessage},
@@ -60,7 +69,10 @@ fn opened_playback(previous: Option<&Overlay>, overlay: &Overlay) -> Cmd {
         | Overlay::ConfirmTrash(_)
         | Overlay::TrackDetails(_)
         | Overlay::JumpToTime(_)
-        | Overlay::MusicDir(_) => previous.map_or(Cmd::none(), closed_playback),
+        | Overlay::MusicDir(_)
+        | Overlay::AddServer(_)
+        | Overlay::Servers(_)
+        | Overlay::ConfirmRemove(_) => previous.map_or(Cmd::none(), closed_playback),
     }
 }
 
@@ -74,7 +86,10 @@ fn closed_playback(overlay: &Overlay) -> Cmd {
         | Overlay::ConfirmTrash(_)
         | Overlay::TrackDetails(_)
         | Overlay::JumpToTime(_)
-        | Overlay::MusicDir(_) => Cmd::none(),
+        | Overlay::MusicDir(_)
+        | Overlay::AddServer(_)
+        | Overlay::Servers(_)
+        | Overlay::ConfirmRemove(_) => Cmd::none(),
     }
 }
 
@@ -103,10 +118,15 @@ fn confirm_cmd(overlay: &mut Overlay) -> Result<Confirmed, Unhandled> {
         ))),
         Overlay::JumpToTime(text_entry) => confirm_jump(text_entry),
         Overlay::MusicDir(text_entry) => confirm_music_dir(text_entry),
+        Overlay::AddServer(server_prompt) => server_prompt.confirm(),
+        Overlay::ConfirmRemove(server_name) => Ok(Confirmed::Close(Cmd::message(
+            Message::Server(ServerRequest::Remove(server_name.clone())),
+        ))),
         Overlay::Settings(..)
         | Overlay::Help
         | Overlay::TrackDetails(_)
-        | Overlay::History(_) => Err(Unhandled),
+        | Overlay::History(_)
+        | Overlay::Servers(_) => Err(Unhandled),
     }
 }
 
@@ -159,6 +179,92 @@ fn confirm_music_dir(
     ))))
 }
 
+impl ServerPrompt {
+    fn confirm(&mut self) -> Result<Confirmed, Unhandled> {
+        match self {
+            ServerPrompt::Link {
+                origin_server_name,
+                text_entry,
+            } => match Endpoint::parse(&text_entry.input) {
+                Ok(endpoint) => {
+                    *self = ServerPrompt::User {
+                        origin_server_name: origin_server_name.take(),
+                        endpoint,
+                        text_entry: TextEntry::default(),
+                    };
+                    Ok(Confirmed::Stay)
+                }
+                Err(error) => replace(&mut text_entry.error, Some(error))
+                    .map(|()| Confirmed::Stay),
+            },
+            ServerPrompt::User {
+                origin_server_name,
+                endpoint,
+                text_entry,
+            } => match UserName::new(&text_entry.input) {
+                Ok(user_name) => {
+                    *self = ServerPrompt::Password {
+                        origin_server_name: origin_server_name.take(),
+                        endpoint: endpoint.clone(),
+                        user_name,
+                        text_entry: TextEntry::default(),
+                    };
+                    Ok(Confirmed::Stay)
+                }
+                Err(error) => replace(&mut text_entry.error, Some(error))
+                    .map(|()| Confirmed::Stay),
+            },
+            ServerPrompt::Password {
+                origin_server_name,
+                endpoint,
+                user_name,
+                text_entry,
+            } => match Secret::new(&text_entry.input) {
+                Ok(secret) => Ok(Confirmed::Close(Cmd::message(Message::Server(
+                    ServerRequest::Add {
+                        connection: Connection {
+                            account: Account {
+                                server_name: ServerName::new(endpoint.host()),
+                                endpoint: endpoint.clone(),
+                                user_name: user_name.clone(),
+                            },
+                            credential: Credential::Typed(secret),
+                        },
+                        origin_server_name: origin_server_name.clone(),
+                    },
+                )))),
+                Err(error) => replace(&mut text_entry.error, Some(error))
+                    .map(|()| Confirmed::Stay),
+            },
+        }
+    }
+}
+
+impl Machine for ServerPrompt {
+    type Message = TextRequest;
+    type Effect = Cmd;
+
+    fn transition(&mut self, message: TextRequest) -> Result<Cmd, Unhandled> {
+        match self {
+            ServerPrompt::Link {
+                origin_server_name: _origin_server_name,
+                text_entry,
+            } => text_entry.transition(message),
+            ServerPrompt::User {
+                origin_server_name: _origin_server_name,
+                endpoint: _endpoint,
+                text_entry,
+            } => text_entry.transition(message),
+            ServerPrompt::Password {
+                origin_server_name: _origin_server_name,
+                endpoint: _endpoint,
+                user_name: _user_name,
+                text_entry,
+            } => text_entry.transition(message),
+        }
+    }
+}
+
 fn content_transition(
     overlay: &mut Option<Overlay>,
     content_message: OverlayContentMessage,
@@ -180,6 +286,9 @@ fn content_transition(
         (Overlay::JumpToTime(text_entry), OverlayContentMessage::Text(message)) => {
             text_entry.transition(message)
         }
+        (Overlay::AddServer(server_prompt), OverlayContentMessage::Text(message)) => {
+            server_prompt.transition(message)
+        }
         (Overlay::History(cursor), OverlayContentMessage::History(message)) => {
             cursor.transition(message)
         }
@@ -192,7 +301,10 @@ fn content_transition(
             | Overlay::ConfirmTrash(_)
             | Overlay::TrackDetails(_)
             | Overlay::JumpToTime(_)
-            | Overlay::MusicDir(_),
+            | Overlay::MusicDir(_)
+            | Overlay::AddServer(_)
+            | Overlay::Servers(_)
+            | Overlay::ConfirmRemove(_),
             OverlayContentMessage::Search(_)
             | OverlayContentMessage::Settings(_)
             | OverlayContentMessage::Text(_)

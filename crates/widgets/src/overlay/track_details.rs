@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 
-use kernel::domain::{geometry::Cells, track::Track};
+use kernel::domain::{
+    geometry::Cells,
+    track::{Track, TrackSource},
+};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -140,10 +143,27 @@ pub struct TrackDetailsRow<'a> {
 impl<'a> TrackDetailsRow<'a> {
     #[must_use]
     pub(crate) fn all(track: &'a Track) -> Vec<Self> {
-        let path_row = TrackDetailsRow {
-            prefix: glyphs::track_details::PATH_LABEL,
-            value: track.path().to_string_lossy(),
-            truncation: Truncation::Head,
+        let rows = match track.source() {
+            TrackSource::Local(path) => vec![TrackDetailsRow {
+                prefix: glyphs::track_details::PATH_LABEL,
+                value: path.to_string_lossy(),
+                truncation: Truncation::Head,
+            }],
+            TrackSource::Server {
+                server_name,
+                server_track_id,
+            } => vec![
+                TrackDetailsRow {
+                    prefix: glyphs::track_details::SERVER_LABEL,
+                    value: Cow::Borrowed(server_name.as_str()),
+                    truncation: Truncation::Tail,
+                },
+                TrackDetailsRow {
+                    prefix: glyphs::track_details::ID_LABEL,
+                    value: Cow::Borrowed(server_track_id.as_str()),
+                    truncation: Truncation::Tail,
+                },
+            ],
         };
         tag_rows(track)
             .into_iter()
@@ -152,7 +172,7 @@ impl<'a> TrackDetailsRow<'a> {
                 value,
                 truncation: Truncation::Tail,
             })
-            .chain(std::iter::once(path_row))
+            .chain(rows)
             .collect()
     }
 }
@@ -216,11 +236,15 @@ fn missing_or_value(tag: Option<&str>) -> Cow<'_, str> {
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::track::{AudioFormat, Hertz, Kbps, Tags, Track, TrackParts};
+    use kernel::domain::{
+        server::{ServerName, ServerTrackId},
+        track::{AudioFormat, Hertz, Kbps, Tags, Track, TrackParts, TrackSource},
+    };
     use rstest::{fixture, rstest};
 
     use crate::{
         overlay::track_details::{TrackDetailsRow, TrackDetailsWidget},
+        primitive::glyphs::track_details,
         test_support::{noir, rendered},
         theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
     };
@@ -307,6 +331,31 @@ mod tests {
             .area
             .height,
             3
+        );
+    }
+
+    #[test]
+    fn track_details_show_the_server_and_the_id_of_a_server_track() {
+        let track = Track::from(TrackSource::Server {
+            server_name: ServerName::new("home"),
+            server_track_id: ServerTrackId::new("tr-1"),
+        });
+        let rows = TrackDetailsRow::all(&track);
+        let pairs: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|row| (row.prefix, row.value.as_ref()))
+            .collect();
+        assert_eq!(
+            pairs[pairs.len() - 2..],
+            [
+                (track_details::SERVER_LABEL, "home"),
+                (track_details::ID_LABEL, "tr-1"),
+            ]
+        );
+        assert!(
+            pairs
+                .iter()
+                .all(|(prefix, _)| *prefix != track_details::PATH_LABEL)
         );
     }
 }

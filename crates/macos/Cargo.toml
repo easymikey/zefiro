@@ -8,10 +8,12 @@ license.workspace = true
 publish = false
 
 [target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { workspace = true }
 block2 = { workspace = true }
 crossbeam-channel = { workspace = true }
 dispatch2 = { workspace = true }
 kernel = { workspace = true }
+keyring-core = { workspace = true }
 objc2 = { workspace = true }
 objc2-app-kit = { workspace = true }
 objc2-core-audio = { workspace = true }

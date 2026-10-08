@@ -128,7 +128,13 @@ fn listed(listing: scan::Listing, revision: Revision) -> LibraryMessage {
 fn local_paths(track_sources: Vec<TrackSource>) -> Vec<PathBuf> {
     track_sources
         .into_iter()
-        .map(|TrackSource::Local(path)| path)
+        .filter_map(|track_source| match track_source {
+            TrackSource::Local(path) => Some(path),
+            TrackSource::Server {
+                server_name: _server_name,
+                server_track_id: _server_track_id,
+            } => None,
+        })
         .collect()
 }
 
